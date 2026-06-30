@@ -30,6 +30,7 @@ import type { ChannelContext } from '../types/index.js';
 import type { ToolControlsConfig } from '../app/config.js';
 import { ContainerExecutionProvider } from './containerExecutionProvider.js';
 import { MemorySearchToolProvider } from './memorySearchToolProvider.js';
+import { persistShellOutputFiles } from './shellOutputFiles.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import {
   DEFAULT_SHELL_TIMEOUT_MS,
@@ -465,7 +466,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
         }
         case 'Shell': {
           const args = input as { command: string; timeoutMs?: number };
-          const content = await this._runShell(workspace, args.command, args.timeoutMs, signal);
+          const content = await this._runShell(workspace, args.command, args.timeoutMs, signal, context.invocationId);
           return { status: 'success', content };
         }
         case 'Edit': {
@@ -514,7 +515,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     let done = false;
     let notify: (() => void) | undefined;
     const wake = () => { notify?.(); notify = undefined; };
-    this._runShellStreaming(workspace, args.command, args.timeoutMs, signal, (chunk) => { queue.push(chunk); wake(); })
+    this._runShellStreaming(workspace, args.command, args.timeoutMs, signal, (chunk) => { queue.push(chunk); wake(); }, request.context.invocationId)
       .then((response) => queue.push({ type: 'completed', response }))
       .catch((err) => queue.push({ type: 'completed', response: { status: 'error', error: err instanceof Error ? err.message : String(err) } }))
       .finally(() => { done = true; wake(); });
@@ -590,8 +591,9 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     command: string,
     timeoutMs: number | undefined,
     signal: AbortSignal | undefined,
+    invocationId?: string,
   ): Promise<string> {
-    const response = await this._runShellStreaming(workspace, command, timeoutMs, signal);
+    const response = await this._runShellStreaming(workspace, command, timeoutMs, signal, undefined, invocationId);
     if (response.status === 'error') throw new Error(response.error);
     return response.content;
   }
@@ -602,6 +604,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     timeoutMs: number | undefined,
     signal: AbortSignal | undefined,
     onChunk?: (chunk: import('../runtime/handProtocol.js').ToolInvocationStreamChunk) => void | Promise<void>,
+    invocationId?: string,
   ): Promise<ToolInvocationResponse> {
     return await new Promise<ToolInvocationResponse>((resolvePromise) => {
       const deniedPath = findDeniedPathMention(workspace, command);
@@ -697,9 +700,21 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
       child.stdout?.on('data', (chunk: Buffer) => emit('stdout', chunk));
       child.stderr?.on('data', (chunk: Buffer) => emit('stderr', chunk));
       child.on('error', (err: Error) => finish({ status: 'error', error: err.message }));
-      child.on('close', (code: number | null, sig: NodeJS.Signals | null) => {
+      child.on('close', async (code: number | null, sig: NodeJS.Signals | null) => {
         signal?.removeEventListener('abort', onAbort);
         const durationMs = Date.now() - startedAt;
+        let outputFiles: import('./toolOutput.js').ShellOutputFileRef[] = [];
+        let outputFileError: string | undefined;
+        try {
+          outputFiles = await persistShellOutputFiles({
+            workspaceRoot: workspace.root,
+            invocationId,
+            stdout,
+            stderr,
+          });
+        } catch (err) {
+          outputFileError = err instanceof Error ? err.message : String(err);
+        }
         const content = formatShellOutput({
           stdout,
           stderr,
@@ -709,6 +724,8 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
           signal: sig,
           durationMs,
           captureLimitExceeded: outputExceeded,
+          outputFiles,
+          outputFileError,
         });
         const metadata = {
           exitCode: code,
@@ -716,6 +733,8 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
           stdoutBytes,
           stderrBytes,
           durationMs,
+          ...(outputFiles.length > 0 ? { outputFiles } : {}),
+          ...(outputFileError ? { outputFileError } : {}),
           ...(outputExceeded ? { outputExceeded: true } : {}),
         };
         if (outputExceeded) {

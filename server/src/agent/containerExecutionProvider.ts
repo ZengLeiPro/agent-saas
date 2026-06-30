@@ -15,6 +15,7 @@ import {
   MAX_ARTIFACT_PAYLOAD_BYTES,
   WORKSPACE_ARTIFACT_PAYLOAD_METADATA_KEY,
 } from './workspaceHandTools.js';
+import { persistShellOutputFiles } from './shellOutputFiles.js';
 import {
   DEFAULT_SHELL_TIMEOUT_MS,
   MAX_FILE_BYTES,
@@ -188,13 +189,20 @@ export class ContainerExecutionProvider implements ExecutionProvider {
             signal,
             allowNonZeroExit: true,
           }, audit);
-          const content = formatShellOutput(result);
+          const { outputFiles, outputFileError } = await this.persistShellOutput(workspace, context.invocationId, result.stdout, result.stderr);
+          const content = formatShellOutput({
+            ...result,
+            outputFiles,
+            ...(outputFileError ? { outputFileError } : {}),
+          });
           const metadata = {
             exitCode: result.exitCode,
             signal: result.signal,
             stdoutBytes: result.stdoutBytes,
             stderrBytes: result.stderrBytes,
             durationMs: result.durationMs,
+            ...(outputFiles.length > 0 ? { outputFiles } : {}),
+            ...(outputFileError ? { outputFileError } : {}),
           };
           return result.exitCode === 0
             ? { status: 'success', content, audit, metadata }
@@ -305,14 +313,21 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       allowNonZeroExit: true,
       onOutput: createLimitedStreamForwarder((chunk) => { queue.push(chunk); wake(); }),
     }, audit)
-      .then((result) => {
-        const content = formatShellOutput(result);
+      .then(async (result) => {
+        const { outputFiles, outputFileError } = await this.persistShellOutput(workspace, context.invocationId, result.stdout, result.stderr);
+        const content = formatShellOutput({
+          ...result,
+          outputFiles,
+          ...(outputFileError ? { outputFileError } : {}),
+        });
         const metadata = {
           exitCode: result.exitCode,
           signal: result.signal,
           stdoutBytes: result.stdoutBytes,
           stderrBytes: result.stderrBytes,
           durationMs: result.durationMs,
+          ...(outputFiles.length > 0 ? { outputFiles } : {}),
+          ...(outputFileError ? { outputFileError } : {}),
         };
         queue.push({
           type: 'completed',
@@ -327,6 +342,29 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       const chunk = queue.shift();
       if (chunk) { yield chunk; continue; }
       await new Promise<void>((resolve) => { notify = resolve; });
+    }
+  }
+
+  private async persistShellOutput(
+    workspace: WorkspaceRef,
+    invocationId: string | undefined,
+    stdout: string,
+    stderr: string,
+  ) {
+    try {
+      return {
+        outputFiles: await persistShellOutputFiles({
+          workspaceRoot: workspace.root,
+          invocationId,
+          stdout,
+          stderr,
+        }),
+      };
+    } catch (err) {
+      return {
+        outputFiles: [],
+        outputFileError: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 

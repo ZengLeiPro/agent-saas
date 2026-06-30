@@ -2,4 +2,4 @@ Run a shell command in the current workspace runtime. Requires Web approval. Aut
 
 The command starts with cwd set to the current workspace. Put durable outputs, downloaded files, project worktrees, and deliverables under the workspace, preferably `assets/YYYYMMDD/`, `downloads/YYYYMMDD/`, or `projects/`. Use `/tmp`, `$HOME`, and other system paths only for disposable cache.
 
-Large stdout/stderr is allowed up to a hard capture limit. The final tool result is summarized with exit code, wall time, output byte/line counts, and head/tail truncation instead of failing solely because output is over the model-visible budget. For full large outputs, redirect to a workspace file and inspect it with Read/Grep.
+Large stdout/stderr is allowed up to a hard capture limit. The final tool result is summarized with exit code, wall time, output byte/line counts, and head/tail truncation instead of failing solely because output is over the model-visible budget. When output is too large for the model-visible result, full stdout/stderr is saved under workspace `tmp/tool-results/`; inspect those files with Read/Grep.

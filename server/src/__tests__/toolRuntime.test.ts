@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -162,9 +162,14 @@ describe('PlatformToolRuntime', () => {
       if (response.status === 'success') {
         expect(response.content).toContain('Exit code: 0');
         expect(response.content).toContain('Output bytes: stdout=');
+        expect(response.content).toContain('Full output files: stdout=tmp/tool-results/');
         expect(response.content).toContain('[stdout]');
         expect(response.content).toContain('truncated');
         expect(response.content.length).toBeLessThan(70 * 1024);
+        const match = /stdout=(tmp\/tool-results\/[^ ]+\.txt)/.exec(response.content);
+        expect(match?.[1]).toBeTruthy();
+        const saved = await readFile(join(root, match![1]!), 'utf-8');
+        expect(saved).toHaveLength(70 * 1024);
       }
     } finally {
       await rm(root, { recursive: true, force: true });

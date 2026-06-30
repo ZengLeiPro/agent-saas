@@ -396,9 +396,14 @@ describeIfDocker('ContainerExecutionProvider', () => {
       timeoutMs: 15_000,
     });
     expect(result.content).toContain('Exit code: 0');
+    expect(result.content).toContain('Full output files: stdout=tmp/tool-results/');
     expect(result.content).toContain('[stdout]');
     expect(result.content).toContain('truncated');
     expect(result.content.length).toBeLessThan(70 * 1024);
+    const match = /stdout=(tmp\/tool-results\/[^ ]+\.txt)/.exec(result.content);
+    expect(match?.[1]).toBeTruthy();
+    const saved = readFileSync(join(root, match![1]!), 'utf-8');
+    expect(saved).toHaveLength(70 * 1024);
     await sleep(1_000);
     expect(listContainers(prefix)).toBe('');
   });

@@ -6,6 +6,13 @@ export const MAX_SHELL_CAPTURE_BYTES = 4 * 1024 * 1024;
 export const MAX_SHELL_STREAM_BYTES = 64 * 1024;
 export const DEFAULT_SHELL_TIMEOUT_MS = 30_000;
 
+export interface ShellOutputFileRef {
+  channel: 'stdout' | 'stderr';
+  path: string;
+  bytes: number;
+  sha256: string;
+}
+
 export interface ShellOutputSummary {
   stdout: string;
   stderr: string;
@@ -15,6 +22,8 @@ export interface ShellOutputSummary {
   signal?: NodeJS.Signals | string | null;
   durationMs?: number;
   captureLimitExceeded?: boolean;
+  outputFiles?: ShellOutputFileRef[];
+  outputFileError?: string;
   maxChars?: number;
 }
 
@@ -45,6 +54,10 @@ export function formatShellOutput(input: ShellOutputSummary): string {
     input.durationMs === undefined ? undefined : `Wall time: ${(input.durationMs / 1000).toFixed(3)}s`,
     `Output bytes: stdout=${input.stdoutBytes} stderr=${input.stderrBytes}`,
     `Output lines: stdout=${stdoutLines} stderr=${stderrLines}`,
+    input.outputFiles?.length
+      ? `Full output files: ${input.outputFiles.map((file) => `${file.channel}=${file.path} (${file.bytes} bytes sha256=${file.sha256})`).join('; ')}`
+      : undefined,
+    input.outputFileError ? `Full output file write failed: ${input.outputFileError}` : undefined,
     input.captureLimitExceeded
       ? `Output capture exceeded ${MAX_SHELL_CAPTURE_BYTES} bytes; process was terminated after preserving captured output.`
       : undefined,

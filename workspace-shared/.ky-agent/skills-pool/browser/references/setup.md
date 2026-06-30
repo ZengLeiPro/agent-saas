@@ -1,15 +1,19 @@
 # Setup
 
-## 1. Runtime expectation
+ACS Sandbox should already provide Python Playwright and Chromium.
 
-ACS Sandbox should already provide `playwright-cli`, `curl`, and the internal browser lifecycle API. Do not run global installs during a user task.
-
-## 2. Verify
+Verify the runtime:
 
 ```bash
-playwright-cli --version
+python3 - <<'PY'
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True, args=["--disable-dev-shm-usage"])
+    page = browser.new_page()
+    page.set_content("<h1>ok</h1>")
+    print(page.inner_text("body"))
+    browser.close()
+PY
 ```
 
-The platform automatically configures `PLAYWRIGHT_MCP_CDP_ENDPOINT` for each user. No manual browser or token setup is needed.
-
-If `playwright-cli` is missing, report an ACS image dependency gap. Do not run Homebrew, `npm install -g`, or mutate the shared skill directory from a normal task.
+If this fails, report an ACS image/runtime gap. Do not run Homebrew, global npm installs, or system-level package installs during a user task.

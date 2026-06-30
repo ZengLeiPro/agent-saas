@@ -76,7 +76,11 @@ def generate_image(
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        print("错误：未设置 GEMINI_API_KEY 环境变量", file=sys.stderr)
+        print(
+            "错误：未设置 GEMINI_API_KEY 环境变量。\n"
+            "  请由平台/租户 secret/env 注入，不要把长期 key 写入 skill、日志或对话。",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # 构建 parts

@@ -7,8 +7,8 @@ GPT-Image-2 图像生成脚本（通过平台 CLIProxyAPI 中转）
   - 以图生图：POST /v1/images/edits（multipart/form-data）
 
 环境变量：
-  CLIPROXY_BASE_URL  CLIProxyAPI base URL；未设置时回退到 http://127.0.0.1:8317
-  CLIPROXY_API_KEY   必须由 ACS secret/env 注入；不从用户 HOME 读取
+  CLIPROXY_BASE_URL  CLIProxyAPI base URL；必须由平台/租户 secret/env 注入
+  CLIPROXY_API_KEY   必须由平台/租户 secret/env 注入；不从用户 HOME 读取
 
 参数尽量对齐 generate_gemini.py：
   -s 尺寸 / -a 宽高比 映射到 gpt-image-2 实际支持的 size
@@ -44,7 +44,6 @@ VALID_QUALITY = {"low", "medium", "high", "auto"}
 # gpt-image-2 实际支持的 size（实测，2026-05-18）
 SUPPORTED_SIZES = {"1024x1024", "1024x1536", "1536x1024", "2048x2048", "auto"}
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8317"
 LOCK_PATH = os.environ.get(
     "GPT_IMAGE_2_LOCK_PATH",
     os.path.join(os.getcwd(), ".cache", "image-gen", "gpt-image-2.lock"),
@@ -60,12 +59,20 @@ RETRYABLE_ERROR_MARKERS = (
 
 
 def _resolve_config():
-    base_url = os.environ.get("CLIPROXY_BASE_URL", "").strip() or DEFAULT_BASE_URL
+    base_url = os.environ.get("CLIPROXY_BASE_URL", "").strip()
     api_key = os.environ.get("CLIPROXY_API_KEY", "").strip()
+    if not base_url:
+        print(
+            "错误：找不到 CLIPROXY_BASE_URL。\n"
+            "  请由平台/租户 secret/env 注入 CLIProxyAPI base URL；ACS Sandbox 内不假设"
+            "存在 127.0.0.1 本地代理。",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if not api_key:
         print(
             "错误：找不到 CLIPROXY_API_KEY。\n"
-            "  请由 ACS secret/env 注入 CLIPROXY_API_KEY；不要把 key 写入 skill、"
+            "  请由平台/租户 secret/env 注入 CLIPROXY_API_KEY；不要把 key 写入 skill、"
             "用户 HOME 配置、日志或对话。",
             file=sys.stderr,
         )

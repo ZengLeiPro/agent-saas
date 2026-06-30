@@ -14,6 +14,7 @@ const SAMPLE_WORKSPACE: WorkspaceRef = {
   userId: 'u-1',
   username: 'admin',
   sessionId: 'session-abc',
+  sandboxScopeId: 'ws_kaiyan__u-1',
   mountSubPath: 'workspaces/kaiyan/u-1',
   executionTarget: 'server-remote',
 };
@@ -43,6 +44,7 @@ describe('HttpTransport.serializeRequest', () => {
     expect(wire.context.workspace).not.toHaveProperty('root');
     expect((wire as unknown as Record<string, unknown>).signal).toBeUndefined();
     expect(wire.context.workspace.id).toBe('session-abc');
+    expect(wire.context.workspace.sandboxScopeId).toBe('ws_kaiyan__u-1');
     expect(wire.context.workspace.mountSubPath).toBe('workspaces/kaiyan/u-1');
     expect(wire.context.workspace.executionTarget).toBe('server-remote');
   });
@@ -244,7 +246,7 @@ describe('HttpTransport hand lifecycle helpers', () => {
     }) as unknown as typeof fetch;
     const transport = new HttpTransport({ baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl });
 
-    await expect(transport.provision({ workspaceId: 'session-abc', setupCommands: ['true'] })).resolves.toEqual({
+    await expect(transport.provision({ workspaceId: 'session-abc', sandboxScopeId: 'ws_kaiyan__u-1', setupCommands: ['true'] })).resolves.toEqual({
       status: 'ok',
       metadata: { status: 'ok', workspaceId: 'session-abc' },
     });
@@ -253,7 +255,7 @@ describe('HttpTransport hand lifecycle helpers', () => {
     expect((captured.init?.headers as Record<string, string>).authorization).toBe('Bearer secret-token-12345');
     expect(JSON.parse(captured.init?.body as string)).toEqual({
       workspaceId: 'session-abc',
-      recipe: { workspaceId: 'session-abc', setupCommands: ['true'] },
+      recipe: { workspaceId: 'session-abc', sandboxScopeId: 'ws_kaiyan__u-1', setupCommands: ['true'] },
     });
   });
 

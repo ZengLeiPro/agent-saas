@@ -352,6 +352,7 @@ export function serializeRequest(request: ToolInvocationRequest): WireToolInvoca
     userId: ws.userId,
     username: ws.username,
     sessionId: ws.sessionId,
+    sandboxScopeId: ws.sandboxScopeId,
     mountSubPath: ws.mountSubPath,
     executionTarget: ws.executionTarget,
   };

@@ -109,6 +109,7 @@ export interface WorkspaceRef {
    */
   tenantId?: string;
   sessionId?: string;
+  sandboxScopeId?: string;
   mountSubPath?: string;
   executionTarget: ExecutionTargetKind;
   /**
@@ -204,6 +205,9 @@ export interface WorkspaceProvider {
   resolve(context: ChannelContext, args: {
     cwd: string;
     sessionId?: string;
+    workspaceId?: string;
+    sandboxScopeId?: string;
+    mountSubPath?: string;
     executionTarget?: ExecutionTargetKind;
     sandboxPolicy?: WorkspaceRef['sandboxPolicy'];
   }): WorkspaceRef;
@@ -356,23 +360,28 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
   resolve(context: ChannelContext, args: {
     cwd: string;
     sessionId?: string;
+    workspaceId?: string;
+    sandboxScopeId?: string;
+    mountSubPath?: string;
     executionTarget?: ExecutionTargetKind;
     sandboxPolicy?: WorkspaceRef['sandboxPolicy'];
   }): WorkspaceRef {
-    // workspaceId 由 sessionId（runtime 主键）派生，对 server-remote 远端 hand 而言
-    // 等于一个稳定的 sandbox 命名空间；本地 backend 暂时不依赖它。
+    // workspaceId 由 server runtime 基于 tenant/user 派生；server-remote
+    // 底层执行面可用 sandboxScopeId 复用同一用户 workspace 的 warm Sandbox。
     // tenantId 优先取 context.user（首跑 fresh request），fallback context.sessionOwner
     // （wake / resume 路径）。两者都缺时返回 undefined → 下游 buildTenantScopedEnv
     // 按"匿名/平台兼容路径"走，保持向后兼容；ServerLocal Shell gate 也会因
     // identity 缺失自然 fail-closed（toolRuntime.ts:620）。
     const tenantId = context.user?.tenantId ?? context.sessionOwner?.tenantId;
     return {
-      id: args.sessionId,
+      id: args.workspaceId ?? args.sessionId,
       root: resolve(args.cwd),
       userId: context.user?.id,
       username: context.user?.username,
       ...(tenantId ? { tenantId } : {}),
       sessionId: args.sessionId,
+      sandboxScopeId: args.sandboxScopeId,
+      mountSubPath: args.mountSubPath,
       executionTarget: args.executionTarget ?? this.defaultExecutionTarget,
       ...(args.sandboxPolicy ? { sandboxPolicy: args.sandboxPolicy } : {}),
     };
@@ -1218,10 +1227,18 @@ class WorkspaceToolProvider implements ToolProvider {
       if (hand.sessionId && currentSessionId && hand.sessionId !== currentSessionId) {
         throw new Error('hand is not available in the current session');
       }
+      if (hand.workspaceId && context.workspace.id && hand.workspaceId !== context.workspace.id) {
+        throw new Error('hand workspace does not match the current workspace');
+      }
+      const handMountSubPath = recipeMountSubPath(hand.metadata?.recipe);
+      if (handMountSubPath && context.workspace.mountSubPath && handMountSubPath !== context.workspace.mountSubPath) {
+        throw new Error('hand mountSubPath does not match the current workspace');
+      }
       const workspace: WorkspaceRef = {
         ...context.workspace,
         id: hand.workspaceId || context.workspace.id,
-        mountSubPath: recipeMountSubPath(hand.metadata?.recipe),
+        sandboxScopeId: recipeSandboxScopeId(hand.metadata?.recipe) ?? context.workspace.sandboxScopeId,
+        mountSubPath: handMountSubPath ?? context.workspace.mountSubPath,
         executionTarget: hand.type,
       };
       if (hand.type === 'server-remote' && hand.endpoint) {
@@ -1260,6 +1277,12 @@ function resolveRemoteHandInvokeTimeoutMs(metadata: Record<string, unknown>): nu
 function recipeMountSubPath(recipe: unknown): string | undefined {
   if (!recipe || typeof recipe !== 'object') return undefined;
   const raw = (recipe as { mountSubPath?: unknown }).mountSubPath;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+}
+
+function recipeSandboxScopeId(recipe: unknown): string | undefined {
+  if (!recipe || typeof recipe !== 'object') return undefined;
+  const raw = (recipe as { sandboxScopeId?: unknown }).sandboxScopeId;
   return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
 }
 

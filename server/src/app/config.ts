@@ -499,6 +499,7 @@ export function applyBearerCredentialRefine(
  */
 const workspaceRecipeConfigSchema = z.object({
   workspaceId: z.string().min(1).optional(),
+  sandboxScopeId: z.string().min(1).optional(),
   mountSubPath: z.string().min(1).optional(),
   repo: z.object({
     url: z.string().min(1),

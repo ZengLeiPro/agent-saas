@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import { buildTrafficPolicyManifest, trafficPolicyNameFor } from './networkPolicyManager.js';
@@ -6,7 +7,7 @@ describe('AcsNetworkPolicyManager helpers', () => {
   it('builds public-egress TrafficPolicy with DNS allow, private deny, then public allow', () => {
     const manifest = buildTrafficPolicyManifest({
       namespace: 'agent-saas-coding',
-      ref: { name: 'as-session-abcdef', workspaceId: 'ws_kaiyan__test', sessionId: 'session-123', mountSubPath: 'workspaces/kaiyan/u-1' },
+      ref: { name: 'as-session-abcdef', workspaceId: 'ws_kaiyan__test', sandboxScopeId: 'ws_kaiyan__test', sessionId: 'session-123', mountSubPath: 'workspaces/kaiyan/u-1' },
       policy: { mode: 'public-egress', denyPrivateNetworks: true },
     });
 
@@ -23,8 +24,8 @@ describe('AcsNetworkPolicyManager helpers', () => {
           matchLabels: {
             'app.kubernetes.io/name': 'agent-saas-coding-hand',
             'app.kubernetes.io/managed-by': 'agent-saas-acs-orchestrator',
-            'agent-saas.kaiyan.net/workspace-id': 'ws_kaiyan__test',
-            'agent-saas.kaiyan.net/session-id': 'session-123',
+            'agent-saas.kaiyan.net/workspace-id': labelValue('ws_kaiyan__test'),
+            'agent-saas.kaiyan.net/sandbox-scope-id': labelValue('ws_kaiyan__test'),
           },
         },
       },
@@ -48,7 +49,7 @@ describe('AcsNetworkPolicyManager helpers', () => {
   it('builds private-egress TrafficPolicy as allow-list plus deny-all fallback', () => {
     const manifest = buildTrafficPolicyManifest({
       namespace: 'agent-saas-coding',
-      ref: { name: 'as-session-abcdef', workspaceId: 'ws_kaiyan__test', sessionId: 'session-123', mountSubPath: 'workspaces/kaiyan/u-1' },
+      ref: { name: 'as-session-abcdef', workspaceId: 'ws_kaiyan__test', sandboxScopeId: 'ws_kaiyan__test', sessionId: 'session-123', mountSubPath: 'workspaces/kaiyan/u-1' },
       policy: {
         mode: 'private-egress',
         denyPrivateNetworks: true,
@@ -70,3 +71,7 @@ describe('AcsNetworkPolicyManager helpers', () => {
     expect(rules.at(-1)).toEqual({ action: 'deny', to: [{ cidr: '0.0.0.0/0' }] });
   });
 });
+
+function labelValue(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 40);
+}

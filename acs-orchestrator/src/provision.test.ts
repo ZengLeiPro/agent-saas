@@ -47,7 +47,6 @@ describe('Provisioner runtime bootstrap', () => {
     const kubectl = kubectlStub(calls, {
       existingProvisionHash: createHash('sha256').update(JSON.stringify({
         workspaceId: 'ws_kaiyan__test',
-        sessionId: 'session-123',
       })).digest('hex'),
     });
     const provisioner = new Provisioner(baseConfig(), kubectl, sandboxManagerStub(), () => new Set());
@@ -69,10 +68,20 @@ describe('Provisioner runtime bootstrap', () => {
 
 function sandboxManagerStub(): SandboxManager {
   return {
+    ref() {
+      return {
+        name: 'as-session-123',
+        workspaceId: 'ws_kaiyan__test',
+        sandboxScopeId: 'ws_kaiyan__test',
+        sessionId: 'session-123',
+        mountSubPath: 'workspaces/kaiyan/u-1',
+      };
+    },
     async ensureRunning() {
       return {
         name: 'as-session-123',
         workspaceId: 'ws_kaiyan__test',
+        sandboxScopeId: 'ws_kaiyan__test',
         sessionId: 'session-123',
         mountSubPath: 'workspaces/kaiyan/u-1',
       };

@@ -17,9 +17,15 @@ export interface HandCapability {
 export interface WorkspaceRecipe {
   workspaceId: string;
   /**
+   * Underlying execution-runtime pooling key. Session records can stay
+   * session-scoped while ACS maps multiple sessions for the same user workspace
+   * to one warm Sandbox.
+   */
+  sandboxScopeId?: string;
+  /**
    * Optional session identity for execution planes whose lifecycle is
-   * session-scoped. Legacy hand-server ignores it; ACS orchestrator uses it to
-   * keep concurrent sessions from sharing one running Sandbox.
+   * session-scoped. ACS keeps it for audit even when the underlying Sandbox is
+   * pooled by sandboxScopeId.
    */
   sessionId?: string;
   /**

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
 
 import type { AcsOrchestratorConfig } from './config.js';
@@ -48,7 +49,7 @@ interface CommandResult {
 
 const MANAGED_BY_LABEL = 'agent-saas-acs-orchestrator';
 const WORKSPACE_LABEL = 'agent-saas.kaiyan.net/workspace-id';
-const SESSION_LABEL = 'agent-saas.kaiyan.net/session-id';
+const SANDBOX_SCOPE_LABEL = 'agent-saas.kaiyan.net/sandbox-scope-id';
 
 export class SnatManager {
   constructor(
@@ -214,7 +215,7 @@ export class SnatManager {
       `app.kubernetes.io/managed-by=${MANAGED_BY_LABEL}`,
       ...(ref ? [
         `${WORKSPACE_LABEL}=${labelValue(ref.workspaceId)}`,
-        `${SESSION_LABEL}=${labelValue(ref.sessionId)}`,
+        `${SANDBOX_SCOPE_LABEL}=${labelValue(ref.sandboxScopeId)}`,
       ] : []),
     ].join(',');
     const result = await this.kubectl.run(['get', 'pod', '-l', selector, '-o', 'json'], {
@@ -361,12 +362,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function labelValue(value: string): string {
-  const cleaned = value
-    .toLowerCase()
-    .replace(/[^a-z0-9_.-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 63);
-  return cleaned || 'unknown';
+  return createHash('sha256').update(value).digest('hex').slice(0, 40);
 }
 
 function stringValue(value: unknown): string | undefined {

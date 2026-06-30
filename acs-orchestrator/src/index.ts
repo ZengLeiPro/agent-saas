@@ -20,6 +20,7 @@ import {
 } from './protocol.js';
 import { Provisioner } from './provision.js';
 import { SandboxManager } from './sandboxManager.js';
+import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 
 const config = loadConfigFromEnv();
 
@@ -30,9 +31,10 @@ const logger = {
 };
 
 const kubectl = new Kubectl(config);
-const sandboxManager = new SandboxManager(config, kubectl, logger);
-const executor = new AcsExecutor(config, kubectl, sandboxManager, logger);
-const provisioner = new Provisioner(config, kubectl, sandboxManager, () => executor.busySandboxNames());
+const activeRegistry = new ActiveSandboxRegistry();
+const sandboxManager = new SandboxManager(config, kubectl, logger, activeRegistry);
+const executor = new AcsExecutor(config, kubectl, sandboxManager, logger, activeRegistry);
+const provisioner = new Provisioner(config, kubectl, sandboxManager, () => executor.busySandboxNames(), activeRegistry);
 let lifecycleTimer: ReturnType<typeof setInterval> | null = null;
 const lastAlertAtByEvent = new Map<string, number>();
 
@@ -262,7 +264,7 @@ async function handleLifecycleCleanup(req: IncomingMessage, res: ServerResponse)
   if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
   try {
-    const report = await sandboxManager.cleanupSandboxes({ busySandboxNames: executor.busySandboxNames() });
+    const report = await sandboxManager.cleanupSandboxes({ busySandboxNames: activeBusySandboxNames() });
     logger.warn(
       `sandbox_lifecycle_manual_cleanup checked=${report.checked} paused=${report.paused.length} `
       + `deleted=${report.deleted.length} skippedBusy=${report.skippedBusy.length}`,
@@ -417,7 +419,16 @@ async function handleWorkspaceLifecycle(
     return sendJson(res, 400, { status: 'error', error: err instanceof Error ? err.message : String(err) });
   }
   try {
-    const deleted = await sandboxManager.deleteByWorkspaceId(workspaceId);
+    const deleted = await sandboxManager.deleteByWorkspaceId(workspaceId, { busySandboxNames: activeBusySandboxNames() });
+    if (deleted.skippedBusy.length) {
+      return sendJson(res, 409, {
+        status: 'error',
+        error: 'workspace has active sandbox invocations; retry after they finish',
+        workspaceId,
+        skippedBusySandboxes: deleted.skippedBusy,
+        deletedSandboxes: deleted.names,
+      });
+    }
     const archived = await sandboxManager.archiveWorkspace(workspaceId, `${action}-${reason}`);
     return sendJson(res, 200, {
       status: 'ok',
@@ -426,6 +437,7 @@ async function handleWorkspaceLifecycle(
       archived: archived.archived,
       missing: archived.missing === true,
       deletedSandboxes: deleted.names,
+      skippedBusySandboxes: deleted.skippedBusy,
       ...(archived.archiveId ? { archiveId: archived.archiveId } : {}),
       note: archived.archived
         ? 'workspace archived; no files were deleted'
@@ -434,6 +446,10 @@ async function handleWorkspaceLifecycle(
   } catch (err) {
     return sendJson(res, 400, { status: 'error', error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+function activeBusySandboxNames(): Set<string> {
+  return new Set([...executor.busySandboxNames(), ...activeRegistry.busyNames()]);
 }
 
 function authorize(req: IncomingMessage): boolean {

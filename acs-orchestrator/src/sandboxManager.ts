@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { chmod, chown, mkdir, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { AcsOrchestratorConfig } from './config.js';
+import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { Kubectl } from './kubectl.js';
 import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './networkPolicyManager.js';
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
@@ -17,6 +19,7 @@ export interface ManagedSandbox {
   name: string;
   workspaceId?: string;
   sessionId?: string;
+  sandboxScopeId?: string;
   mountSubPath?: string;
   phase?: string;
   createdAt?: string;
@@ -27,6 +30,7 @@ export interface SandboxRef {
   name: string;
   workspaceId: string;
   sessionId: string;
+  sandboxScopeId: string;
   mountSubPath: string;
 }
 
@@ -53,9 +57,11 @@ export interface SandboxInventorySummary {
 const MANAGED_BY_LABEL = 'agent-saas-acs-orchestrator';
 const APP_LABEL = 'agent-saas-coding-hand';
 const WORKSPACE_LABEL = 'agent-saas.kaiyan.net/workspace-id';
+const SANDBOX_SCOPE_LABEL = 'agent-saas.kaiyan.net/sandbox-scope-id';
 const SESSION_LABEL = 'agent-saas.kaiyan.net/session-id';
 const NETWORK_POLICY_MODE_LABEL = 'agent-saas.kaiyan.net/network-policy-mode';
 const WORKSPACE_ANNOTATION = 'agent-saas.kaiyan.net/workspace-id';
+const SANDBOX_SCOPE_ANNOTATION = 'agent-saas.kaiyan.net/sandbox-scope-id';
 const SESSION_ANNOTATION = 'agent-saas.kaiyan.net/session-id';
 const MOUNT_SUBPATH_ANNOTATION = 'agent-saas.kaiyan.net/mount-subpath';
 const CREATED_AT_ANNOTATION = 'agent-saas.kaiyan.net/created-at';
@@ -74,42 +80,47 @@ export class SandboxManager {
     private readonly config: AcsOrchestratorConfig,
     private readonly kubectl: Kubectl,
     private readonly logger: { info(msg: string): void; warn(msg: string): void; error(msg: string): void },
+    private readonly activeRegistry?: ActiveSandboxRegistry,
   ) {
     this.networkPolicyManager = new AcsNetworkPolicyManager(config, kubectl, logger);
     this.snatManager = new SnatManager(config, kubectl, logger);
   }
 
-  ref(input: { workspaceId: string; sessionId: string; mountSubPath?: string }): SandboxRef {
+  ref(input: { workspaceId: string; sessionId: string; sandboxScopeId?: string; mountSubPath?: string }): SandboxRef {
     const workspaceId = validateWorkspaceId(input.workspaceId);
     const sessionId = validateSessionId(input.sessionId);
+    const sandboxScopeId = validateWorkspaceId(input.sandboxScopeId ?? workspaceId);
     const mountSubPath = normalizeMountSubPath(input.mountSubPath ?? workspaceId);
     return {
-      name: sandboxNameFor({ workspaceId, sessionId }),
+      name: sandboxNameFor({ workspaceId, sessionId, sandboxScopeId }),
       workspaceId,
       sessionId,
+      sandboxScopeId,
       mountSubPath,
     };
   }
 
   async ensureRunning(
-    input: { workspaceId: string; sessionId: string; mountSubPath?: string },
-    options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean } = {},
+    input: { workspaceId: string; sessionId: string; sandboxScopeId?: string; mountSubPath?: string },
+    options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
   ): Promise<SandboxRef> {
     const ref = this.ref(input);
     await this.ensureHostWorkspace(ref);
     let existing = await this.getStatus(ref.name);
     if (existing && this.existingMountSubPath(existing, ref) !== ref.mountSubPath) {
+      this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'mountSubPath changed', options.activeKey);
       this.logger.warn(
         `sandbox_mount_subpath_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingMountSubPath(existing, ref)} new=${ref.mountSubPath}`,
       );
-      await this.delete(ref);
+      await this.delete(ref, { activeKey: options.activeKey });
       existing = null;
     }
     if (existing && this.existingImage(existing) !== this.config.sandboxImage) {
+      this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'image changed', options.activeKey);
       this.logger.warn(
         `sandbox_image_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingImage(existing) ?? 'unknown'} new=${this.config.sandboxImage}`,
       );
-      await this.delete(ref);
+      await this.delete(ref, { activeKey: options.activeKey });
       existing = null;
     }
     if (!existing) {
@@ -139,7 +150,8 @@ export class SandboxManager {
     return ref;
   }
 
-  async delete(ref: SandboxRef): Promise<void> {
+  async delete(ref: SandboxRef, options: { activeKey?: string } = {}): Promise<void> {
+    this.assertIdle(ref.name, 'delete', options.activeKey);
     await this.kubectl.run(['delete', this.resourceName(ref.name), '--ignore-not-found=true'], {
       timeoutMs: this.config.sandboxWaitTimeoutMs,
     });
@@ -147,27 +159,24 @@ export class SandboxManager {
     await this.snatManager.deleteForSandboxName(ref.name);
   }
 
-  async deleteByWorkspaceId(workspaceId: string): Promise<{ names: string[] }> {
+  async deleteByWorkspaceId(workspaceId: string, input: { busySandboxNames?: Set<string> } = {}): Promise<{ names: string[]; skippedBusy: string[] }> {
     const id = validateWorkspaceId(workspaceId);
-    const result = await this.kubectl.run([
-      'get',
-      this.config.sandboxKind.toLowerCase(),
-      '-l',
-      `agent-saas.kaiyan.net/workspace-id=${labelValue(id)}`,
-      '-o',
-      'json',
-    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
-    if (result.exitCode !== 0) throw new Error(`list Sandbox by workspace 失败: ${result.stderr || result.stdout}`);
-    const body = JSON.parse(result.stdout || '{}') as { items?: Array<{ metadata?: { name?: string } }> };
-    const names = (body.items ?? []).map((item) => item.metadata?.name).filter((name): name is string => Boolean(name));
+    const names = (await this.listManagedSandboxes())
+      .filter((sandbox) => sandbox.workspaceId === id)
+      .map((sandbox) => sandbox.name);
+    const skippedBusy: string[] = [];
     for (const name of names) {
+      if (this.isBusy(name, input.busySandboxNames)) {
+        skippedBusy.push(name);
+        continue;
+      }
       await this.kubectl.run(['delete', this.resourceName(name), '--ignore-not-found=true'], {
         timeoutMs: this.config.sandboxWaitTimeoutMs,
       });
       await this.networkPolicyManager.deleteForSandboxName(name);
       await this.snatManager.deleteForSandboxName(name);
     }
-    return { names };
+    return { names: names.filter((name) => !skippedBusy.includes(name)), skippedBusy };
   }
 
   networkPolicyStatus(): NetworkPolicyStatus {
@@ -175,17 +184,28 @@ export class SandboxManager {
   }
 
   async probeNetworkPolicy(): Promise<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }> {
-    const ref = await this.ensureRunning({
+    const probeId = `probe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    const input = {
       workspaceId: 'network-probe',
-      sessionId: `probe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-    }, {
-      skipCapacityManagement: true,
-    });
+      sessionId: probeId,
+      sandboxScopeId: `network-probe-${probeId}`,
+    };
+    const plannedRef = this.ref(input);
+    const activeKey = `probe:${probeId}`;
+    const releaseActive = this.activeRegistry?.acquire(plannedRef.name, activeKey);
     try {
-      await this.snatManager.ensureForProbe(ref);
-      return await this.networkPolicyManager.probe(ref);
+      const ref = await this.ensureRunning(input, {
+        skipCapacityManagement: true,
+        activeKey,
+      });
+      try {
+        await this.snatManager.ensureForProbe(ref);
+        return await this.networkPolicyManager.probe(ref);
+      } finally {
+        await this.delete(ref, { activeKey });
+      }
     } finally {
-      await this.delete(ref);
+      releaseActive?.();
     }
   }
 
@@ -224,6 +244,7 @@ export class SandboxManager {
         name: typeof metadata.name === 'string' ? metadata.name : '',
         workspaceId: stringValue(annotations[WORKSPACE_ANNOTATION]) ?? stringValue(labels[WORKSPACE_LABEL]),
         sessionId: stringValue(annotations[SESSION_ANNOTATION]) ?? stringValue(labels[SESSION_LABEL]),
+        sandboxScopeId: stringValue(annotations[SANDBOX_SCOPE_ANNOTATION]) ?? stringValue(labels[SANDBOX_SCOPE_LABEL]),
         mountSubPath: stringValue(annotations[MOUNT_SUBPATH_ANNOTATION]),
         phase: stringValue(status.phase),
         createdAt: stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
@@ -268,7 +289,7 @@ export class SandboxManager {
     const snatDeleted: string[] = [];
 
     for (const sandbox of sandboxes) {
-      if (busySandboxNames.has(sandbox.name)) {
+      if (this.isBusy(sandbox.name, busySandboxNames)) {
         skippedBusy.push(sandbox.name);
         continue;
       }
@@ -281,6 +302,10 @@ export class SandboxManager {
       const orphanPhase = !['Running', 'Paused'].includes(phase);
       const shouldDeleteOrphan = this.config.sandboxOrphanGraceMs > 0 && orphanPhase && ageMs >= this.config.sandboxOrphanGraceMs;
       if (shouldDeleteByTtl || shouldDeleteOrphan) {
+        if (this.isBusy(sandbox.name, busySandboxNames)) {
+          skippedBusy.push(sandbox.name);
+          continue;
+        }
         await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
           timeoutMs: this.config.sandboxWaitTimeoutMs,
         });
@@ -290,6 +315,10 @@ export class SandboxManager {
         continue;
       }
       if (phase === 'Running' && this.config.sandboxIdlePauseMs > 0 && idleMs >= this.config.sandboxIdlePauseMs) {
+        if (this.isBusy(sandbox.name, busySandboxNames)) {
+          skippedBusy.push(sandbox.name);
+          continue;
+        }
         await this.patchPaused(sandbox.name, true);
         paused.push(sandbox.name);
       }
@@ -341,6 +370,7 @@ export class SandboxManager {
   }
 
   async patchPaused(name: string, paused: boolean): Promise<void> {
+    if (paused) this.assertIdle(name, 'pause');
     const result = await this.kubectl.run([
       'patch',
       this.resourceName(name),
@@ -449,6 +479,7 @@ export class SandboxManager {
       const pauseCount = active.length - this.config.maxRunningSandboxes + 1;
       const paused: string[] = [];
       for (const sandbox of candidates.slice(0, pauseCount)) {
+        if (this.isBusy(sandbox.name, protectedSandboxes)) continue;
         await this.patchPaused(sandbox.name, true);
         paused.push(sandbox.name);
       }
@@ -468,12 +499,32 @@ export class SandboxManager {
     }
   }
 
+  private assertNotBusyForRecreate(
+    ref: SandboxRef,
+    busySandboxNames: Set<string> | undefined,
+    reason: string,
+    activeKey?: string,
+  ): void {
+    if (!this.isBusy(ref.name, busySandboxNames, activeKey)) return;
+    throw new Error(`ACS Sandbox ${ref.name} is busy; refuse to recreate while active (${reason})`);
+  }
+
+  private isBusy(name: string, busySandboxNames?: Set<string>, activeKey?: string): boolean {
+    return busySandboxNames?.has(name) === true || this.activeRegistry?.isBusy(name, { exceptKey: activeKey }) === true;
+  }
+
+  private assertIdle(name: string, reason: string, activeKey?: string): void {
+    if (!this.activeRegistry?.isBusy(name, { exceptKey: activeKey })) return;
+    throw new Error(`ACS Sandbox ${name} is busy; refuse to ${reason} while active`);
+  }
+
   private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {
     const now = new Date().toISOString();
     const labels = {
       'app.kubernetes.io/name': APP_LABEL,
       'app.kubernetes.io/managed-by': MANAGED_BY_LABEL,
       [WORKSPACE_LABEL]: labelValue(ref.workspaceId),
+      [SANDBOX_SCOPE_LABEL]: labelValue(ref.sandboxScopeId),
       [SESSION_LABEL]: labelValue(ref.sessionId),
       [NETWORK_POLICY_MODE_LABEL]: this.config.networkPolicy.mode,
       'alibabacloud.com/acs': 'true',
@@ -481,6 +532,7 @@ export class SandboxManager {
     };
     const annotations = {
       [WORKSPACE_ANNOTATION]: ref.workspaceId,
+      [SANDBOX_SCOPE_ANNOTATION]: ref.sandboxScopeId,
       [SESSION_ANNOTATION]: ref.sessionId,
       [MOUNT_SUBPATH_ANNOTATION]: ref.mountSubPath,
       [CREATED_AT_ANNOTATION]: now,
@@ -613,12 +665,7 @@ export class SandboxManager {
 }
 
 function labelValue(value: string): string {
-  const cleaned = value
-    .toLowerCase()
-    .replace(/[^a-z0-9_.-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 63);
-  return cleaned || 'unknown';
+  return createHash('sha256').update(value).digest('hex').slice(0, 40);
 }
 
 function stringValue(value: unknown): string | undefined {

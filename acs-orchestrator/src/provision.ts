@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type { AcsOrchestratorConfig } from './config.js';
+import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { Kubectl } from './kubectl.js';
 import type { ProvisioningLogEntry, SandboxRunnerFinalOutput, WorkspaceRecipe } from './protocol.js';
 import type { SandboxManager } from './sandboxManager.js';
@@ -15,88 +16,103 @@ export class Provisioner {
     private readonly kubectl: Kubectl,
     private readonly sandboxManager: SandboxManager,
     private readonly getBusySandboxNames: () => Set<string> = () => new Set(),
+    private readonly activeRegistry?: ActiveSandboxRegistry,
   ) {}
 
   async provision(recipe: WorkspaceRecipe): Promise<{ status: 'ok' | 'error'; error?: string; logs: ProvisioningLogEntry[]; metadata: Record<string, unknown> }> {
     const logs: ProvisioningLogEntry[] = [];
-    const ref = await this.sandboxManager.ensureRunning({
+    const plannedRef = this.sandboxManager.ref({
       workspaceId: recipe.workspaceId,
       sessionId: recipe.sessionId!,
+      sandboxScopeId: recipe.sandboxScopeId,
       mountSubPath: recipe.mountSubPath,
-    }, {
-      busySandboxNames: this.getBusySandboxNames(),
     });
-    const recipeHash = createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
-    logs.push({
-      step: 'sandbox_ensure',
-      status: 'ok',
-      note: `Sandbox ${ref.name} is running`,
-    });
-    const timeoutMs = clampTimeoutMs(recipe.resources?.timeoutMs);
-    const runtimeBootstrap = await this.runRuntimeBootstrap(ref.name, recipe, Math.max(timeoutMs, RUNTIME_BOOTSTRAP_TIMEOUT_MS));
-    logs.push(runtimeBootstrap);
-    if (runtimeBootstrap.status === 'error') return this.error('runtime bootstrap failed; see logs[]', logs, recipeHash, 'runtime_bootstrap');
-
-    if (this.config.skipProvisionOnSameRecipe) {
-      const existingHash = await this.readProvisionHash(ref.name);
-      if (existingHash === recipeHash) {
-        logs.push({
-          step: 'provision_idempotency',
-          status: 'skipped',
-          note: 'recipe hash already provisioned',
-        });
-        return {
-          status: 'ok',
-          logs,
-          metadata: { recipeVersion: 1, recipeHash, sandboxName: ref.name, provisionSkipped: true },
-        };
-      }
-    }
-
-    if (recipe.repo) {
-      const command = buildRepoCommand(recipe.repo);
-      const log = await this.runSetupCommand(ref.name, 'repo_hydrate', command, timeoutMs);
-      logs.push({ ...log, command: redactProvisioningCommand(command) });
-      if (log.status === 'error') return this.error('repo hydrate failed; see logs[]', logs, recipeHash, 'repo_hydrate');
-    }
-
-    if (recipe.files?.length) {
-      for (let i = 0; i < recipe.files.length; i++) {
-        const file = recipe.files[i]!;
-        const url = file.signedUrl ?? file.url;
-        if (!url) {
-          logs.push({ step: `artifact_hydrate#${i}`, status: 'error', stderr: 'artifact entry is missing signedUrl/url', note: `artifactId=${file.artifactId}` });
-          return this.error('artifact hydrate failed; see logs[]', logs, recipeHash, 'artifact_hydrate');
-        }
-        const command = `node -e ${shellQuote(artifactDownloadScript())} ${shellQuote(url)} ${shellQuote(file.path)}`;
-        const log = await this.runSetupCommand(ref.name, `artifact_hydrate#${i}`, command, timeoutMs);
-        logs.push({ ...log, command: 'node -e <artifactDownloadScript> <redacted-url> <path>', note: `artifactId=${file.artifactId}` });
-        if (log.status === 'error') return this.error('artifact hydrate failed; see logs[]', logs, recipeHash, 'artifact_hydrate');
-      }
-    }
-
-    if (recipe.setupCommands?.length) {
-      for (let i = 0; i < recipe.setupCommands.length; i++) {
-        const command = recipe.setupCommands[i]!;
-        const log = await this.runSetupCommand(ref.name, `setup_command#${i}`, command, timeoutMs);
-        logs.push(log);
-        if (log.status === 'error') return this.error('setup command failed; see logs[]', logs, recipeHash, 'setup_command');
-      }
-    }
-
-    await this.writeProvisionHash(ref.name, recipeHash).catch((err) => {
-      logs.push({
-        step: 'provision_receipt_write',
-        status: 'error',
-        stderr: err instanceof Error ? err.message : String(err),
+    const activeKey = `provision:${recipe.sessionId}:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
+    const releaseActive = this.activeRegistry?.acquire(plannedRef.name, activeKey);
+    try {
+      const ref = await this.sandboxManager.ensureRunning({
+        workspaceId: recipe.workspaceId,
+        sessionId: recipe.sessionId!,
+        sandboxScopeId: recipe.sandboxScopeId,
+        mountSubPath: recipe.mountSubPath,
+      }, {
+        busySandboxNames: this.getBusySandboxNames(),
+        activeKey,
       });
-    });
+      const recipeHash = createHash('sha256').update(JSON.stringify(provisionFingerprint(recipe))).digest('hex');
+      logs.push({
+        step: 'sandbox_ensure',
+        status: 'ok',
+        note: `Sandbox ${ref.name} is running`,
+      });
+      const timeoutMs = clampTimeoutMs(recipe.resources?.timeoutMs);
+      const runtimeBootstrap = await this.runRuntimeBootstrap(ref.name, recipe, Math.max(timeoutMs, RUNTIME_BOOTSTRAP_TIMEOUT_MS));
+      logs.push(runtimeBootstrap);
+      if (runtimeBootstrap.status === 'error') return this.error('runtime bootstrap failed; see logs[]', logs, recipeHash, 'runtime_bootstrap');
 
-    return {
-      status: 'ok',
-      logs,
-      metadata: { recipeVersion: 1, recipeHash, sandboxName: ref.name },
-    };
+      if (this.config.skipProvisionOnSameRecipe) {
+        const existingHash = await this.readProvisionHash(ref.name);
+        if (existingHash === recipeHash) {
+          logs.push({
+            step: 'provision_idempotency',
+            status: 'skipped',
+            note: 'recipe hash already provisioned',
+          });
+          return {
+            status: 'ok',
+            logs,
+            metadata: { recipeVersion: 1, recipeHash, sandboxName: ref.name, provisionSkipped: true },
+          };
+        }
+      }
+
+      if (recipe.repo) {
+        const command = buildRepoCommand(recipe.repo);
+        const log = await this.runSetupCommand(ref.name, 'repo_hydrate', command, timeoutMs);
+        logs.push({ ...log, command: redactProvisioningCommand(command) });
+        if (log.status === 'error') return this.error('repo hydrate failed; see logs[]', logs, recipeHash, 'repo_hydrate');
+      }
+
+      if (recipe.files?.length) {
+        for (let i = 0; i < recipe.files.length; i++) {
+          const file = recipe.files[i]!;
+          const url = file.signedUrl ?? file.url;
+          if (!url) {
+            logs.push({ step: `artifact_hydrate#${i}`, status: 'error', stderr: 'artifact entry is missing signedUrl/url', note: `artifactId=${file.artifactId}` });
+            return this.error('artifact hydrate failed; see logs[]', logs, recipeHash, 'artifact_hydrate');
+          }
+          const command = `node -e ${shellQuote(artifactDownloadScript())} ${shellQuote(url)} ${shellQuote(file.path)}`;
+          const log = await this.runSetupCommand(ref.name, `artifact_hydrate#${i}`, command, timeoutMs);
+          logs.push({ ...log, command: 'node -e <artifactDownloadScript> <redacted-url> <path>', note: `artifactId=${file.artifactId}` });
+          if (log.status === 'error') return this.error('artifact hydrate failed; see logs[]', logs, recipeHash, 'artifact_hydrate');
+        }
+      }
+
+      if (recipe.setupCommands?.length) {
+        for (let i = 0; i < recipe.setupCommands.length; i++) {
+          const command = recipe.setupCommands[i]!;
+          const log = await this.runSetupCommand(ref.name, `setup_command#${i}`, command, timeoutMs);
+          logs.push(log);
+          if (log.status === 'error') return this.error('setup command failed; see logs[]', logs, recipeHash, 'setup_command');
+        }
+      }
+
+      await this.writeProvisionHash(ref.name, recipeHash).catch((err) => {
+        logs.push({
+          step: 'provision_receipt_write',
+          status: 'error',
+          stderr: err instanceof Error ? err.message : String(err),
+        });
+      });
+
+      return {
+        status: 'ok',
+        logs,
+        metadata: { recipeVersion: 1, recipeHash, sandboxName: ref.name },
+      };
+    } finally {
+      releaseActive?.();
+    }
   }
 
   private async readProvisionHash(sandboxName: string): Promise<string | null> {
@@ -198,6 +214,11 @@ export class Provisioner {
       metadata: { recipeVersion: 1, recipeHash, retryPolicy: { retryable: true, step, maxAttempts: 3, backoffMs: [1000, 5000, 15000] } },
     };
   }
+}
+
+function provisionFingerprint(recipe: WorkspaceRecipe): WorkspaceRecipe {
+  const { sessionId: _sessionId, ...stableRecipe } = recipe;
+  return stableRecipe;
 }
 
 function runtimeBootstrapCommand(workspaceMountPath: string): string {

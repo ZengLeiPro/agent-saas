@@ -15,6 +15,9 @@ export interface RunContext {
   sessionId: string;
   model: string;
   cwd: string;
+  workspaceId?: string;
+  sandboxScopeId?: string;
+  mountSubPath?: string;
   tenantId?: string;
   executionTarget?: ExecutionTargetKind;
   sandboxPolicy?: {

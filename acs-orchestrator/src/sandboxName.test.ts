@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
 
 describe('sandboxNameFor', () => {
-  it('builds a stable Kubernetes-safe name from workspace and session', () => {
+  it('builds a stable Kubernetes-safe name from workspace scope', () => {
     const name = sandboxNameFor({
       workspaceId: 'ws_kaiyan__ky50wfyptpafch',
       sessionId: '4d9d88c9-da74-4982-800c-9559f6f65bac',
@@ -12,6 +12,14 @@ describe('sandboxNameFor', () => {
     expect(name.length).toBeLessThanOrEqual(63);
     expect(name).toBe(sandboxNameFor({
       workspaceId: 'ws_kaiyan__ky50wfyptpafch',
+      sessionId: '4d9d88c9-da74-4982-800c-9559f6f65bac',
+    }));
+    expect(name).toBe(sandboxNameFor({
+      workspaceId: 'ws_kaiyan__ky50wfyptpafch',
+      sessionId: 'different-session',
+    }));
+    expect(name).not.toBe(sandboxNameFor({
+      workspaceId: 'ws_kaiyan__other-user',
       sessionId: '4d9d88c9-da74-4982-800c-9559f6f65bac',
     }));
   });

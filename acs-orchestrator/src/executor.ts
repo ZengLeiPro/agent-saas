@@ -8,6 +8,7 @@ import type {
   SandboxRunnerOutput,
   WireToolInvocationRequest,
 } from './protocol.js';
+import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import type { SandboxManager, SandboxRef } from './sandboxManager.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
 
@@ -19,12 +20,14 @@ interface InvocationEntry {
 
 export class AcsExecutor {
   private readonly invocations = new Map<string, InvocationEntry>();
+  private invocationSeq = 0;
 
   constructor(
     private readonly config: AcsOrchestratorConfig,
     private readonly kubectl: Kubectl,
     private readonly sandboxManager: SandboxManager,
     private readonly logger: { info(msg: string): void; warn(msg: string): void; error(msg: string): void },
+    private readonly activeRegistry?: ActiveSandboxRegistry,
   ) {}
 
   async execute(request: WireToolInvocationRequest): Promise<ToolInvocationResponse> {
@@ -40,17 +43,27 @@ export class AcsExecutor {
     options: { stream: boolean },
   ): AsyncIterable<ToolInvocationStreamChunk> {
     const workspace = request.context.workspace;
-    const ref = await this.sandboxManager.ensureRunning({
+    const ref = this.sandboxManager.ref({
       workspaceId: workspace.id!,
       sessionId: workspace.sessionId!,
+      sandboxScopeId: workspace.sandboxScopeId,
       mountSubPath: workspace.mountSubPath,
-    }, {
-      busySandboxNames: this.busySandboxNames(),
     });
     const invocationId = request.context.invocationId;
+    const invocationKey = invocationId ?? `internal-${Date.now()}-${++this.invocationSeq}`;
+    const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);
     const controller = new AbortController();
-    if (invocationId) this.invocations.set(invocationId, { controller, sandboxName: ref.name });
     try {
+      await this.sandboxManager.ensureRunning({
+        workspaceId: workspace.id!,
+        sessionId: workspace.sessionId!,
+        sandboxScopeId: workspace.sandboxScopeId,
+        mountSubPath: workspace.mountSubPath,
+      }, {
+        busySandboxNames: this.busySandboxNames(),
+        activeKey: invocationKey,
+      });
+      this.invocations.set(invocationKey, { controller, sandboxName: ref.name });
       const runnerInput: SandboxRunnerInput = {
         toolName: toolNameForSandboxRunner(request.toolName),
         input: request.input,
@@ -66,7 +79,7 @@ export class AcsExecutor {
       };
       const child = this.spawnRunner(ref, runnerInput, controller);
       const closePromise = waitForClose(child);
-      if (invocationId) this.invocations.set(invocationId, { controller, child, sandboxName: ref.name });
+      this.invocations.set(invocationKey, { controller, child, sandboxName: ref.name });
       yield { type: 'progress', message: 'acs sandbox invocation accepted' };
       let sawCompleted = false;
       for await (const line of readLines(child)) {
@@ -91,7 +104,8 @@ export class AcsExecutor {
         };
       }
     } finally {
-      if (invocationId) this.invocations.delete(invocationId);
+      this.invocations.delete(invocationKey);
+      releaseActive?.();
     }
   }
 
@@ -100,7 +114,6 @@ export class AcsExecutor {
     if (!entry) return false;
     entry.controller.abort();
     entry.child?.kill('SIGTERM');
-    this.invocations.delete(invocationId);
     return true;
   }
 

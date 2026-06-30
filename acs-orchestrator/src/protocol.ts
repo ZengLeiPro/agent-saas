@@ -9,6 +9,7 @@ export interface WireWorkspaceRef {
   userId?: string;
   username?: string;
   sessionId?: string;
+  sandboxScopeId?: string;
   mountSubPath?: string;
   executionTarget?: string;
 }
@@ -25,6 +26,7 @@ export interface WireToolInvocationRequest {
 export interface WorkspaceRecipe {
   workspaceId: string;
   sessionId?: string;
+  sandboxScopeId?: string;
   mountSubPath?: string;
   repo?: { url: string; ref?: string; remote?: string };
   files?: Array<{ artifactId: string; path: string; url?: string; signedUrl?: string }>;
@@ -94,9 +96,14 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
   const id = typeof workspace.id === 'string' ? workspace.id : undefined;
   const sessionId = typeof workspace.sessionId === 'string' ? workspace.sessionId : undefined;
   if (!id) return { ok: false, error: 'context.workspace.id 必须为非空字符串' };
-  if (!sessionId) return { ok: false, error: 'context.workspace.sessionId 必须为非空字符串（ACS Sandbox 按 session 隔离）' };
+  if (!sessionId) return { ok: false, error: 'context.workspace.sessionId 必须为非空字符串（用于会话审计与 runner 上下文）' };
   const mountSubPath = parseMountSubPath(workspace.mountSubPath);
   if (mountSubPath.error) return { ok: false, error: mountSubPath.error };
+  const sandboxScopeId = typeof workspace.sandboxScopeId === 'string' && workspace.sandboxScopeId.trim()
+    ? workspace.sandboxScopeId.trim()
+    : undefined;
+  const sandboxScope = parseSandboxScopeId(sandboxScopeId);
+  if (sandboxScope.error) return { ok: false, error: sandboxScope.error };
   return {
     ok: true,
     value: {
@@ -107,6 +114,7 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
         workspace: {
           id,
           sessionId,
+          ...(sandboxScope.value ? { sandboxScopeId: sandboxScope.value } : {}),
           ...(mountSubPath.value ? { mountSubPath: mountSubPath.value } : {}),
           ...(typeof workspace.userId === 'string' ? { userId: workspace.userId } : {}),
           ...(typeof workspace.username === 'string' ? { username: workspace.username } : {}),
@@ -132,8 +140,16 @@ export function parseProvisionRecipe(body: unknown): { ok: true; value: Workspac
     : typeof obj.sessionId === 'string' && obj.sessionId.trim()
       ? obj.sessionId.trim()
       : undefined;
-  if (!sessionId) return { ok: false, error: 'sessionId 必须为非空字符串（ACS provision 按 session 创建 Sandbox）' };
+  if (!sessionId) return { ok: false, error: 'sessionId 必须为非空字符串（用于会话审计与 runner 上下文）' };
   const recipe: WorkspaceRecipe = { workspaceId, sessionId };
+  const sandboxScopeId = typeof recipeRaw.sandboxScopeId === 'string' && recipeRaw.sandboxScopeId.trim()
+    ? recipeRaw.sandboxScopeId.trim()
+    : typeof obj.sandboxScopeId === 'string' && obj.sandboxScopeId.trim()
+      ? obj.sandboxScopeId.trim()
+      : undefined;
+  const sandboxScope = parseSandboxScopeId(sandboxScopeId);
+  if (sandboxScope.error) return { ok: false, error: sandboxScope.error };
+  if (sandboxScope.value) recipe.sandboxScopeId = sandboxScope.value;
   const mountSubPath = parseMountSubPath(recipeRaw.mountSubPath ?? obj.mountSubPath);
   if (mountSubPath.error) return { ok: false, error: mountSubPath.error };
   if (mountSubPath.value) recipe.mountSubPath = mountSubPath.value;
@@ -183,4 +199,12 @@ function parseMountSubPath(value: unknown): { value?: string; error?: string } {
     return { error: 'mountSubPath 不能包含空路径段、. 或 ..' };
   }
   return { value: parts.join('/') };
+}
+
+function parseSandboxScopeId(value: string | undefined): { value?: string; error?: string } {
+  if (!value) return {};
+  if (value.includes('/') || value.includes('\\') || value.includes('..') || value.startsWith('.')) {
+    return { error: 'sandboxScopeId 非法' };
+  }
+  return { value };
 }

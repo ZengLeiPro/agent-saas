@@ -420,7 +420,7 @@ describe('PlatformToolRuntime', () => {
             sessionOwner: { id: 'wain-admin-1', username: 'wain_admin', role: 'admin', tenantId: 'wain-test' },
           },
           sessionId: 'session-1',
-          workspace: { ...workspace('/tmp/project'), id: 'session-1', sessionId: 'session-1' },
+          workspace: { ...workspace('/tmp/project'), id: 'workspace-tenant', sessionId: 'session-1' },
         },
       );
 
@@ -587,7 +587,7 @@ describe('PlatformToolRuntime', () => {
         },
         {
           channelContext: adminContext,
-          workspace: { ...workspace('/tmp/project'), id: 'session-1', executionTarget: 'server-local' },
+          workspace: { ...workspace('/tmp/project'), id: 'workspace-tenant', executionTarget: 'server-local' },
         },
       );
 
@@ -637,7 +637,7 @@ describe('PlatformToolRuntime', () => {
       {
         channelContext: adminContext,
         sessionId: 'session-1',
-        workspace: { ...workspace('/tmp/project'), id: 'session-1', sessionId: 'session-1', executionTarget: 'server-local' },
+        workspace: { ...workspace('/tmp/project'), id: 'workspace-tenant', sessionId: 'session-1', executionTarget: 'server-local' },
       },
     );
 
@@ -679,7 +679,7 @@ describe('PlatformToolRuntime', () => {
       {
         channelContext: adminContext,
         sessionId: 'session-1',
-        workspace: { ...workspace('/tmp/project'), id: 'session-1', sessionId: 'session-1' },
+        workspace: { ...workspace('/tmp/project'), id: 'workspace-tenant', sessionId: 'session-1' },
       },
     );
 
@@ -720,7 +720,7 @@ describe('PlatformToolRuntime', () => {
       {
         channelContext: adminContext,
         sessionId: 'session-1',
-        workspace: { ...workspace('/tmp/project'), id: 'session-1', sessionId: 'session-1', executionTarget: 'server-local' },
+        workspace: { ...workspace('/tmp/project'), id: 'workspace-tenant', sessionId: 'session-1', executionTarget: 'server-local' },
       },
     )).rejects.toThrow('Current workspace runtime is still preparing');
     expect(localInvoke).not.toHaveBeenCalled();
@@ -778,7 +778,7 @@ describe('PlatformToolRuntime', () => {
         {
           channelContext: adminContext,
           sessionId: 'session-1',
-          workspace: { ...workspace('/tmp/project'), id: 'session-1', sessionId: 'session-1', executionTarget: 'server-container' },
+          workspace: { ...workspace('/tmp/project'), id: 'workspace-tenant', sessionId: 'session-1', executionTarget: 'server-container' },
         },
       );
 
@@ -825,7 +825,7 @@ describe('PlatformToolRuntime', () => {
       {
         channelContext: adminContext,
         sessionId: 'session-1',
-        workspace: { ...workspace('/tmp/project'), id: 'session-1', sessionId: 'session-1', executionTarget: 'server-local' },
+        workspace: { ...workspace('/tmp/project'), id: 'workspace-tenant', sessionId: 'session-1', executionTarget: 'server-local' },
       },
     );
 
@@ -834,7 +834,7 @@ describe('PlatformToolRuntime', () => {
       toolName: 'Read',
       input: { path: 'hello.txt' },
       context: {
-        workspace: expect.objectContaining({ id: 'session-1', executionTarget: 'server-local' }),
+        workspace: expect.objectContaining({ id: 'workspace-tenant', executionTarget: 'server-local' }),
         signal: undefined,
       },
     });
@@ -1055,13 +1055,22 @@ describe('PlatformToolRuntime', () => {
 
   it('keeps workspace identity separate from the OpenAI tool adapter', () => {
     const provider = new LocalWorkspaceProvider();
-    const ref = provider.resolve(adminContext, { cwd: '/tmp/workspace', sessionId: 'session-abc' });
+    const ref = provider.resolve(adminContext, {
+      cwd: '/tmp/workspace',
+      sessionId: 'session-abc',
+      workspaceId: 'ws_pantheon__admin-1',
+      sandboxScopeId: 'ws_pantheon__admin-1__workspaces_pantheon_admin-1',
+      mountSubPath: 'workspaces/pantheon/admin-1',
+    });
 
     expect(ref).toMatchObject({
+      id: 'ws_pantheon__admin-1',
       root: '/tmp/workspace',
       userId: 'admin-1',
       username: 'admin',
       sessionId: 'session-abc',
+      sandboxScopeId: 'ws_pantheon__admin-1__workspaces_pantheon_admin-1',
+      mountSubPath: 'workspaces/pantheon/admin-1',
       executionTarget: 'server-local',
     });
   });

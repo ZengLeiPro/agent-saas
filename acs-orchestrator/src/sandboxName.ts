@@ -20,11 +20,12 @@ export function validateSessionId(sessionId: string): string {
   return id;
 }
 
-export function sandboxNameFor(input: { workspaceId: string; sessionId: string }): string {
+export function sandboxNameFor(input: { workspaceId: string; sessionId: string; sandboxScopeId?: string }): string {
   const workspaceId = validateWorkspaceId(input.workspaceId);
-  const sessionId = validateSessionId(input.sessionId);
-  const hash = createHash('sha256').update(`${workspaceId}:${sessionId}`).digest('hex').slice(0, 16);
-  const prefix = slugify(sessionId).slice(0, 36) || 'session';
+  validateSessionId(input.sessionId);
+  const sandboxScopeId = validateWorkspaceId(input.sandboxScopeId ?? workspaceId);
+  const hash = createHash('sha256').update(sandboxScopeId).digest('hex').slice(0, 16);
+  const prefix = slugify(sandboxScopeId).slice(0, 36) || 'workspace';
   const name = `as-${prefix}-${hash}`;
   return name.length <= MAX_K8S_NAME_LENGTH ? name : `as-${hash}`;
 }

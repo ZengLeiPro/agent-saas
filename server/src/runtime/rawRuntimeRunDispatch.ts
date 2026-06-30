@@ -485,9 +485,11 @@ function buildWorkspaceRecipe(
   sessionId?: string,
   mountSubPath?: string,
 ): WorkspaceRecipe {
+  const effectiveMountSubPath = override?.mountSubPath ?? mountSubPath;
   return {
     ...(override ?? {}),
     workspaceId,
+    sandboxScopeId: override?.sandboxScopeId ?? deriveSandboxScopeId({ workspaceId, mountSubPath: effectiveMountSubPath }),
     ...(sessionId ? { sessionId } : {}),
     ...(!override?.mountSubPath && mountSubPath ? { mountSubPath } : {}),
   };
@@ -500,6 +502,10 @@ function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: string }):
   const rel = relative(mountRoot, workspaceRoot);
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return undefined;
   return rel.split(sep).join('/');
+}
+
+function deriveSandboxScopeId(input: { workspaceId: string; mountSubPath?: string }): string {
+  return input.mountSubPath ? `${input.workspaceId}__${input.mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}` : input.workspaceId;
 }
 
 function deriveRuntimeWorkspaceId(params: {
@@ -556,6 +562,7 @@ async function ensureRuntimeHandRegistered(params: {
     params.sessionId,
     params.workspaceMountSubPath,
   );
+  const defaultHandId = `${params.sessionId}:${params.executionTarget}`;
   if (transport && typeof (transport as { provision?: unknown }).provision === 'function') {
     const result = await (transport as unknown as { provision(recipe: { workspaceId: string }): Promise<{ status: 'ok' | 'error'; error?: string; metadata?: Record<string, unknown> }> }).provision(recipe);
     // B3: persist provisioning logs (workspace_ensure / setup_command#N / skipped
@@ -563,7 +570,7 @@ async function ensureRuntimeHandRegistered(params: {
     await appendProvisioningLogs({
       eventStore: params.eventStore,
       sessionId: params.sessionId,
-      handId: `${params.workspaceId}:${params.executionTarget}`,
+      handId: defaultHandId,
       workspaceId: params.workspaceId,
       metadata: result.metadata,
     });
@@ -578,7 +585,7 @@ async function ensureRuntimeHandRegistered(params: {
     }
   }
   await manager.provision({
-    handId: `${params.workspaceId}:${params.executionTarget}`,
+    handId: defaultHandId,
     sessionId: params.sessionId,
     workspaceId: params.workspaceId,
     type: params.executionTarget,
@@ -1344,6 +1351,11 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       updatedAt: new Date().toISOString(),
     };
     await sessionCatalog.upsert(sessionRecord);
+    const workspaceMountSubPath = deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd });
+    const sandboxScopeId = deriveSandboxScopeId({
+      workspaceId: sessionRecord.workspaceId ?? sessionId,
+      mountSubPath: workspaceMountSubPath,
+    });
     await hooks?.onSessionStart?.(sessionId, transcriptPath);
     yield { type: 'session_init', sessionId };
 
@@ -1361,6 +1373,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       metadata: {
         cwd,
         transcriptPath,
+        sandboxScopeId,
+        ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
         wakeMessage: {
           channel: message.channel,
@@ -1382,7 +1396,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       executionTarget,
       sessionId,
       workspaceId: sessionRecord.workspaceId ?? sessionId,
-      workspaceMountSubPath: deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd }),
+      workspaceMountSubPath,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
@@ -1460,6 +1474,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           sessionId,
           model,
           cwd,
+          workspaceId: sessionRecord.workspaceId ?? sessionId,
+          sandboxScopeId,
+          mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
           executionTarget,
           sandboxPolicy,
@@ -1637,6 +1654,11 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       updatedAt: new Date().toISOString(),
     };
     await sessionCatalog.upsert(sessionRecord);
+    const workspaceMountSubPath = deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd });
+    const sandboxScopeId = deriveSandboxScopeId({
+      workspaceId: sessionRecord.workspaceId ?? request.sessionId,
+      mountSubPath: workspaceMountSubPath,
+    });
 
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
     const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId);
@@ -1654,7 +1676,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       channel: request.context.channel,
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
-      metadata: { cwd, transcriptPath, approvalId: request.approvalId, ...(approvalPolicy ? { approvalPolicy } : {}) },
+      metadata: { cwd, transcriptPath, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}) },
     });
     await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running');
     await ensureRuntimeHandRegistered({
@@ -1664,7 +1686,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTarget,
       sessionId: request.sessionId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
-      workspaceMountSubPath: deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd }),
+      workspaceMountSubPath,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
@@ -1736,6 +1758,9 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           sessionId: request.sessionId,
           model,
           cwd,
+          workspaceId: sessionRecord.workspaceId ?? request.sessionId,
+          sandboxScopeId,
+          mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
           executionTarget,
           sandboxPolicy,
@@ -1874,6 +1899,11 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       updatedAt: new Date().toISOString(),
     };
     await sessionCatalog.upsert(sessionRecord);
+    const workspaceMountSubPath = deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd });
+    const sandboxScopeId = deriveSandboxScopeId({
+      workspaceId: sessionRecord.workspaceId ?? request.sessionId,
+      mountSubPath: workspaceMountSubPath,
+    });
 
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
     const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId);
@@ -1905,7 +1935,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       channel: request.context.channel,
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
-      metadata: { cwd, transcriptPath, interactionId: request.interactionId, ...(approvalPolicy ? { approvalPolicy } : {}) },
+      metadata: { cwd, transcriptPath, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}) },
     });
     await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running');
     await ensureRuntimeHandRegistered({
@@ -1915,7 +1945,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTarget,
       sessionId: request.sessionId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
-      workspaceMountSubPath: deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd }),
+      workspaceMountSubPath,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
@@ -1987,6 +2017,9 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           sessionId: request.sessionId,
           model,
           cwd,
+          workspaceId: sessionRecord.workspaceId ?? request.sessionId,
+          sandboxScopeId,
+          mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
           executionTarget,
           sandboxPolicy,

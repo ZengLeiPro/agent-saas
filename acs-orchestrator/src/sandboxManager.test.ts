@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import type { AcsOrchestratorConfig } from './config.js';
+import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import type { Kubectl, KubectlResult } from './kubectl.js';
 import { SandboxManager } from './sandboxManager.js';
 
@@ -91,6 +92,7 @@ describe('SandboxManager', () => {
     });
     expect((applied?.metadata as Record<string, unknown>).annotations).toMatchObject({
       'agent-saas.kaiyan.net/workspace-id': 'ws_kaiyan__test',
+      'agent-saas.kaiyan.net/sandbox-scope-id': 'ws_kaiyan__test',
       'agent-saas.kaiyan.net/session-id': 'session-123',
       'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
       'agent-saas.kaiyan.net/network-policy-mode': 'public-egress',
@@ -160,7 +162,7 @@ describe('SandboxManager', () => {
     }
   });
 
-  it('recreates an existing Sandbox when the image tag drifts', async () => {
+  it('recreates an existing Sandbox when only the current active key is using it', async () => {
     const deleted: string[] = [];
     let sandboxApplied = false;
     const kubectl = {
@@ -207,16 +209,69 @@ describe('SandboxManager', () => {
       },
     } as unknown as Kubectl;
 
-    const manager = new SandboxManager(baseConfig(), kubectl, noopLogger);
-
-    await manager.ensureRunning({
+    const activeRegistry = new ActiveSandboxRegistry();
+    const manager = new SandboxManager(baseConfig(), kubectl, noopLogger, activeRegistry);
+    const activeKey = 'current-invocation';
+    const ref = manager.ref({
       workspaceId: 'ws_kaiyan__test',
       sessionId: 'session-123',
       mountSubPath: 'workspaces/kaiyan/u-1',
     });
+    const release = activeRegistry.acquire(ref.name, activeKey);
 
-    expect(deleted.some((name) => name.startsWith('sandbox/as-session-123-'))).toBe(true);
+    try {
+      await manager.ensureRunning({
+        workspaceId: 'ws_kaiyan__test',
+        sessionId: 'session-123',
+        mountSubPath: 'workspaces/kaiyan/u-1',
+      }, { activeKey });
+    } finally {
+      release();
+    }
+
+    expect(deleted.some((name) => name.startsWith('sandbox/as-ws-kaiyan-test-'))).toBe(true);
     expect(sandboxApplied).toBe(true);
+  });
+
+  it('refuses to recreate a busy shared Sandbox when the image tag drifts', async () => {
+    const kubectl = {
+      async run(args: string[]): Promise<KubectlResult> {
+        if (args[0] === 'get') {
+          return {
+            stdout: JSON.stringify({
+              status: { phase: 'Running' },
+              spec: {
+                template: {
+                  spec: {
+                    containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:old' }],
+                  },
+                },
+              },
+              metadata: {
+                annotations: {
+                  'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
+                },
+              },
+            }),
+            stderr: '',
+            exitCode: 0,
+            signal: null,
+          };
+        }
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+    const manager = new SandboxManager(baseConfig(), kubectl, noopLogger);
+    const busyName = manager.ref({
+      workspaceId: 'ws_kaiyan__test',
+      sessionId: 'session-123',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    }).name;
+
+    await expect(manager.ensureRunning(
+      { workspaceId: 'ws_kaiyan__test', sessionId: 'session-456', mountSubPath: 'workspaces/kaiyan/u-1' },
+      { busySandboxNames: new Set([busyName]) },
+    )).rejects.toThrow(/refuse to recreate while active/);
   });
 
   it('rejects creating a new Sandbox when running quota is exhausted', async () => {
@@ -453,6 +508,61 @@ describe('SandboxManager', () => {
     expect(report.skippedBusy).toEqual(['as-busy']);
     expect(calls.some((args) => args[0] === 'patch' && args[1] === 'sandbox/as-idle')).toBe(true);
     expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-expired')).toBe(true);
+  });
+
+  it('does not pause or delete active Sandboxes from lifecycle or workspace deletion', async () => {
+    const calls: string[][] = [];
+    const activeRegistry = new ActiveSandboxRegistry();
+    const release = activeRegistry.acquire('as-active', 'invocation-1');
+    const kubectl = {
+      async run(args: string[]): Promise<KubectlResult> {
+        calls.push(args);
+        if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
+          return {
+            stdout: JSON.stringify({
+              items: [{
+                metadata: {
+                  name: 'as-active',
+                  annotations: {
+                    'agent-saas.kaiyan.net/workspace-id': 'ws_kaiyan__test',
+                    'agent-saas.kaiyan.net/created-at': '2026-06-26T00:00:00.000Z',
+                    'agent-saas.kaiyan.net/last-active-at': '2026-06-26T00:10:00.000Z',
+                  },
+                },
+                status: { phase: 'Running' },
+              }],
+            }),
+            stderr: '',
+            exitCode: 0,
+            signal: null,
+          };
+        }
+        if (args[0] === 'patch' || args[0] === 'delete') {
+          throw new Error(`active sandbox should not be mutated: ${args.join(' ')}`);
+        }
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+
+    try {
+      const manager = new SandboxManager({
+        ...baseConfig(),
+        sandboxIdlePauseMs: 1,
+        sandboxTtlMs: 1,
+      }, kubectl, noopLogger, activeRegistry);
+
+      const report = await manager.cleanupSandboxes({ now: new Date('2026-06-27T00:20:00.000Z') });
+      const deleted = await manager.deleteByWorkspaceId('ws_kaiyan__test');
+
+      expect(report.skippedBusy).toEqual(['as-active']);
+      expect(report.paused).toEqual([]);
+      expect(report.deleted).toEqual([]);
+      expect(deleted).toEqual({ names: [], skippedBusy: ['as-active'] });
+      expect(calls.some((args) => args[0] === 'patch')).toBe(false);
+      expect(calls.some((args) => args[0] === 'delete')).toBe(false);
+    } finally {
+      release();
+    }
   });
 });
 

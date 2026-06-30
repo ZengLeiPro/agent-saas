@@ -266,6 +266,9 @@ export class RawAgentLoop implements AgentLoop {
     const workspace = this.workspaceProvider.resolve(context.channelContext, {
       cwd: context.cwd,
       sessionId: context.sessionId,
+      workspaceId: context.workspaceId,
+      sandboxScopeId: context.sandboxScopeId,
+      mountSubPath: context.mountSubPath,
       executionTarget: context.executionTarget,
       sandboxPolicy: context.sandboxPolicy,
     });
@@ -784,6 +787,9 @@ export class RawAgentLoop implements AgentLoop {
     const workspace = this.workspaceProvider.resolve(resumeContext.channelContext, {
       cwd: resumeContext.cwd,
       sessionId: resumeContext.sessionId,
+      workspaceId: resumeContext.workspaceId,
+      sandboxScopeId: resumeContext.sandboxScopeId,
+      mountSubPath: resumeContext.mountSubPath,
       executionTarget: approval.executionTarget ?? pendingState.approvalRequest?.executionTarget ?? resumeContext.executionTarget,
       sandboxPolicy: resumeContext.sandboxPolicy,
     });
@@ -910,6 +916,9 @@ export class RawAgentLoop implements AgentLoop {
     const workspace = this.workspaceProvider.resolve(context.channelContext, {
       cwd: context.cwd,
       sessionId: context.sessionId,
+      workspaceId: context.workspaceId,
+      sandboxScopeId: context.sandboxScopeId,
+      mountSubPath: context.mountSubPath,
       executionTarget: context.executionTarget,
       sandboxPolicy: context.sandboxPolicy,
     });
@@ -1217,7 +1226,10 @@ export class RawAgentLoop implements AgentLoop {
         ...(effectiveHandId ? { handId: effectiveHandId } : {}),
         ...(autoHandId ? { autoRoutedHandId: autoHandId } : {}),
         executionTarget: args.baseToolContext.workspace.executionTarget,
-        defaultHandId: `${args.baseToolContext.workspace.id ?? args.context.sessionId}:${args.baseToolContext.workspace.executionTarget}`,
+        defaultHandId: `${args.context.sessionId}:${args.baseToolContext.workspace.executionTarget}`,
+        workspaceId: args.baseToolContext.workspace.id,
+        ...(args.baseToolContext.workspace.mountSubPath ? { mountSubPath: args.baseToolContext.workspace.mountSubPath } : {}),
+        ...(args.baseToolContext.workspace.sandboxScopeId ? { sandboxScopeId: args.baseToolContext.workspace.sandboxScopeId } : {}),
         ...(args.context.workerId ? { workerId: args.context.workerId } : {}),
       },
     }).catch(() => undefined);

@@ -17,7 +17,7 @@ describe('SnatManager', () => {
     const kubectl = podKubectl('172.16.177.139');
     const manager = new SnatManager({ ...baseConfig(cliPath), snat: { ...baseConfig(cliPath).snat, mode: 'probe-only' } }, kubectl, noopLogger);
 
-    const ref = { name: 'as-probe-123', workspaceId: 'network-probe', sessionId: 'probe-123', mountSubPath: 'network-probe' };
+    const ref = { name: 'as-probe-123', workspaceId: 'network-probe', sandboxScopeId: 'network-probe', sessionId: 'probe-123', mountSubPath: 'network-probe' };
     const created = await manager.ensureForProbe(ref);
     const reused = await manager.ensureForProbe(ref);
 

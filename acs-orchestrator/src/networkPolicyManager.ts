@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
 
 import type { AcsOrchestratorConfig } from './config.js';
@@ -16,6 +17,7 @@ const TRAFFIC_POLICY_RESOURCE = 'trafficpolicy';
 const APP_LABEL = 'agent-saas-coding-hand';
 const MANAGED_BY_LABEL = 'agent-saas-acs-orchestrator';
 const WORKSPACE_LABEL = 'agent-saas.kaiyan.net/workspace-id';
+const SANDBOX_SCOPE_LABEL = 'agent-saas.kaiyan.net/sandbox-scope-id';
 const SESSION_LABEL = 'agent-saas.kaiyan.net/session-id';
 const NETWORK_POLICY_MODE_LABEL = 'agent-saas.kaiyan.net/network-policy-mode';
 const DNS_SERVICE_PEER = { service: { namespace: 'kube-system', name: 'kube-dns' } };
@@ -135,6 +137,7 @@ export function buildTrafficPolicyManifest(input: {
         'app.kubernetes.io/name': APP_LABEL,
         'app.kubernetes.io/managed-by': MANAGED_BY_LABEL,
         [WORKSPACE_LABEL]: labelValue(input.ref.workspaceId),
+        [SANDBOX_SCOPE_LABEL]: labelValue(input.ref.sandboxScopeId),
         [SESSION_LABEL]: labelValue(input.ref.sessionId),
         [NETWORK_POLICY_MODE_LABEL]: input.policy.mode,
       },
@@ -150,7 +153,7 @@ export function buildTrafficPolicyManifest(input: {
           'app.kubernetes.io/name': APP_LABEL,
           'app.kubernetes.io/managed-by': MANAGED_BY_LABEL,
           [WORKSPACE_LABEL]: labelValue(input.ref.workspaceId),
-          [SESSION_LABEL]: labelValue(input.ref.sessionId),
+          [SANDBOX_SCOPE_LABEL]: labelValue(input.ref.sandboxScopeId),
         },
       },
       egress: {
@@ -333,10 +336,5 @@ function sanitizeProbeResult(result: KubectlResult): ProbeCheck {
 }
 
 function labelValue(value: string): string {
-  const cleaned = value
-    .toLowerCase()
-    .replace(/[^a-z0-9_.-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 63);
-  return cleaned || 'unknown';
+  return createHash('sha256').update(value).digest('hex').slice(0, 40);
 }

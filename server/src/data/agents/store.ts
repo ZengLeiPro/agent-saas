@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import type { AgentProfileRecord, AgentProfileInfo, AgentsFileData } from './types.js';
 
 const DEFAULT_PROFILE: Omit<AgentProfileRecord, 'updatedAt' | 'updatedBy'> = {
-  name: 'AI 助手',
+  name: '开开',
   avatar: '🤖',
 };
 

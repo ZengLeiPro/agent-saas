@@ -9,6 +9,10 @@ const INTERACTIVE_PERMISSION_TOOLS = new Set([
   'RequestPluginInstall',
 ]);
 
+const NEVER_AUTO_APPROVE_TOOLS = new Set([
+  'UpdateCompanyInfo',
+]);
+
 export class DefaultToolPolicy implements ToolPolicy {
   async decide(descriptor: ToolDescriptor, _input: unknown, _context: RunContext): Promise<ToolPolicyDecision> {
     const identity = _context.channelContext.user ?? _context.channelContext.sessionOwner;
@@ -21,6 +25,8 @@ export class DefaultToolPolicy implements ToolPolicy {
       && descriptor.risk !== 'safe'
       && !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.id)
       && !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.name)
+      && !NEVER_AUTO_APPROVE_TOOLS.has(descriptor.id)
+      && !NEVER_AUTO_APPROVE_TOOLS.has(descriptor.name)
     ) {
       return { type: 'allow' };
     }

@@ -902,6 +902,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     },
     memoryIndexService: memoryIndexServiceRef.current,
     agentStore,
+    tenantStore,
     resolveUserRole: ({ userId, username }: { userId?: string; username?: string }) => {
       const user = userId
         ? userStore?.findById(userId)

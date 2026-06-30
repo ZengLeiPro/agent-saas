@@ -1,5 +1,5 @@
 export interface AgentProfileRecord {
-  name: string;                    // Agent 显示名，默认 "AI 助手"
+  name: string;                    // Agent 显示名，默认 "开开"
   signature?: string;              // 签名（仅展示，不注入提示语）
   avatar?: string;                 // emoji 字符串（如 "🤖"）或文件相对路径（如 "agent-avatars/pengyn.jpg"）
   avatarVersion?: number;          // 头像版本号（上传时 Date.now()），用于客户端缓存控制

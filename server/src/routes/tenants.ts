@@ -5,9 +5,6 @@
  * - 组织 settings 可由平台 admin 操作任意组织，也可由组织 admin 操作自己组织。
  */
 
-import { mkdirSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { Router } from 'express';
 import type { Request } from 'express';
 import { z } from 'zod';
@@ -16,6 +13,11 @@ import { isPlatformAdmin, requireAdmin, requirePlatformAdmin } from '../auth/mid
 import { auditLog } from '../data/login-logs/index.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import { TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
+import {
+  MAX_COMPANY_INFO_CHARS,
+  readTenantCompanyInfo,
+  writeTenantCompanyInfo,
+} from '../data/tenants/companyInfo.js';
 
 const createTenantSchema = z.object({
   id: z.string().regex(
@@ -94,7 +96,7 @@ export interface CreateTenantsRouterOptions {
 
 // company.md 体量上限：留 200k，与 MEMORY 对齐
 const companyInfoSchema = z.object({
-  content: z.string().max(200000),
+  content: z.string().max(MAX_COMPANY_INFO_CHARS),
 });
 
 function canAccessTenantSettings(reqUser: Request['user'], tenantId: string): boolean {
@@ -105,8 +107,6 @@ function canAccessTenantSettings(reqUser: Request['user'], tenantId: string): bo
 export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
   const router = Router();
   const { tenantStore, sharedDir } = opts;
-
-  const companyInfoPath = (tenantId: string) => resolve(sharedDir, 'tenants', tenantId, 'company.md');
 
   // GET /api/tenants — 列出所有组织（含 disabled）
   router.get('/', requirePlatformAdmin, (_req, res) => {
@@ -129,11 +129,10 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       return;
     }
     try {
-      const content = await readFile(companyInfoPath(req.params.id), 'utf-8');
-      res.json({ tenantId: req.params.id, content });
-    } catch {
-      // 文件不存在 → 返回空内容，前端正常进入编辑态；不从旧全局 company.md 自动复制。
-      res.json({ tenantId: req.params.id, content: '' });
+      const content = await readTenantCompanyInfo(sharedDir, req.params.id);
+      res.json({ tenantId: req.params.id, content: content ?? '' });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : '读取失败' });
     }
   });
 
@@ -152,9 +151,7 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       return;
     }
     try {
-      const path = companyInfoPath(req.params.id);
-      mkdirSync(resolve(path, '..'), { recursive: true });
-      await writeFile(path, parsed.data.content, 'utf-8');
+      await writeTenantCompanyInfo(sharedDir, req.params.id, parsed.data.content);
       auditLog(req, 'tenant_updated', `${req.params.id} → company.md`);
       res.json({ ok: true, tenantId: req.params.id });
     } catch (err) {

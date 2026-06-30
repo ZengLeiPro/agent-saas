@@ -28,6 +28,8 @@ export const BUILTIN_TOOL_CATALOG = [
   { id: 'Shell', name: 'Shell', category: 'workspace', label: '执行 Shell' },
   { id: 'MemorySearch', name: 'MemorySearch', category: 'memory', label: '搜索记忆' },
   { id: 'MemoryList', name: 'MemoryList', category: 'memory', label: '列出记忆文件' },
+  { id: 'ReadCompanyInfo', name: 'ReadCompanyInfo', category: 'memory', label: '读取组织资料' },
+  { id: 'UpdateCompanyInfo', name: 'UpdateCompanyInfo', category: 'memory', label: '更新组织资料' },
   { id: 'Skill', name: 'Skill', category: 'skill', label: '调用 Skill' },
   { id: 'TodoWrite', name: 'TodoWrite', category: 'meta', label: '管理 TODO' },
   { id: 'AskUserQuestion', name: 'AskUserQuestion', category: 'meta', label: '向用户提问' },

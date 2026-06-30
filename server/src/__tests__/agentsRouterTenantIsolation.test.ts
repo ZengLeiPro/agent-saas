@@ -251,7 +251,7 @@ describe('agents 路由多组织隔离 (PR 8)', () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.username).toBe('alice');
-      expect(body.name).toBe('AI 助手');
+      expect(body.name).toBe('开开');
       expect(body.persona).toContain('alice persona');
     });
 
@@ -326,7 +326,7 @@ describe('agents 路由多组织隔离 (PR 8)', () => {
       const body = await res.json() as { username: string; name?: string }[];
       const usernames = body.map(p => p.username).sort();
       expect(usernames).toEqual(['alice', 'zengky']);
-      expect(body.find(p => p.username === 'alice')?.name).toBe('AI 助手');
+      expect(body.find(p => p.username === 'alice')?.name).toBe('开开');
       expect(usernames).not.toContain('stale_ghost');
     });
   });

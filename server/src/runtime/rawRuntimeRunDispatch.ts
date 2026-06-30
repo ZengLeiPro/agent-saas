@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { mkdir } from 'fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 
@@ -11,7 +11,9 @@ import type {
   ToolApprovalPolicyOptions,
 } from '../agent/types.js';
 import type { AgentStore } from '../data/agents/store.js';
+import type { TenantStore } from '../data/tenants/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { readTenantCompanyInfoSync } from '../data/tenants/companyInfo.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import type { UserOverrides } from '../security/extraDirs.js';
@@ -36,6 +38,7 @@ import {
 } from '../agent/skillToolProvider.js';
 import { createBuiltinTools, type BuiltinToolsConfig } from '../agent/builtinTools.js';
 import { WebToolProvider, type ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
+import { TenantCompanyInfoToolProvider } from '../agent/tenantCompanyInfoToolProvider.js';
 import { McpClientToolProvider } from '../mcp/clientToolProvider.js';
 import type { McpClientManager } from '../mcp/clientManager.js';
 import type { McpProxy } from '../mcp/proxy.js';
@@ -202,6 +205,7 @@ export interface RawRuntimeRunDispatchConfig {
   memory?: { enabled?: boolean; maxLines?: number };
   memoryIndexService?: MemoryIndexService | null;
   agentStore?: AgentStore;
+  tenantStore?: TenantStore;
   resolveUserRole?: (identity: { userId?: string; username?: string }) => 'admin' | 'user' | undefined;
   /** Default raw loop turn budget when a run does not specify maxTurns. */
   defaultMaxTurns?: number;
@@ -992,6 +996,14 @@ async function collectRuntimeTooling(
   providers.push(builtin);
 
   // 3. Web 工具（平台托管网络出站，不走 workspace hand / shell）
+  if (config.tenantStore) {
+    providers.push(new TenantCompanyInfoToolProvider({
+      sharedDir: config.sharedDir,
+      tenantStore: config.tenantStore,
+    }));
+  }
+
+  // 4. Web 工具（平台托管网络出站，不走 workspace hand / shell）
   if (config.webTools && config.webTools.enabled !== false) {
     const webProvider = new WebToolProvider(config.webTools);
     const webDescriptors = webProvider.list().filter((tool) => isToolEnabled(config.toolControls, tool));
@@ -1000,7 +1012,7 @@ async function collectRuntimeTooling(
     }
   }
 
-  // 4. MCP 工具（带超时兜底，单 server hang 不会卡 dispatch 主路径）
+  // 5. MCP 工具（带超时兜底，单 server hang 不会卡 dispatch 主路径）
   if (config.mcpProxy || config.mcpClientManager) {
     const mcpProvider = new McpClientToolProvider(config.mcpProxy ?? config.mcpClientManager!);
     try {
@@ -1203,9 +1215,8 @@ function visibleWorkspaceCwd(hostCwd: string, executionTarget: ExecutionTargetKi
 
 function loadCompanyInfo(sharedDir: string, tenantId?: string): string {
   if (!tenantId) return '（未配置组织 company.md）';
-  const path = resolve(sharedDir, 'tenants', tenantId, 'company.md');
   try {
-    return readFileSync(path, 'utf-8').trim();
+    return readTenantCompanyInfoSync(sharedDir, tenantId)?.trim() ?? '（未配置组织 company.md）';
   } catch {
     return '（未配置组织 company.md）';
   }
@@ -1299,7 +1310,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const agentProfile = identitySource && config.agentStore
       ? config.agentStore.get(identitySource.username)
       : undefined;
-    const agentName = agentProfile?.name || '麦迪文';
+    const agentName = agentProfile?.name || '开开';
     const userName = identitySource ? (identitySource.realName || identitySource.username || '') : '';
     const persona = options.skipPersona ? '' : ((await loadPersona(cwd)) || '');
 
@@ -1605,7 +1616,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     const agentProfile = identitySource && config.agentStore
       ? config.agentStore.get(identitySource.username)
       : undefined;
-    const agentName = agentProfile?.name || '麦迪文';
+    const agentName = agentProfile?.name || '开开';
     const userName = identitySource ? (identitySource.realName || identitySource.username || '') : '';
     const persona = (await loadPersona(cwd)) || '';
     const memorySearchEnabled = hasMemorySearchTool(config.memoryIndexService)
@@ -1852,7 +1863,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     const agentProfile = identitySource && config.agentStore
       ? config.agentStore.get(identitySource.username)
       : undefined;
-    const agentName = agentProfile?.name || '麦迪文';
+    const agentName = agentProfile?.name || '开开';
     const userName = identitySource ? (identitySource.realName || identitySource.username || '') : '';
     const persona = (await loadPersona(cwd)) || '';
     const memorySearchEnabled = hasMemorySearchTool(config.memoryIndexService)

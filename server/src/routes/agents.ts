@@ -75,7 +75,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
     const existing = agentStore.get(username);
     return existing
       ? { ...existing, username }
-      : { username, name: 'AI 助手', avatar: '🤖', updatedAt: '', updatedBy: 'system' };
+      : { username, name: '开开', avatar: '🤖', updatedAt: '', updatedBy: 'system' };
   }
 
   // 确保头像目录存在

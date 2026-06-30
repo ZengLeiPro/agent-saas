@@ -8,7 +8,7 @@
 #
 # 决策（06-14 β1 / 06-29 ACS 升级）：
 #   - server/hand-server 复用 Alpine deps；acs-sandbox 是通用生产 Agent hand，
-#     使用 Debian glibc + Python 3.12，并内置浏览器、字体、文档/PDF/媒体转换栈
+#     使用 Debian glibc + Python 3.12，并内置浏览器、中文字体、轻量 Office/PDF/OCR/媒体栈
 #   - 不装 docker-cli：生产容器内的 ContainerExecutionProvider 路径**禁用**——server-container
 #     在 docker-in-docker 上是反 pattern，自用阶段只用 server-local；要走容器隔离时跑独立 hand-server
 #     target 并切 executionTarget=server-remote
@@ -53,9 +53,9 @@ RUN pnpm install --frozen-lockfile \
 FROM node:22-bookworm-slim AS node-bookworm
 
 # ─────────────────────────────────────────────────────────────
-# Stage: acs-deps — full production Agent hand runtime
+# Stage: acs-base — production Agent hand runtime
 # ─────────────────────────────────────────────────────────────
-FROM python:3.12-slim-bookworm AS acs-deps
+FROM python:3.12-slim-bookworm AS acs-base
 WORKDIR /app
 
 # 这是用户代码执行环境，不是控制面。保留通用 Agent 生产任务常用工具，但不要放
@@ -78,14 +78,12 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https:
     && apt-get install -y --no-install-recommends \
       bash \
       bind9-dnsutils \
-      build-essential \
       ca-certificates \
-      cmake \
       curl \
       file \
       findutils \
       fontconfig \
-      fonts-dejavu \
+      fonts-dejavu-core \
       fonts-liberation \
       fonts-noto-cjk \
       fonts-noto-color-emoji \
@@ -93,29 +91,19 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https:
       git \
       git-lfs \
       ghostscript \
-      imagemagick \
       iproute2 \
       iputils-ping \
       jq \
       less \
-      libffi-dev \
-      libfreetype6-dev \
-      libfribidi-dev \
-      libharfbuzz-dev \
-      libjpeg62-turbo-dev \
-      liblcms2-dev \
-      libopenjp2-7-dev \
-      libpng-dev \
-      libtiff-dev \
-      libxml2-dev \
-      libxslt1-dev \
-      libreoffice \
+      libreoffice-calc \
+      libreoffice-common \
+      libreoffice-core \
+      libreoffice-impress \
+      libreoffice-writer \
       mariadb-client \
       netcat-openbsd \
       openssh-client \
       openssl \
-      pandoc \
-      pkg-config \
       poppler-utils \
       postgresql-client \
       procps \
@@ -162,12 +150,51 @@ RUN pnpm install --frozen-lockfile \
     --filter '!mobile' \
     --filter '!web'
 
-RUN pnpm -F server exec playwright install --with-deps chromium
+RUN pnpm -F server exec playwright install --with-deps chromium \
+    && apt-get purge -y --auto-remove \
+      fonts-freefont-ttf \
+      fonts-ipafont-gothic \
+      fonts-tlwg-loma-otf \
+      fonts-unifont \
+      fonts-wqy-zenhei \
+      xfonts-scalable \
+    && chmod -R a+rX /ms-playwright \
+    && rm -rf /var/lib/apt/lists/*
+
+# ─────────────────────────────────────────────────────────────
+# Stage: acs-wheel-builder — build wheelhouse without leaking compilers into runtime
+# ─────────────────────────────────────────────────────────────
+FROM acs-base AS acs-wheel-builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      build-essential \
+      cmake \
+      libffi-dev \
+      libfreetype6-dev \
+      libfribidi-dev \
+      libharfbuzz-dev \
+      libjpeg62-turbo-dev \
+      liblcms2-dev \
+      libopenjp2-7-dev \
+      libpng-dev \
+      libtiff-dev \
+      libxml2-dev \
+      libxslt1-dev \
+      pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /opt/ky-agent/python-wheels \
     && python3 -m pip wheel --no-cache-dir \
       --wheel-dir /opt/ky-agent/python-wheels \
       -r acs-orchestrator/requirements/base.txt
+
+# ─────────────────────────────────────────────────────────────
+# Stage: acs-deps — runtime + prebuilt Python wheels
+# ─────────────────────────────────────────────────────────────
+FROM acs-base AS acs-deps
+
+COPY --from=acs-wheel-builder /opt/ky-agent/python-wheels /opt/ky-agent/python-wheels
 
 # ─────────────────────────────────────────────────────────────
 # Stage: web-build — 仅产出 web/dist 给 server target COPY
@@ -246,6 +273,7 @@ ENV ACS_WORKSPACE_PATH=/workspace
 ENV DOWNLOAD_DIR=/workspace/downloads
 ENV XDG_DOWNLOAD_DIR=/workspace/downloads
 ENV ACS_PYTHON_WHEELHOUSE=/opt/ky-agent/python-wheels
+ENV ACS_MAX_VENV_ARCHIVES=2
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PIP_REQUIRE_VIRTUALENV=1
@@ -258,7 +286,7 @@ ENV PATH=/home/agent/.npm-global/bin:$PATH
 RUN groupadd -f -g 20 dialout \
     && useradd -m -u 501 -g 20 -s /bin/bash agent \
     && mkdir -p /workspace /home/agent/.npm-global/bin /home/agent/.npm-global/lib /ms-playwright \
-    && chown -R 501:20 /home/agent /workspace /ms-playwright \
+    && chown -R 501:20 /home/agent /workspace \
     && su agent -c 'corepack prepare yarn@1.22.22 --activate && corepack prepare pnpm@10.18.3 --activate'
 WORKDIR /workspace
 

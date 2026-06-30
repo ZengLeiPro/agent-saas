@@ -1,9 +1,16 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { buildRuntimePath, ensurePythonEnv, pipInstallArgs, toolNameForLocalProvider, venvRebuildReasons } from './sandboxRunner.js';
+import {
+  buildRuntimePath,
+  ensurePythonEnv,
+  pipInstallArgs,
+  pruneVenvArchive,
+  toolNameForLocalProvider,
+  venvRebuildReasons,
+} from './sandboxRunner.js';
 
 describe('toolNameForLocalProvider', () => {
   it('accepts legacy tool names from the deployed orchestrator compatibility layer', () => {
@@ -140,5 +147,31 @@ describe('pipInstallArgs', () => {
       '-r',
       '/app/requirements/base.txt',
     ]);
+  });
+});
+
+describe('pruneVenvArchive', () => {
+  it('keeps the newest venv archives and ignores unrelated entries', () => {
+    const root = mkdtempSync(join(tmpdir(), 'acs-venv-archive-'));
+    const archiveRoot = join(root, '.ky-agent', 'runtime', 'venv-archive');
+    mkdirSync(archiveRoot, { recursive: true });
+    const entries = [
+      { name: '.venv-old', date: new Date('2026-06-29T00:00:00.000Z') },
+      { name: '.venv-mid', date: new Date('2026-06-30T00:00:00.000Z') },
+      { name: '.venv-new', date: new Date('2026-07-01T00:00:00.000Z') },
+    ];
+    for (const entry of entries) {
+      const path = join(archiveRoot, entry.name);
+      mkdirSync(path, { recursive: true });
+      writeFileSync(join(path, 'marker.txt'), entry.name);
+      utimesSync(path, entry.date, entry.date);
+    }
+    mkdirSync(join(archiveRoot, 'manual-backup'), { recursive: true });
+    writeFileSync(join(archiveRoot, 'notes.txt'), 'keep');
+
+    expect(pruneVenvArchive(archiveRoot, 2)).toEqual([join(archiveRoot, '.venv-old')]);
+    expect(readdirSync(archiveRoot).sort()).toEqual(['.venv-mid', '.venv-new', 'manual-backup', 'notes.txt']);
+    expect(existsSync(join(archiveRoot, 'manual-backup'))).toBe(true);
+    expect(existsSync(join(archiveRoot, 'notes.txt'))).toBe(true);
   });
 });

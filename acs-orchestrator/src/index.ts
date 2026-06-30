@@ -179,13 +179,13 @@ async function handleHealth(res: ServerResponse): Promise<void> {
       media: {
         available: config.capabilities.media,
         reason: config.capabilities.media
-          ? 'ffmpeg/ImageMagick media processing is available in the production Agent hand'
+          ? 'ffmpeg/ffprobe media processing is available in the production Agent hand'
           : 'media processing is disabled for this runtime',
       },
       officeDocuments: {
         available: config.capabilities.officeDocuments,
         reason: config.capabilities.officeDocuments
-          ? 'Office/PDF/OCR/document authoring and conversion tools are available in the production Agent hand'
+          ? 'LibreOffice/Poppler/QPDF/Tesseract document tools are available in the production Agent hand'
           : 'office document packages disabled for this runtime',
       },
       pythonBasePackages: {
@@ -211,6 +211,8 @@ function runtimeContractSnapshot(): Record<string, unknown> {
       venvPath: `${config.workspaceMountPath}/.ky-agent/runtime/venv`,
       pipCacheDir: `${config.workspaceMountPath}/.ky-agent/runtime/cache/pip`,
       manifestPath: `${config.workspaceMountPath}/.ky-agent/runtime/venv/.ky-runtime.json`,
+      archivePath: `${config.workspaceMountPath}/.ky-agent/runtime/venv-archive`,
+      maxArchives: readPositiveIntegerEnv('ACS_MAX_VENV_ARCHIVES', 2),
       includeSystemSitePackages: false,
       baseRequirementsPath: requirementsPath,
       baseRequirementsHash: hashFileIfExists(requirementsPath),
@@ -232,6 +234,13 @@ function runtimeContractSnapshot(): Record<string, unknown> {
       directory: `${config.workspaceMountPath}/downloads`,
     },
   };
+}
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function hashFileIfExists(path: string): string {

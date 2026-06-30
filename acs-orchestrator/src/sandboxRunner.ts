@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -12,6 +12,7 @@ import type { SandboxRunnerFinalOutput, SandboxRunnerInput, SandboxRunnerOutput 
 const PYTHON_RUNTIME_CONTRACT_VERSION = 1;
 const DEFAULT_PIP_INSTALL_TIMEOUT_MS = 240_000;
 const DEFAULT_PYTHON_WHEELHOUSE = '/opt/ky-agent/python-wheels';
+const DEFAULT_MAX_VENV_ARCHIVES = 2;
 const DEFAULT_RUNTIME_PATH_SEGMENTS = [
   '/home/agent/.npm-global/bin',
   '/usr/local/bin',
@@ -42,6 +43,7 @@ interface PythonRuntimeManifest {
 export interface EnsurePythonEnvOptions {
   baseRequirementsPath?: string;
   imageRef?: string;
+  maxVenvArchives?: number;
   skipBaseInstall?: boolean;
   installTimeoutMs?: number;
   now?: () => Date;
@@ -138,7 +140,7 @@ export function ensurePythonEnv(workspaceRoot: string, options: EnsurePythonEnvO
   mkdirSync(dirname(venvPath), { recursive: true });
   mkdirSync(pipCacheDir, { recursive: true });
   if (rebuildReasons.length > 0) {
-    archiveBrokenVenv(workspaceRoot, venvPath);
+    archiveBrokenVenv(workspaceRoot, venvPath, options.maxVenvArchives ?? readMaxVenvArchives());
     execFileSync('python3', ['-m', 'venv', venvPath], { timeout: 30_000, stdio: 'pipe' });
     rebuilt = true;
     configurePythonEnv(venvPath, pipCacheDir);
@@ -304,7 +306,14 @@ function readInstallTimeoutMs(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_PIP_INSTALL_TIMEOUT_MS;
 }
 
-function archiveBrokenVenv(workspaceRoot: string, venvPath: string): void {
+function readMaxVenvArchives(): number {
+  const raw = process.env.ACS_MAX_VENV_ARCHIVES?.trim();
+  if (!raw) return DEFAULT_MAX_VENV_ARCHIVES;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_VENV_ARCHIVES;
+}
+
+function archiveBrokenVenv(workspaceRoot: string, venvPath: string, maxArchives: number): void {
   if (!existsSync(venvPath)) return;
   const archiveRoot = join(workspaceRoot, '.ky-agent', 'runtime', 'venv-archive');
   mkdirSync(archiveRoot, { recursive: true });
@@ -315,6 +324,33 @@ function archiveBrokenVenv(workspaceRoot: string, venvPath: string): void {
     if (err && typeof err === 'object' && 'code' in err && (err as { code?: unknown }).code === 'ENOENT') return;
     throw err;
   }
+  try {
+    pruneVenvArchive(archiveRoot, maxArchives);
+  } catch {
+    // Archive cleanup is best-effort; venv rebuild must still proceed.
+  }
+}
+
+export function pruneVenvArchive(archiveRoot: string, maxArchives = DEFAULT_MAX_VENV_ARCHIVES): string[] {
+  if (!existsSync(archiveRoot)) return [];
+  const kept = Math.max(0, maxArchives);
+  const archives = readdirSync(archiveRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('.venv-'))
+    .map((entry) => {
+      const path = join(archiveRoot, entry.name);
+      return {
+        name: entry.name,
+        path,
+        mtimeMs: statSync(path).mtimeMs,
+      };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.name.localeCompare(a.name));
+  const deleted: string[] = [];
+  for (const archive of archives.slice(kept)) {
+    rmSync(archive.path, { recursive: true, force: true });
+    deleted.push(archive.path);
+  }
+  return deleted;
 }
 
 function isDirectRun(): boolean {

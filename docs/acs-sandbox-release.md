@@ -60,12 +60,13 @@ pnpm test
 镜像内容基线（通用生产 Agent hand P0）：
 
 - 基础 OS：Debian/Ubuntu glibc slim，生产默认 Python 3.12；Alpine/musl 与 Python 3.14 只可作为回滚/实验，不是目标形态。
-- 必须有：`node/npm/npx/pnpm/corepack`、`bash`、`git/git-lfs`、`ssh/scp`、`curl/wget`、`rg`、`jq`、`zip/unzip`、`python/python3/pip`、`gcc/g++/make/cmake/pkg-config`、`sqlite3/psql/mysql`、`dig/nslookup/nc/ping`。
-- 通用 Agent full tools 必须有：Chromium/Playwright、`fontconfig` + 中文字体、`ffmpeg/ffprobe`、ImageMagick、LibreOffice、Pandoc、Poppler、Ghostscript、QPDF、Tesseract OCR。
+- 必须有：`node/npm/npx/pnpm/corepack`、`bash`、`git/git-lfs`、`ssh/scp`、`curl/wget`、`rg`、`jq`、`zip/unzip`、`python/python3/pip`、`sqlite3/psql/mysql`、`dig/nslookup/nc/ping`。
+- 默认 runtime 不带 `gcc/g++/make/cmake/pkg-config` 和 `*-dev` 编译头文件；需要现场编译 Python/Node native 依赖时走扩展镜像或预构建 wheelhouse。
+- 通用 Agent 默认工具必须有：Chromium/Playwright、`fontconfig` + CJK/emoji 字体、`ffmpeg/ffprobe`、最小 LibreOffice（core/common/writer/calc/impress）、Poppler、Ghostscript、QPDF、Tesseract OCR。Pandoc 与 ImageMagick 不进默认镜像，后续按扩展层提供。
 - 必须用非 root 跑：当前默认 `runAsUser=501`、`runAsGroup=20`，与 NAS workspace 的 `501:dialout` 对齐；不要让 Sandbox 继续以 root 生成 workspace 文件。
-- Python 必须走 workspace venv：ACS runner 会使用 `/workspace/.ky-agent/runtime/venv`，旧/不可用 venv 归档到 `.ky-agent/runtime/venv-archive/` 后用容器内 Python 重建 Linux venv；镜像默认 `PIP_REQUIRE_VIRTUALENV=1`，禁止 pip 静默写系统环境。
+- Python 必须走 workspace venv：ACS runner 会使用 `/workspace/.ky-agent/runtime/venv`，旧/不可用 venv 归档到 `.ky-agent/runtime/venv-archive/` 后用容器内 Python 重建 Linux venv；默认只保留最近 2 个 `.venv-*` 归档，可用 `ACS_MAX_VENV_ARCHIVES` 调整；镜像默认 `PIP_REQUIRE_VIRTUALENV=1`，禁止 pip 静默写系统环境。
 - workspace venv 必须有 `.ky-runtime.json` manifest：记录 runtime contract、Python major/minor、base requirements hash、Sandbox image ref。manifest 缺失/损坏、Python 版本变化、requirements hash 变化、image ref 变化或 `include-system-site-packages != false` 都必须归档旧 venv 并重建。
-- 基础 Python 包安装到 workspace venv，不安装到系统 Python。权威清单是 `acs-orchestrator/requirements/base.txt`，应覆盖 requests/httpx/aiohttp、numpy/pandas、Office 文档、轻量 PDF（PyMuPDF + pypdf）、数据库客户端、dotenv/yaml、playwright、jieba 等通用任务基线；机器学习、科学计算、Parquet/Arrow、matplotlib、Selenium、PDF 高级解析/生成套件不放入默认基线。镜像必须预置 `/opt/ky-agent/python-wheels`，runner 优先用本地 wheelhouse 安装，避免生产运行时首个 workspace 依赖公网 PyPI。
+- 基础 Python 包安装到 workspace venv，不安装到系统 Python。权威清单是 `acs-orchestrator/requirements/base.txt`，应覆盖 requests/httpx、numpy/pandas、Office 文档、轻量 PDF（PyMuPDF + pypdf）、数据库客户端、dotenv/yaml、playwright、jieba 等通用任务基线；aiohttp、redis、机器学习、科学计算、Parquet/Arrow、matplotlib、Selenium、PDF 高级解析/生成套件不放入默认基线。镜像必须预置 `/opt/ky-agent/python-wheels`，runner 优先用本地 wheelhouse 安装，避免生产运行时首个 workspace 依赖公网 PyPI；wheelhouse 只保留默认基线所需 wheels。
 - npm global prefix 必须走用户可写目录：镜像默认 `NPM_CONFIG_PREFIX=/home/agent/.npm-global`，`PATH` 必须包含 `/home/agent/.npm-global/bin`，保证 skill 里仍使用 `npm install -g` 的脚本不会写 root-owned `/usr/local`。
 - Sandbox 业务时区必须显式注入：镜像默认 `TZ=Asia/Shanghai`，orchestrator 创建 Sandbox 时也注入同名 env；`date +%z` 应输出 `+0800`。
 - 下载目录必须落 workspace：镜像与 orchestrator 创建 Sandbox 时都应提供 `DOWNLOAD_DIR=/workspace/downloads`、`XDG_DOWNLOAD_DIR=/workspace/downloads`，浏览器/下载类任务不得默认写进 `/home/agent` 或容器临时层。
@@ -80,7 +81,7 @@ pnpm test
 ```bash
 docker run --rm --user 501:20 --entrypoint /bin/sh "$IMAGE" -c '
 set -eu
-for c in node npm npx pnpm corepack yarn bash git git-lfs ssh scp curl wget rg jq zip unzip python python3 pip gcc g++ make cmake pkg-config sqlite3 psql mysql dig nslookup nc ping tree openssl ffmpeg ffprobe convert identify soffice pandoc pdftotext qpdf gs tesseract fc-match; do
+for c in node npm npx pnpm corepack yarn bash git git-lfs ssh scp curl wget rg jq zip unzip python python3 pip sqlite3 psql mysql dig nslookup nc ping tree openssl ffmpeg ffprobe soffice pdftotext qpdf gs tesseract fc-match; do
   command -v "$c" >/dev/null || { echo "missing $c"; exit 1; }
 done
 python3 - <<'PY'
@@ -100,6 +101,7 @@ test "$PLAYWRIGHT_BROWSERS_PATH" = "/ms-playwright"
 test "$DOWNLOAD_DIR" = "/workspace/downloads"
 test "$XDG_DOWNLOAD_DIR" = "/workspace/downloads"
 test "$ACS_PYTHON_WHEELHOUSE" = "/opt/ky-agent/python-wheels"
+test "$ACS_MAX_VENV_ARCHIVES" = "2"
 test -d "$ACS_PYTHON_WHEELHOUSE"
 test "$(find "$ACS_PYTHON_WHEELHOUSE" -name "*.whl" | wc -l)" -gt 0
 fc-match "Noto Sans CJK SC" | grep -Ei "Noto|CJK|Sans" >/dev/null
@@ -122,13 +124,14 @@ const command = [
   'test "$DOWNLOAD_DIR" = /workspace/downloads',
   'test "$PLAYWRIGHT_BROWSERS_PATH" = /ms-playwright',
   'test "$ACS_PYTHON_WHEELHOUSE" = /opt/ky-agent/python-wheels',
-  'for c in openssl ffmpeg ffprobe convert identify soffice pandoc pdftotext qpdf gs tesseract fc-match; do command -v "$c" >/dev/null; done',
+  'test "$ACS_MAX_VENV_ARCHIVES" = 2',
+  'for c in openssl ffmpeg ffprobe soffice pdftotext qpdf gs tesseract fc-match; do command -v "$c" >/dev/null; done',
   'fc-match "Noto Sans CJK SC" | grep -Ei "Noto|CJK|Sans" >/dev/null',
   'mkdir -p "$DOWNLOAD_DIR"',
   'touch "$DOWNLOAD_DIR/.write-test"',
   'rm "$DOWNLOAD_DIR/.write-test"',
   'python3 - <<\\PY',
-  'import requests, httpx, aiohttp, bs4, lxml, numpy, pandas, openpyxl, xlsxwriter, docx, pptx, PIL, jinja2, markdown, pypdf, fitz, sqlalchemy, pymysql, psycopg, redis, dotenv, yaml, jieba, playwright',
+  'import requests, httpx, bs4, lxml, numpy, pandas, openpyxl, xlsxwriter, docx, pptx, PIL, jinja2, markdown, pypdf, fitz, sqlalchemy, pymysql, psycopg, dotenv, yaml, jieba, playwright',
   'print("PYTHON_BASE_IMPORTS_OK")',
   'PY',
   'node - <<\\NODE',

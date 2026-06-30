@@ -278,6 +278,12 @@ jobs:
             "$CONTAINER_CLI" image prune -f >/dev/null 2>&1 || true
           }
 
+          prune_pnpm_store() {
+            if command -v pnpm >/dev/null 2>&1; then
+              pnpm store prune || echo "pnpm store prune failed; continuing" >&2
+            fi
+          }
+
           cleanup() {
             if [ -n "${SMOKE_SESSION:-}" ] && command -v kubectl >/dev/null 2>&1; then
               if [ -n "${ACS_KUBECONFIG:-}" ]; then
@@ -493,4 +499,5 @@ jobs:
             --data-binary @/tmp/acs-execute-payload.json \
             >/tmp/acs-execute.json
           grep -F 'ACS_SANDBOX_DEPLOY_SMOKE_OK' /tmp/acs-execute.json >/dev/null
+          prune_pnpm_store
           REMOTE

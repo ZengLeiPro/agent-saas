@@ -138,9 +138,16 @@ jobs:
           fi
           NODE_ENV=development pnpm install --frozen-lockfile --filter server... --filter shared...
 
+          prune_pnpm_store() {
+            if command -v pnpm >/dev/null 2>&1; then
+              pnpm store prune || echo "pnpm store prune failed; continuing" >&2
+            fi
+          }
+
           systemctl restart "$SERVICE_NAME"
           for _ in $(seq 1 120); do
             if curl -fsS http://127.0.0.1:3200/api/healthz >/dev/null; then
+              prune_pnpm_store
               rm -f "$RELEASE_TGZ"
               exit 0
             fi

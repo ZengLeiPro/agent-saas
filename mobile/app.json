@@ -1,0 +1,96 @@
+{
+  "expo": {
+    "name": "Agent SaaS",
+    "slug": "agent-saas",
+    "version": "1.9.5",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "agent-saas",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#EDEDED",
+      "dark": {
+        "backgroundColor": "#191919"
+      }
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.agentsaas.mobile",
+      "buildNumber": "85",
+      "appleTeamId": "T4D4M5B485",
+      "entitlements": {
+        "keychain-access-groups": [
+          "$(AppIdentifierPrefix)group.com.agentsaas.mobile.share"
+        ]
+      },
+      "infoPlist": {
+        "CFBundleDevelopmentRegion": "zh_CN",
+        "CFBundleLocalizations": ["zh_CN", "zh"],
+        "NSMicrophoneUsageDescription": "用于发送语音消息",
+        "NSCameraUsageDescription": "用于拍照上传",
+        "NSPhotoLibraryUsageDescription": "用于从系统图库选择图片或视频作为附件、头像",
+        "NSLocationWhenInUseUsageDescription": "用于操作日志中的位置记录",
+        "ITSAppUsesNonExemptEncryption": false,
+        "LSApplicationQueriesSchemes": ["iosamap"]
+      }
+    },
+    "android": {
+      "package": "com.agentsaas.mobile",
+      "permissions": [
+        "RECORD_AUDIO",
+        "CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.REQUEST_INSTALL_PACKAGES"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-audio",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "用于操作日志中的位置记录"
+        }
+      ],
+      "expo-video",
+      "expo-sharing",
+      [
+        "expo-share-intent",
+        {
+          "iosShareExtensionName": "AgentSaaSShare",
+          "iosAppGroupIdentifier": "group.com.agentsaas.mobile.share",
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsImageWithMaxCount": 10,
+            "NSExtensionActivationSupportsMovieWithMaxCount": 5,
+            "NSExtensionActivationSupportsFileWithMaxCount": 10
+          },
+          "androidIntentFilters": ["image/*", "video/*", "*/*"],
+          "androidMultiIntentFilters": ["image/*", "video/*", "*/*"]
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      "./plugins/withAndroidSigningConfig",
+      "./plugins/withInstallPermission"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c5c346ce-795f-4dae-9570-b7e937028923"
+      }
+    }
+  }
+}

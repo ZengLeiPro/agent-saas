@@ -1,0 +1,247 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /*
+   * 开沿科技品牌色桥接层：把 shadcn HSL 变量映射到 brand-50…900 + accent。
+   * 蓝色（brand）= 技术/产品/数据 默认色；橙色（brand-accent）= 人文/温度/故事，
+   * 在 utility 层独立暴露（bg-brand-accent / brand-accent-soft / text-brand-accent-ink），
+   * 不进 shadcn 桥接，避免与 hover 浅底语义混用。
+   */
+  :root {
+    --background: 225 75% 98%;            /* #F6F8FE 品牌稀释浅蓝灰 */
+    --foreground: 0 0% 12%;               /* 一级文字 ≈ rgba(0,0,0,0.88) */
+
+    --card: 0 0% 100%;                    /* 纯白卡片浮于品牌底 */
+    --card-foreground: 0 0% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 12%;
+
+    --primary: 227 76% 53%;               /* brand-600 #2E56E1 UI 主色 */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 225 75% 98%;             /* 与背景同源，备用浅底 */
+    --secondary-foreground: 0 0% 12%;
+
+    --muted: 225 35% 95%;                 /* 微带蓝调的浅底，比纯灰更协调 */
+    --muted-foreground: 0 0% 35%;         /* 二级文字 ≈ rgba(0,0,0,0.65) */
+
+    --accent: 225 100% 97%;               /* brand-50 #EEF2FF 蓝色 hover 浅底 */
+    --accent-foreground: 228 69% 45%;     /* brand-700 浅底上的深文字 */
+
+    --destructive: 358 90% 60%;           /* #F53F3F Arco/AntD 国产惯例 */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;                /* #E5E6EB 冷灰描边 */
+    --input: 220 13% 88%;
+    --ring: 225 100% 79%;                 /* brand-300 focus ring（按品牌规范） */
+
+    --radius: 0.5rem;
+
+    --success: 134 100% 35%;              /* #00B42A Arco 国产惯例 */
+    --success-foreground: 0 0% 100%;
+    --warning: 26 100% 50%;               /* #FF7D00 比 brand-accent 更红，与之拉开距离 */
+    --warning-foreground: 0 0% 100%;
+    --link: 227 76% 53%;                  /* brand-600 链接收敛到品牌主色 */
+    --user-bubble: 28 86% 95%;            /* brand-accent-soft #FDF2E8 用户=人=暖橙，与 AI 蓝色技术语境拉开 */
+    --code-block-bg: 225 60% 97%;         /* 极淡蓝灰，代码块从品牌底浮起 */
+    --interrupted: 24 95% 49%;
+
+    /* 品牌阴影：主色 brand-600 @ 28% 投影。Tailwind 通过 shadow-brand utility 暴露 */
+    --shadow-brand: 0 14px 32px rgba(46, 86, 225, 0.28);
+  }
+
+  .dark {
+    --background: 227 30% 8%;             /* 淡淡蓝调深底，非纯黑 */
+    --foreground: 0 0% 82%;
+
+    --card: 227 25% 11%;
+    --card-foreground: 0 0% 82%;
+
+    --popover: 227 25% 14%;
+    --popover-foreground: 0 0% 82%;
+
+    --primary: 227 89% 68%;               /* brand-400，暗色下提亮一档保对比度 */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 227 25% 16%;
+    --secondary-foreground: 0 0% 82%;
+
+    --muted: 227 18% 18%;
+    --muted-foreground: 0 0% 60%;
+
+    --accent: 228 50% 22%;                /* brand-900 方向深蓝浅底（hover） */
+    --accent-foreground: 225 100% 87%;    /* brand-200 */
+
+    --destructive: 358 90% 65%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 227 18% 18%;
+    --input: 227 18% 22%;
+    --ring: 227 89% 68%;                  /* brand-400 暗色 focus */
+
+    --success: 134 70% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 26 100% 60%;
+    --warning-foreground: 0 0% 10%;
+    --link: 227 89% 68%;                  /* brand-400 */
+    --user-bubble: 24 28% 18%;            /* 暖棕深底，暗色下保持用户=橙的语义 */
+    --code-block-bg: 227 22% 13%;
+    --interrupted: 24 95% 60%;
+
+    --shadow-brand: 0 14px 32px rgba(46, 86, 225, 0.36);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  /* prose 内代码块：撑满气泡宽度，内部独立横滚 */
+  .prose pre {
+    max-width: 100%;
+    overflow-x: auto;
+    display: block;
+  }
+
+  /* CJK 表格：keep-all 让中文只在标点处断行，避免逐字折行挤压列宽 */
+  .prose table {
+    word-break: keep-all;
+  }
+  .prose table th,
+  .prose table td {
+    white-space: nowrap;
+  }
+
+
+  html,
+  body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  /* iOS standalone PWA: black-translucent 将文档上移至状态栏后方，
+     底部会露出系统背景色。html 背景色能渲染到 safe area 外，
+     确保 home indicator 区域颜色与应用一致 */
+  html {
+    @apply bg-background;
+  }
+
+  /*
+   * #root 使用 fixed 定位脱离文档流，配合 JS (App.tsx) 中的 visualViewport
+   * 监听动态调整 height/top，使键盘弹出时整个布局缩进 visual viewport 内，
+   * 从而阻止 iOS 系统级上推导致 header 被推出屏幕。
+   */
+  #root {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+  }
+
+  /* 防止内联代码、长链接等撑破容器 */
+  .prose code:not(pre code) {
+    word-break: break-all;
+  }
+  .prose a {
+    word-break: break-all;
+  }
+
+  /*
+   * iOS safe area insets
+   * --sat: App.tsx (状态栏背景/header), mobile/SwipeDrawer.tsx (抽屉定位)
+   * --sab: ChatInput.tsx (输入栏底部间距)
+   *
+   * 在 standalone PWA 模式下，系统可能已在布局层面提供了安全区域偏移，
+   * App.tsx 会在首帧渲染后测量并将 --sab 归零以避免叠加。
+   */
+  :root {
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+  }
+
+  /*
+   * iOS standalone PWA safe-area 修正：
+   * 系统可能在布局层面将 fixed 定位元素约束在安全区域内，
+   * 但 env(safe-area-inset-bottom) 仍返回完整值，导致 CSS padding 与系统偏移叠加。
+   *
+   * 不再使用 @media (display-mode: standalone) 归零 --sab（在部分 iOS 版本不可靠），
+   * 改由 App.tsx 中的 useEffect 在首帧渲染后测量 #root 实际底边与 window.innerHeight 的差值，
+   * 动态决定是否将 --sab 归零。
+   */
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    /*
+     * 中文优先字体栈：苹方 → 鸿蒙黑 → 微软雅黑 → 思源黑体 → Noto。
+     * 不引入 web font，全部依赖系统字体（macOS/iOS PingFang、Windows YaHei、
+     * HarmonyOS HarmonyOS Sans、Linux Noto），与飞书/钉钉/腾讯文档惯例一致。
+     */
+    font-family:
+      -apple-system,
+      BlinkMacSystemFont,
+      "PingFang SC",
+      "HarmonyOS Sans SC",
+      "Microsoft YaHei",
+      "Source Han Sans SC",
+      "Noto Sans CJK SC",
+      ui-sans-serif,
+      system-ui,
+      "Segoe UI",
+      Roboto,
+      "Helvetica Neue",
+      Arial,
+      "Noto Sans",
+      "Apple Color Emoji",
+      "Segoe UI Emoji",
+      "Segoe UI Symbol",
+      "Noto Color Emoji";
+  }
+}
+
+@layer components {
+  /* 内容区域居中容器 - 消息列表、输入框、文件上传共用 */
+  .content-container {
+    @apply mx-auto max-w-3xl md:max-w-4xl px-3;
+  }
+  .chat-width-wide .content-container {
+    @apply md:max-w-6xl;
+  }
+
+  /* Markdown 消息的 prose 样式预设 */
+  .prose-chat {
+    @apply prose prose-sm prose-neutral dark:prose-invert max-w-none
+      prose-p:my-2.5 prose-headings:my-3 prose-ul:my-2.5 prose-ol:my-2.5
+      prose-li:my-1 prose-pre:my-2.5 prose-hr:my-3
+      prose-p:leading-relaxed prose-li:leading-relaxed;
+  }
+  .prose-chat pre {
+    background-color: hsl(var(--code-block-bg));
+    color: hsl(var(--foreground));
+  }
+  .prose-chat pre code {
+    color: inherit;
+  }
+
+  /* 用户消息正文字号（脱离 text-sm 以支持大字体切换） */
+  .msg-user-text {
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+
+  /* 大字体模式 */
+  .chat-font-large .prose-chat {
+    font-size: 1rem;
+    line-height: 1.75;
+  }
+  .chat-font-large .msg-user-text {
+    font-size: 1rem;
+    line-height: 1.5rem;
+  }
+
+  /* 代码/工具内容预览区域 */
+  .code-preview {
+    @apply max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md p-3 text-xs text-muted-foreground;
+    background-color: hsl(var(--code-block-bg));
+  }
+}

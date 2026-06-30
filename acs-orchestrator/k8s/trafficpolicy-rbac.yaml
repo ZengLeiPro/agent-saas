@@ -1,0 +1,30 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-saas-acs-orchestrator-trafficpolicy
+  namespace: agent-saas-coding
+rules:
+  - apiGroups:
+      - network.alibabacloud.com
+    resources:
+      - trafficpolicies
+    verbs:
+      - get
+      - create
+      - patch
+      - update
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-saas-acs-orchestrator-trafficpolicy
+  namespace: agent-saas-coding
+subjects:
+  - kind: ServiceAccount
+    name: agent-saas-acs-orchestrator
+    namespace: agent-saas-coding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-saas-acs-orchestrator-trafficpolicy

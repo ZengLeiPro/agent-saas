@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd 服务配置 — Tailscale Daemon
+
+  安装: launchctl load ~/Library/LaunchAgents/com.kaiyan.tailscaled.plist
+  卸载: launchctl unload ~/Library/LaunchAgents/com.kaiyan.tailscaled.plist
+  状态: tailscale --socket=/tmp/tailscale/tailscaled.sock status
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kaiyan.tailscaled</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>exec /Users/admin/code/agent/scripts/tailscaled.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/admin</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/opt/tailscale/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- 崩溃后等 5s 再重启 -->
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/admin/.config/tailscale/tailscaled.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/admin/.config/tailscale/tailscaled.error.log</string>
+</dict>
+</plist>

@@ -1,0 +1,827 @@
+#!/usr/bin/env python3
+"""报价书生成器
+读取 JSON 数据 → 渲染 HTML → 转换 PDF
+
+Usage:
+    python3 generate_quote.py <input.json> [output_dir]
+
+输出三个文件到 output_dir:
+    - {customer}_报价书.html
+    - {customer}_报价书.pdf
+    - {customer}_报价书.json
+"""
+
+import json
+import sys
+import os
+import re
+import base64
+import shutil
+import subprocess
+import tempfile
+import urllib.request
+from pathlib import Path
+
+import mistune
+
+SCRIPT_DIR = Path(__file__).parent
+LOGOS_DIR = SCRIPT_DIR / "logos"
+
+
+def load_logo_base64(name):
+    """从 logos 目录加载图片并转为 base64"""
+    path = LOGOS_DIR / name
+    if not path.exists():
+        return ""
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+
+def fmt_price(price):
+    """格式化价格：整数用千分位，0 显示为 0"""
+    if price == 0:
+        return "0"
+    if price == int(price):
+        return f"{int(price):,}"
+    return f"{price:,.2f}"
+
+
+def embed_images(html, base_dir):
+    """将 HTML 中的 img src 转换为 base64 内嵌"""
+
+    def _replace(match):
+        src = match.group(1)
+        if src.startswith("data:"):
+            return match.group(0)
+        try:
+            if src.startswith(("http://", "https://")):
+                req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0"})
+                data = urllib.request.urlopen(req, timeout=15).read()
+            else:
+                path = src if os.path.isabs(src) else os.path.join(base_dir, src)
+                with open(path, "rb") as f:
+                    data = f.read()
+
+            ext = src.rsplit(".", 1)[-1].lower().split("?")[0]
+            mime_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                        "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml"}
+            mime = mime_map.get(ext, "image/png")
+            b64 = base64.b64encode(data).decode("utf-8")
+            return f'src="data:{mime};base64,{b64}"'
+        except Exception as e:
+            print(f"Warning: 图片嵌入失败 {src}: {e}", file=sys.stderr)
+            return match.group(0)
+
+    return re.sub(r'src="([^"]+)"', _replace, html)
+
+
+def render_solution(solution_data, json_dir):
+    """读取 Markdown 文件并渲染为 HTML，图片自动 base64 内嵌"""
+    md_file = solution_data.get("file", "")
+    if not md_file:
+        return ""
+
+    # 相对路径基于 JSON 文件所在目录解析
+    if not os.path.isabs(md_file):
+        md_file = os.path.join(json_dir, md_file)
+
+    if not os.path.exists(md_file):
+        print(f"Warning: 方案文件不存在 {md_file}", file=sys.stderr)
+        return ""
+
+    with open(md_file, encoding="utf-8") as f:
+        md_content = f.read()
+
+    md = mistune.create_markdown(plugins=["table", "strikethrough"], escape=False)
+    html = md(md_content)
+    html = embed_images(html, os.path.dirname(os.path.abspath(md_file)))
+
+    title = solution_data.get("title", "")
+    title_html = f'<div class="solution-main-title">{title}</div>' if title else ""
+
+    return f"""
+    <hr class="solution-divider">
+    {title_html}
+    <div class="solution-content">
+        {html}
+    </div>"""
+
+
+def build_service_table(table):
+    """构建单个服务报价表 HTML"""
+    # 检测是否有 remark 列
+    has_remark = any(item.get("remark") is not None for item in table["items"])
+    total_cols = 8 if has_remark else 7
+    content_colspan = 4
+    summary_colspan = total_cols - 1
+
+    remark_header = '<td class="center bold" style="width:10%">备注</td>' if has_remark else ""
+
+    rows = ""
+    for idx, item in enumerate(table["items"], 1):
+        desc = ""
+        if item.get("description"):
+            desc = f'<br><span class="item-desc">{item["description"]}</span>'
+        remark_cell = f'<td class="center">{item.get("remark", "-")}</td>' if has_remark else ""
+        rows += f"""
+            <tr>
+                <td class="center">{idx}</td>
+                <td colspan="{content_colspan}">{item["name"]}{desc}</td>
+                <td class="center">{item["chargeType"]}</td>
+                <td class="right bold">{fmt_price(item["price"])}</td>
+                {remark_cell}
+            </tr>"""
+
+    summary = ""
+    for row in table.get("summaryRows", []):
+        if row.get("highlight") and has_remark:
+            summary += f"""
+            <tr class="summary-row highlight-row">
+                <td colspan="{total_cols - 2}" class="right bold">{row["label"]}</td>
+                <td class="right bold" colspan="2">{fmt_price(row["value"])}</td>
+            </tr>"""
+        else:
+            remark_empty = '<td class="center">-</td>' if has_remark else ""
+            summary += f"""
+            <tr class="summary-row">
+                <td colspan="{summary_colspan - (1 if has_remark else 0)}" class="right bold">{row["label"]}</td>
+                <td class="right bold">{fmt_price(row["value"])}</td>
+                {remark_empty}
+            </tr>"""
+
+    return f"""
+        <table class="price-table">
+            <tr class="section-header">
+                <td colspan="{total_cols}" class="bold">{table["title"]}</td>
+            </tr>
+            <tr class="col-header">
+                <td class="center bold" style="width:8%">序号</td>
+                <td colspan="{content_colspan}" class="bold">项目</td>
+                <td class="center bold" style="width:12%">收费方式</td>
+                <td class="center bold" style="width:14%">总价（元）</td>
+                {remark_header}
+            </tr>
+            {rows}
+            {summary}
+        </table>"""
+
+
+def build_detailed_table(table):
+    """构建详细报价表 HTML（含规格、单价、数量列，用于软件/硬件类报价）"""
+    rows = ""
+    for idx, item in enumerate(table["items"], 1):
+        desc = ""
+        if item.get("description"):
+            desc = f'<br><span class="item-desc">{item["description"]}</span>'
+        remark = item.get("remark", "-")
+        rows += f"""
+            <tr>
+                <td class="center">{idx}</td>
+                <td>{item["name"]}{desc}</td>
+                <td class="center">{item.get("spec", "")}</td>
+                <td class="center">{item["chargeType"]}</td>
+                <td class="right">{fmt_price(item["unitPrice"])}</td>
+                <td class="center">{item["quantity"]}</td>
+                <td class="right bold">{fmt_price(item["total"])}</td>
+                <td class="center">{remark}</td>
+            </tr>"""
+
+    summary = ""
+    for row in table.get("summaryRows", []):
+        if row.get("highlight"):
+            summary += f"""
+            <tr class="summary-row highlight-row">
+                <td colspan="6" class="right bold">{row["label"]}</td>
+                <td class="right bold" colspan="2">{fmt_price(row["value"])}</td>
+            </tr>"""
+        else:
+            summary += f"""
+            <tr class="summary-row">
+                <td colspan="6" class="right bold">{row["label"]}</td>
+                <td class="right bold">{fmt_price(row["value"])}</td>
+                <td class="center">-</td>
+            </tr>"""
+
+    return f"""
+        <table class="price-table">
+            <tr class="section-header">
+                <td colspan="8" class="bold">{table["title"]}</td>
+            </tr>
+            <tr class="col-header">
+                <td class="center bold" style="width:6%">序号</td>
+                <td class="center bold">项目</td>
+                <td class="center bold" style="width:10%">规格</td>
+                <td class="center bold" style="width:11%">收费方式</td>
+                <td class="center bold" style="width:12%">单价（元）</td>
+                <td class="center bold" style="width:7%">数量</td>
+                <td class="center bold" style="width:12%">总价（元）</td>
+                <td class="center bold" style="width:8%">备注</td>
+            </tr>
+            {rows}
+            {summary}
+        </table>"""
+
+
+def build_attachment(att):
+    """构建附件说明表 HTML"""
+    modules = att["modules"]
+    has_category = any(mod.get("category") for mod in modules)
+    if has_category:
+        return _build_attachment_with_category(att)
+    return _build_attachment_simple(att)
+
+
+def _build_attachment_with_category(att):
+    """构建带功能分类的附件表（三列：功能分类、业务模块、功能描述）"""
+    modules = att["modules"]
+    groups = []
+    current_cat = None
+    current_group = []
+    for mod in modules:
+        cat = mod.get("category", "")
+        if cat != current_cat:
+            if current_group:
+                groups.append((current_cat, current_group))
+            current_cat = cat
+            current_group = [mod]
+        else:
+            current_group.append(mod)
+    if current_group:
+        groups.append((current_cat, current_group))
+
+    rows = ""
+    for cat, mods in groups:
+        for i, mod in enumerate(mods):
+            features = "<ol>" + "".join(f"<li>{f}</li>" for f in mod["features"]) + "</ol>"
+            cat_cell = ""
+            if i == 0:
+                cat_cell = f'<td class="center module-category" rowspan="{len(mods)}">{cat}</td>'
+            rows += f"""
+                <tr>
+                    {cat_cell}
+                    <td class="module-name">{mod["name"]}</td>
+                    <td class="module-desc">{features}</td>
+                </tr>"""
+
+    return f"""
+        <div class="attachment-title bold">{att["title"]}</div>
+        <table class="att-table">
+            <tr class="col-header">
+                <td class="center bold" style="width:12%">功能分类</td>
+                <td class="center bold" style="width:15%">业务模块</td>
+                <td class="bold">功能描述</td>
+            </tr>
+            {rows}
+        </table>"""
+
+
+def _build_attachment_simple(att):
+    """构建简单附件表（两列：业务模块、功能详细描述，向后兼容）"""
+    modules = ""
+    for mod in att["modules"]:
+        features = "<ul>" + "".join(f"<li>{f}</li>" for f in mod["features"]) + "</ul>"
+        modules += f"""
+            <tr>
+                <td class="module-name">{mod["name"]}</td>
+                <td class="module-desc">{features}</td>
+            </tr>"""
+
+    return f"""
+        <div class="attachment-title bold">{att["title"]}</div>
+        <table class="att-table">
+            <tr class="col-header">
+                <td class="bold" style="width:25%">业务模块</td>
+                <td class="bold">功能详细描述</td>
+            </tr>
+            {modules}
+        </table>"""
+
+
+def generate_html(data, json_dir):
+    """根据 JSON 数据生成完整 HTML"""
+    customer = data["customer"]
+    title = data.get("title", "钉钉数字化解决方案报价书")
+    quoter = data["quoter"]
+    date = data["date"]
+    valid_days = data.get("validDays", 30)
+
+    kaiyan_b64 = load_logo_base64("kaiyan.png")
+    show_dingtalk = data.get("showDingtalkLogo", True)
+    dingtalk_b64 = load_logo_base64("dingtalk.png") if show_dingtalk else ""
+
+    # 服务报价表
+    tables_html = ""
+    for i, tbl in enumerate(data.get("serviceTables", [])):
+        if i > 0:
+            tables_html += '<div class="table-gap"></div>'
+        if tbl.get("type") == "detailed":
+            tables_html += build_detailed_table(tbl)
+        else:
+            tables_html += build_service_table(tbl)
+
+    # 报价表后的补充说明
+    extra_notes = data.get("extraNotes", "")
+    extra_notes_html = ""
+    if extra_notes:
+        md = mistune.create_markdown(plugins=["table", "strikethrough"], escape=False)
+        extra_notes_html = f'<div class="extra-notes">{md(extra_notes)}</div>'
+
+    # 附件说明
+    att_html = ""
+    for att in data.get("attachments", []):
+        att_html += build_attachment(att)
+
+    # 解决方案文档（可选）
+    solution_html = ""
+    if data.get("solution"):
+        solution_html = render_solution(data["solution"], json_dir)
+
+    # 页脚备注
+    notes = data.get("footerNotes", [
+        "如有任何问题，欢迎随时致电。",
+        "此报价表为意向性报价，有效期内可参照查看。贵方应严守保密义务，不得向第三方披露。"
+    ])
+    notes_html = "".join(f"<li>{n}</li>" for n in notes)
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>{customer} - {title}</title>
+<style>
+/* === 基础 === */
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{
+    /* 首选 Heiti SC(STHeiti)：TrueType(glyf) 轮廓，子集嵌入 PDF 为 FontFile2，
+       国产手机阅读器(微信内置/QQ浏览器等)兼容性最好。
+       绝不可把 PingFang SC / Hiragino Sans GB 放首位——它们是 OpenType CFF，
+       子集嵌入为 FontFile3，国产轻量阅读器对 CFF 子集支持不全 → 中文乱码/方块。
+       此修复对 chromium 与 weasyprint 两条渲染路径通用（与渲染器无关，是字体轮廓格式兼容性问题）。 */
+    font-family: "Heiti SC", "STHeiti", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Helvetica Neue", Arial, sans-serif;
+    font-size: 13px;
+    color: #333;
+    background: #f5f5f5;
+    -webkit-font-smoothing: antialiased;
+}}
+.page {{
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0 auto;
+    padding: 22mm 20mm 20mm 20mm;
+    background: #fff;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}}
+
+/* === 头部 === */
+.header {{
+    margin-bottom: 28px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid #385ff5;
+}}
+.header-top {{
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 16px;
+}}
+.header-title {{
+    flex: 1;
+}}
+.customer-name {{
+    font-size: 18px;
+    font-weight: 700;
+    color: #385ff5;
+    line-height: 1.5;
+    margin-bottom: 4px;
+}}
+.doc-title {{
+    font-size: 18px;
+    font-weight: 700;
+    color: #385ff5;
+    line-height: 1.5;
+}}
+.header-logos {{
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+    padding-top: 2px;
+}}
+.logo-kaiyan {{
+    height: 52px;
+    width: auto;
+}}
+.logo-dingtalk {{
+    height: 36px;
+    width: auto;
+}}
+.header-meta {{
+    padding-top: 4px;
+}}
+.meta-item {{
+    font-size: 13px;
+    color: #595959;
+    line-height: 2;
+}}
+
+/* === 报价清单标题 === */
+.section-title {{
+    text-align: center;
+    font-size: 15px;
+    font-weight: 700;
+    color: #595959;
+    margin: 10px 0 18px;
+}}
+
+/* === 报价表 === */
+.price-table {{
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0;
+}}
+.price-table td {{
+    border: 1px solid #d9d9d9;
+    padding: 9px 12px;
+    font-size: 13px;
+    color: #333;
+    vertical-align: middle;
+}}
+.price-table .section-header td {{
+    background: #eef2ff;
+    font-size: 13.5px;
+    padding: 10px 12px;
+}}
+.price-table .col-header td {{
+    background: #fafafa;
+    text-align: center;
+}}
+.price-table .summary-row td {{
+    background: #fafafa;
+}}
+.item-desc {{
+    font-size: 12px;
+    color: #888;
+}}
+.center {{ text-align: center; }}
+.right {{ text-align: right; }}
+.bold {{ font-weight: 700; }}
+
+.table-gap {{
+    height: 40px;
+}}
+
+/* === 补充说明 === */
+.extra-notes {{
+    margin: 20px 0 0;
+    font-size: 13px;
+    color: #333;
+    line-height: 1.8;
+}}
+.extra-notes p {{
+    margin-bottom: 6px;
+}}
+
+/* === 附件 === */
+.attachment-title {{
+    font-size: 14px;
+    color: #333;
+    margin: 30px 0 14px;
+}}
+.att-table {{
+    width: 100%;
+    border-collapse: collapse;
+}}
+.att-table td {{
+    border: 1px solid #d9d9d9;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #333;
+    vertical-align: top;
+}}
+.att-table .col-header td {{
+    background: #fafafa;
+}}
+.module-name {{
+    font-weight: 500;
+}}
+.module-desc ul {{
+    margin: 0;
+    padding-left: 18px;
+}}
+.module-desc li {{
+    margin-bottom: 6px;
+    line-height: 1.7;
+}}
+.module-desc ol {{
+    margin: 0;
+    padding-left: 18px;
+}}
+.highlight-row td {{
+    background: #eef2ff !important;
+}}
+.module-category {{
+    font-weight: 500;
+    vertical-align: middle;
+}}
+
+/* === 解决方案文档 === */
+.solution-divider {{
+    border: none;
+    border-top: 1px solid #d9d9d9;
+    margin: 36px 0 24px;
+}}
+.solution-main-title {{
+    font-size: 16px;
+    font-weight: 700;
+    color: #333;
+    text-align: center;
+    margin-bottom: 24px;
+}}
+.solution-content {{
+    font-size: 13.5px;
+    color: #333;
+    line-height: 1.8;
+}}
+.solution-content h1 {{
+    font-size: 18px;
+    font-weight: 700;
+    margin: 28px 0 14px;
+    color: #222;
+}}
+.solution-content h2 {{
+    font-size: 15px;
+    font-weight: 700;
+    margin: 24px 0 12px;
+    color: #222;
+}}
+.solution-content h3 {{
+    font-size: 14px;
+    font-weight: 700;
+    margin: 18px 0 10px;
+    color: #333;
+}}
+.solution-content h4 {{
+    font-size: 13.5px;
+    font-weight: 700;
+    margin: 14px 0 8px;
+    color: #333;
+}}
+.solution-content p {{
+    margin-bottom: 10px;
+}}
+.solution-content ul, .solution-content ol {{
+    padding-left: 22px;
+    margin-bottom: 12px;
+}}
+.solution-content li {{
+    margin-bottom: 5px;
+}}
+.solution-content li > ul, .solution-content li > ol {{
+    margin-top: 4px;
+    margin-bottom: 4px;
+}}
+.solution-content img {{
+    max-width: 100%;
+    height: auto;
+    margin: 14px 0;
+    border-radius: 4px;
+}}
+.solution-content table {{
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 12.5px;
+}}
+.solution-content table th,
+.solution-content table td {{
+    border: 1px solid #d9d9d9;
+    padding: 8px 12px;
+    vertical-align: top;
+    text-align: left;
+}}
+.solution-content table th {{
+    background: #fafafa;
+    font-weight: 700;
+}}
+.solution-content table ul {{
+    margin: 0;
+    padding-left: 16px;
+}}
+.solution-content table li {{
+    margin-bottom: 4px;
+    line-height: 1.6;
+}}
+.solution-content blockquote {{
+    border-left: 3px solid #385ff5;
+    padding: 8px 16px;
+    margin: 12px 0;
+    color: #555;
+    background: #f9f9ff;
+}}
+.solution-content hr {{
+    border: none;
+    border-top: 1px solid #e5e5e5;
+    margin: 20px 0;
+}}
+.solution-content a {{
+    color: #385ff5;
+    text-decoration: none;
+}}
+
+/* === 页脚 === */
+.divider {{
+    border: none;
+    border-top: 1px solid #d9d9d9;
+    margin: 32px 0 14px;
+}}
+.footer-notes {{
+    list-style: disc;
+    padding-left: 18px;
+    color: #7F7F7F;
+    font-size: 12px;
+    line-height: 1.9;
+}}
+
+/* === 打印 === */
+@media print {{
+    body {{ background: #fff; }}
+    .page {{
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        box-shadow: none;
+        min-height: auto;
+    }}
+    .price-table, .att-table {{
+        page-break-inside: avoid;
+    }}
+    .solution-divider {{
+        page-break-before: always;
+    }}
+}}
+</style>
+</head>
+<body>
+<div class="page">
+
+    <!-- 头部 -->
+    <div class="header">
+        <div class="header-top">
+            <div class="header-title">
+                <div class="customer-name">{customer}</div>
+                <div class="doc-title">{title}</div>
+            </div>
+            <div class="header-logos">
+                <img src="data:image/png;base64,{kaiyan_b64}" class="logo-kaiyan" alt="开沿科技">
+                {'<img src="data:image/png;base64,' + dingtalk_b64 + '" class="logo-dingtalk" alt="钉钉">' if dingtalk_b64 else ''}
+            </div>
+        </div>
+        <div class="header-meta">
+            <div class="meta-item">报价方：{quoter["company"]}</div>
+            <div class="meta-item">报价人：{quoter["name"]}</div>
+            <div class="meta-item">电话：{quoter["phone"]}</div>
+            <div class="meta-item">报价日期：{date}</div>
+            <div class="meta-item">有效期：{valid_days} 天</div>
+        </div>
+    </div>
+
+    <!-- 报价清单 -->
+    <div class="section-title">报价清单明细表</div>
+
+    {tables_html}
+
+    {extra_notes_html}
+
+    <!-- 附件 -->
+    {att_html}
+
+    <!-- 解决方案文档 -->
+    {solution_html}
+
+    <!-- 页脚 -->
+    <hr class="divider">
+    <ul class="footer-notes">
+        {notes_html}
+    </ul>
+
+</div>
+</body>
+</html>"""
+    return html
+
+
+def html_to_pdf(html_path, pdf_path):
+    """将 HTML 转换为 PDF。
+
+    优先 Playwright(chromium)；在受限沙箱等 chromium 起不来的环境下
+    （典型报错 bootstrap_check_in ... Permission denied / mach port 被沙箱拦），
+    自动降级到 weasyprint，避免 PDF 步骤整体失败、只剩 HTML。
+    两条路径的字体兼容性一致（见 body font-family 注释）。
+    """
+    if _chromium_pdf(html_path, pdf_path):
+        return
+    print("chromium 不可用，降级使用 weasyprint 生成 PDF...", file=sys.stderr)
+    if _weasyprint_pdf(html_path, pdf_path):
+        return
+    print("PDF 生成失败：chromium 与 weasyprint 均不可用，仅产出 HTML。", file=sys.stderr)
+    sys.exit(1)
+
+
+def _chromium_pdf(html_path, pdf_path):
+    """用 Playwright(chromium) 渲染 PDF，成功返回 True，失败返回 False。"""
+    abs_html = os.path.abspath(html_path)
+    abs_pdf = os.path.abspath(pdf_path)
+    script = f"""
+const {{ chromium }} = require('playwright');
+(async () => {{
+    const browser = await chromium.launch({{ headless: true }});
+    const page = await browser.newPage();
+    await page.goto('file://{abs_html}', {{ waitUntil: 'networkidle' }});
+    await page.pdf({{
+        path: '{abs_pdf}',
+        format: 'A4',
+        margin: {{ top: '18mm', right: '16mm', bottom: '18mm', left: '16mm' }},
+        printBackground: true
+    }});
+    await browser.close();
+    console.log('PDF generated: {abs_pdf}');
+}})();
+"""
+    try:
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True, text=True, timeout=60
+        )
+    except Exception as e:
+        print(f"chromium 调用异常: {e}", file=sys.stderr)
+        return False
+    if result.returncode != 0:
+        print(f"chromium 渲染失败: {result.stderr.strip()}", file=sys.stderr)
+        return False
+    print(result.stdout.strip())
+    return True
+
+
+def _weasyprint_pdf(html_path, pdf_path):
+    """用 weasyprint 渲染 PDF（chromium 的兜底路径）。成功返回 True，失败返回 False。"""
+    # fontconfig 缓存目录指向可写临时目录，消除受限环境下的缓存写入报错
+    os.environ.setdefault("XDG_CACHE_HOME", os.path.join(tempfile.gettempdir(), "fccache"))
+    try:
+        from weasyprint import HTML, CSS
+    except Exception as e:
+        print(f"weasyprint 不可用（未安装或导入失败）: {e}", file=sys.stderr)
+        return False
+    try:
+        # 补 @page 边距，对齐 chromium 路径的页边距（上下 18mm / 左右 16mm）
+        page_css = CSS(string="@page { size: A4; margin: 18mm 16mm; }")
+        HTML(filename=os.path.abspath(html_path)).write_pdf(
+            os.path.abspath(pdf_path), stylesheets=[page_css]
+        )
+    except Exception as e:
+        print(f"weasyprint 渲染失败: {e}", file=sys.stderr)
+        return False
+    print(f"PDF generated (weasyprint): {os.path.abspath(pdf_path)}")
+    return True
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(1)
+
+    input_file = sys.argv[1]
+    output_dir = sys.argv[2] if len(sys.argv) > 2 else os.path.dirname(os.path.abspath(input_file))
+
+    with open(input_file, encoding="utf-8") as f:
+        data = json.load(f)
+
+    json_dir = os.path.dirname(os.path.abspath(input_file))
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 文件名
+    customer_short = data["customer"].replace(" ", "")
+    if len(customer_short) > 15:
+        customer_short = customer_short[:15]
+
+    base_name = f"{customer_short}_报价书"
+    html_path = os.path.join(output_dir, f"{base_name}.html")
+    pdf_path = os.path.join(output_dir, f"{base_name}.pdf")
+    json_path = os.path.join(output_dir, f"{base_name}.json")
+
+    # 生成 HTML
+    html = generate_html(data, json_dir)
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"HTML: {html_path}")
+
+    # 复制 JSON（输入输出同文件时跳过）
+    if os.path.abspath(input_file) != os.path.abspath(json_path):
+        shutil.copy2(input_file, json_path)
+    print(f"JSON: {json_path}")
+
+    # 转换 PDF
+    html_to_pdf(html_path, pdf_path)
+
+
+if __name__ == "__main__":
+    main()

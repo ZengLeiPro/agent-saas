@@ -1,0 +1,22 @@
+[Unit]
+Description=Agent SaaS Server
+After=network-online.target remote-fs.target agent-saas-acs-orchestrator.service
+Wants=network-online.target
+RequiresMountsFor=/mnt/agent-workspaces
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-saas-app/current/server
+Environment=NODE_ENV=production
+Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas/config.json
+EnvironmentFile=/etc/agent-saas/server.env
+ExecStart=/usr/local/bin/pnpm start
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=35
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

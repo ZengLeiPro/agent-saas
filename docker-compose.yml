@@ -1,0 +1,137 @@
+# agent-saas 本地 + ECS 部署编排
+#
+# β 阶段决策（06-14 由 AI 自决，曾磊授权"自己进 beta 不要等"）：
+#   β-Q1 hand-server 部署形态 = 方案 ii（同台 ECS 不同容器，HttpTransport 走 localhost）
+#   β-Q2 workspace 持久化 = 方案 ii（NAS 挂载，docker-compose volume 兜底）
+#   β-Q3 反向代理 = 方案 iii（Tailscale 内网，不暴露公网）
+#
+# 本地启动：
+#   docker compose up -d
+#   curl http://127.0.0.1:3200/api/health
+#
+# ECS 启动（同 docker-compose.yml，但 volume 改 NAS 挂载点；详见 docs/ecs-deployment.md）：
+#   docker compose --env-file .env.ecs up -d
+#
+# 配置（必填，本地通过 .env.local 注入；ECS 通过 systemd unit 或 .env.ecs）：
+#   OPENAI_API_KEY        生产模型 key（或走 OPENAI_BASE_URL 网关）
+#   OPENAI_BASE_URL       可选，默认 OpenAI 官方
+#   HAND_SERVER_AUTH_TOKEN  hand-server 鉴权 token（长度 ≥ 8）
+#   RUNTIME_PG_URL        PG connection string（Azeroth RDS）
+#   JWT_SECRET            server 鉴权 jwt secret
+#
+# 关闭：docker compose down  （volume 不删，保留 transcripts/PG cache）
+# 完全清理：docker compose down -v  （会删 workspace volume，谨慎！）
+
+services:
+
+  server:
+    build:
+      context: .
+      target: server
+    image: agent-runtime:server
+    container_name: agent-runtime-server
+    restart: unless-stopped
+
+    # 通过 Tailscale 内网访问；本地开发暴露到 127.0.0.1
+    ports:
+      - "127.0.0.1:3200:3200"
+
+    environment:
+      NODE_ENV: production
+      PORT: "3200"
+
+      # 模型与网关（生产应在 .env 文件中提供）
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-}"
+
+      # Legacy/no-op placeholders: server 核心配置只读挂载的 config.json；
+      # runtimeEventStore/serverRemote/auth.jwtSecret 必须写入 config.json。
+      # 这些 env 保留给旧脚本/排障观察，不是 server 配置入口。
+      RUNTIME_EVENT_STORE_BACKEND: "${RUNTIME_EVENT_STORE_BACKEND:-file}"
+      RUNTIME_EVENT_STORE_CONNECTION: "${RUNTIME_PG_URL:-}"
+      RUNTIME_EVENT_STORE_TABLE_PREFIX: "${RUNTIME_EVENT_STORE_TABLE_PREFIX:-runtime}"
+
+      # Legacy/no-op placeholder：真值 = config.json.serverRemote。
+      SERVER_REMOTE_BASE_URL: "http://hand-server:3300"
+      SERVER_REMOTE_AUTH_TOKEN: "${HAND_SERVER_AUTH_TOKEN:-}"
+
+      # Legacy/no-op placeholder：真值 = config.json.auth.jwtSecret。
+      AUTH_JWT_SECRET: "${JWT_SECRET:-}"
+
+      # 网络代理（如果在 ECS 上有 GFW 内代理）
+      HTTP_PROXY: "${HTTP_PROXY:-}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+      NO_PROXY: "${NO_PROXY:-localhost,127.0.0.1,hand-server,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
+
+    volumes:
+      # config.json 包含敏感字段（jwtSecret/connectionString）—— 不进镜像
+      # 本地 dev：把仓库根 config.json 挂进来；ECS：从 /etc/agent-runtime/config.json 挂载
+      - ${CONFIG_JSON_PATH:-./config.json}:/app/config.json:ro
+      # workspace：β-Q2 决策 = NAS 挂载（生产 ECS 上把 ./workspace 改成 /mnt/nas/agent-runtime/workspace）
+      - workspace:/app/workspace
+      # transcripts：~/.claude/projects 等价路径
+      - transcripts:/root/.claude/projects
+      # data（audit.duckdb / sessions metadata / 本地 sqlite）
+      - server-data:/app/server/data
+      # logs
+      - server-logs:/app/logs
+
+    # server 启动时也作 web 静态文件 server（CMD 已带 web/dist）；
+    # 健康检查走 /api/health
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3200/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+    depends_on:
+      hand-server:
+        condition: service_healthy
+
+  hand-server:
+    build:
+      context: .
+      target: hand-server
+    image: agent-runtime:hand-server
+    container_name: agent-runtime-hand-server
+    restart: unless-stopped
+
+    # hand-server 只对 server 容器开放（不暴露宿主机）
+    expose:
+      - "3300"
+
+    environment:
+      NODE_ENV: production
+      HAND_SERVER_PORT: "3300"
+      # 允许 server 容器通过 Docker bridge 的 http://hand-server:3300 访问；
+      # 该服务只 expose 给 compose network，不映射宿主端口。
+      HAND_SERVER_HOST: "${HAND_SERVER_HOST:-0.0.0.0}"
+      HAND_SERVER_AUTH_TOKEN: "${HAND_SERVER_AUTH_TOKEN:-}"
+      # backend=local：hand-server 内部用 ServerLocalExecutionProvider（写文件即在 sandbox 内）
+      # backend=container 需要 docker-cli + docker-in-docker，自用阶段不开
+      HAND_SERVER_BACKEND: "${HAND_SERVER_BACKEND:-local}"
+      HAND_SERVER_SANDBOX_ROOT: "/app/sandbox"
+      HAND_SERVER_LOG_LEVEL: "${HAND_SERVER_LOG_LEVEL:-info}"
+
+    volumes:
+      # hand sandbox 也走 NAS，让 server 和 hand 看同一份 workspace
+      - workspace:/app/sandbox
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3300/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  # 本地 docker volume 兜底；ECS 上换成 NAS 挂载 (driver: local, driver_opts: type=nfs)
+  workspace:
+    driver: local
+  transcripts:
+    driver: local
+  server-data:
+    driver: local
+  server-logs:
+    driver: local

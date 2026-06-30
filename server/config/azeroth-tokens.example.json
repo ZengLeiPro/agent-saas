@@ -1,0 +1,9 @@
+{
+  "_comment_": "ky-azeroth Personal Access Token 映射表。复制本文件为 azeroth-tokens.json 并填实际值。token 通过 ky-azeroth admin POST /api/v1/admin/pat 签发。",
+  "azerothApiUrl": "http://localhost:3000",
+  "tokens": {
+    "admin": "pat_admin_REPLACE_ME_REPLACE_ME_REPLACE_ME_",
+    "huangyiping": "pat_huangyiping_REPLACE_ME_REPLACE_ME_REPLACE_",
+    "huangsilin": "pat_huangsilin_REPLACE_ME_REPLACE_ME_REPLACE_M"
+  }
+}

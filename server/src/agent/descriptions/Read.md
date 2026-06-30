@@ -1,0 +1,1 @@
+Read a UTF-8 text file inside the current workspace. Small files are returned exactly. Files larger than 131072 bytes return the first 131072 bytes with a continuation hint. For large files, pass `offset` (1-based line number) and `limit` (max 2000 lines) to read a specific line range.

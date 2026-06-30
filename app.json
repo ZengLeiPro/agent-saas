@@ -1,0 +1,8 @@
+{
+  "ios": {
+    "bundleIdentifier": "com.anonymous.claude-agent-chat"
+  },
+  "android": {
+    "package": "com.anonymous.claudeagentchat"
+  }
+}

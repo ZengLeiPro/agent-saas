@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd 服务配置 — WireGuard Tunnel (wg0)
+
+  安装: ln -sf $(pwd)/com.kaiyan.wireguard.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.kaiyan.wireguard.plist
+  卸载: launchctl unload ~/Library/LaunchAgents/com.kaiyan.wireguard.plist
+  状态: sudo wg show wg0
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kaiyan.wireguard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/bash</string>
+        <string>/Users/admin/code/agent/scripts/wireguard.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/admin</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- 崩溃后等 10s 再重启 -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/admin/.config/wireguard/launchd-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/admin/.config/wireguard/launchd-stderr.log</string>
+</dict>
+</plist>

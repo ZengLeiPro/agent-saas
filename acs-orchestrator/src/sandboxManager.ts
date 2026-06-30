@@ -1,0 +1,651 @@
+import { chmod, chown, mkdir, rename, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import type { AcsOrchestratorConfig } from './config.js';
+import { Kubectl } from './kubectl.js';
+import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './networkPolicyManager.js';
+import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
+import { SnatManager, type SnatCleanupReport, type SnatStatus } from './snatManager.js';
+import type { NetworkPolicyStatus } from 'server/runtime/networkPolicy.js';
+
+interface SandboxStatus {
+  phase?: string;
+  raw?: Record<string, unknown>;
+}
+
+export interface ManagedSandbox {
+  name: string;
+  workspaceId?: string;
+  sessionId?: string;
+  mountSubPath?: string;
+  phase?: string;
+  createdAt?: string;
+  lastActiveAt?: string;
+}
+
+export interface SandboxRef {
+  name: string;
+  workspaceId: string;
+  sessionId: string;
+  mountSubPath: string;
+}
+
+export interface SandboxCleanupReport {
+  checked: number;
+  paused: string[];
+  deleted: string[];
+  skippedBusy: string[];
+  snatDeleted: string[];
+  snatUnexpected: number;
+  runningCount: number;
+  totalCount: number;
+}
+
+export interface SandboxInventorySummary {
+  totalCount: number;
+  phaseCounts: Record<string, number>;
+  runningCount: number;
+  pausedCount: number;
+  oldestCreatedAt?: string;
+  newestLastActiveAt?: string;
+}
+
+const MANAGED_BY_LABEL = 'agent-saas-acs-orchestrator';
+const APP_LABEL = 'agent-saas-coding-hand';
+const WORKSPACE_LABEL = 'agent-saas.kaiyan.net/workspace-id';
+const SESSION_LABEL = 'agent-saas.kaiyan.net/session-id';
+const NETWORK_POLICY_MODE_LABEL = 'agent-saas.kaiyan.net/network-policy-mode';
+const WORKSPACE_ANNOTATION = 'agent-saas.kaiyan.net/workspace-id';
+const SESSION_ANNOTATION = 'agent-saas.kaiyan.net/session-id';
+const MOUNT_SUBPATH_ANNOTATION = 'agent-saas.kaiyan.net/mount-subpath';
+const CREATED_AT_ANNOTATION = 'agent-saas.kaiyan.net/created-at';
+const LAST_ACTIVE_AT_ANNOTATION = 'agent-saas.kaiyan.net/last-active-at';
+const NETWORK_POLICY_MODE_ANNOTATION = 'agent-saas.kaiyan.net/network-policy-mode';
+const NETWORK_POLICY_DENY_PRIVATE_ANNOTATION = 'agent-saas.kaiyan.net/network-policy-deny-private';
+const ACS_NETWORK_POLICY_AGENT_ANNOTATION = 'network.alibabacloud.com/enable-network-policy-agent';
+const ACS_NETWORK_POLICY_MODE_ANNOTATION = 'network.alibabacloud.com/network-policy-mode';
+const SANDBOX_TIMEZONE = 'Asia/Shanghai';
+
+export class SandboxManager {
+  private readonly networkPolicyManager: AcsNetworkPolicyManager;
+  private readonly snatManager: SnatManager;
+
+  constructor(
+    private readonly config: AcsOrchestratorConfig,
+    private readonly kubectl: Kubectl,
+    private readonly logger: { info(msg: string): void; warn(msg: string): void; error(msg: string): void },
+  ) {
+    this.networkPolicyManager = new AcsNetworkPolicyManager(config, kubectl, logger);
+    this.snatManager = new SnatManager(config, kubectl, logger);
+  }
+
+  ref(input: { workspaceId: string; sessionId: string; mountSubPath?: string }): SandboxRef {
+    const workspaceId = validateWorkspaceId(input.workspaceId);
+    const sessionId = validateSessionId(input.sessionId);
+    const mountSubPath = normalizeMountSubPath(input.mountSubPath ?? workspaceId);
+    return {
+      name: sandboxNameFor({ workspaceId, sessionId }),
+      workspaceId,
+      sessionId,
+      mountSubPath,
+    };
+  }
+
+  async ensureRunning(
+    input: { workspaceId: string; sessionId: string; mountSubPath?: string },
+    options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean } = {},
+  ): Promise<SandboxRef> {
+    const ref = this.ref(input);
+    await this.ensureHostWorkspace(ref);
+    let existing = await this.getStatus(ref.name);
+    if (existing && this.existingMountSubPath(existing, ref) !== ref.mountSubPath) {
+      this.logger.warn(
+        `sandbox_mount_subpath_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingMountSubPath(existing, ref)} new=${ref.mountSubPath}`,
+      );
+      await this.delete(ref);
+      existing = null;
+    }
+    if (existing && this.existingImage(existing) !== this.config.sandboxImage) {
+      this.logger.warn(
+        `sandbox_image_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingImage(existing) ?? 'unknown'} new=${this.config.sandboxImage}`,
+      );
+      await this.delete(ref);
+      existing = null;
+    }
+    if (!existing) {
+      if (!options.skipCapacityManagement) await this.ensureCapacity(ref.name, options.busySandboxNames);
+      await this.networkPolicyManager.reconcile(ref);
+      await this.applySandbox(ref);
+      await this.waitForPhase(ref.name, 'Running');
+      await this.snatManager.ensureForSandbox(ref);
+      await this.touch(ref.name);
+      return ref;
+    }
+    await this.networkPolicyManager.reconcile(ref);
+    if (existing.phase === 'Paused') {
+      if (!options.skipCapacityManagement) await this.ensureCapacity(ref.name, options.busySandboxNames);
+      await this.patchPaused(ref.name, false);
+      await this.waitForPhase(ref.name, 'Running');
+      await this.snatManager.ensureForSandbox(ref);
+      await this.touch(ref.name);
+      return ref;
+    }
+    if (existing.phase !== 'Running') {
+      if (!options.skipCapacityManagement) await this.ensureCapacity(ref.name, options.busySandboxNames);
+      await this.waitForPhase(ref.name, 'Running');
+    }
+    await this.snatManager.ensureForSandbox(ref);
+    await this.touch(ref.name);
+    return ref;
+  }
+
+  async delete(ref: SandboxRef): Promise<void> {
+    await this.kubectl.run(['delete', this.resourceName(ref.name), '--ignore-not-found=true'], {
+      timeoutMs: this.config.sandboxWaitTimeoutMs,
+    });
+    await this.networkPolicyManager.deleteForSandboxName(ref.name);
+    await this.snatManager.deleteForSandboxName(ref.name);
+  }
+
+  async deleteByWorkspaceId(workspaceId: string): Promise<{ names: string[] }> {
+    const id = validateWorkspaceId(workspaceId);
+    const result = await this.kubectl.run([
+      'get',
+      this.config.sandboxKind.toLowerCase(),
+      '-l',
+      `agent-saas.kaiyan.net/workspace-id=${labelValue(id)}`,
+      '-o',
+      'json',
+    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
+    if (result.exitCode !== 0) throw new Error(`list Sandbox by workspace 失败: ${result.stderr || result.stdout}`);
+    const body = JSON.parse(result.stdout || '{}') as { items?: Array<{ metadata?: { name?: string } }> };
+    const names = (body.items ?? []).map((item) => item.metadata?.name).filter((name): name is string => Boolean(name));
+    for (const name of names) {
+      await this.kubectl.run(['delete', this.resourceName(name), '--ignore-not-found=true'], {
+        timeoutMs: this.config.sandboxWaitTimeoutMs,
+      });
+      await this.networkPolicyManager.deleteForSandboxName(name);
+      await this.snatManager.deleteForSandboxName(name);
+    }
+    return { names };
+  }
+
+  networkPolicyStatus(): NetworkPolicyStatus {
+    return this.networkPolicyManager.currentStatus();
+  }
+
+  async probeNetworkPolicy(): Promise<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }> {
+    const ref = await this.ensureRunning({
+      workspaceId: 'network-probe',
+      sessionId: `probe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    }, {
+      skipCapacityManagement: true,
+    });
+    try {
+      await this.snatManager.ensureForProbe(ref);
+      return await this.networkPolicyManager.probe(ref);
+    } finally {
+      await this.delete(ref);
+    }
+  }
+
+  async snatStatus(): Promise<SnatStatus> {
+    const activeCidrs = this.snatManager.isEnabled()
+      ? await this.snatManager.activeManagedPodCidrs()
+      : undefined;
+    return await this.snatManager.status(activeCidrs);
+  }
+
+  async cleanupOrphanSnat(): Promise<SnatCleanupReport> {
+    if (!this.snatManager.isEnabled()) {
+      return { enabled: false, checked: 0, deleted: [], orphanCidrs: [], unexpected: [] };
+    }
+    const activeCidrs = await this.snatManager.activeManagedPodCidrs();
+    return await this.snatManager.cleanupOrphans(activeCidrs);
+  }
+
+  async listManagedSandboxes(): Promise<ManagedSandbox[]> {
+    const result = await this.kubectl.run([
+      'get',
+      this.config.sandboxKind.toLowerCase(),
+      '-l',
+      `app.kubernetes.io/managed-by=${MANAGED_BY_LABEL}`,
+      '-o',
+      'json',
+    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
+    if (result.exitCode !== 0) throw new Error(`list managed Sandbox 失败: ${result.stderr || result.stdout}`);
+    const body = JSON.parse(result.stdout || '{}') as { items?: Array<Record<string, unknown>> };
+    return (body.items ?? []).map((item) => {
+      const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata as Record<string, unknown> : {};
+      const annotations = metadata.annotations && typeof metadata.annotations === 'object' ? metadata.annotations as Record<string, unknown> : {};
+      const labels = metadata.labels && typeof metadata.labels === 'object' ? metadata.labels as Record<string, unknown> : {};
+      const status = item.status && typeof item.status === 'object' ? item.status as Record<string, unknown> : {};
+      return {
+        name: typeof metadata.name === 'string' ? metadata.name : '',
+        workspaceId: stringValue(annotations[WORKSPACE_ANNOTATION]) ?? stringValue(labels[WORKSPACE_LABEL]),
+        sessionId: stringValue(annotations[SESSION_ANNOTATION]) ?? stringValue(labels[SESSION_LABEL]),
+        mountSubPath: stringValue(annotations[MOUNT_SUBPATH_ANNOTATION]),
+        phase: stringValue(status.phase),
+        createdAt: stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
+        lastActiveAt: stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]) ?? stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
+      };
+    }).filter((sandbox) => sandbox.name);
+  }
+
+  async inventorySummary(): Promise<SandboxInventorySummary> {
+    const sandboxes = await this.listManagedSandboxes();
+    const phaseCounts: Record<string, number> = {};
+    let oldestCreatedAt: string | undefined;
+    let newestLastActiveAt: string | undefined;
+    for (const sandbox of sandboxes) {
+      const phase = sandbox.phase ?? 'Unknown';
+      phaseCounts[phase] = (phaseCounts[phase] ?? 0) + 1;
+      if (sandbox.createdAt && (!oldestCreatedAt || Date.parse(sandbox.createdAt) < Date.parse(oldestCreatedAt))) {
+        oldestCreatedAt = sandbox.createdAt;
+      }
+      if (sandbox.lastActiveAt && (!newestLastActiveAt || Date.parse(sandbox.lastActiveAt) > Date.parse(newestLastActiveAt))) {
+        newestLastActiveAt = sandbox.lastActiveAt;
+      }
+    }
+    return {
+      totalCount: sandboxes.length,
+      phaseCounts,
+      runningCount: sandboxes.filter((sandbox) => isRunningCostPhase(sandbox.phase)).length,
+      pausedCount: phaseCounts.Paused ?? 0,
+      ...(oldestCreatedAt ? { oldestCreatedAt } : {}),
+      ...(newestLastActiveAt ? { newestLastActiveAt } : {}),
+    };
+  }
+
+  async cleanupSandboxes(input: { busySandboxNames?: Set<string>; now?: Date } = {}): Promise<SandboxCleanupReport> {
+    const now = input.now ?? new Date();
+    const nowMs = now.getTime();
+    const busySandboxNames = input.busySandboxNames ?? new Set<string>();
+    const sandboxes = await this.listManagedSandboxes();
+    const paused: string[] = [];
+    const deleted: string[] = [];
+    const skippedBusy: string[] = [];
+    const snatDeleted: string[] = [];
+
+    for (const sandbox of sandboxes) {
+      if (busySandboxNames.has(sandbox.name)) {
+        skippedBusy.push(sandbox.name);
+        continue;
+      }
+      const phase = sandbox.phase ?? 'Unknown';
+      const createdAtMs = parseDateMs(sandbox.createdAt);
+      const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt) ?? createdAtMs;
+      const ageMs = createdAtMs === undefined ? 0 : nowMs - createdAtMs;
+      const idleMs = lastActiveAtMs === undefined ? 0 : nowMs - lastActiveAtMs;
+      const shouldDeleteByTtl = this.config.sandboxTtlMs > 0 && ageMs >= this.config.sandboxTtlMs;
+      const orphanPhase = !['Running', 'Paused'].includes(phase);
+      const shouldDeleteOrphan = this.config.sandboxOrphanGraceMs > 0 && orphanPhase && ageMs >= this.config.sandboxOrphanGraceMs;
+      if (shouldDeleteByTtl || shouldDeleteOrphan) {
+        await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
+          timeoutMs: this.config.sandboxWaitTimeoutMs,
+        });
+        await this.networkPolicyManager.deleteForSandboxName(sandbox.name);
+        snatDeleted.push(...await this.snatManager.deleteForSandboxName(sandbox.name));
+        deleted.push(sandbox.name);
+        continue;
+      }
+      if (phase === 'Running' && this.config.sandboxIdlePauseMs > 0 && idleMs >= this.config.sandboxIdlePauseMs) {
+        await this.patchPaused(sandbox.name, true);
+        paused.push(sandbox.name);
+      }
+    }
+
+    const pausedSet = new Set(paused);
+    const deletedSet = new Set(deleted);
+    const snatReport = await this.cleanupOrphanSnat();
+
+    return {
+      checked: sandboxes.length,
+      paused,
+      deleted,
+      skippedBusy,
+      snatDeleted: [...snatDeleted, ...snatReport.deleted],
+      snatUnexpected: snatReport.unexpected.length,
+      runningCount: sandboxes.filter((sandbox) => (
+        !deletedSet.has(sandbox.name)
+        && !pausedSet.has(sandbox.name)
+        && isRunningCostPhase(sandbox.phase)
+      )).length,
+      totalCount: sandboxes.length,
+    };
+  }
+
+  async archiveWorkspace(workspaceId: string, reason: string): Promise<{ workspaceId: string; archived: boolean; missing?: boolean; archiveId?: string; archivePath?: string }> {
+    const id = validateWorkspaceId(workspaceId);
+    if (!this.config.hostWorkspaceRoot) {
+      return { workspaceId: id, archived: false, missing: false };
+    }
+    const workspacePath = join(this.config.hostWorkspaceRoot, id);
+    try {
+      const current = await stat(workspacePath);
+      if (!current.isDirectory()) throw new Error(`workspace 不是目录: ${id}`);
+    } catch (err) {
+      if (err && typeof err === 'object' && 'code' in err && (err as { code?: unknown }).code === 'ENOENT') {
+        return { workspaceId: id, archived: false, missing: true };
+      }
+      throw err;
+    }
+    const archiveRoot = join(this.config.hostWorkspaceRoot, '.archive');
+    await mkdir(archiveRoot, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const suffix = reason.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'manual';
+    const archiveId = `${id}__${stamp}__${suffix}`;
+    const archivePath = join(archiveRoot, archiveId);
+    await rename(workspacePath, archivePath);
+    return { workspaceId: id, archived: true, archiveId, archivePath };
+  }
+
+  async patchPaused(name: string, paused: boolean): Promise<void> {
+    const result = await this.kubectl.run([
+      'patch',
+      this.resourceName(name),
+      '--type=merge',
+      '-p',
+      JSON.stringify({ spec: { paused } }),
+    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
+    if (result.exitCode !== 0) throw new Error(`patch sandbox paused=${paused} 失败: ${result.stderr || result.stdout}`);
+    if (paused) await this.snatManager.deleteForSandboxName(name);
+  }
+
+  async touch(name: string, now: Date = new Date()): Promise<void> {
+    const result = await this.kubectl.run([
+      'patch',
+      this.resourceName(name),
+      '--type=merge',
+      '-p',
+      JSON.stringify({ metadata: { annotations: { [LAST_ACTIVE_AT_ANNOTATION]: now.toISOString() } } }),
+    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
+    if (result.exitCode !== 0) throw new Error(`touch sandbox 失败: ${result.stderr || result.stdout}`);
+  }
+
+  async getStatus(name: string): Promise<SandboxStatus | null> {
+    const result = await this.kubectl.run(['get', this.resourceName(name), '-o', 'json'], { timeoutMs: 15_000 });
+    if (result.exitCode !== 0) {
+      if (/NotFound|not found/i.test(result.stderr + result.stdout)) return null;
+      throw new Error(`读取 Sandbox 失败: ${result.stderr || result.stdout}`);
+    }
+    const raw = JSON.parse(result.stdout || '{}') as Record<string, unknown>;
+    const status = raw.status && typeof raw.status === 'object' ? raw.status as Record<string, unknown> : {};
+    return { phase: typeof status.phase === 'string' ? status.phase : undefined, raw };
+  }
+
+  private async applySandbox(ref: SandboxRef): Promise<void> {
+    const manifest = this.buildSandboxManifest(ref);
+    const result = await this.kubectl.run(['apply', '-f', '-'], {
+      input: JSON.stringify(manifest),
+      timeoutMs: this.config.sandboxWaitTimeoutMs,
+    });
+    if (result.exitCode !== 0) throw new Error(`apply Sandbox 失败: ${result.stderr || result.stdout}`);
+    this.logger.info(`sandbox_applied name=${ref.name} workspaceId=${ref.workspaceId} sessionId=${ref.sessionId}`);
+  }
+
+  private async waitForPhase(name: string, expected: string): Promise<void> {
+    const deadline = Date.now() + this.config.sandboxWaitTimeoutMs;
+    let lastPhase = 'unknown';
+    let lastError = '';
+    while (Date.now() < deadline) {
+      try {
+        const status = await this.getStatus(name);
+        lastPhase = status?.phase ?? 'missing';
+        if (lastPhase === expected) return;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+    throw new Error(`等待 Sandbox ${name} 进入 ${expected} 超时，lastPhase=${lastPhase}${lastError ? ` lastError=${lastError}` : ''}`);
+  }
+
+  private async ensureHostWorkspace(ref: SandboxRef): Promise<void> {
+    if (!this.config.hostWorkspaceRoot) return;
+    const path = join(this.config.hostWorkspaceRoot, ref.mountSubPath);
+    await this.prepareWritableDir(path, 0o775);
+    await this.prepareWritableDir(join(path, '.ky-agent'), 0o770);
+    await this.prepareWritableDir(join(path, '.ky-agent', 'runtime'), 0o770);
+    await this.prepareWritableDir(join(path, '.ky-agent', 'runtime', 'cache'), 0o770);
+    await this.prepareWritableDir(join(path, '.ky-agent', 'runtime', 'cache', 'pip'), 0o770);
+    await this.prepareWritableDir(join(path, '.ky-agent', 'runtime', 'provision'), 0o770);
+    await this.prepareWritableDir(join(path, '.ky-agent', 'runtime', 'venv-archive'), 0o770);
+    await this.prepareWritableDir(join(path, 'downloads'), 0o775);
+  }
+
+  private async prepareWritableDir(path: string, mode: number): Promise<void> {
+    await mkdir(path, { recursive: true });
+    try {
+      await chown(path, this.config.sandboxRunAsUser, this.config.sandboxRunAsGroup);
+      await chmod(path, mode);
+    } catch (err) {
+      this.logger.warn(
+        `workspace_permission_prepare_failed path=${path} uid=${this.config.sandboxRunAsUser} gid=${this.config.sandboxRunAsGroup} mode=${mode.toString(8)} err=${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  private async ensureCapacity(currentSandboxName: string, busySandboxNames?: Set<string>): Promise<void> {
+    if (this.config.maxRunningSandboxes <= 0) return;
+    if (this.config.lifecycleEnabled) {
+      const protectedSandboxes = new Set(busySandboxNames ?? []);
+      protectedSandboxes.add(currentSandboxName);
+      const report = await this.cleanupSandboxes({ busySandboxNames: protectedSandboxes });
+      if (report.paused.length || report.deleted.length) {
+        this.logger.warn(
+          `sandbox_capacity_reclaimed current=${currentSandboxName} paused=${report.paused.length} deleted=${report.deleted.length}`,
+        );
+      }
+    }
+    const sandboxes = await this.listManagedSandboxes();
+    const protectedSandboxes = new Set(busySandboxNames ?? []);
+    protectedSandboxes.add(currentSandboxName);
+    const active = sandboxes.filter((sandbox) => sandbox.name !== currentSandboxName && isRunningCostPhase(sandbox.phase));
+    if (this.config.lifecycleEnabled && active.length >= this.config.maxRunningSandboxes) {
+      const candidates = active
+        .filter((sandbox) => !protectedSandboxes.has(sandbox.name) && sandbox.phase === 'Running')
+        .sort((a, b) => (parseDateMs(a.lastActiveAt) ?? 0) - (parseDateMs(b.lastActiveAt) ?? 0));
+      const pauseCount = active.length - this.config.maxRunningSandboxes + 1;
+      const paused: string[] = [];
+      for (const sandbox of candidates.slice(0, pauseCount)) {
+        await this.patchPaused(sandbox.name, true);
+        paused.push(sandbox.name);
+      }
+      if (paused.length) {
+        this.logger.warn(`sandbox_capacity_forced_pause current=${currentSandboxName} paused=${paused.length}`);
+        const remainingActive = active.length - paused.length;
+        if (remainingActive < this.config.maxRunningSandboxes) return;
+      }
+    }
+    const refreshed = await this.listManagedSandboxes();
+    const refreshedActive = refreshed.filter((sandbox) => (
+      sandbox.name !== currentSandboxName
+      && isRunningCostPhase(sandbox.phase)
+    ));
+    if (refreshedActive.length >= this.config.maxRunningSandboxes) {
+      throw new Error(`ACS Sandbox running quota exceeded: ${refreshedActive.length}/${this.config.maxRunningSandboxes}`);
+    }
+  }
+
+  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {
+    const now = new Date().toISOString();
+    const labels = {
+      'app.kubernetes.io/name': APP_LABEL,
+      'app.kubernetes.io/managed-by': MANAGED_BY_LABEL,
+      [WORKSPACE_LABEL]: labelValue(ref.workspaceId),
+      [SESSION_LABEL]: labelValue(ref.sessionId),
+      [NETWORK_POLICY_MODE_LABEL]: this.config.networkPolicy.mode,
+      'alibabacloud.com/acs': 'true',
+      'alibabacloud.com/compute-class': 'agent-sandbox',
+    };
+    const annotations = {
+      [WORKSPACE_ANNOTATION]: ref.workspaceId,
+      [SESSION_ANNOTATION]: ref.sessionId,
+      [MOUNT_SUBPATH_ANNOTATION]: ref.mountSubPath,
+      [CREATED_AT_ANNOTATION]: now,
+      [LAST_ACTIVE_AT_ANNOTATION]: now,
+      [NETWORK_POLICY_MODE_ANNOTATION]: this.config.networkPolicy.mode,
+      [NETWORK_POLICY_DENY_PRIVATE_ANNOTATION]: String(this.config.networkPolicy.denyPrivateNetworks),
+      [ACS_NETWORK_POLICY_AGENT_ANNOTATION]: 'true',
+      [ACS_NETWORK_POLICY_MODE_ANNOTATION]: acsNetworkPolicyMode(this.config.networkPolicy.mode),
+    };
+    const container: Record<string, unknown> = {
+      name: this.config.sandboxContainerName,
+      image: this.config.sandboxImage,
+      imagePullPolicy: this.config.imagePullPolicy,
+      command: ['/bin/sh', '-c', 'mkdir -p "$ACS_WORKSPACE_PATH" "$DOWNLOAD_DIR" && cd "$ACS_WORKSPACE_PATH" && sleep infinity'],
+      env: [
+        { name: 'ACS_WORKSPACE_PATH', value: this.config.workspaceMountPath },
+        { name: 'ACS_SANDBOX_IMAGE', value: this.config.sandboxImage },
+        { name: 'DOWNLOAD_DIR', value: `${this.config.workspaceMountPath}/downloads` },
+        { name: 'XDG_DOWNLOAD_DIR', value: `${this.config.workspaceMountPath}/downloads` },
+        { name: 'PLAYWRIGHT_BROWSERS_PATH', value: '/ms-playwright' },
+        { name: 'MPLBACKEND', value: 'Agg' },
+        { name: 'NPM_CONFIG_PREFIX', value: '/home/agent/.npm-global' },
+        { name: 'VIRTUAL_ENV', value: `${this.config.workspaceMountPath}/.ky-agent/runtime/venv` },
+        { name: 'PIP_CACHE_DIR', value: `${this.config.workspaceMountPath}/.ky-agent/runtime/cache/pip` },
+        { name: 'PIP_DISABLE_PIP_VERSION_CHECK', value: '1' },
+        { name: 'PIP_REQUIRE_VIRTUALENV', value: '1' },
+        {
+          name: 'PATH',
+          value: `${this.config.workspaceMountPath}/.ky-agent/runtime/venv/bin:/home/agent/.npm-global/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin`,
+        },
+        { name: 'FORCE_COLOR', value: '0' },
+        { name: 'TZ', value: SANDBOX_TIMEZONE },
+        { name: 'LANG', value: 'C.UTF-8' },
+        { name: 'LC_ALL', value: 'C.UTF-8' },
+      ],
+      workingDir: this.config.workspaceMountPath,
+      securityContext: {
+        runAsNonRoot: true,
+        runAsUser: this.config.sandboxRunAsUser,
+        runAsGroup: this.config.sandboxRunAsGroup,
+        allowPrivilegeEscalation: false,
+        capabilities: { drop: ['ALL'] },
+      },
+      resources: {
+        requests: {
+          cpu: this.config.cpuRequest,
+          memory: this.config.memoryRequest,
+        },
+        ...(this.config.cpuLimit || this.config.memoryLimit
+          ? { limits: { ...(this.config.cpuLimit ? { cpu: this.config.cpuLimit } : {}), ...(this.config.memoryLimit ? { memory: this.config.memoryLimit } : {}) } }
+          : {}),
+      },
+      ...(this.config.pvcName ? {
+        volumeMounts: [{
+          name: 'workspace',
+          mountPath: this.config.workspaceMountPath,
+          subPath: ref.mountSubPath,
+        }],
+      } : {}),
+    };
+    return {
+      apiVersion: this.config.sandboxApiVersion,
+      kind: this.config.sandboxKind,
+      metadata: {
+        name: ref.name,
+        namespace: this.config.namespace,
+        labels,
+        annotations,
+      },
+      spec: {
+        paused: false,
+        ...(this.config.sandboxRuntimes.length ? { runtimes: this.config.sandboxRuntimes.map((name) => ({ name })) } : {}),
+        template: {
+          metadata: {
+            annotations: {
+              'network.alibabacloud.com/wait-clusterip-ready': '*',
+              ...annotations,
+            },
+            labels,
+          },
+          spec: {
+            automountServiceAccountToken: false,
+            enableServiceLinks: false,
+            hostNetwork: false,
+            hostPID: false,
+            hostIPC: false,
+            securityContext: {
+              runAsNonRoot: true,
+              runAsUser: this.config.sandboxRunAsUser,
+              runAsGroup: this.config.sandboxRunAsGroup,
+              ...(this.config.sandboxFsGroup !== undefined ? { fsGroup: this.config.sandboxFsGroup } : {}),
+            },
+            restartPolicy: 'Never',
+            terminationGracePeriodSeconds: 30,
+            ...(this.config.imagePullSecretNames.length
+              ? { imagePullSecrets: this.config.imagePullSecretNames.map((name) => ({ name })) }
+              : {}),
+            containers: [container],
+            ...(this.config.pvcName ? { volumes: [{ name: 'workspace', persistentVolumeClaim: { claimName: this.config.pvcName } }] } : {}),
+          },
+        },
+      },
+    };
+  }
+
+  private resourceName(name: string): string {
+    return `${this.config.sandboxKind.toLowerCase()}/${name}`;
+  }
+
+  private existingMountSubPath(status: SandboxStatus, ref: SandboxRef): string {
+    const raw = status.raw ?? {};
+    const metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata as Record<string, unknown> : {};
+    const annotations = metadata.annotations && typeof metadata.annotations === 'object' ? metadata.annotations as Record<string, unknown> : {};
+    return stringValue(annotations[MOUNT_SUBPATH_ANNOTATION]) ?? ref.workspaceId;
+  }
+
+  private existingImage(status: SandboxStatus): string | undefined {
+    const raw = status.raw ?? {};
+    const spec = raw.spec && typeof raw.spec === 'object' ? raw.spec as Record<string, unknown> : {};
+    const template = spec.template && typeof spec.template === 'object' ? spec.template as Record<string, unknown> : {};
+    const podSpec = template.spec && typeof template.spec === 'object' ? template.spec as Record<string, unknown> : {};
+    const containers = Array.isArray(podSpec.containers) ? podSpec.containers : [];
+    const container = containers.find((item): item is Record<string, unknown> => (
+      Boolean(item)
+      && typeof item === 'object'
+      && (!('name' in item) || item.name === this.config.sandboxContainerName)
+    ));
+    return container ? stringValue(container.image) : undefined;
+  }
+}
+
+function labelValue(value: string): string {
+  const cleaned = value
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 63);
+  return cleaned || 'unknown';
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function normalizeMountSubPath(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error('mountSubPath must not be empty');
+  if (trimmed.startsWith('/') || trimmed.includes('\\')) throw new Error('mountSubPath must be a relative POSIX path');
+  const parts = trimmed.split('/');
+  if (parts.some((part) => !part || part === '.' || part === '..')) {
+    throw new Error('mountSubPath must not contain empty segments, . or ..');
+  }
+  return parts.join('/');
+}
+
+function parseDateMs(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function isRunningCostPhase(phase: string | undefined): boolean {
+  return phase !== 'Paused';
+}
+
+function acsNetworkPolicyMode(mode: string): string {
+  return mode === 'isolated' ? 'network-policy' : 'traffic-policy';
+}

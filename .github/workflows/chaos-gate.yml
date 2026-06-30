@@ -1,0 +1,73 @@
+# ============================================================================
+# Runtime Chaos 发布前门禁（2026-06-22）
+# ============================================================================
+# 触发: 发版 tag（v*） + 手动 dispatch —— 不在每次 push 跑（chaos 要拉 docker PG，
+#       单次约 5-10 分钟，不适合每次提交）。
+# 作用: 串行跑全部 runtime chaos mode，任一失败 → job 红 → 阻断该次发版。
+#       产出可追溯报告（JSON + Markdown）上传为 artifact。
+# 依赖: GitHub-hosted ubuntu runner 自带 docker；chaos 脚本用 --pull=never，所以先
+#       显式 docker pull postgres:16-alpine。
+# ============================================================================
+
+name: Chaos Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      modes:
+        description: "只跑指定 mode（逗号分隔；留空=全部）"
+        required: false
+        default: ""
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: chaos-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  chaos-gate:
+    name: Runtime Chaos Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # chaos 脚本用 --pull=never，CI 上必须先把镜像拉到本地。
+      - name: Pull postgres image
+        run: docker pull postgres:16-alpine
+
+      - name: Run chaos gate
+        run: |
+          if [ -n "${{ github.event.inputs.modes }}" ]; then
+            pnpm -F server verify:chaos:gate --modes "${{ github.event.inputs.modes }}"
+          else
+            pnpm -F server verify:chaos:gate
+          fi
+
+      # 无论成败都上传报告（失败时报告含每个失败 mode 的输出尾巴，便于排查）。
+      - name: Upload chaos report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: chaos-gate-report
+          path: server/.chaos-reports/
+          retention-days: 30

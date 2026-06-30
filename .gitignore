@@ -1,0 +1,96 @@
+# Dependencies
+node_modules/
+
+# Workspace（仅根目录 runtime 工作区，不含源码 server/src/workspace/）
+/workspace/
+
+# Build outputs
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+# ECS docker compose 环境文件（含 token）：模板 .env.ecs.example 入库，真实 .env.ecs 不入库
+.env.ecs
+!.env.ecs.example
+
+# Config (contains API keys)
+config.json
+# config.json 的备份/衍生（如 config.json.pre-pg-default.bak，含密码，禁止入库）
+config.json.*
+# ky-azeroth PAT 映射表（per-user 长期凭证，禁止入库）
+server/config/azeroth-tokens.json
+# hyperframes 豆包 TTS 凭证（skill 单独配置，禁止入库）
+workspace-shared/.claude/skills-pool/hyperframes/references/modules/hyperframes-media/scripts/doubao.config.json
+workspace-shared/.ky-agent/skills-pool/hyperframes/references/modules/hyperframes-media/scripts/doubao.config.json
+
+# Session data
+dingtalk-sessions.json
+
+# 工具 description 单测临时文件兜底（SIGKILL / vitest 异常崩溃时残留），
+# 防止 git add -A 误提交进生产源码目录。命名约定：__test_*.md
+server/src/agent/descriptions/__test_*.md
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Vite
+*.local
+vite.config.ts.timestamp-*
+
+# TypeScript
+*.tsbuildinfo
+server/coverage/
+
+# Runtime data
+server/data/
+
+# Browser data
+.browser-data/
+
+# Deploy rollback snapshots
+.deploy-rollback/
+
+# Expo / React Native
+mobile/ios/
+mobile/android/
+mobile/.expo/
+ios/
+android/
+.expo/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# Python
+__pycache__/
+*.pyc
+
+# Playwright
+.playwright-cli/
+
+# Chaos 门禁报告产物（CI 上传为 artifact，不入库）
+.chaos-reports/
+server/.chaos-reports/

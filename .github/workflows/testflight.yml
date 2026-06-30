@@ -1,0 +1,49 @@
+# ============================================================================
+# CI/CD Pipeline: Build iOS on EAS → Submit to TestFlight
+# ============================================================================
+# 触发: 手动触发 (GitHub 页面 / gh workflow run / AI 代执行)
+# 流程: install → eas build (cloud) → auto submit to TestFlight
+# ============================================================================
+
+name: TestFlight
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: testflight-ios
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+jobs:
+  build-and-submit:
+    name: Build & Submit to TestFlight
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup EAS CLI
+        run: pnpm add -g eas-cli
+
+      - name: Build and submit to TestFlight
+        working-directory: mobile
+        run: eas build --platform ios --profile production --auto-submit --non-interactive

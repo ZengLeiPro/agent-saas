@@ -1,0 +1,73 @@
+# 减小 build context / 镜像体积
+# 任何在 docker-compose / ECS 上需要的运行时数据走 volume，不进镜像
+
+# 依赖与构建产物
+node_modules
+**/node_modules
+web/dist
+web/.vite
+**/.next
+**/.turbo
+mobile/.expo
+mobile/ios
+mobile/android
+
+# 本地运行时状态（应走 volume）
+logs
+**/logs
+data
+server/data
+.deploy-rollback
+
+# 本地配置（敏感）
+config.json
+**/*.local.json
+.env
+.env.*
+
+# launchd / macOS 系统配置（容器内无意义）
+scripts/com.*.plist
+scripts/com.kaiyan.*.plist
+scripts/tailscaled.sh
+scripts/wireguard.sh
+
+# git / IDE
+.git
+.gitignore
+.github
+.vscode
+.cursor
+.idea
+
+# 文档（生产容器不需要）
+*.md
+docs
+CLAUDE.md
+README.md
+
+# 例外：工具 description md 是 LLM API 必需载荷，必须进镜像。
+# 当前 `*.md` 不递归，理论上 server/src/agent/descriptions/*.md 也不被命中，
+# 但任何人把上面规则改成 `**/*.md` 会立即让生产启动 fail-fast。
+# 显式白名单兜底，永远不要 ignore 这两个目录的 md。
+!server/src/agent/descriptions/*.md
+!server/src/agent/descriptions/**/*.md
+
+# playwright / browser profile
+.playwright-cli
+.browser-profile
+
+# tests / coverage
+**/__tests__
+**/*.test.ts
+**/*.test.mts
+coverage
+
+# server experiments (sdk-poc 归档代码)
+server/src/experiments
+
+# workspace-shared 是本地 dev 用，生产不需要
+workspace-shared
+
+# Apple / DS_Store
+.DS_Store
+**/.DS_Store

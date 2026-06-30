@@ -1,0 +1,15 @@
+packages:
+  - server
+  - web
+  - shared
+  - mobile
+  - hand-server
+  - acs-orchestrator
+
+onlyBuiltDependencies:
+  - '@ffmpeg-installer/darwin-arm64'
+  - bcrypt
+  - esbuild
+
+patchedDependencies:
+  '@react-native-menu/menu': patches/@react-native-menu__menu.patch

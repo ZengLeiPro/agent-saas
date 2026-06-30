@@ -1,0 +1,46 @@
+/* 代码预览面板的语法高亮主题：基于 GitHub 配色，scoped 到 .hljs token。
+   亮色为默认，.dark 作用域覆盖为 github-dark。适配项目的 class 暗色模式。 */
+
+.hljs-pre {
+  margin: 0;
+  padding: 1rem 1.25rem;
+  background-color: hsl(var(--code-block-bg));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+  tab-size: 2;
+}
+.hljs-pre code.hljs {
+  display: block;
+  color: hsl(var(--foreground));
+  background: transparent;
+  white-space: pre;
+}
+
+/* ---- github light ---- */
+.hljs-comment, .hljs-quote { color: #6a737d; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-link { color: #d73a49; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-meta .hljs-string { color: #032f62; }
+.hljs-number, .hljs-built_in, .hljs-type, .hljs-meta { color: #005cc5; }
+.hljs-title, .hljs-title.function_, .hljs-section { color: #6f42c1; }
+.hljs-attr, .hljs-variable, .hljs-template-variable, .hljs-class .hljs-title { color: #e36209; }
+.hljs-tag, .hljs-name, .hljs-selector-id, .hljs-selector-class { color: #22863a; }
+.hljs-symbol, .hljs-bullet { color: #e36209; }
+.hljs-deletion { color: #b31d28; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+
+/* ---- github dark (.dark scope) ---- */
+.dark .hljs-comment, .dark .hljs-quote { color: #8b949e; }
+.dark .hljs-keyword, .dark .hljs-selector-tag, .dark .hljs-literal, .dark .hljs-link { color: #ff7b72; }
+.dark .hljs-string, .dark .hljs-regexp, .dark .hljs-addition, .dark .hljs-attribute, .dark .hljs-meta .hljs-string { color: #a5d6ff; }
+.dark .hljs-number, .dark .hljs-built_in, .dark .hljs-type, .dark .hljs-meta { color: #79c0ff; }
+.dark .hljs-title, .dark .hljs-title.function_, .dark .hljs-section { color: #d2a8ff; }
+.dark .hljs-attr, .dark .hljs-variable, .dark .hljs-template-variable, .dark .hljs-class .hljs-title { color: #ffa657; }
+.dark .hljs-tag, .dark .hljs-name, .dark .hljs-selector-id, .dark .hljs-selector-class { color: #7ee787; }
+.dark .hljs-symbol, .dark .hljs-bullet { color: #ffa657; }
+.dark .hljs-deletion { color: #ffdcd7; }

@@ -1,0 +1,1 @@
+Wait until the session workspace runtime is ready before using workspace file or shell tools. Use this when you need to read, list, search, edit, write files, create artifacts, or run shell commands and the workspace runtime may still be starting. It returns JSON with status: ready, provisioning, failed, or unavailable. Ordinary conversation does not require this tool.

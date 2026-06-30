@@ -1,0 +1,32 @@
+#!/bin/bash
+# playwright-cli wrapper: 防御层（可选加固）
+#
+# 主隔离路径是 dispatch.ts 注入 PLAYWRIGHT_MCP_CDP_ENDPOINT 环境变量。
+# 本 wrapper 在 PATH 命中时作为二道防线：
+#   - 从 CWD 提取用户名，强制注入 CDP endpoint
+#
+# 注意：macOS path_helper 可能重排 PATH，本 wrapper 不保证被命中。
+# 架构上不依赖此 wrapper 生效。
+
+REAL_CLI="/Users/admin/.nvm/versions/node/v22.22.2/bin/playwright-cli"
+PORTS_FILE="/Users/admin/code/agent/server/data/browser-ports.json"
+WORKSPACE_ROOT="/Users/admin/workspace"
+
+# 从 CWD 提取用户名
+USER=$(echo "$PWD" | sed -n "s|^${WORKSPACE_ROOT}/\([^/]*\).*|\1|p")
+
+# 无法识别用户: 透传
+if [[ -z "$USER" ]]; then
+  exec "$REAL_CLI" "$@"
+fi
+
+# 读端口映射，强制注入 CDP endpoint
+if [[ -f "$PORTS_FILE" ]]; then
+  PORT=$(python3 -c "import json; d=json.load(open('$PORTS_FILE')); print(d['ports'].get('$USER',''))" 2>/dev/null)
+  if [[ -n "$PORT" ]]; then
+    unset PLAYWRIGHT_MCP_CDP_ENDPOINT
+    export PLAYWRIGHT_MCP_CDP_ENDPOINT="http://localhost:$PORT"
+  fi
+fi
+
+exec "$REAL_CLI" "$@"

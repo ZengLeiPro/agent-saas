@@ -1,0 +1,137 @@
+{
+  "roles": {
+    "core": [
+      "audio-transcribe",
+      "browser",
+      "dingtalk-docs",
+      "dingtalk-msg",
+      "dws",
+      "docx",
+      "image-gen",
+      "peekaboo",
+      "pptx",
+      "skill-creator",
+      "xlsx"
+    ],
+    "admin": [
+      "bird",
+      "contract-generator",
+      "cron",
+      "frpc-tunnel",
+      "gmail",
+      "imsg",
+      "job-req-optimizer",
+      "ky-data-query",
+      "media-download",
+      "oil-price",
+      "quote-generator",
+      "reddit",
+      "tianyuan",
+      "video-subtitle",
+      "weekly-report",
+      "xhs-copywriter",
+      "xhs-note-analysis",
+      "youtube-transcript"
+    ],
+    "sales": [
+      "job-req-optimizer",
+      "quote-generator",
+      "weekly-report",
+      "xhs-copywriter",
+      "xhs-note-analysis",
+      "case-study"
+    ],
+    "ops": [
+      "xhs-copywriter",
+      "xhs-note-analysis"
+    ]
+  },
+  "users": {
+    "admin": {
+      "roles": [
+        "core",
+        "admin"
+      ]
+    },
+    "huangyp": {
+      "roles": [
+        "core",
+        "sales"
+      ]
+    },
+    "pengyn": {
+      "roles": [
+        "core",
+        "sales"
+      ]
+    },
+    "yangyh": {
+      "roles": [
+        "core",
+        "ops"
+      ]
+    },
+    "chenhj": {
+      "roles": [
+        "core"
+      ]
+    },
+    "zengky": {
+      "roles": [
+        "core"
+      ]
+    },
+    "syanp": {
+      "roles": [
+        "core"
+      ]
+    },
+    "caicy": {
+      "roles": [
+        "core"
+      ]
+    },
+    "chenyx": {
+      "roles": [
+        "core"
+      ]
+    },
+    "huangh": {
+      "roles": [
+        "core"
+      ]
+    },
+    "huangsl": {
+      "roles": [
+        "core",
+        "sales"
+      ]
+    },
+    "lish": {
+      "roles": [
+        "core"
+      ]
+    },
+    "susy": {
+      "roles": [
+        "core"
+      ]
+    },
+    "test": {
+      "roles": [
+        "core"
+      ]
+    },
+    "xurh": {
+      "roles": [
+        "core",
+        "sales"
+      ]
+    },
+    "ziye": {
+      "roles": [
+        "core"
+      ]
+    }
+  }
+}

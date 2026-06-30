@@ -1,0 +1,466 @@
+{
+  // ── 模型切换 ──────────────────────────────────────────────
+  "models": {
+    // false: 会话开始后只能在当前 provider 分组内切换
+    // true: 允许会话过程中跨 provider 分组切换模型
+    "allowCrossGroupSwitch": false,
+    "groups": [
+      {
+        "id": "anthropic",
+        "name": "Anthropic",
+        "protocol": "chat_completions",
+        "models": [
+          { "id": "opus", "name": "Opus 4.6", "value": "claude-opus-4-6[1m]" },
+          { "id": "sonnet", "name": "Sonnet 4.6", "value": "claude-sonnet-4-6" },
+          { "id": "haiku", "name": "Haiku 4.5", "value": "claude-haiku-4-5-20251001" }
+        ]
+      },
+      {
+        "id": "gpa",
+        "name": "GPA",
+        "apiKey": "your-provider-api-key",
+        "baseUrl": "http://127.0.0.1:8317",
+        // 分组默认协议；模型级 protocol 可覆盖。可选值：chat_completions / responses。
+        "protocol": "chat_completions",
+        // 可选：group 级 provider 请求体默认值；model 级同名配置会覆盖。
+        // "thinking": { "type": "enabled" },
+        // "reasoning_effort": "high",
+        // "extraBody": { "temperature": 1 },
+        // 无状态 OpenAI 兼容代理（如 cli-proxy）走 Responses 协议时必须关闭有状态接力，
+        // 否则工具调用后那一轮上游会报 "No tool call found for function call output"。
+        // group 级开关，组内所有模型生效；model 级 disable_response_chaining 可单独覆盖。
+        // "disable_response_chaining": true,
+        "models": [
+          {
+            "id": "gpt54",
+            "name": "GPT 5.4",
+            "value": "gpt-5.4",
+            // 可选：Token 单价（USD / 1M tokens）。平台管理 → 模型管理可视化维护。
+            // 未配置时使用服务端内置价格表；未知模型未配置则 cost=0 并告警。
+            "pricing": { "input": 2.5, "output": 15, "cacheCreation": 0, "cacheRead": 0.25 }
+          },
+          { "id": "gpt54mini", "name": "GPT 5.4 Mini", "value": "gpt-5.4-mini"},
+          { "id": "k25", "name": "Kimi 2.5", "value": "kimi-2.5" },
+          { "id": "m25", "name": "MiniMax 2.5", "value": "MiniMax-2.5" },
+          {
+            "id": "glm5",
+            "name": "GLM 5",
+            "value": "glm-5",
+            "thinking": { "type": "enabled", "clear_thinking": true },
+            "reasoning_effort": "high",
+            "extraBody": { "tool_stream": false }
+          },
+          // Responses 协议模型示例：protocol="responses" 走 /responses 端点
+          // （支持 previous_response_id 接力 + reasoning chain）。配套元数据字段：
+          //   alias_actual              —— response.model 实际别名值，用于 actualModelSeen 校验
+          //   supports_reasoning_output —— 是否公开 reasoning summary（隐藏派=false）
+          //   supports_tool_reasoning   —— 工具调用链路是否真正 think
+          //   tool_choice_modes         —— 支持的 tool_choice 白名单（如 glm 仅 auto/none）
+          //   call_id_format            —— call_id 格式标识（记录用）
+          //   disable_response_chaining —— 无状态代理需置 true（见上方 group 注释）
+          // {
+          //   "id": "gpt55", "name": "GPT 5.5", "value": "gpt-5.5",
+          //   "protocol": "responses",
+          //   "alias_actual": "gpt-5.5",
+          //   "supports_reasoning_output": true,
+          //   "supports_tool_reasoning": true,
+          //   "tool_choice_modes": ["auto", "required", "none", "specific"],
+          //   "call_id_format": "base62-24",
+          //   "disable_response_chaining": true
+          // },
+          { "id": "qwen35", "name": "Qwen 3.5", "value": "qwen3.5-plus" }
+        ]
+      }
+    ],
+    "default": "anthropic/sonnet"
+  },
+
+  // ── 标题生成器 ─────────────────────────────────────────────
+  // model: 引用 models.groups 中的 "groupId/modelId"
+  "titleGenerator": {
+    "model": "anthropic/haiku"
+  },
+
+  // ── Agent runtime 选项 ─────────────────────────────────────
+  // raw runtime 按 workspace / shared settings 装配 env、MCP、prompt 与工具。
+  "agent": {
+    "cwd": "/path/to/workspace",
+    "sharedDir": "workspace-shared",
+    "permissionMode": "bypassPermissions",
+    "allowDangerouslySkipPermissions": true,
+    "maxTurns": 1000,
+    "effortLevel": "medium",
+    // per-user 覆盖（key 为用户名，支持 effortLevel / extraDirs / allowGhCli）
+    "userOverrides": {
+      "admin": { "effortLevel": "high" },
+      "zengky": {
+        "extraDirs": ["/path/to/extra/project"],
+        "allowGhCli": true
+      }
+    },
+    // 系统提示语模板放在 workspace-shared/prompts/，由 raw runtime 在 buildInstructions()
+    // 加载并按运行时状态组合。可编辑的片段：static / dynamic / runtime-mcp /
+    // runtime-memory。promptRenderer 有进程内 cache，改 md 后需重启进程或显式
+    // clearPromptCache() 才能保证生效。
+    // （历史字段 agent.systemPrompt 仍在 schema 中保留但已无消费者，可忽略）
+    "settingSources": ["project"],
+    // 从模型上下文完全移除的工具。
+    "disallowedTools": ["CronCreate", "CronDelete", "CronList"]
+  },
+
+  // ── 服务端 ────────────────────────────────────────────────
+  "server": {
+    "port": 3000,
+    "timezone": "Asia/Shanghai"
+  },
+
+  // ── 定时任务调度 ──────────────────────────────────────────
+  // store 路径相对于 server 目录
+  "cron": {
+    "enabled": true,
+    "store": "./data/cron/jobs.json"
+  },
+
+  // ── 网络代理 ─────────────────────────
+  "proxy": {
+    "HTTP_PROXY": "http://127.0.0.1:7897",
+    "HTTPS_PROXY": "http://127.0.0.1:7897",
+    "NO_PROXY": "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1",
+    "CLAUDE_CODE_PROXY_RESOLVES_HOSTS": "1"
+  },
+
+  // ── 钉钉机器人（Stream / Webhook）────────────────────────
+  // messageBufferMs: 收到文件后等待后续文字合并的时间（毫秒），0 或不设置则禁用
+  "dingtalk": {
+    "enabled": false,
+    "mode": "stream",
+    "messageBufferMs": 43200000,
+    "robots": {
+      "***REMOVED-PUBLIC-HISTORY-5***": {
+        "name": "机器人名称",
+        "enabled": true,
+        "appKey": "dingXXXXXXXX",
+        "appSecret": "your-app-secret"
+      }
+    }
+  },
+
+  // ── 钉钉主动发送 ─────────────────────────────────────────
+  // 按 userId/chatId 推送，用于 Cron 等定时推送（不依赖 90 分钟有效的 sessionWebhook）
+  "dingtalkSendMessage": {
+    "enabled": false,
+    "endpoint": "",
+    "appKey": "",
+    "appSecret": "",
+    "robotCode": ""
+  },
+
+  // ── 调度引擎 ──────────────────────────────────────────────
+  // enabled=false 可快速回退为无中间件模式
+  "dispatch": {
+    "enabled": true,
+    "rateLimit": {
+      "enabled": false,
+      "maxRequests": 30,
+      "windowMs": 60000
+    }
+  },
+
+  // ── 平台内建 Web 工具 ────────────────────────────────────
+  // enabled=true 后，raw runtime 会向模型暴露 WebSearch / WebFetch。
+  // search 第一版使用 Brave Search API；生产建议把 key 存进 secretVault，
+  // 这里只写 apiKeyRef。fetch 只做 HTTP(S) 抓取与正文抽取，不执行 JS、不带登录态。
+  "webTools": {
+    "enabled": false,
+    "search": {
+      "enabled": true,
+      "provider": "brave",
+      "apiKeyRef": "brave-search-api-key",
+      "maxResults": 5,
+      "timeoutMs": 8000
+    },
+    "fetch": {
+      "enabled": true,
+      "timeoutMs": 10000,
+      "maxBytes": 1048576,
+      "maxChars": 20000,
+      "maxRedirects": 3
+    },
+    "egress": {
+      "allowPrivateNetworks": false
+    }
+  },
+
+  // ── 可观测性 ──────────────────────────────────────────────
+  "observability": {
+    "enabled": true,
+    "logging": {
+      "level": "info",
+      "timestamp": true
+    },
+    "metrics": true,
+    "audit": {
+      "enabled": false,
+      "path": "./data/logs/dispatch-audit.jsonl",
+      "redact": true
+    }
+  },
+
+  // ── Agent 记忆系统 ────────────────────────────────────────
+  "memory": {
+    "enabled": true,
+    "injectContext": {
+      "enabled": true,
+      "maxLines": 200
+    },
+    "maintenance": {
+      "enabled": true,
+      "minTextLength": 500,
+      "cooldownMinutes": 30
+    },
+    // 记忆索引（SQLite + FTS5 + sqlite-vec 向量混合检索）
+    // 启用后替代纯关键词搜索，提供语义理解能力
+    "index": {
+      "enabled": false,
+      // SQLite 数据库存放目录（相对于 server/，每个用户一个 .sqlite 文件）
+      "dbDir": "data/memory-index",
+      // 嵌入模型（OpenAI 兼容格式，当前用阿里云百炼 DashScope）
+      "embedding": {
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode",
+        "apiKey": "YOUR_DASHSCOPE_API_KEY",
+        "model": "text-embedding-v3",
+        "dimensions": 1024
+      },
+      // Markdown 分块参数
+      "chunking": {
+        "tokens": 200,
+        "overlap": 40
+      },
+      // 搜索参数
+      "search": {
+        "vectorWeight": 0.7,
+        "textWeight": 0.3,
+        "maxResults": 10,
+        "minScore": 0.3
+      },
+      // 时间衰减（日期文件 memory/YYYY-MM-DD.md 越旧分数越低，MEMORY.md 和 topics/ 不衰减）
+      "temporalDecay": {
+        "enabled": false,
+        "halfLifeDays": 30
+      },
+      // 文件同步
+      "sync": {
+        "debounceMs": 30000
+      }
+    }
+  },
+
+  // ── TTS 语音合成（豆包）───────────────────────────────────
+  // 用于钉钉 [VOICE] 标记触发的文本转语音
+  "tts": {
+    "doubaoAppId": "",
+    "doubaoApiKey": "",
+    "doubaoCluster": "volcengine_input_common",
+    "defaultVoice": "cancan",
+    "defaultSpeed": 1.2
+  },
+
+  // ── STT 语音识别（阿里云百炼 DashScope）────────────────
+  "stt": {
+    "apiKey": "",
+    "model": "fun-asr",
+    "ossAccessKeyId": "",
+    "ossAccessKeySecret": "",
+    "ossBucket": "your-oss-bucket",
+    "ossEndpoint": "https://oss-cn-shenzhen.aliyuncs.com"
+  },
+
+  // ── 鉴权 ────────────────────────────────────────────────────
+  "auth": {
+    "enabled": false,
+    "jwtSecret": "your-jwt-secret-at-least-32-characters",
+    "tokenExpiresIn": "60d"
+  },
+
+  // ── 消息展示 ──────────────────────────────────────────────
+  // 控制 Web 端和钉钉端分别展示哪些事件（thinking、工具调用等）
+  "messageDisplay": {
+    "web": {
+      "thinking": true,
+      "toolInput": true,
+      "toolResult": true,
+      "skillInput": true,
+      "skillResult": true
+    },
+    "dingtalk": {
+      "thinking": true,
+      "toolStart": false,
+      "toolComplete": true,
+      "skillStart": false,
+      "skillComplete": true,
+      "useAICard": true // 是否使用 AI Card 流式卡片
+    }
+  },
+
+  // ── Runtime audit 投影后端 ────────────────────────────────
+  // - "file"   (默认)：EventStore 直读 *.runtime-events.jsonl
+  // - "duckdb"      ：投影到独立 data/audit.duckdb；同接口、admin route 不感知切换
+  // 两 backend 同一份 audit 数据结果一致（见 verify:audit-read 双 backend 验证）
+  "audit": {
+    "projection": "file"
+  },
+
+  // ── Runtime Artifact 对象后端 ─────────────────────────────
+  // 不配置时默认使用本机 ./data/artifacts 作为 local blob backend；PG runtime
+  // 下 artifact metadata 会落 runtime_artifacts，file/dev 模式 metadata 为进程内兼容。
+  // 生产推荐 backend="oss"，content-addressed object 写入 OSS，并由 /api/artifacts/*
+  // 提供 ACL metadata 查询、短期 signed read URL 和 retention GC。
+  // "artifact": {
+  //   "backend": "oss",
+  //   "accessKeyId": "<OSS_ACCESS_KEY_ID>",
+  //   "accessKeySecret": "<OSS_ACCESS_KEY_SECRET>",
+  //   "bucket": "agent-artifacts",
+  //   "endpoint": "https://oss-cn-shenzhen.aliyuncs.com",
+  //   "prefix": "agent-saas/artifacts",
+  //   "signedUrlSecret": "<至少 16 字符，生产应固定>",
+  //   "readUrlTtlSeconds": 900,
+  //   "maxBlobBytes": 104857600,
+  //   "retentionDays": 90,
+  //   "gcIntervalMs": 86400000
+  // },
+
+  // ── Runtime EventStore 后端（Stage 2 brain stateless）─────────
+  // 不配置 / backend="file"：事件落本机 *.runtime-events.jsonl（默认，自给自足）
+  // backend="pg"：事件外部化到 PostgreSQL（Azeroth RDS 独立 agent_runtime 库），
+  //   多 brain 可共享、ECS 迁移零数据搬运。建库见 docs/azeroth-pg-setup.md
+  // ⚠️ Azeroth RDS 服务端 SSL 未开时用 sslmode=disable；控制台开启后切 sslmode=require
+  // "runtimeEventStore": {
+  //   "backend": "pg",
+  //   "connectionString": "postgresql://agent_runtime_app:<PG_PWD>@<RDS 域名>:5432/agent_runtime?sslmode=disable",
+  //   "tablePrefix": "runtime"
+  // },
+
+
+  // ── Client daemon reverse WebSocket（Many-hands 客户侧 hand）──────────────
+  // 客户机器 daemon 通过 ws(s)://<server>/daemon 反向连接平台，hello 后注册为
+  // type=client 的 hand。普通 workspace 工具不接受 handId 入参；runtime 会按
+  // session / hand 状态自动选择可用执行环境，必要时先让模型调用 WaitForWorkspaceReady。
+  // 两者都省略 → gateway 接受任意连接（dev/受信网络）。生产建议二选一：
+  //   - `authToken`：inline 共享 bearer，dev/staging。
+  //   - `authTokenRef`：SecretVault ref id（A5）。运行期由 vault 解析为 plaintext
+  //     注入到 gateway；rotation 时调 `vault.rotateSecret` 后再调 gateway.setAuthToken
+  //     即可热更新，无需重启进程。已建立的 daemon socket 不受影响，重连时使用新 token。
+  // "clientDaemon": {
+  //   "path": "/daemon",
+  //   "authTokenRef": "client-daemon-prod",
+  //   // 或 "authToken": "replace-with-daemon-token",
+  //   "helloTimeoutMs": 10000,
+  //   // 单个 daemon 连接 lastSeenAt 未刷新超过该值视为失联：close socket、
+  //   // unregister transport、HandStore 标记 unhealthy（metadata.disconnectReason=
+  //   // heartbeat_timeout:<ms>）、fail pending invokes。默认 60_000；0 关闭扫描。
+  //   "heartbeatTimeoutMs": 60000,
+  //   // scanner 周期，默认 heartbeatTimeoutMs/3 且最小 1s。
+  //   "heartbeatScanIntervalMs": 20000
+  // },
+
+  // ── SecretVault backend 选择（A2）──────────────
+  // 未配置 = 进程内 `InMemorySecretVault`：所有 putSecret/rotate/revoke 仅
+  // 进程内可见，重启即丢；仅适合 dev/单进程。生产应显式选择：
+  //
+  // "secretVault": {
+  //   "backend": "encrypted-file",
+  //   "filePath": "./data/secrets.enc",  // 相对 server cwd
+  //   "encryptionKeyEnv": "AGENT_SECRET_VAULT_KEY"   // 或 inline "encryptionKey": "...≥16 字符..."
+  // },
+  //
+  // 或外接 KMS / secret-manager proxy（生产推荐）：
+  // "secretVault": {
+  //   "backend": "http",
+  //   "baseUrl": "https://kms.internal/v1",
+  //   "authTokenEnv": "AGENT_SECRET_VAULT_HTTP_TOKEN"   // 或 inline "authToken": "...≥8 字符..."
+  // },
+  // 注意：http vault 自身的 bearer 不能走 vault ref（鸡生蛋），所以这里
+  // 只支持 inline 或 env-var；envName 内的实际 token 由部署管道注入。
+
+  // ── Tenant ECS / Docker hand appliances（过渡态）──────────────
+  // 用于“每个组织 ECS 跑一个 hand-server，并由平台总调度器调用”的模式。
+  // 平台会在每个匹配 session 中注册一个 handId=`<sessionId>:<id>` 的
+  // server-remote hand；普通 Read/Write/List/Shell 不接受 handId 入参，runtime 会在
+  // 唯一 ready tenant hand 存在时自动路由；未 ready 时模型应先调用
+  // WaitForWorkspaceReady。RunStore/EventStore/approval/cancel/audit 仍由平台作为
+  // 事实源；Docker 只作为可替换执行面。
+  // 两个 allow-list（users + tenantIds）独立放行（任一命中即可 attach）；
+  // 都省略 = 对所有认证用户可见。`tenantIds` 命中条件是 `user.tenantId` 与
+  // 列表交集（user 模型新增 optional `tenantId` 字段）。生产建议优先用
+  // tenantIds 维度，username 保留作为单点放行的兼容口子。
+  // 必须启用 runtimeEventStore.backend="pg"，否则 durable HandStore 不可用，启动会拒绝 tenantRemoteHands 配置。
+  //
+  // 每个 hand 必须二选一提供 bearer token：
+  //   - `authToken`：inline 明文，仅用于 dev/staging。明文会出现在 config 与进程内存，但 **不** 写入 HandStore 持久化字段。
+  //   - `authTokenRef`：SecretVault ref id，生产推荐。token 由 vault 解析，HandStore 仅记录 ref id 供 ops 审计与 cancel-delivery dead-letter 调试。
+  //     默认 vault 是进程内 `InMemorySecretVault`；生产应在启动期通过外部 KMS adapter（或调用 `vault.putSecret`）把真实 token 注入到对应 ref id。
+  //     ref id 本身不是 secret，可以写入 config 与日志；但若 ref id 看起来像真实 token（命中 looksLikeSecret 启发式），schema 会拒绝以避免误填。
+  //
+  // "tenantRemoteHands": {
+  //   "hands": [
+  //     {
+  //       "id": "tenant-ecs",
+  //       "description": "Docker hand-server running in the tenant ECS/VPC",
+  //       "tenantIds": ["tenant-A", "tenant-B"],
+  //       // 或同时声明 "users": ["alice"] —— 两个 list 独立放行（union）
+  //       "baseUrl": "http://tenant-ecs-hand:3300",
+  //       "authTokenRef": "tenant-hand-prod",
+  //       "invokeTimeoutMs": 120000,
+  //       "networkPolicy": {
+  //         "mode": "public-egress",
+  //         "denyPrivateNetworks": true
+  //       }
+  //     },
+  //     {
+  //       "id": "tenant-ecs-dev",
+  //       "description": "Dev tenant hand with inline token (NOT for production)",
+  //       "users": ["dev-user"],
+  //       "baseUrl": "http://localhost:3300",
+  //       "authToken": "dev-only-inline-token",
+  //       "networkPolicy": {
+  //         "mode": "isolated"
+  //       }
+  //     },
+  //     {
+  //       "id": "tenant-private-vpc",
+  //       "description": "Tenant hand with explicit private egress allow-list",
+  //       "tenantIds": ["tenant-C"],
+  //       "baseUrl": "http://tenant-vpc-hand:3300",
+  //       "authTokenRef": "tenant-private-vpc-hand",
+  //       "networkPolicy": {
+  //         "mode": "private-egress",
+  //         "denyPrivateNetworks": true,
+  //         "allowCidrs": ["10.8.0.0/16"],
+  //         "allowDomains": ["internal.example.com"]
+  //       }
+  //     }
+  //   ]
+  // },
+
+  // ── HandHealthScanner（B4）──────────────
+  // PG runtime 启动 server-remote hand 健康扫描器；周期 GET <endpoint>/health，
+  // 失败 → status=unhealthy + emit hand_health_changed；恢复 → 翻回 ready。
+  // 默认 enabled=true / intervalMs=30000 / healthTimeoutMs=5000。
+  // "runtimeHandHealthScanner": {
+  //   "enabled": true,
+  //   "intervalMs": 30000,
+  //   "healthTimeoutMs": 5000
+  // },
+
+  // ── Runtime Scheduler / Web enqueue-only（P8）──────────────
+  // 仅 PG Runtime EventStore 下生效。默认 autoWake=true：Web chat 会默认只
+  // durable enqueue run，由 RuntimeScheduler acquire lease 后调用 wakeRuntimeSession
+  // 执行；如需极保守恢复策略，可显式设为 false（pending/recoverable 会被标 orphaned）。
+  // "runtimeScheduler": {
+  //   "autoWake": true,
+  //   "pollIntervalMs": 10000,
+  //   "leaseMs": 60000,
+  //   "renewIntervalMs": 30000,
+  //   "approvalTimeoutMs": 86400000
+  // }
+}

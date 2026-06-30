@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kaiyan.agent-daemon</string>
+
+    <!--
+      C5 packaging baseline. Replace the placeholder values via install.sh
+      OR by editing this file before `launchctl bootstrap gui/$UID …`.
+      Required vars:
+        AGENT_DAEMON_REPO_ROOT  path to checked-out repo
+        CLIENT_DAEMON_URL       reverse-WS gateway URL (wss://… or ws://…)
+        CLIENT_DAEMON_ID        stable device id; matches the registry entry
+        CLIENT_DAEMON_AUTH_TOKEN   bearer issued by the platform admin tool
+        CLIENT_DAEMON_WORKSPACE_ROOT   local sandbox path the daemon uses
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/pnpm</string>
+        <string>--dir</string>
+        <string>__REPO_ROOT__/server</string>
+        <string>exec</string>
+        <string>tsx</string>
+        <string>scripts/client-daemon.mts</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CLIENT_DAEMON_URL</key>
+        <string>__CLIENT_DAEMON_URL__</string>
+        <key>CLIENT_DAEMON_ID</key>
+        <string>__CLIENT_DAEMON_ID__</string>
+        <key>CLIENT_DAEMON_AUTH_TOKEN</key>
+        <string>__CLIENT_DAEMON_AUTH_TOKEN__</string>
+        <key>CLIENT_DAEMON_WORKSPACE_ROOT</key>
+        <string>__CLIENT_DAEMON_WORKSPACE_ROOT__</string>
+        <!--
+          The daemon socket goes through a real WebSocket; if the host has
+          a corporate proxy, set NO_PROXY=* to bypass scutil --proxy noise
+          that breaks Node's outbound connections (same issue we hit with
+          frpc; see CLAUDE.md).
+        -->
+        <key>NO_PROXY</key>
+        <string>*</string>
+        <key>ALL_PROXY</key>
+        <string></string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>__REPO_ROOT__/logs/agent-daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO_ROOT__/logs/agent-daemon.err.log</string>
+
+    <!--
+      Run as the invoking user (matching launchctl gui/$UID context). Don't
+      use root unless the workspace requires it — the daemon executes
+      shell commands inside CLIENT_DAEMON_WORKSPACE_ROOT.
+    -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

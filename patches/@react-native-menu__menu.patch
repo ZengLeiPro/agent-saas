@@ -1,0 +1,51 @@
+diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..78a94fd84529b53e4ca0f6b77bbddff48d854535 100644
+--- a/ios/Shared/MenuViewImplementation.swift
++++ b/ios/Shared/MenuViewImplementation.swift
+@@ -51,6 +51,7 @@ public class MenuViewImplementation: UIButton {
+     }
+ 
+     @objc public var hitSlop: UIEdgeInsets = .zero
++    private weak var _dimmingOverlay: UIView?
+ 
+     override init(frame: CGRect) {
+         super.init(frame: frame)
+@@ -69,6 +70,38 @@ public class MenuViewImplementation: UIButton {
+     
+     public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willEndFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
+         sendMenuClose()
++        if let overlay = self._dimmingOverlay {
++            animator?.addAnimations {
++                overlay.alpha = 0
++            }
++            animator?.addCompletion {
++                overlay.removeFromSuperview()
++            }
++            self._dimmingOverlay = nil
++        }
++    }
++
++    // Show the view as-is in the preview (no glass bubble, no lift scaling)
++    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
++        return UITargetedPreview(view: self)
++    }
++
++    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
++        return UITargetedPreview(view: self)
++    }
++
++    // Add extra dimming overlay for stronger contrast
++    public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
++        guard let window = self.window else { return }
++        let overlay = UIView(frame: window.bounds)
++        overlay.backgroundColor = UIColor.black.withAlphaComponent(0.25)
++        overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
++        overlay.alpha = 0
++        window.addSubview(overlay)
++        self._dimmingOverlay = overlay
++        animator?.addAnimations {
++            overlay.alpha = 1
++        }
+     }
+ 
+     func setup () {

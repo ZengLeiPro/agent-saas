@@ -1,0 +1,152 @@
+# ============================================================================
+# CI/CD Pipeline: install → typecheck → test → build → deploy ECS
+# ============================================================================
+# 触发: push to main
+# 说明: 检查通过后打包 release，通过 SSH 部署到新深圳 ECS 的 systemd 服务。
+# ============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+env:
+  NODE_VERSION: "22"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build & Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck server
+        run: pnpm -F server typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      # web build 内含 tsc，同时完成 typecheck + vite build
+      - name: Build frontend
+        run: pnpm -F web build
+
+      # 将构建产物 web/dist/ 打包上传（保留以便手动下载部署）
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist/
+          retention-days: 5
+
+      - name: Pack ECS release
+        run: |
+          tar \
+            --exclude='./.git' \
+            --exclude='./node_modules' \
+            --exclude='./*/node_modules' \
+            --exclude='./server/data' \
+            --exclude='./logs' \
+            --exclude='./config.json' \
+            --exclude='./config.json.*' \
+            --exclude='./.env' \
+            --exclude='./.env.*' \
+            --exclude='./mobile/ios' \
+            --exclude='./mobile/android' \
+            -czf "$RUNNER_TEMP/agent-saas-release.tgz" .
+
+      - name: Upload ECS release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-saas-release
+          path: ${{ runner.temp }}/agent-saas-release.tgz
+          retention-days: 5
+
+  deploy-ecs:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    env:
+      ECS_HOST: ${{ secrets.ECS_HOST }}
+      ECS_USER: ${{ secrets.ECS_USER }}
+      ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      DEPLOY_ROOT: /opt/agent-saas-app
+      SERVICE_NAME: agent-saas-server
+
+    steps:
+      - name: Download ECS release artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: agent-saas-release
+
+      - name: Configure SSH
+        run: |
+          : "${ECS_HOST:?Missing secret ECS_HOST}"
+          : "${ECS_USER:?Missing secret ECS_USER}"
+          : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_deploy_key
+          chmod 600 ~/.ssh/ecs_deploy_key
+          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload release
+        run: |
+          scp -i ~/.ssh/ecs_deploy_key agent-saas-release.tgz \
+            "$ECS_USER@$ECS_HOST:/tmp/agent-saas-${GITHUB_SHA}.tgz"
+
+      - name: Deploy and restart
+        run: |
+          ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
+            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_SHA}.tgz' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          : "${DEPLOY_ROOT:?missing DEPLOY_ROOT}"
+          : "${SERVICE_NAME:?missing SERVICE_NAME}"
+          : "${RELEASE_TGZ:?missing RELEASE_TGZ}"
+
+          APP_DIR="$DEPLOY_ROOT/current"
+          DATA_DIR="/mnt/agent-saas/server-data"
+
+          mkdir -p "$APP_DIR" "$DATA_DIR"
+          tar -xzf "$RELEASE_TGZ" -C "$APP_DIR"
+          ln -sfn "$DATA_DIR" "$APP_DIR/server/data"
+
+          cd "$APP_DIR"
+          if command -v corepack >/dev/null 2>&1; then
+            corepack enable
+            corepack prepare pnpm@10.18.3 --activate
+          fi
+          NODE_ENV=development pnpm install --frozen-lockfile --filter server... --filter shared...
+
+          systemctl restart "$SERVICE_NAME"
+          for _ in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:3200/api/healthz >/dev/null; then
+              rm -f "$RELEASE_TGZ"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          journalctl -u "$SERVICE_NAME" -n 120 --no-pager
+          exit 1
+          REMOTE

@@ -1,0 +1,37 @@
+{
+  "name": "agent-saas",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.18.3",
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,green \"pnpm run dev:server\" \"pnpm run dev:web\"",
+    "dev:server": "pnpm -F server dev",
+    "dev:web": "pnpm -F web dev",
+    "dev:backend": "pnpm run dev:server",
+    "dev:frontend": "pnpm run dev:web",
+    "install:all": "pnpm install",
+    "frpc:stop": "launchctl unload ~/Library/LaunchAgents/com.frp.frpc.plist 2>/dev/null; true",
+    "frpc:start": "launchctl load ~/Library/LaunchAgents/com.frp.frpc.plist",
+    "build": "pnpm -F web build",
+    "start": "pnpm -F server start",
+    "prod": "pnpm build && pnpm start",
+    "dev:frpc": "pnpm run frpc:stop && concurrently -k -n server,web,frpc -c blue,green,yellow \"pnpm run dev:server\" \"pnpm run dev:web\" \"bash scripts/frpc.sh\"",
+    "prod:frpc": "pnpm build && pnpm run frpc:stop && concurrently -k -n server,frpc -c blue,yellow \"pnpm start\" \"bash scripts/frpc.sh\"",
+    "deploy": "bash scripts/deploy.sh",
+    "test": "pnpm -r --filter='./server' --filter='./shared' --filter='./web' run --if-present test",
+    "rollback": "bash scripts/rollback.sh",
+    "postinstall": "patch-package",
+    "local:db": "docker compose -f docker-compose.local-db.yml up -d",
+    "local:db:down": "docker compose -f docker-compose.local-db.yml down"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "patch-package": "^8.0.0"
+  },
+  "dependencies": {
+    "expo": "~55.0.5",
+    "react": "19.2.0",
+    "react-native": "0.83.2",
+    "zustand": "^5.0.12"
+  }
+}

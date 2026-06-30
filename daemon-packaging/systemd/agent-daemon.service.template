@@ -1,0 +1,38 @@
+[Unit]
+Description=Kaiyan Agent client daemon (reverse-WS hand)
+Documentation=https://github.com/kaiyan-tech/agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# install.sh substitutes __REPO_ROOT__ / __DAEMON_USER__ / etc.
+User=__DAEMON_USER__
+Group=__DAEMON_USER__
+WorkingDirectory=__REPO_ROOT__/server
+EnvironmentFile=-/etc/agent-daemon/env
+
+# pnpm + tsx in PATH; symlink or use absolute path from `which pnpm`.
+ExecStart=/usr/local/bin/pnpm --dir __REPO_ROOT__/server exec tsx scripts/client-daemon.mts
+
+Restart=on-failure
+RestartSec=10s
+
+# Sandbox the daemon a bit. Tools that need to read/write the workspace
+# do so under CLIENT_DAEMON_WORKSPACE_ROOT, which install.sh sets as a
+# ReadWritePath on the unit (added below).
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=__CLIENT_DAEMON_WORKSPACE_ROOT__
+
+# journald rotates by default so no logrotate.conf required.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -62,7 +62,6 @@ WORKDIR /app
 # docker/kubectl/aliyun 这类可以触达宿主或云控制面的命令。
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-ENV MPLBACKEND=Agg
 ARG DEBIAN_MIRROR=http://deb.debian.org/debian
 ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
 
@@ -248,7 +247,6 @@ ENV DOWNLOAD_DIR=/workspace/downloads
 ENV XDG_DOWNLOAD_DIR=/workspace/downloads
 ENV ACS_PYTHON_WHEELHOUSE=/opt/ky-agent/python-wheels
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-ENV MPLBACKEND=Agg
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PIP_REQUIRE_VIRTUALENV=1
 ENV HOME=/home/agent

@@ -104,7 +104,6 @@ jobs:
           test "$LANG" = "C.UTF-8"
           test "$LC_ALL" = "C.UTF-8"
           test "$PLAYWRIGHT_BROWSERS_PATH" = "/ms-playwright"
-          test "$MPLBACKEND" = "Agg"
           test "$NPM_CONFIG_PREFIX" = "/home/agent/.npm-global"
           test "$(npm config get prefix)" = "/home/agent/.npm-global"
           npm list -g --depth=0 >/dev/null
@@ -139,7 +138,6 @@ jobs:
             'test "$(cat /etc/timezone)" = Asia/Shanghai',
             'test "$(readlink -f /etc/localtime)" = /usr/share/zoneinfo/Asia/Shanghai',
             'test "$PLAYWRIGHT_BROWSERS_PATH" = /ms-playwright',
-            'test "$MPLBACKEND" = Agg',
             'test "$(npm config get prefix)" = /home/agent/.npm-global',
             'npm list -g --depth=0 >/dev/null',
             'test "$DOWNLOAD_DIR" = /workspace/downloads',
@@ -148,7 +146,7 @@ jobs:
             'for c in openssl ffmpeg ffprobe convert identify soffice pandoc pdftotext qpdf gs tesseract fc-match; do command -v "$c" >/dev/null; done',
             'fc-match "Noto Sans CJK SC" | grep -Ei "Noto|CJK|Sans" >/dev/null',
             'python3 - <<\\PY',
-            'import requests, httpx, aiohttp, bs4, lxml, numpy, pandas, pyarrow, openpyxl, docx, pptx, PIL, jinja2, markdown, pypdf, pdfplumber, fitz, reportlab, matplotlib, sqlalchemy, pymysql, psycopg, redis, dotenv, yaml, jieba, sklearn, playwright',
+            'import requests, httpx, aiohttp, bs4, lxml, numpy, pandas, openpyxl, xlsxwriter, docx, pptx, PIL, jinja2, markdown, pypdf, fitz, sqlalchemy, pymysql, psycopg, redis, dotenv, yaml, jieba, playwright',
             'print("PYTHON_BASE_IMPORTS_OK")',
             'PY',
             'node - <<\\NODE',
@@ -458,13 +456,12 @@ jobs:
             'test "$VIRTUAL_ENV" = /workspace/.ky-agent/runtime/venv',
             'test "$PIP_CACHE_DIR" = /workspace/.ky-agent/runtime/cache/pip',
             'test "$PLAYWRIGHT_BROWSERS_PATH" = /ms-playwright',
-            'test "$MPLBACKEND" = Agg',
             'test "$(cat /etc/timezone)" = Asia/Shanghai',
             'test "$(readlink -f /etc/localtime)" = /usr/share/zoneinfo/Asia/Shanghai',
             'for c in openssl ffmpeg ffprobe convert identify soffice pandoc pdftotext qpdf gs tesseract fc-match; do command -v "$c" >/dev/null; done',
             'fc-match "Noto Sans CJK SC" | grep -Ei "Noto|CJK|Sans" >/dev/null',
             'python3 - <<\\PY',
-            'import requests, httpx, aiohttp, bs4, lxml, numpy, pandas, pyarrow, openpyxl, docx, pptx, PIL, jinja2, markdown, pypdf, pdfplumber, fitz, reportlab, matplotlib, sqlalchemy, pymysql, psycopg, redis, dotenv, yaml, jieba, sklearn, playwright',
+            'import requests, httpx, aiohttp, bs4, lxml, numpy, pandas, openpyxl, xlsxwriter, docx, pptx, PIL, jinja2, markdown, pypdf, fitz, sqlalchemy, pymysql, psycopg, redis, dotenv, yaml, jieba, playwright',
             'print("PYTHON_BASE_IMPORTS_OK")',
             'PY',
             'node - <<\\NODE',

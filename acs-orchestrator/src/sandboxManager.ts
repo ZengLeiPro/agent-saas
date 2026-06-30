@@ -553,7 +553,6 @@ export class SandboxManager {
         { name: 'DOWNLOAD_DIR', value: `${this.config.workspaceMountPath}/downloads` },
         { name: 'XDG_DOWNLOAD_DIR', value: `${this.config.workspaceMountPath}/downloads` },
         { name: 'PLAYWRIGHT_BROWSERS_PATH', value: '/ms-playwright' },
-        { name: 'MPLBACKEND', value: 'Agg' },
         { name: 'NPM_CONFIG_PREFIX', value: '/home/agent/.npm-global' },
         { name: 'VIRTUAL_ENV', value: `${this.config.workspaceMountPath}/.ky-agent/runtime/venv` },
         { name: 'PIP_CACHE_DIR', value: `${this.config.workspaceMountPath}/.ky-agent/runtime/cache/pip` },

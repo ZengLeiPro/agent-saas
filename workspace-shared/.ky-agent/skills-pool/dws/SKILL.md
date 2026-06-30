@@ -10,8 +10,8 @@ cli_version: ">=1.0.30"
 > 2. **脚本已自动注入隔离环境**：`scripts/dws_runtime.py` 会在所有 bundled Python 脚本调用 `dws` 时自动设置上述 env；手写 `dws` 命令仍必须 source `.dws/env.sh` 或显式带 env。
 > 3. **首次授权使用当前平台支持的后台任务/轮询机制**：不要写 `nohup ... & disown`、不要把日志放 `/tmp`、不要承诺普通对话结束后仍在盯轮询。授权日志放 `.dws/logs/login.log`。
 > 4. **device flow URL 让用户在自己设备打开**：授权页面跑在钉钉服务器上，用户手机或自己的电脑浏览器都可以，agent 不需要也不应该代开授权页面。
-> 5. **每个 workspace 独立授权**，绑定本 workspace 对应的钉钉账号；禁止复用 `dingtalk-docs` 的 `***REMOVED-PUBLIC-HISTORY-5***` 小号（那个只有发消息权限，dws 需要的 13+ 产品 scope 拿不到）。
-> 6. **职责边界**：TTS / 语音消息 / `[VOICE]` 标记走 `dingtalk-msg`；批量历史聚合（员工/部门/工时）走 `ky-data-query`；实时单点钉钉操作才走本 skill。
+> 5. **每个 workspace 独立授权**，绑定本 workspace 对应的钉钉账号；禁止复用旧文档小号（那类小号通常只有发消息权限，dws 需要的 13+ 产品 scope 拿不到）。
+> 6. **职责边界**：实时钉钉产品操作走本 skill；批量历史聚合（员工/部门/工时）走 `ky-data-query`；TTS / 语音消息 / `[VOICE]` 标记当前无专用 skill，不要路由到已下线的旧 skill。
 >
 > **Token 寿命（实际行为）**：access_token 2h 自动 refresh / refresh_token 30 天但**每次刷新 sliding window 自动延长 30 天**——只要月内调过一次 dws 命令就永不掉线。掉线唯一可能是连续 30 天工作区完全不用 dws。
 >

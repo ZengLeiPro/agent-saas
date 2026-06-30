@@ -64,7 +64,7 @@ DWS_DISABLE_KEYCHAIN=1 DWS_CONFIG_DIR="$PWD/.dws/config" DWS_KEYCHAIN_DIR="$PWD/
 7. 验证：`source .dws/env.sh && dws auth status`，看到 `authenticated: true` 即成功
 8. 烟雾测试：`dws contact user get-self --format json` 拿到当前用户档案
 
-**与现有 dingtalk-docs 小号共用模式的区别**：dws 涉及日历、待办、审批、听记、考勤、日志等**个人数据**，必须每个工作区绑定本人的钉钉账号，**禁止**复用 ***REMOVED-PUBLIC-HISTORY-5*** 那个无人小号。
+**与旧文档小号共用模式的区别**：dws 涉及日历、待办、审批、听记、考勤、日志等**个人数据**，必须每个工作区绑定本人的钉钉账号，**禁止**复用只有少量权限的无人小号。
 
 **Token 寿命**：access_token 2 小时（自动 refresh），refresh_token 30 天（过期需重走完整 device flow 授权）。
 
@@ -75,21 +75,16 @@ DWS_DISABLE_KEYCHAIN=1 DWS_CONFIG_DIR="$PWD/.dws/config" DWS_KEYCHAIN_DIR="$PWD/
 | 场景 | 用哪个 |
 |---|---|
 | 钉钉云文档读写、知识库遍历、AI 表格操作、日历待办审批考勤听记日志等 | **dws**（本 skill） |
-| TTS 语音消息 / [VOICE] 输出格式标记 / SessionWebhook 90 分钟回复 | `dingtalk-msg`（开沿自建 FC + 火山引擎合成，dws 不覆盖） |
+| TTS 语音消息 / [VOICE] 输出格式标记 / SessionWebhook 90 分钟回复 | 当前 skills-pool 未提供专用 skill，不要路由到旧能力 |
 | 钉钉员工 / 部门 / 工时 / 项目工时 / 审批历史归档查询 | `ky-data-query`（查 azeroth 镜像数据库，比 dws 调实时 API 快、可做聚合分析） |
 | 实时拉某个员工今天的日程 / 实时查某条钉钉文档 | dws（实时） |
 | 跨多人多月聚合统计（如全员本月考勤异常） | `ky-data-query`（镜像 + DuckDB） |
 
-简化判断：**实时单点操作 → dws；批量历史聚合 → ky-data-query；TTS 语音 → dingtalk-msg**。
+简化判断：**实时单点操作 → dws；批量历史聚合 → ky-data-query；TTS 语音 → 当前无专用 skill，先说明能力缺口**。
 
-## 4. 过渡期注意（旧 dingtalk-docs 暂未下线）
+## 4. 旧能力下线说明
 
-当前 skills-pool 同时存在 `dingtalk-docs`（基于 mcporter + 钉钉官方 MCP server）和 `dws`（本 skill）。两者描述会有重叠触发。优先级：
-
-- **优先选 dws**：因为它有更完整的产品覆盖、官方维护、token 隔离方案更严
-- 仅在 dws 临时不可用（网络、CLI 未装、授权未完成）时降级到 dingtalk-docs
-
-`dingtalk-docs` 计划在 dws 稳定使用 2-4 周后下线。
+旧 `dingtalk-docs` 已从当前 agent-saas skills-pool 下线。不要再降级到该旧 skill；如果 dws 临时不可用，停止并报告 dws 授权、CLI 或网络问题。
 
 ## 5. 常用调用模板
 

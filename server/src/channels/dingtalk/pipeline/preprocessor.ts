@@ -53,7 +53,7 @@ export class DingtalkPreprocessor {
   ): Promise<PreparedDingtalkMessage | null> {
     const robotConfig = this.resolveRobotConfig(robotId);
     const messageHelpers = this.deliveryService.createMessageHelpers(source);
-    const existingSession = this.sessionService.getClaudeSession(source.conversationId);
+    const existingSession = this.sessionService.getAgentSession(source.conversationId);
     const card = await this.cardService.createForMessage(source, robotConfig);
 
     const followup = this.parseFollowup(source.content);

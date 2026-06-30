@@ -69,8 +69,8 @@ services:
       - ${CONFIG_JSON_PATH:-./config.json}:/app/config.json:ro
       # workspace：β-Q2 决策 = NAS 挂载（生产 ECS 上把 ./workspace 改成 /mnt/nas/agent-runtime/workspace）
       - workspace:/app/workspace
-      # transcripts：~/.claude/projects 等价路径
-      - transcripts:/root/.claude/projects
+      # transcripts：Agent SaaS 会话投影
+      - transcripts:/root/.agent-saas/legacy-transcripts
       # data（audit.duckdb / sessions metadata / 本地 sqlite）
       - server-data:/app/server/data
       # logs

@@ -1,8 +1,8 @@
 {
   "ios": {
-    "bundleIdentifier": "com.anonymous.claude-agent-chat"
+    "bundleIdentifier": "net.kaiyan.agent"
   },
   "android": {
-    "package": "com.anonymous.claudeagentchat"
+    "package": "net.kaiyan.agent"
   }
 }

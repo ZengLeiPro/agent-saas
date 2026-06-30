@@ -45,21 +45,12 @@ describe('rebuildTokenUsageFromJsonl', () => {
    * 去扫真实 `~/.agent-saas/legacy-transcripts` 污染主机。
    */
   let newProjectsRoot: string;
-  /**
-   * 旧 Claude layout 根：`<root>/<cwd-derived-projectKey>/*.jsonl`。
-   * 现有用例的 fixture 都用旧 projectKey 命名（`-Users-admin-workspace-zenglei`），
-   * 写到这个目录测 legacy fallback 的 `parseUsernameFromProjectKey` 路径。
-   * 显式 mock 也避免默认值扫主机 `~/.claude/projects`（本地存在时会大量超时）。
-   */
-  let legacyProjectsRoot: string;
 
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), 'tu-rebuild-data-'));
     newProjectsRoot = await mkdtemp(join(tmpdir(), 'tu-rebuild-new-'));
-    legacyProjectsRoot = await mkdtemp(join(tmpdir(), 'tu-rebuild-legacy-'));
     cleanupDirs.add(dataDir);
     cleanupDirs.add(newProjectsRoot);
-    cleanupDirs.add(legacyProjectsRoot);
     __resetBusinessDbForTest();
   });
 
@@ -71,9 +62,12 @@ describe('rebuildTokenUsageFromJsonl', () => {
     cleanupDirs.clear();
   });
 
-  /** 写到旧 Claude layout（projectKey/sessionId.jsonl）。 */
+  /** 写到新 Agent SaaS layout。旧 projectKey 入参仅用于复用历史测试夹具命名。 */
   async function writeJsonl(projectKey: string, sessionId: string, lines: object[], meta?: object) {
-    const dir = join(legacyProjectsRoot, projectKey);
+    const username = parseUsernameFromProjectKey(projectKey, '-Users-admin-workspace-');
+    const dir = username
+      ? join(newProjectsRoot, 'kaiyan', username)
+      : newProjectsRoot;
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, `${sessionId}.jsonl`), lines.map(l => JSON.stringify(l)).join('\n'));
     if (meta) {
@@ -112,7 +106,6 @@ describe('rebuildTokenUsageFromJsonl', () => {
     const stats = await rebuildTokenUsageFromJsonl(db, {
       agentCwd: '/Users/admin/workspace',
       projectsRoot: newProjectsRoot,
-      legacyProjectsRoot,
       log: () => {},
     });
 
@@ -158,7 +151,6 @@ describe('rebuildTokenUsageFromJsonl', () => {
     const r1 = await rebuildTokenUsageFromJsonl(db, {
       agentCwd: '/Users/admin/workspace',
       projectsRoot: newProjectsRoot,
-      legacyProjectsRoot,
       log: () => {},
     });
     expect(r1.performed).toBe(true);
@@ -166,7 +158,6 @@ describe('rebuildTokenUsageFromJsonl', () => {
     const r2 = await rebuildTokenUsageFromJsonl(db, {
       agentCwd: '/Users/admin/workspace',
       projectsRoot: newProjectsRoot,
-      legacyProjectsRoot,
       log: () => {},
     });
     expect(r2.performed).toBe(false);
@@ -183,11 +174,10 @@ describe('rebuildTokenUsageFromJsonl', () => {
 
     const db = getBusinessDb(dataDir);
     runBusinessMigrations(db);
-    await rebuildTokenUsageFromJsonl(db, { agentCwd: '/Users/admin/workspace', projectsRoot: newProjectsRoot, legacyProjectsRoot });
+    await rebuildTokenUsageFromJsonl(db, { agentCwd: '/Users/admin/workspace', projectsRoot: newProjectsRoot });
     const r2 = await rebuildTokenUsageFromJsonl(db, {
       agentCwd: '/Users/admin/workspace',
       projectsRoot: newProjectsRoot,
-      legacyProjectsRoot,
       force: true,
     });
     expect(r2.performed).toBe(true);
@@ -204,12 +194,11 @@ describe('rebuildTokenUsageFromJsonl', () => {
 
     const db = getBusinessDb(dataDir);
     runBusinessMigrations(db);
-    await rebuildTokenUsageFromJsonl(db, { agentCwd: '/Users/admin/workspace', projectsRoot: newProjectsRoot, legacyProjectsRoot });
+    await rebuildTokenUsageFromJsonl(db, { agentCwd: '/Users/admin/workspace', projectsRoot: newProjectsRoot });
     resetRebuildState(db);
     const r2 = await rebuildTokenUsageFromJsonl(db, {
       agentCwd: '/Users/admin/workspace',
       projectsRoot: newProjectsRoot,
-      legacyProjectsRoot,
     });
     expect(r2.performed).toBe(true);
   });
@@ -235,7 +224,7 @@ describe('rebuildTokenUsageFromJsonl', () => {
 
     const db = getBusinessDb(dataDir);
     runBusinessMigrations(db);
-    await rebuildTokenUsageFromJsonl(db, { agentCwd: '/Users/admin/workspace', projectsRoot: newProjectsRoot, legacyProjectsRoot });
+    await rebuildTokenUsageFromJsonl(db, { agentCwd: '/Users/admin/workspace', projectsRoot: newProjectsRoot });
 
     const store = createTokenUsageStore(db);
     const rows = store.listByDate('2026-05-16');
@@ -258,7 +247,6 @@ describe('rebuildTokenUsageFromJsonl', () => {
     const stats = await rebuildTokenUsageFromJsonl(db, {
       agentCwd: '/Users/admin/workspace',
       projectsRoot: newProjectsRoot,
-      legacyProjectsRoot,
     });
 
     expect(stats.filesScanned).toBe(0); // 此 projectKey 不匹配前缀，连扫都不扫
@@ -284,7 +272,7 @@ describe('rebuildTokenUsageFromJsonl', () => {
 
     const db = getBusinessDb(dataDir);
     runBusinessMigrations(db);
-    await rebuildTokenUsageFromJsonl(db, { agentCwd: '/Users/admin/workspace', projectsRoot: newProjectsRoot, legacyProjectsRoot });
+    await rebuildTokenUsageFromJsonl(db, { agentCwd: '/Users/admin/workspace', projectsRoot: newProjectsRoot });
 
     const store = createTokenUsageStore(db);
     const rows = store.listByDate('2026-05-16').sort((a, b) => a.username.localeCompare(b.username));
@@ -337,7 +325,6 @@ describe('rebuildTokenUsageFromJsonl', () => {
     const stats = await rebuildTokenUsageFromJsonl(db, {
       agentCwd: '/Users/admin/workspace',
       projectsRoot: newProjectsRoot,
-      legacyProjectsRoot,
       log: () => {},
     });
 
@@ -369,7 +356,6 @@ describe('rebuildTokenUsageFromJsonl', () => {
     await rebuildTokenUsageFromJsonl(db, {
       agentCwd: '/Users/admin/workspace',
       projectsRoot: newProjectsRoot,
-      legacyProjectsRoot,
       log: () => {},
     });
 
@@ -397,22 +383,16 @@ describe('rebuildTokenUsageFromJsonl', () => {
     const stats = await rebuildTokenUsageFromJsonl(db, {
       agentCwd: '/Users/admin/workspace',
       projectsRoot: newProjectsRoot,
-      legacyProjectsRoot,
       log: () => {},
     });
 
-    // parts = ['kaiyan', 'orphan-session.jsonl']，fallback=parts[1] 存在 → 会被解析。
-    // 这里我们其实在做一个"防回归"断言：当前实现把它当成 username='orphan-session.jsonl'，
-    // 是已知次优行为；如果未来收紧（要求 parts.length>=3），改成 toHaveLength(0) 即可。
-    // 现在固化当前行为以便回归追踪。
-    expect(stats.filesScanned).toBe(1);
+    expect(stats.filesScanned).toBe(0);
     const store = createTokenUsageStore(db);
     const rows = store.listByDate('2026-05-16');
-    expect(rows).toHaveLength(1);
-    expect(rows[0].username).toBe('orphan-session.jsonl');
+    expect(rows).toHaveLength(0);
   });
 
-  it('new layout + legacy fallback：同用户跨两个 root 合并到同一桶', async () => {
+  it('new layout: 同用户多个 transcript 合并到同一桶', async () => {
     // 新 layout（带 meta.username）
     await writeNewLayoutJsonl(
       'kaiyan',
@@ -427,7 +407,7 @@ describe('rebuildTokenUsageFromJsonl', () => {
       ],
       { userId: 'u-001', username: 'zenglei', channel: 'web', createdAt: '2026-05-16T00:00:00Z' },
     );
-    // 旧 layout（同分钟、同 model、同 channel 触发合桶；username 由 projectKey 推）
+    // 第二个 transcript（同分钟、同 model、同 channel 触发合桶）
     await writeJsonl('-Users-admin-workspace-zenglei', 'session-legacy', [
       {
         type: 'assistant',
@@ -441,7 +421,6 @@ describe('rebuildTokenUsageFromJsonl', () => {
     const stats = await rebuildTokenUsageFromJsonl(db, {
       agentCwd: '/Users/admin/workspace',
       projectsRoot: newProjectsRoot,
-      legacyProjectsRoot,
       log: () => {},
     });
 
@@ -476,7 +455,6 @@ describe('rebuildTokenUsageFromJsonl', () => {
     await rebuildTokenUsageFromJsonl(db, {
       agentCwd: '/Users/admin/workspace',
       projectsRoot: newProjectsRoot,
-      legacyProjectsRoot,
       log: () => {},
     });
 

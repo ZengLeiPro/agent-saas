@@ -16,16 +16,15 @@ import * as fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import * as readline from 'node:readline';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { loadAppConfig } from '../app/config.js';
 import { resolveModelRef } from '../app/models.js';
 import { generateTitle, type TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import { readSessionMeta, updateSessionMeta } from '../data/transcripts/meta.js';
-import { isValidSessionId } from '../data/transcripts/projectKey.js';
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT, isValidSessionId } from '../data/transcripts/projectKey.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 
-const PROJECTS_ROOT = path.join(os.homedir(), '.claude', 'projects');
+const PROJECTS_ROOT = process.env.AGENT_TRANSCRIPTS_ROOT || AGENT_LEGACY_TRANSCRIPTS_ROOT;
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
@@ -145,32 +144,23 @@ interface SessionInfo {
 async function scanAllSessions(): Promise<SessionInfo[]> {
   const sessions: SessionInfo[] = [];
 
-  let projectDirs: string[];
-  try {
-    const entries = await fs.readdir(PROJECTS_ROOT, { withFileTypes: true });
-    // 只处理 workspace 下的用户会话目录
-    projectDirs = entries
-      .filter(e => e.isDirectory() && e.name.includes('-workspace-'))
-      .map(e => e.name);
-  } catch {
-    console.error(`无法读取 projects 目录: ${PROJECTS_ROOT}`);
-    return sessions;
-  }
-
-  for (const projectKey of projectDirs) {
-    const projectDir = path.join(PROJECTS_ROOT, projectKey);
-    let files: string[];
+  async function walk(dir: string): Promise<void> {
+    let entries: import('node:fs').Dirent[];
     try {
-      files = await fs.readdir(projectDir);
-    } catch { continue; }
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch { return; }
 
-    for (const file of files) {
-      if (!file.endsWith('.jsonl')) continue;
-      const sessionId = file.replace(/\.jsonl$/, '');
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+      const sessionId = entry.name.replace(/\.jsonl$/, '');
       // 兼容旧版 agent-xxxxxxx 格式和 UUID 格式
       if (!isValidSessionId(sessionId) && !/^agent-[0-9a-f]+$/.test(sessionId)) continue;
 
-      const fullPath = path.join(projectDir, file);
       try {
         const stat = await fs.stat(fullPath);
         if (stat.size === 0) continue;
@@ -179,6 +169,7 @@ async function scanAllSessions(): Promise<SessionInfo[]> {
       sessions.push({ sessionId, transcriptPath: fullPath });
     }
   }
+  await walk(PROJECTS_ROOT);
 
   return sessions;
 }

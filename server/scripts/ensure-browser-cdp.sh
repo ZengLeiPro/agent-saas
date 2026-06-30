@@ -17,7 +17,7 @@ CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 USER_CWD="$PWD"
 while [[ "$USER_CWD" == "$WORKSPACE_ROOT"* && "$USER_CWD" != "$WORKSPACE_ROOT" ]]; do
-  if [[ -d "$USER_CWD/.ky-agent" || -d "$USER_CWD/.claude" ]]; then
+  if [[ -d "$USER_CWD/.ky-agent" ]]; then
     break
   fi
   USER_CWD="$(dirname "$USER_CWD")"

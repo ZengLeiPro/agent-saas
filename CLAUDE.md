@@ -8,8 +8,8 @@
 
 - `config.json` - 后端服务配置（API 密钥、端口、Agent 参数）
 - `~/workspace/` - Agent 工作根目录（`agent.cwd`，独立于项目目录）
-- `workspace-shared/` - 共享资源中心（.claude/settings.json、.claude/skills-pool/、.claude/scripts/），位于项目目录内，通过 `agent.sharedDir` 配置
-- `~/workspace/{username}/` - 用户专属工作目录（per-user 隔离，首次请求自动创建；仅含 .claude/ symlink + memory + uploads）
+- `workspace-shared/` - 共享资源中心（.ky-agent/settings.json、.ky-agent/skills-pool/、.ky-agent/scripts/），位于项目目录内，通过 `agent.sharedDir` 配置
+- `~/workspace/{tenantId}/{userId}/` - 用户专属工作目录（per-user 隔离，首次请求自动创建；包含 .ky-agent runtime namespace、memory、uploads）
 - `server/` - Express 后端
 - `web/` - React 前端
 - `mobile/` - React Native 移动端（Expo SDK 55 + expo-router）

@@ -23,7 +23,7 @@
 
 import { readdirSync } from 'fs';
 import { basename, resolve } from 'path';
-import { agentSettingsPath, legacySettingsPath } from '../workspace/namespace.js';
+import { agentSettingsPath } from '../workspace/namespace.js';
 
 export const DEFAULT_SANDBOX_ALLOW_WRITE: readonly string[] = [
   '/tmp',
@@ -41,6 +41,7 @@ export const DEFAULT_SANDBOX_DENY_READ: readonly string[] = [
 
   // 共享配置中的敏感文件
   '{{SHARED_DIR}}/.ky-agent/settings.json',
+  // 历史包残留中可能仍有敏感配置；运行态不读取，但默认拒读。
   '{{SHARED_DIR}}/.claude/settings.json',
   // PR 6 P0-5：per-tenant settings.json 隔离 — 兄弟 tenant 的 settings 全部 deny
   // （包括自己 tenant 的也 deny，与 .ky-agent/settings.json 一致策略，防止 mcpServers 注入升权）
@@ -82,8 +83,7 @@ export const DEFAULT_SANDBOX_DENY_READ: readonly string[] = [
   // 防御目标：user A 的 agent 进程不应能 path traversal 读 user B/跨组织的 transcript。
   '~/.agent-saas/legacy-transcripts',
 
-  // Claude Code 数据 + Shell 历史
-  // ~/.claude 下 SDK 多个子目录(shell-snapshots/skills/plugins/agents 等)需默认放行，故只显式 deny 已知敏感项
+  // 历史 Claude Code 数据 + Shell 历史。运行态不依赖这些路径，只作为宿主敏感数据防护。
   '~/.claude/projects',
   '~/.claude/sessions',
   '~/.claude/session-env',
@@ -108,9 +108,6 @@ export const DEFAULT_SANDBOX_ALLOW_READ: readonly string[] = [
   // ctx.agentTranscriptDir 由调用方算好（见 projectKey.ts#getAgentTranscriptDir），
   // 缺失时此条不展开（安全默认：宁可读不到自己的也不开错洞）。
   '{{AGENT_TRANSCRIPT_DIR}}',
-  // 当前用户自己的旧 Claude 会话数据（extract-user-messages.py 脚本需要；迁移期保留）
-  '~/.claude/projects/-Users-admin-workspace-{{USER}}',
-  '~/.claude/projects/-Users-admin-code-agent-workspace-{{USER}}',
   // 共享脚本目录（skills-pool 不暴露给非 admin，skills 已通过 syncSkills 复制）
   '{{SHARED_DIR}}/.ky-agent/scripts',
 ];
@@ -163,7 +160,7 @@ const SHARED_DIR_RESERVED_NAMES = new Set(['skills-pool', 'scripts']);
 
 function expandOtherTenantSettings(ctx: SandboxExpandContext): string[] {
   // PR 6 P0-5：扫 sharedDir 下所有 <tenantSlug>/.ky-agent/settings.json，全部 deny
-  // 迁移期同时 deny legacy .claude/settings.json；运行态不再读取 legacy，但残留敏感文件不能暴露给 LLM。
+  // 同时 deny 历史 .claude/settings.json；运行态不读取，但残留敏感文件不能暴露给 LLM。
   // （含自己 tenant 的 — settings.json 不该被 LLM 读，与全局 SHARED_DIR/.ky-agent/settings.json 同策略）
   try {
     return readdirSync(ctx.sharedDir)
@@ -171,7 +168,7 @@ function expandOtherTenantSettings(ctx: SandboxExpandContext): string[] {
       .filter((name) => !SHARED_DIR_RESERVED_NAMES.has(name))
       .flatMap((name) => {
         const tenantSharedDir = resolve(ctx.sharedDir, name);
-        return [agentSettingsPath(tenantSharedDir), legacySettingsPath(tenantSharedDir)];
+        return [agentSettingsPath(tenantSharedDir), resolve(tenantSharedDir, '.claude', 'settings.json')];
       });
   } catch {
     return [];
@@ -223,7 +220,7 @@ export function expandSandboxPaths(
  * 从 denyRead 模板清单里筛出以 `{{USER_CWD}}/` 开头的条目，
  * 生成 SDK 层 permissions.deny 规则（Read/Edit/Write）。
  *
- * 目的：让 Claude 在尝试前就知道"别碰"，UX 优于等 OS 沙箱 EPERM。
+ * 目的：让 agent 在尝试前就知道"别碰"，UX 优于等 OS 沙箱 EPERM。
  * 只处理 cwd 内路径因为 SDK permissions 用 cwd-relative 形式（./xxx/**）；
  * 家目录级路径表达不便，由 OS 沙箱兜底。
  */

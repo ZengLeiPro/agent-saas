@@ -1,7 +1,7 @@
 export type DingtalkConversationType = "1" | "2" | string;
 
 export interface DingtalkSessionInfo {
-  claudeSessionId: string;
+  agentSessionId: string;
   sessionWebhook?: string;
   senderNick: string;
   senderId: string;
@@ -19,7 +19,7 @@ export interface DingtalkSessionStore {
 
 export interface SaveSessionOptions {
   conversationId: string;
-  claudeSessionId: string;
+  agentSessionId: string;
   sessionWebhook?: string;
   senderNick: string;
   senderId: string;

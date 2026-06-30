@@ -43,7 +43,7 @@ export interface AuditProjectionLogger {
 export interface CreateAuditProjectionOptions {
   /** 已 `connect()` 的 DuckDB connection；归 caller 负责 close */
   db: DuckDBConnection;
-  /** 扫描根目录；默认 `ALLOWED_ROOT` */
+  /** 扫描根目录；默认 Agent SaaS transcript root */
   root?: string;
   /** 可选 logger，缺省 silent */
   logger?: AuditProjectionLogger;
@@ -225,29 +225,27 @@ export class AuditProjection {
   // ── 内部 ─────────────────────────────────────────
 
   private async discoverFiles(): Promise<string[]> {
-    let projectDirs: string[];
+    const result: string[] = [];
+    await this.collectRuntimeEventFiles(this.root, result);
+    return result;
+  }
+
+  private async collectRuntimeEventFiles(dir: string, result: string[]): Promise<void> {
+    let entries: import('node:fs').Dirent[];
     try {
-      const entries = await readdir(this.root, { withFileTypes: true });
-      projectDirs = entries.filter((e) => e.isDirectory()).map((e) => join(this.root, e.name));
+      entries = await readdir(dir, { withFileTypes: true });
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
       throw err;
     }
-    const result: string[] = [];
-    for (const dir of projectDirs) {
-      let files: import('node:fs').Dirent[];
-      try {
-        files = await readdir(dir, { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      for (const f of files) {
-        if (!f.isFile()) continue;
-        if (!f.name.endsWith(RUNTIME_EVENTS_SUFFIX)) continue;
-        result.push(join(dir, f.name));
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await this.collectRuntimeEventFiles(full, result);
+      } else if (entry.isFile() && entry.name.endsWith(RUNTIME_EVENTS_SUFFIX)) {
+        result.push(full);
       }
     }
-    return result;
   }
 
   private async readWatermark(filePath: string): Promise<number> {

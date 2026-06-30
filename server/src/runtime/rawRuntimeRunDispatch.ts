@@ -727,16 +727,16 @@ function tenantRemoteHandCapabilities(
       },
       {
         name: 'media',
-        description: 'Media and image processing tools are available in the ACS production Agent hand.',
+        description: 'Media processing tools are available in the ACS production Agent hand.',
         tools: [],
-        constraints: ['ffmpeg/ImageMagick/Poppler/Ghostscript are provided by the sandbox image'],
+        constraints: ['ffmpeg/ffprobe are provided by the sandbox image; ImageMagick is extension-only'],
         risk: 'workspace_write',
       },
       {
         name: 'document-conversion',
         description: 'Office, PDF, OCR, and document conversion tools are available in the ACS production Agent hand.',
         tools: [],
-        constraints: ['LibreOffice/Pandoc/Tesseract and CJK fonts are provided by the sandbox image'],
+        constraints: ['Minimal LibreOffice, Poppler, QPDF, Ghostscript, Tesseract and CJK fonts are provided by the sandbox image; Pandoc is extension-only'],
         risk: 'workspace_write',
       },
     );
@@ -1283,8 +1283,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const effectiveTenantId = resolveContextTenantId(context, existingSession);
     // BUG FIX 2026-06-23：tenantId 必须与 userId 同源用 identitySource，否则
     // admin 代操作 / cron / 内部触发等 context.user 为空但 sessionOwner 存在的
-    // 路径上 hasTranscriptOwnerRef 会返回 false，transcript 回退到 cwd-derived
-    // ~/.claude/projects/<encoded>/ 把同一 userId 按 cwd 切碎成多个文件夹。
+    // 路径上 hasTranscriptOwnerRef 会返回 false，transcript 会回退到 ownerless
+    // dev/test layout，把同一 userId 按 cwd 切碎成多个文件夹。
     const transcriptPath = existingSession?.transcriptPath ?? getTranscriptPath(cwd, sessionId, { userId: identitySource?.id, tenantId: identitySource?.tenantId });
     await mkdir(dirname(transcriptPath), { recursive: true });
 

@@ -11,7 +11,7 @@ import { requireAdmin, requirePlatformAdmin, isPlatformAdmin } from '../auth/mid
 import { auditLog } from '../data/login-logs/index.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import { scanPoolSkills, scanUserCustomSkills } from '../data/skills/scanner.js';
-import { migrateLegacyAgentNamespace, resolveUserCwd, syncSkills } from '../workspace/resolver.js';
+import { resolveUserCwd, syncSkills } from '../workspace/resolver.js';
 import { agentDir, agentPath, agentSkillsDir, resolveAgentPath } from '../workspace/namespace.js';
 import { ensureWorkspaceDir, repairWorkspacePath, repairWorkspaceTree } from '../workspace/permissions.js';
 import type { UserStore } from '../data/users/store.js';
@@ -62,7 +62,6 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
    */
   function getUserSkillsDir(user: SkillUser): string {
     const userCwd = resolveUserCwd(agentCwd, { id: user.id, username: user.username, role: user.role as 'admin' | 'user', tenantId: user.tenantId });
-    migrateLegacyAgentNamespace(userCwd);
     return agentSkillsDir(userCwd);
   }
 
@@ -527,7 +526,6 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
         const user = resolveAdminTargetUser(req, res, usernameSafe);
         if (!user) return;
         const userCwd = resolveUserCwd(agentCwd, { id: user.id, username: user.username, role: user.role as 'admin' | 'user', tenantId: user.tenantId });
-        migrateLegacyAgentNamespace(userCwd);
         if (!existsSync(agentDir(userCwd))) {
           return res.status(404).json({ error: 'User workspace not initialized' });
         }
@@ -539,7 +537,6 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
         for (const u of userStore.listAll()) {
           if (!platform && u.tenantId !== req.user?.tenantId) continue;
           const userCwd = resolveUserCwd(agentCwd, { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId });
-          migrateLegacyAgentNamespace(userCwd);
           if (existsSync(agentDir(userCwd))) {
             syncSkills(userCwd, sharedDir, { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId }, skillConfigStore);
             writeVersion(userCwd);

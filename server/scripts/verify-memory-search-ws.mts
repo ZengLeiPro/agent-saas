@@ -50,7 +50,7 @@ const PROJECT_ROOT = join(import.meta.dirname, '..', '..');
 const CONFIG_PATH = join(PROJECT_ROOT, 'config.json');
 const TRANSCRIPT_ROOT = join(
   process.env.HOME ?? '',
-  '.claude/projects/-Users-admin-workspace-openai-runtime-admin',
+  '.agent-saas/legacy-transcripts/pantheon/admin',
 );
 const WS_URL = 'ws://127.0.0.1:3200/ws';
 const TURN_TIMEOUT_MS = 90_000;

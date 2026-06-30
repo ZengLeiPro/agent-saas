@@ -23,7 +23,6 @@ config.json.*
 # ky-azeroth PAT 映射表（per-user 长期凭证，禁止入库）
 server/config/azeroth-tokens.json
 # hyperframes 豆包 TTS 凭证（skill 单独配置，禁止入库）
-workspace-shared/.claude/skills-pool/hyperframes/references/modules/hyperframes-media/scripts/doubao.config.json
 workspace-shared/.ky-agent/skills-pool/hyperframes/references/modules/hyperframes-media/scripts/doubao.config.json
 
 # Session data

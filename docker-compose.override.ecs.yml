@@ -21,8 +21,8 @@ services:
       - ${CONFIG_JSON_PATH:-/etc/agent-runtime/config.json}:/app/config.json:ro
       # workspace：server 与 hand-server 共享同一份 NAS 目录（β-Q1+β-Q2 → 文件预览无需改 transport）
       - /mnt/nas/agent-runtime/workspace:/app/workspace
-      # transcripts：会话归档（~/.claude/projects 等价路径）
-      - /mnt/nas/agent-runtime/transcripts:/root/.claude/projects
+      # transcripts：会话归档
+      - /mnt/nas/agent-runtime/transcripts:/root/.agent-saas/legacy-transcripts
       # server data：sessions metadata / 本地 sqlite（PG backend 下 audit 走 RDS，不依赖这里的 duckdb）
       - /mnt/nas/agent-runtime/server-data:/app/server/data
       # logs

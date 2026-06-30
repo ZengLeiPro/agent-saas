@@ -57,7 +57,7 @@ pnpm test         # 运行 server/shared/web 测试
 
 ## 配置
 
-根目录通常通过 `config.json` 配置服务端口、模型组、Agent 工作区、鉴权、Cron、钉钉、memory index 等。`workspace-shared/.claude/settings.json` 可提供共享 env、MCP 和技能池相关配置。
+根目录通常通过 `config.json` 配置服务端口、模型组、Agent 工作区、鉴权、Cron、钉钉、memory index 等。`workspace-shared/.ky-agent/settings.json` 可提供共享 env、MCP 和技能池相关配置。
 
 最小示例：
 

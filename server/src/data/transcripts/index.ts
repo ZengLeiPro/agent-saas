@@ -1,5 +1,5 @@
 /**
- * Claude transcript 访问层导出
+ * Agent SaaS transcript 访问层导出
  */
 export * from './projectKey.js';
 export * from './store.js';

@@ -7,7 +7,7 @@ import { existsSync, readdirSync, renameSync } from 'node:fs';
 import { join, extname, basename } from 'node:path';
 import { authLogger } from '../../utils/logger.js';
 import { resolveUserCwd } from '../../workspace/resolver.js';
-import { getProjectDir } from '../transcripts/projectKey.js';
+import { getAgentTranscriptDir, getProjectDir } from '../transcripts/projectKey.js';
 
 export interface CleanupContext {
   userId: string;
@@ -59,7 +59,9 @@ function softDeleteTranscripts(ctx: CleanupContext, suffix: string): void {
     tenantId: ctx.tenantId,
   });
 
-  const projectDir = getProjectDir(userCwd);
+  const projectDir = ctx.tenantId
+    ? getAgentTranscriptDir({ tenantId: ctx.tenantId, userId: ctx.userId })
+    : getProjectDir(userCwd);
   if (!existsSync(projectDir)) return;
 
   const dest = `${projectDir}${suffix}`;

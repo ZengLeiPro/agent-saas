@@ -107,7 +107,7 @@ export function parseToolResult(result: string): ParsedToolResult {
           images.push({ data: block.data, mimeType: block.mimeType });
           continue;
         }
-        // Anthropic API 格式: { type: "image", source: { type: "base64", media_type: "...", data: "..." } }
+        // Content block image 格式: { type: "image", source: { type: "base64", media_type: "...", data: "..." } }
         if (block.source?.type === 'base64' && typeof block.source.data === 'string') {
           images.push({ data: block.source.data, mimeType: block.source.media_type || 'image/png' });
           continue;

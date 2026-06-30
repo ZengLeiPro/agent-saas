@@ -42,9 +42,9 @@ export class DingtalkPostprocessor {
       return;
     }
 
-    this.sessionService.saveClaudeSession({
+    this.sessionService.saveAgentSession({
       conversationId: source.conversationId,
-      claudeSessionId: sessionId,
+      agentSessionId: sessionId,
       sessionWebhook: source.sessionWebhook,
       senderNick: source.senderNick || '',
       senderId: source.senderId || '',

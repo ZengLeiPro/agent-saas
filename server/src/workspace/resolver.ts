@@ -17,13 +17,10 @@ import {
   agentPath,
   agentScriptsDir,
   agentSkillsDir,
-  legacyClaudeDir,
   resolveAgentPath,
   WORKSPACE_META_FILE,
 } from './namespace.js';
-import { ensureWorkspaceRuntimeLayout, migrateLegacyAgentNamespace, repairWorkspacePath, repairWorkspaceTree } from './permissions.js';
-
-export { migrateLegacyAgentNamespace } from './permissions.js';
+import { ensureWorkspaceRuntimeLayout, repairWorkspacePath, repairWorkspaceTree } from './permissions.js';
 
 export interface WorkspaceUser {
   id: string;
@@ -98,7 +95,7 @@ export async function ensureUserWorkspace(
     for (const legacy of legacyCandidates) {
       if (
         legacy.path !== userCwd
-        && (existsSync(agentDir(legacy.path)) || existsSync(legacyClaudeDir(legacy.path)))
+        && existsSync(agentDir(legacy.path))
         && !existsSync(userCwd)
       ) {
         serverLogger.info(`Migrating workspace ${legacy.label} → ${tenantSlug}/${safeUserPathSegment(user.id)}`);
@@ -108,8 +105,6 @@ export async function ensureUserWorkspace(
       }
     }
   }
-
-  migrateLegacyAgentNamespace(userCwd);
 
   // 如果用户目录已存在，仍要修复 runtime layout / owner，避免历史 root-owned 目录阻断 ACS。
   if (existsSync(agentDir(userCwd))) {
@@ -476,7 +471,6 @@ export function refreshUserWorkspace(
   meta?: WorkspaceUserMeta,
   skillConfigStore?: SkillConfigStore,
 ): void {
-  migrateLegacyAgentNamespace(userCwd);
   ensureWorkspaceRuntimeLayout(userCwd);
 
   // 迁移旧的 skills 软链接为真实目录

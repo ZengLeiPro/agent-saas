@@ -1,17 +1,17 @@
 import type { DingtalkSessionStore, SaveSessionOptions } from '../types.js';
 import {
   loadDingtalkSessions,
-  saveClaudeSession,
+  saveAgentSession,
   clearDingtalkSession,
-  getClaudeSession,
+  getAgentSession,
   getModelRef,
   saveModelRef,
 } from '../../../data/sessions/dingtalkSessionStore.js';
 
 export interface DingtalkSessionService {
   loadSessions(): DingtalkSessionStore;
-  getClaudeSession(conversationId: string): string | undefined;
-  saveClaudeSession(options: SaveSessionOptions): void;
+  getAgentSession(conversationId: string): string | undefined;
+  saveAgentSession(options: SaveSessionOptions): void;
   clearSession(conversationId: string): void;
   getModelRef(conversationId: string): string | undefined;
   saveModelRef(conversationId: string, modelRef: string | undefined): void;
@@ -22,11 +22,11 @@ export function createDingtalkSessionService(basePath: string): DingtalkSessionS
     loadSessions(): DingtalkSessionStore {
       return loadDingtalkSessions(basePath);
     },
-    getClaudeSession(conversationId: string): string | undefined {
-      return getClaudeSession(conversationId, basePath);
+    getAgentSession(conversationId: string): string | undefined {
+      return getAgentSession(conversationId, basePath);
     },
-    saveClaudeSession(options: SaveSessionOptions): void {
-      saveClaudeSession(options, basePath);
+    saveAgentSession(options: SaveSessionOptions): void {
+      saveAgentSession(options, basePath);
     },
     clearSession(conversationId: string): void {
       clearDingtalkSession(conversationId, basePath);

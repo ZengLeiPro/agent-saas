@@ -28,16 +28,13 @@ import {
 } from './store.js';
 import { computeCostMicro } from './pricing.js';
 import { readSessionMeta } from '../transcripts/meta.js';
-import { AGENT_LEGACY_TRANSCRIPTS_ROOT, CLAUDE_PROJECTS_ROOT } from '../transcripts/projectKey.js';
-import { LEGACY_TENANT_ID } from '../tenants/types.js';
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../transcripts/projectKey.js';
 
 export interface RebuildOptions {
-  /** Agent 全局 cwd，用于反推 projectKey 前缀（如 /Users/admin/workspace） */
+  /** Agent 全局 cwd；保留作调用方 API 兼容，当前新 layout rebuild 不再用它反推路径 */
   agentCwd: string;
   /** 新 Agent SaaS transcript 根目录，默认 ~/.agent-saas/legacy-transcripts */
   projectsRoot?: string;
-  /** 旧 Claude transcript 根目录，默认 ~/.claude/projects；设为 null 可关闭旧布局扫描 */
-  legacyProjectsRoot?: string | null;
   /** 日志函数（可选） */
   log?: (msg: string) => void;
   /** 强制重建（即使 rebuild_state 已存在） */
@@ -51,15 +48,6 @@ export interface RebuildStats {
   rowsWritten: number;
   maxMtimeMs: number;
   durationMs: number;
-}
-
-/**
- * 把 agentCwd 转成对应的 projectKey 前缀。
- * 例：'/Users/admin/workspace' → '-Users-admin-workspace-'
- */
-function buildProjectKeyPrefix(agentCwd: string): string {
-  const transformed = agentCwd.replace(/[^a-zA-Z0-9]/g, '-');
-  return transformed.endsWith('-') ? transformed : transformed + '-';
 }
 
 /**
@@ -211,9 +199,6 @@ export async function rebuildTokenUsageFromJsonl(
 ): Promise<RebuildStats> {
   const log = options.log ?? (() => {});
   const projectsRoot = options.projectsRoot ?? AGENT_LEGACY_TRANSCRIPTS_ROOT;
-  const legacyProjectsRoot = options.legacyProjectsRoot === null
-    ? null
-    : (options.legacyProjectsRoot ?? CLAUDE_PROJECTS_ROOT);
   const startedAt = Date.now();
   const store = createTokenUsageStore(db);
 
@@ -231,8 +216,7 @@ export async function rebuildTokenUsageFromJsonl(
     };
   }
 
-  const prefix = buildProjectKeyPrefix(options.agentCwd);
-  log(`[token-usage] rebuild starting (agentRoot='${projectsRoot}', legacyProjectKey prefix='${prefix}')`);
+  log(`[token-usage] rebuild starting (agentRoot='${projectsRoot}')`);
 
   // 内存累加：username → (date|model|channel) → { channel, bucket }
   const acc = new Map<string, UserAcc>();
@@ -250,7 +234,7 @@ export async function rebuildTokenUsageFromJsonl(
     const parts = rel.split(/[/\\]/);
     const tenantIdFromPath = parts[0];
     const fallbackUsername = parts[1]; // <tenantId>/<userId>/... — meta 缺失时以 userId 兜底
-    if (!fallbackUsername || !tenantIdFromPath) continue;
+    if (parts.length < 3 || !fallbackUsername || !tenantIdFromPath) continue;
     const meta = await readSessionMeta(file).catch(() => null);
     const username = meta?.username || fallbackUsername;
     const tenantId = meta?.tenantId || tenantIdFromPath;
@@ -274,42 +258,6 @@ export async function rebuildTokenUsageFromJsonl(
     if (r.mtimeMs > maxMtimeMs) maxMtimeMs = r.mtimeMs;
   }
 
-  // 旧布局：~/.claude/projects/<cwd-derived-projectKey>/**/*.jsonl（迁移期 fallback）
-  if (legacyProjectsRoot) {
-    let projectKeys: string[] = [];
-    try {
-      const entries = await readdir(legacyProjectsRoot, { withFileTypes: true });
-      projectKeys = entries.filter(e => e.isDirectory()).map(e => e.name);
-    } catch (err) {
-      log(`[token-usage] legacy projects root unreadable: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    for (const projectKey of projectKeys) {
-      const username = parseUsernameFromProjectKey(projectKey, prefix);
-      if (!username) continue;
-
-      const projectDir = join(legacyProjectsRoot, projectKey);
-      const jsonlFiles = await listJsonlFilesRecursive(projectDir);
-
-      let userMap = acc.get(username);
-      if (!userMap) {
-        userMap = new Map();
-        acc.set(username, userMap);
-      }
-      // 旧布局 ~/.claude/projects/ 路径里没有 tenantId 信息，兜底 LEGACY_TENANT_ID。
-      // 注意：若新布局已经为同名 username 设过 tenantId，不覆盖。
-      if (!userTenant.has(username)) userTenant.set(username, LEGACY_TENANT_ID);
-
-      for (const file of jsonlFiles) {
-        filesScanned++;
-        const channel = await inferChannel(file);
-        const r = await processJsonl(file, channel, userMap);
-        linesProcessed += r.lines;
-        if (r.mtimeMs > maxMtimeMs) maxMtimeMs = r.mtimeMs;
-      }
-    }
-  }
-
   // 写入：清表 + 批量 UPSERT 全程包在事务内
   db.exec('BEGIN');
   try {
@@ -329,9 +277,8 @@ export async function rebuildTokenUsageFromJsonl(
         const delta: UsageDailyRowDelta = {
           date,
           username,
-          // PR 10：从 userTenant 映射回填 tenantId；理论上 acc 中 username 一定也在 userTenant
-          // 里（同一文件循环里 set 的），但旧路径在 userMap 创建后才 set，所以这里兜底 legacy。
-          tenantId: userTenant.get(username) ?? LEGACY_TENANT_ID,
+          // PR 10：从新 layout 路径或 meta 回填 tenantId；理论上 acc 中 username 一定也在 userTenant。
+          tenantId: userTenant.get(username) ?? 'unknown',
           model,
           channel: entry.channel,
           ...tokens,

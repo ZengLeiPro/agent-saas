@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ensureWorkspaceRuntimeLayout } from '../workspace/permissions.js';
-import { migrateLegacyAgentNamespace } from '../workspace/resolver.js';
 
 describe('workspace runtime layout', () => {
   const previousChown = process.env.KY_AGENT_WORKSPACE_CHOWN;
@@ -63,39 +62,6 @@ describe('workspace runtime layout', () => {
 
       await expect(access(join(root, '.ky-agent', 'runtime', 'venv', 'bin', 'python3'))).resolves.toBeUndefined();
       await expect(access(join(root, '.venv'))).rejects.toThrow();
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it('migrates legacy .claude namespace before skill sync creates a new .ky-agent tree', async () => {
-    process.env.KY_AGENT_WORKSPACE_CHOWN = '0';
-    const root = await mkdtemp(join(tmpdir(), 'workspace-legacy-namespace-'));
-    try {
-      await mkdir(join(root, '.claude', 'skills', 'custom-skill'), { recursive: true });
-      await writeFile(join(root, '.claude', 'skills', 'custom-skill', 'SKILL.md'), '---\nname: custom-skill\ndescription: c\n---\n', 'utf-8');
-
-      expect(migrateLegacyAgentNamespace(root)).toBe(true);
-
-      await expect(access(join(root, '.ky-agent', 'skills', 'custom-skill', 'SKILL.md'))).resolves.toBeUndefined();
-      await expect(access(join(root, '.claude'))).rejects.toThrow();
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it('merges legacy .claude namespace even when .ky-agent already exists', async () => {
-    process.env.KY_AGENT_WORKSPACE_CHOWN = '0';
-    const root = await mkdtemp(join(tmpdir(), 'workspace-legacy-merge-'));
-    try {
-      await mkdir(join(root, '.ky-agent', 'skills', 'system-skill'), { recursive: true });
-      await mkdir(join(root, '.claude', 'skills', 'custom-skill'), { recursive: true });
-      await writeFile(join(root, '.claude', 'skills', 'custom-skill', 'SKILL.md'), '---\nname: custom-skill\ndescription: c\n---\n', 'utf-8');
-
-      ensureWorkspaceRuntimeLayout(root);
-
-      await expect(access(join(root, '.ky-agent', 'skills', 'system-skill'))).resolves.toBeUndefined();
-      await expect(access(join(root, '.ky-agent', 'skills', 'custom-skill', 'SKILL.md'))).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

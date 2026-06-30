@@ -1,13 +1,11 @@
 /**
  * 清理 title-generator 产生的幽灵 transcript 文件
  *
- * 问题：`generateTitle` 通过 SDK `query()` 生成标题时，即使传了 `persistSession: false`，
- * SDK 依然会在 `~/.claude/projects/<projectKey>/` 下写入 `{"type":"ai-title",...}`
- * 的一行 jsonl。这些文件首行是 ai-title、没有 user/assistant 消息，
- * 会被会话列表误判为「新对话」显示，点进去空。
+ * 历史问题：title-generator 可能写入首行为 `{"type":"ai-title",...}` 的
+ * 小 jsonl。这些文件没有 user/assistant 消息，会被会话列表误判为「新对话」。
  *
- * 本脚本扫描所有 projectKey 目录，删除首行为 `"type":"ai-title"` 的 jsonl
- * 及其同名 .meta.json 和 sidecar 目录。
+ * 本脚本递归扫描 Agent SaaS transcript root，删除首行为 `"type":"ai-title"`
+ * 的 jsonl 及其同名 .meta.json 和 sidecar 目录。
  *
  * 用法：
  *   tsx scripts/cleanup-phantom-sessions.ts         # dry-run（只报告）
@@ -16,12 +14,13 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { homedir } from 'node:os';
 
-const ROOT = path.join(homedir(), '.claude', 'projects');
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../src/data/transcripts/projectKey.js';
+
+const ROOT = process.env.AGENT_TRANSCRIPTS_ROOT || AGENT_LEGACY_TRANSCRIPTS_ROOT;
 
 interface PhantomFile {
-  projectKey: string;
+  bucket: string;
   sessionId: string;
   jsonlPath: string;
   metaPath: string;
@@ -57,19 +56,24 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-async function scanProjectKey(projectDir: string, projectKey: string): Promise<PhantomFile[]> {
+async function scanDir(dir: string): Promise<PhantomFile[]> {
   const found: PhantomFile[] = [];
   let entries;
   try {
-    entries = await fs.readdir(projectDir, { withFileTypes: true });
+    entries = await fs.readdir(dir, { withFileTypes: true });
   } catch {
     return found;
   }
 
   for (const ent of entries) {
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      found.push(...await scanDir(full));
+      continue;
+    }
     if (!ent.isFile() || !ent.name.endsWith('.jsonl')) continue;
     const sessionId = ent.name.replace(/\.jsonl$/, '');
-    const jsonlPath = path.join(projectDir, ent.name);
+    const jsonlPath = full;
     const stat = await fs.stat(jsonlPath).catch(() => null);
     if (!stat) continue;
     // 真实对话 transcript 至少有系统初始化行 + 用户消息，通常 > 4KB
@@ -78,11 +82,11 @@ async function scanProjectKey(projectDir: string, projectKey: string): Promise<P
     const firstLine = await readFirstLine(jsonlPath);
     if (!firstLine || !firstLine.includes('"type":"ai-title"')) continue;
 
-    const metaPath = path.join(projectDir, `${sessionId}.meta.json`);
-    const sidecarDir = path.join(projectDir, sessionId);
+    const metaPath = path.join(dir, `${sessionId}.meta.json`);
+    const sidecarDir = path.join(dir, sessionId);
 
     found.push({
-      projectKey,
+      bucket: path.relative(ROOT, dir) || '.',
       sessionId,
       jsonlPath,
       metaPath,
@@ -97,19 +101,8 @@ async function scanProjectKey(projectDir: string, projectKey: string): Promise<P
 
 async function main() {
   const apply = process.argv.includes('--apply');
-  const rootEntries = await fs.readdir(ROOT, { withFileTypes: true }).catch(() => []);
-  const projectDirs = rootEntries.filter(e => e.isDirectory()).map(e => e.name);
-
-  console.log(`扫描 ${projectDirs.length} 个 projectKey 目录...\n`);
-
-  const all: PhantomFile[] = [];
-  for (const key of projectDirs) {
-    const found = await scanProjectKey(path.join(ROOT, key), key);
-    all.push(...found);
-    if (found.length > 0) {
-      console.log(`  ${key}: ${found.length} 个幽灵`);
-    }
-  }
+  console.log(`递归扫描 transcript root: ${ROOT}\n`);
+  const all = await scanDir(ROOT);
 
   console.log(`\n总计发现幽灵文件: ${all.length}`);
   const withMeta = all.filter(f => f.hasMeta).length;
@@ -125,7 +118,7 @@ async function main() {
   if (!apply) {
     console.log('\n前 5 个样本：');
     for (const f of all.slice(0, 5)) {
-      console.log(`  - ${f.projectKey}/${f.sessionId}.jsonl`);
+      console.log(`  - ${f.bucket}/${f.sessionId}.jsonl`);
       console.log(`    firstLine: ${f.firstLine}`);
     }
     console.log('\nDry-run 模式，未实际删除。加 --apply 参数真正执行。');

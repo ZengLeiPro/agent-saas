@@ -6,16 +6,6 @@
     "allowCrossGroupSwitch": false,
     "groups": [
       {
-        "id": "anthropic",
-        "name": "Anthropic",
-        "protocol": "chat_completions",
-        "models": [
-          { "id": "opus", "name": "Opus 4.6", "value": "claude-opus-4-6[1m]" },
-          { "id": "sonnet", "name": "Sonnet 4.6", "value": "claude-sonnet-4-6" },
-          { "id": "haiku", "name": "Haiku 4.5", "value": "claude-haiku-4-5-20251001" }
-        ]
-      },
-      {
         "id": "gpa",
         "name": "GPA",
         "apiKey": "your-provider-api-key",
@@ -72,13 +62,13 @@
         ]
       }
     ],
-    "default": "anthropic/sonnet"
+    "default": "gpa/gpt54"
   },
 
   // ── 标题生成器 ─────────────────────────────────────────────
   // model: 引用 models.groups 中的 "groupId/modelId"
   "titleGenerator": {
-    "model": "anthropic/haiku"
+    "model": "gpa/gpt54mini"
   },
 
   // ── Agent runtime 选项 ─────────────────────────────────────
@@ -125,8 +115,7 @@
   "proxy": {
     "HTTP_PROXY": "http://127.0.0.1:7897",
     "HTTPS_PROXY": "http://127.0.0.1:7897",
-    "NO_PROXY": "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1",
-    "CLAUDE_CODE_PROXY_RESOLVES_HOSTS": "1"
+    "NO_PROXY": "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1"
   },
 
   // ── 钉钉机器人（Stream / Webhook）────────────────────────

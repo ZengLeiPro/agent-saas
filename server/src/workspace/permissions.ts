@@ -11,7 +11,7 @@ import {
 import { dirname, join } from 'path';
 
 import { serverLogger } from '../utils/logger.js';
-import { agentDir, agentPath, legacyClaudeDir } from './namespace.js';
+import { agentDir, agentPath } from './namespace.js';
 
 export interface WorkspaceOwnership {
   uid?: number;
@@ -114,7 +114,6 @@ export function ensureWorkspaceRuntimeLayout(userCwd: string): void {
 
   ensureWorkspaceDir(userCwd, rootMode, ownership);
 
-  const migratedAgentNamespace = migrateLegacyAgentNamespace(userCwd);
   const migratedRuntimeArtifacts = migrateLegacyRuntimeArtifacts(userCwd);
 
   ensureWorkspaceDir(join(userCwd, 'memory'), dataMode, ownership);
@@ -140,7 +139,7 @@ export function ensureWorkspaceRuntimeLayout(userCwd: string): void {
   ]) {
     repairWorkspaceTree(tree, undefined, ownership);
   }
-  if (migratedAgentNamespace || migratedRuntimeArtifacts || process.env.KY_AGENT_WORKSPACE_DEEP_REPAIR === '1') {
+  if (migratedRuntimeArtifacts || process.env.KY_AGENT_WORKSPACE_DEEP_REPAIR === '1') {
     repairWorkspaceTree(agentPath(userCwd, 'runtime', 'browser-profile'), undefined, ownership);
   }
 
@@ -155,62 +154,6 @@ export function ensureWorkspaceRuntimeLayout(userCwd: string): void {
   }
 
   repairLegacyRuntimeLayout(userCwd, ownership, { dataMode, privateMode, runtimeMode, fileMode });
-}
-
-export function migrateLegacyAgentNamespace(userCwd: string): boolean {
-  const legacy = legacyClaudeDir(userCwd);
-  const next = agentDir(userCwd);
-  if (!existsSync(legacy)) return false;
-  if (!existsSync(next)) {
-    try {
-      renameSync(legacy, next);
-      serverLogger.info(`Migrated workspace agent namespace: ${legacy} → ${next}`);
-      return true;
-    } catch (err) {
-      serverLogger.warn(`Failed to migrate workspace agent namespace ${legacy} → ${next}: ${err}`);
-      return false;
-    }
-  }
-  return mergeLegacyAgentNamespace(legacy, next);
-}
-
-function mergeLegacyAgentNamespace(sourceDir: string, targetDir: string): boolean {
-  let moved = false;
-  let entries: string[];
-  try {
-    entries = readdirSync(sourceDir);
-  } catch {
-    return false;
-  }
-
-  for (const entry of entries) {
-    const source = join(sourceDir, entry);
-    const target = join(targetDir, entry);
-    if (!existsSync(target)) {
-      try {
-        renameSync(source, target);
-        moved = true;
-      } catch (err) {
-        serverLogger.warn(`Failed to move legacy agent namespace entry ${source} → ${target}: ${err}`);
-      }
-      continue;
-    }
-
-    try {
-      const sourceStat = statSync(source);
-      const targetStat = statSync(target);
-      if (sourceStat.isDirectory() && targetStat.isDirectory()) {
-        moved = mergeLegacyAgentNamespace(source, target) || moved;
-      }
-    } catch {
-      // Keep both copies when either side cannot be inspected; preserving data is safer than guessing.
-    }
-  }
-
-  if (moved) {
-    serverLogger.info(`Merged legacy workspace agent namespace into ${targetDir}`);
-  }
-  return moved;
 }
 
 function migrateLegacyRuntimeArtifacts(userCwd: string): boolean {
@@ -248,13 +191,7 @@ function repairLegacyRuntimeLayout(
   ownership: WorkspaceOwnership,
   modes: { dataMode: number; privateMode: number; runtimeMode: number; fileMode: number },
 ): void {
-  const legacy = legacyClaudeDir(userCwd);
-  if (existsSync(legacy)) {
-    repairWorkspacePath(legacy, modes.runtimeMode, ownership);
-  }
   for (const dir of [
-    join(legacy, 'skills'),
-    join(legacy, 'scripts'),
     join(userCwd, '.agent-saas'),
     join(userCwd, '.agent-saas', 'venv-archive'),
     join(userCwd, '.cache'),
@@ -265,6 +202,4 @@ function repairLegacyRuntimeLayout(
   }
   const browserProfile = join(userCwd, '.browser-profile');
   if (existsSync(browserProfile)) repairWorkspacePath(browserProfile, modes.privateMode, ownership);
-  const legacySettings = join(legacy, 'settings.json');
-  if (existsSync(legacySettings)) repairWorkspacePath(legacySettings, modes.fileMode, ownership);
 }

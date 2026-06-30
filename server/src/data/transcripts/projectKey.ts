@@ -4,8 +4,6 @@
  * New Agent SaaS-owned transcript projections live under:
  *   ~/.agent-saas/legacy-transcripts/<tenantId>/<userId>/<sessionId>.jsonl
  *
- * The old Claude-compatible root is retained only for explicit migration utilities:
- *   ~/.claude/projects/<cwd-derived-projectKey>/<sessionId>.jsonl
  */
 import * as os from "node:os";
 import * as path from "node:path";
@@ -17,23 +15,15 @@ export const AGENT_LEGACY_TRANSCRIPTS_ROOT = path.join(
   "legacy-transcripts",
 );
 
-/** Old Claude Code / Agent SDK transcript root kept for migration fallback. */
-export const CLAUDE_PROJECTS_ROOT = path.join(os.homedir(), ".claude", "projects");
-
-/** Backward-compatible alias for legacy migration code that still scans Claude projects. */
-export const ALLOWED_ROOT = CLAUDE_PROJECTS_ROOT;
+/** Canonical root used by runtime projections and migration helpers. */
+export const ALLOWED_ROOT = AGENT_LEGACY_TRANSCRIPTS_ROOT;
 
 export interface TranscriptOwnerRef {
   tenantId?: string;
   userId?: string;
 }
 
-/**
- * 从工作目录推导旧 Claude projectKey。
- *
- * 仅用于读取/迁移旧 ~/.claude/projects 布局；新 Agent SaaS transcript 路径
- * 不再由 cwd 决定。
- */
+/** 从工作目录推导 ownerless dev/test transcript bucket 名。 */
 export function deriveProjectKey(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");
 }
@@ -57,7 +47,7 @@ export function getAgentTranscriptDir(owner: Required<TranscriptOwnerRef>): stri
   );
 }
 
-/** Ownerless dev/test sessions stay under Agent SaaS storage, not ~/.claude/projects. */
+/** Ownerless dev/test sessions stay under Agent SaaS storage. */
 export function getAnonymousAgentTranscriptDir(cwd: string): string {
   return path.join(
     AGENT_LEGACY_TRANSCRIPTS_ROOT,
@@ -66,18 +56,8 @@ export function getAnonymousAgentTranscriptDir(cwd: string): string {
   );
 }
 
-/** Old Claude-compatible project directory for cwd-derived transcripts. */
-export function getClaudeProjectDir(cwd: string): string {
-  const projectKey = deriveProjectKey(cwd);
-  return path.join(CLAUDE_PROJECTS_ROOT, projectKey);
-}
-
-/**
- * 获取指定 cwd 对应的旧 project 目录。
- * Kept for explicit legacy migration/debug tools that need the Claude-compatible path.
- */
 export function getProjectDir(cwd: string): string {
-  return getClaudeProjectDir(cwd);
+  return getAnonymousAgentTranscriptDir(cwd);
 }
 
 function isInsideRoot(resolved: string, root: string): boolean {
@@ -88,15 +68,10 @@ function isInsideRoot(resolved: string, root: string): boolean {
   return resolved === resolvedRoot || resolved.startsWith(allowedPrefix);
 }
 
-/**
- * 安全校验：确保路径在新 Agent SaaS transcript 根或旧 Claude fallback 根下。
- */
+/** 安全校验：确保路径在 Agent SaaS transcript 根下。 */
 export function assertAllowedTranscriptPath(transcriptPath: string): string {
   const resolved = path.resolve(transcriptPath);
-  if (
-    isInsideRoot(resolved, AGENT_LEGACY_TRANSCRIPTS_ROOT) ||
-    isInsideRoot(resolved, CLAUDE_PROJECTS_ROOT)
-  ) {
+  if (isInsideRoot(resolved, AGENT_LEGACY_TRANSCRIPTS_ROOT)) {
     return resolved;
   }
   throw new Error("Transcript path is outside allowed directories");

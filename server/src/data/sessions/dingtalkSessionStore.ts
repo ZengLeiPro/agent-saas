@@ -1,7 +1,7 @@
 /**
  * DingTalk Session Storage
  *
- * 钉钉会话持久化：conversationId -> Claude sessionId 映射。
+ * 钉钉会话持久化：conversationId -> Agent sessionId 映射。
  * 存储在 JSON 文件中，供 DingtalkChannel 和 Cron 通知使用。
  *
  * 内存缓存 + 串行写入队列，消除并发读写竞态。
@@ -86,18 +86,18 @@ export function saveDingtalkSessions(sessions: DingtalkSessionStore, basePath: s
   queueWrite(basePath);
 }
 
-export function getClaudeSession(conversationId: string, basePath: string): string | undefined {
-  return getCache(basePath)[conversationId]?.claudeSessionId;
+export function getAgentSession(conversationId: string, basePath: string): string | undefined {
+  return getCache(basePath)[conversationId]?.agentSessionId;
 }
 
-export function saveClaudeSession(opts: SaveSessionOptions, basePath: string): void {
-  const { conversationId, claudeSessionId, sessionWebhook, senderNick, senderId, conversationType } = opts;
+export function saveAgentSession(opts: SaveSessionOptions, basePath: string): void {
+  const { conversationId, agentSessionId, sessionWebhook, senderNick, senderId, conversationType } = opts;
   const sessions = getCache(basePath);
   const now = Date.now();
   const existing = sessions[conversationId];
 
   sessions[conversationId] = {
-    claudeSessionId,
+    agentSessionId,
     sessionWebhook: sessionWebhook || existing?.sessionWebhook,
     senderNick,
     senderId,

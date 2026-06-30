@@ -3,7 +3,7 @@
  *
  * 设计目标：把 ToolDescriptor.description 文本抽到 server/src/agent/descriptions/{id}.md，
  * 启动时 hydrate 进 descriptor，其余字段（schema/risk/approvalMode/auditCategory）保持
- * TS 强类型不动。详见 plan：/Users/admin/.claude/plans/squishy-twirling-pebble.md
+ * TS 强类型不动。
  *
  * 约束：
  *  - **同步**：descriptor 是模块顶层 `export const`，必须在 import 求值时拿到 string。

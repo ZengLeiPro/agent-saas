@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-从 Claude Code 会话文件中提取主 agent 会话的用户消息，生成结构化摘要。
+从 Agent SaaS transcript 文件中提取主 agent 会话的用户消息，生成结构化摘要。
 
 用途：在心跳轮询时运行，让 Agent 了解用户最近在做什么。
-安全：自动从 cwd 推断 workspace name，每个用户只能查看自己的会话记录。
+安全：自动从 cwd 读取 workspace 身份，每个用户只能查看自己的会话记录。
 
 用法：
     python3 extract-user-messages.py                    # 提取今天的
@@ -20,32 +20,41 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 
-PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
-# 按优先级尝试多种路径模式（不同时期部署的目录结构不同）
-WORKSPACE_BASES = [
-    "-Users-admin-workspace-",              # 当前: /Users/admin/workspace/{name}
-    "-Users-admin-code-agent-workspace-",   # 旧: /Users/admin/code/agent/workspace/{name}
-]
-WORKSPACE_ROOT = os.path.expanduser("~/workspace")
+TRANSCRIPT_ROOT = os.path.expanduser(
+    os.environ.get("AGENT_TRANSCRIPTS_ROOT", "~/.agent-saas/legacy-transcripts")
+)
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 CST = timezone(timedelta(hours=8))
 
 
 def detect_workspace_from_cwd():
-    """从 cwd 推断 workspace name（安全：只能查看自己的会话）"""
+    """从 cwd 向上查找 .ky-agent/workspace.json，推断 transcript owner。"""
     cwd = os.getcwd()
-    # 期望格式: /Users/admin/workspace/{name} 或其子目录
-    if cwd.startswith(WORKSPACE_ROOT + "/"):
-        rest = cwd[len(WORKSPACE_ROOT) + 1:]
-        name = rest.split("/")[0]
-        # 排除 .shared 等非用户目录
-        if name and not name.startswith("."):
-            return name
+    current = cwd
+    while current and current != os.path.dirname(current):
+        meta_path = os.path.join(current, ".ky-agent", "workspace.json")
+        if os.path.isfile(meta_path):
+            try:
+                with open(meta_path, encoding="utf-8") as f:
+                    meta = json.load(f)
+                tenant_id = meta.get("tenantId")
+                user_id = meta.get("userId")
+                username = meta.get("username") or user_id
+                if tenant_id and user_id:
+                    return {
+                        "tenantId": tenant_id,
+                        "userId": user_id,
+                        "username": username,
+                        "workspaceDir": current,
+                    }
+            except Exception:
+                return None
+        current = os.path.dirname(current)
     return None
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Extract user messages from Claude Code sessions")
+    p = argparse.ArgumentParser(description="Extract user messages from Agent SaaS transcripts")
     p.add_argument("-d", "--date", help="Target date (YYYY-MM-DD), default today CST")
     p.add_argument("-n", "--days", type=int, default=1, help="Number of days to look back (default 1 = today only)")
     p.add_argument("-o", "--output", help="Output file path (default stdout)")
@@ -227,24 +236,17 @@ def main():
     args = parse_args()
     target_dates = get_target_dates(args)
 
-    # 从 cwd 自动推断 workspace name（安全隔离：只能查看自己的会话）
+    # 从 cwd 自动推断 workspace owner（安全隔离：只能查看自己的会话）
     workspace = detect_workspace_from_cwd()
     if not workspace:
-        print(f"Error: 无法从当前目录推断 workspace name。", file=sys.stderr)
-        print(f"请在用户 workspace 目录下运行此脚本（如 /Users/admin/workspace/huangyp/）。", file=sys.stderr)
+        print(f"Error: 无法从当前目录读取 workspace identity。", file=sys.stderr)
+        print(f"请在用户 workspace 目录下运行此脚本（需存在 .ky-agent/workspace.json）。", file=sys.stderr)
         print(f"当前目录: {os.getcwd()}", file=sys.stderr)
         return
 
-    # 尝试多种路径模式找到项目目录
-    project_dir = None
-    for base in WORKSPACE_BASES:
-        candidate = os.path.join(PROJECTS_DIR, base + workspace)
-        if os.path.isdir(candidate):
-            project_dir = candidate
-            break
-    if not project_dir:
-        tried = [base + workspace for base in WORKSPACE_BASES]
-        print(f"Error: project dir not found for workspace '{workspace}'. Tried: {', '.join(tried)}")
+    project_dir = os.path.join(TRANSCRIPT_ROOT, workspace["tenantId"], workspace["userId"])
+    if not os.path.isdir(project_dir):
+        print(f"Error: transcript dir not found for workspace '{workspace['username']}': {project_dir}")
         return
 
     # 权限检测：尝试列出目录内容，sandbox 可能允许 stat 但拒绝 readdir
@@ -256,7 +258,7 @@ def main():
         return
 
     if not dir_entries:
-        print(f"# 用户活动摘要\n\n> 项目目录为空: {project_dir}\n")
+        print(f"# 用户活动摘要\n\n> transcript 目录为空: {project_dir}\n")
         return
 
     # 计算文件 mtime 过滤范围 (UTC)

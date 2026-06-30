@@ -101,7 +101,7 @@ async function listMetaFilesRecursive(dir: string): Promise<string[]> {
 
 /**
  * 通过 sessionId 查找 transcript 路径（全局扫描）。
- * 仅扫描新 Agent SaaS layout。旧 ~/.claude/projects 不再作为在线会话读路径。
+ * 仅扫描新 Agent SaaS layout；旧 cwd-derived transcript root 不再作为在线会话读路径。
  */
 export async function findTranscriptPathBySessionId(
   sessionId: string
@@ -210,7 +210,7 @@ export async function listSessionsByProjectKey(
 
 /**
  * 扫描指定 cwd/owner 对应的所有会话。
- * 仅扫描新 Agent SaaS layout；旧 Claude cwd-derived projectKey 不再作为在线会话 fallback。
+ * 仅扫描新 Agent SaaS layout；旧 cwd-derived projectKey 不再作为在线会话 fallback。
  */
 export async function listSessions(
   cwd: string,

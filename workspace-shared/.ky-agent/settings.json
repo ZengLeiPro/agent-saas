@@ -1,19 +1,6 @@
 {
   "cleanupPeriodDays": 36500,
   "env": {
-    "_ANTHROPIC_MODEL": "gemini-3-pro-preview",
-    "_ANTHROPIC_DEFAULT_OPUS_MODEL": "gemini-3-pro-preview",
-    "_ANTHROPIC_DEFAULT_SONNET_MODEL": "gemini-3-pro-preview",
-    "_ANTHROPIC_DEFAULT_HAIKU_MODEL": "gemini-3-pro-preview",
-    "__ANTHROPIC_MODEL": "MiniMax-M2.5",
-    "__ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.5",
-    "__ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.5",
-    "__ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.5",
-    "ANTHROPIC_MODEL": "claude-opus-4-6[1m]",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-6[1m]",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5-20251001",
-    "DEBUG_CLAUDE_AGENT_SDK": "1",
     "NODE_OPTIONS": "--use-env-proxy",
     "NODE_NO_WARNINGS": "1",
     "DASHSCOPE_API_KEY": ""

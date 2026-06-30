@@ -3,7 +3,7 @@
  *
  * 提供会话列表、详情、删除等操作。
  * 真源来自 ~/.agent-saas/legacy-transcripts/<tenantId>/<userId>/*.jsonl
- * （PR #31 起的新 Agent SaaS layout；旧 ~/.claude/projects 不再作为在线读路径）
+ * （PR #31 起的新 Agent SaaS layout；旧 cwd-derived transcript root 不再作为在线读路径）
  */
 import { Router } from "express";
 import type { Request, Response } from "express";
@@ -270,7 +270,7 @@ async function buildMetaOnlyTranscript(
 }
 
 /**
- * 从 dingtalk-sessions.json 构建 claudeSessionId -> senderNick 反向索引
+ * 从 dingtalk-sessions.json 构建 agentSessionId -> senderNick 反向索引
  */
 async function buildDingtalkSessionIndex(
   basePath: string,
@@ -281,11 +281,11 @@ async function buildDingtalkSessionIndex(
     const raw = await fs.readFile(filePath, "utf-8");
     const store = JSON.parse(raw) as Record<
       string,
-      { claudeSessionId?: string; senderNick?: string }
+      { agentSessionId?: string; senderNick?: string }
     >;
     for (const info of Object.values(store)) {
-      if (info.claudeSessionId && info.senderNick) {
-        map.set(info.claudeSessionId, info.senderNick);
+      if (info.agentSessionId && info.senderNick) {
+        map.set(info.agentSessionId, info.senderNick);
       }
     }
   } catch {

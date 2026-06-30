@@ -147,12 +147,10 @@ export interface WebChannelConfig {
   };
 }
 
-/** 读取 plan 文件内容，优先从用户 cwd 的 .ky-agent/plans 读取，fallback 到宿主 ~/.claude/plans */
+/** 读取用户 workspace 内最近生成的 plan 文件内容。 */
 async function readLatestPlanContent(userCwd?: string): Promise<string | null> {
-  // 候选目录：用户 cwd 优先，全局 fallback
-  const candidates = userCwd
-    ? [agentPath(userCwd, 'plans'), join(homedir(), '.claude', 'plans')]
-    : [join(homedir(), '.claude', 'plans')];
+  if (!userCwd) return null;
+  const candidates = [agentPath(userCwd, 'plans')];
 
   try {
     const now = Date.now();

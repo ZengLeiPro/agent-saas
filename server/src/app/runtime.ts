@@ -62,7 +62,7 @@ import { GroupStore } from '../data/groups/store.js';
 import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { McpConfigStore } from '../data/mcpConfig.js';
 import { scanPoolSkills as scanPoolSkillsForDispatch } from '../data/skills/scanner.js';
-import { syncSkills, resolveUserCwd, ensureUserWorkspace, migrateLegacyAgentNamespace } from '../workspace/resolver.js';
+import { syncSkills, resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, agentPath, resolveAgentPath } from '../workspace/namespace.js';
 import type { RawRuntimeRunDispatchConfig, SkillsDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
 import type { SkillEntry } from '../agent/skillToolProvider.js';
@@ -468,7 +468,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     for (const u of allUsers) {
       const workspaceUser = { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId };
       const userCwd = resolveUserCwd(agentCwd, workspaceUser);
-      migrateLegacyAgentNamespace(userCwd);
       if (existsSync(agentDir(userCwd))) {
         syncSkills(userCwd, sharedDir, workspaceUser, skillConfigStore);
         synced++;
@@ -489,7 +488,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       const workspaceUser = { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId };
       const userCwd = resolveUserCwd(agentCwd, workspaceUser);
       const versionFile = agentPath(userCwd, '.skills-version');
-      migrateLegacyAgentNamespace(userCwd);
       if (existsSync(agentDir(userCwd))) {
         writeFileSync(versionFile, String(skillConfigStore.getConfigVersion()), 'utf-8');
       }
@@ -1214,16 +1212,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
   // Token usage 历史回填：首次启动时扫 ~/.agent-saas/legacy-transcripts 全量重建一次。
   // 异步触发，不阻塞启动；rebuild_state 表已有记录则自动跳过。
-  //
-  // 旧 Claude transcript 根（~/.claude/projects）默认不扫——agent-saas 是新仓，
-  // 主机上该目录通常是其他项目（agent、其它 KY 工具链）的 transcript，扫了也
-  // 不该计入本服务的 token usage。如需做迁移期一次性回填，设置 env
-  // TOKEN_USAGE_LEGACY_CLAUDE_ROOT=/path/to/old/projects 指定根目录开启。
-  const legacyClaudeRoot = process.env.TOKEN_USAGE_LEGACY_CLAUDE_ROOT?.trim() || null;
   if (businessDbHandle) {
     void rebuildTokenUsageFromJsonl(businessDbHandle, {
       agentCwd,
-      legacyProjectsRoot: legacyClaudeRoot,
       log: (msg) => serverLogger.info(msg),
     }).catch((err) => {
       serverLogger.warn(`Token usage rebuild error: ${err instanceof Error ? err.message : String(err)}`);
@@ -1491,7 +1482,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ? () =>
           rebuildTokenUsageFromJsonl(businessDbHandle!, {
             agentCwd,
-            legacyProjectsRoot: legacyClaudeRoot,
             log: (msg) => serverLogger.info(msg),
             force: true,
           }).catch((err) => {

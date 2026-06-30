@@ -27,7 +27,7 @@
  * Options:
  *   --connection-string <url>   PG 连接串（execute 模式必填；dry-run 也建议传以读取现有数据）
  *   --table-prefix <prefix>     PG 表前缀，默认 runtime（与 runtimeEventStore.tablePrefix 对齐）
- *   --root <path>               扫描根目录，默认 ~/.claude/projects (ALLOWED_ROOT)
+ *   --root <path>               扫描根目录，默认 ~/.agent-saas/legacy-transcripts
  *   --session <sessionId>       只迁指定 session（可重复）
  *   --limit <n>                 最多处理 n 个 session（dev 抽样用）
  *   --execute                   真写 PG；缺省=dry-run
@@ -117,31 +117,30 @@ function sanitizeIdentifier(value: string): string {
 
 async function discoverFiles(root: string): Promise<Array<{ sessionId: string; filePath: string }>> {
   const out: Array<{ sessionId: string; filePath: string }> = [];
-  let projectDirs: import('node:fs').Dirent[];
+  await collectFiles(root, out);
+  return out;
+}
+
+async function collectFiles(root: string, out: Array<{ sessionId: string; filePath: string }>): Promise<void> {
+  let entries: import('node:fs').Dirent[];
   try {
-    projectDirs = await readdir(root, { withFileTypes: true });
+    entries = await readdir(root, { withFileTypes: true });
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return out;
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw err;
   }
-  for (const dir of projectDirs) {
-    if (!dir.isDirectory()) continue;
-    const projectPath = join(root, dir.name);
-    let files: import('node:fs').Dirent[];
-    try {
-      files = await readdir(projectPath, { withFileTypes: true });
-    } catch {
+  for (const entry of entries) {
+    const fullPath = join(root, entry.name);
+    if (entry.isDirectory()) {
+      await collectFiles(fullPath, out);
       continue;
     }
-    for (const f of files) {
-      if (!f.isFile()) continue;
-      if (!f.name.endsWith(RUNTIME_EVENTS_SUFFIX)) continue;
-      const sessionId = f.name.slice(0, -RUNTIME_EVENTS_SUFFIX.length);
-      if (!sessionId) continue;
-      out.push({ sessionId, filePath: join(projectPath, f.name) });
-    }
+    if (!entry.isFile()) continue;
+    if (!entry.name.endsWith(RUNTIME_EVENTS_SUFFIX)) continue;
+    const sessionId = entry.name.slice(0, -RUNTIME_EVENTS_SUFFIX.length);
+    if (!sessionId) continue;
+    out.push({ sessionId, filePath: fullPath });
   }
-  return out;
 }
 
 async function parseEventsFromFile(filePath: string): Promise<PlatformEvent[]> {

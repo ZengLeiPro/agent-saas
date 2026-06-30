@@ -97,7 +97,7 @@ export class TTLCache<T = string> {
 
 /**
  * 用 JSON 文件持久化的简单 Session Cache。
- * - 主要用于 Web 端 clientSessionId -> claudeSessionId 映射
+ * - 主要用于 Web 端 clientSessionId -> agentSessionId 映射
  * - 仅在 set 时写文件（降低 IO）
  */
 export class JsonFileSessionCache {

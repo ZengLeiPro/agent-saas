@@ -294,6 +294,9 @@ jobs:
           else
             CONTAINER_CLI=docker
           fi
+          CONTAINER_TMPDIR="${CONTAINER_TMPDIR:-/mnt/agent-saas/runtime/container-tmp/github-actions}"
+          mkdir -p "$CONTAINER_TMPDIR"
+          export TMPDIR="$CONTAINER_TMPDIR"
           "$CONTAINER_CLI" load -i "$IMAGE_TAR"
           "$CONTAINER_CLI" tag "$LOCAL_IMAGE" "$IMAGE"
 

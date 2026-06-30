@@ -309,7 +309,12 @@ function archiveBrokenVenv(workspaceRoot: string, venvPath: string): void {
   const archiveRoot = join(workspaceRoot, '.ky-agent', 'runtime', 'venv-archive');
   mkdirSync(archiveRoot, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  renameSync(venvPath, join(archiveRoot, `.venv-${stamp}`));
+  try {
+    renameSync(venvPath, join(archiveRoot, `.venv-${stamp}`));
+  } catch (err) {
+    if (err && typeof err === 'object' && 'code' in err && (err as { code?: unknown }).code === 'ENOENT') return;
+    throw err;
+  }
 }
 
 function isDirectRun(): boolean {

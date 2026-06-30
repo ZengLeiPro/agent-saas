@@ -64,6 +64,45 @@ describe('Provisioner runtime bootstrap', () => {
     ]);
     expect(calls.find((call) => call.args.includes('/app/acs-orchestrator/src/sandboxRunner.ts'))).toBeTruthy();
   });
+
+  it('coalesces concurrent provisions for the same sandbox and recipe', async () => {
+    const calls: Array<{ args: string[]; input?: string }> = [];
+    let releaseBootstrap!: () => void;
+    const bootstrapGate = new Promise<void>((resolve) => {
+      releaseBootstrap = resolve;
+    });
+    let bootstrapStarted = 0;
+    const kubectl = kubectlStub(calls, {
+      onBootstrap: async () => {
+        bootstrapStarted += 1;
+        await bootstrapGate;
+      },
+    });
+    const provisioner = new Provisioner(baseConfig(), kubectl, sandboxManagerStub(), () => new Set());
+
+    const first = provisioner.provision({
+      workspaceId: 'ws_kaiyan__test',
+      sessionId: 'session-123',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    });
+    const second = provisioner.provision({
+      workspaceId: 'ws_kaiyan__test',
+      sessionId: 'session-456',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    });
+
+    await waitFor(() => bootstrapStarted === 1);
+    releaseBootstrap();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult.status).toBe('ok');
+    expect(secondResult.status).toBe('ok');
+    expect(secondResult.logs[0]).toMatchObject({
+      step: 'provision_singleflight',
+      status: 'skipped',
+    });
+    expect(calls.filter((call) => call.args.includes('/app/acs-orchestrator/src/sandboxRunner.ts'))).toHaveLength(1);
+  });
 });
 
 function sandboxManagerStub(): SandboxManager {
@@ -91,13 +130,14 @@ function sandboxManagerStub(): SandboxManager {
 
 function kubectlStub(
   calls: Array<{ args: string[]; input?: string }>,
-  options: { existingProvisionHash?: string } = {},
+  options: { existingProvisionHash?: string; onBootstrap?: () => void | Promise<void> } = {},
 ): Kubectl {
   return {
     async run(args: string[], runOptions: { input?: string } = {}): Promise<KubectlResult> {
       calls.push({ args, input: runOptions.input });
       const joinedArgs = args.join('\n');
       if (args.includes('/app/acs-orchestrator/src/sandboxRunner.ts')) {
+        await options.onBootstrap?.();
         return {
           stdout: JSON.stringify({
             kind: 'final',
@@ -117,6 +157,14 @@ function kubectlStub(
       throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
     },
   } as unknown as Kubectl;
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error('condition was not met');
 }
 
 function baseConfig(): AcsOrchestratorConfig {

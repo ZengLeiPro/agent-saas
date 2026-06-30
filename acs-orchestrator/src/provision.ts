@@ -10,7 +10,21 @@ const SETUP_DEFAULT_TIMEOUT_MS = 60_000;
 const RUNTIME_BOOTSTRAP_TIMEOUT_MS = 360_000;
 const SETUP_MAX_OUTPUT_BYTES = 16 * 1024;
 
+type ProvisionResult = {
+  status: 'ok' | 'error';
+  error?: string;
+  logs: ProvisioningLogEntry[];
+  metadata: Record<string, unknown>;
+};
+
+interface InFlightProvision {
+  recipeHash: string;
+  promise: Promise<ProvisionResult>;
+}
+
 export class Provisioner {
+  private readonly inFlightBySandbox = new Map<string, InFlightProvision>();
+
   constructor(
     private readonly config: AcsOrchestratorConfig,
     private readonly kubectl: Kubectl,
@@ -19,14 +33,54 @@ export class Provisioner {
     private readonly activeRegistry?: ActiveSandboxRegistry,
   ) {}
 
-  async provision(recipe: WorkspaceRecipe): Promise<{ status: 'ok' | 'error'; error?: string; logs: ProvisioningLogEntry[]; metadata: Record<string, unknown> }> {
-    const logs: ProvisioningLogEntry[] = [];
+  async provision(recipe: WorkspaceRecipe): Promise<ProvisionResult> {
     const plannedRef = this.sandboxManager.ref({
       workspaceId: recipe.workspaceId,
       sessionId: recipe.sessionId!,
       sandboxScopeId: recipe.sandboxScopeId,
       mountSubPath: recipe.mountSubPath,
     });
+    const recipeHash = createHash('sha256').update(JSON.stringify(provisionFingerprint(recipe))).digest('hex');
+
+    while (true) {
+      const inFlight = this.inFlightBySandbox.get(plannedRef.name);
+      if (!inFlight) break;
+      try {
+        const result = await inFlight.promise;
+        if (inFlight.recipeHash === recipeHash) {
+          return {
+            ...result,
+            logs: [
+              {
+                step: 'provision_singleflight',
+                status: 'skipped',
+                note: `joined in-flight provision for Sandbox ${plannedRef.name}`,
+              },
+              ...result.logs,
+            ],
+          };
+        }
+      } catch (err) {
+        if (inFlight.recipeHash === recipeHash) throw err;
+      }
+    }
+
+    const promise = this.provisionExclusive(recipe, plannedRef, recipeHash);
+    this.inFlightBySandbox.set(plannedRef.name, { recipeHash, promise });
+    try {
+      return await promise;
+    } finally {
+      const current = this.inFlightBySandbox.get(plannedRef.name);
+      if (current?.promise === promise) this.inFlightBySandbox.delete(plannedRef.name);
+    }
+  }
+
+  private async provisionExclusive(
+    recipe: WorkspaceRecipe,
+    plannedRef: { name: string; workspaceId: string; sessionId: string; sandboxScopeId?: string; mountSubPath?: string },
+    recipeHash: string,
+  ): Promise<ProvisionResult> {
+    const logs: ProvisioningLogEntry[] = [];
     const activeKey = `provision:${recipe.sessionId}:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
     const releaseActive = this.activeRegistry?.acquire(plannedRef.name, activeKey);
     try {
@@ -39,7 +93,6 @@ export class Provisioner {
         busySandboxNames: this.getBusySandboxNames(),
         activeKey,
       });
-      const recipeHash = createHash('sha256').update(JSON.stringify(provisionFingerprint(recipe))).digest('hex');
       logs.push({
         step: 'sandbox_ensure',
         status: 'ok',

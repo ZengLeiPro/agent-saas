@@ -88,8 +88,11 @@ jobs:
         run: |
           docker run --rm --user 501:20 --entrypoint /bin/sh "$LOCAL_IMAGE" -c '
           set -eu
-          for c in node npm npx pnpm corepack yarn bash git git-lfs ssh scp curl wget rg jq zip unzip python python3 pip gcc g++ make cmake pkg-config sqlite3 psql mysql dig nslookup nc ping tree openssl ffmpeg ffprobe convert identify soffice pandoc pdftotext qpdf gs tesseract fc-match; do
+          for c in node npm npx pnpm corepack yarn bash git git-lfs ssh scp curl wget rg jq zip unzip python python3 pip sqlite3 psql mysql dig nslookup nc ping tree openssl ffmpeg ffprobe soffice pdftotext qpdf gs tesseract fc-match; do
             command -v "$c" >/dev/null || { echo "missing $c"; exit 1; }
+          done
+          for c in gcc g++ make cmake pkg-config convert identify pandoc; do
+            if command -v "$c" >/dev/null 2>&1; then echo "unexpected $c"; exit 1; fi
           done
           python3 - <<PY
           import sys
@@ -143,10 +146,11 @@ jobs:
             'test "$DOWNLOAD_DIR" = /workspace/downloads',
             'test "$ACS_PYTHON_WHEELHOUSE" = /opt/ky-agent/python-wheels',
             'test -f /workspace/.ky-agent/runtime/venv/.ky-runtime.json',
-            'for c in openssl ffmpeg ffprobe convert identify soffice pandoc pdftotext qpdf gs tesseract fc-match; do command -v "$c" >/dev/null; done',
+            'for c in openssl ffmpeg ffprobe soffice pdftotext qpdf gs tesseract fc-match; do command -v "$c" >/dev/null; done',
+            'for c in gcc g++ make cmake pkg-config convert identify pandoc; do if command -v "$c" >/dev/null 2>&1; then echo "unexpected $c"; exit 1; fi; done',
             'fc-match "Noto Sans CJK SC" | grep -Ei "Noto|CJK|Sans" >/dev/null',
             'python3 - <<\\PY',
-            'import requests, httpx, aiohttp, bs4, lxml, numpy, pandas, openpyxl, xlsxwriter, docx, pptx, PIL, jinja2, markdown, pypdf, fitz, sqlalchemy, pymysql, psycopg, redis, dotenv, yaml, jieba, playwright',
+            'import requests, httpx, bs4, lxml, numpy, pandas, openpyxl, xlsxwriter, docx, pptx, PIL, jinja2, markdown, pypdf, fitz, sqlalchemy, pymysql, psycopg, dotenv, yaml, jieba, playwright',
             'print("PYTHON_BASE_IMPORTS_OK")',
             'PY',
             'node - <<\\NODE',
@@ -458,10 +462,11 @@ jobs:
             'test "$PLAYWRIGHT_BROWSERS_PATH" = /ms-playwright',
             'test "$(cat /etc/timezone)" = Asia/Shanghai',
             'test "$(readlink -f /etc/localtime)" = /usr/share/zoneinfo/Asia/Shanghai',
-            'for c in openssl ffmpeg ffprobe convert identify soffice pandoc pdftotext qpdf gs tesseract fc-match; do command -v "$c" >/dev/null; done',
+            'for c in openssl ffmpeg ffprobe soffice pdftotext qpdf gs tesseract fc-match; do command -v "$c" >/dev/null; done',
+            'for c in gcc g++ make cmake pkg-config convert identify pandoc; do if command -v "$c" >/dev/null 2>&1; then echo "unexpected $c"; exit 1; fi; done',
             'fc-match "Noto Sans CJK SC" | grep -Ei "Noto|CJK|Sans" >/dev/null',
             'python3 - <<\\PY',
-            'import requests, httpx, aiohttp, bs4, lxml, numpy, pandas, openpyxl, xlsxwriter, docx, pptx, PIL, jinja2, markdown, pypdf, fitz, sqlalchemy, pymysql, psycopg, redis, dotenv, yaml, jieba, playwright',
+            'import requests, httpx, bs4, lxml, numpy, pandas, openpyxl, xlsxwriter, docx, pptx, PIL, jinja2, markdown, pypdf, fitz, sqlalchemy, pymysql, psycopg, dotenv, yaml, jieba, playwright',
             'print("PYTHON_BASE_IMPORTS_OK")',
             'PY',
             'node - <<\\NODE',

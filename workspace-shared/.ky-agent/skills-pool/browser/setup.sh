@@ -2,34 +2,18 @@
 set -e
 
 SKILL_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -z "${HOME:-}" ]; then
-  echo "HOME is not set; cannot choose a user-writable npm global prefix" >&2
+
+echo "==> Browser skill setup is a legacy maintenance helper."
+echo "ACS Sandbox runtime should already provide playwright-cli."
+echo "This script no longer installs global npm packages or rewrites references/."
+
+echo ""
+echo "==> Verifying runtime..."
+if ! command -v playwright-cli >/dev/null 2>&1; then
+  echo "ERROR: playwright-cli not found. Fix the ACS image or platform runtime; do not install globally during a task." >&2
   exit 1
 fi
-NPM_GLOBAL_PREFIX="${NPM_GLOBAL_PREFIX:-${NPM_CONFIG_PREFIX:-$HOME/.npm-global}}"
-
-mkdir -p "$NPM_GLOBAL_PREFIX"
-export NPM_CONFIG_PREFIX="$NPM_GLOBAL_PREFIX"
-export PATH="$NPM_GLOBAL_PREFIX/bin:$PATH"
-
-echo "==> Installing @playwright/cli to user prefix: $NPM_GLOBAL_PREFIX"
-npm install -g @playwright/cli@latest
-
-echo ""
-echo "==> Verifying installation..."
 playwright-cli --version
-
-echo ""
-echo "==> Copying reference docs..."
-REFS_SRC="$(npm root -g)/@playwright/cli/node_modules/playwright/lib/skill/references"
-REFS_DST="$SKILL_DIR/references"
-if [ -d "$REFS_SRC" ]; then
-  rm -rf "$REFS_DST"
-  cp -r "$REFS_SRC" "$REFS_DST"
-  echo "Copied $(ls "$REFS_DST" | wc -l | tr -d ' ') reference files to $REFS_DST"
-else
-  echo "Warning: reference docs not found at $REFS_SRC"
-fi
 
 echo ""
 echo "==> Setup complete!"

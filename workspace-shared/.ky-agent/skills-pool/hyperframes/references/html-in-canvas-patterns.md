@@ -130,11 +130,11 @@ tl.to(
 
 ```html
 <script type="module">
-  import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.181.2/+esm";
-  import { EffectComposer } from "https://cdn.jsdelivr.net/npm/three@0.181.2/examples/jsm/postprocessing/EffectComposer.js";
-  import { RenderPass } from "https://cdn.jsdelivr.net/npm/three@0.181.2/examples/jsm/postprocessing/RenderPass.js";
-  import { ShaderPass } from "https://cdn.jsdelivr.net/npm/three@0.181.2/examples/jsm/postprocessing/ShaderPass.js";
-  import { UnrealBloomPass } from "https://cdn.jsdelivr.net/npm/three@0.181.2/examples/jsm/postprocessing/UnrealBloomPass.js";
+  import * as THREE from "./vendor/three.module.js";
+  import { EffectComposer } from "./vendor/three/examples/jsm/postprocessing/EffectComposer.js";
+  import { RenderPass } from "./vendor/three/examples/jsm/postprocessing/RenderPass.js";
+  import { ShaderPass } from "./vendor/three/examples/jsm/postprocessing/ShaderPass.js";
+  import { UnrealBloomPass } from "./vendor/three/examples/jsm/postprocessing/UnrealBloomPass.js";
   // ... rest of composition code using these imports
 </script>
 ```

@@ -10,6 +10,9 @@
 import sys
 import json
 import subprocess
+from dws_runtime import patch_subprocess_for_dws
+
+patch_subprocess_for_dws()
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 

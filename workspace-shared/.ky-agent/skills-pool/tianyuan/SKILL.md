@@ -1,11 +1,14 @@
 ---
 name: tianyuan
-description: 从钉钉天元服务平台抓取数据（订单、商机、Leads 等）。当用户要求拉取、同步、导出钉钉天元/服务平台/渠道后台的数据时触发此 Skill。关键词：天元、钉钉服务平台、钉钉订单、渠道数据。
+description: 旧 macOS 本机钉钉客户端版天元抓取方案，仅在用户明确要求查看、维护或迁移旧天元抓取脚本时触发。当前不适配 agent-saas ACS Sandbox；用户只是要求拉取/同步/导出天元数据时，不要自动运行本 skill，应先确认是否有官方 API、天元导出文件、浏览器可访问页面或人工上传数据。
 ---
 
 # 钉钉天元服务平台数据抓取
 
-从钉钉桌面客户端内嵌的天元服务平台 WebView 中提取数据（订单、商机、Leads 等），写入本地数据库供查询。
+> **ACS Sandbox 状态：暂不支持自动抓取。** 当前方案依赖 macOS 钉钉桌面客户端、Safari Web Inspector、Frida、peekaboo 和剪贴板，不能在 Linux ACS Sandbox 中运行。
+> 在 ACS 中遇到天元数据需求时，先走安全替代路径：官方/内部 API、天元后台导出文件、用户上传的 Excel/CSV/JSON，或重新设计 Playwright/HTTP 方案。不要自动修改本机钉钉、不要执行 Frida 注入、不要默认写数据库。
+
+从钉钉桌面客户端内嵌的天元服务平台 WebView 中提取数据（订单、商机、Leads 等）。这是 legacy macOS 本机方案。
 
 ## 技术链路
 
@@ -13,9 +16,9 @@ Frida 注入 → peekaboo 进入服务平台 → Safari Web Inspector 连接 Web
 
 ## 前置条件
 
-- DingTalk.app 已去除 Hardened Runtime（钉钉更新后需重做）:
+- 仅限明确授权的 macOS 本机维护场景。DingTalk.app 已去除 Hardened Runtime（钉钉更新后需重做）:
   `codesign -s - --deep --force /Applications/DingTalk.app`
-- Frida 已安装: `pip3 install --break-system-packages frida-tools`
+- Frida 已安装在受控 Python 环境中；不要使用 `--break-system-packages`
 - peekaboo 可用（Safari 自动化依赖）
 - Safari 已启用"开发"菜单（Safari → 设置 → 高级 → 显示开发菜单）
 
@@ -24,19 +27,16 @@ Frida 注入 → peekaboo 进入服务平台 → Safari Web Inspector 连接 Web
 ### 一条命令跑完全流程
 
 ```bash
-bash shared/.ky-agent/skills/tianyuan/scripts/scrape-tianyuan.sh [模块名称] [--no-db]
+bash <skill_dir>/scripts/scrape-tianyuan.sh [模块名称] [--write-db]
 ```
 
 示例：
 ```bash
-# 抓订单 + 入库
-bash shared/.ky-agent/skills/tianyuan/scripts/scrape-tianyuan.sh 订单管理
+# 抓订单，只输出 JSON（默认不入库）
+bash <skill_dir>/scripts/scrape-tianyuan.sh 订单管理
 
-# 抓订单，不入库，只要 JSON
-bash shared/.ky-agent/skills/tianyuan/scripts/scrape-tianyuan.sh 订单管理 --no-db
-
-# 抓商机 + 入库
-bash shared/.ky-agent/skills/tianyuan/scripts/scrape-tianyuan.sh 商机管理
+# 抓商机并在用户明确确认后入库
+bash <skill_dir>/scripts/scrape-tianyuan.sh 商机管理 --write-db
 ```
 
 **脚本输出**：每个步骤打印 `✅`/`❌` 状态，成功时最后一行输出 JSON 文件路径。
@@ -96,7 +96,7 @@ scraper.js 在 WebView 内执行：
 
 ### [5/6] 数据入库（可选）
 
-`process-data.py` 读 JSON → 自动检测模块 → 清洗 → PostgreSQL UPSERT。`--no-db` 跳过。
+`process-data.py` 读 JSON → 自动检测模块 → 清洗 → PostgreSQL UPSERT。默认跳过入库；只有传 `--write-db` 且用户明确确认目标库、表和影响范围后才可写入。
 
 ### [6/6] 输出
 
@@ -128,7 +128,7 @@ scraper.js 在 WebView 内执行：
 ## 文件清单
 
 ```
-shared/.ky-agent/skills/tianyuan/
+<skill_dir>/
 ├── SKILL.md                         # 本文件
 └── scripts/
     ├── scrape-tianyuan.sh           # ★ 统一入口（一条命令跑完全流程）

@@ -310,7 +310,7 @@
 
 ## Icons 图标
 
-**严禁使用 emoji**。用 Lucide via CDN（template.html 已引入）。
+**严禁使用 emoji**。用模板内置的 lucide-compatible helper（template.html 已内置）。
 
 ```html
 <i data-lucide="compass" class="ico-lg"></i>     <!-- 大图标（pillar 用） -->
@@ -373,21 +373,18 @@
 
 ## Motion 动效系统
 
-整套 deck 默认开启翻页入场动画,由 Motion One(vanilla 版 Framer Motion,约 4KB)驱动。
+整套 deck 默认开启翻页入场动画。模板优先使用本地 Motion One 副本,缺失时自动降级到原生 WAAPI 轻量兜底。
 
 ### 加载方式
 
-`assets/template.html` 底部的 module script 会先尝试**本地** `assets/motion.min.js`,失败则回落到 **jsdelivr CDN**,两者都失败则强制把所有带 `data-anim` 的元素设为 `opacity:1`—— 内容永远可读,演示不依赖网络。
+`assets/template.html` 底部的 module script 会先尝试**本地** `assets/motion.min.js`,失败则使用内置 WAAPI 兜底；如果浏览器连 WAAPI 都不可用,脚本会强制把所有带 `data-anim` 的元素设为 `opacity:1`—— 内容永远可读,演示不依赖网络。
 
 ```js
 // template 里的核心加载器(不用改)
 let motion;
 try { motion = await import('./assets/motion.min.js'); }
 catch(e1) {
-  try { motion = await import('https://cdn.jsdelivr.net/npm/motion@11.11.17/+esm'); }
-  catch(e2) {
-    document.querySelectorAll('[data-anim]').forEach(el=>{el.style.opacity='1';el.style.transform='none'});
-  }
+  motion = { animate: fallbackAnimate, stagger: fallbackStagger };
 }
 ```
 

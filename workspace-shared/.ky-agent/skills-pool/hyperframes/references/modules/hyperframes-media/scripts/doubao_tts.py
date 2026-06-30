@@ -6,8 +6,8 @@
 `npx hyperframes transcribe` 取词级时间轴，或在合成 HTML 里用 <audio>/<video> 播放。
 逻辑与 server/src/integrations/tts/ttsClient.ts 对齐，纯标准库、无第三方依赖。
 
-凭证：读取本脚本同目录的 doubao.config.json（已 gitignore，单独配置）；
-      环境变量 DOUBAO_APP_ID / DOUBAO_ACCESS_TOKEN 可覆盖配置文件。
+凭证：默认只读取环境变量 DOUBAO_APP_ID / DOUBAO_ACCESS_TOKEN。
+      如确需本地配置文件，必须显式设置 DOUBAO_CONFIG_PATH，且不得把真实凭证放进 skill 目录。
 
 用法：
   python doubao_tts.py "你好，这是一段旁白" -o narration.mp3
@@ -39,14 +39,14 @@ DOUBAO_VOICES = {
 }
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(SCRIPT_DIR, "doubao.config.json")
 
 
 def load_config():
-    """读取凭证。配置文件优先，环境变量可覆盖 appId/token。"""
+    """读取凭证。环境变量优先；配置文件必须通过 DOUBAO_CONFIG_PATH 显式指定。"""
     cfg = {}
-    if os.path.isfile(CONFIG_PATH):
-        with open(CONFIG_PATH, encoding="utf-8") as f:
+    config_path = os.environ.get("DOUBAO_CONFIG_PATH", "")
+    if config_path:
+        with open(config_path, encoding="utf-8") as f:
             raw = re.sub(r"^\s*//.*$", "", f.read(), flags=re.M)  # 容忍 // 行注释
             cfg = json.loads(raw)
     app_id = os.environ.get("DOUBAO_APP_ID") or cfg.get("doubaoAppId", "")
@@ -148,8 +148,9 @@ def main():
 
     app_id, token, default_voice, default_speed = load_config()
     if not app_id or not token:
-        sys.exit(f"[豆包TTS] 缺少凭证。请在 {CONFIG_PATH} 填 doubaoAppId/doubaoApiKey，"
-                 f"或设环境变量 DOUBAO_APP_ID / DOUBAO_ACCESS_TOKEN。")
+        sys.exit("[豆包TTS] 缺少凭证。请由 ACS secret/env 注入 DOUBAO_APP_ID / "
+                 "DOUBAO_ACCESS_TOKEN，或显式设置 DOUBAO_CONFIG_PATH 指向受控配置文件；"
+                 "不要把真实凭证写进 skill 目录或对话。")
     if not args.input:
         sys.exit("[豆包TTS] 需要文本或 .txt 文件路径，见 --help")
 

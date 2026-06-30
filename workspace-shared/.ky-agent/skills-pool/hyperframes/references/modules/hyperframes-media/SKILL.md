@@ -1,11 +1,11 @@
 ---
 name: hyperframes-media
-description: Asset preprocessing for HyperFrames compositions — text-to-speech narration (豆包/火山引擎 TTS for Chinese & mixed CN/EN; Kokoro for English & other languages), audio/video transcription (Whisper), and background removal for transparent overlays (u2net). Use when generating voiceover from text, transcribing speech for captions, removing the background from a video or image to use as a transparent overlay, choosing a TTS voice or whisper model, or chaining these (TTS → transcribe → captions). Each command downloads its own model on first run.
+description: Asset preprocessing for HyperFrames compositions — text-to-speech narration (豆包/火山引擎 TTS for Chinese & mixed CN/EN; Kokoro for English & other languages), audio/video transcription (Whisper), and background removal for transparent overlays (u2net). Use when generating voiceover from text, transcribing speech for captions, removing the background from a video or image to use as a transparent overlay, choosing a TTS voice or whisper model, or chaining these (TTS → transcribe → captions). 豆包 TTS calls an external Volcengine API and requires ACS secret/env credentials; Kokoro/Whisper/u2net may download local models on first run.
 ---
 
 # HyperFrames Media Preprocessing
 
-Three CLI commands that produce assets for compositions: `tts` (speech), `transcribe` (timestamps), and `remove-background` (transparent video). Each downloads a model on first run and caches it under `~/.cache/hyperframes/`. Drop the output into the project, then reference it from the composition HTML — see the `hyperframes` skill for the audio/video element conventions.
+Three CLI commands that produce assets for compositions: `tts` (speech), `transcribe` (timestamps), and `remove-background` (transparent video). 豆包 TTS calls Volcengine's external API and can incur cost/data egress; Kokoro, Whisper, and u2net may download models on first run and cache them under `~/.cache/hyperframes/`. User-facing outputs should go under `assets/yyyymmdd/` unless a HyperFrames project explicitly needs them in its local assets directory. Reference generated media from the composition HTML — see the `hyperframes` skill for the audio/video element conventions.
 
 ## Text-to-Speech (`tts`)
 
@@ -13,14 +13,15 @@ Three CLI commands that produce assets for compositions: `tts` (speech), `transc
 
 ### 中文 / 中英混读（默认）— 豆包 / 火山引擎
 
-调用本模块自带脚本（火山引擎 TTS V3，输出 24kHz MP3，凭证已在 skill 内配好，无需 API key 现配）。脚本在本模块 `scripts/` 目录下：
+调用本模块自带脚本（火山引擎 TTS V3，输出 24kHz MP3）。脚本在本模块 `scripts/` 目录下，必须按当前 `SKILL.md` 所在目录解析脚本路径，不要假设 cwd 是 HyperFrames skill 根。
+
+凭证必须由 ACS secret/env 注入 `DOUBAO_APP_ID` 和 `DOUBAO_ACCESS_TOKEN`。不要把真实凭证写进 skill、报告、命令示例、日志或对话；缺凭证时停止并提示管理员配置 secret，不要要求用户把 token 粘贴进上下文。
 
 ```bash
-# 路径相对 hyperframes skill 根；AI 按本 SKILL.md 同级的 scripts/ 实际绝对路径调用
-SK=references/modules/hyperframes-media/scripts/doubao_tts.py
-python3 "$SK" "开沿科技，让企业真正用得起 AI Agent。" -o narration.mp3
-python3 "$SK" script.txt --voice jieshuo --speed 1.1 -o narration.mp3
-python3 "$SK" --list                              # 列出内置音色
+SK="<hyperframes-media skill dir>/scripts/doubao_tts.py"
+python3 "$SK" "开沿科技，让企业真正用得起 AI Agent。" -o assets/20260630/narration.mp3
+python3 "$SK" script.txt --voice jieshuo --speed 1.1 -o assets/20260630/narration.mp3
+python3 "$SK" --list                              # 列出内置音色，不需要凭证
 ```
 
 音色（`--voice` 传别名，或直接传任意豆包 speaker id）：
@@ -37,7 +38,7 @@ python3 "$SK" --list                              # 列出内置音色
 - `--speed` 0.5–2.0（默认 1.2）、`--volume` 0.5–2.0（默认 1.0）。位置参数可以是字面文本，也可以是 `.txt` 脚本文件路径。
 - 这些 `*_bigtts` 大模型音色**原生支持中英混读**，文案里夹英文术语（API、AI Agent、SaaS）发音正常，无需像 Kokoro 那样把字母逐个拆开。
 - 输出是 MP3，`npx hyperframes transcribe narration.mp3 --language zh` 直接可用。
-- 凭证：脚本读 `scripts/doubao.config.json`（已 gitignore，单独配置；模板见 `scripts/doubao.config.example.json`），也可用环境变量 `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN` 覆盖。底层与 `server/src/integrations/tts/ttsClient.ts` 同一套豆包 V3 接口。
+- 凭证：脚本默认只读 `DOUBAO_APP_ID` / `DOUBAO_ACCESS_TOKEN`。如确需本地配置文件，必须显式设置 `DOUBAO_CONFIG_PATH` 指向受控位置；不要使用 skill 目录下的配置文件作为凭证来源。底层调用豆包 V3 接口。
 
 ### 纯英文 / 其他语言 — Kokoro（本地，免费）
 
@@ -59,11 +60,11 @@ Default is `af_heart`. Match voice to content:
 | Documentation     | `bf_emma`/`bm_george` | Clear British English, formal |
 | Casual / social   | `af_heart`/`af_sky`   | Approachable, natural         |
 
-Voice IDs encode language in the first letter: `a`=American English, `b`=British English, `e`=Spanish, `f`=French, `h`=Hindi, `i`=Italian, `j`=Japanese, `p`=Brazilian Portuguese, `z`=Mandarin. The CLI auto-detects the phonemizer locale from the prefix. Non-English phonemization requires `espeak-ng` system-wide (`brew install espeak-ng` / `apt-get install espeak-ng`). **注意：Kokoro 的中文（`z` 前缀）质量一般 —— 中文一律走上面的豆包通道，不要用 Kokoro 出中文。**
+Voice IDs encode language in the first letter: `a`=American English, `b`=British English, `e`=Spanish, `f`=French, `h`=Hindi, `i`=Italian, `j`=Japanese, `p`=Brazilian Portuguese, `z`=Mandarin. The CLI auto-detects the phonemizer locale from the prefix. Non-English phonemization requires `espeak-ng`; in ACS this should be preinstalled in the image. Do not run Homebrew, `apt-get`, `sudo pip`, `pip install --user`, `--break-system-packages`, or create a new venv from a skill invocation. **注意：Kokoro 的中文（`z` 前缀）质量一般 —— 中文一律走上面的豆包通道，不要用 Kokoro 出中文。**
 
 Speed: `0.7-0.8` tutorials/accessibility · `1.0` natural (default) · `1.1-1.2` intros/upbeat. For long scripts, write to a `.txt` file and pass the path.
 
-Requirements: Python 3.8+ with `kokoro-onnx` and `soundfile` (`pip install kokoro-onnx soundfile`). Model downloads on first use (~311 MB + ~27 MB voices, cached in `~/.cache/hyperframes/tts/`).
+Requirements: Python 3.8+ with `kokoro-onnx` and `soundfile`; if missing, install only into the workspace `.venv` with `python3 -m pip install kokoro-onnx soundfile`, or stop and report the image dependency gap. Model downloads on first use (~311 MB + ~27 MB voices, cached in `~/.cache/hyperframes/tts/`).
 
 ## Transcription (`transcribe`)
 
@@ -97,7 +98,7 @@ npx hyperframes transcribe openai-response.json
 | `medium`   | 1.5 GB | Slow     | Important content, noisy audio, music |
 | `large-v3` | 3.1 GB | Slowest  | Production quality                    |
 
-Music with vocals: start at `medium` minimum; produced tracks often need manual SRT/VTT import. For caption-quality checks (mandatory after every transcription), the cleaning JS, retry rules, and the OpenAI/Groq API import path, see [hyperframes/references/transcript-guide.md](../hyperframes/references/transcript-guide.md).
+Music with vocals: start at `medium` minimum; produced tracks often need manual SRT/VTT import. For caption-quality checks (mandatory after every transcription), the cleaning JS, retry rules, and the OpenAI/Groq API import path, see [transcript-guide.md](../../transcript-guide.md).
 
 ### Output Shape
 

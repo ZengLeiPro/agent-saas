@@ -32,43 +32,40 @@ description: 从视频/音频平台下载媒体文件，或从本地视频提取
 ```bash
 # === 从 URL 下载 ===
 
-# 下载视频（最佳质量 MP4）
-python3 scripts/download.py "URL"
+# 下载视频（最佳质量 MP4，默认输出到 assets/yyyymmdd/media-download/）
+python3 <media-download skill dir>/scripts/download.py "URL"
 
 # 仅提取音频（最核心场景 —— 下载后交给 audio-transcribe 转录）
-python3 scripts/download.py -a "URL"
+python3 <media-download skill dir>/scripts/download.py -a "URL"
 
 # 指定输出目录
-python3 scripts/download.py -a -o /path/to/dir/ "URL"
+python3 <media-download skill dir>/scripts/download.py -a -o assets/20260630/media-download/ "URL"
 
 # 指定视频质量
-python3 scripts/download.py -q 720p "URL"
+python3 <media-download skill dir>/scripts/download.py -q 720p "URL"
 
 # 使用浏览器 cookies（B站高清/VIP内容/需登录平台）
-python3 scripts/download.py --cookies-from-browser chrome "URL"
+python3 <media-download skill dir>/scripts/download.py --cookies uploads/site.cookies.txt "URL"
 
 # 查看视频信息（不下载）
-python3 scripts/download.py --info "URL"
+python3 <media-download skill dir>/scripts/download.py --info "URL"
 
 # 下载播放列表
-python3 scripts/download.py --playlist "URL"
+python3 <media-download skill dir>/scripts/download.py --playlist "URL"
 
 # === 本地视频提取音频 ===
 
 # 从本地视频提取 mp3 音频
-python3 scripts/download.py -a video.mp4
+python3 <media-download skill dir>/scripts/download.py -a uploads/video.mp4
 
 # 指定音频格式
-python3 scripts/download.py -a --audio-format m4a video.mp4
+python3 <media-download skill dir>/scripts/download.py -a --audio-format m4a uploads/video.mp4
 
 # 指定输出路径
-python3 scripts/download.py -a -o output.mp3 video.mp4
+python3 <media-download skill dir>/scripts/download.py -a -o assets/20260630/media-download/video.mp3 uploads/video.mp4
 ```
 
-脚本路径是相对于本 skill 目录的，实际调用时从用户 workspace 根目录使用：
-```bash
-python3 .ky-agent/skills/media-download/scripts/download.py ...
-```
+脚本路径必须从当前 skill 目录解析，不要假设 workspace 下存在 `.claude/skills/media-download/`。
 
 ## 参数说明
 
@@ -79,8 +76,8 @@ python3 .ky-agent/skills/media-download/scripts/download.py ...
 | `--audio-format` | 音频格式：mp3（默认）/ m4a / wav / aac / flac / opus |
 | `-q, --quality` | 视频质量：best（默认）/ 1080p / 720p / 480p |
 | `-o, --output` | 输出文件路径或目录 |
-| `--cookies` | cookies 文件路径（Netscape 格式） |
-| `--cookies-from-browser` | 从浏览器导入 cookies（chrome / firefox / safari） |
+| `--cookies` | cookies 文件路径（Netscape 格式，优先使用用户上传到 `uploads/` 的文件） |
+| `--cookies-from-browser` | 从容器内浏览器 profile 导入 cookies（chrome / firefox）；仅在用户确认授权且 profile 确实存在时使用 |
 | `--info` | 仅显示视频信息，不下载 |
 | `--playlist` | 下载完整播放列表（默认仅单个视频） |
 
@@ -107,18 +104,21 @@ python3 .ky-agent/skills/media-download/scripts/download.py ...
 | 症状 | 解法 |
 |------|------|
 | 平台不支持 | 手动在浏览器下载，然后传本地文件路径 |
-| 需要登录 | 加 `--cookies-from-browser chrome` |
-| yt-dlp 报错 | `brew upgrade yt-dlp`（国内平台反爬更新频繁） |
+| 需要登录 | 优先请用户导出/上传 Netscape cookies 文件到 `uploads/`，再用 `--cookies uploads/site.cookies.txt` |
+| yt-dlp 报错 | 先用 `--info` 只读探测；若是 extractor 过旧，报告 ACS 镜像依赖缺口 |
 | 链接无法解析 | 先用 `--info` 测试 |
 
 ## 行为规范
 
 - 当用户给出视频链接并要求「转录」「转文字」「听写」时，自动串联本 skill + audio-transcribe 完成全流程
-- 输出文件默认保存到当前目录，建议用 `-o` 指定到 `assets/yyyymmdd/`
+- 输出文件默认保存到 `assets/yyyymmdd/media-download/`
 - 下载完成后告知用户文件路径和大小
 - 如果平台需要 cookies 且用户未传入，先提示再尝试下载（可能得到低清版本）
+- 本地音频提取默认不覆盖已有文件；只有用户明确要求时才传 `--overwrite`
 
 ## 依赖
 
-- **yt-dlp**：`brew install yt-dlp`
-- **ffmpeg**：`brew install ffmpeg`（本地音频提取需要）
+- **yt-dlp**：应由 ACS 镜像预置，或由平台批准后装入 workspace `.venv`
+- **ffmpeg**：应由 ACS 镜像预置（本地音频提取和 URL 音频抽取需要）
+
+缺依赖时停止并报告镜像/运行环境缺口；不要在普通 skill 流程里使用 Homebrew、`apt-get`、`sudo pip`、`--user`、`--break-system-packages` 或自建 venv。

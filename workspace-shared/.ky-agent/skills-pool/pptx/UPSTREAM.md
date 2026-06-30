@@ -1,5 +1,7 @@
 # Upstream Sync Guide
 
+> Maintenance-only note. Do not run these commands from a normal ACS user task. Any sync that can overwrite or delete files must be reviewed as a separate repository maintenance operation with an explicit file list and confirmation.
+
 This skill is composed of **two upstream snapshots**. Each lives in its own subdirectory and has its own upstream repo. When asked "看看 pptx skill 有没有上游更新",follow the procedure below for **each** branch independently.
 
 ---
@@ -39,7 +41,7 @@ If both the commit list and the file sizes match the "Last synced" row above, th
 ### How to apply an update
 
 ```bash
-SKILL_DIR=/Users/admin/code/agent/workspace-shared/.ky-agent/skills-pool/pptx
+SKILL_DIR="<workspace-shared>/.ky-agent/skills-pool/pptx"
 TMP=$(mktemp -d)
 cd "$TMP"
 # Sparse-checkout only the pptx subdirectory to avoid pulling the whole skills repo
@@ -67,12 +69,12 @@ After sync: re-read `pptx-binary/SKILL.md` and `pptx-binary/editing.md` for any 
 - **License**: MIT, see `html-deck/LICENSE`
 - **Last synced commit**: `f6676c3f315e4cbf8abb41daa26377688a716a5f` (2026-05-11 01:30:55 +0800)
 - **Last synced at**: 2026-05-11
-- **Working copy on this machine**: `~/code/toys/guizang-ppt-skill/` (kept as a working clone for diff & inspection)
+- **Working copy**: maintenance clone only; do not assume it exists in ACS.
 
 ### How to check for updates
 
 ```bash
-cd ~/code/toys/guizang-ppt-skill
+cd "<maintenance working clone>"
 git fetch origin main
 git log --oneline HEAD..origin/main           # commits we don't have yet
 git diff --stat HEAD..origin/main             # what changed
@@ -83,8 +85,8 @@ If `git log` shows no new commits, report "no upstream changes since [last synce
 ### How to apply an update
 
 ```bash
-SKILL_DIR=/Users/admin/code/agent/workspace-shared/.ky-agent/skills-pool/pptx
-WORK_DIR=~/code/toys/guizang-ppt-skill
+SKILL_DIR="<workspace-shared>/.ky-agent/skills-pool/pptx"
+WORK_DIR="<maintenance working clone>"
 
 cd "$WORK_DIR"
 git pull origin main

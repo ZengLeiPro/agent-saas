@@ -22,7 +22,9 @@ The adapter sets `window.__hfThreeTime` and dispatches `new CustomEvent("hf-seek
 ```html
 <canvas id="three-layer"></canvas>
 <script type="module">
-  import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.181.2/+esm";
+  // Vendor Three.js in the project, for example vendor/three.module.js.
+  // Do not import render-critical modules from a CDN in final deliverables.
+  import * as THREE from "./vendor/three.module.js";
 
   const canvas = document.getElementById("three-layer");
   const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });

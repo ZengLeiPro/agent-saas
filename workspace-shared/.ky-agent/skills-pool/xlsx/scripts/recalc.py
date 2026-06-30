@@ -8,14 +8,13 @@ import os
 import platform
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from office.soffice import get_soffice_env
 
 from openpyxl import load_workbook
 
-MACRO_DIR_MACOS = "~/Library/Application Support/LibreOffice/4/user/basic/Standard"
-MACRO_DIR_LINUX = "~/.config/libreoffice/4/user/basic/Standard"
 MACRO_FILENAME = "Module1.xba"
 
 RECALCULATE_MACRO = """<?xml version="1.0" encoding="UTF-8"?>
@@ -39,11 +38,10 @@ def has_gtimeout():
         return False
 
 
-def setup_libreoffice_macro():
-    macro_dir = os.path.expanduser(
-        MACRO_DIR_MACOS if platform.system() == "Darwin" else MACRO_DIR_LINUX
-    )
-    macro_file = os.path.join(macro_dir, MACRO_FILENAME)
+def setup_libreoffice_macro(profile_dir):
+    profile_uri = Path(profile_dir).resolve().as_uri()
+    macro_dir = Path(profile_dir) / "user" / "basic" / "Standard"
+    macro_file = macro_dir / MACRO_FILENAME
 
     if (
         os.path.exists(macro_file)
@@ -53,7 +51,7 @@ def setup_libreoffice_macro():
 
     if not os.path.exists(macro_dir):
         subprocess.run(
-            ["soffice", "--headless", "--terminate_after_init"],
+            ["soffice", "--headless", f"-env:UserInstallation={profile_uri}", "--terminate_after_init"],
             capture_output=True,
             timeout=10,
             env=get_soffice_env(),
@@ -61,7 +59,7 @@ def setup_libreoffice_macro():
         os.makedirs(macro_dir, exist_ok=True)
 
     try:
-        Path(macro_file).write_text(RECALCULATE_MACRO)
+        macro_file.write_text(RECALCULATE_MACRO)
         return True
     except Exception:
         return False
@@ -73,29 +71,38 @@ def recalc(filename, timeout=30):
 
     abs_path = str(Path(filename).absolute())
 
-    if not setup_libreoffice_macro():
-        return {"error": "Failed to setup LibreOffice macro"}
+    with tempfile.TemporaryDirectory(prefix="libreoffice-xlsx-") as profile_dir:
+        profile_uri = Path(profile_dir).resolve().as_uri()
 
-    cmd = [
-        "soffice",
-        "--headless",
-        "--norestore",
-        "vnd.sun.star.script:Standard.Module1.RecalculateAndSave?language=Basic&location=application",
-        abs_path,
-    ]
+        if not setup_libreoffice_macro(profile_dir):
+            return {"error": "Failed to setup LibreOffice macro"}
 
-    if platform.system() == "Linux":
-        cmd = ["timeout", str(timeout)] + cmd
-    elif platform.system() == "Darwin" and has_gtimeout():
-        cmd = ["gtimeout", str(timeout)] + cmd
+        cmd = [
+            "soffice",
+            "--headless",
+            f"-env:UserInstallation={profile_uri}",
+            "--norestore",
+            "vnd.sun.star.script:Standard.Module1.RecalculateAndSave?language=Basic&location=application",
+            abs_path,
+        ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, env=get_soffice_env())
+        if platform.system() == "Linux":
+            cmd = ["timeout", str(timeout)] + cmd
+        elif platform.system() == "Darwin" and has_gtimeout():
+            cmd = ["gtimeout", str(timeout)] + cmd
 
-    if result.returncode != 0 and result.returncode != 124:  
-        error_msg = result.stderr or "Unknown error during recalculation"
-        if "Module1" in error_msg or "RecalculateAndSave" not in error_msg:
-            return {"error": "LibreOffice macro not configured properly"}
-        return {"error": error_msg}
+        result = subprocess.run(cmd, capture_output=True, text=True, env=get_soffice_env())
+
+        if result.returncode == 124:
+            return {
+                "error": f"LibreOffice recalculation timed out after {timeout}s",
+                "stderr_tail": (result.stderr or "")[-1000:],
+            }
+        if result.returncode != 0:
+            error_msg = result.stderr or "Unknown error during recalculation"
+            if "Module1" in error_msg or "RecalculateAndSave" not in error_msg:
+                return {"error": "LibreOffice macro not configured properly"}
+            return {"error": error_msg}
 
     try:
         wb = load_workbook(filename, data_only=True)

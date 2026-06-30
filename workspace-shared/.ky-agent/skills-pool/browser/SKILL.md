@@ -1,7 +1,7 @@
 ---
 name: browser
 description: "Browser automation via playwright-cli commands. Use when tasks involve browsing web pages, interacting with page elements, taking screenshots, filling forms, clicking buttons, extracting web content, or checking website status. Preserves login sessions, cookies, and fingerprints via per-user Chrome profiles. All operations are Bash calls to playwright-cli."
-allowed-tools: Bash(playwright-cli:*)
+allowed-tools: "Bash(playwright-cli:*), Bash(curl:*)"
 ---
 
 # Browser Automation with playwright-cli
@@ -10,7 +10,7 @@ CLI-based browser automation. All commands run via Bash tool as `playwright-cli 
 
 ## Setup
 
-See [references/setup.md](references/setup.md) for installation instructions.
+ACS Sandbox should already provide `playwright-cli` and the internal browser lifecycle API. See [references/setup.md](references/setup.md) only for diagnostics; do not install global packages during a task.
 
 ## Connection Mode (CDP)
 
@@ -37,7 +37,7 @@ Do NOT pass `--profile` or `--user-data-dir` flags; browser isolation is enforce
 6. **Re-snapshot after any page change** — clicking links, navigating, form submission all invalidate old refs
 7. **Never reuse old refs** — always get fresh ones from a new snapshot
 8. **Prefer snapshot over screenshot** — snapshots return structured ARIA text (token-efficient); use screenshot only for visual confirmation. Do NOT rely on screenshots for element targeting
-9. **Screenshot = file → Read** — save to file with `--filename=`, then use the Read tool to view: `playwright-cli -s=<name> screenshot --filename=/tmp/page.png`
+9. **Screenshot = file → view** — save user-visible screenshots under `assets/yyyymmdd/browser/`, then view them with the current environment's image/file viewer: `playwright-cli -s=<name> screenshot --filename=assets/20260630/browser/page.png`
 10. **Close your tabs before closing the session** — **You MUST run `tab-list` first, then `tab-close` every tab you created, then call `close`**. Only close tabs you opened via `tab-new` or `goto`
 11. **Don't close user's existing tabs** — only close tabs you opened. Never close pre-existing user tabs
 12. **Never use `kill-all` or `close-all`** — these commands kill ALL sessions including those belonging to other agents running concurrently. Only close your own session with `playwright-cli -s=<your-session> close`
@@ -69,8 +69,8 @@ playwright-cli -s=task-abc snapshot
 # 7. Repeat until task is complete
 
 # 8. Screenshot for visual confirmation (optional)
-playwright-cli -s=task-abc screenshot --filename=/tmp/result.png
-# Use Read tool to view the screenshot
+playwright-cli -s=task-abc screenshot --filename=assets/20260630/browser/result.png
+# View the screenshot with the current environment's image/file viewer
 
 # 9. Close tabs: MUST tab-list first, then tab-close each
 playwright-cli -s=task-abc tab-list          # check which tabs exist
@@ -106,7 +106,7 @@ playwright-cli hover <ref>             # hover over element
 playwright-cli check <ref>             # check checkbox/radio
 playwright-cli uncheck <ref>           # uncheck checkbox
 playwright-cli drag <startRef> <endRef> # drag and drop
-playwright-cli upload /path/to/file     # file upload
+playwright-cli upload uploads/file.ext  # file upload from workspace uploads/
 ```
 
 ### Keyboard
@@ -133,7 +133,7 @@ playwright-cli mousewheel 0 100         # scroll down
 playwright-cli snapshot                            # ARIA tree to stdout
 playwright-cli snapshot --filename=state.yaml      # save to file
 playwright-cli screenshot                          # auto-named PNG
-playwright-cli screenshot --filename=/tmp/page.png # to specific file
+playwright-cli screenshot --filename=assets/20260630/browser/page.png # to specific file
 playwright-cli screenshot --full-page              # full scrollable page
 playwright-cli screenshot <ref>                    # screenshot element
 playwright-cli pdf --filename=page.pdf             # save as PDF
@@ -203,9 +203,9 @@ Snapshot files accumulate in `.playwright-cli/` in the working directory. Use `-
 
 Screenshots are saved as PNG files. To view:
 ```bash
-playwright-cli screenshot --filename=/tmp/screenshot.png
+playwright-cli screenshot --filename=assets/20260630/browser/screenshot.png
 ```
-Then use the Read tool on `/tmp/screenshot.png` to view the image.
+Then view the image with the current environment's image/file viewer.
 
 Do NOT rely on screenshots for element targeting — always use snapshot refs instead.
 
@@ -306,10 +306,10 @@ playwright-cli -s=<name> open [url]
 
 1. **先共情**：表示理解用户的顾虑（"完全理解，账号安全确实很重要"）
 2. **然后具体解释安全机制**：
-   > 这个浏览器是完全隔离的：
-   > - 它运行在你**专属的沙箱环境**中，和其他人的浏览器实例完全独立
-   > - 你的 cookie、登录状态存储在你个人的浏览器配置目录里，**其他用户和管理员都无法访问**
-   > - 浏览器用完后可以随时关闭销毁，不会留下痕迹
+   > 这个浏览器运行在平台管理的用户隔离环境里：
+   > - 它按用户/工作区隔离，和其他用户的浏览器实例分开
+   > - cookie、登录状态保存在你的浏览器配置中；同一用户后续会话可能复用
+   > - 如需清理登录状态，可以明确要求退出登录或清理对应站点状态
    > - 如果用扫码登录，我甚至看不到你的密码——你只需要在手机上确认一下就行
 3. **再次给出选择**：让用户决定是否继续（"你可以先试试扫码登录，不满意随时退出"）
 
@@ -319,7 +319,7 @@ playwright-cli -s=<name> open [url]
 
 - **永远不要因为"需要登录"就放弃任务**——先问用户
 - **用户犹豫时解释安全性，不是立即退让**——犹豫是在寻求保证，不是在拒绝
-- **强调安全性**：浏览器在专属沙箱中运行，凭证隔离存储
+- **准确说明安全性**：浏览器在平台管理的用户隔离环境中运行，登录状态可能在同一用户后续会话复用；不要承诺绝对无痕或管理员不可访问
 - **不要主动索要账号密码**：只在用户主动提供时使用
 - **截图是关键**：登录页面、二维码、验证码输入框都要截图让用户看到实际状态
 - **保持耐心**：登录流程可能需要多轮交互，这是正常的
@@ -336,7 +336,7 @@ playwright-cli -s=<name> open [url]
 - **`Tab undefined not found` on close**: Run `tab-list` to see actual tab state before `tab-close`
 - **Any command fails unexpectedly**: Run `snapshot` to check current page state before deciding next steps
 - **Session conflicts**: Run `playwright-cli list` to check active sessions, then close your specific session with `-s=<name> close` and re-open
-- **Command not found**: Run `cd ~/.ky-agent/skills/browser && bash setup.sh` to install, or use `npx @playwright/cli` as fallback
+- **Command not found**: 当前 ACS 镜像缺少 `playwright-cli`。停止并报告平台镜像依赖缺口，不要在任务运行期全局安装或升级。
 
 ## References
 

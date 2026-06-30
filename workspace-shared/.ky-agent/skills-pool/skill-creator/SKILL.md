@@ -29,17 +29,17 @@ Then after the skill is done (but again, the order is flexible), you can also ru
 
 Cool? Cool.
 
-## Platform Rules (Multi-User Agent Platform)
+## Platform Rules (KY Agent / ACS Workspace)
 
 **These rules override any conflicting directory examples elsewhere in this document.**
 
-This skill runs on a multi-user agent platform where each user has an isolated workspace. The SDK only discovers skills from one specific directory. Follow these rules strictly:
+KY Agent runs skills from synced user workspaces, but the editable source of truth for shared company skills is the central pool:
 
-1. **Installation path**: The finished skill MUST be placed in `.ky-agent/skills/<skill-name>/` (relative to cwd). This is the **only** location the SDK scans. A skill placed anywhere else will silently fail to be discovered.
-2. **Working/eval directory**: Put all evaluation results, iteration workspaces, and temporary files in `.ky-agent/skill-workspaces/<skill-name>/` (relative to cwd). Do NOT place workspace directories as siblings inside `.ky-agent/skills/` — the scanner will misidentify them as separate skills.
-3. **Temporary staging**: `/tmp/` may be used for short-lived staging during packaging or editing. Always copy the final result back to `.ky-agent/skills/<skill-name>/` when done.
-4. **Script paths**: When running scripts bundled with this skill (e.g., `scripts/aggregate_benchmark.py`, `eval-viewer/generate_review.py`), use the path `.ky-agent/skills/skill-creator/` as the base — this is where your copy of skill-creator lives.
-5. **Do NOT read or write to `skills-pool/`**: The central skill pool is a server-side resource not accessible to your agent process. All skill files you need are already synced to your `.ky-agent/skills/` directory.
+1. **Shared skill source**: When maintaining company-wide agent-saas skills, edit `/Users/admin/code/product/agent-saas/workspace-shared/.ky-agent/skills-pool/<skill-name>/`. Do not edit a per-workspace synced copy unless the user explicitly asks for a one-off local override.
+2. **User-created skill drafts**: Put drafts and eval workspaces under `assets/yyyymmdd/skill-workspaces/<skill-name>/` unless the user gives another workspace path. Do not create ad-hoc sibling directories inside `.claude/skills/`.
+3. **Temporary files**: Keep temporary and review artifacts inside the current workspace, preferably `assets/yyyymmdd/`. Avoid `/tmp` as the primary path because ACS workspaces are persistent and auditable.
+4. **Script paths**: Resolve bundled scripts relative to the current `SKILL.md` directory. Do not hard-code `.claude/skills/skill-creator/`.
+5. **Viewer output**: In ACS/headless environments, use `eval-viewer/generate_review.py --static assets/yyyymmdd/<skill-name>-eval-review.html` instead of starting a long-running local server. The static HTML must be self-contained and usable without external CDN access.
 
 ## Communicating with the user
 
@@ -176,7 +176,7 @@ See `references/schemas.md` for the full schema (including the `assertions` fiel
 
 This section is one continuous sequence — don't stop partway through. Do NOT use `/skill-test` or any other testing skill.
 
-Put results in `.ky-agent/skill-workspaces/<skill-name>/` (relative to cwd). Within the workspace, organize results by iteration (`iteration-1/`, `iteration-2/`, etc.) and within that, each test case gets a directory (`eval-0/`, `eval-1/`, etc.). Don't create all of this upfront — just create directories as you go.
+Put results in `assets/yyyymmdd/skill-workspaces/<skill-name>/` unless the user gives a different workspace path. Within the workspace, organize results by iteration (`iteration-1/`, `iteration-2/`, etc.) and within that, each test case gets a directory (`eval-0/`, `eval-1/`, etc.). Don't create all of this upfront — just create directories as you go.
 
 ### Step 1: Spawn all runs (with-skill AND baseline) in the same turn
 
@@ -247,16 +247,15 @@ Put each with_skill version before its baseline counterpart.
 
 4. **Launch the viewer** with both qualitative outputs and quantitative data:
    ```bash
-   nohup python <skill-creator-path>/eval-viewer/generate_review.py \
+   python <skill-creator-path>/eval-viewer/generate_review.py \
      <workspace>/iteration-N \
      --skill-name "my-skill" \
      --benchmark <workspace>/iteration-N/benchmark.json \
-     > /dev/null 2>&1 &
-   VIEWER_PID=$!
+     --static assets/yyyymmdd/my-skill-eval-review.html
    ```
    For iteration 2+, also pass `--previous-workspace <workspace>/iteration-<N-1>`.
 
-   **Cowork / headless environments:** If `webbrowser.open()` is not available or the environment has no display, use `--static <output_path>` to write a standalone HTML file instead of starting a server. Feedback will be downloaded as a `feedback.json` file when the user clicks "Submit All Reviews". After download, copy `feedback.json` into the workspace directory for the next iteration to pick up.
+   **ACS / headless environments:** Use `--static <output_path>` by default. Feedback will be downloaded as a `feedback.json` file when the user clicks "Submit All Reviews". After download, copy `feedback.json` into the workspace directory for the next iteration to pick up.
 
 Note: please use generate_review.py to create the viewer; there's no need to write custom HTML.
 
@@ -378,7 +377,7 @@ Present the eval set to the user for review using the HTML template:
    - `__EVAL_DATA_PLACEHOLDER__` → the JSON array of eval items (no quotes around it — it's a JS variable assignment)
    - `__SKILL_NAME_PLACEHOLDER__` → the skill's name
    - `__SKILL_DESCRIPTION_PLACEHOLDER__` → the skill's current description
-3. Write to a temp file (e.g., `/tmp/eval_review_<skill-name>.html`) and open it: `open /tmp/eval_review_<skill-name>.html`
+3. Write to a workspace file, for example `assets/yyyymmdd/eval-review-<skill-name>.html`, and return it to the user with a `[FILE]` marker. Do not use `/tmp` or macOS `open` as the primary ACS path.
 4. The user can edit queries, toggle should-trigger, add/remove entries, then click "Export Eval Set"
 5. The file downloads to `~/Downloads/eval_set.json` — check the Downloads folder for the most recent version in case there are multiple (e.g., `eval_set (1).json`)
 
@@ -449,7 +448,7 @@ In Claude.ai, the core workflow is the same (draft → test → review → impro
 
 **Updating an existing skill**: The user might be asking you to update an existing skill, not create a new one. In this case:
 - **Preserve the original name.** Note the skill's directory name and `name` frontmatter field -- use them unchanged. E.g., if the installed skill is `research-helper`, output `research-helper.skill` (not `research-helper-v2`).
-- **Edit in place at `.ky-agent/skills/<skill-name>/`** — on this platform, user skills are writable. If you need a staging area, copy to `/tmp/skill-name/`, edit there, then copy back to `.ky-agent/skills/<skill-name>/`.
+- **Edit shared skills in place at the skills-pool source** — `/Users/admin/code/product/agent-saas/workspace-shared/.ky-agent/skills-pool/<skill-name>/`. For user-local experimental skills, ask for the target workspace path first and keep staging under `assets/yyyymmdd/`.
 
 ---
 

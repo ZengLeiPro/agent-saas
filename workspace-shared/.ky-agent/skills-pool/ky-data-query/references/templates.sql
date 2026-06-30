@@ -10,15 +10,16 @@
 -- 共用约定：
 --   - 所有时间字段按 UTC→Asia/Shanghai 转换后再按日聚合
 --   - 所有金额统一 CAST AS DECIMAL(18,2)
---   - 所有业务表加 WHERE "deletedAt" IS NULL
+--   - 所有业务表加 WHERE "deletedAt" IS NULL（双保险：server list 默认已过滤软删，
+--     SQL 这道是防 server 行为漂移 + 防 trash 接口数据被误用；详见 SKILL.md § 1）
 --   - array_agg 必须显式 ORDER BY
 --
 -- session 路径：从 shell env $SESS 读取（dump 步骤已 export）。
 -- 如果 duckdb 报 "Missing variable 'sess'"，先在 shell 跑：
 --   export SESS="$(pwd)/.cache/azq/<your-session>"
 -- 再 .read 本文件。
--- 注：必须落 cwd 内（.cache/azq），不要用 /tmp 或 $TMPDIR——
--- 前者非 admin 沙箱 EPERM，后者 Write 工具白名单不含。
+-- 注：必须落 workspace 内（.cache/azq），不要把可复核中间文件写到 /tmp。
+-- workspace 内文件对后续读取、grep、SQL review 和审计都稳定可见。
 SET VARIABLE sess = getenv('SESS');
 
 -- 全局时区固定到 Shanghai，让所有 NOW()/隐式 TIMESTAMPTZ↔TIMESTAMP 比较都按 +08:00 解读。

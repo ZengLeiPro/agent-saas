@@ -27,7 +27,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --blue: #0071E3;
+  --blue: #2E56E1;
   --blue-light: #EBF5FF;
   --gray-bg: #F5F5F7;
   --gray-100: #FBFBFD;
@@ -49,7 +49,7 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
   background: #fff;
   color: var(--gray-900);
   line-height: 1.6;
@@ -63,17 +63,17 @@ body {
 
 ```html
 <div class="page">
-  <\!-- Hero -->
-  <\!-- Stats -->
-  <\!-- Section: 核心场景（含模拟界面 + feature 卡片）-->
+  <!-- Hero -->
+  <!-- Stats -->
+  <!-- Section: 核心场景（含模拟界面 + feature 卡片）-->
   <div class="divider"></div>
-  <\!-- Section: 补充场景 1 -->
+  <!-- Section: 补充场景 1 -->
   <div class="divider"></div>
-  <\!-- Section: 补充场景 2 -->
+  <!-- Section: 补充场景 2 -->
   <div class="divider"></div>
-  <\!-- Section: 更多场景九宫格（加 class="section-last"）-->
-  <\!-- Highlight Box -->
-  <\!-- Footer -->
+  <!-- Section: 更多场景九宫格（加 class="section-last"）-->
+  <!-- Highlight Box -->
+  <!-- Footer -->
 </div>
 ```
 
@@ -503,7 +503,7 @@ body {
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
 .approval-detail-header {
-  padding: 16px 20px; background: linear-gradient(135deg, #1E6FD9 0%, #0071E3 100%); color: #fff;
+  padding: 16px 20px; background: linear-gradient(135deg, #1E6FD9 0%, #2E56E1 100%); color: #fff;
 }
 .approval-detail-header h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
 .approval-detail-header span { font-size: 12px; opacity: 0.8; }
@@ -631,7 +631,7 @@ body {
   <div class="footer-logo">开沿科技</div>
   <div class="footer-desc">钉钉官方授权服务商 · 泉州本地化服务</div>
   <div class="footer-contact">
-    服务顾问：<span>彭一宁</span>
+    服务顾问：<span>{服务顾问姓名}</span>
   </div>
 </div>
 ```

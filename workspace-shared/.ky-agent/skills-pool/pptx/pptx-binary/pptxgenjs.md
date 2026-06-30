@@ -235,7 +235,7 @@ slide.addImage({
 
 ### Icon Libraries
 
-Install: `npm install -g react-icons react react-dom sharp`
+Use project-local dependencies or ACS image provided packages for `react-icons`, `react`, `react-dom`, and `sharp`; do not run global npm installs during a task.
 
 Popular icon sets in react-icons:
 - `react-icons/fa` - Font Awesome

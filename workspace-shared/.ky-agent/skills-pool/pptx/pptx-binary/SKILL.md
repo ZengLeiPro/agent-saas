@@ -225,8 +225,9 @@ pdftoppm -jpeg -r 150 -f N -l N output.pdf slide-fixed
 
 ## Dependencies
 
-- `pip install "markitdown[pptx]"` - text extraction
-- `pip install Pillow` - thumbnail grids
-- `npm install -g pptxgenjs` - creating from scratch
+- `markitdown[pptx]` - text extraction, provided by ACS image or workspace `.venv`
+- `Pillow` - thumbnail grids, provided by ACS image or workspace `.venv`
+- `pptxgenjs` - creating from scratch, provided by project-local Node dependencies or ACS image; do not use global npm installs during a task
+- `gcc` - only needed if LibreOffice AF_UNIX shim must be compiled at runtime
 - LibreOffice (`soffice`) - PDF conversion (auto-configured for sandboxed environments via `scripts/office/soffice.py`)
 - Poppler (`pdftoppm`) - PDF to images

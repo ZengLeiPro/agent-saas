@@ -76,20 +76,20 @@ The runtime registers these adapters in order; each implements `discover()` / `s
 
 | Adapter                            | What it drives                                                                | How to load                                                     | Notable                                                                                                   |
 | ---------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| GSAP (createGsapAdapter)           | The primary timeline + all tweens registered on `window.__timelines[<id>]`    | CDN `https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js` | Plugins via standard GSAP register; HyperFrames does NOT patch THREE.Clock (uses `__hfThreeTime` instead) |
-| Anime.js v4 (createAnimeJsAdapter) | Anime instances pushed to `window.__hfAnime`                                  | CDN `animejs@4.0.2/lib/anime.iife.min.js` or ESM                | Adapter multiplies composition seconds by 1000 for ms                                                     |
+| GSAP (createGsapAdapter)           | The primary timeline + all tweens registered on `window.__timelines[<id>]`    | Local `vendor/gsap.min.js` copied into the project              | Plugins via standard GSAP register; HyperFrames does NOT patch THREE.Clock (uses `__hfThreeTime` instead) |
+| Anime.js v4 (createAnimeJsAdapter) | Anime instances pushed to `window.__hfAnime`                                  | Local vendored IIFE or ESM build                                | Adapter multiplies composition seconds by 1000 for ms                                                     |
 | CSS animations (createCssAdapter)  | Any element with computed `animation-name`                                    | Declarative `@keyframes`                                        | Falls back to negative `animation-delay` when WAAPI unavailable                                           |
 | WAAPI (createWaapiAdapter)         | All Animation objects on document                                             | `element.animate()`                                             | Uses `document.getAnimations()`                                                                           |
-| Lottie (createLottieAdapter)       | `window.__hfLottie` array; supports lottie-web + dotlottie-web                | CDN `lottie.min.js` + `@lottiefiles/dotlottie-web`              | `goToAndStop(time*1000)` or `setCurrentRawFrameValue` / `seek(%)`                                         |
-| Three.js (createThreeAdapter)      | `window.__hfThreeTime` + dispatches `CustomEvent("hf-seek", {detail:{time}})` | ESM CDN `three@0.181.2/+esm`                                    | Composition's render loop listens to `hf-seek`; pattern: `mixer.setTime(time)`                            |
+| Lottie (createLottieAdapter)       | `window.__hfLottie` array; supports lottie-web + dotlottie-web                | Local vendored lottie/dotlottie player files                    | `goToAndStop(time*1000)` or `setCurrentRawFrameValue` / `seek(%)`                                         |
+| Three.js (createThreeAdapter)      | `window.__hfThreeTime` + dispatches `CustomEvent("hf-seek", {detail:{time}})` | Local vendored Three.js ESM files                               | Composition's render loop listens to `hf-seek`; pattern: `mixer.setTime(time)`                            |
 
 ### GSAP plugins (documented patterns)
 
-- **TextPlugin** — text mutation in `tl.call` (skills/gsap/references/effects.md)
-- **MotionPathPlugin** — curve-constrained tweens (skills/hyperframes/references/techniques.md)
+- **TextPlugin** — text mutation in `tl.call` (GSAP module `references/effects.md`)
+- **MotionPathPlugin** — curve-constrained tweens (parent HyperFrames `references/techniques.md`)
 - **CustomEase** — bezier eases imported from Remotion-style timing
 - **ScrollTrigger / Flip / SplitText / Draggable / Inertia / Observer / ScrambleText / CustomWiggle / CustomBounce / ScrollSmoother / GSDevTools** — work natively if loaded and tweens are on the registered paused timeline, but no special HyperFrames adapter
-- Producer injects ScrollTrigger CDN automatically when needed (packages/producer/src/services/htmlCompiler.ts)
+- If plugins are needed, vendor the plugin file locally and register it explicitly. Do not rely on CDN injection in ACS deliverables.
 
 ---
 
@@ -142,7 +142,7 @@ You can also **write custom GLSL shaders from scratch** — any fragment shader 
 
 ## 4. CSS scene transitions (30+ named patterns)
 
-Documented in skills/hyperframes/references/transitions/ across 14 category files. All GSAP-driven, none mixable with shader transitions in same composition.
+Documented in the parent HyperFrames `references/transitions/` directory across 14 category files. All GSAP-driven, none mixable with shader transitions in same composition.
 
 ### By category
 
@@ -287,7 +287,7 @@ EQ bars, spectrum UI, generic waveforms, note clip-art, generic particles, rainb
 
 ## 8. HTML-in-canvas
 
-Documented in skills/hyperframes/references/html-in-canvas-patterns.md (504 lines).
+Documented in the parent HyperFrames `references/html-in-canvas-patterns.md`.
 
 ### Capability
 
@@ -327,7 +327,7 @@ window.addEventListener("hf-seek", (e) => {
 });
 ```
 
-- Load: `import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.181.2/+esm"`
+- Load: `import * as THREE from "./vendor/three.module.js"`
 - Deterministic: every frame must derive from `time`, never `requestAnimationFrame` / `Date.now()`
 - Includes: AnimationMixer, custom GLSL shaders, post-processing, GLTF models, lights, cameras, materials
 
@@ -335,7 +335,7 @@ window.addEventListener("hf-seek", (e) => {
 
 ## 10. SVG / canvas / variable fonts (other authored techniques)
 
-(From skills/hyperframes/references/techniques.md)
+(From the parent HyperFrames `references/techniques.md`)
 
 | Technique                | Mechanism                                                                            |
 | ------------------------ | ------------------------------------------------------------------------------------ |
@@ -437,7 +437,7 @@ Install: `npx hyperframes add <name>` for blocks/components, `hyperframes init <
 | play              | Lightweight browser player (default port 3003)                                                                                                                                                                                                                                                                           |
 | preview           | Studio dev server (port 3002; --force-new, --list, --kill-all)                                                                                                                                                                                                                                                           |
 | publish           | Zip + upload + return hyperframes.dev URL                                                                                                                                                                                                                                                                                |
-| render            | Render to MP4 / WebM / MOV / PNG sequence — flags: --fps 24/30/60, --quality draft/standard/high, --workers, --docker, --hdr/--sdr, --crf, --video-bitrate, --gpu, --browser-gpu auto/software/hardware, --max-concurrent-renders 1-10, --variables JSON, --variables-file PATH, --strict-variables, --resolution preset |
+| render            | Render to MP4 / WebM / MOV / PNG sequence — flags: --fps 24/30/60, --quality draft/standard/high, --workers, --hdr/--sdr, --crf, --video-bitrate, --gpu, --browser-gpu auto/software/hardware, --max-concurrent-renders 1-10, --variables JSON, --variables-file PATH, --strict-variables, --resolution preset. In ACS prefer `--workers 1` and avoid `--docker` unless explicitly requested. |
 | lint              | Static lint (--json, --verbose)                                                                                                                                                                                                                                                                                          |
 | validate          | Bundle + headless Chrome + console + contrast (--contrast default true, --timeout 3000)                                                                                                                                                                                                                                  |
 | inspect / layout  | Visual layout audit (overflow detection at N timestamps; --samples 9, --at, --tolerance 2, --max-issues 80)                                                                                                                                                                                                              |
@@ -451,7 +451,7 @@ Install: `npx hyperframes add <name>` for blocks/components, `hyperframes init <
 | docs              | Print bundled markdown topics (data-attributes, examples, rendering, gsap, troubleshooting, compositions)                                                                                                                                                                                                                |
 | doctor            | Environment checklist (Node, CPU, memory, disk, FFmpeg, FFprobe, Chrome, Docker)                                                                                                                                                                                                                                         |
 | upgrade           | npm update check + optional global install                                                                                                                                                                                                                                                                               |
-| skills            | Run `npx skills add heygen-com/hyperframes --all`                                                                                                                                                                                                                                                                        |
+| skills            | Legacy command for installing upstream skills; do not run from ACS worker sessions                                                                                                                                                                                                                                       |
 | telemetry         | enable/disable/status                                                                                                                                                                                                                                                                                                    |
 | snapshot          | PNG screenshots at timeline timestamps                                                                                                                                                                                                                                                                                   |
 | capture           | Capture URL → site assets + screenshots + design tokens (uses Puppeteer + optional Gemini vision)                                                                                                                                                                                                                        |
@@ -526,7 +526,7 @@ mp4, webm, mov, png-sequence — with HDR (PQ / HLG / SDR / auto-detect), transp
 - `--workers`: parallel render workers
 - `--max-concurrent-renders`: 1–10 (sets `PRODUCER_MAX_CONCURRENT_RENDERS`)
 - `--resolution`: preset (1080p, 4k, portrait, etc.)
-- `--docker`: render inside Dockerfile.test image (reproducibility)
+- `--docker`: render inside Dockerfile.test image (local/CI reproducibility; not ACS default)
 - `--hdr` / `--sdr`: force HDR or SDR pipeline
 
 ### Engine subsystems
@@ -684,11 +684,11 @@ Control bridge actions: play, pause, seek, set-muted, set-playback-rate, enable-
 
 ---
 
-## 23. References inventory (skills/hyperframes/references/)
+## 23. References inventory (parent HyperFrames references/)
 
 16 reference docs covering:
 
-- text-effects.md — 24 named text animation effects (per-character, per-word, per-line, whole) — vocabulary reference for the separate `pixel-point/animate-text` skill (load it via `npx skills add pixel-point/animate-text` or `/animate-text`). Specs live in that upstream skill, not in this repo.
+- text-effects.md — named text animation effects (per-character, per-word, per-line, whole) and implementation notes available in the parent HyperFrames references.
 - transitions.md + transitions/catalog.md + 14 category subfiles
 - css-patterns.md (marker patterns)
 - dynamic-techniques.md (caption animation)

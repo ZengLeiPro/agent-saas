@@ -21,7 +21,8 @@ The adapter seeks `lottie-web` with `goToAndStop(timeMs, false)` and dotLottie w
 
 ```html
 <div id="logo-lottie" class="lottie-layer"></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js"></script>
+<!-- Copy lottie.min.js into the project (for example vendor/lottie.min.js). Do not use CDN in final deliverables. -->
+<script src="vendor/lottie.min.js"></script>
 <script>
   const anim = lottie.loadAnimation({
     container: document.getElementById("logo-lottie"),
@@ -47,7 +48,8 @@ The adapter seeks `lottie-web` with `goToAndStop(timeMs, false)` and dotLottie w
 
 ```html
 <canvas id="product-lottie" class="lottie-canvas"></canvas>
-<script src="https://unpkg.com/@lottiefiles/dotlottie-web"></script>
+<!-- Copy dotlottie-web into the project (for example vendor/dotlottie-web.js). Do not use CDN in final deliverables. -->
+<script src="vendor/dotlottie-web.js"></script>
 <script>
   const player = new DotLottie({
     canvas: document.getElementById("product-lottie"),

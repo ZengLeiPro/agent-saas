@@ -19,7 +19,7 @@ A demo is a complete, standalone HTML composition:
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=1920, height=1080" />
     <title>Component Name — Demo</title>
-    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="vendor/gsap.min.js"></script>
     <style>
       /* reset + canvas size */
     </style>

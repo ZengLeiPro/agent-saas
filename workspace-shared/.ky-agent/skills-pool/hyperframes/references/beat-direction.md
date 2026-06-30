@@ -15,7 +15,7 @@ The first describes pixels. The second describes an experience. Write the second
 
 Each beat should have:
 
-**For text animations:** pick a named effect from the [`text-effects.md`](text-effects.md) reference and name it by ID in the storyboard. Don't describe "text fades in" — write `soft-blur-in` or `kinetic-center-build`. The catalog is maintained as a separate skill (`pixel-point/animate-text`); see `text-effects.md` for how sub-agents load it and find the implementation specs.
+**For text animations:** pick a named effect from the [`text-effects.md`](text-effects.md) reference and name it by ID in the storyboard. Don't describe "text fades in" — write `soft-blur-in` or `kinetic-center-build`. The effect vocabulary and implementation defaults live inside this HyperFrames skill, so workers do not need a separate text-animation skill.
 
 ---
 

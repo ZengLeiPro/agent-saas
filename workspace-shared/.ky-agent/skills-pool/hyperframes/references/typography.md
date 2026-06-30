@@ -33,17 +33,30 @@ You know these rules but you violate them. Stop.
 
 ## Finding Fonts
 
-Don't default to what you know. If the content is luxury, a grotesque sans might create more tension than the expected Didone serif. Decide the register first, then search.
+Don't default to what you know. If the content is luxury, a grotesque sans might create more tension than the expected Didone serif. Decide the register first, then search. In ACS, use font discovery to choose a direction, then vendor the final font files locally; do not leave Google Fonts links in deliverables.
 
-Save this script to `/tmp/fontquery.py` and run with `curl -s 'https://fonts.google.com/metadata/fonts' > /tmp/gfonts.json && python3 /tmp/fontquery.py /tmp/gfonts.json`:
+Save this script under the project workspace, for example `.hyperframes/fontquery.py`, and put downloaded metadata beside it. If network access is unavailable, skip the live metadata step and use existing local font files or a small explicitly named fallback set; do not block composition work on Google Fonts.
+
+```bash
+mkdir -p .hyperframes
+curl -s 'https://fonts.google.com/metadata/fonts' > .hyperframes/gfonts.json
+python3 .hyperframes/fontquery.py .hyperframes/gfonts.json --seed "<project-slug-or-prompt>"
+```
 
 ```python
-import json, sys, random
+import argparse
+import json
+import random
 from collections import OrderedDict
 
-random.seed()  # true random each run
+parser = argparse.ArgumentParser()
+parser.add_argument("metadata")
+parser.add_argument("--seed", default="hyperframes")
+args = parser.parse_args()
 
-with open(sys.argv[1]) as f:
+random.seed(args.seed)
+
+with open(args.metadata) as f:
     data = json.load(f)
 fonts = data.get("familyMetadataList", [])
 
@@ -100,7 +113,7 @@ for f in fonts:
         R["Script & Handwriting"].append(f); seen.add(f["family"])
 
 
-# Randomize the top 5 in each category so the LLM doesn't always pick the same first result
+# Shuffle deterministically so the picker is varied but reproducible for a project.
 for cat in R:
     R[cat].sort(key=lambda x: x.get("popularity",9999))
     top5 = R[cat][:5]
@@ -119,7 +132,7 @@ for cat in R:
     print()
 ```
 
-Five categories: trending sans, trending serif, monospace, impact/condensed, script/handwriting. All dynamically filtered from Google Fonts metadata — no hardcoded font names. Cross classification boundaries when pairing.
+Five categories: trending sans, trending serif, monospace, impact/condensed, script/handwriting. Metadata helps avoid hardcoded font monoculture, but the final selected fonts must be local `.woff2` files or runtime-supported fonts. Cross classification boundaries when pairing.
 
 ## Selection Thinking
 

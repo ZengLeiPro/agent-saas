@@ -17,7 +17,7 @@ Usage:
 import os
 import socket
 import subprocess
-import tempfile
+import fcntl
 from pathlib import Path
 
 
@@ -38,7 +38,9 @@ def run_soffice(args: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 
-_SHIM_SO = Path(tempfile.gettempdir()) / "lo_socket_shim.so"
+_SHIM_DIR = Path(os.environ.get("KY_LIBREOFFICE_SHIM_DIR", Path.cwd() / ".cache" / "libreoffice-shim"))
+_SHIM_SO = _SHIM_DIR / "lo_socket_shim.so"
+_SHIM_LOCK = _SHIM_DIR / "lo_socket_shim.lock"
 
 
 def _needs_shim() -> bool:
@@ -51,17 +53,32 @@ def _needs_shim() -> bool:
 
 
 def _ensure_shim() -> Path:
+    _SHIM_DIR.mkdir(parents=True, exist_ok=True)
+    with _SHIM_LOCK.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            return _ensure_shim_locked()
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _ensure_shim_locked() -> Path:
     if _SHIM_SO.exists():
         return _SHIM_SO
 
-    src = Path(tempfile.gettempdir()) / "lo_socket_shim.c"
+    src = _SHIM_DIR / f"lo_socket_shim.{os.getpid()}.c"
+    out = _SHIM_DIR / f"lo_socket_shim.{os.getpid()}.so"
     src.write_text(_SHIM_SOURCE)
-    subprocess.run(
-        ["gcc", "-shared", "-fPIC", "-o", str(_SHIM_SO), str(src), "-ldl"],
-        check=True,
-        capture_output=True,
-    )
-    src.unlink()
+    try:
+        subprocess.run(
+            ["gcc", "-shared", "-fPIC", "-o", str(out), str(src), "-ldl"],
+            check=True,
+            capture_output=True,
+        )
+        os.replace(out, _SHIM_SO)
+    finally:
+        src.unlink(missing_ok=True)
+        out.unlink(missing_ok=True)
     return _SHIM_SO
 
 

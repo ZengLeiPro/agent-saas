@@ -8,7 +8,7 @@ These are NOT advanced — they're standard motion design patterns that every co
 
 ## Table of Contents
 
-**Named text animation effects** (per-character, per-word, per-line, whole-element) — 24 effects with exact GSAP specs come from the separate `pixel-point/animate-text` skill. See [`text-effects.md`](text-effects.md) for the effect-name vocabulary and instructions for loading the upstream skill. Use those for all headline and label animations instead of inventing timing from scratch.
+**Named text animation effects** (per-character, per-word, per-line, whole-element) — use [`text-effects.md`](text-effects.md) for the local effect-name vocabulary and implementation defaults. Name effects explicitly for headline and label animations instead of inventing vague "fade in" timing from scratch.
 
 **HTML-in-Canvas patterns** (live DOM as GPU texture: iPhone/MacBook mockups, liquid glass, magnetic, portal, shatter, text cursor — using `drawElementImage` + `layoutsubtree`) are in [`html-in-canvas-patterns.md`](html-in-canvas-patterns.md) — 504 lines, one shared boilerplate + ~6 effect recipes. Use for 1–3 hero beats per video, not every beat.
 
@@ -182,7 +182,7 @@ Vector animations that play inside a composition. Use for logos, character anima
 
 ```html
 <div id="anim" class="lottie"></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js"></script>
+<script src="vendor/lottie.min.js"></script>
 <script>
   window.__hfLottie = window.__hfLottie || [];
 
@@ -301,7 +301,7 @@ The glyph subtly reshapes as axes animate — optical size adjusts detail, weigh
 Animate an element along an arbitrary SVG path. Use for sliders following curves, particles along trajectories, guided reveals.
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/MotionPathPlugin.min.js"></script>
+<script src="vendor/MotionPathPlugin.min.js"></script>
 <div class="dot" style="width:20px;height:20px;background:#2a8a7c;border-radius:50%;"></div>
 <script>
   gsap.registerPlugin(MotionPathPlugin);

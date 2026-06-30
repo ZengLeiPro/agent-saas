@@ -13,11 +13,16 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
 
-// 解析全局 npm 模块路径
-const globalNodeModules = execSync("npm root -g", { encoding: "utf-8" }).trim();
-module.paths.unshift(globalNodeModules);
+let docx;
+try {
+  docx = require("docx");
+} catch (err) {
+  console.error(
+    "Missing dependency: docx. Use the ACS image or a project-local Node dependency that makes require('docx') resolvable; do not install global npm packages during a user task."
+  );
+  process.exit(1);
+}
 
 const {
   Document,
@@ -33,11 +38,90 @@ const {
   ShadingType,
   VerticalAlign,
   HeadingLevel,
-} = require("docx");
+} = docx;
 
 // ============================================================
 // 工具函数
 // ============================================================
+
+function todayYmd() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `${yyyy}${mm}${dd}`;
+}
+
+function defaultOutputDir() {
+  return path.join(process.cwd(), "assets", todayYmd(), "contracts");
+}
+
+function safeFileStem(value, fallback) {
+  let stem = String(value || "")
+    .replace(/\s+/g, "")
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+    .replace(/[^0-9A-Za-z\u3400-\u9fff._-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^\.+/, "")
+    .replace(/[._-]+$/, "");
+  if (!stem) stem = fallback;
+  if (stem.length > 24) stem = stem.slice(0, 24);
+  return stem;
+}
+
+function resolveInside(baseDir, fileName) {
+  const resolvedBase = path.resolve(baseDir);
+  const resolved = path.resolve(resolvedBase, fileName);
+  const relative = path.relative(resolvedBase, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Refusing to write outside output directory: ${fileName}`);
+  }
+  return resolved;
+}
+
+function uniqueOutputPaths(outputDir, baseName) {
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:TZ.]/g, "")
+    .slice(0, 14);
+
+  for (let i = 0; i < 100; i++) {
+    const suffix = i === 0 ? "" : `_${stamp}${i === 1 ? "" : `_${i}`}`;
+    const name = `${baseName}${suffix}`;
+    const docxPath = resolveInside(outputDir, `${name}.docx`);
+    const jsonPath = resolveInside(outputDir, `${name}.json`);
+    if (!fs.existsSync(docxPath) && !fs.existsSync(jsonPath)) {
+      return { docxPath, jsonPath };
+    }
+  }
+
+  throw new Error("Unable to find a non-conflicting output filename");
+}
+
+function assertNonEmptyString(value, field) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`Invalid or missing field: ${field}`);
+  }
+}
+
+function validateContractData(data) {
+  assertNonEmptyString(data.partyA, "partyA");
+  if (!Array.isArray(data.services) || data.services.length === 0) {
+    throw new Error("Invalid or missing field: services");
+  }
+  data.services.forEach((service, index) => {
+    assertNonEmptyString(service.name, `services[${index}].name`);
+    assertNonEmptyString(service.content, `services[${index}].content`);
+    assertNonEmptyString(service.description, `services[${index}].description`);
+  });
+  assertNonEmptyString(data.period && data.period.start, "period.start");
+  assertNonEmptyString(data.period && data.period.end, "period.end");
+  if (typeof data.totalAmount !== "number" || !Number.isFinite(data.totalAmount) || data.totalAmount < 0) {
+    throw new Error("Invalid field: totalAmount must be a non-negative number");
+  }
+  assertNonEmptyString(data.projectManager && data.projectManager.name, "projectManager.name");
+  assertNonEmptyString(data.projectManager && data.projectManager.phone, "projectManager.phone");
+}
 
 /** 人民币数字转大写 */
 function amountToChinese(amount) {
@@ -611,20 +695,18 @@ async function main() {
   }
 
   const inputFile = process.argv[2];
-  const outputDir =
-    process.argv[3] || path.dirname(path.resolve(inputFile));
+  const outputDir = path.resolve(process.argv[3] || defaultOutputDir());
 
   const data = JSON.parse(fs.readFileSync(inputFile, "utf-8"));
+  validateContractData(data);
 
   fs.mkdirSync(outputDir, { recursive: true });
 
   // 文件名
-  let customerShort = data.partyA.replace(/\s/g, "");
-  if (customerShort.length > 15) customerShort = customerShort.slice(0, 15);
+  const customerShort = safeFileStem(data.partyA, "customer");
   const baseName = `${customerShort}_合同`;
 
-  const docxPath = path.join(outputDir, `${baseName}.docx`);
-  const jsonPath = path.join(outputDir, `${baseName}.json`);
+  const { docxPath, jsonPath } = uniqueOutputPaths(outputDir, baseName);
 
   // 生成 DOCX
   const doc = generateContract(data);

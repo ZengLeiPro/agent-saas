@@ -7,19 +7,26 @@ description: 操作钉钉云文档、知识库、电子表格和 AI 表格。触
 
 这是钉钉官方 MCP 的轻量调用说明。**不要依赖本文件枚举的旧工具列表**；钉钉 MCP 会更新，具体工具、参数和返回结构以运行时 schema 为准。
 
+## ACS Sandbox 凭证与路径规则
+
+- `mcporter.json` 只保留环境变量占位：`DINGTALK_DOCS_MCP_URL`、`DINGTALK_SHEET_MCP_URL`、`DINGTALK_AI_TABLE_MCP_URL`。这些 URL 内可能包含 MCP key，必须由 ACS secret/env 注入。
+- 禁止把真实 MCP URL、`key`、完整请求头或 `sessionWebhook` 写入 skill、报告、日志或最终回复。
+- `mcporter` 配置路径必须从当前 skill 目录解析；不要假设用户 workspace 下存在 `.claude/skills/dingtalk-docs/`。
+- 若环境变量或 `mcporter` 不可用，停止执行并向用户说明“钉钉文档 MCP 未配置”，不要要求用户在对话里粘贴 key。
+
 ## 核心原则：动态 schema 优先
 
 每次执行任务时，先判断目标域，只对相关服务拉取 schema：
 
 ```bash
 # 云文档 / 知识库 / 文件夹 / 文档权限 / 文档导出
-mcporter --config .ky-agent/skills/dingtalk-docs/mcporter.json list dingtalk-docs --schema --json
+mcporter --config <skill_dir>/mcporter.json list dingtalk-docs --schema --json
 
 # 传统电子表格：工作簿、工作表、单元格、公式、行列、筛选、下拉
-mcporter --config .ky-agent/skills/dingtalk-docs/mcporter.json list dingtalk-sheet --schema --json
+mcporter --config <skill_dir>/mcporter.json list dingtalk-sheet --schema --json
 
 # AI 表格 / 多维表：Base、Table、Field、Record、View、Dashboard、Chart、AI 字段
-mcporter --config .ky-agent/skills/dingtalk-docs/mcporter.json list dingtalk-ai-table --schema --json
+mcporter --config <skill_dir>/mcporter.json list dingtalk-ai-table --schema --json
 ```
 
 只在需要跨域时才拉多个 schema。不要无脑全量拉三份，太吵，也浪费上下文。
@@ -27,13 +34,13 @@ mcporter --config .ky-agent/skills/dingtalk-docs/mcporter.json list dingtalk-ai-
 调用工具格式：
 
 ```bash
-mcporter --config .ky-agent/skills/dingtalk-docs/mcporter.json call <server> <tool> --args '<JSON>' --output json
+mcporter --config <skill_dir>/mcporter.json call <server> <tool> --args '<JSON>' --output json
 ```
 
 示例：
 
 ```bash
-mcporter --config .ky-agent/skills/dingtalk-docs/mcporter.json call dingtalk-docs search_documents --args '{"keyword":"项目计划"}' --output json
+mcporter --config <skill_dir>/mcporter.json call dingtalk-docs search_documents --args '{"keyword":"项目计划"}' --output json
 ```
 
 ## 域路由
@@ -59,7 +66,7 @@ mcporter --config .ky-agent/skills/dingtalk-docs/mcporter.json call dingtalk-doc
 
 ## 高危操作规则
 
-执行以下操作前必须确认用户意图；如果用户已经明确要求，可继续，但仍要先读取/列出现状：
+执行以下操作前必须先读取/列出现状与影响范围，并在同一轮向用户确认目标对象、数量、权限范围和是否立即执行；用户没有明确确认前不得调用写接口：
 
 - 删除文档、文件夹、block、表格、字段、记录、视图、仪表盘、图表、说明文档。
 - 覆盖全文、批量替换、批量更新记录、覆盖单元格区域、删除行列、删除筛选/下拉。
@@ -70,7 +77,8 @@ mcporter --config .ky-agent/skills/dingtalk-docs/mcporter.json call dingtalk-doc
 - 文档新增内容优先 `append`，不要默认 `overwrite`。
 - 表格写入前先读取目标范围，避免覆盖用户数据。
 - AI 表格批量操作分批并报告数量；遇到分页要继续读取，别只看第一页就下结论。
-- 异步导出/导入要保存 jobId/importId，并轮询到成功或明确失败。
+- 公开分享默认不使用 `PUBLIC`；确需任何人可访问的公开链接，必须单独确认。
+- 异步导出/导入要保存 jobId/importId，并轮询到成功或明确失败；导出文件保存到 `assets/yyyymmdd/`。
 
 ## 常见工作流（工具名以动态 schema 为准）
 

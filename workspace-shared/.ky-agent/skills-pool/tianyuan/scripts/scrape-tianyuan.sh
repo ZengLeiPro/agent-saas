@@ -1,11 +1,10 @@
 #!/bin/bash
 # 天元服务平台数据抓取 - 统一入口脚本
-# 用法: scrape-tianyuan.sh [模块名称] [--no-db]
+# 用法: scrape-tianyuan.sh [模块名称] [--write-db]
 # 示例:
-#   scrape-tianyuan.sh                    # 抓订单管理 + 入库
+#   scrape-tianyuan.sh                    # 抓订单管理，不入库，只输出 JSON 路径
 #   scrape-tianyuan.sh 订单管理            # 同上
-#   scrape-tianyuan.sh 商机管理            # 抓商机管理 + 入库
-#   scrape-tianyuan.sh 订单管理 --no-db    # 抓订单管理，不入库，只输出 JSON 路径
+#   scrape-tianyuan.sh 商机管理 --write-db # 用户确认后抓商机管理 + 入库
 #
 # 输出：
 #   成功时最后一行打印 JSON 文件路径，供 Agent 读取
@@ -17,11 +16,17 @@
 
 set -euo pipefail
 
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "ERROR: 当前天元抓取脚本是 legacy macOS 本机方案，依赖 DingTalk.app/Safari/Frida/peekaboo/pbcopy。" >&2
+  echo "       ACS/Linux Sandbox 不支持自动运行；请改用官方 API、后台导出文件或重新设计浏览器/HTTP 抓取方案。" >&2
+  exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_MODULE="${1:-订单管理}"
-NO_DB=false
+WRITE_DB=false
 for arg in "$@"; do
-  [[ "$arg" == "--no-db" ]] && NO_DB=true
+  [[ "$arg" == "--write-db" ]] && WRITE_DB=true
 done
 
 TS=$(date +%Y%m%d%H%M%S)
@@ -173,15 +178,15 @@ log "✅ [4/6] 抓取完成: $SUMMARY"
 # ============================================================
 # 步骤 5：数据入库（可选）
 # ============================================================
-if [ "$NO_DB" = true ]; then
-  log "⏭️  [5/6] 跳过入库（--no-db）"
-else
+if [ "$WRITE_DB" = true ]; then
   log "💾 [5/6] 数据入库..."
   if python3 "$SCRIPT_DIR/process-data.py" "$OUTPUT_FILE" 2>&1; then
     log "✅ [5/6] 入库完成"
   else
     log "⚠️  [5/6] 入库失败，JSON 文件仍可用"
   fi
+else
+  log "⏭️  [5/6] 跳过入库（默认不写库；需用户确认后传 --write-db）"
 fi
 
 # ============================================================

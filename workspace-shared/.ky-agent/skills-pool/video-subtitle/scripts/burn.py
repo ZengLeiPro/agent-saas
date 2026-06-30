@@ -43,10 +43,13 @@ def burn_subtitles(
         output_path = video_path.parent / f"{video_path.stem}_with_subtitles{video_path.suffix}"
     else:
         output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        raise FileExistsError(f"输出文件已存在，避免覆盖: {output_path}")
 
     # 默认字幕样式
     if style is None:
-        style = 'Fontname=Arial Unicode MS,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Alignment=2,MarginV=30'
+        style = 'Fontname=Noto Sans CJK SC,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Alignment=2,MarginV=30'
 
     print(f"正在烧录字幕到视频...")
     print(f"视频: {video_path}")
@@ -62,7 +65,7 @@ def burn_subtitles(
         '-i', str(video_path),
         '-vf', f"subtitles={srt_path_escaped}:force_style='{style}'",
         '-c:a', 'copy',  # 音频直接复制，不重新编码
-        '-y',  # 覆盖输出文件
+        '-n',  # 不覆盖输出文件
         str(output_path)
     ]
 
@@ -80,7 +83,7 @@ def burn_subtitles(
         sys.exit(1)
     except FileNotFoundError:
         print("错误: 未安装 ffmpeg")
-        print("请运行: brew install ffmpeg")
+        print("请确认 ACS 镜像已预置 ffmpeg，或由管理员处理运行时依赖。")
         sys.exit(1)
 
     # 获取输出文件大小

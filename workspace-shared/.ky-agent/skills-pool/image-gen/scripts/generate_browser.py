@@ -30,6 +30,7 @@ import glob
 
 BROWSER_API = "http://localhost:3000/internal/browser"
 SESSION_PREFIX = "img-gen"
+SESSION_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 POLL_INTERVAL = 8
 MAX_GENERATION_WAIT = 300
 MAX_DOWNLOAD_WAIT = 30
@@ -57,20 +58,22 @@ def curl_ensure(username):
     return json.loads(result.stdout) if result.returncode == 0 else None
 
 
-def run_pw(args_str, session, timeout=30):
+def run_pw(args, session, timeout=30):
     """Execute playwright-cli command, return stdout+stderr."""
-    cmd = f"playwright-cli -s={session} {args_str}"
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+    if not SESSION_RE.match(session):
+        raise ValueError("Invalid session name")
+    cmd = ["playwright-cli", f"-s={session}", *args]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     return result.stdout + result.stderr
 
 
 def get_snapshot(session, timeout=30):
     """Run snapshot and read actual yml content (not metadata)."""
-    output = run_pw("snapshot", session, timeout)
+    output = run_pw(["snapshot"], session, timeout)
     matches = re.findall(r'\[Snapshot\]\((.+?\.yml)\)', output)
     if matches:
         yml_rel = matches[-1]
-        workspace = os.environ.get("WORKSPACE_DIR", os.path.expanduser("~/workspace/admin"))
+        workspace = os.environ.get("WORKSPACE_DIR") or os.getcwd()
         yml_path = os.path.join(workspace, yml_rel)
         if os.path.exists(yml_path):
             with open(yml_path, 'r') as f:
@@ -151,7 +154,10 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     session = args.session or f"{SESSION_PREFIX}-{rand_suffix()}"
-    workspace = os.environ.get("WORKSPACE_DIR", os.path.expanduser("~/workspace/admin"))
+    if not SESSION_RE.match(session):
+        print("Invalid --session. Use letters, numbers, underscore, or hyphen only.", file=sys.stderr)
+        sys.exit(2)
+    workspace = os.environ.get("WORKSPACE_DIR") or os.getcwd()
     username = os.path.basename(workspace)
     cli_dir = os.path.join(workspace, ".playwright-cli")
 
@@ -167,8 +173,8 @@ def main():
 
         # 2. Open Gemini
         log(session, "2. Opening Gemini...")
-        run_pw("open", session)
-        run_pw("goto 'https://gemini.google.com/app'", session)
+        run_pw(["open"], session)
+        run_pw(["goto", "https://gemini.google.com/app"], session)
         time.sleep(4)
 
         # 3. Click "Create image" button
@@ -178,7 +184,7 @@ def main():
         if not ref:
             log(session, "Error: create image button not found")
             sys.exit(1)
-        run_pw(f"click {ref}", session)
+        run_pw(["click", ref], session)
         time.sleep(2)
 
         # 4. Fill prompt
@@ -189,8 +195,7 @@ def main():
             log(session, "Error: textbox not found")
             sys.exit(1)
 
-        safe_prompt = args.prompt.replace("'", "'\\''")
-        run_pw(f"fill {ref} '{safe_prompt}'", session, timeout=60)
+        run_pw(["fill", ref, args.prompt], session, timeout=60)
         time.sleep(1)
 
         # 5. Click send
@@ -200,7 +205,7 @@ def main():
         if not ref:
             log(session, "Error: send button not found")
             sys.exit(1)
-        run_pw(f"click {ref}", session)
+        run_pw(["click", ref], session)
 
         send_ts = time.time()
 
@@ -233,7 +238,7 @@ def main():
 
         # 7. Click download
         log(session, "7. Downloading image...")
-        run_pw(f"click {download_ref}", session)
+        run_pw(["click", download_ref], session)
 
         # 8. Wait for file
         downloaded = None
@@ -259,7 +264,7 @@ def main():
 
     finally:
         try:
-            run_pw("close", session)
+            run_pw(["close"], session)
         except Exception:
             pass
 

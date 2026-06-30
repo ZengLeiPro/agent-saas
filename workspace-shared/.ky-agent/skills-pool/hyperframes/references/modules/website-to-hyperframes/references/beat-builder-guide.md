@@ -14,26 +14,26 @@ You are building ONE beat of a multi-beat video composition. This file tells you
 
 | Resource                                                                              | What it covers                                                                                                                | Read when                                         |
 | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| [techniques.md](../../hyperframes/references/techniques.md)                           | 13 primitive animation techniques: SVG path drawing, Canvas 2D, CSS 3D, kinetic type, variable fonts, MotionPath, etc.        | Beat uses any of these techniques                 |
-| [text-effects.md](../../hyperframes/references/text-effects.md)                       | 24 named text animations from `pixel-point/animate-text` (separate skill — load via `/animate-text` for specs)                | Beat has text animation                           |
-| [html-in-canvas-patterns.md](../../hyperframes/references/html-in-canvas-patterns.md) | HTML-in-Canvas: iPhone/MacBook mockups, liquid glass, magnetic, portal, shatter, text cursor                                  | Beat uses device mockups or WebGL effects on HTML |
-| [transitions.md](../../hyperframes/references/transitions.md)                         | Shader transition API, HyperShader.init() pattern, all 14 WebGL shaders                                                       | Beat has shader transitions                       |
-| [transitions/](../../hyperframes/references/transitions/)                             | 14 CSS transition category files: push, scale, dissolve, blur, 3D flip, light leak, distortion, grid, mechanical, destruction | Beat uses CSS transitions                         |
-| [css-patterns.md](../../hyperframes/references/css-patterns.md)                       | Text markers: highlight sweeps, hand-drawn circles, burst lines, scribble, sketchout                                          | Beat uses text emphasis/markers                   |
-| [audio-reactive.md](../../hyperframes/references/audio-reactive.md)                   | Bass→scale, mid→shape, treble→glow mappings                                                                                   | Beat reacts to music/audio                        |
-| [captions.md](../../hyperframes/references/captions.md)                               | Per-word karaoke, tone-adaptive styling, positioning                                                                          | Beat includes captions                            |
-| [typography.md](../../hyperframes/references/typography.md)                           | Font hierarchy, variable fonts, responsive type scaling                                                                       | Beat has complex typography                       |
-| [motion-principles.md](../../hyperframes/references/motion-principles.md)             | Velocity matching, easing philosophy, motion continuity                                                                       | Beat needs polished motion design                 |
-| [dynamic-techniques.md](../../hyperframes/references/dynamic-techniques.md)           | Counter animations, data-driven visuals, dynamic content                                                                      | Beat has counters or data visualization           |
-| [video-composition.md](../../hyperframes/references/video-composition.md)             | Frame composition, color presence, scale, density rules                                                                       | General composition quality                       |
+| [techniques.md](../../../techniques.md)                           | 13 primitive animation techniques: SVG path drawing, Canvas 2D, CSS 3D, kinetic type, variable fonts, MotionPath, etc.        | Beat uses any of these techniques                 |
+| [text-effects.md](../../../text-effects.md)                       | Named text animation effects and implementation notes                                                                         | Beat has text animation                           |
+| [html-in-canvas-patterns.md](../../../html-in-canvas-patterns.md) | HTML-in-Canvas: iPhone/MacBook mockups, liquid glass, magnetic, portal, shatter, text cursor                                  | Beat uses device mockups or WebGL effects on HTML |
+| [transitions.md](../../../transitions.md)                         | Shader transition API, HyperShader.init() pattern, all 14 WebGL shaders                                                       | Beat has shader transitions                       |
+| [transitions/](../../../transitions/)                             | 14 CSS transition category files: push, scale, dissolve, blur, 3D flip, light leak, distortion, grid, mechanical, destruction | Beat uses CSS transitions                         |
+| [css-patterns.md](../../../css-patterns.md)                       | Text markers: highlight sweeps, hand-drawn circles, burst lines, scribble, sketchout                                          | Beat uses text emphasis/markers                   |
+| [audio-reactive.md](../../../audio-reactive.md)                   | Bass→scale, mid→shape, treble→glow mappings                                                                                   | Beat reacts to music/audio                        |
+| [captions.md](../../../captions.md)                               | Per-word karaoke, tone-adaptive styling, positioning                                                                          | Beat includes captions                            |
+| [typography.md](../../../typography.md)                           | Font hierarchy, variable fonts, responsive type scaling                                                                       | Beat has complex typography                       |
+| [motion-principles.md](../../../motion-principles.md)             | Velocity matching, easing philosophy, motion continuity                                                                       | Beat needs polished motion design                 |
+| [dynamic-techniques.md](../../../dynamic-techniques.md)           | Counter animations, data-driven visuals, dynamic content                                                                      | Beat has counters or data visualization           |
+| [video-composition.md](../../../video-composition.md)             | Frame composition, color presence, scale, density rules                                                                       | General composition quality                       |
 
 **Other skills you can load if needed:**
 
-- `/gsap` or `/gsap-core`, `/gsap-timeline`, `/gsap-plugins` — deeper GSAP reference
-- `/animate-text` — curated text animation catalog with exact JSON specs
-- `/hyperframes-registry` — if you need to install and wire registry blocks
-- `/hyperframes-contrast` — audit color contrast (WCAG)
-- `/lottie`, `/three`, `/waapi`, `/animejs`, `/css-animations` — if beat uses these engines
+- GSAP module reference — deeper GSAP reference
+- `../../../text-effects.md` — curated text animation catalog available inside this skill
+- HyperFrames registry module — if you need to install and wire registry blocks
+- Contrast checks via `npx hyperframes validate` and any available contrast helper
+- Lottie/Three/WAAPI/Anime.js/CSS animation module references when the beat uses those engines
 
 **Always open the captured assets folder before designing the beat:**
 

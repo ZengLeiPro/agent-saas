@@ -6,7 +6,9 @@
 """
 
 import argparse
+from datetime import datetime
 import os
+import platform
 import sys
 from pathlib import Path
 
@@ -22,37 +24,70 @@ def extract_subtitles(video_path: str, output_dir: str = None, model: str = "med
     Returns:
         dict: 包含生成的文件路径
     """
-    try:
-        import mlx_whisper
-    except ImportError:
-        print("错误: 未安装 mlx-whisper")
-        print("请运行: pip3 install mlx-whisper")
-        sys.exit(1)
-
     video_path = Path(video_path).resolve()
     if not video_path.exists():
         raise FileNotFoundError(f"视频文件不存在: {video_path}")
 
     # 设置输出目录
     if output_dir is None:
-        output_dir = video_path.parent
+        output_dir = Path("assets") / datetime.now().strftime("%Y%m%d") / "video-subtitle" / video_path.stem
     else:
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     output_name = video_path.stem
     srt_path = output_dir / f"{output_name}.srt"
     txt_path = output_dir / f"{output_name}.txt"
 
-    print(f"正在使用 MLX Whisper 提取字幕...")
+    print(f"正在提取字幕...")
     print(f"视频: {video_path}")
     print(f"模型: {model}")
 
-    # 转录视频
-    result = mlx_whisper.transcribe(
-        str(video_path),
-        path_or_hf_repo=f'mlx-community/whisper-{model}'
-    )
+    # Linux/ACS 优先使用 faster-whisper；macOS 且已安装时可回退 MLX Whisper。
+    try:
+        from faster_whisper import WhisperModel
+
+        model_name = "large-v3" if model == "large" else model
+        device = os.environ.get("WHISPER_DEVICE", "cpu")
+        compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+        whisper = WhisperModel(model_name, device=device, compute_type=compute_type)
+        segments_iter, info = whisper.transcribe(str(video_path), vad_filter=True)
+        segments = []
+        text_parts = []
+        for segment in segments_iter:
+            text = segment.text.strip()
+            segments.append({
+                "start": segment.start,
+                "end": segment.end,
+                "text": text,
+            })
+            if text:
+                text_parts.append(text)
+        result = {
+            "segments": segments,
+            "text": "\n".join(text_parts),
+            "language": getattr(info, "language", "unknown"),
+        }
+        backend = "faster-whisper"
+    except ImportError:
+        if platform.system() != "Darwin":
+            print("错误: 当前环境未安装 Linux 可用的 faster-whisper。")
+            print("请在工作区内置 .venv 中安装依赖，或由 ACS 镜像预置：")
+            print("  python3 -m pip install faster-whisper")
+            print("不要使用 mlx-whisper；它主要面向 Apple Silicon。")
+            sys.exit(1)
+        try:
+            import mlx_whisper
+        except ImportError:
+            print("错误: 未安装 faster-whisper 或 mlx-whisper。")
+            print("请在工作区内置 .venv 中安装依赖，不要写系统 Python。")
+            sys.exit(1)
+        result = mlx_whisper.transcribe(
+            str(video_path),
+            path_or_hf_repo=f'mlx-community/whisper-{model}'
+        )
+        backend = "mlx-whisper"
+    print(f"后端: {backend}")
 
     # 保存 SRT 字幕
     def format_time(seconds):

@@ -20,10 +20,12 @@ Load the `hyperframes` skill — it has the rules for data attributes, timeline 
 ## 1. Copy SFX to project
 
 ```bash
-cp -r skills/website-to-hyperframes/assets/sfx/ <project-dir>/sfx/
-# If skill is installed elsewhere:
-find . -path "*/website-to-hyperframes/assets/sfx" -exec cp -r {} <project-dir>/sfx/ \;
+cp -R <website-to-hyperframes-skill-dir>/assets/sfx <project-dir>/sfx
 ```
+
+The main agent resolves `<website-to-hyperframes-skill-dir>` from the current skill file location before dispatching workers. Do not use `find "$HOME"` from workers; platform skill sync paths differ across runtimes.
+
+Also create `<project-dir>/vendor/` and copy any runtime JS used by the HTML examples (`gsap.min.js`, GSAP plugins, Three.js modules, Lottie players) from local npm/package artifacts before referencing them. Final compositions must not load scripts from a CDN.
 
 ## 2. Build the root index.html
 
@@ -191,13 +193,15 @@ For videos with sub-composition beats and scene transitions, `index.html` MUST u
 Copy the local shader build first:
 
 ```bash
-cp packages/shader-transitions/dist/index.global.js <project-dir>/hyper-shader-local.js
+cp <local-hyperframes-package-or-registry>/shader-transitions/dist/index.global.js <project-dir>/hyper-shader-local.js
 ```
+
+Use a local package/registry artifact. Do not point the final HTML at a CDN or a repo-root `packages/` path unless the current project is actually inside the HyperFrames source repo.
 
 Full working `index.html` pattern — every field matters:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script src="vendor/gsap.min.js"></script>
 <script src="hyper-shader-local.js"></script>
 
 <div id="root" data-composition-id="main" data-start="0" data-duration="TOTAL"
@@ -293,18 +297,17 @@ The Studio preview server rewrites base URLs to the project root — `../` paths
 
 In either case, use the template. Do not skip it and build from memory.
 
-Each sub-agent reads [beat-builder-guide.md](beat-builder-guide.md) — it has everything: rules, easing, file references, validation commands. **Do not try to paste all rules into the prompt yourself.** Instead, tell the sub-agent to read the guide file. You paste only the beat-specific context: the storyboard sections, brand values, and asset paths.
+Each sub-agent reads [beat-builder-guide.md](beat-builder-guide.md) — it has everything: rules, easing, file references, validation commands. **Do not try to paste all rules into the prompt yourself.** Instead, resolve the exact `beat-builder-guide.md` path before dispatch and tell the sub-agent to read that file. You paste only the beat-specific context: the storyboard sections, brand values, and asset paths.
 
 ```
 Build the composition for Beat N. Save to compositions/beat-N-name.html.
 
-FIRST: Locate and read the beat-builder guide. Your CWD is the project directory, so
-the skill lives outside it — run this to find it:
+FIRST: Read the beat-builder guide at this exact path:
 
-  find "$HOME" -path '*/website-to-hyperframes/references/beat-builder-guide.md' -maxdepth 10 2>/dev/null | head -1
+  <absolute-or-project-relative-path-to>/website-to-hyperframes/references/beat-builder-guide.md
 
-Read that file end to end. It has your full workflow, all rules, easing vocabulary,
-and file references. Follow its workflow exactly:
+It has your full workflow, all rules, easing vocabulary, and file references.
+Follow its workflow exactly:
   build → lint (`npx hyperframes lint .`)
         → snapshot (`npx hyperframes snapshot . --frames 3`)
         → view contact sheet AND read snapshots/descriptions.md
@@ -398,7 +401,7 @@ Example: Beat 6's sub-agent took a snapshot at t=25.7s and saw Beat 1's content 
 **Required after all sub-agents complete:**
 
 ```bash
-node /<repo-root>/packages/cli/dist/cli.js snapshot <project-dir> --frames <N>
+npx hyperframes snapshot <project-dir> --frames <N>
 ```
 
 where N follows the snapshot formula: `max(beats × 3, ceil(duration_seconds / 2))`. This is the canonical snapshot that Step 6's DoD uses — not any individual sub-agent's intermediate snapshots.

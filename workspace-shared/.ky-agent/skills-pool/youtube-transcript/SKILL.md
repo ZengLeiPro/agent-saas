@@ -35,18 +35,21 @@ uv run scripts/get_transcript.py "VIDEO_URL_OR_ID" --timestamps
 
 ### Fallback (no `uv` available)
 
-Create a venv and install a compatible version:
-```bash
-python3 -m venv .venv-youtube-transcript
-. .venv-youtube-transcript/bin/activate
-python -m pip install -U pip
-python -m pip install "youtube-transcript-api>=1.2.3"
-```
+Use the current workspace Python environment. Do not create a separate venv inside the workspace.
 
-Run:
 ```bash
 python scripts/get_transcript.py "VIDEO_URL_OR_ID"
 python scripts/get_transcript.py "VIDEO_URL_OR_ID" --timestamps
+```
+
+If `youtube-transcript-api` is missing, stop and report the missing dependency. Do not run `pip install --user`, create a new venv, or install into system Python. ACS runtime dependencies should be fixed in the base image or current workspace `.venv`.
+
+If a file output is requested, write it under `assets/yyyymmdd/` unless the user provides a path.
+
+Example:
+```bash
+mkdir -p assets/$(date +%Y%m%d)
+python scripts/get_transcript.py "VIDEO_URL_OR_ID" > assets/$(date +%Y%m%d)/VIDEO_ID-transcript.txt
 ```
 
 ## Defaults
@@ -66,7 +69,7 @@ python scripts/get_transcript.py "VIDEO_URL_OR_ID" --timestamps
 - CRITICAL: Do **not** change the transcript wording/content.
   - Reflowing whitespace/line breaks (e.g., paragraph formatting) is allowed.
 - If asked to save to a specific file, save to that file.
-- If no output file is specified, use `<VIDEO_ID>-transcript.txt`.
+- If no output file is specified, use `assets/yyyymmdd/<VIDEO_ID>-transcript.txt`.
 
 ## Notes
 

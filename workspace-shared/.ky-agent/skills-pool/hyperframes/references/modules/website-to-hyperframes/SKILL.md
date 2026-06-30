@@ -14,6 +14,14 @@ Users say things like:
 - "Turn this website into a 15-second social ad for Instagram"
 - "Create a 30-second product tour from https://..."
 
+## ACS Runtime Defaults
+
+- Create the project under `assets/yyyymmdd/<project-slug>/` unless the user points to an existing project. Keep capture artifacts in `<project-dir>/capture/`; put user-facing renders and final review artifacts in `assets/yyyymmdd/`.
+- Secrets for Gemini, HeyGen, ElevenLabs, or TTS providers must come from environment variables or the platform secret binding. Do not ask the user to paste API keys into chat, and do not write keys into project `.env` files.
+- Do not locate bundled references with `find "$HOME"` from workers. The main agent should resolve this skill directory once, then pass exact file paths such as `references/beat-builder-guide.md` and `scripts/w2h-verify.mjs` into worker prompts.
+- Preview URLs are deliverable only if the platform exposes the port. Otherwise deliver screenshots, review notes, and rendered files. Do not assume `localhost` is visible to the user.
+- Final compositions must be self-contained: no CDN scripts, Google Fonts links, or render-time remote JS/font/model fetches.
+
 The workflow has 7 steps. Each produces an artifact that gates the next. By default it's collaborative — gates marked 💬 stop and ask the user. If the user signals autonomous mode ("decide for me", "surprise me"), 💬 user-preference gates are skipped; see step-2-brief.md for how that propagates.
 
 **Autonomous mode is NOT "skip all gates."** Auto mode covers user-preference questions (TTS provider, voice, color emphasis, beat count, music yes/no, captions yes/no — where the agent decides on the user's behalf). It does NOT cover quality-verification gates. The following remain non-skippable in auto mode:
@@ -94,11 +102,11 @@ Build index.html and compositions following the architecture and pacing chosen i
 
 **Read:** [references/step-6-validate.md](references/step-6-validate.md)
 
-Lint, validate, take snapshots scaled to video length (formula: `max(beats × 3, ceil(duration_seconds / 2))`), and review each one. Fix issues before delivering. Deliver the localhost Studio project URL — only render to MP4 on explicit user request.
+Lint, validate, take snapshots scaled to video length (formula: `max(beats × 3, ceil(duration_seconds / 2))`), and review each one. Fix issues before delivering. Deliver a Studio URL only when the platform exposes the preview port; otherwise deliver the snapshot/review artifacts and render only on explicit user request.
 
 **Deliver something you're proud of.** Before handing off, ask yourself: would I post this on social media with my name on it? If not, fix what's wrong.
 
-**Gate:** `npx hyperframes lint` and `npx hyperframes validate` pass with zero errors, and the final response includes the active Studio project URL.
+**Gate:** `npx hyperframes lint` and `npx hyperframes validate` pass with zero errors, and the final response includes either the active exposed Studio URL or a clear fallback handoff (snapshot/contact-sheet paths, verification report, and any rendered file path).
 
 ---
 

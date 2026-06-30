@@ -15,7 +15,7 @@
 | ----------- | --------------------------------------------------------------------------------------------------- |
 | 表/实体     | `sales_action_items`（CLI 命令 `azeroth sales-action-items ...`，API `/api/v1/sales-action-items`） |
 | 谁写        | **仅夜间 admin cron 的协调器**（用 admin PAT，ADMIN 角色）。`employeeId` = 收件销售本人             |
-| 谁读/处置   | 销售在 azeroth 工作台两卡 + 独立列表页看自己的；艺萍/ADMIN 看全员（管理端）                         |
+| 谁读/处置   | 销售在 azeroth 工作台两卡 + 独立列表页看自己的；艺萍/ADMIN 看全员（管理端），可转交待办             |
 | 写权限      | **建单/修正/删除只给 admin 角色**；销售只能处置自己名下待办（见第六节 RBAC）                         |
 | 何时 create | 夜间分析产出进攻 item / 防御缺口 / 内容沉淀候选时。普通用户日常问数据分析**不要碰这张表**           |
 
@@ -71,6 +71,8 @@ azeroth sales-action-items my-count [--category GAP_HARD]              # GET /sa
 azeroth sales-action-items adopt  <id>                                 # 采纳：仅 FILL_CONFIRM + 过 D6 强校验，转写 keep_record
 azeroth sales-action-items ignore <id> --resolve-note "理由"           # 忽略：resolveNote 必填，喂回 Agent 降权
 azeroth sales-action-items done   <id> --done-type progressed --resolve-note "已电话推进"  # 标记已办
+azeroth sales-action-items done   <id> --json <file>                   # 可带 keepRecord；doneType=follow_recorded 时必填
+azeroth sales-action-items transfer <id> --target-employee-id <uuid> --reason "转交原因" # 管理端转交
 azeroth sales-action-items reopen <id>                                 # done → pending，不触碰采纳生成的 CRM 记录
 azeroth sales-action-items undo   <id>                                 # adopted → pending，并软删本次采纳生成的 keep_record
 
@@ -79,6 +81,8 @@ azeroth sales-action-items list --source-run-id <id> --status <s>        # GET /
 ```
 
 > **采纳的正确姿势**：前端/CLI 走 `azeroth sales-action-items adopt <id>` / `POST /:id/adopt`，由后端复用 `KeepRecordsService.create()` 写跟进记录。**绝不在 agent/前端直接 `azeroth keep-records create`**（绕过 D6 强校验和业务规则），也不要用 `update --status adopted` 伪装采纳——标准 update schema 本来也不接受 `status` 字段，且不会触发写 CRM。
+>
+> **转交的正确姿势**：管理端走 `transfer <id>`，body 是 `{ targetEmployeeId, reason }`；销售本人不要用 update 改 `employeeId` 伪装转交，标准 update 虽可能接受 employeeId，但不会留下转交语义与原因。
 
 ### 2.3 夜间脚本写候选的标准形态（`create --json -`）
 
@@ -86,7 +90,8 @@ azeroth sales-action-items list --source-run-id <id> --status <s>        # GET /
 
 ```bash
 # 会话首次：确保 CLI 最新（拿到刚部署的新表 schema）。刚部署过务必 FORCE 刷绕过 1h TTL
-AZEROTH_CLI_FORCE=1 source ".ky-agent/skills/ky-data-query/scripts/ensure-cli.sh"
+KY_DATA_QUERY_SKILL_DIR="<当前 ky-data-query skill 目录>"
+AZEROTH_CLI_FORCE=1 source "$KY_DATA_QUERY_SKILL_DIR/scripts/ensure-cli.sh"
 azeroth describe sales-action-items --action create    # 拿权威字段表，别猜字段
 
 # 写一条硬缺口督办（防御 / GAP_HARD）
@@ -387,7 +392,7 @@ azeroth 多张表有**只读派生字段**——service 层从 update DTO 显式
 ## 六、结构性写入只给 admin（RBAC，别人 token 调写 → 403）
 
 - `sales_action_items` 的**建单/修正/删除**（create/update/delete）只授予 **admin 角色**。夜间 cron 用 admin PAT（ADMIN 角色）写。
-- **销售本人 token 只有读 + 处置自己待办的权限**（my/get/adopt/ignore/done/reopen/undo 受 RBAC + 数据范围限定在 `employeeId=自己`）；**调 `create` 写候选 → 403**（azeroth RBAC 拦截，预期行为，不是 bug）。
+- **销售本人 token 只有读 + 处置自己待办的权限**（my/get/adopt/ignore/done/reopen/undo 受 RBAC + 数据范围限定在 `employeeId=自己`）；管理端才做 `transfer` 转交；**调 `create` 写候选 → 403**（azeroth RBAC 拦截，预期行为，不是 bug）。
 - 普通用户/分析师 token 调 `sales-action-items create/update` 也 **403**。
 - **403 是预期行为**：说明当前身份在 azeroth 内没有该写权限。**不要尝试升权 / 换账号 / 用 admin 绕过**——告诉用户即可。只有夜间 admin cron 链路才建/改/删这张表。
 - 这是"ky-data-query 写扩散"的防线：靠 azeroth RBAC 约束，不做专门 coordinator token（内部工具）。

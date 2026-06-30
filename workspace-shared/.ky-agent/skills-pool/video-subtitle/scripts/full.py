@@ -6,6 +6,7 @@
 """
 
 import argparse
+from datetime import datetime
 import sys
 from pathlib import Path
 
@@ -24,7 +25,7 @@ def full_process(
     api_key: str = None,
     base_url: str = None,
     ai_model: str = "glm-4.7",
-    keep_temp: bool = False
+    keep_temp: bool = True
 ):
     """
     完整的字幕处理流程
@@ -53,10 +54,10 @@ def full_process(
 
     # 设置输出目录
     if output_dir is None:
-        output_dir = video_path.parent
+        output_dir = Path("assets") / datetime.now().strftime("%Y%m%d") / "video-subtitle" / video_path.stem
     else:
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     results = {}
 
@@ -94,7 +95,7 @@ def full_process(
     )
     results['output_video'] = output_video
 
-    # 清理临时文件
+    # 清理临时文件。默认保留，便于复核字幕与翻译结果。
     if not keep_temp:
         print("\n[清理] 删除中间文件...")
         temp_files = [
@@ -141,8 +142,8 @@ def main():
   # 使用大型 Whisper 模型（更准确但更慢）
   python full.py video.mp4 --model large
 
-  # 保留中间文件
-  python full.py video.mp4 --keep-temp
+  # 删除中间文件（默认保留）
+  python full.py video.mp4 --delete-temp
 
   # 自定义字幕样式
   python full.py video.mp4 --style "FontSize=20,Alignment=2"
@@ -162,8 +163,8 @@ def main():
     parser.add_argument('-u', '--base-url', help='翻译 API Base URL')
     parser.add_argument('--ai-model', default='glm-4.7',
                         help='翻译 AI 模型（默认: glm-4.7）')
-    parser.add_argument('--keep-temp', action='store_true',
-                        help='保留中间文件（字幕文件）')
+    parser.add_argument('--delete-temp', action='store_true',
+                        help='删除本次生成的中间文件（默认保留字幕文件）')
 
     args = parser.parse_args()
 
@@ -177,7 +178,7 @@ def main():
             api_key=args.api_key,
             base_url=args.base_url,
             ai_model=args.ai_model,
-            keep_temp=args.keep_temp
+            keep_temp=not args.delete_temp
         )
     except Exception as e:
         print(f"\n错误: {e}", file=sys.stderr)

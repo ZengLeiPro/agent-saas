@@ -1,7 +1,7 @@
 # 典型查询示例
 
 > 所有示例为只读 SELECT。客户/合同号/数字已对照真实数据校验。
-> 数据库路径：`.ky-agent/skills/xinling-procurement-qc/data/procurement_qc.db`
+> 数据库路径：使用当前 skill 目录下的 `data/procurement_qc.db`，不要硬编码 `.claude/skills/...`。
 > SQL 中中文标识符用双引号 `"..."` 包裹。
 >
 > **数据已清洗**：

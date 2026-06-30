@@ -69,6 +69,14 @@ Unless otherwise stated by the user or existing template
 
 A user may ask you to create, edit, or analyze the contents of an .xlsx file. You have different tools and workflows available for different tasks.
 
+## ACS Sandbox Rules
+
+- Resolve bundled scripts relative to the current `xlsx` skill directory; do not assume cwd or `.claude/skills/xlsx/`.
+- User uploads normally come from `uploads/`.
+- New or modified spreadsheet deliverables should be saved under `assets/yyyymmdd/`. Do not overwrite uploaded originals unless the user explicitly requests it.
+- Use the workspace `.venv` or ACS image provided Python dependencies (`pandas`, `openpyxl`, etc.). Do not use Homebrew, `sudo pip`, `pip install --user`, `--break-system-packages`, or create a new venv.
+- LibreOffice recalculation uses an invocation-scoped profile and workspace-cached shim; do not force shared `~/.config/libreoffice` or fixed `/tmp` profiles.
+
 ## Important Requirements
 
 **LibreOffice Required for Formula Recalculation**: You can assume LibreOffice is installed for recalculating formula values using the `scripts/recalc.py` script. The script automatically configures LibreOffice on first run, including in sandboxed environments where Unix sockets are restricted (handled by `scripts/office/soffice.py`)
@@ -91,7 +99,7 @@ df.info()      # Column info
 df.describe()  # Statistics
 
 # Write Excel
-df.to_excel('output.xlsx', index=False)
+df.to_excel('assets/20260630/output.xlsx', index=False)
 ```
 
 ## Excel File Workflows
@@ -136,7 +144,7 @@ This applies to ALL calculations - totals, percentages, ratios, differences, etc
 4. **Save**: Write to file
 5. **Recalculate formulas (MANDATORY IF USING FORMULAS)**: Use the scripts/recalc.py script
    ```bash
-   python scripts/recalc.py output.xlsx
+   python <xlsx skill dir>/scripts/recalc.py assets/20260630/output.xlsx
    ```
 6. **Verify and fix any errors**: 
    - The script returns JSON with error details
@@ -174,7 +182,7 @@ sheet['A1'].alignment = Alignment(horizontal='center')
 # Column width
 sheet.column_dimensions['A'].width = 20
 
-wb.save('output.xlsx')
+wb.save('assets/20260630/output.xlsx')
 ```
 
 ### Editing existing Excel files
@@ -214,7 +222,7 @@ python scripts/recalc.py <excel_file> [timeout_seconds]
 
 Example:
 ```bash
-python scripts/recalc.py output.xlsx 30
+python <xlsx skill dir>/scripts/recalc.py assets/20260630/output.xlsx 30
 ```
 
 The script:

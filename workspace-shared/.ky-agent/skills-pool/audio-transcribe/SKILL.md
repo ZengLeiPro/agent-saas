@@ -1,11 +1,14 @@
 ---
 name: audio-transcribe
-description: 语音识别转文字（ASR），基于阿里云百炼 fun-asr。接受本地音频/视频文件（mp3, wav, m4a, mp4 等）或音频直链 URL，输出纯文本。典型场景：会议录音转文字、访谈整理、语音备忘录转文本。如果用户给的是视频平台链接（B站/抖音/YouTube 等页面链接，非音频直链），需先用 media-download 下载或提取音频，再传给本 skill。本 skill 只做语音识别转写，不生成 SRT 字幕、不翻译、不烧录字幕（那些是 video-subtitle 的职责）。
+description: 语音识别转文字（ASR），基于阿里云百炼 fun-asr。接受本地音频/视频文件（mp3, wav, m4a, mp4 等）或音频直链 URL，输出纯文本；本地文件会上传到受控 OSS 临时对象后提交百炼，敏感录音需先确认。典型场景：会议录音转文字、语音备忘录转文本。
 ---
 
 # Transcribe - 音频/视频转文字
 
-将录音或视频文件转录为纯文本。使用阿里云百炼 fun-asr 模型（中文效果最好），通过异步 API 完成转写，本地大文件自动经 OSS 中转。
+将录音或视频文件转录为纯文本。使用阿里云百炼 fun-asr 模型（中文效果最好），通过异步 API 完成转写。**本地文件都会先上传到 OSS 临时对象再提交百炼 ASR**；HTTP/HTTPS 直链会直接提交给百炼。处理敏感录音、客户录音或个人隐私内容前，先向用户说明外部处理事实并取得确认。
+
+如果用户给的是视频平台链接（B站/抖音/YouTube 等页面链接，非音频直链），需先用 media-download 下载或提取音频，再传给本 skill。
+本 skill 只做语音识别转写，不生成 SRT 字幕、不翻译、不烧录字幕（那些是 video-subtitle 的职责）。
 
 ## 能力边界
 
@@ -34,9 +37,9 @@ python3 scripts/transcribe.py recording.mp3 --model paraformer-v2 -o output.txt
 python3 scripts/transcribe.py 'https://example.com/audio.mp3' -o output.txt
 ```
 
-脚本路径是相对于本 skill 目录的，实际调用时从用户 workspace 根目录使用：
+脚本路径必须从当前 skill 目录解析，不要假设用户 workspace 下存在 `.claude/skills/`。示例：
 ```bash
-python3 .ky-agent/skills/audio-transcribe/scripts/transcribe.py ...
+python3 <skill_dir>/scripts/transcribe.py uploads/meeting.m4a -o assets/20260630/会议录音转写.txt
 ```
 
 ## 参数说明
@@ -58,16 +61,22 @@ python3 .ky-agent/skills/audio-transcribe/scripts/transcribe.py ...
 
 ## 环境依赖
 
-脚本依赖两个 Python 包（`dashscope` 和 `oss2`），以及环境变量 `DASHSCOPE_API_KEY`。
-如果运行报错缺包，执行：
+脚本依赖两个 Python 包（`dashscope` 和 `oss2`），以及运行时注入的环境变量：
+
+- `DASHSCOPE_API_KEY`：百炼 API Key，必需。
+- `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET` / `OSS_BUCKET`：本地文件上传 OSS 必需，必须由 ACS secret/env 注入；禁止写入 skill、对话或报告。
+- `OSS_ENDPOINT`：可选，默认 `https://oss-cn-shenzhen.aliyuncs.com`。
+
+如果运行报错缺包，只能安装到工作区内置 `.venv/`：
 ```bash
-pip3 install --break-system-packages dashscope oss2
+python3 -m pip install dashscope oss2
 ```
 
 ## 行为规范
 
 - 多人对话/会议场景默认加 `--speaker`，除非用户明确不需要
-- 输出文件默认保存到用户工作区的 `assets/yyyymmdd/` 下，文件名基于原始音频名
+- 输出文件默认保存到用户工作区的 `assets/yyyymmdd/` 下，文件名基于原始音频名；也可显式用 `-o assets/yyyymmdd/xxx.txt`
+- 不要在回复、日志或报告中打印 OSS AK/SK、签名 URL、完整请求头；OSS 临时对象清理失败时要向用户报告
 - 转录结果不做任何内容修改，原样输出识别文本
 - 如果用户要求"整理"或"总结"录音内容，先转录再对文本做后处理，两步分开
 - 转录完成后告知用户文件路径、总行数，并展示前几行预览

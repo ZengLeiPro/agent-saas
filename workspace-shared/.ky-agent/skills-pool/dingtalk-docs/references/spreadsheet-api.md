@@ -4,10 +4,10 @@
 > 调用格式：`SHEET <tool> --args '{ ... }' --output json`
 > 电子表格访问地址：`https://alidocs.dingtalk.com/i/nodes/{dentryUuid}`
 
-`SHEET` 是 `mcporter --config .ky-agent/skills/dingtalk-docs/mcporter.json call dingtalk-sheet` 的简写：
+`SHEET` 是 `mcporter --config <skill_dir>/mcporter.json call dingtalk-sheet` 的简写；`<skill_dir>` 必须由当前 skill 根目录解析，不能写死 `.claude/skills/...`：
 
 ```bash
-SHEET = mcporter --config .ky-agent/skills/dingtalk-docs/mcporter.json call dingtalk-sheet
+SHEET = mcporter --config <skill_dir>/mcporter.json call dingtalk-sheet
 ```
 
 钉钉电子表格 MCP 服务当前提供 **37 个工具**，覆盖工作表管理、单元格读写、行列维度操作、合并、筛选、筛选视图、下拉列表、图片插入与异步导出。

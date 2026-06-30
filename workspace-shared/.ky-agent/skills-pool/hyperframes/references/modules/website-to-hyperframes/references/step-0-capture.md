@@ -4,11 +4,9 @@ The capture pipeline downloads the site and extracts structured data for the res
 
 ## Run the capture
 
-No API keys required for the base capture. However, before running, ask the user:
+No API keys are required for the base capture. Gemini vision descriptions are optional. Before running, check whether `GEMINI_API_KEY` is already available from the runtime environment/secret binding. If it is not available, ask the user whether to continue without AI image descriptions or configure the secret outside this project.
 
-> "For the best results, it is recommended to set a Gemini API key — it gives me AI-powered descriptions of every captured image, which helps me choose the right assets for each scene. It costs about $0.001 per image. You can skip this if you want, but the video quality will be better with it. To set it up: add `GEMINI_API_KEY=your-key` to a `.env` file in the project root. You can get a free key at ai.google.dev."
-
-If the user provides the key or already has one set, proceed. If they skip it, proceed anyway — the capture works without it, but `asset-descriptions.md` will have DOM-context descriptions only (position, size, alt text) instead of AI vision descriptions.
+Do not ask the user to paste the key into chat, and do not write API keys into a project `.env` file. If the key is absent and the user skips it, proceed anyway — the capture works without it, but `asset-descriptions.md` will have DOM-context descriptions only (position, size, alt text) instead of AI vision descriptions.
 
 Create a project directory for your video if it doesn't exist yet, then capture the website into a `capture/` subfolder within it:
 
@@ -16,9 +14,9 @@ Create a project directory for your video if it doesn't exist yet, then capture 
 npx hyperframes capture <URL> -o <project-dir>/capture
 ```
 
-Example: `npx hyperframes capture https://stripe.com -o videos/stripe-launch/capture`
+Example: `npx hyperframes capture https://stripe.com -o assets/yyyymmdd/stripe-launch/capture`
 
-Keeping capture artifacts (`screenshots/`, `assets/`, `extracted/`, `AGENTS.md`, `CLAUDE.md`) in a dedicated `capture/` subfolder keeps them isolated from later build files (`SCRIPT.md`, `STORYBOARD.md`, `DESIGN.md`, `compositions/`, `index.html`, `narration.wav`, `transcript.json`, `renders/`, `snapshots/`), which all live at `<project-dir>/` root.
+Keeping capture artifacts (`screenshots/`, `assets/`, `extracted/`, `AGENTS.md`, `CLAUDE.md`) in a dedicated `capture/` subfolder keeps them isolated from later build files (`SCRIPT.md`, `STORYBOARD.md`, `DESIGN.md`, `compositions/`, `index.html`, `narration.wav`, `transcript.json`, `snapshots/`), which all live at `<project-dir>/` root.
 
 For exploratory captures that aren't becoming a video yet, `-o captures/<name>` at the repo root is fine — the isolation convention only matters when you're building a video on top of the capture.
 

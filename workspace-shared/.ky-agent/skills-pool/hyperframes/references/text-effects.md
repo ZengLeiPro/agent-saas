@@ -1,55 +1,55 @@
 # Text Effects — Reference
 
-For deterministic text-animation specs (e.g., `typewriter` at exact `240ms / 46ms stagger / steps(1, end) easing`), this skill defers to the separate **`animate-text`** skill maintained by Pixel Point at [github.com/pixel-point/animate-text](https://github.com/pixel-point/animate-text). It provides a catalog of 24 named text effects with portable contracts and per-library implementation recipes (GSAP, Anime.js, WAAPI).
+Use this file as the local HyperFrames vocabulary for deterministic text animation. Do not install or invoke a separate text-animation skill from ACS worker sessions; the effect IDs below are enough to plan the storyboard and implement the motion with GSAP, Anime.js, WAAPI, or CSS.
 
-**We do NOT ship the catalog inside this repo.** Pixel Point's `animate-text` is the source of truth; vendoring its files here would violate the upstream's licensing (no explicit license declared upstream as of this writing). Loading the skill separately keeps the legal picture clean while giving you the same catalog.
+## ACS Contract
 
-## How to use it
+- Keep text effects deterministic and seekable. Build animations synchronously on the registered timeline.
+- Use local/vendor JS only; no CDN dependencies.
+- Split text in plain DOM during initialization, then animate spans on the main timeline. Do not split text in async callbacks.
+- Effects are named design intents, not magic imports. If the storyboard says `soft-blur-in`, implement that behavior directly in the composition.
 
-When a beat needs a deterministic text animation, load the upstream skill alongside this one:
+## Effect IDs
 
-```bash
-# In your project root, install the upstream skill into .agents/skills/
-npx skills add pixel-point/animate-text
-```
+- **Per-character:** `soft-blur-in`, `per-character-rise`, `typewriter`, `bottom-up-letters`, `top-down-letters`, `stagger-from-center`, `stagger-from-edges`
+- **Per-word:** `per-word-crossfade`, `spring-scale-in`, `shared-axis-y`, `blur-out-up`, `kinetic-center-build`, `short-slide-right`, `short-slide-down`, `depth-parallax-words`
+- **Per-line:** `mask-reveal-up`, `line-by-line-slide`
+- **Whole element:** `micro-scale-fade`, `shimmer-sweep`, `fade-through`, `shared-axis-z`, `scale-down-fade`, `focus-blur-resolve`, `shared-axis-x`
 
-Or in Claude Code / a skill-aware agent runtime, the skill is invoked by name:
+## Implementation Defaults
 
-```
-/animate-text
-```
+Use these as starting values, then adapt to the brand and beat duration:
 
-Once installed, the specs live at:
+| ID | Default behavior |
+| --- | --- |
+| `soft-blur-in` | characters/words start `opacity:0; filter:blur(12px); y:18`, stagger 35-55ms, ease `power3.out` |
+| `per-character-rise` | characters rise from `y:0.8em`, opacity 0→1, stagger 28-42ms |
+| `typewriter` | reveal characters with `steps(1, end)` or `tl.set()` calls; add cursor blink only if the brand supports it |
+| `bottom-up-letters` | characters clipped by an overflow-hidden wrapper and enter from below |
+| `top-down-letters` | same as above, entering from above |
+| `stagger-from-center` | order characters by distance from center; reveal outward |
+| `stagger-from-edges` | reveal from both edges toward center |
+| `per-word-crossfade` | words fade/translate in sequence, 60-90ms stagger |
+| `spring-scale-in` | words scale 0.86→1 with `back.out(1.4)` or similar, no bounce loops |
+| `shared-axis-y` | text exits/enters along y axis with a small opacity crossfade |
+| `blur-out-up` | outgoing phrase blurs and moves up before replacement enters |
+| `kinetic-center-build` | central word locks first, surrounding words build around it |
+| `short-slide-right` | compact x-axis entrance, `x:-24` to `0`, 60ms stagger |
+| `short-slide-down` | compact y-axis entrance, `y:-20` to `0`, 60ms stagger |
+| `depth-parallax-words` | words have slight z/scale/y offsets and converge to a flat readable state |
+| `mask-reveal-up` | each line sits in an overflow-hidden wrapper and slides up into place |
+| `line-by-line-slide` | full lines slide/fade in with 120-180ms stagger |
+| `micro-scale-fade` | whole element `scale:0.98; opacity:0` to normal, subtle and fast |
+| `shimmer-sweep` | local pseudo-element or gradient mask sweeps across text; no remote assets |
+| `fade-through` | phrase A fades down before phrase B fades in; avoid simultaneous unreadable overlap |
+| `shared-axis-z` | element scales 0.94→1 or 1.04→1 with opacity; reads like z-depth |
+| `scale-down-fade` | large/near element settles down into final size while fading in |
+| `focus-blur-resolve` | text starts slightly blurred and resolves to sharp focus |
+| `shared-axis-x` | text moves along x axis with opacity crossfade |
 
-```
-.agents/skills/animate-text/assets/effects/<id>.json   # per-library implementation recipe
-.agents/skills/animate-text/assets/specs/<id>.json     # portable motion contract
-```
+## In The Storyboard
 
-Sub-agents reading those files get exact GSAP timings, easing strings, DOM split rules, and stagger algorithms — no creative invention needed.
-
-## When you don't need the upstream skill
-
-If a beat's text animation is simple enough to describe in prose ("headline fades up word-by-word, 80ms stagger"), implement it inline using the GSAP knowledge already in this skill ([motion-principles.md](motion-principles.md), [beat-direction.md](beat-direction.md), [techniques.md](techniques.md) — see entry #4 "Per-Word Kinetic Typography"). The upstream catalog is most valuable when:
-
-- You want a specific NAMED effect across multiple beats (so they feel like one design system, not one-offs)
-- You're choosing between several similar effects (typewriter vs per-character-rise vs bottom-up-letters) and want to see all 24 in one place
-- You need layout-aware effects (`kinetic-center-build`, `short-slide-right`, `short-slide-down`) where parameters alone aren't enough — those ship with custom layout algorithms
-
-## Effect names — vocabulary (do NOT use this as the implementation source)
-
-For convenience while writing storyboards: the upstream skill provides 24 effects. Their IDs are listed here so you can name them in `STORYBOARD.md` even before loading the upstream skill. **The implementation specs are in the upstream skill, not here.**
-
-- **Per-character (7):** soft-blur-in, per-character-rise, typewriter, bottom-up-letters, top-down-letters, stagger-from-center, stagger-from-edges
-- **Per-word (8):** per-word-crossfade, spring-scale-in, shared-axis-y, blur-out-up, kinetic-center-build, short-slide-right, short-slide-down, depth-parallax-words
-- **Per-line (2):** mask-reveal-up, line-by-line-slide
-- **Whole element (7):** micro-scale-fade, shimmer-sweep, fade-through, shared-axis-z, scale-down-fade, focus-blur-resolve, shared-axis-x
-
-For descriptions, durations, easing curves, and the per-library recipes: load `/animate-text` and read its own catalog page.
-
-## In the storyboard
-
-Every text element in every beat can name an effect by ID, e.g.:
+Name the effect ID for every meaningful text element:
 
 ```markdown
 **Text Animations:**
@@ -59,6 +59,10 @@ Every text element in every beat can name an effect by ID, e.g.:
 - Body copy 3 lines: `mask-reveal-up`
 ```
 
-Sub-agents implementing the beat will load `/animate-text` if it's not already loaded, then read the spec for each named effect from the upstream skill's files.
+## Build Pattern
 
-If the upstream skill isn't available (offline build, network restrictions, agent runtime that doesn't support skill loading), sub-agents fall back to implementing the effect from the description alone — using GSAP knowledge plus the effect ID as a description of intent (e.g., "typewriter" = per-character stepped reveal with no interpolation).
+1. Split text into spans at the required granularity: character, word, or line.
+2. Build the static readable end-state first.
+3. Add `tl.from()` / `tl.fromTo()` tweens from hidden/offset states into that end-state.
+4. Keep stagger finite and deterministic. If a stagger order needs variation, compute it from a stable index or seeded helper.
+5. Re-run `npx hyperframes lint`, `validate`, and `inspect` after implementing effects; text splitting is a common source of overflow.

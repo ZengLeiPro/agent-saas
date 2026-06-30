@@ -2,9 +2,11 @@
 """从视频/音频平台下载媒体，或从本地视频提取音频。"""
 
 import argparse
+import datetime as dt
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -49,14 +51,57 @@ def is_url(s):
     return bool(re.match(r'https?://', s, re.I))
 
 
-def extract_audio_local(input_file, output_file, audio_format):
+def default_output_dir():
+    path = Path("assets") / dt.datetime.now().strftime("%Y%m%d") / "media-download"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def require_cmd(name):
+    if shutil.which(name):
+        return
+    print(
+        f"缺少依赖: {name}。ACS Sandbox 应由镜像预置该命令，"
+        "不要在 skill 运行期使用 Homebrew、apt-get 或系统级安装；请复核镜像依赖。",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
+def resolve_local_output(input_file, output_arg, audio_format):
+    if output_arg:
+        out = Path(output_arg)
+        if output_arg.endswith(os.sep) or (out.exists() and out.is_dir()):
+            out.mkdir(parents=True, exist_ok=True)
+            return out / f"{Path(input_file).stem}.{audio_format}"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        return out
+    return default_output_dir() / f"{Path(input_file).stem}.{audio_format}"
+
+
+def resolve_download_template(output_arg):
+    if output_arg:
+        out = Path(output_arg)
+        if output_arg.endswith(os.sep) or out.suffix == "" or (out.exists() and out.is_dir()):
+            out.mkdir(parents=True, exist_ok=True)
+            return str(out / "%(title)s.%(ext)s")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        return str(out)
+    return str(default_output_dir() / "%(title)s.%(ext)s")
+
+
+def extract_audio_local(input_file, output_file, audio_format, overwrite=False):
     """用 ffmpeg 从本地视频提取音频。"""
+    require_cmd('ffmpeg')
+    if os.path.exists(output_file) and not overwrite:
+        print(f"输出文件已存在: {output_file}。如需覆盖请显式传 --overwrite。", file=sys.stderr)
+        sys.exit(1)
     codec = CODEC_MAP.get(audio_format, 'libmp3lame')
     cmd = ['ffmpeg', '-i', input_file, '-vn', '-acodec', codec]
     # mp3/m4a/aac 加质量参数
     if audio_format in ('mp3', 'm4a', 'aac'):
         cmd += ['-q:a', '2']
-    cmd += ['-y', output_file]
+    cmd += ['-y' if overwrite else '-n', str(output_file)]
 
     print(f"提取音频: {input_file} -> {output_file}", file=sys.stderr)
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -71,6 +116,7 @@ def extract_audio_local(input_file, output_file, audio_format):
 
 def show_info(url, args):
     """查看视频信息，不下载。"""
+    require_cmd('yt-dlp')
     cmd = ['yt-dlp', '--dump-json', '--no-download']
     if args.cookies:
         cmd += ['--cookies', args.cookies]
@@ -105,6 +151,9 @@ def show_info(url, args):
 
 def download_url(url, args):
     """用 yt-dlp 从 URL 下载。"""
+    require_cmd('yt-dlp')
+    if args.audio_only:
+        require_cmd('ffmpeg')
     platform, tip = detect_platform(url)
 
     cmd = ['yt-dlp']
@@ -116,7 +165,7 @@ def download_url(url, args):
         cmd += ['--cookies-from-browser', args.cookies_from_browser]
     elif tip:
         print(f"提示: {platform} - {tip}", file=sys.stderr)
-        print(f"  可用 --cookies-from-browser chrome 自动获取", file=sys.stderr)
+        print("  推荐让用户上传 Netscape cookies 文件到 uploads/ 后用 --cookies 指定", file=sys.stderr)
 
     # 音频 or 视频
     if args.audio_only:
@@ -125,10 +174,7 @@ def download_url(url, args):
         cmd += ['-f', FORMAT_MAP.get(args.quality, FORMAT_MAP['best'])]
 
     # 输出路径
-    out_tpl = args.output
-    if out_tpl and os.path.isdir(out_tpl):
-        out_tpl = os.path.join(out_tpl, '%(title)s.%(ext)s')
-    cmd += ['-o', out_tpl or '%(title)s.%(ext)s']
+    cmd += ['-o', resolve_download_template(args.output)]
 
     # 默认不下载播放列表
     if not args.playlist:
@@ -147,7 +193,7 @@ def download_url(url, args):
         print(f"\n下载失败（退出码 {r.returncode}）", file=sys.stderr)
         if tip:
             print(f"建议: {tip}", file=sys.stderr)
-            print(f"  尝试 --cookies-from-browser chrome", file=sys.stderr)
+            print("  优先请用户上传 Netscape cookies 文件到 uploads/ 后用 --cookies 指定", file=sys.stderr)
         print(f"如果 yt-dlp 无法处理该链接，可手动下载后传本地文件路径", file=sys.stderr)
         sys.exit(1)
 
@@ -160,7 +206,7 @@ def main():
 示例:
   %(prog)s "https://www.bilibili.com/video/BV1xx411c7mD"
   %(prog)s -a "https://www.douyin.com/video/xxx"
-  %(prog)s -a --cookies-from-browser chrome "URL"
+  %(prog)s -a --cookies uploads/site.cookies.txt "URL"
   %(prog)s -a local_video.mp4
   %(prog)s --info "URL"
 """)
@@ -176,11 +222,14 @@ def main():
     p.add_argument('-o', '--output', help='输出文件路径或目录')
     p.add_argument('--cookies', help='cookies 文件路径（Netscape 格式）')
     p.add_argument('--cookies-from-browser', metavar='BROWSER',
-                   help='从浏览器导入 cookies（chrome/firefox/safari）')
+                   choices=['chrome', 'firefox'],
+                   help='从容器内浏览器 profile 导入 cookies（仅在用户确认授权且 profile 存在时使用）')
     p.add_argument('--info', action='store_true',
                    help='仅查看视频信息，不下载')
     p.add_argument('--playlist', action='store_true',
                    help='下载完整播放列表（默认仅单视频）')
+    p.add_argument('--overwrite', action='store_true',
+                   help='允许覆盖已存在的本地音频提取输出文件')
 
     args = p.parse_args()
 
@@ -192,8 +241,8 @@ def main():
         if not args.audio_only:
             print("本地文件无需下载。如需提取音频，请加 -a 参数", file=sys.stderr)
             sys.exit(1)
-        out = args.output or f"{Path(args.input).stem}.{args.audio_format}"
-        extract_audio_local(args.input, out, args.audio_format)
+        out = resolve_local_output(args.input, args.output, args.audio_format)
+        extract_audio_local(args.input, out, args.audio_format, args.overwrite)
     elif args.info:
         show_info(args.input, args)
     else:

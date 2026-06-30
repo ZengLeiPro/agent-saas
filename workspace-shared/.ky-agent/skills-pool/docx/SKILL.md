@@ -10,6 +10,14 @@ license: Proprietary. LICENSE.txt has complete terms
 
 A .docx file is a ZIP archive containing XML files.
 
+## ACS Sandbox Rules
+
+- Resolve bundled scripts relative to the current `docx` skill directory; do not assume cwd or `.claude/skills/docx/`.
+- User uploads normally come from `uploads/`.
+- Final `.docx`, `.pdf`, extracted `.md`, and image outputs should be written under `assets/yyyymmdd/`.
+- Python dependencies must come from the workspace `.venv` or the ACS image. Do not use Homebrew, `sudo pip`, `pip install --user`, `--break-system-packages`, a new venv, or global npm installs during a task.
+- LibreOffice profile and shim state are isolated by bundled scripts; do not override them with fixed `/tmp` paths.
+
 ## Quick Reference
 
 | Task | Approach |
@@ -23,24 +31,24 @@ A .docx file is a ZIP archive containing XML files.
 Legacy `.doc` files must be converted before editing:
 
 ```bash
-python scripts/office/soffice.py --headless --convert-to docx document.doc
+python <docx skill dir>/scripts/office/soffice.py --headless --convert-to docx uploads/document.doc --outdir assets/20260630/
 ```
 
 ### Reading Content
 
 ```bash
 # Text extraction with tracked changes
-pandoc --track-changes=all document.docx -o output.md
+pandoc --track-changes=all uploads/document.docx -o assets/20260630/output.md
 
 # Raw XML access
-python scripts/office/unpack.py document.docx unpacked/
+python <docx skill dir>/scripts/office/unpack.py uploads/document.docx unpacked/
 ```
 
 ### Converting to Images
 
 ```bash
-python scripts/office/soffice.py --headless --convert-to pdf document.docx
-pdftoppm -jpeg -r 150 document.pdf page
+python <docx skill dir>/scripts/office/soffice.py --headless --convert-to pdf uploads/document.docx --outdir assets/20260630/
+pdftoppm -jpeg -r 150 assets/20260630/document.pdf assets/20260630/page
 ```
 
 ### Accepting Tracked Changes
@@ -48,14 +56,14 @@ pdftoppm -jpeg -r 150 document.pdf page
 To produce a clean document with all tracked changes accepted (requires LibreOffice):
 
 ```bash
-python scripts/accept_changes.py input.docx output.docx
+python <docx skill dir>/scripts/accept_changes.py uploads/input.docx assets/20260630/output.docx
 ```
 
 ---
 
 ## Creating New Documents
 
-Generate .docx files with JavaScript, then validate. Install: `npm install -g docx`
+Generate .docx files with JavaScript, then validate. Use a project-local dependency or an ACS image provided `docx` package; do not run `npm install -g docx` during a task.
 
 ### Setup
 ```javascript
@@ -68,7 +76,7 @@ const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, ImageR
         VerticalAlign, PageNumber, PageBreak } = require('docx');
 
 const doc = new Document({ sections: [{ children: [/* content */] }] });
-Packer.toBuffer(doc).then(buffer => fs.writeFileSync("doc.docx", buffer));
+Packer.toBuffer(doc).then(buffer => fs.writeFileSync("assets/20260630/doc.docx", buffer));
 ```
 
 ### Validation
@@ -409,9 +417,9 @@ Extracts XML, pretty-prints, merges adjacent runs, and converts smart quotes to 
 
 Edit files in `unpacked/word/`. See XML Reference below for patterns.
 
-**Use "Claude" as the author** for tracked changes and comments, unless the user explicitly requests use of a different name.
+Use the user-specified author for tracked changes and comments. If the user does not specify one, use the current agent/organization convention or a neutral author name; do not hard-code `"Claude"` for customer-facing files.
 
-**Use the Edit tool directly for string replacement. Do not write Python scripts.** Scripts introduce unnecessary complexity. The Edit tool shows exactly what is being replaced.
+Use the current environment's precise file-editing tool for simple XML string replacement. Avoid writing one-off scripts for trivial replacements; direct edits make the exact change easier to review.
 
 **CRITICAL: Use smart quotes for new content.** When adding text with apostrophes or quotes, use XML entities to produce smart quotes:
 ```xml
@@ -435,7 +443,7 @@ Then add markers to document.xml (see Comments in XML Reference).
 
 ### Step 3: Pack
 ```bash
-python scripts/office/pack.py unpacked/ output.docx --original document.docx
+python <docx skill dir>/scripts/office/pack.py unpacked/ assets/20260630/output.docx --original uploads/document.docx
 ```
 Validates with auto-repair, condenses XML, and creates DOCX. Use `--validate false` to skip.
 
@@ -585,6 +593,8 @@ After running `comment.py` (see Step 2), add markers to document.xml. For replie
 ## Dependencies
 
 - **pandoc**: Text extraction
-- **docx**: `npm install -g docx` (new documents)
+- **docx**: project-local or ACS image provided `docx` package (new documents); no global npm install during a task
 - **LibreOffice**: PDF conversion (auto-configured for sandboxed environments via `scripts/office/soffice.py`)
 - **Poppler**: `pdftoppm` for images
+- **Python packages**: `defusedxml`, `lxml` for bundled XML/Office helpers, provided by ACS image or workspace `.venv`
+- **gcc**: only needed if LibreOffice AF_UNIX shim must be compiled at runtime

@@ -4,9 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>[必填] 替换为 PPT 标题 · Deck Title</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@300;400;500;600&family=Noto+Serif+SC:wght@300;400;500;600;700;900&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <style>
   :root{
     /* ============ 主题色(默认:🖋 墨水经典) ============
@@ -21,11 +18,11 @@
     --ink-tint:#18181a;
 
     /* ============ 字体(跨主题固定) ============ */
-    --mono:"IBM Plex Mono",ui-monospace,monospace;
-    --serif-en:"Playfair Display","Source Serif 4",Georgia,serif;
-    --serif-body-en:"Source Serif 4",Georgia,serif;
-    --serif-zh:"Noto Serif SC",source-han-serif-sc,serif;
-    --sans-zh:"Noto Sans SC",source-han-sans-sc,sans-serif;
+    --mono:"SF Mono","IBM Plex Mono","Cascadia Code","Consolas",ui-monospace,monospace;
+    --serif-en:Georgia,"Times New Roman",serif;
+    --serif-body-en:Georgia,"Times New Roman",serif;
+    --serif-zh:"Songti SC","Noto Serif SC","Source Han Serif SC","SimSun",serif;
+    --sans-zh:"PingFang SC","Microsoft YaHei UI","Microsoft YaHei","Noto Sans SC","Source Han Sans SC",sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:100%;height:100%;overflow:hidden;background:var(--ink);color:var(--paper);font-family:var(--sans-zh);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
@@ -144,7 +141,7 @@
   .slide.dark .hi::after{content:"";position:absolute;left:-.1em;right:-.1em;bottom:-.05em;height:.28em;background:rgba(var(--paper-rgb),.15);z-index:-1}
   .slide.light .hi::after{content:"";position:absolute;left:-.1em;right:-.1em;bottom:-.05em;height:.28em;background:rgba(var(--ink-rgb),.08);z-index:-1}
 
-  /* ============ Icons（Lucide via CDN） ============ */
+  /* ============ Icons（template-bundled lucide-compatible helper） ============ */
   .ico{width:1em;height:1em;display:inline-block;vertical-align:-.12em;stroke:currentColor;fill:none;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
   .ico-lg,.ico-md,.ico-sm{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
   .ico-lg{width:2.6vw;height:2.6vw;stroke-width:1.2;display:inline-block}
@@ -418,7 +415,7 @@
      - quote(含 [data-anim="line"]):逐行 600ms 淡入
      - directional(含 [data-anim="left|right"]):左→分隔线→右
      - pipeline(data-animate="pipeline"):Space/→ 手动推进
-     Motion One 没加载成功时(CDN 断 + 本地丢),所有 [data-anim] 会兜底显示。
+     Motion One 本地文件没加载成功时,原生 WAAPI 兜底会继续播放；动画完全不可用时所有 [data-anim] 会兜底显示。
   */
   [data-anim]{opacity:1}
   body.motion-ready [data-anim]{opacity:0}
@@ -732,27 +729,91 @@ addEventListener('touchend',e=>{
 
 go(0);
 </script>
-<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-<script>lucide.createIcons();</script>
+<script>
+/* Self-contained lucide-compatible subset. Unknown names render as a clean square icon. */
+window.lucide={createIcons(){
+  const paths={
+    "bookmark":'<path d="M6 4h12v17l-6-4-6 4z"/>',
+    "check-circle":'<path d="M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0z"/><path d="m8.5 12.5 2.2 2.2 4.8-5.2"/>',
+    "compass":'<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2.2 5-4.8 2.2 2.2-5z"/>',
+    "layers":'<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/><path d="m3 18 9 5 9-5"/>',
+    "square-stack":'<rect x="4" y="4" width="13" height="13"/><path d="M8 8h12v12H8z"/>',
+    "target":'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>'
+  };
+  document.querySelectorAll('i[data-lucide]').forEach(el=>{
+    const name=el.getAttribute('data-lucide')||'';
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('viewBox','0 0 24 24');
+    svg.setAttribute('fill','none');
+    svg.setAttribute('stroke','currentColor');
+    svg.setAttribute('stroke-width','1.8');
+    svg.setAttribute('stroke-linecap','square');
+    svg.setAttribute('stroke-linejoin','miter');
+    svg.setAttribute('class',('lucide '+(el.className||'')).trim());
+    svg.setAttribute('aria-hidden','true');
+    svg.innerHTML=paths[name]||'<rect x="5" y="5" width="14" height="14"/>';
+    el.replaceWith(svg);
+  });
+}};
+window.lucide.createIcons();
+</script>
 
-<!-- ============ Motion One 动效引擎（本地优先,CDN 兜底） ============
-     加载策略:先 ./assets/motion.min.js(本地,离线可用),失败 fallback 到 jsDelivr CDN
+<!-- ============ 动效引擎（本地优先,原生 WAAPI 兜底） ============
+     加载策略:先 ./assets/motion.min.js(本地,离线可用),失败则使用内置 WAAPI 轻量兜底
      加载完成后挂 window.__playSlide / window.__pipeAdvance,
      导航脚本会在翻页中段调用 __playSlide(idx),键盘/滚轮/触屏会在翻页前调用 __pipeAdvance()
-     双双失败时会兜底把所有 [data-anim] 设为可见,不让动效破坏阅读
+     若浏览器不支持动画,兜底把所有 [data-anim] 设为可见,不让动效破坏阅读
 -->
 <script type="module">
 let motion;
+function fallbackStagger(step,{start=0}={}){return i=>start+i*step}
+function px(v){return typeof v==='number'?`${v}px`:v}
+function normalizeFrames(keyframes){
+  const entries=Object.entries(keyframes||{});
+  const len=Math.max(1,...entries.map(([,v])=>Array.isArray(v)?v.length:1));
+  const frames=[];
+  for(let i=0;i<len;i++){
+    const frame={};
+    const transforms=[];
+    for(const [k,v0] of entries){
+      const v=Array.isArray(v0)?v0[Math.min(i,v0.length-1)]:v0;
+      if(k==='x') transforms.push(`translateX(${px(v)})`);
+      else if(k==='y') transforms.push(`translateY(${px(v)})`);
+      else if(k==='scale') transforms.push(`scale(${v})`);
+      else if(k==='scaleX') transforms.push(`scaleX(${v})`);
+      else if(k==='scaleY') transforms.push(`scaleY(${v})`);
+      else if(k==='rotate') transforms.push(`rotate(${typeof v==='number'?`${v}deg`:v})`);
+      else frame[k]=v;
+    }
+    if(transforms.length) frame.transform=[frame.transform,...transforms].filter(Boolean).join(' ');
+    frames.push(frame);
+  }
+  return frames;
+}
+function fallbackAnimate(targets,keyframes,opts={}){
+  const list=typeof targets==='string'?[...document.querySelectorAll(targets)]:(targets instanceof Element?[targets]:[...(targets||[])]);
+  const delay=opts.delay||0;
+  const easing=Array.isArray(opts.easing)?`cubic-bezier(${opts.easing.join(',')})`:(opts.easing||'ease-out');
+  const animations=list.map((el,i)=>{
+    const d=typeof delay==='function'?delay(i,list.length):delay;
+    if(!el.animate){
+      Object.assign(el.style, normalizeFrames(keyframes).at(-1)||{});
+      return {finished:Promise.resolve(),cancel(){}};
+    }
+    return el.animate(normalizeFrames(keyframes),{
+      duration:(opts.duration||.3)*1000,
+      delay:d*1000,
+      easing,
+      fill:'both'
+    });
+  });
+  return {finished:Promise.all(animations.map(a=>a.finished.catch(()=>{}))),cancel(){animations.forEach(a=>a.cancel&&a.cancel())}};
+}
 try {
   motion = await import('./assets/motion.min.js');
 } catch(e1) {
-  try {
-    motion = await import('https://cdn.jsdelivr.net/npm/motion@11.11.17/+esm');
-  } catch(e2) {
-    console.warn('[motion] local + CDN both failed, disabling animations', e1, e2);
-    document.querySelectorAll('[data-anim]').forEach(el=>{el.style.opacity='1';el.style.transform='none'});
-    document.querySelectorAll('[data-animate="pipeline"] [data-anim]').forEach(el=>el.style.opacity='1');
-  }
+  console.warn('[motion] local file failed, using native animation fallback', e1);
+  motion={animate:fallbackAnimate,stagger:fallbackStagger};
 }
 
 if(motion){

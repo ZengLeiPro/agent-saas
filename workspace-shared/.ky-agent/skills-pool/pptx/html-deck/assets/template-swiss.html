@@ -4,9 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>[必填] 替换为 PPT 标题 · Deck Title</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600&family=Noto+Sans+SC:wght@200;300;400;500;700;900&display=swap" rel="stylesheet">
 <style>
   :root{
     /* ============ 主题色(默认: 🔵 克莱因蓝 IKB) ============
@@ -36,9 +33,9 @@
     --border-strong:#a3a3a3;       /* gray 40, 强分隔 */
 
     /* ============ 字体(跨主题固定) ============ */
-    --sans:"Inter","Helvetica Neue","Helvetica","Arial","Segoe UI Variable","Segoe UI",system-ui,-apple-system,sans-serif;
+    --sans:"Helvetica Neue","Helvetica","Arial","Segoe UI Variable","Segoe UI",system-ui,-apple-system,sans-serif;
     --sans-zh:"PingFang SC","Hiragino Sans GB","Source Han Sans SC","Noto Sans SC","Microsoft YaHei UI","Microsoft YaHei","微软雅黑",sans-serif;
-    --mono:"JetBrains Mono","IBM Plex Mono","SF Mono","Cascadia Code","Consolas","Courier New",ui-monospace,monospace;
+    --mono:"SF Mono","IBM Plex Mono","Cascadia Code","Consolas","Courier New",ui-monospace,monospace;
 
     /* ============ Carbon 2x Grid 间距模数 (基础 8px) ============
        参考: https://carbondesignsystem.com/elements/2x-grid/overview/
@@ -492,7 +489,7 @@
     opacity:.6;
   }
 
-  /* ============ Icons (Lucide via CDN) ============ */
+  /* ============ Icons (template-bundled lucide-compatible helper) ============ */
   .ico{width:1em;height:1em;display:inline-block;vertical-align:-.12em;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
   .ico-lg,.ico-md,.ico-sm{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
   .ico-lg{width:2.4vw;height:2.4vw;stroke-width:1.4;display:inline-block}
@@ -1595,22 +1592,85 @@ const initialSlideParam = new URLSearchParams(location.search).get('slide');
 const initialSlide = initialSlideParam ? Number(initialSlideParam) - 1 : 0;
 go(Number.isFinite(initialSlide) ? initialSlide : 0);
 </script>
-<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-<script>lucide.createIcons();</script>
+<script>
+/* Self-contained lucide-compatible subset. Unknown names render as a clean square icon. */
+window.lucide={createIcons(){
+  const paths={
+    "bookmark":'<path d="M6 4h12v17l-6-4-6 4z"/>',
+    "check-circle":'<path d="M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0z"/><path d="m8.5 12.5 2.2 2.2 4.8-5.2"/>',
+    "compass":'<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2.2 5-4.8 2.2 2.2-5z"/>',
+    "layers":'<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/><path d="m3 18 9 5 9-5"/>',
+    "square-stack":'<rect x="4" y="4" width="13" height="13"/><path d="M8 8h12v12H8z"/>',
+    "target":'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>'
+  };
+  document.querySelectorAll('i[data-lucide]').forEach(el=>{
+    const name=el.getAttribute('data-lucide')||'';
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('viewBox','0 0 24 24');
+    svg.setAttribute('fill','none');
+    svg.setAttribute('stroke','currentColor');
+    svg.setAttribute('stroke-width','1.8');
+    svg.setAttribute('stroke-linecap','square');
+    svg.setAttribute('stroke-linejoin','miter');
+    svg.setAttribute('class',('lucide '+(el.className||'')).trim());
+    svg.setAttribute('aria-hidden','true');
+    svg.innerHTML=paths[name]||'<rect x="5" y="5" width="14" height="14"/>';
+    el.replaceWith(svg);
+  });
+}};
+window.lucide.createIcons();
+</script>
 
-<!-- Motion One 动效引擎 (与原模板一致) -->
+<!-- 动效引擎:本地 Motion One 优先,失败时使用原生 WAAPI 轻量兜底 -->
 <script type="module">
 let motion;
+function px(v){return typeof v==='number'?`${v}px`:v}
+function normalizeFrames(keyframes){
+  const entries=Object.entries(keyframes||{});
+  const len=Math.max(1,...entries.map(([,v])=>Array.isArray(v)?v.length:1));
+  const frames=[];
+  for(let i=0;i<len;i++){
+    const frame={};
+    const transforms=[];
+    for(const [k,v0] of entries){
+      const v=Array.isArray(v0)?v0[Math.min(i,v0.length-1)]:v0;
+      if(k==='x') transforms.push(`translateX(${px(v)})`);
+      else if(k==='y') transforms.push(`translateY(${px(v)})`);
+      else if(k==='scale') transforms.push(`scale(${v})`);
+      else if(k==='scaleX') transforms.push(`scaleX(${v})`);
+      else if(k==='scaleY') transforms.push(`scaleY(${v})`);
+      else if(k==='rotate') transforms.push(`rotate(${typeof v==='number'?`${v}deg`:v})`);
+      else frame[k]=v;
+    }
+    if(transforms.length) frame.transform=[frame.transform,...transforms].filter(Boolean).join(' ');
+    frames.push(frame);
+  }
+  return frames;
+}
+function fallbackAnimate(targets,keyframes,opts={}){
+  const list=typeof targets==='string'?[...document.querySelectorAll(targets)]:(targets instanceof Element?[targets]:[...(targets||[])]);
+  const delay=opts.delay||0;
+  const easing=Array.isArray(opts.easing)?`cubic-bezier(${opts.easing.join(',')})`:(opts.easing||'ease-out');
+  const animations=list.map((el,i)=>{
+    const d=typeof delay==='function'?delay(i,list.length):delay;
+    if(!el.animate){
+      Object.assign(el.style, normalizeFrames(keyframes).at(-1)||{});
+      return {finished:Promise.resolve(),cancel(){}};
+    }
+    return el.animate(normalizeFrames(keyframes),{
+      duration:(opts.duration||.3)*1000,
+      delay:d*1000,
+      easing,
+      fill:'both'
+    });
+  });
+  return {finished:Promise.all(animations.map(a=>a.finished.catch(()=>{}))),cancel(){animations.forEach(a=>a.cancel&&a.cancel())}};
+}
 try {
   motion = await import('./assets/motion.min.js');
 } catch(e1) {
-  try {
-    motion = await import('https://cdn.jsdelivr.net/npm/motion@11.11.17/+esm');
-  } catch(e2) {
-    console.warn('[motion] local + CDN both failed, disabling animations', e1, e2);
-    document.querySelectorAll('[data-anim]').forEach(el=>{el.style.opacity='1';el.style.transform='none'});
-    document.querySelectorAll('[data-animate="pipeline"] [data-anim]').forEach(el=>el.style.opacity='1');
-  }
+  console.warn('[motion] local file failed, using native animation fallback', e1);
+  motion={animate:fallbackAnimate};
 }
 
 if(motion){

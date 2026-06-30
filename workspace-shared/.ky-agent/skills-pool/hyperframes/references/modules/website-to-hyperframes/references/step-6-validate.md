@@ -17,8 +17,8 @@ Score each item 1–5. If any item scores below 3, fix it before continuing. **D
 [ ] No mid-video dark frames              → state explicitly which frames (if any) are dark and why
 [ ] Brand assets actually visible         → for each beat, name which captured SVG / illustration / screenshot is on screen and at what timestamp. If a beat shows zero captured assets, justify why.
 [ ] Audio duration matches video ±0.5s    → paste both numbers
-[ ] animation-map.json generated          → run `node <animation-map-path> <project-dir>` (locate: `find "$HOME" -path '*/hyperframes/scripts/animation-map.mjs' 2>/dev/null | head -1`); confirm every beat has events listed and no bbox/flag warnings
-[ ] w2h-verify report                     → run `node <w2h-verify-path> <project-dir>` (locate via the find helper below); paste the FULL output (every row, every percent) verbatim into your final user-facing summary — see "w2h-verify — the source of truth" below
+[ ] animation-map.json generated          → run `node <animation-map-path> <project-dir>` (main agent resolves this path from the parent hyperframes skill directory); confirm every beat has events listed and no bbox/flag warnings
+[ ] w2h-verify report                     → run `node <w2h-verify-path> <project-dir>` (main agent resolves this path from this module directory); paste the FULL output (every row, every percent) verbatim into your final user-facing summary — see "w2h-verify — the source of truth" below
 [ ] Audio + motion verification done      → see "Audio + motion verification" below; played the full preview, confirmed SFX lands at storyboard timestamps
 [ ] Critic sub-agent run                  → paste its single biggest quality gap finding, verbatim
 ```
@@ -42,7 +42,7 @@ Run it as the LAST gate in your DoD pass, after fixing everything else:
 node <w2h-verify-path> <project-dir>
 ```
 
-(Locate `<w2h-verify-path>`: `find "$HOME" -path '*/website-to-hyperframes/scripts/w2h-verify.mjs' -maxdepth 12 2>/dev/null | head -1` — matches whether the skill lives under `skills/` or `references/modules/`.)
+`<w2h-verify-path>` is `scripts/w2h-verify.mjs` relative to this website-to-hyperframes module directory. Resolve it once in the main agent and pass the exact path through; do not make workers discover it with `find "$HOME"`.
 
 **The script's output is the deliverable.** Paste the entire report — the table, the percentages, the FAIL lines — verbatim into your final user-facing summary, in the "What I verified" / "What I did NOT verify" section. The user will read it directly. You don't get to summarize, simplify, or omit rows.
 
@@ -128,10 +128,6 @@ After lint and validate pass, capture snapshot frames to SEE your own output. **
 Scale snapshot count to the video — not a fixed number. Formula: `max(beats × 3, ceil(duration_seconds / 2))`. A 3-beat 10s video: max(9, 5) = 9 frames. An 8-beat 60s video: max(24, 30) = 30 frames. Aim for at least 3 frames per beat: entrance, hold, and near-exit.
 
 ```bash
-# The CLI auto-loads .env from the current working directory, so a
-# .env file in <project-dir> with GEMINI_API_KEY=... is enough — no
-# explicit `export` needed. If you've set GEMINI_API_KEY in your shell
-# environment, that works too.
 npx hyperframes snapshot <project-dir> --frames <N>
 
 # Pass a custom question to Gemini instead of the default prompt:
@@ -141,7 +137,7 @@ npx hyperframes snapshot <project-dir> --frames <N> \
 
 Output lands in `<project-dir>/snapshots/`. Gemini writes `snapshots/descriptions.md` automatically.
 
-**If `descriptions.md` is missing or empty after the snapshot:** `GEMINI_API_KEY` was not set — confirm it's in `<project-dir>/.env` (the CLI loads .env from CWD) or in your shell environment. Re-run after fixing.
+**If `descriptions.md` is missing or empty after the snapshot:** `GEMINI_API_KEY` was not available from the runtime environment/secret binding, or the key/quota failed. Do not write keys into the project. Either configure the platform secret and re-run, or use the fallback below.
 
 **Fallback if Gemini is genuinely unavailable** (no key, key invalid, or quota exhausted): use your own image-reading capability to inspect each frame in `snapshots/` directly. For each frame, write one sentence describing what's on screen — focus on the dimensions Gemini would catch (blank/dark frames, missing brand assets, text legibility, layout problems). Save these descriptions as `snapshots/descriptions.md` yourself so the rest of the checklist still has a single source of truth. State explicitly in your verdict that descriptions were agent-authored, not Gemini-authored, so the user knows to spot-check.
 
@@ -235,8 +231,8 @@ Open the Studio URL in a browser via Playwright (or another browser tool you hav
 When Playwright isn't available, render at 540p (fast — ~30s for a 30s video) and read the MP4:
 
 ```bash
-node /<repo-root>/packages/cli/dist/cli.js render <project-dir> \
-  --width 960 --height 540 --quality medium
+npx hyperframes render <project-dir> \
+  --resolution 540p --quality draft --workers 1 --output <project-dir>/../motion-check.mp4
 ```
 
 Then sample the resulting MP4 at minimum 5fps (use `ffmpeg -i <mp4> -r 5 frames/frame-%04d.png` if needed). Read those frames sequentially. For each SFX moment in STORYBOARD.md, find the corresponding frame and confirm the visual matches.
@@ -249,7 +245,7 @@ If neither Path 1 nor Path 2 is possible in this session, your final summary MUS
 **Audio + motion verification: NOT POSSIBLE in this session.**
 - Snapshots cover: <N> frames out of <video_duration × fps> total (<percentage>% coverage)
 - NOT verified: motion between snapshots, SFX/visual timing alignment, shader transition smoothness, audio mix levels, narration sync to beats
-- Recommended user action: open the preview URL above and play start-to-end; flag anything that feels off
+- Recommended user action: open the preview/review artifact above and play start-to-end when available; flag anything that feels off
 ```
 
 **Forbidden everywhere:**
@@ -260,19 +256,19 @@ If neither Path 1 nor Path 2 is possible in this session, your final summary MUS
 
 ## Preview (always do this)
 
-Always start the preview so the user can see and scrub through the project:
+Start the preview when the platform can expose the port so the user can see and scrub through the project:
 
 ```bash
 npx hyperframes preview
 ```
 
-The Studio URL is the deliverable. In your final response, always include it:
+If the port is exposed, the Studio URL is the deliverable. Include it:
 
 ```text
 http://localhost:<port>/#project/<project-name>
 ```
 
-Use the actual port and project name from the preview command output. Do NOT present `index.html` as the project link — that's the source file. The user-facing project is the running Studio preview.
+Use the actual port and project name from the preview command output. Do NOT present `index.html` as the project link — that's the source file. If the platform cannot expose the port, say so and deliver snapshots/contact sheet, verification report, and any rendered MP4 instead.
 
 ### Honest disclosure — REQUIRED in your final summary
 
@@ -287,7 +283,7 @@ Your final message to the user MUST end with these two sections, even if everyth
 
 **What I did NOT verify (spot-check these):**
 - <one bullet per item you skipped, deferred, or could not complete — and why>
-  (e.g. "Audio + motion verification deferred — no Playwright in this session. SFX timing is computed but unconfirmed in playback.")
+  (e.g. "Audio + motion verification deferred — no Playwright/port preview in this session. SFX timing is computed but unconfirmed in playback.")
   (e.g. "animation-map.json skipped — script not found at expected path; manually confirmed timeline coverage in per-beat reads instead.")
   (e.g. "Beat 5 has a 0.4s window where the doc card is visible but contents are still opacity 0 — sub-agent flagged it, I chose not to fix because it was below my threshold; worth your eye.")
 ```
@@ -313,16 +309,16 @@ When rendering, **always specify quality and resolution explicitly.** Don't use 
 
 ```bash
 # Standard quality, 1080p landscape (default for most videos)
-npx hyperframes render --output renders/<name>.mp4 --quality standard --fps 30
+npx hyperframes render <project-dir> --output <project-dir>/../<name>.mp4 --quality standard --fps 30 --workers 1
 
 # High quality for final delivery
-npx hyperframes render --output renders/<name>.mp4 --quality high --fps 30
+npx hyperframes render <project-dir> --output <project-dir>/../<name>.mp4 --quality high --fps 30 --workers 1
 
 # Portrait for Instagram Stories / TikTok
-npx hyperframes render --output renders/<name>.mp4 --quality standard --fps 30 --resolution portrait
+npx hyperframes render <project-dir> --output <project-dir>/../<name>-portrait.mp4 --quality standard --fps 30 --resolution portrait --workers 1
 
 # 4K for premium output
-npx hyperframes render --output renders/<name>.mp4 --quality high --fps 30 --resolution 4k
+npx hyperframes render <project-dir> --output <project-dir>/../<name>-4k.mp4 --quality high --fps 30 --resolution 4k --workers 1
 ```
 
 **Available options:**
@@ -333,7 +329,7 @@ npx hyperframes render --output renders/<name>.mp4 --quality high --fps 30 --res
 | `--fps`           | `24`, `30`, `60`                                                                           | 30 is standard, 24 for cinematic feel, 60 for smooth motion                        |
 | `--resolution`    | `landscape` (1920×1080), `portrait` (1080×1920), `landscape-4k` (3840×2160), `portrait-4k` | Aliases: `1080p`, `4k`, `uhd`                                                      |
 | `--format`        | `mp4`, `webm`, `mov`, `png-sequence`                                                       | mp4 default. mov/webm for transparency. png-sequence for AE/Nuke                   |
-| `--output`        | path                                                                                       | Always set to `renders/<project-name>.mp4` for readable names                      |
+| `--output`        | path                                                                                       | Always set explicitly; in ACS prefer `<project-dir>/../<project-name>.mp4`         |
 | `--gpu`           | flag                                                                                       | Use GPU encoding if available (faster)                                             |
 | `--crf`           | integer                                                                                    | Override encoder quality (lower = better, mutually exclusive with --video-bitrate) |
 | `--video-bitrate` | e.g. `10M`                                                                                 | Target bitrate (mutually exclusive with --crf)                                     |

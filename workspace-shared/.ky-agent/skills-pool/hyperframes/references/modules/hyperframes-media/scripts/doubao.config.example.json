@@ -1,6 +1,6 @@
 {
-  "doubaoAppId": "在火山引擎语音技术控制台获取的 App ID",
-  "doubaoApiKey": "对应的 Access Token",
+  "doubaoAppId": "<DOUBAO_APP_ID>",
+  "doubaoApiKey": "<DOUBAO_ACCESS_TOKEN>",
   "defaultVoice": "cancan",
   "defaultSpeed": 1.2
 }

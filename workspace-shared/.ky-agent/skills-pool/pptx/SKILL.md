@@ -6,6 +6,15 @@ license: See pptx-binary/LICENSE.txt (Anthropic) and html-deck/LICENSE (MIT, op7
 
 # Presentation Skill (Two Branches)
 
+> **Brand colors (Kaiyan)**: primary blue `#2E56E1`, accent orange `#E8843A`, orange text `#A0500E` (not `#B65E16`); Chinese font stack in ACS should prefer `Noto Sans SC`, `Microsoft YaHei UI`, `PingFang SC`, `sans-serif`. See `brand-guidelines` skill for the full spec. For pptx-binary use `RGBColor(0x2E, 0x56, 0xE1)`.
+
+## ACS Sandbox Rules
+
+- Resolve branch scripts relative to the active skill directory; do not assume `.claude/skills/pptx/`, `/Users/admin/...`, or `~/code/...`.
+- Final `.pptx`, `.pdf`, thumbnail grids, and HTML deck deliverables should be written under `assets/yyyymmdd/`.
+- HTML deck files delivered to the user must be single-file self-contained: no CDN, no remote fonts, no sibling JS/CSS/image dependency. Treat bundled templates as source templates until the final HTML is inlined.
+- Dependencies must come from the ACS image, project-local installs, or workspace `.venv`; do not run global npm installs or system package managers during a task.
+
 This skill handles all presentation-related tasks across two very different output formats. **Before doing anything, decide which branch fits the user's intent**, then read that branch's own `SKILL.md` for the full workflow.
 
 ## Branch Decision
@@ -31,7 +40,7 @@ This skill handles all presentation-related tasks across two very different outp
 
 → **Read [`pptx-binary/SKILL.md`](pptx-binary/SKILL.md) for the full workflow.**
 
-All scripts and references live under `pptx-binary/` — when that SKILL.md says `scripts/thumbnail.py` it means `pptx-binary/scripts/thumbnail.py`. The Read tool resolves these correctly because that SKILL.md is read from inside `pptx-binary/`.
+All scripts and references live under `pptx-binary/` — when that SKILL.md says `scripts/thumbnail.py` it means `pptx-binary/scripts/thumbnail.py`. Resolve those paths from the `pptx-binary` skill directory.
 
 ## Branch B — HTML Deck (single-file, web presentation)
 

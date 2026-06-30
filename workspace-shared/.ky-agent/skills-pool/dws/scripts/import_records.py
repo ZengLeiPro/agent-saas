@@ -17,6 +17,9 @@ import sys
 import csv
 import json
 import subprocess
+from dws_runtime import patch_subprocess_for_dws, workspace_root
+
+patch_subprocess_for_dws()
 import os
 import re
 from pathlib import Path
@@ -37,7 +40,7 @@ def resolve_safe_path(
     path: str, allowed_root: Optional[str] = None
 ) -> Path:
     if allowed_root is None:
-        allowed_root = os.environ.get('OPENCLAW_WORKSPACE', os.getcwd())
+        allowed_root = os.environ.get('KY_WORKSPACE_ROOT') or os.environ.get('WORKSPACE_DIR') or str(workspace_root())
     allowed_root = Path(allowed_root).resolve()
     target_path = (
         Path(path).resolve()
@@ -52,7 +55,7 @@ def resolve_safe_path(
             f"路径超出允许范围：{path}\n"
             f"目标路径：{target_path}\n"
             f"允许根目录：{allowed_root}\n"
-            f"提示：设置 OPENCLAW_WORKSPACE 环境变量或确保文件在工作目录内"
+            f"提示：请从工作区根目录运行，或设置 KY_WORKSPACE_ROOT / WORKSPACE_DIR"
         )
 
 
@@ -326,5 +329,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-

@@ -16,16 +16,67 @@ import sys
 import os
 import re
 import base64
+import html as html_lib
 import shutil
 import subprocess
 import tempfile
-import urllib.request
 from pathlib import Path
 
 import mistune
 
 SCRIPT_DIR = Path(__file__).parent
 LOGOS_DIR = SCRIPT_DIR / "logos"
+PLACEHOLDER_IMAGE = "data:image/svg+xml;base64," + base64.b64encode(
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="240"><rect width="100%" height="100%" fill="#f5f5f5"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#777" font-size="24">image unavailable</text></svg>'
+).decode("utf-8")
+
+
+def esc(value):
+    """HTML-escape user supplied text fields."""
+    return html_lib.escape(str(value), quote=True)
+
+
+def today_ymd():
+    from datetime import datetime
+    return datetime.now().strftime("%Y%m%d")
+
+
+def default_output_dir():
+    return os.path.join(os.getcwd(), "assets", today_ymd(), "quotes")
+
+
+def safe_file_stem(value, fallback):
+    stem = re.sub(r"\s+", "", str(value or ""))
+    stem = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", stem)
+    stem = re.sub(r"[^0-9A-Za-z\u3400-\u9fff._-]+", "_", stem)
+    stem = re.sub(r"_+", "_", stem).strip("._-")
+    if not stem:
+        stem = fallback
+    return stem[:24]
+
+
+def resolve_inside(base_dir, filename):
+    base = Path(base_dir).resolve()
+    target = (base / filename).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError as exc:
+        raise ValueError(f"Refusing to write outside output directory: {filename}") from exc
+    return str(target)
+
+
+def unique_output_paths(output_dir, base_name):
+    from datetime import datetime
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    for i in range(100):
+        suffix = "" if i == 0 else f"_{stamp}" if i == 1 else f"_{stamp}_{i}"
+        name = f"{base_name}{suffix}"
+        html_path = resolve_inside(output_dir, f"{name}.html")
+        pdf_path = resolve_inside(output_dir, f"{name}.pdf")
+        json_path = resolve_inside(output_dir, f"{name}.json")
+        if not any(os.path.exists(p) for p in (html_path, pdf_path, json_path)):
+            return html_path, pdf_path, json_path
+    raise RuntimeError("Unable to find a non-conflicting output filename")
 
 
 def load_logo_base64(name):
@@ -48,19 +99,21 @@ def fmt_price(price):
 
 def embed_images(html, base_dir):
     """将 HTML 中的 img src 转换为 base64 内嵌"""
+    base = Path(base_dir).resolve()
 
     def _replace(match):
         src = match.group(1)
         if src.startswith("data:"):
             return match.group(0)
         try:
-            if src.startswith(("http://", "https://")):
-                req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0"})
-                data = urllib.request.urlopen(req, timeout=15).read()
-            else:
-                path = src if os.path.isabs(src) else os.path.join(base_dir, src)
-                with open(path, "rb") as f:
-                    data = f.read()
+            if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", src) or os.path.isabs(src):
+                raise ValueError("only relative image paths under the Markdown directory are allowed")
+
+            clean_src = src.split("?", 1)[0].split("#", 1)[0]
+            path = (base / clean_src).resolve()
+            path.relative_to(base)
+            with open(path, "rb") as f:
+                data = f.read()
 
             ext = src.rsplit(".", 1)[-1].lower().split("?")[0]
             mime_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
@@ -70,7 +123,7 @@ def embed_images(html, base_dir):
             return f'src="data:{mime};base64,{b64}"'
         except Exception as e:
             print(f"Warning: 图片嵌入失败 {src}: {e}", file=sys.stderr)
-            return match.group(0)
+            return f'src="{PLACEHOLDER_IMAGE}"'
 
     return re.sub(r'src="([^"]+)"', _replace, html)
 
@@ -81,9 +134,18 @@ def render_solution(solution_data, json_dir):
     if not md_file:
         return ""
 
-    # 相对路径基于 JSON 文件所在目录解析
-    if not os.path.isabs(md_file):
-        md_file = os.path.join(json_dir, md_file)
+    # 相对路径基于 JSON 文件所在目录解析，不允许绝对路径或跳出目录。
+    json_base = Path(json_dir).resolve()
+    if os.path.isabs(md_file):
+        print(f"Warning: 方案文件必须是 JSON 目录下的相对路径，已忽略 {md_file}", file=sys.stderr)
+        return ""
+    try:
+        md_path = (json_base / md_file).resolve()
+        md_path.relative_to(json_base)
+    except ValueError:
+        print(f"Warning: 方案文件路径不能跳出 JSON 目录，已忽略 {md_file}", file=sys.stderr)
+        return ""
+    md_file = str(md_path)
 
     if not os.path.exists(md_file):
         print(f"Warning: 方案文件不存在 {md_file}", file=sys.stderr)
@@ -92,12 +154,12 @@ def render_solution(solution_data, json_dir):
     with open(md_file, encoding="utf-8") as f:
         md_content = f.read()
 
-    md = mistune.create_markdown(plugins=["table", "strikethrough"], escape=False)
+    md = mistune.create_markdown(plugins=["table", "strikethrough"], escape=True)
     html = md(md_content)
     html = embed_images(html, os.path.dirname(os.path.abspath(md_file)))
 
     title = solution_data.get("title", "")
-    title_html = f'<div class="solution-main-title">{title}</div>' if title else ""
+    title_html = f'<div class="solution-main-title">{esc(title)}</div>' if title else ""
 
     return f"""
     <hr class="solution-divider">
@@ -121,13 +183,13 @@ def build_service_table(table):
     for idx, item in enumerate(table["items"], 1):
         desc = ""
         if item.get("description"):
-            desc = f'<br><span class="item-desc">{item["description"]}</span>'
-        remark_cell = f'<td class="center">{item.get("remark", "-")}</td>' if has_remark else ""
+            desc = f'<br><span class="item-desc">{esc(item["description"])}</span>'
+        remark_cell = f'<td class="center">{esc(item.get("remark", "-"))}</td>' if has_remark else ""
         rows += f"""
             <tr>
                 <td class="center">{idx}</td>
-                <td colspan="{content_colspan}">{item["name"]}{desc}</td>
-                <td class="center">{item["chargeType"]}</td>
+                <td colspan="{content_colspan}">{esc(item["name"])}{desc}</td>
+                <td class="center">{esc(item["chargeType"])}</td>
                 <td class="right bold">{fmt_price(item["price"])}</td>
                 {remark_cell}
             </tr>"""
@@ -137,14 +199,14 @@ def build_service_table(table):
         if row.get("highlight") and has_remark:
             summary += f"""
             <tr class="summary-row highlight-row">
-                <td colspan="{total_cols - 2}" class="right bold">{row["label"]}</td>
+                <td colspan="{total_cols - 2}" class="right bold">{esc(row["label"])}</td>
                 <td class="right bold" colspan="2">{fmt_price(row["value"])}</td>
             </tr>"""
         else:
             remark_empty = '<td class="center">-</td>' if has_remark else ""
             summary += f"""
             <tr class="summary-row">
-                <td colspan="{summary_colspan - (1 if has_remark else 0)}" class="right bold">{row["label"]}</td>
+                <td colspan="{summary_colspan - (1 if has_remark else 0)}" class="right bold">{esc(row["label"])}</td>
                 <td class="right bold">{fmt_price(row["value"])}</td>
                 {remark_empty}
             </tr>"""
@@ -152,7 +214,7 @@ def build_service_table(table):
     return f"""
         <table class="price-table">
             <tr class="section-header">
-                <td colspan="{total_cols}" class="bold">{table["title"]}</td>
+                <td colspan="{total_cols}" class="bold">{esc(table["title"])}</td>
             </tr>
             <tr class="col-header">
                 <td class="center bold" style="width:8%">序号</td>
@@ -172,18 +234,18 @@ def build_detailed_table(table):
     for idx, item in enumerate(table["items"], 1):
         desc = ""
         if item.get("description"):
-            desc = f'<br><span class="item-desc">{item["description"]}</span>'
+            desc = f'<br><span class="item-desc">{esc(item["description"])}</span>'
         remark = item.get("remark", "-")
         rows += f"""
             <tr>
                 <td class="center">{idx}</td>
-                <td>{item["name"]}{desc}</td>
-                <td class="center">{item.get("spec", "")}</td>
-                <td class="center">{item["chargeType"]}</td>
+                <td>{esc(item["name"])}{desc}</td>
+                <td class="center">{esc(item.get("spec", ""))}</td>
+                <td class="center">{esc(item["chargeType"])}</td>
                 <td class="right">{fmt_price(item["unitPrice"])}</td>
-                <td class="center">{item["quantity"]}</td>
+                <td class="center">{esc(item["quantity"])}</td>
                 <td class="right bold">{fmt_price(item["total"])}</td>
-                <td class="center">{remark}</td>
+                <td class="center">{esc(remark)}</td>
             </tr>"""
 
     summary = ""
@@ -191,13 +253,13 @@ def build_detailed_table(table):
         if row.get("highlight"):
             summary += f"""
             <tr class="summary-row highlight-row">
-                <td colspan="6" class="right bold">{row["label"]}</td>
+                <td colspan="6" class="right bold">{esc(row["label"])}</td>
                 <td class="right bold" colspan="2">{fmt_price(row["value"])}</td>
             </tr>"""
         else:
             summary += f"""
             <tr class="summary-row">
-                <td colspan="6" class="right bold">{row["label"]}</td>
+                <td colspan="6" class="right bold">{esc(row["label"])}</td>
                 <td class="right bold">{fmt_price(row["value"])}</td>
                 <td class="center">-</td>
             </tr>"""
@@ -205,7 +267,7 @@ def build_detailed_table(table):
     return f"""
         <table class="price-table">
             <tr class="section-header">
-                <td colspan="8" class="bold">{table["title"]}</td>
+                <td colspan="8" class="bold">{esc(table["title"])}</td>
             </tr>
             <tr class="col-header">
                 <td class="center bold" style="width:6%">序号</td>
@@ -252,19 +314,19 @@ def _build_attachment_with_category(att):
     rows = ""
     for cat, mods in groups:
         for i, mod in enumerate(mods):
-            features = "<ol>" + "".join(f"<li>{f}</li>" for f in mod["features"]) + "</ol>"
+            features = "<ol>" + "".join(f"<li>{esc(f)}</li>" for f in mod["features"]) + "</ol>"
             cat_cell = ""
             if i == 0:
-                cat_cell = f'<td class="center module-category" rowspan="{len(mods)}">{cat}</td>'
+                cat_cell = f'<td class="center module-category" rowspan="{len(mods)}">{esc(cat)}</td>'
             rows += f"""
                 <tr>
                     {cat_cell}
-                    <td class="module-name">{mod["name"]}</td>
+                    <td class="module-name">{esc(mod["name"])}</td>
                     <td class="module-desc">{features}</td>
                 </tr>"""
 
     return f"""
-        <div class="attachment-title bold">{att["title"]}</div>
+        <div class="attachment-title bold">{esc(att["title"])}</div>
         <table class="att-table">
             <tr class="col-header">
                 <td class="center bold" style="width:12%">功能分类</td>
@@ -279,15 +341,15 @@ def _build_attachment_simple(att):
     """构建简单附件表（两列：业务模块、功能详细描述，向后兼容）"""
     modules = ""
     for mod in att["modules"]:
-        features = "<ul>" + "".join(f"<li>{f}</li>" for f in mod["features"]) + "</ul>"
+        features = "<ul>" + "".join(f"<li>{esc(f)}</li>" for f in mod["features"]) + "</ul>"
         modules += f"""
             <tr>
-                <td class="module-name">{mod["name"]}</td>
+                <td class="module-name">{esc(mod["name"])}</td>
                 <td class="module-desc">{features}</td>
             </tr>"""
 
     return f"""
-        <div class="attachment-title bold">{att["title"]}</div>
+        <div class="attachment-title bold">{esc(att["title"])}</div>
         <table class="att-table">
             <tr class="col-header">
                 <td class="bold" style="width:25%">业务模块</td>
@@ -323,7 +385,7 @@ def generate_html(data, json_dir):
     extra_notes = data.get("extraNotes", "")
     extra_notes_html = ""
     if extra_notes:
-        md = mistune.create_markdown(plugins=["table", "strikethrough"], escape=False)
+        md = mistune.create_markdown(plugins=["table", "strikethrough"], escape=True)
         extra_notes_html = f'<div class="extra-notes">{md(extra_notes)}</div>'
 
     # 附件说明
@@ -341,23 +403,18 @@ def generate_html(data, json_dir):
         "如有任何问题，欢迎随时致电。",
         "此报价表为意向性报价，有效期内可参照查看。贵方应严守保密义务，不得向第三方披露。"
     ])
-    notes_html = "".join(f"<li>{n}</li>" for n in notes)
+    notes_html = "".join(f"<li>{esc(n)}</li>" for n in notes)
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>{customer} - {title}</title>
+<title>{esc(customer)} - {esc(title)}</title>
 <style>
 /* === 基础 === */
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
-    /* 首选 Heiti SC(STHeiti)：TrueType(glyf) 轮廓，子集嵌入 PDF 为 FontFile2，
-       国产手机阅读器(微信内置/QQ浏览器等)兼容性最好。
-       绝不可把 PingFang SC / Hiragino Sans GB 放首位——它们是 OpenType CFF，
-       子集嵌入为 FontFile3，国产轻量阅读器对 CFF 子集支持不全 → 中文乱码/方块。
-       此修复对 chromium 与 weasyprint 两条渲染路径通用（与渲染器无关，是字体轮廓格式兼容性问题）。 */
-    font-family: "Heiti SC", "STHeiti", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Helvetica Neue", Arial, sans-serif;
+    font-family: "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "Heiti SC", "STHeiti", "PingFang SC", Arial, sans-serif;
     font-size: 13px;
     color: #333;
     background: #f5f5f5;
@@ -376,7 +433,7 @@ body {{
 .header {{
     margin-bottom: 28px;
     padding-bottom: 18px;
-    border-bottom: 1px solid #385ff5;
+    border-bottom: 1px solid #2E56E1;
 }}
 .header-top {{
     display: flex;
@@ -390,14 +447,14 @@ body {{
 .customer-name {{
     font-size: 18px;
     font-weight: 700;
-    color: #385ff5;
+    color: #2E56E1;
     line-height: 1.5;
     margin-bottom: 4px;
 }}
 .doc-title {{
     font-size: 18px;
     font-weight: 700;
-    color: #385ff5;
+    color: #2E56E1;
     line-height: 1.5;
 }}
 .header-logos {{
@@ -612,7 +669,7 @@ body {{
     line-height: 1.6;
 }}
 .solution-content blockquote {{
-    border-left: 3px solid #385ff5;
+    border-left: 3px solid #2E56E1;
     padding: 8px 16px;
     margin: 12px 0;
     color: #555;
@@ -624,7 +681,7 @@ body {{
     margin: 20px 0;
 }}
 .solution-content a {{
-    color: #385ff5;
+    color: #2E56E1;
     text-decoration: none;
 }}
 
@@ -668,8 +725,8 @@ body {{
     <div class="header">
         <div class="header-top">
             <div class="header-title">
-                <div class="customer-name">{customer}</div>
-                <div class="doc-title">{title}</div>
+                <div class="customer-name">{esc(customer)}</div>
+                <div class="doc-title">{esc(title)}</div>
             </div>
             <div class="header-logos">
                 <img src="data:image/png;base64,{kaiyan_b64}" class="logo-kaiyan" alt="开沿科技">
@@ -677,11 +734,11 @@ body {{
             </div>
         </div>
         <div class="header-meta">
-            <div class="meta-item">报价方：{quoter["company"]}</div>
-            <div class="meta-item">报价人：{quoter["name"]}</div>
-            <div class="meta-item">电话：{quoter["phone"]}</div>
-            <div class="meta-item">报价日期：{date}</div>
-            <div class="meta-item">有效期：{valid_days} 天</div>
+            <div class="meta-item">报价方：{esc(quoter["company"])}</div>
+            <div class="meta-item">报价人：{esc(quoter["name"])}</div>
+            <div class="meta-item">电话：{esc(quoter["phone"])}</div>
+            <div class="meta-item">报价日期：{esc(date)}</div>
+            <div class="meta-item">有效期：{esc(valid_days)} 天</div>
         </div>
     </div>
 
@@ -713,10 +770,8 @@ body {{
 def html_to_pdf(html_path, pdf_path):
     """将 HTML 转换为 PDF。
 
-    优先 Playwright(chromium)；在受限沙箱等 chromium 起不来的环境下
-    （典型报错 bootstrap_check_in ... Permission denied / mach port 被沙箱拦），
-    自动降级到 weasyprint，避免 PDF 步骤整体失败、只剩 HTML。
-    两条路径的字体兼容性一致（见 body font-family 注释）。
+    优先 Playwright(chromium)；如果当前 ACS 镜像缺少 Node Playwright、
+    浏览器启动失败或运行超时，则自动降级到 weasyprint。
     """
     if _chromium_pdf(html_path, pdf_path):
         return
@@ -729,22 +784,23 @@ def html_to_pdf(html_path, pdf_path):
 
 def _chromium_pdf(html_path, pdf_path):
     """用 Playwright(chromium) 渲染 PDF，成功返回 True，失败返回 False。"""
-    abs_html = os.path.abspath(html_path)
-    abs_pdf = os.path.abspath(pdf_path)
+    abs_html = Path(html_path).resolve()
+    abs_pdf = str(Path(pdf_path).resolve())
+    html_url = abs_html.as_uri()
     script = f"""
 const {{ chromium }} = require('playwright');
 (async () => {{
     const browser = await chromium.launch({{ headless: true }});
     const page = await browser.newPage();
-    await page.goto('file://{abs_html}', {{ waitUntil: 'networkidle' }});
+    await page.goto({json.dumps(html_url)}, {{ waitUntil: 'networkidle' }});
     await page.pdf({{
-        path: '{abs_pdf}',
+        path: {json.dumps(abs_pdf)},
         format: 'A4',
         margin: {{ top: '18mm', right: '16mm', bottom: '18mm', left: '16mm' }},
         printBackground: true
     }});
     await browser.close();
-    console.log('PDF generated: {abs_pdf}');
+    console.log('PDF generated: ' + {json.dumps(abs_pdf)});
 }})();
 """
     try:
@@ -790,7 +846,7 @@ def main():
         sys.exit(1)
 
     input_file = sys.argv[1]
-    output_dir = sys.argv[2] if len(sys.argv) > 2 else os.path.dirname(os.path.abspath(input_file))
+    output_dir = os.path.abspath(sys.argv[2] if len(sys.argv) > 2 else default_output_dir())
 
     with open(input_file, encoding="utf-8") as f:
         data = json.load(f)
@@ -799,14 +855,9 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     # 文件名
-    customer_short = data["customer"].replace(" ", "")
-    if len(customer_short) > 15:
-        customer_short = customer_short[:15]
-
+    customer_short = safe_file_stem(data["customer"], "customer")
     base_name = f"{customer_short}_报价书"
-    html_path = os.path.join(output_dir, f"{base_name}.html")
-    pdf_path = os.path.join(output_dir, f"{base_name}.pdf")
-    json_path = os.path.join(output_dir, f"{base_name}.json")
+    html_path, pdf_path, json_path = unique_output_paths(output_dir, base_name)
 
     # 生成 HTML
     html = generate_html(data, json_dir)

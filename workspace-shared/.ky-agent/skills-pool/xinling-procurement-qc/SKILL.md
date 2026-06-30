@@ -11,21 +11,25 @@ description: 查询和分析新凌公司 2026 年 1-4 月采购+品管数据。*
 
 ```bash
 # 1. 看表结构（必读）
-cat .ky-agent/skills/xinling-procurement-qc/schema.md
+SKILL_DIR="<path-to-this-skill-directory>"
+cat "$SKILL_DIR/schema.md"
 
 # 2. 查询数据
-sqlite3 -header -column .ky-agent/skills/xinling-procurement-qc/data/procurement_qc.db "<SQL>"
+sqlite3 -header -column "$SKILL_DIR/data/procurement_qc.db" "<SQL>"
 ```
 
 或用 Python：
 
 ```python
 import sqlite3
-conn = sqlite3.connect(".ky-agent/skills/xinling-procurement-qc/data/procurement_qc.db")
+from pathlib import Path
+
+skill_dir = Path("<path-to-this-skill-directory>")
+conn = sqlite3.connect(skill_dir / "data" / "procurement_qc.db")
 df = pd.read_sql_query("...", conn)
 ```
 
-注意：skill 在工作区生效后路径为 `.ky-agent/skills/xinling-procurement-qc/`，不要去 `skills-pool` 找。
+注意：使用当前加载到的 skill 目录作为 `SKILL_DIR`。不要硬编码 `.claude/skills/...` 或 `skills-pool/...`；如果运行环境无法直接给出 skill 目录，先用 `rg --files`/目录列表定位包含本 `SKILL.md`、`schema.md` 和 `data/procurement_qc.db` 的目录。
 
 ## 核心原则
 

@@ -210,14 +210,10 @@ node <SKILL_ROOT>/scripts/validate-swiss-deck.mjs path/to/index.html
 
 **现象**：在中式杂志风格里用 emoji（🎯 💡 ✅）会立刻破坏格调。
 
-**做法**：用 Lucide 图标库，CDN 方式引用：
+**做法**：用模板内置的 lucide-compatible helper。只写 `data-lucide` 占位,不要额外引入 CDN：
 
 ```html
-<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-...
 <i data-lucide="target" class="ico-md"></i>
-...
-<script>lucide.createIcons();</script>
 ```
 
 常用图标名：`target / palette / search-check / compass / share-2 / crown / check-circle / x-circle / plus / arrow-right / grid-2x2 / network`
@@ -300,7 +296,7 @@ CSS 里 `.frame-img img` 已经预设 `object-position:top`，只裁底。
 - 正文、描述、pipeline 步骤名 → **非衬线字体**（Noto Sans SC + Inter）
 - 元数据、代码、标签 → **等宽字体**（IBM Plex Mono + JetBrains Mono）
 
-所有字体用 Google Fonts CDN 引入，模板里已预设。
+字体使用模板预设的本地系统字体栈；最终 HTML 不允许依赖 Google Fonts 或任何外部字体 CDN。
 
 ### 4b. 图片不要用 `align-self:end` 贴底
 
@@ -511,7 +507,7 @@ JS 会动态算总页数并扩展底部翻页圆点，但 `.chrome` 里的 `XX /
   □ B 键触发静态/低功耗模式,右下角提示在 `B 静态` / `B 动态` 之间切换
 
 动效
-  □ `assets/motion.min.js` 存在(本地兜底)
+  □ 若使用 Motion One 增强,`assets/motion.min.js` 存在；缺失时模板能用原生 WAAPI 或静态 reveal 兜底
   □ 低功耗模式下 WebGL/ASCII canvas 不再挂 RAF 循环,当前页内容仍全部可见
   □ 翻页时内容逐个淡入,不是"啪"一下全出
   □ 大引用页 `<section>` 带 `data-animate="quote"`,每行 `<span data-anim="line">`

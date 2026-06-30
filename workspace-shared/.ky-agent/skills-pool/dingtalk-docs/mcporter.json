@@ -1,13 +1,13 @@
 {
   "mcpServers": {
     "dingtalk-docs": {
-      "baseUrl": "https://mcp-gw.dingtalk.com/server/8086b3099970a2ba2c11f41f1f1ab4bfa6b5b75b9ed9a637af37b8ae5bcb68bf?key=10b0e3d8a8125a3bec90bcbb7d419839"
+      "baseUrl": "${DINGTALK_DOCS_MCP_URL}"
     },
     "dingtalk-ai-table": {
-      "baseUrl": "https://mcp-gw.dingtalk.com/server/c559579aabc9091413b299380ca9b13ba5a2af4dac33518877a5318dbb0dcfa5?key=c2114ff81107559606abe677a966a5ae"
+      "baseUrl": "${DINGTALK_AI_TABLE_MCP_URL}"
     },
     "dingtalk-sheet": {
-      "baseUrl": "https://mcp-gw.dingtalk.com/server/eace86c6a2b700b980e21f3dbcd6b6b42bf7478567bda564eb049e826bf5194d?key=59fe7b4976d8598a1cb9130441529c5f"
+      "baseUrl": "${DINGTALK_SHEET_MCP_URL}"
     }
   },
   "imports": []

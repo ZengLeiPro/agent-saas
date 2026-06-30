@@ -28,9 +28,10 @@ Generate a 2-sentence test clip NOW using the script's opening lines. Measure th
 
 ```bash
 # 中文测试（2 句，豆包）：
-python3 <media>/scripts/doubao_tts.py "第一句话。第二句话。" -o /tmp/test-tts.mp3
+mkdir -p .hyperframes
+python3 <media>/scripts/doubao_tts.py "第一句话。第二句话。" -o .hyperframes/test-tts.mp3
 # English quick test (Kokoro):
-npx hyperframes tts "First sentence. Second sentence." --voice af_nova --output /tmp/test-tts.wav
+npx hyperframes tts "First sentence. Second sentence." --voice af_nova --output .hyperframes/test-tts.wav
 # Measure: seconds ÷ words × total script words = estimated full audio length
 ```
 
@@ -52,7 +53,7 @@ If they want music, note the track in the storyboard for Step 5 to wire into `in
 
 ## TTS Provider
 
-**中文 / 中英混读旁白：默认直接用豆包脚本，不必问用户**（火山引擎 TTS V3，凭证已在 skill 内配好，中文质量远好于 Kokoro）：
+**中文 / 中英混读旁白：默认直接用豆包脚本，不必问用户**（火山引擎 TTS V3，凭证来自运行环境/secret 绑定，中文质量远好于 Kokoro）：
 
 ```bash
 # 路径见 hyperframes-media 模块 SKILL.md（references/modules/hyperframes-media/scripts/doubao_tts.py）
@@ -69,12 +70,10 @@ python3 <media>/scripts/doubao_tts.py narration.txt --voice cancan -o narration.
 > 2. **ElevenLabs** — Large voice library, very natural output. Requires ElevenLabs API key. Does not return word timestamps — you'll transcribe separately.
 > 3. **Kokoro** (Free) — Runs locally, no API key needed. Decent quality but more robotic than the others. Good for drafts or budget runs.
 
-If the user picks ElevenLabs or HeyGen and doesn't have a key set up yet, help them:
+If the user picks ElevenLabs or HeyGen and the key is not present in the runtime environment/secret binding, ask them to configure the platform secret first. Do not ask them to paste keys into chat and do not write keys into project files.
 
-- **ElevenLabs:** "Add `ELEVENLABS_API_KEY=your-key` to a `.env` file in the project root, or just paste it here and I'll set it up."
-- **HeyGen:** "Add `HEYGEN_API_KEY=your-key` to a `.env` file, or paste it here."
-
-Don't judge or critique if the user pastes a key directly in chat — just use it and move on.
+- **ElevenLabs env var:** `ELEVENLABS_API_KEY`
+- **HeyGen env var:** `HEYGEN_API_KEY`
 
 ## Audition voices
 
@@ -234,7 +233,7 @@ After the narration is generated and transcribed, ask the user:
 > - **Yes** — per-word captions synced to the narration. Great for social media (most viewers watch on mute) and accessibility.
 > - **No** — narration audio only, no text overlay.
 
-If yes, captions are built as a separate composition (`compositions/captions.html`) in Step 5. The `transcript.json` drives the timing — each word appears/highlights as it's spoken. Read [the captions reference](../../hyperframes/references/captions.md) for styling options (scale-pop, typewriter, fade+slide, etc.) and positioning rules.
+If yes, captions are built as a separate composition (`compositions/captions.html`) in Step 5. The `transcript.json` drives the timing — each word appears/highlights as it's spoken. Read [the captions reference](../../../captions.md) for styling options (scale-pop, typewriter, fade+slide, etc.) and positioning rules.
 
 ## Save timing data for Step 5
 

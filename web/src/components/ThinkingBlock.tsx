@@ -1,16 +1,17 @@
 import { useState } from "react";
 import { Brain, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { activityStatusIconClass, activityStatusTextClass } from "./activityStatusStyles";
+import { activityStatusBadgeClass, activityStatusIconClass, formatActivityDuration } from "./activityStatusStyles";
 
 interface ThinkingBlockProps {
   content: string;
   streaming?: boolean;
+  durationMs?: number;
 }
 
-export function ThinkingBlock({ content, streaming }: ThinkingBlockProps) {
+export function ThinkingBlock({ content, streaming, durationMs }: ThinkingBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const tone = streaming ? "active" : "success";
+  const duration = formatActivityDuration(durationMs);
 
   return (
     <div className="my-0.5">
@@ -18,10 +19,13 @@ export function ThinkingBlock({ content, streaming }: ThinkingBlockProps) {
         onClick={() => setIsExpanded(v => !v)}
         className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <Brain className={activityStatusIconClass(tone, "h-3.5 w-3.5 shrink-0")} />
-        <span className={activityStatusTextClass(tone, "min-w-0 truncate")}>
+        <Brain className={activityStatusIconClass(streaming ? "active" : "neutral", "h-3.5 w-3.5 shrink-0")} />
+        <span className="min-w-0 truncate">
           {streaming ? "思考中" : "已思考"}
           {streaming && <span className="animate-pulse">...</span>}
+        </span>
+        <span className={activityStatusBadgeClass(streaming ? "active" : "success")}>
+          {streaming ? "思考中" : duration ? `已完成 ${duration}` : "已完成"}
         </span>
         <ChevronRight className={cn(
           "h-3.5 w-3.5 shrink-0 transition-transform",

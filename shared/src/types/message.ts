@@ -1,7 +1,7 @@
 export type MessageItem =
   | { id: string; type: "user"; content: string; displayContent?: string; attachments?: Array<{ name: string; isImage?: boolean }>; isVoiceTranscript?: boolean; status?: 'pending' | 'sent' | 'failed'; timestamp?: number; clientMsgId?: string; failedReason?: string }
   | { id: string; type: "text"; content: string; streaming?: boolean; voiceMarkers?: Array<{ text: string; voice?: string; speed?: number }>; owner?: string; timestamp?: number }
-  | { id: string; type: "thinking"; content: string; streaming?: boolean }
+  | { id: string; type: "thinking"; content: string; streaming?: boolean; startedAt?: number; durationMs?: number }
   | {
       id: string;
       type: "tool_use";

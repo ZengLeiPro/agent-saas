@@ -3,7 +3,7 @@ import { formatJson } from './types';
 import { parseToolResult, getToolDisplayInfo } from '@agent/shared';
 import { Wrench, CheckCircle2, ChevronRight, X, Loader2, CircleDashed, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { activityStatusBadgeClass, activityStatusIconClass, type ActivityStatusTone } from "./activityStatusStyles";
+import { activityStatusBadgeClass, activityStatusIconClass, formatActivityDuration, type ActivityStatusTone } from "./activityStatusStyles";
 
 // ============================================
 // Image Lightbox (shared)
@@ -87,12 +87,6 @@ interface ToolBlockProps {
   error?: string;
 }
 
-function formatDuration(ms?: number): string | null {
-  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
-}
-
 function getExecutionLabel(status?: ToolBlockProps["executionStatus"], resultReady?: boolean): string {
   if (status === "running") return "执行中";
   if (status === "pending") return "待执行";
@@ -115,7 +109,7 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
 
   const formatted = useMemo(() => formatJson(toolInput), [toolInput]);
   const displayInfo = useMemo(() => getToolDisplayInfo(toolName, toolInput), [toolName, toolInput]);
-  const duration = formatDuration(durationMs);
+  const duration = formatActivityDuration(durationMs);
   const statusLabel = getExecutionLabel(executionStatus, resultReady);
   const tone = getExecutionTone(executionStatus, resultReady, streaming);
 

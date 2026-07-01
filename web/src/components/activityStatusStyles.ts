@@ -50,3 +50,9 @@ export function activityStatusBadgeClass(tone: ActivityStatusTone, className?: s
     className,
   );
 }
+
+export function formatActivityDuration(ms?: number): string | null {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+}

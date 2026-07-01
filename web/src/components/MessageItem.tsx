@@ -783,6 +783,7 @@ export const MessageItem = memo(function MessageItem({
       <ThinkingBlock
         content={message.content}
         streaming={message.streaming}
+        durationMs={message.durationMs}
       />
     );
   }

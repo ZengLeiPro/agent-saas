@@ -143,6 +143,76 @@ describe('wsEventProcessor terminal errors', () => {
     });
   });
 
+  it('records thinking duration when the thinking block ends', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-01T00:00:00.000Z'));
+    try {
+      const { messages, ctx } = createTestRig();
+      const block = { currentBlockIndex: -1, currentBlockType: null };
+
+      processWsEvent(
+        { type: 'block_start', blockType: 'thinking' },
+        ctx,
+        block,
+        { value: 'session-1' },
+        'session-1',
+      );
+      vi.advanceTimersByTime(1234);
+      processWsEvent(
+        { type: 'block_end', blockType: 'thinking' },
+        ctx,
+        block,
+        { value: 'session-1' },
+        'session-1',
+      );
+
+      expect(messages[0]).toMatchObject({
+        type: 'thinking',
+        streaming: false,
+        durationMs: 1234,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('records thinking duration when a new block starts before thinking ends', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-01T00:00:00.000Z'));
+    try {
+      const { messages, ctx } = createTestRig();
+      const block = { currentBlockIndex: -1, currentBlockType: null };
+
+      processWsEvent(
+        { type: 'block_start', blockType: 'thinking' },
+        ctx,
+        block,
+        { value: 'session-1' },
+        'session-1',
+      );
+      vi.advanceTimersByTime(2400);
+      processWsEvent(
+        { type: 'block_start', blockType: 'text' },
+        ctx,
+        block,
+        { value: 'session-1' },
+        'session-1',
+      );
+
+      expect(messages[0]).toMatchObject({
+        type: 'thinking',
+        streaming: false,
+        durationMs: 2400,
+      });
+      expect(messages[1]).toMatchObject({
+        type: 'text',
+        streaming: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('marks the current user message failed when done carries an error without client_msg_id', () => {
     const { messages, ctx } = createTestRig([
       {

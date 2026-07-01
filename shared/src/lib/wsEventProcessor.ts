@@ -144,7 +144,12 @@ export function finalizeStreamingMessages(msg: MessagesController): void {
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
     if ("streaming" in m && m.streaming) {
-      msg.updateMessageAt(i, (prev) => ("streaming" in prev ? { ...prev, streaming: false } : prev));
+      msg.updateMessageAt(i, (prev) => {
+        if (prev.type === "thinking" && typeof prev.startedAt === "number" && typeof prev.durationMs !== "number") {
+          return { ...prev, streaming: false, durationMs: Math.max(0, Date.now() - prev.startedAt) };
+        }
+        return "streaming" in prev ? { ...prev, streaming: false } : prev;
+      });
     }
     if (m.type === "tool_use" && m.executionStatus === "running") {
       msg.updateMessageAt(i, (prev) =>
@@ -305,13 +310,16 @@ export function processWsEvent(
   if (data.type === "block_start") {
     removeRuntimeStatusMessages(msg);
     if (block.currentBlockIndex >= 0) {
-      msg.updateMessageAt(block.currentBlockIndex, (message) =>
-        "streaming" in message ? { ...message, streaming: false } : message
-      );
+      msg.updateMessageAt(block.currentBlockIndex, (message) => {
+        if (message.type === "thinking" && typeof message.startedAt === "number" && typeof message.durationMs !== "number") {
+          return { ...message, streaming: false, durationMs: Math.max(0, Date.now() - message.startedAt) };
+        }
+        return "streaming" in message ? { ...message, streaming: false } : message;
+      });
     }
     block.currentBlockType = data.blockType;
     if (data.blockType === "thinking") {
-      block.currentBlockIndex = msg.addMessage({ type: "thinking", content: "", streaming: true });
+      block.currentBlockIndex = msg.addMessage({ type: "thinking", content: "", streaming: true, startedAt: Date.now() });
     } else if (data.blockType === "text") {
       const owner = ctx.sessionOwnerRef?.current;
       block.currentBlockIndex = msg.addMessage({ type: "text", content: "", streaming: true, ...(owner ? { owner } : {}), timestamp: Date.now() });
@@ -384,6 +392,9 @@ export function processWsEvent(
         }
         if (message.type === "tool_use") {
           return { ...message, streaming: false, executionStatus: message.executionStatus ?? "pending" };
+        }
+        if (message.type === "thinking" && typeof message.startedAt === "number" && typeof message.durationMs !== "number") {
+          return { ...message, streaming: false, durationMs: Math.max(0, Date.now() - message.startedAt) };
         }
         return { ...message, streaming: false };
       });

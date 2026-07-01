@@ -3,6 +3,7 @@
     "core": [
       "audio-transcribe",
       "browser",
+      "skill-demo",
       "dws",
       "docx",
       "image-gen",

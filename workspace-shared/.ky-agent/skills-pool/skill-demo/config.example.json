@@ -1,0 +1,6 @@
+{
+  "_说明": "线上 skill-demo(cywk 餐饮 ERP + CRM + BOM 设备 ERP 三合一)的 CRUD 配置。apiBase = FC 自定义域名 + /api/v1(三套业务路径都在这个前缀下,如 /cywk/... /crm/... /bom/...);webBase = OSS 前端自定义域名。DEMO 免密登录不需要 username/password。本地开发把 apiBase 改 http://localhost:3000/api/v1、webBase 改 http://localhost:5173。openapiUrl 仅在本地非生产 backend 有效(线上生产 Swagger 已关闭)。",
+  "apiBase": "https://fc.kaiyan.net/skill-demo/api/v1",
+  "webBase": "http://skill-demo.kaiyancn.com",
+  "openapiUrl": "http://localhost:3000/api/docs-json"
+}

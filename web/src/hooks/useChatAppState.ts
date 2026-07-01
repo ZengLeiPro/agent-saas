@@ -1127,9 +1127,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     });
     if (sessionId !== sessionIdRef.current) return;
 
-    const localRuntime = activeRunsBySession.current.get(sessionId);
-    if (!loadingRef.current && !isActiveRuntimeStatus(localRuntime?.status)) return;
-
     try {
       const res = await authFetch(`/api/sessions/${sessionId}/stream-status`);
       if (!res.ok) return;

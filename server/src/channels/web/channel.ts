@@ -93,6 +93,8 @@ const INTERACTIVE_PERMISSION_TOOLS = new Set([
   'RequestPluginInstall',
 ]);
 
+const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'orphaned']);
+
 function wantsToolAutoApproval(policy: { autoApproveTools?: boolean; autoApproveRunShell?: boolean } | undefined): boolean {
   return policy?.autoApproveTools === true || policy?.autoApproveRunShell === true;
 }
@@ -1258,11 +1260,15 @@ export class WebChannel implements BaseChannel {
     const resolvedStreamId = active?.streamId ?? (!runId ? streamId : undefined);
     let sessionId = entry?.sessionId;
     let resolvedRunId = runId ?? entry?.runId;
+    let resolvedRunStatus: string | undefined;
+    let resolvedRunStatusReason: string | undefined;
 
     if (!sessionId && resolvedRunId && this.config.enqueueRuntime?.runStore) {
       const record = await this.config.enqueueRuntime.runStore.get(resolvedRunId);
       if (record) {
         sessionId = record.sessionId;
+        resolvedRunStatus = record.status;
+        resolvedRunStatusReason = record.statusReason;
         if (client.user && client.user.role !== 'admin' && record.userId && record.userId !== client.user.sub) {
           this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
           return;
@@ -1272,6 +1278,20 @@ export class WebChannel implements BaseChannel {
 
     if (entry && client.user && client.user.role !== 'admin' && entry.userId && entry.userId !== client.user.sub) {
       this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      return;
+    }
+
+    if (resolvedRunStatus && TERMINAL_RUN_STATUSES.has(resolvedRunStatus)) {
+      this.wsSend(client.ws, { type: 'abort_ok', ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}), ...(resolvedRunId ? { runId: resolvedRunId } : {}) });
+      if (sessionId) {
+        this.wsSend(client.ws, {
+          type: 'session_status',
+          sessionId,
+          status: resolvedRunStatus as 'completed' | 'failed' | 'cancelled' | 'orphaned',
+          ...(resolvedRunId ? { runId: resolvedRunId } : {}),
+          ...(resolvedRunStatusReason ? { reason: resolvedRunStatusReason } : {}),
+        });
+      }
       return;
     }
 

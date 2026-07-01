@@ -117,21 +117,28 @@ jobs:
       - name: Deploy and restart
         run: |
           ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
-            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_SHA}.tgz' bash -s" <<'REMOTE'
+            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_SHA}.tgz' RELEASE_ID='${GITHUB_SHA}' bash -s" <<'REMOTE'
           set -euo pipefail
 
           : "${DEPLOY_ROOT:?missing DEPLOY_ROOT}"
           : "${SERVICE_NAME:?missing SERVICE_NAME}"
           : "${RELEASE_TGZ:?missing RELEASE_TGZ}"
+          : "${RELEASE_ID:?missing RELEASE_ID}"
 
-          APP_DIR="$DEPLOY_ROOT/current"
+          APP_LINK="$DEPLOY_ROOT/current"
+          RELEASES_DIR="$DEPLOY_ROOT/releases"
+          RELEASE_DIR="$RELEASES_DIR/$RELEASE_ID"
           DATA_DIR="/mnt/agent-saas/server-data"
 
-          mkdir -p "$APP_DIR" "$DATA_DIR"
-          tar -xzf "$RELEASE_TGZ" -C "$APP_DIR"
-          ln -sfn "$DATA_DIR" "$APP_DIR/server/data"
+          mkdir -p "$RELEASES_DIR" "$DATA_DIR"
+          if [ -e "$RELEASE_DIR" ]; then
+            mv "$RELEASE_DIR" "$RELEASE_DIR.replaced.$(date +%Y%m%d%H%M%S)"
+          fi
+          mkdir -p "$RELEASE_DIR"
+          tar -xzf "$RELEASE_TGZ" -C "$RELEASE_DIR"
+          ln -sfn "$DATA_DIR" "$RELEASE_DIR/server/data"
 
-          cd "$APP_DIR"
+          cd "$RELEASE_DIR"
           if command -v corepack >/dev/null 2>&1; then
             corepack enable
             corepack prepare pnpm@10.18.3 --activate
@@ -144,6 +151,10 @@ jobs:
             fi
           }
 
+          if [ -d "$APP_LINK" ] && [ ! -L "$APP_LINK" ]; then
+            mv "$APP_LINK" "$DEPLOY_ROOT/legacy-current-$(date +%Y%m%d%H%M%S)"
+          fi
+          ln -sfn "$RELEASE_DIR" "$APP_LINK"
           systemctl restart "$SERVICE_NAME"
           for _ in $(seq 1 120); do
             if curl -fsS http://127.0.0.1:3200/api/healthz >/dev/null; then

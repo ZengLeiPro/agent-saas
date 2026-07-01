@@ -15,7 +15,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,6 +36,7 @@ interface TestRig {
   baseUrl: string;
   agentCwd: string;
   poolDir: string;
+  skillConfigStore: SkillConfigStore;
   setCaller(caller: JwtPayload): void;
   request(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
@@ -89,6 +90,38 @@ function fakeSkillConfigStore(): SkillConfigStore {
       const tenantEnabled = new Set(getTenantEnabledSkills(tenantId));
       return (userSelections.get(u) ?? []).filter(id => visibility[id] !== false && tenantEnabled.has(id));
     },
+    syncWithPool: (currentPoolIds: Set<string>) => {
+      let added = 0;
+      for (const id of currentPoolIds) {
+        if (!(id in visibility)) {
+          visibility[id] = true;
+          added++;
+        }
+      }
+      if (added > 0) configVersion++;
+      return added;
+    },
+    pruneStaleSkills: (currentPoolIds: Set<string>) => {
+      let pruned = 0;
+      for (const id of Object.keys(visibility)) {
+        if (!currentPoolIds.has(id)) {
+          delete visibility[id];
+          pruned++;
+        }
+      }
+      for (const [username, skills] of userSelections) {
+        const next = skills.filter(id => currentPoolIds.has(id));
+        pruned += skills.length - next.length;
+        userSelections.set(username, next);
+      }
+      for (const [tenantId, skills] of tenantSelections) {
+        const next = skills.filter(id => currentPoolIds.has(id));
+        pruned += skills.length - next.length;
+        tenantSelections.set(tenantId, next);
+      }
+      if (pruned > 0) configVersion++;
+      return pruned;
+    },
   } as unknown as SkillConfigStore;
 }
 
@@ -118,9 +151,10 @@ async function makeTestRig(): Promise<TestRig> {
   const app = express();
   app.use(express.json());
   let currentCaller: JwtPayload = PLATFORM_ADMIN;
+  const skillConfigStore = fakeSkillConfigStore();
   app.use((req, _res, next) => { req.user = currentCaller; next(); });
   app.use('/api/skills', createSkillsRouter({
-    skillConfigStore: fakeSkillConfigStore(),
+    skillConfigStore,
     userStore: fakeUserStore(),
     agentCwd,
     sharedDir,
@@ -136,6 +170,7 @@ async function makeTestRig(): Promise<TestRig> {
     baseUrl,
     agentCwd,
     poolDir,
+    skillConfigStore,
     setCaller(c) { currentCaller = c; },
     request: (path, init) => fetch(`${baseUrl}${path}`, init),
     close: async () => {
@@ -325,6 +360,20 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(Object.keys(body.users).sort()).toEqual(['alice', 'wain_user']);
     });
 
+    it('GET /custom 不把已从 pool 删除但仍在配置历史中的系统 skill 误判为自建', async () => {
+      await h.skillConfigStore.setPoolVisibility({ old_system: true });
+      const staleDir = join(h.agentCwd, 'kaiyan', 'u-ku', '.ky-agent', 'skills', 'old_system');
+      mkdirSync(staleDir, { recursive: true });
+      writeFileSync(join(staleDir, 'SKILL.md'), '---\nname: old_system\ndescription: stale\n---\nx');
+
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await h.request('/api/skills/custom');
+      expect(res.status).toBe(200);
+      const body = await res.json() as { users: Record<string, { id: string }[]> };
+      expect(body.users.alice?.map(s => s.id)).toContain('alice_custom');
+      expect(body.users.alice?.map(s => s.id)).not.toContain('old_system');
+    });
+
     it('组织 admin (wain) DELETE /custom/alice/:id (跨组织) → 403', async () => {
       h.setCaller(WAIN_ADMIN);
       const res = await h.request('/api/skills/custom/alice/alice_custom', { method: 'DELETE' });
@@ -399,6 +448,21 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(res.status).toBe(200);
       const body = await res.json() as { synced: string[] };
       expect(body.synced.sort()).toEqual(['alice', 'wain_user']);
+    });
+
+    it('platform admin 全量 POST /sync → 先删除旧系统副本，再 prune stale 配置', async () => {
+      await h.skillConfigStore.setPoolVisibility({ old_system: true });
+      const staleDir = join(h.agentCwd, 'kaiyan', 'u-ku', '.ky-agent', 'skills', 'old_system');
+      mkdirSync(staleDir, { recursive: true });
+      writeFileSync(join(staleDir, 'SKILL.md'), '---\nname: old_system\ndescription: stale\n---\nx');
+
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await h.request('/api/skills/sync', { method: 'POST' });
+      expect(res.status).toBe(200);
+      const body = await res.json() as { pruned: number };
+      expect(body.pruned).toBeGreaterThan(0);
+      expect(existsSync(staleDir)).toBe(false);
+      expect(h.skillConfigStore.getPoolVisibility()).not.toHaveProperty('old_system');
     });
   });
 

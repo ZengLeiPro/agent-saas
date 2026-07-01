@@ -54,6 +54,13 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     return new Set(scanPoolSkills(poolDir).map(s => s.id));
   }
 
+  function getKnownSystemSkillIds(): Set<string> {
+    return new Set([
+      ...getPoolSkillIds(),
+      ...Object.keys(skillConfigStore.getPoolVisibility()),
+    ]);
+  }
+
   /**
    * 用户的 `.ky-agent/skills` 目录。workspace 物理路径由 resolveUserCwd 统一决定；
    * 本路由原代码仍用旧扁平路径 `<cwd>/<username>`，
@@ -362,7 +369,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   router.get('/custom', requireAdmin, (req, res) => {
     try {
       const platform = isPlatformAdmin(req.user);
-      const poolIds = getPoolSkillIds();
+      const poolIds = getKnownSystemSkillIds();
       const users: Record<string, any[]> = {};
       for (const u of userStore.listAll()) {
         if (!platform && u.tenantId !== req.user?.tenantId) continue;
@@ -427,7 +434,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!usernameParam || !skillId) return res.status(400).json({ error: 'Invalid username or skillId' });
     const target = resolveAdminTargetUser(req, res, usernameParam);
     if (!target) return;
-    if (getPoolSkillIds().has(skillId)) return res.status(400).json({ error: 'Pool skill documents must be managed via /pool' });
+    if (getKnownSystemSkillIds().has(skillId)) return res.status(400).json({ error: 'Pool skill documents must be managed via /pool' });
 
     const skillDir = join(getUserSkillsDir(target), skillId);
     if (!existsSync(skillDir)) return res.status(404).json({ error: `Skill '${skillId}' not found in ${target.username}'s workspace` });
@@ -448,7 +455,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!usernameParam || !skillId) return res.status(400).json({ error: 'Invalid username or skillId' });
     const target = resolveAdminTargetUser(req, res, usernameParam);
     if (!target) return;
-    if (getPoolSkillIds().has(skillId)) return res.status(400).json({ error: 'Pool skill documents must be managed via /pool' });
+    if (getKnownSystemSkillIds().has(skillId)) return res.status(400).json({ error: 'Pool skill documents must be managed via /pool' });
 
     const parsed = skillDocumentSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -481,7 +488,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!usernameParam || !skillId) return res.status(400).json({ error: 'Invalid username or skillId' });
     const target = resolveAdminTargetUser(req, res, usernameParam);
     if (!target) return;
-    const poolIds = getPoolSkillIds();
+    const poolIds = getKnownSystemSkillIds();
 
     if (poolIds.has(skillId)) {
       return res.status(400).json({ error: 'Cannot delete a pool skill via this endpoint' });
@@ -515,11 +522,18 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     const rawUsername = typeof req.query.username === 'string' ? req.query.username : undefined;
     const platform = isPlatformAdmin(req.user);
     try {
-      const configVersion = String(skillConfigStore.getConfigVersion());
-      const writeVersion = (userCwd: string) => {
+      const currentPoolIds = getPoolSkillIds();
+      if (currentPoolIds.size === 0) {
+        return res.status(409).json({ error: 'Skills pool is empty or missing; refusing to sync' });
+      }
+
+      const discovered = platform ? skillConfigStore.syncWithPool(currentPoolIds) : 0;
+      const syncedWorkspaces: string[] = [];
+      const writeVersion = (userCwd: string, configVersion: string) => {
         const vf = agentPath(userCwd, '.skills-version');
         if (existsSync(agentDir(userCwd))) writeFileSync(vf, configVersion, 'utf-8');
       };
+
       if (rawUsername) {
         const usernameSafe = safeName(rawUsername);
         if (!usernameSafe) return res.status(400).json({ error: 'Invalid username' });
@@ -530,8 +544,10 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
           return res.status(404).json({ error: 'User workspace not initialized' });
         }
         syncSkills(userCwd, sharedDir, { id: user.id, username: user.username, role: user.role as 'admin' | 'user', tenantId: user.tenantId }, skillConfigStore);
-        writeVersion(userCwd);
-        res.json({ ok: true, synced: [user.username] });
+        syncedWorkspaces.push(userCwd);
+        const configVersion = String(skillConfigStore.getConfigVersion());
+        for (const cwd of syncedWorkspaces) writeVersion(cwd, configVersion);
+        res.json({ ok: true, synced: [user.username], discovered, pruned: 0 });
       } else {
         const synced: string[] = [];
         for (const u of userStore.listAll()) {
@@ -539,11 +555,14 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
           const userCwd = resolveUserCwd(agentCwd, { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId });
           if (existsSync(agentDir(userCwd))) {
             syncSkills(userCwd, sharedDir, { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId }, skillConfigStore);
-            writeVersion(userCwd);
+            syncedWorkspaces.push(userCwd);
             synced.push(u.username);
           }
         }
-        res.json({ ok: true, synced });
+        const pruned = platform ? skillConfigStore.pruneStaleSkills(currentPoolIds) : 0;
+        const configVersion = String(skillConfigStore.getConfigVersion());
+        for (const cwd of syncedWorkspaces) writeVersion(cwd, configVersion);
+        res.json({ ok: true, synced, discovered, pruned });
       }
     } catch (err) {
       serverLogger.error(`POST /sync error: ${err}`);
@@ -693,7 +712,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     const poolSkills = scanPoolSkills(poolDir);
     const visibility = skillConfigStore.getPoolVisibility();
     const selected = new Set(skillConfigStore.getUserSelectedSkills(user.username));
-    const poolIds = new Set(poolSkills.map(s => s.id));
+    const poolIds = getKnownSystemSkillIds();
     const tenantEnabled = new Set(skillConfigStore.getTenantEnabledSkills(user.tenantId));
 
     // Pool skills: 只返回平台 visible 且本租户 enabled 的

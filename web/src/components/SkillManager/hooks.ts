@@ -51,10 +51,11 @@ export function useSkillAdmin() {
   useEffect(() => {
     if (cachedPool && cachedCustom) {
       setLoading(false);
+      void Promise.all([refreshPool(), refreshCustom()]);
       return;
     }
     void refresh();
-  }, [refresh]);
+  }, [refresh, refreshPool, refreshCustom]);
 
   useEffect(() => {
     registerRefresh("skillAdmin", refresh);

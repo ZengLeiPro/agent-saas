@@ -3,6 +3,7 @@ import { formatJson } from './types';
 import { parseToolResult, getToolDisplayInfo } from '@agent/shared';
 import { Wrench, CheckCircle2, ChevronRight, X, Loader2, CircleDashed, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { activityStatusBadgeClass, activityStatusIconClass, type ActivityStatusTone } from "./activityStatusStyles";
 
 // ============================================
 // Image Lightbox (shared)
@@ -101,6 +102,14 @@ function getExecutionLabel(status?: ToolBlockProps["executionStatus"], resultRea
   return "待执行";
 }
 
+function getExecutionTone(status?: ToolBlockProps["executionStatus"], resultReady?: boolean, streaming?: boolean): ActivityStatusTone {
+  if (status === "running" || streaming) return "active";
+  if (status === "failed") return "danger";
+  if (status === "cancelled") return "neutral";
+  if (status === "completed" || resultReady) return "success";
+  return "pending";
+}
+
 export function ToolBlock({ toolName, toolInput, streaming, result, resultReady, executionStatus, durationMs, lastProgress, error }: ToolBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -108,16 +117,19 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
   const displayInfo = useMemo(() => getToolDisplayInfo(toolName, toolInput), [toolName, toolInput]);
   const duration = formatDuration(durationMs);
   const statusLabel = getExecutionLabel(executionStatus, resultReady);
+  const tone = getExecutionTone(executionStatus, resultReady, streaming);
 
   const icon = executionStatus === "running"
-    ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
-    : executionStatus === "failed" || executionStatus === "cancelled"
-      ? <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+    ? <Loader2 className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-spin")} />
+    : executionStatus === "failed"
+      ? <XCircle className={activityStatusIconClass("danger", "h-3.5 w-3.5 shrink-0")} />
+      : executionStatus === "cancelled"
+        ? <XCircle className={activityStatusIconClass("neutral", "h-3.5 w-3.5 shrink-0")} />
       : resultReady || executionStatus === "completed"
-        ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        ? <CheckCircle2 className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
         : streaming
-          ? <Wrench className="h-3.5 w-3.5 shrink-0 animate-pulse" />
-          : <CircleDashed className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />;
+          ? <Wrench className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-pulse")} />
+          : <CircleDashed className={activityStatusIconClass("pending", "h-3.5 w-3.5 shrink-0")} />;
 
   return (
     <div className="my-0.5">
@@ -138,7 +150,7 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
           )}
           {(streaming || executionStatus === "running") && <span className="shrink-0 animate-pulse">...</span>}
         </span>
-        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
+        <span className={activityStatusBadgeClass(tone)}>
           {duration && (executionStatus === "completed" || executionStatus === "failed" || executionStatus === "cancelled")
             ? `${statusLabel} ${duration}`
             : statusLabel}

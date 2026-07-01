@@ -1,5 +1,6 @@
 import { Clock, Loader2, Server, Shield, User } from "lucide-react";
 import type { MessageItem } from "./types";
+import { activityStatusIconClass, activityStatusTextClass, type ActivityStatusTone } from "./activityStatusStyles";
 
 type RuntimeStatus = Extract<MessageItem, { type: "runtime_status" }>["status"];
 
@@ -24,23 +25,40 @@ function getRuntimeStatusMeta(status: RuntimeStatus): { label: string; icon: "lo
   }
 }
 
+function getRuntimeStatusTone(status: RuntimeStatus): ActivityStatusTone {
+  switch (status) {
+    case "queued":
+      return "pending";
+    case "waiting_approval":
+    case "waiting_user":
+      return "warning";
+    case "sending":
+    case "running":
+    case "waiting_hand":
+    case "reconnecting":
+    default:
+      return "active";
+  }
+}
+
 export function RuntimeStatusBlock({ status, content }: { status: RuntimeStatus; content?: string }) {
   const meta = getRuntimeStatusMeta(status);
+  const tone = getRuntimeStatusTone(status);
   const iconClass = "h-3.5 w-3.5 shrink-0";
   const icon = meta.icon === "clock"
-    ? <Clock className={iconClass} />
+    ? <Clock className={activityStatusIconClass(tone, iconClass)} />
     : meta.icon === "server"
-      ? <Server className={`${iconClass} text-primary`} />
+      ? <Server className={activityStatusIconClass(tone, iconClass)} />
       : meta.icon === "shield"
-        ? <Shield className={`${iconClass} text-primary`} />
+        ? <Shield className={activityStatusIconClass(tone, iconClass)} />
         : meta.icon === "user"
-          ? <User className={`${iconClass} text-primary`} />
-          : <Loader2 className={`${iconClass} animate-spin text-primary`} />;
+          ? <User className={activityStatusIconClass(tone, iconClass)} />
+          : <Loader2 className={activityStatusIconClass(tone, `${iconClass} animate-spin`)} />;
 
   return (
     <div className="my-0.5 flex max-w-full items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
       {icon}
-      <span className="min-w-0 truncate">{content || meta.label}</span>
+      <span className={activityStatusTextClass(tone, "min-w-0 truncate")}>{content || meta.label}</span>
     </div>
   );
 }

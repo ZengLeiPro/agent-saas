@@ -7,6 +7,7 @@ import { ThinkingBlock } from './ThinkingBlock';
 import { ToolBlock, ToolResultBlock } from './ToolBlock';
 import { SubagentBlock } from './SubagentBlock';
 import { RuntimeStatusBlock } from './RuntimeStatusBlock';
+import { activityStatusIconClass, activityStatusTextClass } from './activityStatusStyles';
 
 interface SummaryInfo {
   text: string;
@@ -63,11 +64,11 @@ export function ExecutionHiddenPlaceholder({ isActive }: { isActive?: boolean })
   return (
     <div className="my-0.5 flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
       {isActive ? (
-        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+        <Loader2 className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-spin")} />
       ) : (
-        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
+        <CheckCircle2 className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
       )}
-      <span>{isActive ? "正在执行中" : "已执行"}</span>
+      <span className={activityStatusTextClass(isActive ? "active" : "success")}>{isActive ? "正在执行中" : "已执行"}</span>
     </div>
   );
 }
@@ -94,9 +95,9 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
         className="flex max-w-full items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         {isActive ? (
-          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+          <Loader2 className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-spin")} />
         ) : (
-          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
+          <CheckCircle2 className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
         )}
         <span
           className="min-w-0 max-w-sm truncate"

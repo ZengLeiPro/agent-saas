@@ -105,6 +105,10 @@ export type { AgentProfile, AgentProfileDetail } from "./agent";
 
 export type {
   SkillInfo,
+  PlatformSkillExposure,
+  TenantSkillMemberExposure,
+  PlatformSkillSettings,
+  TenantSkillSettings,
   PoolSkillInfo,
   TenantSkillInfo,
   UserSkillInfo,

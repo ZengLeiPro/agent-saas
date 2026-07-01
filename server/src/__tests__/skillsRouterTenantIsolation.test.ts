@@ -394,6 +394,64 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       });
       expect(res.status).toBe(200);
     });
+
+    it('platform admin 可将 skill 仅开放给指定租户', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      let res = await h.request('/api/skills/pool/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shared_skill: { enabled: true, exposure: 'allow_tenants', tenantIds: ['wain'] },
+        }),
+      });
+      expect(res.status).toBe(200);
+
+      h.setCaller(WAIN_ADMIN);
+      res = await h.request('/api/skills/tenants/wain/pool');
+      expect(res.status).toBe(200);
+      const wainBody = await res.json() as { skills: { id: string }[] };
+      expect(wainBody.skills.map(s => s.id)).toContain('shared_skill');
+
+      h.setCaller(PLATFORM_ADMIN);
+      res = await h.request('/api/skills/tenants/kaiyan/pool');
+      expect(res.status).toBe(200);
+      const kaiyanBody = await res.json() as { skills: { id: string }[] };
+      expect(kaiyanBody.skills.map(s => s.id)).not.toContain('shared_skill');
+    });
+
+    it('租户 admin 可将 skill 仅开放给指定成员', async () => {
+      h.setCaller(WAIN_ADMIN);
+      let res = await h.request('/api/skills/tenants/wain/pool/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shared_skill: { enabled: true, exposure: 'allow_users', usernames: ['wain_admin'] },
+        }),
+      });
+      expect(res.status).toBe(200);
+
+      h.setCaller(WAIN_USER);
+      res = await h.request('/api/skills/me');
+      expect(res.status).toBe(200);
+      const blockedBody = await res.json() as { poolSkills: { id: string }[] };
+      expect(blockedBody.poolSkills.map(s => s.id)).not.toContain('shared_skill');
+
+      h.setCaller(WAIN_ADMIN);
+      res = await h.request('/api/skills/tenants/wain/pool/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shared_skill: { enabled: true, exposure: 'allow_users', usernames: ['wain_user'] },
+        }),
+      });
+      expect(res.status).toBe(200);
+
+      h.setCaller(WAIN_USER);
+      res = await h.request('/api/skills/me');
+      expect(res.status).toBe(200);
+      const allowedBody = await res.json() as { poolSkills: { id: string }[] };
+      expect(allowedBody.poolSkills.map(s => s.id)).toContain('shared_skill');
+    });
   });
 
   // ============================================================

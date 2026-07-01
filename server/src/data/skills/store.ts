@@ -2,7 +2,18 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { SkillsConfigData, TenantSkillConfig, UserSkillConfig } from './types.js';
+import type {
+  PlatformSkillConfig,
+  PlatformSkillExposure,
+  SkillsConfigData,
+  TenantSkillConfig,
+  TenantSkillMemberExposure,
+  TenantSkillRule,
+  UserSkillConfig,
+} from './types.js';
+
+const DEFAULT_PLATFORM_EXPOSURE: PlatformSkillExposure = 'all';
+const DEFAULT_TENANT_EXPOSURE: TenantSkillMemberExposure = 'all';
 
 export class SkillConfigStore {
   private data: SkillsConfigData;
@@ -18,7 +29,7 @@ export class SkillConfigStore {
 
   constructor(filePath: string) {
     this.filePath = filePath;
-    this.data = { version: 1, configVersion: 0, poolVisibility: {}, tenants: {}, users: {} };
+    this.data = { version: 1, configVersion: 0, poolVisibility: {}, platform: {}, tenants: {}, users: {} };
     this.load();
   }
 
@@ -36,35 +47,85 @@ export class SkillConfigStore {
   }
 
   getPoolVisibility(): Record<string, boolean> {
-    return { ...this.data.poolVisibility };
+    const result: Record<string, boolean> = {};
+    for (const id of new Set([
+      ...Object.keys(this.data.poolVisibility),
+      ...Object.keys(this.data.platform ?? {}),
+    ])) {
+      result[id] = this.getPlatformSkillConfig(id).enabled;
+    }
+    return result;
   }
 
   isPoolSkillVisible(skillId: string): boolean {
-    return this.data.poolVisibility[skillId] !== false;
+    return this.getPlatformSkillConfig(skillId).enabled;
+  }
+
+  getPlatformSkillConfig(skillId: string): PlatformSkillConfig {
+    return this.normalizePlatformSkillConfig(skillId, this.data.platform?.[skillId]);
+  }
+
+  getPlatformSkillConfigs(): Record<string, PlatformSkillConfig> {
+    const result: Record<string, PlatformSkillConfig> = {};
+    for (const id of new Set([
+      ...Object.keys(this.data.poolVisibility),
+      ...Object.keys(this.data.platform ?? {}),
+    ])) {
+      result[id] = this.getPlatformSkillConfig(id);
+    }
+    return result;
   }
 
   getUserSelectedSkills(username: string): string[] {
     return this.data.users[username]?.selectedSkills ?? [];
   }
 
-  /**
-   * 租户启用集合：未显式配置的租户默认启用当前平台可见 skill，兼容旧配置。
-   */
-  getTenantEnabledSkills(tenantId: string | undefined, visibleSkillIds?: string[]): string[] {
-    const fallback = visibleSkillIds ?? Object.entries(this.data.poolVisibility)
-      .filter(([, visible]) => visible !== false)
-      .map(([id]) => id);
-    if (!tenantId) return fallback;
-    return this.data.tenants[tenantId]?.enabledSkills ?? fallback;
+  isPoolSkillAvailableToTenant(skillId: string, tenantId: string | undefined): boolean {
+    const config = this.getPlatformSkillConfig(skillId);
+    if (!config.enabled) return false;
+    if (!tenantId) return true;
+    if (config.exposure === 'allow_tenants') return config.tenantIds.includes(tenantId);
+    if (config.exposure === 'deny_tenants') return !config.tenantIds.includes(tenantId);
+    return true;
   }
 
   /**
-   * 计算用户的有效 pool skill 集合 = visible ∩ tenantEnabled ∩ selectedSkills
+   * 租户启用集合：平台开放 ∩ 租户启用。
+   * 未显式配置的租户默认启用当前平台开放 skill，兼容旧配置。
+   */
+  getTenantEnabledSkills(tenantId: string | undefined, visibleSkillIds?: string[]): string[] {
+    const candidates = visibleSkillIds ?? Object.entries(this.getPoolVisibility())
+      .filter(([, visible]) => visible)
+      .map(([id]) => id);
+    return candidates.filter((id) => {
+      if (!this.isPoolSkillAvailableToTenant(id, tenantId)) return false;
+      if (!tenantId) return true;
+      return this.getTenantSkillRule(tenantId, id).enabled;
+    });
+  }
+
+  getTenantSkillRule(tenantId: string | undefined, skillId: string): TenantSkillRule {
+    if (!tenantId) return { enabled: true, exposure: DEFAULT_TENANT_EXPOSURE, usernames: [] };
+    const tenant = this.data.tenants[tenantId];
+    return this.normalizeTenantSkillRule(tenant, skillId, tenant?.skills?.[skillId]);
+  }
+
+  isTenantSkillAvailableToUser(skillId: string, tenantId: string | undefined, username: string | undefined): boolean {
+    if (!this.isPoolSkillAvailableToTenant(skillId, tenantId)) return false;
+    if (!tenantId) return true;
+    const rule = this.getTenantSkillRule(tenantId, skillId);
+    if (!rule.enabled) return false;
+    if (rule.exposure === 'allow_users') return !!username && rule.usernames.includes(username);
+    if (rule.exposure === 'deny_users') return !username || !rule.usernames.includes(username);
+    return true;
+  }
+
+  /**
+   * 计算用户的有效 pool skill 集合 = platformAllowed ∩ tenantRuleAllowed ∩ selectedSkills
    */
   getUserEffectivePoolSkills(username: string, tenantId?: string): string[] {
     const selected = this.getUserSelectedSkills(username);
-    const tenantEnabled = new Set(this.getTenantEnabledSkills(tenantId));
-    return selected.filter(id => this.data.poolVisibility[id] !== false && tenantEnabled.has(id));
+    return selected.filter(id => this.isTenantSkillAvailableToUser(id, tenantId, username));
   }
 
   getAllUserConfigs(): Record<string, UserSkillConfig> {
@@ -81,6 +142,21 @@ export class SkillConfigStore {
     await this.serialize(async () => {
       for (const [id, visible] of Object.entries(updates)) {
         this.data.poolVisibility[id] = visible;
+        const current = this.getPlatformSkillConfig(id);
+        this.ensurePlatformConfigMap()[id] = { ...current, enabled: visible };
+      }
+      this.bumpVersion();
+      await this.persist();
+    });
+  }
+
+  async setPlatformSkillConfigs(updates: Record<string, PlatformSkillConfig>): Promise<void> {
+    await this.serialize(async () => {
+      const platform = this.ensurePlatformConfigMap();
+      for (const [id, config] of Object.entries(updates)) {
+        const normalized = this.normalizePlatformSkillConfig(id, config);
+        platform[id] = normalized;
+        this.data.poolVisibility[id] = normalized.enabled;
       }
       this.bumpVersion();
       await this.persist();
@@ -100,7 +176,27 @@ export class SkillConfigStore {
 
   async setTenantEnabledSkills(tenantId: string, skills: string[]): Promise<void> {
     await this.serialize(async () => {
-      this.data.tenants[tenantId] = { enabledSkills: skills };
+      const current = this.data.tenants[tenantId] ?? {};
+      const enabled = new Set(skills);
+      const rules = current.skills
+        ? Object.fromEntries(
+          Object.entries(current.skills).map(([id, rule]) => [id, { ...rule, enabled: enabled.has(id) }]),
+        )
+        : undefined;
+      this.data.tenants[tenantId] = { ...current, enabledSkills: skills, skills: rules };
+      this.bumpVersion();
+      await this.persist();
+    });
+  }
+
+  async setTenantSkillRules(tenantId: string, updates: Record<string, TenantSkillRule>): Promise<void> {
+    await this.serialize(async () => {
+      const current = this.data.tenants[tenantId] ?? {};
+      const rules = { ...(current.skills ?? {}) };
+      for (const [id, rule] of Object.entries(updates)) {
+        rules[id] = this.normalizeTenantSkillRule(current, id, rule);
+      }
+      this.data.tenants[tenantId] = { ...current, skills: rules };
       this.bumpVersion();
       await this.persist();
     });
@@ -114,10 +210,15 @@ export class SkillConfigStore {
     poolVisibility: Record<string, boolean>,
     users: Record<string, UserSkillConfig>,
   ): void {
+    const platform: Record<string, PlatformSkillConfig> = {};
+    for (const [id, enabled] of Object.entries(poolVisibility)) {
+      platform[id] = { enabled, exposure: DEFAULT_PLATFORM_EXPOSURE, tenantIds: [] };
+    }
     this.data = {
       version: 1,
       configVersion: 1,
       poolVisibility,
+      platform,
       tenants: {},
       users,
     };
@@ -151,13 +252,20 @@ export class SkillConfigStore {
    */
   syncWithPool(currentPoolIds: Set<string>): number {
     let added = 0;
+    let changed = false;
     for (const id of currentPoolIds) {
       if (!(id in this.data.poolVisibility)) {
         this.data.poolVisibility[id] = true;
         added++;
+        changed = true;
+      }
+      const platform = this.ensurePlatformConfigMap();
+      if (!platform[id]) {
+        platform[id] = this.getPlatformSkillConfig(id);
+        changed = true;
       }
     }
-    if (added > 0) {
+    if (changed) {
       this.bumpVersion();
       this.persistSync();
     }
@@ -173,7 +281,16 @@ export class SkillConfigStore {
     for (const id of Object.keys(this.data.poolVisibility)) {
       if (!currentPoolIds.has(id)) {
         delete this.data.poolVisibility[id];
+        if (this.data.platform) delete this.data.platform[id];
         pruned++;
+      }
+    }
+    if (this.data.platform) {
+      for (const id of Object.keys(this.data.platform)) {
+        if (!currentPoolIds.has(id)) {
+          delete this.data.platform[id];
+          pruned++;
+        }
       }
     }
     for (const config of Object.values(this.data.users)) {
@@ -182,9 +299,17 @@ export class SkillConfigStore {
       pruned += before - config.selectedSkills.length;
     }
     for (const config of Object.values(this.data.tenants)) {
-      const before = config.enabledSkills.length;
-      config.enabledSkills = config.enabledSkills.filter(id => currentPoolIds.has(id));
-      pruned += before - config.enabledSkills.length;
+      const before = config.enabledSkills?.length ?? 0;
+      config.enabledSkills = config.enabledSkills?.filter(id => currentPoolIds.has(id));
+      pruned += before - (config.enabledSkills?.length ?? 0);
+      if (config.skills) {
+        for (const id of Object.keys(config.skills)) {
+          if (!currentPoolIds.has(id)) {
+            delete config.skills[id];
+            pruned++;
+          }
+        }
+      }
     }
     if (pruned > 0) {
       this.bumpVersion();
@@ -204,6 +329,7 @@ export class SkillConfigStore {
         version: 1,
         configVersion: parsed.configVersion ?? 0,
         poolVisibility: parsed.poolVisibility ?? {},
+        platform: parsed.platform ?? {},
         tenants: parsed.tenants ?? {},
         users: parsed.users ?? {},
       };
@@ -218,6 +344,40 @@ export class SkillConfigStore {
 
   private bumpVersion(): void {
     this.data.configVersion++;
+  }
+
+  private ensurePlatformConfigMap(): Record<string, PlatformSkillConfig> {
+    if (!this.data.platform) this.data.platform = {};
+    return this.data.platform;
+  }
+
+  private normalizePlatformSkillConfig(skillId: string, config: PlatformSkillConfig | undefined): PlatformSkillConfig {
+    const exposure = config?.exposure === 'allow_tenants' || config?.exposure === 'deny_tenants'
+      ? config.exposure
+      : DEFAULT_PLATFORM_EXPOSURE;
+    return {
+      enabled: config?.enabled ?? (this.data.poolVisibility[skillId] !== false),
+      exposure,
+      tenantIds: Array.from(new Set((config?.tenantIds ?? []).filter(Boolean))).sort(),
+    };
+  }
+
+  private normalizeTenantSkillRule(
+    tenant: TenantSkillConfig | undefined,
+    skillId: string,
+    rule: TenantSkillRule | undefined,
+  ): TenantSkillRule {
+    const exposure = rule?.exposure === 'allow_users' || rule?.exposure === 'deny_users'
+      ? rule.exposure
+      : DEFAULT_TENANT_EXPOSURE;
+    const legacyEnabled = tenant?.enabledSkills
+      ? tenant.enabledSkills.includes(skillId)
+      : true;
+    return {
+      enabled: rule?.enabled ?? legacyEnabled,
+      exposure,
+      usernames: Array.from(new Set((rule?.usernames ?? []).filter(Boolean))).sort(),
+    };
   }
 
   private async persist(): Promise<void> {

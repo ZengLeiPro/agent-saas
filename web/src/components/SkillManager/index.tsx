@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, RefreshCw, ArrowUpCircle, Pencil, Trash2, Zap } from "lucide-react";
-import { fetchTenantSkillPool, updateTenantSkillSelections, type TenantSkillInfo } from "@agent/shared";
+import {
+  fetchTenantSkillPool,
+  updateTenantSkillSettings,
+  type PlatformSkillSettings,
+  type PoolSkillInfo,
+  type TenantSkillInfo,
+  type TenantSkillSettings,
+} from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +22,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { useTenants } from "@/components/TenantManager/hooks";
 import { useUsers } from "@/components/UserManager/hooks";
 import { useSkillAdmin } from "./hooks";
 
@@ -29,7 +39,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     loading,
     error,
     refresh,
-    updateVisibility,
+    updatePlatformSettings,
     promoteSkill,
     deleteCustomSkill,
     fetchCustomSkillDocument,
@@ -37,6 +47,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     syncSkills,
   } = useSkillAdmin();
   const { users, loading: usersLoading } = useUsers();
+  const { tenants, loading: tenantsLoading } = useTenants();
 
   const [syncing, setSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState<"global" | "user">("global");
@@ -86,26 +97,37 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     }
   }, [syncSkills, refreshAll]);
 
-  const handleToggleVisibility = useCallback(async (skillId: string, visible: boolean) => {
+  const handleUpdatePlatformSkill = useCallback(async (skill: PoolSkillInfo, patch: Partial<PlatformSkillSettings>) => {
     try {
-      await updateVisibility({ [skillId]: visible });
+      await updatePlatformSettings({
+        [skill.id]: {
+          enabled: skill.enabled,
+          exposure: skill.exposure,
+          tenantIds: skill.tenantIds,
+          ...patch,
+        },
+      });
     } catch {
       alert("更新失败");
     }
-  }, [updateVisibility]);
+  }, [updatePlatformSettings]);
 
-  const handleToggleTenantSkill = useCallback(async (skillId: string, enabled: boolean) => {
+  const handleUpdateTenantSkill = useCallback(async (skill: TenantSkillInfo, patch: Partial<TenantSkillSettings>) => {
     if (!tenantIdScope) return;
     try {
-      const next = tenantSkills
-        .filter((skill) => skill.id !== skillId ? skill.enabled : enabled)
-        .map((skill) => skill.id);
-      await updateTenantSkillSelections(tenantIdScope, next);
+      await updateTenantSkillSettings(tenantIdScope, {
+        [skill.id]: {
+          enabled: skill.enabled,
+          exposure: skill.exposure,
+          usernames: skill.usernames,
+          ...patch,
+        },
+      });
       await refreshTenantSkills();
     } catch (err) {
       alert(err instanceof Error ? err.message : "更新失败");
     }
-  }, [refreshTenantSkills, tenantIdScope, tenantSkills]);
+  }, [refreshTenantSkills, tenantIdScope]);
 
   const handlePromote = useCallback(async (skillId: string, sourceUser: string) => {
     try {
@@ -161,21 +183,18 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const tenantUsernames = tenantIdScope
     ? new Set(users.filter((u) => u.tenantId === tenantIdScope).map((u) => u.username))
     : null;
-  const visiblePoolSkills = mode === "tenant"
-    ? tenantSkills.map((skill) => ({
-      id: skill.id,
-      name: skill.name,
-      description: skill.description,
-      visible: skill.enabled,
-    }))
-    : poolSkills;
   const visibleCustomUsers = Object.fromEntries(
     Object.entries(customUsers).filter(([username]) => !tenantUsernames || tenantUsernames.has(username)),
   );
   const userSkillCount = Object.values(visibleCustomUsers).reduce((sum, arr) => sum + arr.length, 0);
   const hasCustomSkills = userSkillCount > 0;
+  const activePoolSkillsCount = isTenantMode ? tenantSkills.length : poolSkills.length;
+  const platformTenantOptions = tenants.filter((tenant) => !tenant.disabled);
+  const tenantMemberOptions = tenantIdScope
+    ? users.filter((user) => user.tenantId === tenantIdScope && !user.disabled)
+    : [];
 
-  if (loading || tenantLoading || (tenantIdScope && usersLoading)) {
+  if (loading || tenantLoading || (tenantIdScope && usersLoading) || (!isTenantMode && tenantsLoading)) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -229,8 +248,8 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
             <div className="shrink-0 rounded-lg border bg-card p-1 shadow-sm">
               <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-transparent p-0 text-muted-foreground">
                 <TabsTrigger value="global" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
-                  全局Skills
-                  <span className="ml-1.5 text-xs font-normal">({visiblePoolSkills.length})</span>
+                  {isTenantMode ? "组织 Skills" : "平台 Skills"}
+                  <span className="ml-1.5 text-xs font-normal">({activePoolSkillsCount})</span>
                 </TabsTrigger>
                 <TabsTrigger value="user" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
                   用户Skills
@@ -243,24 +262,114 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
               <TabsContent value="global" forceMount className="mt-0">
                 <div className="rounded-2xl border bg-card shadow-sm">
                   <div className="space-y-1 p-4">
-            {visiblePoolSkills.length === 0 ? (
-              <div className="py-4 text-center text-sm text-muted-foreground">暂无全局Skills</div>
-            ) : (
-              visiblePoolSkills.map(skill => (
-                <div key={skill.id} className="flex items-start gap-3 rounded-lg p-2.5 transition-colors hover:bg-muted/50">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">{skill.name}</div>
-                    {skill.description && (
-                      <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{skill.description}</p>
-                    )}
+            {activePoolSkillsCount === 0 ? (
+              <div className="py-4 text-center text-sm text-muted-foreground">暂无{isTenantMode ? "组织" : "平台"} Skills</div>
+            ) : isTenantMode ? (
+              tenantSkills.map(skill => (
+                <div key={skill.id} className="rounded-lg p-2.5 transition-colors hover:bg-muted/50">
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium">{skill.name}</div>
+                      {skill.description && (
+                        <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{skill.description}</p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Select
+                        value={skill.exposure}
+                        onValueChange={(value) => {
+                          void handleUpdateTenantSkill(skill, { exposure: value as TenantSkillInfo["exposure"] });
+                        }}
+                      >
+                        <SelectTrigger className="h-8 w-36">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">全员开放</SelectItem>
+                          <SelectItem value="allow_users">指定成员开放</SelectItem>
+                          <SelectItem value="deny_users">指定成员禁用</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Switch
+                        checked={skill.enabled}
+                        onCheckedChange={(checked) => { void handleUpdateTenantSkill(skill, { enabled: checked }); }}
+                        className="shrink-0"
+                      />
+                    </div>
                   </div>
-                  <Switch
-                    checked={skill.visible}
-                    onCheckedChange={(checked) => isTenantMode
-                      ? handleToggleTenantSkill(skill.id, checked)
-                      : handleToggleVisibility(skill.id, checked)}
-                    className="shrink-0"
-                  />
+                  {skill.exposure !== "all" && (
+                    <div className="mt-3 grid gap-2 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
+                      {tenantMemberOptions.map((user) => (
+                        <label key={user.username} className="flex min-w-0 items-center gap-2 text-xs">
+                          <Checkbox
+                            checked={skill.usernames.includes(user.username)}
+                            onCheckedChange={(checked) => {
+                              const usernames = checked === true
+                                ? Array.from(new Set([...skill.usernames, user.username]))
+                                : skill.usernames.filter((username) => username !== user.username);
+                              void handleUpdateTenantSkill(skill, { usernames });
+                            }}
+                          />
+                          <span className="truncate">{user.realName || user.username}</span>
+                          {user.realName && <span className="truncate text-muted-foreground">{user.username}</span>}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))
+            ) : (
+              poolSkills.map(skill => (
+                <div key={skill.id} className="rounded-lg p-2.5 transition-colors hover:bg-muted/50">
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium">{skill.name}</div>
+                      {skill.description && (
+                        <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{skill.description}</p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Select
+                        value={skill.exposure}
+                        onValueChange={(value) => {
+                          void handleUpdatePlatformSkill(skill, { exposure: value as PoolSkillInfo["exposure"] });
+                        }}
+                      >
+                        <SelectTrigger className="h-8 w-40">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">全平台开放</SelectItem>
+                          <SelectItem value="allow_tenants">仅指定租户开放</SelectItem>
+                          <SelectItem value="deny_tenants">指定租户禁用</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Switch
+                        checked={skill.enabled}
+                        onCheckedChange={(checked) => { void handleUpdatePlatformSkill(skill, { enabled: checked }); }}
+                        className="shrink-0"
+                      />
+                    </div>
+                  </div>
+                  {skill.exposure !== "all" && (
+                    <div className="mt-3 grid gap-2 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
+                      {platformTenantOptions.map((tenant) => (
+                        <label key={tenant.id} className="flex min-w-0 items-center gap-2 text-xs">
+                          <Checkbox
+                            checked={skill.tenantIds.includes(tenant.id)}
+                            onCheckedChange={(checked) => {
+                              const tenantIds = checked === true
+                                ? Array.from(new Set([...skill.tenantIds, tenant.id]))
+                                : skill.tenantIds.filter((tenantId) => tenantId !== tenant.id);
+                              void handleUpdatePlatformSkill(skill, { tenantIds });
+                            }}
+                          />
+                          <span className="truncate">{tenant.name}</span>
+                          <span className="truncate text-muted-foreground">{tenant.id}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))
             )}

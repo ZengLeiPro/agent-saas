@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { requireAdmin, requirePlatformAdmin, isPlatformAdmin } from '../auth/middleware.js';
 import { auditLog } from '../data/login-logs/index.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
+import type { PlatformSkillConfig, TenantSkillRule } from '../data/skills/types.js';
 import { scanPoolSkills, scanUserCustomSkills } from '../data/skills/scanner.js';
 import { resolveUserCwd, syncSkills } from '../workspace/resolver.js';
 import { agentDir, agentPath, agentSkillsDir, resolveAgentPath } from '../workspace/namespace.js';
@@ -104,15 +105,14 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     return tenantId;
   }
 
-  function platformVisiblePoolSkills() {
+  function platformPoolSkillsForTenant(tenantId?: string) {
     const poolSkills = scanPoolSkills(poolDir);
-    const visibility = skillConfigStore.getPoolVisibility();
     return poolSkills
       .map(s => ({
         ...s,
-        visible: visibility[s.id] !== false,
+        settings: skillConfigStore.getPlatformSkillConfig(s.id),
       }))
-      .filter(s => s.visible);
+      .filter(s => skillConfigStore.isPoolSkillAvailableToTenant(s.id, tenantId));
   }
 
   function getSkillDocPath(skillDir: string, skillId: string): string {
@@ -223,14 +223,19 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   router.get('/pool', requireAdmin, (req, res) => {
     try {
       const poolSkills = scanPoolSkills(poolDir);
-      const visibility = skillConfigStore.getPoolVisibility();
       const platform = isPlatformAdmin(req.user);
       const skills = poolSkills
-        .map(s => ({
-          ...s,
-          visible: visibility[s.id] !== false, // 新 skill 默认 visible
-        }))
-        .filter(s => platform || s.visible);
+        .map(s => {
+          const settings = skillConfigStore.getPlatformSkillConfig(s.id);
+          return {
+            ...s,
+            enabled: settings.enabled,
+            visible: settings.enabled, // 兼容旧前端字段名
+            exposure: settings.exposure,
+            tenantIds: settings.tenantIds,
+          };
+        })
+        .filter(s => platform || skillConfigStore.isPoolSkillAvailableToTenant(s.id, req.user?.tenantId));
       res.json({ skills });
     } catch (err) {
       serverLogger.error(`GET /pool error: ${err}`);
@@ -240,9 +245,19 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
   /** PATCH /pool/visibility — 批量更新可见性 */
   const visibilitySchema = z.record(z.string(), z.boolean());
+  const platformSkillSettingsSchema = z.record(z.string(), z.object({
+    enabled: z.boolean(),
+    exposure: z.enum(['all', 'allow_tenants', 'deny_tenants']),
+    tenantIds: z.array(z.string()).default([]),
+  }));
   const tenantSelectionsSchema = z.object({
     enabledSkills: z.array(z.string()),
   });
+  const tenantSkillSettingsSchema = z.record(z.string(), z.object({
+    enabled: z.boolean(),
+    exposure: z.enum(['all', 'allow_users', 'deny_users']),
+    usernames: z.array(z.string()).default([]),
+  }));
   const skillDocumentSchema = z.object({
     content: z.string().max(300000),
   });
@@ -320,19 +335,50 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
   });
 
+  /** PATCH /pool/settings — 平台级 skill 启用与租户开放范围，仅平台 admin */
+  router.patch('/pool/settings', requirePlatformAdmin, async (req, res) => {
+    const parsed = platformSkillSettingsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid platform skill settings', details: parsed.error.format() });
+    }
+    try {
+      const poolIds = getPoolSkillIds();
+      const updates: Record<string, PlatformSkillConfig> = {};
+      for (const [skillId, settings] of Object.entries(parsed.data)) {
+        if (!poolIds.has(skillId)) continue;
+        const tenantIds = settings.tenantIds.filter((id): id is string => !!safeName(id));
+        updates[skillId] = {
+          enabled: settings.enabled,
+          exposure: settings.exposure,
+          tenantIds,
+        };
+      }
+      await skillConfigStore.setPlatformSkillConfigs(updates);
+      auditLog(req, 'skill_platform_settings_updated', JSON.stringify(Object.keys(updates)));
+      res.json({ ok: true });
+    } catch (err) {
+      serverLogger.error(`PATCH /pool/settings error: ${err}`);
+      res.status(500).json({ error: 'Failed to update platform skill settings' });
+    }
+  });
+
   /** GET /tenants/:tenantId/pool — 租户可管理的平台已开放 skill */
   router.get('/tenants/:tenantId/pool', requireAdmin, (req, res) => {
     const tenantId = resolveAdminTargetTenantId(req, res, req.params.tenantId);
     if (!tenantId) return;
     try {
-      const visibleSkills = platformVisiblePoolSkills();
-      const enabled = new Set(skillConfigStore.getTenantEnabledSkills(tenantId, visibleSkills.map(s => s.id)));
-      const skills = visibleSkills.map(s => ({
-        id: s.id,
-        name: s.name,
-        description: s.description,
-        enabled: enabled.has(s.id),
-      }));
+      const platformSkills = platformPoolSkillsForTenant(tenantId);
+      const skills = platformSkills.map(s => {
+        const rule = skillConfigStore.getTenantSkillRule(tenantId, s.id);
+        return {
+          id: s.id,
+          name: s.name,
+          description: s.description,
+          enabled: rule.enabled,
+          exposure: rule.exposure,
+          usernames: rule.usernames,
+        };
+      });
       res.json({ tenantId, skills });
     } catch (err) {
       serverLogger.error(`GET /tenants/${tenantId}/pool error: ${err}`);
@@ -349,7 +395,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       return res.status(400).json({ error: 'Invalid selections', details: parsed.error.format() });
     }
     try {
-      const visibleIds = new Set(platformVisiblePoolSkills().map(s => s.id));
+      const visibleIds = new Set(platformPoolSkillsForTenant(tenantId).map(s => s.id));
       const enabledSkills = parsed.data.enabledSkills.filter(id => visibleIds.has(id));
       await skillConfigStore.setTenantEnabledSkills(tenantId, enabledSkills);
       auditLog(req, 'skill_tenant_selections_updated', `${tenantId}: ${enabledSkills.length} skills`);
@@ -357,6 +403,39 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     } catch (err) {
       serverLogger.error(`PUT /tenants/${tenantId}/pool/selections error: ${err}`);
       res.status(500).json({ error: 'Failed to update tenant skills' });
+    }
+  });
+
+  /** PUT /tenants/:tenantId/pool/settings — 更新租户启用与成员开放范围 */
+  router.put('/tenants/:tenantId/pool/settings', requireAdmin, async (req, res) => {
+    const tenantId = resolveAdminTargetTenantId(req, res, req.params.tenantId);
+    if (!tenantId) return;
+    const parsed = tenantSkillSettingsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid tenant skill settings', details: parsed.error.format() });
+    }
+    try {
+      const availableIds = new Set(platformPoolSkillsForTenant(tenantId).map(s => s.id));
+      const tenantUsernames = new Set(
+        userStore.listAll()
+          .filter((u) => u.tenantId === tenantId)
+          .map((u) => u.username),
+      );
+      const updates: Record<string, TenantSkillRule> = {};
+      for (const [skillId, settings] of Object.entries(parsed.data)) {
+        if (!availableIds.has(skillId)) continue;
+        updates[skillId] = {
+          enabled: settings.enabled,
+          exposure: settings.exposure,
+          usernames: settings.usernames.filter((username): username is string => tenantUsernames.has(username)),
+        };
+      }
+      await skillConfigStore.setTenantSkillRules(tenantId, updates);
+      auditLog(req, 'skill_tenant_settings_updated', `${tenantId}: ${Object.keys(updates).length} skills`);
+      res.json({ ok: true });
+    } catch (err) {
+      serverLogger.error(`PUT /tenants/${tenantId}/pool/settings error: ${err}`);
+      res.status(500).json({ error: 'Failed to update tenant skill settings' });
     }
   });
 
@@ -642,12 +721,9 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
 
     try {
-      // 过滤掉不可见的 skill
-      const visibility = skillConfigStore.getPoolVisibility();
       const poolIds = getPoolSkillIds();
-      const tenantEnabled = new Set(skillConfigStore.getTenantEnabledSkills(user.tenantId));
       const validSkills = parsed.data.selectedSkills.filter(
-        id => poolIds.has(id) && visibility[id] !== false && tenantEnabled.has(id),
+        id => poolIds.has(id) && skillConfigStore.isTenantSkillAvailableToUser(id, user.tenantId, user.username),
       );
       await skillConfigStore.setUserSelectedSkills(username, validSkills);
       res.json({ ok: true });
@@ -691,11 +767,9 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
 
     try {
-      const visibility = skillConfigStore.getPoolVisibility();
       const poolIds = getPoolSkillIds();
-      const tenantEnabled = new Set(skillConfigStore.getTenantEnabledSkills(target.tenantId));
       const validSkills = parsed.data.selectedSkills.filter(
-        id => poolIds.has(id) && visibility[id] !== false && tenantEnabled.has(id),
+        id => poolIds.has(id) && skillConfigStore.isTenantSkillAvailableToUser(id, target.tenantId, target.username),
       );
       await skillConfigStore.setUserSelectedSkills(target.username, validSkills);
       auditLog(req, 'skill_user_selections_updated', `${target.username}: ${validSkills.length} skills`);
@@ -710,14 +784,12 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
   function buildUserSkillsResponse(user: SkillUser) {
     const poolSkills = scanPoolSkills(poolDir);
-    const visibility = skillConfigStore.getPoolVisibility();
     const selected = new Set(skillConfigStore.getUserSelectedSkills(user.username));
     const poolIds = getKnownSystemSkillIds();
-    const tenantEnabled = new Set(skillConfigStore.getTenantEnabledSkills(user.tenantId));
 
-    // Pool skills: 只返回平台 visible 且本租户 enabled 的
+    // Pool skills: 只返回平台授权、租户启用且成员范围允许的
     const visiblePoolSkills = poolSkills
-      .filter(s => visibility[s.id] !== false && tenantEnabled.has(s.id))
+      .filter(s => skillConfigStore.isTenantSkillAvailableToUser(s.id, user.tenantId, user.username))
       .map(s => ({
         ...s,
         selected: selected.has(s.id),

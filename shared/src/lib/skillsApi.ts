@@ -6,6 +6,8 @@ import type {
   CustomSkillsResponse,
   SkillImportResponse,
   SkillDocumentResponse,
+  PlatformSkillSettings,
+  TenantSkillSettings,
 } from '../types/skill';
 
 // ── 用户自助 ──────────────────────────────────────────────
@@ -57,6 +59,15 @@ export async function updatePoolVisibility(visibility: Record<string, boolean>):
   if (!res.ok) throw new Error(`Failed to update pool visibility: ${res.status}`);
 }
 
+export async function updatePoolSkillSettings(updates: Record<string, PlatformSkillSettings>): Promise<void> {
+  const res = await authFetch('/api/skills/pool/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`Failed to update pool skill settings: ${res.status}`);
+}
+
 export async function fetchTenantSkillPool(tenantId: string): Promise<TenantSkillPoolResponse> {
   const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/pool`);
   if (!res.ok) throw new Error(`Failed to fetch tenant skill pool: ${res.status}`);
@@ -70,6 +81,15 @@ export async function updateTenantSkillSelections(tenantId: string, enabledSkill
     body: JSON.stringify({ enabledSkills }),
   });
   if (!res.ok) throw new Error(`Failed to update tenant skill selections: ${res.status}`);
+}
+
+export async function updateTenantSkillSettings(tenantId: string, updates: Record<string, TenantSkillSettings>): Promise<void> {
+  const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/pool/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`Failed to update tenant skill settings: ${res.status}`);
 }
 
 export async function fetchCustomSkills(): Promise<CustomSkillsResponse> {

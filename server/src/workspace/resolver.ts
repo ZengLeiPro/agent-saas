@@ -149,7 +149,7 @@ export async function ensureUserWorkspace(
       const visibleSkills = Object.entries(skillConfigStore.getPoolVisibility())
         .filter(([, v]) => v !== false)
         .map(([id]) => id);
-      const tenantSkills = skillConfigStore.getTenantEnabledSkills(user.tenantId, visibleSkills);
+      const tenantSkills = visibleSkills.filter((id) => skillConfigStore.isTenantSkillAvailableToUser(id, user.tenantId, user.username));
       if (tenantSkills.length > 0) {
         await skillConfigStore.setUserSelectedSkills(user.username, tenantSkills);
       }

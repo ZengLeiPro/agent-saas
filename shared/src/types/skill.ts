@@ -5,15 +5,29 @@ export interface SkillInfo {
   description: string;
 }
 
+export type PlatformSkillExposure = 'all' | 'allow_tenants' | 'deny_tenants';
+export type TenantSkillMemberExposure = 'all' | 'allow_users' | 'deny_users';
+
+export interface PlatformSkillSettings {
+  enabled: boolean;
+  exposure: PlatformSkillExposure;
+  tenantIds: string[];
+}
+
+export interface TenantSkillSettings {
+  enabled: boolean;
+  exposure: TenantSkillMemberExposure;
+  usernames: string[];
+}
+
 /** Pool skill + admin 设置的全局可见性 */
-export interface PoolSkillInfo extends SkillInfo {
+export interface PoolSkillInfo extends SkillInfo, PlatformSkillSettings {
+  /** 兼容旧字段；等价于 enabled */
   visible: boolean;
 }
 
 /** 租户视角的平台 skill + 租户启用状态 */
-export interface TenantSkillInfo extends SkillInfo {
-  enabled: boolean;
-}
+export interface TenantSkillInfo extends SkillInfo, TenantSkillSettings {}
 
 /** 用户视角的 skill（含选中状态和来源） */
 export interface UserSkillInfo extends SkillInfo {

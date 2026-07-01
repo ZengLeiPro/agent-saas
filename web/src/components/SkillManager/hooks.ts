@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   fetchSkillPool,
-  updatePoolVisibility,
+  updatePoolSkillSettings,
   fetchCustomSkills,
   promoteSkill,
   deleteCustomSkill,
@@ -10,6 +10,7 @@ import {
   syncSkillsApi,
 } from "@agent/shared";
 import type { PoolSkillInfo, CustomSkillsResponse, SkillDocumentResponse } from "@agent/shared";
+import type { PlatformSkillSettings } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 
 let cachedPool: PoolSkillInfo[] | null = null;
@@ -62,8 +63,8 @@ export function useSkillAdmin() {
     return () => unregisterRefresh("skillAdmin");
   }, [refresh]);
 
-  const updateVisibility = useCallback(async (updates: Record<string, boolean>) => {
-    await updatePoolVisibility(updates);
+  const updatePlatformSettings = useCallback(async (updates: Record<string, PlatformSkillSettings>) => {
+    await updatePoolSkillSettings(updates);
     await refreshPool();
   }, [refreshPool]);
 
@@ -97,7 +98,7 @@ export function useSkillAdmin() {
     loading,
     error,
     refresh,
-    updateVisibility,
+    updatePlatformSettings,
     promoteSkill: handlePromote,
     deleteCustomSkill: handleDelete,
     fetchCustomSkillDocument: handleFetchDocument,

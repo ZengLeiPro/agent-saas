@@ -2,51 +2,84 @@
 
 > 本文件是 KY Agent SaaS 平台运行时约定，与 dws 官方升级独立维护。每次执行 `dws` 命令之前必须遵守本文档约定。
 
-## 1. 强制 env 注入（硬约束）
+## 1. env 注入约定（三级 fallback）
 
 KY Agent SaaS 已迁到 ACS warm sandbox。容器按用户/workspace 复用，同一 workspace 的多个会话共享持久目录；如果 dws 默认行为（写系统凭据、HOME 默认配置目录或 `~/.config/dws/`）被触发，会破坏 workspace 级账号隔离，也不利于审计和迁移。
 
-**因此调用 dws 之前必须显式注入三个环境变量，把 token 与配置都强制写到当前工作区内部：**
+**因此 dws 必须始终把 token 与配置写到当前 workspace 内部**，通过三个环境变量控制：
 
-```bash
-export DWS_DISABLE_KEYCHAIN=1
-export DWS_CONFIG_DIR="$PWD/.dws/config"
-export DWS_KEYCHAIN_DIR="$PWD/.dws/keys"
-mkdir -p "$DWS_CONFIG_DIR" "$DWS_KEYCHAIN_DIR" .dws/logs
+- `DWS_DISABLE_KEYCHAIN=1`：禁用系统凭据管理器（避免 macOS Keychain / Linux Secret Service 拒写或跨机泄漏）
+- `DWS_CONFIG_DIR`：workspace 内 config 目录
+- `DWS_KEYCHAIN_DIR`：workspace 内 key 目录
+
+平台按三级 fallback 提供 env 注入：
+
+### 1.1 ACS sandbox 容器（默认，agent 无需感知）
+
+`acs-sandbox` 镜像 Dockerfile `ENV` 层已强制注入：
+
+```dockerfile
+ENV DWS_DISABLE_KEYCHAIN=1 \
+    DWS_CONFIG_DIR=/workspace/.dws/config \
+    DWS_KEYCHAIN_DIR=/workspace/.dws/keys
 ```
 
-**推荐做法**：在工作区根目录建 `.dws/env.sh`（首次 setup 时生成）：
+容器起来后所有 shell 会话、Python subprocess 都天然继承。**agent 直接跑 `dws <cmd>` 即可，token 会正确落到 `/workspace/.dws/keys/`**。
+
+用**绝对路径** `/workspace/.dws/...` 而非 `$PWD/.dws/...`：agent 走到子目录（比如 `assets/YYYYMMDD/`、`downloads/` 等）时 token 归属不漂移。`WORKDIR /workspace`、`VOLUME /workspace` 保证工作区就在这里。
+
+首次授权后目录会自动出现，无需手动 mkdir。`.dws/logs/` 用于 device flow polling 日志，首次跑授权流程时脚本自己 mkdir 即可。
+
+### 1.2 本地开发（非 ACS 容器）
+
+开发者笔记本上跑 skill 时容器 ENV 不存在，需自己 source `.dws/env.sh`：
 
 ```bash
-# .dws/env.sh
-# 用法: 从工作区根目录 source: . .dws/env.sh
-# 注：此脚本依赖 source 时 cwd 在工作区根目录，请勿在子目录 source
-export DWS_DISABLE_KEYCHAIN=1
-export DWS_CONFIG_DIR="$PWD/.dws/config"
-export DWS_KEYCHAIN_DIR="$PWD/.dws/keys"
-```
-
-确保目录存在（首次 setup 时执行一次）：
-
-```bash
+# 首次 setup（一次即可）
 mkdir -p .dws/config .dws/keys .dws/logs
-```
+cat > .dws/env.sh <<'EOF'
+# 用法：从工作区根目录 source: . .dws/env.sh
+export DWS_DISABLE_KEYCHAIN=1
+export DWS_CONFIG_DIR="$PWD/.dws/config"
+export DWS_KEYCHAIN_DIR="$PWD/.dws/keys"
+EOF
 
-每次执行 dws 命令时 source 一次（必须从工作区根目录）：
-
-```bash
+# 每个 shell session source 一次
 . .dws/env.sh && dws <command> --format json
 ```
 
-⚠️ 不要用 `${BASH_SOURCE[0]}` 自动定位的写法：实测在 source 上下文里它可能返回空字符串，路径会变成 `$PWD/config` 而非 `$PWD/.dws/config`，导致 token 落到工作区根，与本约定不一致。务必用上面这种 `$PWD/.dws/...` 的简洁写法。
+⚠️ 不要用 `${BASH_SOURCE[0]}` 自动定位的写法：实测在 source 上下文里它可能返回空字符串，路径会变成 `$PWD/config` 而非 `$PWD/.dws/config`，token 会落到工作区根、与本约定不一致。务必用 `$PWD/.dws/...` 的简洁写法。
 
-或者写成一行：
+也可以一行内联：
 
 ```bash
 DWS_DISABLE_KEYCHAIN=1 DWS_CONFIG_DIR="$PWD/.dws/config" DWS_KEYCHAIN_DIR="$PWD/.dws/keys" dws <command> --format json
 ```
 
-**禁止**：直接裸跑 `dws auth login` 或 `dws aitable list`。第一次裸跑可能把 token/config 写到默认 HOME 位置，污染后续会话。
+**禁止**：本地开发环境直接裸跑 `dws auth login` 或 `dws aitable list`。第一次裸跑会把 token/config 写到默认 HOME 位置（`~/.config/dws/` 或 macOS Keychain），污染后续所有会话。ACS sandbox 里不会有这个问题（ENV 已默认注入）。
+
+### 1.3 自写 Python 脚本（可选 helper）
+
+`scripts/dws_runtime.py` 提供 workspace 规范工具，给**自写脚本**使用：
+
+- `workspace_root() -> Path`：定位当前 workspace 根（读 `$KY_WORKSPACE_ROOT` / `$WORKSPACE_DIR` / cwd）
+- `dws_env(extra=None) -> dict[str, str]`：显式构建 warm sandbox env（本地开发时给 subprocess 传）
+- `today_ymd() / assets_dir(*parts) / safe_filename(name)`：workspace 规范工具
+
+```python
+import dws_runtime
+import subprocess
+
+env = dws_runtime.dws_env()  # ACS 里返回 os.environ 的浅副本（已含正确变量）；本地则强制写入
+result = subprocess.run(
+    ["dws", "contact", "user", "get-self", "--format", "json"],
+    env=env,
+    capture_output=True,
+    text=True,
+)
+```
+
+**官方 32 个脚本不 import 本 helper**——它们依赖 shell/subprocess 环境继承，ACS 容器里因 §1.1 天然生效；本地开发时必须先按 §1.2 source。**不要在 `dws_runtime.py` 里加 subprocess 猴子补丁**——那会跟官方 skill 的假设分叉、维护性极差；warm sandbox 隔离的单一真相源是 Dockerfile `ENV` 层。
 
 ## 2. 首次授权流程
 

@@ -10,16 +10,16 @@ cli_version: ">=1.0.15"
 
 > ⚠️ **平台运行时约定（必读，先于本文档其他章节）**：执行任何 `dws` 命令前必须读 [references/platform-runtime-context.md](./references/platform-runtime-context.md)。下面 6 条是实战踩坑得到的硬规则，违反任何一条都会让授权流程或调用失败：
 >
-> 1. **Token/config 必须写入当前 workspace**：`DWS_DISABLE_KEYCHAIN=1` + `DWS_CONFIG_DIR=$PWD/.dws/config` + `DWS_KEYCHAIN_DIR=$PWD/.dws/keys`。ACS warm sandbox 会复用同一用户 workspace，不能写默认 HOME 配置目录。建议执行 `. .dws/env.sh`（首次 setup 时由 `platform-runtime-context.md §1` 创建）。
-> 2. **脚本已自动注入隔离环境**：`scripts/` 下 Python 脚本在调用 `dws` 时会通过 `subprocess` env 传入上述变量；手写 `dws` 命令仍必须先 source `.dws/env.sh` 或显式带 env。
+> 1. **Token/config 隔离到 workspace**：`DWS_DISABLE_KEYCHAIN=1` + `DWS_CONFIG_DIR=/workspace/.dws/config` + `DWS_KEYCHAIN_DIR=/workspace/.dws/keys`。**ACS sandbox 镜像 Dockerfile `ENV` 层已默认注入这三个变量**，agent 直接跑 `dws <cmd>` 即可；本地开发（非 ACS 容器）需 `. .dws/env.sh` 或 `dws_runtime.dws_env()` 显式带 env。
+> 2. **官方脚本依赖 env 继承**：`scripts/` 下 32 个官方 Python 脚本调用 `dws` 时**没有**内置 env 注入逻辑，依赖 shell/`subprocess` 环境继承——ACS 容器里天然生效（因 §1 的 `ENV` 层），本地开发若忘 source `.dws/env.sh`，token 会落到默认 HOME 位置。`scripts/dws_runtime.py` 仅是给**自写脚本**的 workspace 规范 helper（`workspace_root()` / `dws_env()` / `assets_dir()` 等），**不 patch subprocess**。
 > 3. **首次授权走 device flow**：日志写 `.dws/logs/login.log`，polling 用当前平台后台任务机制启动（禁止 `nohup ... & disown`）；用户在自己设备打开 `https://login.dingtalk.com/oauth2/device/verify.htm?user_code=<CODE>` 完成登录。详见 §2。
 > 4. **每 workspace 绑定独立钉钉账号**：dws 涉及个人数据（日历/邮件/听记/考勤/日志），禁止复用少量权限的无人小号。机器人/自动化场景改用 `--client-id --client-secret` 自定义应用模式。
-> 5. **禁止裸跑 `dws`**：任何命令前必须先 `. .dws/env.sh`（或一行 env 内联注入）。裸跑可能污染默认 HOME 配置目录。
+> 5. **ACS 里可直接跑 `dws`**：容器 ENV 已注入，token 会落 `/workspace/.dws/keys/`；本地开发或裸机跑 dws 之前必须先 `. .dws/env.sh` 或显式内联 env，否则 token 会污染默认 HOME 配置目录。
 > 6. **职责边界**：实时钉钉产品操作走本 skill；批量历史聚合（员工/部门/工时）若当前会话启用了 `ky-data-query` 则优先走它；TTS/语音消息/长时间异步回复不属于 dws，仅当明确启用对应专用 skill 时才路由过去。
 >
 > **PAT 行为授权是预期机制，不是 bug**——撞到 `PAT_*_RISK_NO_PERMISSION` 错误时**不要重试、不要改命令**，把错误 JSON 里的 `authorizationUrl` **原样**转给用户，说明风险等级和授权时长选项（一次性 / 本次会话 / 永久），让用户在自己设备打开完成同意。完整机制见 [platform-runtime-context.md](./references/platform-runtime-context.md) §7（含 4 个风险等级 / vs OAuth 对比 / `PAT_SCOPE_AUTH_REQUIRED` 与 `AGENT_CODE_NOT_EXISTS` 两个特殊错误码）。
 >
-> **平台默认部署注意**：本 skill 不携带任何用户 token/config；每个新用户 workspace 首次使用时都应自动创建 `.dws/env.sh` 并独立完成 dws device flow 授权。平台镜像必须预装 `dingtalk-workspace-cli` npm 包（bin 名 `dws`），否则 skill 文档再完整也无法真实调用钉钉。
+> **平台默认部署**：本 skill 不携带任何用户 token/config；每个新用户 workspace 首次使用时都需独立完成 dws device flow 授权（token 写到 `/workspace/.dws/keys/`）。平台镜像已预装 `dingtalk-workspace-cli@1.0.45` npm 包 + 在 `acs-sandbox` stage `ENV` 层默认注入 warm sandbox 三变量；本地开发需自行 source `.dws/env.sh`。
 >
 > **如果有任何调用失败**，先按这 6 条对照排查；仍不通时读完整 [references/platform-runtime-context.md](./references/platform-runtime-context.md) §6 故障特征表 + §7 PAT 章节。
 

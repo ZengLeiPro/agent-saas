@@ -289,6 +289,13 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV NPM_CONFIG_PREFIX=/home/agent/.npm-global
 ENV PATH=/home/agent/.npm-global/bin:$PATH
+# dws warm sandbox 隔离约定（agent 无需 source .dws/env.sh）：
+# 强制 token/config 写工作区 /workspace/.dws/、禁用系统凭据管理器。
+# 用绝对路径而非 $PWD/.dws/…：agent 走到子目录（如 assets/YYYYMMDD/）时 token 归属不漂移。
+# 本地开发（非 ACS 容器）需自行 source .dws/env.sh 或用 dws_runtime.dws_env() 显式带 env。
+ENV DWS_DISABLE_KEYCHAIN=1 \
+    DWS_CONFIG_DIR=/workspace/.dws/config \
+    DWS_KEYCHAIN_DIR=/workspace/.dws/keys
 RUN groupadd -f -g 20 dialout \
     && useradd -m -u 501 -g 20 -s /bin/bash agent \
     && mkdir -p /workspace /home/agent/.npm-global/bin /home/agent/.npm-global/lib /ms-playwright \

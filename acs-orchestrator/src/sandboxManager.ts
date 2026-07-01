@@ -298,7 +298,7 @@ export class SandboxManager {
       const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt) ?? createdAtMs;
       const ageMs = createdAtMs === undefined ? 0 : nowMs - createdAtMs;
       const idleMs = lastActiveAtMs === undefined ? 0 : nowMs - lastActiveAtMs;
-      const shouldDeleteByTtl = this.config.sandboxTtlMs > 0 && ageMs >= this.config.sandboxTtlMs;
+      const shouldDeleteByTtl = this.config.sandboxTtlMs > 0 && idleMs >= this.config.sandboxTtlMs;
       const orphanPhase = !['Running', 'Paused'].includes(phase);
       const shouldDeleteOrphan = this.config.sandboxOrphanGraceMs > 0 && orphanPhase && ageMs >= this.config.sandboxOrphanGraceMs;
       if (shouldDeleteByTtl || shouldDeleteOrphan) {

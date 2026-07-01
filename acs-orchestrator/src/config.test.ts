@@ -99,6 +99,18 @@ describe('ACS runtime config', () => {
     }
   });
 
+  it('uses seven days as the default sandbox unused TTL', () => {
+    const originalEnv = { ...process.env };
+    process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
+    process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
+    delete process.env.ACS_SANDBOX_TTL_MS;
+    try {
+      expect(loadConfigFromEnv().sandboxTtlMs).toBe(7 * 24 * 60 * 60_000);
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
   it('enables production Agent runtime capabilities by default and allows explicit disable', () => {
     const originalEnv = { ...process.env };
     process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';

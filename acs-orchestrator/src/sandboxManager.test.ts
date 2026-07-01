@@ -439,7 +439,7 @@ describe('SandboxManager', () => {
     expect(calls.some((args) => args[0] === 'patch' && args[1] === 'sandbox/as-busy')).toBe(false);
   });
 
-  it('pauses idle running Sandboxes and deletes expired Sandboxes without touching workspaces', async () => {
+  it('pauses idle running Sandboxes and deletes Sandboxes unused past TTL without touching workspaces', async () => {
     const calls: string[][] = [];
     const kubectl = {
       async run(args: string[]): Promise<KubectlResult> {
@@ -462,8 +462,8 @@ describe('SandboxManager', () => {
                   metadata: {
                     name: 'as-expired',
                     annotations: {
-                      'agent-saas.kaiyan.net/created-at': '2026-06-26T00:00:00.000Z',
-                      'agent-saas.kaiyan.net/last-active-at': '2026-06-26T00:10:00.000Z',
+                      'agent-saas.kaiyan.net/created-at': '2026-06-20T00:00:00.000Z',
+                      'agent-saas.kaiyan.net/last-active-at': '2026-06-20T00:10:00.000Z',
                     },
                   },
                   status: { phase: 'Paused' },
@@ -472,8 +472,8 @@ describe('SandboxManager', () => {
                   metadata: {
                     name: 'as-busy',
                     annotations: {
-                      'agent-saas.kaiyan.net/created-at': '2026-06-26T00:00:00.000Z',
-                      'agent-saas.kaiyan.net/last-active-at': '2026-06-26T00:10:00.000Z',
+                      'agent-saas.kaiyan.net/created-at': '2026-06-20T00:00:00.000Z',
+                      'agent-saas.kaiyan.net/last-active-at': '2026-06-20T00:10:00.000Z',
                     },
                   },
                   status: { phase: 'Running' },
@@ -495,7 +495,7 @@ describe('SandboxManager', () => {
     const manager = new SandboxManager({
       ...baseConfig(),
       sandboxIdlePauseMs: 5 * 60_000,
-      sandboxTtlMs: 6 * 60 * 60_000,
+      sandboxTtlMs: 7 * 24 * 60 * 60_000,
     }, kubectl, noopLogger);
 
     const report = await manager.cleanupSandboxes({
@@ -508,6 +508,52 @@ describe('SandboxManager', () => {
     expect(report.skippedBusy).toEqual(['as-busy']);
     expect(calls.some((args) => args[0] === 'patch' && args[1] === 'sandbox/as-idle')).toBe(true);
     expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-expired')).toBe(true);
+  });
+
+  it('does not delete Sandboxes older than TTL when they were recently active', async () => {
+    const calls: string[][] = [];
+    const kubectl = {
+      async run(args: string[]): Promise<KubectlResult> {
+        calls.push(args);
+        if (args[0] === 'get' && args.includes('-l')) {
+          return {
+            stdout: JSON.stringify({
+              items: [
+                {
+                  metadata: {
+                    name: 'as-recently-active',
+                    annotations: {
+                      'agent-saas.kaiyan.net/created-at': '2026-06-19T00:00:00.000Z',
+                      'agent-saas.kaiyan.net/last-active-at': '2026-06-27T00:10:00.000Z',
+                    },
+                  },
+                  status: { phase: 'Paused' },
+                },
+              ],
+            }),
+            stderr: '',
+            exitCode: 0,
+            signal: null,
+          };
+        }
+        if (args[0] === 'delete') {
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+
+    const manager = new SandboxManager({
+      ...baseConfig(),
+      sandboxTtlMs: 7 * 24 * 60 * 60_000,
+    }, kubectl, noopLogger);
+
+    const report = await manager.cleanupSandboxes({
+      now: new Date('2026-06-27T00:20:00.000Z'),
+    });
+
+    expect(report.deleted).toEqual([]);
+    expect(calls.some((args) => args[0] === 'delete')).toBe(false);
   });
 
   it('does not pause or delete active Sandboxes from lifecycle or workspace deletion', async () => {
@@ -600,7 +646,7 @@ function baseConfig(): AcsOrchestratorConfig {
     lifecycleEnabled: true,
     sandboxCleanupIntervalMs: 300_000,
     sandboxIdlePauseMs: 900_000,
-    sandboxTtlMs: 21_600_000,
+    sandboxTtlMs: 7 * 24 * 60 * 60_000,
     sandboxOrphanGraceMs: 1_800_000,
     maxRunningSandboxes: 8,
     warnRunningSandboxes: 6,

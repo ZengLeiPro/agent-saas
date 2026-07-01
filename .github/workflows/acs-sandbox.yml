@@ -5,14 +5,21 @@ on:
     branches: [main]
     paths:
       - 'Dockerfile'
+      - '.dockerignore'
+      - '.npmrc'
+      - 'patches/**'
       - 'acs-orchestrator/**'
       - 'server/src/agent/**'
       - 'server/src/runtime/handProtocol.ts'
       - 'server/src/runtime/httpTransport.ts'
+      - 'server/src/runtime/inProcessTransport.ts'
+      - 'server/src/runtime/clientDaemonTransport.ts'
+      - 'server/src/runtime/networkPolicy.ts'
       - 'server/src/runtime/rawAgentLoop.ts'
       - 'server/src/runtime/rawRuntimeRunDispatch.ts'
       - 'server/src/runtime/handStore.ts'
-      - 'shared/**'
+      - 'server/src/data/tenants/types.ts'
+      - 'server/package.json'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -29,10 +36,243 @@ env:
   ACS_SERVICE_NAME: agent-saas-acs-orchestrator.service
 
 jobs:
+  changes:
+    name: Classify ACS Impact
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      publish: ${{ steps.filter.outputs.publish }}
+      contract_check: ${{ steps.filter.outputs.contract_check }}
+      reason: ${{ steps.filter.outputs.reason }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: filter
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          publish=false
+          contract_check=false
+          reasons=()
+          skipped=()
+          changed_files="$RUNNER_TEMP/acs-changed-files.txt"
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            publish=true
+            reasons+=("manual workflow_dispatch")
+            : > "$changed_files"
+          else
+            before="${BEFORE_SHA:-}"
+            zero_sha="0000000000000000000000000000000000000000"
+            if [ -n "$before" ] && [ "$before" != "$zero_sha" ] && git cat-file -e "$before^{commit}" 2>/dev/null; then
+              git diff --name-only "$before" "$GITHUB_SHA" > "$changed_files"
+              base_sha="$before"
+            else
+              git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" > "$changed_files"
+              base_sha="$(git rev-parse "$GITHUB_SHA^" 2>/dev/null || true)"
+            fi
+
+            package_json_affects_acs() {
+              if [ -z "${base_sha:-}" ] || ! git cat-file -e "$base_sha:package.json" 2>/dev/null; then
+                return 0
+              fi
+
+              BASE_SHA="$base_sha" node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const fs = require('node:fs');
+
+          const baseSha = process.env.BASE_SHA;
+
+          function readJsonAt(ref, file) {
+            return JSON.parse(execFileSync('git', ['show', `${ref}:${file}`], { encoding: 'utf8' }));
+          }
+
+          function pickRuntimeFields(pkg) {
+            return {
+              packageManager: pkg.packageManager,
+              postinstall: pkg.scripts?.postinstall,
+              dependencies: pkg.dependencies,
+              devDependencies: pkg.devDependencies,
+              optionalDependencies: pkg.optionalDependencies,
+              peerDependencies: pkg.peerDependencies,
+              pnpm: pkg.pnpm,
+              overrides: pkg.overrides,
+              resolutions: pkg.resolutions,
+              patchedDependencies: pkg.patchedDependencies,
+            };
+          }
+
+          try {
+            const before = pickRuntimeFields(readJsonAt(baseSha, 'package.json'));
+            const after = pickRuntimeFields(JSON.parse(fs.readFileSync('package.json', 'utf8')));
+            process.exit(JSON.stringify(before) === JSON.stringify(after) ? 1 : 0);
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(0);
+          }
+          NODE
+            }
+
+            is_publish_path() {
+              case "$1" in
+                Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml)
+                  return 0
+                  ;;
+                acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)
+                  return 0
+                  ;;
+                server/src/agent/toolRuntime.ts|server/src/agent/workspaceHandTools.ts|server/src/agent/toolOutput.ts|server/src/agent/shellOutputFiles.ts|server/src/agent/containerExecutionProvider.ts|server/src/agent/memorySearchToolProvider.ts|server/src/agent/tools/descriptionLoader.ts)
+                  return 0
+                  ;;
+                server/src/agent/descriptions/Read.md|server/src/agent/descriptions/Write.md|server/src/agent/descriptions/List.md|server/src/agent/descriptions/Shell.md|server/src/agent/descriptions/WaitForWorkspaceReady.md|server/src/agent/descriptions/Edit.md|server/src/agent/descriptions/Glob.md|server/src/agent/descriptions/Grep.md|server/src/agent/descriptions/CreateArtifact.md|server/src/agent/descriptions/MemorySearch.md|server/src/agent/descriptions/MemoryList.md)
+                  return 0
+                  ;;
+                server/src/runtime/handProtocol.ts|server/src/runtime/httpTransport.ts|server/src/runtime/inProcessTransport.ts|server/src/runtime/clientDaemonTransport.ts|server/src/runtime/handStore.ts|server/src/runtime/networkPolicy.ts)
+                  return 0
+                  ;;
+              esac
+              return 1
+            }
+
+            is_contract_check_path() {
+              case "$1" in
+                server/src/runtime/rawAgentLoop.ts|server/src/runtime/rawRuntimeRunDispatch.ts)
+                  return 0
+                  ;;
+              esac
+              return 1
+            }
+
+            lock_changed=false
+            while IFS= read -r file; do
+              [ -n "$file" ] || continue
+
+              if [ "$file" = "package.json" ]; then
+                if package_json_affects_acs; then
+                  publish=true
+                  reasons+=("package.json runtime fields")
+                else
+                  skipped+=("package.json scripts/non-runtime fields")
+                fi
+                continue
+              fi
+
+              if [ "$file" = "pnpm-lock.yaml" ]; then
+                lock_changed=true
+                continue
+              fi
+
+              if is_publish_path "$file"; then
+                publish=true
+                reasons+=("$file")
+                continue
+              fi
+
+              if is_contract_check_path "$file"; then
+                contract_check=true
+                reasons+=("$file contract check")
+                continue
+              fi
+
+              skipped+=("$file")
+            done < "$changed_files"
+
+            if [ "$lock_changed" = true ]; then
+              if [ "$publish" = true ]; then
+                reasons+=("pnpm-lock.yaml paired with ACS publish path")
+              else
+                skipped+=("pnpm-lock.yaml without ACS package/source change")
+              fi
+            fi
+          fi
+
+          join_items() {
+            if [ "$#" -eq 0 ]; then
+              printf 'none'
+              return 0
+            fi
+            local first=true
+            for item in "$@"; do
+              if [ "$first" = true ]; then
+                printf '%s' "$item"
+                first=false
+              else
+                printf '; %s' "$item"
+              fi
+            done
+          }
+
+          if [ "${#reasons[@]}" -gt 0 ]; then
+            reason="$(join_items "${reasons[@]}")"
+          else
+            reason="none"
+          fi
+          if [ "${#skipped[@]}" -gt 0 ]; then
+            skipped_reason="$(join_items "${skipped[@]}")"
+          else
+            skipped_reason="none"
+          fi
+
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "contract_check=$contract_check" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### ACS impact classification"
+            echo
+            echo "- publish: \`$publish\`"
+            echo "- contract_check: \`$contract_check\`"
+            echo "- publish reasons: $reason"
+            echo "- skipped inputs: $skipped_reason"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "ACS publish=$publish contract_check=$contract_check reason=$reason"
+
+  contract-check:
+    name: ACS Contract Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: changes
+    if: needs.changes.outputs.publish != 'true' && needs.changes.outputs.contract_check == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck server and orchestrator
+        run: |
+          pnpm -F server typecheck
+          pnpm -F acs-orchestrator typecheck
+
+      - name: Test orchestrator
+        run: pnpm -F acs-orchestrator test
+
   build:
     name: Build ACS Sandbox Image
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    needs: changes
+    if: needs.changes.outputs.publish == 'true'
 
     outputs:
       image: ${{ steps.meta.outputs.image }}
@@ -204,8 +444,8 @@ jobs:
     name: Push Image and Deploy ACS Orchestrator
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: build
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [changes, build]
+    if: needs.changes.outputs.publish == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
 
     env:
       ECS_HOST: ${{ secrets.ECS_HOST }}

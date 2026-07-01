@@ -16,17 +16,39 @@ ACS workspace 挂载也跨这三段：主服务把真实用户目录相对 `/mnt
 
 ## 触发条件
 
-改到以下内容时，必须判断是否需要发布新 ACS Sandbox 镜像：
+ACS Sandbox workflow 分两层判断：
 
+1. 顶层 `paths` 只负责唤醒 workflow，包含 ACS 相关源码、Docker/依赖输入，以及少量主服务到 hand 的契约文件。
+2. `Classify ACS Impact` job 再按 changed files 分类：命中发布路径才构建镜像并重启 `agent-saas-acs-orchestrator.service`；只命中契约路径时只跑 contract check，不滚生产 ACS。
+
+改到以下内容时，应发布新 ACS Sandbox 镜像：
+
+- `acs-orchestrator/**`
+- `Dockerfile` / `.dockerignore` / `.npmrc`
+- `patches/**`
+- `server/package.json`
 - `server/src/agent/toolRuntime.ts`
 - `server/src/agent/workspaceHandTools.ts`
-- `server/src/agent/descriptions/*.md`
+- `server/src/agent/toolOutput.ts`
+- `server/src/agent/shellOutputFiles.ts`
+- `server/src/agent/containerExecutionProvider.ts`
+- `server/src/agent/memorySearchToolProvider.ts`
+- `server/src/agent/tools/descriptionLoader.ts`
+- 当前 Sandbox import 闭包会加载的工具 descriptions：`Read`、`Write`、`List`、`Shell`、`WaitForWorkspaceReady`、`Edit`、`Glob`、`Grep`、`CreateArtifact`、`MemorySearch`、`MemoryList`
 - `server/src/runtime/handProtocol.ts`
-- `acs-orchestrator/src/protocol.ts`
-- `acs-orchestrator/src/sandboxRunner.ts`
-- `Dockerfile` 的 `acs-sandbox` target
-- `shared/`
-- `package.json`、`pnpm-lock.yaml` 或 workspace 工具运行依赖
+- `server/src/runtime/httpTransport.ts`
+- `server/src/runtime/inProcessTransport.ts`
+- `server/src/runtime/clientDaemonTransport.ts`
+- `server/src/runtime/handStore.ts`
+- `server/src/runtime/networkPolicy.ts`
+- `server/src/data/tenants/types.ts`
+- `pnpm-workspace.yaml`
+- root `package.json` 中会影响安装/runtime 的字段（`packageManager`、`postinstall`、依赖字段、pnpm/patch/override/resolution 配置等）
+- `pnpm-lock.yaml` 与上述发布路径一起变化时
+
+只改 `server/src/runtime/rawAgentLoop.ts` / `server/src/runtime/rawRuntimeRunDispatch.ts` 时，workflow 会跑 ACS contract check，但默认不发布镜像。这类变更主要是主服务侧契约风险，主服务 CI/CD 负责真正部署；除非同时改到 ACS 发布路径，否则滚 ACS 没有增量。
+
+只改 `shared/**` 源码目前不触发 ACS 发布。当前 ACS runtime 没有直接 import `shared/src`；如果后续 Sandbox runtime 真正依赖 shared，需要同步更新 workflow 与本节。
 
 只改 ACS orchestrator 自身代码时，主服务 CI/CD 不会自动部署 `/opt/agent-saas`；现在由 ACS Sandbox workflow 同步 `/opt/agent-saas` 并重启 `agent-saas-acs-orchestrator.service`。如果同时改到 Sandbox runner 或工具运行依赖，同一个 workflow 会继续发布新 Sandbox 镜像。
 
@@ -199,13 +221,16 @@ curl -sf http://10.0.1.1:3400/health
 
 `.github/workflows/acs-sandbox.yml` 负责这条链路：
 
-- 相关路径变更时自动构建 `acs-sandbox` 镜像。
+- `Classify ACS Impact` 读取本次 push 的 changed files，输出 `publish` / `contract_check`。
+- `workflow_dispatch` 视为人工强制发布；非 main 手动触发只 build，不 deploy。
+- `publish=true` 时自动构建 `acs-sandbox` 镜像。
 - 本地跑命令矩阵与 runner contract smoke。
 - 将镜像 tar 和代码 release 包上传到 ECS。
 - 在 ECS 上安装 orchestrator 依赖、用 ACR VPC endpoint 推送镜像、更新 `/etc/agent-saas/acs-orchestrator.env` 的 `ACS_SANDBOX_IMAGE`。
 - 重启 `agent-saas-acs-orchestrator.service`。
 - 正式跑 `/provision + /execute Shell` smoke，断言 workspace venv 路径、base Python 包 import、`ACS_SANDBOX_DEPLOY_SMOKE_OK`。
 - `/health` 暴露当前 Sandbox image、runtime contract、capabilities、networkPolicy、SNAT 与 Sandbox inventory。
+- `publish=false && contract_check=true` 时只跑 `server` / `acs-orchestrator` typecheck 和 `acs-orchestrator` tests，不发布。
 
 Workflow 依赖 GitHub Secrets：`ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、`ACR_USERNAME`、`ACR_PASSWORD`。ACR 推送发生在 ECS 内，经 VPC endpoint；`ACR_USERNAME`/`ACR_PASSWORD` 是主登录路径。ECS 上的阿里云 CLI `cr GetAuthorizationToken` 与集群 `acr-agentsaasacrprod` imagePullSecret 只作为诊断兜底，不应依赖 orchestrator 最小 RBAC 去读 Secret。不要求打开 ACR 公网 endpoint。
 

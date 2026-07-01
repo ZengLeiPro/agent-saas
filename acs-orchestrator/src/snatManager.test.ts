@@ -49,6 +49,29 @@ describe('SnatManager', () => {
     const state = JSON.parse(readFileSync(statePath, 'utf-8')) as { entries: Array<{ SnatEntryId: string }> };
     expect(state.entries.map((entry) => entry.SnatEntryId).sort()).toEqual(['snat-managed-active', 'snat-manual']);
   });
+
+  it('uses a fresh ClientToken when recreating a deleted SNAT entry', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'acs-snat-token-'));
+    const statePath = join(root, 'state.json');
+    const logPath = join(root, 'calls.log');
+    writeFileSync(statePath, JSON.stringify({ entries: [] }), 'utf-8');
+    const cliPath = writeFakeAliyun(root, statePath, logPath);
+    const manager = new SnatManager({ ...baseConfig(cliPath), snat: { ...baseConfig(cliPath).snat, mode: 'probe-only' } }, podKubectl('172.16.177.139'), noopLogger);
+    const ref = { name: 'as-probe-123', workspaceId: 'network-probe', sandboxScopeId: 'network-probe', sessionId: 'probe-123', mountSubPath: 'network-probe' };
+
+    await manager.ensureForProbe(ref);
+    await manager.deleteForSandboxName(ref.name);
+    await manager.ensureForProbe(ref);
+
+    const createCalls = readFileSync(logPath, 'utf-8')
+      .split('\n')
+      .filter((line) => line.includes('CreateSnatEntry'));
+    const clientTokens = createCalls.map((line) => valueAfter(line.split(' '), '--ClientToken'));
+    expect(clientTokens).toHaveLength(2);
+    expect(clientTokens[0]).toMatch(/^agent-saas-acs-/);
+    expect(clientTokens[1]).toMatch(/^agent-saas-acs-/);
+    expect(clientTokens[1]).not.toBe(clientTokens[0]);
+  });
 });
 
 function writeFakeAliyun(root: string, statePath: string, logPath: string): string {
@@ -116,6 +139,11 @@ function podKubectl(podIp: string): Kubectl {
       throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
     },
   } as unknown as Kubectl;
+}
+
+function valueAfter(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : undefined;
 }
 
 const noopLogger = {

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 
 import type { AcsOrchestratorConfig } from './config.js';
@@ -186,7 +186,7 @@ export class SnatManager {
       '--SnatEntryName',
       name,
       '--ClientToken',
-      `agent-saas-acs-${ref.name}`.slice(0, 64),
+      createSnatClientToken(),
     ]);
     if (result.exitCode !== 0) throw new Error(`CreateSnatEntry 失败: ${result.stderr || result.stdout}`);
     this.logger.warn(`snat_created sandbox=${ref.name} sourceCidr=${sourceCidr} snatIp=${this.config.snat.snatIp}`);
@@ -355,6 +355,10 @@ function parseJsonObject(stdout: string): Record<string, unknown> | null {
 function safeSnatNamePrefix(value: string): string {
   const cleaned = value.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
   return /^[a-zA-Z]/.test(cleaned) ? cleaned : `a${cleaned || 'agent-saas-acs'}`;
+}
+
+function createSnatClientToken(): string {
+  return `agent-saas-acs-${randomUUID()}`;
 }
 
 function sleep(ms: number): Promise<void> {

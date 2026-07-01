@@ -67,28 +67,85 @@ function fakeUserStore(): UserStore {
 
 function fakeSkillConfigStore(): SkillConfigStore {
   const visibility: Record<string, boolean> = {};
+  const platformConfig = new Map<string, { enabled: boolean; exposure: 'all' | 'allow_tenants' | 'deny_tenants'; tenantIds: string[] }>();
+  const tenantRules = new Map<string, Map<string, { enabled: boolean; exposure: 'all' | 'allow_users' | 'deny_users'; usernames: string[] }>>();
   const tenantSelections = new Map<string, string[]>();
   const userSelections = new Map<string, string[]>();
   let configVersion = 1;
+  const getPlatformSkillConfig = (skillId: string) => platformConfig.get(skillId) ?? {
+    enabled: visibility[skillId] !== false,
+    exposure: 'all' as const,
+    tenantIds: [],
+  };
+  const isPoolSkillAvailableToTenant = (skillId: string, tenantId?: string) => {
+    const config = getPlatformSkillConfig(skillId);
+    if (!config.enabled) return false;
+    if (!tenantId) return true;
+    if (config.exposure === 'allow_tenants') return config.tenantIds.includes(tenantId);
+    if (config.exposure === 'deny_tenants') return !config.tenantIds.includes(tenantId);
+    return true;
+  };
   const getTenantEnabledSkills = (tenantId?: string, visibleSkillIds?: string[]) => {
     const fallback = visibleSkillIds ?? Object.entries(visibility)
       .filter(([, visible]) => visible !== false)
       .map(([id]) => id);
-    return tenantId ? tenantSelections.get(tenantId) ?? fallback : fallback;
+    return (tenantId ? tenantSelections.get(tenantId) ?? fallback : fallback)
+      .filter(id => isPoolSkillAvailableToTenant(id, tenantId));
+  };
+  const getTenantSkillRule = (tenantId: string | undefined, skillId: string) => {
+    if (!tenantId) return { enabled: true, exposure: 'all' as const, usernames: [] };
+    const configured = tenantRules.get(tenantId)?.get(skillId);
+    if (configured) return configured;
+    return {
+      enabled: !tenantSelections.has(tenantId) || getTenantEnabledSkills(tenantId).includes(skillId),
+      exposure: 'all' as const,
+      usernames: [],
+    };
+  };
+  const isTenantSkillAvailableToUser = (skillId: string, tenantId?: string, username?: string) => {
+    if (!isPoolSkillAvailableToTenant(skillId, tenantId)) return false;
+    if (!tenantId) return true;
+    const rule = getTenantSkillRule(tenantId, skillId);
+    if (!rule.enabled) return false;
+    if (rule.exposure === 'allow_users') return !!username && rule.usernames.includes(username);
+    if (rule.exposure === 'deny_users') return !username || !rule.usernames.includes(username);
+    return true;
   };
   return {
     getConfigVersion: () => configVersion,
     getPoolVisibility: () => ({ ...visibility }),
-    setPoolVisibility: async (updates: Record<string, boolean>) => { Object.assign(visibility, updates); configVersion++; },
+    getPlatformSkillConfig,
+    isPoolSkillAvailableToTenant,
+    setPoolVisibility: async (updates: Record<string, boolean>) => {
+      Object.assign(visibility, updates);
+      for (const [id, enabled] of Object.entries(updates)) {
+        platformConfig.set(id, { ...getPlatformSkillConfig(id), enabled });
+      }
+      configVersion++;
+    },
+    setPlatformSkillConfigs: async (updates: Record<string, { enabled: boolean; exposure: 'all' | 'allow_tenants' | 'deny_tenants'; tenantIds: string[] }>) => {
+      for (const [id, config] of Object.entries(updates)) {
+        platformConfig.set(id, config);
+        visibility[id] = config.enabled;
+      }
+      configVersion++;
+    },
     getTenantEnabledSkills,
     setTenantEnabledSkills: async (tenantId: string, skills: string[]) => { tenantSelections.set(tenantId, skills); configVersion++; },
+    getTenantSkillRule,
+    isTenantSkillAvailableToUser,
+    setTenantSkillRules: async (tenantId: string, updates: Record<string, { enabled: boolean; exposure: 'all' | 'allow_users' | 'deny_users'; usernames: string[] }>) => {
+      const rules = tenantRules.get(tenantId) ?? new Map();
+      for (const [id, rule] of Object.entries(updates)) rules.set(id, rule);
+      tenantRules.set(tenantId, rules);
+      configVersion++;
+    },
     getUserSelectedSkills: (u: string) => userSelections.get(u) ?? [],
     setUserSelectedSkills: async (u: string, skills: string[]) => { userSelections.set(u, skills); configVersion++; },
     touchConfigVersion: async () => { configVersion++; },
     // syncSkills() 调到的方法：返回该 username 实际应同步的 pool skill ids
     getUserEffectivePoolSkills: (u: string, tenantId?: string) => {
-      const tenantEnabled = new Set(getTenantEnabledSkills(tenantId));
-      return (userSelections.get(u) ?? []).filter(id => visibility[id] !== false && tenantEnabled.has(id));
+      return (userSelections.get(u) ?? []).filter(id => isTenantSkillAvailableToUser(id, tenantId, u));
     },
     syncWithPool: (currentPoolIds: Set<string>) => {
       let added = 0;

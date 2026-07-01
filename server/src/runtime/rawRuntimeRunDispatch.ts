@@ -940,6 +940,12 @@ class RunStateTrackingEventStore implements EventStore {
     } else if (event.type === 'approval_resolved') {
       status = 'running';
       reason = `approval_resolved:${event.approvalId}`;
+    } else if (event.type === 'interaction_requested' && event.interactionType === 'ask_user') {
+      status = 'waiting_user';
+      reason = `interaction:${event.interactionId}`;
+    } else if (event.type === 'interaction_resolved' && event.interactionType === 'ask_user') {
+      status = 'running';
+      reason = `interaction_resolved:${event.interactionId}`;
     } else if (event.type === 'run_finished') {
       status = event.subtype === 'success' ? 'completed' : event.subtype === 'interrupted' ? 'cancelled' : 'failed';
       reason = event.subtype === 'error' ? event.error ?? event.subtype : event.subtype;

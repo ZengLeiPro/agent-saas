@@ -1324,6 +1324,63 @@ describe('RawAgentLoop', () => {
     expect(eventLog).toContain('"type":"tool_result"');
   });
 
+  it('parks AskUserQuestion as a durable pending interaction when no hook is registered', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-ask-no-hook-'));
+    cleanupDirs.add(cwd);
+    const eventPath = join(cwd, 'session.runtime-events.jsonl');
+    const transcriptPath = join(cwd, 'session.jsonl');
+    const eventStore = new FileEventStore(eventPath);
+    const toolInvocationStore = new InMemoryToolInvocationStore();
+    const loop = new RawAgentLoop({
+      modelAdapter: new AskUserOnlyAdapter(),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-ask-no-hook-1'),
+      transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
+      toolRuntime: new PlatformToolRuntime({ providers: [createBuiltinTools()] }),
+      toolInvocationStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '需要问用户' },
+        prompt: '需要问用户',
+        instructions: '必须调用 AskUserQuestion。',
+        maxTurns: 4,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-ask-no-hook-1',
+        sessionId: 'session-ask-no-hook-1',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          sessionOwner: { id: 'user-1', username: 'alice', role: 'user' },
+        },
+      },
+    ));
+
+    const askEvent = events.find((event) => event.type === 'ask_user');
+    expect(askEvent).toMatchObject({
+      type: 'ask_user',
+      toolName: 'AskUserQuestion',
+      questions: [{
+        question: 'Which branch should I use?',
+        header: 'Branch',
+      }],
+    });
+    expect(events.map((event) => event.type)).not.toContain('error');
+    expect(events.map((event) => event.type)).not.toContain('done');
+    expect((await toolInvocationStore.get('run-ask-no-hook-1:call_ask_1'))?.status).toBe('running');
+
+    const eventLog = await readFile(eventPath, 'utf-8');
+    expect(eventLog).toContain('"type":"interaction_requested"');
+    expect(eventLog).toContain('"interactionType":"ask_user"');
+    expect(eventLog).not.toContain('HITL hook not registered');
+    expect(eventLog).not.toContain('"type":"tool_result"');
+    expect(eventLog).not.toContain('"type":"run_finished"');
+  });
+
   it('drains remaining sibling tool calls after resuming AskUserQuestion', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-ask-batch-'));
     cleanupDirs.add(cwd);

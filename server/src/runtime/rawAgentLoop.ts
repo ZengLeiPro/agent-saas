@@ -1,4 +1,5 @@
 import type {
+  InteractionEvent,
   InteractionResponse,
 } from '../agent/types.js';
 import type {
@@ -532,6 +533,16 @@ export class RawAgentLoop implements AgentLoop {
         }
         return;
       }
+      if (err instanceof InteractionPendingWithoutInteractionHook) {
+        if (thinkingStarted) yield { type: 'thinking_end' };
+        if (textStarted) {
+          textStarted = false;
+          await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'end');
+          yield { type: 'text_end' };
+        }
+        yield toOutboundInteractionEvent(err.event);
+        return;
+      }
       if (thinkingStarted) yield { type: 'thinking_end' };
       if (textStarted) {
         textStarted = false;
@@ -858,6 +869,10 @@ export class RawAgentLoop implements AgentLoop {
       });
     } catch (err) {
       if (err instanceof ApprovalPendingWithoutInteractionHook) return;
+      if (err instanceof InteractionPendingWithoutInteractionHook) {
+        yield toOutboundInteractionEvent(err.event);
+        return;
+      }
       throw err;
     }
 
@@ -986,6 +1001,10 @@ export class RawAgentLoop implements AgentLoop {
       });
     } catch (err) {
       if (err instanceof ApprovalPendingWithoutInteractionHook) return;
+      if (err instanceof InteractionPendingWithoutInteractionHook) {
+        yield toOutboundInteractionEvent(err.event);
+        return;
+      }
       throw err;
     }
 
@@ -1119,6 +1138,7 @@ export class RawAgentLoop implements AgentLoop {
       });
       return { call, descriptor, input, result };
     } catch (err) {
+      if (err instanceof InteractionPendingWithoutInteractionHook) throw err;
       return {
         call,
         descriptor,
@@ -1200,12 +1220,36 @@ export class RawAgentLoop implements AgentLoop {
     const invocationId = `${args.context.runId}:${args.call.id}`;
     const executionAudit = createExecutionAuditRecorder();
     const streamBatcher = new StreamEventBatcher(this.eventStore, this.streamEventBatch);
+    const hooks = args.baseToolContext.hooks?.onInteraction || args.descriptor.name !== 'AskUserQuestion'
+      ? args.baseToolContext.hooks
+      : {
+          ...(args.baseToolContext.hooks ?? {}),
+          onInteraction: async (event: InteractionEvent): Promise<InteractionResponse> => {
+            await this.append({
+              type: 'interaction_requested',
+              runId: args.context.runId,
+              sessionId: args.context.sessionId,
+              toolCallId: event.toolCallId ?? args.call.id,
+              invocationId: event.invocationId ?? `${args.context.runId}:${args.call.id}`,
+              interactionId: event.interactionId,
+              interactionType: event.type,
+              userId: args.context.channelContext.user?.id ?? args.context.channelContext.sessionOwner?.id,
+              toolId: event.toolId,
+              toolName: event.toolName,
+              displayName: event.displayName,
+              questions: event.questions,
+              toolInput: event.toolInput,
+            });
+            throw new InteractionPendingWithoutInteractionHook(event);
+          },
+        };
     const toolContext: ToolCallContext = {
       ...args.baseToolContext,
       sessionId: args.context.sessionId,
       runId: args.context.runId,
       toolCallId: args.call.id,
       invocationId,
+      hooks,
       executionAudit,
       onStreamChunk: async (chunk) => {
         if (chunk.type === 'output') {
@@ -1300,6 +1344,9 @@ export class RawAgentLoop implements AgentLoop {
       return result;
     } catch (err) {
       await streamBatcher.flush().catch(() => undefined);
+      if (err instanceof InteractionPendingWithoutInteractionHook) {
+        throw err;
+      }
       const message = err instanceof Error ? err.message : String(err);
       const completionStatus = args.context.signal?.aborted ? 'cancelled' : 'failed';
       await this.toolInvocationStore?.complete(invocationId, completionStatus, message).catch(() => undefined);
@@ -1544,6 +1591,16 @@ export class RawAgentLoop implements AgentLoop {
         }
         return;
       }
+      if (err instanceof InteractionPendingWithoutInteractionHook) {
+        if (thinkingStarted) yield { type: 'thinking_end' };
+        if (textStarted) {
+          textStarted = false;
+          await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'end');
+          yield { type: 'text_end' };
+        }
+        yield toOutboundInteractionEvent(err.event);
+        return;
+      }
       if (thinkingStarted) yield { type: 'thinking_end' };
       if (textStarted) {
         textStarted = false;
@@ -1607,6 +1664,25 @@ class ApprovalPendingWithoutInteractionHook extends Error {
     super(`approval pending without interaction hook: ${approvalId}`);
     this.name = 'ApprovalPendingWithoutInteractionHook';
   }
+}
+
+class InteractionPendingWithoutInteractionHook extends Error {
+  constructor(readonly event: InteractionEvent) {
+    super(`interaction pending without interaction hook: ${event.interactionId}`);
+    this.name = 'InteractionPendingWithoutInteractionHook';
+  }
+}
+
+function toOutboundInteractionEvent(event: InteractionEvent): OutboundEvent {
+  return {
+    type: event.type,
+    interactionId: event.interactionId,
+    toolId: event.toolId,
+    toolName: event.toolName,
+    displayName: event.displayName,
+    toolInput: event.toolInput,
+    questions: event.questions,
+  };
 }
 
 function toModelToolDefinition(descriptor: ToolDescriptor) {

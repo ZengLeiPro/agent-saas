@@ -34,6 +34,8 @@ export interface TranscriptBlock {
   toolName?: string;
   /** Tool use ID (for correlation) */
   toolId?: string;
+  /** Activity duration derived from runtime events, when available */
+  durationMs?: number;
   /** User prompt originated from mobile voice transcription */
   isVoiceTranscript?: boolean;
 }

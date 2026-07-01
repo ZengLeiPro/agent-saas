@@ -239,7 +239,13 @@ function mapBlock(
     case "text":
       return { id, type: "text", content: block.content, streaming: false, ...(owner ? { owner } : {}), timestamp: block.tsMs };
     case "thinking":
-      return { id, type: "thinking", content: block.content || "", streaming: false };
+      return {
+        id,
+        type: "thinking",
+        content: block.content || "",
+        streaming: false,
+        ...(typeof block.durationMs === "number" ? { durationMs: block.durationMs } : {}),
+      };
 
     case "tool_use": {
       const resultText = block.toolId ? toolResultMap.get(block.toolId) : undefined;
@@ -261,6 +267,7 @@ function mapBlock(
         toolInput: block.content,
         toolId: block.toolId || "",
         streaming: false,
+        ...(typeof block.durationMs === "number" ? { durationMs: block.durationMs } : {}),
         ...(resultText !== undefined ? { result: resultText, resultReady: true } : {}),
       };
     }

@@ -149,5 +149,6 @@ export interface ApiTranscriptBlock {
   isError?: boolean;
   toolName?: string;
   toolId?: string;
+  durationMs?: number;
   isVoiceTranscript?: boolean;
 }

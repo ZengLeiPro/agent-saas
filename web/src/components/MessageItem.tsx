@@ -778,7 +778,7 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (message.type === "thinking") {
-    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.streaming} />;
+    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.streaming} durationMs={message.durationMs} />;
     return (
       <ThinkingBlock
         content={message.content}
@@ -793,7 +793,7 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (message.type === "tool_use") {
-    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.streaming || message.executionStatus === "running" || !message.resultReady} />;
+    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.streaming || message.executionStatus === "running" || !message.resultReady} durationMs={message.durationMs} />;
     return (
       <ToolBlock
         toolName={message.toolName}

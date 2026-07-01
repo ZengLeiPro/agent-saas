@@ -48,6 +48,10 @@ import {
   FileEventStore,
   getRuntimeEventLogPath,
 } from "../runtime/fileEventStore.js";
+import {
+  enrichTranscriptActivityDurations,
+  listActivityDurationEvents,
+} from "../data/transcripts/activityDurations.js";
 import type { EventStore, PlatformEvent } from "../runtime/types.js";
 import { buildRuntimeReplayState } from "../runtime/replay.js";
 import { buildPendingInteractionsFromEvents } from "../runtime/interactionProjection.js";
@@ -972,22 +976,35 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
 
+      const detailEventStore = runtimeEventStoreFor
+        ? runtimeEventStoreFor(transcriptPath)
+        : new FileEventStore(getRuntimeEventLogPath(transcriptPath));
       const parseStartedAt = Date.now();
-      const parsed = hasTranscript
+      let parsed = hasTranscript
         ? await parseTranscriptFile(transcriptPath)
         : await buildMetaOnlyTranscript(
             sessionId,
             transcriptPath,
             runtimeEventStoreFor,
           );
+      if (parsed.blocks.some((block) => block.kind === "thinking" || block.kind === "tool_use")) {
+        try {
+          parsed = enrichTranscriptActivityDurations(
+            parsed,
+            await listActivityDurationEvents(detailEventStore, sessionId),
+            sessionId,
+          );
+        } catch (err) {
+          apiLogger.warn(
+            `[sessions] activity duration enrichment failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       const parseDurationMs = Date.now() - parseStartedAt;
 
       // a-2 对账：拉最近一条 run_state_changed 派生 lastRunState,
       // 让前端进会话时能识别"后端已 failed/cancelled,但 UI 还在转" 的鬼状态。
-      const lastRunStateEventStore = runtimeEventStoreFor
-        ? runtimeEventStoreFor(transcriptPath)
-        : new FileEventStore(getRuntimeEventLogPath(transcriptPath));
-      const lastRunState = await getLastRunState(lastRunStateEventStore, sessionId);
+      const lastRunState = await getLastRunState(detailEventStore, sessionId);
 
       // 审计：记录会话打开（silent 参数标记自动刷新，跳过审计）
       if (!req.query.silent) {

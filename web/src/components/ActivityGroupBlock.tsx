@@ -7,7 +7,7 @@ import { ThinkingBlock } from './ThinkingBlock';
 import { ToolBlock, ToolResultBlock } from './ToolBlock';
 import { SubagentBlock } from './SubagentBlock';
 import { RuntimeStatusBlock } from './RuntimeStatusBlock';
-import { activityStatusBadgeClass, activityStatusIconClass, activityStatusTextClass, type ActivityStatusTone } from './activityStatusStyles';
+import { activityStatusBadgeClass, activityStatusIconClass, activityStatusTextClass, formatActivityDuration, type ActivityStatusTone } from './activityStatusStyles';
 
 interface SummaryInfo {
   text: string;
@@ -17,6 +17,7 @@ interface SummaryInfo {
 interface GroupSummaryInfo extends SummaryInfo {
   tone: ActivityStatusTone;
   badge: string;
+  durationMs?: number;
   progress?: string;
   active: boolean;
 }
@@ -103,6 +104,18 @@ function getCompletedBreakdown(items: MessageItem[]): string {
     : `已完成 ${items.length} 条`;
 }
 
+function getActivityDurationMs(items: MessageItem[]): number | undefined {
+  let total = 0;
+  let hasDuration = false;
+  for (const item of items) {
+    if ((item.type === 'thinking' || item.type === 'tool_use') && typeof item.durationMs === 'number') {
+      total += item.durationMs;
+      hasDuration = true;
+    }
+  }
+  return hasDuration ? total : undefined;
+}
+
 function getFailureSummary(items: MessageItem[]): GroupSummaryInfo | null {
   const failedCount = items.filter(item => item.type === 'tool_use' && item.executionStatus === 'failed').length;
   if (failedCount > 0) {
@@ -116,6 +129,7 @@ function getFailureSummary(items: MessageItem[]): GroupSummaryInfo | null {
       truncateStart: false,
       tone: 'danger',
       badge: '失败',
+      durationMs: getActivityDurationMs(items),
       active: false,
     };
   }
@@ -216,6 +230,7 @@ function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryI
       truncateStart: false,
       tone: 'neutral',
       badge: '已取消',
+      durationMs: getActivityDurationMs(items),
       active: false,
     };
   }
@@ -225,6 +240,7 @@ function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryI
     truncateStart: false,
     tone: 'success',
     badge: '已完成',
+    durationMs: getActivityDurationMs(items),
     active: false,
   };
 }
@@ -270,7 +286,8 @@ interface ActivityGroupBlockProps {
   debugMode?: boolean;
 }
 
-export function ExecutionHiddenPlaceholder({ isActive }: { isActive?: boolean }) {
+export function ExecutionHiddenPlaceholder({ isActive, durationMs }: { isActive?: boolean; durationMs?: number }) {
+  const duration = !isActive ? formatActivityDuration(durationMs) : null;
   return (
     <div className="my-0.5 flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
       {isActive ? (
@@ -278,7 +295,7 @@ export function ExecutionHiddenPlaceholder({ isActive }: { isActive?: boolean })
       ) : (
         <CheckCircle2 className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
       )}
-      <span className={activityStatusTextClass(isActive ? "active" : "success")}>{isActive ? "正在执行中" : "已执行"}</span>
+      <span className={activityStatusTextClass(isActive ? "active" : "success")}>{isActive ? "正在执行中" : duration ? `已执行 ${duration}` : "已执行"}</span>
     </div>
   );
 }
@@ -287,7 +304,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (!debugMode) {
-    return <ExecutionHiddenPlaceholder isActive={isActive} />;
+    return <ExecutionHiddenPlaceholder isActive={isActive} durationMs={getActivityDurationMs(items)} />;
   }
 
   // 单项分组：直接渲染子项本身（单层展开），不套分组壳
@@ -296,6 +313,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
   }
 
   const summary = getGroupSummary(items, isActive);
+  const summaryDuration = !summary.active ? formatActivityDuration(summary.durationMs) : null;
 
   return (
     <div className="my-0.5">
@@ -308,7 +326,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
           className="min-w-0 max-w-sm truncate"
           style={summary.truncateStart ? { direction: 'rtl', textAlign: 'left' } : undefined}
         >{summary.text}</span>
-        <span className={activityStatusBadgeClass(summary.tone)}>{summary.badge}</span>
+        <span className={activityStatusBadgeClass(summary.tone)}>{summaryDuration ? `${summary.badge} ${summaryDuration}` : summary.badge}</span>
         {summary.progress && <span className="shrink-0 text-muted-foreground/60">({summary.progress})</span>}
         <ChevronRight className={cn(
           "h-3.5 w-3.5 shrink-0 transition-transform",

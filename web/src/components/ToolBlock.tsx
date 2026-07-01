@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { formatJson } from './types';
 import { parseToolResult, getToolDisplayInfo } from '@agent/shared';
-import { Wrench, CheckCircle2, ChevronRight, X, Loader2 } from "lucide-react";
+import { Wrench, CheckCircle2, ChevronRight, X, Loader2, CircleDashed, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ============================================
@@ -80,19 +80,44 @@ interface ToolBlockProps {
   streaming?: boolean;
   result?: string;
   resultReady?: boolean;
+  executionStatus?: "pending" | "running" | "completed" | "failed" | "cancelled";
+  durationMs?: number;
+  lastProgress?: string;
+  error?: string;
 }
 
-export function ToolBlock({ toolName, toolInput, streaming, result, resultReady }: ToolBlockProps) {
+function formatDuration(ms?: number): string | null {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+}
+
+function getExecutionLabel(status?: ToolBlockProps["executionStatus"], resultReady?: boolean): string {
+  if (status === "running") return "执行中";
+  if (status === "pending") return "待执行";
+  if (status === "failed") return "失败";
+  if (status === "cancelled") return "已取消";
+  if (status === "completed" || resultReady) return "已完成";
+  return "待执行";
+}
+
+export function ToolBlock({ toolName, toolInput, streaming, result, resultReady, executionStatus, durationMs, lastProgress, error }: ToolBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const formatted = useMemo(() => formatJson(toolInput), [toolInput]);
   const displayInfo = useMemo(() => getToolDisplayInfo(toolName, toolInput), [toolName, toolInput]);
+  const duration = formatDuration(durationMs);
+  const statusLabel = getExecutionLabel(executionStatus, resultReady);
 
-  const icon = streaming
-    ? <Wrench className="h-3.5 w-3.5 shrink-0 animate-pulse" />
-    : resultReady
-      ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-      : <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />;
+  const icon = executionStatus === "running"
+    ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+    : executionStatus === "failed" || executionStatus === "cancelled"
+      ? <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+      : resultReady || executionStatus === "completed"
+        ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        : streaming
+          ? <Wrench className="h-3.5 w-3.5 shrink-0 animate-pulse" />
+          : <CircleDashed className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />;
 
   return (
     <div className="my-0.5">
@@ -111,7 +136,12 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady 
               {displayInfo.detail}
             </span>
           )}
-          {streaming && <span className="shrink-0 animate-pulse">...</span>}
+          {(streaming || executionStatus === "running") && <span className="shrink-0 animate-pulse">...</span>}
+        </span>
+        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
+          {duration && (executionStatus === "completed" || executionStatus === "failed" || executionStatus === "cancelled")
+            ? `${statusLabel} ${duration}`
+            : statusLabel}
         </span>
         <ChevronRight className={cn(
           "h-3.5 w-3.5 shrink-0 transition-transform",
@@ -126,6 +156,14 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady 
               <>
                 <div className="my-2 border-t border-border pt-2 font-mono text-xs text-muted-foreground">Result:</div>
                 <ResultContent result={result || ""} toolName={toolName} />
+              </>
+            )}
+            {!resultReady && (lastProgress || error) && (
+              <>
+                <div className="my-2 border-t border-border pt-2 font-mono text-xs text-muted-foreground">
+                  {error ? "Error:" : "Progress:"}
+                </div>
+                <pre className="whitespace-pre-wrap break-words">{error || lastProgress}</pre>
               </>
             )}
           </div>

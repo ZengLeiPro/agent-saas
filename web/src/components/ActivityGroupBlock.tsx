@@ -6,6 +6,7 @@ import { MessageItem } from './types';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolBlock, ToolResultBlock } from './ToolBlock';
 import { SubagentBlock } from './SubagentBlock';
+import { RuntimeStatusBlock } from './RuntimeStatusBlock';
 
 interface SummaryInfo {
   text: string;
@@ -15,6 +16,8 @@ interface SummaryInfo {
 /** 根据最后一条消息生成摘要文字及截断方向 */
 function getSummary(item: MessageItem): SummaryInfo {
   switch (item.type) {
+    case 'runtime_status':
+      return { text: item.content || '正在处理', truncateStart: false };
     case 'thinking':
       return { text: item.streaming ? '思考中...' : '已思考', truncateStart: false };
     case 'tool_use': {
@@ -34,10 +37,12 @@ function getSummary(item: MessageItem): SummaryInfo {
 
 function ActivityItem({ item }: { item: MessageItem }) {
   switch (item.type) {
+    case 'runtime_status':
+      return <RuntimeStatusBlock status={item.status} content={item.content} />;
     case 'thinking':
       return <ThinkingBlock content={item.content} streaming={item.streaming} />;
     case 'tool_use':
-      return <ToolBlock toolName={item.toolName} toolInput={item.toolInput} streaming={item.streaming} result={item.result} resultReady={item.resultReady} />;
+      return <ToolBlock toolName={item.toolName} toolInput={item.toolInput} streaming={item.streaming} result={item.result} resultReady={item.resultReady} executionStatus={item.executionStatus} durationMs={item.durationMs} lastProgress={item.lastProgress} error={item.error} />;
     case 'tool_result':
       return <ToolResultBlock toolName={item.toolName} result={item.result} />;
     case 'subagent':

@@ -173,9 +173,8 @@ class WsClient {
         }
     }
 
-    /** Force reconnect (app resume / network recovery). No-op if refCount=0. */
+    /** Force reconnect (app resume / network recovery). */
     async forceReconnect(): Promise<void> {
-        if (this.refCount <= 0) return;
         this.stopHeartbeat();
         if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
         if (this.connectTimeoutTimer) { clearTimeout(this.connectTimeoutTimer); this.connectTimeoutTimer = null; }

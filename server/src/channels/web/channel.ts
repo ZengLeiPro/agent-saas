@@ -608,6 +608,27 @@ export class WebChannel implements BaseChannel {
           toolName: input.event.toolName,
         });
         break;
+      case 'tool_execution_start':
+        emitSession({
+          type: 'tool_execution',
+          phase: 'started',
+          toolId: input.event.toolId,
+          toolName: input.event.toolName,
+          invocationId: input.event.invocationId,
+        });
+        break;
+      case 'tool_execution_end':
+        emitSession({
+          type: 'tool_execution',
+          phase: 'completed',
+          toolId: input.event.toolId,
+          toolName: input.event.toolName,
+          invocationId: input.event.invocationId,
+          status: input.event.status,
+          durationMs: input.event.durationMs,
+          error: input.event.error,
+        });
+        break;
       case 'tool_result':
         emitSession({
           type: 'tool_result',
@@ -702,7 +723,14 @@ export class WebChannel implements BaseChannel {
     const sessionId = event.sessionId;
     if (!sessionId) return;
     const runId = 'runId' in event ? event.runId : undefined;
-    if (runId && this.inProcessOutboundRuns.has(runId) && event.type !== 'approval_requested') return;
+    if (runId && this.inProcessOutboundRuns.has(runId) && ![
+      'assistant_tool_calls',
+      'approval_requested',
+      'tool_invocation_started',
+      'tool_invocation_completed',
+      'tool_output_delta',
+      'tool_progress',
+    ].includes(event.type)) return;
     const active = runId ? this.findActiveStreamByRunId(runId) : undefined;
     const streamId = active?.streamId ?? (runId ? runId : undefined);
     const activeEntry = active?.entry ?? (streamId ? this.activeStreams.get(streamId) : undefined);
@@ -3075,11 +3103,10 @@ function projectRuntimePlatformEvent(
     case 'tool_output_delta':
       return {
         events: [{
-          type: 'tool_result',
+          type: 'tool_execution',
+          phase: 'progress',
           toolId: event.toolCallId,
-          toolName: 'stream',
           content: event.content,
-          result: event.content,
           channel: event.channel,
           invocationId: event.invocationId,
         }],
@@ -3087,12 +3114,34 @@ function projectRuntimePlatformEvent(
     case 'tool_progress':
       return {
         events: [{
-          type: 'tool_result',
+          type: 'tool_execution',
+          phase: 'progress',
           toolId: event.toolCallId,
-          toolName: 'progress',
           content: event.content,
-          result: event.content,
           invocationId: event.invocationId,
+        }],
+      };
+    case 'tool_invocation_started':
+      return {
+        events: [{
+          type: 'tool_execution',
+          phase: 'started',
+          toolId: event.toolCallId,
+          toolName: event.toolName,
+          invocationId: event.invocationId,
+        }],
+      };
+    case 'tool_invocation_completed':
+      return {
+        events: [{
+          type: 'tool_execution',
+          phase: 'completed',
+          toolId: event.toolCallId,
+          toolName: event.toolName,
+          invocationId: event.invocationId,
+          status: event.status,
+          durationMs: event.durationMs,
+          ...(event.error ? { error: event.error } : {}),
         }],
       };
     case 'tool_result':

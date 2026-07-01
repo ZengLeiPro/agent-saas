@@ -306,7 +306,9 @@ export {
   processWsEvent,
   finalizeRunningSubagents,
   finalizeStreamingMessages,
+  removeRuntimeStatusMessages,
   resolvePlanModeDisplay,
+  upsertRuntimeStatusMessage,
 } from "./lib/wsEventProcessor";
 export type {
   MessagesController,

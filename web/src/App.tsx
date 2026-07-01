@@ -69,7 +69,7 @@ function App() {
     handleDragOver, handleDragLeave, handleDrop,
     handlePermissionResponse, handleAskUserResponse,
     modelList, selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell,
-    tokenUsage, contextUsage, connectionState, refreshCurrentSession,
+    tokenUsage, contextUsage, connectionState, refreshCurrentSession, resumeCurrentStream,
     notifications, dismissNotification,
     lastMemoryRecall, dismissMemoryRecall, pluginInstallStatus,
     unreadAiReplySessionIds,
@@ -83,10 +83,13 @@ function App() {
   // iOS PWA 生命周期：后台恢复时刷新数据，进入后台时保存状态
   const onResume = useCallback(() => {
     void refreshAll();
+    if (sessionId) {
+      void resumeCurrentStream();
+    }
     if (!loading) {
       refreshCurrentSession();
     }
-  }, [loading, refreshCurrentSession]);
+  }, [loading, refreshCurrentSession, resumeCurrentStream, sessionId]);
 
   const onSuspend = useCallback(() => {
     if (sessionId && messages.length > 0) {

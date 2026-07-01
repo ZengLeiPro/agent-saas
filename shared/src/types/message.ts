@@ -2,8 +2,32 @@ export type MessageItem =
   | { id: string; type: "user"; content: string; displayContent?: string; attachments?: Array<{ name: string; isImage?: boolean }>; isVoiceTranscript?: boolean; status?: 'pending' | 'sent' | 'failed'; timestamp?: number; clientMsgId?: string; failedReason?: string }
   | { id: string; type: "text"; content: string; streaming?: boolean; voiceMarkers?: Array<{ text: string; voice?: string; speed?: number }>; owner?: string; timestamp?: number }
   | { id: string; type: "thinking"; content: string; streaming?: boolean }
-  | { id: string; type: "tool_use"; toolName: string; toolInput: string; toolId: string; streaming?: boolean; result?: string; resultReady?: boolean }
+  | {
+      id: string;
+      type: "tool_use";
+      toolName: string;
+      toolInput: string;
+      toolId: string;
+      streaming?: boolean;
+      result?: string;
+      resultReady?: boolean;
+      executionStatus?: "pending" | "running" | "completed" | "failed" | "cancelled";
+      invocationId?: string;
+      durationMs?: number;
+      lastProgress?: string;
+      error?: string;
+    }
   | { id: string; type: "tool_result"; toolName: string; result: string; toolId: string }
+  | {
+      id: string;
+      type: "runtime_status";
+      status: "sending" | "queued" | "running" | "waiting_hand" | "waiting_approval" | "waiting_user" | "reconnecting";
+      content?: string;
+      streamId?: string;
+      runId?: string;
+      streaming?: boolean;
+      timestamp?: number;
+    }
   | {
       id: string;
       type: "permission_request";
@@ -88,7 +112,7 @@ export interface UploadedFile {
 
 /** Activity types that can be grouped */
 export const ACTIVITY_TYPES: Set<MessageItem['type']> = new Set([
-  'thinking', 'tool_use', 'subagent',
+  'runtime_status', 'thinking', 'tool_use', 'subagent',
 ]);
 
 /** Render-layer activity group */

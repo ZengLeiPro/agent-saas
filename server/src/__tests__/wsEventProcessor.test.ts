@@ -20,6 +20,10 @@ function createTestRig(initial: MessageItem[] = []) {
     updateMessageAt(index: number, updater: (msg: MessageItem) => MessageItem): void {
       messages[index] = updater(messages[index]);
     },
+    setMessages(nextMessages: MessageItemInput[]): void {
+      messages.splice(0, messages.length, ...(nextMessages as MessageItem[]));
+      msg.messagesRef.current = messages;
+    },
     triggerScroll: vi.fn(),
   };
   const ctx: WsProcessingContext = {
@@ -222,6 +226,144 @@ describe('wsEventProcessor terminal errors', () => {
       type: 'user',
       status: 'failed',
       failedReason: '异常中断，请继续对话',
+    });
+  });
+});
+
+describe('wsEventProcessor runtime and tool execution status', () => {
+  it('shows a runtime status after stream_id and removes it when visible content starts', () => {
+    const { messages, ctx } = createTestRig([
+      {
+        id: 'user-1',
+        type: 'user',
+        content: 'run',
+        status: 'pending',
+        clientMsgId: 'client-1',
+      },
+    ]);
+    const block = { currentBlockIndex: -1, currentBlockType: null };
+
+    processWsEvent(
+      { type: 'stream_id', streamId: 'stream-1', runId: 'run-1', client_msg_id: 'client-1' },
+      ctx,
+      block,
+      { value: 'session-1' },
+      'session-1',
+    );
+
+    expect(messages.at(-1)).toMatchObject({
+      type: 'runtime_status',
+      status: 'queued',
+      streamId: 'stream-1',
+      runId: 'run-1',
+    });
+
+    processWsEvent(
+      { type: 'block_start', blockType: 'thinking' },
+      ctx,
+      block,
+      { value: 'session-1' },
+      'session-1',
+    );
+
+    expect(messages.some((message) => message.type === 'runtime_status')).toBe(false);
+    expect(messages.at(-1)).toMatchObject({
+      type: 'thinking',
+      streaming: true,
+    });
+  });
+
+  it('tracks tool execution progress without marking the tool result ready', () => {
+    const { messages, ctx } = createTestRig();
+    const block = { currentBlockIndex: -1, currentBlockType: null };
+
+    processWsEvent(
+      { type: 'block_start', blockType: 'tool_use', toolId: 'call-1', toolName: 'Shell' },
+      ctx,
+      block,
+      { value: 'session-1' },
+      'session-1',
+    );
+    processWsEvent(
+      { type: 'tool_input', toolId: 'call-1', toolName: 'Shell', content: '{"cmd":"sleep 20"}' },
+      ctx,
+      block,
+      { value: 'session-1' },
+      'session-1',
+    );
+    processWsEvent(
+      { type: 'block_end', blockType: 'tool_use', toolName: 'Shell' },
+      ctx,
+      block,
+      { value: 'session-1' },
+      'session-1',
+    );
+    processWsEvent(
+      { type: 'tool_execution', phase: 'started', toolId: 'call-1', toolName: 'Shell', invocationId: 'run-1:call-1' },
+      ctx,
+      block,
+      { value: 'session-1' },
+      'session-1',
+    );
+    processWsEvent(
+      { type: 'tool_execution', phase: 'progress', toolId: 'call-1', invocationId: 'run-1:call-1', content: 'still running' },
+      ctx,
+      block,
+      { value: 'session-1' },
+      'session-1',
+    );
+
+    expect(messages[0]).toMatchObject({
+      type: 'tool_use',
+      toolId: 'call-1',
+      executionStatus: 'running',
+      lastProgress: 'still running',
+    });
+    expect(messages[0].type === 'tool_use' ? messages[0].resultReady : undefined).not.toBe(true);
+  });
+
+  it('marks a tool completed only when the final tool_result arrives', () => {
+    const { messages, ctx } = createTestRig([
+      {
+        id: 'tool-1',
+        type: 'tool_use',
+        toolName: 'Shell',
+        toolInput: '{"cmd":"echo done"}',
+        toolId: 'call-1',
+        executionStatus: 'running',
+      },
+    ]);
+
+    process(
+      {
+        type: 'tool_execution',
+        phase: 'completed',
+        toolId: 'call-1',
+        toolName: 'Shell',
+        invocationId: 'run-1:call-1',
+        status: 'success',
+        durationMs: 1234,
+      },
+      ctx,
+    );
+
+    expect(messages[0]).toMatchObject({
+      type: 'tool_use',
+      executionStatus: 'completed',
+      durationMs: 1234,
+    });
+    expect(messages[0].type === 'tool_use' ? messages[0].resultReady : undefined).not.toBe(true);
+
+    process(
+      { type: 'tool_result', toolId: 'call-1', toolName: 'Shell', result: 'done' },
+      ctx,
+    );
+
+    expect(messages[0]).toMatchObject({
+      type: 'tool_use',
+      executionStatus: 'completed',
+      resultReady: true,
+      result: 'done',
     });
   });
 });

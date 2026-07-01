@@ -54,6 +54,7 @@ import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
  * rawRuntimeRunDispatch 的 enterSessionContext 自动注入到 trace 前缀。
  */
 const logger = createLogger('RawAgentLoop');
+const INTERACTIVE_TOOL_NAMES = new Set(['AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode']);
 
 function resolveRunTenantId(context: RunContext): string {
   return context.tenantId
@@ -681,6 +682,15 @@ export class RawAgentLoop implements AgentLoop {
     messages?: ModelChatMessage[];
   }): AsyncIterable<OutboundEvent> {
     for (const call of args.calls) {
+      if (await this.shouldEmitToolUseBeforeExecution(
+        call,
+        args.descriptorsByName,
+        args.context,
+      )) {
+        yield { type: 'tool_start', toolId: call.id, toolName: call.name };
+        yield { type: 'tool_input_delta', toolId: call.id, toolName: call.name, partialJson: call.arguments };
+        yield { type: 'tool_end', toolId: call.id, toolName: call.name };
+      }
       const outcome = await this.executeToolCall(
         call,
         args.descriptorsByName,
@@ -715,6 +725,20 @@ export class RawAgentLoop implements AgentLoop {
     });
   }
 
+  private async shouldEmitToolUseBeforeExecution(
+    call: ModelToolCall,
+    descriptorsByName: Map<string, ToolDescriptor>,
+    context: RunContext,
+  ): Promise<boolean> {
+    if (INTERACTIVE_TOOL_NAMES.has(call.name)) return false;
+    const descriptor = descriptorsByName.get(call.name);
+    if (!descriptor) return true;
+    const input = parseToolArguments(call.arguments);
+    const policyContext = await this.refreshApprovalPolicy(context);
+    const decision = await this.toolPolicy.decide(descriptor, input, policyContext);
+    return decision.type !== 'requires_approval';
+  }
+
   private async *appendToolResult(args: {
     call: ModelToolCall;
     content: string;
@@ -722,9 +746,6 @@ export class RawAgentLoop implements AgentLoop {
     context: RunContext;
     messages?: ModelChatMessage[];
   }): AsyncIterable<OutboundEvent> {
-    yield { type: 'tool_start', toolId: args.call.id, toolName: args.call.name };
-    yield { type: 'tool_input_delta', toolId: args.call.id, toolName: args.call.name, partialJson: args.call.arguments };
-    yield { type: 'tool_end', toolId: args.call.id, toolName: args.call.name };
     yield {
       type: 'tool_result',
       toolId: args.call.id,

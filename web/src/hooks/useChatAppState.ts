@@ -34,6 +34,8 @@ import {
   finalizeStreamingMessages,
   finalizeRunningSubagents,
   formatRuntimeFailureMessage,
+  removeRuntimeStatusMessages,
+  upsertRuntimeStatusMessage,
   type WsProcessingContext,
   type WsBlockState,
 } from '@agent/shared';
@@ -128,6 +130,7 @@ export interface ChatAppState {
   unreadAiReplySessionIds: ReadonlySet<string>;
   connectionState: ConnectionState;
   refreshCurrentSession: () => void;
+  resumeCurrentStream: () => Promise<void>;
   hasMoreSessions: boolean;
   isLoadingMoreSessions: boolean;
   loadMoreSessions: () => Promise<void>;
@@ -177,6 +180,24 @@ function isActiveRuntimeStatus(status: string | undefined): boolean {
 
 function isTerminalRuntimeStatus(status: string | undefined): status is TerminalRuntimeStatus {
   return !!status && TERMINAL_RUNTIME_STATUSES.has(status);
+}
+
+function runtimeStatusFromSessionStatus(status: string): Parameters<typeof upsertRuntimeStatusMessage>[1] | null {
+  switch (status) {
+    case 'queued':
+      return 'queued';
+    case 'busy':
+    case 'running':
+      return 'running';
+    case 'waiting_hand':
+      return 'waiting_hand';
+    case 'waiting_approval':
+      return 'waiting_approval';
+    case 'waiting_user':
+      return 'waiting_user';
+    default:
+      return null;
+  }
 }
 
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
@@ -575,6 +596,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         lastEventIdRef.current = null;
         lastEventCursorRef.current = null;
         finalizeRunningSubagents(msgRef.current);
+        removeRuntimeStatusMessages(msgRef.current);
         setLoading(false);
         setStopping(false);
       }
@@ -632,6 +654,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsUserMsgIndexRef.current = -1;
     wsAttachedRef.current = false;
     finalizeRunningSubagents(msgRef.current);
+    removeRuntimeStatusMessages(msgRef.current);
     setLoading(false);
     setStopping(false);
     // 切会话：清 outbox 中 queued（未发）条目；sending/acked 留给它们自己的终态处理
@@ -1279,6 +1302,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         // 仅在 sessionId === 当前选中 时改 UI;其他会话只持久化状态(切回时再恢复 UI)
         if (a.sessionId === sessionIdRef.current) {
           if (a.active) {
+            upsertRuntimeStatusMessage(msgRef.current, runtimeStatusFromSessionStatus(a.status || 'running') ?? 'running', {
+              ...(a.streamId ? { streamId: a.streamId } : {}),
+              ...(a.runId ? { runId: a.runId } : {}),
+            });
             if (!loadingRef.current) {
               setLoading(true);
               dispatchConnection('connect');
@@ -1359,6 +1386,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           if (d.streamId) streamIdRef.current = d.streamId;
           if (d.runId) runIdRef.current = d.runId;
           wsAttachedRef.current = true;
+          const visibleStatus = runtimeStatusFromSessionStatus(d.status);
+          if (visibleStatus) {
+            upsertRuntimeStatusMessage(msgRef.current, visibleStatus, {
+              ...(d.streamId ? { streamId: d.streamId } : {}),
+              ...(d.runId ? { runId: d.runId } : {}),
+            });
+          }
           if (!loadingRef.current) {
             setLoading(true);
             dispatchConnection('connect');
@@ -1816,6 +1850,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       createdAt: Date.now(),
     });
 
+    upsertRuntimeStatusMessage(msgRef.current, 'sending');
     setLoading(true);
     resetWatchdog();
     dispatchConnection('connect');
@@ -1868,6 +1903,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsAttachedRef.current = true;
     wsUserMsgIndexRef.current = -1;
 
+    upsertRuntimeStatusMessage(msgRef.current, 'sending');
     setLoading(true);
     resetWatchdog();
     dispatchConnection('connect');
@@ -2011,6 +2047,21 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   const subscribeToActiveStreamRef = useRef(subscribeToActiveStream);
   subscribeToActiveStreamRef.current = subscribeToActiveStream;
+
+  const resumeCurrentStream = useCallback(async () => {
+    const targetSessionId = sessionIdRef.current;
+    if (!targetSessionId) return;
+    if (loadingRef.current) {
+      upsertRuntimeStatusMessage(msgRef.current, 'reconnecting');
+    }
+    try {
+      await wsClient.forceReconnect();
+    } catch {
+      // subscribeToActiveStream 会通过 ensureConnectedSend 再尝试一次。
+    }
+    if (sessionIdRef.current !== targetSessionId) return;
+    await subscribeToActiveStreamRef.current(targetSessionId);
+  }, []);
 
   // WS 连接成功后或 sessionId 变化时，检测当前会话是否有活跃流（合并为单一 useEffect 避免重复触发）
   useEffect(() => {
@@ -2279,6 +2330,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     unreadAiReplySessionIds,
     connectionState,
     refreshCurrentSession: session.refreshCurrentSession,
+    resumeCurrentStream,
     hasMoreSessions: session.hasMore,
     isLoadingMoreSessions: session.isLoadingMore,
     loadMoreSessions: session.loadMoreSessions,

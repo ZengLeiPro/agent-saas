@@ -36,7 +36,8 @@ export type WsEvent =
     | { type: 'text'; content: string }
     | { type: 'tool_input'; content: string; toolName?: string; toolId?: string }
     | { type: 'block_end'; blockType: WsBlockType; toolName?: string }
-    | { type: 'tool_result'; toolName?: string; toolId?: string; result?: string }
+    | { type: 'tool_execution'; phase: 'started' | 'progress' | 'completed'; toolName?: string; toolId?: string; invocationId?: string; status?: 'success' | 'error' | 'cancelled'; durationMs?: number; content?: string; error?: string }
+    | { type: 'tool_result'; toolName?: string; toolId?: string; result?: string; isError?: boolean }
     | { type: 'permission_request'; interactionId: string; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string }
     | { type: 'ask_user'; interactionId: string; questions: WsAskUserQuestion[] }
     | { type: 'subagent_start'; toolId: string; agentType: string }

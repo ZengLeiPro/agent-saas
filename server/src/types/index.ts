@@ -43,6 +43,8 @@ export type OutboundEventType =
   | "tool_start"
   | "tool_input_delta"
   | "tool_end"
+  | "tool_execution_start"
+  | "tool_execution_end"
   | "tool_result"
   | "permission_request"
   | "ask_user"
@@ -153,6 +155,9 @@ export interface OutboundEvent {
   toolId?: string;
   partialJson?: string;
   toolResult?: string;
+  invocationId?: string;
+  status?: "success" | "error" | "cancelled";
+  durationMs?: number;
   error?: string;
   interactionId?: string;
   displayName?: string;

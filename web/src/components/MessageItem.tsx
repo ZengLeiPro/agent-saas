@@ -8,6 +8,7 @@ import { PermissionBlock } from './PermissionBlock';
 import { AskUserBlock } from './AskUserBlock';
 import { SubagentBlock } from './SubagentBlock';
 import { ExecutionHiddenPlaceholder } from './ActivityGroupBlock';
+import { RuntimeStatusBlock } from './RuntimeStatusBlock';
 import { UserVoiceMessage } from './UserVoiceMessage';
 import { cn } from '@/lib/utils';
 import { VoiceBar } from './VoiceBar';
@@ -786,8 +787,12 @@ export const MessageItem = memo(function MessageItem({
     );
   }
 
+  if (message.type === "runtime_status") {
+    return <RuntimeStatusBlock status={message.status} content={message.content} />;
+  }
+
   if (message.type === "tool_use") {
-    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.streaming || !message.resultReady} />;
+    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.streaming || message.executionStatus === "running" || !message.resultReady} />;
     return (
       <ToolBlock
         toolName={message.toolName}
@@ -795,6 +800,10 @@ export const MessageItem = memo(function MessageItem({
         streaming={message.streaming}
         result={message.result}
         resultReady={message.resultReady}
+        executionStatus={message.executionStatus}
+        durationMs={message.durationMs}
+        lastProgress={message.lastProgress}
+        error={message.error}
       />
     );
   }

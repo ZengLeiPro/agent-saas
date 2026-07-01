@@ -43,7 +43,86 @@ export interface MessagesController {
   messagesRef: { current: MessageItem[] };
   addMessage: (message: MessageItemInput) => number;
   updateMessageAt: (index: number, updater: (msg: MessageItem) => MessageItem) => void;
+  setMessages?: (messages: MessageItemInput[], options?: { scrollToBottom?: boolean }) => void;
   triggerScroll: () => void;
+}
+
+function runtimeStatusText(status: Extract<MessageItem, { type: "runtime_status" }>["status"]): string {
+  switch (status) {
+    case "sending":
+      return "正在发送消息";
+    case "queued":
+      return "已进入队列";
+    case "running":
+      return "正在思考";
+    case "waiting_hand":
+      return "正在准备工作区";
+    case "waiting_approval":
+      return "等待授权";
+    case "waiting_user":
+      return "等待补充信息";
+    case "reconnecting":
+      return "正在恢复连接";
+    default:
+      return "正在处理";
+  }
+}
+
+export function upsertRuntimeStatusMessage(
+  msg: MessagesController,
+  status: Extract<MessageItem, { type: "runtime_status" }>["status"],
+  options: { content?: string; streamId?: string; runId?: string } = {},
+): void {
+  const msgs = msg.messagesRef.current;
+  let idx = -1;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].type === "runtime_status") {
+      idx = i;
+      break;
+    }
+    if (msgs[i].type === "text" || msgs[i].type === "thinking" || msgs[i].type === "tool_use") break;
+  }
+  const patch = {
+    status,
+    content: options.content ?? runtimeStatusText(status),
+    ...(options.streamId ? { streamId: options.streamId } : {}),
+    ...(options.runId ? { runId: options.runId } : {}),
+    streaming: true,
+    timestamp: Date.now(),
+  } satisfies Omit<Extract<MessageItem, { type: "runtime_status" }>, "id" | "type">;
+  if (idx >= 0) {
+    msg.updateMessageAt(idx, (message) =>
+      message.type === "runtime_status" ? { ...message, ...patch } : message
+    );
+    return;
+  }
+  msg.addMessage({ type: "runtime_status", ...patch });
+}
+
+export function removeRuntimeStatusMessages(msg: MessagesController): void {
+  const msgs = msg.messagesRef.current;
+  if (!msgs.some((message) => message.type === "runtime_status")) return;
+  if (msg.setMessages) {
+    msg.setMessages(msgs.filter((message) => message.type !== "runtime_status"), { scrollToBottom: false });
+    return;
+  }
+  for (let i = 0; i < msgs.length; i++) {
+    if (msgs[i].type === "runtime_status") {
+      msg.updateMessageAt(i, (message) =>
+        message.type === "runtime_status" ? { ...message, streaming: false } : message
+      );
+    }
+  }
+}
+
+function findToolUseIndex(msgs: MessageItem[], toolId?: string, toolName?: string): number {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const message = msgs[i];
+    if (message.type !== "tool_use") continue;
+    if (toolId && message.toolId === toolId) return i;
+    if (!toolId && toolName && message.toolName === toolName && !message.resultReady) return i;
+  }
+  return -1;
 }
 
 /** Mark all running subagents as completed */
@@ -67,7 +146,13 @@ export function finalizeStreamingMessages(msg: MessagesController): void {
     if ("streaming" in m && m.streaming) {
       msg.updateMessageAt(i, (prev) => ("streaming" in prev ? { ...prev, streaming: false } : prev));
     }
+    if (m.type === "tool_use" && m.executionStatus === "running") {
+      msg.updateMessageAt(i, (prev) =>
+        prev.type === "tool_use" ? { ...prev, executionStatus: prev.resultReady ? "completed" : "pending" } : prev
+      );
+    }
   }
+  removeRuntimeStatusMessages(msg);
 }
 
 /** WS event processing context */
@@ -128,6 +213,10 @@ export function processWsEvent(
   if (data.type === "stream_id") {
     streamIdRef.current = data.streamId;
     if (ctx.runIdRef) ctx.runIdRef.current = data.runId ?? null;
+    upsertRuntimeStatusMessage(msg, "queued", {
+      streamId: data.streamId,
+      ...(data.runId ? { runId: data.runId } : {}),
+    });
     // 优先按 client_msg_id 精准定位（支持多条 pending 并发），回退到 userMsgIndex 兼容老路径
     const msgs = msg.messagesRef.current;
     let targetIdx = -1;
@@ -152,6 +241,7 @@ export function processWsEvent(
   }
 
   if (data.type === "chat_rejected") {
+    removeRuntimeStatusMessages(msg);
     const msgs = msg.messagesRef.current;
     const idx = findUserMsgIndexByClientId(msgs, data.client_msg_id);
     if (idx >= 0) {
@@ -213,6 +303,7 @@ export function processWsEvent(
   }
 
   if (data.type === "block_start") {
+    removeRuntimeStatusMessages(msg);
     if (block.currentBlockIndex >= 0) {
       msg.updateMessageAt(block.currentBlockIndex, (message) =>
         "streaming" in message ? { ...message, streaming: false } : message
@@ -225,10 +316,28 @@ export function processWsEvent(
       const owner = ctx.sessionOwnerRef?.current;
       block.currentBlockIndex = msg.addMessage({ type: "text", content: "", streaming: true, ...(owner ? { owner } : {}), timestamp: Date.now() });
     } else if (data.blockType === "tool_use") {
-      block.currentBlockIndex = msg.addMessage({
-        type: "tool_use", toolName: data.toolName || "unknown",
-        toolInput: "", toolId: data.toolId || "", streaming: true,
-      });
+      const existingIdx = findToolUseIndex(msg.messagesRef.current, data.toolId, data.toolName);
+      if (existingIdx >= 0) {
+        block.currentBlockIndex = existingIdx;
+        msg.updateMessageAt(existingIdx, (message) =>
+          message.type === "tool_use"
+            ? {
+                ...message,
+                toolName: data.toolName || message.toolName || "unknown",
+                toolId: data.toolId || message.toolId || "",
+                toolInput: "",
+                streaming: true,
+                executionStatus: message.executionStatus ?? "pending",
+              }
+            : message
+        );
+      } else {
+        block.currentBlockIndex = msg.addMessage({
+          type: "tool_use", toolName: data.toolName || "unknown",
+          toolInput: "", toolId: data.toolId || "", streaming: true,
+          executionStatus: "pending",
+        });
+      }
     }
     return;
   }
@@ -266,7 +375,15 @@ export function processWsEvent(
       msg.updateMessageAt(block.currentBlockIndex, (message) => {
         if (!("streaming" in message)) return message;
         if (resolvedToolName && message.type === "tool_use" && message.toolName !== resolvedToolName) {
-          return { ...message, streaming: false, toolName: resolvedToolName };
+          return {
+            ...message,
+            streaming: false,
+            toolName: resolvedToolName,
+            executionStatus: message.executionStatus ?? "pending",
+          };
+        }
+        if (message.type === "tool_use") {
+          return { ...message, streaming: false, executionStatus: message.executionStatus ?? "pending" };
         }
         return { ...message, streaming: false };
       });
@@ -276,13 +393,52 @@ export function processWsEvent(
     return;
   }
 
+  if (data.type === "tool_execution") {
+    removeRuntimeStatusMessages(msg);
+    const toolId = data.toolId || "";
+    const toolName = data.toolName || "unknown";
+    const msgs = msg.messagesRef.current;
+    const existingIdx = findToolUseIndex(msgs, toolId, data.toolName);
+    const executionStatus = data.phase === "completed"
+      ? data.status === "error"
+        ? "failed"
+        : data.status === "cancelled"
+          ? "cancelled"
+          : "completed"
+      : "running";
+    const patch = {
+      toolName,
+      toolId,
+      executionStatus,
+      streaming: false,
+      ...(data.invocationId ? { invocationId: data.invocationId } : {}),
+      ...(typeof data.durationMs === "number" ? { durationMs: data.durationMs } : {}),
+      ...(data.content ? { lastProgress: data.content } : {}),
+      ...(data.error ? { error: data.error } : {}),
+    } satisfies Partial<Extract<MessageItem, { type: "tool_use" }>>;
+    if (existingIdx >= 0) {
+      msg.updateMessageAt(existingIdx, (message) =>
+        message.type === "tool_use" ? { ...message, ...patch } : message
+      );
+      return;
+    }
+    msg.addMessage({
+      type: "tool_use",
+      toolInput: "",
+      ...patch,
+    });
+    return;
+  }
+
   if (data.type === "error") {
+    removeRuntimeStatusMessages(msg);
     const owner = ctx.sessionOwnerRef?.current;
     msg.addMessage({ type: "text", content: `Error: ${data.message || "Unknown error"}`, ...(owner ? { owner } : {}) });
     return;
   }
 
   if (data.type === "tool_result") {
+    removeRuntimeStatusMessages(msg);
     const toolId = data.toolId || "";
     const msgs = msg.messagesRef.current;
     for (let i = msgs.length - 1; i >= 0; i--) {
@@ -290,7 +446,12 @@ export function processWsEvent(
       if (m.type === "tool_use" && m.toolId === toolId) {
         msg.updateMessageAt(i, (prev) =>
           prev.type === "tool_use"
-            ? { ...prev, result: data.result || "", resultReady: true }
+            ? {
+                ...prev,
+                result: data.result || "",
+                resultReady: true,
+                executionStatus: data.isError ? "failed" : "completed",
+              }
             : prev
         );
         return;
@@ -304,6 +465,7 @@ export function processWsEvent(
   }
 
   if (data.type === "permission_request") {
+    removeRuntimeStatusMessages(msg);
     const { name, description } = resolvePlanModeDisplay(
       data.toolName, formatPermissionInput(data.toolInput), data.planContent, data.displayName,
     );
@@ -315,6 +477,7 @@ export function processWsEvent(
   }
 
   if (data.type === "ask_user") {
+    removeRuntimeStatusMessages(msg);
     msg.addMessage({
       type: "ask_user", interactionId: data.interactionId,
       questions: data.questions, status: "pending",
@@ -328,6 +491,7 @@ export function processWsEvent(
   }
 
   if (data.type === "subagent_start") {
+    removeRuntimeStatusMessages(msg);
     msg.addMessage({ type: "subagent", toolId: data.toolId, agentType: data.agentType, status: "running" });
     return;
   }
@@ -348,6 +512,7 @@ export function processWsEvent(
   }
 
   if (data.type === "done") {
+    removeRuntimeStatusMessages(msg);
     finalizeStreamingMessages(msg);
     block.currentBlockIndex = -1;
     block.currentBlockType = null;

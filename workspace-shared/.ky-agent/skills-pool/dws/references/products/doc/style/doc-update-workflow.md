@@ -46,7 +46,7 @@ JSONML 模式下这些元素的节点结构见 [doc-jsonml-schema.md](../format/
 
 | 优先级 | 形态 | 适用 |
 |--------|------|------|
-| ① 首选 | `--content-format jsonml` | 保真度最高；callout / 分栏 / 表格 / @人 / 附件 / 颜色 / 嵌套结构都能 1:1 round-trip；写入端有 normalize + validator 兜底（§4.4） |
+| ① 首选 | `--content-format jsonml` | 保真度最高；callout / 分栏 / 表格 / @人 / 附件 / 颜色 / 嵌套结构都能 1:1 round-trip；写入端有 validator 兜底（§4.4） |
 | ② 次选 | `--content-format element`（JSON，老接口） | JSONML 不支持某个块字段时；或快速插入 callout / 分栏不想构造 JSONML 时；不保真改写正文 |
 | ③ 兜底 | markdown（不带 `--content-format` 即默认）| 纯文本追加、整篇重排骨架；callout / 分栏 / 颜色 / 部分属性会被 markdown 还原过程丢失 |
 
@@ -75,7 +75,7 @@ JSONML 模式下这些元素的节点结构见 [doc-jsonml-schema.md](../format/
 | 用户需求 | 读取方式 | 定位方法 |
 |----------|----------|----------|
 | 单块精修（首选）| `doc block list --node <id> --content-format jsonml` → 拿 uuid → `doc block list --node <id> --content-format jsonml --block-id <uuid>` 读子树 | 节点结构见 [doc-jsonml-schema.md](../format/doc-jsonml-schema.md) |
-| 多处保真改写 / 改 root sectPr | `doc read --node <id> --content-format jsonml --output assets/yyyymmdd/dws/doc.json` | 解析 JSON，按 schema 操作；担心并发覆盖时记下 `revision` 供 update 透传 |
+| 多处保真改写 / 改 root sectPr | `doc read --node <id> --content-format jsonml --output /tmp/doc.json` | 解析 JSON，按 schema 操作；担心并发覆盖时记下 `revision` 供 update 透传 |
 | 整篇按新骨架重写（纯文本场景）| `doc read --node <id>`（markdown 输出）| 直接处理 markdown 全文，定位用 `grep -n "<章节关键词>"` |
 | 末尾追加纯文本章节 | 不必读全文，直接 §4.2 append | 必要时 `doc read` 看末尾衔接 |
 | 老接口快速找 BLOCK_ID（无需 jsonml 时）| `doc block list --node <id>` | 默认输出 JSON；用 `grep -B2 -A2 "<关键词>"` 在 children 里定位（结构 `{"blocks":[{...,"children":[...]}]}`，jq 需 `..\|.text? // empty` 递归查文本） |
@@ -106,7 +106,7 @@ JSONML 模式下这些元素的节点结构见 [doc-jsonml-schema.md](../format/
 
 ## 四、改写路径详细
 
-> **首选 JSONML（§4.4）**——保真度最高且 normalize/validator 兜底；本节其余路径（markdown / element）仅在 §1.3 列出的"次选 / 兜底"场景下使用。
+> **首选 JSONML（§4.4）**——保真度最高且 validator 兜底；本节其余路径（markdown / element）仅在 §1.3 列出的"次选 / 兜底"场景下使用。
 
 ### 4.1 段落级 overwrite（markdown 兜底路径）
 
@@ -119,7 +119,7 @@ dws doc update --node <nodeId> --content "<新内容>" --mode overwrite --conten
 或写入临时文件：
 
 ```bash
-dws doc update --node <nodeId> --content-file assets/yyyymmdd/dws/<name>-section.md --mode overwrite --content-format markdown
+dws doc update --node <nodeId> --content-file /tmp/<name>-section.md --mode overwrite --content-format markdown
 ```
 
 > ⚠️ **overwrite 须用户确认**——尤其是整篇文档 overwrite。
@@ -129,7 +129,7 @@ dws doc update --node <nodeId> --content-file assets/yyyymmdd/dws/<name>-section
 > 适用范围：在文档末尾加 X 章 / 补充纯文本段落。追加内容若含 callout / 分栏等富结构，先用本节 append 一个占位段落，再用 §4.4 路径 B 的 `block insert --content-format jsonml` 替换/精修。
 
 ```bash
-dws doc update --node <nodeId> --content-file assets/yyyymmdd/dws/<name>-append.md --mode append --content-format markdown
+dws doc update --node <nodeId> --content-file /tmp/<name>-append.md --mode append --content-format markdown
 ```
 
 按 [doc-style-guideline.md](./doc-style-guideline.md) 的元素选择规则准备追加内容。
@@ -161,7 +161,7 @@ dws doc block insert --node <nodeId> --ref-block <BLOCK_ID> --where after --cont
 
 ### 4.4 JSONML 无损改写（**首选路径**）
 
-> 改写已有文档**默认走本节**——保真度最高，callout / 分栏 / 表格 / @人 / 附件 / 颜色 / 嵌套都能 1:1 round-trip；写入端有 normalize + validator 兜底。其他路径（§4.1/4.2/4.3/4.5 markdown）仅在 §1.3 列出的"次选 / 兜底"场景下使用。
+> 改写已有文档**默认走本节**——保真度最高，callout / 分栏 / 表格 / @人 / 附件 / 颜色 / 嵌套都能 1:1 round-trip；写入端有 validator 兜底。其他路径（§4.1/4.2/4.3/4.5 markdown）仅在 §1.3 列出的"次选 / 兜底"场景下使用。
 
 两条子路径：
 
@@ -187,30 +187,29 @@ dws doc block insert --node <nodeId> --ref-block <BLOCK_UUID> --where after --co
 
 ```bash
 # 1. 读出完整 JSONML 结构（输出含 revision，普通改写场景下不需要）
-dws doc read --node <nodeId> --content-format jsonml --output assets/yyyymmdd/dws/doc.json
+dws doc read --node <nodeId> --content-format jsonml --output /tmp/doc.json
 
 # 2. 解析 JSON，修改 jsonml 数组中的目标节点
 #    节点结构见 doc-jsonml-schema.md，可复制范例见 doc-jsonml-cookbook.md
 
-# 3. 写回临时文件 assets/yyyymmdd/dws/doc_modified.json，格式 {"jsonml": [...]}
+# 3. 写回临时文件 /tmp/doc_modified.json，格式 {"jsonml": [...]}
 
 # 4. 提交修改（默认直接覆盖，不做并发检查）
-dws doc update --node <nodeId> --content-file assets/yyyymmdd/dws/doc_modified.json \
+dws doc update --node <nodeId> --content-file /tmp/doc_modified.json \
   --content-format jsonml --mode overwrite
 ```
 
 > **并发安全模式（担心被并发覆盖时使用）**：如果担心多 agent 同时改这篇文档，可以把第 1 步 read 返回的 `revision` 通过 `--revision <N>` 透传给第 4 步：服务端会做并发检查，版本不一致返回 `VersionConflict`，此时回到第 1 步重读重写即可。普通单 agent 改写场景默认不传 `--revision`。
 
-#### JSONML 写入端的 normalize 与 validator
+#### JSONML 写入端的 validator
 
-写入命令（`doc create/update` + `doc block insert/update`）默认按 **normalize → validate** 两步处理 JSONML：
+写入命令（`doc create/update` + `doc block insert/update`）走 **validate** 一步，不做结构修复：
 
-| 行为 | 缺省 | `--fix-jsonml` | `--no-fix-jsonml` |
-|------|------|----------------|-------------------|
-| JSON 语法修复（括号/逗号补全） | ✗ | ✓（打印 `[FIX]`） | ✗ |
-| 注入缺失的 block `uuid` | ✓ | ✓ | ✗ |
-| 裸字符串 → 包成 `["span",{"data-type":"text"},["span",{"data-type":"leaf"},"..."]]` | ✓（stderr 打印 `[FIX]`） | ✓ | ✗ |
-| validator 阻断（HasErrors → 拒发） | ✓ | ✓ | ✓ |
+| 行为 | 缺省 | `--fix-jsonml` |
+|------|------|----------------|
+| JSON 语法修复（括号/逗号补全） | ✗ | ✓（打印 `[FIX]`） |
+| validator 阻断（HasErrors → 拒发） | ✓ | ✓ |
+| root 校验（仅 doc create/update） | ✓ | ✓ |
 
 报错格式（agent 友好）：
 
@@ -219,11 +218,11 @@ $[2][2]: paragraph child must be span wrapper, got raw string.
 Suggestion: ["span",{"data-type":"text"},["span",{"data-type":"leaf"},"<your text>"]]
 ```
 
-三态设计：
+设计要点：
 
-- 不传：结构修复 ON + JSON 语法修复 OFF + 校验 ON（推荐人工调用）
-- `--fix-jsonml`：全部修复 ON（含 JSON 语法修复，推荐 agent 调用）
-- `--no-fix-jsonml`：全部修复 OFF，校验仍 ON；用于排查原始错误
+- 缺省为严格模式：不做结构修复，裸字符串、缺 uuid 等错误会被 validator 抦下。
+- `doc create/update` 要求 body 必须以 `["root", ...]` 为根节点，缺少会报错。`doc block insert/update` 不要求 root。
+- `--fix-jsonml`：启用 JSON 语法修复（修复 LLM 遗漏的括号/逗号），推荐 agent 调用。
 
 **何时不走本节、改用 markdown**：纯文本追加章节（§4.2）、整篇按全新骨架重写（§4.5，且无富结构需要保留时）、只在乎"加一段文字"且确认目标段落无 callout / 分栏 / 颜色 / @人 / 附件。其余场景默认本节。
 
@@ -250,7 +249,7 @@ Suggestion: ["span",{"data-type":"text"},["span",{"data-type":"leaf"},"<your tex
 得到确认后执行（markdown 兜底路径）：
 
 ```bash
-dws doc update --node <nodeId> --content-file assets/yyyymmdd/dws/<name>-full.md --mode overwrite --content-format markdown
+dws doc update --node <nodeId> --content-file /tmp/<name>-full.md --mode overwrite --content-format markdown
 ```
 
 **写入后必须回读**（§6）。如果发现旧内容残留，按 §6 的修复路径处理。

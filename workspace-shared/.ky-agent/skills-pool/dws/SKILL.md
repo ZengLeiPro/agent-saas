@@ -1,68 +1,27 @@
 ---
 name: dws
-description: 管理钉钉产品能力(AI表格/AI搜问/日历/通讯录/群聊与机器人/待办/审批/考勤/日志/DING消息/开放平台文档/钉钉文档/钉钉云盘/AI听记/钉钉邮箱或企业邮箱/在线电子表格/知识库等)。当用户需要操作钉钉表格数据、管理钉钉日程会议、模糊找人/查谁负责某事项、查询钉钉通讯录、管理群聊、机器人发消息、创建待办、提交审批、查看考勤、提交日报周报（钉钉日志模版）、读写钉钉文档、上传下载钉钉云盘文件、查询听记纪要、收发钉钉邮箱/企业邮箱邮件、读写在线电子表格(axls)、管理钉钉知识库时使用。普通 Gmail/Google Workspace/非钉钉邮箱任务不要触发本 skill。
-cli_version: ">=1.0.30"
+description: 管理钉钉产品能力(AI表格/AI搜问/日历/通讯录/群聊与机器人/待办/审批/考勤/日志/DING消息/开放平台文档/钉钉文档/钉钉云盘/AI听记/邮箱/在线电子表格/知识库等)。当用户需要操作表格数据、管理日程会议、模糊找人/查谁负责某事项、查询通讯录、管理群聊、机器人发消息、创建待办、提交审批、查看考勤、提交日报周报（钉钉日志模版）、读写钉钉文档、上传下载云盘文件、查询听记纪要、收发邮件、读写在线电子表格(axls)、管理钉钉知识库时使用。
+cli_version: ">=1.0.15"
 ---
-
-> ⚠️ **开沿专属约定（必读，先于本文档其他章节）**：执行任何 `dws` 命令前必须读 [references/kaiyan-context.md](./references/kaiyan-context.md)。下面 6 条是 2026-05-17 实战踩坑得到的硬规则，违反任何一条都会让授权流程或调用失败：
->
-> 1. **Token/config 必须写入当前 workspace**：`DWS_DISABLE_KEYCHAIN=1` + `DWS_CONFIG_DIR=$PWD/.dws/config` + `DWS_KEYCHAIN_DIR=$PWD/.dws/keys`。ACS warm sandbox 会复用同一用户 workspace，不能写默认 HOME 配置目录。建议执行 `source .dws/env.sh`（首次 setup 时由 `kaiyan-context.md §1` 创建）。
-> 2. **脚本已自动注入隔离环境**：`scripts/dws_runtime.py` 会在所有 bundled Python 脚本调用 `dws` 时自动设置上述 env；手写 `dws` 命令仍必须 source `.dws/env.sh` 或显式带 env。
-> 3. **首次授权使用当前平台支持的后台任务/轮询机制**：不要写 `nohup ... & disown`、不要把日志放 `/tmp`、不要承诺普通对话结束后仍在盯轮询。授权日志放 `.dws/logs/login.log`。
-> 4. **device flow URL 让用户在自己设备打开**：授权页面跑在钉钉服务器上，用户手机或自己的电脑浏览器都可以，agent 不需要也不应该代开授权页面。
-> 5. **每个 workspace 独立授权**，绑定本 workspace 对应的钉钉账号；禁止复用旧文档小号（那类小号通常只有发消息权限，dws 需要的 13+ 产品 scope 拿不到）。
-> 6. **职责边界**：实时钉钉产品操作走本 skill；批量历史聚合（员工/部门/工时）走 `ky-data-query`；TTS / 语音消息 / `[VOICE]` 标记当前无专用 skill，不要路由到已下线的旧 skill。
->
-> **Token 寿命（实际行为）**：access_token 2h 自动 refresh / refresh_token 30 天但**每次刷新 sliding window 自动延长 30 天**——只要月内调过一次 dws 命令就永不掉线。掉线唯一可能是连续 30 天工作区完全不用 dws。
->
-> **撞到 `PAT_*_RISK_NO_PERMISSION` 错误是预期机制，不是 bug**——钉钉对涉及个人敏感数据（聊天记录/邮件/日程详情）的 API 要求用户单独按 scope 同意一次行为（叫「PAT 行为授权」）。处理方式：**把错误 JSON 里的 `authorizationUrl` 原样转给用户**，说明风险等级和授权影响，让用户自行选择授权时长；高风险/代发/删除/修改类操作仍必须按业务动作逐次确认。不要重试不要改命令——重试只会再得同样错误。完整机制见 [references/kaiyan-context.md](./references/kaiyan-context.md) §7「PAT 行为授权机制」（含 4 个风险等级 / vs OAuth 对比 / `PAT_SCOPE_AUTH_REQUIRED` 与 `AGENT_CODE_NOT_EXISTS` 两个特殊错误码）。
->
-> **如果有任何调用失败**，先按这 6 条对照排查；仍不通时读完整 [references/kaiyan-context.md](./references/kaiyan-context.md) §6 故障特征表 + §7 PAT 章节。
-
-## 🚀 首次授权 — ACS 准备与后台启动（用户说"开通钉钉/接入 dws/初始化钉钉助理"时按顺序跑）
-
-```bash
-# 步骤 1：检查 dws 二进制
-command -v dws >/dev/null || { echo "当前 ACS 镜像或 workspace PATH 中没有 dws，请先补镜像/项目依赖"; exit 1; }
-
-# 步骤 2：如果工作区没有 .dws/env.sh，自动创建
-[ -f .dws/env.sh ] || {
-  mkdir -p .dws/config .dws/keys .dws/logs
-  cat > .dws/env.sh <<'EOF'
-export DWS_DISABLE_KEYCHAIN=1
-export DWS_CONFIG_DIR="$PWD/.dws/config"
-export DWS_KEYCHAIN_DIR="$PWD/.dws/keys"
-EOF
-}
-
-# 步骤 3：检查是否已授权
-source .dws/env.sh && dws auth status --format json | grep -q '"authenticated": true' && {
-  echo "已登录，直接烟雾测试"
-} || {
-  # 步骤 4：准备 device flow 日志。长轮询必须用当前平台的后台任务机制启动。
-  mkdir -p .dws/logs
-  LOG=.dws/logs/login.log
-  : > "$LOG"
-  echo "未登录。请用当前平台的后台任务机制启动："
-  echo "  bash -lc 'source .dws/env.sh && dws auth login --device > .dws/logs/login.log 2>&1'"
-  echo "启动后读取 .dws/logs/login.log，提取 [A-Z0-9]{4}-[A-Z0-9]{4} 授权码给用户。"
-}
-
-# 步骤 6：用户扫码后烟雾测试
-source .dws/env.sh && dws auth status --format json
-source .dws/env.sh && dws contact user get-self --format json
-```
-
-**关键纪律**：
-- 后台任务启动后不要 `kill` / `pkill` dws 相关进程；如果授权流程失效，重新发起 device flow，让用户扫新 code
-- 从 `.dws/logs/login.log` 提取授权码后，告诉用户：在自己的手机或电脑浏览器打开 `https://login.dingtalk.com/oauth2/device/verify.htm?user_code=<CODE>`，登录钉钉 → 选「福建开沿科技有限公司」 → 点「同意」
-- 在当前 turn 内可以查看 `.dws/logs/login.log` 判断进度；跨 turn 需要用平台后台任务/续接机制，不要承诺普通对话结束后继续盯
-- 用户扫完码、`auth status` 显示 `authenticated: true` 后即完成，再跑 `dws contact user get-self` 让用户看到自己的钉钉档案作为确认
 
 # 钉钉全产品 Skill
 
 通过 `dws` 命令管理钉钉产品能力。
 
+> ⚠️ **平台运行时约定（必读，先于本文档其他章节）**：执行任何 `dws` 命令前必须读 [references/platform-runtime-context.md](./references/platform-runtime-context.md)。下面 6 条是实战踩坑得到的硬规则，违反任何一条都会让授权流程或调用失败：
+>
+> 1. **Token/config 必须写入当前 workspace**：`DWS_DISABLE_KEYCHAIN=1` + `DWS_CONFIG_DIR=$PWD/.dws/config` + `DWS_KEYCHAIN_DIR=$PWD/.dws/keys`。ACS warm sandbox 会复用同一用户 workspace，不能写默认 HOME 配置目录。建议执行 `. .dws/env.sh`（首次 setup 时由 `platform-runtime-context.md §1` 创建）。
+> 2. **脚本已自动注入隔离环境**：`scripts/` 下 Python 脚本在调用 `dws` 时会通过 `subprocess` env 传入上述变量；手写 `dws` 命令仍必须先 source `.dws/env.sh` 或显式带 env。
+> 3. **首次授权走 device flow**：日志写 `.dws/logs/login.log`，polling 用当前平台后台任务机制启动（禁止 `nohup ... & disown`）；用户在自己设备打开 `https://login.dingtalk.com/oauth2/device/verify.htm?user_code=<CODE>` 完成登录。详见 §2。
+> 4. **每 workspace 绑定独立钉钉账号**：dws 涉及个人数据（日历/邮件/听记/考勤/日志），禁止复用少量权限的无人小号。机器人/自动化场景改用 `--client-id --client-secret` 自定义应用模式。
+> 5. **禁止裸跑 `dws`**：任何命令前必须先 `. .dws/env.sh`（或一行 env 内联注入）。裸跑可能污染默认 HOME 配置目录。
+> 6. **职责边界**：实时钉钉产品操作走本 skill；批量历史聚合（员工/部门/工时）若当前会话启用了 `ky-data-query` 则优先走它；TTS/语音消息/长时间异步回复不属于 dws，仅当明确启用对应专用 skill 时才路由过去。
+>
+> **PAT 行为授权是预期机制，不是 bug**——撞到 `PAT_*_RISK_NO_PERMISSION` 错误时**不要重试、不要改命令**，把错误 JSON 里的 `authorizationUrl` **原样**转给用户，说明风险等级和授权时长选项（一次性 / 本次会话 / 永久），让用户在自己设备打开完成同意。完整机制见 [platform-runtime-context.md](./references/platform-runtime-context.md) §7（含 4 个风险等级 / vs OAuth 对比 / `PAT_SCOPE_AUTH_REQUIRED` 与 `AGENT_CODE_NOT_EXISTS` 两个特殊错误码）。
+>
+> **平台默认部署注意**：本 skill 不携带任何用户 token/config；每个新用户 workspace 首次使用时都应自动创建 `.dws/env.sh` 并独立完成 dws device flow 授权。平台镜像必须预装 `dingtalk-workspace-cli` npm 包（bin 名 `dws`），否则 skill 文档再完整也无法真实调用钉钉。
+>
+> **如果有任何调用失败**，先按这 6 条对照排查；仍不通时读完整 [references/platform-runtime-context.md](./references/platform-runtime-context.md) §6 故障特征表 + §7 PAT 章节。
 
 > ⚠️ **命令可用性可能因企业服务发现配置而异**。本文档列出的命令基于 dws envelope schema 与本仓库 v1.0.30 实测，但部分命令的 cobra 子命令暴露与否还取决于你的企业 MCP gateway 是否注册了对应 tool。如果跑某条命令报 `unknown command` 或 fall back 到父级 help，说明当前账号企业未开通该能力。实际调用前可用 `dws <cmd> --help` 或 `--dry-run` 验证。
 
@@ -82,6 +41,14 @@ source .dws/env.sh && dws contact user get-self --format json
 - **脚本优先**：[scripts/](./scripts/) 下的 `python scripts/<name>.py` 已封装翻页/轮询/批量逻辑，遇到对应场景（如 AI 表格批量导入导出、AI 应用创建轮询、文档创建后写内容、钉盘目录树等）**优先调用脚本**而非手写多步命令。脚本均支持 `--dry-run` 预览、`--format json` 输出，失败时回退到手动步骤
 - **业务域最佳实践优先**：文档类多步任务先读 [04-document.md](./references/best_practices/04-document.md)；AI 表格读取/统计/写入/导入导出先读 [06-data-analytics.md](./references/best_practices/06-data-analytics.md)。本仓库只迁入这些业务域 best practices，不引入其它产品行动指南。
 - 知识库容器只用 `dws wiki space/member`；知识库内文件/文档的浏览、搜索、读取、创建、移动、复制统一切到 `dws doc`。`workspaceId` 只能传给 `wiki --workspace`、`doc --workspace` 或 `doc search --workspace-ids`，禁止传给 `doc list --folder`，也不要使用不存在的 `--space-id`。
+- 找群 / 找人 / 找数据在当前组织没命中、且 `dws profile list` 显示 ≥2 个组织时，对每个组织带一次性 `--profile <corpId>` 各搜一遍；命中即用，全部组织都没有才追问用户。禁止在当前组织搜不到就判定「不存在」或直接甩给用户选。
+
+## 开放平台文档 RAG / 错误码排查
+
+- 任何产品执行中，只要用户问开放平台 API、接口参数、字段含义、权限点、回调、SDK、配额、错误码，或命令返回上游 OpenAPI/SDK 错误，必须先用 `dws devdoc article search --query "<关键词>" --format json` 做官方文档 RAG。
+- 查询词优先保留原始 API 名、能力名、权限点、完整错误码和 message；首轮形如 `errcode <code> <message>`，无结果再换 `<产品/场景> <错误码>`、`<接口名> 参数`。
+- 本地 CLI 错误（如 `unknown command` / `unknown flag` / 认证 / recovery）仍按本文件「错误处理」执行；`devdoc` 用于开放平台业务错误码和接口语义排查。
+- `devdoc` 只查钉钉开放平台开发者文档，不查业务数据；排查结论必须基于命中条目的标题、摘要或链接，不能编造错误原因或不存在的命令。
 
 
 ## 产品总览
@@ -92,10 +59,11 @@ source .dws/env.sh && dws contact user get-self --format json
 |-------------------|------------------------------------------------------|----------------------------------------------------------------|
 | `aisearch`        | AI搜问（搜人首选）：按姓名/部门/职位/职责/上级/下级/手机号/工号维度找人，"谁负责 XX/XX 的负责人/某事项/某项目的人"统一走本产品 | [aisearch.md](./references/products/aisearch.md)               |
 | `aitable`         | AI表格：Base/数据表/字段/记录/视图/附件/图表/仪表盘/导入导出/模板搜索            | [aitable.md](./references/products/aitable.md)                 |
-| `attendance`      | 考勤：打卡结果/打卡流水/考勤组查询/考勤规则/汇总统计/假期类型/假期余额（P0 已落地，部分管理类命令仍属 P1） | [attendance.md](./references/products/attendance.md)           |
+| `attendance`      | 考勤：考勤组与规则查询(rules)/个人打卡详情(record get)/批量班次查询(shift list)/考勤统计摘要(summary)，仅此 4 个命令组 | [attendance.md](./references/products/attendance.md)           |
 | `calendar`        | 日历：日历列表/日程/参与者/附件/响应/会议室/闲忙查询/时间建议                  | [calendar.md](./references/products/calendar.md)               |
-| `chat`            | 群聊与机器人：搜索群/建群/群成员管理/改群名/消息发送(文本/Markdown/图片/文件)/拉取消息/@我/特别关注/机器人群发/单聊/撤回/转发/引用回复/Webhook/机器人搜索     | [chat.md](./references/products/chat.md)                       |
-| `contact`         | 通讯录：用户查询(当前用户/搜索/详情/手机号)/花名册档案(学历/家庭/银行卡/合同)/离职员工查询(姓名/时间范围/部门)/部门查询(搜索/详情/子部门/成员)/角色查询(主管/管理员/财务/HR 等 label)/特别关注列表              | [contact.md](./references/products/contact.md)                 |
+| `chat`            | 群聊与机器人：搜索群/建群/群成员管理/改群名/消息发送(文本/Markdown/图片/文件)/拉取消息/@我/特别关注/机器人群发/单聊/撤回/转发/引用回复/Webhook/**查询**已有机器人 | [chat.md](./references/products/chat.md)                       |
+| `contact`         | 通讯录：用户查询(当前用户/搜索/详情/手机号)/花名册档案(学历/家庭/银行卡/合同)/离职员工查询(姓名/时间范围/部门)/部门查询(搜索/详情/子部门/成员)/特别关注列表（按角色/职责找人请走 `aisearch`）              | [contact.md](./references/products/contact.md)                 |
+| `dev`             | 开放平台开发者：**新建/配置机器人（建号）**、建联调试（把机器人接到本地 agent 的 Stream）、应用生命周期（创建/更新/删除/凭证/权限/成员/事件订阅）、开放平台文档搜索 | [dev.md](./references/products/dev.md)                         |
 | `devdoc`          | 开放平台文档：搜索开发文档                                        | [devdoc.md](./references/products/devdoc.md)                   |
 | `ding`            | DING消息：发送/撤回（应用内/短信/电话）                              | [ding.md](./references/products/ding.md)                       |
 | `doc`             | 钉钉文档：搜索/浏览/读写/块级编辑/评论/文件创建/复制/移动/重命名/**删除/导出 docx/权限管理/媒体上传下载**；创建/编辑先按渐进式 doc 子文档与 JSONML 工作流决策       | [doc.md](./references/products/doc.md)                         |
@@ -119,6 +87,30 @@ source .dws/env.sh && dws contact user get-self --format json
 4. **Fallback 单产品路由**：仅当行动指南未命中，且用户意图明确是单一产品单步操作时，才按「产品总览」和「意图判断决策树」选择产品，并读取对应 `references/products/*.md`。
 5. **追问**：以上步骤都无法判断时，主动追问用户澄清，严禁猜测命令、flag、URL、ID 或字段名。
 
+## 多组织处理
+dws 可同时登录多个钉钉组织，一个 profile = 一个已登录组织（corp）。当前 profile 决定本次命令用哪个组织的身份（corpId / userId 按当前 profile 自动注入，不是只支持单组织）。
+
+**触发条件（命中任一即进入本节）**：
+- 显式：用户提到 切换 / 换 / 跨组织、另一个钉钉、别的公司、看登录了哪些组织、当前是哪个组织、某人 / 某群 / 某数据在别的组织
+- 隐式（最常见、易漏）：在当前组织读 / 搜没找到目标（群 / 人 / 数据），且 `dws profile list` 显示已登录 ≥2 个组织 —— 别急着判「不存在」，按下方跨组织铁律去其他组织找
+- 需要跨多个组织汇总 / 对比数据
+- 用户问认证状态 / 登录了哪些组织 / 主组织是哪个
+
+**不触发**：只登录 1 个组织时，按当前组织正常处理，不带 `--profile`，不进本节。
+
+命令：
+- `dws profile list` — 列出已登录组织（主 / 当前标记、状态、有效期），只读元数据
+- `dws profile switch <名称|corpId|->` — 持久切换当前组织；`-` 切回上一个；无参数在交互终端弹选择器（非交互须显式传参）。`dws profile use` 是其别名
+- 全局 `--profile <名称|corpId>` — 单次指定本命令用哪个组织，一次性、不改当前组织
+- `dws auth login` — 再登一个组织即新增 profile（自动从授权账号取 corpId / corpName）；同组织重复 login = 刷新
+- `dws auth status [--profile <名称>]` — 查看认证状态
+
+多组织数据聚合步骤：`dws profile list` 拿到所有已登录组织，对每个组织带 `--profile <corpId>` 各取一次数，合并并标注来源组织；某组织失败则标「该组织暂不可用」并继续返回其余。
+安全护栏：
+- 只有 `dws profile list` 显示 ≥2 个组织才启用上面的跨组织逻辑；单组织直接按当前组织走，不带 `--profile`。
+- 自动跨组织只对「读 / 搜」。写 / 发 / 删 / 撤回等操作默认只在当前组织做；确需带 `--profile` 跨组织写时，必须先与用户确认目标组织。
+- 持久切换 `dws profile switch`（改默认组织）按写操作对待：未经用户明确要求不得执行。跨组织找数一律用一次性 `--profile`，不改当前组织。
+
 ## 行动指南（优先匹配）
 
 > 将用户意图与下表做**语义比对**，不要求字面包含关键词。命中后必须读取该行动指南文件，并按其中固定路线执行；多个场景同时命中时，按下方「消歧规则」选择。
@@ -130,6 +122,10 @@ source .dws/env.sh && dws contact user get-self --format json
 
 ### 消歧规则
 
+- "工作台应用/app001/appXYZ/钉钉工作台上有哪些应用" → `workbench app`。
+- "开放平台接口文档/API 怎么调用/错误码/字段说明" → `devdoc`。
+- "MCP 服务/connector/创建工具/HSF 映射/上架 MCP" → MCP 平台配置流程。
+- 只说"应用"且缺少上下文时，先结合当前对话判断；仍不明确时追问是工作台应用、文档能力还是 MCP 工具。
 - "知识库空间/成员管理" → `wiki` 产品参考；"知识库里的文档/文件/内容" → #4 文档知识，再切 `doc`。
 - "创建表格/在线电子表格/单元格" → `sheet`；"AI 表格/多维表/base/记录/字段/视图" → #6 AI 表格数据。
 - "写文档/读文档/总结文档/插入图片附件/块级编辑/JSONML 保真改写" → #4 文档知识，不要停在 `doc create` 或 `doc block --help`；创建/编辑必须继续按 [doc.md](./references/products/doc.md) 加载渐进式子文档和 JSONML workflow。
@@ -137,12 +133,13 @@ source .dws/env.sh && dws contact user get-self --format json
 
 ## 意图判断决策树
 
-用户提到"找人/搜人/谁负责 XX/某事项的负责人/某项目的人/团队成员/上级/下级/按工号找人/按手机号找人" → `aisearch`
+用户提到"找人/搜人/谁负责 XX/某事项的负责人/某项目的人/某职责/某角色（主管/管理员/财务/HR 等）由谁担任/团队成员/上级/下级/按工号找人/按手机号找人" → `aisearch`（按角色或职责找人用 `aisearch person --dimension duty`）
 用户提到"表格/多维表/AI表格/记录/数据/视图/图表/仪表盘" → `aitable`
 用户提到"考勤/打卡/排班" → `attendance`
 用户提到"日程/日历/会议室/约会/时间建议" → `calendar`
-用户提到"群聊/建群/群成员/群管理/发消息/发图片消息/发文件消息/发 Markdown 消息/截图发钉钉/转发消息/引用回复/@我/特别关注消息/机器人发消息/Webhook/机器人群发/机器人单聊/通知" → `chat`
-用户提到"通讯录/同事/部门/组织架构/子部门/部门多少人/离职员工/离职名单/离职花名册/花名册/员工档案/学历/家庭/银行卡/紧急联系人/合同/角色/主管角色/管理员角色/财务/HR/特别关注/星标联系人" → `contact`
+用户提到"群聊/建群/群成员/群管理/发消息/发图片消息/发文件消息/发 Markdown 消息/截图发钉钉/转发消息/引用回复/@我/特别关注消息/机器人发消息/Webhook/机器人群发/机器人单聊/通知" → `chat`（仅 IM 操作；创建/配置/建联机器人走 `dev`，见下）
+用户提到"创建机器人/新建机器人/建机器人/配置机器人/机器人建号/建联/把机器人连到/接入 agent/opencode/claude/qoder/连接 agent/开放平台应用/开发者应用/app 创建/应用凭证/事件订阅/dws dev" → `dev`
+用户提到"通讯录/同事/部门/组织架构/子部门/部门多少人/离职员工/离职名单/离职花名册/花名册/员工档案/学历/家庭/银行卡/紧急联系人/合同/特别关注/星标联系人" → `contact`（按角色/职责找人不在此，走 `aisearch`）
 用户提到"开发/API/调用错误 文档" → `devdoc`
 用户提到"DING/紧急消息/电话提醒" → `ding`
 用户提到"钉钉文档/云文档/读写文档/知识库里的文档/浏览知识库内容/知识库内搜索文档/块级编辑/文档评论/文档复制移动" → `doc`
@@ -154,7 +151,9 @@ source .dws/env.sh && dws contact user get-self --format json
 用户提到"在线电子表格/钉钉表格/axls/工作表/单元格读写/合并单元格/筛选视图/导出 xlsx" → `sheet`
 用户提到"待办/TODO/任务提醒/循环待办" → `todo`
 用户提到"创建知识库/知识库列表/搜索知识库空间/wiki/团队空间/知识库成员管理/我的文档个人空间" → `wiki`
+用户提到"切换组织/换组织/跨组织/另一个钉钉/别的公司/多组织/看所有组织/profile/登录了哪些组织" → `profile`（见「多组织 / profile」节）
 
+关键区分: **dev(创建/配置/建联机器人)** vs **chat(查询/发消息已有机器人)**。`dws chat bot search/find` 只查询机器人；**建号**（创建钉钉智能体机器人）走 `dws dev app robot submit`；**建联**（把机器人接到本地 agent 的 Stream）走 `dws dev connect`。凡是"创建机器人""建机器人""接入 agent""建联"一律路由到 `dev`，禁止走 `chat`。
 关键区分: aitable(数据表格) vs todo(待办任务)
 关键区分: report(钉钉日志/日报周报) vs todo(待办任务)
 关键区分: chat send-by-bot(机器人身份发消息) vs send-by-webhook(自定义机器人Webhook告警)
@@ -190,6 +189,7 @@ source .dws/env.sh && dws contact user get-self --format json
 | `oa` | `approval reject` | 拒绝待审批（需加明确理由） |
 | `todo` | `task delete` | 删除待办 |
 | `minutes` | `replace-text` | 全文批量替换转写与摘要 |
+| `auth` | `logout` | **默认退出所有已登录组织**；只退一个加 `--profile <名称\|corpId>`。注意：退主组织不会被拦，会静默把「主」改选为剩下第一个组织，退主前必须向用户确认 |
 
 ### 确认流程
 ```

@@ -18,9 +18,6 @@ import argparse
 import json
 import re
 import subprocess
-from dws_runtime import assets_dir, patch_subprocess_for_dws, safe_filename
-
-patch_subprocess_for_dws()
 import sys
 import time
 from pathlib import Path
@@ -113,7 +110,7 @@ def main() -> None:
     parser.add_argument("--timeout-ms", type=int, default=1000, help="单次等待毫秒数，默认 1000")
     parser.add_argument("--poll-timeout-ms", type=int, default=3000, help="轮询等待毫秒数，默认 3000")
     parser.add_argument("--max-polls", type=int, default=10, help="最大轮询次数，默认 10")
-    parser.add_argument("--output", help="本地保存路径（不传则保存到 assets/yyyymmdd/dws/exports/）")
+    parser.add_argument("--output", help="本地保存路径（不传则按 fileName 保存到当前目录）")
     parser.add_argument("--dws", default="dws", help="dws 可执行文件路径，默认 dws")
     parser.add_argument("--no-download", action="store_true", help="仅返回 downloadUrl，不下载文件")
     args = parser.parse_args()
@@ -198,12 +195,7 @@ def main() -> None:
         return
 
     norm_url = normalize_download_url(download_url)
-    output_path = (
-        Path(args.output).expanduser().resolve()
-        if args.output
-        else assets_dir("dws", "exports") / safe_filename(file_name, "export_result.bin")
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path = Path(args.output).expanduser().resolve() if args.output else Path.cwd() / file_name
     ok, dl_err = download_file(norm_url, output_path)
     if not ok:
         fail(f"downloadUrl 下载失败: {dl_err}")

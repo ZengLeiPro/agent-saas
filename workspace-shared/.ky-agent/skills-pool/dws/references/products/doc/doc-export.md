@@ -1,13 +1,13 @@
 # doc export（在线文档导出为 docx）
 
-> **前置条件（MUST READ）：** 执行本命令前，必须先用 当前环境的文件读取方式读取以下文件：
+> **前置条件（MUST READ）：** 执行本命令前，必须先用 Read 工具读取以下文件：
 > 1. [`../doc.md`](../doc.md) — 命令路由 + 场景索引 + 意图判断 + 工作流
 
 > **路由前置判断**：用户说「下载/导出」时**必须**先用 [`./doc-info.md`](./doc-info.md) `info --node <ID> --format json` 查 `contentType`：
 > - `contentType` 为 `ALIDOC`（在线文档）→ **必须用 `export`**，禁止用 `download`
-> - `contentType` 为 `DOCUMENT`/`IMAGE`/`VIDEO` 等（已有文件）→ 用 [`./doc-file-ops.md`](./doc-file-ops.md) `download`
+> - `contentType` 为 `DOCUMENT`/`IMAGE`/`VIDEO` 等（已有文件）→ 用 `dws drive download`（详见 [`../drive.md`](../drive.md)）
 >
-> `download` 只能下载**已有文件**（原样下载），`export` 是将**在线文档格式转换**后导出为 docx，两者完全不同。
+> `drive download` 只能下载**已有文件**（原样下载），`export` 是将**在线文档格式转换**后导出为 docx，两者完全不同。
 
 ---
 
@@ -18,7 +18,7 @@ Usage:
   dws doc export [flags]
 Example:
   dws doc export --node "https://alidocs.dingtalk.com/i/nodes/xxx" --output ./exported.docx
-  dws doc export --node <DOC_ID> --output assets/yyyymmdd/dws/downloads/
+  dws doc export --node <DOC_ID> --output ~/downloads/
 Flags:
       --node string           要导出的文档标识，支持文档 URL 或 dentryUuid (必填)
       --output string         本地保存路径，文件路径或目录 (必填)
@@ -64,7 +64,7 @@ Flags:
 dws doc export --node <DOC_ID> --output ./exported.docx
 
 # 输出到目录（自动按文档名命名）
-dws doc export --node <DOC_ID> --output assets/yyyymmdd/dws/downloads/
+dws doc export --node <DOC_ID> --output ~/downloads/
 
 # alidocs URL 直传
 dws doc export --node "https://alidocs.dingtalk.com/i/nodes/<DOC_UUID>" --output ./exported.docx
@@ -77,4 +77,4 @@ dws doc export get --job-id <JOB_ID> --format json
 
 - [`../doc.md` §意图判断](../doc.md#意图判断)（如何路由到本命令）
 - [`./doc-info.md`](./doc-info.md)（前置：判断 contentType=ALIDOC 才走 export）
-- [`./doc-file-ops.md`](./doc-file-ops.md)（非 ALIDOC 文件用 download）
+- [`../drive.md`](../drive.md)（非 ALIDOC 文件用 `dws drive download`）

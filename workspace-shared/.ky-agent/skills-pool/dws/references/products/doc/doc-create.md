@@ -1,6 +1,6 @@
 # doc create（创建文档）
 
-> **前置条件（MUST READ）：** 执行本命令前，必须先用 当前环境的文件读取方式读取以下文件：
+> **前置条件（MUST READ）：** 执行本命令前，必须先用 Read 工具读取以下文件：
 > 1. [`../doc.md`](../doc.md) — 命令路由 + 场景索引 + 意图判断 + 工作流
 > 2. [`./style/doc-create-workflow.md`](./style/doc-create-workflow.md) — 创建工作流（标题、位置、骨架、回读校验）
 > 3. [`./style/doc-style-guideline.md`](./style/doc-style-guideline.md) — 排版规范（草稿元素清单、骨架样板）
@@ -35,8 +35,7 @@ Flags:
       --content string        文档初始内容（短文本字面量）；传 - 表示从 stdin 读取
       --content-file string   从文件读取文档内容（UTF-8）。推荐长/多行/表格内容使用
       --content-format string         内容格式: 默认为 markdown，可选 jsonml
-      --fix-jsonml              启用全部 JSONML 修复（含 JSON 语法修复 + 结构修复），推荐 agent 调用时使用
-      --no-fix-jsonml           关闭全部 JSONML 修复（跳过 JSON 语法修复和结构修复），用于排查原始错误
+      --fix-jsonml              启用 JSON 语法修复（括号/逗号补全），推荐 agent 调用时使用
 ```
 
 ## 关键说明
@@ -63,13 +62,13 @@ CLI **不会**自动回读校验。**每次创建后**都必须执行 `doc read 
 
 ```bash
 # 默认创建到「我的文档」根目录（推荐文件路径）
-dws doc create --name "<文档名>" --content-file assets/yyyymmdd/dws/<name>.md --content-format markdown
+dws doc create --name "<文档名>" --content-file /tmp/<name>.md --content-format markdown
 
 # 创建到指定文件夹
-dws doc create --name "<文档名>" --content-file assets/yyyymmdd/dws/<name>.md --folder <DOC_FOLDER_NODE_ID> --content-format markdown
+dws doc create --name "<文档名>" --content-file /tmp/<name>.md --folder <DOC_FOLDER_NODE_ID> --content-format markdown
 
 # 创建到知识库
-dws doc create --name "<文档名>" --content-file assets/yyyymmdd/dws/<name>.md --workspace <WS_ID> --content-format markdown
+dws doc create --name "<文档名>" --content-file /tmp/<name>.md --workspace <WS_ID> --content-format markdown
 
 # 创建空文档（仅取 nodeId 后再分步写入，适合 >200KB 兜底）
 dws doc create --name "<文档名>" [--folder <ID> | --workspace <ID>] --content-format markdown
@@ -82,10 +81,10 @@ cat report.md | dws doc create --name "月报" --content - --content-format mark
 
 # JSONML 起稿（决策型 / 对展示效果有要求时直接用 JSONML 构造）
 # 详见 doc-create-workflow.md §JSONML 起稿判定
-dws doc create --name "<文档名>" --content-file assets/yyyymmdd/dws/<name>.json --content-format jsonml
+dws doc create --name "<文档名>" --content-file /tmp/<name>.json --content-format jsonml
 
 # JSONML 创建到指定文件夹
-dws doc create --name "<文档名>" --content-file assets/yyyymmdd/dws/<name>.json --content-format jsonml --folder <DOC_FOLDER_NODE_ID>
+dws doc create --name "<文档名>" --content-file /tmp/<name>.json --content-format jsonml --folder <DOC_FOLDER_NODE_ID>
 ```
 
 ## 参考

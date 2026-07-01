@@ -1,6 +1,6 @@
 # doc 文件操作（upload / download / copy / move / rename / delete + folder create）
 
-> **前置条件（MUST READ）：** 执行本命令前，必须先用 当前环境的文件读取方式读取以下文件：
+> **前置条件（MUST READ）：** 执行本命令前，必须先用 Read 工具读取以下文件：
 > 1. [`../doc.md`](../doc.md) — 命令路由 + 场景索引 + 意图判断 + 工作流
 
 ---
@@ -45,7 +45,7 @@ Usage:
 Example:
   dws doc download --node <NODE_ID>
   dws doc download --node <NODE_ID> --output ./report.pdf
-  dws doc download --node "https://alidocs.dingtalk.com/i/nodes/<DOC_UUID>" --output assets/yyyymmdd/dws/downloads/
+  dws doc download --node "https://alidocs.dingtalk.com/i/nodes/<DOC_UUID>" --output ~/downloads/
 Flags:
       --node string     文件节点 ID 或 URL (必填)
       --output string   本地保存路径 (文件路径或目录，必填)
@@ -179,7 +179,7 @@ dws doc upload --file ./data.xlsx --workspace <WS_ID> --convert
 
 # ── download（仅限非 ALIDOC 文件）──
 # 自动推断文件名，下到目录
-dws doc download --node <NODE_ID> --output assets/yyyymmdd/dws/downloads/
+dws doc download --node <NODE_ID> --output ~/downloads/
 
 # 指定文件路径
 dws doc download --node <NODE_ID> --output ./report.pdf

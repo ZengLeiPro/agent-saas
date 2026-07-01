@@ -33,9 +33,6 @@ import hashlib
 import json
 import os
 import subprocess
-from dws_runtime import patch_subprocess_for_dws
-
-patch_subprocess_for_dws()
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -1110,7 +1107,7 @@ def write_excel(
         from openpyxl import Workbook
     except ImportError as e:
         raise RuntimeError(
-            "缺少 openpyxl 依赖；请使用 ACS 镜像或工作区 .venv 预置依赖，不要在脚本运行中安装。"
+            "缺少 openpyxl 依赖，请执行：pip install openpyxl"
         ) from e
 
     wb = Workbook()
@@ -1194,7 +1191,7 @@ def write_excel_multi_sheets(
         from openpyxl import Workbook
     except ImportError as e:
         raise RuntimeError(
-            "缺少 openpyxl 依赖；请使用 ACS 镜像或工作区 .venv 预置依赖，不要在脚本运行中安装。"
+            "缺少 openpyxl 依赖，请执行：pip install openpyxl"
         ) from e
 
     wb = Workbook()
@@ -1530,13 +1527,13 @@ def download_and_convert_image(
     try:
         import requests
     except ImportError:
-        warn("缺少 requests 依赖，无法下载图片；请使用 ACS 镜像或工作区 .venv 预置依赖。")
+        warn("缺少 requests 依赖，无法下载图片，请执行: pip install requests")
         _image_failed_urls.add(url)
         return None
     try:
         from PIL import Image as PILImage
     except ImportError:
-        warn("缺少 Pillow 依赖，无法转换图片格式；请使用 ACS 镜像或工作区 .venv 预置依赖。")
+        warn("缺少 Pillow 依赖，无法转换图片格式，请执行: pip install Pillow")
         _image_failed_urls.add(url)
         return None
 
@@ -1622,17 +1619,47 @@ def _embed_images_in_columns(
         warn(f"openpyxl 不完整，无法嵌入图片: {e}")
         return
 
-    # openpyxl 的 Image 类内部依赖 Pillow（模块加载时检测）。
-    # 如果 Pillow 不可用，直接降级为超链接，不在用户任务中隐式安装依赖。
+    # openpyxl 的 Image 类内部依赖 Pillow（模块加载时检测），
+    # 如果 Pillow 不可用，OpenpyxlImage() 会抛出：
+    #   ImportError: You must install Pillow to fetch image objects
+    # 这里提前检测，不可用时尝试自动安装，避免逐张图片重复报错。
     from openpyxl.drawing.image import PILImage as _openpyxl_pil_check
     if not _openpyxl_pil_check:
         warn(
-            "[image] openpyxl 检测到 Pillow 未安装，图片将显示为可点击链接。"
+            "[image] openpyxl 检测到 Pillow 未安装，尝试自动安装..."
         )
-        _replace_all_image_urls_with_hyperlinks(
-            ws, headers, rows, image_column_names, first_data_row,
-        )
-        return
+        import subprocess, sys
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "Pillow"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=60,
+            )
+            log("[image] Pillow 安装成功，重新加载 openpyxl.drawing.image...")
+            # 安装后需要重新加载模块，让 openpyxl 重新检测 Pillow
+            import importlib
+            import openpyxl.drawing.image as _img_mod
+            importlib.reload(_img_mod)
+            from openpyxl.drawing.image import Image as OpenpyxlImage  # noqa: F811
+            from openpyxl.drawing.image import PILImage as _recheck
+            if not _recheck:
+                warn(
+                    "[image] Pillow 安装后 openpyxl 仍无法检测到，"
+                    "图片将显示为可点击链接。请手动执行: pip install Pillow"
+                )
+                _replace_all_image_urls_with_hyperlinks(
+                    ws, headers, rows, image_column_names, first_data_row,
+                )
+                return
+        except Exception as install_err:
+            warn(
+                f"[image] Pillow 自动安装失败: {install_err}\n"
+                "图片将显示为可点击链接。请手动执行: pip install Pillow"
+            )
+            _replace_all_image_urls_with_hyperlinks(
+                ws, headers, rows, image_column_names, first_data_row,
+            )
+            return
 
     # 找到目标列索引（1-based）
     name_to_col_idx: dict[str, int] = {}

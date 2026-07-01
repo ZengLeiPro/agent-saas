@@ -26,9 +26,6 @@ todos.json 格式:
 import sys
 import json
 import subprocess
-from dws_runtime import patch_subprocess_for_dws
-
-patch_subprocess_for_dws()
 import re
 from datetime import datetime
 from pathlib import Path

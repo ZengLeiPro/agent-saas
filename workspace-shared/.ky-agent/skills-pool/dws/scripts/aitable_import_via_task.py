@@ -9,7 +9,7 @@
 用法:
     python scripts/aitable_import_via_task.py <baseId> <filePath>
     python scripts/aitable_import_via_task.py <baseId> <filePath> --timeout 30
-    python scripts/aitable_import_via_task.py <baseId> <filePath> --dws /path/to/dws
+    python scripts/aitable_import_via_task.py <baseId> <filePath> --dws /tmp/dws
 """
 
 from __future__ import annotations
@@ -18,9 +18,6 @@ import argparse
 import json
 import re
 import subprocess
-from dws_runtime import patch_subprocess_for_dws
-
-patch_subprocess_for_dws()
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple

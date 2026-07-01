@@ -1,6 +1,6 @@
 # doc search（搜索文档）
 
-> **前置条件（MUST READ）：** 执行本命令前，必须先用 当前环境的文件读取方式读取以下文件：
+> **前置条件（MUST READ）：** 执行本命令前，必须先用 Read 工具读取以下文件：
 > 1. [`../doc.md`](../doc.md) — 命令路由 + 场景索引 + 意图判断 + 工作流
 >
 > **同任务常配合**：[`doc-list.md`](./doc-list.md)（目录遍历，互补于关键字搜索）/ [`doc-info.md`](./doc-info.md)（拿到 nodeId 后查元信息）/ [`doc-read.md`](./doc-read.md)（拿到 nodeId 后读取正文）
@@ -31,8 +31,8 @@ Flags:
       --editor-uids strings       按编辑者用户 ID 过滤，逗号分隔
       --mentioned-uids strings    按 @提及的用户 ID 过滤，逗号分隔
       --workspace-ids strings     按知识库 ID 过滤，支持知识库 URL，逗号分隔
-      --limit int             每页数量 (默认 10，最大 30)
-      --cursor string         分页游标 (从上次结果的 nextPageToken 获取)
+      --page-size int             每页数量
+      --page-token string         分页 token (从上次结果的 nextPageToken 获取)
 ```
 
 ## 关键说明
@@ -70,7 +70,7 @@ dws doc search --creator-uids uid1,uid2
 dws doc search --workspace-ids wsId1,wsId2
 
 # 翻页
-dws doc search --query "周报" --limit 30 --cursor <nextPageToken>
+dws doc search --query "周报" --page-size 30 --page-token <nextPageToken>
 ```
 
 ## 参考

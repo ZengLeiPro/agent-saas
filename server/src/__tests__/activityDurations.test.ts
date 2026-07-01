@@ -111,4 +111,59 @@ describe("transcript activity durations", () => {
     expect(messages[0]).toMatchObject({ type: "thinking", durationMs: 1200 });
     expect(messages[1]).toMatchObject({ type: "tool_use", durationMs: 850 });
   });
+
+  it("emits an artifact delivery card when a CreateArtifact tool_use has a matching result", () => {
+    const detail: ApiSessionDetail = {
+      sessionId: "session-artifact",
+      stats: { lines: 2, parsedLines: 2, parseErrors: 0 },
+      blocks: [
+        {
+          id: "tool-artifact",
+          kind: "tool_use",
+          title: "工具调用: CreateArtifact",
+          defaultOpen: false,
+          content: "{\"file_path\":\"assets/20260702/report.pdf\"}",
+          toolName: "CreateArtifact",
+          toolId: "call-artifact",
+        },
+        {
+          id: "tool-artifact-result",
+          kind: "tool_result",
+          title: "结果",
+          defaultOpen: false,
+          content: JSON.stringify({
+            artifactId: "artifact_hist_123",
+            kind: "file",
+            fileName: "report.pdf",
+            sourcePath: "assets/20260702/report.pdf",
+            sizeBytes: 4096,
+            mimeType: "application/pdf",
+            sha256: "cafebabe",
+          }),
+          toolName: "CreateArtifact",
+          toolId: "call-artifact",
+        },
+      ],
+    };
+
+    const messages = mapSessionDetailToMessages(detail, "alice");
+
+    // tool_use 携带 resultReady + 独立的 file_download 卡片
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      type: "tool_use",
+      toolName: "CreateArtifact",
+      resultReady: true,
+    });
+    expect(messages[1]).toMatchObject({
+      type: "file_download",
+      fileName: "report.pdf",
+      filePath: "assets/20260702/report.pdf",
+      fileSize: 4096,
+      artifactId: "artifact_hist_123",
+      artifactKind: "file",
+      mimeType: "application/pdf",
+      owner: "alice",
+    });
+  });
 });

@@ -248,6 +248,33 @@ async function authFetchDownload(filePath: string, fileName: string, owner?: str
   }
 }
 
+/**
+ * Artifact 签名 URL 解析：调 /api/artifacts/:id/read-url,后端返回 15 min TTL
+ * 的直读 URL（本地 blob=签名 token,OSS=预签名 URL）。失败时抛错让调用侧兜底。
+ */
+async function resolveArtifactUrl(artifactId: string): Promise<string> {
+  const res = await authFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/read-url`);
+  if (!res.ok) throw new Error(`resolveArtifactUrl: ${res.status}`);
+  const body = await res.json() as { url?: string };
+  if (!body.url) throw new Error('resolveArtifactUrl: missing url');
+  return body.url;
+}
+
+/** Artifact 交付卡片下载：用签名 URL 触发浏览器原生下载。 */
+async function artifactDownload(artifactId: string, fileName: string) {
+  try {
+    const url = await resolveArtifactUrl(artifactId);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } catch (err) {
+    console.error('Artifact download failed:', err);
+  }
+}
+
 /** 文件下载卡片，fileSize 为 0 时通过 HEAD 请求懒加载真实大小 */
 /** 文件分类 → lucide 图标 */
 const CATEGORY_ICON: Record<FileTypeCategory, LucideIcon> = {
@@ -256,12 +283,14 @@ const CATEGORY_ICON: Record<FileTypeCategory, LucideIcon> = {
   video: FileVideo, text: FileText, archive: FileArchive, default: File,
 };
 
-function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner }: {
+function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, artifactId }: {
   fileName: string;
   filePath: string;
   fileSize: number;
   filePreview: ReturnType<typeof useFilePreview> | null;
   owner?: string;
+  /** CreateArtifact 交付：优先走 artifact 签名 URL,不依赖 workspace 文件仍在原位。 */
+  artifactId?: string;
 }) {
   const [resolvedSize, setResolvedSize] = useState(fileSize);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
@@ -269,6 +298,9 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner }: 
 
   useEffect(() => {
     if (fileSize > 0) return;
+    // artifact 卡片：大小已由 tool result 带出（sizeBytes 常存在但可能为 0）
+    // 这时不 fallback HEAD /api/file/download——sourcePath 可能不在工作区里。
+    if (artifactId) return;
     let cancelled = false;
     authFetch(`/api/file/download?path=${encodeURIComponent(filePath)}${ownerParam}`, { method: 'HEAD' })
       .then(res => {
@@ -278,15 +310,27 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner }: 
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [filePath, fileSize, ownerParam]);
+  }, [filePath, fileSize, ownerParam, artifactId]);
 
   const isPreviewable = !!getPreviewFileType(fileName);
   const visual = getFileTypeVisual(fileName);
   const TypeIcon = CATEGORY_ICON[visual.category];
   const isImage = visual.category === 'image';
-  const canOpenPreview = isImage || (isPreviewable && !!filePreview);
+  // artifact 图片有签名 URL 可用,直接 lightbox；其他类型暂只支持下载
+  // （filePreview 依赖工作区路径,artifact 不适用）。
+  const canOpenPreview = artifactId
+    ? isImage
+    : (isImage || (isPreviewable && !!filePreview));
 
   const handleClick = () => {
+    if (artifactId) {
+      if (isImage) {
+        void resolveArtifactUrl(artifactId)
+          .then(setPreviewSrc)
+          .catch(() => { /* 打开失败静默；下载按钮仍可用 */ });
+      }
+      return;
+    }
     if (isImage) {
       void resolveImageSrc(filePath, owner)
         .then(setPreviewSrc)
@@ -316,7 +360,14 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner }: 
           <button
             type="button"
             className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
-            onClick={(e) => { e.stopPropagation(); authFetchDownload(filePath, fileName, owner); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (artifactId) {
+                void artifactDownload(artifactId, fileName);
+              } else {
+                void authFetchDownload(filePath, fileName, owner);
+              }
+            }}
             title="下载"
             aria-label={`下载 ${fileName}`}
           >
@@ -773,6 +824,7 @@ export const MessageItem = memo(function MessageItem({
         fileSize={message.fileSize}
         filePreview={filePreview}
         owner={message.owner}
+        {...(message.artifactId ? { artifactId: message.artifactId } : {})}
       />
     );
   }

@@ -1202,10 +1202,12 @@ function FileDownloadCard({ message, onPreviewMd }: {
   const [downloading, setDownloading] = useState(false);
 
   const ownerParam = message.owner ? `&owner=${encodeURIComponent(message.owner)}` : '';
+  const artifactId = message.artifactId;
 
-  // HEAD 请求懒加载真实文件大小
+  // HEAD 请求懒加载真实文件大小；artifact 卡片跳过（sourcePath 不保证在工作区仍存在）
   useEffect(() => {
     if (message.fileSize > 0) return;
+    if (artifactId) return;
     let cancelled = false;
     authFetch(`/api/file/download?path=${encodeURIComponent(message.filePath)}${ownerParam}`, { method: 'HEAD' })
       .then(res => {
@@ -1215,7 +1217,7 @@ function FileDownloadCard({ message, onPreviewMd }: {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [message.filePath, message.fileSize, ownerParam]);
+  }, [message.filePath, message.fileSize, ownerParam, artifactId]);
 
   // mobile 暂仅预览 md/html；text/code 预览为 web 端能力，移动端这些类型走下载
   const previewKind = getPreviewFileType(message.fileName);
@@ -1225,6 +1227,17 @@ function FileDownloadCard({ message, onPreviewMd }: {
   const handleDownload = useCallback(async () => {
     setDownloading(true);
     try {
+      // Artifact 走签名 URL 直下：/api/artifacts/:id/read-url 拿 15 min URL,
+      // 交给 expo-sharing 打开分享面板（原生下载/保存/发送）。
+      if (artifactId) {
+        const res = await authFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/read-url`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json() as { url?: string };
+        if (!body.url) throw new Error('signed url missing');
+        const { openOrShareUrl } = await import('../../utils/openOrShareFile');
+        await openOrShareUrl(body.url, message.fileName);
+        return;
+      }
       const { openOrShareFile } = await import('../../utils/openOrShareFile');
       const uri = await fileCacheService.getOrDownload(
         message.filePath, 0, message.fileSize || 0, message.owner,
@@ -1236,15 +1249,16 @@ function FileDownloadCard({ message, onPreviewMd }: {
     } finally {
       setDownloading(false);
     }
-  }, [message.filePath, message.fileName, message.fileSize, message.owner]);
+  }, [artifactId, message.filePath, message.fileName, message.fileSize, message.owner]);
 
   const handlePress = useCallback(async () => {
-    if (isPreviewable && onPreviewMd) {
+    // Artifact 卡片不支持工作区路径预览，直接触发下载/分享
+    if (!artifactId && isPreviewable && onPreviewMd) {
       onPreviewMd(message.filePath);
       return;
     }
     await handleDownload();
-  }, [isPreviewable, onPreviewMd, message.filePath, handleDownload]);
+  }, [artifactId, isPreviewable, onPreviewMd, message.filePath, handleDownload]);
 
   return (
     <TouchableOpacity

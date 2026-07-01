@@ -64,6 +64,16 @@ export type MessageItem =
       filePath: string;
       fileSize: number;
       owner?: string;
+      /**
+       * Artifact 归档标识。CreateArtifact 工具产出的正式交付物会带上此字段：
+       * 有 artifactId 时前端走 /api/artifacts/:id/read-url 签名 URL 下载/预览；
+       * 未提供（老的 [FILE] 标记路径）则走 /api/file/download 直读工作区文件。
+       */
+      artifactId?: string;
+      /** artifact 分类，仅 artifactId 存在时有意义 */
+      artifactKind?: 'file' | 'screenshot' | 'patch' | 'log' | 'blob';
+      /** artifact blob 的 MIME 类型（内容寻址存储侧真实值） */
+      mimeType?: string;
     }
   | {
       id: string;

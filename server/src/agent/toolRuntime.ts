@@ -1021,10 +1021,14 @@ class WorkspaceToolProvider implements ToolProvider {
     this.notifyMemoryIndexIfNeeded(call.toolId, parsedInput, workspaceForHand, response);
     if (call.toolId === artifactCreateToolDescriptor.id) {
       const artifact = await this.createArtifactFromHandResponse(response, context, call.input);
+      const fileName = typeof artifact.metadata?.fileName === 'string' ? artifact.metadata.fileName : undefined;
+      const sourcePath = typeof artifact.metadata?.sourcePath === 'string' ? artifact.metadata.sourcePath : undefined;
       return {
         content: JSON.stringify({
           artifactId: artifact.artifactId,
           kind: artifact.kind,
+          ...(fileName ? { fileName } : {}),
+          ...(sourcePath ? { sourcePath } : {}),
           sizeBytes: artifact.sizeBytes,
           sha256: artifact.sha256,
           mimeType: artifact.mimeType,

@@ -156,6 +156,7 @@ export type WsDownstreamEvent =
     | { type: 'subagent_start'; toolId: string; agentType: string }
     | { type: 'subagent_end'; toolId: string }
     | { type: 'file_download'; fileName: string; fileType: string; filePath: string; fileSize: number; owner?: string }
+    | { type: 'artifact_created'; artifactId: string; fileName: string; kind: 'file' | 'screenshot' | 'patch' | 'log' | 'blob'; sourcePath?: string; sizeBytes?: number; mimeType?: string; sha256?: string; owner?: string }
     | { type: 'voice'; text: string; voice?: string; speed?: number; standalone?: boolean }
     | { type: 'voice_transcribed'; text: string; error?: boolean }
     | { type: 'title_updated'; sessionId: string; title: string }

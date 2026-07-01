@@ -631,6 +631,23 @@ export function processWsEvent(
     return;
   }
 
+  if (data.type === "artifact_created") {
+    // CreateArtifact 交付卡片：artifactId 是主 key,filePath 保留 sourcePath 作
+    // 展示辅助（下载路径实际走 /api/artifacts/:id/read-url,不依赖 filePath）。
+    msg.addMessage({
+      type: "file_download",
+      fileName: data.fileName,
+      fileType: data.mimeType ?? "",
+      filePath: data.sourcePath ?? data.fileName,
+      fileSize: data.sizeBytes ?? 0,
+      artifactId: data.artifactId,
+      artifactKind: data.kind,
+      ...(data.mimeType ? { mimeType: data.mimeType } : {}),
+      ...(data.owner ? { owner: data.owner } : {}),
+    });
+    return;
+  }
+
   if (data.type === "voice") {
     const marker = { text: data.text, voice: data.voice, speed: data.speed };
     if (data.standalone) {

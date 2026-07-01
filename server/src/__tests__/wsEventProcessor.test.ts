@@ -516,3 +516,60 @@ describe('wsEventProcessor pending interaction replay', () => {
     });
   });
 });
+
+describe('wsEventProcessor artifact_created', () => {
+  it('renders a CreateArtifact delivery as a file_download card carrying artifactId', () => {
+    const { messages, ctx } = createTestRig();
+
+    process(
+      {
+        type: 'artifact_created',
+        artifactId: 'artifact_abc123',
+        fileName: 'report.pdf',
+        kind: 'file',
+        sourcePath: 'assets/20260702/report.pdf',
+        sizeBytes: 12345,
+        mimeType: 'application/pdf',
+        sha256: 'deadbeef',
+        owner: 'alice',
+      },
+      ctx,
+    );
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      type: 'file_download',
+      fileName: 'report.pdf',
+      fileType: 'application/pdf',
+      filePath: 'assets/20260702/report.pdf',
+      fileSize: 12345,
+      artifactId: 'artifact_abc123',
+      artifactKind: 'file',
+      mimeType: 'application/pdf',
+      owner: 'alice',
+    });
+  });
+
+  it('falls back to fileName when sourcePath is omitted', () => {
+    const { messages, ctx } = createTestRig();
+
+    process(
+      {
+        type: 'artifact_created',
+        artifactId: 'artifact_xyz',
+        fileName: 'shot.png',
+        kind: 'screenshot',
+      },
+      ctx,
+    );
+
+    expect(messages[0]).toMatchObject({
+      type: 'file_download',
+      fileName: 'shot.png',
+      filePath: 'shot.png',
+      fileSize: 0,
+      artifactId: 'artifact_xyz',
+      artifactKind: 'screenshot',
+    });
+  });
+});

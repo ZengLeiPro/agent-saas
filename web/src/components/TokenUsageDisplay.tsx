@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import type { TokenUsage } from "@/lib/sessionsApi";
 import type { ContextUsageData } from "@agent/shared";
 import { formatTokenCount } from "@/lib/sessionsApi";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface TokenUsageDisplayProps {
   tokenUsage: TokenUsage | null;
@@ -19,6 +20,7 @@ function DetailRow({ label, value }: { label: string; value: number }) {
 }
 
 export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDisplayProps) {
+  const { isPlatformAdmin } = useAuth();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -62,25 +64,40 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
   const buttonColor = overThreshold ? 'text-red-600 dark:text-red-400'
     : nearThreshold ? 'text-amber-600 dark:text-amber-400'
     : 'text-muted-foreground';
+  const label = (
+    <>
+      {hasExactContext ? '上下文' : '累计'} {formatTokenCount(displayTokens)}
+      {hasRealtime && ` · ${(percentage * 100).toFixed(0)}%`}
+      {!hasExactContext && accounting?.kind === 'stateful_response_unknown' && ' · 接力'}
+    </>
+  );
+  const title = hasRealtime
+    ? `上下文占用：${formatTokenCount(displayTokens)} / ${formatTokenCount(contextUsage!.maxTokens)} (${(percentage * 100).toFixed(1)}%)`
+    : hasExactFallback
+      ? `当前上下文：${formatTokenCount(displayTokens)}（provider usage）`
+      : `${accounting?.label ?? '上下文不可确认'}：显示累计用量`;
 
   return (
     <div ref={containerRef} className="relative" onClick={(e) => e.stopPropagation()}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={`rounded-md px-2 py-1 text-xs font-medium tabular-nums transition-colors hover:bg-accent hover:text-accent-foreground ${buttonColor}`}
-        title={hasRealtime
-          ? `上下文占用：${formatTokenCount(displayTokens)} / ${formatTokenCount(contextUsage!.maxTokens)} (${(percentage * 100).toFixed(1)}%)`
-          : hasExactFallback
-            ? `当前上下文：${formatTokenCount(displayTokens)}（provider usage）`
-            : `${accounting?.label ?? '上下文不可确认'}：显示累计用量`}
-      >
-        {hasExactContext ? '上下文' : '累计'} {formatTokenCount(displayTokens)}
-        {hasRealtime && ` · ${(percentage * 100).toFixed(0)}%`}
-        {!hasExactContext && accounting?.kind === 'stateful_response_unknown' && ' · 接力'}
-      </button>
+      {isPlatformAdmin ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className={`rounded-md px-2 py-1 text-xs font-medium tabular-nums transition-colors hover:bg-accent hover:text-accent-foreground ${buttonColor}`}
+          title={title}
+        >
+          {label}
+        </button>
+      ) : (
+        <span
+          className={`rounded-md px-2 py-1 text-xs font-medium tabular-nums ${buttonColor}`}
+          title={title}
+        >
+          {label}
+        </span>
+      )}
 
-      {open && (
+      {open && isPlatformAdmin && (
         <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border bg-popover p-3 text-xs shadow-lg">
           <div className="mb-2 flex items-center justify-between">
             <div className="font-medium">Token 统计</div>

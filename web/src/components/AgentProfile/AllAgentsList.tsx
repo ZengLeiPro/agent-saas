@@ -9,12 +9,6 @@ import type { AgentProfile as AgentProfileType } from "@agent/shared";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { useAuth } from "@/contexts/AuthContext";
-import { cn } from "@/lib/utils";
-
-interface AllAgentsListProps {
-  /** admin 点击列表项时触发，由上层负责切到「我的 Agent」section 并定位到该用户 */
-  onEditUser?: (username: string) => void;
-}
 
 /**
  * 所有 Agent 列表（独立视图）。
@@ -22,10 +16,10 @@ interface AllAgentsListProps {
  * 与 AgentProfile（编辑器）完全解耦：
  * - 自己拉取 profiles 列表
  * - 自带 SettingsPanelHeader
- * - admin 点击列表项 → 通过 onEditUser 回调上抛，由上层负责切换 section/URL
+ * - 列表只展示公开资料，不提供跳转详情入口
  */
-export function AllAgentsList({ onEditUser }: AllAgentsListProps = {}) {
-  const { user, isAdmin } = useAuth();
+export function AllAgentsList() {
+  const { user } = useAuth();
   const [profiles, setProfiles] = useState<AgentProfileType[]>([]);
   const [listAvatarPreview, setListAvatarPreview] = useState<AgentProfileType | null>(null);
 
@@ -40,7 +34,7 @@ export function AllAgentsList({ onEditUser }: AllAgentsListProps = {}) {
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
         title="所有 Agent"
-        description="浏览所有用户的 Agent 资料。"
+        description="浏览所有用户的 Agent 列表。"
       />
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="grid gap-3 sm:grid-cols-2">
@@ -56,16 +50,10 @@ export function AllAgentsList({ onEditUser }: AllAgentsListProps = {}) {
             <AgentAvatar avatar={p.avatar} username={p.username} size="md" version={p.avatarVersion} />
           );
 
-          const clickable = isAdmin && !!onEditUser;
-
           return (
             <div
               key={p.username}
-              className={cn(
-                "flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors",
-                clickable && "cursor-pointer hover:bg-muted/50",
-              )}
-              onClick={clickable ? () => onEditUser!(p.username) : undefined}
+              className="flex items-center gap-3 rounded-lg border bg-card p-3"
             >
               {avatarEl}
               <div className="min-w-0 flex-1">

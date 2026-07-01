@@ -101,16 +101,6 @@ export function DesktopLayout(props: LayoutProps) {
     setCronJobCount({ enabled, total });
   }, []);
 
-  // Agent profile 编辑目标（admin 编辑他人，由「所有 Agent」列表上抛设置）
-  const [editingAgentUsername, setEditingAgentUsername] = useState<string | null>(null);
-  // 退出编辑他人时返回聊天页；settings/profile 已移除。
-  const handleAgentEditingChange = useCallback((next: string | null) => {
-    setEditingAgentUsername(next);
-    if (next === null && activeTab === "profile") {
-      setActiveTab("chat");
-    }
-  }, [activeTab, setActiveTab]);
-
   // Header 标题：根据 activeTab 动态显示
   const headerTitle = useMemo(() => {
     if (activeTab === "profile") return "我的 Agent";
@@ -365,10 +355,7 @@ export function DesktopLayout(props: LayoutProps) {
         {profileMounted && (
           <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "profile" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
-              <AgentProfilePanel
-                editingUsername={editingAgentUsername}
-                onEditingChange={handleAgentEditingChange}
-              />
+              <AgentProfilePanel />
             </Suspense>
           </div>
         )}
@@ -495,15 +482,7 @@ export function DesktopLayout(props: LayoutProps) {
             section={settingsSection}
             onSectionChange={setSettingsSection}
             onClose={closeSettings}
-            renderAllAgents={() => (
-              <AllAgentsListPanel
-                onEditUser={(username) => {
-                  setEditingAgentUsername(username);
-                  closeSettings();
-                  setActiveTab("profile");
-                }}
-              />
-            )}
+            renderAllAgents={() => <AllAgentsListPanel />}
             renderMemory={() => <MemorySectionPanel />}
             renderSkills={() => <SkillsSectionPanel />}
             renderCron={() => <CronManager onJobCountChange={handleCronJobCountChange} />}

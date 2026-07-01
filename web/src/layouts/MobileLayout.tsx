@@ -66,16 +66,6 @@ export function MobileLayout(props: LayoutProps) {
   const authorizationModeEnabled = authUser?.role === "admin" && authUser?.preferences?.authorizationModeEnabled === true;
 
   const [sheetOpen, setSheetOpen] = useState(false);
-  // Agent profile 编辑目标（admin 编辑他人，由「所有 Agent」列表上抛设置）
-  const [editingAgentUsername, setEditingAgentUsername] = useState<string | null>(null);
-  // 退出编辑他人时返回聊天页；settings/profile 已移除。
-  const handleAgentEditingChange = useCallback((next: string | null) => {
-    setEditingAgentUsername(next);
-    if (next === null && activeTab === "profile") {
-      setActiveTab("chat");
-    }
-  }, [activeTab, setActiveTab]);
-
   const closeDrawer = useCallback(() => {
     setSheetOpen(false);
     setActiveTab("chat");
@@ -296,7 +286,7 @@ export function MobileLayout(props: LayoutProps) {
                   />
                 </Suspense>
               )}
-              renderAgentProfile={() => <Suspense fallback={SuspenseFallback}><AgentProfilePanel editingUsername={editingAgentUsername} onEditingChange={handleAgentEditingChange} /></Suspense>}
+              renderAgentProfile={() => <Suspense fallback={SuspenseFallback}><AgentProfilePanel /></Suspense>}
               renderSkillManager={() => <Suspense fallback={SuspenseFallback}><SkillManagerPanel mode={isPlatformAdmin ? "platform" : "tenant"} tenantIdScope={isPlatformAdmin ? undefined : authUser?.tenantId} /></Suspense>}
               renderMcpManager={() => <Suspense fallback={SuspenseFallback}><McpManagerPanel /></Suspense>}
               renderUsageDashboard={() => (
@@ -366,15 +356,7 @@ export function MobileLayout(props: LayoutProps) {
           section={settingsSection}
           onSectionChange={setSettingsSection}
           onClose={closeSettings}
-          renderAllAgents={() => (
-            <AllAgentsListPanel
-              onEditUser={(username) => {
-                setEditingAgentUsername(username);
-                closeSettings();
-                setActiveTab("profile");
-              }}
-            />
-          )}
+          renderAllAgents={() => <AllAgentsListPanel />}
           renderMemory={() => <MemorySectionPanel />}
           renderSkills={() => <SkillsSectionPanel />}
           renderCron={() => <CronManager />}

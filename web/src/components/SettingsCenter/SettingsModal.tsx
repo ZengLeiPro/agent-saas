@@ -43,7 +43,7 @@ export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
   { id: "account", label: "账户", description: "账号资料、安全和登录状态。", group: "account", icon: User },
   { id: "general", label: "通用", description: "界面、语言、声音和基础偏好。", group: "account", icon: Settings2 },
   { id: "personalization", label: "个性化", description: "默认 Agent、记忆和工作偏好。", group: "account", icon: Palette },
-  { id: "all-agents", label: "所有 Agent", description: "查看所有用户的 Agent 资料。", group: "features", icon: Bot },
+  { id: "all-agents", label: "所有 Agent", description: "查看所有用户的 Agent 列表。", group: "features", icon: Bot },
   { id: "memory", label: "记忆", description: "查看和编辑 Agent 长期记忆（MEMORY.md）。", group: "features", icon: Brain },
   { id: "skills", label: "Skills", description: "为 Agent 选择启用的 Skills。", group: "features", icon: Puzzle },
   { id: "cron", label: "定时任务", description: "创建和管理个人自动化任务。", group: "features", icon: Clock },

@@ -11,11 +11,10 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, typography, radius } from '../../src/theme';
-import { useAuth } from '../../src/contexts/AuthContext';
 import { AgentAvatar } from '../../src/components/AgentAvatar';
 import { fetchAllAgentProfiles, isEmojiAvatar, getAgentAvatarUrl, reportActivity } from '@agent/shared';
 import { getServerUrl } from '../../src/platform/mobileConfig';
@@ -25,9 +24,6 @@ export default function AllAgentsScreen() {
   useEffect(() => { reportActivity('agent_profile_viewed', { detail: '所有 Agent' }); }, []);
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
-  const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
 
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,24 +92,6 @@ export default function AllAgentsScreen() {
         ) : null}
       </View>
     );
-
-    if (isAdmin) {
-      return (
-        <View
-          key={p.username}
-          style={[styles.profileRow, index < profiles.length - 1 && styles.profileRowBorder]}
-        >
-          {avatarEl}
-          <TouchableOpacity
-            style={styles.profileInfo}
-            onPress={() => router.push(`/settings/agent-profile/${p.username}`)}
-            activeOpacity={0.7}
-          >
-            {info}
-          </TouchableOpacity>
-        </View>
-      );
-    }
 
     return (
       <View

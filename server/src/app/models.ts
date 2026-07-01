@@ -28,6 +28,76 @@ export interface PublicModelList {
   showGroupNames: boolean;
 }
 
+export interface ModelContextAccounting {
+  exact: boolean;
+  kind: 'exact_current' | 'stateful_response_unknown' | 'unknown';
+  source: 'provider_usage' | 'stateful_response' | 'unknown';
+  label: string;
+  reason?: string;
+}
+
+export function resolveContextAccountingFromModels(
+  modelsConfig: ModelsConfig | undefined,
+  modelRef: string | undefined,
+): ModelContextAccounting {
+  if (!modelsConfig || !modelRef) {
+    return {
+      exact: false,
+      kind: 'unknown',
+      source: 'unknown',
+      label: '上下文不可确认',
+      reason: '当前会话缺少可解析的模型配置，不能把 transcript 最后一轮 usage 当作准确当前上下文。',
+    };
+  }
+
+  const slashIdx = modelRef.indexOf('/');
+  if (slashIdx < 0) {
+    return {
+      exact: false,
+      kind: 'unknown',
+      source: 'unknown',
+      label: '上下文不可确认',
+      reason: `模型引用 ${modelRef} 不是 group/model 格式，无法确认上下文口径。`,
+    };
+  }
+
+  const groupId = modelRef.slice(0, slashIdx);
+  const modelId = modelRef.slice(slashIdx + 1);
+  const group = modelsConfig.groups.find((item) => item.id === groupId);
+  const model = group?.models.find((item) => item.id === modelId);
+  if (!group || !model) {
+    return {
+      exact: false,
+      kind: 'unknown',
+      source: 'unknown',
+      label: '上下文不可确认',
+      reason: `模型引用 ${modelRef} 已不在当前模型配置中，无法确认上下文口径。`,
+    };
+  }
+
+  const protocol = model.protocol ?? group.protocol;
+  const disableResponseChaining = model.disable_response_chaining ?? group.disable_response_chaining ?? false;
+  if (protocol === 'responses' && !disableResponseChaining) {
+    return {
+      exact: false,
+      kind: 'stateful_response_unknown',
+      source: 'stateful_response',
+      label: 'Responses 接力中',
+      reason: '该模型启用 previous_response_id，完整上下文保存在上游 Responses state 中；当前服务端没有精确 token 计数。',
+    };
+  }
+
+  return {
+    exact: true,
+    kind: 'exact_current',
+    source: 'provider_usage',
+    label: '当前上下文',
+    reason: protocol === 'responses'
+      ? '该 Responses 模型关闭了 previous_response_id，每轮全量发送历史；provider usage 可作为准确当前上下文。'
+      : '该模型每轮全量发送历史；provider usage 可作为准确当前上下文。',
+  };
+}
+
 /**
  * 返回脱敏模型列表（不含 apiKey/baseUrl/env），供前端展示
  */

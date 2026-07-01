@@ -33,10 +33,23 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  // 实时 contextUsage 优先，否则回退到 tokenUsage（HTTP 事后拉取）。
-  // 这里展示的是上下文占用，不是整场会话累计消耗；累计用量在弹层里分项展示。
+  const cumulativeTokens = tokenUsage
+    ? tokenUsage.totalTokens
+      ?? (tokenUsage.totalInputTokens + tokenUsage.totalOutputTokens + tokenUsage.subagentTotalTokens)
+    : 0;
+  const accounting = tokenUsage?.contextAccounting;
+
+  // 实时 contextUsage 优先。没有实时事件时，仅在服务端明确标记 exact=true
+  // 才把 transcript/provider usage 当“当前上下文”显示；stateful Responses 接力
+  // 场景只显示累计用量，避免把最后一轮请求误报为完整上下文。
   const hasRealtime = contextUsage != null && contextUsage.totalTokens > 0;
-  const displayTokens = hasRealtime ? contextUsage!.totalTokens : tokenUsage?.contextTokens ?? 0;
+  const hasExactFallback = !hasRealtime && accounting?.exact === true && (tokenUsage?.contextTokens ?? 0) > 0;
+  const hasExactContext = hasRealtime || hasExactFallback;
+  const displayTokens = hasRealtime
+    ? contextUsage!.totalTokens
+    : hasExactFallback
+      ? tokenUsage!.contextTokens
+      : cumulativeTokens;
   if (displayTokens === 0) return null;
 
   // 百分比接近 autoCompactThreshold 时变色预警
@@ -58,19 +71,25 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
         className={`rounded-md px-2 py-1 text-xs font-medium tabular-nums transition-colors hover:bg-accent hover:text-accent-foreground ${buttonColor}`}
         title={hasRealtime
           ? `上下文占用：${formatTokenCount(displayTokens)} / ${formatTokenCount(contextUsage!.maxTokens)} (${(percentage * 100).toFixed(1)}%)`
-          : '上下文占用（transcript 估算）'}
+          : hasExactFallback
+            ? `当前上下文：${formatTokenCount(displayTokens)}（provider usage）`
+            : `${accounting?.label ?? '上下文不可确认'}：显示累计用量`}
       >
-        上下文 {formatTokenCount(displayTokens)}
+        {hasExactContext ? '上下文' : '累计'} {formatTokenCount(displayTokens)}
         {hasRealtime && ` · ${(percentage * 100).toFixed(0)}%`}
+        {!hasExactContext && accounting?.kind === 'stateful_response_unknown' && ' · 接力'}
       </button>
 
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border bg-popover p-3 text-xs shadow-lg">
           <div className="mb-2 flex items-center justify-between">
             <div className="font-medium">Token 统计</div>
-            {hasRealtime && (
-              <div className="text-[10px] text-muted-foreground">上下文 · SDK</div>
-            )}
+            <div className="text-[10px] text-muted-foreground">
+              {hasRealtime ? '上下文 · SDK'
+                : hasExactFallback ? '上下文 · provider'
+                  : accounting?.kind === 'stateful_response_unknown' ? '累计 · 接力'
+                    : '累计'}
+            </div>
           </div>
 
           {hasRealtime && (
@@ -161,6 +180,46 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
                 </details>
               )}
 
+              <div className="my-2 border-t" />
+            </>
+          )}
+
+          {!hasRealtime && hasExactFallback && (
+            <>
+              <div className="mb-2 rounded-md border bg-muted/35 p-2">
+                <div className="flex items-center justify-between gap-3 text-[11px]">
+                  <span className="text-muted-foreground">当前上下文</span>
+                  <span className="font-mono tabular-nums">{formatTokenCount(tokenUsage!.contextTokens)}</span>
+                </div>
+                {accounting?.reason && (
+                  <div className="mt-1 text-[10px] leading-snug text-muted-foreground">
+                    {accounting.reason}
+                  </div>
+                )}
+              </div>
+              <div className="my-2 border-t" />
+            </>
+          )}
+
+          {!hasExactContext && tokenUsage && (
+            <>
+              <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
+                <div className="flex items-center justify-between gap-3 text-[11px] font-medium">
+                  <span>当前上下文</span>
+                  <span>{accounting?.label ?? '不可确认'}</span>
+                </div>
+                {accounting?.reason && (
+                  <div className="mt-1 text-[10px] leading-snug opacity-85">
+                    {accounting.reason}
+                  </div>
+                )}
+                {accounting?.lastRequestTokens != null && accounting.lastRequestTokens > 0 && (
+                  <div className="mt-1 flex items-center justify-between gap-3 text-[10px] opacity-85">
+                    <span>最后请求</span>
+                    <span className="font-mono tabular-nums">{formatTokenCount(accounting.lastRequestTokens)}</span>
+                  </div>
+                )}
+              </div>
               <div className="my-2 border-t" />
             </>
           )}

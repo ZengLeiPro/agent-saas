@@ -485,7 +485,11 @@ function extractTitleFromContent(content: string): string {
 // ============================================
 
 export interface TokenUsage {
-  /** 当前上下文窗口占用（按模型 usage 语义折算后的最后一轮 total） */
+  /**
+   * 最后一轮 provider request 的 total token。
+   * 是否可作为“当前上下文”展示，取决于模型 dispatch 口径：
+   * full-history 请求可用；Responses previous_response_id 接力不可用。
+   */
   contextTokens: number;
   /** 所有轮次的 input_tokens 累加（OpenAI-compatible 下包含缓存命中部分） */
   totalInputTokens: number;
@@ -497,12 +501,15 @@ export interface TokenUsage {
   totalOutputTokens: number;
   /** 子 agent（Task 工具）的 totalTokens 累加 */
   subagentTotalTokens: number;
+  /** 主 agent 逐轮 total + 子 agent total 的累计 token，用于 UI 展示累计口径 */
+  totalTokens: number;
 }
 
 /**
  * 轻量级 token 统计：遍历 jsonl 提取主 agent 和子 agent 的 token 数据。
  *
- * - contextTokens: 最后一条 assistant usage 按模型语义折算后的总 token
+ * - contextTokens: 最后一条 assistant usage 按模型语义折算后的总 token，不直接承诺为当前上下文
+ * - totalTokens: 主 agent 每轮 total 累加 + 子 agent total
  * - totalOutputTokens: 所有 turn 的 output_tokens 累加
  * - subagentTotalTokens: user 消息中 toolUseResult.totalTokens 累加（子 agent 消耗）
  */
@@ -518,6 +525,7 @@ export async function getTokenUsage(
   let totalCacheCreationTokens = 0;
   let totalOutputTokens = 0;
   let subagentTotalTokens = 0;
+  let mainTotalTokens = 0;
   let hasUsage = false;
 
   const rl = readline.createInterface({
@@ -572,6 +580,7 @@ export async function getTokenUsage(
       cacheCreationTokens: cc,
     });
     if (turnTotal > 0) lastContextTokens = turnTotal;
+    mainTotalTokens += turnTotal;
 
     // 分项累加
     totalInputTokens += inp;
@@ -589,6 +598,7 @@ export async function getTokenUsage(
     totalCacheCreationTokens,
     totalOutputTokens,
     subagentTotalTokens,
+    totalTokens: mainTotalTokens + subagentTotalTokens,
   };
 }
 

@@ -96,6 +96,42 @@ interface SessionsListResponse {
   hasMore: boolean;
 }
 
+interface TokenContextAccounting {
+  exact: boolean;
+  kind: "exact_current" | "stateful_response_unknown" | "unknown";
+  source: "provider_usage" | "stateful_response" | "unknown";
+  label: string;
+  reason?: string;
+  lastRequestTokens?: number;
+}
+
+type ContextAccountingResolver = (modelRef?: string) => Omit<TokenContextAccounting, "lastRequestTokens">;
+
+function unknownContextAccounting(): Omit<TokenContextAccounting, "lastRequestTokens"> {
+  return {
+    exact: false,
+    kind: "unknown",
+    source: "unknown",
+    label: "上下文不可确认",
+    reason: "当前会话缺少可解析的模型配置，不能把 transcript 最后一轮 usage 当作准确当前上下文。",
+  };
+}
+
+function attachContextAccounting<T extends { contextTokens: number }>(
+  usage: T,
+  resolver: ContextAccountingResolver | undefined,
+  modelRef: string | undefined,
+): T & { contextAccounting: TokenContextAccounting } {
+  const accounting = resolver?.(modelRef) ?? unknownContextAccounting();
+  return {
+    ...usage,
+    contextAccounting: {
+      ...accounting,
+      lastRequestTokens: usage.contextTokens,
+    },
+  };
+}
+
 
 export interface SessionsRouterOptions {
   /** Agent 工作目录（用于推导 transcript projectKey） */
@@ -128,6 +164,13 @@ export interface SessionsRouterOptions {
    * 注入路径见 app/runtime.ts → routes.ts。
    */
   runtimeEventStoreFor?: (transcriptPath: string) => EventStore;
+  /**
+   * Resolve whether transcript-derived `contextTokens` is an exact current
+   * context count for this session's model. Stateful Responses chaining keeps
+   * context on the provider side, so last-turn usage must not be displayed as
+   * exact current context.
+   */
+  resolveContextAccounting?: ContextAccountingResolver;
 }
 
 interface ResolvedSessionPath {
@@ -1378,8 +1421,15 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
 
-        const tokenUsage = hasTranscript
+        const rawTokenUsage = hasTranscript
           ? await getTokenUsage(transcriptPath)
+          : null;
+        const tokenUsage = rawTokenUsage
+          ? attachContextAccounting(
+            rawTokenUsage,
+            options.resolveContextAccounting,
+            meta?.model,
+          )
           : null;
         res.json({ tokenUsage, totalCostUsd: meta?.totalCostUsd ?? null });
       } catch (err) {

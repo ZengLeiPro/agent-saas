@@ -67,6 +67,20 @@ export interface ApiSessionDetail {
 }
 
 /** Token usage statistics */
+export interface TokenContextAccounting {
+  /**
+   * Whether `contextTokens` is an exact current-context count.
+   * Exact currently means provider-reported usage for a full-history request.
+   */
+  exact: boolean;
+  kind: 'exact_current' | 'stateful_response_unknown' | 'unknown';
+  source: 'provider_usage' | 'stateful_response' | 'unknown';
+  label: string;
+  reason?: string;
+  /** Last provider request total kept for diagnostics when exact=false. */
+  lastRequestTokens?: number;
+}
+
 export interface TokenUsage {
   contextTokens: number;
   totalInputTokens: number;
@@ -74,6 +88,9 @@ export interface TokenUsage {
   totalCacheCreationTokens: number;
   totalOutputTokens: number;
   subagentTotalTokens: number;
+  /** Cumulative token total with model-specific cache accounting applied. */
+  totalTokens?: number;
+  contextAccounting?: TokenContextAccounting;
   /** 累积等效 API 成本（美元） */
   totalCostUsd?: number | null;
 }

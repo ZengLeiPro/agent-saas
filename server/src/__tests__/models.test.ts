@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { getPublicModelList, getTenantPublicModelList, isModelAllowedForTenant, resolveModelRef, toRunModelOptions } from '../app/models.js';
+import {
+  getPublicModelList,
+  getTenantPublicModelList,
+  isModelAllowedForTenant,
+  resolveContextAccountingFromModels,
+  resolveModelRef,
+  toRunModelOptions,
+} from '../app/models.js';
 import type { ModelsConfig } from '../app/config.js';
 
 const modelsConfig: ModelsConfig = {
@@ -99,6 +106,71 @@ describe('OpenAI-only model resolver', () => {
           temperature: 0.2,
         },
       },
+    });
+  });
+
+  it('classifies current-context accounting by model dispatch semantics', () => {
+    const contextModelsConfig: ModelsConfig = {
+      default: 'chat/gpt',
+      allowCrossGroupSwitch: true,
+      groups: [
+        {
+          id: 'chat',
+          name: 'Chat',
+          apiKey: 'sk-test',
+          models: [
+            { id: 'gpt', name: 'GPT', value: 'gpt' },
+          ],
+        },
+        {
+          id: 'ark',
+          name: 'Ark Responses',
+          apiKey: 'sk-test',
+          protocol: 'responses',
+          models: [
+            { id: 'glm', name: 'GLM', value: 'glm' },
+            { id: 'full-history', name: 'Full History', value: 'full-history', disable_response_chaining: true },
+          ],
+        },
+        {
+          id: 'proxy',
+          name: 'Responses Proxy',
+          apiKey: 'sk-test',
+          protocol: 'responses',
+          disable_response_chaining: true,
+          models: [
+            { id: 'gpt', name: 'GPT', value: 'gpt' },
+          ],
+        },
+      ],
+    };
+
+    expect(resolveContextAccountingFromModels(contextModelsConfig, 'ark/glm')).toMatchObject({
+      exact: false,
+      kind: 'stateful_response_unknown',
+      source: 'stateful_response',
+      label: 'Responses 接力中',
+    });
+    expect(resolveContextAccountingFromModels(contextModelsConfig, 'ark/full-history')).toMatchObject({
+      exact: true,
+      kind: 'exact_current',
+      source: 'provider_usage',
+      label: '当前上下文',
+    });
+    expect(resolveContextAccountingFromModels(contextModelsConfig, 'proxy/gpt')).toMatchObject({
+      exact: true,
+      kind: 'exact_current',
+      source: 'provider_usage',
+    });
+    expect(resolveContextAccountingFromModels(contextModelsConfig, 'chat/gpt')).toMatchObject({
+      exact: true,
+      kind: 'exact_current',
+      source: 'provider_usage',
+    });
+    expect(resolveContextAccountingFromModels(contextModelsConfig, 'ark/removed')).toMatchObject({
+      exact: false,
+      kind: 'unknown',
+      source: 'unknown',
     });
   });
 

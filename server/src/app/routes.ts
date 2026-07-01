@@ -8,6 +8,7 @@ import type { TitleGeneratorConfig } from "../agent/titleGenerator.js";
 import {
   getPublicModelList,
   getTenantPublicModelList,
+  resolveContextAccountingFromModels,
   resolveModelRef,
 } from "./models.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
@@ -171,6 +172,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       tokenUsageStore: runtime.tokenUsageStore,
       getEventBus: webChannel ? () => webChannel.getEventBus() : undefined,
       runtimeEventStoreFor: runtime.runtimeEventStoreFor,
+      resolveContextAccounting: (modelRef) => resolveContextAccountingFromModels(config.models, modelRef),
     }),
   );
   app.use(

@@ -33,7 +33,18 @@ function stopServer(server: Server): Promise<void> {
   return new Promise((resolve) => server.close(() => resolve()));
 }
 
-async function startServer(agentCwd: string): Promise<{ server: Server; baseUrl: string }> {
+async function startServer(
+  agentCwd: string,
+  options: {
+    resolveContextAccounting?: (modelRef?: string) => {
+      exact: boolean;
+      kind: 'exact_current' | 'stateful_response_unknown' | 'unknown';
+      source: 'provider_usage' | 'stateful_response' | 'unknown';
+      label: string;
+      reason?: string;
+    };
+  } = {},
+): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -43,6 +54,7 @@ async function startServer(agentCwd: string): Promise<{ server: Server; baseUrl:
   app.use('/api', createSessionsRouter({
     agentCwd,
     runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+    resolveContextAccounting: options.resolveContextAccounting,
   }));
 
   return new Promise((resolve) => {
@@ -122,6 +134,35 @@ describe('sessions routes for meta-only runtime sessions', () => {
     return { sessionId, transcriptPath };
   }
 
+  async function writeAssistantUsageTranscript(
+    transcriptPath: string,
+    sessionId: string,
+    usage: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadInputTokens?: number;
+      cacheCreationInputTokens?: number;
+    },
+  ): Promise<void> {
+    await writeFile(transcriptPath, JSON.stringify({
+      type: 'assistant',
+      sessionId,
+      timestamp: new Date().toISOString(),
+      message: {
+        role: 'assistant',
+        model: 'gpt-5.5',
+        content: [{ type: 'text', text: 'ok' }],
+        usage: {
+          input_tokens: usage.inputTokens,
+          output_tokens: usage.outputTokens,
+          cache_read_input_tokens: usage.cacheReadInputTokens ?? 0,
+          cache_creation_input_tokens: usage.cacheCreationInputTokens ?? 0,
+          api_request_count: 1,
+        },
+      },
+    }) + '\n');
+  }
+
   async function listSessions(baseUrl: string, query = ''): Promise<SessionListResponse> {
     const response = await fetch(`${baseUrl}/api/sessions${query}`);
     expect(response.status).toBe(200);
@@ -143,6 +184,84 @@ describe('sessions routes for meta-only runtime sessions', () => {
       const stats = await fetch(`${baseUrl}/api/sessions/${sessionId}/stats`);
       expect(stats.status).toBe(200);
       await expect(stats.json()).resolves.toMatchObject({ tokenUsage: null });
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('marks transcript context as exact for full-history models', async () => {
+    const { sessionId, transcriptPath } = await writeRuntimeSession({
+      metaPatch: { model: 'kaiyan-llm/gpt55-high' },
+    });
+    await writeAssistantUsageTranscript(transcriptPath, sessionId, {
+      inputTokens: 12000,
+      outputTokens: 300,
+    });
+
+    const { server, baseUrl } = await startServer(agentCwd, {
+      resolveContextAccounting: () => ({
+        exact: true,
+        kind: 'exact_current',
+        source: 'provider_usage',
+        label: '当前上下文',
+      }),
+    });
+    try {
+      const stats = await fetch(`${baseUrl}/api/sessions/${sessionId}/stats`);
+      expect(stats.status).toBe(200);
+      await expect(stats.json()).resolves.toMatchObject({
+        tokenUsage: {
+          contextTokens: 12300,
+          totalTokens: 12300,
+          contextAccounting: {
+            exact: true,
+            kind: 'exact_current',
+            source: 'provider_usage',
+            lastRequestTokens: 12300,
+          },
+        },
+      });
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('does not mark transcript context as exact for stateful Responses chaining', async () => {
+    const { sessionId, transcriptPath } = await writeRuntimeSession({
+      metaPatch: { model: 'ark-agents/glm-5.2' },
+    });
+    await writeAssistantUsageTranscript(transcriptPath, sessionId, {
+      inputTokens: 4397,
+      outputTokens: 38,
+      cacheReadInputTokens: 4288,
+    });
+
+    const { server, baseUrl } = await startServer(agentCwd, {
+      resolveContextAccounting: () => ({
+        exact: false,
+        kind: 'stateful_response_unknown',
+        source: 'stateful_response',
+        label: 'Responses 接力中',
+        reason: 'stateful',
+      }),
+    });
+    try {
+      const stats = await fetch(`${baseUrl}/api/sessions/${sessionId}/stats`);
+      expect(stats.status).toBe(200);
+      await expect(stats.json()).resolves.toMatchObject({
+        tokenUsage: {
+          contextTokens: 4435,
+          totalTokens: 4435,
+          contextAccounting: {
+            exact: false,
+            kind: 'stateful_response_unknown',
+            source: 'stateful_response',
+            label: 'Responses 接力中',
+            reason: 'stateful',
+            lastRequestTokens: 4435,
+          },
+        },
+      });
     } finally {
       await stopServer(server);
     }

@@ -1,10 +1,10 @@
 # 平台运行时上下文（必读）
 
-> 本文件是 KY Agent SaaS 平台运行时约定，与 dws 官方升级独立维护。每次执行 `dws` 命令之前必须遵守本文档约定。
+> 本文件是当前 Agent 平台的运行时约定，与 dws 官方升级独立维护。每次执行 `dws` 命令之前必须遵守本文档约定。
 
 ## 1. env 注入约定（三级 fallback）
 
-KY Agent SaaS 已迁到 ACS warm sandbox。容器按用户/workspace 复用，同一 workspace 的多个会话共享持久目录；如果 dws 默认行为（写系统凭据、HOME 默认配置目录或 `~/.config/dws/`）被触发，会破坏 workspace 级账号隔离，也不利于审计和迁移。
+当前 Agent 平台已迁到 ACS warm sandbox。容器按用户/workspace 复用，同一 workspace 的多个会话共享持久目录；如果 dws 默认行为（写系统凭据、HOME 默认配置目录或 `~/.config/dws/`）被触发，会破坏 workspace 级账号隔离，也不利于审计和迁移。
 
 **因此 dws 必须始终把 token 与配置写到当前 workspace 内部**，通过三个环境变量控制：
 
@@ -260,7 +260,7 @@ dws pat chmod chat.message:list aitable.record:read \
 
 ## 8. 多组织（profile）注意事项（v1.0.45+）
 
-dws v1.0.45 起支持在同一 workspace 同时登录多个钉钉组织（`dws profile list/switch/use` + 全局 `--profile <name|corpId>`）。KY Agent SaaS 场景下：
+dws v1.0.45 起支持在同一 workspace 同时登录多个钉钉组织（`dws profile list/switch/use` + 全局 `--profile <name|corpId>`）。多租户 SaaS 场景下：
 
 - 单组织租户：不需要额外操作，dws 自动把首次登录的组织标记为 primary 与 current
 - 多组织租户：可能需要在同一 workspace 依次跑多次 `dws auth login --device`，每次授权后自动追加为新 profile

@@ -203,7 +203,19 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (existsSync(targetDir)) return res.status(409).json({ error: `Skill '${skillId}' 已存在` });
 
     ensureWorkspaceDir(userSkillsDir, 0o775);
-    renameSync(skillRoot, targetDir);
+    try {
+      renameSync(skillRoot, targetDir);
+    } catch (err) {
+      // 生产上 /tmp（本地盘）与 workspace（NAS 挂载）跨文件系统，rename 抛 EXDEV，退化为复制。
+      if ((err as NodeJS.ErrnoException)?.code !== 'EXDEV') throw err;
+      try {
+        cpSync(skillRoot, targetDir, { recursive: true });
+      } catch (copyErr) {
+        // 复制中途失败会残留半份目录，导致用户重传时误报 409 已存在
+        rmSync(targetDir, { recursive: true, force: true });
+        throw copyErr;
+      }
+    }
     repairWorkspaceTree(targetDir);
     auditLog(req, 'skill_custom_uploaded', `${username}/${skillId}`);
     res.json({ ok: true, skill: { id: skillId, name: meta.name, description: meta.description } });

@@ -35,6 +35,7 @@ import { TrendChart, type TrendBarDatum } from "./TrendChart";
 import { UserDetailView } from "./UserDetailView";
 import { RangeSelector, type RangeQuery, type RangeValue, type CustomRange } from "./RangeSelector";
 import { FamilyFilter } from "./FamilyFilter";
+import { EfficiencyView } from "./EfficiencyView";
 
 // ────────── 子组件 ──────────
 
@@ -353,6 +354,8 @@ interface UsageDashboardProps {
 
 export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platform" }: UsageDashboardProps = {}) {
   const { isPlatformAdmin } = useAuth();
+  /** 顶部 tab：用量（现有内容）/ 效率（仅平台 admin 可见） */
+  const [viewTab, setViewTab] = useState<"usage" | "efficiency">("usage");
   const [range, setRange] = useState<RangeValue>("30d");
   const [customRange, setCustomRange] = useState<CustomRange | null>(null);
   /** 家族筛选；'all' = 全部（请求时不带 family 参数） */
@@ -485,6 +488,30 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4">
+      {/* 用量 / 效率 tab（效率仅平台 admin 可见；组织 admin 维持现状不显示 tab 栏） */}
+      {isPlatformAdmin && (
+        <div className="inline-flex items-center self-start rounded-md border bg-card p-0.5">
+          {([["usage", "用量"], ["efficiency", "效率"]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setViewTab(key)}
+              className={cn(
+                "rounded px-4 py-1 text-xs font-medium transition-colors",
+                viewTab === key
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {isPlatformAdmin && viewTab === "efficiency" ? (
+        <EfficiencyView tenantId={tenantId} />
+      ) : (
+        <>
       {/* Header */}
       <SettingsPanelHeader
         title="Token 用量"
@@ -581,6 +608,8 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
           ) : null}
         </CardContent>
       </Card>
+        </>
+      )}
     </div>
   );
 }

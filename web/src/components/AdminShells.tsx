@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { BarChart3, Building2, Cpu, Database, FileText, Gauge, Globe2, KeyRound, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, Users, X, Activity, WalletCards } from "lucide-react";
+import { BarChart3, Building2, Cpu, Database, FileText, Gauge, Globe2, KeyRound, ListTree, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, Users, X, Activity, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,9 +17,10 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type TenantSettings } from "@/components/TenantManager/types";
 import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
+import { RunTraceExplorer } from "@/components/RunTraceExplorer";
 
 export type TenantSection = "overview" | "users" | "skills" | "mcp" | "usage" | "billing" | "files" | "audit" | "settings" | "company";
-export type PlatformSection = "overview" | "tenants" | "models" | "billing" | "remote-hands" | "runtime" | "tool-controls" | "global-mcp" | "skill-pool" | "security" | "system";
+export type PlatformSection = "overview" | "tenants" | "models" | "billing" | "remote-hands" | "runtime" | "run-trace" | "tool-controls" | "global-mcp" | "skill-pool" | "security" | "system";
 
 interface ShellButton<T extends string> {
   id: T;
@@ -62,6 +63,7 @@ const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "billing", label: "计费", icon: WalletCards },
   { id: "remote-hands", label: "执行环境池", icon: ServerCog },
   { id: "runtime", label: "运行态", icon: Activity },
+  { id: "run-trace", label: "Run 追踪", icon: ListTree },
   { id: "tool-controls", label: "工具开关", icon: Globe2 },
   { id: "global-mcp", label: "全局 MCP", icon: KeyRound },
   { id: "skill-pool", label: "Skill 池", icon: Puzzle },
@@ -940,6 +942,7 @@ export function PlatformAdminShell({
     { id: "billing", node: <PlatformBillingManager /> },
     { id: "remote-hands", node: renderRemoteHands() },
     { id: "runtime", node: renderRuntimeOperations() },
+    { id: "run-trace", node: <RunTraceExplorer /> },
     { id: "tool-controls", node: renderToolControls() },
     { id: "global-mcp", node: renderMcp() },
     { id: "skill-pool", node: renderSkills() },

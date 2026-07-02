@@ -33,6 +33,8 @@ import { createAuthRouter } from "../routes/auth.js";
 import { requireAdmin } from "../auth/middleware.js";
 import { createAgentsRouter } from "../routes/agents.js";
 import { createRuntimeAuditRouter } from "../routes/runtimeAudit.js";
+import { createRuntimeTraceRouter } from "../routes/runtimeTrace.js";
+import { RuntimeEfficiencyQuery } from "../runtime/efficiencyQuery.js";
 import { createSkillsRouter } from "../routes/skills.js";
 import { createMcpRouter } from "../routes/mcp.js";
 import { createTenantsRouter } from "../routes/tenants.js";
@@ -297,6 +299,32 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       "/api/admin/runtime/audit",
       requireAdmin,
       createRuntimeAuditRouter({ auditQuery: runtime.runtimeAuditQuery }),
+    );
+  }
+
+  // Agent 运行监测读 API（平台 admin-only，router 内 isPlatformAdmin 再硬拦一层）：
+  // run trace drill-down + 最近 run 列表 + 效率聚合。仅 PG runtime backend 可用
+  // （依赖 runtime_runs / runtime_events / billing usage 三张表）；依赖不齐时不挂载。
+  const runtimeTraceBillingStore = runtime.billingService?.store;
+  if (
+    runtime.runtimeRunStore &&
+    runtime.runtimePgEventStore &&
+    runtimeTraceBillingStore
+  ) {
+    app.use(
+      "/api/admin/runtime/trace",
+      requireAdmin,
+      createRuntimeTraceRouter({
+        runStore: runtime.runtimeRunStore,
+        eventStore: runtime.runtimePgEventStore,
+        billingStore: runtimeTraceBillingStore,
+        efficiencyQuery: new RuntimeEfficiencyQuery({
+          pool: runtime.runtimePgEventStore.pool,
+          eventsTable: runtime.runtimePgEventStore.eventsTable,
+          runsTable: runtime.runtimeRunStore.runsTable,
+          billingUsageEventsTable: runtimeTraceBillingStore.usageEventsTable,
+        }),
+      }),
     );
   }
 

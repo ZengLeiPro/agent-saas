@@ -143,6 +143,16 @@ export interface AppRuntime {
   triggerTokenUsageRebuild?: () => Promise<unknown>;
   /** Runtime audit 读查询（按 sessionId/runId 投影 tool_audit）。 */
   runtimeAuditQuery?: RuntimeAuditQuery;
+  /**
+   * PG runtime run store 直接句柄（仅 runtimeEventStore.backend='pg'；file backend 为 undefined）。
+   * 运行监测读 API（/api/admin/runtime/trace）用它查 RunRecord 并取 runsTable 表名。
+   */
+  runtimeRunStore?: PgRunStore;
+  /**
+   * PG runtime event store 直接句柄（仅 backend='pg'；file backend 为 undefined）。
+   * 运行监测读 API 复用其 pool / eventsTable 做聚合查询，避免另开第二份连接池。
+   */
+  runtimePgEventStore?: PgEventStore;
   /** 校验平台工具配置，包括 WebSearch SecretVault ref 解析。 */
   validateToolSettingsConfig?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void>;
   /** 更新平台工具配置并热写入后续 raw runtime dispatch。 */
@@ -1486,6 +1496,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tokenUsageStore,
     billingService,
     runtimeAuditQuery,
+    runtimeRunStore: pgRunStore,
+    runtimePgEventStore: pgEventStore,
     validateToolSettingsConfig,
     updateToolSettingsConfig,
     updateMemoryIndexConfig,

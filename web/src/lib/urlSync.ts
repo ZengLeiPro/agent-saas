@@ -20,7 +20,7 @@ const TENANT_ADMIN_SETTINGS_SECTIONS: ReadonlySet<string> = new Set([
 ]);
 /** 平台管理 modal 的合法 section（与 AdminShells.platformSettingsSections 对齐） */
 const PLATFORM_ADMIN_SETTINGS_SECTIONS: ReadonlySet<string> = new Set([
-  'tenants', 'models', 'billing', 'remote-hands', 'runtime', 'tool-controls', 'global-mcp', 'skill-pool', 'system',
+  'tenants', 'models', 'billing', 'remote-hands', 'runtime', 'run-trace', 'tool-controls', 'global-mcp', 'skill-pool', 'system',
 ]);
 
 export type AdminSettingsTarget = 'tenant' | 'platform';

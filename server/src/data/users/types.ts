@@ -16,6 +16,11 @@ export interface UserPreferences {
   authorizationModeEnabled?: boolean;
 }
 
+export const DEFAULT_USER_PREFERENCES = {
+  sidebarLayout: "single",
+  authorizationModeEnabled: true,
+} as const satisfies Required<UserPreferences>;
+
 export interface UserRecord {
   id: string;
   username: string;

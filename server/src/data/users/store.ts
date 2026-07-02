@@ -4,6 +4,7 @@ import { writeFile, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import bcrypt from "bcrypt";
 import type { UserPermissions } from "../../types/index.js";
+import { DEFAULT_USER_PREFERENCES } from "./types.js";
 import type {
   UserRecord,
   UserRole,
@@ -218,6 +219,7 @@ export class UserStore {
         : {}),
       ...(input.debugMode ? { debugMode: true } : {}),
       ...(input.permissions ? { permissions: input.permissions } : {}),
+      preferences: { ...DEFAULT_USER_PREFERENCES, ...(input.preferences ?? {}) },
       createdAt: now,
       createdBy: input.createdBy,
       updatedAt: now,

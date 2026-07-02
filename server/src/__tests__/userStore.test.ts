@@ -42,9 +42,18 @@ describe("UserStore user ids", () => {
 
     expect(user.id).toMatch(USER_ID_PATTERN);
     expect(user.id).toHaveLength(14);
+    expect(user.preferences).toEqual({
+      authorizationModeEnabled: true,
+      sidebarLayout: "single",
+    });
 
     const reloaded = new UserStore(filePath);
-    expect(reloaded.findById(user.id)?.username).toBe("alice");
+    const persisted = reloaded.findById(user.id);
+    expect(persisted?.username).toBe("alice");
+    expect(persisted?.preferences).toEqual({
+      authorizationModeEnabled: true,
+      sidebarLayout: "single",
+    });
   });
 });
 

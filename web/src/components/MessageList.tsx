@@ -464,8 +464,15 @@ export const MessageList = memo(function MessageList({
         })}
 
         {!showCenterLoading && showAgentLoading && (
-          <div ref={lastMessageRef} className="flex justify-start">
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <div ref={lastMessageRef} className="flex flex-col">
+            <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
+            <div className="rounded-lg bg-card px-3 py-2 shadow-[0_2px_4px_rgba(15,23,42,0.06),0_8px_24px_-6px_rgba(15,23,42,0.10)]">
+              <div className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground/70" />
+                <span>正在思考</span>
+                <span className="animate-pulse">...</span>
+              </div>
+            </div>
           </div>
         )}
 

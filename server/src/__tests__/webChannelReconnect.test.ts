@@ -184,4 +184,103 @@ describe('WebChannel active stream reconnect', () => {
       },
     ]);
   });
+
+  it('does not create a ghost buffer for background events with empty projection', () => {
+    const channel = createChannel();
+
+    // hand_health_changed 投影为空且非 terminal —— 不应为已结束会话创建 active buffer
+    channel.publishRuntimePlatformEvent({
+      id: 'evt-health-1',
+      timestamp: new Date().toISOString(),
+      type: 'hand_health_changed',
+      sessionId: 'session-ghost',
+      handId: 'session-ghost:agent-saas-acs',
+      healthy: false,
+      detail: 'health_probe_failed',
+    } as any);
+
+    expect((channel as any).eventBufferStore.get('session-ghost')).toBeUndefined();
+    expect((channel as any).eventBufferStore.isActive('session-ghost')).toBe(false);
+  });
+
+  it('resume treats an active buffer as inactive when durable runStore has no active run', async () => {
+    const getActiveBySession = vi.fn().mockResolvedValue(null);
+    const channel = new WebChannel({
+      agentCwd: '/tmp/workspace',
+      enqueueRuntime: {
+        runStore: { getActiveBySession },
+      } as any,
+    }, noopDispatch);
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    // 幽灵 buffer：active 但 PG 无任何活跃 run
+    (channel as any).eventBufferStore.create('session-ghost-2', 'admin-1');
+    expect((channel as any).eventBufferStore.isActive('session-ghost-2')).toBe(true);
+
+    await (channel as any).handleResumeAsync(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      { action: 'resume', sessionId: 'session-ghost-2', lastEventId: 0, skipReplay: true },
+    );
+
+    expect(getActiveBySession).toHaveBeenCalledWith('session-ghost-2');
+    // 必须回 inactive，且幽灵 buffer 被收口
+    expect(ws.sent).toContainEqual({
+      data: { type: 'active_stream', sessionId: 'session-ghost-2', active: false },
+    });
+    expect((channel as any).eventBufferStore.isActive('session-ghost-2')).toBe(false);
+  });
+
+  it('resume still reports active when durable runStore confirms a live run', async () => {
+    const getActiveBySession = vi.fn().mockResolvedValue({
+      runId: 'run-live',
+      sessionId: 'session-live',
+      status: 'running',
+      metadata: {},
+    });
+    const channel = new WebChannel({
+      agentCwd: '/tmp/workspace',
+      enqueueRuntime: {
+        runStore: { getActiveBySession },
+      } as any,
+    }, noopDispatch);
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    (channel as any).activeStreams.set('stream-live', {
+      controller: new AbortController(),
+      userId: 'admin-1',
+      ws: new FakeWebSocket(),
+      sessionId: 'session-live',
+      runId: 'run-live',
+    });
+    (channel as any).eventBufferStore.create('session-live', 'admin-1');
+
+    await (channel as any).handleResumeAsync(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      { action: 'resume', sessionId: 'session-live', lastEventId: 0, skipReplay: true },
+    );
+
+    expect(ws.sent).toContainEqual({
+      data: {
+        type: 'active_stream',
+        sessionId: 'session-live',
+        active: true,
+        streamId: 'stream-live',
+        runId: 'run-live',
+        status: 'running',
+      },
+    });
+    expect((channel as any).eventBufferStore.isActive('session-live')).toBe(true);
+  });
 });

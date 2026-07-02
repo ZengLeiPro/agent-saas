@@ -736,11 +736,16 @@ export class WebChannel implements BaseChannel {
     const active = runId ? this.findActiveStreamByRunId(runId) : undefined;
     const streamId = active?.streamId ?? (runId ? runId : undefined);
     const activeEntry = active?.entry ?? (streamId ? this.activeStreams.get(streamId) : undefined);
+    const projection = projectRuntimePlatformEvent(event, { clientMsgId: activeEntry?.clientMsgId });
+    // 空投影且非终态的背景事件（如 hand_health_changed / hand_provisioning_log）直接跳过:
+    // 不允许它们为已结束的会话 create 一个永不 complete 的 active buffer。
+    // 否则 WS resume 判活会把该会话误报成 running(前端永久"正在思考"/停止按钮,刷新无效)。
+    // 实证: 2026-07-02 会话 3adc25a5 服务重启后被 ACS sandbox 健康探测事件复活。
+    if (projection.events.length === 0 && !projection.terminal) return;
     const buffer = this.eventBufferStore.get(sessionId);
     if (!buffer) {
       this.eventBufferStore.create(sessionId, activeEntry?.userId);
     }
-    const projection = projectRuntimePlatformEvent(event, { clientMsgId: activeEntry?.clientMsgId });
     // 终态投影跨事件去重：run_finished{error} 与 RunStore 派生的 run_state_changed{failed}
     // 来自同一个 runId 且都会 terminal=true，第二次到达直接 return 避免给前端发两次 done /
     // session_status。注意必须在 events push 之前判断,否则 buffer 仍会被脏写。
@@ -1440,8 +1445,28 @@ export class WebChannel implements BaseChannel {
     }
 
     const bufferEntry = this.eventBufferStore.get(sid);
-    // buffer 不存在 OR 已完成 → 返回 inactive
-    if (!bufferEntry || !this.eventBufferStore.isActive(sid)) {
+    // 判活口径与 getStreamStatus() 统一：durable runStore 是 run 是否活着的唯一真相,
+    // 内存 buffer 只是传输缓存。buffer active 但 runStore 明确说没有活跃 run 时,
+    // 这是幽灵 buffer(背景事件误建/complete 丢失),就地收口并按 inactive 处理。
+    // 否则前端 resume 永远收到 active:true,会话永久卡在"正在思考"。
+    let bufferActive = Boolean(bufferEntry && this.eventBufferStore.isActive(sid));
+    if (bufferActive) {
+      try {
+        const runStore = this.config.enqueueRuntime?.runStore;
+        if (runStore?.getActiveBySession) {
+          const activeRun = await runStore.getActiveBySession(sid);
+          if (!activeRun) {
+            this.eventBufferStore.complete(sid);
+            bufferActive = false;
+          }
+        }
+      } catch (err) {
+        // runStore 异常时退化信 buffer(与 getStreamStatus 的降级方向一致)
+        chatLogger.warn(`[resume] runStore.getActiveBySession 异常,降级信 buffer: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    // buffer 不存在 OR 已完成/被收口 → 返回 inactive
+    if (!bufferEntry || !bufferActive) {
       const durableActive = await this.tryReplayDurableRuntimeEvents(client, sid, {
         lastEventId,
         lastEventCursor,

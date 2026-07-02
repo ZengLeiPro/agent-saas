@@ -69,4 +69,55 @@ describe('buildRuntimeSkillFilter', () => {
 
     expect(filter(browserSkill)).toBe(true);
   });
+
+  it('keeps browser skill while the ACS hand is still provisioning (capability is a static declaration, not a probe result)', () => {
+    // 回归锁定 2026-07-03 生产 bug：每轮 dispatch 都把 ACS hand upsert 回
+    // provisioning 后毫秒级取快照构建 filter，若要求 ready，browser skill
+    // 会在每一轮 run 的 <available-skills> 里被永久滤掉。
+    const filter = buildRuntimeSkillFilter([{
+      handId: 'session:agent-saas-acs',
+      sessionId: 'session',
+      workspaceId: 'workspace',
+      type: 'server-remote',
+      status: 'provisioning',
+      endpoint: 'http://10.0.1.1:3400',
+      capabilities: [{
+        name: 'browser',
+        description: 'Browser automation hand',
+        tools: [],
+        constraints: [],
+        risk: 'safe',
+      }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      metadata: { tenantRemoteHandId: 'agent-saas-acs' },
+    } satisfies HandRecord]);
+
+    expect(filter(browserSkill)).toBe(true);
+    expect(filter(docSkill)).toBe(true);
+  });
+
+  it('hides browser skill when the browser-capable hand is unhealthy', () => {
+    const filter = buildRuntimeSkillFilter([{
+      handId: 'session:agent-saas-acs',
+      sessionId: 'session',
+      workspaceId: 'workspace',
+      type: 'server-remote',
+      status: 'unhealthy',
+      endpoint: 'http://10.0.1.1:3400',
+      capabilities: [{
+        name: 'browser',
+        description: 'Browser automation hand',
+        tools: [],
+        constraints: [],
+        risk: 'safe',
+      }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      metadata: { tenantRemoteHandId: 'agent-saas-acs' },
+    } satisfies HandRecord]);
+
+    expect(filter(browserSkill)).toBe(false);
+    expect(filter(docSkill)).toBe(true);
+  });
 });

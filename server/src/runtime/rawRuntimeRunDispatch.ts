@@ -1050,8 +1050,15 @@ export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSk
   ));
   if (!hasTenantAcsHand) return allowAllRuntimeSkills;
 
+  // 门控判据看 capability 声明而非 status==='ready'：capabilities 是注册时静态写入的
+  // 配置事实（tenantRemoteHandCapabilities），不是运行期探测结果。而每轮 dispatch 的
+  // ensureRuntimeHandRegistered 都会把 ACS hand upsert 回 'provisioning'，随后毫秒级
+  // 内 listBySession 取快照构建本 filter，异步 provision 翻回 'ready' 需要秒级——若
+  // 要求 ready，browser skill 会在每一轮 run 的 <available-skills> 里被永久滤掉
+  // （2026-07-03 生产实锤）。仅在 hand 明确不健康/已销毁时才视为无 browser 能力。
   const hasBrowserCapability = availableHands.some((hand) => (
-    hand.status === 'ready'
+    hand.status !== 'unhealthy'
+    && hand.status !== 'destroyed'
     && hand.capabilities.some((capability) => (
       capability.name === 'browser'
       || capability.tools.some((tool) => tool.name === 'Browser' || tool.name === 'playwright-cli')

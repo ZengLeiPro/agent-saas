@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DEFAULT_TENANT_ID } from "@agent/shared";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   Table,
   TableBody,
@@ -94,15 +94,13 @@ export function UserTable({
     }
   };
 
-  const currentUser = useMemo(
-    () => users.find((user) => user.id === currentUserId),
-    [users, currentUserId],
-  );
-  const currentIsPlatformAdmin =
-    currentUser?.role === "admin" && currentUser.tenantId === DEFAULT_TENANT_ID;
+  // 平台管理员身份必须取自登录态（JWT/me），不能从传入的 users 列表推断：
+  // 平台管理员切到其他组织时，列表已按 tenantIdScope 过滤、不含自己，
+  // 从列表推断会误判为非平台管理员，导致其他组织 admin 的管理按钮消失。
+  const { isPlatformAdmin } = useAuth();
 
   const canManageUser = (user: UserInfo): boolean => {
-    if (currentIsPlatformAdmin) return true;
+    if (isPlatformAdmin) return true;
     return user.id === currentUserId || user.role !== "admin";
   };
 

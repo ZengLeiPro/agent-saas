@@ -29,6 +29,7 @@ export interface WsClient {
     ws: WebSocket;
     user?: WsUser;
     alive: boolean;
+    connectedAt: number;
     lastActivityAt: number;
     ip?: string;
     userAgent?: string;
@@ -100,12 +101,14 @@ export class WsServer {
         });
 
         this.wss.on('connection', (ws: WebSocket, request: IncomingMessage, user?: WsUser) => {
+            const connectedAt = Date.now();
             const client: WsClient = {
                 ws,
                 user,
                 alive: true,
-                lastActivityAt: Date.now(),
-                ip: request.socket.remoteAddress,
+                connectedAt,
+                lastActivityAt: connectedAt,
+                ip: this.resolveClientIp(request),
                 userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : undefined,
             };
             this.clients.add(client);
@@ -160,7 +163,7 @@ export class WsServer {
                 }
             });
 
-            ws.on('close', () => {
+            ws.on('close', (code, reasonBuffer) => {
                 this.clients.delete(client);
                 if (client.user) {
                     const userClients = this.clientsByUser.get(client.user.sub);
@@ -171,7 +174,12 @@ export class WsServer {
                         }
                     }
                 }
-                chatLogger.info(`WS disconnected: ${user?.username ?? 'anonymous'} (total: ${this.clients.size})`);
+                const now = Date.now();
+                const ageMs = now - client.connectedAt;
+                const idleMs = now - client.lastActivityAt;
+                const reason = reasonBuffer.toString('utf-8');
+                const reasonLog = reason ? JSON.stringify(reason) : 'none';
+                chatLogger.info(`WS disconnected: ${user?.username ?? 'anonymous'} code=${code} reason=${reasonLog} age=${ageMs}ms idle=${idleMs}ms ip=${client.ip ?? 'unknown'} (total: ${this.clients.size})`);
                 this.closeHandler?.(client);
             });
 
@@ -198,6 +206,16 @@ export class WsServer {
                 if (idleMs > timeout) {
                     chatLogger.warn(`WS heartbeat timeout, closing: ${client.user?.username ?? 'anonymous'} idle=${idleMs}ms timeout=${timeout}ms`);
                     client.ws.terminate();
+                    continue;
+                }
+                if (client.ws.readyState === client.ws.OPEN) {
+                    try {
+                        client.ws.ping();
+                    } catch (err) {
+                        const message = err instanceof Error ? err.message : String(err);
+                        chatLogger.warn(`WS native ping failed, closing: ${client.user?.username ?? 'anonymous'} error=${message}`);
+                        client.ws.terminate();
+                    }
                 }
             }
         }, this.config.pingIntervalMs);
@@ -280,6 +298,17 @@ export class WsServer {
         } catch {
             return '';
         }
+    }
+
+    private resolveClientIp(request: IncomingMessage): string | undefined {
+        const forwardedFor = request.headers['x-forwarded-for'];
+        const rawForwardedFor = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
+        const firstForwarded = rawForwardedFor?.split(',')[0]?.trim();
+        if (firstForwarded) return firstForwarded;
+
+        const realIp = request.headers['x-real-ip'];
+        const rawRealIp = Array.isArray(realIp) ? realIp[0] : realIp;
+        return rawRealIp?.trim() || request.socket.remoteAddress;
     }
 
     private authenticate(request: IncomingMessage): WsUser | undefined {

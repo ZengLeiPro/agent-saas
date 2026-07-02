@@ -162,6 +162,76 @@ describe('ResponsesApiAdapter', () => {
     ]);
   });
 
+  it('previous_response_id 上游不存在时降级全量重试（跨模型切换兜底）', async () => {
+    const arkError = JSON.stringify({
+      error: {
+        code: 'InvalidParameter.PreviousResponseNotFound',
+        message: 'Previous response with id resp_prev not found. Request id: 0217829945',
+        param: 'previous_response_id',
+        type: 'BadRequest',
+      },
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(arkError, { status: 400 }))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_new', model: 'glm-5.2' } }),
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: 'ok' }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: { id: 'resp_new', model: 'glm-5.2', status: 'completed', usage: { input_tokens: 8, output_tokens: 1, input_tokens_details: {}, output_tokens_details: {} } },
+        }),
+      ]));
+
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk-test', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    const events = await collect(adapter.stream({
+      model: 'glm-5.2',
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'old' },
+        { role: 'assistant', content: 'old-reply' },
+        { role: 'user', content: '继续' },
+      ],
+      tools: [],
+      previousResponseId: 'resp_prev',
+    }, baseContext));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // 第一次：接力请求（带 previous_response_id + 增量 input）
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(firstBody.previous_response_id).toBe('resp_prev');
+    expect(firstBody.input).toHaveLength(1);
+    // 第二次：降级全量（无 previous_response_id，system 回 instructions，全量 messages 进 input）
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(secondBody.previous_response_id).toBeUndefined();
+    expect(secondBody.instructions).toBe('sys');
+    expect(secondBody.input.length).toBeGreaterThan(1);
+
+    const completed = events.find((e) => e.type === 'completed');
+    expect(completed).toMatchObject({ type: 'completed', responseId: 'resp_new' });
+  });
+
+  it('不带 previous_response_id 时 400 不触发降级重试，立即抛', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"error":{"message":"bad request"}}', { status: 400 }),
+    );
+
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk-test', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    await expect(collect(adapter.stream({
+      model: 'glm-5.2',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+    }, baseContext))).rejects.toThrow('Responses API HTTP 400');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('SSE 解析 function_call 累积参数为完整 toolCalls', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
       sse('response.created', { type: 'response.created', response: { id: 'resp_t', model: 'glm-5.2' } }),

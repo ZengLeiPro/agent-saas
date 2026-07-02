@@ -53,6 +53,17 @@ const RESPONSE_TTL_MS = 72 * 3600 * 1000;
 const MAX_REQUEST_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 500;
 
+/**
+ * 上游拒绝 previous_response_id 的判定。
+ * - 火山 Ark：HTTP 400 `{"error":{"code":"InvalidParameter.PreviousResponseNotFound","param":"previous_response_id",...}}`
+ * - OpenAI：HTTP 400/404 `Previous response with id 'resp_x' not found`
+ * 仅在请求确实带了 previous_response_id 时调用（调用方保证），无误伤面。
+ */
+export function isPreviousResponseNotFound(status: number, bodyText: string): boolean {
+  if (status !== 400 && status !== 404) return false;
+  return /previous[_\s]?response/i.test(bodyText);
+}
+
 /** setTimeout 版 delay，监听 abort signal 提前结束（由调用方在循环里再判 aborted 跳出）。 */
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -111,37 +122,44 @@ export class ResponsesApiAdapter implements ModelAdapter {
       && !this.providerOptions.disableResponseChaining;
 
     const sessionIdShort = context.sessionId ? context.sessionId.slice(0, 8) : undefined;
-    const { instructions, input } = hasPrevious
-      ? { instructions: undefined, input: this.extractIncrementalInput(request.messages, sessionIdShort) }
-      : this.buildFullInput(request.messages, sessionIdShort);
+    // usePrevious 可被降级：上游报 PreviousResponseNotFound（跨模型切换残留 / 服务端已过期）
+    // 时切回全量重建 body 重试，不让确定性 400 直接打死整个 run。
+    let usePrevious = hasPrevious;
+    const buildRequestBody = (): Record<string, unknown> => {
+      const { instructions, input } = usePrevious
+        ? { instructions: undefined, input: this.extractIncrementalInput(request.messages, sessionIdShort) }
+        : this.buildFullInput(request.messages, sessionIdShort);
 
-    if (hasPrevious && input.length === 0) {
-      throw new Error(
-        'ResponsesApiAdapter: previousResponseId 存在但 messages 尾部没有可接力的 user/tool 增量；'
-        + 'RawAgentLoop 调用前请确认增量结构正确。',
-      );
-    }
-
-    const body: Record<string, unknown> = {
-      model: request.model,
-      input,
-      ...(hasPrevious ? { previous_response_id: request.previousResponseId } : {}),
-      ...(instructions ? { instructions } : {}),
-      tools: this.adaptTools(request.tools),
-      tool_choice: toolChoice,
-      max_output_tokens: maxOutputTokens,
-      store: true,
-      stream: true,
-      ...(this.providerOptions.extraBody ?? {}),
-    };
-
-    // reasoning 字段：伪推理模型不发，避免 Responses+tools 在伪推理模型上 broken（RFC §2.3）
-    if (!this.providerOptions.isPseudoReasoning) {
-      if (this.providerOptions.thinking !== undefined) body.thinking = this.providerOptions.thinking;
-      if (this.providerOptions.reasoningEffort !== undefined) {
-        body.reasoning = { effort: this.providerOptions.reasoningEffort };
+      if (usePrevious && input.length === 0) {
+        throw new Error(
+          'ResponsesApiAdapter: previousResponseId 存在但 messages 尾部没有可接力的 user/tool 增量；'
+          + 'RawAgentLoop 调用前请确认增量结构正确。',
+        );
       }
-    }
+
+      const built: Record<string, unknown> = {
+        model: request.model,
+        input,
+        ...(usePrevious ? { previous_response_id: request.previousResponseId } : {}),
+        ...(instructions ? { instructions } : {}),
+        tools: this.adaptTools(request.tools),
+        tool_choice: toolChoice,
+        max_output_tokens: maxOutputTokens,
+        store: true,
+        stream: true,
+        ...(this.providerOptions.extraBody ?? {}),
+      };
+
+      // reasoning 字段：伪推理模型不发，避免 Responses+tools 在伪推理模型上 broken（RFC §2.3）
+      if (!this.providerOptions.isPseudoReasoning) {
+        if (this.providerOptions.thinking !== undefined) built.thinking = this.providerOptions.thinking;
+        if (this.providerOptions.reasoningEffort !== undefined) {
+          built.reasoning = { effort: this.providerOptions.reasoningEffort };
+        }
+      }
+      return built;
+    };
+    let body = buildRequestBody();
 
     const requestSignal = request.signal ?? context.signal;
     const url = responsesUrl(this.connection.baseUrl);
@@ -169,7 +187,22 @@ export class ResponsesApiAdapter implements ModelAdapter {
       }
       if (attemptResponse.ok) { response = attemptResponse; break; }
       const text = await attemptResponse.text().catch(() => '');
-      // 5xx（含上游 `Post "...": EOF` 包装成的 500）瞬时故障可重试；4xx 立即抛。
+      // previous_response_id 不被上游认可（跨模型切换后残留 / 服务端 TTL 过期）：
+      // 确定性 4xx，重发同 body 无意义 → 降级全量重建后立即重试（不退避，不占额外网络成本）。
+      if (
+        usePrevious
+        && attempt < MAX_REQUEST_ATTEMPTS
+        && !requestSignal?.aborted
+        && isPreviousResponseNotFound(attemptResponse.status, text)
+      ) {
+        logger.warn(
+          `Responses API previous_response_id 不被上游认可（跨模型切换或已过期），降级全量重试：${text.slice(0, 200)}`,
+        );
+        usePrevious = false;
+        body = buildRequestBody();
+        continue;
+      }
+      // 5xx（含上游 `Post "...": EOF` 包装成的 500）瞬时故障可重试；其余 4xx 立即抛。
       if (attemptResponse.status >= 500 && attempt < MAX_REQUEST_ATTEMPTS && !requestSignal?.aborted) {
         logger.warn(`Responses API HTTP ${attemptResponse.status}（attempt ${attempt}/${MAX_REQUEST_ATTEMPTS}），退避重试：${text.slice(0, 200)}`);
         await delay(RETRY_BASE_DELAY_MS * 3 ** (attempt - 1), requestSignal);

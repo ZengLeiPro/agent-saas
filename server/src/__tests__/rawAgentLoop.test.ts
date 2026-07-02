@@ -20,6 +20,7 @@ import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
+import type { LatestResponseSessionState, ResponseSessionStatePatch, RunStore } from '../runtime/runStore.js';
 import type { ModelAdapter, ModelEvent, ModelRequest, ModelToolCall, RunContext } from '../runtime/types.js';
 import type { OutboundEvent } from '../types/index.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
@@ -1966,5 +1967,109 @@ describe('RawAgentLoop', () => {
     expect(events[0]).toMatchObject({ type: 'error' });
     expect(events[0]?.error).toContain('仍在执行或等待恢复');
     expect(adapter.requests).toHaveLength(0);
+  });
+
+  // ── 跨 run Responses 接力：模型匹配防线（2026-07-02 切模型 PreviousResponseNotFound 事故） ──
+
+  function relayFixtures(state: LatestResponseSessionState | null) {
+    const patches: Array<{ runId: string; patch: ResponseSessionStatePatch }> = [];
+    const runStore = {
+      findLatestResponseSessionStateBySession: async () => state,
+      updateResponseSessionState: async (runId: string, patch: ResponseSessionStatePatch) => {
+        patches.push({ runId, patch });
+        return null;
+      },
+    } as unknown as RunStore;
+    return { runStore, patches };
+  }
+
+  class ResponseIdTextAdapter implements ModelAdapter {
+    requests: ModelRequest[] = [];
+
+    constructor(private readonly responseId: string) {}
+
+    async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+      this.requests.push(request);
+      yield { type: 'text_delta', content: 'ok' };
+      yield {
+        type: 'completed',
+        content: 'ok',
+        toolCalls: [],
+        responseId: this.responseId,
+        usage: { inputTokens: 3, outputTokens: 2, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      };
+    }
+  }
+
+  async function runRelayScenario(
+    state: LatestResponseSessionState | null,
+    currentModel: string,
+  ): Promise<{ adapter: ResponseIdTextAdapter; patches: Array<{ runId: string; patch: ResponseSessionStatePatch }> }> {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-relay-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new ResponseIdTextAdapter('resp_new_run');
+    const { runStore, patches } = relayFixtures(state);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-relay-1'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore,
+    });
+    await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '继续' },
+        prompt: '继续',
+        instructions: '继续。',
+        maxTurns: 2,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-relay-2',
+        sessionId: 'session-relay-1',
+        model: currentModel,
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+      },
+    ));
+    return { adapter, patches };
+  }
+
+  it('上一 run 同模型时跨 run 接力 previousResponseId', async () => {
+    const { adapter } = await runRelayScenario(
+      { runId: 'run-relay-1', lastResponseId: 'resp_prev', lastResponseModel: 'glm-5.2' },
+      'glm-5.2',
+    );
+    expect(adapter.requests[0]?.previousResponseId).toBe('resp_prev');
+  });
+
+  it('上一 run 模型不同时禁止接力（切模型后 response id 属于旧后端）', async () => {
+    const { adapter } = await runRelayScenario(
+      { runId: 'run-relay-1', lastResponseId: 'resp_prev', lastResponseModel: 'gpt-5.5' },
+      'glm-5.2',
+    );
+    expect(adapter.requests[0]?.previousResponseId).toBeUndefined();
+  });
+
+  it('存量数据缺 lastResponseModel 时视为身份未知，不接力', async () => {
+    const { adapter } = await runRelayScenario(
+      { runId: 'run-relay-1', lastResponseId: 'resp_prev' },
+      'glm-5.2',
+    );
+    expect(adapter.requests[0]?.previousResponseId).toBeUndefined();
+  });
+
+  it('completed 带 responseId 时把当前模型作为接力身份键落库', async () => {
+    const { patches } = await runRelayScenario(null, 'glm-5.2');
+    expect(patches).toHaveLength(1);
+    expect(patches[0]).toMatchObject({
+      runId: 'run-relay-2',
+      patch: { lastResponseId: 'resp_new_run', lastResponseModel: 'glm-5.2' },
+    });
   });
 });

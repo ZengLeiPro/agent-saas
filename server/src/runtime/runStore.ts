@@ -45,6 +45,12 @@ export interface RunRecord {
   lastResponseExpireAt?: string;
   /** Responses API 返回的 response.model 实际别名值（用于审计/告警）。 */
   actualModelSeen?: string;
+  /**
+   * 产生 lastResponseId 时发给上游的 model 值（RunContext.model）。
+   * 跨 run 接力的身份键：新 run 模型与它不一致时禁止接力——response id 是后端私有状态，
+   * 拿 A 后端的 id 发给 B 后端必报 PreviousResponseNotFound（2026-07-02 切模型事故）。
+   */
+  lastResponseModel?: string;
   /** 本 run 内累计 input_tokens（嵌套接力会爆涨，监控用）。 */
   cumulativeInputTokens?: number;
 }
@@ -74,6 +80,8 @@ export interface ResponseSessionStatePatch {
   lastResponseId?: string | null;
   lastResponseExpireAt?: string | null;
   actualModelSeen?: string | null;
+  /** 产生 lastResponseId 的上游 model 值（接力身份键，见 RunRecord.lastResponseModel）。 */
+  lastResponseModel?: string | null;
   cumulativeInputTokensDelta?: number;
 }
 
@@ -85,6 +93,8 @@ export interface LatestResponseSessionState {
   lastResponseId: string;
   lastResponseExpireAt?: string;
   actualModelSeen?: string;
+  /** 产生 lastResponseId 的上游 model 值；缺失（存量数据）视为身份未知，调用方不得接力。 */
+  lastResponseModel?: string;
   cumulativeInputTokens?: number;
 }
 
@@ -173,6 +183,8 @@ export class PgRunStore implements RunStore {
       await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS last_response_id TEXT`);
       await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS last_response_expire_at TIMESTAMPTZ`);
       await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS actual_model_seen TEXT`);
+      // 2026-07-02：接力身份键（切模型后跨后端接力必炸，见 findLatestResponseSessionStateBySession 调用方）
+      await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS last_response_model TEXT`);
       await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS cumulative_input_tokens BIGINT NOT NULL DEFAULT 0`);
       // PR 3：多组织改造 — 加 tenant_id 列，旧数据回填 LEGACY_TENANT_ID，新 run 由
       // dispatch 层（PR 4）显式传入；UpsertRunInput 已加可选 tenantId 字段。
@@ -394,6 +406,11 @@ export class PgRunStore implements RunStore {
       params.push(patch.actualModelSeen);
       nextIdx++;
     }
+    if (patch.lastResponseModel !== undefined) {
+      sets.push(`last_response_model = $${nextIdx}`);
+      params.push(patch.lastResponseModel);
+      nextIdx++;
+    }
     if (patch.cumulativeInputTokensDelta !== undefined && patch.cumulativeInputTokensDelta !== 0) {
       sets.push(`cumulative_input_tokens = cumulative_input_tokens + $${nextIdx}`);
       params.push(patch.cumulativeInputTokensDelta);
@@ -422,9 +439,10 @@ export class PgRunStore implements RunStore {
       last_response_id: string;
       last_response_expire_at: string | null;
       actual_model_seen: string | null;
+      last_response_model: string | null;
       cumulative_input_tokens: string | number | null;
     }>(`
-      SELECT run_id, last_response_id, last_response_expire_at, actual_model_seen, cumulative_input_tokens
+      SELECT run_id, last_response_id, last_response_expire_at, actual_model_seen, last_response_model, cumulative_input_tokens
       FROM ${this.runsTable}
       WHERE session_id = $1
         AND last_response_id IS NOT NULL
@@ -444,6 +462,7 @@ export class PgRunStore implements RunStore {
         ? { lastResponseExpireAt: new Date(row.last_response_expire_at).toISOString() }
         : {}),
       ...(row.actual_model_seen ? { actualModelSeen: row.actual_model_seen } : {}),
+      ...(row.last_response_model ? { lastResponseModel: row.last_response_model } : {}),
       ...(cumulative ? { cumulativeInputTokens: cumulative } : {}),
     };
   }
@@ -506,6 +525,7 @@ function normalizeRunRecord(raw: any): RunRecord {
       ? new Date(raw.last_response_expire_at).toISOString()
       : raw.lastResponseExpireAt,
     actualModelSeen: raw.actual_model_seen ?? raw.actualModelSeen ?? undefined,
+    lastResponseModel: raw.last_response_model ?? raw.lastResponseModel ?? undefined,
     cumulativeInputTokens: (() => {
       const v = raw.cumulative_input_tokens ?? raw.cumulativeInputTokens;
       if (typeof v === 'number') return v;

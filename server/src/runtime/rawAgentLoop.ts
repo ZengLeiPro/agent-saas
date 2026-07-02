@@ -228,12 +228,26 @@ export class RawAgentLoop implements AgentLoop {
   /**
    * RFC v1 P0.4：跨 run 接力 — 启动时从 runStore 查上一 run 的 last_response_id（未过期）。
    * RunStore 缺失 / 接口未实现 / 查询出错全部退化为不接力（绝不阻断主流程）。
+   *
+   * 2026-07-02 模型匹配防线：response id 是上游后端的私有状态，只在「同一 model」下有效。
+   * 会话中途切模型后，上一 run 的 id 对新后端不存在，接力必报 PreviousResponseNotFound
+   * （实证：gpt-5.5 的 resp id 发给火山 glm-5.2 → HTTP 400）。lastResponseModel 与当前
+   * model 不一致（含存量数据缺失）一律不接力，退化为全量首轮——中间插过别的模型的对话
+   * 本就不在旧 response 链上，全量才是语义正确的选择，不只是安全退化。
    */
-  private async loadInitialResponseId(sessionId: string): Promise<string | undefined> {
+  private async loadInitialResponseId(sessionId: string, model: string): Promise<string | undefined> {
     if (!this.runStore?.findLatestResponseSessionStateBySession) return undefined;
     try {
       const state = await this.runStore.findLatestResponseSessionStateBySession(sessionId);
-      return state?.lastResponseId;
+      if (!state?.lastResponseId) return undefined;
+      if (state.lastResponseModel !== model) {
+        logger.info(
+          `[responses-chain] skip cross-model relay session=${sessionId} `
+          + `prevModel=${state.lastResponseModel ?? '<unknown>'} currentModel=${model}`,
+        );
+        return undefined;
+      }
+      return state.lastResponseId;
     } catch {
       return undefined;
     }
@@ -242,15 +256,18 @@ export class RawAgentLoop implements AgentLoop {
   /**
    * RFC v1 P0.4：把 turn 内 completed event 里的 responseId/expireAt/actualModel 落库。
    * input_tokens 增量同时累加到 cumulative_input_tokens。
+   * model 作为接力身份键一并落库（loadInitialResponseId 据此拒绝跨模型接力）。
    */
   private async persistResponseSessionState(
     runId: string,
     completed: Extract<ModelEvent, { type: 'completed' }>,
+    model: string,
   ): Promise<void> {
     if (!this.runStore?.updateResponseSessionState || !completed.responseId) return;
     try {
       await this.runStore.updateResponseSessionState(runId, {
         lastResponseId: completed.responseId,
+        lastResponseModel: model,
         ...(typeof completed.responseExpireAt === 'number'
           ? { lastResponseExpireAt: new Date(completed.responseExpireAt * 1000).toISOString() }
           : {}),
@@ -345,7 +362,7 @@ export class RawAgentLoop implements AgentLoop {
     // 启动时查上一已完成 run 的 last_response_id（72h 内未过期），赋给本 run。
     // ChatCompletionsAdapter 收到 previousResponseId 会抛错 — 所以 runStore 只在
     // 模型走 protocol="responses" 时才有意义；dispatcher 已按 protocol 路由 adapter。
-    let currentResponseId = await this.loadInitialResponseId(context.sessionId);
+    let currentResponseId = await this.loadInitialResponseId(context.sessionId, context.model);
 
     try {
       for (turn = 1; turn <= input.maxTurns; turn++) {
@@ -411,7 +428,7 @@ export class RawAgentLoop implements AgentLoop {
         // currentResponseId 用于下一轮 turn 接力（同 run 内）；落库后跨 run 也能查回。
         if (completed.responseId) {
           currentResponseId = completed.responseId;
-          await this.persistResponseSessionState(context.runId, completed);
+          await this.persistResponseSessionState(context.runId, completed, context.model);
         }
 
         if (completed.toolCalls.length === 0) {
@@ -1409,7 +1426,7 @@ export class RawAgentLoop implements AgentLoop {
     let turn = 0;
 
     // RFC v1 P0.4：resume 路径同样接力 Responses API session state。
-    let currentResponseId = await this.loadInitialResponseId(args.context.sessionId);
+    let currentResponseId = await this.loadInitialResponseId(args.context.sessionId, args.context.model);
 
     try {
       for (turn = 1; turn <= args.maxTurns; turn++) {
@@ -1474,7 +1491,7 @@ export class RawAgentLoop implements AgentLoop {
         // RFC v1 P0.4：resume 路径同样持久化 last_response_id 等。
         if (completed.responseId) {
           currentResponseId = completed.responseId;
-          await this.persistResponseSessionState(args.context.runId, completed);
+          await this.persistResponseSessionState(args.context.runId, completed, args.context.model);
         }
 
         if (completed.toolCalls.length === 0) {

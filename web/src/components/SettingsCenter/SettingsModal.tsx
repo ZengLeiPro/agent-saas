@@ -118,6 +118,31 @@ function SidebarLayoutPreference({
   );
 }
 
+function SessionListAvatarPreference({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: boolean;
+  onChange: (value: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-foreground">会话列表显示头像</div>
+        <div className="mt-1 text-sm text-muted-foreground">开启后会话列表显示 Agent 头像；关闭时使用更紧凑的单行样式。</div>
+      </div>
+      <Switch
+        checked={value}
+        disabled={disabled}
+        onCheckedChange={onChange}
+        aria-label="会话列表显示头像"
+      />
+    </div>
+  );
+}
+
 function PlaceholderSection({
   title,
   description,
@@ -611,11 +636,14 @@ export function SettingsModal({
   sidebarLayout = "double",
   onSidebarLayoutChange,
 }: SettingsModalProps) {
-  const { user, isAdmin, isPlatformAdmin, updateAvatar } = useAuth();
+  const { user, isAdmin, isPlatformAdmin, updateAvatar, updatePreferences } = useAuth();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [draftSidebarLayout, setDraftSidebarLayout] = useState<SidebarLayoutPref>(sidebarLayout);
+  const showSessionListAvatar = user?.preferences?.showSessionListAvatar === true;
+  const [draftShowSessionListAvatar, setDraftShowSessionListAvatar] = useState(showSessionListAvatar);
+  const [personalizationSaving, setPersonalizationSaving] = useState(false);
   const [personalizationSaved, setPersonalizationSaved] = useState(false);
   const [, startSectionTransition] = useTransition();
 
@@ -631,9 +659,10 @@ export function SettingsModal({
   useEffect(() => {
     if (open) {
       setDraftSidebarLayout(sidebarLayout);
+      setDraftShowSessionListAvatar(showSessionListAvatar);
       setPersonalizationSaved(false);
     }
-  }, [open, sidebarLayout]);
+  }, [open, sidebarLayout, showSessionListAvatar]);
 
   useEffect(() => {
     if (!open) return;
@@ -651,11 +680,35 @@ export function SettingsModal({
     setVisited(prev => (prev.has(section) ? prev : new Set(prev).add(section)));
   }, [open, section]);
 
-  const handleSavePersonalization = useCallback(() => {
-    onSidebarLayoutChange?.(draftSidebarLayout);
-    setPersonalizationSaved(true);
-    window.setTimeout(() => setPersonalizationSaved(false), 2000);
-  }, [draftSidebarLayout, onSidebarLayoutChange]);
+  const personalizationDirty =
+    draftSidebarLayout !== sidebarLayout ||
+    draftShowSessionListAvatar !== showSessionListAvatar;
+
+  const handleSavePersonalization = useCallback(async () => {
+    setPersonalizationSaving(true);
+    setPersonalizationSaved(false);
+    try {
+      if (draftSidebarLayout !== sidebarLayout) {
+        onSidebarLayoutChange?.(draftSidebarLayout);
+      }
+      if (draftShowSessionListAvatar !== showSessionListAvatar) {
+        const next = { showSessionListAvatar: draftShowSessionListAvatar };
+        updatePreferences(next);
+        const saved = await saveUserPreferences(next);
+        if (!saved) {
+          updatePreferences({ showSessionListAvatar });
+          throw new Error("保存失败");
+        }
+        updatePreferences(saved);
+      }
+      setPersonalizationSaved(true);
+      window.setTimeout(() => setPersonalizationSaved(false), 2000);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "保存失败");
+    } finally {
+      setPersonalizationSaving(false);
+    }
+  }, [draftSidebarLayout, sidebarLayout, onSidebarLayoutChange, draftShowSessionListAvatar, showSessionListAvatar, updatePreferences]);
 
   const handleAvatarUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -715,14 +768,17 @@ export function SettingsModal({
           actions={(
             <>
               {personalizationSaved && <span className="text-sm text-success">已保存</span>}
-              <Button onClick={handleSavePersonalization} disabled={draftSidebarLayout === sidebarLayout}>
-                <Save className="mr-1.5 h-4 w-4" />
+              <Button onClick={() => { void handleSavePersonalization(); }} disabled={personalizationSaving || !personalizationDirty}>
+                {personalizationSaving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
                 保存
               </Button>
             </>
           )}
         >
-          <SidebarLayoutPreference value={draftSidebarLayout} onChange={(next) => { setDraftSidebarLayout(next); setPersonalizationSaved(false); }} />
+          <div className="space-y-6">
+            <SidebarLayoutPreference value={draftSidebarLayout} onChange={(next) => { setDraftSidebarLayout(next); setPersonalizationSaved(false); }} />
+            <SessionListAvatarPreference value={draftShowSessionListAvatar} disabled={personalizationSaving} onChange={(next) => { setDraftShowSessionListAvatar(next); setPersonalizationSaved(false); }} />
+          </div>
         </PlaceholderSection>
       ),
     },

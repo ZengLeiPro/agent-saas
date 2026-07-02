@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState, useEffect, type ChangeEvent, ty
 import {
   Plus,
   MoreHorizontal,
+  MessageSquare,
   Pencil,
   Sparkles,
   Bot,
@@ -9,6 +10,7 @@ import {
   Loader2,
   LogOut,
   User,
+  Folder,
   FolderPlus,
   ChevronLeft,
   ChevronRight,
@@ -149,6 +151,29 @@ function SessionLeadingIcon({ session, selected = false }: { session: ChatSessio
   );
 }
 
+/** 紧凑模式（不显示头像）下的会话前缀小图标：普通会话=灰色气泡；批量选中态=绿色小勾。 */
+function CompactSessionLeadingIcon({ selected = false }: { selected?: boolean }) {
+  if (selected) {
+    return (
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white" aria-hidden="true">
+        <Check className="h-3 w-3 stroke-[3]" />
+      </span>
+    );
+  }
+  return <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground/70" aria-hidden="true" />;
+}
+
+/** 紧凑模式下的分组前缀小图标：自定义分组=品牌蓝文件夹；cron 分组=teal 时钟。 */
+function CompactGroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
+  const Icon = kind === "cron" ? Clock : Folder;
+  return (
+    <Icon
+      className={cn("h-4 w-4 shrink-0", kind === "cron" ? "text-teal-500" : "text-brand-600")}
+      aria-hidden="true"
+    />
+  );
+}
+
 function GroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
   const Icon = kind === "cron" ? Clock : FolderPlus;
 
@@ -185,6 +210,7 @@ function SessionRow({
   selectionMode = false,
   selected = false,
   singleColumn = false,
+  compact = false,
 }: {
   session: ChatSessionIndexItem;
   active: boolean;
@@ -205,8 +231,156 @@ function SessionRow({
   selectionMode?: boolean;
   selected?: boolean;
   singleColumn?: boolean;
+  /** 紧凑模式（不显示头像）：单行布局，行尾日期 hover 时切换为更多按钮。 */
+  compact?: boolean;
 }) {
   const menuOpen = actionMenuId === session.id;
+  const hasMenu = !selectionMode && Boolean(onDelete || onRename || onAddToGroup);
+
+  const menuDropdown = menuOpen ? (
+    <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] rounded-lg border bg-popover py-1 shadow-md">
+      {onRename && (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            setActionMenuId(null);
+            setRenameSessionId(session.id);
+          }}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          重命名
+        </button>
+      )}
+      {onAutoTitle && (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            setActionMenuId(null);
+            onAutoTitle(session.id);
+          }}
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          自动命名
+        </button>
+      )}
+      {onAddToGroup && (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            setActionMenuId(null);
+            onAddToGroup(session.id);
+          }}
+        >
+          <FolderPlus className="h-3.5 w-3.5" />
+          添加到分组
+        </button>
+      )}
+      {isInManualGroup && onRemoveFromGroup && (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            setActionMenuId(null);
+            onRemoveFromGroup(session.id);
+          }}
+        >
+          <FolderMinus className="h-3.5 w-3.5" />
+          移出分组
+        </button>
+      )}
+      {onCompact && (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            setActionMenuId(null);
+            onCompact();
+          }}
+        >
+          <Minimize2 className="h-3.5 w-3.5" />
+          压缩上下文
+        </button>
+      )}
+      {onDelete && (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive transition-colors hover:bg-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            setActionMenuId(null);
+            onDelete(session.id);
+          }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          删除
+        </button>
+      )}
+    </div>
+  ) : null;
+
+  if (compact) {
+    return (
+      <div
+        className={cn(
+          "group relative flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 transition-colors",
+          active
+            ? "bg-brand-accent-soft before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-r-full before:bg-brand-accent"
+            : "hover:bg-muted",
+          menuOpen && "z-10",
+        )}
+        onClick={() => onSelect(session.id)}
+      >
+        <CompactSessionLeadingIcon selected={selected} />
+        {session.hasUnreadAiReply && (
+          <span className="h-2 w-2 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
+        )}
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-snug">
+          {session.title || "新会话"}
+        </span>
+        <span
+          className={cn(
+            "shrink-0 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground/60 transition-opacity",
+            hasMenu && "group-hover:opacity-0",
+            hasMenu && menuOpen && "opacity-0",
+          )}
+        >
+          {formatShortDate(session.updatedAt)}
+        </span>
+        {hasMenu && (
+          <div
+            className={cn(
+              "absolute right-1 top-1/2 -translate-y-1/2 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100",
+              menuOpen && "opacity-100",
+            )}
+            ref={menuOpen ? actionMenuRef : undefined}
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActionMenuId(menuOpen ? null : session.id);
+              }}
+              disabled={isLoading}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+            </Button>
+            {menuDropdown}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -243,7 +417,7 @@ function SessionRow({
       </span>
 
       {/* 省略号操作菜单 */}
-      {!selectionMode && (onDelete || onRename || onAddToGroup) && (
+      {hasMenu && (
         <div
           className="absolute right-1 top-2"
           ref={menuOpen ? actionMenuRef : undefined}
@@ -262,94 +436,7 @@ function SessionRow({
             <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
           </Button>
 
-          {menuOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] rounded-lg border bg-popover py-1 shadow-md">
-              {onRename && (
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActionMenuId(null);
-                    setRenameSessionId(session.id);
-                  }}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  重命名
-                </button>
-              )}
-              {onAutoTitle && (
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActionMenuId(null);
-                    onAutoTitle(session.id);
-                  }}
-                >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  自动命名
-                </button>
-              )}
-              {onAddToGroup && (
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActionMenuId(null);
-                    onAddToGroup(session.id);
-                  }}
-                >
-                  <FolderPlus className="h-3.5 w-3.5" />
-                  添加到分组
-                </button>
-              )}
-              {isInManualGroup && onRemoveFromGroup && (
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActionMenuId(null);
-                    onRemoveFromGroup(session.id);
-                  }}
-                >
-                  <FolderMinus className="h-3.5 w-3.5" />
-                  移出分组
-                </button>
-              )}
-              {onCompact && (
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActionMenuId(null);
-                    onCompact();
-                  }}
-                >
-                  <Minimize2 className="h-3.5 w-3.5" />
-                  压缩上下文
-                </button>
-              )}
-              {onDelete && (
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive transition-colors hover:bg-accent"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActionMenuId(null);
-                    onDelete(session.id);
-                  }}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  删除
-                </button>
-              )}
-            </div>
-          )}
+          {menuDropdown}
         </div>
       )}
     </div>
@@ -837,6 +924,8 @@ export function DesktopSessionSidebar({
   sidebarLayout = "double",
 }: DesktopSessionSidebarProps) {
   const { user: authUser, logout, authEnabled, updateAvatar } = useAuth();
+  // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
+  const compactList = authUser?.preferences?.showSessionListAvatar !== true;
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
@@ -1530,7 +1619,18 @@ export function DesktopSessionSidebar({
                 ) : singleColumnEntries.length === 0 ? (
                   <div className="px-2 py-6 text-center text-sm text-muted-foreground">暂无会话</div>
                 ) : singleColumnEntries.map((entry) => entry.type === "session" ? (
-                  <SessionRow key={entry.session.id} session={entry.session} active={!singleSelectionMode && entry.session.id === activeSessionId} isLoading={isLoading} onSelect={handleSelect} onDelete={onDelete} onRename={onRename} onAutoTitle={onAutoTitle} actionMenuId={actionMenuId} setActionMenuId={setActionMenuId} actionMenuRef={actionMenuRef} setRenameSessionId={setRenameSessionId} onAddToGroup={isReadOnlyGroups ? undefined : setAddToGroupSessionId} onCompact={entry.session.id === activeSessionId && onCompact ? () => setCompactDialogOpen(true) : undefined} selectionMode={singleSelectionMode} selected={selectedSingleSessionIds.has(entry.session.id)} singleColumn />
+                  <SessionRow key={entry.session.id} session={entry.session} active={!singleSelectionMode && entry.session.id === activeSessionId} isLoading={isLoading} onSelect={handleSelect} onDelete={onDelete} onRename={onRename} onAutoTitle={onAutoTitle} actionMenuId={actionMenuId} setActionMenuId={setActionMenuId} actionMenuRef={actionMenuRef} setRenameSessionId={setRenameSessionId} onAddToGroup={isReadOnlyGroups ? undefined : setAddToGroupSessionId} onCompact={entry.session.id === activeSessionId && onCompact ? () => setCompactDialogOpen(true) : undefined} selectionMode={singleSelectionMode} selected={selectedSingleSessionIds.has(entry.session.id)} singleColumn compact={compactList} />
+                ) : compactList ? (
+                  <button key={entry.group.groupKey} type="button" className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted" onClick={() => { setActionMenuId(null); setSingleExpandedGroupKey(entry.group.groupKey); void onLoadGroupSessions?.(entry.group.groupKey); }}>
+                    <CompactGroupLeadingIcon kind={entry.group.kind} />
+                    {unreadByGroupId.get(entry.group.groupKey) && <GroupUnreadDot />}
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-snug">
+                      {entry.group.name}
+                      <span className="ml-1 font-normal text-muted-foreground/60">({entry.group.count})</span>
+                    </span>
+                    <span className="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground/60">{formatShortDate(entry.group.latestUpdatedAt)}</span>
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+                  </button>
                 ) : (
                   <button key={entry.group.groupKey} type="button" className="group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-muted" onClick={() => { setActionMenuId(null); setSingleExpandedGroupKey(entry.group.groupKey); void onLoadGroupSessions?.(entry.group.groupKey); }}>
                     <GroupLeadingIcon kind={entry.group.kind} />
@@ -1588,7 +1688,7 @@ export function DesktopSessionSidebar({
             </div>
             <ScrollArea className="flex-1 [&_[style*=table]]:!block">
               <div className="px-2 py-1">
-                {isSessionSearchActive ? <SessionSearchResults hits={sessionSearch.hits} activeSessionId={activeSessionId} isSearching={sessionSearch.isSearching} isLoadingMore={sessionSearch.isLoadingMore} hasMore={sessionSearch.hasMore} error={sessionSearch.error} onSelect={handleSelect} onLoadMore={sessionSearch.loadMore} /> : visibleSingleSessions.length === 0 ? <div className="px-2 py-6 text-center text-sm text-muted-foreground">暂无会话</div> : <div className="flex flex-col gap-1">{visibleSingleSessions.map((s) => <SessionRow key={s.id} session={s} active={!singleSelectionMode && s.id === activeSessionId} isLoading={isLoading} onSelect={handleSelect} onDelete={onDelete} onRename={onRename} onAutoTitle={onAutoTitle} actionMenuId={actionMenuId} setActionMenuId={setActionMenuId} actionMenuRef={actionMenuRef} setRenameSessionId={setRenameSessionId} onAddToGroup={isReadOnlyGroups ? undefined : setAddToGroupSessionId} onRemoveFromGroup={!isReadOnlyGroups ? (id) => singleExpandedGroup && groupsHook.removeSessionsFromGroup(singleExpandedGroup.groupKey, [id]) : undefined} isInManualGroup={!isReadOnlyGroups} onCompact={s.id === activeSessionId && onCompact ? () => setCompactDialogOpen(true) : undefined} selectionMode={singleSelectionMode} selected={selectedSingleSessionIds.has(s.id)} singleColumn />)}</div>}
+                {isSessionSearchActive ? <SessionSearchResults hits={sessionSearch.hits} activeSessionId={activeSessionId} isSearching={sessionSearch.isSearching} isLoadingMore={sessionSearch.isLoadingMore} hasMore={sessionSearch.hasMore} error={sessionSearch.error} onSelect={handleSelect} onLoadMore={sessionSearch.loadMore} /> : visibleSingleSessions.length === 0 ? <div className="px-2 py-6 text-center text-sm text-muted-foreground">暂无会话</div> : <div className="flex flex-col gap-1">{visibleSingleSessions.map((s) => <SessionRow key={s.id} session={s} active={!singleSelectionMode && s.id === activeSessionId} isLoading={isLoading} onSelect={handleSelect} onDelete={onDelete} onRename={onRename} onAutoTitle={onAutoTitle} actionMenuId={actionMenuId} setActionMenuId={setActionMenuId} actionMenuRef={actionMenuRef} setRenameSessionId={setRenameSessionId} onAddToGroup={isReadOnlyGroups ? undefined : setAddToGroupSessionId} onRemoveFromGroup={!isReadOnlyGroups ? (id) => singleExpandedGroup && groupsHook.removeSessionsFromGroup(singleExpandedGroup.groupKey, [id]) : undefined} isInManualGroup={!isReadOnlyGroups} onCompact={s.id === activeSessionId && onCompact ? () => setCompactDialogOpen(true) : undefined} selectionMode={singleSelectionMode} selected={selectedSingleSessionIds.has(s.id)} singleColumn compact={compactList} />)}</div>}
               </div>
             </ScrollArea>
           </div>
@@ -2089,6 +2189,7 @@ export function DesktopSessionSidebar({
                                   ? () => setCompactDialogOpen(true)
                                   : undefined
                               }
+                              compact={compactList}
                             />
                           );
                         })}

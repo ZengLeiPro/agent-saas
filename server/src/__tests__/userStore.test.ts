@@ -45,6 +45,7 @@ describe("UserStore user ids", () => {
     expect(user.preferences).toEqual({
       authorizationModeEnabled: true,
       sidebarLayout: "single",
+      showSessionListAvatar: false,
     });
 
     const reloaded = new UserStore(filePath);
@@ -53,6 +54,7 @@ describe("UserStore user ids", () => {
     expect(persisted?.preferences).toEqual({
       authorizationModeEnabled: true,
       sidebarLayout: "single",
+      showSessionListAvatar: false,
     });
   });
 });

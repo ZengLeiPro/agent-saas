@@ -14,11 +14,14 @@ export type SidebarLayoutPref = "double" | "single";
 export interface UserPreferences {
   sidebarLayout?: SidebarLayoutPref;
   authorizationModeEnabled?: boolean;
+  /** 会话列表是否显示头像；false（默认）时列表使用紧凑单行布局。 */
+  showSessionListAvatar?: boolean;
 }
 
 export const DEFAULT_USER_PREFERENCES = {
   sidebarLayout: "single",
   authorizationModeEnabled: true,
+  showSessionListAvatar: false,
 } as const satisfies Required<UserPreferences>;
 
 export interface UserRecord {

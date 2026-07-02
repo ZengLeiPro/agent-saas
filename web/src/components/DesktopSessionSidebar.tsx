@@ -30,6 +30,7 @@ import {
   ShieldCheck,
   UserCog,
   Search,
+  LayoutGrid,
 } from "lucide-react";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
@@ -483,6 +484,7 @@ function getNavIcon(tab: AppTab) {
   if (tab === "settings") return Settings2;
   if (tab === "cron") return Clock;
   if (tab === "mcp") return Plug;
+  if (tab === "scenarios") return LayoutGrid;
   return null;
 }
 
@@ -1346,7 +1348,11 @@ export function DesktopSessionSidebar({
   }, [hidden, sortMenuOpen]);
 
   const navItems = useMemo(
-    () => baseNavItems.filter((item) => !item.adminOnly || isAdmin),
+    () => [
+      ...baseNavItems.filter((item) => !item.adminOnly || isAdmin),
+      // 场景库入口仅桌面端展示（不进 baseNavItems，避免移动端 MobileSessionList 跟着出现）
+      { tab: "scenarios" as AppTab, label: "场景库" },
+    ],
     [isAdmin],
   );
 

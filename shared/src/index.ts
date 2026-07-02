@@ -58,6 +58,12 @@ export type {
   AppTab,
   SessionGroup,
   SessionListEntry,
+  ScenarioMode,
+  ScenarioRequirement,
+  ScenarioRole,
+  ScenarioSlot,
+  ScenarioItem,
+  ScenarioLibraryResponse,
   ScheduleAt,
   ScheduleEvery,
   ScheduleCron,
@@ -123,7 +129,7 @@ export type {
   McpDiagnosticTool,
   McpDiagnosticResponse,
 } from "./types/index";
-export { FILE_SORT_LABELS } from "./types/index";
+export { FILE_SORT_LABELS, buildScenarioPrompt } from "./types/index";
 export { saveUserPreferences } from "./lib/preferencesApi";
 export { GLOBAL_TENANT_ID } from "./types/index";
 

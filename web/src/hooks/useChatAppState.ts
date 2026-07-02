@@ -820,7 +820,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // ---- URL 路由同步 ----
   const TAB_LABELS: Partial<Record<AppTab, string>> = {
-    cron: '定时任务', files: '文件管理',
+    cron: '定时任务', files: '文件管理', scenarios: '场景库',
   };
   const setActiveTab = useCallback((tab: AppTab) => {
     setSettingsOpen(false);

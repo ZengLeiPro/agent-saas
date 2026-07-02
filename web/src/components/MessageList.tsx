@@ -196,6 +196,11 @@ interface MessageListProps {
   ttsStateMap?: Record<string, TtsState>;
   agentProfile?: AgentProfile | null;
   sessionParticipants?: SessionParticipants | null;
+  /**
+   * 空会话槽位：会话没有任何消息且不在加载中时渲染（场景推荐卡等）。
+   * 注意：本组件被 memo，上层需传入引用稳定（useMemo）的节点，避免破坏 memo。
+   */
+  emptySlot?: React.ReactNode;
 }
 
 export const MessageList = memo(function MessageList({
@@ -213,6 +218,7 @@ export const MessageList = memo(function MessageList({
   ttsStateMap,
   agentProfile,
   sessionParticipants,
+  emptySlot,
 }: MessageListProps) {
   const NEAR_BOTTOM_THRESHOLD = 150;
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
@@ -303,6 +309,9 @@ export const MessageList = memo(function MessageList({
               <span className="text-sm">加载中...</span>
             </div>
           </div>
+        ) : bubbleItems.length === 0 && !loading && emptySlot ? (
+          // 新会话空白态：展示空会话槽位（场景推荐卡）；一旦产生消息立即让位
+          emptySlot
         ) : bubbleItems.map((item, ri) => {
           const showHeader = headerItemIds.has(item.id);
 

@@ -1,0 +1,1057 @@
+{
+  "$schema": "./scenario-library.schema.md",
+  "version": 1,
+  "updatedAt": "2026-07-03",
+  "roles": [
+    {
+      "id": "boss",
+      "name": "老板/总经理",
+      "sort": 1
+    },
+    {
+      "id": "sales",
+      "name": "销售",
+      "sort": 2
+    },
+    {
+      "id": "cs",
+      "name": "跟单/客服",
+      "sort": 3
+    },
+    {
+      "id": "procurement",
+      "name": "采购",
+      "sort": 4
+    },
+    {
+      "id": "finance",
+      "name": "财务",
+      "sort": 5
+    },
+    {
+      "id": "hr",
+      "name": "人事行政",
+      "sort": 6
+    },
+    {
+      "id": "marketing",
+      "name": "市场/电商运营",
+      "sort": 7
+    },
+    {
+      "id": "production",
+      "name": "生产计划",
+      "sort": 8
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "boss-competitor-daily",
+      "title": "竞品动态晨报",
+      "role": "boss",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "每天早上 8 点，同行的新品、中标、开店、负面，一条消息看完",
+      "story": "你告诉 AI 同事盯哪几家同行 → 它每天自动检索官网、公众号、行业网站和新闻 → 每早把有变化的事项整理成简报推给你，附原文链接",
+      "promptTemplate": "帮我盯着这几家同行：{{competitors}}。重点关注：新品发布、大客户中标、门店或产能变化、价格动作、负面新闻。先出一期今天的竞品简报给我看看效果；我确认后，你每天早上 8 点自动推送给我。",
+      "slots": [
+        {
+          "key": "competitors",
+          "label": "同行公司名单",
+          "example": "同行A、同行B、同行C（写你最关注的 3-5 家）"
+        }
+      ],
+      "requires": [
+        "web",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "manus:120205,120207,120220",
+      "enabled": true
+    },
+    {
+      "id": "boss-daily-biz-report",
+      "title": "经营数据日报",
+      "role": "boss",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "昨天的销售额、回款、库存异常，每天早上主动送到你手上",
+      "story": "管理员把公司 ERP/进销存接入后，你告诉 AI 同事想看哪些数字 → 它每天定时取数 → 早上推送日报，异常项标红并附一句原因分析",
+      "promptTemplate": "我想每天早上收到一份经营日报，内容包括：{{metrics}}。先告诉我你现在能读到公司哪些系统和数据；如果数据够，先出一份昨天的样例日报给我确认，之后每天早上 8 点自动推送。",
+      "slots": [
+        {
+          "key": "metrics",
+          "label": "想看的指标",
+          "example": "昨日销售额、回款金额、新增订单、库存异常"
+        }
+      ],
+      "requires": [
+        "internal_system",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "manus:120049,180017,120096",
+      "enabled": true
+    },
+    {
+      "id": "boss-policy-weekly",
+      "title": "政策与行业风向周报",
+      "role": "boss",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "影响你行业的政策、汇率、原料行情，每周一份「对我们意味着什么」",
+      "story": "告诉 AI 同事你的行业和关注面 → 它每周收集政策发布、行业新闻、汇率与大宗行情 → 输出带解读的周报，每条都说清对公司的影响",
+      "promptTemplate": "我们是{{industry}}企业，主要市场是{{market}}。帮我每周整理一份行业风向周报：相关政策法规、行业大事、原材料和汇率变化，每条都要写清「对我们可能意味着什么」。先出本周这期给我看。",
+      "slots": [
+        {
+          "key": "industry",
+          "label": "所在行业",
+          "example": "运动鞋服制造"
+        },
+        {
+          "key": "market",
+          "label": "主要市场",
+          "example": "国内批发 + 东南亚出口"
+        }
+      ],
+      "requires": [
+        "web",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "manus:120234",
+      "enabled": true
+    },
+    {
+      "id": "boss-industry-research",
+      "title": "行业调研报告",
+      "role": "boss",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "一句话要一份市场调研，AI 同事联网深挖，交付完整报告",
+      "story": "你说要调研什么市场 → AI 同事联网检索行业数据、主要玩家、趋势并交叉核对 → 交付结构完整的调研报告，重要判断都附来源",
+      "promptTemplate": "帮我做一份关于{{topic}}的调研报告，我关心：市场规模与趋势、主要玩家和他们的打法、进入机会与风险。信息要交叉核实、注明来源，最后给出你的判断和建议。",
+      "slots": [
+        {
+          "key": "topic",
+          "label": "调研主题",
+          "example": "宠物用品出海东南亚市场"
+        }
+      ],
+      "requires": [
+        "web"
+      ],
+      "recommendCron": false,
+      "source": "manus:120001,120164,210013,120219",
+      "enabled": true
+    },
+    {
+      "id": "boss-strategy-analysis",
+      "title": "经营策略分析",
+      "role": "boss",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "结合公司数据和市场信息，帮你分析该主推哪条产品线",
+      "story": "你提出经营问题 → AI 同事结合内部数据（发文件或接系统）与外部市场信息交叉分析 → 交付有依据的策略建议，数据结论和判断分开标注",
+      "promptTemplate": "结合{{context}}，帮我分析：{{question}}。先告诉我你能读到哪些内部数据；结合外部市场信息做交叉分析，给出有依据的建议，标清楚哪些是数据结论、哪些是你的判断。",
+      "slots": [
+        {
+          "key": "context",
+          "label": "数据来源",
+          "example": "我们近两年的销售数据（我发你文件）"
+        },
+        {
+          "key": "question",
+          "label": "经营问题",
+          "example": "明年该主推哪条产品线"
+        }
+      ],
+      "requires": [
+        "upload",
+        "web"
+      ],
+      "recommendCron": false,
+      "source": "manus:120109",
+      "enabled": true
+    },
+    {
+      "id": "sales-customer-profile",
+      "title": "客户背景调查建档",
+      "role": "sales",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "报个客户名字，工商、经营、涉诉、新闻全查清，生成客户档案",
+      "story": "拜访前你报客户公司名 → AI 同事检索工商信息、官网、招聘动态、涉诉与新闻 → 几分钟给你一页客户档案，可存档复用",
+      "promptTemplate": "帮我调查一下{{company}}这家公司：工商注册信息、股东与关联企业、主营业务和大致规模、最近的招聘和新闻动态、有没有涉诉风险。整理成一页客户档案给我。",
+      "slots": [
+        {
+          "key": "company",
+          "label": "客户公司名",
+          "example": "泉州XX鞋业有限公司"
+        }
+      ],
+      "requires": [
+        "web"
+      ],
+      "recommendCron": false,
+      "source": "manus:210009,210007,120149",
+      "enabled": true
+    },
+    {
+      "id": "sales-leads-batch",
+      "title": "展会名录批量开发",
+      "role": "sales",
+      "industries": [
+        "manufacturing",
+        "trade"
+      ],
+      "mode": "oneshot",
+      "pitch": "一份展会名录扔进来，逐家补全信息，产出可跟进的线索表",
+      "story": "把展会采购商名录或行业名单发给 AI 同事 → 它逐家检索补全主营、规模、匹配度 → 输出按跟进优先级排序的线索表格",
+      "promptTemplate": "这是一份{{sourceDesc}}的客户名录（文件我发你）。帮我逐家查一下主营业务、规模、和我们产品的匹配度，整理成一张线索表，按值得跟进的优先级排序，说明排序理由。",
+      "slots": [
+        {
+          "key": "sourceDesc",
+          "label": "名录来源",
+          "example": "广交会采购商"
+        }
+      ],
+      "requires": [
+        "upload",
+        "web"
+      ],
+      "recommendCron": false,
+      "source": "manus:120158",
+      "enabled": true
+    },
+    {
+      "id": "sales-visit-brief",
+      "title": "拜访前情报简报",
+      "role": "sales",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "明天要见的客户，头天晚上自动收到一份拜访简报",
+      "story": "AI 同事读你的钉钉日程 → 发现明天有客户拜访 → 自动汇总该客户的往来记录、最新动态、建议话题，头天晚上推给你",
+      "promptTemplate": "以后我钉钉日程里有客户拜访安排时，请提前一晚给我准备拜访简报：这个客户的基本情况、我们和他的往来记录（你能查到的）、他最近的动态、这次拜访建议聊的 3 个话题。先拿我日程里最近的一场拜访演练一次给我看。",
+      "slots": [],
+      "requires": [
+        "dingtalk",
+        "web"
+      ],
+      "recommendCron": true,
+      "source": "manus:120108",
+      "enabled": true
+    },
+    {
+      "id": "sales-meeting-followup",
+      "title": "拜访纪要与跟进",
+      "role": "sales",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "拜访录音丢进来，纪要、待办、跟进话术一次生成",
+      "story": "拜访结束把录音或速记发给 AI 同事 → 它转写整理成纪要，提取承诺事项 → 待办写进钉钉，附一条跟进消息草稿",
+      "promptTemplate": "这是我今天拜访{{company}}的录音/记录（我发你）。帮我：① 整理成一页纪要；② 列出我答应客户的事和下一步动作，重要的帮我建成钉钉待办；③ 起草一条今晚发给客户的跟进消息，我改完自己发。",
+      "slots": [
+        {
+          "key": "company",
+          "label": "客户名",
+          "example": "XX 贸易"
+        }
+      ],
+      "requires": [
+        "upload",
+        "dingtalk"
+      ],
+      "recommendCron": false,
+      "source": "manus:120110,120135",
+      "enabled": true
+    },
+    {
+      "id": "sales-proposal-doc",
+      "title": "方案与报价文档",
+      "role": "sales",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "说清楚客户要什么，AI 同事按公司模板出方案初稿",
+      "story": "你描述客户需求和打算提供的东西 → AI 同事按公司产品资料和模板组织内容 → 交付方案文档初稿，你审核后发客户。把公司模板教给它一次，以后越出越准",
+      "promptTemplate": "帮我给{{company}}出一份方案初稿。客户的需求是：{{needs}}。我们打算提供：{{offering}}。按专业的客户方案结构来写：背景与需求理解、方案内容、实施安排，报价框架留空给我填。",
+      "slots": [
+        {
+          "key": "company",
+          "label": "客户名",
+          "example": "XX 食品"
+        },
+        {
+          "key": "needs",
+          "label": "客户需求",
+          "example": "仓库出入库流程数字化，减少错发漏发"
+        },
+        {
+          "key": "offering",
+          "label": "我们提供什么",
+          "example": "扫码出入库系统 + 钉钉审批打通"
+        }
+      ],
+      "requires": [],
+      "recommendCron": false,
+      "source": "manus:210008,120091,120111",
+      "enabled": true
+    },
+    {
+      "id": "sales-key-account-analysis",
+      "title": "大客户价值分析",
+      "role": "sales",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "Top 20 客户的贡献、复购、流失风险，一张表看清",
+      "story": "把订单/客户数据给 AI 同事 → 它分析贡献占比、复购趋势、沉默时长 → 交付带流失风险打分和维护建议的分析表",
+      "promptTemplate": "这是我们的订单和客户数据（我发你，或告诉你在哪个系统）。帮我分析 top {{count}} 客户：各家的贡献占比、复购趋势、多久没下单了、流失风险打分，给出每家的维护建议，整理成一张分析表。",
+      "slots": [
+        {
+          "key": "count",
+          "label": "分析家数",
+          "example": "20"
+        }
+      ],
+      "requires": [
+        "upload"
+      ],
+      "recommendCron": false,
+      "source": "manus:120131",
+      "enabled": true
+    },
+    {
+      "id": "cs-product-qa",
+      "title": "产品知识问答",
+      "role": "cs",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "把产品资料教给 AI 同事一次，新人随时问、秒回带出处",
+      "story": "管理员把产品手册、常见问题喂给 AI 同事 → 新客服/跟单遇到问题直接问 → 它按公司资料回答并注明出处，资料里没有的就明说",
+      "promptTemplate": "我把我们的产品资料发给你（文件或文档链接），请你学习并记住。以后我和同事问产品问题时，按资料回答并注明出自哪份文件；资料里没有的就明确说没有，不要自己编。现在先复述一下你从资料里学到的产品线结构，我确认你理解对了。",
+      "slots": [],
+      "requires": [
+        "upload",
+        "dingtalk"
+      ],
+      "recommendCron": false,
+      "source": "manus:120041",
+      "enabled": true
+    },
+    {
+      "id": "cs-statement-batch",
+      "title": "对账单批量发送",
+      "role": "cs",
+      "industries": [
+        "manufacturing",
+        "trade"
+      ],
+      "mode": "recurring",
+      "pitch": "每月 1 号，按表格自动给每个客户生成对账单",
+      "story": "你维护一张客户对账表格 → 每月固定日 AI 同事按表格逐家生成个性化对账单 → 你过目确认后发出，回执自动汇总",
+      "promptTemplate": "这是我们的客户对账表格（我发你）。帮我按这个格式给每个客户生成对账单：{{templateDesc}}。先生成 2 家给我检查格式；确认后本月的全部生成，发送前把清单给我过目。以后每月 {{day}} 号自动做这件事。",
+      "slots": [
+        {
+          "key": "templateDesc",
+          "label": "对账单要素",
+          "example": "本月订单明细、金额合计、未结余额"
+        },
+        {
+          "key": "day",
+          "label": "每月几号",
+          "example": "1"
+        }
+      ],
+      "requires": [
+        "upload",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "manus:120170",
+      "enabled": true
+    },
+    {
+      "id": "cs-feedback-analysis",
+      "title": "客诉与评价分析",
+      "role": "cs",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "每月的客诉、差评、退换货自动归类，给出改进建议",
+      "story": "把客诉记录、平台评价给 AI 同事 → 它按问题类型和责任环节归类统计 → 月度报告加改进建议，按月自动推送",
+      "promptTemplate": "这是{{period}}的客户投诉和评价记录（我发你）。帮我：① 按问题类型分类统计；② 找出最集中的 3 个问题和可能的原因；③ 给出改进建议。整理成一份报告。以后每月月初帮我自动做一次上月的。",
+      "slots": [
+        {
+          "key": "period",
+          "label": "统计周期",
+          "example": "6 月份"
+        }
+      ],
+      "requires": [
+        "upload"
+      ],
+      "recommendCron": true,
+      "source": "manus:120094,120126,120073",
+      "enabled": true
+    },
+    {
+      "id": "cs-quote-calc",
+      "title": "外贸报价成本试算",
+      "role": "cs",
+      "industries": [
+        "trade",
+        "manufacturing"
+      ],
+      "mode": "oneshot",
+      "pitch": "报关、运费、关税、汇率，一句话算出 DDP 报价明细",
+      "story": "把公司的报价计算规则教给 AI 同事一次 → 以后报目的地、货量、条款，直接出报价明细表 → 规则变了随时更新",
+      "promptTemplate": "我把我们的报价计算规则发给你（运费表、关税税率、汇率口径、利润率），请学习并记住。然后帮我算：{{cargo}}发到{{destination}}，{{terms}}条款下的报价明细。列出完整计算过程，我核对。",
+      "slots": [
+        {
+          "key": "cargo",
+          "label": "货物与数量",
+          "example": "运动鞋 2000 双（3 个 40HQ 柜）"
+        },
+        {
+          "key": "destination",
+          "label": "目的地",
+          "example": "美国洛杉矶"
+        },
+        {
+          "key": "terms",
+          "label": "贸易条款",
+          "example": "DDP"
+        }
+      ],
+      "requires": [
+        "upload"
+      ],
+      "recommendCron": false,
+      "source": "manus:120050",
+      "enabled": true
+    },
+    {
+      "id": "cs-multilang-translate",
+      "title": "产品资料多语翻译",
+      "role": "cs",
+      "industries": [
+        "trade",
+        "manufacturing"
+      ],
+      "mode": "oneshot",
+      "pitch": "产品规格书翻成西语、阿语版，术语全文档一致",
+      "story": "把产品资料发给 AI 同事 → 它先出关键术语对照表给你确认 → 按确认的术语完成翻译，排版保持原样，疑难点单独标注",
+      "promptTemplate": "这份{{doc}}（我发你）帮我翻译成{{languages}}。产品术语要全文档一致——先给我一张关键术语对照表确认，然后再翻全文。排版保持原样，拿不准的地方单独标出来。",
+      "slots": [
+        {
+          "key": "doc",
+          "label": "文档类型",
+          "example": "产品规格书"
+        },
+        {
+          "key": "languages",
+          "label": "目标语言",
+          "example": "西班牙语和阿拉伯语"
+        }
+      ],
+      "requires": [
+        "upload"
+      ],
+      "recommendCron": false,
+      "source": "manus:120221,120195",
+      "enabled": true
+    },
+    {
+      "id": "proc-price-watch",
+      "title": "原材料行情监测",
+      "role": "procurement",
+      "industries": [
+        "manufacturing"
+      ],
+      "mode": "recurring",
+      "pitch": "大宗原料价格异动，第一时间推到你钉钉",
+      "story": "告诉 AI 同事你采购哪些原料、关注多大的波动 → 它定时查行情 → 异动即时提醒，每周附价格走势小结",
+      "promptTemplate": "我们主要采购{{materials}}。帮我盯着这些原料的市场价格，波动超过{{threshold}}就第一时间提醒我，每周五给我一份价格走势周报。先出一份当前的价格基准表给我确认。",
+      "slots": [
+        {
+          "key": "materials",
+          "label": "原料清单",
+          "example": "EVA、天然橡胶、瓦楞纸"
+        },
+        {
+          "key": "threshold",
+          "label": "提醒阈值",
+          "example": "5%"
+        }
+      ],
+      "requires": [
+        "web",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "manus:120129,120076",
+      "enabled": true
+    },
+    {
+      "id": "proc-compare-sheet",
+      "title": "供应商比价与对账整理",
+      "role": "procurement",
+      "industries": [
+        "manufacturing",
+        "trade",
+        "retail"
+      ],
+      "mode": "oneshot",
+      "pitch": "多家报价单扔进来，自动整理成一张能看的比价表",
+      "story": "把供应商发来的报价单（表格、PDF、截图都行）发给 AI 同事 → 它统一口径整理成比价表，标出综合最优 → 疑点单独提醒",
+      "promptTemplate": "这是{{count}}家供应商的报价单（文件我发你）。帮我统一整理成一张比价表：单价、起订量、交期、付款条件，折算到同一口径比较，标出综合最优的，把你发现的疑点（比如口径不一致、漏报的项）单独列出来。",
+      "slots": [
+        {
+          "key": "count",
+          "label": "供应商数量",
+          "example": "4"
+        }
+      ],
+      "requires": [
+        "upload"
+      ],
+      "recommendCron": false,
+      "source": "kaiyan:custom",
+      "enabled": true
+    },
+    {
+      "id": "proc-tender-watch",
+      "title": "招标与供应商监测",
+      "role": "procurement",
+      "industries": [
+        "manufacturing",
+        "trade"
+      ],
+      "mode": "recurring",
+      "pitch": "盯着招标平台和目标供应商，有匹配的标即时推送",
+      "story": "告诉 AI 同事盯哪些平台、什么条件 → 它定时检索 → 匹配的信息即时推送附链接，每周五汇总周报",
+      "promptTemplate": "帮我盯着{{targets}}，出现{{criteria}}就推送给我，附链接和关键信息摘要，每周五再汇总一份周报。先做一次全面检索，给我当前的基线。",
+      "slots": [
+        {
+          "key": "targets",
+          "label": "监测对象",
+          "example": "这几个招标网站和采购平台（列给你）"
+        },
+        {
+          "key": "criteria",
+          "label": "匹配条件",
+          "example": "和我们产品品类匹配的招标公告"
+        }
+      ],
+      "requires": [
+        "web",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "manus:120076",
+      "enabled": true
+    },
+    {
+      "id": "fin-receivable-remind",
+      "title": "应收回款跟踪提醒",
+      "role": "finance",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "哪家客户的款该催了，每周自动提醒到人",
+      "story": "维护一张应收账款表（或接入财务/CRM 系统）→ AI 同事每周核对账期 → 到期未回款的按负责人整理成催收清单，逾期的重点标出",
+      "promptTemplate": "这是我们的应收账款表（我发你，或告诉你数据在哪个系统）。帮我每周一核对：哪些款项即将到期、哪些已经逾期，按业务负责人整理成催收提醒清单发给我。先出本周这期给我确认格式。",
+      "slots": [],
+      "requires": [
+        "upload",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "kaiyan:custom",
+      "enabled": true
+    },
+    {
+      "id": "fin-budget-check",
+      "title": "预算汇总校验",
+      "role": "finance",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "各部门报的预算表，一次合并、口径校验、疑点标注",
+      "story": "把各部门预算表发给 AI 同事 → 它合并汇总，检查口径不一致和异常增减 → 交付汇总总表加疑点清单",
+      "promptTemplate": "这是各部门报上来的预算表（我发你）。帮我：① 合并成公司总表；② 检查各部门口径是否一致（科目、周期、含税口径）；③ 和上一期数据相比异常的增减标出来，形成疑点清单，我逐项去确认。",
+      "slots": [],
+      "requires": [
+        "upload"
+      ],
+      "recommendCron": false,
+      "source": "manus:120172",
+      "enabled": true
+    },
+    {
+      "id": "fin-invoice-ledger",
+      "title": "发票与单据整理台账",
+      "role": "finance",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "一堆发票拍照扔进来，自动识别整理成台账",
+      "story": "把发票、收据的照片或 PDF 发给 AI 同事 → 它识别抬头、税号、金额、税率、日期 → 整理成规范台账表格，异常票据单独标出",
+      "promptTemplate": "这批发票和单据（文件我发你）帮我整理成台账：开票方、金额、税率、开票日期、发票号，全部录成表格。识别不清或信息异常的单独列出来提醒我人工核对，不要猜。",
+      "slots": [],
+      "requires": [
+        "upload"
+      ],
+      "recommendCron": false,
+      "source": "kaiyan:custom",
+      "enabled": true
+    },
+    {
+      "id": "hr-survey-flow",
+      "title": "问卷表单全流程",
+      "role": "hr",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "说个主题，问卷创建、催填、回收分析一条龙",
+      "story": "你说要做什么调查 → AI 同事设计问卷发到钉钉 → 定时催未填人员 → 截止后自动出分析报告",
+      "promptTemplate": "帮我做一个{{topic}}问卷：先设计题目给我确认，然后发给{{audience}}，{{deadline}}截止，中途提醒还没填的人。截止后把结果分析成一份报告给我。",
+      "slots": [
+        {
+          "key": "topic",
+          "label": "调查主题",
+          "example": "年会满意度"
+        },
+        {
+          "key": "audience",
+          "label": "调查对象",
+          "example": "全体员工"
+        },
+        {
+          "key": "deadline",
+          "label": "截止时间",
+          "example": "本周五 18:00"
+        }
+      ],
+      "requires": [
+        "dingtalk"
+      ],
+      "recommendCron": false,
+      "source": "manus:120202,120196,120166",
+      "enabled": true
+    },
+    {
+      "id": "hr-meeting-minutes",
+      "title": "会议纪要与待办分发",
+      "role": "hr",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "会议录音丢进来，纪要、待办、责任人自动分发",
+      "story": "会后把录音或闪记发给 AI 同事 → 它整理成结构化纪要，提取决议和待办 → 待办分发到责任人，纪要归档到群",
+      "promptTemplate": "这是{{meeting}}的会议录音/记录（我发你）。帮我：① 整理成纪要（议题、讨论要点、决议）；② 提取所有待办事项、责任人和截止时间；③ 把待办发给对应的人，纪要发到会议群归档。发之前先给我过目。",
+      "slots": [
+        {
+          "key": "meeting",
+          "label": "会议名称",
+          "example": "周一经营例会"
+        }
+      ],
+      "requires": [
+        "upload",
+        "dingtalk"
+      ],
+      "recommendCron": false,
+      "source": "manus:120197,120055,180016",
+      "enabled": true
+    },
+    {
+      "id": "hr-schedule-coordinate",
+      "title": "会议协调与日程安排",
+      "role": "hr",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "「约王总李经理下周开会」，AI 同事查空档、发邀请",
+      "story": "你说要约谁开什么会 → AI 同事查各方钉钉日程找共同空档 → 给你 2-3 个时间选项，你定了它发会议邀请",
+      "promptTemplate": "帮我约{{people}}下周开{{topic}}会，大约{{duration}}。查一下大家的钉钉日程，找 2-3 个共同空档给我选，我定了之后你发会议邀请。",
+      "slots": [
+        {
+          "key": "people",
+          "label": "参会人",
+          "example": "王总、李经理、我"
+        },
+        {
+          "key": "topic",
+          "label": "会议主题",
+          "example": "新品定价"
+        },
+        {
+          "key": "duration",
+          "label": "时长",
+          "example": "1 小时"
+        }
+      ],
+      "requires": [
+        "dingtalk"
+      ],
+      "recommendCron": false,
+      "source": "manus:120200,120201,120199",
+      "enabled": true
+    },
+    {
+      "id": "hr-recruit-content",
+      "title": "招聘内容制作",
+      "role": "hr",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "一份 JD，变成小红书风格招聘帖和内推海报",
+      "story": "把职位要求给 AI 同事 → 它按不同平台风格改写并配图 → 交付小红书帖、朋友圈文案、内推海报一套素材",
+      "promptTemplate": "我们在招{{position}}，要求是：{{requirements}}。帮我做成三种招聘素材：① 小红书风格图文帖；② 员工朋友圈转发文案；③ 一张内推海报。突出我们的亮点：{{highlights}}。",
+      "slots": [
+        {
+          "key": "position",
+          "label": "职位",
+          "example": "外贸业务员"
+        },
+        {
+          "key": "requirements",
+          "label": "核心要求",
+          "example": "英语流利，2 年以上外贸经验"
+        },
+        {
+          "key": "highlights",
+          "label": "公司亮点",
+          "example": "提成上不封顶、每年两次团建旅游"
+        }
+      ],
+      "requires": [],
+      "recommendCron": false,
+      "source": "manus:120188",
+      "enabled": true
+    },
+    {
+      "id": "hr-onboarding-qa",
+      "title": "新员工入职问答",
+      "role": "hr",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "新人问「怎么报销、WiFi 密码、找谁开票」，随时秒回",
+      "story": "管理员把入职指南、制度文档教给 AI 同事 → 新员工随时提问 → 它按公司制度回答，说清流程和对接人",
+      "promptTemplate": "我把公司的入职指南和常用制度发给你，请学习记住。以后新同事问行政、报销、考勤、IT 这类问题，你按制度回答，说清楚流程和该找谁。先自测一下：列出你学到的 10 个新人最常问的问题和答案，我核对。",
+      "slots": [],
+      "requires": [
+        "upload",
+        "dingtalk"
+      ],
+      "recommendCron": false,
+      "source": "manus:120045",
+      "enabled": true
+    },
+    {
+      "id": "hr-travel-plan",
+      "title": "差旅安排",
+      "role": "hr",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "「下周去广州出差」，行程比价、日程写入、审批草稿一次备齐",
+      "story": "你说出差需求 → AI 同事查高铁/航班和酒店给你 2 套比价方案 → 你选定后行程写入钉钉日程，出差审批草稿一并备好",
+      "promptTemplate": "帮我安排{{trip}}的行程：查一下合适的高铁/航班和酒店（我的偏好：{{prefs}}），给我 2 套方案比价。我选定后，把行程写进我的钉钉日程，出差审批的草稿也帮我准备好。",
+      "slots": [
+        {
+          "key": "trip",
+          "label": "出差安排",
+          "example": "下周三到周五去广州见客户"
+        },
+        {
+          "key": "prefs",
+          "label": "偏好",
+          "example": "高铁优先、酒店离客户公司近"
+        }
+      ],
+      "requires": [
+        "web",
+        "dingtalk"
+      ],
+      "recommendCron": false,
+      "source": "manus:120194,120204",
+      "enabled": true
+    },
+    {
+      "id": "mkt-competitor-watch",
+      "title": "竞品内容监测拆解",
+      "role": "marketing",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "竞品的抖音、公众号、小红书在打什么卖点，每周拆解",
+      "story": "告诉 AI 同事盯哪些竞品账号 → 它每周采集新内容 → 拆解选题、卖点、表现，输出周报和可借鉴点",
+      "promptTemplate": "帮我每周盯这些竞品的内容动作：{{accounts}}。拆解他们本周发了什么、主打什么卖点、哪些内容数据表现好，最后给我 3 条我们可以借鉴的点。先出本周这期给我看效果。",
+      "slots": [
+        {
+          "key": "accounts",
+          "label": "竞品账号",
+          "example": "XX 品牌的抖音号和公众号、XX 的小红书号"
+        }
+      ],
+      "requires": [
+        "web",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "manus:180004,180011,180005",
+      "enabled": true
+    },
+    {
+      "id": "mkt-content-calendar",
+      "title": "内容选题与脚本周报",
+      "role": "marketing",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "每周五收到下周的选题表，勾选后直接展开成脚本",
+      "story": "把账号定位告诉 AI 同事 → 它每周结合热点出下周选题表 → 你勾选，它把选中的展开成脚本或图文初稿",
+      "promptTemplate": "我们的账号定位是{{positioning}}，发布节奏是{{frequency}}。帮我出下周的内容选题表，每条附一句为什么值得做；我勾选后你把选中的展开成脚本初稿。以后每周五自动出下一周的选题。",
+      "slots": [
+        {
+          "key": "positioning",
+          "label": "账号定位",
+          "example": "面向工厂老板讲数字化的抖音号"
+        },
+        {
+          "key": "frequency",
+          "label": "发布节奏",
+          "example": "每周 3 条短视频 + 1 篇公众号"
+        }
+      ],
+      "requires": [
+        "web"
+      ],
+      "recommendCron": true,
+      "source": "manus:180019,180009,210002",
+      "enabled": true
+    },
+    {
+      "id": "mkt-content-repurpose",
+      "title": "一鱼多吃内容改写",
+      "role": "marketing",
+      "industries": [
+        "all"
+      ],
+      "mode": "oneshot",
+      "pitch": "一篇文章变出小红书图文、口播稿、信息图",
+      "story": "把一篇内容给 AI 同事 → 它按各平台特性改写 → 多平台素材包一次交付",
+      "promptTemplate": "这篇内容（我发你）帮我改成：① 小红书图文（带话题标签）；② 60 秒短视频口播稿；③ 一张信息长图的文案结构。核心信息保持一致，各平台的风格要到位。",
+      "slots": [],
+      "requires": [
+        "upload"
+      ],
+      "recommendCron": false,
+      "source": "manus:210011,210003,120209",
+      "enabled": true
+    },
+    {
+      "id": "mkt-product-visuals",
+      "title": "商品素材批量生成",
+      "role": "marketing",
+      "industries": [
+        "ecommerce",
+        "retail",
+        "trade"
+      ],
+      "mode": "oneshot",
+      "pitch": "30 个 SKU 白底图，批量变场景图和详情素材",
+      "story": "把产品图和要求发给 AI 同事 → 它先出样确认风格 → 批量生成场景图、海报素材，按 SKU 归档交付",
+      "promptTemplate": "这批产品图（我发你）帮我批量做成{{style}}风格的场景图，用途是{{usage}}。先做 2 张给我确认风格，确认后批量出，按产品编号命名归档打包给我。",
+      "slots": [
+        {
+          "key": "style",
+          "label": "风格",
+          "example": "居家生活场景、暖色调"
+        },
+        {
+          "key": "usage",
+          "label": "用途",
+          "example": "电商详情页头图"
+        }
+      ],
+      "requires": [
+        "upload"
+      ],
+      "recommendCron": false,
+      "source": "manus:120186,120222,120190",
+      "enabled": true
+    },
+    {
+      "id": "mkt-sentiment-watch",
+      "title": "舆情与差评监测",
+      "role": "marketing",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "品牌在小红书、抖音、黑猫被提到什么，负面即时推送",
+      "story": "告诉 AI 同事品牌词和监测范围 → 它定时检索社媒和投诉平台 → 负面即时提醒附链接，每周出舆情小结",
+      "promptTemplate": "帮我盯着「{{brand}}」在小红书、抖音、黑猫投诉等平台的提及。负面内容第一时间推给我，附链接和内容摘要；每周五出一份舆情周报。先做一次全面排查，给我当前的舆情基线。",
+      "slots": [
+        {
+          "key": "brand",
+          "label": "品牌词",
+          "example": "品牌名及常见别称"
+        }
+      ],
+      "requires": [
+        "web",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "manus:180014,120123",
+      "enabled": true
+    },
+    {
+      "id": "mkt-ads-weekly",
+      "title": "投放数据周报",
+      "role": "marketing",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "每周一上周的投放数据汇总，附调整建议",
+      "story": "确定取数方式（系统对接或每周导出给它）→ AI 同事每周一汇总消耗、转化、成本变化 → 周报附具体调整建议",
+      "promptTemplate": "我们在{{platforms}}投放。帮我每周一把上周的投放数据汇总成周报：消耗、转化、成本变化趋势，并给出调整建议。先告诉我你能通过什么方式拿到数据（系统对接，或者我每周把报表导出发给你），确定后出第一期。",
+      "slots": [
+        {
+          "key": "platforms",
+          "label": "投放平台",
+          "example": "巨量引擎和腾讯广告"
+        }
+      ],
+      "requires": [
+        "upload",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "manus:180001,180002,120171",
+      "enabled": true
+    },
+    {
+      "id": "mkt-trend-watch",
+      "title": "行业趋势监测",
+      "role": "marketing",
+      "industries": [
+        "all"
+      ],
+      "mode": "recurring",
+      "pitch": "你的品类在社媒上什么在火，每周一份趋势报告",
+      "story": "告诉 AI 同事你的品类和市场 → 它每周汇总社媒热点、款式、卖点、价格带和行业新动向 → 趋势周报附对你们的启示",
+      "promptTemplate": "我们做{{category}}。帮我每周出一份趋势报告：社媒平台上这个品类什么在火（话题、款式、卖点、价格带）、行业媒体有什么新动向，最后给 3 条对我们产品和内容的启示。先出本周这期。",
+      "slots": [
+        {
+          "key": "category",
+          "label": "品类与市场",
+          "example": "运动鞋服，主打东南亚市场"
+        }
+      ],
+      "requires": [
+        "web",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "manus:120130,120106,180006",
+      "enabled": true
+    },
+    {
+      "id": "prod-delay-warning",
+      "title": "订单交期风险预警",
+      "role": "production",
+      "industries": [
+        "manufacturing"
+      ],
+      "mode": "recurring",
+      "pitch": "在产订单谁有延误风险，提前 3 天预警到生产群",
+      "story": "管理员把生产/订单系统接入 → AI 同事每天核对在产订单进度与交期 → 有风险的提前预警：哪张单、卡在哪、建议动作",
+      "promptTemplate": "帮我每天检查在产订单的进度和交期（先告诉我你现在能读到哪些生产数据）。有交期风险的提前 {{days}} 天预警：哪张单、卡在哪个环节、建议怎么处理。数据确认没问题后，每天早上推送到生产群。",
+      "slots": [
+        {
+          "key": "days",
+          "label": "提前几天",
+          "example": "3"
+        }
+      ],
+      "requires": [
+        "internal_system",
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "manus:120120",
+      "enabled": true
+    },
+    {
+      "id": "prod-daily-report",
+      "title": "生产日报自动汇总",
+      "role": "production",
+      "industries": [
+        "manufacturing"
+      ],
+      "mode": "recurring",
+      "pitch": "各车间报工数据，自动汇总成一份生产日报",
+      "story": "车间在钉钉报工或填表 → AI 同事每天定时汇总产量、完成率、异常 → 生产日报推送管理群",
+      "promptTemplate": "我们车间每天在{{source}}报工。帮我每天晚上{{time}}汇总成生产日报：各线产量、计划完成率、异常和停线记录，推送到管理群。先拿今天的数据出一份样例给我确认。",
+      "slots": [
+        {
+          "key": "source",
+          "label": "报工方式",
+          "example": "钉钉表格/钉钉日志"
+        },
+        {
+          "key": "time",
+          "label": "汇总时间",
+          "example": "19:00"
+        }
+      ],
+      "requires": [
+        "dingtalk"
+      ],
+      "recommendCron": true,
+      "source": "kaiyan:custom",
+      "enabled": true
+    }
+  ]
+}

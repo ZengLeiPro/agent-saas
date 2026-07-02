@@ -45,6 +45,8 @@ interface ChatTabContentProps {
   readOnly?: boolean;
   agentProfile?: AgentProfile | null;
   sessionParticipants?: SessionParticipants | null;
+  /** 空会话槽位（透传给 MessageList）：新会话空白态展示的内容，如场景推荐卡 */
+  emptySlot?: React.ReactNode;
 }
 
 export function ChatTabContent({
@@ -83,6 +85,7 @@ export function ChatTabContent({
   readOnly,
   agentProfile,
   sessionParticipants,
+  emptySlot,
 }: ChatTabContentProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -101,6 +104,7 @@ export function ChatTabContent({
         ttsStateMap={ttsStateMap}
         agentProfile={agentProfile}
         sessionParticipants={sessionParticipants}
+        emptySlot={readOnly ? undefined : emptySlot}
       />
 
       <div className="shrink-0">

@@ -27,6 +27,7 @@ import {
   createUsageRouter,
   createArtifactsRouter,
   createSearchRouter,
+  createScenariosRouter,
 } from "../routes/index.js";
 import { createAuthRouter } from "../routes/auth.js";
 import { requireAdmin } from "../auth/middleware.js";
@@ -151,6 +152,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     "/api/search",
     createSearchRouter({ agentCwd, userStore: runtime.userStore }),
   );
+  // 场景库：预置场景卡片（所有登录用户可读；服务端过滤未上架条目并剥离内部 source 字段）
+  app.use("/api/scenarios", createScenariosRouter());
   const webChannel = channelManager.getChannel<WebChannel>("web");
   app.use(
     "/api",

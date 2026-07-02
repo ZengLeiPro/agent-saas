@@ -41,7 +41,9 @@ const ToolControlsManagerPanel = lazy(() => import("@/components/ToolControlsMan
 const SettingsModal = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsModal })));
 const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
 const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.PlatformAdminShell })));
+const ScenariosPanelLazy = lazy(() => import("@/components/scenarios/ScenariosPanel").then(m => ({ default: m.ScenariosPanel })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
+import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
 const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
 
 const SuspenseFallback = (
@@ -104,6 +106,7 @@ export function DesktopLayout(props: LayoutProps) {
   // Header 标题：根据 activeTab 动态显示
   const headerTitle = useMemo(() => {
     if (activeTab === "profile") return "我的 Agent";
+    if (activeTab === "scenarios") return "场景库";
     if (activeTab === "cron") return "定时任务";
     if (activeTab === "tenants") return "组织分析";
     if (activeTab === "tenant-admin") return "组织分析";
@@ -128,8 +131,10 @@ export function DesktopLayout(props: LayoutProps) {
   const [tenantAdminMounted, setTenantAdminMounted] = useState(false);
   const [platformAdminMounted, setPlatformAdminMounted] = useState(false);
   const [trashMounted, setTrashMounted] = useState(false);
+  const [scenariosMounted, setScenariosMounted] = useState(false);
   useEffect(() => {
     if (activeTab === "cron" && !cronMounted) setCronMounted(true);
+    if (activeTab === "scenarios" && !scenariosMounted) setScenariosMounted(true);
     if (activeTab === "tenants" && !tenantsMounted && isPlatformAdmin) setTenantsMounted(true);
     if (activeTab === "profile" && !profileMounted) setProfileMounted(true);
     if (activeTab === "skills" && !skillsMounted && isAdmin) setSkillsMounted(true);
@@ -139,7 +144,35 @@ export function DesktopLayout(props: LayoutProps) {
     if (activeTab === "tenant-admin" && !tenantAdminMounted && isAdmin) setTenantAdminMounted(true);
     if (activeTab === "platform-admin" && !platformAdminMounted && isPlatformAdmin) setPlatformAdminMounted(true);
     if (activeTab === "trash" && !trashMounted) setTrashMounted(true);
-  }, [activeTab, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, tenantAdminMounted, platformAdminMounted, trashMounted, isAdmin, isPlatformAdmin]);
+  }, [activeTab, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, tenantAdminMounted, platformAdminMounted, trashMounted, scenariosMounted, isAdmin, isPlatformAdmin]);
+
+  // ---- 场景库「试一试」链路 ----
+  // 整页场景库里点「试一试」：新建会话 → 预填起手 prompt（不自动发送）→ 切回聊天视图。
+  // 顺序不能反：newSession 内部会清空输入框（clearComposer），必须先建会话再 setInput。
+  const handleTryScenario = useCallback((prompt: string) => {
+    newSession();
+    setInput(prompt);
+    setActiveTab("chat");
+  }, [newSession, setInput, setActiveTab]);
+
+  // 空会话推荐卡：当前会话本来就是空的，直接预填当前输入框即可，无需再新建会话
+  const handlePrefillScenario = useCallback((prompt: string) => {
+    setInput(prompt);
+  }, [setInput]);
+
+  // 「查看全部场景」：push 版切换，浏览器后退可回到聊天
+  const handleViewAllScenarios = useCallback(() => {
+    pushActiveTab("scenarios");
+  }, [pushActiveTab]);
+
+  // 新会话空白态的推荐槽位。MessageList 被 memo，这里必须用 useMemo 保持节点引用稳定，
+  // 避免输入框每次击键（input 变化触发本组件重渲染）都打穿 MessageList 的 memo。
+  const chatEmptySlot = useMemo(() => (
+    <EmptySessionScenarios
+      onTryScenario={handlePrefillScenario}
+      onViewAll={handleViewAllScenarios}
+    />
+  ), [handlePrefillScenario, handleViewAllScenarios]);
 
   // 非 admin 用户访问 admin-only tab 时重定向到 chat
   // 组织分析对 admin 可见；平台分析仅限平台 admin。
@@ -303,6 +336,7 @@ export function DesktopLayout(props: LayoutProps) {
               readOnly={isTrashPreview}
               agentProfile={agentProfile}
               sessionParticipants={sessionParticipants}
+              emptySlot={chatEmptySlot}
             />
           </div>
           {rightPanelOpen && (
@@ -338,6 +372,13 @@ export function DesktopLayout(props: LayoutProps) {
             </>
           )}
         </div>
+        {scenariosMounted && (
+          <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "scenarios" && "hidden")}>
+            <Suspense fallback={SuspenseFallback}>
+              <ScenariosPanelLazy onTryScenario={handleTryScenario} />
+            </Suspense>
+          </div>
+        )}
         {cronMounted && (
           <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "cron" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>

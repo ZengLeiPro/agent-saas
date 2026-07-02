@@ -28,3 +28,7 @@ export {
   type ArtifactsRouterOptions,
 } from "./artifacts.js";
 export { createSearchRouter, type SearchRouterOptions } from "./search.js";
+export {
+  createScenariosRouter,
+  type ScenariosRouterOptions,
+} from "./scenarios.js";

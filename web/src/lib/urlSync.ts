@@ -88,6 +88,7 @@ export function parseUrl(pathname = window.location.pathname): ParsedUrlState {
   if (pathname === '/files') return { tab: 'chat', sessionId: null, settingsSection: 'files', adminSettings: null };
   if (pathname === '/agents' || pathname === '/all-agents') return { tab: 'chat', sessionId: null, settingsSection: 'all-agents', adminSettings: null };
   if (pathname === '/profile') return { tab: 'profile', sessionId: null, settingsSection: null, adminSettings: null };
+  if (pathname === '/scenarios') return { tab: 'scenarios', sessionId: null, settingsSection: null, adminSettings: null };
   if (pathname === '/mcp') return { tab: 'chat', sessionId: null, settingsSection: 'mcp', adminSettings: null };
   if (pathname === '/users' || pathname === '/skills' || pathname === '/usage' || pathname === '/tenant-admin') {
     return { tab: 'tenant-admin', sessionId: null, settingsSection: null, adminSettings: null };
@@ -107,6 +108,7 @@ export function buildUrl(tab: AppTab, sessionId: string | null): string {
   if (tab === 'platform-admin') return '/platform-admin';
   if (tab === 'files') return '/files';
   if (tab === 'profile') return '/profile';
+  if (tab === 'scenarios') return '/scenarios';
   if (tab === 'skills') return '/skills';
   if (tab === 'usage') return '/usage';
   if (tab === 'mcp') return '/mcp';

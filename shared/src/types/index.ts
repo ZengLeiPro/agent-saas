@@ -46,6 +46,16 @@ export { baseNavItems, formatShortDate, sourceDisplayText } from "./sidebar";
 export type { SessionGroup, SessionListEntry } from "./sessionGroup";
 
 export type {
+  ScenarioMode,
+  ScenarioRequirement,
+  ScenarioRole,
+  ScenarioSlot,
+  ScenarioItem,
+  ScenarioLibraryResponse,
+} from "./scenario";
+export { buildScenarioPrompt } from "./scenario";
+
+export type {
   ScheduleAt,
   ScheduleEvery,
   ScheduleCron,

@@ -70,7 +70,7 @@ export function DesktopLayout(props: LayoutProps) {
 
   const { user: authUser, updatePreferences } = useAuth();
   const sidebarLayout = authUser?.preferences?.sidebarLayout ?? "double";
-  const authorizationModeEnabled = authUser?.role === "admin" && authUser?.preferences?.authorizationModeEnabled === true;
+  const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
   const handleSidebarLayoutChange = useCallback((layout: "double" | "single") => {
     updatePreferences({ sidebarLayout: layout });
     void saveUserPreferences({ sidebarLayout: layout }).then((saved) => {
@@ -296,7 +296,7 @@ export function DesktopLayout(props: LayoutProps) {
               selectedModel={selectedModel}
               sessionId={sessionId}
               onModelChange={onModelChange}
-              canAutoApproveRunShell={isAdmin && !authorizationModeEnabled}
+              canAutoApproveRunShell={!authorizationModeEnabled}
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}

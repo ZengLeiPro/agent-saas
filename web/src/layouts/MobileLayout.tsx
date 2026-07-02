@@ -63,7 +63,7 @@ export function MobileLayout(props: LayoutProps) {
     agentProfile, sessionParticipants,
   } = props;
   const { user: authUser } = useAuth();
-  const authorizationModeEnabled = authUser?.role === "admin" && authUser?.preferences?.authorizationModeEnabled === true;
+  const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const closeDrawer = useCallback(() => {
@@ -327,7 +327,7 @@ export function MobileLayout(props: LayoutProps) {
               selectedModel={selectedModel}
               sessionId={sessionId}
               onModelChange={onModelChange}
-              canAutoApproveRunShell={isAdmin && !authorizationModeEnabled}
+              canAutoApproveRunShell={!authorizationModeEnabled}
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}

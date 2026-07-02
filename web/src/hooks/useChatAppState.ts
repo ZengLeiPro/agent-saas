@@ -202,7 +202,8 @@ function runtimeStatusFromSessionStatus(status: string): Parameters<typeof upser
 
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user } = useAuth();
-  const authorizationModeEnabled = user?.role === 'admin' && user?.preferences?.authorizationModeEnabled === true;
+  // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
+  const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
 
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());

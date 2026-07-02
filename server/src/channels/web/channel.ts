@@ -1338,7 +1338,7 @@ export class WebChannel implements BaseChannel {
   }
 
   private async handleApprovalPolicy(client: WsClient, msg: import('./wsTypes.js').WsApprovalPolicyMessage): Promise<void> {
-    if (client.user?.role !== 'admin') {
+    if (!client.user) {
       this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
       return;
     }
@@ -1351,6 +1351,12 @@ export class WebChannel implements BaseChannel {
     const record = await runStore.get(runId);
     if (!record) {
       this.wsSend(client.ws, { type: 'error', message: 'Run not found' });
+      return;
+    }
+    // 归属校验：平台 admin 可操作任意 run；其他用户（含组织 admin）只能改自己的 run。
+    const isPlatformAdmin = client.user.role === 'admin' && client.user.tenantId === DEFAULT_TENANT_ID;
+    if (!isPlatformAdmin && record.userId !== client.user.sub) {
+      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
       return;
     }
     if (msg.sessionId && record.sessionId !== msg.sessionId) {
@@ -1698,7 +1704,8 @@ export class WebChannel implements BaseChannel {
     const ws = client.ws;
     const user = client.user;
     const executionConfig = this.config.executionConfig ?? DEFAULT_EXECUTION_CONFIG;
-    const approvalPolicy = user?.role === 'admin' && wantsToolAutoApproval(msg.approvalPolicy)
+    // 授权模式对所有已认证用户生效（2026-07-02 起）：用户通过账户设置自行切换。
+    const approvalPolicy = user && wantsToolAutoApproval(msg.approvalPolicy)
       ? { autoApproveTools: true }
       : undefined;
 
@@ -2201,11 +2208,13 @@ export class WebChannel implements BaseChannel {
         ) {
           return { allow: true, message: 'auto-approved by policy' };
         }
-        // 非 admin 用户的 permission_request 统一处理
+        // 非平台用户（组织 admin + 普通用户）开启授权模式时走「沙箱审计后自动裁决」：
+        // 免除的是人工确认，不豁免路径/命令安全审计；未开启授权模式则落到下方人工审批流程。
         if (
           event.type === 'permission_request'
-          && user?.role !== 'admin'
           && user
+          && !(user.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID)
+          && approvalPolicy?.autoApproveTools === true
         ) {
           // 安全工具：无路径风险，直接放行
           const safeTools = new Set([
@@ -2348,11 +2357,12 @@ export class WebChannel implements BaseChannel {
         const isPlanMode = event.type === 'permission_request'
           && (event.toolName === 'EnterPlanMode' || event.toolName === 'ExitPlanMode');
         if (connectionAbortController.signal.aborted && event.type !== 'ask_user' && !isPlanMode) {
-          // Admin 断连时自动放行（等同于 bypassPermissions 行为）
-          if (user?.role === 'admin') {
+          // 平台 admin 断连时自动放行（等同于 bypassPermissions 行为）；
+          // 其他用户（含组织 admin）若未走上方授权模式自动裁决，说明其要求人工审批，
+          // 断连时无法确认 → 拒绝。
+          if (user?.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID) {
             return { allow: true };
           }
-          // 非 admin 不应到达此处（已在上方处理），fallback 拒绝
           return { allow: false, message: 'WebSocket connection closed' };
         }
         // ExitPlanMode: 读取最新 plan 文件内容（按用户 cwd 隔离）

@@ -468,6 +468,69 @@ describe('RawAgentLoop', () => {
     });
   });
 
+  it('auto-approves workspace writes for regular tenant users when tool auto-approval is enabled', async () => {
+    // 授权模式对所有已认证用户生效（2026-07-02 起）：普通用户开启后
+    // Write/Edit 免人工审批；Shell 的宿主隔离兜底另行覆盖（toolRuntime.test.ts）。
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-write-auto-user-'));
+    cleanupDirs.add(cwd);
+    const eventPath = join(cwd, 'session.runtime-events.jsonl');
+    const transcriptPath = join(cwd, 'session.jsonl');
+    const eventStore = new FileEventStore(eventPath);
+    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-write-auto-user');
+    const loop = new RawAgentLoop({
+      modelAdapter: new FakeToolCallingAdapter(),
+      eventStore,
+      approvalStore,
+      transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
+      toolRuntime: new PlatformToolRuntime(),
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '写文件' },
+        prompt: '写文件',
+        instructions: '必须调用 Write。',
+        maxTurns: 4,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-write-auto-user',
+        sessionId: 'session-write-auto-user',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'user-1', username: 'wain_user', role: 'user', tenantId: 'wain-test' },
+        },
+        approvalPolicy: { autoApproveTools: true },
+      },
+    ));
+
+    expect(readFileSync(join(cwd, 'approved.txt'), 'utf-8')).toBe('RAW_LOOP_OK');
+    expect(events.map((event) => event.type)).toContain('tool_result');
+    expect(events.at(-1)).toEqual({ type: 'done' });
+    expect((await approvalStore.list('session-write-auto-user'))).toEqual([]);
+
+    const eventLog = await readFile(eventPath, 'utf-8');
+    expect(eventLog).not.toContain('"type":"approval_requested"');
+    const auditEvent = eventLog
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as any)
+      .find((event) => event.type === 'tool_audit');
+    expect(auditEvent).toMatchObject({
+      toolCallId: 'call_write_1',
+      toolId: 'Write',
+      toolName: 'Write',
+      risk: 'workspace_write',
+      status: 'success',
+      authorization: {
+        source: 'policy_auto',
+        approved: true,
+      },
+    });
+  });
+
   it('keeps the legacy Shell auto-approval field compatible for platform-admin runs', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-shell-auto-'));
     cleanupDirs.add(cwd);
@@ -504,8 +567,8 @@ describe('RawAgentLoop', () => {
         cwd,
         channelContext: {
           channel: 'web',
-          // 工具自动放行只给平台 admin；组织用户即使可在隔离 hand/container
-          // 执行工具，也仍需要 human approval。
+          // 授权模式对所有已认证用户生效；此处沿用平台 admin 验证 legacy 字段兼容。
+          // 非平台用户的 Shell 仍受隔离 hand/container 兜底约束（toolRuntime.test.ts）。
           user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         },
         approvalPolicy: { autoApproveRunShell: true },

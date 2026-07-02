@@ -151,8 +151,9 @@ function clearRunShellApprovalStorage() {
 }
 
 function GeneralSection() {
-  const { user, isAdmin, updatePreferences } = useAuth();
-  const authorizationModeEnabled = isAdmin && user?.preferences?.authorizationModeEnabled === true;
+  // 授权模式对所有用户开放（2026-07-02 起），每个用户自行切换。
+  const { user, updatePreferences } = useAuth();
+  const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
   const [draftAuthorizationMode, setDraftAuthorizationMode] = useState(authorizationModeEnabled);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -163,7 +164,6 @@ function GeneralSection() {
   }, [authorizationModeEnabled]);
 
   const handleSave = useCallback(async () => {
-    if (!isAdmin) return;
     const next = { authorizationModeEnabled: draftAuthorizationMode };
     setSaving(true);
     setSaved(false);
@@ -182,7 +182,7 @@ function GeneralSection() {
     } finally {
       setSaving(false);
     }
-  }, [authorizationModeEnabled, draftAuthorizationMode, isAdmin, updatePreferences]);
+  }, [authorizationModeEnabled, draftAuthorizationMode, updatePreferences]);
 
   return (
     <PlaceholderSection
@@ -191,7 +191,7 @@ function GeneralSection() {
       actions={(
         <>
           {saved && <span className="text-sm text-success">已保存</span>}
-          <Button onClick={() => { void handleSave(); }} disabled={!isAdmin || saving || draftAuthorizationMode === authorizationModeEnabled}>
+          <Button onClick={() => { void handleSave(); }} disabled={saving || draftAuthorizationMode === authorizationModeEnabled}>
             {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
             保存
           </Button>
@@ -204,12 +204,11 @@ function GeneralSection() {
             <div className="text-sm font-semibold text-foreground">授权模式</div>
             <div className="mt-1 text-sm leading-6 text-muted-foreground">
               开启后所有会话默认自动批准工具授权，输入框不再显示授权开关；需要你回答的问题仍会暂停等待。
-              {!isAdmin ? " 仅管理员账户可用。" : ""}
             </div>
           </div>
           <Switch
             checked={draftAuthorizationMode}
-            disabled={!isAdmin || saving}
+            disabled={saving}
             onCheckedChange={(checked) => {
               setDraftAuthorizationMode(checked);
               setSaved(false);

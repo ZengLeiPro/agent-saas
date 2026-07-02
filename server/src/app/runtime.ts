@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'path';
 import { serverLogger, configureLogger } from '../utils/logger.js';
 import type { AppConfig } from '../types/index.js';
@@ -61,7 +61,8 @@ import { AgentStore } from '../data/agents/store.js';
 import { GroupStore } from '../data/groups/store.js';
 import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { McpConfigStore } from '../data/mcpConfig.js';
-import { scanPoolSkills as scanPoolSkillsForDispatch } from '../data/skills/scanner.js';
+import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds } from '../data/skills/scanner.js';
+import { resolveTenantSkillsDir } from '../data/tenants/tenantSkillsPath.js';
 import { syncSkills, resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, agentPath, resolveAgentPath } from '../workspace/namespace.js';
 import type { RawRuntimeRunDispatchConfig, SkillsDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
@@ -478,7 +479,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     }
 
     // 3. 清理配置中的幽灵条目（sync 完成后再清理，避免 sync 时读不到历史记录）
-    const pruned = skillConfigStore.pruneStaleSkills(currentPoolIds);
+    // 租户自有 skill 目录现状一并传入：保留 selectedSkills 中的租户 skill、清理 ownSkills 幽灵规则
+    const tenantOwnIdsByTenant: Record<string, Set<string>> = {};
+    const tenantsRoot = join(sharedDir, 'tenants');
+    if (existsSync(tenantsRoot)) {
+      for (const entry of readdirSync(tenantsRoot)) {
+        try {
+          if (!statSync(join(tenantsRoot, entry)).isDirectory()) continue;
+          tenantOwnIdsByTenant[entry] = scanTenantOwnSkillIds(resolveTenantSkillsDir(sharedDir, entry), currentPoolIds);
+        } catch {
+          // 非法目录名或读取失败，跳过
+        }
+      }
+    }
+    const pruned = skillConfigStore.pruneStaleSkills(currentPoolIds, tenantOwnIdsByTenant);
     if (pruned > 0) {
       serverLogger.info(`Skills config: pruned ${pruned} stale entries`);
     }

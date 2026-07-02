@@ -15,6 +15,8 @@ export type LoginEvent =
   | 'skill_visibility_updated' | 'skill_platform_settings_updated' | 'skill_tenant_settings_updated'
   | 'skill_promoted' | 'skill_custom_uploaded' | 'skill_custom_deleted' | 'skill_tenant_selections_updated' | 'skill_user_selections_updated'
   | 'skill_document_updated'
+  | 'skill_pool_uploaded' | 'skill_tenant_uploaded' | 'skill_tenant_deleted'
+  | 'skill_tenant_own_settings_updated' | 'skill_promoted_to_tenant'
   | 'mcp_server_updated' | 'mcp_server_deleted' | 'mcp_user_selections_updated' | 'mcp_admin_user_selections_updated'
   | 'mcp_secret_bound' | 'mcp_secret_rotated' | 'mcp_secret_deleted' | 'mcp_oauth_connected' | 'mcp_oauth_revoked'
   | 'tenant_created' | 'tenant_updated' | 'tenant_disabled' | 'tenant_enabled';

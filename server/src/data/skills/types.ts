@@ -38,8 +38,14 @@ export interface TenantSkillRule {
 export interface TenantSkillConfig {
   /** 旧字段：租户启用的 pool skill ID 列表；保留用于兼容旧数据 */
   enabledSkills?: string[];
-  /** 新字段：租户对每个 skill 的启用与成员范围规则 */
+  /** 新字段：租户对每个 pool skill 的启用与成员范围规则 */
   skills?: Record<string, TenantSkillRule>;
+  /**
+   * 租户自有 skill（存于 `tenants/<tenantId>/skills/`）的治理规则。
+   * 与 `skills`（pool skill 规则）分开存：pruneStaleSkills 按 pool 目录清理 `skills`，
+   * `ownSkills` 按租户目录清理，互不误删。未配置的自有 skill 默认 enabled + 全员开放。
+   */
+  ownSkills?: Record<string, TenantSkillRule>;
 }
 
 export interface UserSkillConfig {

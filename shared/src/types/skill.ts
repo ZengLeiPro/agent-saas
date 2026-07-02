@@ -29,15 +29,20 @@ export interface PoolSkillInfo extends SkillInfo, PlatformSkillSettings {
 /** 租户视角的平台 skill + 租户启用状态 */
 export interface TenantSkillInfo extends SkillInfo, TenantSkillSettings {}
 
+/** 租户自有 skill（存于 tenants/<tenantId>/skills/）+ 治理规则 */
+export interface TenantOwnSkillInfo extends SkillInfo, TenantSkillSettings {}
+
 /** 用户视角的 skill（含选中状态和来源） */
 export interface UserSkillInfo extends SkillInfo {
   selected: boolean;
-  source: 'pool' | 'custom';
+  source: 'pool' | 'tenant' | 'custom';
 }
 
 /** GET /api/skills/me 响应 */
 export interface MySkillsResponse {
   poolSkills: UserSkillInfo[];
+  /** 组织自有 skill（旧服务端无此字段，消费方按空数组兜底） */
+  tenantSkills?: UserSkillInfo[];
   customSkills: UserSkillInfo[];
 }
 
@@ -50,6 +55,12 @@ export interface SkillPoolResponse {
 export interface TenantSkillPoolResponse {
   tenantId: string;
   skills: TenantSkillInfo[];
+}
+
+/** GET /api/skills/tenants/:tenantId/skills 响应（组织自有 skill） */
+export interface TenantOwnSkillsResponse {
+  tenantId: string;
+  skills: TenantOwnSkillInfo[];
 }
 
 /** GET /api/skills/custom 响应 */
@@ -68,8 +79,9 @@ export interface SkillImportResponse {
 /** Skill 文档响应 */
 export interface SkillDocumentResponse {
   skillId: string;
-  source: 'pool' | 'custom';
+  source: 'pool' | 'tenant' | 'custom';
   username?: string;
+  tenantId?: string;
   content: string;
   fileName: string;
 }

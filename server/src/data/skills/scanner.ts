@@ -89,6 +89,20 @@ export function scanPoolSkills(poolDir: string): PoolSkillMeta[] {
 }
 
 /**
+ * 扫描租户自有 skill 目录（tenants/<tenantId>/skills/），返回现存 skill ID 集合。
+ * 与 pool 同名的目录被 shadow（pool 优先），不返回。
+ * 只看目录名，不校验 frontmatter——内容合法性由上传/promote 入口保证。
+ */
+export function scanTenantOwnSkillIds(tenantSkillsDir: string, poolSkillIds: Set<string>): Set<string> {
+  if (!existsSync(tenantSkillsDir)) return new Set();
+  return new Set(readdirSync(tenantSkillsDir).filter(d => {
+    if (d.startsWith('.') || d.startsWith('_')) return false;
+    if (poolSkillIds.has(d)) return false;
+    try { return statSync(join(tenantSkillsDir, d)).isDirectory(); } catch { return false; }
+  }));
+}
+
+/**
  * 扫描用户的 .ky-agent/skills/ 目录，找出不在 pool 中的自建 skill。
  * 严格模式：要求有效 SKILL.md frontmatter，避免评测目录/临时目录被误识别。
  */

@@ -35,6 +35,7 @@ const WAIN_USER: JwtPayload = { sub: 'u-wu', username: 'wain_user', role: 'user'
 interface TestRig {
   baseUrl: string;
   agentCwd: string;
+  sharedDir: string;
   poolDir: string;
   skillConfigStore: SkillConfigStore;
   setCaller(caller: JwtPayload): void;
@@ -111,7 +112,30 @@ function fakeSkillConfigStore(): SkillConfigStore {
     if (rule.exposure === 'deny_users') return !username || !rule.usernames.includes(username);
     return true;
   };
+  const tenantOwnRules = new Map<string, Map<string, { enabled: boolean; exposure: 'all' | 'allow_users' | 'deny_users'; usernames: string[] }>>();
+  const getTenantOwnSkillRule = (tenantId: string, skillId: string) =>
+    tenantOwnRules.get(tenantId)?.get(skillId) ?? { enabled: true, exposure: 'all' as const, usernames: [] };
+  const isTenantOwnSkillAvailableToUser = (tenantId: string, skillId: string, username?: string) => {
+    const rule = getTenantOwnSkillRule(tenantId, skillId);
+    if (!rule.enabled) return false;
+    if (rule.exposure === 'allow_users') return !!username && rule.usernames.includes(username);
+    if (rule.exposure === 'deny_users') return !username || !rule.usernames.includes(username);
+    return true;
+  };
   return {
+    getTenantOwnSkillRule,
+    getTenantOwnSkillRules: (tenantId: string) => Object.fromEntries(tenantOwnRules.get(tenantId) ?? new Map()),
+    isTenantOwnSkillAvailableToUser,
+    getUserEffectiveTenantOwnSkills: (u: string, tenantId: string | undefined, availableOwnIds: Set<string>) => {
+      if (!tenantId) return [];
+      return (userSelections.get(u) ?? []).filter(id => availableOwnIds.has(id) && isTenantOwnSkillAvailableToUser(tenantId, id, u));
+    },
+    setTenantOwnSkillRules: async (tenantId: string, updates: Record<string, { enabled: boolean; exposure: 'all' | 'allow_users' | 'deny_users'; usernames: string[] }>) => {
+      const rules = tenantOwnRules.get(tenantId) ?? new Map();
+      for (const [id, rule] of Object.entries(updates)) rules.set(id, rule);
+      tenantOwnRules.set(tenantId, rules);
+      configVersion++;
+    },
     getConfigVersion: () => configVersion,
     getPoolVisibility: () => ({ ...visibility }),
     getPlatformSkillConfig,
@@ -226,6 +250,7 @@ async function makeTestRig(): Promise<TestRig> {
   return {
     baseUrl,
     agentCwd,
+    sharedDir,
     poolDir,
     skillConfigStore,
     setCaller(c) { currentCaller = c; },
@@ -599,6 +624,217 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(res.status).toBe(200);
       const body = await res.json() as { customSkills: { id: string }[] };
       expect(body.customSkills.map(s => s.id)).toContain('alice_custom');
+    });
+  });
+
+  // ============================================================
+  // 租户自有 skill：三级上传 / 治理 / promote
+  // ============================================================
+  describe('租户自有 skill（tenants/<id>/skills）', () => {
+    function skillUploadBody(skillName: string): FormData {
+      const fd = new FormData();
+      fd.append('files', new Blob([`---\nname: ${skillName}\ndescription: d\n---\nbody`], { type: 'text/markdown' }), 'SKILL.md');
+      return fd;
+    }
+    const tenantSkillDir = (tenantId: string, skillId: string) => join(h.sharedDir, 'tenants', tenantId, 'skills', skillId);
+
+    it('组织 admin POST /tenants/:own/import → 200，目录落 tenants/<id>/skills', async () => {
+      h.setCaller(WAIN_ADMIN);
+      const res = await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('wain-shared') });
+      expect(res.status).toBe(200);
+      expect(existsSync(tenantSkillDir('wain', 'wain-shared'))).toBe(true);
+    });
+
+    it('组织 admin POST /tenants/:other/import → 403', async () => {
+      h.setCaller(WAIN_ADMIN);
+      const res = await h.request('/api/skills/tenants/kaiyan/import', { method: 'POST', body: skillUploadBody('sneaky') });
+      expect(res.status).toBe(403);
+      expect(existsSync(tenantSkillDir('kaiyan', 'sneaky'))).toBe(false);
+    });
+
+    it('普通用户 POST /tenants/:own/import → 403', async () => {
+      h.setCaller(WAIN_USER);
+      const res = await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('nope') });
+      expect(res.status).toBe(403);
+    });
+
+    it('POST /pool/import：组织 admin → 403；平台 admin → 200 且注册 visibility', async () => {
+      h.setCaller(WAIN_ADMIN);
+      const denied = await h.request('/api/skills/pool/import', { method: 'POST', body: skillUploadBody('pool-new') });
+      expect(denied.status).toBe(403);
+
+      h.setCaller(PLATFORM_ADMIN);
+      const ok = await h.request('/api/skills/pool/import', { method: 'POST', body: skillUploadBody('pool-new') });
+      expect(ok.status).toBe(200);
+      expect(existsSync(join(h.poolDir, 'pool-new'))).toBe(true);
+      expect(h.skillConfigStore.getPoolVisibility()).toHaveProperty('pool-new', true);
+    });
+
+    it('租户上传与 pool 同名 → 409', async () => {
+      // SKILL.md name 规则只允许小写/数字/连字符，先经 pool/import 造一个合法名 pool skill
+      h.setCaller(PLATFORM_ADMIN);
+      await h.request('/api/skills/pool/import', { method: 'POST', body: skillUploadBody('pool-owned') });
+
+      h.setCaller(WAIN_ADMIN);
+      const res = await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('pool-owned') });
+      expect(res.status).toBe(409);
+    });
+
+    it('租户上传与本组织成员自建同名 → 409', async () => {
+      h.setCaller(WAIN_USER);
+      await h.request('/api/skills/me/import', { method: 'POST', body: skillUploadBody('user-owned') });
+
+      h.setCaller(WAIN_ADMIN);
+      const res = await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('user-owned') });
+      expect(res.status).toBe(409);
+    });
+
+    it('用户上传与组织 skill 同名 → 409', async () => {
+      h.setCaller(WAIN_ADMIN);
+      await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('taken-by-tenant') });
+
+      h.setCaller(WAIN_USER);
+      const res = await h.request('/api/skills/me/import', { method: 'POST', body: skillUploadBody('taken-by-tenant') });
+      expect(res.status).toBe(409);
+    });
+
+    it('GET /me 返回 tenantSkills 且按成员范围过滤', async () => {
+      h.setCaller(WAIN_ADMIN);
+      await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('team-tool') });
+
+      h.setCaller(WAIN_USER);
+      let res = await h.request('/api/skills/me');
+      let body = await res.json() as { tenantSkills: { id: string }[] };
+      expect(body.tenantSkills.map(s => s.id)).toContain('team-tool');
+
+      // kaiyan 用户看不到 wain 的组织 skill
+      h.setCaller(KAIYAN_USER);
+      res = await h.request('/api/skills/me');
+      body = await res.json() as { tenantSkills: { id: string }[] };
+      expect(body.tenantSkills.map(s => s.id)).not.toContain('team-tool');
+
+      // 收紧成员范围：仅 wain_admin 可用 → wain_user 不再看到
+      h.setCaller(WAIN_ADMIN);
+      await h.request('/api/skills/tenants/wain/skills/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 'team-tool': { enabled: true, exposure: 'allow_users', usernames: ['wain_admin'] } }),
+      });
+      h.setCaller(WAIN_USER);
+      res = await h.request('/api/skills/me');
+      body = await res.json() as { tenantSkills: { id: string }[] };
+      expect(body.tenantSkills.map(s => s.id)).not.toContain('team-tool');
+    });
+
+    it('PUT /me/selections 接受组织 skill id、拒绝他租户 skill id', async () => {
+      h.setCaller(WAIN_ADMIN);
+      await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('selectable') });
+
+      h.setCaller(WAIN_USER);
+      const res = await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['selectable', 'shared_skill'] }),
+      });
+      expect(res.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('wain_user')).toContain('selectable');
+
+      // kaiyan 用户提交 wain 的组织 skill → 被过滤
+      h.setCaller(KAIYAN_USER);
+      await h.request('/api/skills/me/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['selectable'] }),
+      });
+      expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('selectable');
+    });
+
+    it('GET /tenants/:id/skills 列表含治理规则；跨组织 → 403', async () => {
+      h.setCaller(WAIN_ADMIN);
+      await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('listed') });
+      const res = await h.request('/api/skills/tenants/wain/skills');
+      expect(res.status).toBe(200);
+      const body = await res.json() as { skills: { id: string; enabled: boolean; exposure: string }[] };
+      const listed = body.skills.find(s => s.id === 'listed');
+      expect(listed).toBeDefined();
+      expect(listed!.enabled).toBe(true);
+      expect(listed!.exposure).toBe('all');
+
+      const denied = await h.request('/api/skills/tenants/kaiyan/skills');
+      expect(denied.status).toBe(403);
+    });
+
+    it('POST /tenants/:id/promote：本组织成员 skill → 组织；跨组织源用户 → 400', async () => {
+      h.setCaller(WAIN_ADMIN);
+      const ok = await h.request('/api/skills/tenants/wain/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skillId: 'wain_user_custom', sourceUser: 'wain_user' }),
+      });
+      expect(ok.status).toBe(200);
+      expect(existsSync(tenantSkillDir('wain', 'wain_user_custom'))).toBe(true);
+      // 源用户自动勾选，promote 后 skill 不消失
+      expect(h.skillConfigStore.getUserSelectedSkills('wain_user')).toContain('wain_user_custom');
+
+      const crossTenant = await h.request('/api/skills/tenants/wain/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skillId: 'alice_custom', sourceUser: 'alice' }),
+      });
+      expect(crossTenant.status).toBe(400);
+    });
+
+    it('POST /tenants/:id/skills/:skillId/promote → pool：组织 admin 403；平台 admin 200', async () => {
+      h.setCaller(WAIN_ADMIN);
+      await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('to-pool') });
+      const denied = await h.request('/api/skills/tenants/wain/skills/to-pool/promote', { method: 'POST' });
+      expect(denied.status).toBe(403);
+
+      h.setCaller(PLATFORM_ADMIN);
+      const ok = await h.request('/api/skills/tenants/wain/skills/to-pool/promote', { method: 'POST' });
+      expect(ok.status).toBe(200);
+      expect(existsSync(join(h.poolDir, 'to-pool'))).toBe(true);
+      expect(h.skillConfigStore.getPoolVisibility()).toHaveProperty('to-pool', true);
+    });
+
+    it('DELETE /tenants/:id/skills/:skillId → 目录删除；跨组织 → 403', async () => {
+      h.setCaller(WAIN_ADMIN);
+      await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('doomed') });
+      expect(existsSync(tenantSkillDir('wain', 'doomed'))).toBe(true);
+
+      h.setCaller(KAIYAN_USER);
+      const denied = await h.request('/api/skills/tenants/wain/skills/doomed', { method: 'DELETE' });
+      expect(denied.status).toBe(403);
+
+      h.setCaller(WAIN_ADMIN);
+      const ok = await h.request('/api/skills/tenants/wain/skills/doomed', { method: 'DELETE' });
+      expect(ok.status).toBe(200);
+      expect(existsSync(tenantSkillDir('wain', 'doomed'))).toBe(false);
+    });
+
+    it('组织 skill 文档读写：GET/PUT /tenants/:id/skills/:skillId/document', async () => {
+      h.setCaller(WAIN_ADMIN);
+      await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('docable') });
+
+      const got = await h.request('/api/skills/tenants/wain/skills/docable/document');
+      expect(got.status).toBe(200);
+      const doc = await got.json() as { source: string; content: string };
+      expect(doc.source).toBe('tenant');
+      expect(doc.content).toContain('name: docable');
+
+      const put = await h.request('/api/skills/tenants/wain/skills/docable/document', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: '---\nname: docable\ndescription: updated\n---\nnew body' }),
+      });
+      expect(put.status).toBe(200);
+
+      const mismatched = await h.request('/api/skills/tenants/wain/skills/docable/document', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: '---\nname: other-name\ndescription: x\n---\nbody' }),
+      });
+      expect(mismatched.status).toBe(400);
     });
   });
 });

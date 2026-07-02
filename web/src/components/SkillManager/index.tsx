@@ -1,11 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
-import { Loader2, RefreshCw, ArrowUpCircle, Pencil, Trash2, Zap } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, RefreshCw, ArrowUpCircle, Pencil, Trash2, Upload, Zap } from "lucide-react";
 import {
   fetchTenantSkillPool,
   updateTenantSkillSettings,
+  importPoolSkill,
+  importTenantSkill,
+  fetchTenantOwnSkills,
+  updateTenantOwnSkillSettings,
+  fetchTenantOwnSkillDocument,
+  updateTenantOwnSkillDocument,
+  deleteTenantOwnSkill,
+  promoteSkillToTenant,
+  promoteTenantSkillToPool,
   type PlatformSkillSettings,
   type PoolSkillInfo,
   type TenantSkillInfo,
+  type TenantOwnSkillInfo,
   type TenantSkillSettings,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
@@ -24,6 +34,7 @@ import {
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useUsers } from "@/components/UserManager/hooks";
+import { useAuth } from "@/contexts/AuthContext";
 import { useSkillAdmin } from "./hooks";
 
 export interface SkillManagerProps {
@@ -49,17 +60,28 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const { users, loading: usersLoading } = useUsers();
   const { tenants, loading: tenantsLoading } = useTenants();
 
+  const { isPlatformAdmin } = useAuth();
   const [syncing, setSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState<"global" | "user">("global");
-  const [deleteTarget, setDeleteTarget] = useState<{ username: string; skillId: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ kind: "custom" | "tenantOwn"; username: string; skillId: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [editTarget, setEditTarget] = useState<{ username: string; skillId: string; name: string } | null>(null);
+  const [editTarget, setEditTarget] = useState<{ kind: "custom" | "tenantOwn"; username: string; skillId: string; name: string } | null>(null);
   const [editContent, setEditContent] = useState("");
   const [editLoading, setEditLoading] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [tenantSkills, setTenantSkills] = useState<TenantSkillInfo[]>([]);
   const [tenantLoading, setTenantLoading] = useState(false);
   const [tenantError, setTenantError] = useState<string | null>(null);
+  const [ownSkills, setOwnSkills] = useState<TenantOwnSkillInfo[]>([]);
+  const [ownError, setOwnError] = useState<string | null>(null);
+  // 上传 skill（platform mode → pool；tenant mode → 组织自有）
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [importOk, setImportOk] = useState(false);
+  const skillFileInputRef = useRef<HTMLInputElement>(null);
+  const skillFolderInputRef = useRef<HTMLInputElement>(null);
+  const skillZipInputRef = useRef<HTMLInputElement>(null);
 
   const isTenantMode = mode === "tenant";
 
@@ -67,9 +89,14 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     if (!isTenantMode || !tenantIdScope) return;
     setTenantLoading(true);
     try {
-      const result = await fetchTenantSkillPool(tenantIdScope);
-      setTenantSkills(result.skills);
+      const [poolResult, ownResult] = await Promise.all([
+        fetchTenantSkillPool(tenantIdScope),
+        fetchTenantOwnSkills(tenantIdScope),
+      ]);
+      setTenantSkills(poolResult.skills);
+      setOwnSkills(ownResult.skills);
       setTenantError(null);
+      setOwnError(null);
     } catch (err) {
       setTenantError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -84,6 +111,57 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const refreshAll = useCallback(async () => {
     await Promise.all([refresh(), refreshTenantSkills()]);
   }, [refresh, refreshTenantSkills]);
+
+  const handleSkillImport = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (files.length === 0) return;
+    setImporting(true);
+    setImportMsg(null);
+    setImportOk(false);
+    try {
+      const result = isTenantMode && tenantIdScope
+        ? await importTenantSkill(tenantIdScope, files)
+        : await importPoolSkill(files);
+      setImportDialogOpen(false);
+      setImportOk(true);
+      setImportMsg(`已上传 Skill：${result.skill.name}`);
+      await refreshAll();
+      setTimeout(() => setImportMsg(null), 2200);
+    } catch (err) {
+      setImportOk(false);
+      setImportMsg(`上传失败: ${err instanceof Error ? err.message : "未知错误"}`);
+    } finally {
+      setImporting(false);
+    }
+  }, [isTenantMode, tenantIdScope, refreshAll]);
+
+  const handleUpdateOwnSkill = useCallback(async (skill: TenantOwnSkillInfo, patch: Partial<TenantSkillSettings>) => {
+    if (!tenantIdScope) return;
+    try {
+      await updateTenantOwnSkillSettings(tenantIdScope, {
+        [skill.id]: {
+          enabled: skill.enabled,
+          exposure: skill.exposure,
+          usernames: skill.usernames,
+          ...patch,
+        },
+      });
+      await refreshTenantSkills();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "更新失败");
+    }
+  }, [refreshTenantSkills, tenantIdScope]);
+
+  const handlePromoteOwnToPool = useCallback(async (skillId: string) => {
+    if (!tenantIdScope) return;
+    try {
+      await promoteTenantSkillToPool(tenantIdScope, skillId);
+      await refreshAll();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "提升失败");
+    }
+  }, [tenantIdScope, refreshAll]);
 
   const handleSync = useCallback(async () => {
       setSyncing(true);
@@ -129,20 +207,28 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     }
   }, [refreshTenantSkills, tenantIdScope]);
 
+  /** user tab 的提升：platform mode → 全局 pool；tenant mode → 组织自有 */
   const handlePromote = useCallback(async (skillId: string, sourceUser: string) => {
     try {
-      await promoteSkill(skillId, sourceUser);
-    } catch {
-      alert("提升失败");
+      if (isTenantMode && tenantIdScope) {
+        await promoteSkillToTenant(tenantIdScope, skillId, sourceUser);
+        await refreshAll();
+      } else {
+        await promoteSkill(skillId, sourceUser);
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "提升失败");
     }
-  }, [promoteSkill]);
+  }, [isTenantMode, tenantIdScope, promoteSkill, refreshAll]);
 
-  const openEditor = useCallback(async (target: { username: string; skillId: string; name: string }) => {
+  const openEditor = useCallback(async (target: { kind: "custom" | "tenantOwn"; username: string; skillId: string; name: string }) => {
     setEditTarget(target);
     setEditContent("");
     setEditLoading(true);
     try {
-      const doc = await fetchCustomSkillDocument(target.username, target.skillId);
+      const doc = target.kind === "tenantOwn" && tenantIdScope
+        ? await fetchTenantOwnSkillDocument(tenantIdScope, target.skillId)
+        : await fetchCustomSkillDocument(target.username, target.skillId);
       setEditContent(doc.content);
     } catch (err) {
       alert(err instanceof Error ? err.message : "读取失败");
@@ -150,13 +236,17 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     } finally {
       setEditLoading(false);
     }
-  }, [fetchCustomSkillDocument]);
+  }, [fetchCustomSkillDocument, tenantIdScope]);
 
   const saveEditor = useCallback(async () => {
     if (!editTarget) return;
     setEditSaving(true);
     try {
-      await updateCustomSkillDocument(editTarget.username, editTarget.skillId, editContent);
+      if (editTarget.kind === "tenantOwn" && tenantIdScope) {
+        await updateTenantOwnSkillDocument(tenantIdScope, editTarget.skillId, editContent);
+      } else {
+        await updateCustomSkillDocument(editTarget.username, editTarget.skillId, editContent);
+      }
       setEditTarget(null);
       await refreshAll();
     } catch (err) {
@@ -164,20 +254,25 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     } finally {
       setEditSaving(false);
     }
-  }, [editContent, editTarget, refreshAll, updateCustomSkillDocument]);
+  }, [editContent, editTarget, refreshAll, tenantIdScope, updateCustomSkillDocument]);
 
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      await deleteCustomSkill(deleteTarget.username, deleteTarget.skillId);
+      if (deleteTarget.kind === "tenantOwn" && tenantIdScope) {
+        await deleteTenantOwnSkill(tenantIdScope, deleteTarget.skillId);
+        await refreshTenantSkills();
+      } else {
+        await deleteCustomSkill(deleteTarget.username, deleteTarget.skillId);
+      }
       setDeleteTarget(null);
     } catch {
       alert("删除失败");
     } finally {
       setDeleting(false);
     }
-  }, [deleteTarget, deleteCustomSkill]);
+  }, [deleteTarget, deleteCustomSkill, refreshTenantSkills, tenantIdScope]);
 
   const customUsers = customData?.users ?? {};
   const tenantUsernames = tenantIdScope
@@ -188,7 +283,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   );
   const userSkillCount = Object.values(visibleCustomUsers).reduce((sum, arr) => sum + arr.length, 0);
   const hasCustomSkills = userSkillCount > 0;
-  const activePoolSkillsCount = isTenantMode ? tenantSkills.length : poolSkills.length;
+  const activePoolSkillsCount = isTenantMode ? tenantSkills.length + ownSkills.length : poolSkills.length;
   const platformTenantOptions = tenants.filter((tenant) => !tenant.disabled);
   const tenantMemberOptions = tenantIdScope
     ? users.filter((user) => user.tenantId === tenantIdScope && !user.disabled)
@@ -227,11 +322,29 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
             <Button
               variant="outline"
               size="sm"
+              onClick={() => setImportDialogOpen(true)}
+              disabled={importing}
+            >
+              {importing ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Upload className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              上传 Skill
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => { void refreshAll(); }}
             >
               <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
               刷新
             </Button>
+            {importMsg && (
+              <span className={importOk ? "text-sm text-success" : "text-sm text-destructive"}>
+                {importMsg}
+              </span>
+            )}
           </>
         }
       />
@@ -265,7 +378,99 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
             {activePoolSkillsCount === 0 ? (
               <div className="py-4 text-center text-sm text-muted-foreground">暂无{isTenantMode ? "组织" : "平台"} Skills</div>
             ) : isTenantMode ? (
-              tenantSkills.map(skill => (
+              <>
+              {ownError && (
+                <div className="mb-2 rounded-lg border border-destructive/50 bg-destructive/10 p-2 text-xs text-destructive">{ownError}</div>
+              )}
+              {ownSkills.length > 0 && (
+                <>
+                  <div className="mb-1 mt-1 text-xs font-medium text-muted-foreground">组织自有 Skills（上传/沉淀）</div>
+                  {ownSkills.map(skill => (
+                    <div key={skill.id} className="rounded-lg p-2.5 transition-colors hover:bg-muted/50">
+                      <div className="flex items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium">{skill.name}</div>
+                          {skill.description && (
+                            <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{skill.description}</p>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => { void openEditor({ kind: "tenantOwn", username: "", skillId: skill.id, name: skill.name }); }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          {isPlatformAdmin && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              title="提升到平台 Skills 池"
+                              onClick={() => { void handlePromoteOwnToPool(skill.id); }}
+                            >
+                              <ArrowUpCircle className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                            onClick={() => setDeleteTarget({ kind: "tenantOwn", username: "", skillId: skill.id, name: skill.name })}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                          <Select
+                            value={skill.exposure}
+                            onValueChange={(value) => {
+                              void handleUpdateOwnSkill(skill, { exposure: value as TenantOwnSkillInfo["exposure"] });
+                            }}
+                          >
+                            <SelectTrigger className="h-8 w-36">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">全员开放</SelectItem>
+                              <SelectItem value="allow_users">指定成员开放</SelectItem>
+                              <SelectItem value="deny_users">指定成员禁用</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Switch
+                            checked={skill.enabled}
+                            onCheckedChange={(checked) => { void handleUpdateOwnSkill(skill, { enabled: checked }); }}
+                            className="shrink-0"
+                          />
+                        </div>
+                      </div>
+                      {skill.exposure !== "all" && (
+                        <div className="mt-3 grid gap-2 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
+                          {tenantMemberOptions.map((user) => (
+                            <label key={user.username} className="flex min-w-0 items-center gap-2 text-xs">
+                              <Checkbox
+                                checked={skill.usernames.includes(user.username)}
+                                onCheckedChange={(checked) => {
+                                  const usernames = checked === true
+                                    ? Array.from(new Set([...skill.usernames, user.username]))
+                                    : skill.usernames.filter((username: string) => username !== user.username);
+                                  void handleUpdateOwnSkill(skill, { usernames });
+                                }}
+                              />
+                              <span className="truncate">{user.realName || user.username}</span>
+                              {user.realName && <span className="truncate text-muted-foreground">{user.username}</span>}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {tenantSkills.length > 0 && (
+                    <div className="mb-1 mt-3 text-xs font-medium text-muted-foreground">平台 Skills（组织内启用范围）</div>
+                  )}
+                </>
+              )}
+              {tenantSkills.map(skill => (
                 <div key={skill.id} className="rounded-lg p-2.5 transition-colors hover:bg-muted/50">
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
@@ -317,7 +522,8 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                     </div>
                   )}
                 </div>
-              ))
+              ))}
+              </>
             ) : (
               poolSkills.map(skill => (
                 <div key={skill.id} className="rounded-lg p-2.5 transition-colors hover:bg-muted/50">
@@ -403,7 +609,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs"
-                                onClick={() => { void openEditor({ username, skillId: skill.id, name: skill.name }); }}
+                                onClick={() => { void openEditor({ kind: "custom", username, skillId: skill.id, name: skill.name }); }}
                               >
                                 <Pencil className="mr-1 h-3.5 w-3.5" />
                                 接管编辑
@@ -415,13 +621,13 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 onClick={() => handlePromote(skill.id, username)}
                               >
                                 <ArrowUpCircle className="mr-1 h-3.5 w-3.5" />
-                                提升到全局
+                                {isTenantMode ? "提升到组织" : "提升到全局"}
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                                onClick={() => setDeleteTarget({ username, skillId: skill.id, name: skill.name })}
+                                onClick={() => setDeleteTarget({ kind: "custom", username, skillId: skill.id, name: skill.name })}
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </Button>
@@ -445,9 +651,9 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
       <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open) setEditTarget(null); }}>
         <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>接管编辑 Skill</DialogTitle>
+            <DialogTitle>{editTarget?.kind === "tenantOwn" ? "编辑组织 Skill" : "接管编辑 Skill"}</DialogTitle>
             <DialogDescription>
-              正在编辑 {editTarget?.username} 的 Skill “{editTarget?.name}”。保存时会校验 SKILL.md frontmatter，且 name 必须与 Skill ID 保持一致。
+              正在编辑{editTarget?.kind === "tenantOwn" ? "组织" : ` ${editTarget?.username} `}的 Skill “{editTarget?.name}”。保存时会校验 SKILL.md frontmatter，且 name 必须与 Skill ID 保持一致。
             </DialogDescription>
           </DialogHeader>
           {editLoading ? (
@@ -478,7 +684,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           <DialogHeader>
             <DialogTitle>确认删除</DialogTitle>
             <DialogDescription>
-              确定要删除 {deleteTarget?.username} 的 Skill "{deleteTarget?.name}" 吗？此操作不可撤销。
+              确定要删除{deleteTarget?.kind === "tenantOwn" ? "组织" : ` ${deleteTarget?.username} `}的 Skill "{deleteTarget?.name}" 吗？此操作不可撤销。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -490,6 +696,58 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
               删除
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Upload skill dialog（platform → pool；tenant → 组织自有） */}
+      <input
+        ref={skillFileInputRef}
+        type="file"
+        accept=".md,text/markdown"
+        className="hidden"
+        onChange={(event) => { void handleSkillImport(event); }}
+      />
+      <input
+        ref={skillZipInputRef}
+        type="file"
+        accept=".zip,application/zip"
+        className="hidden"
+        onChange={(event) => { void handleSkillImport(event); }}
+      />
+      {/* @ts-expect-error webkitdirectory is supported by Chromium for folder uploads but missing from React types. */}
+      <input ref={skillFolderInputRef} type="file" className="hidden" multiple webkitdirectory="" onChange={(event) => { void handleSkillImport(event); }} />
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>上传 Skill 到{isTenantMode ? "组织" : "平台"} Skills</DialogTitle>
+            <DialogDescription>
+              支持 SKILL.md 单文件、包含 SKILL.md 的文件夹，或包含同样结构的 zip 压缩包。SKILL.md 需要包含 name 和 description frontmatter。
+              {isTenantMode ? "上传后组织成员可在自己的 Skill 设置中启用。" : "上传后按平台/租户/成员三级范围控制开放。"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Button
+              variant="outline"
+              onClick={() => skillFileInputRef.current?.click()}
+              disabled={importing}
+            >
+              上传 SKILL.md
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => skillFolderInputRef.current?.click()}
+              disabled={importing}
+            >
+              上传文件夹
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => skillZipInputRef.current?.click()}
+              disabled={importing}
+            >
+              上传 zip 压缩包
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

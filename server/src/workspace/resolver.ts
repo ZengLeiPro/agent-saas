@@ -11,7 +11,9 @@ import { join, basename, resolve } from 'path';
 import { execSync } from 'child_process';
 import { serverLogger } from '../utils/logger.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
+import { scanTenantOwnSkillIds } from '../data/skills/scanner.js';
 import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
+import { resolveTenantSkillsDir } from '../data/tenants/tenantSkillsPath.js';
 import {
   agentDir,
   agentPath,
@@ -200,12 +202,35 @@ export function syncSkills(userCwd: string, sharedDir: string, user?: WorkspaceU
 
   const username = user?.username || basename(userCwd);
 
+  // 获取 pool 中所有 skill 名（排除 _ 开头的文件如 _manifest.json）
+  const poolSkills = new Set(
+    readdirSync(poolDir).filter(d => {
+      if (d.startsWith('_') || d.startsWith('.')) return false;
+      try { return statSync(join(poolDir, d)).isDirectory(); } catch { return false; }
+    })
+  );
+
+  // 租户自有 skill 源目录与现存 ids（与 pool 同名的被 shadow，pool 优先）
+  let tenantSkillsSrcDir: string | null = null;
+  let tenantOwnIds = new Set<string>();
+  if (skillConfigStore && user?.tenantId) {
+    try {
+      tenantSkillsSrcDir = resolveTenantSkillsDir(sharedDir, user.tenantId);
+      tenantOwnIds = scanTenantOwnSkillIds(tenantSkillsSrcDir, poolSkills);
+    } catch {
+      // 非法 tenantId → 视为无租户层
+    }
+  }
+
   // 计算该用户应有的 skill 集合
   const targetSkills = new Set<string>();
 
   if (skillConfigStore) {
-    // 新模式：从 SkillConfigStore 读取
+    // 新模式：从 SkillConfigStore 读取（pool + 租户自有两层）
     for (const id of skillConfigStore.getUserEffectivePoolSkills(username, user?.tenantId)) {
+      targetSkills.add(id);
+    }
+    for (const id of skillConfigStore.getUserEffectiveTenantOwnSkills(username, user?.tenantId, tenantOwnIds)) {
       targetSkills.add(id);
     }
   } else {
@@ -232,25 +257,24 @@ export function syncSkills(userCwd: string, sharedDir: string, user?: WorkspaceU
     }
   }
 
-  // 获取 pool 中所有 skill 名（排除 _ 开头的文件如 _manifest.json）
-  const poolSkills = new Set(
-    readdirSync(poolDir).filter(d => {
-      if (d.startsWith('_') || d.startsWith('.')) return false;
-      try { return statSync(join(poolDir, d)).isDirectory(); } catch { return false; }
-    })
-  );
-
   // 扫描用户当前 skills 目录
   const existingDirs = readdirSync(userSkillsDir).filter(d => {
     const p = join(userSkillsDir, d);
     try { return statSync(p).isDirectory(); } catch { return false; }
   });
 
-  // 已知的系统 skill ID 集合（pool 中存在的 + 曾经在配置中注册过的）
+  // 已知的系统 skill ID 集合（pool 中存在的 + 曾经在配置中注册过的 + 本租户自有的）
   const knownSystemSkills = new Set(poolSkills);
   if (skillConfigStore) {
     for (const id of Object.keys(skillConfigStore.getPoolVisibility())) {
       knownSystemSkills.add(id);
+    }
+    for (const id of tenantOwnIds) knownSystemSkills.add(id);
+    if (user?.tenantId) {
+      // 已删除但规则条目尚未 prune 的租户自有 skill，也要清理用户残留副本
+      for (const id of Object.keys(skillConfigStore.getTenantOwnSkillRules(user.tenantId))) {
+        knownSystemSkills.add(id);
+      }
     }
   }
 
@@ -264,15 +288,17 @@ export function syncSkills(userCwd: string, sharedDir: string, user?: WorkspaceU
     }
   }
 
-  // 2. 复制/覆盖系统 skill
+  // 2. 复制/覆盖系统 skill（源查找 pool 优先，其次租户自有目录）
   for (const skill of targetSkills) {
-    const src = join(poolDir, skill);
+    const poolSrc = join(poolDir, skill);
+    const tenantSrc = tenantSkillsSrcDir ? join(tenantSkillsSrcDir, skill) : null;
+    const src = existsSync(poolSrc) ? poolSrc : (tenantSrc && existsSync(tenantSrc) ? tenantSrc : null);
     const dst = join(userSkillsDir, skill);
-    if (!existsSync(src)) {
-      // pool 中已不存在，删除用户残留副本
+    if (!src) {
+      // pool 与租户目录都已不存在，删除用户残留副本
       if (existsSync(dst)) {
         rmSync(dst, { recursive: true, force: true });
-        serverLogger.info(`Removed stale skill '${skill}' from ${username} (no longer in pool)`);
+        serverLogger.info(`Removed stale skill '${skill}' from ${username} (no longer in pool/tenant dir)`);
       }
       continue;
     }

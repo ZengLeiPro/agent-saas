@@ -128,6 +128,51 @@ export class SkillConfigStore {
     return selected.filter(id => this.isTenantSkillAvailableToUser(id, tenantId, username));
   }
 
+  // ── 租户自有 skill（tenants/<tenantId>/skills/）────────
+
+  /** 租户自有 skill 的治理规则；未配置默认 enabled + 全员开放 */
+  getTenantOwnSkillRule(tenantId: string, skillId: string): TenantSkillRule {
+    // tenant 参数传 undefined：own skill 不受旧 enabledSkills（pool 语义）影响，默认 enabled=true
+    return this.normalizeTenantSkillRule(undefined, skillId, this.data.tenants[tenantId]?.ownSkills?.[skillId]);
+  }
+
+  getTenantOwnSkillRules(tenantId: string): Record<string, TenantSkillRule> {
+    const result: Record<string, TenantSkillRule> = {};
+    for (const id of Object.keys(this.data.tenants[tenantId]?.ownSkills ?? {})) {
+      result[id] = this.getTenantOwnSkillRule(tenantId, id);
+    }
+    return result;
+  }
+
+  /** 自有 skill 对成员的可用性：仅租户规则（enabled + 成员范围），不经过平台层 */
+  isTenantOwnSkillAvailableToUser(tenantId: string, skillId: string, username: string | undefined): boolean {
+    const rule = this.getTenantOwnSkillRule(tenantId, skillId);
+    if (!rule.enabled) return false;
+    if (rule.exposure === 'allow_users') return !!username && rule.usernames.includes(username);
+    if (rule.exposure === 'deny_users') return !username || !rule.usernames.includes(username);
+    return true;
+  }
+
+  /** 用户的有效租户自有 skill = 目录现存 ∩ 租户规则允许 ∩ selectedSkills */
+  getUserEffectiveTenantOwnSkills(username: string, tenantId: string | undefined, availableOwnIds: Set<string>): string[] {
+    if (!tenantId) return [];
+    return this.getUserSelectedSkills(username)
+      .filter(id => availableOwnIds.has(id) && this.isTenantOwnSkillAvailableToUser(tenantId, id, username));
+  }
+
+  async setTenantOwnSkillRules(tenantId: string, updates: Record<string, TenantSkillRule>): Promise<void> {
+    await this.serialize(async () => {
+      const current = this.data.tenants[tenantId] ?? {};
+      const rules = { ...(current.ownSkills ?? {}) };
+      for (const [id, rule] of Object.entries(updates)) {
+        rules[id] = this.normalizeTenantSkillRule(undefined, id, rule);
+      }
+      this.data.tenants[tenantId] = { ...current, ownSkills: rules };
+      this.bumpVersion();
+      await this.persist();
+    });
+  }
+
   getAllUserConfigs(): Record<string, UserSkillConfig> {
     return { ...this.data.users };
   }
@@ -275,9 +320,17 @@ export class SkillConfigStore {
   /**
    * 清理幽灵条目：pool 中已不存在的 skill ID 从 poolVisibility 和所有用户的 selectedSkills 中移除。
    * 同步写入，启动时调用。返回被清理的 ID 数量。
+   *
+   * @param tenantOwnIdsByTenant 各租户自有 skill 目录的现存 ID；用于：
+   *   1. 保留 selectedSkills 中的租户自有 skill（宽松并集：跨租户误保留仅是无害冗余，物化按本租户过滤）
+   *   2. 清理 ownSkills 中目录已不存在的规则条目
    */
-  pruneStaleSkills(currentPoolIds: Set<string>): number {
+  pruneStaleSkills(currentPoolIds: Set<string>, tenantOwnIdsByTenant: Record<string, Set<string>> = {}): number {
     let pruned = 0;
+    const anyOwnIds = new Set<string>();
+    for (const ids of Object.values(tenantOwnIdsByTenant)) {
+      for (const id of ids) anyOwnIds.add(id);
+    }
     for (const id of Object.keys(this.data.poolVisibility)) {
       if (!currentPoolIds.has(id)) {
         delete this.data.poolVisibility[id];
@@ -295,10 +348,10 @@ export class SkillConfigStore {
     }
     for (const config of Object.values(this.data.users)) {
       const before = config.selectedSkills.length;
-      config.selectedSkills = config.selectedSkills.filter(id => currentPoolIds.has(id));
+      config.selectedSkills = config.selectedSkills.filter(id => currentPoolIds.has(id) || anyOwnIds.has(id));
       pruned += before - config.selectedSkills.length;
     }
-    for (const config of Object.values(this.data.tenants)) {
+    for (const [tenantId, config] of Object.entries(this.data.tenants)) {
       const before = config.enabledSkills?.length ?? 0;
       config.enabledSkills = config.enabledSkills?.filter(id => currentPoolIds.has(id));
       pruned += before - (config.enabledSkills?.length ?? 0);
@@ -306,6 +359,15 @@ export class SkillConfigStore {
         for (const id of Object.keys(config.skills)) {
           if (!currentPoolIds.has(id)) {
             delete config.skills[id];
+            pruned++;
+          }
+        }
+      }
+      if (config.ownSkills) {
+        const ownIds = tenantOwnIdsByTenant[tenantId] ?? new Set<string>();
+        for (const id of Object.keys(config.ownSkills)) {
+          if (!ownIds.has(id)) {
+            delete config.ownSkills[id];
             pruned++;
           }
         }

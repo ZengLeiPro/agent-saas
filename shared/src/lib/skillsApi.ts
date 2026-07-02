@@ -3,6 +3,7 @@ import type {
   MySkillsResponse,
   SkillPoolResponse,
   TenantSkillPoolResponse,
+  TenantOwnSkillsResponse,
   CustomSkillsResponse,
   SkillImportResponse,
   SkillDocumentResponse,
@@ -144,13 +145,13 @@ export async function syncSkills(username?: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to sync skills: ${res.status}`);
 }
 
-export async function importMySkill(files: File[]): Promise<SkillImportResponse> {
+async function importSkillTo(url: string, files: File[]): Promise<SkillImportResponse> {
   const formData = new FormData();
   for (const file of files) {
     const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
     formData.append('files', file, relativePath);
   }
-  const res = await authFetch('/api/skills/me/import', {
+  const res = await authFetch(url, {
     method: 'POST',
     body: formData,
   });
@@ -163,4 +164,96 @@ export async function importMySkill(files: File[]): Promise<SkillImportResponse>
     throw new Error(message);
   }
   return res.json() as Promise<SkillImportResponse>;
+}
+
+export async function importMySkill(files: File[]): Promise<SkillImportResponse> {
+  return importSkillTo('/api/skills/me/import', files);
+}
+
+/** 平台 admin 上传 skill 到全局 pool */
+export async function importPoolSkill(files: File[]): Promise<SkillImportResponse> {
+  return importSkillTo('/api/skills/pool/import', files);
+}
+
+/** 上传组织自有 skill（平台 admin 任意租户；组织 admin 仅本组织） */
+export async function importTenantSkill(tenantId: string, files: File[]): Promise<SkillImportResponse> {
+  return importSkillTo(`/api/skills/tenants/${encodeURIComponent(tenantId)}/import`, files);
+}
+
+// ── 组织自有 skill 管理 ──────────────────────────────────
+
+export async function fetchTenantOwnSkills(tenantId: string): Promise<TenantOwnSkillsResponse> {
+  const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/skills`);
+  if (!res.ok) throw new Error(`Failed to fetch tenant own skills: ${res.status}`);
+  return res.json() as Promise<TenantOwnSkillsResponse>;
+}
+
+export async function updateTenantOwnSkillSettings(tenantId: string, updates: Record<string, TenantSkillSettings>): Promise<void> {
+  const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/skills/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`Failed to update tenant own skill settings: ${res.status}`);
+}
+
+export async function fetchTenantOwnSkillDocument(tenantId: string, skillId: string): Promise<SkillDocumentResponse> {
+  const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/skills/${encodeURIComponent(skillId)}/document`);
+  if (!res.ok) throw new Error(`Failed to fetch tenant skill document: ${res.status}`);
+  return res.json() as Promise<SkillDocumentResponse>;
+}
+
+export async function updateTenantOwnSkillDocument(tenantId: string, skillId: string, content: string): Promise<void> {
+  const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/skills/${encodeURIComponent(skillId)}/document`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) {
+    let message = `Failed to update tenant skill document: ${res.status}`;
+    try {
+      const data = await res.json() as { error?: string };
+      if (data.error) message = data.error;
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
+}
+
+export async function deleteTenantOwnSkill(tenantId: string, skillId: string): Promise<void> {
+  const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/skills/${encodeURIComponent(skillId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`Failed to delete tenant skill: ${res.status}`);
+}
+
+/** 把成员自建 skill 提升为组织自有 skill */
+export async function promoteSkillToTenant(tenantId: string, skillId: string, sourceUser: string): Promise<void> {
+  const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/promote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ skillId, sourceUser }),
+  });
+  if (!res.ok) {
+    let message = `Failed to promote skill to tenant: ${res.status}`;
+    try {
+      const data = await res.json() as { error?: string };
+      if (data.error) message = data.error;
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
+}
+
+/** 把组织自有 skill 提升到全局 pool（仅平台 admin） */
+export async function promoteTenantSkillToPool(tenantId: string, skillId: string): Promise<void> {
+  const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/skills/${encodeURIComponent(skillId)}/promote`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    let message = `Failed to promote tenant skill to pool: ${res.status}`;
+    try {
+      const data = await res.json() as { error?: string };
+      if (data.error) message = data.error;
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
 }

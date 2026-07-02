@@ -49,6 +49,9 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
     for (const s of data.poolSkills) {
       selections[s.id] = s.selected;
     }
+    for (const s of data.tenantSkills ?? []) {
+      selections[s.id] = s.selected;
+    }
     for (const s of data.customSkills) {
       selections[s.id] = s.selected;
     }
@@ -137,8 +140,9 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
   }
 
   const poolSkills = data?.poolSkills ?? [];
+  const tenantSkills = data?.tenantSkills ?? [];
   const customSkills = data?.customSkills ?? [];
-  const showActions = poolSkills.length > 0 || customSkills.length > 0 || canImport;
+  const showActions = poolSkills.length > 0 || tenantSkills.length > 0 || customSkills.length > 0 || canImport;
   const actionControls = showActions ? (
     <>
       {(poolSkills.length > 0 || customSkills.length > 0) && (
@@ -200,7 +204,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
           <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-transparent p-0 text-muted-foreground">
             <TabsTrigger value="system" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
               系统 Skills
-              <span className="ml-1.5 text-xs font-normal">({poolSkills.length})</span>
+              <span className="ml-1.5 text-xs font-normal">({poolSkills.length + tenantSkills.length})</span>
             </TabsTrigger>
             <TabsTrigger value="custom" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
               自建 Skills
@@ -211,7 +215,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
 
         <div className="min-h-0 flex-1 overflow-auto">
           <TabsContent value="system" forceMount className="mt-0">
-            {poolSkills.length === 0 ? (
+            {poolSkills.length === 0 && tenantSkills.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">暂无系统 Skills</div>
           ) : (
             <div className="space-y-2">
@@ -222,6 +226,16 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                   description={s.description}
                   checked={localSelections[s.id] ?? false}
                   onCheckedChange={(checked) => toggle(s.id, checked)}
+                />
+              ))}
+              {tenantSkills.map(s => (
+                <SkillToggleItem
+                  key={s.id}
+                  name={s.name}
+                  description={s.description}
+                  checked={localSelections[s.id] ?? false}
+                  onCheckedChange={(checked) => toggle(s.id, checked)}
+                  badge="组织"
                 />
               ))}
             </div>

@@ -2110,7 +2110,10 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     }
   }
 
-  async function makeCompactHarness(adapter: ModelAdapter) {
+  async function makeCompactHarness(
+    adapter: ModelAdapter,
+    options: { relayState?: LatestResponseSessionState | null } = {},
+  ) {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-compact-'));
     cleanupDirs.add(cwd);
     const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
@@ -2121,6 +2124,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       get: vi.fn().mockResolvedValue(null),
       findByIdempotencyKey: vi.fn().mockResolvedValue(null),
       listRecoverable: vi.fn().mockResolvedValue([]),
+      findLatestResponseSessionStateBySession: vi.fn().mockResolvedValue(options.relayState ?? null),
       clearResponseSessionStateBySession: vi.fn(async (sessionId: string) => {
         clearedSessions.push(sessionId);
         return 2;
@@ -2160,7 +2164,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     await seedHistory(eventStore);
 
     const outbound = await collect(loop.compact(
-      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' } },
+      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' }, instructions: '你是开开，会话正常指令。' },
       context,
     ));
 
@@ -2171,14 +2175,15 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(streamedText).toContain('推荐 B');
     expect(streamedText).toContain('上下文已压缩');
 
-    // 摘要请求形态：压缩指令 system + 历史 + 请求语，无工具、无接力
+    // 摘要请求与正常轮同构（缓存前缀友好）：原 system + 历史 + 末尾压缩请求 user；
+    // 工具定义照常带上但 toolChoice='none'；无接力状态时不带 previousResponseId
     expect(adapter.requests).toHaveLength(1);
     const request = adapter.requests[0]!;
-    expect(request.messages[0]).toMatchObject({ role: 'system' });
-    expect(request.messages[0]?.content).toContain('上下文压缩助手');
-    expect(request.messages.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining('压缩以上对话历史') });
+    expect(request.messages[0]).toEqual({ role: 'system', content: '你是开开，会话正常指令。' });
+    expect(request.messages.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining('上下文压缩') });
     expect(request.messages.map((m) => m.content)).toContain('帮我分析 A 方案');
-    expect(request.tools).toEqual([]);
+    expect(request.tools.length).toBeGreaterThan(0);
+    expect(request.toolChoice).toBe('none');
     expect(request.previousResponseId).toBeUndefined();
 
     // 事件落库顺序（compaction 必须在 assistant_message 之后、run_finished 之前）
@@ -2218,12 +2223,30 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(projection.messages[0]?.content).not.toContain('/compact');
   });
 
+  it('Responses 接力状态存在时透传 previousResponseId（远端已存历史，input 只有增量）', async () => {
+    const adapter = new SummaryAdapter(['接力摘要正文，长度足够作为摘要输出。']);
+    const { eventStore, loop, context, clearedSessions } = await makeCompactHarness(adapter, {
+      relayState: { runId: 'run-prev', lastResponseId: 'resp_prev_123', lastResponseModel: 'glm-5.2' },
+    });
+    await seedHistory(eventStore);
+
+    const outbound = await collect(loop.compact(
+      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' }, instructions: '正常指令' },
+      context,
+    ));
+
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    expect(adapter.requests[0]?.previousResponseId).toBe('resp_prev_123');
+    // 压缩完成后接力链必须被清空，下一轮全量重建（带 summary）
+    expect(clearedSessions).toEqual(['session-compact']);
+  });
+
   it('历史太短：直接回复无需压缩，不产生 compaction 事件', async () => {
     const adapter = new SummaryAdapter(['不应被调用']);
     const { eventStore, loop, context } = await makeCompactHarness(adapter);
 
     const outbound = await collect(loop.compact(
-      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' } },
+      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' }, instructions: '正常指令' },
       context,
     ));
 
@@ -2246,7 +2269,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     await seedHistory(eventStore);
 
     const outbound = await collect(loop.compact(
-      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' } },
+      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' }, instructions: '正常指令' },
       context,
     ));
 

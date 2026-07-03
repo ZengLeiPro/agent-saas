@@ -100,23 +100,29 @@ export interface RawAgentLoopOptions {
 
 export interface CompactInput {
   message: InboundMessage;
+  /**
+   * 会话的正常 system prompt。压缩调用刻意与正常对话轮保持完全同构
+   * （同 system、同工具定义、同接力语义），只把末尾 user 换成压缩请求——
+   * 这样请求前缀与上一正常轮一致，能命中 provider 的 prompt cache；
+   * Responses 接力模型更是只发一条增量 user，input 趋近于零。
+   * 若改成独立压缩器 system prompt，会从第 1 个 token 起打断缓存前缀，
+   * 让全会话最大的一次 input 付全价。
+   */
+  instructions: string;
 }
 
 /**
- * /compact 真实现（2026-07-03）的压缩指令。
- * 摘要请求是一次独立的单轮模型调用：压缩器 system prompt 替代会话 instructions，
- * 无工具、不接力 previousResponseId。
+ * /compact 真实现（2026-07-03）的压缩请求。作为普通 user message 追加在
+ * 会话末尾（见 CompactInput.instructions 注释：请求形态必须与正常轮同构）。
  */
-const COMPACTION_SYSTEM_PROMPT = [
-  '你是上下文压缩助手。请把提供的对话历史压缩成一份忠实、信息密集的摘要，该摘要将替代原始历史继续对话。',
+const COMPACTION_REQUEST_PROMPT = [
+  '请暂停当前任务。现在需要对本会话到目前为止的对话历史做一次上下文压缩：请生成一份忠实、信息密集的摘要，它将替代原始历史用于后续对话。',
   '要求：',
   '- 保留：用户的目标与关键要求；重要事实与数据（数字/文件路径/命令/URL/代码要点）；已完成的工作及其产出位置；未完成的任务与下一步；用户明确表达的偏好与约束。',
   '- 丢弃：寒暄、重复内容、已被纠正的中间尝试细节、冗长的工具原始输出（只留结论）。',
   '- 用 Markdown 分节输出，使用中文。',
-  '- 只输出摘要本身，不要添加任何解释、开场白或结尾语。',
+  '- 不要调用任何工具；只输出摘要正文，不要添加解释、开场白或结尾语。',
 ].join('\n');
-
-const COMPACTION_REQUEST_PROMPT = '请按要求压缩以上对话历史，直接输出摘要。';
 
 /**
  * 失败残留防御：/compact 的 user_message 落库时 modelContent 用这段说明文本。
@@ -680,8 +686,28 @@ export class RawAgentLoop implements AgentLoop {
     let totalUsage: ModelUsage | undefined;
     let summaryText = '';
     try {
+      // 与正常轮完全同构的请求（缓存前缀友好，见 CompactInput.instructions 注释）：
+      // 同 system prompt、同工具定义（toolChoice='none' 禁止实际调用）、同接力语义。
+      const workspace = this.workspaceProvider.resolve(context.channelContext, {
+        cwd: context.cwd,
+        sessionId: context.sessionId,
+        workspaceId: context.workspaceId,
+        sandboxScopeId: context.sandboxScopeId,
+        mountSubPath: context.mountSubPath,
+        executionTarget: context.executionTarget,
+        sandboxPolicy: context.sandboxPolicy,
+      });
+      const tools = this.toolRuntime.list({
+        channelContext: context.channelContext,
+        workspace,
+        sessionId: context.sessionId,
+        runId: context.runId,
+        hooks: context.hooks,
+        signal: context.signal,
+      }).map(toModelToolDefinition);
+      const previousResponseId = await this.loadInitialResponseId(context.sessionId, context.model);
       const requestMessages: ModelChatMessage[] = [
-        { role: 'system', content: COMPACTION_SYSTEM_PROMPT },
+        { role: 'system', content: input.instructions },
         ...projection.messages,
         { role: 'user', content: COMPACTION_REQUEST_PROMPT },
       ];
@@ -689,8 +715,10 @@ export class RawAgentLoop implements AgentLoop {
       for await (const event of this.modelAdapter.stream({
         model: context.model,
         messages: requestMessages,
-        tools: [],
+        tools,
+        toolChoice: 'none',
         signal: context.signal,
+        ...(previousResponseId ? { previousResponseId } : {}),
       }, context)) {
         if (event.type === 'thinking_delta') {
           if (!thinkingStarted) {

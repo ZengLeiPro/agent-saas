@@ -1504,8 +1504,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       };
       // /compact 平台命令（2026-07-03 真实现）：分流到上下文压缩，不进正常 agent run。
       // web / dingtalk / cron 任何通道发裸 "/compact" 行为一致。
+      // instructions 传会话正常 system prompt——压缩请求与正常轮同构以命中 prompt cache。
       if (isCompactCommand(message.content)) {
-        yield* loop.compact({ message }, runContext);
+        yield* loop.compact({ message, instructions }, runContext);
       } else {
         yield* loop.run(
           {

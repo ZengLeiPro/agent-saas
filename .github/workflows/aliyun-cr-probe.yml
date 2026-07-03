@@ -1,0 +1,54 @@
+# 一次性验证：ALIYUN_ACCESS_KEY_ID/SECRET 能否调 ACR EE OpenAPI
+# 验证通过后本 workflow 可以删除，或改造为方案 C 的实际构建触发链路
+name: Aliyun CR Probe
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    name: Probe ACR EE OpenAPI access
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
+      ACR_REGION_ID: cn-shenzhen
+    steps:
+      - name: Install aliyun CLI
+        run: |
+          curl -fsSL "https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz" -o aliyun.tgz
+          tar xzf aliyun.tgz
+          sudo mv aliyun /usr/local/bin/
+          aliyun version
+
+      - name: GetInstance (最小 API 校验凭证 + 实例访问)
+        run: |
+          aliyun cr GetInstance \
+            --region "$ACR_REGION_ID" \
+            --InstanceId "$ACR_INSTANCE_ID" \
+            | tee /tmp/instance.json
+          grep -E '"InstanceStatus"|"InstanceName"' /tmp/instance.json
+
+      - name: ListRepository（验证仓库读权限）
+        run: |
+          aliyun cr ListRepository \
+            --region "$ACR_REGION_ID" \
+            --InstanceId "$ACR_INSTANCE_ID" \
+            --RepoNamespaceName agent-saas \
+            --RepoName acs-sandbox \
+            | tee /tmp/repos.json
+          grep -E '"RepoId"|"RepoName"' /tmp/repos.json || {
+            echo "ListRepository 返回没有匹配仓库,可能是权限或参数问题" >&2
+            exit 1
+          }
+
+      - name: ListRepoBuildRule（有权限但无 rule 也算通过）
+        run: |
+          REPO_ID=$(grep -oE '"RepoId":\s*"[^"]+"' /tmp/repos.json | head -1 | cut -d'"' -f4)
+          echo "RepoId=$REPO_ID"
+          aliyun cr ListRepoBuildRule \
+            --region "$ACR_REGION_ID" \
+            --InstanceId "$ACR_INSTANCE_ID" \
+            --RepoId "$REPO_ID" \
+            | tee /tmp/rules.json
+          echo "OK: 有权限查询 build rule 列表(有无 rule 都算通过)"

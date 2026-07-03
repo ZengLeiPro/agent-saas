@@ -67,7 +67,19 @@ export class LegacyTranscriptProjection {
       case 'memory_context':
         return null;
       case 'user_message':
+        // 系统命令替身（/compact 等）不进前端历史——压缩在 transcript 里由
+        // compaction line（分界线）呈现，命令气泡本身不保留
+        if (event.modelContent?.startsWith('[系统命令]')) return null;
         return userLine(event.content, event.sessionId);
+      case 'compaction':
+        // v2：投影为压缩分界线。前端渲染分界线组件；摘要仅 debugMode 展开查看
+        return jsonl({
+          type: 'compaction',
+          summary: event.summary,
+          coveredEventCount: event.coveredEventCount,
+          sessionId: event.sessionId,
+          timestamp: new Date().toISOString(),
+        });
       case 'assistant_message':
         return assistantLine(
           [{ type: 'text', text: event.content }],

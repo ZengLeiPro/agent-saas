@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildContextProjection } from '../runtime/contextProjection.js';
+import { buildContextProjection, extractUserMessageTrail, renderUserMessageTrail } from '../runtime/contextProjection.js';
 import { truncateOldToolResults } from '../runtime/legacyTranscriptProjection.js';
 import type { ModelChatMessage, PlatformEvent } from '../runtime/types.js';
 
@@ -95,15 +95,17 @@ describe('context projection', () => {
 });
 
 describe('compaction 切分（/compact 真实现）', () => {
-  function compactionEvent(index: number, summary: string): PlatformEvent {
+  // 真实形态：compact run 是独立 runId，不与普通消息 run 混用
+  function compactionEvent(index: number, summary: string, cutoffEventId?: string): PlatformEvent {
     return {
       id: `compaction-${index}`,
       timestamp: new Date(2026, 0, 1, 0, 0, index).toISOString(),
       type: 'compaction',
-      runId: `run-${Math.floor(index / 10)}`,
+      runId: `run-compact-${index}`,
       sessionId: 'session-1',
       summary,
       coveredEventCount: index,
+      ...(cutoffEventId ? { cutoffEventId } : {}),
     } as PlatformEvent;
   }
 
@@ -170,5 +172,109 @@ describe('compaction 切分（/compact 真实现）', () => {
     expect(projection.messages[0]?.content).toContain('窗口测试摘要');
     expect(projection.messages[1]).toMatchObject({ role: 'user', content: 'user_message-4' });
     expect(projection.selectedEvents.map((e) => e.id)).toEqual(['event-4']);
+  });
+
+  it('v2 保留窗口：cutoffEventId 之前被摘要替代，之后原文重放且剔除 compact run 自身事件', () => {
+    const compactRunUserMessage = {
+      id: 'event-compact-cmd',
+      timestamp: new Date(2026, 0, 1, 0, 0, 6).toISOString(),
+      type: 'user_message',
+      runId: 'run-compact-7',
+      sessionId: 'session-1',
+      content: '/compact',
+      modelContent: '[系统命令] 用户请求压缩会话上下文（/compact）。',
+    } as PlatformEvent;
+    const events = [
+      event(0),                          // 被压缩
+      event(1, 'assistant_message'),     // 被压缩
+      event(2),                          // cutoff：从这里开始保留
+      event(3, 'assistant_message'),
+      event(4),
+      event(5, 'assistant_message'),
+      compactRunUserMessage,             // compact run 替身：必须剔除
+      compactionEvent(7, '早期摘要正文', 'event-2'),
+      event(8),                          // 压缩后新消息
+    ];
+    const projection = buildContextProjection(events, { sessionId: 'session-1', runId: 'run-x' });
+
+    // summary + 保留窗口 4 条 + 压缩后 1 条
+    expect(projection.messages).toHaveLength(6);
+    const summary = projection.messages[0]!;
+    expect(summary.role).toBe('user');
+    expect(summary.content).toContain('<context-summary>');
+    expect(summary.content).toContain('早期摘要正文');
+    // 用户消息轨迹：仅被压缩段的用户消息（event-0），不含保留窗口内的（event-2/4）
+    expect(summary.content).toContain('<user-message-trail>');
+    expect(summary.content).toContain('user_message-0');
+    expect(summary.content).not.toContain('user_message-2');
+    // 末尾三件套提醒
+    expect(summary.content).toContain('SessionSearchEvents');
+    expect(summary.content).toContain('SessionGetToolTrace');
+    // 保留窗口原文重放
+    expect(projection.messages[1]).toMatchObject({ role: 'user', content: 'user_message-2' });
+    expect(projection.messages[4]).toMatchObject({ role: 'assistant', content: 'assistant_message-5' });
+    expect(projection.messages[5]).toMatchObject({ role: 'user', content: 'user_message-8' });
+    // compact run 替身不出现在任何投影消息中
+    expect(projection.messages.some((m) => m.content?.includes('/compact'))).toBe(false);
+    expect(projection.messages.some((m) => m.content?.includes('[系统命令]'))).toBe(false);
+  });
+
+  it('cutoffEventId 指向不存在的事件时退化为以 compaction 自身为切分点', () => {
+    const events = [
+      event(0),
+      event(1, 'assistant_message'),
+      compactionEvent(2, '摘要正文', 'event-missing'),
+      event(3),
+    ];
+    const projection = buildContextProjection(events, { sessionId: 'session-1', runId: 'run-x' });
+
+    expect(projection.messages).toHaveLength(2);
+    expect(projection.messages[0]?.content).toContain('摘要正文');
+    expect(projection.messages[1]).toMatchObject({ role: 'user', content: 'user_message-3' });
+  });
+});
+
+describe('用户消息轨迹（抽取式，非 LLM 转述）', () => {
+  it('extractUserMessageTrail 只取真实用户消息，剔除系统命令替身与空消息', () => {
+    const events = [
+      event(0),
+      event(1, 'assistant_message'),
+      {
+        ...event(2),
+        modelContent: '[系统命令] 用户请求压缩会话上下文（/compact）。',
+      } as PlatformEvent,
+      { ...event(3), content: '   ' } as PlatformEvent,
+      event(4),
+    ];
+    const trail = extractUserMessageTrail(events);
+    expect(trail.map((t) => t.content)).toEqual(['user_message-0', 'user_message-4']);
+  });
+
+  it('单条超长保头保尾截断，并标注省略字数', () => {
+    const long = `${'头'.repeat(450)}${'尾'.repeat(150)}`; // 600 字符
+    const rendered = renderUserMessageTrail([
+      { timestamp: new Date(2026, 5, 1, 10, 30).toISOString(), content: long },
+    ]);
+    expect(rendered).toContain('<user-message-trail>');
+    expect(rendered).toContain('[06-01 10:30]');
+    expect(rendered).toContain('已省略 100 字'); // 600 - 400 - 100
+    // 尾部保留
+    expect(rendered).toContain('尾尾尾');
+  });
+
+  it('总量超预算降级为「首条 + 最近若干条」并标注省略条数', () => {
+    const items = Array.from({ length: 40 }, (_, i) => ({
+      timestamp: new Date(2026, 0, 1, 0, i).toISOString(),
+      content: `消息${i}-${'x'.repeat(300)}`,
+    }));
+    const rendered = renderUserMessageTrail(items);
+    expect(rendered.length).toBeLessThan(9500); // 8000 预算 + 包装文本余量
+    expect(rendered).toContain('消息0-');       // 首条保留
+    expect(rendered).toContain('消息39-');      // 最新保留
+    expect(rendered).toMatch(/中间省略 \d+ 条用户消息/);
+  });
+
+  it('空轨迹渲染为空字符串（摘要块不出现空 trail 段）', () => {
+    expect(renderUserMessageTrail([])).toBe('');
   });
 });

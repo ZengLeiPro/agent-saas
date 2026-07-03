@@ -16,6 +16,7 @@ export type TranscriptBlockKind =
   | "thinking"
   | "tool_use"
   | "tool_result"
+  | "compaction"
   | "meta";
 
 export interface TranscriptBlock {
@@ -38,6 +39,8 @@ export interface TranscriptBlock {
   durationMs?: number;
   /** User prompt originated from mobile voice transcription */
   isVoiceTranscript?: boolean;
+  /** compaction block：被摘要替代的历史事件数 */
+  coveredEventCount?: number;
 }
 
 export interface ParsedTranscript {
@@ -416,6 +419,22 @@ async function parseTranscriptFileUncached(
           ...(isVoiceTranscript ? { isVoiceTranscript: true } : {}),
         });
       }
+      continue;
+    }
+
+    // /compact v2：压缩分界线。content 为摘要正文（前端仅 debugMode 提供展开查看）
+    if (obj?.type === "compaction") {
+      blocks.push({
+        id: `line-${lines}-compaction`,
+        tsMs,
+        kind: "compaction",
+        title: "上下文已压缩",
+        defaultOpen: false,
+        content: typeof obj?.summary === "string" ? obj.summary : "",
+        ...(typeof obj?.coveredEventCount === "number"
+          ? { coveredEventCount: obj.coveredEventCount }
+          : {}),
+      });
       continue;
     }
 

@@ -56,8 +56,23 @@ export type OutboundEventType =
   | "plugin_install"
   | "notification"
   | "memory_recall"
+  // /compact v2（2026-07-03）：压缩过程黑箱化，只对外发开始/结束两个事件
+  | "compaction_start"
+  | "compaction_end"
   | "done"
   | "error";
+
+/** compaction_end 携带的压缩结果（黑箱压缩对外唯一的数据出口） */
+export interface CompactionOutboundData {
+  /** 摘要正文（前端 debugMode 展开查看用；skipped 时为空） */
+  summary?: string;
+  /** 被摘要替代的历史事件数 */
+  coveredEventCount: number;
+  /** 历史过短，本次未执行压缩 */
+  skipped?: boolean;
+  /** skipped 时的用户可读说明 */
+  note?: string;
+}
 
 export interface ContextUsageData {
   totalTokens: number;
@@ -169,6 +184,7 @@ export interface OutboundEvent {
   pluginInstall?: PluginInstallData;
   notification?: NotificationData;
   memoryRecall?: MemoryRecallData;
+  compaction?: CompactionOutboundData;
 }
 
 export interface UserPermissions {

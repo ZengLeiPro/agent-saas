@@ -118,8 +118,9 @@ export interface CompactInput {
 const COMPACTION_REQUEST_PROMPT = [
   '请暂停当前任务。现在需要对本会话到目前为止的对话历史做一次上下文压缩：请生成一份忠实、信息密集的摘要，它将替代原始历史用于后续对话。',
   '要求：',
-  '- 保留：用户的目标与关键要求；重要事实与数据（数字/文件路径/命令/URL/代码要点）；已完成的工作及其产出位置；未完成的任务与下一步；用户明确表达的偏好与约束。',
+  '- 保留：任务目标与当前状态；重要事实与数据（数字/文件路径/命令/URL/代码要点）；已完成的工作及其产出位置；未完成的任务与下一步；用户明确表达的偏好与约束。',
   '- 丢弃：寒暄、重复内容、已被纠正的中间尝试细节、冗长的工具原始输出（只留结论）。',
+  '- 无需逐字复述用户消息（系统会在摘要旁另行保留用户消息原文摘录），聚焦工作过程、结论与产出。',
   '- 用 Markdown 分节输出，使用中文。',
   '- 不要调用任何工具；只输出摘要正文，不要添加解释、开场白或结尾语。',
 ].join('\n');
@@ -131,8 +132,29 @@ const COMPACTION_REQUEST_PROMPT = [
  */
 const COMPACT_COMMAND_MODEL_CONTENT = '[系统命令] 用户请求压缩会话上下文（/compact）。这是平台指令，无需回应此消息本身。';
 
-/** 少于这个消息数（投影后）不值得压缩，直接回复无需压缩 */
+/** 压缩段（保留窗口之前）投影后少于这个消息数不值得压缩，直接回复无需压缩 */
 const MIN_COMPACTABLE_MESSAGES = 4;
+
+/** 压缩时保留最近 N 轮真实用户交互的原文（不被摘要替代） */
+const RETAIN_RECENT_USER_TURNS = 2;
+
+/**
+ * 计算压缩切分点：倒数第 RETAIN_RECENT_USER_TURNS 条真实用户消息的事件下标。
+ * 该下标之前的事件进入压缩段，之后（含该条用户消息）保留原文。
+ * 真实用户消息 = user_message 且 modelContent 不是系统命令替身（[系统命令] 前缀）。
+ * 真实交互不足 N 轮时返回 0（无可压缩段）。
+ */
+function findCompactionCutoffIndex(events: { type: string; modelContent?: string }[]): number {
+  let seen = 0;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.type !== 'user_message') continue;
+    if (event.modelContent?.startsWith('[系统命令]')) continue;
+    seen++;
+    if (seen >= RETAIN_RECENT_USER_TURNS) return i;
+  }
+  return 0;
+}
 
 export interface ResumeApprovalInput {
   approvalId: string;
@@ -623,15 +645,20 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   /**
-   * /compact 真实现（2026-07-03）：把当前会话历史压缩成摘要。
+   * /compact 真实现（2026-07-03；v2 黑箱化 + 保留窗口 + 用户消息轨迹）：
+   * 把「最近 RETAIN_RECENT_USER_TURNS 轮之前」的会话历史压缩成摘要。
    *
    * 事件落库顺序（顺序即语义，不可调换）：
-   *   run_started → user_message('/compact') → assistant_message(摘要，用户可见)
-   *   → [清 Responses 接力链] → compaction(切分点) → run_finished
-   * compaction 必须最后落（在 run_finished 前）：投影以最后一条 compaction 为切分点，
-   * 它之前的事件（含本 run 的 user/assistant_message，避免摘要在后续上下文里出现两遍）
-   * 全部被 summary 替代。清接力链放在 compaction 之前：若清空失败则压缩整体宣告失败，
-   * 不会出现「投影已压缩但远端 response chain 仍带全量历史」的半生效状态。
+   *   run_started → user_message('/compact') → [清 Responses 接力链]
+   *   → compaction(带 cutoffEventId) → run_finished
+   * v2 起摘要不再落 assistant_message（摘要只存 compaction.summary，transcript
+   * 渲染为压缩分界线；钉钉等文本通道由 onResult resultText 收到简短确认）。
+   * 清接力链放在 compaction 之前：若清空失败则压缩整体宣告失败，不会出现
+   * 「投影已压缩但远端 response chain 仍带全量历史」的半生效状态。
+   *
+   * 对外事件流是黑箱：只发 compaction_start / compaction_end，不流式播放
+   * 模型的 thinking/text——压缩过程对用户不可见，摘要经 compaction_end 与
+   * transcript line 下发（前端 debugMode 决定是否提供展开查看）。
    */
   async *compact(input: CompactInput, context: RunContext): AsyncIterable<OutboundEvent> {
     const priorEvents = await this.eventStore.list(context.sessionId);
@@ -655,20 +682,15 @@ export class RawAgentLoop implements AgentLoop {
       content: input.message.content,
       modelContent: COMPACT_COMMAND_MODEL_CONTENT,
     });
+    yield { type: 'compaction_start' };
 
-    if (projection.messages.length < MIN_COMPACTABLE_MESSAGES) {
+    // 切分点：倒数第 RETAIN_RECENT_USER_TURNS 条真实用户消息之前进入压缩段。
+    // 门槛按「压缩段」投影消息数判定——保留窗口内的消息本来就不会被压缩。
+    const cutIdx = findCompactionCutoffIndex(priorEvents);
+    const compressedMessages = buildChatMessagesFromEvents(priorEvents.slice(0, cutIdx));
+    if (cutIdx <= 0 || compressedMessages.length < MIN_COMPACTABLE_MESSAGES) {
       const note = '当前会话历史很短，无需压缩。';
-      yield { type: 'text_start' };
-      yield { type: 'text_delta', content: note };
-      await this.append({
-        type: 'assistant_message',
-        runId: context.runId,
-        sessionId: context.sessionId,
-        content: note,
-        model: context.model,
-        streamed: true,
-      });
-      yield { type: 'text_end' };
+      yield { type: 'compaction_end', compaction: { skipped: true, note, coveredEventCount: 0 } };
       await this.append({
         type: 'run_finished',
         runId: context.runId,
@@ -681,8 +703,6 @@ export class RawAgentLoop implements AgentLoop {
       return;
     }
 
-    let textStarted = false;
-    let thinkingStarted = false;
     let totalUsage: ModelUsage | undefined;
     let summaryText = '';
     try {
@@ -712,6 +732,7 @@ export class RawAgentLoop implements AgentLoop {
         { role: 'user', content: COMPACTION_REQUEST_PROMPT },
       ];
       let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
+      // 黑箱消费：thinking 丢弃、text 静默累积，不向外 yield 流式内容
       for await (const event of this.modelAdapter.stream({
         model: context.model,
         messages: requestMessages,
@@ -720,64 +741,23 @@ export class RawAgentLoop implements AgentLoop {
         signal: context.signal,
         ...(previousResponseId ? { previousResponseId } : {}),
       }, context)) {
-        if (event.type === 'thinking_delta') {
-          if (!thinkingStarted) {
-            thinkingStarted = true;
-            yield { type: 'thinking_start' };
-          }
-          yield { type: 'thinking_delta', content: event.content };
-        } else if (event.type === 'text_delta') {
-          if (thinkingStarted) {
-            thinkingStarted = false;
-            yield { type: 'thinking_end' };
-          }
-          if (!textStarted) {
-            textStarted = true;
-            yield { type: 'text_start' };
-          }
+        if (event.type === 'text_delta') {
           summaryText += event.content;
-          yield { type: 'text_delta', content: event.content };
-        } else {
+        } else if (event.type !== 'thinking_delta') {
           completed = event;
         }
       }
-      if (thinkingStarted) {
-        thinkingStarted = false;
-        yield { type: 'thinking_end' };
-      }
       if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
       if (!summaryText && completed?.content) {
-        if (!textStarted) {
-          textStarted = true;
-          yield { type: 'text_start' };
-        }
         summaryText = completed.content;
-        yield { type: 'text_delta', content: completed.content };
       }
       if (!summaryText.trim()) {
         throw new Error('compaction failed: model returned empty summary');
       }
 
-      // 被摘要覆盖的事件 = 既有历史 + 本 run 已落库的 run_started/user_message/assistant_message
-      const coveredEventCount = priorEvents.length + 3;
-      const statsLine = `\n\n---\n✅ 上下文已压缩：${coveredEventCount} 条历史事件已被以上摘要替代（原始记录仍完整保留，可通过会话事件检索查询）。`;
-      if (!textStarted) {
-        textStarted = true;
-        yield { type: 'text_start' };
-      }
-      yield { type: 'text_delta', content: statsLine };
-      const finalText = summaryText + statsLine;
-      await this.append({
-        type: 'assistant_message',
-        runId: context.runId,
-        sessionId: context.sessionId,
-        content: finalText,
-        model: context.model,
-        ...(completed?.usage ? { usage: completed.usage } : {}),
-        streamed: true,
-      });
-      yield { type: 'text_end' };
-      textStarted = false;
+      // 被摘要覆盖的事件 = 切分点（保留窗口起点）之前的全部事件
+      const coveredEventCount = cutIdx;
+      const cutoffEventId = priorEvents[cutIdx]!.id;
 
       // 清空 Responses API 接力链（见方法头注释：必须在 compaction 落库之前）
       if (this.runStore?.clearResponseSessionStateBySession) {
@@ -792,6 +772,7 @@ export class RawAgentLoop implements AgentLoop {
         sessionId: context.sessionId,
         summary: summaryText.trim(),
         coveredEventCount,
+        cutoffEventId,
       });
 
       const modelUsage = buildModelUsage(context.model, totalUsage);
@@ -803,19 +784,43 @@ export class RawAgentLoop implements AgentLoop {
         numTurns: 1,
         ...(modelUsage ? { modelUsage } : {}),
       });
-      logger.info(`[compact] finished session=${context.sessionId} covered=${coveredEventCount} summaryChars=${summaryText.length}`);
+      logger.info(`[compact] finished session=${context.sessionId} covered=${coveredEventCount} cutoff=${cutoffEventId} summaryChars=${summaryText.length}`);
+      const resultText = `✅ 上下文已压缩：${coveredEventCount} 条较早历史事件已被摘要替代，最近 ${RETAIN_RECENT_USER_TURNS} 轮对话原文保留（完整记录仍可检索）。`;
+      yield {
+        type: 'compaction_end',
+        compaction: { summary: summaryText.trim(), coveredEventCount },
+      };
       await context.hooks?.onResult?.({
         subtype: 'success',
         numTurns: 1,
-        resultText: finalText,
+        resultText,
         ...(modelUsage ? { modelUsage } : {}),
       });
       yield { type: 'done' };
     } catch (err) {
-      if (thinkingStarted) yield { type: 'thinking_end' };
-      if (textStarted) yield { type: 'text_end' };
-      const message = err instanceof Error ? err.message : String(err);
       const modelUsage = buildModelUsage(context.model, totalUsage);
+      // 被抢占（用户新消息 abort 自动压缩）：静默收尾，不报错——压缩是可推迟的
+      // 维护动作，abort 无残留（compaction 事件只在成功收尾时落库）。
+      if (context.signal?.aborted) {
+        await this.append({
+          type: 'run_finished',
+          runId: context.runId,
+          sessionId: context.sessionId,
+          subtype: 'interrupted',
+          numTurns: 1,
+          ...(modelUsage ? { modelUsage } : {}),
+        });
+        await context.hooks?.onResult?.({
+          subtype: 'interrupted',
+          numTurns: 1,
+          resultText: '',
+          ...(modelUsage ? { modelUsage } : {}),
+        });
+        logger.info(`[compact] preempted/aborted session=${context.sessionId}`);
+        yield { type: 'done' };
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
       await this.append({
         type: 'run_finished',
         runId: context.runId,

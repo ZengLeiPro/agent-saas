@@ -287,11 +287,14 @@ export type PlatformEvent =
     id: string;
     timestamp: string;
     /**
-     * 上下文压缩点（2026-07-03 /compact 真实现）。
-     * buildContextProjection 以「最后一条 compaction」为切分点：其之前的全部事件
-     * 被 summary 替代，之后的事件正常重放。原始事件仍完整留在 EventStore
-     * （SessionSearchEvents 可查），本事件只改变 prompt 投影，不删数据。
-     * 不投影到 legacy transcript（前端历史由伴随的 user/assistant_message 呈现）。
+     * 上下文压缩点（2026-07-03 /compact 真实现；2026-07-03 v2 黑箱化+保留窗口）。
+     * buildContextProjection 以「最后一条 compaction」定位压缩：
+     * - cutoffEventId 存在时：该事件 id 之前的历史被 summary 替代，之后的事件
+     *   （剔除本 compaction 所属 run 自身的事件）正常重放——即「保留最近 N 轮原始交互」。
+     * - cutoffEventId 缺失（v1 存量事件）：退化为以 compaction 自身为切分点，之前全替代。
+     * 原始事件仍完整留在 EventStore（SessionSearchEvents 可查），本事件只改变
+     * prompt 投影，不删数据。
+     * v2 起投影到 legacy transcript（前端渲染为压缩分界线，摘要 debugMode 可展开）。
      */
     type: 'compaction';
     runId: string;
@@ -300,6 +303,11 @@ export type PlatformEvent =
     summary: string;
     /** 被本次摘要覆盖的事件数（切分点之前的全部事件），观测/审计用 */
     coveredEventCount: number;
+    /**
+     * 保留窗口起点：投影时从该事件（含）开始保留原文，之前的历史被摘要替代。
+     * 由 compact() 计算为「倒数第 2 条真实用户消息」的事件 id。
+     */
+    cutoffEventId?: string;
   }
   | {
     id: string;

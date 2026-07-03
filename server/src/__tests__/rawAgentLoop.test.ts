@@ -2151,14 +2151,19 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     return { cwd, eventStore, loop, context, clearedSessions };
   }
 
+  /** 4 轮真实交互：v2 下最近 2 轮（C/D 方案）进保留窗口，前 2 轮（A/B 方案）进压缩段 */
   async function seedHistory(eventStore: FileEventStore) {
     await eventStore.append({ type: 'user_message', runId: 'run-old-1', sessionId: 'session-compact', content: '帮我分析 A 方案' });
     await eventStore.append({ type: 'assistant_message', runId: 'run-old-1', sessionId: 'session-compact', content: 'A 方案的结论是 X=42。' });
     await eventStore.append({ type: 'user_message', runId: 'run-old-2', sessionId: 'session-compact', content: '再对比 B 方案' });
     await eventStore.append({ type: 'assistant_message', runId: 'run-old-2', sessionId: 'session-compact', content: 'B 方案成本更低，推荐 B。' });
+    await eventStore.append({ type: 'user_message', runId: 'run-old-3', sessionId: 'session-compact', content: '那 C 方案呢' });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-3', sessionId: 'session-compact', content: 'C 方案不可行。' });
+    await eventStore.append({ type: 'user_message', runId: 'run-old-4', sessionId: 'session-compact', content: '最后看下 D 方案' });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-4', sessionId: 'session-compact', content: 'D 方案与 B 接近，仍推荐 B。' });
   }
 
-  it('成功链路：事件顺序、摘要落库、接力链清空、后续投影只剩 summary', async () => {
+  it('成功链路：黑箱事件流、cutoff 落库、接力链清空、投影=摘要+轨迹+保留窗口', async () => {
     const adapter = new SummaryAdapter(['## 摘要\n', '用户对比了 A/B 方案，结论：推荐 B（成本更低），A 的结论是 X=42。']);
     const { eventStore, loop, context, clearedSessions } = await makeCompactHarness(adapter);
     await seedHistory(eventStore);
@@ -2168,12 +2173,14 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       context,
     ));
 
-    // 出站流：正常 text 流 + done
-    expect(outbound[0]).toEqual({ type: 'text_start' });
+    // 出站流是黑箱：只有 compaction_start / compaction_end / done，无 thinking/text 流
+    expect(outbound[0]).toEqual({ type: 'compaction_start' });
     expect(outbound.at(-1)).toEqual({ type: 'done' });
-    const streamedText = outbound.filter((e) => e.type === 'text_delta').map((e: any) => e.content).join('');
-    expect(streamedText).toContain('推荐 B');
-    expect(streamedText).toContain('上下文已压缩');
+    expect(outbound.some((e) => e.type === 'text_delta' || e.type === 'thinking_delta')).toBe(false);
+    const end = outbound.find((e) => e.type === 'compaction_end') as any;
+    expect(end.compaction.summary).toContain('推荐 B');
+    expect(end.compaction.coveredEventCount).toBe(4); // 前 2 轮 = 4 条事件
+    expect(end.compaction.skipped).toBeUndefined();
 
     // 摘要请求与正常轮同构（缓存前缀友好）：原 system + 历史 + 末尾压缩请求 user；
     // 工具定义照常带上但 toolChoice='none'；无接力状态时不带 previousResponseId
@@ -2186,41 +2193,51 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(request.toolChoice).toBe('none');
     expect(request.previousResponseId).toBeUndefined();
 
-    // 事件落库顺序（compaction 必须在 assistant_message 之后、run_finished 之前）
+    // 事件落库：run_started → user_message(替身) → compaction → run_finished；
+    // v2 起摘要不再落 assistant_message
     const events = await eventStore.list('session-compact');
-    const types = events.map((e) => e.type);
-    const idx = (t: string) => types.lastIndexOf(t as never);
-    expect(idx('run_started')).toBeGreaterThanOrEqual(0);
-    expect(idx('user_message')).toBeLessThan(idx('assistant_message'));
-    expect(idx('assistant_message')).toBeLessThan(idx('compaction'));
-    expect(idx('compaction')).toBeLessThan(idx('run_finished'));
+    const compactRunEvents = events.filter((e) => 'runId' in e && e.runId === 'run-compact-1');
+    expect(compactRunEvents.map((e) => e.type)).toEqual(['run_started', 'user_message', 'compaction', 'run_finished']);
 
     const compaction = events.find((e) => e.type === 'compaction') as any;
     expect(compaction.summary).toContain('推荐 B');
-    expect(compaction.summary).not.toContain('上下文已压缩'); // 统计尾部不进 summary
-    expect(compaction.coveredEventCount).toBe(4 + 3);
+    expect(compaction.coveredEventCount).toBe(4);
+    // cutoff = 倒数第 2 条真实用户消息（'那 C 方案呢'）
+    const cutoffEvent = events.find((e) => e.id === compaction.cutoffEventId) as any;
+    expect(cutoffEvent.type).toBe('user_message');
+    expect(cutoffEvent.content).toBe('那 C 方案呢');
 
     const userMessage = events.find((e) => e.type === 'user_message' && e.runId === 'run-compact-1') as any;
     expect(userMessage.content).toBe('/compact');
     expect(userMessage.modelContent).toContain('[系统命令]');
 
-    const runFinished = events.find((e) => e.type === 'run_finished') as any;
+    const runFinished = events.find((e) => e.type === 'run_finished' && (e as any).runId === 'run-compact-1') as any;
     expect(runFinished.subtype).toBe('success');
     expect(runFinished.modelUsage?.['glm-5.2']).toMatchObject({ inputTokens: 500, outputTokens: 60 });
 
     // 接力链已按 session 清空
     expect(clearedSessions).toEqual(['session-compact']);
 
-    // 闭环：下一个 run 的投影只剩 summary（历史与本 run 的 user/assistant 全部被盖掉）
+    // 闭环：下一个 run 的投影 = summary(含轨迹) + 保留窗口 4 条原文；compact run 自身事件不出现
     const projection = buildContextProjection(await eventStore.list('session-compact'), {
       sessionId: 'session-compact',
       runId: 'run-next',
     });
-    expect(projection.messages).toHaveLength(1);
-    expect(projection.messages[0]).toMatchObject({ role: 'user' });
-    expect(projection.messages[0]?.content).toContain('<context-summary>');
-    expect(projection.messages[0]?.content).toContain('推荐 B');
-    expect(projection.messages[0]?.content).not.toContain('/compact');
+    expect(projection.messages).toHaveLength(5);
+    const summary = projection.messages[0]!;
+    expect(summary).toMatchObject({ role: 'user' });
+    expect(summary.content).toContain('<context-summary>');
+    expect(summary.content).toContain('推荐 B');
+    // 轨迹：被压缩段的用户消息原文（抽取式），保留窗口内的不重复出现
+    expect(summary.content).toContain('<user-message-trail>');
+    expect(summary.content).toContain('帮我分析 A 方案');
+    expect(summary.content).toContain('再对比 B 方案');
+    expect(summary.content).not.toContain('那 C 方案呢');
+    expect(summary.content).toContain('SessionGetToolTrace');
+    // 保留窗口原文
+    expect(projection.messages[1]).toMatchObject({ role: 'user', content: '那 C 方案呢' });
+    expect(projection.messages[4]).toMatchObject({ role: 'assistant', content: 'D 方案与 B 接近，仍推荐 B。' });
+    expect(projection.messages.some((m) => m.content?.includes('/compact'))).toBe(false);
   });
 
   it('Responses 接力状态存在时透传 previousResponseId（远端已存历史，input 只有增量）', async () => {
@@ -2241,7 +2258,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(clearedSessions).toEqual(['session-compact']);
   });
 
-  it('历史太短：直接回复无需压缩，不产生 compaction 事件', async () => {
+  it('历史太短（空会话）：compaction_end 带 skipped，不产生 compaction 事件', async () => {
     const adapter = new SummaryAdapter(['不应被调用']);
     const { eventStore, loop, context } = await makeCompactHarness(adapter);
 
@@ -2251,12 +2268,33 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     ));
 
     expect(adapter.requests).toHaveLength(0);
+    expect(outbound[0]).toEqual({ type: 'compaction_start' });
     expect(outbound.at(-1)).toEqual({ type: 'done' });
-    const streamedText = outbound.filter((e) => e.type === 'text_delta').map((e: any) => e.content).join('');
-    expect(streamedText).toContain('无需压缩');
+    const end = outbound.find((e) => e.type === 'compaction_end') as any;
+    expect(end.compaction.skipped).toBe(true);
+    expect(end.compaction.note).toContain('无需压缩');
     const events = await eventStore.list('session-compact');
     expect(events.some((e) => e.type === 'compaction')).toBe(false);
     expect((events.find((e) => e.type === 'run_finished') as any)?.subtype).toBe('success');
+  });
+
+  it('仅 2 轮真实交互：全部落入保留窗口，无可压缩段 → skipped', async () => {
+    const adapter = new SummaryAdapter(['不应被调用']);
+    const { eventStore, loop, context } = await makeCompactHarness(adapter);
+    await eventStore.append({ type: 'user_message', runId: 'run-old-1', sessionId: 'session-compact', content: '帮我分析 A 方案' });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-1', sessionId: 'session-compact', content: 'A 方案的结论是 X=42。' });
+    await eventStore.append({ type: 'user_message', runId: 'run-old-2', sessionId: 'session-compact', content: '再对比 B 方案' });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-2', sessionId: 'session-compact', content: 'B 方案成本更低，推荐 B。' });
+
+    const outbound = await collect(loop.compact(
+      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' }, instructions: '正常指令' },
+      context,
+    ));
+
+    expect(adapter.requests).toHaveLength(0);
+    const end = outbound.find((e) => e.type === 'compaction_end') as any;
+    expect(end.compaction.skipped).toBe(true);
+    expect((await eventStore.list('session-compact')).some((e) => e.type === 'compaction')).toBe(false);
   });
 
   it('模型返回空摘要：run_finished error，无 compaction，防御性 modelContent 保证投影无裸 /compact', async () => {

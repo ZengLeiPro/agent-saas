@@ -11,6 +11,7 @@ import type {
   PluginInstallData,
   NotificationData,
   MemoryRecallData,
+  CompactionOutboundData,
 } from '../types/index.js';
 import { resolveDisplayToolName } from './toolNameResolver.js';
 import type { ResolveToolNameParams, ToolNameResolver } from './toolNameResolver.js';
@@ -61,6 +62,9 @@ export interface EventHandler {
   onPluginInstall?(data: PluginInstallData): void | Promise<void>;
   onNotification?(data: NotificationData): void | Promise<void>;
   onMemoryRecall?(data: MemoryRecallData): void | Promise<void>;
+  // /compact v2：压缩黑箱事件（开始 / 结束）
+  onCompactionStart?(): void | Promise<void>;
+  onCompactionEnd?(data: CompactionOutboundData | undefined): void | Promise<void>;
   onDone?(): void | Promise<void>;
   onError?(error: string): void | Promise<void>;
   onFinally?(result: ConsumeResult): void | Promise<void>;
@@ -225,6 +229,14 @@ export class EventConsumer implements ToolTracker {
 
           case 'memory_recall':
             if (event.memoryRecall) await handler.onMemoryRecall?.(event.memoryRecall);
+            break;
+
+          case 'compaction_start':
+            await handler.onCompactionStart?.();
+            break;
+
+          case 'compaction_end':
+            await handler.onCompactionEnd?.(event.compaction);
             break;
 
           case 'done':

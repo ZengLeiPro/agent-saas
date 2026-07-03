@@ -652,6 +652,17 @@ export class WebChannel implements BaseChannel {
           questions: input.event.questions,
         });
         break;
+      // /compact v2：压缩过程黑箱——开始/结束各一条状态消息，无流式内容
+      case 'compaction_start':
+        emitSession({ type: 'compaction_status', phase: 'started' });
+        break;
+      case 'compaction_end':
+        emitSession({
+          type: 'compaction_status',
+          phase: 'completed',
+          compaction: input.event.compaction,
+        });
+        break;
       case 'done':
         emitSession({ type: 'done', client_msg_id: input.clientMsgId });
         this.eventBufferStore.complete(input.sessionId);
@@ -3352,6 +3363,16 @@ function projectRuntimePlatformEvent(
       }
       return { events };
     }
+    case 'compaction':
+      // /compact v2：durable replay / 跨进程 NOTIFY 路径把压缩点投影为分界线状态事件
+      // （同进程直推路径由 handleRuntimeOutboundEvent 的 compaction_end case 覆盖）
+      return {
+        events: [{
+          type: 'compaction_status',
+          phase: 'completed',
+          compaction: { summary: event.summary, coveredEventCount: event.coveredEventCount },
+        }],
+      };
     case 'run_state_changed':
       if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') {
         const terminalError = event.status !== 'completed' ? event.reason ?? event.status : undefined;

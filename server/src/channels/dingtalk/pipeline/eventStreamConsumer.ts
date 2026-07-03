@@ -154,6 +154,28 @@ export class DingtalkEventStreamConsumer {
         }
       },
 
+      // /compact v2：压缩过程黑箱化——钉钉端只收到状态提示与完成确认，不收摘要正文
+      async onCompactionStart() {
+        await effectiveSendStatus('正在压缩上下文...');
+      },
+
+      async onCompactionEnd(data) {
+        const text = data?.skipped
+          ? (data.note ?? '当前会话历史很短，无需压缩。')
+          : `✅ 上下文已压缩：${data?.coveredEventCount ?? 0} 条较早历史已被摘要替代，最近对话原文保留。`;
+        if (card) {
+          if (needsBlockSeparator && aiCardAccumulated) {
+            aiCardAccumulated += '\n\n';
+            needsBlockSeparator = false;
+          }
+          aiCardAccumulated += text;
+          await cardService.stream(card, 'content', cleanMediaForDisplay(aiCardAccumulated));
+        } else {
+          hasSentText = true;
+          await sendMessage(text, 'markdown');
+        }
+      },
+
       async onError(error) {
         if (card) {
           try {

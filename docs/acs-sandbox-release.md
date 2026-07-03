@@ -199,7 +199,7 @@ grep '^ACS_SANDBOX_IMAGE=' /etc/agent-saas/acs-orchestrator.env
 sudoedit /etc/agent-saas/acs-orchestrator.env
 systemctl restart agent-saas-acs-orchestrator.service
 systemctl is-active agent-saas-acs-orchestrator.service
-curl -sf http://10.0.1.1:3400/health
+curl -sf http://127.0.0.1:3400/health
 ```
 
 验证时至少覆盖：

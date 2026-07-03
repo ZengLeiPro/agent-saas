@@ -664,7 +664,7 @@ jobs:
           systemctl is-active "$ACS_SERVICE_NAME"
 
           for _ in $(seq 1 120); do
-            if curl -fsS http://10.0.1.1:3400/health >/tmp/acs-health.json; then
+            if curl -fsS -m 5 http://127.0.0.1:3400/health >/tmp/acs-health.json; then
               grep -F "$IMAGE" /tmp/acs-health.json >/dev/null
               break
             fi
@@ -684,7 +684,7 @@ jobs:
           export SMOKE_WS SMOKE_SESSION SMOKE_MOUNT
           AUTH_HEADER="Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}"
 
-          curl -fsS -m 420 -X POST http://10.0.1.1:3400/provision \
+          curl -fsS -m 420 -X POST http://127.0.0.1:3400/provision \
             -H "$AUTH_HEADER" \
             -H 'Content-Type: application/json' \
             -d "{\"workspaceId\":\"${SMOKE_WS}\",\"recipe\":{\"workspaceId\":\"${SMOKE_WS}\",\"sessionId\":\"${SMOKE_SESSION}\",\"mountSubPath\":\"${SMOKE_MOUNT}\"}}" \
@@ -735,7 +735,7 @@ jobs:
           }));
           NODE
 
-          curl -fsS -m 420 -X POST http://10.0.1.1:3400/execute \
+          curl -fsS -m 420 -X POST http://127.0.0.1:3400/execute \
             -H "$AUTH_HEADER" \
             -H 'Content-Type: application/json' \
             --data-binary @/tmp/acs-execute-payload.json \

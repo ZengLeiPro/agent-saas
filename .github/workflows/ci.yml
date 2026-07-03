@@ -224,6 +224,17 @@ jobs:
             if healthz_ok; then
               prune_pnpm_store
               rm -f "$RELEASE_TGZ"
+              # 自动清理：保留最近 5 个 release + current/previous 指向
+              # （盘只有 40G，每个 release 约 1.5G，不清会涨满打挂服务）
+              KEEP_CURRENT=$(readlink "$APP_LINK" 2>/dev/null || true)
+              KEEP_PREV=$(readlink "$PREV_LINK" 2>/dev/null || true)
+              (ls -dt "$RELEASES_DIR"/*/ 2>/dev/null || true) | tail -n +6 | while read -r old; do
+                old="${old%/}"
+                if [ -n "$old" ] && [ "$old" != "$KEEP_CURRENT" ] && [ "$old" != "$KEEP_PREV" ]; then
+                  echo "Pruning old release: $old"
+                  rm -rf "$old"
+                fi
+              done
               echo "Deploy OK: $RELEASE_ID"
               exit 0
             fi

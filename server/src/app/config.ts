@@ -352,6 +352,12 @@ const modelItemSchema = z.object({
    * - cache_tokens_separate: Anthropic 原生，cache read/write 是独立 token 分量
    */
   usage_accounting: usageAccountingSchema.optional(),
+  /**
+   * 模型上下文窗口（token 数）。自动压缩用它计算触发阈值
+   * （当前上下文 ≥ context_window × 阈值比例时 post-run 自动压缩）。
+   * 不配置 = 该模型不启用自动压缩（无内置默认，配错比不配危害大）。
+   */
+  context_window: z.number().int().positive().optional(),
 }).extend(modelProviderOptionsSchema.shape)
   .extend(modelResponsesOptionsSchema.shape);
 

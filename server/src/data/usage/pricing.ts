@@ -54,6 +54,8 @@ export interface PricingModelConfig {
   alias_actual?: string;
   pricing?: ModelPrice;
   usage_accounting?: UsageAccountingMode;
+  /** 模型上下文窗口（token 数）。自动压缩阈值判断用；未配置则该模型不触发自动压缩。 */
+  context_window?: number;
 }
 
 export interface PricingModelsConfig {
@@ -119,10 +121,12 @@ const PRICING: Record<string, ModelPrice> = {
 
 let configuredPricing: Record<string, ModelPrice> = {};
 let configuredUsageAccounting: Record<string, UsageAccountingMode> = {};
+let configuredContextWindows: Record<string, number> = {};
 
 export function configureModelPricing(modelsConfig: PricingModelsConfig | undefined): void {
   const next: Record<string, ModelPrice> = {};
   const nextAccounting: Record<string, UsageAccountingMode> = {};
+  const nextContextWindows: Record<string, number> = {};
   for (const group of modelsConfig?.groups ?? []) {
     for (const model of group.models ?? []) {
       if (model.pricing) {
@@ -133,10 +137,24 @@ export function configureModelPricing(modelsConfig: PricingModelsConfig | undefi
         nextAccounting[model.value] = model.usage_accounting;
         if (model.alias_actual) nextAccounting[model.alias_actual] = model.usage_accounting;
       }
+      if (typeof model.context_window === 'number' && model.context_window > 0) {
+        nextContextWindows[model.value] = model.context_window;
+        if (model.alias_actual) nextContextWindows[model.alias_actual] = model.context_window;
+      }
     }
   }
   configuredPricing = next;
   configuredUsageAccounting = nextAccounting;
+  configuredContextWindows = nextContextWindows;
+}
+
+/**
+ * 模型上下文窗口（token 数）。只认 config.json 显式配置（models.groups[].models[].context_window），
+ * 不做内置猜测——窗口值直接决定自动压缩触发点，配错比不配危害更大。
+ * 未配置返回 undefined，调用方（自动压缩）应视为「该模型不启用自动压缩」。
+ */
+export function getModelContextWindow(model: string): number | undefined {
+  return configuredContextWindows[model];
 }
 
 /**

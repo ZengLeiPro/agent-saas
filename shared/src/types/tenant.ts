@@ -44,6 +44,8 @@ export interface TenantSettings {
     mcpEnabled: boolean;
     customSkillsEnabled: boolean;
     debugModeAllowed: boolean;
+    /** 会话上下文自动压缩（post-run 超阈值触发）。默认关闭。 */
+    autoCompactEnabled: boolean;
   };
   quotas: {
     maxUsers?: number;
@@ -95,6 +97,7 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     mcpEnabled: true,
     customSkillsEnabled: true,
     debugModeAllowed: false,
+    autoCompactEnabled: false,
   },
   quotas: {},
   models: {

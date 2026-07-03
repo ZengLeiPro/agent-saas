@@ -375,6 +375,7 @@ function TenantCapabilitiesPanel({ tenant }: { tenant: Tenant }) {
     ["MCP", settings.features.mcpEnabled],
     ["自建 Skill", settings.features.customSkillsEnabled],
     ["调试模式", settings.features.debugModeAllowed],
+    ["自动压缩", settings.features.autoCompactEnabled],
     ["钉钉绑定", settings.security.requireDingtalkBinding],
   ] as const;
 

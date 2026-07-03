@@ -48,6 +48,8 @@ const tenantSettingsSchema = z.object({
     mcpEnabled: z.boolean(),
     customSkillsEnabled: z.boolean(),
     debugModeAllowed: z.boolean(),
+    // optional：兼容不带新字段的旧客户端提交；缺省时 store merge 保留原值/默认 false
+    autoCompactEnabled: z.boolean().optional(),
   }).optional(),
   quotas: z.object({
     maxUsers: optionalNumber,

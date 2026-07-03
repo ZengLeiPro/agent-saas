@@ -27,7 +27,11 @@
             "value": "gpt-5.4",
             // 可选：Token 单价（USD / 1M tokens）。平台管理 → 模型管理可视化维护。
             // 未配置时使用服务端内置价格表；未知模型未配置则 cost=0 并告警。
-            "pricing": { "input": 2.5, "output": 15, "cacheCreation": 0, "cacheRead": 0.25 }
+            "pricing": { "input": 2.5, "output": 15, "cacheCreation": 0, "cacheRead": 0.25 },
+            // 可选：模型上下文窗口（token 数）。自动压缩据此计算触发阈值
+            // （当前上下文 ≥ 80% 窗口时回合结束后自动压缩；还需租户开启 autoCompactEnabled）。
+            // 不配置 = 该模型不启用自动压缩。无内置默认——窗口值直接决定触发点，宁缺勿错。
+            "context_window": 200000
           },
           { "id": "gpt54mini", "name": "GPT 5.4 Mini", "value": "gpt-5.4-mini"},
           { "id": "k25", "name": "Kimi 2.5", "value": "kimi-2.5" },

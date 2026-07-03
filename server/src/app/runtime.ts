@@ -32,6 +32,7 @@ import { ArtifactService } from '../runtime/artifactService.js';
 import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
 import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from '../runtime/toolInvocationCancelDelivery.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
+import { AutoCompactionService } from '../runtime/autoCompaction.js';
 import { runtimeRunController } from '../runtime/runController.js';
 import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { createMiddlewareRunDispatch } from '../engine/dispatch.js';
@@ -967,6 +968,21 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...(pgRunStore ? { runStore: pgRunStore } : {}),
     ...(pgHandStore ? { handStore: pgHandStore } : {}),
     ...(pgToolInvocationStore ? { toolInvocationStore: pgToolInvocationStore } : {}),
+    // /compact v2 自动压缩：需要 PG runStore（enqueue 走 scheduler wake 链路）。
+    // file backend 无 scheduler，不装配（手动 /compact 不受影响）。
+    ...(pgRunStore && tenantStore ? {
+      autoCompaction: new AutoCompactionService({
+        runStore: pgRunStore,
+        getTenantSettings: (tenantId) => {
+          if (!tenantId) return undefined;
+          try {
+            return tenantStore!.getSettings(tenantId)?.features;
+          } catch {
+            return undefined;
+          }
+        },
+      }),
+    } : {}),
     executionTransportRegistry,
     ...(sessionLock ? { sessionLock } : {}),
     ...(artifactService ? { artifactService } : {}),

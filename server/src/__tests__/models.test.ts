@@ -183,6 +183,7 @@ describe('OpenAI-only model resolver', () => {
         mcpEnabled: true,
         customSkillsEnabled: true,
         debugModeAllowed: false,
+        autoCompactEnabled: false,
       },
       quotas: {},
       models: {
@@ -238,6 +239,7 @@ describe('OpenAI-only model resolver', () => {
         mcpEnabled: true,
         customSkillsEnabled: true,
         debugModeAllowed: false,
+        autoCompactEnabled: false,
       },
       quotas: {},
       models: {
@@ -265,6 +267,7 @@ describe('OpenAI-only model resolver', () => {
         mcpEnabled: true,
         customSkillsEnabled: true,
         debugModeAllowed: false,
+        autoCompactEnabled: false,
       },
       quotas: {},
       mcp: {

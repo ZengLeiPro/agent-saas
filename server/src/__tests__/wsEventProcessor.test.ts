@@ -573,3 +573,72 @@ describe('wsEventProcessor artifact_created', () => {
     });
   });
 });
+
+describe('wsEventProcessor interactive tool passthrough', () => {
+  // 回归：AskUserQuestion 等交互工具由 ask_user / permission_request 卡片渲染，
+  // durable replay 通道曾漏过滤 → 前端叠加"AskUserQuestion 执行中"骨架 + 交互卡
+  // 片两条并存。前端兜底：block_start / tool_execution / tool_result 三分支都
+  // 应识别交互工具并跳过,不新增 tool_use 骨架。
+  for (const toolName of ['AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode']) {
+    it(`ignores block_start(tool_use) for ${toolName}`, () => {
+      const { messages, ctx } = createTestRig();
+      const block = { currentBlockIndex: -1, currentBlockType: null };
+      processWsEvent(
+        { type: 'block_start', blockType: 'tool_use', toolId: 't1', toolName },
+        ctx, block, { value: 'session-1' }, 'session-1',
+      );
+      // tool_input / block_end 由于 currentBlockType 仍为 null 自然跳过
+      processWsEvent(
+        { type: 'tool_input', toolId: 't1', toolName, content: '{}' },
+        ctx, block, { value: 'session-1' }, 'session-1',
+      );
+      processWsEvent(
+        { type: 'block_end', blockType: 'tool_use', toolName },
+        ctx, block, { value: 'session-1' }, 'session-1',
+      );
+      expect(messages.some(m => m.type === 'tool_use')).toBe(false);
+    });
+
+    it(`ignores tool_execution phase=started for ${toolName}`, () => {
+      const { messages, ctx } = createTestRig();
+      process(
+        { type: 'tool_execution', phase: 'started', toolId: 't1', toolName },
+        ctx,
+      );
+      expect(messages.some(m => m.type === 'tool_use')).toBe(false);
+    });
+
+    it(`ignores tool_result for ${toolName} and does not spawn a bare tool_result card`, () => {
+      const { messages, ctx } = createTestRig();
+      process(
+        { type: 'tool_result', toolId: 't1', toolName, result: 'ignored' },
+        ctx,
+      );
+      expect(messages.some(m => m.type === 'tool_result')).toBe(false);
+    });
+  }
+
+  it('still renders regular tools via tool_execution', () => {
+    const { messages, ctx } = createTestRig();
+    process(
+      { type: 'tool_execution', phase: 'started', toolId: 't1', toolName: 'Bash' },
+      ctx,
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'tool_use', toolName: 'Bash' });
+  });
+
+  it('coexists cleanly: only ask_user card remains for AskUserQuestion end-to-end', () => {
+    // 端到端回归：replay/durable 通道曾同时投出 tool_execution(AskUserQuestion) +
+    // ask_user,前端会渲染成"AskUserQuestion 执行中" + "Agent Question / Answered"
+    // 两条。修复后 tool_execution 分支挡住,只留 ask_user 卡片。
+    const { messages, ctx } = createTestRig();
+    process({ type: 'tool_execution', phase: 'started', toolId: 't1', toolName: 'AskUserQuestion' }, ctx);
+    process({
+      type: 'ask_user', interactionId: 'ix-1',
+      questions: [{ question: 'q?', header: 'H', options: [{ label: 'A', description: '' }], multiSelect: false }],
+    }, ctx);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'ask_user', interactionId: 'ix-1' });
+  });
+});

@@ -17,6 +17,7 @@ import {
   shouldSendWebBlock,
   shouldSendWebToolResult,
   getWebDisplayConfig,
+  isInteractiveTool,
 } from './displayFilter.js';
 import { chatLogger } from '../../utils/logger.js';
 import { parseVoiceMarkers } from '../../utils/voiceMarkers.js';
@@ -631,7 +632,7 @@ export class WebChannel implements BaseChannel {
           error: input.event.error,
         });
         break;
-      case 'tool_result':
+      case 'tool_result': {
         emitSession({
           type: 'tool_result',
           toolId: input.event.toolId,
@@ -639,7 +640,21 @@ export class WebChannel implements BaseChannel {
           result: input.event.toolResult ?? '',
           content: input.event.toolResult ?? '',
         });
+        // CreateArtifact 交付卡片：raw runtime 同进程直推是 live 会话的唯一通道
+        //（跨进程桥对 in-process run 的 tool_result 直接 return），必须与
+        // onToolResult（SDK 流）/ projectRuntimePlatformEvent（replay）一样补发
+        // artifact_created，否则前端 live 看不到文件卡片，只有冷加载历史才有。
+        // tool error 时 result 非 JSON，build 返回 null 自然跳过。
+        if (
+          input.event.toolName === 'CreateArtifact'
+          && typeof input.event.toolResult === 'string'
+          && input.event.toolResult.length > 0
+        ) {
+          const artifactEvent = buildArtifactCreatedEventFromToolResult(input.event.toolResult);
+          if (artifactEvent) emitSession(artifactEvent);
+        }
         break;
+      }
       case 'permission_request':
       case 'ask_user':
         emitSession({
@@ -3272,6 +3287,12 @@ function projectRuntimePlatformEvent(
         }],
       };
     case 'tool_invocation_started':
+      // 交互型工具（AskUserQuestion / EnterPlanMode / ExitPlanMode）由 ask_user /
+      // permission_request 侧通道独立驱动 UI，不该走 tool_execution 通道，
+      // 否则前端会在交互卡片之外再叠加一条"AskUserQuestion 执行中"骨架。
+      // live 通道 onToolStart 已用 shouldSendWebBlock 过滤,这里补上 replay/
+      // durable/跨进程 NOTIFY 路径的兜底,与 displayFilter.ts 语义对齐。
+      if (isInteractiveTool(event.toolName)) return { events: [] };
       return {
         events: [{
           type: 'tool_execution',
@@ -3282,6 +3303,7 @@ function projectRuntimePlatformEvent(
         }],
       };
     case 'tool_invocation_completed':
+      if (isInteractiveTool(event.toolName)) return { events: [] };
       return {
         events: [{
           type: 'tool_execution',
@@ -3295,6 +3317,7 @@ function projectRuntimePlatformEvent(
         }],
       };
     case 'tool_result': {
+      if (isInteractiveTool(event.toolName)) return { events: [] };
       const events: object[] = [{
         type: 'tool_result',
         toolId: event.toolCallId,
@@ -3355,6 +3378,9 @@ function projectRuntimePlatformEvent(
         );
       }
       for (const call of event.toolCalls) {
+        // 交互型工具的 tool call 由 ask_user / permission_request 侧通道单独渲染,
+        // 不产生 tool_use 骨架,避免与交互卡片双条并存。
+        if (isInteractiveTool(call.name)) continue;
         events.push(
           { type: 'block_start', blockType: 'tool_use', toolId: call.id, toolName: call.name },
           { type: 'tool_input', toolId: call.id, toolName: call.name, content: call.arguments },

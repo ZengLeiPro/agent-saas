@@ -7,6 +7,24 @@ import type { MessageItem, MessageItemInput } from '../types/message';
 import type { WsEvent } from '../types/ws';
 import { formatRuntimeFailureMessage } from './runtimeErrorMessage';
 
+/**
+ * 交互性工具：由 canUseTool 侧通道驱动交互 UI（ask_user / permission_request），
+ * 不该走通用 tool_use / tool_result 展示通道。live 通道已用后端 shouldSendWebBlock
+ * 过滤，但 durable replay/跨进程 NOTIFY 路径的 projectRuntimePlatformEvent 曾漏过
+ * 滤 → 前端同时收到 `tool_execution(AskUserQuestion)` 与 `ask_user`，出现"执行中"
+ * 骨架 + "Agent Question / Answered" 两行并存的丑陋 UI。此常量作为前端兜底，与
+ * 后端 `channels/web/displayFilter.ts` 的 INTERACTIVE_TOOLS 一致。
+ */
+const INTERACTIVE_TOOL_NAMES = new Set<string>([
+  "AskUserQuestion",
+  "EnterPlanMode",
+  "ExitPlanMode",
+]);
+
+function isInteractiveToolName(toolName: string | undefined | null): boolean {
+  return !!toolName && INTERACTIVE_TOOL_NAMES.has(toolName);
+}
+
 /** Plan mode tool display mapping */
 const PLAN_MODE_DISPLAY: Record<string, { name: string; description: string }> = {
   EnterPlanMode: {
@@ -324,6 +342,13 @@ export function processWsEvent(
       const owner = ctx.sessionOwnerRef?.current;
       block.currentBlockIndex = msg.addMessage({ type: "text", content: "", streaming: true, ...(owner ? { owner } : {}), timestamp: Date.now() });
     } else if (data.blockType === "tool_use") {
+      // 交互型工具（AskUserQuestion / EnterPlanMode / ExitPlanMode）走
+      // ask_user / permission_request 独立卡片渲染，不产生 tool_use 骨架，
+      // 避免与交互卡片双条并存。currentBlockIndex 保持 -1 让 tool_input /
+      // block_end 也自动跳过。
+      if (isInteractiveToolName(data.toolName)) {
+        return;
+      }
       const existingIdx = findToolUseIndex(msg.messagesRef.current, data.toolId, data.toolName);
       if (existingIdx >= 0) {
         block.currentBlockIndex = existingIdx;
@@ -405,6 +430,14 @@ export function processWsEvent(
   }
 
   if (data.type === "tool_execution") {
+    // 交互型工具的 tool_invocation_started/completed 会被 durable replay 投影
+    // 成 tool_execution 事件；这里兜底跳过，防出现 "AskUserQuestion 执行中" 骨架。
+    // toolName 只在 phase=started/completed 里携带，progress 时靠 toolId 找已有骨架，
+    // 交互型工具本就没有骨架，findToolUseIndex 找不到会走 addMessage —— 一并挡住。
+    if (isInteractiveToolName(data.toolName)) {
+      removeRuntimeStatusMessages(msg);
+      return;
+    }
     removeRuntimeStatusMessages(msg);
     const toolId = data.toolId || "";
     const toolName = data.toolName || "unknown";
@@ -449,6 +482,12 @@ export function processWsEvent(
   }
 
   if (data.type === "tool_result") {
+    // 交互型工具的 tool_result 由 ask_user / permission_request 卡片自身呈现，
+    // 兜底跳过（与 sessionsApi.ts 的 INTERACTIVE_RESULT_TOOLS 行为一致）。
+    if (isInteractiveToolName(data.toolName)) {
+      removeRuntimeStatusMessages(msg);
+      return;
+    }
     removeRuntimeStatusMessages(msg);
     const toolId = data.toolId || "";
     const msgs = msg.messagesRef.current;

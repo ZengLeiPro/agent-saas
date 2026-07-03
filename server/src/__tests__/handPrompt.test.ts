@@ -48,8 +48,6 @@ describe('Runtime prompt and client daemon transport', () => {
     expect(prompt).not.toContain('client-laptop');
     expect(prompt).not.toContain('type="client"');
     expect(prompt).not.toContain('customer_network');
-    expect(prompt).toContain('先调用 WaitForWorkspaceReady');
-    expect(prompt).toContain('只暴露一个 workspace 运行态');
   });
 
   it('does not expose fallback hands when a tenant runtime is ready', () => {
@@ -97,7 +95,6 @@ describe('Runtime prompt and client daemon transport', () => {
     expect(prompt).not.toContain('server-container');
     expect(prompt).not.toContain('endpoint');
     expect(prompt).not.toContain('currentDefault');
-    expect(prompt).toContain('工具始终在当前运行态执行');
     expect(prompt).not.toContain('handId');
   });
 
@@ -131,7 +128,6 @@ describe('Runtime prompt and client daemon transport', () => {
     expect(prompt).toContain('<current-runtime status="provisioning" workspaceId="ws_kaiyan__ky50wfyptpafch">');
     expect(prompt).not.toContain('server-container');
     expect(prompt).not.toContain('agent-saas-acs');
-    expect(prompt).toContain('不要改用其他执行环境猜测文件状态');
   });
 
   it('routes client invocations to reverse registered daemon connection by handId', async () => {

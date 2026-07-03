@@ -1,7 +1,6 @@
 import { randomUUID } from 'crypto';
-import { existsSync } from 'fs';
 import { mkdir } from 'fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'path';
 
 import type {
   AgentRunDispatch,
@@ -1151,12 +1150,12 @@ function normalizeApprovalPolicy(value: unknown): ToolApprovalPolicyOptions | un
  *
  * Sections 顺序严格按 variability「从低到高」排列，最大化 OpenAI 自动前缀缓存命中：
  *   1. static.md             全局稳定（无变量、跨用户共享）
- *   2. dynamic-shared.md     全局稳定（COMPANY_INFO，月级不变）
- *   3. runtime-memory.md     全局稳定（3 行固定提示，条件加载）
+ *   2. dynamic-shared.md     per-tenant 稳定（COMPANY_INFO，月级不变）
+ *   3. runtime-memory.md     全局稳定（固定提示，条件加载）
  *   4. dynamic-personal.md   per-user 变量（身份 + PERSONA + env + 安全块）
  *   5. <available-hands>     高度易变（hand status 翻动）
  *
- * ── ↑ 前 3 段跨用户共享前缀，是 prompt cache 的理想命中区 ──
+ * ── ↑ 段 1 跨用户共享前缀；段 2 起同租户内共享，是 prompt cache 的理想命中区 ──
  *
  * 2026-07-03：原 section 4 `<available-skills>` xml 段已删——skill 清单现由
  * SkillToolProvider 动态注入到 Skill 工具 description 中，避免 xml 注意力弱的
@@ -1175,11 +1174,9 @@ function buildInstructions(params: {
   memorySearchEnabled: boolean;
   availableHandsPrompt?: string;
   isPlatformAdmin: boolean;
-  model: string;
 }): string {
-  const personaBody = params.persona && params.persona.trim().length > 0
-    ? params.persona.trim()
-    : '无定义，直接遵循系统提示语。';
+  const personaBody = params.persona.trim();
+  const hasPersona = personaBody.length > 0;
 
   const sharedVars: PromptVars = {
     COMPANY_INFO: loadCompanyInfo(params.sharedDir, params.tenantId),
@@ -1190,11 +1187,9 @@ function buildInstructions(params: {
     AGENT_NAME: params.agentName,
     PERSONA: personaBody,
     USER_CWD: visibleCwd,
-    IS_GIT_REPO: existsSync(join(params.cwd, '.git')) ? 'Yes' : 'No',
-    PLATFORM: process.platform,
-    RUNTIME_INFO: `raw API ModelAdapter (model=${params.model}, executionTarget=${params.executionTarget})`,
+    IF_PERSONA: hasPersona,
+    IF_NO_PERSONA: !hasPersona,
     IF_NOT_ADMIN: !params.isPlatformAdmin,
-    IF_ADMIN: params.isPlatformAdmin,
   };
 
   const sections: string[] = [
@@ -1453,7 +1448,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           memorySearchEnabled,
           availableHandsPrompt: buildAvailableHandsPrompt(availableHands),
           isPlatformAdmin,
-          model,
         });
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
     const projection = new LegacyTranscriptProjection(transcriptPath);
@@ -1740,7 +1734,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       memorySearchEnabled,
       availableHandsPrompt: buildAvailableHandsPrompt(availableHands),
       isPlatformAdmin: resumeIsPlatformAdmin,
-      model,
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);
     const modelAdapter = createModelAdapterForProtocol({ apiKey, baseUrl }, modelProviderOptions);
@@ -1998,7 +1991,6 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       memorySearchEnabled,
       availableHandsPrompt: buildAvailableHandsPrompt(availableHands),
       isPlatformAdmin: resumeIsPlatformAdmin,
-      model,
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);
     const modelAdapter = createModelAdapterForProtocol({ apiKey, baseUrl }, modelProviderOptions);

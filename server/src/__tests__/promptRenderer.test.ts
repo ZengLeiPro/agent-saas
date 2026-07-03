@@ -14,29 +14,47 @@ describe('prompt smoke', () => {
     expect(out).not.toContain('{{');
   });
 
-  it('renders dynamic-personal.md with vars and IF_NOT_ADMIN block', () => {
+  it('renders dynamic-personal.md with persona and IF_NOT_ADMIN block', () => {
     const out = loadAndRenderPrompt(SHARED, 'dynamic-personal', {
       CURRENT_USER: '测试用户',
       AGENT_NAME: '测试体',
       PERSONA: '简洁',
       USER_CWD: '/tmp/x',
-      IS_GIT_REPO: 'No',
-      PLATFORM: 'darwin',
-      RUNTIME_INFO: 'raw',
+      IF_PERSONA: true,
+      IF_NO_PERSONA: false,
       IF_NOT_ADMIN: true,
     });
     expect(out).toContain('测试用户');
     expect(out).toContain('「测试体」');
+    expect(out).toContain('把你的名字定为');
+    expect(out).not.toContain('尚未定义你的个性化人格');
     expect(out).toContain('系统级硬约束');
-    expect(out).not.toContain('OS Version');           // O3: 已删除
+    expect(out).not.toContain('{{');
+  });
+
+  it('renders default identity when persona is absent', () => {
+    const out = loadAndRenderPrompt(SHARED, 'dynamic-personal', {
+      CURRENT_USER: '测试用户',
+      AGENT_NAME: '开开',
+      PERSONA: '',
+      USER_CWD: '/x',
+      IF_PERSONA: false,
+      IF_NO_PERSONA: true,
+      IF_NOT_ADMIN: true,
+    });
+    expect(out).toContain('「开开」');
+    expect(out).toContain('尚未定义你的个性化人格');
+    // 默认态不得虚构「用户起名 / 情感纽带」叙事
+    expect(out).not.toContain('把你的名字定为');
+    expect(out).not.toContain('情感纽带');
     expect(out).not.toContain('{{');
   });
 
   it('strips IF_NOT_ADMIN block from dynamic-personal.md for admin', () => {
     const out = loadAndRenderPrompt(SHARED, 'dynamic-personal', {
       CURRENT_USER: 'a', AGENT_NAME: 'b', PERSONA: 'c',
-      USER_CWD: '/x', IS_GIT_REPO: 'No', PLATFORM: 'darwin',
-      RUNTIME_INFO: 'r',
+      USER_CWD: '/x',
+      IF_PERSONA: true, IF_NO_PERSONA: false,
       IF_NOT_ADMIN: false,
     });
     expect(out).not.toContain('系统级硬约束');

@@ -14,7 +14,9 @@ export function buildPrompt(
   message: InboundMessage,
   context: ChannelContext,
 ): string {
-  // 平台内置斜杠命令必须原样传递（不加时间戳/上下文包装）
+  // ⚠️ 斜杠命令原样传递（不加时间戳/上下文包装），但 raw runtime 路径上没有
+  // 任何组件实现这三个命令——模型会把裸文本当普通消息即兴处理。前端
+  // compactSession（useChatAppState）仍在发 `/compact`，属挂空功能，待实现或下线。
   const trimmed = message.content.trim();
   if (trimmed === '/compact' || trimmed === '/clear' || trimmed === '/help') {
     return trimmed;

@@ -975,15 +975,14 @@ async function collectRuntimeTooling(
   username: string | undefined,
   skillFilter: RuntimeSkillFilter = allowAllRuntimeSkills,
 ): Promise<{
-  availableSkills: SkillEntry[];
   providers: ToolProvider[];
 }> {
   const providers: ToolProvider[] = [];
-  let availableSkills: SkillEntry[] = [];
 
-  // 1. Skill 工具 + L1 注入清单
+  // Skill 工具：注入 EffectiveSkillsResolver，SkillToolProvider.list(context) 会用它
+  // 派生用户实际可用清单并拼进工具 description（模型注意力最集中的位置）。原
+  // <available-skills> xml section 已废弃（2026-07-03）。
   if (config.skills && isToolEnabled(config.toolControls, 'Skill')) {
-    availableSkills = filterRuntimeSkills(config.skills.listForUser(username), skillFilter);
     providers.push(
       new SkillToolProvider({
         list: (ctx) => filterRuntimeSkills(
@@ -1029,7 +1028,7 @@ async function collectRuntimeTooling(
     providers.push(mcpProvider);
   }
 
-  return { availableSkills, providers };
+  return { providers };
 }
 
 type RuntimeSkillFilter = (skill: SkillEntry) => boolean;
@@ -1154,15 +1153,16 @@ function normalizeApprovalPolicy(value: unknown): ToolApprovalPolicyOptions | un
  *   1. static.md             全局稳定（无变量、跨用户共享）
  *   2. dynamic-shared.md     全局稳定（COMPANY_INFO，月级不变）
  *   3. runtime-memory.md     全局稳定（3 行固定提示，条件加载）
- *   4. <available-skills>    per-user 半稳定（启用列表，admin 开关时变）
- *   5. dynamic-personal.md   per-user 变量（身份 + PERSONA + env + 安全块）
- *   6. <available-hands>     高度易变（hand status 翻动）
+ *   4. dynamic-personal.md   per-user 变量（身份 + PERSONA + env + 安全块）
+ *   5. <available-hands>     高度易变（hand status 翻动）
  *
  * ── ↑ 前 3 段跨用户共享前缀，是 prompt cache 的理想命中区 ──
  *
- * 早期版本把 dynamic.md 作为单一模板拼在 static 之后，里面变量（OS_VERSION /
- * PERSONA / USER_CWD 等）一变，后续稳定段（memory）全跟着失效。
- * O3+O6 重排后：变量内容统一推到 dynamic-personal.md，前面 3 段保持跨用户字节相同。
+ * 2026-07-03：原 section 4 `<available-skills>` xml 段已删——skill 清单现由
+ * SkillToolProvider 动态注入到 Skill 工具 description 中，避免 xml 注意力弱的
+ * 模型（glm-5.2 等）忽略中段 prompt 而幻觉调用不存在的 skill。工具 schema 是
+ * 模型注意力最集中的位置，且天然会随 skill 增删刷新，不再需要 system prompt
+ * 双写。
  */
 function buildInstructions(params: {
   sharedDir: string;
@@ -1173,14 +1173,10 @@ function buildInstructions(params: {
   cwd: string;
   executionTarget: ExecutionTargetKind;
   memorySearchEnabled: boolean;
-  availableSkills: SkillEntry[];
   availableHandsPrompt?: string;
   isPlatformAdmin: boolean;
   model: string;
 }): string {
-  const skillList = params.availableSkills
-    .map((s) => `- ${s.name}: ${s.description}`)
-    .join('\n');
   const personaBody = params.persona && params.persona.trim().length > 0
     ? params.persona.trim()
     : '无定义，直接遵循系统提示语。';
@@ -1208,9 +1204,6 @@ function buildInstructions(params: {
 
   if (params.memorySearchEnabled) {
     sections.push(loadPrompt(params.sharedDir, 'runtime-memory'));
-  }
-  if (params.availableSkills.length > 0) {
-    sections.push(['<available-skills>', skillList, '</available-skills>'].join('\n'));
   }
   sections.push(loadAndRenderPrompt(params.sharedDir, 'dynamic-personal', personalVars));
   if (params.availableHandsPrompt) {
@@ -1458,7 +1451,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           cwd,
           executionTarget,
           memorySearchEnabled,
-          availableSkills: tooling.availableSkills,
           availableHandsPrompt: buildAvailableHandsPrompt(availableHands),
           isPlatformAdmin,
           model,
@@ -1746,7 +1738,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       cwd,
       executionTarget,
       memorySearchEnabled,
-      availableSkills: resumeTooling.availableSkills,
       availableHandsPrompt: buildAvailableHandsPrompt(availableHands),
       isPlatformAdmin: resumeIsPlatformAdmin,
       model,
@@ -2005,7 +1996,6 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       cwd,
       executionTarget,
       memorySearchEnabled,
-      availableSkills: resumeTooling.availableSkills,
       availableHandsPrompt: buildAvailableHandsPrompt(availableHands),
       isPlatformAdmin: resumeIsPlatformAdmin,
       model,

@@ -37,7 +37,7 @@ export interface SkillEntry {
 /**
  * Effective skill 解析器。dispatch 时调用方按用户 username 计算"对该用户可见 + 已选"的
  * skill 集合，注入到 SkillToolProvider，提供给：
- *   1. L1 注入 buildInstructions（让模型知道这些 skill 存在）
+ *   1. Skill 工具 description 里的「当前用户可用 Skill 清单」（模型选择 skill 的唯一来源）
  *   2. Skill 工具调用时的校验白名单（防越权读 pool 隐藏的 skill）
  */
 export interface EffectiveSkillsResolver {
@@ -52,9 +52,8 @@ export interface EffectiveSkillsResolver {
 }
 
 // 基础描述加载一次。动态部分（当前用户 skill 清单）在 SkillToolProvider.list(context)
-// 时按用户拼接进来——这样模型在读工具 schema 时就能看到实际可用清单，不必依赖
-// system prompt 里的 <available-skills> section（对 xml tag 注意力弱的模型如 glm-5.2
-// 会照抄 schema 里的示例 skill 名而幻觉调用不存在的 skill）。
+// 时按用户拼接进来——工具 schema 是模型注意力最集中的位置。原 system prompt 里的
+// <available-skills> xml section 已删（2026-07-03），此处是唯一权威来源。
 const BASE_SKILL_DESCRIPTION = loadToolDescription('Skill');
 
 export const skillToolDescriptor: ToolDescriptor<SkillInput> = {
@@ -74,9 +73,9 @@ export const skillToolDescriptor: ToolDescriptor<SkillInput> = {
 };
 
 /**
- * 把用户当前可用的 skill 清单拼进 Skill 工具的 description。放在工具 schema 里而不是
- * 只放在 system prompt 的 <available-skills>——因为对 xml tag/中段 prompt 注意力弱的
- * 模型（glm-5.2、部分国产模型）在决定「调什么 skill」时更倾向读工具本身的 schema。
+ * 把用户当前可用的 skill 清单拼进 Skill 工具的 description。这里是 skill 清单的唯一
+ * 权威来源——工具 schema 是所有主流模型注意力最集中的位置，比 system prompt 中段的
+ * xml section 稳得多。
  */
 function renderSkillDescription(skills: SkillEntry[]): string {
   if (skills.length === 0) {
@@ -125,7 +124,7 @@ export class SkillToolProvider implements ToolProvider {
     if (!allowed) {
       return {
         content:
-          `Skill "${input.skill}" 当前用户不可用。请用 <available-skills> 里列出的 name 调用，`
+          `Skill "${input.skill}" 当前用户不可用。请用 Skill 工具描述里「当前用户可用 Skill 清单」的 name 调用，`
             + `若需新 skill 请联系 admin 在 pool 中开启。`,
       };
     }

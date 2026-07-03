@@ -72,7 +72,10 @@ describe('prompt smoke', () => {
     expect(s).not.toContain('agent-saas 服务端不注入任何带尖括号');
     expect(s).not.toContain('工具调用被权限模式拒绝即用户主动拒绝');
     expect(s).not.toContain('工作区内置 venv');
-    expect(s).toContain('<current-runtime>');
+    // 2026-07-03 <current-runtime> 段已删（status 快照恒 provisioning 恒错），
+    // 防幽灵标签回归：static.md 不得再预授信任何平台从不拼装的标签名
+    expect(s).not.toContain('<current-runtime>');
     expect(s).toContain('当前 workspace 运行态');
+    expect(s).toContain('WaitForWorkspaceReady');
   });
 });

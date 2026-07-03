@@ -94,7 +94,6 @@ import type { ApprovalRecord, ApprovalStore, EventStore, PlatformEvent } from '.
 import type { RunRecord, RunStatus, RunStore } from './runStore.js';
 import { HandManager } from './handManager.js';
 import type { HandCapability, HandRecord, HandStore, WorkspaceRecipe } from './handStore.js';
-import { buildAvailableHandsPrompt } from './handPrompt.js';
 import {
   createTenantRemoteHandAuthTokenResolver,
   selectTenantRemoteHandsForRegistration,
@@ -1164,7 +1163,6 @@ function normalizeApprovalPolicy(value: unknown): ToolApprovalPolicyOptions | un
  *   2. dynamic-shared.md     per-tenant 稳定（COMPANY_INFO，月级不变）
  *   3. runtime-memory.md     全局稳定（固定提示，条件加载）
  *   4. dynamic-personal.md   per-user 变量（身份 + PERSONA + env + 安全块）
- *   5. <available-hands>     高度易变（hand status 翻动）
  *
  * ── ↑ 段 1 跨用户共享前缀；段 2 起同租户内共享，是 prompt cache 的理想命中区 ──
  *
@@ -1173,6 +1171,13 @@ function normalizeApprovalPolicy(value: unknown): ToolApprovalPolicyOptions | un
  * 模型（glm-5.2 等）忽略中段 prompt 而幻觉调用不存在的 skill。工具 schema 是
  * 模型注意力最集中的位置，且天然会随 skill 增删刷新，不再需要 system prompt
  * 双写。
+ *
+ * 2026-07-03：原尾段 `<current-runtime>` 状态 XML（handPrompt.ts）已删——租户
+ * hand 每轮 dispatch 被重置为 provisioning 后异步置 ready，dispatch 同步快照
+ * 几乎恒为 provisioning（恒错误导）；workspaceId 无消费者（工具不接受执行环境
+ * 标识参数）。运行态感知交给 WaitForWorkspaceReady 工具结果（实时真值）+
+ * static.md「## 运行态」静态规则。删除后 instructions 无易变尾巴，per-user
+ * 段之后逐字节稳定。
  */
 function buildInstructions(params: {
   sharedDir: string;
@@ -1183,7 +1188,6 @@ function buildInstructions(params: {
   cwd: string;
   executionTarget: ExecutionTargetKind;
   memorySearchEnabled: boolean;
-  availableHandsPrompt?: string;
   isPlatformAdmin: boolean;
 }): string {
   const personaBody = params.persona.trim();
@@ -1212,9 +1216,6 @@ function buildInstructions(params: {
     sections.push(loadPrompt(params.sharedDir, 'runtime-memory'));
   }
   sections.push(loadAndRenderPrompt(params.sharedDir, 'dynamic-personal', personalVars));
-  if (params.availableHandsPrompt) {
-    sections.push(params.availableHandsPrompt);
-  }
 
   return sections.join('\n\n');
 }
@@ -1457,7 +1458,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           cwd,
           executionTarget,
           memorySearchEnabled,
-          availableHandsPrompt: buildAvailableHandsPrompt(availableHands),
           isPlatformAdmin,
         });
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
@@ -1751,7 +1751,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       cwd,
       executionTarget,
       memorySearchEnabled,
-      availableHandsPrompt: buildAvailableHandsPrompt(availableHands),
       isPlatformAdmin: resumeIsPlatformAdmin,
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);
@@ -2008,7 +2007,6 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       cwd,
       executionTarget,
       memorySearchEnabled,
-      availableHandsPrompt: buildAvailableHandsPrompt(availableHands),
       isPlatformAdmin: resumeIsPlatformAdmin,
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);

@@ -19,7 +19,7 @@ import type {
   PlatformEvent,
   PlatformEventInput,
 } from './types.js';
-import type { OutboundEvent } from '../types/index.js';
+import type { InboundMessage, OutboundEvent } from '../types/index.js';
 import {
   createExecutionAuditRecorder,
   LocalWorkspaceProvider,
@@ -97,6 +97,36 @@ export interface RawAgentLoopOptions {
    */
   zombieToolCallTimeoutMs?: number;
 }
+
+export interface CompactInput {
+  message: InboundMessage;
+}
+
+/**
+ * /compact 真实现（2026-07-03）的压缩指令。
+ * 摘要请求是一次独立的单轮模型调用：压缩器 system prompt 替代会话 instructions，
+ * 无工具、不接力 previousResponseId。
+ */
+const COMPACTION_SYSTEM_PROMPT = [
+  '你是上下文压缩助手。请把提供的对话历史压缩成一份忠实、信息密集的摘要，该摘要将替代原始历史继续对话。',
+  '要求：',
+  '- 保留：用户的目标与关键要求；重要事实与数据（数字/文件路径/命令/URL/代码要点）；已完成的工作及其产出位置；未完成的任务与下一步；用户明确表达的偏好与约束。',
+  '- 丢弃：寒暄、重复内容、已被纠正的中间尝试细节、冗长的工具原始输出（只留结论）。',
+  '- 用 Markdown 分节输出，使用中文。',
+  '- 只输出摘要本身，不要添加任何解释、开场白或结尾语。',
+].join('\n');
+
+const COMPACTION_REQUEST_PROMPT = '请按要求压缩以上对话历史，直接输出摘要。';
+
+/**
+ * 失败残留防御：/compact 的 user_message 落库时 modelContent 用这段说明文本。
+ * 压缩成功时该事件被 compaction 切分点盖掉，永远不进模型；压缩失败时它会随
+ * full_replay 残留在后续上下文里——说明文本确保模型不会把裸 "/compact" 当聊天即兴处理。
+ */
+const COMPACT_COMMAND_MODEL_CONTENT = '[系统命令] 用户请求压缩会话上下文（/compact）。这是平台指令，无需回应此消息本身。';
+
+/** 少于这个消息数（投影后）不值得压缩，直接回复无需压缩 */
+const MIN_COMPACTABLE_MESSAGES = 4;
 
 export interface ResumeApprovalInput {
   approvalId: string;
@@ -583,6 +613,198 @@ export class RawAgentLoop implements AgentLoop {
       });
       logger.error(`[run] failed session=${context.sessionId} turns=${turn}: ${message}`);
       yield { type: 'error', error: message };
+    }
+  }
+
+  /**
+   * /compact 真实现（2026-07-03）：把当前会话历史压缩成摘要。
+   *
+   * 事件落库顺序（顺序即语义，不可调换）：
+   *   run_started → user_message('/compact') → assistant_message(摘要，用户可见)
+   *   → [清 Responses 接力链] → compaction(切分点) → run_finished
+   * compaction 必须最后落（在 run_finished 前）：投影以最后一条 compaction 为切分点，
+   * 它之前的事件（含本 run 的 user/assistant_message，避免摘要在后续上下文里出现两遍）
+   * 全部被 summary 替代。清接力链放在 compaction 之前：若清空失败则压缩整体宣告失败，
+   * 不会出现「投影已压缩但远端 response chain 仍带全量历史」的半生效状态。
+   */
+  async *compact(input: CompactInput, context: RunContext): AsyncIterable<OutboundEvent> {
+    const priorEvents = await this.eventStore.list(context.sessionId);
+    const projection = buildContextProjection(priorEvents, {
+      sessionId: context.sessionId,
+      runId: context.runId,
+      policy: this.contextPolicy,
+    });
+    await this.append({
+      type: 'run_started',
+      runId: context.runId,
+      sessionId: context.sessionId,
+      model: context.model,
+      channel: context.channelContext.channel,
+    });
+    logger.info(`[compact] start session=${context.sessionId} model=${context.model} events=${priorEvents.length}`);
+    await this.append({
+      type: 'user_message',
+      runId: context.runId,
+      sessionId: context.sessionId,
+      content: input.message.content,
+      modelContent: COMPACT_COMMAND_MODEL_CONTENT,
+    });
+
+    if (projection.messages.length < MIN_COMPACTABLE_MESSAGES) {
+      const note = '当前会话历史很短，无需压缩。';
+      yield { type: 'text_start' };
+      yield { type: 'text_delta', content: note };
+      await this.append({
+        type: 'assistant_message',
+        runId: context.runId,
+        sessionId: context.sessionId,
+        content: note,
+        model: context.model,
+        streamed: true,
+      });
+      yield { type: 'text_end' };
+      await this.append({
+        type: 'run_finished',
+        runId: context.runId,
+        sessionId: context.sessionId,
+        subtype: 'success',
+        numTurns: 0,
+      });
+      await context.hooks?.onResult?.({ subtype: 'success', numTurns: 0, resultText: note });
+      yield { type: 'done' };
+      return;
+    }
+
+    let textStarted = false;
+    let thinkingStarted = false;
+    let totalUsage: ModelUsage | undefined;
+    let summaryText = '';
+    try {
+      const requestMessages: ModelChatMessage[] = [
+        { role: 'system', content: COMPACTION_SYSTEM_PROMPT },
+        ...projection.messages,
+        { role: 'user', content: COMPACTION_REQUEST_PROMPT },
+      ];
+      let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
+      for await (const event of this.modelAdapter.stream({
+        model: context.model,
+        messages: requestMessages,
+        tools: [],
+        signal: context.signal,
+      }, context)) {
+        if (event.type === 'thinking_delta') {
+          if (!thinkingStarted) {
+            thinkingStarted = true;
+            yield { type: 'thinking_start' };
+          }
+          yield { type: 'thinking_delta', content: event.content };
+        } else if (event.type === 'text_delta') {
+          if (thinkingStarted) {
+            thinkingStarted = false;
+            yield { type: 'thinking_end' };
+          }
+          if (!textStarted) {
+            textStarted = true;
+            yield { type: 'text_start' };
+          }
+          summaryText += event.content;
+          yield { type: 'text_delta', content: event.content };
+        } else {
+          completed = event;
+        }
+      }
+      if (thinkingStarted) {
+        thinkingStarted = false;
+        yield { type: 'thinking_end' };
+      }
+      if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
+      if (!summaryText && completed?.content) {
+        if (!textStarted) {
+          textStarted = true;
+          yield { type: 'text_start' };
+        }
+        summaryText = completed.content;
+        yield { type: 'text_delta', content: completed.content };
+      }
+      if (!summaryText.trim()) {
+        throw new Error('compaction failed: model returned empty summary');
+      }
+
+      // 被摘要覆盖的事件 = 既有历史 + 本 run 已落库的 run_started/user_message/assistant_message
+      const coveredEventCount = priorEvents.length + 3;
+      const statsLine = `\n\n---\n✅ 上下文已压缩：${coveredEventCount} 条历史事件已被以上摘要替代（原始记录仍完整保留，可通过会话事件检索查询）。`;
+      if (!textStarted) {
+        textStarted = true;
+        yield { type: 'text_start' };
+      }
+      yield { type: 'text_delta', content: statsLine };
+      const finalText = summaryText + statsLine;
+      await this.append({
+        type: 'assistant_message',
+        runId: context.runId,
+        sessionId: context.sessionId,
+        content: finalText,
+        model: context.model,
+        ...(completed?.usage ? { usage: completed.usage } : {}),
+        streamed: true,
+      });
+      yield { type: 'text_end' };
+      textStarted = false;
+
+      // 清空 Responses API 接力链（见方法头注释：必须在 compaction 落库之前）
+      if (this.runStore?.clearResponseSessionStateBySession) {
+        const cleared = await this.runStore.clearResponseSessionStateBySession(context.sessionId);
+        if (cleared > 0) {
+          logger.info(`[compact] cleared ${cleared} response relay state(s) session=${context.sessionId}`);
+        }
+      }
+      await this.append({
+        type: 'compaction',
+        runId: context.runId,
+        sessionId: context.sessionId,
+        summary: summaryText.trim(),
+        coveredEventCount,
+      });
+
+      const modelUsage = buildModelUsage(context.model, totalUsage);
+      await this.append({
+        type: 'run_finished',
+        runId: context.runId,
+        sessionId: context.sessionId,
+        subtype: 'success',
+        numTurns: 1,
+        ...(modelUsage ? { modelUsage } : {}),
+      });
+      logger.info(`[compact] finished session=${context.sessionId} covered=${coveredEventCount} summaryChars=${summaryText.length}`);
+      await context.hooks?.onResult?.({
+        subtype: 'success',
+        numTurns: 1,
+        resultText: finalText,
+        ...(modelUsage ? { modelUsage } : {}),
+      });
+      yield { type: 'done' };
+    } catch (err) {
+      if (thinkingStarted) yield { type: 'thinking_end' };
+      if (textStarted) yield { type: 'text_end' };
+      const message = err instanceof Error ? err.message : String(err);
+      const modelUsage = buildModelUsage(context.model, totalUsage);
+      await this.append({
+        type: 'run_finished',
+        runId: context.runId,
+        sessionId: context.sessionId,
+        subtype: 'error',
+        numTurns: 1,
+        ...(modelUsage ? { modelUsage } : {}),
+        error: message,
+      });
+      await context.hooks?.onResult?.({
+        subtype: 'error',
+        numTurns: 1,
+        resultText: summaryText,
+        ...(modelUsage ? { modelUsage } : {}),
+      });
+      logger.error(`[compact] failed session=${context.sessionId}: ${message}`);
+      yield { type: 'error', error: `上下文压缩失败: ${message}` };
     }
   }
 

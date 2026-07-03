@@ -20,7 +20,7 @@ import type { DispatchConfig } from '../app/config.js';
 import type { ArtifactService } from './artifactService.js';
 import type { ChannelContext, InboundMessage, ModelProviderOptions, OutboundEvent } from '../types/index.js';
 import { loadMemoryContext, loadPersona } from '../agent/memory.js';
-import { buildPrompt } from '../agent/prompt.js';
+import { buildPrompt, isCompactCommand } from '../agent/prompt.js';
 import {
   createDefaultExecutionTransportRegistry,
   hasMemorySearchTool,
@@ -1485,37 +1485,44 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     });
 
     try {
-      yield* loop.run(
-        {
-          message,
-          prompt,
-          recordUserMessage: options.recordUserMessage,
-          ...(memoryContext ? { memoryContext } : {}),
-          instructions,
-          maxTurns: resolveEffectiveMaxTurns(config, options.maxTurns, {
-            userId: context.user?.id ?? context.sessionOwner?.id,
-            username: context.user?.username ?? context.sessionOwner?.username,
-          }),
-          connection: { apiKey, baseUrl },
-        },
-        {
-          runId,
-          sessionId,
-          model,
-          cwd,
-          workspaceId: sessionRecord.workspaceId ?? sessionId,
-          sandboxScopeId,
-          mountSubPath: workspaceMountSubPath,
-          tenantId: sessionRecord.tenantId,
-          executionTarget,
-          sandboxPolicy,
-          workerId: options.runtimeWorkerId,
-          channelContext: context,
-          approvalPolicy,
-          hooks,
-          signal: options.abortController?.signal,
-        },
-      );
+      const runContext = {
+        runId,
+        sessionId,
+        model,
+        cwd,
+        workspaceId: sessionRecord.workspaceId ?? sessionId,
+        sandboxScopeId,
+        mountSubPath: workspaceMountSubPath,
+        tenantId: sessionRecord.tenantId,
+        executionTarget,
+        sandboxPolicy,
+        workerId: options.runtimeWorkerId,
+        channelContext: context,
+        approvalPolicy,
+        hooks,
+        signal: options.abortController?.signal,
+      };
+      // /compact 平台命令（2026-07-03 真实现）：分流到上下文压缩，不进正常 agent run。
+      // web / dingtalk / cron 任何通道发裸 "/compact" 行为一致。
+      if (isCompactCommand(message.content)) {
+        yield* loop.compact({ message }, runContext);
+      } else {
+        yield* loop.run(
+          {
+            message,
+            prompt,
+            recordUserMessage: options.recordUserMessage,
+            ...(memoryContext ? { memoryContext } : {}),
+            instructions,
+            maxTurns: resolveEffectiveMaxTurns(config, options.maxTurns, {
+              userId: context.user?.id ?? context.sessionOwner?.id,
+              username: context.user?.username ?? context.sessionOwner?.username,
+            }),
+            connection: { apiKey, baseUrl },
+          },
+          runContext,
+        );
+      }
       await sessionCatalog.markStatus(sessionId, 'idle');
     } catch (err) {
       if (options.abortController?.signal.aborted) return;

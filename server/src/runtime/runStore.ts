@@ -122,6 +122,14 @@ export interface RunStore {
    * 过滤掉已过期的（last_response_expire_at < now）。
    */
   findLatestResponseSessionStateBySession?(sessionId: string, now?: Date): Promise<LatestResponseSessionState | null>;
+  /**
+   * /compact 真实现（2026-07-03）：清空整个 session 的 Responses API 接力状态。
+   * 压缩后若仍接力旧 response chain，远端保存的全量历史会绕过本地投影，压缩等于没做——
+   * 且 findLatestResponseSessionStateBySession 只找「有 last_response_id 的 run」，
+   * compact run 自身无 responseId 并不能自然阻断，必须显式按 session 清空。
+   * 不更新 updated_at（避免把老 run 顶到观测排序顶部）。返回受影响行数。
+   */
+  clearResponseSessionStateBySession?(sessionId: string): Promise<number>;
 }
 
 export interface PgRunStoreOptions {
@@ -465,6 +473,15 @@ export class PgRunStore implements RunStore {
       ...(row.last_response_model ? { lastResponseModel: row.last_response_model } : {}),
       ...(cumulative ? { cumulativeInputTokens: cumulative } : {}),
     };
+  }
+
+  async clearResponseSessionStateBySession(sessionId: string): Promise<number> {
+    const result = await this.pool.query(`
+      UPDATE ${this.runsTable}
+      SET last_response_id = NULL
+      WHERE session_id = $1 AND last_response_id IS NOT NULL
+    `, [sessionId]);
+    return result.rowCount ?? 0;
   }
 
   async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string): Promise<RunRecord | null> {

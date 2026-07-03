@@ -16,6 +16,7 @@ import {
 } from '../agent/toolRuntime.js';
 import { createBuiltinTools } from '../agent/builtinTools.js';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
+import { buildContextProjection } from '../runtime/contextProjection.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
@@ -2078,5 +2079,188 @@ describe('RawAgentLoop', () => {
       runId: 'run-relay-2',
       patch: { lastResponseId: 'resp_new_run', lastResponseModel: 'glm-5.2' },
     });
+  });
+});
+
+describe('RawAgentLoop.compact（/compact 真实现）', () => {
+  const cleanupDirs = new Set<string>();
+
+  afterEach(async () => {
+    for (const dir of cleanupDirs) {
+      await rm(dir, { recursive: true, force: true });
+    }
+    cleanupDirs.clear();
+  });
+
+  class SummaryAdapter implements ModelAdapter {
+    requests: ModelRequest[] = [];
+    constructor(private readonly summaryChunks: string[]) {}
+
+    async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+      this.requests.push(request);
+      for (const chunk of this.summaryChunks) {
+        yield { type: 'text_delta', content: chunk };
+      }
+      yield {
+        type: 'completed',
+        content: this.summaryChunks.join(''),
+        toolCalls: [],
+        usage: { inputTokens: 500, outputTokens: 60 },
+      };
+    }
+  }
+
+  async function makeCompactHarness(adapter: ModelAdapter) {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-compact-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const clearedSessions: string[] = [];
+    const runStore = {
+      upsertPending: vi.fn(),
+      markStatus: vi.fn(),
+      get: vi.fn().mockResolvedValue(null),
+      findByIdempotencyKey: vi.fn().mockResolvedValue(null),
+      listRecoverable: vi.fn().mockResolvedValue([]),
+      clearResponseSessionStateBySession: vi.fn(async (sessionId: string) => {
+        clearedSessions.push(sessionId);
+        return 2;
+      }),
+    } as unknown as RunStore;
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-compact'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore,
+    });
+    const context: RunContext = {
+      runId: 'run-compact-1',
+      sessionId: 'session-compact',
+      model: 'glm-5.2',
+      cwd,
+      channelContext: {
+        channel: 'web',
+        user: { id: 'user-1', username: 'leo', role: 'user' },
+      },
+    };
+    return { cwd, eventStore, loop, context, clearedSessions };
+  }
+
+  async function seedHistory(eventStore: FileEventStore) {
+    await eventStore.append({ type: 'user_message', runId: 'run-old-1', sessionId: 'session-compact', content: '帮我分析 A 方案' });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-1', sessionId: 'session-compact', content: 'A 方案的结论是 X=42。' });
+    await eventStore.append({ type: 'user_message', runId: 'run-old-2', sessionId: 'session-compact', content: '再对比 B 方案' });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-2', sessionId: 'session-compact', content: 'B 方案成本更低，推荐 B。' });
+  }
+
+  it('成功链路：事件顺序、摘要落库、接力链清空、后续投影只剩 summary', async () => {
+    const adapter = new SummaryAdapter(['## 摘要\n', '用户对比了 A/B 方案，结论：推荐 B（成本更低），A 的结论是 X=42。']);
+    const { eventStore, loop, context, clearedSessions } = await makeCompactHarness(adapter);
+    await seedHistory(eventStore);
+
+    const outbound = await collect(loop.compact(
+      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' } },
+      context,
+    ));
+
+    // 出站流：正常 text 流 + done
+    expect(outbound[0]).toEqual({ type: 'text_start' });
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    const streamedText = outbound.filter((e) => e.type === 'text_delta').map((e: any) => e.content).join('');
+    expect(streamedText).toContain('推荐 B');
+    expect(streamedText).toContain('上下文已压缩');
+
+    // 摘要请求形态：压缩指令 system + 历史 + 请求语，无工具、无接力
+    expect(adapter.requests).toHaveLength(1);
+    const request = adapter.requests[0]!;
+    expect(request.messages[0]).toMatchObject({ role: 'system' });
+    expect(request.messages[0]?.content).toContain('上下文压缩助手');
+    expect(request.messages.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining('压缩以上对话历史') });
+    expect(request.messages.map((m) => m.content)).toContain('帮我分析 A 方案');
+    expect(request.tools).toEqual([]);
+    expect(request.previousResponseId).toBeUndefined();
+
+    // 事件落库顺序（compaction 必须在 assistant_message 之后、run_finished 之前）
+    const events = await eventStore.list('session-compact');
+    const types = events.map((e) => e.type);
+    const idx = (t: string) => types.lastIndexOf(t as never);
+    expect(idx('run_started')).toBeGreaterThanOrEqual(0);
+    expect(idx('user_message')).toBeLessThan(idx('assistant_message'));
+    expect(idx('assistant_message')).toBeLessThan(idx('compaction'));
+    expect(idx('compaction')).toBeLessThan(idx('run_finished'));
+
+    const compaction = events.find((e) => e.type === 'compaction') as any;
+    expect(compaction.summary).toContain('推荐 B');
+    expect(compaction.summary).not.toContain('上下文已压缩'); // 统计尾部不进 summary
+    expect(compaction.coveredEventCount).toBe(4 + 3);
+
+    const userMessage = events.find((e) => e.type === 'user_message' && e.runId === 'run-compact-1') as any;
+    expect(userMessage.content).toBe('/compact');
+    expect(userMessage.modelContent).toContain('[系统命令]');
+
+    const runFinished = events.find((e) => e.type === 'run_finished') as any;
+    expect(runFinished.subtype).toBe('success');
+    expect(runFinished.modelUsage?.['glm-5.2']).toMatchObject({ inputTokens: 500, outputTokens: 60 });
+
+    // 接力链已按 session 清空
+    expect(clearedSessions).toEqual(['session-compact']);
+
+    // 闭环：下一个 run 的投影只剩 summary（历史与本 run 的 user/assistant 全部被盖掉）
+    const projection = buildContextProjection(await eventStore.list('session-compact'), {
+      sessionId: 'session-compact',
+      runId: 'run-next',
+    });
+    expect(projection.messages).toHaveLength(1);
+    expect(projection.messages[0]).toMatchObject({ role: 'user' });
+    expect(projection.messages[0]?.content).toContain('<context-summary>');
+    expect(projection.messages[0]?.content).toContain('推荐 B');
+    expect(projection.messages[0]?.content).not.toContain('/compact');
+  });
+
+  it('历史太短：直接回复无需压缩，不产生 compaction 事件', async () => {
+    const adapter = new SummaryAdapter(['不应被调用']);
+    const { eventStore, loop, context } = await makeCompactHarness(adapter);
+
+    const outbound = await collect(loop.compact(
+      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' } },
+      context,
+    ));
+
+    expect(adapter.requests).toHaveLength(0);
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    const streamedText = outbound.filter((e) => e.type === 'text_delta').map((e: any) => e.content).join('');
+    expect(streamedText).toContain('无需压缩');
+    const events = await eventStore.list('session-compact');
+    expect(events.some((e) => e.type === 'compaction')).toBe(false);
+    expect((events.find((e) => e.type === 'run_finished') as any)?.subtype).toBe('success');
+  });
+
+  it('模型返回空摘要：run_finished error，无 compaction，防御性 modelContent 保证投影无裸 /compact', async () => {
+    class EmptyAdapter implements ModelAdapter {
+      async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+        yield { type: 'completed', content: '', toolCalls: [] };
+      }
+    }
+    const { eventStore, loop, context, clearedSessions } = await makeCompactHarness(new EmptyAdapter());
+    await seedHistory(eventStore);
+
+    const outbound = await collect(loop.compact(
+      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' } },
+      context,
+    ));
+
+    expect(outbound.at(-1)).toMatchObject({ type: 'error' });
+    expect((outbound.at(-1) as any).error).toContain('压缩失败');
+    const events = await eventStore.list('session-compact');
+    expect(events.some((e) => e.type === 'compaction')).toBe(false);
+    expect((events.find((e) => e.type === 'run_finished') as any)?.subtype).toBe('error');
+    expect(clearedSessions).toEqual([]); // 失败时不清接力链
+
+    // 残留的 /compact user_message 投影后是防御说明文本，不是裸命令
+    const projection = buildContextProjection(events, { sessionId: 'session-compact', runId: 'run-next' });
+    const lastUser = projection.messages.filter((m) => m.role === 'user').at(-1);
+    expect(lastUser?.content).toContain('[系统命令]');
+    expect(lastUser?.content).not.toBe('/compact');
   });
 });

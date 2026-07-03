@@ -33,24 +33,56 @@ const DEFAULT_RECENT_EVENTS = 80;
 const DEFAULT_MAX_MATCHES = 20;
 
 /**
+ * /compact 真实现（2026-07-03）：以最后一条 compaction 事件为切分点。
+ * 切分点之前的事件被 summary（一条 user message）替代，之后的事件正常重放。
+ * 原始事件仍在 EventStore（SessionSearchEvents 可查原文），这里只影响 prompt 投影。
+ */
+function applyCompaction(events: PlatformEvent[]): {
+  effectiveEvents: PlatformEvent[];
+  summaryMessages: ModelChatMessage[];
+} {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.type === 'compaction') {
+      return {
+        effectiveEvents: events.slice(i + 1),
+        summaryMessages: [{ role: 'user', content: formatCompactionSummary(event.summary) }],
+      };
+    }
+  }
+  return { effectiveEvents: events, summaryMessages: [] };
+}
+
+function formatCompactionSummary(summary: string): string {
+  return [
+    '<context-summary>',
+    '以下是本会话较早历史的压缩摘要（原始消息已被压缩以节省 context；如需查询原始细节，可用 SessionSearchEvents 工具检索会话事件）：',
+    '',
+    summary,
+    '</context-summary>',
+  ].join('\n');
+}
+
+/**
  * Convert the durable session log into a prompt-sized context view.
  *
  * The returned messages are derived. The raw PlatformEvents remain the source of truth.
  */
-export function buildContextProjection(events: PlatformEvent[], options: ContextProjectionOptions): ContextProjection {
+export function buildContextProjection(allEvents: PlatformEvent[], options: ContextProjectionOptions): ContextProjection {
   const policy = options.policy ?? { type: 'full_replay' };
   const truncate = (msgs: ModelChatMessage[]) => truncateOldToolResults(msgs, options.toolResultTruncation);
+  const { effectiveEvents: events, summaryMessages } = applyCompaction(allEvents);
   switch (policy.type) {
     case 'full_replay':
       return {
-        messages: truncate(buildChatMessagesFromEvents(events)),
+        messages: [...summaryMessages, ...truncate(buildChatMessagesFromEvents(events))],
         policy: policy.type,
         selectedEvents: events,
       };
     case 'recent_window': {
       const selectedEvents = lastN(events, policy.recentEvents ?? DEFAULT_RECENT_EVENTS);
       return {
-        messages: truncate(buildChatMessagesFromEvents(selectedEvents)),
+        messages: [...summaryMessages, ...truncate(buildChatMessagesFromEvents(selectedEvents))],
         policy: policy.type,
         selectedEvents,
       };
@@ -60,7 +92,7 @@ export function buildContextProjection(events: PlatformEvent[], options: Context
       const end = clampIndex(policy.end ?? events.length, events.length);
       const selectedEvents = events.slice(Math.min(start, end), Math.max(start, end));
       return {
-        messages: truncate(buildChatMessagesFromEvents(selectedEvents)),
+        messages: [...summaryMessages, ...truncate(buildChatMessagesFromEvents(selectedEvents))],
         policy: policy.type,
         selectedEvents,
       };
@@ -73,7 +105,7 @@ export function buildContextProjection(events: PlatformEvent[], options: Context
         ? [{ role: 'user' as const, content: formatRetrievalMessage(policy.query, matches) }]
         : [];
       return {
-        messages: [...retrievalMessage, ...truncate(buildChatMessagesFromEvents(selectedEvents))],
+        messages: [...summaryMessages, ...retrievalMessage, ...truncate(buildChatMessagesFromEvents(selectedEvents))],
         policy: policy.type,
         selectedEvents,
       };

@@ -93,3 +93,82 @@ describe('context projection', () => {
     expect(projection.selectedEvents.map((e) => e.id)).toEqual(['event-2', 'event-3']);
   });
 });
+
+describe('compaction 切分（/compact 真实现）', () => {
+  function compactionEvent(index: number, summary: string): PlatformEvent {
+    return {
+      id: `compaction-${index}`,
+      timestamp: new Date(2026, 0, 1, 0, 0, index).toISOString(),
+      type: 'compaction',
+      runId: `run-${Math.floor(index / 10)}`,
+      sessionId: 'session-1',
+      summary,
+      coveredEventCount: index,
+    } as PlatformEvent;
+  }
+
+  it('以最后一条 compaction 为切分点：之前事件被 summary 替代，之后事件正常重放', () => {
+    const events = [
+      event(0),
+      event(1, 'assistant_message'),
+      compactionEvent(2, '早期历史摘要：用户在讨论 A 方案。'),
+      event(3),
+      event(4, 'assistant_message'),
+    ];
+    const projection = buildContextProjection(events, { sessionId: 'session-1', runId: 'run-x' });
+
+    expect(projection.messages).toHaveLength(3);
+    expect(projection.messages[0]).toMatchObject({ role: 'user' });
+    expect(projection.messages[0]?.content).toContain('<context-summary>');
+    expect(projection.messages[0]?.content).toContain('早期历史摘要：用户在讨论 A 方案。');
+    expect(projection.messages[1]).toMatchObject({ role: 'user', content: 'user_message-3' });
+    expect(projection.messages[2]).toMatchObject({ role: 'assistant', content: 'assistant_message-4' });
+    // selectedEvents 不含切分点之前的事件
+    expect(projection.selectedEvents.map((e) => e.id)).toEqual(['event-3', 'event-4']);
+  });
+
+  it('多条 compaction 只认最后一条', () => {
+    const events = [
+      event(0),
+      compactionEvent(1, '第一次摘要'),
+      event(2),
+      compactionEvent(3, '第二次摘要'),
+      event(4),
+    ];
+    const projection = buildContextProjection(events, { sessionId: 'session-1', runId: 'run-x' });
+
+    expect(projection.messages).toHaveLength(2);
+    expect(projection.messages[0]?.content).toContain('第二次摘要');
+    expect(projection.messages[0]?.content).not.toContain('第一次摘要');
+    expect(projection.messages[1]).toMatchObject({ role: 'user', content: 'user_message-4' });
+  });
+
+  it('compaction 之后无新事件时，投影只剩 summary message', () => {
+    const events = [event(0), event(1, 'assistant_message'), compactionEvent(2, '全部历史的摘要')];
+    const projection = buildContextProjection(events, { sessionId: 'session-1', runId: 'run-x' });
+
+    expect(projection.messages).toHaveLength(1);
+    expect(projection.messages[0]?.content).toContain('全部历史的摘要');
+    expect(projection.selectedEvents).toHaveLength(0);
+  });
+
+  it('recent_window 在切分后的事件集上取窗口，summary 始终在最前', () => {
+    const events = [
+      event(0),
+      compactionEvent(1, '窗口测试摘要'),
+      event(2),
+      event(3, 'assistant_message'),
+      event(4),
+    ];
+    const projection = buildContextProjection(events, {
+      sessionId: 'session-1',
+      runId: 'run-x',
+      policy: { type: 'recent_window', recentEvents: 1 },
+    });
+
+    expect(projection.messages).toHaveLength(2);
+    expect(projection.messages[0]?.content).toContain('窗口测试摘要');
+    expect(projection.messages[1]).toMatchObject({ role: 'user', content: 'user_message-4' });
+    expect(projection.selectedEvents.map((e) => e.id)).toEqual(['event-4']);
+  });
+});

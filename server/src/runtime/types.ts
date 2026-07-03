@@ -286,6 +286,24 @@ export type PlatformEvent =
   | {
     id: string;
     timestamp: string;
+    /**
+     * 上下文压缩点（2026-07-03 /compact 真实现）。
+     * buildContextProjection 以「最后一条 compaction」为切分点：其之前的全部事件
+     * 被 summary 替代，之后的事件正常重放。原始事件仍完整留在 EventStore
+     * （SessionSearchEvents 可查），本事件只改变 prompt 投影，不删数据。
+     * 不投影到 legacy transcript（前端历史由伴随的 user/assistant_message 呈现）。
+     */
+    type: 'compaction';
+    runId: string;
+    sessionId: string;
+    /** 压缩摘要正文，作为后续 run 上下文的开头 user message 注入 */
+    summary: string;
+    /** 被本次摘要覆盖的事件数（切分点之前的全部事件），观测/审计用 */
+    coveredEventCount: number;
+  }
+  | {
+    id: string;
+    timestamp: string;
     type: 'run_enqueued';
     runId: string;
     sessionId: string;

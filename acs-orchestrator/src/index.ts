@@ -38,6 +38,23 @@ const provisioner = new Provisioner(config, kubectl, sandboxManager, () => execu
 let lifecycleTimer: ReturnType<typeof setInterval> | null = null;
 const lastAlertAtByEvent = new Map<string, number>();
 
+// ─── Graceful drain (SIGUSR2) ────────────────────────────────────
+// 用于零停机 deploy: `kill -USR2` -> 停接新的长运行请求 (/provision, /execute,
+// /execute-stream, /invocations/*) -> 等 inflight=0 -> exit(0)。/health 期间
+// 报告 draining + inflight 供 CI 脚本轮询。SIGTERM 沿用原短路径 (5s 硬退)。
+let inflightRequests = 0;
+let draining = false;
+const DRAIN_DEADLINE_MS = 120_000; // 与 CI 脚本超时对齐,给它留 20s buffer
+
+async function withInflight<T>(fn: () => Promise<T>): Promise<T> {
+  inflightRequests++;
+  try {
+    return await fn();
+  } finally {
+    inflightRequests--;
+  }
+}
+
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     void handleHealth(res);
@@ -73,23 +90,31 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // Drain 期间对新的长运行请求返回 503; 已在跑的请求正常继续
+  if (draining && (req.url === '/provision' || req.url === '/execute' || req.url === '/execute-stream')) {
+    res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5' });
+    res.end(JSON.stringify({ status: 'error', error: 'orchestrator draining, retry shortly' }));
+    return;
+  }
+
   if (req.url === '/provision') {
-    void handleProvision(req, res);
+    void withInflight(() => handleProvision(req, res));
     return;
   }
 
   if (req.url === '/execute') {
-    void handleExecute(req, res);
+    void withInflight(() => handleExecute(req, res));
     return;
   }
 
   if (req.url === '/execute-stream') {
-    void handleExecuteStream(req, res);
+    void withInflight(() => handleExecuteStream(req, res));
     return;
   }
 
   const cancelMatch = req.url?.match(/^\/invocations\/([^/?#]+)$/);
   if (cancelMatch) {
+    // cancel 请求即使 drain 也放行(它本身是清理动作,加速 inflight 下降)
     void handleCancel(req, res, decodeURIComponent(cancelMatch[1]!));
     return;
   }
@@ -140,6 +165,9 @@ async function handleHealth(res: ServerResponse): Promise<void> {
   }
   return sendJson(res, ok ? 200 : 503, {
     status: ok ? 'ok' : 'unhealthy',
+    // drain 期间 CI 脚本轮询 inflight,为 0 时才 SIGTERM
+    draining,
+    inflight: inflightRequests,
     backend: 'acs-agent-sandbox',
     namespace: config.namespace,
     sandboxKind: config.sandboxKind,
@@ -508,6 +536,35 @@ const shutdown = (sig: NodeJS.Signals) => {
 };
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
+
+// SIGUSR2: 优雅 drain。deploy 时 CI 先 `kill -USR2` -> 轮询 /health.inflight=0
+// -> `systemctl restart` (SIGTERM)。已在跑的 /execute-stream SSE 不会被打断。
+process.on('SIGUSR2', () => {
+  if (draining) return;
+  draining = true;
+  logger.info(`SIGUSR2 received — entering drain mode (inflight=${inflightRequests})`);
+  if (lifecycleTimer) clearInterval(lifecycleTimer);
+  // 停接新连接; 已建立连接 keep-alive 上的新请求会拿到 draining=true 状态或
+  // 长运行路径的 503。已在跑的 handler 通过 withInflight 计数,进度不受影响。
+  server.close(() => {
+    logger.info('server.close callback fired (all connections closed)');
+  });
+  const startedAt = Date.now();
+  const poll = setInterval(() => {
+    if (inflightRequests === 0) {
+      clearInterval(poll);
+      logger.info('drain complete, exiting cleanly');
+      process.exit(0);
+    }
+    if (Date.now() - startedAt >= DRAIN_DEADLINE_MS) {
+      clearInterval(poll);
+      logger.warn(`drain deadline reached (${DRAIN_DEADLINE_MS}ms), forcing exit (inflight=${inflightRequests})`);
+      process.exit(1);
+    }
+    logger.info(`draining... inflight=${inflightRequests}`);
+  }, 2_000);
+  poll.unref();
+});
 
 function startLifecycleLoop(): void {
   if (!config.lifecycleEnabled) {

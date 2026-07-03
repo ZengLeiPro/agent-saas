@@ -267,25 +267,24 @@ jobs:
       - name: Test orchestrator
         run: pnpm -F acs-orchestrator test
 
-  # ── build + deploy 合并到同一 job ────────────────────────────────────
-  # 原设计: build (GitHub runner) → upload artifact 1.6GB tar → deploy
-  # download → scp → ECS docker load → ECS push ACR。artifact 是纯中转站,
-  # 反模式(2026-07-03 累积 27GB 打爆配额致全线 CI 红)。
-  # ACR VPC 内网 endpoint GitHub runner 走不通,push ACR 必须在 ECS 上做,
-  # 但镜像传递不必绕 artifact——直接 GitHub runner scp 到 ECS 即可。
-  build:
-    name: Build ACS Sandbox and Deploy
+  # ── 方案 C（2026-07-04 曾磊拍板）: 镜像构建全部在阿里云 ACR EE 源码构建完成 ──
+  # GitHub Actions 只做两件事:
+  #   gate: typecheck + test（push/dispatch 都跑, 代码门禁）
+  #   build-deploy (dispatch only): 调 ACR OpenAPI 触发云端构建 → 轮询到
+  #     SUCCESS → scp orchestrator 源码到 ECS → drain 旧进程(SIGUSR2) →
+  #     systemd 自动拉起新代码+新镜像 env → health/smoke → 失败自动回滚 env。
+  # 收益: push 零跨境镜像流量、零 GitHub artifact、build 5-10min(原 25-35min)、
+  #   全部日志在 GitHub Actions 单一界面。
+  # ACR 侧一次性配置(2026-07-04 完成): GitHub OAuth 绑定 + source repo
+  #   ZengLeiPro/agent-saas + build rule crbr-xgrdo809of1uj6in
+  #   (branches:main, Dockerfile /, tag=${GIT_PUSH_DATE:yyyyMMddHHmm}-${GIT_COMMIT_ID:6},
+  #   linux/amd64, 自动构建关闭、海外源智能加速开启、缓存开启)。
+  gate:
+    name: Gate (typecheck + test)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 15
     needs: changes
-    if: needs.changes.outputs.publish == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-
-    env:
-      ECS_HOST: ${{ secrets.ECS_HOST }}
-      ECS_USER: ${{ secrets.ECS_USER }}
-      ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
-      ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
-      ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+    if: needs.changes.outputs.publish == 'true'
 
     steps:
       - name: Checkout code
@@ -311,121 +310,91 @@ jobs:
       - name: Test orchestrator
         run: pnpm -F acs-orchestrator test
 
-      - name: Prepare image metadata
-        id: meta
-        run: |
-          set -euo pipefail
-          short_sha="${GITHUB_SHA::7}"
-          tag="$(date -u +%Y%m%d)-${short_sha}-amd64"
-          image="${ACR_REGISTRY}/${ACR_REPOSITORY}:${tag}"
-          echo "image_tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "image=${image}" >> "$GITHUB_OUTPUT"
-          echo "IMAGE_TAG=${tag}" >> "$GITHUB_ENV"
-          echo "IMAGE=${image}" >> "$GITHUB_ENV"
-          echo "LOCAL_IMAGE=agent-saas-acs-sandbox:${tag}" >> "$GITHUB_ENV"
+  build-deploy:
+    name: ACR Cloud Build and Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [changes, gate]
+    # 生产部署只走手动 dispatch（与主服务 ci.yml 同一纪律: push 归 push, 部署归部署）
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.gate.result == 'success'
 
-      - name: Build image
-        run: |
-          docker buildx build \
-            --platform linux/amd64 \
-            --target acs-sandbox \
-            --load \
-            -t "$LOCAL_IMAGE" \
-            .
+    env:
+      ECS_HOST: ${{ secrets.ECS_HOST }}
+      ECS_USER: ${{ secrets.ECS_USER }}
+      ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      ALIYUN_AK: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIYUN_SK: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
+      ACR_REPO_ID: crr-csx99pbexlsw5qqv
+      ACR_BUILD_RULE_ID: crbr-xgrdo809of1uj6in
+      ACR_REGION_ID: cn-shenzhen
 
-      - name: Local image command matrix
+    steps:
+      - name: Install aliyun CLI
         run: |
-          docker run --rm --user 501:20 --entrypoint /bin/sh "$LOCAL_IMAGE" -c '
-          set -eu
-          for c in node npm npx pnpm corepack yarn bash git git-lfs ssh scp curl wget rg jq zip unzip python python3 pip sqlite3 psql mysql dig nslookup nc ping tree openssl ffmpeg ffprobe soffice pdftotext qpdf gs tesseract fc-match; do
-            command -v "$c" >/dev/null || { echo "missing $c"; exit 1; }
-          done
-          for c in gcc g++ make cmake pkg-config convert identify pandoc; do
-            if command -v "$c" >/dev/null 2>&1; then echo "unexpected $c"; exit 1; fi
-          done
-          python3 - <<PY
-          import sys
-          assert sys.version_info[:2] == (3, 12), sys.version
+          curl -fsSL "https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz" -o aliyun.tgz
+          tar xzf aliyun.tgz
+          sudo mv aliyun /usr/local/bin/
+          aliyun version
+
+      # 不主动触发构建: build rule 的 tag 变量 ${GIT_PUSH_DATE}/${GIT_COMMIT_ID}
+      # 只在 push 事件自动构建时有值, API 手动触发会解析为空 tag "-"（2026-07-04
+      # 首次实测踩坑）。因此 ACR 侧开启「代码变更自动构建」, push main 即自动
+      # build; 本 job 只按当前 HEAD sha 查找对应构建记录并等它 SUCCESS。
+      # 附带收益: dispatch deploy 时镜像通常已 ready, deploy 全程 2-3min。
+      - name: Wait for ACR auto-build of HEAD (poll every 30s)
+        id: wait
+        run: |
+          : "${ALIYUN_AK:?Missing secret ALIYUN_ACCESS_KEY_ID}"
+          : "${ALIYUN_SK:?Missing secret ALIYUN_ACCESS_KEY_SECRET}"
+          SHA6="${GITHUB_SHA:0:6}"
+          echo "Looking for ACR build record with tag suffix -$SHA6 (HEAD $GITHUB_SHA) ..."
+          for i in $(seq 1 60); do
+            aliyun cr ListRepoBuildRecord \
+              --mode AK --access-key-id "$ALIYUN_AK" --access-key-secret "$ALIYUN_SK" \
+              --region "$ACR_REGION_ID" \
+              --InstanceId "$ACR_INSTANCE_ID" \
+              --RepoId "$ACR_REPO_ID" \
+              --PageNo 1 --PageSize 20 >/tmp/records.json 2>/dev/null || true
+            result=$(python3 - "$SHA6" <<'PY'
+          import json, sys
+          sha6 = sys.argv[1]
+          try:
+              data = json.load(open('/tmp/records.json'))
+          except Exception:
+              print('PARSE_ERROR'); raise SystemExit
+          for r in data.get('BuildRecords', []):
+              tag = (r.get('Image') or {}).get('ImageTag', '')
+              if tag.endswith('-' + sha6):
+                  print(f"{r.get('BuildStatus','')}\t{tag}")
+                  break
+          else:
+              print('NOT_FOUND')
           PY
-          test "$(id -u)" = "501"
-          test "$(find --version | head -1 | grep -c "GNU findutils")" = "1"
-          test "$TZ" = "Asia/Shanghai"
-          test "$(date +%z)" = "+0800"
-          test "$(cat /etc/timezone)" = "Asia/Shanghai"
-          test "$(readlink -f /etc/localtime)" = "/usr/share/zoneinfo/Asia/Shanghai"
-          test "$LANG" = "C.UTF-8"
-          test "$LC_ALL" = "C.UTF-8"
-          test "$PLAYWRIGHT_BROWSERS_PATH" = "/ms-playwright"
-          test "$NPM_CONFIG_PREFIX" = "/home/agent/.npm-global"
-          test "$(npm config get prefix)" = "/home/agent/.npm-global"
-          npm list -g --depth=0 >/dev/null
-          test "$DOWNLOAD_DIR" = "/workspace/downloads"
-          test "$XDG_DOWNLOAD_DIR" = "/workspace/downloads"
-          test "$ACS_PYTHON_WHEELHOUSE" = "/opt/ky-agent/python-wheels"
-          test -d "$ACS_PYTHON_WHEELHOUSE"
-          test "$(find "$ACS_PYTHON_WHEELHOUSE" -name "*.whl" | wc -l)" -gt 0
-          fc-match "Noto Sans CJK SC" | grep -Ei "Noto|CJK|Sans" >/dev/null
-          case ":$PATH:" in *":/home/agent/.npm-global/bin:"*) ;; *) echo "missing npm global bin in PATH"; exit 1 ;; esac
-          touch "$NPM_CONFIG_PREFIX/.write-test" && rm "$NPM_CONFIG_PREFIX/.write-test"
-          mkdir -p "$DOWNLOAD_DIR" && touch "$DOWNLOAD_DIR/.write-test" && rm "$DOWNLOAD_DIR/.write-test"
-          '
+            )
+            bstatus=$(echo "$result" | cut -f1)
+            btag=$(echo "$result" | cut -f2 -s)
+            echo "  [$i] $bstatus ${btag:-}"
+            case "$bstatus" in
+              SUCCESS)
+                echo "image_tag=$btag" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+              FAILED|CANCELED)
+                echo "ACR build $bstatus — 构建日志: https://cr.console.aliyun.com/repository/cn-shenzhen/$ACR_INSTANCE_ID/agent-saas/acs-sandbox/build" >&2
+                exit 1
+                ;;
+            esac
+            sleep 30
+          done
+          echo "no SUCCESS build record for HEAD within 30min — 确认 push 是否触发了 ACR 自动构建" >&2
+          exit 1
 
-      - name: Local runner contract smoke
-        run: |
-          node <<'NODE' \
-            | docker run --rm --user 501:20 \
-                -e ACS_SANDBOX_IMAGE="$IMAGE" \
-                -i "$LOCAL_IMAGE" \
-                /app/acs-orchestrator/node_modules/.bin/tsx /app/acs-orchestrator/src/sandboxRunner.ts
-          const command = [
-            'set -eu',
-            'test "$(id -u)" = 501',
-            'test "$(pwd)" = /workspace',
-            'test "$(which python3)" = /workspace/.ky-agent/runtime/venv/bin/python3',
-            'test "$VIRTUAL_ENV" = /workspace/.ky-agent/runtime/venv',
-            'test "$PIP_CACHE_DIR" = /workspace/.ky-agent/runtime/cache/pip',
-            'test "$PIP_REQUIRE_VIRTUALENV" = 1',
-            'test "$TZ" = Asia/Shanghai',
-            'test "$(date +%z)" = +0800',
-            'test "$(cat /etc/timezone)" = Asia/Shanghai',
-            'test "$(readlink -f /etc/localtime)" = /usr/share/zoneinfo/Asia/Shanghai',
-            'test "$PLAYWRIGHT_BROWSERS_PATH" = /ms-playwright',
-            'test "$(npm config get prefix)" = /home/agent/.npm-global',
-            'npm list -g --depth=0 >/dev/null',
-            'test "$DOWNLOAD_DIR" = /workspace/downloads',
-            'test "$ACS_PYTHON_WHEELHOUSE" = /opt/ky-agent/python-wheels',
-            'test -f /workspace/.ky-agent/runtime/venv/.ky-runtime.json',
-            'for c in openssl ffmpeg ffprobe soffice pdftotext qpdf gs tesseract fc-match; do command -v "$c" >/dev/null; done',
-            'for c in gcc g++ make cmake pkg-config convert identify pandoc; do if command -v "$c" >/dev/null 2>&1; then echo "unexpected $c"; exit 1; fi; done',
-            'fc-match "Noto Sans CJK SC" | grep -Ei "Noto|CJK|Sans" >/dev/null',
-            'python3 - <<\\PY',
-            'import requests, httpx, bs4, lxml, numpy, pandas, openpyxl, xlsxwriter, docx, pptx, PIL, jinja2, markdown, pypdf, fitz, sqlalchemy, pymysql, psycopg, dotenv, yaml, jieba, playwright',
-            'print("PYTHON_BASE_IMPORTS_OK")',
-            'PY',
-            'node - <<\\NODE',
-            'const { chromium } = require("/app/server/node_modules/playwright");',
-            '(async () => {',
-            '  const browser = await chromium.launch({ headless: true, args: ["--disable-dev-shm-usage"] });',
-            '  const page = await browser.newPage();',
-            '  await page.setContent("<html><body><h1>中文测试</h1></body></html>");',
-            '  await page.screenshot({ path: "/tmp/playwright-smoke.png" });',
-            '  await browser.close();',
-            '  console.log("PLAYWRIGHT_CHROMIUM_OK");',
-            '})().catch((err) => { console.error(err); process.exit(1); });',
-            'NODE',
-            'echo LOCAL_ACS_SANDBOX_SMOKE_OK',
-          ].join('\n');
-          process.stdout.write(JSON.stringify({
-            toolName: 'Shell',
-            input: { command, timeoutMs: 120000 },
-            workspace: { id: 'ws-local', sessionId: 's-local', root: '/workspace' },
-          }));
-          NODE
+      - name: Checkout code
+        uses: actions/checkout@v5
 
-      - name: Save image and release bundle
+      - name: Pack orchestrator release
         run: |
-          set -euo pipefail
-          docker save "$LOCAL_IMAGE" | gzip -1 > "$RUNNER_TEMP/acs-sandbox-image.tar.gz"
           tar \
             --exclude='./.git' \
             --exclude='./node_modules' \
@@ -438,43 +407,34 @@ jobs:
             --exclude='./.env.*' \
             --exclude='./mobile/ios' \
             --exclude='./mobile/android' \
-            -czf "$RUNNER_TEMP/agent-saas-acs-release.tgz" .
+            -czf agent-saas-acs-release.tgz .
 
       - name: Configure SSH
         run: |
           : "${ECS_HOST:?Missing secret ECS_HOST}"
           : "${ECS_USER:?Missing secret ECS_USER}"
           : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
-          : "${ACR_USERNAME:?Missing secret ACR_USERNAME}"
-          : "${ACR_PASSWORD:?Missing secret ACR_PASSWORD}"
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_deploy_key
           chmod 600 ~/.ssh/ecs_deploy_key
           ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Upload image and release to ECS
-        # 从 GitHub runner 直传 ECS,零 artifact 依赖。约 1.6GB,scp 通常 3-5min。
+      - name: Upload orchestrator release
         run: |
           scp -i ~/.ssh/ecs_deploy_key \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=20 \
-            "$RUNNER_TEMP/acs-sandbox-image.tar.gz" \
-            "$RUNNER_TEMP/agent-saas-acs-release.tgz" \
-            "$ECS_USER@$ECS_HOST:/tmp/"
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            agent-saas-acs-release.tgz "$ECS_USER@$ECS_HOST:/tmp/"
 
-      - name: Push to ACR, deploy orchestrator, run smoke
+      - name: Deploy orchestrator with drain and smoke
         run: |
+          IMAGE_TAG='${{ steps.wait.outputs.image_tag }}'
+          IMAGE="agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/agent-saas/acs-sandbox:${IMAGE_TAG}"
           ssh -i ~/.ssh/ecs_deploy_key \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=20 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$ECS_USER@$ECS_HOST" \
-            "ACR_REGISTRY='$ACR_REGISTRY' ACR_INSTANCE_ID='$ACR_INSTANCE_ID' ACR_REGION_ID='$ACR_REGION_ID' ACR_USERNAME='$ACR_USERNAME' ACR_PASSWORD='$ACR_PASSWORD' IMAGE='$IMAGE' IMAGE_TAG='$IMAGE_TAG' ECS_DEPLOY_ROOT='$ECS_DEPLOY_ROOT' ACS_SERVICE_NAME='$ACS_SERVICE_NAME' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_SHA='$GITHUB_SHA' bash -s" <<'REMOTE'
+            "IMAGE='$IMAGE' IMAGE_TAG='$IMAGE_TAG' ECS_DEPLOY_ROOT='$ECS_DEPLOY_ROOT' ACS_SERVICE_NAME='$ACS_SERVICE_NAME' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_SHA='$GITHUB_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
-
-          : "${ACR_REGISTRY:?missing ACR_REGISTRY}"
-          : "${ACR_INSTANCE_ID:?missing ACR_INSTANCE_ID}"
-          : "${ACR_REGION_ID:?missing ACR_REGION_ID}"
           : "${IMAGE:?missing IMAGE}"
           : "${IMAGE_TAG:?missing IMAGE_TAG}"
           : "${ECS_DEPLOY_ROOT:?missing ECS_DEPLOY_ROOT}"
@@ -482,46 +442,21 @@ jobs:
 
           APP_DIR="$ECS_DEPLOY_ROOT"
           ENV_FILE="/etc/agent-saas/acs-orchestrator.env"
-          IMAGE_TAR="/tmp/acs-sandbox-image.tar.gz"
           RELEASE_TGZ="/tmp/agent-saas-acs-release.tgz"
-          LOCAL_IMAGE="agent-saas-acs-sandbox:${IMAGE_TAG}"
           SMOKE_SESSION=""
-
-          cleanup_local_images() {
-            if [ -z "${CONTAINER_CLI:-}" ]; then
-              return 0
-            fi
-            "$CONTAINER_CLI" image rm -f \
-              "$IMAGE" \
-              "$LOCAL_IMAGE" \
-              "docker.io/library/agent-saas-acs-sandbox:${IMAGE_TAG}" \
-              "localhost/agent-saas-acs-sandbox:${IMAGE_TAG}" \
-              >/dev/null 2>&1 || true
-            "$CONTAINER_CLI" image prune -f >/dev/null 2>&1 || true
-          }
-
-          prune_pnpm_store() {
-            if command -v pnpm >/dev/null 2>&1; then
-              pnpm store prune || echo "pnpm store prune failed; continuing" >&2
-            fi
-          }
 
           cleanup() {
             if [ -n "${SMOKE_SESSION:-}" ] && command -v kubectl >/dev/null 2>&1; then
-              if [ -n "${ACS_KUBECONFIG:-}" ]; then
-                KCFG_ARGS="--kubeconfig ${ACS_KUBECONFIG}"
-              else
-                KCFG_ARGS=""
-              fi
+              if [ -n "${ACS_KUBECONFIG:-}" ]; then KCFG_ARGS="--kubeconfig ${ACS_KUBECONFIG}"; else KCFG_ARGS=""; fi
               # shellcheck disable=SC2086
               kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" delete sandbox \
                 -l "agent-saas.kaiyan.net/session-id=${SMOKE_SESSION}" --ignore-not-found=true >/dev/null 2>&1 || true
             fi
-            cleanup_local_images
-            rm -f "$IMAGE_TAR" "$RELEASE_TGZ"
+            rm -f "$RELEASE_TGZ"
           }
           trap cleanup EXIT
 
+          # ── 1. 更新 orchestrator 源码（旧进程还在跑, 零影响）──
           mkdir -p "$APP_DIR"
           tar -xzf "$RELEASE_TGZ" -C "$APP_DIR"
           cd "$APP_DIR"
@@ -531,195 +466,114 @@ jobs:
           fi
           NODE_ENV=development pnpm install --frozen-lockfile --filter acs-orchestrator... --filter server... --filter shared...
 
-          if command -v podman >/dev/null 2>&1; then
-            CONTAINER_CLI=podman
-          else
-            CONTAINER_CLI=docker
-          fi
-          CONTAINER_TMPDIR="${CONTAINER_TMPDIR:-/mnt/agent-saas/runtime/container-tmp/github-actions}"
-          mkdir -p "$CONTAINER_TMPDIR"
-          export TMPDIR="$CONTAINER_TMPDIR"
-          "$CONTAINER_CLI" load -i "$IMAGE_TAR"
-          "$CONTAINER_CLI" tag "$LOCAL_IMAGE" "$IMAGE"
-
-          if [ -f "$ENV_FILE" ]; then
-            set -a
-            # shellcheck disable=SC1090
-            . "$ENV_FILE"
-            set +a
-          fi
-
-          read_acr_auth_from_aliyun() {
-            command -v aliyun >/dev/null 2>&1 || return 1
-            local response
-            if ! response="$(aliyun cr GetAuthorizationToken --RegionId "$ACR_REGION_ID" --InstanceId "$ACR_INSTANCE_ID")"; then
-              echo "Aliyun ACR authorization token command failed; trying imagePullSecret fallback" >&2
-              return 1
-            fi
-            ACR_AUTH_JSON="$response" node <<'NODE'
-          const payload = JSON.parse(process.env.ACR_AUTH_JSON || '{}');
-          const usernameKeys = ['TempUsername', 'Username', 'UserName', 'username'];
-          const passwordKeys = ['AuthorizationToken', 'TempPassword', 'Password', 'password', 'Token', 'token'];
-          function findValue(input, keys) {
-            if (!input || typeof input !== 'object') return undefined;
-            for (const key of keys) {
-              if (typeof input[key] === 'string' && input[key]) return input[key];
-            }
-            for (const value of Object.values(input)) {
-              const found = findValue(value, keys);
-              if (found) return found;
-            }
-            return undefined;
-          }
-          const username = findValue(payload, usernameKeys);
-          const password = findValue(payload, passwordKeys);
-          if (payload.IsSuccess === false || (!username || !password)) {
-            const code = payload.Code || 'unknown';
-            const message = payload.Message || payload.MessageDetail || 'missing username/password';
-            console.error(`Aliyun ACR token auth unavailable: code=${code}; message=${message}`);
-            process.exit(1);
-          }
-          process.stdout.write(`${username}\n${password}\n`);
-          NODE
-          }
-
-          read_acr_auth_from_pull_secret() {
-            command -v kubectl >/dev/null 2>&1 || return 1
-            local kube_args=()
-            if [ -n "${ACS_KUBECONFIG:-}" ]; then
-              kube_args=(--kubeconfig "$ACS_KUBECONFIG")
-            fi
-            local docker_config_b64
-            if ! docker_config_b64="$(kubectl "${kube_args[@]}" -n "${ACS_NAMESPACE:-agent-saas-coding}" get secret acr-agentsaasacrprod -o jsonpath='{.data.\.dockerconfigjson}')"; then
-              echo "Unable to read ACR imagePullSecret for deploy login" >&2
-              return 1
-            fi
-            DOCKER_CONFIG_JSON="$(printf '%s' "$docker_config_b64" | base64 -d)" ACR_REGISTRY="$ACR_REGISTRY" node <<'NODE'
-          const config = JSON.parse(process.env.DOCKER_CONFIG_JSON || '{}');
-          const auths = config.auths || {};
-          const entry = auths[process.env.ACR_REGISTRY] || Object.values(auths)[0];
-          if (!entry) {
-            console.error('ACR imagePullSecret docker config has no auth entry');
-            process.exit(1);
-          }
-          let username = entry.username;
-          let password = entry.password;
-          if ((!username || !password) && entry.auth) {
-            const decoded = Buffer.from(entry.auth, 'base64').toString('utf8');
-            const index = decoded.indexOf(':');
-            if (index > 0) {
-              username = decoded.slice(0, index);
-              password = decoded.slice(index + 1);
-            }
-          }
-          if (!username || !password) {
-            console.error('ACR imagePullSecret auth entry is missing username/password');
-            process.exit(1);
-          }
-          process.stdout.write(`${username}\n${password}\n`);
-          NODE
-          }
-
-          if [ -n "${ACR_USERNAME:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
-            ACR_AUTH_PARSED="$(printf '%s\n%s\n' "$ACR_USERNAME" "$ACR_PASSWORD")"
-          elif ! ACR_AUTH_PARSED="$(read_acr_auth_from_aliyun)"; then
-            ACR_AUTH_PARSED="$(read_acr_auth_from_pull_secret)"
-          fi
-          ACR_USERNAME="$(printf '%s\n' "$ACR_AUTH_PARSED" | sed -n '1p')"
-          ACR_PASSWORD="$(printf '%s\n' "$ACR_AUTH_PARSED" | sed -n '2p')"
-          unset ACR_AUTH_PARSED
-          printf '%s' "$ACR_PASSWORD" | "$CONTAINER_CLI" login "$ACR_REGISTRY" --username "$ACR_USERNAME" --password-stdin
-          unset ACR_PASSWORD
-          "$CONTAINER_CLI" push "$IMAGE"
-          "$CONTAINER_CLI" logout "$ACR_REGISTRY" || true
-
+          # ── 2. 备份并更新镜像 env（新进程拉起时生效）──
           test -f "$ENV_FILE"
-          cp "$ENV_FILE" "${ENV_FILE}.bak.${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}"
+          ENV_BAK="${ENV_FILE}.bak.${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}"
+          cp "$ENV_FILE" "$ENV_BAK"
           if grep -q '^ACS_SANDBOX_IMAGE=' "$ENV_FILE"; then
             sed -i "s|^ACS_SANDBOX_IMAGE=.*|ACS_SANDBOX_IMAGE=${IMAGE}|" "$ENV_FILE"
           else
             printf '\nACS_SANDBOX_IMAGE=%s\n' "$IMAGE" >> "$ENV_FILE"
           fi
-          systemctl restart "$ACS_SERVICE_NAME"
-          systemctl is-active "$ACS_SERVICE_NAME"
 
+          # ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后自退 →
+          #      systemd Restart=always 5s 后自动拉起新代码+新 env ──
+          MAIN_PID=$(systemctl show -p MainPID --value "$ACS_SERVICE_NAME" 2>/dev/null || echo 0)
+          if [ "$MAIN_PID" != "0" ] && [ -n "$MAIN_PID" ]; then
+            echo "draining orchestrator pid=$MAIN_PID (SIGUSR2)..."
+            kill -USR2 "$MAIN_PID" 2>/dev/null || true
+            for _ in $(seq 1 135); do
+              kill -0 "$MAIN_PID" 2>/dev/null || break
+              sleep 1
+            done
+            if kill -0 "$MAIN_PID" 2>/dev/null; then
+              echo "drain deadline exceeded, falling back to systemctl restart"
+              systemctl restart "$ACS_SERVICE_NAME"
+            fi
+          else
+            systemctl restart "$ACS_SERVICE_NAME"
+          fi
+
+          # ── 4. 等新进程 health 且 image 已切换 ──
+          HEALTH_OK=false
           for _ in $(seq 1 120); do
-            if curl -fsS -m 5 http://127.0.0.1:3400/health >/tmp/acs-health.json; then
-              grep -F "$IMAGE" /tmp/acs-health.json >/dev/null
-              break
+            if curl -fsS -m 5 http://127.0.0.1:3400/health >/tmp/acs-health.json 2>/dev/null; then
+              if grep -F "$IMAGE" /tmp/acs-health.json >/dev/null; then
+                HEALTH_OK=true
+                break
+              fi
             fi
             sleep 1
           done
-          grep -F "$IMAGE" /tmp/acs-health.json >/dev/null
 
+          rollback() {
+            echo "ROLLING BACK env to previous image..."
+            cp "$ENV_BAK" "$ENV_FILE"
+            systemctl restart "$ACS_SERVICE_NAME"
+            for _ in $(seq 1 60); do
+              if curl -fsS -m 5 http://127.0.0.1:3400/health >/dev/null 2>&1; then
+                echo "rollback health ok"
+                return 0
+              fi
+              sleep 1
+            done
+            echo "ROLLBACK HEALTH ALSO FAILED — manual intervention required" >&2
+            return 1
+          }
+
+          if [ "$HEALTH_OK" != "true" ]; then
+            echo "health/image check failed after 120s" >&2
+            journalctl -u "$ACS_SERVICE_NAME" -n 100 --no-pager || true
+            rollback
+            exit 1
+          fi
+
+          # ── 5. Smoke: provision + execute 真实拉新镜像跑通 ──
           set -a
           # shellcheck disable=SC1090
           . "$ENV_FILE"
           set +a
           : "${ACS_ORCH_AUTH_TOKEN:?missing ACS_ORCH_AUTH_TOKEN in env file}"
 
-          SMOKE_WS="ws_ci_acs_${GITHUB_RUN_ID}"
-          SMOKE_SESSION="ci-acs-${GITHUB_RUN_ID}"
+          SMOKE_WS="ws_ci_acr_${GITHUB_RUN_ID}"
+          SMOKE_SESSION="ci-acr-${GITHUB_RUN_ID}"
           SMOKE_MOUNT="workspaces/_ci/${SMOKE_WS}"
-          export SMOKE_WS SMOKE_SESSION SMOKE_MOUNT
           AUTH_HEADER="Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}"
 
-          curl -fsS -m 420 -X POST http://127.0.0.1:3400/provision \
-            -H "$AUTH_HEADER" \
-            -H 'Content-Type: application/json' \
+          SMOKE_OK=true
+          if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/provision \
+            -H "$AUTH_HEADER" -H 'Content-Type: application/json' \
             -d "{\"workspaceId\":\"${SMOKE_WS}\",\"recipe\":{\"workspaceId\":\"${SMOKE_WS}\",\"sessionId\":\"${SMOKE_SESSION}\",\"mountSubPath\":\"${SMOKE_MOUNT}\"}}" \
-            >/tmp/acs-provision.json
-          grep -F '"status":"ok"' /tmp/acs-provision.json >/dev/null
+            >/tmp/acs-provision.json; then
+            SMOKE_OK=false
+          elif ! grep -F '"status":"ok"' /tmp/acs-provision.json >/dev/null; then
+            SMOKE_OK=false
+          fi
 
-          node <<'NODE' >/tmp/acs-execute-payload.json
-          const command = [
-            'set -eu',
-            'test "$(id -u)" = 501',
-            'test "$(pwd)" = /workspace',
-            'test "$(which python3)" = /workspace/.ky-agent/runtime/venv/bin/python3',
-            'test "$VIRTUAL_ENV" = /workspace/.ky-agent/runtime/venv',
-            'test "$PIP_CACHE_DIR" = /workspace/.ky-agent/runtime/cache/pip',
-            'test "$PLAYWRIGHT_BROWSERS_PATH" = /ms-playwright',
-            'test "$(cat /etc/timezone)" = Asia/Shanghai',
-            'test "$(readlink -f /etc/localtime)" = /usr/share/zoneinfo/Asia/Shanghai',
-            'for c in openssl ffmpeg ffprobe soffice pdftotext qpdf gs tesseract fc-match; do command -v "$c" >/dev/null; done',
-            'for c in gcc g++ make cmake pkg-config convert identify pandoc; do if command -v "$c" >/dev/null 2>&1; then echo "unexpected $c"; exit 1; fi; done',
-            'fc-match "Noto Sans CJK SC" | grep -Ei "Noto|CJK|Sans" >/dev/null',
-            'python3 - <<\\PY',
-            'import requests, httpx, bs4, lxml, numpy, pandas, openpyxl, xlsxwriter, docx, pptx, PIL, jinja2, markdown, pypdf, fitz, sqlalchemy, pymysql, psycopg, dotenv, yaml, jieba, playwright',
-            'print("PYTHON_BASE_IMPORTS_OK")',
-            'PY',
-            'node - <<\\NODE',
-            'const { chromium } = require("/app/server/node_modules/playwright");',
-            '(async () => {',
-            '  const browser = await chromium.launch({ headless: true, args: ["--disable-dev-shm-usage"] });',
-            '  const page = await browser.newPage();',
-            '  await page.setContent("<html><body><h1>中文测试</h1></body></html>");',
-            '  await page.screenshot({ path: "/tmp/playwright-smoke.png" });',
-            '  await browser.close();',
-            '  console.log("PLAYWRIGHT_CHROMIUM_OK");',
-            '})().catch((err) => { console.error(err); process.exit(1); });',
-            'NODE',
-            'echo ACS_SANDBOX_DEPLOY_SMOKE_OK',
-          ].join('\n');
-          process.stdout.write(JSON.stringify({
-            toolName: 'Shell',
-            input: { command, timeoutMs: 120000 },
-            context: {
-              workspace: {
-                id: process.env.SMOKE_WS,
-                sessionId: process.env.SMOKE_SESSION,
-                mountSubPath: process.env.SMOKE_MOUNT,
-              },
-            },
-          }));
-          NODE
+          if [ "$SMOKE_OK" = "true" ]; then
+            printf '%s' "{\"toolName\":\"Shell\",\"input\":{\"command\":\"set -eu; test \\\"\$(id -u)\\\" = 501; test \\\"\$(pwd)\\\" = /workspace; echo ACR_BUILD_DEPLOY_SMOKE_OK\",\"timeoutMs\":120000},\"context\":{\"workspace\":{\"id\":\"${SMOKE_WS}\",\"sessionId\":\"${SMOKE_SESSION}\",\"mountSubPath\":\"${SMOKE_MOUNT}\"}}}" >/tmp/acs-execute-payload.json
+            if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/execute \
+              -H "$AUTH_HEADER" -H 'Content-Type: application/json' \
+              --data-binary @/tmp/acs-execute-payload.json >/tmp/acs-execute.json; then
+              SMOKE_OK=false
+            elif ! grep -F 'ACR_BUILD_DEPLOY_SMOKE_OK' /tmp/acs-execute.json >/dev/null; then
+              SMOKE_OK=false
+            fi
+          fi
 
-          curl -fsS -m 420 -X POST http://127.0.0.1:3400/execute \
-            -H "$AUTH_HEADER" \
-            -H 'Content-Type: application/json' \
-            --data-binary @/tmp/acs-execute-payload.json \
-            >/tmp/acs-execute.json
-          grep -F 'ACS_SANDBOX_DEPLOY_SMOKE_OK' /tmp/acs-execute.json >/dev/null
-          prune_pnpm_store
+          if [ "$SMOKE_OK" != "true" ]; then
+            echo "SMOKE FAILED — dumping diagnostics" >&2
+            cat /tmp/acs-provision.json 2>/dev/null || true
+            cat /tmp/acs-execute.json 2>/dev/null || true
+            if command -v kubectl >/dev/null 2>&1; then
+              if [ -n "${ACS_KUBECONFIG:-}" ]; then KCFG_ARGS="--kubeconfig ${ACS_KUBECONFIG}"; else KCFG_ARGS=""; fi
+              # imagePullSecret 401 是历史高发根因(2026-06-29), events 里最直观
+              # shellcheck disable=SC2086
+              kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" get events --sort-by=.lastTimestamp 2>/dev/null | tail -20 || true
+            fi
+            rollback
+            exit 1
+          fi
+
+          echo "ACS deploy OK: $IMAGE"
           REMOTE

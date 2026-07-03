@@ -12,7 +12,7 @@ const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
 // --- Auth 预取（带重试，等待后端就绪） ---
 
 export type AuthPreloadResult =
-  | { status: "authenticated"; user: { id: string; username: string; role: "admin" | "user"; tenantId: string; realName?: string; phone?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; preferences?: UserPreferences } }
+  | { status: "authenticated"; user: { id: string; username: string; role: "admin" | "user"; tenantId: string; realName?: string; position?: string; phone?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; preferences?: UserPreferences } }
   | { status: "no-auth" }
   | { status: "unauthenticated" }
   | { status: "error" };
@@ -32,7 +32,7 @@ async function fetchAuth(): Promise<AuthPreloadResult> {
     try {
       const res = await fetch("/api/auth/me", { headers });
       if (res.ok) {
-        const data = await res.json() as { id: string; username: string; role: "admin" | "user"; tenantId: string; realName?: string; phone?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; preferences?: UserPreferences };
+        const data = await res.json() as { id: string; username: string; role: "admin" | "user"; tenantId: string; realName?: string; position?: string; phone?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; preferences?: UserPreferences };
         return { status: "authenticated", user: data };
       }
       if (res.status === 404) {

@@ -1005,7 +1005,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         agentCwd,
         sharedDir,
         workspaceUser,
-        { realName: userRecord.realName },
+        { realName: userRecord.realName, position: userRecord.position },
         skillConfigStore,
       );
     },

@@ -65,6 +65,7 @@ const createUserSchema = z.object({
   password: z.string().min(6, "密码至少 6 个字符"),
   role: z.enum(["admin", "user"]).optional().default("user"),
   realName: z.string().optional(),
+  position: z.string().max(50, "岗位不超过 50 个字符").optional(),
   dingtalkStaffId: z.string().optional(),
   debugMode: z.boolean().optional().default(false),
   /**
@@ -136,6 +137,7 @@ const updateUserSchema = z.object({
   password: z.string().min(6, "密码至少 6 个字符").optional(),
   role: z.enum(["admin", "user"]).optional(),
   realName: z.string().optional(),
+  position: z.string().max(50, "岗位不超过 50 个字符").optional(),
   dingtalkStaffId: z.string().optional(),
   debugMode: z.boolean().optional(),
   /** 仅平台 admin 可改 tenantId（业务层校验） */
@@ -441,6 +443,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
           // 前端 AuthContext 据此判定平台 admin / 组织 admin。
           tenantId: user.tenantId || DEFAULT_TENANT_ID,
           realName: user.realName,
+          position: user.position,
           phone: user.phone,
           avatar: avatarUrl(user.id, user.avatar, user.avatarVersion),
           avatarVersion: user.avatarVersion,
@@ -476,6 +479,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       avatarVersion: record?.avatarVersion,
       debugMode: record?.debugMode === true,
       realName: record?.realName,
+      position: record?.position,
       phone: record?.phone,
       createdAt: record?.createdAt,
       createdBy: resolveCreatedBy(record?.createdBy),
@@ -532,6 +536,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         password,
         role,
         realName,
+        position,
         dingtalkStaffId,
         debugMode,
         permissions,
@@ -580,6 +585,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         tenantId: effectiveTenantId,
         createdBy: req.user!.sub,
         realName,
+        position,
         dingtalkStaffId,
         debugMode,
         permissions,
@@ -602,7 +608,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
           role: user.role as "admin" | "user",
           tenantId: user.tenantId,
         },
-        { realName },
+        { realName, position },
         skillConfigStore,
       );
 
@@ -656,6 +662,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         password,
         role,
         realName,
+        position,
         dingtalkStaffId,
         debugMode,
         permissions,
@@ -698,6 +705,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         password,
         role,
         realName,
+        position,
         dingtalkStaffId,
         debugMode,
         tenantId: tenantIdUpdate,

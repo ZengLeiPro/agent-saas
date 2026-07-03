@@ -71,6 +71,7 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
         password: data.password || undefined,
         role: data.role,
         realName: data.realName,
+        position: data.position,
         dingtalkStaffId: data.dingtalkStaffId,
         debugMode: data.debugMode,
         permissions: data.permissions,

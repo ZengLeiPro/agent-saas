@@ -43,6 +43,8 @@ export interface WorkspaceUser {
 /** 创建工作区时可携带的额外用户信息（用于初始化 MEMORY.md 等） */
 export interface WorkspaceUserMeta {
   realName?: string;
+  /** 岗位（自由文本，如「销售」）。有值时写入 MEMORY.md 当前用户行。 */
+  position?: string;
 }
 
 /**
@@ -382,8 +384,11 @@ function writeMemory(
 
   const displayName = meta?.realName || user?.username || 'unknown';
   const createdDate = new Date().toISOString().slice(0, 10);
+  // 岗位有值时拼进当前用户行（「张三（岗位：销售）：账号创建于…」），无值时占位符移除
+  const positionNote = meta?.position?.trim() ? `（岗位：${meta.position.trim()}）` : '';
   const content = readFileSync(templatePath, 'utf-8')
     .replace(/\{\{displayName\}\}/g, displayName)
+    .replace(/\{\{positionNote\}\}/g, positionNote)
     .replace(/\{\{createdDate\}\}/g, createdDate);
   writeFileSync(userMemoryPath, content, 'utf-8');
 }

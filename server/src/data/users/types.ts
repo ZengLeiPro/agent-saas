@@ -30,6 +30,8 @@ export interface UserRecord {
   passwordHash: string;
   role: UserRole;
   realName?: string;
+  /** 岗位（自由文本，如「销售」「财务」）。建 workspace 时写入 MEMORY.md，并驱动场景库按岗位推荐。 */
+  position?: string;
   /** 手机号（用户自维护）。zod 层强校验 11 位中国大陆号码格式，存储层不约束。 */
   phone?: string;
   avatar?: string; // 头像文件相对路径，如 'avatars/uuid.jpg'
@@ -67,6 +69,8 @@ export interface UserInfo {
   username: string;
   role: UserRole;
   realName?: string;
+  /** 岗位（自由文本） */
+  position?: string;
   /** 手机号（用户自维护，11 位中国大陆号码） */
   phone?: string;
   avatar?: string;

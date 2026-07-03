@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import { isPlatformAdmin, requireAdmin, requirePlatformAdmin } from '../auth/middleware.js';
 import { auditLog } from '../data/login-logs/index.js';
+import { apiLogger } from '../utils/logger.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import { TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
 import {
@@ -102,6 +103,21 @@ const companyInfoSchema = z.object({
 function canAccessTenantSettings(reqUser: Request['user'], tenantId: string): boolean {
   if (!reqUser) return false;
   return isPlatformAdmin(reqUser) || reqUser.tenantId === tenantId;
+}
+
+/**
+ * 新组织自动生成的最小 company.md。
+ * 内容会原样注入该组织所有 agent 的 system prompt「公司事实基础」段，
+ * 因此除了组织名，还写入一条给 agent 的行为指令：被问到公司情况时
+ * 如实说明资料未完善并引导管理员补充，而不是凭空编造。
+ */
+function buildInitialCompanyInfo(tenantName: string): string {
+  return [
+    `# 组织名称：${tenantName}`,
+    '',
+    '（除组织名称外，本组织的详细资料尚未配置。当用户问及公司业务、产品、团队、制度等信息时，如实说明组织资料还未完善，不要编造；并提示：组织管理员可在管理后台「组织管理 → 公司信息」页补充，补充后新会话自动生效。）',
+    '',
+  ].join('\n');
 }
 
 export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
@@ -221,6 +237,13 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
         name: parsed.data.name,
         createdBy: req.user!.sub,
       });
+      // 冷启动：自动生成最小 company.md（含组织名 + 引导 agent 提示管理员完善）。
+      // 写失败只 warn 不阻断——组织记录已建成，管理员随时可在组织资料页补写。
+      try {
+        await writeTenantCompanyInfo(sharedDir, tenant.id, buildInitialCompanyInfo(tenant.name));
+      } catch (err) {
+        apiLogger.warn(`初始化 company.md 失败（tenant=${tenant.id}）: ${err instanceof Error ? err.message : String(err)}`);
+      }
       auditLog(req, 'tenant_created', `${tenant.id} (${tenant.name})`);
       res.status(201).json(tenant);
     } catch (err: unknown) {

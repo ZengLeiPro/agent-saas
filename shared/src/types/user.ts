@@ -13,6 +13,8 @@ export interface UserInfo {
   /** Tenant 归属（多组织改造起必选） */
   tenantId: string;
   realName?: string;
+  /** 岗位（自由文本，如「销售」），驱动场景库按岗位推荐 */
+  position?: string;
   avatar?: string;
   avatarVersion?: number;
   /** 调试模式：开启时前端显示思考、工具、Skill 等可展开执行细节。 */
@@ -35,6 +37,7 @@ export interface CreateUserInput {
   password: string;
   role: "admin" | "user";
   realName?: string;
+  position?: string;
   dingtalkStaffId?: string;
   debugMode?: boolean;
   permissions?: UserPermissions;
@@ -45,6 +48,7 @@ export interface UpdateUserInput {
   password?: string;
   role?: "admin" | "user";
   realName?: string;
+  position?: string;
   dingtalkStaffId?: string;
   debugMode?: boolean;
   permissions?: UserPermissions;

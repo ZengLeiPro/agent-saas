@@ -10,8 +10,13 @@
 import { ArrowRight } from "lucide-react";
 import { buildScenarioPrompt } from "@agent/shared";
 import type { ScenarioItem } from "@agent/shared";
+import { useAuth } from "@/contexts/AuthContext";
 import { ScenarioCard } from "./ScenarioCard";
-import { pickRecommendedScenarios, useScenarioLibrary } from "./useScenarioLibrary";
+import {
+  matchRoleIdByPosition,
+  pickRecommendedScenarios,
+  useScenarioLibrary,
+} from "./useScenarioLibrary";
 
 interface EmptySessionScenariosProps {
   /** 点推荐卡：入参为填充好槽位示例值的起手 prompt（上层直接预填当前输入框） */
@@ -22,11 +27,14 @@ interface EmptySessionScenariosProps {
 
 export function EmptySessionScenarios({ onTryScenario, onViewAll }: EmptySessionScenariosProps) {
   const { library, loading, error } = useScenarioLibrary();
+  const { user } = useAuth();
 
   // 加载中/失败时保持空白态安静，不打扰用户（推荐位是锦上添花，不是硬依赖）
   if (loading || error || !library || library.scenarios.length === 0) return null;
 
-  const recommended = pickRecommendedScenarios(library.scenarios, 3);
+  // 用户配置了岗位且命中场景库岗位时，本岗位场景优先（至多 2 张 + 1 张跨岗位精选）
+  const preferredRoleId = matchRoleIdByPosition(library.roles, user?.position);
+  const recommended = pickRecommendedScenarios(library.scenarios, 3, preferredRoleId);
 
   return (
     <div className="mx-auto w-full max-w-2xl pt-[12vh]">

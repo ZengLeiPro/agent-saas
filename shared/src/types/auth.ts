@@ -26,6 +26,8 @@ export interface AuthUser {
    */
   tenantId: string;
   realName?: string;
+  /** 岗位（自由文本），空会话场景推荐按此优先排序 */
+  position?: string;
   phone?: string;
   avatar?: string;
   avatarVersion?: number;

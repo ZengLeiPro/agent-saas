@@ -1226,12 +1226,20 @@ function visibleWorkspaceCwd(hostCwd: string, executionTarget: ExecutionTargetKi
   return hostCwd;
 }
 
+/**
+ * 未配置 company.md 时的 fallback：不是给人看的占位符，而是给 agent 的行为指令——
+ * 如实说明组织资料缺失并引导管理员补充，避免 agent 凭空编造公司信息。
+ * 注意：此文本位于 dynamic-shared 共享缓存段，必须保持角色无关（admin/普通用户同文案）。
+ */
+const COMPANY_INFO_FALLBACK = '（本组织尚未配置组织资料。当用户问及公司业务、产品、团队、制度等信息时，如实说明你还没有组织资料，不要编造；并提示：组织管理员可在管理后台「组织管理 → 公司信息」页补充，补充后新会话自动生效。）';
+
 function loadCompanyInfo(sharedDir: string, tenantId?: string): string {
-  if (!tenantId) return '（未配置组织 company.md）';
+  if (!tenantId) return COMPANY_INFO_FALLBACK;
   try {
-    return readTenantCompanyInfoSync(sharedDir, tenantId)?.trim() ?? '（未配置组织 company.md）';
+    const content = readTenantCompanyInfoSync(sharedDir, tenantId)?.trim();
+    return content || COMPANY_INFO_FALLBACK;
   } catch {
-    return '（未配置组织 company.md）';
+    return COMPANY_INFO_FALLBACK;
   }
 }
 

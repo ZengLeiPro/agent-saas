@@ -64,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     authPreload.then((result) => {
       if (result.status === "authenticated") {
-        setUser({ id: result.user.id, username: result.user.username, role: result.user.role, tenantId: result.user.tenantId, realName: result.user.realName, phone: result.user.phone, avatar: result.user.avatar, avatarVersion: result.user.avatarVersion, debugMode: result.user.debugMode === true, preferences: result.user.preferences ?? {} });
+        setUser({ id: result.user.id, username: result.user.username, role: result.user.role, tenantId: result.user.tenantId, realName: result.user.realName, position: result.user.position, phone: result.user.phone, avatar: result.user.avatar, avatarVersion: result.user.avatarVersion, debugMode: result.user.debugMode === true, preferences: result.user.preferences ?? {} });
         setAuthEnabled(true);
       } else if (result.status === "no-auth") {
         setAuthEnabled(false);
@@ -88,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const data = await res.json();
     localStorage.setItem(TOKEN_KEY, data.token);
-    setUser({ id: data.user.id, username: data.user.username, role: data.user.role, tenantId: data.user.tenantId, realName: data.user.realName, phone: data.user.phone, avatar: data.user.avatar, avatarVersion: data.user.avatarVersion, debugMode: data.user.debugMode === true, preferences: data.user.preferences ?? {} });
+    setUser({ id: data.user.id, username: data.user.username, role: data.user.role, tenantId: data.user.tenantId, realName: data.user.realName, position: data.user.position, phone: data.user.phone, avatar: data.user.avatar, avatarVersion: data.user.avatarVersion, debugMode: data.user.debugMode === true, preferences: data.user.preferences ?? {} });
   }, []);
 
   const updateAvatar = useCallback((avatar: string | undefined, avatarVersion?: number) => {

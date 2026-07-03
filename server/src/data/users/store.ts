@@ -39,6 +39,8 @@ export interface CreateUserInput {
   role: UserRole;
   createdBy: string;
   realName?: string;
+  /** 岗位（自由文本，路由层校验长度） */
+  position?: string;
   dingtalkStaffId?: string;
   debugMode?: boolean;
   /**
@@ -55,6 +57,8 @@ export interface UpdateUserInput {
   password?: string;
   role?: UserRole;
   realName?: string;
+  /** 岗位：空字符串 = 清除；非空 = 设置。 */
+  position?: string;
   /** 手机号：空字符串 = 清除；非空 = 设置（路由层负责格式校验）。 */
   phone?: string;
   avatar?: string;
@@ -214,6 +218,7 @@ export class UserStore {
       role: input.role,
       tenantId: input.tenantId || DEFAULT_TENANT_ID,
       ...(input.realName ? { realName: input.realName } : {}),
+      ...(input.position ? { position: input.position } : {}),
       ...(input.dingtalkStaffId
         ? { dingtalkStaffId: input.dingtalkStaffId }
         : {}),
@@ -264,6 +269,9 @@ export class UserStore {
     }
     if (input.realName !== undefined) {
       user.realName = input.realName || undefined;
+    }
+    if (input.position !== undefined) {
+      user.position = input.position || undefined;
     }
     if (input.phone !== undefined) {
       user.phone = input.phone || undefined;

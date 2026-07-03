@@ -27,11 +27,24 @@ export interface UserFormData {
   password: string;
   role: "admin" | "user";
   realName?: string;
+  position?: string;
   dingtalkStaffId?: string;
   debugMode?: boolean;
   permissions?: UserPermissions;
   tenantId?: string;
 }
+
+/** 岗位快捷建议（与场景库 8 岗位对齐，datalist 提示用，允许自由输入其他岗位） */
+const POSITION_SUGGESTIONS = [
+  "老板/总经理",
+  "销售",
+  "跟单/客服",
+  "采购",
+  "财务",
+  "人事行政",
+  "市场/电商运营",
+  "生产计划",
+];
 
 interface UserFormDialogProps {
   open: boolean;
@@ -58,6 +71,7 @@ export function UserFormDialog({
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"admin" | "user">("user");
   const [realName, setRealName] = useState("");
+  const [position, setPosition] = useState("");
   const [dingtalkStaffId, setDingtalkStaffId] = useState("");
   const [debugMode, setDebugMode] = useState(false);
   const [maxTurns, setMaxTurns] = useState("");
@@ -80,6 +94,7 @@ export function UserFormDialog({
       setPassword("");
       setRole(editingUser?.role || "user");
       setRealName(editingUser?.realName || "");
+      setPosition(editingUser?.position || "");
       setDingtalkStaffId(editingUser?.dingtalkStaffId || "");
       setDebugMode(editingUser?.debugMode === true);
       setTenantId(editingUser?.tenantId || defaultTenantId || currentUser?.tenantId || DEFAULT_TENANT_ID);
@@ -135,6 +150,7 @@ export function UserFormDialog({
         password,
         role,
         realName: realName.trim() || undefined,
+        position: position.trim() || undefined,
         dingtalkStaffId: dingtalkStaffId.trim() || undefined,
         debugMode,
         permissions: hasPermissions ? permissions : undefined,
@@ -174,6 +190,23 @@ export function UserFormDialog({
               disabled={loading}
               placeholder="可选，用于 AI 识别用户身份"
             />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="form-position">岗位</Label>
+            <Input
+              id="form-position"
+              value={position}
+              onChange={(e) => setPosition(e.target.value)}
+              disabled={loading}
+              placeholder="可选，如「销售」——AI 会按岗位推荐场景"
+              list="form-position-suggestions"
+              maxLength={50}
+            />
+            <datalist id="form-position-suggestions">
+              {POSITION_SUGGESTIONS.map((p) => (
+                <option key={p} value={p} />
+              ))}
+            </datalist>
           </div>
           <div className="space-y-2">
             <Label htmlFor="form-password">

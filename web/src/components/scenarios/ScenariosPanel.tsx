@@ -7,7 +7,7 @@
  *
  * 本组件在 DesktopLayout 中按「mount-once-visited + hidden」模式挂载（lazy）。
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -21,12 +21,13 @@ import {
 } from "@/components/ui/dialog";
 import { buildScenarioPrompt } from "@agent/shared";
 import type { ScenarioItem } from "@agent/shared";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   ScenarioCard,
   ScenarioModeBadge,
   ScenarioRequireBadges,
 } from "./ScenarioCard";
-import { useScenarioLibrary } from "./useScenarioLibrary";
+import { matchRoleIdByPosition, useScenarioLibrary } from "./useScenarioLibrary";
 
 interface ScenariosPanelProps {
   /** 点「试一试」：入参为已用槽位示例值填充完毕的起手 prompt 与场景本体 */
@@ -35,9 +36,20 @@ interface ScenariosPanelProps {
 
 export function ScenariosPanel({ onTryScenario }: ScenariosPanelProps) {
   const { library, loading, error, reload } = useScenarioLibrary();
+  const { user } = useAuth();
   // 当前选中的岗位 tab；"all" 表示全部
   const [activeRole, setActiveRole] = useState<string>("all");
   const [detail, setDetail] = useState<ScenarioItem | null>(null);
+
+  // 首次加载完成后，若用户岗位命中场景库岗位，则默认定位到该岗位 tab。
+  // 只自动执行一次，之后完全尊重用户的手动切换。
+  const autoRoleAppliedRef = useRef(false);
+  useEffect(() => {
+    if (autoRoleAppliedRef.current || !library) return;
+    autoRoleAppliedRef.current = true;
+    const matched = matchRoleIdByPosition(library.roles, user?.position);
+    if (matched) setActiveRole(matched);
+  }, [library, user?.position]);
 
   const roles = library?.roles ?? [];
   const scenarios = useMemo(() => {

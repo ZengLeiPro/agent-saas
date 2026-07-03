@@ -121,4 +121,35 @@ describe('tenant-scoped company-info routes', () => {
     const res = await h.request('/api/tenants/wain/company-info');
     expect(res.status).toBe(403);
   });
+
+  it('POST /api/tenants 创建组织时自动生成最小 company.md（组织名 + 引导 agent 提示补充）', async () => {
+    h.setCaller(PLATFORM_ADMIN);
+    const post = await h.request('/api/tenants', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'ruiying', name: '瑞鹰卫浴' }),
+    });
+    expect(post.status).toBe(201);
+
+    const content = readFileSync(join(h.sharedDir, 'tenants', 'ruiying', 'company.md'), 'utf-8');
+    expect(content).toContain('# 组织名称：瑞鹰卫浴');
+    expect(content).toContain('尚未配置');
+    expect(content).toContain('不要编造');
+  });
+
+  it('自动生成的 company.md 不覆盖管理员后续写入', async () => {
+    h.setCaller(PLATFORM_ADMIN);
+    await h.request('/api/tenants', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'ruiying', name: '瑞鹰卫浴' }),
+    });
+    await h.request('/api/tenants/ruiying/company-info', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: '# 瑞鹰卫浴\n正式版公司介绍' }),
+    });
+    const get = await (await h.request('/api/tenants/ruiying/company-info')).json() as { content: string };
+    expect(get.content).toBe('# 瑞鹰卫浴\n正式版公司介绍');
+  });
 });

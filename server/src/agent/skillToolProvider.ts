@@ -51,13 +51,21 @@ export interface EffectiveSkillsResolver {
   resolveSkillDir(skill: string, context: ToolCallContext): string | null;
 }
 
+// 基础描述加载一次。动态部分（当前用户 skill 清单）在 SkillToolProvider.list(context)
+// 时按用户拼接进来——这样模型在读工具 schema 时就能看到实际可用清单，不必依赖
+// system prompt 里的 <available-skills> section（对 xml tag 注意力弱的模型如 glm-5.2
+// 会照抄 schema 里的示例 skill 名而幻觉调用不存在的 skill）。
+const BASE_SKILL_DESCRIPTION = loadToolDescription('Skill');
+
 export const skillToolDescriptor: ToolDescriptor<SkillInput> = {
   id: 'Skill',
   name: 'Skill',
   displayName: 'Skill',
-  description: loadToolDescription('Skill'),
+  description: BASE_SKILL_DESCRIPTION,
   schema: z.object({
-    skill: z.string().min(1).describe('Skill name from the available-skills list, e.g. "image-gen", "case-study".'),
+    // 不写 "e.g." + 具体 skill 名——历史上写过 "image-gen"/"case-study"，case-study 07-01 已删，
+    // 对 xml 注意力弱的模型会把示例误当实际可用 skill 幻觉调用。改指向工具描述里动态注入的清单。
+    skill: z.string().min(1).describe('Skill name — must exactly match one of the skills listed under "当前用户可用 Skill 清单" in this tool description above. Do not guess from other examples.'),
     args: z.string().optional().describe('Optional plain-text arguments forwarded into the skill body.'),
   }),
   risk: 'safe',
@@ -65,11 +73,35 @@ export const skillToolDescriptor: ToolDescriptor<SkillInput> = {
   auditCategory: 'skill.invoke',
 };
 
+/**
+ * 把用户当前可用的 skill 清单拼进 Skill 工具的 description。放在工具 schema 里而不是
+ * 只放在 system prompt 的 <available-skills>——因为对 xml tag/中段 prompt 注意力弱的
+ * 模型（glm-5.2、部分国产模型）在决定「调什么 skill」时更倾向读工具本身的 schema。
+ */
+function renderSkillDescription(skills: SkillEntry[]): string {
+  if (skills.length === 0) {
+    return BASE_SKILL_DESCRIPTION
+      + '\n\n## 当前用户可用 Skill 清单\n\n（当前会话未启用任何 skill。不要调用此工具——所有调用都会失败。）';
+  }
+  const lines = skills.map((s) => `- \`${s.name}\`: ${s.description}`).join('\n');
+  return BASE_SKILL_DESCRIPTION
+    + '\n\n## 当前用户可用 Skill 清单（唯一可信来源）\n\n'
+    + lines
+    + '\n\n**重要**：只调用上面列出的 skill。参数 `skill` 必须与上表中的 `name` 完全一致。'
+    + '不要从其他工具的示例、SKILL.md 引用、或推测出来的名字调用 skill——那样调用会失败。';
+}
+
 export class SkillToolProvider implements ToolProvider {
   constructor(private readonly resolver: EffectiveSkillsResolver) {}
 
-  list(): ToolDescriptor[] {
-    return [skillToolDescriptor];
+  list(context?: ToolCallContext): ToolDescriptor[] {
+    // context 缺失（少数 warmup/dryrun 路径）时用 base description 兜底，避免抛错；
+    // 真实 dispatch 都会传 context（toolRuntime.ts:1318 flatMap((p) => p.list(context))）。
+    const skills = context ? this.resolver.list(context) : [];
+    return [{
+      ...skillToolDescriptor,
+      description: renderSkillDescription(skills),
+    }];
   }
 
   /**

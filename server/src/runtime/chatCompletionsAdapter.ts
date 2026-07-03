@@ -14,7 +14,7 @@ import type {
 import type { ModelProviderOptions } from '../types/index.js';
 import { createLogger } from '../utils/logger.js';
 import {
-  defendUserText,
+  defendUserMessageText,
   detectDsmlLeak,
   detectMojibake,
   unescapeDeepseekArguments,
@@ -67,12 +67,12 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
         + 'Use ResponsesApiAdapter for cross-step reasoning chain (RFC v1 §3.1).',
       );
     }
-    // A3/B2/B4/G1 — user 通道防御 + 时间戳注入：对所有 user role message 走 defendUserText。
-    // 与 ResponsesApiAdapter 对齐，保持跨协议一致行为。
+    // A3/B2/B4/G1 — user 通道防御 + 时间戳注入：对所有 user role message 走 defendUserMessageText
+    // （平台注入上下文块只保留 escape）。与 ResponsesApiAdapter 对齐，保持跨协议一致行为。
     const sessionIdShort = context.sessionId ? context.sessionId.slice(0, 8) : undefined;
     const defendedMessages: ModelChatMessage[] = request.messages.map((m) => (
       m.role === 'user'
-        ? { ...m, content: defendUserText(m.content, { sessionIdShort }) }
+        ? { ...m, content: defendUserMessageText(m.content, sessionIdShort) }
         : m
     ));
 

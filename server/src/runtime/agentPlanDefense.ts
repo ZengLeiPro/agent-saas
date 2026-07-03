@@ -241,6 +241,48 @@ export function defendUserText(raw: string, options: UserTextDefenseOptions = {}
 }
 
 // ─────────────────────────────────────────────────────────────
+// 平台注入上下文块（memory-context / compaction summary / retrieval）
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 平台在 user role 注入的系统上下文块前缀：
+ * - `<memory-context>`：rawAgentLoop.formatMemoryContext（会话首轮长期记忆）
+ * - `<context-summary>`：contextProjection.formatCompactionSummary（/compact 摘要）
+ * - `<session-retrieval-results>`：contextProjection.formatRetrievalMessage（检索投影）
+ *
+ * 这些消息不是用户输入：时间戳前缀（G1）的语义是「用户发送时间」，贴上去既污染
+ * 语义，又让本应字节稳定的注入段每分钟变化（打散 Chat Completions 前缀缓存与
+ * Responses 全量重建的稳定性）；中文 leading（B4）同理不适用。
+ * 注入 escape（A3/B2）仍需执行——记忆/摘要正文可能被写入过恶意标签。
+ *
+ * 判定安全性：真实用户消息在 dispatch 层（buildPrompt）已强制加 `[时间戳] ` 前缀，
+ * 到 adapter 时不可能以这些标签开头，用户无法伪造命中。
+ */
+const PLATFORM_CONTEXT_BLOCK_PREFIXES = [
+  '<memory-context>',
+  '<context-summary>',
+  '<session-retrieval-results>',
+] as const;
+
+export function isPlatformContextBlock(text: string): boolean {
+  return PLATFORM_CONTEXT_BLOCK_PREFIXES.some((prefix) => text.startsWith(prefix));
+}
+
+/**
+ * adapter 层 user role 消息的统一防御入口：平台注入上下文块跳过时间戳与中文
+ * leading，只保留注入 escape；真实用户消息走全套。三个 adapter 调用点
+ * （Responses 全量/增量、Chat Completions）一律用这个，不要散落各自判断。
+ */
+export function defendUserMessageText(raw: string, sessionIdShort?: string): string {
+  const platformBlock = isPlatformContextBlock(raw);
+  return defendUserText(raw, {
+    sessionIdShort,
+    ensureTimestamp: !platformBlock,
+    maybeChineseLeading: !platformBlock,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
 // C1: mojibake 检测（UTF-8 字节按 Latin-1 reinterpret 再 UTF-8 编码的双重编码特征）
 // ─────────────────────────────────────────────────────────────
 

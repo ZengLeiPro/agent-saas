@@ -28,7 +28,7 @@ import type {
 import type { ModelProviderOptions } from '../types/index.js';
 import { createLogger } from '../utils/logger.js';
 import {
-  defendUserText,
+  defendUserMessageText,
   detectDsmlLeak,
   detectMojibake,
   unescapeDeepseekArguments,
@@ -461,7 +461,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         items.push({
           type: 'message',
           role: 'user',
-          content: [{ type: 'input_text', text: defendUserText(m.content, { sessionIdShort }) }],
+          content: [{ type: 'input_text', text: defendUserMessageText(m.content, sessionIdShort) }],
         });
       } else if (m.role === 'tool') {
         items.push({
@@ -476,7 +476,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
 
   /**
    * 首轮全量 input 构造：system 走 instructions，其余按 ChatMessage → Responses input items 转换。
-   * user content 走 defendUserText（A3/B2 injection escape + B4 长英文中文 leading + G1 时间戳）。
+   * user content 走 defendUserMessageText（A3/B2 injection escape + B4 长英文中文 leading + G1 时间戳；
+   * 平台注入上下文块只保留 escape，不加时间戳/中文 leading）。
    */
   private buildFullInput(messages: ModelChatMessage[], sessionIdShort?: string): {
     instructions?: string;
@@ -491,7 +492,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         items.push({
           type: 'message',
           role: 'user',
-          content: [{ type: 'input_text', text: defendUserText(m.content, { sessionIdShort }) }],
+          content: [{ type: 'input_text', text: defendUserMessageText(m.content, sessionIdShort) }],
         });
       } else if (m.role === 'assistant') {
         if (m.tool_calls?.length) {

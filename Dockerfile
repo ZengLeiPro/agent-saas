@@ -202,6 +202,17 @@ FROM acs-base AS acs-deps
 
 COPY --from=acs-wheel-builder /opt/ky-agent/python-wheels /opt/ky-agent/python-wheels
 
+# 构建期自检（fail-fast）：wheelhouse 里 playwright wheel 期望的 chromium 构建号
+# 必须与 /ms-playwright 预装二进制（上方 Node 侧 playwright install，版本锁在 pnpm-lock）一致。
+# 不一致时 sandbox 内 browser skill 会在运行时报 "Executable doesn't exist"（2026-07-03 生产事故）。
+# 临时 venv 在同一 RUN 内创建并删除，不进镜像 layer。
+COPY acs-orchestrator/scripts/verify_playwright_browsers.py /tmp/verify_playwright_browsers.py
+RUN python3 -m venv /tmp/pwcheck \
+    && /tmp/pwcheck/bin/pip install --no-cache-dir --no-index \
+      --find-links /opt/ky-agent/python-wheels playwright \
+    && /tmp/pwcheck/bin/python3 /tmp/verify_playwright_browsers.py \
+    && rm -rf /tmp/pwcheck /tmp/verify_playwright_browsers.py
+
 # ─────────────────────────────────────────────────────────────
 # Stage: web-build — 仅产出 web/dist 给 server target COPY
 # ─────────────────────────────────────────────────────────────

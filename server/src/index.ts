@@ -96,6 +96,46 @@ async function startServer(): Promise<void> {
       maxAge: '1y',
       immutable: true,
     }));
+    // 旧 release assets fallback：SW update-on-navigation 策略下，未刷新的旧页面
+    // 会继续懒加载旧 hash chunk；当前 release 的 dist 没有时，回扫历史 release 目录。
+    // 部署结构 releases/<sha>/web/dist（ci.yml），本地开发无此结构时自动禁用。
+    const releasesRoot = path.resolve(webDistDir, '../../..');
+    if (path.basename(releasesRoot) === 'releases' && fs.existsSync(releasesRoot)) {
+      const MAX_FALLBACK_RELEASES = 10;
+      app.use('/assets', (req, res, next) => {
+        const fileName = req.path.replace(/^\/+/, '');
+        // 仅允许单层安全文件名（vite hash 产物），拒绝子路径与穿越
+        if (!/^[A-Za-z0-9_.-]+$/.test(fileName) || fileName.includes('..')) return next();
+        void (async () => {
+          try {
+            const entries = await fs.promises.readdir(releasesRoot);
+            const dirs = (await Promise.all(entries.map(async (name) => {
+              const dir = path.join(releasesRoot, name);
+              try {
+                const st = await fs.promises.stat(dir);
+                return st.isDirectory() ? { dir, mtime: st.mtimeMs } : null;
+              } catch { return null; }
+            })))
+              .filter((d): d is { dir: string; mtime: number } => d !== null)
+              .sort((a, b) => b.mtime - a.mtime)
+              .slice(0, MAX_FALLBACK_RELEASES);
+            for (const { dir } of dirs) {
+              const assetsDir = path.join(dir, 'web/dist/assets');
+              if (assetsDir === path.join(webDistDir, 'assets')) continue; // 当前 release 已由上方 static 处理
+              const candidate = path.join(assetsDir, fileName);
+              if (fs.existsSync(candidate)) {
+                res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+                res.sendFile(candidate);
+                return;
+              }
+            }
+            next();
+          } catch {
+            next();
+          }
+        })();
+      });
+    }
     // Service Worker & Workbox 文件：禁止缓存，确保浏览器总是检查更新
     app.get(/^\/(sw|workbox-.*?)\.js$/, (_req, res, next) => {
       res.setHeader('Cache-Control', noCacheHeaders);

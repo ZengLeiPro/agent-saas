@@ -7,7 +7,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      // prompt 模式：新 SW 进 waiting，由 lib/swUpdate.ts 决定激活时机
+      // （update-on-navigation + 提示条），不再自动接管强刷所有 tab
+      registerType: "prompt",
       // 使用已有的 manifest.webmanifest，不让插件生成
       manifest: false,
       workbox: {
@@ -66,8 +68,10 @@ export default defineConfig({
             handler: "NetworkOnly",
           },
         ],
-        // 跳过等待，立即激活
-        skipWaiting: true,
+        // 不自动 skipWaiting：等待页面发 SKIP_WAITING 消息（swUpdate.ts applyUpdate）。
+        // 保留 clientsClaim：激活后接管所有 tab，各 tab 通过 controllerchange 感知
+        // 「新版本已就绪」，但只标记不 reload（见 swUpdate.ts 多 tab 说明）。
+        skipWaiting: false,
         clientsClaim: true,
       },
     }),

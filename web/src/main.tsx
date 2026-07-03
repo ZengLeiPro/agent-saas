@@ -3,38 +3,16 @@ import "./platform/init";
 
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { registerSW } from "virtual:pwa-register";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AuthProvider } from "./contexts/AuthContext";
 import { AuthGate } from "./components/AuthGate";
+import { UpdateBanner } from "./components/UpdateBanner";
+import { initSWUpdate } from "./lib/swUpdate";
 import "./index.css";
 
-// 注册 Service Worker，autoUpdate 模式下自动更新
-// - 每 60 秒主动检查 SW 是否有新版本（浏览器默认 24h 才检查一次）
-// - 检测到新 SW 激活后自动 reload 加载新代码
-registerSW({
-  immediate: true,
-  onRegisteredSW(_swUrl, registration) {
-    if (!registration) return;
-    // 定期检查 SW 更新，解决长期开着页面不刷新的问题
-    setInterval(() => {
-      registration.update().catch(() => {});
-    }, 60_000);
-  },
-});
-
-// 新 SW 接管后自动 reload：controllerchange 在 skipWaiting+clientsClaim 后触发
-// 首次注册不触发（此时 controller 从 null 变为 SW，无需 reload）
-if (navigator.serviceWorker) {
-  let hasController = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hasController) {
-      // 已有旧 SW 被新 SW 替换 → 版本更新，需要 reload 加载新代码
-      window.location.reload();
-    }
-    hasController = true;
-  });
-}
+// SW 更新策略：update-on-navigation + 提示条兜底（详见 lib/swUpdate.ts）。
+// 旧的 autoUpdate 全量强刷已移除——用户正在打字/看输出时页面不再突然重载。
+initSWUpdate();
 
 // 一次性迁移：将输入草稿从 sessionStorage 迁移到 localStorage
 {
@@ -58,6 +36,7 @@ if (isStandalone) {
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
+      <UpdateBanner />
       <AuthProvider>
         <AuthGate />
       </AuthProvider>

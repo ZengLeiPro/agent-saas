@@ -30,6 +30,7 @@ import {
 } from "@/lib/compaction";
 import type { CompactionMessageItem, CompactionStatusEvent } from "@/lib/compaction";
 import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, pushSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection } from "@/lib/urlSync";
+import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
 import type { AdminSettingsState, AdminSettingsTarget } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
 import { useAuth } from "@/contexts/AuthContext";
@@ -497,6 +498,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const loadingRef = useRef(loading); loadingRef.current = loading;
   const stoppingRef = useRef(stopping); stoppingRef.current = stopping;
   const uploadedFilesRef = useRef(fileUpload.uploadedFiles); uploadedFilesRef.current = fileUpload.uploadedFiles;
+  const uploadingRef = useRef(fileUpload.uploading); uploadingRef.current = fileUpload.uploading;
   const selectedModelRef = useRef(selectedModel); selectedModelRef.current = selectedModel;
   const autoApproveRunShellRef = useRef(effectiveAutoApproveRunShell); autoApproveRunShellRef.current = effectiveAutoApproveRunShell;
   const msgRef = useRef(msg); msgRef.current = msg;
@@ -511,6 +513,37 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     activeTabRef.current === 'chat'
     && !trashPreviewSessionIdRef.current
     && immediateSessionIdRef.current === targetSessionId;
+
+  // ---- SW 更新协作（lib/swUpdate.ts）----
+  // 守门：上传中 / 消息在途（outbox 未清）/ 任一会话 run 处于进行态 → 导航时不强刷
+  useEffect(() => {
+    const unregisterGuard = registerUpdateGuard(() => {
+      if (uploadingRef.current) return true;
+      if (outboxRef.current.length > 0) return true;
+      for (const runtime of activeRunsBySession.current.values()) {
+        if (
+          runtime.status === 'busy' || runtime.status === 'running' || runtime.status === 'queued'
+          || runtime.status === 'waiting_approval' || runtime.status === 'waiting_hand'
+        ) {
+          return true;
+        }
+      }
+      return false;
+    });
+    // 刷新前同步 flush 草稿：2s debounce 窗口内的输入不丢
+    const unregisterHook = registerBeforeReloadHook(() => {
+      clearTimeout(draftTimerRef.current);
+      try {
+        if (inputRef.current) localStorage.setItem(INPUT_DRAFT_KEY, inputRef.current);
+      } catch {
+        // 存储满时静默失败
+      }
+    });
+    return () => {
+      unregisterGuard();
+      unregisterHook();
+    };
+  }, []);
 
   // ---- WS event processing state ----
   const wsBlockRef = useRef<WsBlockState>({ currentBlockIndex: -1, currentBlockType: null });
@@ -954,6 +987,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // 浏览器前进/后退 → 解析 URL → 更新状态（不操作 URL）
   useEffect(() => {
     const handler = () => {
+      // update-on-navigation：popstate 时 URL 已变，有 pending SW 更新且无守门
+      // 条件直接原地 reload 到新版本，跳过本次 SPA 状态同步
+      if (maybeReloadOnPopstate()) return;
       const { tab, sessionId: urlSessionId, settingsSection: urlSettingsSection, adminSettings: urlAdminSettings } = parseUrl();
       if (urlAdminSettings) {
         // admin settings modal 路径：activeTab 同步到 admin frame，modal 打开到对应 section

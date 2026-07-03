@@ -1,5 +1,6 @@
 import type { AppTab } from '@/types/sidebar';
 import type { SettingsSectionId } from '@/types/settings';
+import { maybeNavigateWithUpdate } from '@/lib/swUpdate';
 
 const SETTINGS_SECTION_IDS: ReadonlySet<string> = new Set([
   'account',
@@ -127,6 +128,9 @@ export function buildSettingsUrl(section: SettingsSectionId): string {
 export function pushUrl(tab: AppTab, sessionId: string | null): void {
   const next = buildUrl(tab, sessionId);
   if (window.location.pathname !== next) {
+    // update-on-navigation：有 pending SW 更新且无守门条件时，
+    // 本次跳转改为整页导航直达新版本（swUpdate.ts）
+    if (maybeNavigateWithUpdate(next)) return;
     window.history.pushState({}, '', next);
   }
 }
@@ -142,6 +146,7 @@ export function replaceUrl(tab: AppTab, sessionId: string | null): void {
 export function pushSettingsUrl(section: SettingsSectionId): void {
   const next = buildSettingsUrl(section);
   if (window.location.pathname !== next) {
+    if (maybeNavigateWithUpdate(next)) return;
     window.history.pushState({}, '', next);
   }
 }
@@ -162,6 +167,7 @@ export function buildAdminSettingsUrl(target: AdminSettingsTarget, section?: str
 export function pushAdminSettingsUrl(target: AdminSettingsTarget, section?: string | null): void {
   const next = buildAdminSettingsUrl(target, section);
   if (window.location.pathname !== next) {
+    if (maybeNavigateWithUpdate(next)) return;
     window.history.pushState({}, '', next);
   }
 }

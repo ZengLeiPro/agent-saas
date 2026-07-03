@@ -1,8 +1,14 @@
 # ============================================================================
 # CI/CD Pipeline: install → typecheck → test → build → deploy ECS
 # ============================================================================
-# 触发: push to main
-# 说明: 检查通过后打包 release，通过 SSH 部署到新深圳 ECS 的 systemd 服务。
+# 触发:
+#   - push to main: 只构建 + 测试 + 打包 artifact（不部署生产）
+#   - workflow_dispatch: 构建通过后部署生产（Actions 页面手动触发，
+#     或 `gh workflow run ci.yml`）
+# 部署与发布解耦: 多 agent 共享仓库高频 push，push ≠ 上生产；
+# 想发版时手动触发一次 dispatch。
+# 部署脚本: 等空闲窗口(activeStreams=0) → 切 symlink → restart →
+#   healthz 门禁失败自动回滚 previous。
 # ============================================================================
 
 name: CI
@@ -10,6 +16,7 @@ name: CI
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 env:
   NODE_VERSION: "22"
@@ -81,9 +88,10 @@ jobs:
   deploy-ecs:
     name: Deploy to ECS
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # 生产部署只走手动触发（workflow_dispatch），push main 不再自动上生产
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
 
     env:
       ECS_HOST: ${{ secrets.ECS_HOST }}
@@ -126,9 +134,11 @@ jobs:
           : "${RELEASE_ID:?missing RELEASE_ID}"
 
           APP_LINK="$DEPLOY_ROOT/current"
+          PREV_LINK="$DEPLOY_ROOT/previous"
           RELEASES_DIR="$DEPLOY_ROOT/releases"
           RELEASE_DIR="$RELEASES_DIR/$RELEASE_ID"
           DATA_DIR="/mnt/agent-saas/server-data"
+          HEALTHZ_URL="http://127.0.0.1:3200/api/healthz"
 
           mkdir -p "$RELEASES_DIR" "$DATA_DIR"
           if [ -e "$RELEASE_DIR" ]; then
@@ -151,20 +161,89 @@ jobs:
             fi
           }
 
-          if [ -d "$APP_LINK" ] && [ ! -L "$APP_LINK" ]; then
+          healthz_ok() {
+            curl -fsS -m 5 "$HEALTHZ_URL" >/dev/null 2>&1
+          }
+
+          # ── 等待空闲窗口：活跃 run 流清零后再切换（等待期间旧版本照常服务，零影响）──
+          # healthz 返回 {"activeStreams":N,...}；最多等 6 分钟，超时打日志强切
+          echo "Waiting for idle window (activeStreams=0, up to 360s)..."
+          IDLE_WAITED=0
+          while [ "$IDLE_WAITED" -lt 360 ]; do
+            ACTIVE=$(curl -fsS -m 5 "$HEALTHZ_URL" 2>/dev/null | grep -o '"activeStreams":[0-9]*' | cut -d: -f2 || echo "")
+            if [ -z "$ACTIVE" ] || [ "$ACTIVE" = "0" ]; then
+              break
+            fi
+            if [ $((IDLE_WAITED % 30)) -eq 0 ]; then
+              echo "  activeStreams=$ACTIVE, waited ${IDLE_WAITED}s"
+            fi
+            sleep 5
+            IDLE_WAITED=$((IDLE_WAITED + 5))
+          done
+          if [ "$IDLE_WAITED" -ge 360 ]; then
+            echo "Idle window timeout after 360s — proceeding anyway (active run may be interrupted)"
+          fi
+
+          # ── 记录回滚目标 & 切换 ──
+          PREV_TARGET=""
+          if [ -L "$APP_LINK" ]; then
+            PREV_TARGET=$(readlink "$APP_LINK")
+          elif [ -d "$APP_LINK" ]; then
             mv "$APP_LINK" "$DEPLOY_ROOT/legacy-current-$(date +%Y%m%d%H%M%S)"
           fi
           ln -sfn "$RELEASE_DIR" "$APP_LINK"
+          if [ -n "$PREV_TARGET" ] && [ "$PREV_TARGET" != "$RELEASE_DIR" ]; then
+            ln -sfn "$PREV_TARGET" "$PREV_LINK"
+          fi
+
+          # 手动回滚入口（幂等覆盖）：ssh 上来执行 bash /opt/agent-saas-app/rollback.sh
+          cat > "$DEPLOY_ROOT/rollback.sh" <<'ROLLBACK'
+          #!/usr/bin/env bash
+          # 一键回滚：current ↔ previous 互换后重启。由 ci.yml 部署时生成。
+          set -euo pipefail
+          ROOT="/opt/agent-saas-app"
+          CUR=$(readlink "$ROOT/current"); PREV=$(readlink "$ROOT/previous")
+          [ -d "$PREV" ] || { echo "previous release missing: $PREV"; exit 1; }
+          echo "rollback: $CUR -> $PREV"
+          ln -sfn "$PREV" "$ROOT/current"; ln -sfn "$CUR" "$ROOT/previous"
+          systemctl restart agent-saas-server
+          for _ in $(seq 1 60); do
+            if curl -fsS -m 5 http://127.0.0.1:3200/api/healthz >/dev/null 2>&1; then
+              echo "rollback ok"; exit 0
+            fi
+            sleep 1
+          done
+          echo "rollback healthz FAILED"; exit 1
+          ROLLBACK
+          chmod +x "$DEPLOY_ROOT/rollback.sh"
+
           systemctl restart "$SERVICE_NAME"
+
+          # ── healthz 门禁：120s 内不过 → 自动回滚到上一 release ──
           for _ in $(seq 1 120); do
-            if curl -fsS http://127.0.0.1:3200/api/healthz >/dev/null; then
+            if healthz_ok; then
               prune_pnpm_store
               rm -f "$RELEASE_TGZ"
+              echo "Deploy OK: $RELEASE_ID"
               exit 0
             fi
             sleep 1
           done
 
-          journalctl -u "$SERVICE_NAME" -n 120 --no-pager
+          echo "healthz FAILED after 120s — rolling back to ${PREV_TARGET:-<none>}"
+          journalctl -u "$SERVICE_NAME" -n 120 --no-pager || true
+          if [ -n "$PREV_TARGET" ] && [ -d "$PREV_TARGET" ]; then
+            ln -sfn "$PREV_TARGET" "$APP_LINK"
+            ln -sfn "$RELEASE_DIR" "$PREV_LINK"
+            systemctl restart "$SERVICE_NAME"
+            for _ in $(seq 1 60); do
+              if healthz_ok; then
+                echo "Rollback OK — production restored on previous release ($PREV_TARGET)"
+                exit 1
+              fi
+              sleep 1
+            done
+            echo "ROLLBACK ALSO FAILED — manual intervention required"
+          fi
           exit 1
           REMOTE

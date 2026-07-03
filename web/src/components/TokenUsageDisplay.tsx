@@ -43,11 +43,10 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
 
   // 实时 contextUsage 优先。没有实时事件时，仅在服务端明确标记 exact=true
   // 才把 transcript/provider usage 当“当前上下文”显示。Responses 接力场景
-  // 上游每轮 usage 仍报全量输入（Ark 实测），同样是 exact，带「接力」标识。
+  // 上游每轮 usage 仍报全量输入（Ark 实测），同样是 exact，与全量重发场景一视同仁展示。
   const hasRealtime = contextUsage != null && contextUsage.totalTokens > 0;
   const hasExactFallback = !hasRealtime && accounting?.exact === true && (tokenUsage?.contextTokens ?? 0) > 0;
   const hasExactContext = hasRealtime || hasExactFallback;
-  const isStatefulChaining = accounting?.kind === 'stateful_response_exact';
   const displayTokens = hasRealtime
     ? contextUsage!.totalTokens
     : hasExactFallback
@@ -69,7 +68,6 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
     <>
       {hasExactContext ? '上下文' : '累计'} {formatTokenCount(displayTokens)}
       {hasRealtime && ` · ${(percentage * 100).toFixed(0)}%`}
-      {hasExactFallback && isStatefulChaining && ' · 接力'}
     </>
   );
   const title = hasRealtime
@@ -104,7 +102,7 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
             <div className="font-medium">Token 统计</div>
             <div className="text-[10px] text-muted-foreground">
               {hasRealtime ? '上下文 · SDK'
-                : hasExactFallback ? (isStatefulChaining ? '上下文 · 接力' : '上下文 · provider')
+                : hasExactFallback ? '上下文'
                   : '累计'}
             </div>
           </div>

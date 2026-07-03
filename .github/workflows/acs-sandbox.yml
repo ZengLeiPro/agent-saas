@@ -267,16 +267,25 @@ jobs:
       - name: Test orchestrator
         run: pnpm -F acs-orchestrator test
 
+  # ── build + deploy 合并到同一 job ────────────────────────────────────
+  # 原设计: build (GitHub runner) → upload artifact 1.6GB tar → deploy
+  # download → scp → ECS docker load → ECS push ACR。artifact 是纯中转站,
+  # 反模式(2026-07-03 累积 27GB 打爆配额致全线 CI 红)。
+  # ACR VPC 内网 endpoint GitHub runner 走不通,push ACR 必须在 ECS 上做,
+  # 但镜像传递不必绕 artifact——直接 GitHub runner scp 到 ECS 即可。
   build:
-    name: Build ACS Sandbox Image
+    name: Build ACS Sandbox and Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     needs: changes
-    if: needs.changes.outputs.publish == 'true'
+    if: needs.changes.outputs.publish == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
 
-    outputs:
-      image: ${{ steps.meta.outputs.image }}
-      image_tag: ${{ steps.meta.outputs.image_tag }}
+    env:
+      ECS_HOST: ${{ secrets.ECS_HOST }}
+      ECS_USER: ${{ secrets.ECS_USER }}
+      ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+      ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
 
     steps:
       - name: Checkout code
@@ -431,39 +440,6 @@ jobs:
             --exclude='./mobile/android' \
             -czf "$RUNNER_TEMP/agent-saas-acs-release.tgz" .
 
-      - name: Upload ACS artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: acs-sandbox-release
-          path: |
-            ${{ runner.temp }}/acs-sandbox-image.tar.gz
-            ${{ runner.temp }}/agent-saas-acs-release.tgz
-          # 镜像 tar 单个 ~1.6GB，retention 5 天曾累积 27GB 打爆 artifact 配额
-          # （2026-07-03 全线 CI 红）；仅作 build→deploy 的 job 间传递，1 天足够
-          retention-days: 1
-
-  deploy:
-    name: Push Image and Deploy ACS Orchestrator
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    needs: [changes, build]
-    if: needs.changes.outputs.publish == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-
-    env:
-      ECS_HOST: ${{ secrets.ECS_HOST }}
-      ECS_USER: ${{ secrets.ECS_USER }}
-      ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
-      ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
-      ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
-      IMAGE: ${{ needs.build.outputs.image }}
-      IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
-
-    steps:
-      - name: Download ACS artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: acs-sandbox-release
-
       - name: Configure SSH
         run: |
           : "${ECS_HOST:?Missing secret ECS_HOST}"
@@ -477,12 +453,14 @@ jobs:
           chmod 600 ~/.ssh/ecs_deploy_key
           ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Upload image and release
+      - name: Upload image and release to ECS
+        # 从 GitHub runner 直传 ECS,零 artifact 依赖。约 1.6GB,scp 通常 3-5min。
         run: |
           scp -i ~/.ssh/ecs_deploy_key \
             -o ServerAliveInterval=30 \
             -o ServerAliveCountMax=20 \
-            acs-sandbox-image.tar.gz agent-saas-acs-release.tgz \
+            "$RUNNER_TEMP/acs-sandbox-image.tar.gz" \
+            "$RUNNER_TEMP/agent-saas-acs-release.tgz" \
             "$ECS_USER@$ECS_HOST:/tmp/"
 
       - name: Push to ACR, deploy orchestrator, run smoke

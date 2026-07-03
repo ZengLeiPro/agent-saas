@@ -369,6 +369,10 @@ export class RawAgentLoop implements AgentLoop {
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
         let turnText = '';
         let turnThinking = '';
+        // 2026-07-03 起 assistant_stream_event delta 不再落库；UI 的"思考 Xs"
+        // 时长改由 assistant_thinking 聚合行的 durationMs 携带。
+        let turnThinkingMs = 0;
+        let thinkingSegmentStartedAt: number | undefined;
 
         await this.assertNoOpenToolCallBatchesBeforeModel(context.sessionId);
         for await (const event of this.modelAdapter.stream({
@@ -381,26 +385,26 @@ export class RawAgentLoop implements AgentLoop {
           if (event.type === 'thinking_delta') {
             if (!thinkingStarted) {
               thinkingStarted = true;
-              await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'thinking', 'start');
+              thinkingSegmentStartedAt = Date.now();
               yield { type: 'thinking_start' };
             }
             turnThinking += event.content;
-            await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'thinking', 'delta', event.content);
             yield { type: 'thinking_delta', content: event.content };
           } else if (event.type === 'text_delta') {
             if (thinkingStarted) {
               thinkingStarted = false;
-              await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'thinking', 'end');
+              if (thinkingSegmentStartedAt !== undefined) {
+                turnThinkingMs += Date.now() - thinkingSegmentStartedAt;
+                thinkingSegmentStartedAt = undefined;
+              }
               yield { type: 'thinking_end' };
             }
             if (!textStarted) {
               textStarted = true;
-              await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'start');
               yield { type: 'text_start' };
             }
             turnText += event.content;
             finalText += event.content;
-            await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'delta', event.content);
             yield { type: 'text_delta', content: event.content };
           } else {
             completed = event;
@@ -408,7 +412,10 @@ export class RawAgentLoop implements AgentLoop {
         }
         if (thinkingStarted) {
           thinkingStarted = false;
-          await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'thinking', 'end');
+          if (thinkingSegmentStartedAt !== undefined) {
+            turnThinkingMs += Date.now() - thinkingSegmentStartedAt;
+            thinkingSegmentStartedAt = undefined;
+          }
           yield { type: 'thinking_end' };
         }
 
@@ -421,6 +428,7 @@ export class RawAgentLoop implements AgentLoop {
             sessionId: context.sessionId,
             content: turnThinking,
             streamed: true,
+            durationMs: turnThinkingMs,
           });
         }
 
@@ -440,11 +448,9 @@ export class RawAgentLoop implements AgentLoop {
           if (completed.content && completed.content !== turnText) {
             if (!textStarted) {
               textStarted = true;
-              await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'start');
               yield { type: 'text_start' };
             }
             finalText += completed.content;
-            await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'delta', completed.content);
             yield { type: 'text_delta', content: completed.content };
           }
           const assistantContent = completed.content || turnText;
@@ -465,7 +471,6 @@ export class RawAgentLoop implements AgentLoop {
             ...(textStarted ? { streamed: true } : {}),
           });
           if (textStarted) {
-            await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'end');
             yield { type: 'text_end' };
           }
           const modelUsage = buildModelUsage(context.model, totalUsage);
@@ -491,17 +496,14 @@ export class RawAgentLoop implements AgentLoop {
         if (completed.content && completed.content !== turnText) {
           if (!textStarted) {
             textStarted = true;
-            await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'start');
             yield { type: 'text_start' };
           }
           finalText += completed.content;
-          await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'delta', completed.content);
           yield { type: 'text_delta', content: completed.content };
         }
         const toolCallContentStreamed = textStarted;
         if (textStarted) {
           textStarted = false;
-          await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'end');
           yield { type: 'text_end' };
         }
 
@@ -536,7 +538,6 @@ export class RawAgentLoop implements AgentLoop {
 
       if (textStarted) {
         textStarted = false;
-        await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'end');
         yield { type: 'text_end' };
       }
       throw new Error(`raw agent loop exceeded maxTurns=${input.maxTurns}`);
@@ -545,7 +546,6 @@ export class RawAgentLoop implements AgentLoop {
         if (thinkingStarted) yield { type: 'thinking_end' };
         if (textStarted) {
           textStarted = false;
-          await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'end');
           yield { type: 'text_end' };
         }
         return;
@@ -554,7 +554,6 @@ export class RawAgentLoop implements AgentLoop {
         if (thinkingStarted) yield { type: 'thinking_end' };
         if (textStarted) {
           textStarted = false;
-          await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'end');
           yield { type: 'text_end' };
         }
         yield toOutboundInteractionEvent(err.event);
@@ -563,7 +562,6 @@ export class RawAgentLoop implements AgentLoop {
       if (thinkingStarted) yield { type: 'thinking_end' };
       if (textStarted) {
         textStarted = false;
-        await this.appendAssistantStreamEvent(context.runId, context.sessionId, 'text', 'end');
         yield { type: 'text_end' };
       }
       const message = err instanceof Error ? err.message : String(err);
@@ -1433,6 +1431,10 @@ export class RawAgentLoop implements AgentLoop {
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
         let turnText = '';
         let turnThinking = '';
+        // 2026-07-03 起 assistant_stream_event delta 不再落库；UI 的"思考 Xs"
+        // 时长改由 assistant_thinking 聚合行的 durationMs 携带。
+        let turnThinkingMs = 0;
+        let thinkingSegmentStartedAt: number | undefined;
 
         await this.assertNoOpenToolCallBatchesBeforeModel(args.context.sessionId);
         for await (const event of this.modelAdapter.stream({
@@ -1445,26 +1447,26 @@ export class RawAgentLoop implements AgentLoop {
           if (event.type === 'thinking_delta') {
             if (!thinkingStarted) {
               thinkingStarted = true;
-              await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'thinking', 'start');
+              thinkingSegmentStartedAt = Date.now();
               yield { type: 'thinking_start' };
             }
             turnThinking += event.content;
-            await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'thinking', 'delta', event.content);
             yield { type: 'thinking_delta', content: event.content };
           } else if (event.type === 'text_delta') {
             if (thinkingStarted) {
               thinkingStarted = false;
-              await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'thinking', 'end');
+              if (thinkingSegmentStartedAt !== undefined) {
+                turnThinkingMs += Date.now() - thinkingSegmentStartedAt;
+                thinkingSegmentStartedAt = undefined;
+              }
               yield { type: 'thinking_end' };
             }
             if (!textStarted) {
               textStarted = true;
-              await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'start');
               yield { type: 'text_start' };
             }
             turnText += event.content;
             finalText += event.content;
-            await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'delta', event.content);
             yield { type: 'text_delta', content: event.content };
           } else {
             completed = event;
@@ -1472,7 +1474,10 @@ export class RawAgentLoop implements AgentLoop {
         }
         if (thinkingStarted) {
           thinkingStarted = false;
-          await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'thinking', 'end');
+          if (thinkingSegmentStartedAt !== undefined) {
+            turnThinkingMs += Date.now() - thinkingSegmentStartedAt;
+            thinkingSegmentStartedAt = undefined;
+          }
           yield { type: 'thinking_end' };
         }
 
@@ -1485,6 +1490,7 @@ export class RawAgentLoop implements AgentLoop {
             sessionId: args.context.sessionId,
             content: turnThinking,
             streamed: true,
+            durationMs: turnThinkingMs,
           });
         }
 
@@ -1503,11 +1509,9 @@ export class RawAgentLoop implements AgentLoop {
           if (completed.content && completed.content !== turnText) {
             if (!textStarted) {
               textStarted = true;
-              await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'start');
               yield { type: 'text_start' };
             }
             finalText += completed.content;
-            await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'delta', completed.content);
             yield { type: 'text_delta', content: completed.content };
           }
           const assistantContent = completed.content || turnText;
@@ -1523,7 +1527,6 @@ export class RawAgentLoop implements AgentLoop {
             });
           }
           if (textStarted) {
-            await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'end');
             yield { type: 'text_end' };
           }
           const modelUsage = buildModelUsage(args.context.model, totalUsage);
@@ -1549,17 +1552,14 @@ export class RawAgentLoop implements AgentLoop {
         if (completed.content && completed.content !== turnText) {
           if (!textStarted) {
             textStarted = true;
-            await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'start');
             yield { type: 'text_start' };
           }
           finalText += completed.content;
-          await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'delta', completed.content);
           yield { type: 'text_delta', content: completed.content };
         }
         const toolCallContentStreamed = textStarted;
         if (textStarted) {
           textStarted = false;
-          await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'end');
           yield { type: 'text_end' };
         }
 
@@ -1594,7 +1594,6 @@ export class RawAgentLoop implements AgentLoop {
 
       if (textStarted) {
         textStarted = false;
-        await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'end');
         yield { type: 'text_end' };
       }
       throw new Error(`raw agent loop exceeded maxTurns=${args.maxTurns}`);
@@ -1603,7 +1602,6 @@ export class RawAgentLoop implements AgentLoop {
         if (thinkingStarted) yield { type: 'thinking_end' };
         if (textStarted) {
           textStarted = false;
-          await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'end');
           yield { type: 'text_end' };
         }
         return;
@@ -1612,7 +1610,6 @@ export class RawAgentLoop implements AgentLoop {
         if (thinkingStarted) yield { type: 'thinking_end' };
         if (textStarted) {
           textStarted = false;
-          await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'end');
           yield { type: 'text_end' };
         }
         yield toOutboundInteractionEvent(err.event);
@@ -1621,7 +1618,6 @@ export class RawAgentLoop implements AgentLoop {
       if (thinkingStarted) yield { type: 'thinking_end' };
       if (textStarted) {
         textStarted = false;
-        await this.appendAssistantStreamEvent(args.context.runId, args.context.sessionId, 'text', 'end');
         yield { type: 'text_end' };
       }
       const message = err instanceof Error ? err.message : String(err);
@@ -1644,23 +1640,6 @@ export class RawAgentLoop implements AgentLoop {
       logger.error(`[resume] failed session=${args.context.sessionId} turns=${turn}: ${message}`);
       yield { type: 'error', error: message };
     }
-  }
-
-  private async appendAssistantStreamEvent(
-    runId: string,
-    sessionId: string,
-    blockType: 'thinking' | 'text',
-    phase: 'start' | 'delta' | 'end',
-    content?: string,
-  ): Promise<void> {
-    await this.eventStore.append({
-      type: 'assistant_stream_event',
-      runId,
-      sessionId,
-      blockType,
-      phase,
-      ...(content ? { content } : {}),
-    });
   }
 
   private async append(event: Parameters<EventStore['append']>[0]): Promise<void> {

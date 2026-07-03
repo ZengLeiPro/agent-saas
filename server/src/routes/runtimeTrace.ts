@@ -8,7 +8,8 @@
  *   GET /runs/:runId/events   → 单 run trace drill-down
  *     query:
  *       types?:            逗号分隔 event_type 白名单；缺省返回全部但排除
- *                          assistant_stream_event（逐 token delta，体积大且无复盘价值）
+ *                          assistant_stream_event（逐 token delta；2026-07-03 起已停写，
+ *                          排除逻辑保留用于屏蔽存量历史行，存量清理后可移除）
  *       maxContentLength?: 大文本字段截断阈值（默认 4000，上限 65536）；截断的
  *                          事件对象标 truncated: true
  *   GET /recent-runs          → 最近 run 列表（updated_at DESC）

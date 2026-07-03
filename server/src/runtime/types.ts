@@ -165,7 +165,7 @@ export type PlatformEvent =
     content: string;
     model?: string;
     usage?: ModelUsage;
-    /** True when granular assistant_stream_event records already carried live UI deltas. */
+    /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
   }
   | {
@@ -175,12 +175,18 @@ export type PlatformEvent =
     runId: string;
     sessionId: string;
     content: string;
-    /** True when granular assistant_stream_event records already carried live UI deltas. */
+    /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
+    /** Wall-clock thinking duration for this turn (ms). Source for UI "thought for Xs". */
+    durationMs?: number;
   }
   | {
     id: string;
     timestamp: string;
+    /**
+     * @deprecated 2026-07-03 起不再写入（逐 token delta 体积占全表 ~89% 且无复盘价值）。
+     * 类型保留用于读取存量历史数据；存量清理完成后可删除。
+     */
     type: 'assistant_stream_event';
     runId: string;
     sessionId: string;
@@ -197,7 +203,7 @@ export type PlatformEvent =
     content: string;
     model?: string;
     usage?: ModelUsage;
-    /** True when granular assistant_stream_event records already carried live UI deltas. */
+    /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
     toolCalls: ModelToolCall[];
   }

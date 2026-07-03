@@ -656,9 +656,10 @@ describe('RawAgentLoop', () => {
       content: '先读取文件。',
       streamed: true,
     });
-    const textStreamEvents = runtimeEvents
-      .flatMap((event) => event.type === 'assistant_stream_event' && event.blockType === 'text' ? [event.phase] : []);
-    expect(textStreamEvents).toEqual(['start', 'delta', 'end', 'start', 'delta', 'end']);
+    // 2026-07-03 起逐 token delta 不再落库：EventStore 里不应再出现 assistant_stream_event，
+    // live 流式只走 yield 直推（上方 events 断言已覆盖），持久化内容由聚合行承载。
+    const streamEvents = runtimeEvents.filter((event) => event.type === 'assistant_stream_event');
+    expect(streamEvents).toEqual([]);
   });
 
   it('streams assistant_tool_calls content when the model only returns it in the completed event', async () => {
@@ -874,9 +875,15 @@ describe('RawAgentLoop', () => {
     ]);
 
     const runtimeEvents = (await eventStore.list('session-thinking-1'));
-    expect(runtimeEvents.find((event) => event.type === 'assistant_thinking')).toMatchObject({
+    const thinkingEvent = runtimeEvents.find((event) => event.type === 'assistant_thinking');
+    expect(thinkingEvent).toMatchObject({
       content: '先判断需求。再给结论。',
+      streamed: true,
     });
+    // 2026-07-03 起 thinking 耗时由聚合行 durationMs 携带（delta 已停写）
+    expect(thinkingEvent && 'durationMs' in thinkingEvent ? thinkingEvent.durationMs : undefined)
+      .toBeGreaterThanOrEqual(0);
+    expect(runtimeEvents.filter((event) => event.type === 'assistant_stream_event')).toEqual([]);
 
     const transcript = await readFile(transcriptPath, 'utf-8');
     expect(transcript).toContain('"type":"thinking"');

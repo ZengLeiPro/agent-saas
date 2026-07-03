@@ -203,6 +203,70 @@ describe('WebChannel active stream reconnect', () => {
     expect((channel as any).eventBufferStore.isActive('session-ghost')).toBe(false);
   });
 
+  const fakeEventBus = () => ({
+    emitSession: () => {},
+    emitUser: () => {},
+    emitDual: () => {},
+    emitReply: () => {},
+  });
+
+  it('expands streamed aggregates for cross-process runs (delta no longer persisted)', () => {
+    const channel = createChannel();
+    // publishRuntimePlatformEvent 在 eventBus 未初始化（未 start()）时提前 return
+    (channel as any).eventBus = fakeEventBus();
+
+    // 2026-07-03 起 assistant_stream_event 不落库：跨进程（非 inProcessOutboundRuns）
+    // 的 streamed 聚合行必须整块展开，否则 ws-only 进程/replay 丢正文
+    channel.publishRuntimePlatformEvent({
+      id: 'evt-agg-1',
+      timestamp: new Date().toISOString(),
+      type: 'assistant_message',
+      runId: 'run-cross-1',
+      sessionId: 'session-agg-1',
+      content: '跨进程正文',
+      streamed: true,
+    } as any);
+
+    const buffer = (channel as any).eventBufferStore.get('session-agg-1');
+    expect(buffer).toBeDefined();
+    const datas = buffer.events.map((e: { data: string }) => JSON.parse(e.data));
+    expect(datas).toEqual([
+      { type: 'block_start', blockType: 'text' },
+      { type: 'text', content: '跨进程正文' },
+      { type: 'block_end', blockType: 'text' },
+    ]);
+  });
+
+  it('still skips streamed aggregate content for in-process runs to avoid duplicates', () => {
+    const channel = createChannel();
+    (channel as any).eventBus = fakeEventBus();
+
+    // 直推路径先把该 run 标记为同进程（live 内容已由 outbound deltas 送达）
+    channel.publishRuntimeOutboundEvent({
+      sessionId: 'session-agg-2',
+      runId: 'run-inproc-1',
+      event: { type: 'session_init', sessionId: 'session-agg-2' } as any,
+    });
+
+    // assistant_tool_calls 在同进程白名单内会到达翻译层：streamed 正文不得重复展开
+    channel.publishRuntimePlatformEvent({
+      id: 'evt-agg-2',
+      timestamp: new Date().toISOString(),
+      type: 'assistant_tool_calls',
+      runId: 'run-inproc-1',
+      sessionId: 'session-agg-2',
+      content: '工具前说明',
+      streamed: true,
+      toolCalls: [{ id: 'call-1', name: 'Read', arguments: '{}' }],
+    } as any);
+
+    const buffer = (channel as any).eventBufferStore.get('session-agg-2');
+    expect(buffer).toBeDefined();
+    const datas = buffer.events.map((e: { data: string }) => JSON.parse(e.data));
+    expect(datas.filter((d: { type: string }) => d.type === 'text')).toEqual([]);
+    expect(datas.some((d: { blockType?: string }) => d.blockType === 'tool_use')).toBe(true);
+  });
+
   it('resume treats an active buffer as inactive when durable runStore has no active run', async () => {
     const getActiveBySession = vi.fn().mockResolvedValue(null);
     const channel = new WebChannel({

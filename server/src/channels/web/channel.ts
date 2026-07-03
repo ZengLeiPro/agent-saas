@@ -736,7 +736,12 @@ export class WebChannel implements BaseChannel {
     const active = runId ? this.findActiveStreamByRunId(runId) : undefined;
     const streamId = active?.streamId ?? (runId ? runId : undefined);
     const activeEntry = active?.entry ?? (streamId ? this.activeStreams.get(streamId) : undefined);
-    const projection = projectRuntimePlatformEvent(event, { clientMsgId: activeEntry?.clientMsgId });
+    const projection = projectRuntimePlatformEvent(event, {
+      clientMsgId: activeEntry?.clientMsgId,
+      // 同进程 run 的 live 内容已由直推（publishRuntimeOutboundEvent）送达，聚合行
+      // 不展开防重复；跨进程（ws-only）无直推，聚合行整块展开补内容。
+      expandStreamed: !(runId && this.inProcessOutboundRuns.has(runId)),
+    });
     // 空投影且非终态的背景事件（如 hand_health_changed / hand_provisioning_log）直接跳过:
     // 不允许它们为已结束的会话 create 一个永不 complete 的 active buffer。
     // 否则 WS resume 判活会把该会话误报成 running(前端永久"正在思考"/停止按钮,刷新无效)。
@@ -1635,7 +1640,7 @@ export class WebChannel implements BaseChannel {
         const page = await store.listPage(sessionId, { afterCursor: cursor, limit: 200 });
         for (const event of page.events) {
           const eventCursor = getDurableEventCursor(event);
-          for (const data of projectRuntimePlatformEvent(event).events) {
+          for (const data of projectRuntimePlatformEvent(event, { expandStreamed: true }).events) {
             replayId += 1;
             this.wsSend(client.ws, data, replayId, eventCursor);
           }
@@ -1648,7 +1653,7 @@ export class WebChannel implements BaseChannel {
     const events = await store.list(sessionId);
     for (const event of events) {
       const eventCursor = getDurableEventCursor(event);
-      for (const data of projectRuntimePlatformEvent(event).events) {
+      for (const data of projectRuntimePlatformEvent(event, { expandStreamed: true }).events) {
         replayId += 1;
         if (replayId > (options.lastEventId ?? 0)) this.wsSend(client.ws, data, replayId, eventCursor);
       }
@@ -3222,7 +3227,16 @@ function buildArtifactCreatedEventFromToolResult(resultText: string): object | n
 
 function projectRuntimePlatformEvent(
   event: PlatformEvent,
-  options: { clientMsgId?: string } = {},
+  options: {
+    clientMsgId?: string;
+    /**
+     * true = 展开 streamed 聚合行（assistant_thinking/message/tool_calls 的正文）。
+     * 2026-07-03 起 assistant_stream_event delta 不再落库，durable replay 与跨进程
+     * NOTIFY 路径的内容必须由聚合行整块补出；同进程直推已覆盖 live 的场景传 false
+     * 防止重复显示。
+     */
+    expandStreamed?: boolean;
+  } = {},
 ): { events: object[]; terminal?: boolean; sessionStatus?: 'completed' | 'failed' | 'cancelled'; terminalError?: string } {
   switch (event.type) {
     case 'tool_output_delta':
@@ -3300,13 +3314,10 @@ function projectRuntimePlatformEvent(
             : { value: event.input },
         }],
       };
-    case 'assistant_stream_event':
-      if (event.phase === 'start') return { events: [{ type: 'block_start', blockType: event.blockType }] };
-      if (event.phase === 'end') return { events: [{ type: 'block_end', blockType: event.blockType }] };
-      if (!event.content) return { events: [] };
-      return { events: [{ type: event.blockType === 'thinking' ? 'thinking' : 'text', content: event.content }] };
+    // 'assistant_stream_event'：已停写（2026-07-03）。存量历史行走 default 分支忽略；
+    // replay 内容由下方 streamed 聚合行在 expandStreamed=true 时整块补出。
     case 'assistant_thinking':
-      if (event.streamed) return { events: [] };
+      if (event.streamed && !options.expandStreamed) return { events: [] };
       return event.content
         ? { events: [
             { type: 'block_start', blockType: 'thinking' },
@@ -3315,7 +3326,7 @@ function projectRuntimePlatformEvent(
           ] }
         : { events: [] };
     case 'assistant_message':
-      if (event.streamed) return { events: [] };
+      if (event.streamed && !options.expandStreamed) return { events: [] };
       return event.content
         ? { events: [
             { type: 'block_start', blockType: 'text' },
@@ -3325,7 +3336,7 @@ function projectRuntimePlatformEvent(
         : { events: [] };
     case 'assistant_tool_calls': {
       const events: object[] = [];
-      if (event.content && !event.streamed) {
+      if (event.content && (!event.streamed || options.expandStreamed)) {
         events.push(
           { type: 'block_start', blockType: 'text' },
           { type: 'text', content: event.content },

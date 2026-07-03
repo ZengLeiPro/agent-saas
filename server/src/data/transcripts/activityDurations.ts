@@ -16,7 +16,11 @@ function isValidDuration(value: unknown): value is number {
 }
 
 function isDurationEvent(event: PlatformEvent): boolean {
-  return event.type === "assistant_stream_event" || event.type === "tool_invocation_completed";
+  return (
+    event.type === "assistant_thinking"
+    || event.type === "assistant_stream_event"
+    || event.type === "tool_invocation_completed"
+  );
 }
 
 async function listEventsByType(
@@ -51,11 +55,13 @@ export async function listActivityDurationEvents(
     return (await eventStore.list(sessionId)).filter(isDurationEvent);
   }
 
-  const [streamEvents, toolCompletionEvents] = await Promise.all([
+  const [thinkingEvents, streamEvents, toolCompletionEvents] = await Promise.all([
+    listEventsByType(eventStore, sessionId, "assistant_thinking"),
+    // 存量 fallback：2026-07-03 前的历史数据无 durationMs，靠 delta start/end 配对
     listEventsByType(eventStore, sessionId, "assistant_stream_event"),
     listEventsByType(eventStore, sessionId, "tool_invocation_completed"),
   ]);
-  return [...streamEvents, ...toolCompletionEvents].sort(
+  return [...thinkingEvents, ...streamEvents, ...toolCompletionEvents].sort(
     (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
   );
 }
@@ -70,6 +76,15 @@ export function buildActivityDurationsFromEvents(
 
   for (const event of events) {
     if ("sessionId" in event && event.sessionId !== sessionId) continue;
+
+    // 新路径（2026-07-03+）：assistant_thinking 聚合行直接携带本轮 thinking 总时长。
+    // 旧数据的聚合行无 durationMs，不会双计——那些轮由下方 delta 配对产出。
+    if (event.type === "assistant_thinking") {
+      if (isValidDuration(event.durationMs)) {
+        thinkingDurations.push(event.durationMs);
+      }
+      continue;
+    }
 
     if (event.type === "assistant_stream_event" && event.blockType === "thinking") {
       const tsMs = toTimestampMs(event.timestamp);

@@ -80,6 +80,65 @@ describe("transcript activity durations", () => {
     expect(enriched.blocks[1]).toMatchObject({ kind: "tool_use", durationMs: 3210 });
   });
 
+  it("prefers assistant_thinking.durationMs and mixes with legacy delta pairing in order", () => {
+    // 2026-07-03 起 delta 停写：新轮由聚合行 durationMs 供时长，旧轮（存量）仍靠
+    // delta start/end 配对。混合会话按事件时间序各产出各的，不双计。
+    const parsed: ParsedTranscript = {
+      sessionId: "session-mixed",
+      blocks: [
+        { id: "t1", kind: "thinking", title: "思考", defaultOpen: true, content: "旧轮" },
+        { id: "t2", kind: "thinking", title: "思考", defaultOpen: true, content: "新轮" },
+      ],
+      stats: { lines: 2, parsedLines: 2, parseErrors: 0 },
+    };
+    const events: PlatformEvent[] = [
+      // 旧轮：存量 delta 配对（聚合行无 durationMs → 不产出，避免双计）
+      {
+        id: "e-legacy-start",
+        timestamp: "2026-07-01T10:00:00.000Z",
+        type: "assistant_stream_event",
+        runId: "run-legacy",
+        sessionId: "session-mixed",
+        blockType: "thinking",
+        phase: "start",
+      },
+      {
+        id: "e-legacy-end",
+        timestamp: "2026-07-01T10:00:02.000Z",
+        type: "assistant_stream_event",
+        runId: "run-legacy",
+        sessionId: "session-mixed",
+        blockType: "thinking",
+        phase: "end",
+      },
+      {
+        id: "e-legacy-agg",
+        timestamp: "2026-07-01T10:00:02.100Z",
+        type: "assistant_thinking",
+        runId: "run-legacy",
+        sessionId: "session-mixed",
+        content: "旧轮",
+        streamed: true,
+      },
+      // 新轮：聚合行直接携带 durationMs
+      {
+        id: "e-new-agg",
+        timestamp: "2026-07-03T10:00:00.000Z",
+        type: "assistant_thinking",
+        runId: "run-new",
+        sessionId: "session-mixed",
+        content: "新轮",
+        streamed: true,
+        durationMs: 4321,
+      },
+    ];
+
+    const enriched = enrichTranscriptActivityDurations(parsed, events, "session-mixed");
+
+    expect(enriched.blocks[0]).toMatchObject({ kind: "thinking", durationMs: 2000 });
+    expect(enriched.blocks[1]).toMatchObject({ kind: "thinking", durationMs: 4321 });
+  });
+
   it("preserves API block durations when mapping session details to messages", () => {
     const detail: ApiSessionDetail = {
       sessionId: "session-1",

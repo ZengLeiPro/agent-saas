@@ -5,6 +5,8 @@ import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import type { MessageItem, RenderItem, AgentProfile } from '@agent/shared';
 import { groupMessages } from '@agent/shared';
 import { MessageItemView } from './MessageItem';
+import { CompactionDivider } from './CompactionDivider';
+import { isCompactionItem } from '../../lib/compaction';
 import { scheduleIdle } from '../../lib/ric';
 import { useColors, useChatTypography, spacing, radius } from '../../theme';
 import type { ThemeColors } from '../../theme';
@@ -43,7 +45,11 @@ function groupIntoBubbles(items: RenderItem[]): BubbleRenderItem[] {
   };
 
   for (const item of items) {
-    if (item.type === 'user' || item.type === 'user-voice') {
+    if (isCompactionItem(item)) {
+      // 压缩分界线：独立渲染（水平分割线，非气泡）
+      flushGroup();
+      result.push(item);
+    } else if (item.type === 'user' || item.type === 'user-voice') {
       flushGroup();
       result.push(item);
     } else if (item.type === 'text' || item.type === 'voice') {
@@ -308,6 +314,8 @@ const AiBubbleView = React.memo(function AiBubbleView({
 interface MessageListProps {
   messages: MessageItem[];
   loading: boolean;
+  /** 上下文压缩进行中：底部显示「正在压缩上下文…」状态条 */
+  compacting?: boolean;
   isLoadingMessages?: boolean;
   shouldScrollRef: React.MutableRefObject<boolean>;
   isNearBottomRef: React.MutableRefObject<boolean>;
@@ -326,6 +334,7 @@ interface MessageListProps {
 export function MessageList({
   messages,
   loading,
+  compacting,
   isLoadingMessages,
   shouldScrollRef,
   isNearBottomRef,
@@ -363,6 +372,8 @@ export function MessageList({
     const ids = new Set<string>();
     let prevSide: 'user' | 'ai' | null = null;
     for (const item of bubbleItems) {
+      // 压缩分界线不参与 user/ai 侧判断，也不显示 header
+      if (isCompactionItem(item)) continue;
       const side = (item.type === 'user' || item.type === 'user-voice') ? 'user' : 'ai';
       if (side !== prevSide) {
         ids.add(item.id);
@@ -452,6 +463,11 @@ export function MessageList({
   agentRef.current = displayAgent;
 
   const renderItem = useCallback(({ item }: { item: BubbleRenderItem }) => {
+    // 压缩分界线：水平线独立渲染，不进气泡、不带 header
+    if (isCompactionItem(item)) {
+      return <CompactionDivider item={item} />;
+    }
+
     const showHeader = headerItemIds.has(item.id);
     const agent = agentRef.current;
     const usr = userRef.current;
@@ -508,7 +524,18 @@ export function MessageList({
   const showCenterLoading = isLoadingMessages && messages.length === 0 && !loading;
   const showSyncLoading = isLoadingMessages && messages.length > 0 && !loading;
 
+  // /compact v2：压缩进行中状态条（黑箱压缩不再流式下发内容，仅显示 spinner 状态条）
+  const showCompactionBar = !!compacting && loading;
+
   const syncFooter = useMemo(() => {
+    if (showCompactionBar) {
+      return (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: spacing.md }}>
+          <ActivityIndicator size="small" color={colors.mutedForeground} />
+          <Text style={{ fontSize: 13, color: colors.mutedForeground }}>正在压缩上下文…</Text>
+        </View>
+      );
+    }
     if (!showSyncLoading) return null;
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: spacing.md }}>
@@ -516,7 +543,7 @@ export function MessageList({
         <Text style={{ fontSize: 13, color: colors.mutedForeground }}>正在加载最新消息...</Text>
       </View>
     );
-  }, [showSyncLoading, colors.mutedForeground]);
+  }, [showCompactionBar, showSyncLoading, colors.mutedForeground]);
 
   const styles = useMemo(() => StyleSheet.create({
     container: {

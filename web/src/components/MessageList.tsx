@@ -3,6 +3,8 @@ import { Loader2 } from 'lucide-react';
 import { MessageItem as MessageItemType, type RenderItem } from './types';
 import { MessageItem, type TtsProps } from './MessageItem';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
+import { CompactionDivider } from './CompactionDivider';
+import { asCompactionItem } from '@/lib/compaction';
 import { useGroupedMessages } from './useGroupedMessages';
 import { ErrorBoundary } from './ErrorBoundary';
 import type { TtsState } from '@/hooks/useTtsPlayer';
@@ -51,6 +53,10 @@ function groupIntoBubbles(items: RenderItem[]): BubbleRenderItem[] {
     } else if (item.type === 'system-error') {
       // system-error 是会话级独立 alert,不与 AI 输出共享 bubble,也不归属 user 侧。
       // 单独 push,渲染时居中无头像 header。
+      flushGroup();
+      result.push(item);
+    } else if (asCompactionItem(item)) {
+      // 压缩状态条/分界线：横铺独立渲染单元（水平线风格,非气泡）
       flushGroup();
       result.push(item);
     } else if (item.type === 'text' || item.type === 'voice') {
@@ -279,8 +285,8 @@ export const MessageList = memo(function MessageList({
     const ids = new Set<string>();
     let prevSide: 'user' | 'ai' | null = null;
     for (const item of bubbleItems) {
-      // system-error 是中性 alert,不参与 user/ai 头像 header 切换计算（也不打断后续 prevSide）
-      if (item.type === 'system-error') continue;
+      // system-error / compaction 是中性渲染单元,不参与 user/ai 头像 header 切换计算（也不打断后续 prevSide）
+      if (item.type === 'system-error' || asCompactionItem(item)) continue;
       const side = (item.type === 'user' || item.type === 'user-voice') ? 'user' : 'ai';
       if (side !== prevSide) ids.add(item.id);
       prevSide = side;
@@ -384,6 +390,22 @@ export const MessageList = memo(function MessageList({
                     <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} />
                   </ErrorBoundary>
                 </div>
+              </div>
+            );
+          }
+
+          // --- compaction: 压缩状态条 / 分界线,无头像 header,横铺 ---
+          const compactionItem = asCompactionItem(item);
+          if (compactionItem) {
+            return (
+              <div
+                key={item.id}
+                ref={ri === lastRenderIdx && !showAgentLoading ? lastMessageRef : undefined}
+                className="flex flex-col"
+              >
+                <ErrorBoundary inline>
+                  <CompactionDivider item={compactionItem} debugMode={debugMode} />
+                </ErrorBoundary>
               </div>
             );
           }

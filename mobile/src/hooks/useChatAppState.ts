@@ -31,6 +31,8 @@ import { useMessages } from "./useMessages";
 import { useSession } from "./useSession";
 import { useFileUpload } from "./useFileUpload";
 import { useAuth } from "../contexts/AuthContext";
+import { isCompactionStatusEvent } from "../lib/compaction";
+import type { MessageItemInput } from "@agent/shared";
 
 export interface ChatAppState {
   messages: MessageItem[];
@@ -79,6 +81,10 @@ export interface ChatAppState {
   renameSession: (sessionId: string, newTitle: string) => Promise<boolean>;
   autoTitleSession: (sessionId: string) => Promise<boolean>;
   compactSession: () => Promise<void>;
+  /** 上下文压缩进行中（服务端黑箱压缩，配合 loading 显示状态条） */
+  compacting: boolean;
+  /** 压缩轻提示（skipped 时的 note 文案），4s 自动消失 */
+  compactionNotice: string | null;
   shouldScrollRef: React.MutableRefObject<boolean>;
   isNearBottomRef: React.MutableRefObject<boolean>;
   // File
@@ -184,6 +190,33 @@ export function useChatAppStateCore(): ChatAppState {
 
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
+
+  // ─── /compact v2：服务端黑箱压缩状态（2026-07-03）───
+  // compacting 仅在 loading 期间有意义（UI 渲染条件 compacting && loading）；
+  // compactionNotice 为 skipped 时的轻提示文案，定时自动清除。
+  const [compacting, setCompacting] = useState(false);
+  const [compactionNotice, setCompactionNotice] = useState<string | null>(null);
+  const compactionNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const showCompactionNotice = useCallback((text: string) => {
+    setCompactionNotice(text);
+    if (compactionNoticeTimerRef.current) {
+      clearTimeout(compactionNoticeTimerRef.current);
+    }
+    compactionNoticeTimerRef.current = setTimeout(() => {
+      compactionNoticeTimerRef.current = null;
+      setCompactionNotice(null);
+    }, 4000);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (compactionNoticeTimerRef.current) {
+        clearTimeout(compactionNoticeTimerRef.current);
+      }
+    };
+  }, []);
+
   const streamNonceRef = useRef(0);
   const streamIdRef = useRef<string | null>(null);
   const lastEventIdRef = useRef<number | null>(null);
@@ -438,6 +471,7 @@ export function useChatAppStateCore(): ChatAppState {
         finalizeRunningSubagents(msgRef.current);
         setLoading(false);
         setStopping(false);
+        setCompacting(false);
       }
     }, 10_000);
   }, []);
@@ -455,6 +489,7 @@ export function useChatAppStateCore(): ChatAppState {
     finalizeRunningSubagents(msgRef.current);
     setLoading(false);
     setStopping(false);
+    setCompacting(false);
     // 切会话：清 outbox 中 queued（未发）条目；清所有 ACK 超时定时器
     for (const t of ackTimersRef.current.values()) clearTimeout(t);
     ackTimersRef.current.clear();
@@ -577,6 +612,7 @@ export function useChatAppStateCore(): ChatAppState {
       wsAttachedRef.current = false;
       setLoading(false);
       setStopping(false);
+      setCompacting(false);
       dispatchConnection("complete");
       sessionRef.current.refreshCurrentSession();
     }, timeout);
@@ -826,6 +862,7 @@ export function useChatAppStateCore(): ChatAppState {
       });
 
       setLoading(true);
+      setCompacting(false); // 普通消息轮：清掉可能残留的压缩状态
       resetWatchdog();
       dispatchConnection("connect");
 
@@ -974,6 +1011,7 @@ export function useChatAppStateCore(): ChatAppState {
           wsAttachedRef.current = false;
           setLoading(false);
           setStopping(false);
+          setCompacting(false);
           outboxRef.current = outboxRef.current.filter(
             (e) => e.state === "queued",
           );
@@ -1038,6 +1076,46 @@ export function useChatAppStateCore(): ChatAppState {
       ) {
         lastStreamEventAtRef.current = Date.now();
         resetWatchdog();
+      }
+
+      // ── /compact v2：压缩状态事件（黑箱，shared WsEvent 联合类型暂未收录，
+      // 经 unknown 走类型守卫，在 processWsEvent 之前本地拦截处理）──
+      const rawEvent: unknown = data;
+      if (isCompactionStatusEvent(rawEvent)) {
+        if (rawEvent.phase === "started") {
+          setCompacting(true);
+        } else if (rawEvent.phase === "completed") {
+          setCompacting(false);
+          const c = rawEvent.compaction;
+          if (c?.skipped) {
+            showCompactionNotice(c.note || "会话历史较短，无需压缩");
+          } else if (c) {
+            // 幂等：断线重连 replay 时同一事件会重放，用 eventId 生成稳定 id，
+            // 已存在同 id 分界线则跳过（同一次压缩只渲染一条分界线）。
+            const stableId =
+              envelope.eventId != null
+                ? `compaction-evt-${envelope.eventId}`
+                : `compaction-${
+                    wsLatestSessionIdRef.current?.value ||
+                    sessionIdRef.current ||
+                    "live"
+                  }-${c.coveredEventCount}`;
+            const exists = msgRef.current.messagesRef.current.some(
+              (m) => m.id === stableId,
+            );
+            if (!exists) {
+              msgRef.current.addMessage({
+                id: stableId,
+                type: "compaction",
+                ...(c.summary ? { summary: c.summary } : {}),
+                coveredEventCount: c.coveredEventCount,
+                timestamp: Date.now(),
+              } as unknown as MessageItemInput);
+              msgRef.current.triggerScroll();
+            }
+          }
+        }
+        return;
       }
 
       const ctx: WsProcessingContext = {
@@ -1172,6 +1250,7 @@ export function useChatAppStateCore(): ChatAppState {
         clearRuntimeForSession(latestSid);
         setLoading(false);
         setStopping(false);
+        setCompacting(false);
 
         // 从 outbox 移除已处理完的 acked/sending 条目
         outboxRef.current = outboxRef.current.filter(
@@ -1204,6 +1283,7 @@ export function useChatAppStateCore(): ChatAppState {
     sendChatViaWs,
     makeResumeMessage,
     clearRuntimeForSession,
+    showCompactionNotice,
   ]);
 
   // Subscribe to active stream on session change
@@ -1357,6 +1437,8 @@ export function useChatAppStateCore(): ChatAppState {
     wsAttachedRef.current = true;
 
     setLoading(true);
+    // 乐观显示「正在压缩上下文…」状态条；服务端 compaction_status started 会再次确认
+    setCompacting(true);
     resetWatchdog();
     dispatchConnection("connect");
 
@@ -1369,6 +1451,7 @@ export function useChatAppStateCore(): ChatAppState {
     if (!ok) {
       wsAttachedRef.current = false;
       setLoading(false);
+      setCompacting(false);
     }
   }, [dispatchConnection]);
 
@@ -1675,6 +1758,8 @@ export function useChatAppStateCore(): ChatAppState {
     renameSession: session.renameSession,
     autoTitleSession: session.autoTitleSession,
     compactSession,
+    compacting,
+    compactionNotice,
     shouldScrollRef: msg.shouldScrollRef,
     isNearBottomRef: msg.isNearBottomRef,
     pickFile: fileUpload.pickFile,

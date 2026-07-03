@@ -22,6 +22,13 @@ import {
 } from "@/lib/unreadAiReplies";
 import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
 import type { ApiSessionDetail } from "@/lib/sessionsApi";
+import {
+  asCompactionItem,
+  compactionDoneReplacement,
+  createCompactionDoneItem,
+  createCompactionRunningItem,
+} from "@/lib/compaction";
+import type { CompactionMessageItem, CompactionStatusEvent } from "@/lib/compaction";
 import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, pushSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection } from "@/lib/urlSync";
 import type { AdminSettingsState, AdminSettingsTarget } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
@@ -1516,6 +1523,84 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         && data.type !== 'pending_interactions') {
         lastStreamEventAtRef.current = Date.now();
         resetWatchdog();
+      }
+
+      // ── 上下文压缩黑箱化（2026-07）：compaction_status 专用事件，不进 processWsEvent ──
+      // started → 消息流插入「正在压缩上下文…」状态条（先清掉 sending/running 等 runtime 状态行）；
+      // completed → 状态条就地落定为分界线（skipped 走轻提示 toast，不入消息流——
+      //   done 后的 refreshCurrentSession 会立即用 transcript 重建消息，流内临时项会被抹掉）。
+      // 幂等（断线重连 / 切会话回来 replay）：running 条最多一条；completed 重放时
+      //   若已有等值分界线则跳过。loading 解除仍由后续 done 事件的既有路径处理。
+      if ((data as { type?: string }).type === 'compaction_status') {
+        const evt = data as unknown as CompactionStatusEvent;
+        const currentMsgs = msgRef.current.messagesRef.current;
+        let runningIdx = -1;
+        for (let i = currentMsgs.length - 1; i >= 0; i--) {
+          if (asCompactionItem(currentMsgs[i])?.status === 'running') {
+            runningIdx = i;
+            break;
+          }
+        }
+
+        if (evt.phase === 'started') {
+          if (runningIdx < 0) {
+            removeRuntimeStatusMessages(msgRef.current);
+            msgRef.current.addMessage(createCompactionRunningItem());
+            msgRef.current.triggerScroll();
+          }
+          return;
+        }
+
+        // phase === 'completed'
+        const outcome = evt.compaction;
+        if (outcome?.skipped) {
+          // 历史太短未压缩：撤掉状态条 + 轻提示（timeoutMs 后自动消失）
+          if (runningIdx >= 0) {
+            msgRef.current.setMessages(
+              currentMsgs.filter((_, i) => i !== runningIdx),
+              { scrollToBottom: false },
+            );
+          }
+          pushNotification({
+            key: 'compaction_skipped',
+            text: outcome.note || '当前会话历史很短，无需压缩',
+            priority: 'medium',
+            timeoutMs: 8000,
+          });
+          return;
+        }
+
+        // replay 幂等：消息流中已有等值 done 分界线（如切会话回来时 transcript 已含
+        // compaction block，事件 buffer 又重放同一次 started+completed）则不再新增/转换，
+        // 只撤掉多余的 running 状态条，保证同一次压缩只有一条分界线。
+        let lastDone: CompactionMessageItem | null = null;
+        for (let i = currentMsgs.length - 1; i >= 0; i--) {
+          const comp = asCompactionItem(currentMsgs[i]);
+          if (comp?.status === 'done') {
+            lastDone = comp;
+            break;
+          }
+        }
+        const isDupe = !!lastDone
+          && lastDone.summary === outcome?.summary
+          && lastDone.coveredEventCount === outcome?.coveredEventCount;
+        if (isDupe) {
+          if (runningIdx >= 0) {
+            msgRef.current.setMessages(
+              currentMsgs.filter((_, i) => i !== runningIdx),
+              { scrollToBottom: false },
+            );
+          }
+          return;
+        }
+
+        if (runningIdx >= 0) {
+          msgRef.current.updateMessageAt(runningIdx, (m) => compactionDoneReplacement(m.id, outcome));
+        } else {
+          msgRef.current.addMessage(createCompactionDoneItem(outcome));
+          msgRef.current.triggerScroll();
+        }
+        return;
       }
 
       // 构建处理上下文

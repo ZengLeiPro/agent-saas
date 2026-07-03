@@ -240,7 +240,7 @@ export default function ChatDetailScreen() {
     } else if (actionId === '_compact') {
       Alert.alert(
         '压缩上下文',
-        '压缩会话的上下文历史，保留关键信息同时减少 Token 占用。此操作不可撤销。',
+        '压缩会保留最近两轮对话原文与用户消息摘录，较早历史将被摘要替代以减少 Token 占用。原始记录仍完整保留，可随时检索。',
         [
           { text: '取消', style: 'cancel' },
           { text: '确认压缩', onPress: () => void chat.compactSession() },
@@ -404,12 +404,21 @@ export default function ChatDetailScreen() {
       />
 
       <ConnectionBanner connectionState={chat.connectionState} isOnline={isOnline} />
+      {/* /compact skipped 轻提示：历史太短未压缩时显示 note，4s 自动消失 */}
+      {chat.compactionNotice ? (
+        <View style={styles.compactionNoticeWrap} pointerEvents="none">
+          <View style={styles.compactionNoticePill}>
+            <Text style={styles.compactionNoticeText}>{chat.compactionNotice}</Text>
+          </View>
+        </View>
+      ) : null}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={headerHeight}>
       <MessageList
         headerPadding={0}
         bottomPadding={Platform.OS === 'ios' ? composerHeight - (isKeyboardOpen ? insets.bottom : 0) : defaultBottomPadding}
         messages={chat.messages}
         loading={chat.loading}
+        compacting={chat.compacting}
         isLoadingMessages={chat.isLoadingMessages}
         shouldScrollRef={chat.shouldScrollRef}
         isNearBottomRef={chat.isNearBottomRef}
@@ -539,6 +548,33 @@ function useScreenStyles(colors: ThemeColors, screenWidth: number) {
       elevation: 4,
       borderWidth: 1,
       borderColor: colors.border,
+    },
+    compactionNoticeWrap: {
+      position: 'absolute',
+      top: 12,
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+      zIndex: 10,
+    },
+    compactionNoticePill: {
+      backgroundColor: colors.card,
+      borderRadius: 16,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      maxWidth: '85%',
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 6,
+      elevation: 4,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    compactionNoticeText: {
+      fontSize: 13,
+      color: colors.mutedForeground,
+      textAlign: 'center',
     },
   }), [colors, screenWidth]);
 }

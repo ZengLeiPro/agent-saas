@@ -19,6 +19,7 @@ import {
   saveSessionListCache,
   loadSessionListCache,
 } from "../lib/sessionListCache";
+import { injectCompactionMessages } from "../lib/compaction";
 
 export interface SessionCallbacks {
   resetMessages: () => void;
@@ -275,7 +276,12 @@ export function useSession(
             data.owner?.username ??
             sessionsRef.current.find((s) => s.sessionId === id)?.owner
               ?.username;
-          const msgs = mapSessionDetailToMessages(data, sessionOwner);
+          // /compact v2：shared mapBlock 会丢弃 kind==='compaction' 的分界线块，
+          // 这里在 mobile 侧按 transcript 原始顺序注回压缩分界线消息
+          const msgs = injectCompactionMessages(
+            data.blocks,
+            mapSessionDetailToMessages(data, sessionOwner),
+          );
 
           // Check pending interactions
           try {

@@ -870,8 +870,8 @@ function SidebarDialogs({
           <DialogHeader>
             <DialogTitle>压缩上下文</DialogTitle>
             <DialogDescription>
-              压缩会话的上下文历史，保留关键信息同时减少 Token
-              占用。此操作不可撤销。
+              压缩会保留最近两轮对话原文与用户消息摘录，较早的历史将被摘要替代，以减少
+              Token 占用；原始记录仍完整保留、可随时检索。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

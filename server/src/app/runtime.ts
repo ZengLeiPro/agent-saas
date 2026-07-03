@@ -62,7 +62,7 @@ import { AgentStore } from '../data/agents/store.js';
 import { GroupStore } from '../data/groups/store.js';
 import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { McpConfigStore } from '../data/mcpConfig.js';
-import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds } from '../data/skills/scanner.js';
+import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds, scanUserCustomSkills } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDir } from '../data/tenants/tenantSkillsPath.js';
 import { syncSkills, resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, agentPath, resolveAgentPath } from '../workspace/namespace.js';
@@ -810,9 +810,38 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       listForUser(username: string | undefined): SkillEntry[] {
         if (!username) return [];
         const all = getAllPoolEntries();
-        const tenantId = userStore?.findByUsername(username)?.tenantId;
+        const user = userStore?.findByUsername(username);
+        const tenantId = user?.tenantId;
         const effective = new Set(store.getUserEffectivePoolSkills(username, tenantId));
-        return all.filter((s) => effective.has(s.id));
+        const poolResult = all.filter((s) => effective.has(s.id));
+
+        // 追加用户自建 skill：与前端 SkillSelector「自建」tab 同源。
+        // 早期 dispatch 只列 pool skill，自建 skill 上传后模型看不到、也调不到（invoke
+        // 前 allowed 校验会拒）；2026-07-03 起改为按 selection 暴露给模型，前端 Switch
+        // 可开关且真实生效。物理路径由 resolveSkillDir 优先命中 user workspace 副本。
+        if (!user) return poolResult;
+        try {
+          const userCwd = resolveUserCwd(agentCwd, {
+            id: user.id,
+            username: user.username,
+            role: user.role,
+            tenantId: user.tenantId,
+          });
+          const userSkillsDir = resolveAgentPath(userCwd, 'skills');
+          const poolIds = new Set(all.map((s) => s.id));
+          const selected = new Set(store.getUserSelectedSkills(username));
+          const customResult = scanUserCustomSkills(userSkillsDir, poolIds)
+            .filter((s) => selected.has(s.id))
+            .map((s) => ({
+              id: s.id,
+              name: (s as { name?: string }).name || s.id,
+              description: s.description ?? '',
+            }));
+          return [...poolResult, ...customResult];
+        } catch {
+          // 非法路径 / 扫描失败：静默降级为仅 pool，dispatch 不因单用户目录异常而崩
+          return poolResult;
+        }
       },
       resolveSkillDir(username: string | undefined, skill: string): string | null {
         if (!username) return null;

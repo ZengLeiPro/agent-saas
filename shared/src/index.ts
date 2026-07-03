@@ -222,6 +222,7 @@ export {
 export {
   fetchMySkills,
   updateMySelections,
+  deleteMySkill,
   fetchUserSkills,
   updateUserSelections,
   fetchSkillPool,

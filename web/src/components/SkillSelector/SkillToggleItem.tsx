@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
@@ -8,9 +9,11 @@ interface SkillToggleItemProps {
   onCheckedChange?: (checked: boolean) => void;
   badge?: string;
   disabled?: boolean;
+  /** Switch 前面的额外操作按钮（如删除）。当前仅自建 skill 用到。 */
+  leadingAction?: ReactNode;
 }
 
-export function SkillToggleItem({ name, description, checked, onCheckedChange, badge, disabled }: SkillToggleItemProps) {
+export function SkillToggleItem({ name, description, checked, onCheckedChange, badge, disabled, leadingAction }: SkillToggleItemProps) {
   return (
     <div className="flex items-start gap-3 rounded-lg border bg-card p-3">
       <div className="min-w-0 flex-1">
@@ -28,6 +31,7 @@ export function SkillToggleItem({ name, description, checked, onCheckedChange, b
           </p>
         )}
       </div>
+      {leadingAction && <div className="shrink-0">{leadingAction}</div>}
       <Switch
         checked={checked}
         onCheckedChange={onCheckedChange}

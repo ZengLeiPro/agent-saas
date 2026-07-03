@@ -272,6 +272,12 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       }
       const dir = moveSkillIntoPlace(res, skillRoot, getUserSkillsDir(user), skillId, true);
       if (!dir) return;
+      // 上传即启用：把新 skillId 追加到用户 selection，保持"上传立刻可用"的直觉体验。
+      // 与前端「导入后 refresh 拉回列表看到 Switch 已开」呼应；用户之后仍可自由关闭。
+      const currentSelection = skillConfigStore.getUserSelectedSkills(username);
+      if (!currentSelection.includes(skillId)) {
+        await skillConfigStore.setUserSelectedSkills(username, [...currentSelection, skillId]);
+      }
       auditLog(req, 'skill_custom_uploaded', `${username}/${skillId}`);
       return res.json({ ok: true, skill: { id: skillId, name: meta.name, description: meta.description } });
     }
@@ -1023,9 +1029,16 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     try {
       const poolIds = getPoolSkillIds();
       const tenantOwnIds = getTenantOwnSkillIds(user.tenantId);
+      // 自建 skill 白名单：物理目录现存 + 未被系统/组织层 shadow 的自建 skill 允许开关。
+      // 只扫用户 workspace 目录，与 buildUserSkillsResponse 保持同一 excluded 集合。
+      const customExcluded = new Set([...poolIds, ...tenantOwnIds]);
+      const customIds = new Set(
+        scanUserCustomSkills(getUserSkillsDir(user), customExcluded).map(s => s.id),
+      );
       const validSkills = parsed.data.selectedSkills.filter(id => {
         if (poolIds.has(id)) return skillConfigStore.isTenantSkillAvailableToUser(id, user.tenantId, user.username);
         if (tenantOwnIds.has(id) && user.tenantId) return skillConfigStore.isTenantOwnSkillAvailableToUser(user.tenantId, id, user.username);
+        if (customIds.has(id)) return true;
         return false;
       });
       await skillConfigStore.setUserSelectedSkills(username, validSkills);
@@ -1033,6 +1046,47 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     } catch (err) {
       serverLogger.error(`PUT /me/selections error: ${err}`);
       res.status(500).json({ error: 'Failed to update selections' });
+    }
+  });
+
+  /**
+   * DELETE /me/skills/:skillId — 用户自删自建 skill
+   * 不需要 admin，但严格限定：仅能删自己 workspace 里、未被系统/组织层 shadow 的 skill；
+   * 同步从 selection 里移除，避免下一次会话读到「已选但已不存在」的孤儿 id。
+   */
+  router.delete('/me/skills/:skillId', async (req, res) => {
+    const username = req.user?.username;
+    if (!username) return res.status(401).json({ error: 'Not authenticated' });
+    const user = userStore.findByUsername(username);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const skillId = safeName(req.params.skillId);
+    if (!skillId) return res.status(400).json({ error: 'Invalid skillId' });
+
+    // 与 admin DELETE /custom/:username/:skillId 同口径：拒绝删除系统 pool / 组织自有 skill。
+    if (getKnownSystemSkillIds().has(skillId)) {
+      return res.status(400).json({ error: 'Cannot delete a pool skill via this endpoint' });
+    }
+    if (getTenantOwnSkillIds(user.tenantId).has(skillId)) {
+      return res.status(400).json({ error: 'Cannot delete a tenant skill via this endpoint' });
+    }
+
+    const skillDir = join(getUserSkillsDir(user), skillId);
+    if (!existsSync(skillDir)) {
+      return res.status(404).json({ error: `Skill '${skillId}' not found in your workspace` });
+    }
+
+    try {
+      rmSync(skillDir, { recursive: true, force: true });
+      // 从 selection 中移除，避免 dispatch listForUser / effective 集合出现孤儿 id
+      const current = skillConfigStore.getUserSelectedSkills(username);
+      if (current.includes(skillId)) {
+        await skillConfigStore.setUserSelectedSkills(username, current.filter(id => id !== skillId));
+      }
+      auditLog(req, 'skill_custom_deleted', `${username}/${skillId}`);
+      res.json({ ok: true });
+    } catch (err) {
+      serverLogger.error(`DELETE /me/skills/${skillId} error: ${err}`);
+      res.status(500).json({ error: 'Failed to delete custom skill' });
     }
   });
 
@@ -1111,13 +1165,15 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
         }))
       : [];
 
-    // 自建 skills: 始终返回，标记为 selected: true；排除系统层与组织层（被 shadow）
+    // 自建 skills: 走用户 selection（2026-07-03 改）；排除系统层与组织层（被 shadow）。
+    // 早期版本硬编码 selected:true + 前端 disabled Switch，用户无法关闭已上传的自建 skill；
+    // 现在按 selection 状态呈现，前端 Switch 恢复可交互，同时用户可自删（DELETE /me/skills/:id）。
     // 路径按 user.tenantId 解析（修 PR 4 漏改）
     const userDir = getUserSkillsDir(user);
     const customExcluded = new Set([...poolIds, ...tenantOwnIds]);
     const customSkills = scanUserCustomSkills(userDir, customExcluded).map(s => ({
       ...s,
-      selected: true,
+      selected: selected.has(s.id),
       source: 'custom' as const,
     }));
 

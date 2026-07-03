@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Loader2, Save, Upload } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Trash2, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -7,10 +7,11 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { importMySkill } from "@agent/shared";
+import { deleteMySkill, importMySkill } from "@agent/shared";
 import { SkillToggleItem } from "./SkillToggleItem";
 import { useMySkills } from "./hooks";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
@@ -40,6 +41,11 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
   const skillFolderInputRef = useRef<HTMLInputElement>(null);
   const skillZipInputRef = useRef<HTMLInputElement>(null);
   const canImport = !targetUsername; // 仅编辑自己时显示，admin 编辑他人路径不挂导入
+  // 自建 skill 删除对话框（仅编辑自己时可用；admin 编辑他人走 SkillManager 的删除路径）
+  const canDeleteCustom = !targetUsername;
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
   // tab 切换：与 SkillManager 同款样式
   const [activeTab, setActiveTab] = useState<"system" | "custom">("system");
 
@@ -85,6 +91,32 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
       setSaveMsg(`保存失败: ${err instanceof Error ? err.message : "未知错误"}`);
     }
   }, [localSelections, saveSelections]);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteErr(null);
+    try {
+      await deleteMySkill(deleteTarget.id);
+      // 本地 selection 状态同步清理，避免 UI 残留孤儿 id
+      setLocalSelections(prev => {
+        const next = { ...prev };
+        delete next[deleteTarget.id];
+        return next;
+      });
+      setInitialSelections(prev => {
+        const next = { ...prev };
+        delete next[deleteTarget.id];
+        return next;
+      });
+      setDeleteTarget(null);
+      await refresh();
+    } catch (err) {
+      setDeleteErr(err instanceof Error ? err.message : "删除失败");
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleteTarget, refresh]);
 
   const handleSkillImport = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -251,9 +283,20 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                     key={s.id}
                     name={s.name}
                     description={s.description}
-                    checked={true}
-                    disabled
+                    checked={localSelections[s.id] ?? false}
+                    onCheckedChange={(checked) => toggle(s.id, checked)}
                     badge="自建"
+                    leadingAction={canDeleteCustom ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-muted-foreground hover:text-destructive"
+                        onClick={() => { setDeleteErr(null); setDeleteTarget({ id: s.id, name: s.name }); }}
+                        aria-label={`删除 ${s.name}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    ) : undefined}
                   />
                 ))}
               </div>
@@ -320,6 +363,40 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
             </DialogContent>
           </Dialog>
         </>
+      )}
+
+      {canDeleteCustom && (
+        <Dialog
+          open={!!deleteTarget}
+          onOpenChange={(open) => { if (!open && !deleting) { setDeleteTarget(null); setDeleteErr(null); } }}
+        >
+          <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>删除自建 Skill</DialogTitle>
+              <DialogDescription>
+                确定删除自建 Skill「{deleteTarget?.name}」？操作不可撤销，SKILL.md 及关联 references/scripts 会一并从你的 workspace 中移除。
+              </DialogDescription>
+            </DialogHeader>
+            {deleteErr && <div className="text-sm text-destructive">{deleteErr}</div>}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => { setDeleteTarget(null); setDeleteErr(null); }}
+                disabled={deleting}
+              >
+                取消
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => { void handleDeleteConfirm(); }}
+                disabled={deleting}
+              >
+                {deleting && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+                删除
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

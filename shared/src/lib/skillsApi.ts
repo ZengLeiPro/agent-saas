@@ -28,6 +28,21 @@ export async function updateMySelections(selectedSkills: string[]): Promise<void
   if (!res.ok) throw new Error(`Failed to update skill selections: ${res.status}`);
 }
 
+/** DELETE /api/skills/me/skills/:skillId — 用户自删自建 skill（同时移除 selection） */
+export async function deleteMySkill(skillId: string): Promise<void> {
+  const res = await authFetch(`/api/skills/me/skills/${encodeURIComponent(skillId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    let message = `Failed to delete custom skill: ${res.status}`;
+    try {
+      const data = await res.json() as { error?: string };
+      if (data.error) message = data.error;
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
+}
+
 export async function fetchUserSkills(username: string): Promise<MySkillsResponse> {
   const res = await authFetch(`/api/skills/users/${encodeURIComponent(username)}`);
   if (!res.ok) throw new Error(`Failed to fetch user skills: ${res.status}`);

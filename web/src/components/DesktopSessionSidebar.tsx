@@ -331,7 +331,7 @@ function SessionRow({
     return (
       <div
         className={cn(
-          "group relative flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 transition-colors",
+          "group relative flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 transition-colors",
           active
             ? "bg-brand-accent-soft before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-r-full before:bg-brand-accent"
             : "hover:bg-muted",
@@ -343,12 +343,12 @@ function SessionRow({
         {session.hasUnreadAiReply && (
           <span className="h-2 w-2 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
         )}
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-snug">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5">
           {session.title || "新会话"}
         </span>
         <span
           className={cn(
-            "shrink-0 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground/60 transition-opacity",
+            "shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground/60 transition-opacity",
             hasMenu && "group-hover:opacity-0",
             hasMenu && menuOpen && "opacity-0",
           )}
@@ -397,7 +397,7 @@ function SessionRow({
       <div className="flex min-w-0 items-center gap-3 pr-8">
         <SessionLeadingIcon session={session} selected={selected} />
         <div className={cn("min-w-0 flex-1", singleColumn && "-translate-y-0.5")}>
-          <div className={cn("flex min-w-0 items-center font-medium leading-snug", singleColumn ? "text-[13px]" : "text-sm")}>
+          <div className="flex min-w-0 items-center text-sm font-medium leading-snug">
             {session.hasUnreadAiReply && (
               <span
                 className="mr-1 flex w-4 shrink-0 items-center justify-center"
@@ -413,7 +413,7 @@ function SessionRow({
           </div>
         </div>
       </div>
-      <span className={cn("pointer-events-none absolute right-2 whitespace-nowrap text-right tabular-nums text-muted-foreground/60", singleColumn ? "bottom-2.5 text-[11px]" : "bottom-3 text-xs")}>
+      <span className={cn("pointer-events-none absolute right-2 whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground/60", singleColumn ? "bottom-2.5" : "bottom-3")}>
         {formatShortDate(session.updatedAt)}
       </span>
 
@@ -1627,14 +1627,14 @@ export function DesktopSessionSidebar({
                 ) : singleColumnEntries.map((entry) => entry.type === "session" ? (
                   <SessionRow key={entry.session.id} session={entry.session} active={!singleSelectionMode && entry.session.id === activeSessionId} isLoading={isLoading} onSelect={handleSelect} onDelete={onDelete} onRename={onRename} onAutoTitle={onAutoTitle} actionMenuId={actionMenuId} setActionMenuId={setActionMenuId} actionMenuRef={actionMenuRef} setRenameSessionId={setRenameSessionId} onAddToGroup={isReadOnlyGroups ? undefined : setAddToGroupSessionId} onCompact={entry.session.id === activeSessionId && onCompact ? () => setCompactDialogOpen(true) : undefined} selectionMode={singleSelectionMode} selected={selectedSingleSessionIds.has(entry.session.id)} singleColumn compact={compactList} />
                 ) : compactList ? (
-                  <button key={entry.group.groupKey} type="button" className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted" onClick={() => { setActionMenuId(null); setSingleExpandedGroupKey(entry.group.groupKey); void onLoadGroupSessions?.(entry.group.groupKey); }}>
+                  <button key={entry.group.groupKey} type="button" className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted" onClick={() => { setActionMenuId(null); setSingleExpandedGroupKey(entry.group.groupKey); void onLoadGroupSessions?.(entry.group.groupKey); }}>
                     <CompactGroupLeadingIcon kind={entry.group.kind} />
                     {unreadByGroupId.get(entry.group.groupKey) && <GroupUnreadDot />}
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-snug">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5">
                       {entry.group.name}
                       <span className="ml-1 font-normal text-muted-foreground/60">({entry.group.count})</span>
                     </span>
-                    <span className="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground/60">{formatShortDate(entry.group.latestUpdatedAt)}</span>
+                    <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground/60">{formatShortDate(entry.group.latestUpdatedAt)}</span>
                     <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
                   </button>
                 ) : (

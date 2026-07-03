@@ -438,7 +438,9 @@ jobs:
           path: |
             ${{ runner.temp }}/acs-sandbox-image.tar.gz
             ${{ runner.temp }}/agent-saas-acs-release.tgz
-          retention-days: 5
+          # 镜像 tar 单个 ~1.6GB，retention 5 天曾累积 27GB 打爆 artifact 配额
+          # （2026-07-03 全线 CI 红）；仅作 build→deploy 的 job 间传递，1 天足够
+          retention-days: 1
 
   deploy:
     name: Push Image and Deploy ACS Orchestrator

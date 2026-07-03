@@ -54,37 +54,6 @@ jobs:
       - name: Build frontend
         run: pnpm -F web build
 
-      # 将构建产物 web/dist/ 打包上传（保留以便手动下载部署）
-      - name: Upload frontend artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: web-dist
-          path: web/dist/
-          retention-days: 5
-
-      - name: Pack ECS release
-        run: |
-          tar \
-            --exclude='./.git' \
-            --exclude='./node_modules' \
-            --exclude='./*/node_modules' \
-            --exclude='./server/data' \
-            --exclude='./logs' \
-            --exclude='./config.json' \
-            --exclude='./config.json.*' \
-            --exclude='./.env' \
-            --exclude='./.env.*' \
-            --exclude='./mobile/ios' \
-            --exclude='./mobile/android' \
-            -czf "$RUNNER_TEMP/agent-saas-release.tgz" .
-
-      - name: Upload ECS release artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: agent-saas-release
-          path: ${{ runner.temp }}/agent-saas-release.tgz
-          retention-days: 5
-
   deploy-ecs:
     name: Deploy to ECS
     runs-on: ubuntu-latest
@@ -101,10 +70,42 @@ jobs:
       SERVICE_NAME: agent-saas-server
 
     steps:
-      - name: Download ECS release artifact
-        uses: actions/download-artifact@v8
+      # 部署产物不走 GitHub artifact（存储配额有限且用量重算延迟 6-12h，
+      # 2026-07-03 曾因配额爆掉全线 CI 红）；deploy job 自构建后直接 scp。
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
         with:
-          name: agent-saas-release
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm -F web build
+
+      - name: Pack ECS release
+        run: |
+          tar \
+            --exclude='./.git' \
+            --exclude='./node_modules' \
+            --exclude='./*/node_modules' \
+            --exclude='./server/data' \
+            --exclude='./logs' \
+            --exclude='./config.json' \
+            --exclude='./config.json.*' \
+            --exclude='./.env' \
+            --exclude='./.env.*' \
+            --exclude='./mobile/ios' \
+            --exclude='./mobile/android' \
+            -czf "$RUNNER_TEMP/agent-saas-release.tgz" .
+          mv "$RUNNER_TEMP/agent-saas-release.tgz" agent-saas-release.tgz
 
       - name: Configure SSH
         run: |

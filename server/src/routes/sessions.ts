@@ -102,8 +102,8 @@ interface SessionsListResponse {
 
 interface TokenContextAccounting {
   exact: boolean;
-  kind: "exact_current" | "stateful_response_unknown" | "unknown";
-  source: "provider_usage" | "stateful_response" | "unknown";
+  kind: "exact_current" | "stateful_response_exact" | "unknown";
+  source: "provider_usage" | "unknown";
   label: string;
   reason?: string;
   lastRequestTokens?: number;

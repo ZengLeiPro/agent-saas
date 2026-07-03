@@ -70,11 +70,13 @@ export interface ApiSessionDetail {
 export interface TokenContextAccounting {
   /**
    * Whether `contextTokens` is an exact current-context count.
-   * Exact currently means provider-reported usage for a full-history request.
+   * Exact means provider-reported usage covers the full context — true for
+   * full-history requests AND stateful Responses chaining (upstream reports
+   * cumulative input_tokens per turn, verified on Ark).
    */
   exact: boolean;
-  kind: 'exact_current' | 'stateful_response_unknown' | 'unknown';
-  source: 'provider_usage' | 'stateful_response' | 'unknown';
+  kind: 'exact_current' | 'stateful_response_exact' | 'unknown';
+  source: 'provider_usage' | 'unknown';
   label: string;
   reason?: string;
   /** Last provider request total kept for diagnostics when exact=false. */

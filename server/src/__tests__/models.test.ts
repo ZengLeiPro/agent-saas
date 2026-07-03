@@ -146,10 +146,10 @@ describe('OpenAI-only model resolver', () => {
     };
 
     expect(resolveContextAccountingFromModels(contextModelsConfig, 'ark/glm')).toMatchObject({
-      exact: false,
-      kind: 'stateful_response_unknown',
-      source: 'stateful_response',
-      label: 'Responses 接力中',
+      exact: true,
+      kind: 'stateful_response_exact',
+      source: 'provider_usage',
+      label: '当前上下文',
     });
     expect(resolveContextAccountingFromModels(contextModelsConfig, 'ark/full-history')).toMatchObject({
       exact: true,

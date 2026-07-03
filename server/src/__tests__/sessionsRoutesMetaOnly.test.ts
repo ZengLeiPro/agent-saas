@@ -38,8 +38,8 @@ async function startServer(
   options: {
     resolveContextAccounting?: (modelRef?: string) => {
       exact: boolean;
-      kind: 'exact_current' | 'stateful_response_unknown' | 'unknown';
-      source: 'provider_usage' | 'stateful_response' | 'unknown';
+      kind: 'exact_current' | 'stateful_response_exact' | 'unknown';
+      source: 'provider_usage' | 'unknown';
       label: string;
       reason?: string;
     };
@@ -226,7 +226,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
     }
   });
 
-  it('does not mark transcript context as exact for stateful Responses chaining', async () => {
+  it('marks transcript context as exact for stateful Responses chaining (usage is cumulative per turn)', async () => {
     const { sessionId, transcriptPath } = await writeRuntimeSession({
       metaPatch: { model: 'ark-agents/glm-5.2' },
     });
@@ -238,11 +238,11 @@ describe('sessions routes for meta-only runtime sessions', () => {
 
     const { server, baseUrl } = await startServer(agentCwd, {
       resolveContextAccounting: () => ({
-        exact: false,
-        kind: 'stateful_response_unknown',
-        source: 'stateful_response',
-        label: 'Responses 接力中',
-        reason: 'stateful',
+        exact: true,
+        kind: 'stateful_response_exact',
+        source: 'provider_usage',
+        label: '当前上下文',
+        reason: 'stateful chaining reports cumulative input per turn',
       }),
     });
     try {
@@ -253,11 +253,11 @@ describe('sessions routes for meta-only runtime sessions', () => {
           contextTokens: 4435,
           totalTokens: 4435,
           contextAccounting: {
-            exact: false,
-            kind: 'stateful_response_unknown',
-            source: 'stateful_response',
-            label: 'Responses 接力中',
-            reason: 'stateful',
+            exact: true,
+            kind: 'stateful_response_exact',
+            source: 'provider_usage',
+            label: '当前上下文',
+            reason: 'stateful chaining reports cumulative input per turn',
             lastRequestTokens: 4435,
           },
         },

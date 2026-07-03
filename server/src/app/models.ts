@@ -30,8 +30,8 @@ export interface PublicModelList {
 
 export interface ModelContextAccounting {
   exact: boolean;
-  kind: 'exact_current' | 'stateful_response_unknown' | 'unknown';
-  source: 'provider_usage' | 'stateful_response' | 'unknown';
+  kind: 'exact_current' | 'stateful_response_exact' | 'unknown';
+  source: 'provider_usage' | 'unknown';
   label: string;
   reason?: string;
 }
@@ -78,12 +78,16 @@ export function resolveContextAccountingFromModels(
   const protocol = model.protocol ?? group.protocol;
   const disableResponseChaining = model.disable_response_chaining ?? group.disable_response_chaining ?? false;
   if (protocol === 'responses' && !disableResponseChaining) {
+    // previous_response_id 接力下，上游每轮 usage.input_tokens 依然是全量口径
+    // （包含接力引用的完整历史，缓存命中记在 input_tokens_details.cached_tokens）。
+    // Ark 实测：5 级嵌套 input_tokens 23→51→79→107→149 逐轮全量递增。
+    // 因此「最后一轮 input+output」与全量重发场景同构，可作为准确当前上下文。
     return {
-      exact: false,
-      kind: 'stateful_response_unknown',
-      source: 'stateful_response',
-      label: 'Responses 接力中',
-      reason: '该模型启用 previous_response_id，完整上下文保存在上游 Responses state 中；当前服务端没有精确 token 计数。',
+      exact: true,
+      kind: 'stateful_response_exact',
+      source: 'provider_usage',
+      label: '当前上下文',
+      reason: '该模型启用 previous_response_id 接力，但上游每轮 usage 仍报告全量输入；最后一轮 input+output 即当前上下文。',
     };
   }
 

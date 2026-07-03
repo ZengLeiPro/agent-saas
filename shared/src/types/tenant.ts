@@ -58,6 +58,8 @@ export interface TenantSettings {
     allowedModels: string[];
     allowUserModelSwitch: boolean;
     showGroupNames: boolean;
+    /** 是否向组织成员显示顶部上下文/Token 统计。缺省 = true（显示）。 */
+    showContextTokens?: boolean;
     displayOverrides?: Record<
       string,
       {
@@ -99,6 +101,7 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     allowedModels: [],
     allowUserModelSwitch: true,
     showGroupNames: false,
+    showContextTokens: true,
     displayOverrides: {},
   },
   mcp: {

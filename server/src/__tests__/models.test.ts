@@ -42,6 +42,7 @@ describe('OpenAI-only model resolver', () => {
       default: 'openai-agents/doubao',
       allowCrossGroupSwitch: false,
       showGroupNames: true,
+      showContextTokens: true,
       groups: [
         {
           id: 'openai-agents',
@@ -213,6 +214,7 @@ describe('OpenAI-only model resolver', () => {
       default: 'openai-agents/kimi',
       allowCrossGroupSwitch: false,
       showGroupNames: true,
+      showContextTokens: true,
       groups: [
         {
           id: 'openai-agents',
@@ -253,5 +255,51 @@ describe('OpenAI-only model resolver', () => {
         requireDingtalkBinding: false,
       },
     }, 'openai-agents/doubao')).toBe(false);
+  });
+
+  it('propagates tenant showContextTokens policy to public model list', () => {
+    const baseSettings = {
+      features: {
+        filesEnabled: true,
+        cronEnabled: true,
+        mcpEnabled: true,
+        customSkillsEnabled: true,
+        debugModeAllowed: false,
+      },
+      quotas: {},
+      mcp: {
+        allowTenantServers: true,
+        allowGlobalServers: true,
+        defaultEnabledServerIds: [],
+      },
+      branding: {},
+      security: {
+        requireDingtalkBinding: false,
+      },
+    };
+
+    // 关闭时透传 false
+    expect(getTenantPublicModelList(modelsConfig, {
+      ...baseSettings,
+      models: {
+        allowedModels: [],
+        allowUserModelSwitch: true,
+        showGroupNames: false,
+        showContextTokens: false,
+      },
+    }).showContextTokens).toBe(false);
+
+    // 缺省（存量租户）= 显示
+    expect(getTenantPublicModelList(modelsConfig, {
+      ...baseSettings,
+      models: {
+        allowedModels: [],
+        allowUserModelSwitch: true,
+        showGroupNames: false,
+      },
+    }).showContextTokens).toBe(true);
+
+    // 无租户 settings（平台视图）= 显示
+    expect(getPublicModelList(modelsConfig).showContextTokens).toBe(true);
   });
 });

@@ -26,6 +26,8 @@ export interface PublicModelList {
   default: string;
   allowCrossGroupSwitch: boolean;
   showGroupNames: boolean;
+  /** 是否向当前组织成员显示顶部上下文/Token 统计（租户策略，缺省 true）。 */
+  showContextTokens: boolean;
 }
 
 export interface ModelContextAccounting {
@@ -115,6 +117,7 @@ export function getPublicModelList(modelsConfig: ModelsConfig): PublicModelList 
     default: modelsConfig.default,
     allowCrossGroupSwitch: modelsConfig.allowCrossGroupSwitch,
     showGroupNames: true,
+    showContextTokens: true,
   };
 }
 
@@ -175,6 +178,7 @@ export function getTenantPublicModelList(
     default: defaultRef,
     allowCrossGroupSwitch: modelsConfig.allowCrossGroupSwitch && tenantSettings.models.allowUserModelSwitch,
     showGroupNames: tenantSettings.models.showGroupNames,
+    showContextTokens: tenantSettings.models.showContextTokens !== false,
   };
 }
 

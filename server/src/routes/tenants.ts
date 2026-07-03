@@ -62,6 +62,7 @@ const tenantSettingsSchema = z.object({
     allowedModels: z.array(z.string().max(200)).optional(),
     allowUserModelSwitch: z.boolean(),
     showGroupNames: z.boolean().optional(),
+    showContextTokens: z.boolean().optional(),
     displayOverrides: z.record(z.string().max(200), z.object({
       displayName: z.string().max(100).optional(),
       description: z.string().max(500).optional(),

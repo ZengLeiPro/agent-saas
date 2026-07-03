@@ -209,6 +209,10 @@ function TenantModelPolicyPanel({
             <input type="checkbox" checked={!!settings.models.showGroupNames} onChange={(event) => patch(draft => { draft.models.showGroupNames = event.target.checked; })} />
             <span>显示分组名</span>
           </label>
+          <label className="flex items-start gap-2 text-sm md:col-span-2">
+            <input type="checkbox" className="mt-0.5" checked={settings.models.showContextTokens !== false} onChange={(event) => patch(draft => { draft.models.showContextTokens = event.target.checked; })} />
+            <span>显示上下文 Token 统计<span className="block text-xs text-muted-foreground">关闭后，组织成员在会话顶部完全看不到上下文/Token 数字。</span></span>
+          </label>
         </CardContent>
       </Card>
 

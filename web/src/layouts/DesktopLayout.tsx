@@ -252,7 +252,9 @@ export function DesktopLayout(props: LayoutProps) {
           </div>
           {activeTab === "chat" && (
             <div className="flex items-center gap-2">
-              <TokenUsageDisplay tokenUsage={tokenUsage} contextUsage={contextUsage} />
+              {modelList?.showContextTokens !== false && (
+                <TokenUsageDisplay tokenUsage={tokenUsage} contextUsage={contextUsage} />
+              )}
               <BillingMiniBadge sessionId={sessionId} />
               <FontSizeToggle isLarge={chatFontLarge} onChange={setChatFontLarge} />
               <div className="w-0.5" />

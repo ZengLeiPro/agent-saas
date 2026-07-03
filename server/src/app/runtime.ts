@@ -1312,6 +1312,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     },
   });
 
+  // CronList/CronManage 内置工具接线：dispatch 构造早于 cronRuntime，
+  // config 传的是惰性 getter（与 updateToolSettingsConfig 热改同模式）。
+  rawRuntimeConfig.cronService = () => cronRuntime.service ?? undefined;
+
   // Backfill cron groups from historical run logs (one-time migration)
   await migrateCronGroups(groupStore, cronRuntime.service, cronRuntime.cronRunsDir);
 

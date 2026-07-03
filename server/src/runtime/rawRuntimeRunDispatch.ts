@@ -37,6 +37,7 @@ import {
 } from '../agent/skillToolProvider.js';
 import { createBuiltinTools, type BuiltinToolsConfig } from '../agent/builtinTools.js';
 import { WebToolProvider, type ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
+import { CronToolProvider } from '../agent/cronToolProvider.js';
 import { TenantCompanyInfoToolProvider } from '../agent/tenantCompanyInfoToolProvider.js';
 import { McpClientToolProvider } from '../mcp/clientToolProvider.js';
 import type { McpClientManager } from '../mcp/clientManager.js';
@@ -227,6 +228,11 @@ export interface RawRuntimeRunDispatchConfig {
   mcpProxy?: McpProxy;
   /** 内置 brain-only 工具配置（TodoWrite/AskUserQuestion）。 */
   builtinTools?: BuiltinToolsConfig;
+  /**
+   * 定时任务服务惰性 getter（CronList/CronManage 内置工具）。cronRuntime 在
+   * dispatch 构造之后才创建，因此传 getter 而非实例；返回 undefined 时工具不挂载。
+   */
+  cronService?: () => import('../cron/service.js').CronService | undefined;
   /** 平台级模型可见工具开关。 */
   toolControls?: import('../app/config.js').ToolControlsConfig;
   /** Platform-managed web access tools (`WebSearch` / `WebFetch`). */
@@ -1016,7 +1022,12 @@ async function collectRuntimeTooling(
     }
   }
 
-  // 5. MCP 工具（带超时兜底，单 server hang 不会卡 dispatch 主路径）
+  // 5. 定时任务工具（CronList/CronManage；服务未启用或无用户身份时 list() 自动隐藏）
+  if (config.cronService) {
+    providers.push(new CronToolProvider({ service: config.cronService }));
+  }
+
+  // 6. MCP 工具（带超时兜底，单 server hang 不会卡 dispatch 主路径）
   if (config.mcpProxy || config.mcpClientManager) {
     const mcpProvider = new McpClientToolProvider(config.mcpProxy ?? config.mcpClientManager!);
     try {

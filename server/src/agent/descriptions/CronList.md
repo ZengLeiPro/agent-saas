@@ -1,0 +1,1 @@
+List or inspect the current user's scheduled cron jobs. Call without id to list every job owned by the current user (including disabled ones) with schedule, next run time and last run status. Call with id to get the full detail of one job including its payload and notify config. Jobs owned by other users are never visible or accessible.

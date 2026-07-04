@@ -45,8 +45,16 @@ function groupIntoBubbles(items: RenderItem[]): BubbleRenderItem[] {
   };
 
   for (const item of items) {
-    // file_download is rendered inline via [FILE] markers in text — skip entirely
-    if (item.type === 'file_download') continue;
+    // file_download 两条路径,分别处理:
+    //  - [FILE] 标记路径(无 artifactId): MessageItem 在 text 内联展开,顶层跳过。
+    //  - CreateArtifact 交付卡片(有 artifactId): 无关联 text 载体,作为独立顶层项
+    //    渲染(flushGroup 后 push,不进 AI bubble 避免与 thinking/tool_use 混排)。
+    if (item.type === 'file_download') {
+      if (!item.artifactId) continue;
+      flushGroup();
+      result.push(item);
+      continue;
+    }
     if (item.type === 'user' || item.type === 'user-voice') {
       flushGroup();
       result.push(item);
@@ -335,7 +343,9 @@ export const MessageList = memo(function MessageList({
                 )}
                 <div className="rounded-lg bg-card px-3 py-2 shadow-[0_2px_4px_rgba(15,23,42,0.06),0_8px_24px_-6px_rgba(15,23,42,0.10)]">
                   {item.items.map((sub) => {
-                    // file_download is rendered inline via [FILE] markers in text messages
+                    // 双重保险:此层理论上不该出现 file_download。
+                    // - [FILE] 内联(无 artifactId): groupIntoBubbles 已 continue 掉。
+                    // - CreateArtifact 卡片(有 artifactId): groupIntoBubbles 已独立提到顶层。
                     if (sub.type === 'file_download') return null;
                     if (sub.type === 'activity_group') {
                       return (
@@ -412,6 +422,39 @@ export const MessageList = memo(function MessageList({
 
           // --- system-error: 会话级失败/取消 alert,无头像 header,横铺 ---
           if (item.type === 'system-error') {
+            const origIndex = msgIndexMap.get(item.id) ?? 0;
+            return (
+              <div
+                key={item.id}
+                ref={ri === lastRenderIdx && !showAgentLoading ? lastMessageRef : undefined}
+                className="flex flex-col"
+              >
+                <ErrorBoundary inline>
+                  <MessageItem
+                    message={item}
+                    index={origIndex}
+                    onPermissionResponse={onPermissionResponse}
+                    onAskUserResponse={onAskUserResponse}
+                    onRetry={onRetry}
+                    onFork={onFork}
+                    isFirstUser={false}
+                    isLoading={loading}
+                    tts={tts}
+                    ttsState={'idle'}
+                    ttsIsActive={false}
+                    voicePlayer={voicePlayer}
+                    voicePlayState={undefined}
+                    debugMode={debugMode}
+                  />
+                </ErrorBoundary>
+              </div>
+            );
+          }
+
+          // --- file_download 顶层项: CreateArtifact 交付卡片(带 artifactId),
+          //     无关联 text 载体,独立渲染(不进气泡、无头像 header)。
+          //     [FILE] 标记路径已在 groupIntoBubbles 阶段被跳过,不会走到这里。
+          if (item.type === 'file_download') {
             const origIndex = msgIndexMap.get(item.id) ?? 0;
             return (
               <div

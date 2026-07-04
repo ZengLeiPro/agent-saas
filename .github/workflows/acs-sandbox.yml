@@ -407,7 +407,9 @@ jobs:
             --exclude='./.env.*' \
             --exclude='./mobile/ios' \
             --exclude='./mobile/android' \
-            -czf agent-saas-acs-release.tgz .
+            -czf "$RUNNER_TEMP/agent-saas-acs-release.tgz" .
+          # 输出必须放 RUNNER_TEMP：写进 checkout 目录会让 tar 读到 "." 目录
+          # mtime 变化，报 "file changed as we read it" 并 exit 1（2026-07-04 首跑实测）
 
       - name: Configure SSH
         run: |
@@ -424,7 +426,7 @@ jobs:
         run: |
           scp -i ~/.ssh/ecs_deploy_key \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
-            agent-saas-acs-release.tgz "$ECS_USER@$ECS_HOST:/tmp/"
+            "$RUNNER_TEMP/agent-saas-acs-release.tgz" "$ECS_USER@$ECS_HOST:/tmp/"
 
       - name: Deploy orchestrator with drain and smoke
         run: |

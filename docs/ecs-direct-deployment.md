@@ -54,7 +54,20 @@ GitHub Secrets：
 /etc/agent-saas/azeroth-tokens.json
 ```
 
-格式参考 `server/config/azeroth-tokens.example.json`。多租户上线后建议使用 v2 结构：平台根组织 `pantheon` 下放 `admin`，开沿日常组织 `kaiyan` 下放普通员工。文件权限建议 `600`，属主为运行 `agent-saas-server` 的用户。
+格式参考 `server/config/azeroth-tokens.example.json`。多租户上线后使用 v2 结构：平台根组织 `pantheon` 下放 `admin`，开沿日常组织 `kaiyan` 下放普通员工。文件权限建议 `600`，属主为运行 `agent-saas-server` 的用户。
+
+注意：这里没有自动账号绑定。key 是 agent-saas 的 `tenantId/username`；value 是 ky-azeroth 员工 PAT。推荐用对象格式保存审计 metadata：
+
+```json
+{
+  "token": "pat_xxx",
+  "kyUsername": "17759501593",
+  "employeeName": "黄思霖",
+  "roles": ["SALES"]
+}
+```
+
+服务启动时会用 PAT 调 ky-azeroth `/users/me` 做只读校验；metadata 错配会打 error，但不阻断主服务。需要临时关闭时设置 `AZEROTH_TOKEN_METADATA_VERIFY=false`。
 
 ## 公网切流
 

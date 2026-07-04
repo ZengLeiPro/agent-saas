@@ -18,8 +18,10 @@ import { isPlatformAdmin } from '../auth/types.js';
 import type { JwtPayload } from '../auth/types.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import {
+  listAzerothTokenBindings,
   resolveAzerothInjection,
   resolveAzerothTokensConfigPath,
+  verifyAzerothTokenMetadata,
 } from '../integrations/azeroth/tokens.js';
 import { UserStore } from '../data/users/store.js';
 import { expandSandboxPaths, type SandboxExpandContext } from '../engine/sandbox.js';
@@ -85,6 +87,90 @@ describe('PR 7 多组织隔离 - 必补测试', () => {
       const wainResult = resolveAzerothInjection('wain', 'huangsl');
       expect(kaiyanResult?.token).toBe('pat_kaiyan_huangsl_xxx');
       expect(wainResult?.token).toBe('pat_wain_huangsl_yyy');
+    });
+
+    it('v2 对象格式：保留审计 metadata，同时按 token 注入', async () => {
+      writeFileSync(configPath, JSON.stringify({
+        azerothApiUrl: 'https://fc.kaiyan.net/ky-azeroth',
+        tenants: {
+          kaiyan: {
+            tokens: {
+              huangsl: {
+                token: 'pat_kaiyan_huangsl_xxx',
+                kyUsername: '17759501593',
+                employeeName: '黄思霖',
+                roles: ['SALES'],
+              },
+            },
+          },
+        },
+      }));
+
+      const injection = resolveAzerothInjection('kaiyan', 'huangsl');
+      expect(injection?.token).toBe('pat_kaiyan_huangsl_xxx');
+
+      const bindings = listAzerothTokenBindings();
+      expect(bindings).toMatchObject([
+        {
+          tenantId: 'kaiyan',
+          username: 'huangsl',
+          kyUsername: '17759501593',
+          employeeName: '黄思霖',
+          roles: ['SALES'],
+        },
+      ]);
+
+      const summary = await verifyAzerothTokenMetadata({
+        fetchFn: async () => new Response(JSON.stringify({
+          username: '17759501593',
+          employee: { id: 'emp-1', name: '黄思霖' },
+          roles: [{ code: 'SALES' }],
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      });
+      expect(summary).toMatchObject({
+        total: 1,
+        verified: 1,
+        mismatched: 0,
+        failed: 0,
+      });
+    });
+
+    it('metadata 校验发现 PAT 填串用户', async () => {
+      writeFileSync(configPath, JSON.stringify({
+        azerothApiUrl: 'https://fc.kaiyan.net/ky-azeroth',
+        tenants: {
+          kaiyan: {
+            tokens: {
+              chenyx: {
+                token: 'pat_wrong_owner',
+                kyUsername: '15980021891',
+                employeeName: '陈育新',
+                roles: ['SALES'],
+              },
+            },
+          },
+        },
+      }));
+
+      const summary = await verifyAzerothTokenMetadata({
+        fetchFn: async () => new Response(JSON.stringify({
+          username: '17759501593',
+          employee: { id: 'emp-2', name: '黄思霖' },
+          roles: [{ code: 'SALES' }],
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      });
+      expect(summary).toMatchObject({
+        total: 1,
+        verified: 0,
+        mismatched: 1,
+        failed: 0,
+      });
     });
 
     it('跨组织串号防御：wain 组织 username 与 kaiyan 同名也拿不到 kaiyan PAT', () => {

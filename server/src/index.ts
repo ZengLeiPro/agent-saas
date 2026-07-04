@@ -9,6 +9,7 @@ import { registerRoutes } from './app/routes.js';
 import { createBrowserRouter } from './routes/browser.js';
 import type { AppRuntime } from './app/runtime.js';
 import type { CronService } from './cron/service.js';
+import { verifyAzerothTokenMetadata } from './integrations/azeroth/tokens.js';
 import { serverLogger, cronLogger } from './utils/logger.js';
 
 type ProcessRole = 'all' | 'ws-only' | 'scheduler-only';
@@ -181,6 +182,11 @@ async function startServer(): Promise<void> {
     serverLogger.info(`Settings source: ${config.agent.settingSources?.join(', ') || '(none)'}`);
     if (processRole === 'all' && cronEnabled) {
       cronLogger.info(`已启用 (store: ${cronStorePath})`);
+    }
+    if (process.env.AZEROTH_TOKEN_METADATA_VERIFY !== 'false') {
+      void verifyAzerothTokenMetadata().catch((err) => {
+        serverLogger.error('ky-azeroth PAT metadata 校验异常', err);
+      });
     }
   });
 

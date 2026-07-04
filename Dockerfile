@@ -23,9 +23,20 @@
 # 编排见 docker-compose.yml；ECS 部署见 docs/ecs-deployment.md。
 
 # ─────────────────────────────────────────────────────────────
+# BASE_REGISTRY — 基础镜像来源前缀
+#   本地构建: 默认 docker.io/library（Docker Hub, 走本机网络/代理）
+#   ACR EE 云端构建: build rule 传 BASE_REGISTRY=
+#     agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base
+#   云端构建机直连 Docker Hub 被墙且「海外源智能加速」实测无效（2026-07-04）,
+#   基础镜像已手动同步到实例 base 命名空间; 升级基础镜像时用 skopeo copy
+#   --override-os linux --override-arch amd64 重新同步后再改此文件。
+# ─────────────────────────────────────────────────────────────
+ARG BASE_REGISTRY=docker.io/library
+
+# ─────────────────────────────────────────────────────────────
 # Stage: deps — pnpm install（共用底层缓存）
 # ─────────────────────────────────────────────────────────────
-FROM node:22-alpine AS deps
+FROM ${BASE_REGISTRY}/node:22-alpine AS deps
 WORKDIR /app
 
 # corepack 启用 pnpm；版本与 root package.json 的 packageManager 字段一致
@@ -50,12 +61,12 @@ RUN pnpm install --frozen-lockfile \
 # ─────────────────────────────────────────────────────────────
 # Stage: node-bookworm — 给 Python 3.12 Debian 运行时复制 Node 22
 # ─────────────────────────────────────────────────────────────
-FROM node:22-bookworm-slim AS node-bookworm
+FROM ${BASE_REGISTRY}/node:22-bookworm-slim AS node-bookworm
 
 # ─────────────────────────────────────────────────────────────
 # Stage: acs-base — production Agent hand runtime
 # ─────────────────────────────────────────────────────────────
-FROM python:3.12-slim-bookworm AS acs-base
+FROM ${BASE_REGISTRY}/python:3.12-slim-bookworm AS acs-base
 WORKDIR /app
 
 # 这是用户代码执行环境，不是控制面。保留通用 Agent 生产任务常用工具，但不要放
@@ -216,7 +227,7 @@ RUN python3 -m venv /tmp/pwcheck \
 # ─────────────────────────────────────────────────────────────
 # Stage: web-build — 仅产出 web/dist 给 server target COPY
 # ─────────────────────────────────────────────────────────────
-FROM node:22-alpine AS web-build
+FROM ${BASE_REGISTRY}/node:22-alpine AS web-build
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.18.3 --activate
 

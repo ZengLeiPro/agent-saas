@@ -18,11 +18,13 @@ Use the browser through Python Playwright inside the current ACS Sandbox. The sa
 
 ## Quick Commands
 
-Set the skill path once:
+Set the skill path once. Skill files are synced into your workspace under `.ky-agent/skills/` (a dot-directory — `Glob("**/...")` will NOT find files here; use `ls .ky-agent/skills/browser/scripts/` to verify):
 
 ```bash
-SKILL_DIR="workspace-shared/.ky-agent/skills-pool/browser"
+SKILL_DIR=".ky-agent/skills/browser"
 ```
+
+If that directory does not exist, the skill was not synced to this workspace — report a platform skill-sync gap instead of searching for alternative paths.
 
 Take a text snapshot:
 

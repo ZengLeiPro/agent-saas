@@ -13,7 +13,7 @@ page.screenshot(path='assets/20260701/browser/page.png', full_page=True)
 Run it with:
 
 ```bash
-python3 workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py run assets/20260701/browser/task.py --session task-k8x2m9
+python3 .ky-agent/skills/browser/scripts/acs_browser.py run assets/20260701/browser/task.py --session task-k8x2m9
 ```
 
 ## Form Interaction

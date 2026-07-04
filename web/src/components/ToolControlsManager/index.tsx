@@ -43,8 +43,11 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 
+// 缺省视为「启用」以对齐后端语义：WebToolProvider.list() 判 `search.enabled !== false`
+// 即缺省字段视为启用。若这里写 false，config.json 里省略 `enabled` 字段时前端会误
+// 显示"关闭"，而后端 agent 实际能用 WebSearch。
 const DEFAULT_SEARCH: WebToolsSearchConfig = {
-  enabled: false,
+  enabled: true,
   provider: "volcengine",
   timeoutMs: 8_000,
   maxResults: 5,
@@ -120,21 +123,29 @@ function normalizeToolControls(toolControls: ToolControlsConfig | null): ToolCon
 
 function normalizeWebTools(webTools: WebToolsConfig | null): WebToolsConfig {
   if (!webTools) {
+    // config.webTools 未定义时后端 resolveWebToolsConfig 返回 undefined，
+    // WebToolProvider 不会启动 —— 两个 web 工具都不会暴露给 agent。
+    // UI 相应显示全部关闭，与运行时状态一致。
     return {
       ...DEFAULT_WEB_TOOLS,
       enabled: false,
       search: { ...DEFAULT_SEARCH, enabled: false },
-      fetch: { ...DEFAULT_FETCH, enabled: true },
+      fetch: { ...DEFAULT_FETCH, enabled: false },
     };
   }
+  // config.webTools 已定义。缺失字段视为「启用」，与后端 WebToolProvider.list()
+  // 对 `search.enabled !== false` / `fetch?.enabled !== false` 的判定一致。
   return {
     enabled: webTools.enabled ?? DEFAULT_WEB_TOOLS.enabled,
+    // webTools.search 不存在 → 后端不加 WebSearch → UI 显示关闭。
     search: webTools.search
       ? { ...DEFAULT_SEARCH, ...webTools.search }
       : { ...DEFAULT_SEARCH, enabled: false },
+    // webTools.fetch 不存在但 webTools 存在 → 后端 `fetch?.enabled !== false`
+    // 判定为 true，仍会暴露 WebFetch → UI 沿用 DEFAULT_FETCH.enabled=true。
     fetch: webTools.fetch
       ? { ...DEFAULT_FETCH, ...webTools.fetch }
-      : { ...DEFAULT_FETCH, enabled: true },
+      : { ...DEFAULT_FETCH },
     egress: { ...DEFAULT_WEB_TOOLS.egress, ...(webTools.egress ?? {}) },
   };
 }
@@ -398,7 +409,7 @@ export function ToolControlsManager() {
         description="统一管理平台内建工具是否向模型暴露，WebSearch / WebFetch 的 provider 参数在同页维护。"
         actions={(
           <>
-            {!configured && <Badge variant="outline">未写入 config</Badge>}
+            {!configured && <Badge variant="outline" title="config.json 里未显式写入 toolControls / webTools，运行时按缺省视为启用">运行时缺省·未落 config</Badge>}
             {dirty && <Badge variant="outline">有未保存更改</Badge>}
             {savedAt && !dirty && <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" />已保存并热生效</Badge>}
             <Button variant="outline" size="sm" onClick={() => { void refresh(); }} disabled={loading || saving}>

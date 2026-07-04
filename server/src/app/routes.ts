@@ -30,6 +30,7 @@ import {
   createScenariosRouter,
 } from "../routes/index.js";
 import { createAuthRouter } from "../routes/auth.js";
+import { createSignupRouter } from "../routes/signup.js";
 import { requireAdmin } from "../auth/middleware.js";
 import { createAgentsRouter } from "../routes/agents.js";
 import { createRuntimeAuditRouter } from "../routes/runtimeAudit.js";
@@ -383,6 +384,26 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         skillConfigStore: runtime.skillConfigStore,
       }),
     );
+    // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES
+    // 放行；enabled 开关（config.auth.selfSignup.enabled）与频控在 router 内收口。
+    if (runtime.tenantStore) {
+      app.use(
+        "/api/signup",
+        createSignupRouter({
+          userStore: runtime.userStore,
+          tenantStore: runtime.tenantStore,
+          billingService: runtime.billingService,
+          modelsConfig: config.models,
+          selfSignup: config.auth.selfSignup,
+          jwtSecret: config.auth.jwtSecret,
+          tokenExpiresIn: config.auth.tokenExpiresIn || "30d",
+          agentCwd,
+          sharedDir,
+          loginLogFilePath,
+          skillConfigStore: runtime.skillConfigStore,
+        }),
+      );
+    }
     // Tenant management (admin-only CRUD；PR 1 仅元数据，不影响任何运行时行为)
     if (runtime.tenantStore) {
       app.use(

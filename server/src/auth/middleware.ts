@@ -12,6 +12,9 @@ export { isPlatformAdmin } from "./types.js";
 // 注意：中间件通过 app.use('/api', ...) 挂载，req.path 不含 /api 前缀
 const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   { method: "POST", path: "/auth/login" },
+  // 自助注册试用（官网联动）：status/send-code/register 均免登录；
+  // enabled 开关与频控在 routes/signup.ts 内收口
+  { path: /^\/signup\// },
   { path: "/health" },
   { path: "/healthz" },
   { path: "/config" },

@@ -41,6 +41,8 @@ export interface CreateUserInput {
   realName?: string;
   /** 岗位（自由文本，路由层校验长度） */
   position?: string;
+  /** 手机号（自助注册链路创建时写入；路由层负责格式校验与查重） */
+  phone?: string;
   dingtalkStaffId?: string;
   debugMode?: boolean;
   /**
@@ -219,6 +221,7 @@ export class UserStore {
       tenantId: input.tenantId || DEFAULT_TENANT_ID,
       ...(input.realName ? { realName: input.realName } : {}),
       ...(input.position ? { position: input.position } : {}),
+      ...(input.phone ? { phone: input.phone } : {}),
       ...(input.dingtalkStaffId
         ? { dingtalkStaffId: input.dingtalkStaffId }
         : {}),

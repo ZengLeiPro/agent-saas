@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -7,12 +7,26 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 
-export function LoginPage() {
+interface LoginPageProps {
+  /** 切到注册页（AuthGate 提供；注册入口仅在后端开放自助注册时显示） */
+  onSwitchToSignup?: () => void;
+}
+
+export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
   const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [signupEnabled, setSignupEnabled] = useState(false);
+
+  useEffect(() => {
+    if (!onSwitchToSignup) return;
+    fetch("/api/signup/status")
+      .then((res) => res.json())
+      .then((data: { enabled?: boolean }) => setSignupEnabled(data.enabled === true))
+      .catch(() => {});
+  }, [onSwitchToSignup]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -98,6 +112,18 @@ export function LoginPage() {
                 "登录"
               )}
             </Button>
+            {signupEnabled && onSwitchToSignup && (
+              <p className="text-center text-xs text-muted-foreground">
+                还没有账号？
+                <button
+                  type="button"
+                  className="ml-1 text-brand-600 hover:underline"
+                  onClick={onSwitchToSignup}
+                >
+                  注册试用
+                </button>
+              </p>
+            )}
           </form>
         </CardContent>
       </Card>

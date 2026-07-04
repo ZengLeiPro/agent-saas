@@ -397,11 +397,42 @@ const titleGeneratorConfigSchema = z.object({
   fallbackModels: z.array(z.string().min(1)).optional(),
 });
 
+const selfSignupSmsSchema = z.object({
+  /** dev = 验证码只打 server log（配合 env AGENT_SMS_DEV_CODE 万能码内测）；aliyun = 真实发送 */
+  provider: z.enum(['dev', 'aliyun']).default('dev'),
+  /** aliyun：AccessKey ID。Secret 只走 env `AGENT_SMS_ACCESS_KEY_SECRET`，不进 config 文件。 */
+  accessKeyId: z.string().optional(),
+  /** aliyun：控制台审核通过的短信签名名称 */
+  signName: z.string().optional(),
+  /** aliyun：验证码模板 CODE（模板变量固定为 ${code}） */
+  templateCode: z.string().optional(),
+});
+
+/**
+ * 手机号自助注册试用（官网联动 MVP，2026-07-04）。
+ * 注册链路：官网 CTA → /signup → 手机验证码 → 独立试用租户 + 赠积分硬封顶 + 模型白名单
+ * → 线索推钉钉「官网线索」群。缺省关闭；enabled=false 时 send-code/register 返回 403。
+ */
+const selfSignupConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** 注册赠送积分数（试用额度，≠ 正式版套餐量） */
+  grantCredits: z.number().positive().default(500),
+  /**
+   * 试用租户模型白名单（"group/model" ref 列表）；首个作为默认模型。
+   * 缺省 = 仅全局默认模型（config.models.default）。
+   */
+  allowedModels: z.array(z.string().min(1)).optional(),
+  /** 注册线索钉钉群机器人 webhook（含 access_token 完整 URL）；缺省不推送 */
+  dingtalkLeadWebhook: z.string().url().optional(),
+  sms: selfSignupSmsSchema.optional(),
+});
+
 const authConfigSchema = z.object({
   enabled: z.boolean().default(false),
   jwtSecret: z.string().min(32),
   tokenExpiresIn: z.string().default('30d'),
   usersFile: z.string().default('./data/users.json'),
+  selfSignup: selfSignupConfigSchema.optional(),
 });
 
 const auditConfigSchema = z.object({
@@ -944,6 +975,7 @@ export type MemoryMaintenanceConfig = z.infer<typeof memoryMaintenanceSchema>;
 export type MemoryConfig = z.infer<typeof memoryConfigSchema>;
 export type MemoryIndexAppConfig = z.infer<typeof memoryIndexSchema>;
 export type AuthConfig = z.infer<typeof authConfigSchema>;
+export type SelfSignupConfig = z.infer<typeof selfSignupConfigSchema>;
 export type ModelItem = z.infer<typeof modelItemSchema>;
 export type ModelGroup = z.infer<typeof modelGroupSchema>;
 export type ModelsConfig = z.infer<typeof modelsConfigSchema>;

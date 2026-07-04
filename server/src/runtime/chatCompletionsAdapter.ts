@@ -98,7 +98,11 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       // 非 OpenAI 的兼容端点会忽略该字段（无害）。
       // 注：cache key 用原始 request.messages 而非 defendedMessages — defended 后的 user message
       // 含时间戳前缀（每分钟变），会冲掉缓存命中，所以保持用原始内容指纹做路由。
-      prompt_cache_key: computePromptCacheKey(request.model, request.messages, request.tools),
+      // disablePromptCacheKey=true 时不传（保留给「兼容层拒绝该字段」的极少数端点用；
+      // 主流兼容端点都是 silent ignore，默认传即可）。
+      ...(this.providerOptions.disablePromptCacheKey
+        ? {}
+        : { prompt_cache_key: computePromptCacheKey(request.model, request.messages, request.tools) }),
       ...(this.providerOptions.extraBody ?? {}),
       ...(this.providerOptions.thinking !== undefined ? { thinking: this.providerOptions.thinking } : {}),
       ...(this.providerOptions.reasoningEffort !== undefined ? { reasoning_effort: this.providerOptions.reasoningEffort } : {}),

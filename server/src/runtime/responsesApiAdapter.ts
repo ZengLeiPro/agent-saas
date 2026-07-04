@@ -26,6 +26,7 @@ import type {
   RuntimeConnection,
 } from './types.js';
 import type { ModelProviderOptions } from '../types/index.js';
+import { createHash } from 'node:crypto';
 import { createLogger } from '../utils/logger.js';
 import {
   defendUserMessageText,
@@ -33,6 +34,26 @@ import {
   detectMojibake,
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
+
+/**
+ * prompt_cache_key 内容指纹：与 chatCompletionsAdapter.computePromptCacheKey 语义等价。
+ * Responses 路径 system 走 instructions（非 messages 里的 system role），所以从 messages
+ * 抽 system 内容用于指纹计算——与 chat 分支保持"相同 system + tools → 相同 key"的行为。
+ * 07-04 实测：CLIProxyAPI 会自动为每次请求填新 UUID 覆盖 prompt_cache_key，
+ * 显式传稳定 key 后 cached_tokens 命中率从 0 提升到 76%+。
+ */
+function computePromptCacheKey(
+  model: string,
+  messages: ModelChatMessage[],
+  tools: ModelToolDefinition[] | undefined,
+): string {
+  const systemContent = messages.find((m) => m.role === 'system')?.content ?? '';
+  const toolSignature = (tools ?? []).map((t) => t.name).sort().join(',');
+  return createHash('sha256')
+    .update(`${model}\n${systemContent}\n${toolSignature}`)
+    .digest('hex')
+    .slice(0, 32);
+}
 
 const logger = createLogger('ResponsesAdapter');
 
@@ -147,6 +168,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
         max_output_tokens: maxOutputTokens,
         store: true,
         stream: true,
+        // prompt_cache_key（07-04）：内容指纹路由。默认传，让相同 system/instructions + tools
+        // 的请求命中同一缓存分片（07-04 实测 CLIProxyAPI 会自动生成新 UUID 覆盖 → 缓存永远打散，
+        // 显式传稳定 key 后 cached_tokens 命中率 76%+）。disablePromptCacheKey=true 时跳过。
+        ...(this.providerOptions.disablePromptCacheKey
+          ? {}
+          : { prompt_cache_key: computePromptCacheKey(request.model, request.messages, request.tools) }),
         ...(this.providerOptions.extraBody ?? {}),
       };
 

@@ -145,6 +145,14 @@ export interface ModelProviderOptions {
    */
   disableResponseChaining?: boolean;
   /**
+   * 关闭 prompt_cache_key 传递。默认 false：adapter 以内容指纹（model + system/instructions
+   * + sorted tool names 的 sha256 前 32 hex）作为 prompt_cache_key 发给上游，让相同前缀
+   * 的请求路由到同一缓存分片、命中 prompt cache。设 true 时不传该字段。
+   * 07-04 实测：CLIProxyAPI 会自动为每次请求生成新 UUID 覆盖 prompt_cache_key，
+   * 显式传稳定 key 后 cached_tokens 命中率 76%+。默认关闭对所有主流兼容端点无害。
+   */
+  disablePromptCacheKey?: boolean;
+  /**
    * D1：deepseek-v4-pro 在 emit tool_call.arguments JSON string 字段时
    * 把反斜杠多 escape 一层（实测 2/2 稳定复现）。开启此 flag 后 ResponsesApiAdapter
    * 在 SSE 累积完成后会对每个 toolCall.arguments 做一次反向 unescape。仅对 deepseek 路径开启。

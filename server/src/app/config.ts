@@ -326,6 +326,16 @@ const modelResponsesOptionsSchema = z.object({
    * 接力会报 "No tool call found for function call output with call_id ..."。
    */
   disable_response_chaining: z.boolean().optional(),
+  /**
+   * 关闭 prompt_cache_key 传递（Chat Completions + Responses 两条路径）。
+   * 默认 false：以 sha256(model + system/instructions + sorted_tool_names) 前 32 hex
+   * 作为内容指纹传给上游，让相同前缀的请求路由到同一缓存分片、命中 prompt cache。
+   * 设 true：不传 prompt_cache_key。用于极少数「兼容层会拒绝该字段」的端点——
+   * 主流 OpenAI 兼容端点都会 silent ignore 未知字段，默认开启无害。
+   * 07-04 实测：CLIProxyAPI 会自动为每次请求填新 UUID 覆盖 prompt_cache_key，
+   * 导致缓存永远打散——显式传稳定 key 后 cached_tokens 命中率 76%+。
+   */
+  disable_prompt_cache_key: z.boolean().optional(),
 });
 
 const modelPricingSchema = z.object({
@@ -368,6 +378,8 @@ const modelGroupSchema = z.object({
   baseUrl: z.string().nullable().optional(),
   /** 组级关闭 Responses 有状态接力（见 modelResponsesOptionsSchema.disable_response_chaining）。 */
   disable_response_chaining: z.boolean().optional(),
+  /** 组级关闭 prompt_cache_key（见 modelResponsesOptionsSchema.disable_prompt_cache_key）。 */
+  disable_prompt_cache_key: z.boolean().optional(),
   models: z.array(modelItemSchema).min(1),
 }).extend(modelProviderOptionsSchema.shape)
   .extend(modelResponsesOptionsSchema.shape);

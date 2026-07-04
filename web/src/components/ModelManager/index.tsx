@@ -45,6 +45,7 @@ type EditableGroup = {
   apiKey?: string;
   baseUrl?: string | null;
   disable_response_chaining?: boolean;
+  disable_prompt_cache_key?: boolean;
   protocol?: ModelProtocol;
   thinking?: unknown;
   reasoning_effort?: string;
@@ -398,6 +399,7 @@ export function ModelManager() {
         if (!nextGroup.apiKey) delete nextGroup.apiKey;
         if (!nextGroup.baseUrl) delete nextGroup.baseUrl;
         if (!nextGroup.disable_response_chaining) delete nextGroup.disable_response_chaining;
+        if (!nextGroup.disable_prompt_cache_key) delete nextGroup.disable_prompt_cache_key;
         if (nextGroup.extraBody === undefined) delete nextGroup.extraBody;
         if (nextGroup.thinking === undefined) delete nextGroup.thinking;
         nextGroup.models = nextGroup.models.map((model) => {
@@ -703,6 +705,7 @@ export function ModelManager() {
                   <p className="text-xs text-muted-foreground">当前生效：{formatEffectiveValue(resolveGroupReasoningEffort(selectedGroup))}</p>
                 </div>
                 <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_response_chaining} onChange={(e) => updateGroup(selectedGroup.id, { disable_response_chaining: e.target.checked ? undefined : true })} /><span>启用 Responses 有状态接力（previous_response_id）<span className="block text-xs text-muted-foreground">开启后会使用 previous_response_id 连接多轮 Responses 调用。适用于原生 Responses 服务，如火山等。无状态 OpenAI 兼容代理，例如 cli-proxy，请关闭，否则工具调用后可能报 "No tool call found for function call output"。</span></span></label>
+                <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_prompt_cache_key} onChange={(e) => updateGroup(selectedGroup.id, { disable_prompt_cache_key: e.target.checked ? undefined : true })} /><span>启用 prompt_cache_key 内容指纹（Chat Completions + Responses 通用）<span className="block text-xs text-muted-foreground">开启后以 sha256(model + system/instructions + tool 名单) 前 32 hex 作为 prompt_cache_key 传给上游，让相同前缀的请求命中同一缓存分片。07-04 实测 CLIProxyAPI 会为每次请求自动填新 UUID 覆盖 → 缓存永远打散，显式传稳定 key 后 cached_tokens 命中率 76%+。主流 OpenAI 兼容端点 silent ignore 未知字段，默认开启无害；仅在极少数「兼容层会拒绝该字段」的端点上关闭。</span></span></label>
                 <div className="space-y-1.5"><Label>Group extraBody JSON</Label><Textarea className="min-h-28 font-mono text-xs" value={advancedText[selectedGroup.id]?.groupExtraBody ?? ""} onChange={(e) => setAdvancedText((current) => ({ ...current, [selectedGroup.id]: { ...(current[selectedGroup.id] ?? { modelExtraBody: {}, modelThinking: {}, groupExtraBody: "", groupThinking: "" }), groupExtraBody: e.target.value } }))} /></div>
                 <div className="space-y-1.5"><Label>Group thinking JSON</Label><Textarea className="min-h-28 font-mono text-xs" value={advancedText[selectedGroup.id]?.groupThinking ?? ""} onChange={(e) => setAdvancedText((current) => ({ ...current, [selectedGroup.id]: { ...(current[selectedGroup.id] ?? { modelExtraBody: {}, modelThinking: {}, groupExtraBody: "", groupThinking: "" }), groupThinking: e.target.value } }))} /></div>
               </CardContent>

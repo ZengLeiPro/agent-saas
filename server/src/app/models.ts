@@ -284,6 +284,7 @@ type ConfigProviderOptions = {
   call_id_format?: string;
   is_pseudo_reasoning?: boolean;
   disable_response_chaining?: boolean;
+  disable_prompt_cache_key?: boolean;
 };
 
 function resolveProviderOptions(
@@ -308,6 +309,7 @@ function resolveProviderOptions(
   const callIdFormat = model.call_id_format ?? group.call_id_format;
   const isPseudoReasoning = model.is_pseudo_reasoning ?? group.is_pseudo_reasoning;
   const disableResponseChaining = model.disable_response_chaining ?? group.disable_response_chaining;
+  const disablePromptCacheKey = model.disable_prompt_cache_key ?? group.disable_prompt_cache_key;
   const options: ModelProviderOptions = {};
   if (Object.keys(extraBody).length > 0) options.extraBody = extraBody;
   if (reasoningEffort !== undefined) options.reasoningEffort = reasoningEffort;
@@ -320,6 +322,7 @@ function resolveProviderOptions(
   if (callIdFormat !== undefined) options.callIdFormat = callIdFormat;
   if (isPseudoReasoning !== undefined) options.isPseudoReasoning = isPseudoReasoning;
   if (disableResponseChaining !== undefined) options.disableResponseChaining = disableResponseChaining;
+  if (disablePromptCacheKey !== undefined) options.disablePromptCacheKey = disablePromptCacheKey;
   return Object.keys(options).length > 0 ? options : undefined;
 }
 

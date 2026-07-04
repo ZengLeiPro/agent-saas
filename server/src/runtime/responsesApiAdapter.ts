@@ -631,11 +631,16 @@ function normalizeResponsesUsage(raw: Record<string, any>): ModelUsage {
   const inputTokens = numberOrZero(raw.input_tokens);
   const outputTokens = numberOrZero(raw.output_tokens);
   const cacheReadInputTokens = numberOrZero(raw.input_tokens_details?.cached_tokens);
+  // reasoning_tokens 是 output_tokens 的子集（output 单价已覆盖），仅用于观测——展示
+  // tool loop 内思考量、诊断是不是在重复思考。上游字段名：OpenAI Responses =
+  // output_tokens_details.reasoning_tokens；Chat Completions 走 chatCompletionsAdapter。
+  const reasoningTokens = numberOrZero(raw.output_tokens_details?.reasoning_tokens);
   return {
     inputTokens,
     outputTokens,
     cacheReadInputTokens,
     cacheCreationInputTokens: 0,
+    reasoningTokens,
   };
 }
 

@@ -102,6 +102,7 @@ describe('ChatCompletionsModelAdapter', () => {
           outputTokens: 3,
           cacheReadInputTokens: 2,
           cacheCreationInputTokens: 0,
+          reasoningTokens: 0,
         },
       },
     ]);
@@ -142,6 +143,7 @@ describe('ChatCompletionsModelAdapter', () => {
         outputTokens: 1,
         cacheReadInputTokens: 0,
         cacheCreationInputTokens: 0,
+        reasoningTokens: 0,
       },
       finishReason: 'stop',
     });

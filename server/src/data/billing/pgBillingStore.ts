@@ -566,9 +566,9 @@ export class PgBillingStore {
         ($1,$2,$3,$4,$5,$6,$7,$8,$9,
          $10,$11,$12,$13,$14,$15,
          $16,$17,$18,$19,
-         0,0,$20,0,$21,
-         $22,$23,$24,'CNY',$25,
-         $26,$27::jsonb,$28)
+         0,0,$20,$21,$22,
+         $23,$24,$25,'CNY',$26,
+         $27,$28::jsonb,$29)
       ON CONFLICT (idempotency_key) DO NOTHING
       RETURNING row_to_json(${this.usageEventsTable}.*) AS row_json
     `, [
@@ -592,6 +592,7 @@ export class PgBillingStore {
       cachedInputTokens,
       cacheCreationTokens,
       usage.outputTokens,
+      usage.reasoningTokens,
       Math.max(1, usage.apiRequestCount),
       inputSegment(usage.inputTokens),
       usageAccounting,
@@ -1027,6 +1028,7 @@ function normalizeUsage(usage: ProjectedRuntimeUsageInput['usage']) {
     outputTokens: nonNegativeInt(usage.outputTokens),
     cacheReadInputTokens: nonNegativeInt(usage.cacheReadInputTokens),
     cacheCreationInputTokens: nonNegativeInt(usage.cacheCreationInputTokens),
+    reasoningTokens: nonNegativeInt(usage.reasoningTokens),
     apiRequestCount: Math.max(1, nonNegativeInt(usage.apiRequestCount) || 1),
   };
 }

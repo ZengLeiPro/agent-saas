@@ -30,6 +30,8 @@ export interface SdkResultModelUsage {
   outputTokens?: number;
   cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
+  /** Reasoning token 数（outputTokens 的子集，不额外计费）。详见 runtime/types.ts ModelUsage。 */
+  reasoningTokens?: number;
   apiRequestCount?: number;
   costUSD?: number;
   webSearchRequests?: number;

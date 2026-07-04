@@ -346,11 +346,16 @@ function normalizeChatUsage(raw: Record<string, any>): ModelUsage {
   const outputTokens = numberOrZero(raw.completion_tokens ?? raw.output_tokens);
   const promptDetails = raw.prompt_tokens_details ?? raw.input_tokens_details;
   const cacheReadInputTokens = numberOrZero(promptDetails?.cached_tokens);
+  // 详见 responsesApiAdapter.normalizeResponsesUsage 里的注释——observability 字段，
+  // outputTokens 已覆盖计费。
+  const completionDetails = raw.completion_tokens_details ?? raw.output_tokens_details;
+  const reasoningTokens = numberOrZero(completionDetails?.reasoning_tokens);
   return {
     inputTokens,
     outputTokens,
     cacheReadInputTokens,
     cacheCreationInputTokens: 0,
+    reasoningTokens,
   };
 }
 
@@ -360,6 +365,7 @@ function mergeUsage(a: ModelUsage | undefined, b: ModelUsage): ModelUsage {
     outputTokens: (a?.outputTokens ?? 0) + (b.outputTokens ?? 0),
     cacheReadInputTokens: (a?.cacheReadInputTokens ?? 0) + (b.cacheReadInputTokens ?? 0),
     cacheCreationInputTokens: (a?.cacheCreationInputTokens ?? 0) + (b.cacheCreationInputTokens ?? 0),
+    reasoningTokens: (a?.reasoningTokens ?? 0) + (b.reasoningTokens ?? 0),
   };
 }
 

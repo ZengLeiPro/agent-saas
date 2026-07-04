@@ -94,7 +94,7 @@ describe('ResponsesApiAdapter', () => {
         type: 'completed',
         content: 'Hello World',
         toolCalls: [],
-        usage: { inputTokens: 12, outputTokens: 3, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+        usage: { inputTokens: 12, outputTokens: 3, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, reasoningTokens: 5 },
         responseId: 'resp_abc',
         responseExpireAt: 1781900000,
         actualModel: 'doubao-seed-2-0-pro-260215',

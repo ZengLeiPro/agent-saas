@@ -62,6 +62,13 @@ export interface ModelUsage {
   outputTokens?: number;
   cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
+  /**
+   * Reasoning 模型（gpt-5.5 / doubao / glm 等）的思考 token 数。
+   * 注：这是 outputTokens 的**子集**，不额外计费——output 单价已覆盖。
+   * 上游字段：Responses API `output_tokens_details.reasoning_tokens`
+   *          Chat Completions `completion_tokens_details.reasoning_tokens`
+   */
+  reasoningTokens?: number;
   apiRequestCount?: number;
 }
 

@@ -156,6 +156,8 @@ COPY web/package.json ./web/
 COPY mobile/package.json ./mobile/
 COPY patches ./patches/
 COPY acs-orchestrator/requirements ./acs-orchestrator/requirements/
+COPY acs-orchestrator/scripts/duckdb_cli.py /usr/local/bin/duckdb
+RUN chmod +x /usr/local/bin/duckdb
 
 RUN pnpm install --frozen-lockfile \
     --filter '!mobile' \
@@ -220,8 +222,10 @@ COPY --from=acs-wheel-builder /opt/ky-agent/python-wheels /opt/ky-agent/python-w
 COPY acs-orchestrator/scripts/verify_playwright_browsers.py /tmp/verify_playwright_browsers.py
 RUN python3 -m venv /tmp/pwcheck \
     && /tmp/pwcheck/bin/pip install --no-cache-dir --no-index \
-      --find-links /opt/ky-agent/python-wheels playwright \
+      --find-links /opt/ky-agent/python-wheels playwright duckdb \
     && /tmp/pwcheck/bin/python3 /tmp/verify_playwright_browsers.py \
+    && PATH="/tmp/pwcheck/bin:$PATH" duckdb --version \
+    && PATH="/tmp/pwcheck/bin:$PATH" duckdb -json -c "select 1 as ok" \
     && rm -rf /tmp/pwcheck /tmp/verify_playwright_browsers.py
 
 # ─────────────────────────────────────────────────────────────

@@ -36,10 +36,12 @@ describe('Provisioner runtime bootstrap', () => {
       '/app/acs-orchestrator/node_modules/.bin/tsx',
       '/app/acs-orchestrator/src/sandboxRunner.ts',
     ]);
-    expect(JSON.parse(bootstrap?.input ?? '{}')).toMatchObject({
+    const bootstrapInput = JSON.parse(bootstrap?.input ?? '{}');
+    expect(bootstrapInput).toMatchObject({
       toolName: 'Shell',
       workspace: { root: '/workspace' },
     });
+    expect(bootstrapInput.input.command).toContain('duckdb -json -c "select 1 as ok"');
   });
 
   it('does not skip runtime bootstrap when recipe hash is already provisioned', async () => {

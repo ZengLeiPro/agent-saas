@@ -19,6 +19,8 @@ services:
     volumes:
       # config.json：唯一权威配置源，只读挂载（宿主路径来自 .env.ecs 的 CONFIG_JSON_PATH）
       - ${CONFIG_JSON_PATH:-/etc/agent-runtime/config.json}:/app/config.json:ro
+      # ky-azeroth PAT 映射表：宿主稳定路径，只读挂载到同一路径
+      - ${AZEROTH_TOKENS_FILE:-/etc/agent-saas/azeroth-tokens.json}:${AZEROTH_TOKENS_FILE:-/etc/agent-saas/azeroth-tokens.json}:ro
       # workspace：server 与 hand-server 共享同一份 NAS 目录（β-Q1+β-Q2 → 文件预览无需改 transport）
       - /mnt/nas/agent-runtime/workspace:/app/workspace
       # transcripts：会话归档

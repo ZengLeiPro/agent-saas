@@ -39,6 +39,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3200"
+      AZEROTH_TOKENS_FILE: "${AZEROTH_TOKENS_FILE:-/app/server/config/azeroth-tokens.json}"
 
       # 模型与网关（生产应在 .env 文件中提供）
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
@@ -67,6 +68,8 @@ services:
       # config.json 包含敏感字段（jwtSecret/connectionString）—— 不进镜像
       # 本地 dev：把仓库根 config.json 挂进来；ECS：从 /etc/agent-runtime/config.json 挂载
       - ${CONFIG_JSON_PATH:-./config.json}:/app/config.json:ro
+      # ky-azeroth PAT 映射表；生产用稳定宿主路径，经 AZEROTH_TOKENS_FILE 指给 server
+      - ${AZEROTH_TOKENS_FILE:-./server/config/azeroth-tokens.json}:${AZEROTH_TOKENS_FILE:-/app/server/config/azeroth-tokens.json}:ro
       # workspace：β-Q2 决策 = NAS 挂载（生产 ECS 上把 ./workspace 改成 /mnt/nas/agent-runtime/workspace）
       - workspace:/app/workspace
       # transcripts：Agent SaaS 会话投影

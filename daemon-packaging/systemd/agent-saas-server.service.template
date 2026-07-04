@@ -9,6 +9,7 @@ Type=simple
 WorkingDirectory=/opt/agent-saas-app/current/server
 Environment=NODE_ENV=production
 Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas/config.json
+Environment=AZEROTH_TOKENS_FILE=/etc/agent-saas/azeroth-tokens.json
 EnvironmentFile=/etc/agent-saas/server.env
 ExecStart=/usr/local/bin/pnpm start
 Restart=always

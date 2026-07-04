@@ -36,7 +36,7 @@
  */
 
 import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
+import { fileURLToPath } from 'url';
 
 import { createLogger } from '../../utils/logger.js';
 import { LEGACY_TENANT_ID } from '../../data/tenants/types.js';
@@ -67,28 +67,23 @@ export interface AzerothInjection {
 /**
  * 配置文件路径解析。
  *
- * 优先 env AZEROTH_TOKENS_FILE（用于测试），否则用项目内默认路径。
+ * 优先 env AZEROTH_TOKENS_FILE（用于测试/生产 systemd），否则用项目内默认路径。
  * 默认路径 = `<repoRoot>/server/config/azeroth-tokens.json`。
  *
- * repoRoot 推断：从 process.cwd() 起向上找 package.json + server/ 目录。
- * 实际生产环境 process.cwd() 就是 server 启动目录（pnpm-workspace 根或 server/），
- * 这里用 import.meta.url fallback 更稳。
+ * 注意：生产 release 会轮换，真实 PAT 文件建议通过 AZEROTH_TOKENS_FILE 指到
+ * `/etc/agent-saas/azeroth-tokens.json` 一类稳定路径；默认路径主要服务本地开发。
  */
-function resolveConfigPath(): string {
+export function resolveAzerothTokensConfigPath(): string {
   const fromEnv = process.env['AZEROTH_TOKENS_FILE'];
   if (fromEnv) return fromEnv;
-  // 在 monorepo 里，server 的 cwd 一般是 server/，向上一级到 repoRoot 再下到 server/config/
-  // 直接用绝对路径写死最稳：~/code/agent/server/config/azeroth-tokens.json
-  // （避免 dist/build 路径推断踩坑）
-  const home = process.env['HOME'] || process.env['USERPROFILE'] || '';
-  return resolve(home, 'code/agent/server/config/azeroth-tokens.json');
+  return fileURLToPath(new URL('../../../config/azeroth-tokens.json', import.meta.url));
 }
 
 let _warnedMissing = false;
 let _warnedParseError = false;
 
 function loadConfig(): AzerothTokensConfig | null {
-  const path = resolveConfigPath();
+  const path = resolveAzerothTokensConfigPath();
   if (!existsSync(path)) {
     if (!_warnedMissing) {
       logger.warn('azeroth-tokens.json not found, ky-azeroth CLI 将无 PAT 注入', { path });

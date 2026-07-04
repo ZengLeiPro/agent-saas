@@ -290,6 +290,8 @@ function runtimeBootstrapCommand(workspaceMountPath: string): string {
     'print("PYTHON_VENV_READY", sys.executable)',
     'PY',
     'python3 -m pip install --dry-run requests >/dev/null',
+    'command -v duckdb >/dev/null',
+    'duckdb -json -c "select 1 as ok" >/dev/null',
     'echo ACS_RUNTIME_BOOTSTRAP_OK',
   ].join('\n');
 }

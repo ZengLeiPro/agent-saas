@@ -8,6 +8,7 @@
 - systemd：`agent-saas-server.service`
 - 配置：`/etc/agent-saas/config.json`
 - 环境变量：`/etc/agent-saas/server.env`
+- ky-azeroth PAT 映射：`/etc/agent-saas/azeroth-tokens.json`（由 `AZEROTH_TOKENS_FILE` 指向）
 - NAS 总根：`/mnt/agent-saas`
 - 持久数据：`/mnt/agent-saas/server-data`
 - 用户 workspace：`/mnt/agent-saas/workspaces/<tenantId>/<userId>`
@@ -44,6 +45,16 @@ GitHub Secrets：
 - `ECS_HOST`
 - `ECS_USER`
 - `ECS_SSH_KEY`
+
+## ky-azeroth PAT 注入
+
+`agent-saas-server.service` 通过 `AZEROTH_TOKENS_FILE` 读取 `(tenantId, username) -> PAT` 映射。生产文件放在稳定路径：
+
+```bash
+/etc/agent-saas/azeroth-tokens.json
+```
+
+格式参考 `server/config/azeroth-tokens.example.json`。多租户上线后建议使用 v2 结构：平台根组织 `pantheon` 下放 `admin`，开沿日常组织 `kaiyan` 下放普通员工。文件权限建议 `600`，属主为运行 `agent-saas-server` 的用户。
 
 ## 公网切流
 

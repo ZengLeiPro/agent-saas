@@ -17,7 +17,10 @@ import { join } from 'node:path';
 import { isPlatformAdmin } from '../auth/types.js';
 import type { JwtPayload } from '../auth/types.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
-import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
+import {
+  resolveAzerothInjection,
+  resolveAzerothTokensConfigPath,
+} from '../integrations/azeroth/tokens.js';
 import { UserStore } from '../data/users/store.js';
 import { expandSandboxPaths, type SandboxExpandContext } from '../engine/sandbox.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
@@ -113,6 +116,23 @@ describe('PR 7 多组织隔离 - 必补测试', () => {
       }));
       expect(resolveAzerothInjection('', 'foo')).toBeNull();
       expect(resolveAzerothInjection('kaiyan', '')).toBeNull();
+    });
+
+    it('默认 token 配置路径指向当前 agent-saas server/config，不回退旧 ~/code/agent', () => {
+      const previous = process.env.AZEROTH_TOKENS_FILE;
+      delete process.env.AZEROTH_TOKENS_FILE;
+      try {
+        const resolved = resolveAzerothTokensConfigPath();
+        const legacyPath = join(
+          process.env.HOME || process.env.USERPROFILE || '',
+          'code/agent/server/config/azeroth-tokens.json',
+        );
+        expect(resolved.endsWith(join('server', 'config', 'azeroth-tokens.json'))).toBe(true);
+        expect(resolved).not.toBe(legacyPath);
+      } finally {
+        if (previous === undefined) delete process.env.AZEROTH_TOKENS_FILE;
+        else process.env.AZEROTH_TOKENS_FILE = previous;
+      }
     });
   });
 

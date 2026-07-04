@@ -132,6 +132,7 @@ sudo nano /srv/agent-saas/.env.ecs
 
 ```ini
 CONFIG_JSON_PATH=/etc/agent-runtime/config.json
+AZEROTH_TOKENS_FILE=/etc/agent-saas/azeroth-tokens.json
 
 OPENAI_API_KEY=<生产 key 或留空走 baseUrl>
 OPENAI_BASE_URL=<可选>

@@ -312,7 +312,7 @@ export function syncSkills(userCwd: string, sharedDir: string, user?: WorkspaceU
       recursive: true,
       filter: (source) => {
         const name = basename(source);
-        return name !== '__pycache__' && name !== '.DS_Store';
+        return name !== '__pycache__' && name !== '.DS_Store' && name !== 'node_modules';
       },
     });
     repairWorkspaceTree(dst);

@@ -12,6 +12,7 @@
       "xlsx"
     ],
     "admin": [
+      "archify",
       "bird",
       "cron",
       "frpc-tunnel",

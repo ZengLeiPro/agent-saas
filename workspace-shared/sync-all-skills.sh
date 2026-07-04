@@ -58,7 +58,7 @@ for (const [username, config] of Object.entries(manifest.users)) {
       recursive: true,
       filter: (source) => {
         const name = path.basename(source);
-        return name !== '__pycache__' && name !== '.DS_Store';
+        return name !== '__pycache__' && name !== '.DS_Store' && name !== 'node_modules';
       },
     });
   }

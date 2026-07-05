@@ -38,6 +38,7 @@ const ModelManagerPanel = lazy(() => import("@/components/ModelManager").then(m 
 const TenantRemoteHandsManagerPanel = lazy(() => import("@/components/TenantRemoteHandsManager").then(m => ({ default: m.TenantRemoteHandsManager })));
 const RuntimeOperationsManagerPanel = lazy(() => import("@/components/RuntimeOperationsManager").then(m => ({ default: m.RuntimeOperationsManager })));
 const ToolControlsManagerPanel = lazy(() => import("@/components/ToolControlsManager").then(m => ({ default: m.ToolControlsManager })));
+const SignupConfigManagerPanel = lazy(() => import("@/components/SignupConfigManager").then(m => ({ default: m.SignupConfigManager })));
 const SettingsModal = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsModal })));
 const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
 const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.PlatformAdminShell })));
@@ -500,6 +501,7 @@ export function DesktopLayout(props: LayoutProps) {
             <Suspense fallback={SuspenseFallback}>
               <PlatformAdminShell
                 renderTenants={() => <TenantManager />}
+                renderSignupConfig={() => <SignupConfigManagerPanel />}
                 renderModels={() => <ModelManagerPanel />}
                 renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
                 renderRuntimeOperations={() => <RuntimeOperationsManagerPanel />}
@@ -539,6 +541,7 @@ export function DesktopLayout(props: LayoutProps) {
           <Suspense fallback={null}>
             <PlatformAdminShell
               renderTenants={() => <TenantManager />}
+              renderSignupConfig={() => <SignupConfigManagerPanel />}
               renderModels={() => <ModelManagerPanel />}
               renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
               renderRuntimeOperations={() => <RuntimeOperationsManagerPanel />}

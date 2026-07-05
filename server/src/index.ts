@@ -40,6 +40,10 @@ async function startServer(): Promise<void> {
   cronService = cronRuntime.service;
 
   const app = express();
+  // 生产在 nginx 反代后：信任第一层代理的 X-Forwarded-For，否则 req.ip 恒为
+  // 代理地址，signup 等 per-IP 限流会退化成"所有用户共享一个桶"。
+  // 直连部署（无代理）下无 XFF header，req.ip 仍取 socket 地址，无副作用。
+  app.set('trust proxy', 1);
   const corsOrigins = config.server?.corsOrigins;
   app.use(cors(corsOrigins?.length
     ? { origin: corsOrigins, exposedHeaders: ['X-Refresh-Token'] }

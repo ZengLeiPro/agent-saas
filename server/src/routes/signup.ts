@@ -1,5 +1,5 @@
 /**
- * 手机号自助注册试用（官网联动 MVP，2026-07-04）
+ * 手机号自助注册试用（官网联动 MVP，2026-07-04；动态配置化 2026-07-06）
  *
  * 转化链路：官网 CTA →（本路由）验证码注册 → 自动开通独立试用租户 + 赠积分硬封顶
  * + 模型白名单 → 线索推钉钉「官网线索」群 → 签发 JWT 直接进产品。
@@ -8,6 +8,15 @@
  *   GET  /api/signup/status     — 是否开放注册（前端判显隐，始终可访问）
  *   POST /api/signup/send-code  — 发送验证码（IP 频控 + phone 冷却/日限在 service 内）
  *   POST /api/signup/register   — 验证码校验 → 开通 → 返回 {token, user}（与 login 同构）
+ *
+ * 管理端点（requirePlatformAdmin，挂 /api/admin/signup-config）：
+ *   GET  /  — 当前配置 + 短信通道自检（secret 不回显，只报 configured 与来源）
+ *   PUT  /  — 全量更新配置；提交的 SMS Secret 写 secretVault，改完下一请求即生效
+ *
+ * 动态配置（2026-07-06 改造）：配置从 SignupConfigStore 读（platform-admin 配置页
+ * 可改），router 按 store.configVersion 懒重建运行态（codeService/限流器/白名单）。
+ * 重建会丢弃在途验证码与限流桶——配置变更是低频管理操作，可接受；用户重发验证码
+ * 即可恢复。
  *
  * 试用租户设计（07-04 曾磊拍板方向）：每注册开独立轻量租户（tenant 级 billing
  * 账本/hard cap/模型白名单零改动复用），转正 = 租户直接转正。
@@ -22,7 +31,14 @@ import type { TenantStore } from "../data/tenants/store.js";
 import { DEFAULT_TENANT_SETTINGS } from "../data/tenants/types.js";
 import type { SkillConfigStore } from "../data/skills/store.js";
 import type { BillingService } from "../data/billing/service.js";
-import type { ModelsConfig, SelfSignupConfig } from "../app/config.js";
+import {
+  selfSignupConfigSchema,
+  type ModelsConfig,
+  type SelfSignupConfig,
+} from "../app/config.js";
+import type { SignupConfigStore } from "../data/signupConfig.js";
+import type { SecretVault } from "../security/secretVault.js";
+import { requirePlatformAdmin } from "../auth/middleware.js";
 import {
   VerificationCodeService,
   DevSmsSender,
@@ -53,6 +69,15 @@ const registerSchema = z.object({
   position: z.string().trim().min(1, "请选择岗位").max(50, "岗位不超过 50 个字符"),
   company: z.string().trim().max(50, "公司名不超过 50 个字符").optional(),
   utm: z.record(z.string(), z.string()).optional(),
+});
+
+const adminUpdateSchema = z.object({
+  config: selfSignupConfigSchema,
+  /**
+   * SMS AccessKey Secret：undefined = 不改动现值；null = 清除 vault ref
+   * （回退 env）；非空字符串 = 写入 secretVault 并替换 ref。永不回显。
+   */
+  smsAccessKeySecret: z.string().min(1).max(200).nullable().optional(),
 });
 
 /** 只保留 utm_ 前缀参数，限制数量与长度，防 webhook/日志被塞垃圾 */
@@ -116,22 +141,33 @@ function generateTrialTenantId(): string {
 // ---- Router ----
 
 const SIGNUP_ACTOR = "self-signup";
+const SMS_SECRET_VAULT_OWNER = "global";
+const SMS_SECRET_VAULT_KIND = "signup-sms";
 
 export interface SignupRouterDeps {
   userStore: UserStore;
   tenantStore: TenantStore;
   billingService?: BillingService;
   modelsConfig?: ModelsConfig;
-  /** config.auth.selfSignup；undefined = 功能关闭（仅 status 端点可用） */
-  selfSignup?: SelfSignupConfig;
+  /** 动态配置 store（platform-admin 配置页写入，本 router 按 version 懒重建） */
+  signupConfigStore: SignupConfigStore;
+  /** SMS AccessKey Secret 的 vault；缺省回退 env AGENT_SMS_ACCESS_KEY_SECRET */
+  secretVault?: SecretVault;
   jwtSecret: string;
   tokenExpiresIn: string;
   agentCwd: string;
   sharedDir: string;
   loginLogFilePath: string;
   skillConfigStore?: SkillConfigStore;
-  /** 测试注入：覆盖内部按 config 构建的验证码服务（capture sender 拿真码） */
+  /** 测试注入：覆盖内部按配置构建的验证码服务（capture sender 拿真码） */
   codeService?: VerificationCodeService;
+}
+
+export interface SignupRouters {
+  /** 挂 /api/signup（公开，PUBLIC_ROUTES 放行） */
+  publicRouter: Router;
+  /** 挂 /api/admin/signup-config（requirePlatformAdmin） */
+  adminRouter: Router;
 }
 
 interface BuildSmsSenderResult {
@@ -144,20 +180,20 @@ function optionalConfigValue(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function buildSmsSender(selfSignup: SelfSignupConfig): BuildSmsSenderResult {
-  const sms = selfSignup.sms;
+function buildSmsSender(
+  cfg: SelfSignupConfig,
+  accessKeySecret: string | undefined,
+): BuildSmsSenderResult {
+  const sms = cfg.sms;
   if (sms?.provider === "aliyun") {
     const accessKeyId = optionalConfigValue(sms.accessKeyId);
     const signName = optionalConfigValue(sms.signName);
     const templateCode = optionalConfigValue(sms.templateCode);
-    const accessKeySecret = optionalConfigValue(
-      process.env.AGENT_SMS_ACCESS_KEY_SECRET,
-    );
     const missing = [
-      accessKeyId ? undefined : "auth.selfSignup.sms.accessKeyId",
-      signName ? undefined : "auth.selfSignup.sms.signName",
-      templateCode ? undefined : "auth.selfSignup.sms.templateCode",
-      accessKeySecret ? undefined : "AGENT_SMS_ACCESS_KEY_SECRET",
+      accessKeyId ? undefined : "sms.accessKeyId",
+      signName ? undefined : "sms.signName",
+      templateCode ? undefined : "sms.templateCode",
+      accessKeySecret ? undefined : "SMS AccessKey Secret（vault 或 env）",
     ].filter((item): item is string => Boolean(item));
     if (missing.length > 0) {
       return {
@@ -178,10 +214,10 @@ function buildSmsSender(selfSignup: SelfSignupConfig): BuildSmsSenderResult {
 }
 
 function buildVerificationCodeService(
-  selfSignup: SelfSignupConfig,
+  cfg: SelfSignupConfig,
   sender: SmsSender,
 ): VerificationCodeService {
-  const sms = selfSignup.sms;
+  const sms = cfg.sms;
   return new VerificationCodeService({
     sender,
     codeTtlMs: (sms?.codeTtlSeconds ?? 300) * 1000,
@@ -194,13 +230,27 @@ function buildVerificationCodeService(
   });
 }
 
-export function createSignupRouter(deps: SignupRouterDeps): Router {
+/** 单个配置版本对应的运行态（配置变更时整体替换） */
+interface SignupRuntime {
+  version: number;
+  cfg: SelfSignupConfig;
+  publicEnabled: boolean;
+  /** SMS 通道不可用原因（enabled=true 但配置不齐时非空，供 admin 自检展示） */
+  smsError?: string;
+  codeService?: VerificationCodeService;
+  sendCodeIpLimiter: (ip: string) => boolean;
+  registerIpLimiter: (ip: string) => boolean;
+  trialAllowedModels: string[];
+}
+
+export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
   const {
     userStore,
     tenantStore,
     billingService,
     modelsConfig,
-    selfSignup,
+    signupConfigStore,
+    secretVault,
     jwtSecret,
     tokenExpiresIn,
     agentCwd,
@@ -208,66 +258,124 @@ export function createSignupRouter(deps: SignupRouterDeps): Router {
     loginLogFilePath,
     skillConfigStore,
   } = deps;
-  const router = Router();
-  const enabled = selfSignup?.enabled === true;
 
-  // 试用租户模型白名单：config 显式配置优先，缺省 = 仅全局默认模型
-  const trialAllowedModels: string[] =
-    selfSignup?.allowedModels && selfSignup.allowedModels.length > 0
-      ? selfSignup.allowedModels
-      : modelsConfig?.default
-        ? [modelsConfig.default]
-        : [];
-  if (enabled && trialAllowedModels.length === 0) {
-    apiLogger.warn(
-      "[signup] 未能确定试用租户模型白名单（selfSignup.allowedModels 与 models.default 均缺失），试用租户将不限模型",
-    );
+  async function resolveSmsSecret(): Promise<string | undefined> {
+    const ref = signupConfigStore.getSmsAccessKeySecretRef();
+    if (ref && secretVault) {
+      try {
+        return await secretVault.getSecret(ref, { actor: "system" });
+      } catch (err) {
+        // fail-closed：vault 解析失败按未配置处理（aliyun 通道会因缺 secret 关闭）
+        apiLogger.warn(
+          `[signup] 从 secretVault 读取 SMS Secret 失败（ref=${ref}）：${err instanceof Error ? err.message : String(err)}`,
+        );
+        return undefined;
+      }
+    }
+    return optionalConfigValue(process.env.AGENT_SMS_ACCESS_KEY_SECRET);
   }
 
-  const smsBuildResult = enabled && !deps.codeService
-    ? buildSmsSender(selfSignup!)
-    : undefined;
-  if (enabled && smsBuildResult?.error) {
-    apiLogger.warn(`[signup] 自助注册短信不可用：${smsBuildResult.error}`);
-  }
-  const codeService = enabled
-    ? (deps.codeService ??
-      (smsBuildResult?.sender
-        ? buildVerificationCodeService(selfSignup!, smsBuildResult.sender)
-        : undefined))
-    : undefined;
-  const publicEnabled = enabled && Boolean(codeService);
-  if (enabled && codeService) {
-    apiLogger.info(
-      `[signup] 自助注册已启用 sms=${codeService.sender.providerName} grantCredits=${selfSignup!.grantCredits} models=${trialAllowedModels.join(",") || "(不限)"}`,
-    );
+  async function buildRuntime(): Promise<SignupRuntime> {
+    const version = signupConfigStore.getConfigVersion();
+    const cfg = signupConfigStore.getConfig();
+    const enabled = cfg.enabled === true;
+
+    // 试用租户模型白名单：显式配置优先，缺省 = 仅全局默认模型
+    const trialAllowedModels: string[] =
+      cfg.allowedModels && cfg.allowedModels.length > 0
+        ? cfg.allowedModels
+        : modelsConfig?.default
+          ? [modelsConfig.default]
+          : [];
+    if (enabled && trialAllowedModels.length === 0) {
+      apiLogger.warn(
+        "[signup] 未能确定试用租户模型白名单（allowedModels 与 models.default 均缺失），试用租户将不限模型",
+      );
+    }
+
+    let codeService: VerificationCodeService | undefined;
+    let smsError: string | undefined;
+    if (enabled) {
+      if (deps.codeService) {
+        codeService = deps.codeService;
+      } else {
+        const secret = await resolveSmsSecret();
+        const built = buildSmsSender(cfg, secret);
+        smsError = built.error;
+        codeService = built.sender
+          ? buildVerificationCodeService(cfg, built.sender)
+          : undefined;
+      }
+    }
+    if (enabled && smsError) {
+      apiLogger.warn(`[signup] 自助注册短信不可用：${smsError}`);
+    }
+    const publicEnabled = enabled && Boolean(codeService);
+    if (publicEnabled) {
+      apiLogger.info(
+        `[signup] 自助注册运行态已构建 v${version} sms=${codeService!.sender.providerName} grantCredits=${cfg.grantCredits} models=${trialAllowedModels.join(",") || "(不限)"}`,
+      );
+    }
+
+    return {
+      version,
+      cfg,
+      publicEnabled,
+      smsError,
+      codeService,
+      sendCodeIpLimiter: createIpLimiter(
+        cfg.sms?.maxSendPerIpPerMinute ?? DEFAULT_SEND_CODE_IP_LIMIT_PER_MINUTE,
+        60_000,
+      ),
+      registerIpLimiter: createIpLimiter(
+        cfg.sms?.maxRegisterPerIpPerMinute ??
+          DEFAULT_REGISTER_IP_LIMIT_PER_MINUTE,
+        60_000,
+      ),
+      trialAllowedModels,
+    };
   }
 
-  const sendCodeIpLimiter = createIpLimiter(
-    selfSignup?.sms?.maxSendPerIpPerMinute ??
-      DEFAULT_SEND_CODE_IP_LIMIT_PER_MINUTE,
-    60_000,
-  );
-  const registerIpLimiter = createIpLimiter(
-    selfSignup?.sms?.maxRegisterPerIpPerMinute ??
-      DEFAULT_REGISTER_IP_LIMIT_PER_MINUTE,
-    60_000,
-  );
+  let cached: SignupRuntime | undefined;
+  let building: Promise<SignupRuntime> | undefined;
+
+  /** version 感知懒重建：store 每次 update 后，下一个请求拿到新运行态 */
+  async function getRuntime(): Promise<SignupRuntime> {
+    const version = signupConfigStore.getConfigVersion();
+    if (cached && cached.version === version) return cached;
+    if (!building) {
+      building = buildRuntime().finally(() => {
+        building = undefined;
+      });
+    }
+    cached = await building;
+    return cached;
+  }
+
+  // ---------------- 公开路由 ----------------
+
+  const publicRouter = Router();
 
   // GET /api/signup/status — 始终可访问，前端据此决定注册入口显隐
-  router.get("/status", (_req, res) => {
-    res.json({ enabled: publicEnabled });
+  publicRouter.get("/status", async (_req, res) => {
+    try {
+      const rt = await getRuntime();
+      res.json({ enabled: rt.publicEnabled });
+    } catch {
+      res.json({ enabled: false });
+    }
   });
 
   // POST /api/signup/send-code
-  router.post("/send-code", async (req, res) => {
+  publicRouter.post("/send-code", async (req, res) => {
     try {
-      if (!publicEnabled || !codeService) {
+      const rt = await getRuntime();
+      if (!rt.publicEnabled || !rt.codeService) {
         res.status(403).json({ error: "当前未开放自助注册" });
         return;
       }
       const ip = req.ip || req.socket.remoteAddress || "unknown";
-      if (!sendCodeIpLimiter(ip)) {
+      if (!rt.sendCodeIpLimiter(ip)) {
         res.status(429).json({ error: "操作过于频繁，请稍后再试" });
         return;
       }
@@ -282,7 +390,7 @@ export function createSignupRouter(deps: SignupRouterDeps): Router {
         res.status(409).json({ error: "该手机号已注册，请直接登录" });
         return;
       }
-      const result = await codeService.requestCode(phone);
+      const result = await rt.codeService.requestCode(phone);
       if (!result.ok) {
         if (result.retryAfterSeconds) {
           res.set("Retry-After", String(result.retryAfterSeconds));
@@ -300,13 +408,14 @@ export function createSignupRouter(deps: SignupRouterDeps): Router {
   });
 
   // POST /api/signup/register
-  router.post("/register", async (req, res) => {
-    if (!publicEnabled || !codeService) {
+  publicRouter.post("/register", async (req, res) => {
+    const rt = await getRuntime().catch(() => undefined);
+    if (!rt?.publicEnabled || !rt.codeService) {
       res.status(403).json({ error: "当前未开放自助注册" });
       return;
     }
     const ip = req.ip || req.socket.remoteAddress || "unknown";
-    if (!registerIpLimiter(ip)) {
+    if (!rt.registerIpLimiter(ip)) {
       res.status(429).json({ error: "操作过于频繁，请稍后再试" });
       return;
     }
@@ -324,7 +433,7 @@ export function createSignupRouter(deps: SignupRouterDeps): Router {
       res.status(409).json({ error: "该手机号已注册，请直接登录" });
       return;
     }
-    if (!codeService.verifyAndConsume(phone, code)) {
+    if (!rt.codeService.verifyAndConsume(phone, code)) {
       res.status(400).json({ error: "验证码错误或已过期" });
       return;
     }
@@ -345,12 +454,12 @@ export function createSignupRouter(deps: SignupRouterDeps): Router {
       });
 
       // 2. 租户模型白名单（锁默认模型，禁用户切换）
-      if (trialAllowedModels.length > 0) {
+      if (rt.trialAllowedModels.length > 0) {
         await tenantStore.updateSettings(tenantId, {
           models: {
             ...DEFAULT_TENANT_SETTINGS.models,
-            defaultModel: trialAllowedModels[0],
-            allowedModels: trialAllowedModels,
+            defaultModel: rt.trialAllowedModels[0],
+            allowedModels: rt.trialAllowedModels,
             allowUserModelSwitch: false,
           },
         });
@@ -401,7 +510,7 @@ export function createSignupRouter(deps: SignupRouterDeps): Router {
         );
         await billingService.adjustAccount({
           tenantId,
-          creditsDelta: selfSignup!.grantCredits,
+          creditsDelta: rt.cfg.grantCredits,
           type: "grant",
           note: `自助注册赠送（${phone}）`,
           actor: SIGNUP_ACTOR,
@@ -428,8 +537,8 @@ export function createSignupRouter(deps: SignupRouterDeps): Router {
         },
         loginLogFilePath,
       ).catch(() => {});
-      if (selfSignup!.dingtalkLeadWebhook) {
-        void sendSignupLeadNotification(selfSignup!.dingtalkLeadWebhook, {
+      if (rt.cfg.dingtalkLeadWebhook) {
+        void sendSignupLeadNotification(rt.cfg.dingtalkLeadWebhook, {
           phone,
           name,
           position,
@@ -496,5 +605,88 @@ export function createSignupRouter(deps: SignupRouterDeps): Router {
     }
   });
 
-  return router;
+  // ---------------- 管理路由（platform admin） ----------------
+
+  async function buildAdminView(): Promise<Record<string, unknown>> {
+    const rt = await getRuntime();
+    const meta = signupConfigStore.getMeta();
+    const vaultRef = signupConfigStore.getSmsAccessKeySecretRef();
+    const envSecret = optionalConfigValue(
+      process.env.AGENT_SMS_ACCESS_KEY_SECRET,
+    );
+    return {
+      config: rt.cfg,
+      /** 生效状态自检：publicEnabled=false 时 smsError 给出原因 */
+      publicEnabled: rt.publicEnabled,
+      smsError: rt.smsError ?? null,
+      smsSecretConfigured: Boolean(vaultRef || envSecret),
+      smsSecretSource: vaultRef ? "vault" : envSecret ? "env" : null,
+      effectiveAllowedModels: rt.trialAllowedModels,
+      updatedAt: meta.updatedAt ?? null,
+      updatedBy: meta.updatedBy ?? null,
+    };
+  }
+
+  const adminRouter = Router();
+  adminRouter.use(requirePlatformAdmin);
+
+  adminRouter.get("/", async (_req, res) => {
+    try {
+      res.json(await buildAdminView());
+    } catch (err) {
+      apiLogger.warn(
+        `[signup] admin 读取配置失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      res.status(500).json({ error: "读取注册配置失败" });
+    }
+  });
+
+  adminRouter.put("/", async (req, res) => {
+    try {
+      const parsed = adminUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: `配置不合法：${parsed.error.issues[0]?.message ?? "unknown"}`,
+        });
+        return;
+      }
+      const { config, smsAccessKeySecret } = parsed.data;
+
+      let secretRefPatch: string | null | undefined;
+      if (typeof smsAccessKeySecret === "string") {
+        if (!secretVault) {
+          res.status(400).json({
+            error:
+              "secretVault 未启用，无法保存 SMS Secret；请改用环境变量 AGENT_SMS_ACCESS_KEY_SECRET",
+          });
+          return;
+        }
+        const ref = await secretVault.putSecret(
+          SMS_SECRET_VAULT_OWNER,
+          SMS_SECRET_VAULT_KIND,
+          smsAccessKeySecret,
+          { updatedBy: req.user?.username ?? "platform-admin" },
+        );
+        secretRefPatch = ref.id;
+      } else if (smsAccessKeySecret === null) {
+        secretRefPatch = null;
+      }
+
+      await signupConfigStore.update(config, {
+        actor: req.user?.username ?? "platform-admin",
+        smsAccessKeySecretRef: secretRefPatch,
+      });
+      apiLogger.info(
+        `[signup] 注册配置已更新 by=${req.user?.username ?? "?"} enabled=${config.enabled} grantCredits=${config.grantCredits} smsProvider=${config.sms?.provider ?? "dev"}${secretRefPatch !== undefined ? " secret=updated" : ""}`,
+      );
+      res.json(await buildAdminView());
+    } catch (err) {
+      apiLogger.warn(
+        `[signup] admin 更新配置失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      res.status(500).json({ error: "保存注册配置失败" });
+    }
+  });
+
+  return { publicRouter, adminRouter };
 }

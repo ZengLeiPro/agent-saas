@@ -455,7 +455,7 @@ const selfSignupSmsSchema = z.object({
  * 注册链路：官网 CTA → /signup → 手机验证码 → 独立试用租户 + 赠积分硬封顶 + 模型白名单
  * → 线索推钉钉「官网线索」群。缺省关闭；enabled=false 时 send-code/register 返回 403。
  */
-const selfSignupConfigSchema = z.object({
+export const selfSignupConfigSchema = z.object({
   enabled: z.boolean().default(false),
   /** 注册赠送积分数（试用额度，≠ 正式版套餐量） */
   grantCredits: z.number().positive().default(500),

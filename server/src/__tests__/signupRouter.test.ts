@@ -16,7 +16,9 @@ import { TenantStore } from "../data/tenants/store.js";
 import { UserStore } from "../data/users/store.js";
 import type { BillingService } from "../data/billing/service.js";
 import type { ModelsConfig, SelfSignupConfig } from "../app/config.js";
-import { createSignupRouter } from "../routes/signup.js";
+import { createSignupRouters } from "../routes/signup.js";
+import { SignupConfigStore } from "../data/signupConfig.js";
+import { InMemorySecretVault } from "../security/secretVault.js";
 import {
   VerificationCodeService,
   type SmsSender,
@@ -73,7 +75,14 @@ interface TestRig {
   userStore: UserStore;
   sender: CaptureSender;
   billingCalls: BillingCalls;
+  signupConfigStore: SignupConfigStore;
   request(path: string, body?: unknown): Promise<Response>;
+  /** 请求 /api/admin/signup-config；identity 缺省 = platform admin */
+  adminRequest(
+    method: "GET" | "PUT",
+    body?: unknown,
+    identity?: { role: string; tenantId: string },
+  ): Promise<Response>;
   close(): Promise<void>;
 }
 
@@ -95,28 +104,51 @@ async function makeTestRig(options?: {
   const sender = new CaptureSender();
   const billingCalls: BillingCalls = {};
   const selfSignup = options?.selfSignup ?? SELF_SIGNUP;
+  const signupConfigStore = new SignupConfigStore(
+    join(tmpRoot, "signup-config.json"),
+    selfSignup,
+  );
 
   const app = express();
   app.use(express.json());
-  app.use(
-    "/api/signup",
-    createSignupRouter({
-      userStore,
-      tenantStore,
-      billingService: makeBillingMock(billingCalls, {
-        failPolicy: options?.failPolicy,
-      }),
-      modelsConfig: MODELS_CONFIG,
-      selfSignup,
-      jwtSecret: "test-secret-test-secret-test-secret",
-      tokenExpiresIn: "1h",
-      agentCwd: join(tmpRoot, "workspaces"),
-      sharedDir: join(tmpRoot, "shared"),
-      loginLogFilePath: join(tmpRoot, "login.jsonl"),
-      codeService: selfSignup.enabled && options?.injectCodeService !== false
-        ? new VerificationCodeService({ sender })
-        : undefined,
+  const routers = createSignupRouters({
+    userStore,
+    tenantStore,
+    billingService: makeBillingMock(billingCalls, {
+      failPolicy: options?.failPolicy,
     }),
+    modelsConfig: MODELS_CONFIG,
+    signupConfigStore,
+    secretVault: new InMemorySecretVault(),
+    jwtSecret: "test-secret-test-secret-test-secret",
+    tokenExpiresIn: "1h",
+    agentCwd: join(tmpRoot, "workspaces"),
+    sharedDir: join(tmpRoot, "shared"),
+    loginLogFilePath: join(tmpRoot, "login.jsonl"),
+    // enabled 与否由 router 运行态判断（动态配置测试会中途翻转开关），
+    // rig 只决定是否注入 capture 通道
+    codeService: options?.injectCodeService !== false
+      ? new VerificationCodeService({ sender })
+      : undefined,
+  });
+  app.use("/api/signup", routers.publicRouter);
+  // 模拟 auth middleware：从测试 header 注入 req.user（requirePlatformAdmin 消费）
+  app.use(
+    "/api/admin/signup-config",
+    (req, _res, next) => {
+      const role = req.header("x-test-role");
+      const tenantId = req.header("x-test-tenant");
+      if (role && tenantId) {
+        req.user = {
+          sub: "test-admin",
+          username: "test-admin",
+          role,
+          tenantId,
+        } as typeof req.user;
+      }
+      next();
+    },
+    routers.adminRouter,
   );
 
   const server: Server = await new Promise((resolve) => {
@@ -131,10 +163,21 @@ async function makeTestRig(options?: {
     userStore,
     sender,
     billingCalls,
+    signupConfigStore,
     request: (path, body) =>
       fetch(`${baseUrl}${path}`, {
         method: body === undefined ? "GET" : "POST",
         headers: { "Content-Type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+    adminRequest: (method, body, identity) =>
+      fetch(`${baseUrl}/api/admin/signup-config`, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          "x-test-role": identity?.role ?? "admin",
+          "x-test-tenant": identity?.tenantId ?? "pantheon",
+        },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       }),
     close: async () => {
@@ -428,5 +471,113 @@ describe("signup router", () => {
       .filter((t) => t.id.startsWith("trial-"));
     expect(trialTenants).toHaveLength(1);
     expect(trialTenants[0].disabled).toBe(true);
+  });
+});
+
+// ---- 动态配置（SignupConfigStore 驱动，改完下一请求即生效） ----
+
+describe("signup dynamic config", () => {
+  let h: TestRig;
+
+  afterEach(async () => {
+    await h?.close();
+  });
+
+  it("store 更新后无需重启即生效：开关翻转 + 赠分变化", async () => {
+    // 起始 enabled=false
+    h = await makeTestRig({
+      selfSignup: { enabled: false, grantCredits: 500 },
+      injectCodeService: true,
+    });
+    expect(await (await h.request("/api/signup/status")).json()).toEqual({
+      enabled: false,
+    });
+
+    // 动态开启 + 改赠分（注入的 codeService 让 dev/capture 通道直接可用）
+    await h.signupConfigStore.update(
+      { enabled: true, grantCredits: 800 },
+      { actor: "test-admin" },
+    );
+    expect(await (await h.request("/api/signup/status")).json()).toEqual({
+      enabled: true,
+    });
+
+    await h.request("/api/signup/send-code", { phone: PHONE });
+    const res = await h.request("/api/signup/register", {
+      ...REGISTER_BODY,
+      code: h.sender.lastCode,
+    });
+    expect(res.status).toBe(201);
+    expect(h.billingCalls.grant).toMatchObject({ creditsDelta: 800 });
+
+    // 动态关闭：立即 403
+    await h.signupConfigStore.update(
+      { enabled: false, grantCredits: 800 },
+      { actor: "test-admin" },
+    );
+    expect(
+      (await h.request("/api/signup/send-code", { phone: "13911112222" }))
+        .status,
+    ).toBe(403);
+  });
+});
+
+// ---- 管理 API（/api/admin/signup-config） ----
+
+describe("signup admin config API", () => {
+  let h: TestRig;
+
+  afterEach(async () => {
+    await h?.close();
+  });
+
+  it("非平台 admin 一律 403", async () => {
+    h = await makeTestRig();
+    expect(
+      (await h.adminRequest("GET", undefined, { role: "admin", tenantId: "kaiyan" }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await h.adminRequest("GET", undefined, { role: "user", tenantId: "pantheon" }))
+        .status,
+    ).toBe(403);
+  });
+
+  it("GET 返回配置与自检状态（secret 不回显）", async () => {
+    h = await makeTestRig();
+    const res = await h.adminRequest("GET");
+    expect(res.status).toBe(200);
+    const view = (await res.json()) as Record<string, unknown>;
+    expect(view.config).toMatchObject({ enabled: true, grantCredits: 500 });
+    expect(view.publicEnabled).toBe(true);
+    expect(view.effectiveAllowedModels).toEqual(["test-group/test-model"]);
+    expect(JSON.stringify(view)).not.toContain("accessKeySecret");
+  });
+
+  it("PUT 更新配置立即生效；提交 SMS Secret 走 vault", async () => {
+    h = await makeTestRig();
+    const res = await h.adminRequest("PUT", {
+      config: { enabled: false, grantCredits: 1200 },
+      smsAccessKeySecret: "sk-test-secret",
+    });
+    expect(res.status).toBe(200);
+    const view = (await res.json()) as Record<string, unknown>;
+    expect(view.publicEnabled).toBe(false);
+    expect(view.smsSecretConfigured).toBe(true);
+    expect(view.smsSecretSource).toBe("vault");
+    expect(h.signupConfigStore.getConfig().grantCredits).toBe(1200);
+    expect(h.signupConfigStore.getSmsAccessKeySecretRef()).toBeTruthy();
+    // 公开端点同步生效
+    expect(await (await h.request("/api/signup/status")).json()).toEqual({
+      enabled: false,
+    });
+  });
+
+  it("PUT 配置不合法返回 400", async () => {
+    h = await makeTestRig();
+    const res = await h.adminRequest("PUT", {
+      config: { enabled: true, grantCredits: -1 },
+    });
+    expect(res.status).toBe(400);
   });
 });

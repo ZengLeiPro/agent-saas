@@ -335,6 +335,19 @@ export type {
   WebToolsSearchConfig,
 } from "./lib/toolControlsApi";
 
+// Lib - platform signup config API
+export {
+  fetchSignupConfig,
+  updateSignupConfig,
+} from "./lib/signupConfigApi";
+export type {
+  SignupConfig,
+  SignupConfigAdminView,
+  SignupSmsConfig,
+  SignupSmsProvider,
+  UpdateSignupConfigRequest,
+} from "./lib/signupConfigApi";
+
 // Lib - persona parser
 export { parsePersona } from "./lib/parsePersona";
 

@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { BarChart3, Building2, Cpu, Database, FileText, Gauge, Globe2, KeyRound, ListTree, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, Users, X, Activity, WalletCards } from "lucide-react";
+import { BarChart3, Building2, Cpu, Database, FileText, Gauge, Globe2, KeyRound, ListTree, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, UserPlus, Users, X, Activity, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,7 +20,7 @@ import { PlatformBillingManager, TenantBillingPanel } from "@/components/Billing
 import { RunTraceExplorer } from "@/components/RunTraceExplorer";
 
 export type TenantSection = "overview" | "users" | "skills" | "mcp" | "usage" | "billing" | "files" | "audit" | "settings" | "company";
-export type PlatformSection = "overview" | "tenants" | "models" | "billing" | "remote-hands" | "runtime" | "run-trace" | "tool-controls" | "global-mcp" | "skill-pool" | "security" | "system";
+export type PlatformSection = "overview" | "tenants" | "signup" | "models" | "billing" | "remote-hands" | "runtime" | "run-trace" | "tool-controls" | "global-mcp" | "skill-pool" | "security" | "system";
 
 interface ShellButton<T extends string> {
   id: T;
@@ -59,6 +59,7 @@ const SETTINGS_NAV_ITEM_UNSELECTED =
 
 const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "tenants", label: "组织", icon: Building2 },
+  { id: "signup", label: "注册管理", icon: UserPlus },
   { id: "models", label: "模型", icon: Cpu },
   { id: "billing", label: "计费", icon: WalletCards },
   { id: "remote-hands", label: "执行环境池", icon: ServerCog },
@@ -904,6 +905,7 @@ export function TenantAdminShell({
 
 export function PlatformAdminShell({
   renderTenants,
+  renderSignupConfig,
   renderModels,
   renderRemoteHands,
   renderRuntimeOperations,
@@ -918,6 +920,7 @@ export function PlatformAdminShell({
   settingsOnly = false,
 }: {
   renderTenants: () => ReactNode;
+  renderSignupConfig?: () => ReactNode;
   renderModels: () => ReactNode;
   renderRemoteHands: () => ReactNode;
   renderRuntimeOperations: () => ReactNode;
@@ -949,6 +952,7 @@ export function PlatformAdminShell({
 
   const platformSectionsToRender: { id: PlatformSection; node: ReactNode }[] = [
     { id: "tenants", node: renderTenants() },
+    { id: "signup", node: renderSignupConfig ? renderSignupConfig() : null },
     { id: "models", node: renderModels() },
     { id: "billing", node: <PlatformBillingManager /> },
     { id: "remote-hands", node: renderRemoteHands() },

@@ -62,6 +62,7 @@ import { AgentStore } from '../data/agents/store.js';
 import { GroupStore } from '../data/groups/store.js';
 import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { McpConfigStore } from '../data/mcpConfig.js';
+import { SignupConfigStore } from '../data/signupConfig.js';
 import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds, scanUserCustomSkills } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDir } from '../data/tenants/tenantSkillsPath.js';
 import { syncSkills, resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
@@ -129,6 +130,8 @@ export interface AppRuntime {
   agentStore?: AgentStore;
   skillConfigStore?: SkillConfigStore;
   mcpConfigStore?: McpConfigStore;
+  /** 自助注册动态配置（platform-admin 配置页写入，signup router 按 version 懒重建） */
+  signupConfigStore?: SignupConfigStore;
   groupStore: GroupStore;
   authMiddleware?: ReturnType<typeof createAuthMiddleware>;
   /**
@@ -867,6 +870,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // MCP client manager（lazy connect per user）。failOnError=false 让连不上的
   // server 不阻塞 dispatch；δ 阶段加 connectTimeout=5s + invokeTimeout=30s 防 hung。
   const mcpConfigStore = new McpConfigStore(join(processCwd, 'data', 'mcp-config.json'));
+  // 自助注册动态配置：文件不存在时用 config.json 的 auth.selfSignup 作 seed（兼容旧配置方式）
+  const signupConfigStore = new SignupConfigStore(
+    join(processCwd, 'data', 'signup-config.json'),
+    config.auth?.selfSignup,
+  );
   const mcpCapabilityTokens = new CapabilityTokenService();
   const mcpClientManager = new McpClientManager({
     agentCwd,
@@ -1538,6 +1546,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentStore,
     skillConfigStore,
     mcpConfigStore,
+    signupConfigStore,
     groupStore,
     authMiddleware,
     titleGeneratorConfigs,

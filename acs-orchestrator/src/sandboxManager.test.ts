@@ -611,7 +611,7 @@ describe('SandboxManager', () => {
     }
   });
 
-  it('prewarmStaleImagePausedSandboxes: 预热 Paused 旧镜像 sandbox，成功后保持 Running 到 idle pause', async () => {
+  it('prewarmStaleImagePausedSandboxes: 预热 Paused 旧镜像 sandbox，成功后无人接管则重新 pause', async () => {
     const calls: string[][] = [];
     const currentImage = 'registry.example.com/agent-saas/acs-sandbox:new-tag';
     let oldPausedName = '';
@@ -700,9 +700,8 @@ describe('SandboxManager', () => {
     expect(bootstrapped).toEqual([oldPausedName]);
     expect(appliedSandboxImage).toBe(currentImage);
     expect(calls.some((args) => args[0] === 'delete')).toBe(false);
-    expect(calls.some((args) => args[0] === 'patch' && args[1] === `sandbox/${oldPausedName}` && String(args[4] ?? '').includes('"paused":true'))).toBe(false);
+    expect(calls.some((args) => args[0] === 'patch' && args[1] === `sandbox/${oldPausedName}` && String(args[4] ?? '').includes('"paused":true'))).toBe(true);
     expect(calls.some((args) => args[0] === 'apply' && args[1] === '-f')).toBe(true);
-    expect(oldPhase).toBe('Running');
   });
 
   it('cleanupSandboxes: as-ws-ci-* 前缀走 sandboxCiTtlMs 短 TTL', async () => {

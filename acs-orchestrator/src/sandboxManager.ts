@@ -614,9 +614,8 @@ export class SandboxManager {
         this.logger.info(`sandbox_stale_image_prewarm_adopted name=${ref.name}`);
         return 'adopted';
       }
-      // 保持 Running 到 idle pause 触发，避免刚部署完的新镜像 sandbox
-      // 下次使用时仍要重走 Paused 恢复、SNAT 创建和稳定等待。
-      this.logger.info(`sandbox_stale_image_prewarm_ready name=${ref.name}`);
+      await this.patchPaused(ref.name, true, { activeKey });
+      this.logger.info(`sandbox_stale_image_prewarm_paused name=${ref.name}`);
       return 'prewarmed';
     } finally {
       releaseActive?.();

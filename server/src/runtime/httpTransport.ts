@@ -2,6 +2,7 @@ import type { ToolDescriptor, WorkspaceRef } from '../agent/toolRuntime.js';
 import { WORKSPACE_HAND_TOOLS } from '../agent/toolRuntime.js';
 import type { ExecutionTransport } from './executionTransport.js';
 import type { WorkspaceRecipe } from './handStore.js';
+import { pickHandEnv } from './handEnvAllowlist.js';
 import type {
   ToolInvocationRequest,
   ToolInvocationResponse,
@@ -30,6 +31,15 @@ export interface HttpTransportOptions {
   internalTools?: ToolDescriptor[];
   /** 测试注入用的 fetch 实现；生产环境为全局 fetch。 */
   fetchImpl?: typeof fetch;
+  /**
+   * 每次 invoke 前调用，按 workspace 装配一份要透传给远端 hand 的 env（wire.context.env）。
+   * 只能返回 {@link HAND_ENV_ALLOWLIST} 内的 key（未上 allowlist 的会被 pickHandEnv 剥掉）；
+   * 未配置或返回空对象 → wire 不带 env（远端 pod 只有自身 K8s spec 里的 env）。
+   *
+   * 典型用法：闭包捕获当前会话 tenantId，内部调 resolveAzerothInjection(tenantId, ws.username)
+   * 得到 { AZEROTH_TOKEN, AZEROTH_API_URL }。见 rawRuntimeRunDispatch.ts。
+   */
+  envResolver?: (workspace: WorkspaceRef) => Record<string, string | undefined>;
 }
 
 /**
@@ -59,6 +69,7 @@ export class HttpTransport implements ExecutionTransport {
   private readonly invokeTimeoutMs: number;
   private readonly internalTools: ToolDescriptor[];
   private readonly fetchImpl: typeof fetch;
+  private readonly envResolver?: (workspace: WorkspaceRef) => Record<string, string | undefined>;
 
   constructor(options: HttpTransportOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
@@ -66,6 +77,23 @@ export class HttpTransport implements ExecutionTransport {
     this.invokeTimeoutMs = options.invokeTimeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS;
     this.internalTools = options.internalTools ?? WORKSPACE_HAND_TOOLS;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.envResolver = options.envResolver;
+  }
+
+  /**
+   * 装配 wire.context.env。envResolver 返回值先经 pickHandEnv allowlist 二次过滤，
+   * 保证任何 slip-through 的敏感 env 都不会上 wire。空对象则不写字段（wire 更紧凑）。
+   */
+  private resolveWireEnv(workspace: WorkspaceRef): Record<string, string> | undefined {
+    if (!this.envResolver) return undefined;
+    let raw: Record<string, string | undefined>;
+    try {
+      raw = this.envResolver(workspace) ?? {};
+    } catch {
+      return undefined;
+    }
+    const picked = pickHandEnv(raw);
+    return Object.keys(picked).length > 0 ? picked : undefined;
   }
 
   listInternalTools(): ToolDescriptor[] {
@@ -134,7 +162,7 @@ export class HttpTransport implements ExecutionTransport {
       }
       return finalResponse ?? { status: 'error', error: 'hand-server stream ended without completed chunk' };
     }
-    const wireRequest = serializeRequest(request);
+    const wireRequest = this.buildWireRequest(request);
     const upstreamSignal = request.context.signal;
 
     // 用 AbortController 同时承载"调用方 abort"与"transport 超时"两个来源。
@@ -216,7 +244,7 @@ export class HttpTransport implements ExecutionTransport {
   }
 
   private async *invokeStreamInternal(request: ToolInvocationRequest): ToolInvocationStream {
-    const wireRequest = serializeRequest(request);
+    const wireRequest = this.buildWireRequest(request);
     const upstreamSignal = request.context.signal;
     const controller = new AbortController();
     const onUpstreamAbort = () => {
@@ -266,6 +294,23 @@ export class HttpTransport implements ExecutionTransport {
       clearTimeout(timer);
       upstreamSignal?.removeEventListener('abort', onUpstreamAbort);
     }
+  }
+
+  /**
+   * 走实例的 wire 序列化：free-function serializeRequest 只组装静态字段，
+   * 这里额外把 envResolver 装配的 wire env（allowlist 过滤后）挂上。
+   */
+  private buildWireRequest(request: ToolInvocationRequest): WireToolInvocationRequest {
+    const base = serializeRequest(request);
+    const env = this.resolveWireEnv(request.context.workspace);
+    if (!env) return base;
+    return {
+      ...base,
+      context: {
+        ...base.context,
+        env,
+      },
+    };
   }
 
   private shouldUseStreaming(request: ToolInvocationRequest): boolean {
@@ -375,7 +420,17 @@ export interface WireWorkspaceRef extends Omit<WorkspaceRef, 'root'> {
 export interface WireToolInvocationRequest {
   toolName: string;
   input: unknown;
-  context: { invocationId?: string; handId?: string; workspace: WireWorkspaceRef };
+  context: {
+    invocationId?: string;
+    handId?: string;
+    workspace: WireWorkspaceRef;
+    /**
+     * 显式透传给远端 hand 的 env（K/V），仅限 {@link HAND_ENV_ALLOWLIST} 内的 key。
+     * 缺省 = 不透传（远端 pod 只有自己 K8s spec 内的 env）。
+     * 服务端 parseWireRequest 会再做一次 allowlist 剥离，防御客户端漏筛。
+     */
+    env?: Record<string, string>;
+  };
 }
 
 async function safeText(response: Response): Promise<string> {

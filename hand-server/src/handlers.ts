@@ -12,6 +12,7 @@ import {
   type WorkspaceRef,
 } from 'server/agent/toolRuntime.js';
 import { unknownNetworkPolicyStatus } from 'server/runtime/networkPolicy.js';
+import { pickHandEnv } from 'server/runtime/handEnvAllowlist.js';
 import type {
   ToolInvocationRequest,
   ToolInvocationResponse,
@@ -754,6 +755,12 @@ interface WireRequest {
       sessionId?: string;
       executionTarget?: string;
     };
+    /**
+     * 07-05：wire.context.env 透传给下游 provider（例如 acs-orchestrator sandboxRunner）
+     * 用于给 pod 内子进程 env 补 AZEROTH_TOKEN 等 allowlist 凭据。仅限
+     * HAND_ENV_ALLOWLIST 内的 key，parseWireRequest 会 pickHandEnv 二次剥离。
+     */
+    env?: Record<string, string>;
   };
 }
 
@@ -768,6 +775,12 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireRequest 
   if (!workspace || typeof workspace !== 'object') {
     return { ok: false, error: 'context.workspace 必须是 object' };
   }
+  const rawEnv = context?.env;
+  const env = rawEnv && typeof rawEnv === 'object' && !Array.isArray(rawEnv)
+    ? pickHandEnv(rawEnv as Record<string, string | undefined>)
+    : {};
+  const envKeys = Object.keys(env);
+
   return {
     ok: true,
     value: {
@@ -782,6 +795,7 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireRequest 
           sessionId: typeof workspace.sessionId === 'string' ? workspace.sessionId : undefined,
           executionTarget: typeof workspace.executionTarget === 'string' ? workspace.executionTarget : undefined,
         },
+        ...(envKeys.length > 0 ? { env } : {}),
       },
     },
   };

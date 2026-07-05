@@ -205,6 +205,99 @@ describe('HttpTransport.invoke', () => {
     expect(response.status === 'error' ? response.metadata?.timedOut : undefined).toBe(true);
   });
 
+  it('injects allowlist wire env from envResolver (AZEROTH_TOKEN + AZEROTH_API_URL)', async () => {
+    let captured: string = '';
+    const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      captured = init?.body as string;
+      return new Response(JSON.stringify({ status: 'success', content: 'ok' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h',
+      authToken: 'secret-token-12345',
+      fetchImpl,
+      envResolver: (ws) => {
+        expect(ws.username).toBe('admin');
+        return {
+          AZEROTH_TOKEN: 'pat_admin_test',
+          AZEROTH_API_URL: 'https://fc.kaiyan.net/ky-azeroth',
+        };
+      },
+    });
+    await transport.invoke(buildRequest());
+    const body = JSON.parse(captured) as WireToolInvocationRequest;
+    expect(body.context.env).toEqual({
+      AZEROTH_TOKEN: 'pat_admin_test',
+      AZEROTH_API_URL: 'https://fc.kaiyan.net/ky-azeroth',
+    });
+  });
+
+  it('strips non-allowlist keys returned by envResolver', async () => {
+    let captured: string = '';
+    const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      captured = init?.body as string;
+      return new Response(JSON.stringify({ status: 'success', content: 'ok' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h',
+      authToken: 'secret-token-12345',
+      fetchImpl,
+      envResolver: () => ({
+        AZEROTH_TOKEN: 'pat_x',
+        // 这些不在 allowlist 里，必须被剥除
+        ANTHROPIC_API_KEY: 'sk-ant-xxx',
+        GH_TOKEN: 'ghp-xxx',
+        FOO_BAR: 'baz',
+      }),
+    });
+    await transport.invoke(buildRequest());
+    const body = JSON.parse(captured) as WireToolInvocationRequest;
+    expect(body.context.env).toEqual({ AZEROTH_TOKEN: 'pat_x' });
+    expect(body.context.env).not.toHaveProperty('ANTHROPIC_API_KEY');
+    expect(body.context.env).not.toHaveProperty('GH_TOKEN');
+    expect(body.context.env).not.toHaveProperty('FOO_BAR');
+  });
+
+  it('omits context.env entirely when envResolver returns empty / undefined', async () => {
+    let captured: string = '';
+    const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      captured = init?.body as string;
+      return new Response(JSON.stringify({ status: 'success', content: 'ok' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h',
+      authToken: 'secret-token-12345',
+      fetchImpl,
+      envResolver: () => ({}),
+    });
+    await transport.invoke(buildRequest());
+    const body = JSON.parse(captured) as WireToolInvocationRequest;
+    expect(body.context).not.toHaveProperty('env');
+  });
+
+  it('omits context.env when no envResolver is provided (backward compat)', async () => {
+    let captured: string = '';
+    const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      captured = init?.body as string;
+      return new Response(JSON.stringify({ status: 'success', content: 'ok' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h',
+      authToken: 'secret-token-12345',
+      fetchImpl,
+    });
+    await transport.invoke(buildRequest());
+    const body = JSON.parse(captured) as WireToolInvocationRequest;
+    expect(body.context).not.toHaveProperty('env');
+  });
+
   it('rejects malformed response body with status=error', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ wrong: 'shape' }), {
       status: 200,

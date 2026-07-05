@@ -78,7 +78,19 @@ async function main(): Promise<void> {
   process.once('SIGINT', abort);
   process.once('SIGHUP', abort);
 
-  const provider = new ServerLocalExecutionProvider();
+  // 07-05：从 wire 传下来的 input.env（允许列表内的 AZEROTH_TOKEN 等）合并进
+  // provider spawn 的子进程 env。ServerLocalExecutionProvider 的 envBuilder 在
+  // 未注入时 fallback process.env；这里显式装配 "pod process.env + input.env"，
+  // 保持 pod 自身 env（PATH/PYTHONPATH 等）+ 允许 wire 层追加凭据。
+  const wireEnvOverride = input.env ?? {};
+  const provider = Object.keys(wireEnvOverride).length > 0
+    ? new ServerLocalExecutionProvider({
+        envBuilder: (_workspace) => ({
+          ...(process.env as Record<string, string | undefined>),
+          ...wireEnvOverride,
+        }) as Record<string, string>,
+      })
+    : new ServerLocalExecutionProvider();
   const request = {
     toolName: toolNameForLocalProvider(input.toolName),
     input: input.input,

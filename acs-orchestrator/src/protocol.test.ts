@@ -23,6 +23,59 @@ describe('parseWireRequest', () => {
     }
   });
 
+  it('保留 wire.context.env 中 allowlist 内的 key（AZEROTH_TOKEN / AZEROTH_API_URL）', () => {
+    const parsed = parseWireRequest({
+      toolName: 'Shell',
+      input: { command: 'env' },
+      context: {
+        workspace: { id: 'ws_1', sessionId: 'session-1', username: 'admin' },
+        env: {
+          AZEROTH_TOKEN: 'pat_admin_test',
+          AZEROTH_API_URL: 'https://fc.kaiyan.net/ky-azeroth',
+        },
+      },
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.context.env).toEqual({
+        AZEROTH_TOKEN: 'pat_admin_test',
+        AZEROTH_API_URL: 'https://fc.kaiyan.net/ky-azeroth',
+      });
+    }
+  });
+
+  it('剥离 wire.context.env 中不在 allowlist 内的敏感 key（防御纵深）', () => {
+    const parsed = parseWireRequest({
+      toolName: 'Shell',
+      input: { command: 'env' },
+      context: {
+        workspace: { id: 'ws_1', sessionId: 'session-1' },
+        env: {
+          AZEROTH_TOKEN: 'pat_x',
+          ANTHROPIC_API_KEY: 'sk-ant-should-not-leak',
+          GH_TOKEN: 'ghp-should-not-leak',
+          RANDOM: 'noise',
+        },
+      },
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.context.env).toEqual({ AZEROTH_TOKEN: 'pat_x' });
+    }
+  });
+
+  it('wire.context.env 缺失时 parsed.env 为 undefined（不写字段）', () => {
+    const parsed = parseWireRequest({
+      toolName: 'Shell',
+      input: {},
+      context: { workspace: { id: 'ws_1', sessionId: 'session-1' } },
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.context.env).toBeUndefined();
+    }
+  });
+
   it('rejects unsafe mountSubPath', () => {
     expect(parseWireRequest({
       toolName: 'Read',

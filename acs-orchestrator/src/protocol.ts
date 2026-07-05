@@ -1,6 +1,7 @@
 import type { ToolDescriptor } from 'server/agent/toolRuntime.js';
 import { WORKSPACE_HAND_TOOLS } from 'server/agent/toolRuntime.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
+import { pickHandEnv } from 'server/runtime/handEnvAllowlist.js';
 
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
@@ -20,6 +21,12 @@ export interface WireToolInvocationRequest {
   context: {
     invocationId?: string;
     workspace: WireWorkspaceRef;
+    /**
+     * 07-05：显式透传给远端 pod 的 env（仅 HAND_ENV_ALLOWLIST 内的 key，例如
+     * AZEROTH_TOKEN / AZEROTH_API_URL）。上游 brain 侧 HttpTransport.envResolver
+     * 生成；本 protocol 层 parseWireRequest 再走 pickHandEnv 二次剥离。
+     */
+    env?: Record<string, string>;
   };
 }
 
@@ -57,6 +64,11 @@ export interface SandboxRunnerInput {
     root: string;
   };
   stream?: boolean;
+  /**
+   * 07-05：从 wire.context.env（allowlist 已过滤）透传到 pod 内 sandboxRunner，
+   * 由 runner 合并进 spawn 子进程的 env（Shell 等 tool 才拿得到 AZEROTH_TOKEN）。
+   */
+  env?: Record<string, string>;
 }
 
 export interface SandboxRunnerOutput {
@@ -104,6 +116,14 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
     : undefined;
   const sandboxScope = parseSandboxScopeId(sandboxScopeId);
   if (sandboxScope.error) return { ok: false, error: sandboxScope.error };
+  // 07-05：wire env 双重防线——上游 HttpTransport 只 pick allowlist，服务端反序列化
+  // 再 pick 一次，即使 client 塞了别的 key 也会被 pickHandEnv 剥掉。空对象则不写字段。
+  const rawEnv = context?.env;
+  const env = rawEnv && typeof rawEnv === 'object' && !Array.isArray(rawEnv)
+    ? pickHandEnv(rawEnv as Record<string, string | undefined>)
+    : {};
+  const envKeys = Object.keys(env);
+
   return {
     ok: true,
     value: {
@@ -120,6 +140,7 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
           ...(typeof workspace.username === 'string' ? { username: workspace.username } : {}),
           ...(typeof workspace.executionTarget === 'string' ? { executionTarget: workspace.executionTarget } : {}),
         },
+        ...(envKeys.length > 0 ? { env } : {}),
       },
     },
   };

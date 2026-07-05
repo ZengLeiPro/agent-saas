@@ -12,6 +12,8 @@ import type {
 import type { AgentStore } from '../data/agents/store.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
+import type { WorkspaceRef } from '../agent/toolRuntime.js';
 import { readTenantCompanyInfoSync } from '../data/tenants/companyInfo.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
@@ -1249,6 +1251,29 @@ function loadCompanyInfo(sharedDir: string, tenantId?: string): string {
   }
 }
 
+/**
+ * 07-05：给 tenant-remote hand（HttpTransport → acs-orchestrator/hand-server → pod）
+ * 现场装配 wire.context.env。envResolver 走 workspace.tenantId + workspace.username
+ * 二级查 tokens.json，得到 { AZEROTH_TOKEN, AZEROTH_API_URL } 塞进 wire。
+ *
+ * 与 dispatch.ts:603 本地 SDK spawn 路径的 AZEROTH_TOKEN 注入并行——两者共用同一份
+ * tokens.json 与 resolveAzerothInjection，一份配置同时生效于本地与远端 pod。
+ *
+ * 未命中（该 (tenantId, username) 没配 PAT）→ 返回空对象 → wire 不带 env →
+ * pod 内 CLI 报"未授权"，语义与本地 SDK 未配置时一致。
+ */
+function buildTenantRemoteHandWireEnv(workspace: WorkspaceRef): Record<string, string> {
+  const username = workspace.username;
+  if (!username) return {};
+  const tenantId = workspace.tenantId ?? DEFAULT_TENANT_ID;
+  const injection = resolveAzerothInjection(tenantId, username);
+  if (!injection) return {};
+  return {
+    AZEROTH_TOKEN: injection.token,
+    ...(injection.apiUrl ? { AZEROTH_API_URL: injection.apiUrl } : {}),
+  };
+}
+
 export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig): AgentRunDispatch {
   const logger = config.logger ?? noopLogger;
   const sessionCatalog = resolveSessionCatalog(config);
@@ -1490,6 +1515,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         executionTransportRegistry,
         handStore: config.handStore,
         resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
+        resolveWireEnv: buildTenantRemoteHandWireEnv,
         artifactService: config.artifactService,
         providers: [...tooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,
@@ -1819,6 +1845,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         executionTransportRegistry,
         handStore: config.handStore,
         resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
+        resolveWireEnv: buildTenantRemoteHandWireEnv,
         artifactService: config.artifactService,
         providers: [...resumeTooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,
@@ -2075,6 +2102,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         executionTransportRegistry,
         handStore: config.handStore,
         resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
+        resolveWireEnv: buildTenantRemoteHandWireEnv,
         artifactService: config.artifactService,
         providers: [...resumeTooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,

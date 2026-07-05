@@ -64,6 +64,10 @@ export class AcsExecutor {
         activeKey: invocationKey,
       });
       this.invocations.set(invocationKey, { controller, sandboxName: ref.name });
+      // 07-05：把 wire.context.env（parseWireRequest 已 allowlist 过滤过）透传给
+      // pod 内 sandboxRunner，让其合并进 spawn 子进程的 env，pod 里 Shell 才能
+      // 拿到 AZEROTH_TOKEN 等凭据。env 为空则不写字段（wire 更紧凑，与协议一致）。
+      const wireEnv = request.context.env;
       const runnerInput: SandboxRunnerInput = {
         toolName: toolNameForSandboxRunner(request.toolName),
         input: request.input,
@@ -76,6 +80,7 @@ export class AcsExecutor {
           root: this.config.workspaceMountPath,
         },
         stream: options.stream,
+        ...(wireEnv && Object.keys(wireEnv).length > 0 ? { env: wireEnv } : {}),
       };
       const child = this.spawnRunner(ref, runnerInput, controller);
       const closePromise = waitForClose(child);

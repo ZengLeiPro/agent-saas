@@ -258,6 +258,14 @@ export interface PlatformToolRuntimeOptions {
   executionTransportRegistry?: ExecutionTransportRegistry;
   handStore?: HandStore;
   resolveHandAuthToken?: (hand: import('../runtime/handStore.js').HandRecord) => string | undefined | Promise<string | undefined>;
+  /**
+   * 每次为 tenant-remote hand 现场构造 HttpTransport 时，把 workspace 传给这个
+   * resolver 拿到要透传远端的 env（wire.context.env）。返回值会被 pickHandEnv
+   * 二次 allowlist 过滤。典型用途：按 workspace.tenantId + workspace.username
+   * 查 tokens.json 得到 `{ AZEROTH_TOKEN, AZEROTH_API_URL }`。
+   * 见 `runtime/handEnvAllowlist.ts` 与 `rawRuntimeRunDispatch.ts` 装配点。
+   */
+  resolveWireEnv?: (workspace: WorkspaceRef) => Record<string, string | undefined>;
   artifactService?: ArtifactService;
   providers?: ToolProvider[];
   toolControls?: ToolControlsConfig;
@@ -918,6 +926,7 @@ class WorkspaceToolProvider implements ToolProvider {
   private readonly executionTransportRegistry: ExecutionTransportRegistry;
   private readonly handStore?: HandStore;
   private readonly resolveHandAuthToken?: PlatformToolRuntimeOptions['resolveHandAuthToken'];
+  private readonly resolveWireEnv?: PlatformToolRuntimeOptions['resolveWireEnv'];
   private readonly artifactService?: ArtifactService;
   private readonly memoryIndexService?: MemoryIndexService | null;
 
@@ -927,10 +936,12 @@ class WorkspaceToolProvider implements ToolProvider {
     resolveHandAuthToken?: PlatformToolRuntimeOptions['resolveHandAuthToken'],
     artifactService?: ArtifactService,
     memoryIndexService?: MemoryIndexService | null,
+    resolveWireEnv?: PlatformToolRuntimeOptions['resolveWireEnv'],
   ) {
     this.executionTransportRegistry = executionTransportRegistry;
     this.handStore = handStore;
     this.resolveHandAuthToken = resolveHandAuthToken;
+    this.resolveWireEnv = resolveWireEnv;
     this.artifactService = artifactService;
     this.memoryIndexService = memoryIndexService;
   }
@@ -1255,6 +1266,10 @@ class WorkspaceToolProvider implements ToolProvider {
             baseUrl: hand.endpoint,
             authToken,
             invokeTimeoutMs: resolveRemoteHandInvokeTimeoutMs(hand.metadata),
+            // 07-05：把 AZEROTH_TOKEN 等 allowlist env 透传到远端 pod。
+            // envResolver 内部按 workspace.tenantId + workspace.username 查 tokens.json，
+            // 见 rawRuntimeRunDispatch.ts 装配点与 runtime/handEnvAllowlist.ts。
+            ...(this.resolveWireEnv ? { envResolver: this.resolveWireEnv } : {}),
           }),
           workspace,
         };
@@ -1306,6 +1321,7 @@ export class PlatformToolRuntime implements ToolRuntime {
         options.resolveHandAuthToken,
         options.artifactService,
         options.memoryIndexService,
+        options.resolveWireEnv,
       ),
       ...(options.memoryIndexService ? [new MemorySearchToolProvider(options.memoryIndexService)] : []),
       ...(options.providers ?? []),

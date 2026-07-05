@@ -5,6 +5,7 @@ It intentionally covers the non-interactive subset used by ky-data-query:
   duckdb --version
   duckdb [-json] [-c SQL]
   duckdb [-json] [-c ".read path/to/query.sql"]
+  duckdb [-json] [dbfile] < query.sql
 """
 
 from __future__ import annotations
@@ -57,9 +58,14 @@ def main(argv: list[str]) -> int:
         i += 1
 
     if not command:
-        print("duckdb: interactive mode is not available in this runtime", file=sys.stderr)
-        print("usage: duckdb [-json] -c SQL", file=sys.stderr)
-        return 2
+        if sys.stdin.isatty():
+            print("duckdb: interactive mode is not available in this runtime", file=sys.stderr)
+            print("usage: duckdb [-json] [-c SQL] [dbfile] < query.sql", file=sys.stderr)
+            return 2
+        command = sys.stdin.read()
+        if not command.strip():
+            print("duckdb: stdin did not contain SQL", file=sys.stderr)
+            return 2
 
     sql = expand_command(command)
     con = duckdb.connect(db_path)

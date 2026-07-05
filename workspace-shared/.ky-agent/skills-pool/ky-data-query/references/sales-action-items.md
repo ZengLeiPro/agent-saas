@@ -90,7 +90,7 @@ azeroth sales-action-items list --source-run-id <id> --status <s>        # GET /
 
 ```bash
 # 会话首次：确保 CLI 最新（拿到刚部署的新表 schema）。刚部署过务必 FORCE 刷绕过 1h TTL
-export KY_DATA_QUERY_SKILL_DIR="<当前 ky-data-query skill 目录>"
+export KY_DATA_QUERY_SKILL_DIR="${KY_DATA_QUERY_SKILL_DIR:-$(pwd)/.ky-agent/skills/ky-data-query}"
 bash -lc 'AZEROTH_CLI_FORCE=1 source "$KY_DATA_QUERY_SKILL_DIR/scripts/ensure-cli.sh" && azeroth describe sales-action-items --action create'
 
 # 写一条硬缺口督办（防御 / GAP_HARD）

@@ -37,10 +37,12 @@ CLI 已支持标准 CRUD，但写操作会真实修改业务系统数据：
 
 ## 第 0 步：确保 CLI 是最新版（每次会话首次使用 ky-data-query 时必跑一次）
 
-agent 平台已经按当前会话用户自动注入 `AZEROTH_TOKEN`（长期 PAT）和 `AZEROTH_API_URL` 到子进程 env。但 `azeroth` 二进制本身要从 ky-azeroth 生产服务按需拉取（保证与服务端同版本，永不漂移）。平台 Shell 默认可能是 `/bin/sh`，且不同工具调用之间不会保留 `PATH`；因此每次执行 `azeroth ...` 的 Shell 命令，都在同一个 `bash -lc` 里先 `source` 一次 ensure 脚本：
+agent 平台已经按当前会话用户自动注入 `AZEROTH_TOKEN`（长期 PAT）和 `AZEROTH_API_URL` 到子进程 env。但 `azeroth` 二进制本身要从 ky-azeroth 生产服务按需拉取（保证与服务端同版本，永不漂移）。平台 Shell 默认可能是 `/bin/sh`，且不同工具调用之间不会保留 `PATH`；因此每次执行 `azeroth ...` 的 Shell 命令，都在同一个 `bash -lc` 里先 `source` 一次 ensure 脚本。
+
+Shell 默认从 workspace 根目录运行；ky-data-query skill 在 workspace 内的稳定路径是 `.ky-agent/skills/ky-data-query`。**不要自行推断或使用服务端/NAS 物理路径**（例如 `/mnt/agent-saas/workspaces/...`），ACS Sandbox 容器内不可见这些宿主路径。
 
 ```bash
-export KY_DATA_QUERY_SKILL_DIR="<当前 ky-data-query skill 目录>"
+export KY_DATA_QUERY_SKILL_DIR="${KY_DATA_QUERY_SKILL_DIR:-$(pwd)/.ky-agent/skills/ky-data-query}"
 bash -lc 'source "$KY_DATA_QUERY_SKILL_DIR/scripts/ensure-cli.sh" && azeroth whoami'
 ```
 
@@ -56,11 +58,11 @@ ensure 脚本逻辑：
 如果刚部署过 ky-azeroth，或 `azeroth describe <entity>` 看不到刚新增的字段，可能是 1h TTL 命中旧 cache；可强制刷新一次：
 
 ```bash
-export KY_DATA_QUERY_SKILL_DIR="<当前 ky-data-query skill 目录>"
+export KY_DATA_QUERY_SKILL_DIR="${KY_DATA_QUERY_SKILL_DIR:-$(pwd)/.ky-agent/skills/ky-data-query}"
 bash -lc 'AZEROTH_CLI_FORCE=1 source "$KY_DATA_QUERY_SKILL_DIR/scripts/ensure-cli.sh" && azeroth whoami'
 ```
 
-如果 `source` 报"No such file or directory"，说明当前运行时没有暴露 ky-data-query skill 资源或路径解析错误。**不要尝试自己复制脚本到 workspace**，停止并报告 agent-saas skill 挂载/安装问题。
+如果 `source` 报"No such file or directory"，先用 `pwd` 和 `ls -la .ky-agent/skills/ky-data-query/scripts/` 确认是否在 workspace 根、skill 是否已同步。仍不存在才停止并报告 agent-saas skill 挂载/安装问题；**不要尝试自己复制脚本到 workspace**。
 
 ## 可选：CLI 覆盖度自检
 
@@ -128,7 +130,14 @@ approval-flows  notifications  table-preferences
 
 ## 前置依赖
 
-**DuckDB 应由 ACS 镜像预装**（本地 SQL 分析引擎，无需 server）
+**DuckDB 应由 ACS 镜像预装**（本地 SQL 分析引擎，无需 server）。ACS 中的 `duckdb` 是平台提供的非交互 wrapper，只保证这些用法：
+
+- `duckdb --version`
+- `duckdb [-json] -c "SQL"`
+- `duckdb [-json] -c ".read path/to/query.sql"`
+- `duckdb [-json] < path/to/query.sql`
+
+不要使用裸 `duckdb` 进入交互模式，也不要在没有 `-c` 的情况下输入 `.read ...`。
 
 ```bash
 duckdb --version      # 期望 ≥ 0.10
@@ -192,6 +201,19 @@ wait
    duckdb -c ".read $SESS/q.sql"
    # 或结构化输出
    duckdb -json -c ".read $SESS/q.sql"
+   ```
+
+   ACS wrapper 也兼容 stdin：
+
+   ```bash
+   duckdb -json < "$SESS/q.sql"
+   ```
+
+   但不要使用交互式写法：
+
+   ```bash
+   duckdb
+   .read "$SESS/q.sql"
    ```
 
 NDJSON 直接 `read_json_auto('file.ndjson', format='newline_delimited')` 即可入表。对复杂分析建议建临时视图：

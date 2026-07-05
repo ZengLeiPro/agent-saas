@@ -123,14 +123,21 @@ date_diff('days', ...)
 `duckdb -c "SELECT ... WHERE \"a\" = '...'"` 里的双引号、单引号、`$`、反引号嵌套多了就会翻车。
 
 ```bash
-# ✅ 正确：写文件 + .read
+# ✅ 正确：写文件 + -c ".read ..."
 cat > "$SESS/q.sql" <<'EOF'
 SELECT "customerName", COUNT(*) FROM customers WHERE "deletedAt" IS NULL GROUP BY 1;
 EOF
 duckdb -c ".read $SESS/q.sql"
 
+# ✅ 正确：ACS wrapper 也支持 stdin
+duckdb -json < "$SESS/q.sql"
+
 # ❌ 反例：shell 转义地狱
 duckdb -c "SELECT \"customerName\", COUNT(*) FROM ..."
+
+# ❌ 反例：交互模式在 ACS wrapper 中不可用
+duckdb
+.read "$SESS/q.sql"
 ```
 
 ## 11. NDJSON 格式参数用完整写法

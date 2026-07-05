@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { SkillToolProvider, type EffectiveSkillsResolver, type SkillEntry } from '../agent/skillToolProvider.js';
 import type { ToolCallContext } from '../agent/toolRuntime.js';
@@ -15,10 +18,10 @@ function makeContext(): ToolCallContext {
   } as unknown as ToolCallContext;
 }
 
-function makeProvider(skills: SkillEntry[]): SkillToolProvider {
+function makeProvider(skills: SkillEntry[], skillDir: string | null = null): SkillToolProvider {
   const resolver: EffectiveSkillsResolver = {
     list: () => skills,
-    resolveSkillDir: () => null,
+    resolveSkillDir: () => skillDir,
   };
   return new SkillToolProvider(resolver);
 }
@@ -55,5 +58,27 @@ describe('SkillToolProvider description injection', () => {
     const [descriptor] = provider.list(makeContext());
     expect(descriptor.description).toContain('未启用任何 skill');
     expect(descriptor.description).toContain('不要调用');
+  });
+
+  it('does not leak host skill paths in Skill invocation hints', async () => {
+    const hostSkillDir = mkdtempSync(join(tmpdir(), 'skill-host-path-'));
+    writeFileSync(join(hostSkillDir, 'SKILL.md'), '---\nname: ky-data-query\ndescription: test\n---\nbody');
+    const provider = makeProvider(
+      [{ id: 'ky-data-query', name: 'ky-data-query', description: 'test' }],
+      hostSkillDir,
+    );
+
+    const result = await provider.invoke(
+      {
+        toolId: 'Skill',
+        toolName: 'Skill',
+        input: { skill: 'ky-data-query' },
+      } as any,
+      makeContext(),
+    );
+
+    expect(result?.content).toContain('.ky-agent/skills/ky-data-query/...');
+    expect(result?.content).not.toContain(hostSkillDir);
+    expect(result?.content).not.toContain('/mnt/agent-saas');
   });
 });

@@ -120,8 +120,8 @@ export class SkillToolProvider implements ToolProvider {
         content: `Skill "${input.skill}" 名字非法（必须 ^[a-zA-Z][a-zA-Z0-9_-]{0,63}$）。`,
       };
     }
-    const allowed = this.resolver.list(context).some((s) => s.name === input.skill || s.id === input.skill);
-    if (!allowed) {
+    const allowedSkill = this.resolver.list(context).find((s) => s.name === input.skill || s.id === input.skill);
+    if (!allowedSkill) {
       return {
         content:
           `Skill "${input.skill}" 当前用户不可用。请用 Skill 工具描述里「当前用户可用 Skill 清单」的 name 调用，`
@@ -130,7 +130,7 @@ export class SkillToolProvider implements ToolProvider {
     }
     const skillDir = this.resolver.resolveSkillDir(input.skill, context);
     if (!skillDir || !existsSync(skillDir)) {
-      return { content: `Skill "${input.skill}" 物理目录不存在（resolver 解析为 ${skillDir ?? 'null'}）。` };
+      return { content: `Skill "${input.skill}" 物理目录不存在或尚未同步到当前 workspace。` };
     }
 
     const docPath = getSkillDocPath(skillDir, input.skill);
@@ -147,9 +147,12 @@ export class SkillToolProvider implements ToolProvider {
     }
 
     const argsLine = input.args ? `\n\n<skill-args>\n${input.args}\n</skill-args>` : '';
+    const workspaceSkillDir = `.ky-agent/skills/${allowedSkill.id}`;
     const hint =
       `\n\n---\n`
-      + `（提示：上面 SKILL.md 可能引用 references/*.md 或 scripts/*；如有，请用 Read 按需加载，路径相对于 ${skillDir}。）`;
+      + `（提示：上面 SKILL.md 可能引用 references/*.md 或 scripts/*；如有，请用 Read 按需加载，`
+      + `workspace 相对路径为 ${workspaceSkillDir}/...。Shell 的默认 cwd 是 workspace 根；`
+      + `在 Shell 里引用 skill 文件时使用 $(pwd)/${workspaceSkillDir}/... 或相对路径，不要使用服务端物理路径。）`;
 
     return {
       content: `<skill-doc name="${input.skill}" path="${basename(docPath)}">\n${body}\n</skill-doc>${argsLine}${hint}`,

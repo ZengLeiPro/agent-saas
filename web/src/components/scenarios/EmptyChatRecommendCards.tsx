@@ -1,0 +1,157 @@
+import { ArrowRight, Clock3, Layers3 } from "lucide-react";
+import {
+  buildScenarioPrompt,
+  sanitizeScenario,
+  type ScenarioItem,
+  type ScenarioRole,
+} from "@agent/shared";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  matchRoleIdByPosition,
+  pickRecommendedScenarios,
+  useScenarioLibrary,
+} from "./useScenarioLibrary";
+import { friendlyDataDependency } from "./friendlyMappings";
+
+interface EmptyChatRecommendCardsProps {
+  onTryScenario: (prompt: string, scenario: ScenarioItem) => void;
+  onViewAll: () => void;
+  onOpenRoleDetail?: (roleId: string) => void;
+}
+
+const ahaScore: Record<NonNullable<ScenarioItem["firstAhaMode"]>, number> = {
+  zero_input_example: 4,
+  paste_then_result: 3,
+  upload_then_result: 2,
+  voice_then_result: 1,
+};
+
+function safeScenario(scenario: ScenarioItem): ScenarioItem {
+  return sanitizeScenario({ ...scenario }).scenario as ScenarioItem;
+}
+
+export function pickRoleTop3(
+  scenarios: readonly ScenarioItem[],
+  roleId: string | null,
+): ScenarioItem[] {
+  const candidates = roleId
+    ? scenarios.filter((scenario) => scenario.role === roleId)
+    : scenarios;
+  const sorted = [...candidates].sort((a, b) => {
+    const ahaDelta = (ahaScore[b.firstAhaMode ?? "zero_input_example"] ?? 0) - (ahaScore[a.firstAhaMode ?? "zero_input_example"] ?? 0);
+    if (ahaDelta !== 0) return ahaDelta;
+    if (a.mode !== b.mode) return a.mode === "recurring" ? -1 : 1;
+    const depA = a.dataDependencyLevel === "zero" ? 0 : 1;
+    const depB = b.dataDependencyLevel === "zero" ? 0 : 1;
+    if (depA !== depB) return depA - depB;
+    return a.id.localeCompare(b.id);
+  });
+  return sorted.slice(0, 3);
+}
+
+function roleName(roles: ScenarioRole[], roleId: string | null): string {
+  if (!roleId) return "推荐";
+  return roles.find((role) => role.id === roleId)?.name ?? "推荐";
+}
+
+export function EmptyChatRecommendCards({
+  onTryScenario,
+  onViewAll,
+  onOpenRoleDetail,
+}: EmptyChatRecommendCardsProps) {
+  const { library, loading, error } = useScenarioLibrary();
+  const { user } = useAuth();
+
+  if (loading || error || !library || library.scenarios.length === 0) return null;
+
+  const matchedRoleId =
+    user?.preferences?.activeRoleId && library.roles.some((role) => role.id === user.preferences?.activeRoleId)
+      ? user.preferences.activeRoleId
+      : matchRoleIdByPosition(library.roles, user?.position);
+  const roleTop3 = pickRoleTop3(library.scenarios, matchedRoleId);
+  const recommended = roleTop3.length > 0
+    ? roleTop3
+    : pickRecommendedScenarios(library.scenarios, 3, matchedRoleId);
+  const cards = recommended.map(safeScenario);
+
+  return (
+    <div className="mx-auto w-full max-w-3xl pt-[10vh]">
+      <div className="mb-4 flex items-end justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-foreground">
+            {roleName(library.roles, matchedRoleId)}开箱任务
+          </div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            点一张卡片，把起手指令放进输入框。
+          </div>
+        </div>
+        {matchedRoleId && onOpenRoleDetail && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 shrink-0 gap-1 text-xs"
+            onClick={() => onOpenRoleDetail(matchedRoleId)}
+          >
+            岗位详情
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {cards.map((scenario) => (
+          <button
+            key={scenario.id}
+            type="button"
+            className={cn(
+              "flex min-h-[172px] flex-col rounded-lg border bg-card p-4 text-left shadow-sm transition-all",
+              "hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-[0_8px_24px_-20px_rgba(15,23,42,0.7)]",
+            )}
+            onClick={() => onTryScenario(buildScenarioPrompt(scenario), scenario)}
+          >
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+              {scenario.mode === "recurring" ? (
+                <>
+                  <Clock3 className="h-3.5 w-3.5" />
+                  常驻监测
+                </>
+              ) : (
+                <>
+                  <Layers3 className="h-3.5 w-3.5" />
+                  一次性任务
+                </>
+              )}
+            </div>
+            <div className="mt-2 line-clamp-2 text-sm font-semibold leading-snug">
+              {scenario.title}
+            </div>
+            <p className="mt-2 line-clamp-3 text-sm leading-5 text-muted-foreground">
+              {scenario.pitch}
+            </p>
+            <div className="mt-auto pt-3 text-xs text-muted-foreground">
+              {scenario.dataDependencyLevel
+                ? friendlyDataDependency[scenario.dataDependencyLevel]
+                : "可直接试跑"}
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-3 flex justify-center">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1 text-sm"
+          onClick={onViewAll}
+        >
+          查看全部场景
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+}

@@ -44,6 +44,12 @@ const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m 
 const ScenariosPanelLazy = lazy(() => import("@/components/scenarios/ScenariosPanel").then(m => ({ default: m.ScenariosPanel })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
+import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
+import { RoleSwitcher } from "@/components/scenarios/RoleSwitcher";
+import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
+import { FirstDayGuideBar } from "@/components/onboarding/FirstDayGuideBar";
+import { CronCreationWizard } from "@/components/onboarding/CronCreationWizard";
+import type { ScenarioItem } from "@agent/shared";
 const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
 
 const SuspenseFallback = (
@@ -71,6 +77,8 @@ export function DesktopLayout(props: LayoutProps) {
   } = props;
 
   const { user: authUser, updatePreferences } = useAuth();
+  const { config: roleKitConfig } = useRoleKitConfig();
+  const roleKitV2Enabled = roleKitConfig.roleKitV2Enabled;
   const sidebarLayout = authUser?.preferences?.sidebarLayout ?? "double";
   const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
   const handleSidebarLayoutChange = useCallback((layout: "double" | "single") => {
@@ -132,6 +140,10 @@ export function DesktopLayout(props: LayoutProps) {
   const [platformAdminMounted, setPlatformAdminMounted] = useState(false);
   const [trashMounted, setTrashMounted] = useState(false);
   const [scenariosMounted, setScenariosMounted] = useState(false);
+  const [roleDetailId, setRoleDetailId] = useState<string | null>(null);
+  const [lastTriedScenario, setLastTriedScenario] = useState<ScenarioItem | null>(null);
+  const [cronWizardOpen, setCronWizardOpen] = useState(false);
+  const [cronWizardScenario, setCronWizardScenario] = useState<ScenarioItem | null>(null);
   useEffect(() => {
     if (activeTab === "cron" && !cronMounted) setCronMounted(true);
     if (activeTab === "scenarios" && !scenariosMounted) setScenariosMounted(true);
@@ -149,14 +161,16 @@ export function DesktopLayout(props: LayoutProps) {
   // ---- 场景库「试一试」链路 ----
   // 整页场景库里点「试一试」：新建会话 → 预填起手 prompt（不自动发送）→ 切回聊天视图。
   // 顺序不能反：newSession 内部会清空输入框（clearComposer），必须先建会话再 setInput。
-  const handleTryScenario = useCallback((prompt: string) => {
+  const handleTryScenario = useCallback((prompt: string, scenario?: ScenarioItem) => {
+    if (scenario) setLastTriedScenario(scenario);
     newSession();
     setInput(prompt);
     setActiveTab("chat");
   }, [newSession, setInput, setActiveTab]);
 
   // 空会话推荐卡：当前会话本来就是空的，直接预填当前输入框即可，无需再新建会话
-  const handlePrefillScenario = useCallback((prompt: string) => {
+  const handlePrefillScenario = useCallback((prompt: string, scenario?: ScenarioItem) => {
+    if (scenario) setLastTriedScenario(scenario);
     setInput(prompt);
   }, [setInput]);
 
@@ -165,14 +179,36 @@ export function DesktopLayout(props: LayoutProps) {
     pushActiveTab("scenarios");
   }, [pushActiveTab]);
 
+  const handleOpenRoleDetail = useCallback((roleId: string) => {
+    setRoleDetailId(roleId);
+    pushActiveTab("scenarios");
+  }, [pushActiveTab]);
+
+  const handleOpenCronWizard = useCallback(() => {
+    if (lastTriedScenario?.mode === "recurring") {
+      setCronWizardScenario(lastTriedScenario);
+      setCronWizardOpen(true);
+      return;
+    }
+    pushActiveTab("scenarios");
+  }, [lastTriedScenario, pushActiveTab]);
+
   // 新会话空白态的推荐槽位。MessageList 被 memo，这里必须用 useMemo 保持节点引用稳定，
   // 避免输入框每次击键（input 变化触发本组件重渲染）都打穿 MessageList 的 memo。
   const chatEmptySlot = useMemo(() => (
-    <EmptySessionScenarios
-      onTryScenario={handlePrefillScenario}
-      onViewAll={handleViewAllScenarios}
-    />
-  ), [handlePrefillScenario, handleViewAllScenarios]);
+    roleKitV2Enabled ? (
+      <EmptyChatRecommendCards
+        onTryScenario={handlePrefillScenario}
+        onViewAll={handleViewAllScenarios}
+        onOpenRoleDetail={handleOpenRoleDetail}
+      />
+    ) : (
+      <EmptySessionScenarios
+        onTryScenario={handlePrefillScenario}
+        onViewAll={handleViewAllScenarios}
+      />
+    )
+  ), [handleOpenRoleDetail, handlePrefillScenario, handleViewAllScenarios, roleKitV2Enabled]);
 
   // 非 admin 用户访问 admin-only tab 时重定向到 chat
   // 组织分析对 admin 可见；平台分析仅限平台 admin。
@@ -239,6 +275,9 @@ export function DesktopLayout(props: LayoutProps) {
             <div className="truncate text-base font-semibold">
               {headerTitle}
             </div>
+            {roleKitV2Enabled && roleKitConfig.roleSwitcher.enabled && (
+              <RoleSwitcher onOpenRoleDetail={handleOpenRoleDetail} />
+            )}
             {activeTab === "cron" && cronJobCount && (
               <span className="text-xs text-muted-foreground">
                 ({cronJobCount.enabled}/{cronJobCount.total})
@@ -377,7 +416,12 @@ export function DesktopLayout(props: LayoutProps) {
         {scenariosMounted && (
           <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "scenarios" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
-              <ScenariosPanelLazy onTryScenario={handleTryScenario} />
+              <ScenariosPanelLazy
+                onTryScenario={handleTryScenario}
+                roleDetailId={roleDetailId}
+                onOpenRoleDetail={setRoleDetailId}
+                onCloseRoleDetail={() => setRoleDetailId(null)}
+              />
             </Suspense>
           </div>
         )}
@@ -518,6 +562,21 @@ export function DesktopLayout(props: LayoutProps) {
               activePreviewId={trashPreviewSessionId}
             />
           </div>
+        )}
+        {activeTab === "chat" && roleKitV2Enabled && roleKitConfig.firstDayGuideBar.enabled && (
+          <FirstDayGuideBar
+            activeScenario={lastTriedScenario ?? undefined}
+            onOpenCronWizard={handleOpenCronWizard}
+            onOpenExampleDemo={handleViewAllScenarios}
+            stageTimeoutMs={roleKitConfig.firstDayGuideBar.stageTimeoutMs}
+          />
+        )}
+        {roleKitV2Enabled && (
+          <CronCreationWizard
+            open={cronWizardOpen}
+            scenario={cronWizardScenario}
+            onOpenChange={setCronWizardOpen}
+          />
         )}
         <Suspense fallback={null}>
           <SettingsModal

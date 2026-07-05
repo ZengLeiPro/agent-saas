@@ -40,6 +40,11 @@ import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDi
 import { TrashView } from "@/components/chat/TrashView";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
+import {
+  matchRoleIdByPosition,
+  useScenarioLibrary,
+} from "@/components/scenarios/useScenarioLibrary";
+import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
 
 import { refreshAll } from "@/lib/refreshBus";
 import { cn } from "@/lib/utils";
@@ -526,6 +531,44 @@ function SidebarNav({ navItems, activeTab, isLoading, onNew, onTabChange, before
         );
       })}
     </nav>
+  );
+}
+
+function RoleKitSidebarHint({
+  onTabChange,
+  beforeNavigate,
+}: {
+  onTabChange?: (tab: AppTab) => void;
+  beforeNavigate?: () => void;
+}) {
+  const { user } = useAuth();
+  const { config } = useRoleKitConfig();
+  const { library, loading, error } = useScenarioLibrary();
+
+  if (!config.roleKitV2Enabled || loading || error || !library) return null;
+
+  const activeRoleId =
+    user?.preferences?.activeRoleId && library.roles.some((role) => role.id === user.preferences?.activeRoleId)
+      ? user.preferences.activeRoleId
+      : matchRoleIdByPosition(library.roles, user?.position);
+  const role = library.roles.find((item) => item.id === activeRoleId);
+  if (!role) return null;
+
+  return (
+    <button
+      type="button"
+      className="mx-2 mb-2 flex w-[calc(100%-1rem)] items-center gap-2 rounded-lg border bg-card px-2 py-2 text-left text-xs transition-colors hover:bg-muted/60"
+      onClick={() => {
+        beforeNavigate?.();
+        onTabChange?.("scenarios");
+      }}
+    >
+      <LayoutGrid className="h-3.5 w-3.5 shrink-0 text-brand-600" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium">{role.name}</span>
+        <span className="block truncate text-muted-foreground">查看开箱场景</span>
+      </span>
+    </button>
   );
 }
 
@@ -1588,6 +1631,10 @@ export function DesktopSessionSidebar({
           beforeNavigate={() => setSingleExpandedGroupKey(null)}
           constrainNewButton={false}
         />
+        <RoleKitSidebarHint
+          onTabChange={onTabChange}
+          beforeNavigate={() => setSingleExpandedGroupKey(null)}
+        />
 
         <div className="mx-2 my-1 border-t" />
         {sessionSearchBox}
@@ -1799,6 +1846,7 @@ export function DesktopSessionSidebar({
             onNew={onNew}
             onTabChange={onTabChange}
           />
+          <RoleKitSidebarHint onTabChange={onTabChange} />
 
           {/* 导航与分组之间的分隔线 */}
           <div className="mx-2 my-1 border-t" />

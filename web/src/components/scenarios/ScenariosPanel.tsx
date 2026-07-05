@@ -28,13 +28,22 @@ import {
   ScenarioRequireBadges,
 } from "./ScenarioCard";
 import { matchRoleIdByPosition, useScenarioLibrary } from "./useScenarioLibrary";
+import { RoleKitDetailPage } from "./RoleKitDetailPage";
 
 interface ScenariosPanelProps {
   /** 点「试一试」：入参为已用槽位示例值填充完毕的起手 prompt 与场景本体 */
   onTryScenario: (prompt: string, scenario: ScenarioItem) => void;
+  roleDetailId?: string | null;
+  onOpenRoleDetail?: (roleId: string) => void;
+  onCloseRoleDetail?: () => void;
 }
 
-export function ScenariosPanel({ onTryScenario }: ScenariosPanelProps) {
+export function ScenariosPanel({
+  onTryScenario,
+  roleDetailId,
+  onOpenRoleDetail,
+  onCloseRoleDetail,
+}: ScenariosPanelProps) {
   const { library, loading, error, reload } = useScenarioLibrary();
   const { user } = useAuth();
   // 当前选中的岗位 tab；"all" 表示全部
@@ -60,6 +69,10 @@ export function ScenariosPanel({ onTryScenario }: ScenariosPanelProps) {
   const roleNameById = useMemo(
     () => new Map(roles.map((r) => [r.id, r.name])),
     [roles],
+  );
+  const roleDetail = useMemo(
+    () => roles.find((role) => role.id === roleDetailId) ?? null,
+    [roleDetailId, roles],
   );
 
   const handleTry = (scenario: ScenarioItem) => {
@@ -87,14 +100,35 @@ export function ScenariosPanel({ onTryScenario }: ScenariosPanelProps) {
     );
   }
 
+  if (roleDetail) {
+    return (
+      <RoleKitDetailPage
+        role={roleDetail}
+        scenarios={library.scenarios}
+        industryHint={user?.preferences?.industryHint}
+        onTryScenario={handleTry}
+        onBack={onCloseRoleDetail}
+      />
+    );
+  }
+
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-6">
       {/* 标题区 */}
       <div className="mb-4">
-        <h1 className="text-xl font-semibold">场景库</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          每个岗位，一个 AI 同事——挑一个场景，点「试一试」即可开跑，起手话术可再编辑。
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-semibold">场景库</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              每个岗位，一个 AI 同事——挑一个场景，点「试一试」即可开跑，起手话术可再编辑。
+            </p>
+          </div>
+          {activeRole !== "all" && onOpenRoleDetail && (
+            <Button type="button" variant="outline" size="sm" onClick={() => onOpenRoleDetail(activeRole)}>
+              查看该岗详情
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* 岗位 tab：横向可滚动 */}

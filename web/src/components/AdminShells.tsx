@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BarChart3, Building2, Cpu, Database, FileText, Gauge, Globe2, KeyRound, ListTree, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, Users, X, Activity, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -204,6 +204,15 @@ function AdminSettingsModal<T extends string>({
           </div>
         </main>
       </div>
+    </div>
+  );
+}
+
+function SettingsSectionFallback() {
+  return (
+    <div className="flex h-full min-h-[240px] items-center justify-center text-sm text-muted-foreground">
+      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      加载中...
     </div>
   );
 }
@@ -835,7 +844,9 @@ export function TenantAdminShell({
         const isActive = id === settingsSection;
         return (
           <div key={id} className={cn("h-full min-h-0", !isActive && "hidden")} aria-hidden={!isActive}>
-            {node}
+            <Suspense fallback={<SettingsSectionFallback />}>
+              {node}
+            </Suspense>
           </div>
         );
       })}
@@ -887,7 +898,6 @@ export function TenantAdminShell({
   return (
     <>
       <ShellFrame title="组织分析" description="组织级概览、用量与审计" badge={isPlatformAdmin ? "平台 Admin" : "组织 Admin"} sections={tenantAnalysisSections} active={active} onActiveChange={setActive}>{content}</ShellFrame>
-      {settingsModal}
     </>
   );
 }
@@ -957,7 +967,9 @@ export function PlatformAdminShell({
         const isActive = id === settingsSection;
         return (
           <div key={id} className={cn("h-full min-h-0", !isActive && "hidden")} aria-hidden={!isActive}>
-            {node}
+            <Suspense fallback={<SettingsSectionFallback />}>
+              {node}
+            </Suspense>
           </div>
         );
       })}
@@ -995,7 +1007,6 @@ export function PlatformAdminShell({
   return (
     <>
       <ShellFrame title="平台分析" description="跨组织概览与平台审计" badge="平台 Admin" sections={platformAnalysisSections} active={active} onActiveChange={setActive}>{content}</ShellFrame>
-      {settingsModal}
     </>
   );
 }

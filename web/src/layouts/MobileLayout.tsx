@@ -373,7 +373,7 @@ export function MobileLayout(props: LayoutProps) {
           )}
         />
 
-        {adminSettings?.target === "tenant" && activeTab !== "tenant-admin" && (
+        {adminSettings?.target === "tenant" && (
           <TenantAdminShell
             renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
             renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
@@ -388,7 +388,7 @@ export function MobileLayout(props: LayoutProps) {
             onSettingsClose={closeAdminSettings}
           />
         )}
-        {adminSettings?.target === "platform" && activeTab !== "platform-admin" && (
+        {adminSettings?.target === "platform" && (
           <PlatformAdminShell
             renderTenants={() => <TenantManager />}
             renderModels={() => <ModelManagerPanel />}
@@ -407,7 +407,7 @@ export function MobileLayout(props: LayoutProps) {
         )}
         {/*
           组织/平台管理弹窗可从任意页面打开：openAdminSettings 只推 settings URL，
-          不切 activeTab；非 admin 页面由 settingsOnly shell 只挂载 modal，关闭后回到原页面。
+          不切 activeTab；弹窗统一由 settingsOnly shell 承载，关闭后回到原页面。
         */}
       </Suspense>
     </>

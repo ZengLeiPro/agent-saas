@@ -516,7 +516,7 @@ export function DesktopLayout(props: LayoutProps) {
           </div>
         )}
 
-        {adminSettings?.target === "tenant" && activeTab !== "tenant-admin" && (
+        {adminSettings?.target === "tenant" && (
           <Suspense fallback={null}>
             <TenantAdminShell
               renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
@@ -535,7 +535,7 @@ export function DesktopLayout(props: LayoutProps) {
             />
           </Suspense>
         )}
-        {adminSettings?.target === "platform" && activeTab !== "platform-admin" && (
+        {adminSettings?.target === "platform" && (
           <Suspense fallback={null}>
             <PlatformAdminShell
               renderTenants={() => <TenantManager />}
@@ -610,7 +610,7 @@ export function DesktopLayout(props: LayoutProps) {
           />
           {/*
             组织/平台管理弹窗可从任意页面打开：openAdminSettings 只推 settings URL，
-            不切 activeTab；非 admin 页面由 settingsOnly shell 只挂载 modal，关闭后回到原页面。
+            不切 activeTab；弹窗统一由 settingsOnly shell 承载，关闭后回到原页面。
           */}
         </Suspense>
       </div>

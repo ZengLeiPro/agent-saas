@@ -1,0 +1,15 @@
+Launch a subagent to autonomously complete a self-contained task and return a concise report.
+何时用：需要 fan-out 调研多个独立方向、隔离高噪音探索（大量文件搜索/网页抓取不污染主上下文）、
+或多个互不依赖的子任务可以并行推进时。同一轮消息里发出的多个 Agent 调用会并行执行。
+何时不用（先自问：这个收益能否用一次普通工具调用或第二次模型调用拿到？）：
+单点查询、读一个已知文件、快改一行代码、需要中途向用户提问或申请审批的任务——这些直接自己做。
+Never delegate understanding：不要把「理解问题本身」外包给子 agent；你必须自己消化它的报告并对最终结论负责。
+prompt 必须完全自包含：子 agent 看不到本对话的任何历史，所有背景、约束、期望输出格式都要写进 prompt。
+建议在 prompt 中约定输出长度（如「报告控制在 400 字内，列出文件路径和结论」）。
+子 agent 的汇报是自述不是事实：涉及外部副作用（写文件、调用外部系统）时，
+要求它返回可验证的凭据（文件路径、id、返回值），并在关键场景亲自核验后再采信。
+并行派发多个写任务时，给每个子 agent 分派互不相交的文件集，避免相互覆盖。
+agent_type 可选 {{AGENT_TYPES}}。
+限额：单次运行最多派生 {{PER_RUN_TOTAL}} 个子 agent、同时并行 {{PER_RUN_CONCURRENCY}} 个；
+每个子 agent 最多 {{MAX_TURNS}} 轮、硬超时 {{TIMEOUT_MINUTES}} 分钟，超限自动终止并返回 status。
+子 agent 与你共享同一工作目录；其内部过程不进入本对话，只有最终报告作为工具结果返回。

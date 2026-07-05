@@ -46,10 +46,6 @@ export interface RoleKitPublicConfig {
     stageTimeoutMs?: number;
     showOnMobile?: boolean;
   };
-  roleSwitcher?: {
-    enabled?: boolean;
-    position?: "top-left" | "top-right";
-  };
   libraryVersion?: "v1" | "v2";
 }
 
@@ -173,10 +169,6 @@ export function createScenariosRouter(
         enabled: roleKit.firstDayGuideBar?.enabled === true,
         stageTimeoutMs: roleKit.firstDayGuideBar?.stageTimeoutMs ?? 5_400_000,
         showOnMobile: roleKit.firstDayGuideBar?.showOnMobile === true,
-      },
-      roleSwitcher: {
-        enabled: roleKit.roleSwitcher?.enabled === true,
-        position: roleKit.roleSwitcher?.position ?? "top-right",
       },
       libraryVersion: roleKit.libraryVersion ?? "v1",
     });

@@ -46,7 +46,6 @@ const ScenariosPanelLazy = lazy(() => import("@/components/scenarios/ScenariosPa
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
-import { RoleSwitcher } from "@/components/scenarios/RoleSwitcher";
 import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
 import { FirstDayGuideBar } from "@/components/onboarding/FirstDayGuideBar";
 import { CronCreationWizard } from "@/components/onboarding/CronCreationWizard";
@@ -276,9 +275,6 @@ export function DesktopLayout(props: LayoutProps) {
             <div className="truncate text-base font-semibold">
               {headerTitle}
             </div>
-            {roleKitV2Enabled && roleKitConfig.roleSwitcher.enabled && (
-              <RoleSwitcher onOpenRoleDetail={handleOpenRoleDetail} />
-            )}
             {activeTab === "cron" && cronJobCount && (
               <span className="text-xs text-muted-foreground">
                 ({cronJobCount.enabled}/{cronJobCount.total})

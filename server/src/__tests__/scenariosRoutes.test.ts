@@ -39,7 +39,6 @@ async function startServer(
     roleKit: {
       v2Enabled: true,
       firstDayGuideBar: { enabled: true },
-      roleSwitcher: { enabled: true, position: 'top-right' },
       libraryVersion: 'v2',
     },
   }));
@@ -233,8 +232,7 @@ describe('scenarios routes', () => {
       await expect(response.json()).resolves.toMatchObject({
         roleKitV2Enabled: true,
         firstDayGuideBar: { enabled: true },
-        roleSwitcher: { enabled: true, position: 'top-right' },
-        libraryVersion: 'v2',
+          libraryVersion: 'v2',
       });
     } finally {
       await stopServer(server);

@@ -33,7 +33,3 @@ export {
   type ScenariosRouterOptions,
 } from "./scenarios.js";
 export { createContentOpsRouter } from "./contentOps.js";
-export {
-  createUserRoleRouter,
-  type UserRoleRouterOptions,
-} from "./userRole.js";

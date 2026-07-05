@@ -9,10 +9,6 @@ export interface RoleKitPublicConfig {
     stageTimeoutMs: number;
     showOnMobile: boolean;
   };
-  roleSwitcher: {
-    enabled: boolean;
-    position: "top-left" | "top-right";
-  };
   libraryVersion: "v1" | "v2";
 }
 
@@ -23,10 +19,6 @@ const DEFAULT_CONFIG: RoleKitPublicConfig = {
     enabled: false,
     stageTimeoutMs: 5_400_000,
     showOnMobile: false,
-  },
-  roleSwitcher: {
-    enabled: false,
-    position: "top-right",
   },
   libraryVersion: "v1",
 };
@@ -47,10 +39,6 @@ async function fetchRoleKitConfig(): Promise<RoleKitPublicConfig> {
         firstDayGuideBar: {
           ...DEFAULT_CONFIG.firstDayGuideBar,
           ...(data.firstDayGuideBar ?? {}),
-        },
-        roleSwitcher: {
-          ...DEFAULT_CONFIG.roleSwitcher,
-          ...(data.roleSwitcher ?? {}),
         },
       };
       cachedConfig = config;

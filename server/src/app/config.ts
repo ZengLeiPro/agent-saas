@@ -87,10 +87,6 @@ const roleKitConfigSchema = z.object({
     stageTimeoutMs: z.number().int().positive().optional(),
     showOnMobile: z.boolean().optional(),
   }).optional(),
-  roleSwitcher: z.object({
-    enabled: z.boolean().optional(),
-    position: z.enum(["top-left", "top-right"]).optional(),
-  }).optional(),
   defaultPushSlot: z.object({
     channel: z.enum(["ding_work_notification", "ding_group", "ding_both"]).optional(),
     target: z.enum(["self", "manager", "group"]).optional(),

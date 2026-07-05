@@ -29,7 +29,6 @@ import {
   createSearchRouter,
   createScenariosRouter,
   createContentOpsRouter,
-  createUserRoleRouter,
 } from "../routes/index.js";
 import { createAuthRouter } from "../routes/auth.js";
 import { createSignupRouters } from "../routes/signup.js";
@@ -391,12 +390,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           ? (userId: string) => webChannel.disconnectUser(userId)
           : undefined,
         skillConfigStore: runtime.skillConfigStore,
-      }),
-    );
-    app.use(
-      "/api/user",
-      createUserRoleRouter({
-        userStore: runtime.userStore,
       }),
     );
     // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES

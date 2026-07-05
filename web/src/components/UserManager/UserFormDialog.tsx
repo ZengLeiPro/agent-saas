@@ -52,6 +52,7 @@ interface UserFormDialogProps {
   /** null = 创建模式；有值 = 编辑模式 */
   editingUser: UserInfo | null;
   onSubmit: (data: UserFormData) => Promise<void>;
+  onResetPassword?: (user: UserInfo) => void;
   defaultTenantId?: string;
   lockTenant?: boolean;
 }
@@ -61,6 +62,7 @@ export function UserFormDialog({
   onOpenChange,
   editingUser,
   onSubmit,
+  onResetPassword,
   defaultTenantId,
   lockTenant = false,
 }: UserFormDialogProps) {
@@ -147,7 +149,7 @@ export function UserFormDialog({
 
       await onSubmit({
         username: username.trim(),
-        password,
+        password: isEdit ? "" : password,
         role,
         realName: realName.trim() || undefined,
         position: position.trim() || undefined,
@@ -179,6 +181,7 @@ export function UserFormDialog({
               onChange={(e) => setUsername(e.target.value)}
               disabled={isEdit || loading}
               placeholder="请输入用户名"
+              autoComplete="off"
             />
           </div>
           <div className="space-y-2">
@@ -201,6 +204,7 @@ export function UserFormDialog({
               placeholder="可选，如「销售」——AI 会按岗位推荐场景"
               list="form-position-suggestions"
               maxLength={50}
+              autoComplete="off"
             />
             <datalist id="form-position-suggestions">
               {POSITION_SUGGESTIONS.map((p) => (
@@ -208,19 +212,21 @@ export function UserFormDialog({
               ))}
             </datalist>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="form-password">
-              密码{isEdit ? "（留空不修改）" : ""}
-            </Label>
-            <Input
-              id="form-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={loading}
-              placeholder={isEdit ? "留空不修改" : "请输入密码（至少 6 位）"}
-            />
-          </div>
+          {!isEdit && (
+            <div className="space-y-2">
+              <Label htmlFor="form-new-password">密码</Label>
+              <Input
+                id="form-new-password"
+                name="new-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
+                placeholder="请输入密码（至少 6 位）"
+                autoComplete="new-password"
+              />
+            </div>
+          )}
 
           {isPlatformAdmin && (
             <div className="space-y-2">
@@ -316,26 +322,39 @@ export function UserFormDialog({
               {error}
             </div>
           )}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={loading}
-            >
-              取消
-            </Button>
-            <Button onClick={handleSubmit} disabled={loading}>
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  提交中...
-                </>
-              ) : isEdit ? (
-                "保存"
-              ) : (
-                "创建"
+          <div className="flex items-center justify-between gap-2 pt-2">
+            <div>
+              {isEdit && editingUser && onResetPassword && (
+                <Button
+                  variant="outline"
+                  onClick={() => onResetPassword(editingUser)}
+                  disabled={loading}
+                >
+                  重置密码
+                </Button>
               )}
-            </Button>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={loading}
+              >
+                取消
+              </Button>
+              <Button onClick={handleSubmit} disabled={loading}>
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    提交中...
+                  </>
+                ) : isEdit ? (
+                  "保存"
+                ) : (
+                  "创建"
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>

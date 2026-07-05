@@ -18,6 +18,7 @@ import { UserTable } from "./UserTable";
 import { UserFormDialog } from "./UserFormDialog";
 import { DeleteUserDialog } from "./DeleteUserDialog";
 import { LoginLogDialog } from "./LoginLogDialog";
+import { ResetUserPasswordDialog } from "./ResetUserPasswordDialog";
 import type { UserInfo } from "./types";
 import type { UserFormData } from "./UserFormDialog";
 
@@ -39,6 +40,8 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
   } = useUsers();
   const [showForm, setShowForm] = useState(false);
   const [editingUser, setEditingUser] = useState<UserInfo | null>(null);
+  const [resettingPasswordUser, setResettingPasswordUser] =
+    useState<UserInfo | null>(null);
   const [deletingUser, setDeletingUser] = useState<UserInfo | null>(null);
   const [disableTarget, setDisableTarget] = useState<UserInfo | null>(null);
   const [disableError, setDisableError] = useState<string | null>(null);
@@ -68,7 +71,6 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
   const handleSubmit = async (data: UserFormData) => {
     if (editingUser) {
       await updateUser(editingUser.id, {
-        password: data.password || undefined,
         role: data.role,
         realName: data.realName,
         position: data.position,
@@ -80,6 +82,15 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
     } else {
       await createUser({ ...data, tenantId: data.tenantId || tenantIdScope });
     }
+  };
+
+  const openResetPassword = (user: UserInfo) => {
+    setShowForm(false);
+    setResettingPasswordUser(user);
+  };
+
+  const handleResetPassword = async (id: string, password: string) => {
+    await updateUser(id, { password });
   };
 
   return (
@@ -170,8 +181,18 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
         onOpenChange={setShowForm}
         editingUser={editingUser}
         onSubmit={handleSubmit}
+        onResetPassword={openResetPassword}
         defaultTenantId={tenantIdScope}
         lockTenant={Boolean(tenantIdScope)}
+      />
+
+      <ResetUserPasswordDialog
+        open={resettingPasswordUser !== null}
+        onOpenChange={(open) => {
+          if (!open) setResettingPasswordUser(null);
+        }}
+        user={resettingPasswordUser}
+        onConfirm={handleResetPassword}
       />
 
       <DeleteUserDialog

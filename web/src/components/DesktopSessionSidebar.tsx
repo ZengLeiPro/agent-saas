@@ -169,16 +169,16 @@ function CompactSessionLeadingIcon({ selected = false }: { selected?: boolean })
   return <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground/70" aria-hidden="true" />;
 }
 
-/** 紧凑模式下的分组前缀小图标：自定义分组=品牌蓝文件夹；cron 分组=teal 时钟。 */
+/** 紧凑模式下的分组前缀小图标：保留分组语义，但用浅品牌色降低视觉重量。 */
 function CompactGroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
   if (kind === "cron") {
-    return <Clock className="h-4 w-4 shrink-0 text-teal-500" aria-hidden="true" />;
+    return <Clock className="h-4 w-4 shrink-0 text-teal-600/70 dark:text-teal-300/70" aria-hidden="true" />;
   }
 
   return (
     <Folder
-      className="h-4 w-4 shrink-0 fill-current text-brand-600 dark:text-brand-400"
-      strokeWidth={2.2}
+      className="h-4 w-4 shrink-0 fill-brand-100 text-brand-500/80 dark:fill-brand-900/35 dark:text-brand-300/80"
+      strokeWidth={2}
       aria-hidden="true"
     />
   );
@@ -190,8 +190,10 @@ function GroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
   return (
     <span
       className={cn(
-        "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white",
-        kind === "cron" ? "bg-teal-500" : "bg-brand-500",
+        "flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-1",
+        kind === "cron"
+          ? "bg-teal-50 text-teal-600 ring-teal-100 dark:bg-teal-700/20 dark:text-teal-300 dark:ring-teal-600/30"
+          : "bg-brand-50 text-brand-600 ring-brand-100 dark:bg-brand-900/35 dark:text-brand-300 dark:ring-brand-800",
       )}
       aria-hidden="true"
     >
@@ -657,7 +659,7 @@ function SidebarUserMenuFooter({
           onChange={onAvatarUpload}
         />
         {showUserMenu && authEnabled && authUser && (
-          <div className="absolute bottom-full left-0 z-50 mb-2 max-h-[70vh] w-64 overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl">
+          <div className="absolute bottom-full left-0 z-50 mb-2 max-h-[70vh] w-52 overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl">
             <div className="rounded-lg bg-muted/50 px-3 py-2">
               <div className="truncate text-sm font-semibold">{authUser.realName || authUser.username}</div>
               <div className="mt-0.5 truncate text-xs text-muted-foreground">@{authUser.username}</div>

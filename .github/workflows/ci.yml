@@ -50,6 +50,9 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      - name: Scenarios sanitize check
+        run: pnpm sanitize-check
+
       # web build 内含 tsc，同时完成 typecheck + vite build
       - name: Build frontend
         run: pnpm -F web build

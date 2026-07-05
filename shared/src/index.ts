@@ -60,9 +60,32 @@ export type {
   SessionListEntry,
   ScenarioMode,
   ScenarioRequirement,
+  IndustryType,
+  FirstAhaMode,
+  DataDependencyLevel,
+  PushChannel,
+  PushTarget,
+  HumanAuditPolicy,
+  SkillLevel,
+  DataSourceDifficulty,
+  RetentionDay,
+  Day1PathStage,
   ScenarioRole,
+  RoleWelcomeMessage,
+  RoleP0DataSource,
+  DemoIndustryTag,
+  RetentionPath7DayItem,
   ScenarioSlot,
+  Day1PathStep,
+  SalesPitch,
+  SalesPitchBossQnA,
+  SkillCandidate,
+  ActivationFallback,
+  SignalAdaptation,
+  PushSlot,
   ScenarioItem,
+  ScenarioItemInternal,
+  ScenarioLibraryFile,
   ScenarioLibraryResponse,
   ScheduleAt,
   ScheduleEvery,
@@ -132,6 +155,51 @@ export type {
 export { FILE_SORT_LABELS, buildScenarioPrompt } from "./types/index";
 export { saveUserPreferences } from "./lib/preferencesApi";
 export { GLOBAL_TENANT_ID } from "./types/index";
+export {
+  scenarioLibraryFileSchema,
+  scenarioItemSchema,
+  scenarioItemInternalSchema,
+  scenarioRoleSchema,
+  roleKitSchema,
+} from "./schemas/roleKit";
+export {
+  cronWizardSubmitSchema,
+  cronWizardResponseSchema,
+  cronWizardStep1Schema,
+  cronWizardStep2Schema,
+  cronWizardStep3Schema,
+} from "./schemas/cronWizard";
+export {
+  bannedWordsHardBlock,
+  hasRedlineHardBlock,
+  redlineReplacements,
+  sanitizeCustomerFacingText,
+  sanitizeRole,
+  sanitizeScenario,
+} from "./security/sanitizeCustomerFacingText";
+export type {
+  ScenarioLibraryFileParsed,
+  ScenarioItemParsed,
+  ScenarioItemInternalParsed,
+  ScenarioRoleParsed,
+  SalesPitchParsed,
+  RoleKitParsed,
+} from "./schemas/roleKit";
+export type {
+  CronWizardStep1,
+  CronWizardStep2,
+  CronWizardStep3,
+  CronWizardSubmit,
+  CronWizardResponse,
+} from "./schemas/cronWizard";
+export type {
+  BannedWord,
+  RedlineReplacement,
+  SanitizeBlock,
+  SanitizeHit,
+  SanitizeResult,
+  ScenarioSanitizeReport,
+} from "./security/sanitizeCustomerFacingText";
 
 // Lib - constants
 export {

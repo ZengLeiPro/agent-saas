@@ -505,6 +505,50 @@ export type PlatformEvent =
     toolName?: string;
     error: string;
     classifiedAs: 'auth' | 'timeout' | 'network' | 'unhealthy' | 'unknown';
+  }
+  /**
+   * 子 agent 工具（Agent tool，2026-07-06）生命周期事件。写入**父 run 的 session**
+   * （子 run 的执行细节在独立 childSessionId 里，绝不混入父 session），供：
+   *   - durable replay / 跨进程 NOTIFY 重建前端 SubagentBlock（subagent_start/end WS 事件）
+   *   - Run Trace 按 childSessionId/childRunId drill-down 挂树
+   * contextProjection / legacyTranscriptProjection 对这两类事件走 default 忽略分支，
+   * 不进模型 messages 投影（子 agent 的贡献只经 Agent 工具的 tool_result 回父上下文）。
+   */
+  | {
+    id: string;
+    timestamp: string;
+    type: 'subagent_started';
+    runId: string;
+    sessionId: string;
+    /** 父 run 中触发本次委派的 Agent 工具调用 id（前端用它锚定 SubagentBlock）。 */
+    toolCallId: string;
+    agentType: string;
+    /** 模型提供的 3-5 词任务概述，UI 显示友好文案。 */
+    description: string;
+    childSessionId: string;
+    childRunId: string;
+    model: string;
+  }
+  | {
+    id: string;
+    timestamp: string;
+    type: 'subagent_finished';
+    runId: string;
+    sessionId: string;
+    toolCallId: string;
+    agentType: string;
+    description: string;
+    childSessionId: string;
+    childRunId: string;
+    model?: string;
+    /**
+     * 终态来自 runtime outcome 枚举（D5 红线）：绝不从模型文本推断；
+     * API 错误 / 超时 / 取消不会伪装成 completed。
+     */
+    status: 'completed' | 'failed' | 'cancelled' | 'timeout';
+    totalTokens: number;
+    toolUseCount: number;
+    durationMs: number;
   };
 
 export type PlatformEventInput = PlatformEvent extends infer Event

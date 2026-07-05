@@ -51,8 +51,8 @@ export interface RecordResultParams {
   username: string;
   /** 业务组织 slug（必填；PR 10 跨组织隔离）。username 全局唯一，但 token usage 表显式按 tenantId 切片，便于 admin 跨组织分析。 */
   tenantId: string;
-  /** 通道/来源：主对话、cron、钉钉，以及基础设施类 LLM 调用 */
-  channel: 'web' | 'cron' | 'dingtalk' | 'title' | 'embedding';
+  /** 通道/来源：主对话、cron、钉钉、子 agent（独立归因，D7），以及基础设施类 LLM 调用 */
+  channel: 'web' | 'cron' | 'dingtalk' | 'subagent' | 'title' | 'embedding';
   /** SDK 的 modelUsage 对象（key 是 model id 原样字符串，如 'claude-opus-4-7[1m]'） */
   modelUsage: Record<string, SdkModelUsage>;
   /** 事件发生时刻（ms epoch） */

@@ -36,6 +36,12 @@ export interface SessionMeta {
   totalCostUsd?: number;
   /** cron 触发时的任务名称，用于前端显示 */
   cronJobName?: string;
+  /**
+   * 会话种类（2026-07-06 子 agent 工具）。'subagent' = 父 run 经 Agent 工具派生的
+   * hidden session：会话列表 API 过滤不展示，但 transcript / runtime events 完整
+   * 保留，平台 admin Run Trace 可按 parentRunId 关联查看。
+   */
+  kind?: 'subagent';
 }
 
 export function getMetaPath(transcriptPath: string): string {

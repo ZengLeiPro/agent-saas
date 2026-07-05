@@ -17,6 +17,11 @@ export interface RuntimeSessionRecord {
   executionTarget?: ExecutionTargetKind;
   workspaceId?: string;
   status?: RuntimeSessionStatus;
+  /**
+   * 会话种类（2026-07-06 子 agent 工具）。'subagent' = Agent 工具派生的 hidden
+   * session：不进会话列表，Run Trace 可见。与 SessionMeta.kind 一一对应。
+   */
+  kind?: 'subagent';
   createdAt: string;
   updatedAt: string;
 }
@@ -56,6 +61,7 @@ export class FileSessionCatalog implements SessionCatalog {
       updatedAt: record.updatedAt,
       ...(record.modelRef ? { model: record.modelRef } : {}),
       ...(record.executionTarget ? { executionTarget: record.executionTarget } : {}),
+      ...(record.kind ? { kind: record.kind } : {}),
     } as SessionMeta & { transcriptPath?: string };
     await writeSessionMeta(record.transcriptPath, meta);
   }
@@ -96,6 +102,7 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(isExecutionTargetKind(meta.executionTarget) ? { executionTarget: meta.executionTarget } : {}),
       ...(meta.workspaceId ? { workspaceId: meta.workspaceId } : {}),
       ...(isRuntimeSessionStatus(meta.runtimeStatus) ? { status: meta.runtimeStatus } : {}),
+      ...(meta.kind === 'subagent' ? { kind: 'subagent' as const } : {}),
       createdAt: meta.createdAt,
       updatedAt: meta.updatedAt ?? meta.createdAt ?? now,
     };
@@ -114,6 +121,7 @@ export function createRuntimeSessionRecord(args: {
   executionTarget?: ExecutionTargetKind;
   workspaceId?: string;
   status?: RuntimeSessionStatus;
+  kind?: 'subagent';
 }): RuntimeSessionRecord {
   const now = new Date().toISOString();
   return {
@@ -129,6 +137,7 @@ export function createRuntimeSessionRecord(args: {
     ...(args.executionTarget ? { executionTarget: args.executionTarget } : {}),
     workspaceId: args.workspaceId ?? args.sessionId,
     status: args.status ?? 'running',
+    ...(args.kind ? { kind: args.kind } : {}),
     createdAt: now,
     updatedAt: now,
   };

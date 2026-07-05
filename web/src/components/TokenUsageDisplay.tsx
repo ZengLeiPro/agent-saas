@@ -10,11 +10,13 @@ interface TokenUsageDisplayProps {
   contextUsage?: ContextUsageData | null;
 }
 
-function DetailRow({ label, value }: { label: string; value: number }) {
+function DetailRow({ label, value }: { label: string; value: number | string }) {
+  const displayValue = typeof value === "number" ? value.toLocaleString() : value;
+
   return (
     <div className="flex items-center justify-between gap-4">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono tabular-nums">{value.toLocaleString()}</span>
+      <span className="font-mono tabular-nums">{displayValue}</span>
     </div>
   );
 }
@@ -94,25 +96,9 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
   const tokenCacheRatio = typeof tokenUsage?.cacheHitRatio === 'number'
     ? tokenUsage.cacheHitRatio
     : undefined;
-  const cacheMetric = hasRealtime && realtimeCacheRatio !== undefined
-    ? {
-      label: typeof realtimeLastCacheRatio === 'number' ? '最近缓存命中' : '累计缓存命中',
-      ratio: realtimeCacheRatio,
-      readTokens: typeof realtimeLastCacheRatio === 'number'
-        ? contextUsage?.lastRequestCacheReadTokens
-        : contextUsage?.cacheReadTokens,
-      denominatorTokens: typeof realtimeLastCacheRatio === 'number'
-        ? contextUsage?.lastRequestCacheHitDenominatorTokens
-        : contextUsage?.cacheHitDenominatorTokens,
-    }
-    : tokenCacheRatio !== undefined
-      ? {
-        label: '累计缓存命中',
-        ratio: tokenCacheRatio,
-        readTokens: tokenUsage?.totalCacheReadTokens,
-        denominatorTokens: tokenUsage?.cacheHitDenominatorTokens,
-      }
-      : null;
+  const cacheHitRatio = hasRealtime && realtimeCacheRatio !== undefined
+    ? realtimeCacheRatio
+    : tokenCacheRatio;
 
   return (
     <div ref={containerRef} className="relative" onClick={(e) => e.stopPropagation()}>
@@ -136,32 +122,6 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
 
       {open && isPlatformAdmin && (
         <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border bg-popover p-3 text-xs shadow-lg">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="font-medium">Token 统计</div>
-            <div className="text-[10px] text-muted-foreground">
-              {hasRealtime ? '上下文 · SDK'
-                : hasExactFallback ? '上下文'
-                  : '累计'}
-            </div>
-          </div>
-
-          {cacheMetric && (
-            <div className="mb-2 rounded-md border bg-muted/35 p-2">
-              <div className="flex items-center justify-between gap-3 text-[11px]">
-                <span className="text-muted-foreground">{cacheMetric.label}</span>
-                <span className="font-mono tabular-nums">{formatPercent(cacheMetric.ratio)}</span>
-              </div>
-              {cacheMetric.readTokens != null && cacheMetric.denominatorTokens != null && cacheMetric.denominatorTokens > 0 && (
-                <div className="mt-1 flex items-center justify-between gap-3 text-[10px] text-muted-foreground">
-                  <span>缓存读取 / 分母</span>
-                  <span className="font-mono tabular-nums">
-                    {formatTokenCount(cacheMetric.readTokens)} / {formatTokenCount(cacheMetric.denominatorTokens)}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
           {hasRealtime && (
             <>
               {/* 百分比进度条 */}
@@ -258,16 +218,8 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
 
           {!hasRealtime && hasExactFallback && (
             <>
-              <div className="mb-2 rounded-md border bg-muted/35 p-2">
-                <div className="flex items-center justify-between gap-3 text-[11px]">
-                  <span className="text-muted-foreground">当前上下文</span>
-                  <span className="font-mono tabular-nums">{formatTokenCount(tokenUsage!.contextTokens)}</span>
-                </div>
-                {accounting?.reason && (
-                  <div className="mt-1 text-[10px] leading-snug text-muted-foreground">
-                    {accounting.reason}
-                  </div>
-                )}
+              <div className="mb-2 rounded-md border bg-muted/35 p-2 text-[10px] leading-snug text-muted-foreground">
+                {accounting?.reason ?? '该模型可确认当前上下文口径。'}
               </div>
               <div className="my-2 border-t" />
             </>
@@ -276,21 +228,9 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
           {!hasExactContext && tokenUsage && (
             <>
               <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
-                <div className="flex items-center justify-between gap-3 text-[11px] font-medium">
-                  <span>当前上下文</span>
-                  <span>{accounting?.label ?? '不可确认'}</span>
+                <div className="text-[10px] leading-snug opacity-85">
+                  {accounting?.reason ?? '当前上下文口径不可确认，以下展示累计用量。'}
                 </div>
-                {accounting?.reason && (
-                  <div className="mt-1 text-[10px] leading-snug opacity-85">
-                    {accounting.reason}
-                  </div>
-                )}
-                {accounting?.lastRequestTokens != null && accounting.lastRequestTokens > 0 && (
-                  <div className="mt-1 flex items-center justify-between gap-3 text-[10px] opacity-85">
-                    <span>最后请求</span>
-                    <span className="font-mono tabular-nums">{formatTokenCount(accounting.lastRequestTokens)}</span>
-                  </div>
-                )}
               </div>
               <div className="my-2 border-t" />
             </>
@@ -301,6 +241,7 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
             {tokenUsage && (
               <>
                 <div className="mb-1 font-medium">累计用量</div>
+                <DetailRow label="上下文" value={formatTokenCount(displayTokens)} />
                 <DetailRow label="累计输入" value={tokenUsage.totalInputTokens} />
                 <DetailRow label="累计输出" value={tokenUsage.totalOutputTokens} />
                 <DetailRow label="缓存读取" value={tokenUsage.totalCacheReadTokens} />
@@ -310,6 +251,9 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
                     <div className="my-1.5 border-t" />
                     <DetailRow label="子 Agent" value={tokenUsage.subagentTotalTokens} />
                   </>
+                )}
+                {cacheHitRatio !== undefined && (
+                  <DetailRow label="缓存命中率" value={formatPercent(cacheHitRatio)} />
                 )}
                 {tokenUsage.totalCostUsd != null && tokenUsage.totalCostUsd > 0 && (
                   <>

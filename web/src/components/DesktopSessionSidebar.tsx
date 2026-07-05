@@ -653,7 +653,7 @@ function SidebarUserMenuFooter({
           onChange={onAvatarUpload}
         />
         {showUserMenu && authEnabled && authUser && (
-          <div className="absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[70vh] overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl">
+          <div className="absolute bottom-full left-0 z-50 mb-2 max-h-[70vh] w-64 overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl">
             <div className="rounded-lg bg-muted/50 px-3 py-2">
               <div className="truncate text-sm font-semibold">{authUser.realName || authUser.username}</div>
               <div className="mt-0.5 truncate text-xs text-muted-foreground">@{authUser.username}</div>

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Coins } from "lucide-react";
 import { authFetch } from "@/lib/authFetch";
 
 interface BillingSummary {
@@ -27,6 +26,21 @@ function formatCredits(value: number): string {
   if (Math.abs(value) >= 10_000) return `${(value / 10_000).toFixed(1)}万`;
   if (Math.abs(value) >= 100) return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function billingModeLabel(mode: string): string {
+  switch (mode) {
+    case "prepaid":
+      return "预付费";
+    case "postpaid":
+      return "后付费";
+    case "trial":
+      return "试用";
+    case "internal":
+      return "内部";
+    default:
+      return mode || "未配置";
+  }
 }
 
 export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
@@ -80,19 +94,14 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
 
   if (!summary || !summary.billingEnabled || summary.billingMode === "internal") return null;
 
-  const color = summary.lowBalance
-    ? "text-amber-600 dark:text-amber-400"
-    : "text-muted-foreground";
-
   return (
     <div ref={containerRef} className="relative" onClick={(event) => event.stopPropagation()}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium tabular-nums transition-colors hover:bg-accent hover:text-accent-foreground ${color}`}
+        className="inline-flex h-7 items-center rounded-md border border-brand-200 bg-brand-50 px-2.5 text-xs font-semibold text-brand-700 shadow-sm tabular-nums transition-colors hover:border-brand-300 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-900/35 dark:text-brand-100 dark:hover:bg-brand-900/55"
         title="组织积分余额"
       >
-        <Coins className="h-3.5 w-3.5" />
         {formatCredits(summary.balanceCredits)}
       </button>
 
@@ -100,7 +109,7 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
         <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-lg border bg-popover p-3 text-xs shadow-lg">
           <div className="mb-2 flex items-center justify-between">
             <div className="font-medium">积分余额</div>
-            <div className="text-[10px] text-muted-foreground">{summary.billingMode}</div>
+            <div className="text-[10px] text-muted-foreground">{billingModeLabel(summary.billingMode)}</div>
           </div>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-3">

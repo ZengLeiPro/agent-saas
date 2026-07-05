@@ -15,6 +15,11 @@ interface SandboxStatus {
   raw?: Record<string, unknown>;
 }
 
+interface EnsureTiming {
+  step<T>(stepName: string, fn: () => Promise<T>): Promise<T>;
+  finish(path: string, status: 'ok' | 'error'): void;
+}
+
 export interface ManagedSandbox {
   name: string;
   workspaceId?: string;
@@ -120,59 +125,74 @@ export class SandboxManager {
     options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
   ): Promise<SandboxRef> {
     const ref = this.ref(input);
-    await this.waitForPrewarm(ref.name);
-    await this.ensureHostWorkspace(ref);
-    let existing = await this.getStatus(ref.name);
-    if (existing && this.existingMountSubPath(existing, ref) !== ref.mountSubPath) {
-      this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'mountSubPath changed', options.activeKey);
-      this.logger.warn(
-        `sandbox_mount_subpath_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingMountSubPath(existing, ref)} new=${ref.mountSubPath}`,
-      );
-      await this.delete(ref, { activeKey: options.activeKey });
-      existing = null;
-    }
-    if (existing && this.existingImage(existing) !== this.config.sandboxImage) {
-      this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'image changed', options.activeKey);
-      this.logger.warn(
-        `sandbox_image_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingImage(existing) ?? 'unknown'} new=${this.config.sandboxImage}`,
-      );
-      if (existing.phase === 'Paused') {
-        if (!options.skipCapacityManagement) await this.ensureCapacity(ref.name, options.busySandboxNames);
-        await this.networkPolicyManager.reconcile(ref);
-        await this.applySandbox(ref);
-        await this.waitForPhase(ref.name, 'Running');
-        await this.snatManager.ensureForSandbox(ref);
-        await this.touch(ref.name);
+    const timing = this.createEnsureTiming(ref.name);
+    let path = 'unknown';
+    let status: 'ok' | 'error' = 'error';
+    try {
+      await timing.step('waitPrewarm', () => this.waitForPrewarm(ref.name));
+      await timing.step('ensureHostWorkspace', () => this.ensureHostWorkspace(ref));
+      let existing = await timing.step('getStatus', () => this.getStatus(ref.name));
+      if (existing && this.existingMountSubPath(existing, ref) !== ref.mountSubPath) {
+        path = 'recreate_mount_subpath_changed';
+        this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'mountSubPath changed', options.activeKey);
+        this.logger.warn(
+          `sandbox_mount_subpath_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingMountSubPath(existing, ref)} new=${ref.mountSubPath}`,
+        );
+        await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey }));
+        existing = null;
+      }
+      if (existing && this.existingImage(existing) !== this.config.sandboxImage) {
+        path = existing.phase === 'Paused' ? 'refresh_paused_image' : 'recreate_image_changed';
+        this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'image changed', options.activeKey);
+        this.logger.warn(
+          `sandbox_image_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingImage(existing) ?? 'unknown'} new=${this.config.sandboxImage}`,
+        );
+        if (existing.phase === 'Paused') {
+          if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
+          await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
+          await timing.step('applySandbox', () => this.applySandbox(ref));
+          await this.waitForRunningAndEnsureSnat(ref, timing);
+          await timing.step('touch', () => this.touch(ref.name));
+          status = 'ok';
+          return ref;
+        }
+        await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey }));
+        existing = null;
+      }
+      if (!existing) {
+        path = path === 'unknown' ? 'create' : path;
+        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
+        await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
+        await timing.step('applySandbox', () => this.applySandbox(ref));
+        await this.waitForRunningAndEnsureSnat(ref, timing);
+        await timing.step('touch', () => this.touch(ref.name));
+        status = 'ok';
         return ref;
       }
-      await this.delete(ref, { activeKey: options.activeKey });
-      existing = null;
-    }
-    if (!existing) {
-      if (!options.skipCapacityManagement) await this.ensureCapacity(ref.name, options.busySandboxNames);
-      await this.networkPolicyManager.reconcile(ref);
-      await this.applySandbox(ref);
-      await this.waitForPhase(ref.name, 'Running');
-      await this.snatManager.ensureForSandbox(ref);
-      await this.touch(ref.name);
+      await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
+      if (existing.phase === 'Paused') {
+        path = 'resume_paused';
+        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
+        await timing.step('patchUnpause', () => this.patchPaused(ref.name, false));
+        await this.waitForRunningAndEnsureSnat(ref, timing);
+        await timing.step('touch', () => this.touch(ref.name));
+        status = 'ok';
+        return ref;
+      }
+      if (existing.phase !== 'Running') {
+        path = 'wait_non_running';
+        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
+        await this.waitForRunningAndEnsureSnat(ref, timing);
+      } else {
+        path = 'already_running';
+        await timing.step('ensureSnat', () => this.snatManager.ensureForSandbox(ref));
+      }
+      await timing.step('touch', () => this.touch(ref.name));
+      status = 'ok';
       return ref;
+    } finally {
+      timing.finish(path, status);
     }
-    await this.networkPolicyManager.reconcile(ref);
-    if (existing.phase === 'Paused') {
-      if (!options.skipCapacityManagement) await this.ensureCapacity(ref.name, options.busySandboxNames);
-      await this.patchPaused(ref.name, false);
-      await this.waitForPhase(ref.name, 'Running');
-      await this.snatManager.ensureForSandbox(ref);
-      await this.touch(ref.name);
-      return ref;
-    }
-    if (existing.phase !== 'Running') {
-      if (!options.skipCapacityManagement) await this.ensureCapacity(ref.name, options.busySandboxNames);
-      await this.waitForPhase(ref.name, 'Running');
-    }
-    await this.snatManager.ensureForSandbox(ref);
-    await this.touch(ref.name);
-    return ref;
   }
 
   async delete(ref: SandboxRef, options: { activeKey?: string } = {}): Promise<void> {
@@ -245,8 +265,13 @@ export class SandboxManager {
     if (!this.snatManager.isEnabled()) {
       return { enabled: false, checked: 0, deleted: [], orphanCidrs: [], unexpected: [] };
     }
+    const retainedEntryNames = new Set(
+      (await this.listManagedSandboxes())
+        .filter((sandbox) => ['Running', 'Paused'].includes(sandbox.phase ?? ''))
+        .map((sandbox) => this.snatManager.entryNameForSandboxName(sandbox.name)),
+    );
     const activeCidrs = await this.snatManager.activeManagedPodCidrs();
-    return await this.snatManager.cleanupOrphans(activeCidrs);
+    return await this.snatManager.cleanupOrphans(activeCidrs, { retainedEntryNames });
   }
 
   async listManagedSandboxes(): Promise<ManagedSandbox[]> {
@@ -502,7 +527,6 @@ export class SandboxManager {
       JSON.stringify({ spec: { paused } }),
     ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
     if (result.exitCode !== 0) throw new Error(`patch sandbox paused=${paused} 失败: ${result.stderr || result.stdout}`);
-    if (paused) await this.snatManager.deleteForSandboxName(name);
   }
 
   async touch(name: string, now: Date = new Date()): Promise<void> {
@@ -707,6 +731,36 @@ export class SandboxManager {
   private assertIdle(name: string, reason: string, activeKey?: string): void {
     if (!this.activeRegistry?.isBusy(name, { exceptKey: activeKey })) return;
     throw new Error(`ACS Sandbox ${name} is busy; refuse to ${reason} while active`);
+  }
+
+  private async waitForRunningAndEnsureSnat(ref: SandboxRef, timing: EnsureTiming): Promise<void> {
+    await Promise.all([
+      timing.step('waitRunning', () => this.waitForPhase(ref.name, 'Running')),
+      timing.step('ensureSnat', () => this.snatManager.ensureForSandboxWhenPodReady(ref, {
+        timeoutMs: this.config.sandboxWaitTimeoutMs,
+      })),
+    ]);
+  }
+
+  private createEnsureTiming(name: string): EnsureTiming {
+    const startedAt = Date.now();
+    const steps: string[] = [];
+    return {
+      step: async <T>(stepName: string, fn: () => Promise<T>): Promise<T> => {
+        const stepStartedAt = Date.now();
+        try {
+          const result = await fn();
+          steps.push(`${stepName}:${Date.now() - stepStartedAt}`);
+          return result;
+        } catch (err) {
+          steps.push(`${stepName}:error:${Date.now() - stepStartedAt}`);
+          throw err;
+        }
+      },
+      finish: (path: string, status: 'ok' | 'error') => {
+        this.logger.info(`sandbox_ensure_timing sandbox=${name} path=${path} status=${status} totalMs=${Date.now() - startedAt} steps=${steps.join(',')}`);
+      },
+    };
   }
 
   private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {

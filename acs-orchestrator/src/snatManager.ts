@@ -76,6 +76,26 @@ export class SnatManager {
     return await this.ensureForRef(ref);
   }
 
+  async ensureForSandboxWhenPodReady(
+    ref: SandboxRef,
+    options: { timeoutMs: number; pollIntervalMs?: number },
+  ): Promise<SnatEntry | null> {
+    if (!this.shouldAttachToSandbox()) return null;
+    const deadline = Date.now() + options.timeoutMs;
+    const pollIntervalMs = options.pollIntervalMs ?? 1_000;
+    let lastError = '';
+    while (Date.now() < deadline) {
+      try {
+        const podIp = await this.findPodIp(ref);
+        if (podIp) return await this.ensureForPodIp(ref, podIp);
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+      }
+      await sleep(pollIntervalMs);
+    }
+    throw new Error(`未找到 Sandbox Pod IP: ${ref.name}${lastError ? ` lastError=${lastError}` : ''}`);
+  }
+
   async ensureForProbe(ref: SandboxRef): Promise<SnatEntry | null> {
     if (!this.shouldAttachToProbe()) return null;
     return await this.ensureForRef(ref);
@@ -94,14 +114,21 @@ export class SnatManager {
     return deleted;
   }
 
-  async cleanupOrphans(activeSourceCidrs: Set<string>): Promise<SnatCleanupReport> {
+  async cleanupOrphans(
+    activeSourceCidrs: Set<string>,
+    options: { retainedEntryNames?: Set<string> } = {},
+  ): Promise<SnatCleanupReport> {
     if (!this.isEnabled() || !this.hasRequiredConfig()) {
       return { enabled: false, checked: 0, deleted: [], orphanCidrs: [], unexpected: [] };
     }
     const entries = await this.listEntries();
     const managed = entries.filter((entry) => entry.managed);
     const unexpected = entries.filter((entry) => !entry.managed);
-    const orphans = managed.filter((entry) => !activeSourceCidrs.has(entry.sourceCidr));
+    const retainedEntryNames = options.retainedEntryNames ?? new Set<string>();
+    const orphans = managed.filter((entry) => (
+      !activeSourceCidrs.has(entry.sourceCidr)
+      && !retainedEntryNames.has(entry.name)
+    ));
     const deleted: string[] = [];
     for (const entry of orphans) {
       await this.deleteEntry(entry.id);
@@ -159,19 +186,41 @@ export class SnatManager {
     return new Set(pods.map((pod) => `${pod.podIp}/32`));
   }
 
+  entryNameForSandboxName(sandboxName: string): string {
+    const prefix = safeSnatNamePrefix(this.config.snat.entryNamePrefix);
+    return `${prefix}-${sandboxName}`.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 128);
+  }
+
   private async ensureForRef(ref: SandboxRef): Promise<SnatEntry> {
     this.assertRequiredConfig();
     const podIp = await this.findPodIp(ref);
     if (!podIp) throw new Error(`未找到 Sandbox Pod IP: ${ref.name}`);
+    return await this.ensureForPodIp(ref, podIp);
+  }
+
+  private async ensureForPodIp(ref: SandboxRef, podIp: string): Promise<SnatEntry> {
     const sourceCidr = `${podIp}/32`;
+    const name = this.entryNameForSandboxName(ref.name);
     const existing = (await this.listEntries(sourceCidr))
       .find((entry) => entry.sourceCidr === sourceCidr && entry.snatIp.split(',').includes(this.config.snat.snatIp!));
     if (existing) return existing;
-    const managedCount = (await this.listEntries()).filter((entry) => entry.managed).length;
+    const allEntries = await this.listEntries();
+    const staleNamedEntries = allEntries.filter((entry) => (
+      entry.managed
+      && entry.name === name
+      && entry.sourceCidr !== sourceCidr
+    ));
+    for (const entry of staleNamedEntries) {
+      await this.deleteEntry(entry.id);
+    }
+    if (staleNamedEntries.length) {
+      this.logger.warn(`snat_stale_deleted sandbox=${ref.name} entries=${staleNamedEntries.length}`);
+    }
+    const staleIds = new Set(staleNamedEntries.map((entry) => entry.id));
+    const managedCount = allEntries.filter((entry) => entry.managed && !staleIds.has(entry.id)).length;
     if (managedCount >= this.config.snat.maxManagedEntries) {
       throw new Error(`ACS SNAT managed entry quota exceeded: ${managedCount}/${this.config.snat.maxManagedEntries}`);
     }
-    const name = this.entryNameForSandboxName(ref.name);
     const result = await this.runAliyun([
       'vpc',
       'CreateSnatEntry',
@@ -302,11 +351,6 @@ export class SnatManager {
     if (!this.hasRequiredConfig()) {
       throw new Error('ACS SNAT 未完整配置：需要 regionId/snatTableId/snatIp');
     }
-  }
-
-  private entryNameForSandboxName(sandboxName: string): string {
-    const prefix = safeSnatNamePrefix(this.config.snat.entryNamePrefix);
-    return `${prefix}-${sandboxName}`.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 128);
   }
 
   private emptyStatus(configured: boolean): SnatStatus {

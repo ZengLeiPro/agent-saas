@@ -50,6 +50,29 @@ describe('SnatManager', () => {
     expect(state.entries.map((entry) => entry.SnatEntryId).sort()).toEqual(['snat-managed-active', 'snat-manual']);
   });
 
+  it('retains SNAT entries for existing paused sandboxes during orphan cleanup', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'acs-snat-retain-'));
+    const statePath = join(root, 'state.json');
+    const logPath = join(root, 'calls.log');
+    writeFileSync(statePath, JSON.stringify({
+      entries: [
+        { SnatEntryId: 'snat-managed-active', SnatEntryName: 'agent-saas-acs-as-active', SourceCIDR: '172.16.177.10/32', SnatIp: '120.77.218.94', Status: 'Available' },
+        { SnatEntryId: 'snat-managed-paused', SnatEntryName: 'agent-saas-acs-as-paused', SourceCIDR: '172.16.177.11/32', SnatIp: '120.77.218.94', Status: 'Available' },
+        { SnatEntryId: 'snat-managed-orphan', SnatEntryName: 'agent-saas-acs-as-orphan', SourceCIDR: '172.16.177.12/32', SnatIp: '120.77.218.94', Status: 'Available' },
+      ],
+    }), 'utf-8');
+    const cliPath = writeFakeAliyun(root, statePath, logPath);
+    const manager = new SnatManager({ ...baseConfig(cliPath), snat: { ...baseConfig(cliPath).snat, mode: 'probe-only' } }, podKubectl('172.16.177.10'), noopLogger);
+
+    const report = await manager.cleanupOrphans(new Set(['172.16.177.10/32']), {
+      retainedEntryNames: new Set(['agent-saas-acs-as-paused']),
+    });
+
+    expect(report.deleted).toEqual(['snat-managed-orphan']);
+    const state = JSON.parse(readFileSync(statePath, 'utf-8')) as { entries: Array<{ SnatEntryId: string }> };
+    expect(state.entries.map((entry) => entry.SnatEntryId).sort()).toEqual(['snat-managed-active', 'snat-managed-paused']);
+  });
+
   it('uses a fresh ClientToken when recreating a deleted SNAT entry', async () => {
     const root = mkdtempSync(join(tmpdir(), 'acs-snat-token-'));
     const statePath = join(root, 'state.json');
@@ -71,6 +94,30 @@ describe('SnatManager', () => {
     expect(clientTokens[0]).toMatch(/^agent-saas-acs-/);
     expect(clientTokens[1]).toMatch(/^agent-saas-acs-/);
     expect(clientTokens[1]).not.toBe(clientTokens[0]);
+  });
+
+  it('deletes stale same-sandbox SNAT entries before creating one for a new Pod IP', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'acs-snat-stale-'));
+    const statePath = join(root, 'state.json');
+    const logPath = join(root, 'calls.log');
+    writeFileSync(statePath, JSON.stringify({
+      entries: [
+        { SnatEntryId: 'snat-stale', SnatEntryName: 'agent-saas-acs-as-probe-123', SourceCIDR: '172.16.177.138/32', SnatIp: '120.77.218.94', Status: 'Available' },
+      ],
+    }), 'utf-8');
+    const cliPath = writeFakeAliyun(root, statePath, logPath);
+    const manager = new SnatManager({ ...baseConfig(cliPath), snat: { ...baseConfig(cliPath).snat, mode: 'probe-only' } }, podKubectl('172.16.177.139'), noopLogger);
+    const ref = { name: 'as-probe-123', workspaceId: 'network-probe', sandboxScopeId: 'network-probe', sessionId: 'probe-123', mountSubPath: 'network-probe' };
+
+    const created = await manager.ensureForProbe(ref);
+
+    expect(created?.sourceCidr).toBe('172.16.177.139/32');
+    const calls = readFileSync(logPath, 'utf-8');
+    expect(calls).toContain('DeleteSnatEntry');
+    expect(calls).toContain('CreateSnatEntry');
+    const state = JSON.parse(readFileSync(statePath, 'utf-8')) as { entries: Array<{ SnatEntryId: string; SourceCIDR: string }> };
+    expect(state.entries.map((entry) => ({ id: entry.SnatEntryId, sourceCidr: entry.SourceCIDR })))
+      .toEqual([{ id: 'snat-1', sourceCidr: '172.16.177.139/32' }]);
   });
 });
 

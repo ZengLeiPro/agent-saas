@@ -80,16 +80,20 @@ export function resolveContextAccountingFromModels(
   const protocol = model.protocol ?? group.protocol;
   const disableResponseChaining = model.disable_response_chaining ?? group.disable_response_chaining ?? false;
   if (protocol === 'responses' && !disableResponseChaining) {
-    // previous_response_id 接力下，上游每轮 usage.input_tokens 依然是全量口径
-    // （包含接力引用的完整历史，缓存命中记在 input_tokens_details.cached_tokens）。
-    // Ark 实测：5 级嵌套 input_tokens 23→51→79→107→149 逐轮全量递增。
-    // 因此「最后一轮 input+output」与全量重发场景同构，可作为准确当前上下文。
+    // previous_response_id 接力 + prompt cache 下，上游每 leg usage.input_tokens
+    // 只报告本 leg 的 payload（含 cache_read_input_tokens），不是「chain 内累计
+    // 历史」——2026-07-05 glm-5.2 实测：6 leg 序列 10421→6816→6929→7029→7132→7243
+    // 明显非全量递增，反而 leg 2 已经小于首 leg（一次性 inject 未进 chain）。
+    // 老口径「最后一 leg input+output」会低估约 chain 累计历史量级。
+    // 现在改为逐 leg 累加 (input - cache_read) + output（parse.ts:getTokenUsage
+    // 实现），并在 cache_read=0 时锚定到 input+output 以覆盖 /compact 清链、
+    // cache 过期、跨模型接力等重锚场景。
     return {
       exact: true,
       kind: 'stateful_response_exact',
       source: 'provider_usage',
       label: '当前上下文',
-      reason: '该模型启用 previous_response_id 接力，但上游每轮 usage 仍报告全量输入；最后一轮 input+output 即当前上下文。',
+      reason: '该模型启用 previous_response_id 接力，按 (input−cache_read)+output 逐 leg 累加估算 chain 累计上下文；cache miss（含首 leg、/compact 后清链、跨模型接力）时自动重锚。',
     };
   }
 

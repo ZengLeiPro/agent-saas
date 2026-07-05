@@ -7,7 +7,7 @@ import { createReadStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as readline from "node:readline";
 import { apiLogger } from "../../utils/logger.js";
-import { computeUsageTotalTokens } from "../usage/pricing.js";
+import { computeUsageTotalTokens, getUsageAccountingMode } from "../usage/pricing.js";
 import { assertAllowedTranscriptPath } from "./projectKey.js";
 
 export type TranscriptBlockKind =
@@ -529,10 +529,24 @@ export interface TokenUsage {
 /**
  * 轻量级 token 统计：遍历 jsonl 提取主 agent 和子 agent 的 token 数据。
  *
- * - contextTokens: 最后一条 assistant usage 按模型语义折算后的总 token，不直接承诺为当前上下文
+ * - contextTokens: 按 accounting_mode 估算的「当前上下文」净大小
+ *   （full-history / Anthropic 类：最后一 leg 的全量 usage；
+ *     input_includes_cache（Ark Responses+chain）：逐 leg 累加
+ *     `(input_tokens - cache_read_input_tokens) + output_tokens`，
+ *     遇 `cache_read_input_tokens === 0` 视为 chain 断/全量重发/首 leg，
+ *     直接锚定到本 leg 的 `input_tokens + output_tokens`）
  * - totalTokens: 主 agent 每轮 total 累加 + 子 agent total
  * - totalOutputTokens: 所有 turn 的 output_tokens 累加
  * - subagentTotalTokens: user 消息中 toolUseResult.totalTokens 累加（子 agent 消耗）
+ *
+ * 强化 B 语义（2026-07-05 修复 glm-5.2 上下文显示为 last-leg-input 的低估 bug）：
+ *   Ark Responses+previous_response_id 接力下，上游每 leg usage.input_tokens
+ *   反映的是「本 leg payload（含 prompt cache）」，不是「chain 内全量历史」。
+ *   老代码把最后一 leg input+output 当当前上下文，稳态误差 ≈ chain 累计历史。
+ *   新算法沿转录逐 leg 累加净新增 = (input - cache_read) + output；每次 cache
+ *   命中率归零（例如 /compact 后接力链被清、cache 过期、跨 model）视为新起点。
+ *   仅对 input_includes_cache 生效；cache_tokens_separate（Anthropic 原生）
+ *   仍走 computeUsageTotalTokens = input + output + cache_read + cache_creation。
  */
 export async function getTokenUsage(
   transcriptPath: string,
@@ -541,6 +555,8 @@ export async function getTokenUsage(
   await fs.access(resolved);
 
   let lastContextTokens = 0;
+  let accumulatingContextTokens = 0;
+  let sawFirstUsage = false;
   let totalInputTokens = 0;
   let totalCacheReadTokens = 0;
   let totalCacheCreationTokens = 0;
@@ -585,23 +601,50 @@ export async function getTokenUsage(
 
     hasUsage = true;
 
-    // 每轮都更新 context（最终保留最后一轮的值）
     const inp = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
     const cr = typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0;
     const cc = typeof usage.cache_creation_input_tokens === "number" ? usage.cache_creation_input_tokens : 0;
     const out = typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
     const model = typeof obj?.message?.model === "string" ? obj.message.model : "";
 
-    // context = 最后一轮的 input + output（下一轮发送时 output 会变成 input 的一部分）
-    // 跳过 usage 全为 0 的合成/错误消息
+    // turnTotal 保持原语义（按 accounting_mode 归一化的单 leg 计费口径），
+    // 只用于 mainTotalTokens 累计展示，不再用于 contextTokens。
     const turnTotal = computeUsageTotalTokens(model, {
       inputTokens: inp,
       outputTokens: out,
       cacheReadTokens: cr,
       cacheCreationTokens: cc,
     });
-    if (turnTotal > 0) lastContextTokens = turnTotal;
     mainTotalTokens += turnTotal;
+
+    // 当前上下文估算（跳过 usage 全为 0 的合成/错误消息）
+    if (inp > 0 || out > 0) {
+      const mode = getUsageAccountingMode(model);
+      if (mode === 'input_includes_cache') {
+        // Ark Responses+chain / OpenAI-compat：cache_read 是本 leg 中被缓存命中
+        // 的部分，input_tokens 已经包含它。语义分三类：
+        //   - 首次看到 usage（不管 cache_read 有没有值）：无法追溯 chain 历史，
+        //     直接把 input+output 视为当前累计上下文（cache_read 是历史被缓存
+        //     的近似占位）。
+        //   - 之后 cache_read=0：视为重锚点（/compact 清链、cache 过期、跨模型
+        //     接力等触发全量重发），累计归位到 input+output。
+        //   - 之后 cache_read>0：接续同一 chain，本 leg 净新增 = input - cache_read。
+        if (!sawFirstUsage || cr === 0) {
+          accumulatingContextTokens = inp + out;
+        } else {
+          const delta = Math.max(0, inp - cr);
+          accumulatingContextTokens += delta + out;
+        }
+        lastContextTokens = accumulatingContextTokens;
+      } else {
+        // cache_tokens_separate（Anthropic）/ unknown：每轮 input_tokens 本身就是
+        // 净新增（不含 cache_read/cache_creation），累加口径 = full-history。
+        // 稳定形态是最后一 leg 的 turnTotal 即当前上下文，沿用老口径。
+        if (turnTotal > 0) lastContextTokens = turnTotal;
+        accumulatingContextTokens = lastContextTokens;
+      }
+      sawFirstUsage = true;
+    }
 
     // 分项累加
     totalInputTokens += inp;

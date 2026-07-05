@@ -10,7 +10,9 @@ import type {
   ToolApprovalPolicyOptions,
 } from '../agent/types.js';
 import type { AgentStore } from '../data/agents/store.js';
+import type { BillingService } from '../data/billing/service.js';
 import type { TenantStore } from '../data/tenants/store.js';
+import type { TokenUsageStore } from '../data/usage/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
 import type { WorkspaceRef } from '../agent/toolRuntime.js';
@@ -119,6 +121,9 @@ import {
 } from '../engine/sandbox.js';
 import { getAgentTranscriptDir } from '../data/transcripts/projectKey.js';
 import { deriveStableWorkspaceId } from './workspaceIdentity.js';
+// 注意：subagent/agentToolProvider.js 反向 import 本文件的装配小件（ESM 循环依赖，
+// 仅函数级引用、无模块求值期访问，安全）。
+import { AgentToolProvider } from './subagent/agentToolProvider.js';
 
 export interface ServerRemoteDispatchConfig {
   baseUrl: string;
@@ -151,7 +156,7 @@ const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
  *
  * 启动时静态决定，运行时不切换；config 改回 chat_completions 即回滚。
  */
-function createModelAdapterForProtocol(
+export function createModelAdapterForProtocol(
   connection: { apiKey: string; baseUrl: string },
   modelProviderOptions: ModelProviderOptions | undefined,
 ): ModelAdapter {
@@ -235,6 +240,17 @@ export interface RawRuntimeRunDispatchConfig {
    * dispatch 构造之后才创建，因此传 getter 而非实例；返回 undefined 时工具不挂载。
    */
   cronService?: () => import('../cron/service.js').CronService | undefined;
+  /**
+   * 计费服务惰性 getter（子 agent spawn 前置 hard cap 检查，D6）。与 cronService
+   * 同款惰性形态：billingService 在 app/runtime.ts 中晚于 dispatch config 可用。
+   * 未配置时子 agent 跳过 billing 闸门（file backend / 测试场景）。
+   */
+  billingService?: () => BillingService | undefined;
+  /**
+   * Token 用量存储惰性 getter（子 agent 收尾 channel:'subagent' 独立记账，D7）。
+   * tokenUsageStore 在 app/runtime.ts 中晚于 dispatch config 实例化，必须走惰性闭包。
+   */
+  tokenUsageStore?: () => TokenUsageStore | undefined;
   /** 平台级模型可见工具开关。 */
   toolControls?: import('../app/config.js').ToolControlsConfig;
   /** Platform-managed web access tools (`WebSearch` / `WebFetch`). */
@@ -253,8 +269,13 @@ export interface RawRuntimeRunDispatchConfig {
   executionTarget?: ExecutionTargetKind;
   /** Runtime-level execution config；未传则使用 DEFAULT_EXECUTION_CONFIG */
   executionConfig?: ExecutionConfig;
-  /** Resolve UI model refs (group/model) into provider model names and connection settings. */
-  modelResolver?: (ref: string) => {
+  /**
+   * Resolve UI model refs (group/model) into provider model names and connection settings.
+   * 可选第二参 tenantId：传入时按该组织的模型白名单校验（子 agent 的 model 参数
+   * 必须显式传父 tenantId 过白名单——dispatch 主路径的调用点历史上只传 ref，
+   * app 装配的闭包对 undefined tenantId 走「不加组织过滤」的旧行为，保持兼容）。
+   */
+  modelResolver?: (ref: string, tenantId?: string) => {
     model: string;
     connection?: { apiKey?: string; baseUrl?: string };
     providerOptions?: ModelProviderOptions;
@@ -438,11 +459,11 @@ function resolveEffectiveMaxTurns(
   return Math.min(requestedMaxTurns ?? defaultMaxTurns, userMaxTurns ?? Infinity);
 }
 
-function resolveSessionCatalog(config: RawRuntimeRunDispatchConfig): SessionCatalog {
+export function resolveSessionCatalog(config: RawRuntimeRunDispatchConfig): SessionCatalog {
   return config.sessionCatalog ?? new FileSessionCatalog({ agentCwd: config.agentCwd });
 }
 
-function createEventStoreForSession(
+export function createEventStoreForSession(
   config: RawRuntimeRunDispatchConfig,
   session: RuntimeSessionRecord,
 ): EventStore {
@@ -451,7 +472,7 @@ function createEventStoreForSession(
     : new FileEventStore(getRuntimeEventLogPath(session.transcriptPath));
 }
 
-function createApprovalStoreForSession(
+export function createApprovalStoreForSession(
   config: RawRuntimeRunDispatchConfig,
   session: RuntimeSessionRecord,
   eventStore: EventStore,
@@ -480,7 +501,7 @@ async function appendRunStateChanged(
   }, ctx);
 }
 
-async function markRunState(
+export async function markRunState(
   runStore: RunStore | undefined,
   eventStore: EventStore,
   sessionId: string,
@@ -533,7 +554,7 @@ function deriveRuntimeWorkspaceId(params: {
     ?? deriveStableWorkspaceId(params.identity, params.fallbackSessionId);
 }
 
-async function ensureRuntimeHandRegistered(params: {
+export async function ensureRuntimeHandRegistered(params: {
   handStore?: HandStore;
   eventStore: EventStore;
   executionTransportRegistry: ExecutionTransportRegistry;
@@ -897,13 +918,15 @@ function getTenantRemoteHandResolver(
   });
 }
 
-function resolveTenantRemoteHandsSource(
+export function resolveTenantRemoteHandsSource(
   source: TenantRemoteHandsSource | undefined,
 ): TenantRemoteHandDispatchConfig[] | undefined {
   return typeof source === 'function' ? source() : source;
 }
 
-class RunStateTrackingEventStore implements EventStore {
+// 以下装配小件同时被 subagent/subagentRunner.ts 复用（子 loop 精简重建，
+// 见该文件头注释）；除加 export 外语义零改动。
+export class RunStateTrackingEventStore implements EventStore {
   constructor(
     private readonly inner: EventStore,
     private readonly runStore: RunStore | undefined,
@@ -979,6 +1002,17 @@ class RunStateTrackingEventStore implements EventStore {
 }
 
 /**
+ * 子 agent 工具的装配依赖（2026-07-06）：executionTransportRegistry 与
+ * tenantHandResolver 是各 dispatch 工厂的闭包级对象（非 config 字段），
+ * AgentToolProvider 派生子 loop 时必须复用**同一实例**（serverRemote 注册、
+ * vault 解析缓存都挂在上面），所以经参数显式传入 collectRuntimeTooling。
+ */
+interface SubagentToolingDeps {
+  executionTransportRegistry: ExecutionTransportRegistry;
+  tenantHandResolver: TenantRemoteHandAuthTokenResolver;
+}
+
+/**
  * 收集本次 dispatch 用到的所有 tool providers + buildInstructions 入参。
  * 两条 dispatch（首跑 / approval resume）共用同一构造，保证 instructions 一致。
  */
@@ -986,6 +1020,7 @@ async function collectRuntimeTooling(
   config: RawRuntimeRunDispatchConfig,
   username: string | undefined,
   skillFilter: RuntimeSkillFilter = allowAllRuntimeSkills,
+  subagentDeps?: SubagentToolingDeps,
 ): Promise<{
   providers: ToolProvider[];
 }> {
@@ -1043,6 +1078,18 @@ async function collectRuntimeTooling(
       // MCP 预热失败只影响本轮 MCP tool schema，不阻断主路径。
     }
     providers.push(mcpProvider);
+  }
+
+  // 7. Agent 工具（子 agent 委派，2026-07-06）。必须最后 push：parentProviders 快照
+  // 在 push 之前截取，子工具集从快照派生 → 子 agent 天然拿不到 Agent 工具（禁嵌套，
+  // 工具移除式，D4）。subagentDeps 缺失（调用方未接线）时不挂载。
+  if (subagentDeps && isToolEnabled(config.toolControls, 'Agent')) {
+    providers.push(new AgentToolProvider({
+      config,
+      executionTransportRegistry: subagentDeps.executionTransportRegistry,
+      tenantHandResolver: subagentDeps.tenantHandResolver,
+      parentProviders: [...providers],
+    }));
   }
 
   return { providers };
@@ -1228,7 +1275,7 @@ function buildInstructions(params: {
   return sections.join('\n\n');
 }
 
-function visibleWorkspaceCwd(hostCwd: string, executionTarget: ExecutionTargetKind): string {
+export function visibleWorkspaceCwd(hostCwd: string, executionTarget: ExecutionTargetKind): string {
   if (executionTarget === 'server-remote') return '/workspace';
   if (executionTarget === 'server-container') return '/workspace';
   return hostCwd;
@@ -1262,7 +1309,7 @@ function loadCompanyInfo(sharedDir: string, tenantId?: string): string {
  * 未命中（该 (tenantId, username) 没配 PAT）→ 返回空对象 → wire 不带 env →
  * pod 内 CLI 报"未授权"，语义与本地 SDK 未配置时一致。
  */
-function buildTenantRemoteHandWireEnv(workspace: WorkspaceRef): Record<string, string> {
+export function buildTenantRemoteHandWireEnv(workspace: WorkspaceRef): Record<string, string> {
   const username = workspace.username;
   if (!username) return {};
   const tenantId = workspace.tenantId ?? DEFAULT_TENANT_ID;
@@ -1488,6 +1535,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       config,
       identitySource?.username,
       buildRuntimeSkillFilter(availableHands),
+      { executionTransportRegistry, tenantHandResolver },
     );
     const instructions = options.skipSystemPrompt
       ? '你是运行在开沿科技公司开发的 Agent 平台上的 AI 助理。'
@@ -1821,6 +1869,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       config,
       resumeUsername,
       buildRuntimeSkillFilter(availableHands),
+      { executionTransportRegistry, tenantHandResolver },
     );
     const instructions = buildInstructions({
       sharedDir: config.sharedDir,
@@ -2078,6 +2127,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       config,
       resumeUsername,
       buildRuntimeSkillFilter(availableHands),
+      { executionTransportRegistry, tenantHandResolver },
     );
     const instructions = buildInstructions({
       sharedDir: config.sharedDir,
@@ -2181,6 +2231,22 @@ export async function wakeRuntimeSession(
   const session = await sessionCatalog.get(run.sessionId);
   if (!session) {
     throw new Error(`wake context restore failed: session metadata not found for ${run.sessionId}`);
+  }
+  // 子 agent run 守卫（2026-07-06）：MVP 是父死子亡语义，子 run 绝不允许 scheduler
+  // 恢复重放（重放 = 双份模型执行 + 双份计费）。正常路径下 subagentRunner 持有
+  // lease 让 listRecoverable 捡不到执行中的子 run；这里兜底进程崩溃后 lease 过期
+  // 的残留——直接判 orphaned，不做任何模型/工具调用。
+  if (session.kind === 'subagent' || run.metadata?.subagent === true) {
+    await options.lease?.release('orphaned', 'subagent_run_not_recoverable');
+    await markRunState(
+      config.runStore,
+      new RunStateTrackingEventStore(createEventStoreForSession(config, session), config.runStore, session.tenantId ?? run.tenantId),
+      run.sessionId,
+      run.runId,
+      'orphaned',
+      'subagent_run_not_recoverable',
+    ).catch(() => undefined);
+    return;
   }
   const baseEventStore = createEventStoreForSession(config, session);
   const eventStore = new RunStateTrackingEventStore(

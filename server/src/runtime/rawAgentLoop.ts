@@ -963,6 +963,21 @@ export class RawAgentLoop implements AgentLoop {
     );
   }
 
+  /**
+   * 执行一个 batch 的工具调用。默认严格串行；唯一例外是**连续 ≥2 个 Agent 工具调用**
+   * 组成的段做并行 fan-out（子 agent P1，2026-07-06）：
+   *   - 仅限 Agent：它 risk:'safe' + approvalMode:'never'，policy 恒 allow——审批挂起
+   *     是通过抛异常中止本 generator 实现的，任何可能触发审批/交互的工具进 Promise.all
+   *     都会让并发兄弟变成孤儿，因此并行窗只对免审批的 Agent 开放。
+   *   - 顺序契约不变：tool_use 块先按原 toolCalls 顺序全部 yield，执行完成后
+   *     tool_result 三件套（yield + eventStore append + messages.push）仍按原顺序逐个
+   *     进行——模型协议要求 tool_result 顺序稳定。并发期间 durable 的
+   *     tool_invocation_* 事件会交错落库，replay/recovery 按 toolCallId 建 Map
+   *     （runtime/replay.ts）不依赖跨 call 顺序，已核实安全。
+   *   - 并发额度由 subagentLimits 的 per-run 信号量（4）在 runner 内排队，本层不限流。
+   *   - abort：父 signal 经 ToolCallContext 传导给每个并发子 agent，级联取消。
+   * 单个 Agent 调用（段长 1）仍走下方串行分支，行为与既有路径逐字节一致。
+   */
   private async *drainToolCalls(args: {
     calls: ModelToolCall[];
     descriptorsByName: Map<string, ToolDescriptor>;
@@ -970,7 +985,49 @@ export class RawAgentLoop implements AgentLoop {
     context: RunContext;
     messages?: ModelChatMessage[];
   }): AsyncIterable<OutboundEvent> {
-    for (const call of args.calls) {
+    const calls = args.calls;
+    let index = 0;
+    while (index < calls.length) {
+      let segmentEnd = index;
+      while (
+        segmentEnd < calls.length
+        && isParallelSafeAgentCall(calls[segmentEnd]!, args.descriptorsByName)
+      ) {
+        segmentEnd += 1;
+      }
+
+      if (segmentEnd - index >= 2) {
+        const segment = calls.slice(index, segmentEnd);
+        for (const call of segment) {
+          // Agent 是 safe 工具，policy 恒 allow → shouldEmit 恒 true；仍走同一判定
+          // 入口保持与串行分支的行为对称。
+          if (await this.shouldEmitToolUseBeforeExecution(call, args.descriptorsByName, args.context)) {
+            yield { type: 'tool_start', toolId: call.id, toolName: call.name };
+            yield { type: 'tool_input_delta', toolId: call.id, toolName: call.name, partialJson: call.arguments };
+            yield { type: 'tool_end', toolId: call.id, toolName: call.name };
+          }
+        }
+        const outcomes = await Promise.all(segment.map((call) => this.executeToolCall(
+          call,
+          args.descriptorsByName,
+          args.baseToolContext,
+          args.context,
+        )));
+        for (let i = 0; i < segment.length; i += 1) {
+          const outcome = outcomes[i]!;
+          yield* this.appendToolResult({
+            call: segment[i]!,
+            content: outcome.result.content,
+            ...(outcome.isError ? { isError: true } : {}),
+            context: args.context,
+            messages: args.messages,
+          });
+        }
+        index = segmentEnd;
+        continue;
+      }
+
+      const call = calls[index]!;
       if (await this.shouldEmitToolUseBeforeExecution(
         call,
         args.descriptorsByName,
@@ -993,6 +1050,7 @@ export class RawAgentLoop implements AgentLoop {
         context: args.context,
         messages: args.messages,
       });
+      index += 1;
     }
   }
 
@@ -1940,6 +1998,21 @@ class InteractionPendingWithoutInteractionHook extends Error {
     super(`interaction pending without interaction hook: ${event.interactionId}`);
     this.name = 'InteractionPendingWithoutInteractionHook';
   }
+}
+
+/**
+ * 并行窗准入判定（子 agent P1）：只有名为 Agent 且 risk:'safe'、免审批的工具才可并行。
+ * 三重条件而非只看名字——防未来有人注册同名高危工具时静默进入并行路径。
+ */
+function isParallelSafeAgentCall(
+  call: ModelToolCall,
+  descriptorsByName: Map<string, ToolDescriptor>,
+): boolean {
+  const descriptor = descriptorsByName.get(call.name);
+  return !!descriptor
+    && descriptor.name === 'Agent'
+    && descriptor.risk === 'safe'
+    && descriptor.approvalMode === 'never';
 }
 
 function toOutboundInteractionEvent(event: InteractionEvent): OutboundEvent {

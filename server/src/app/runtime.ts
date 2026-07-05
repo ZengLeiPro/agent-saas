@@ -997,6 +997,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     executionConfig,
     modelResolver,
     toolControls: config.toolControls,
+    // 子 agent 工具（2026-07-06）：两者都在本 config 构造之后才就绪
+    // （billingService 赋值在上文 ~L658，tokenUsageStore 声明在下文 ~L1280），
+    // 与 cronService 同款惰性 getter 形态；闭包在 dispatch invoke 时才求值，
+    // 到那时变量必已初始化，无 TDZ 问题。
+    billingService: () => billingService,
+    tokenUsageStore: () => tokenUsageStore,
     sessionCatalog,
     skills: skillsDispatchConfig,
     mcpClientManager,

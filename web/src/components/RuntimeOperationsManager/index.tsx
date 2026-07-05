@@ -256,6 +256,14 @@ function sumCounts(rows?: Array<{ count: number }>): number {
   return rows?.reduce((sum, row) => sum + Number(row.count || 0), 0) ?? 0;
 }
 
+function isExecutionRunStatus(status: string): boolean {
+  return status === "pending" || status === "running" || status === "waiting_hand";
+}
+
+function isWaitingActionStatus(status: string): boolean {
+  return status === "waiting_user" || status === "waiting_approval";
+}
+
 type TenantRemoteHandConfig = RuntimeOperationsResponse["tenantRemoteHands"]["hands"][number];
 
 function handRouteSummary(hand: TenantRemoteHandConfig): string {
@@ -339,7 +347,13 @@ export function RuntimeOperationsManager() {
     ?? data?.tenantRemoteHands.health.find((item) => item.metadata?.backend === "acs-agent-sandbox");
   const acsMeta = acsHealth?.metadata;
   const runtimeStore = data?.runtimeEventStore;
+  const executionRunRows = runtimeStore?.status === "ok" ? runtimeStore.activeRuns.filter((row) => isExecutionRunStatus(row.status)) : [];
+  const waitingActionRows = runtimeStore?.status === "ok" ? runtimeStore.activeRuns.filter((row) => isWaitingActionStatus(row.status)) : [];
+  const staleExecutionRuns = runtimeStore?.status === "ok" ? (runtimeStore.staleActiveRuns ?? []).filter((row) => isExecutionRunStatus(row.status)) : [];
+  const staleWaitingActionRuns = runtimeStore?.status === "ok" ? (runtimeStore.staleActiveRuns ?? []).filter((row) => isWaitingActionStatus(row.status)) : [];
   const activeRunCount = runtimeStore?.status === "ok" ? sumCounts(runtimeStore.activeRuns) : 0;
+  const executionRunCount = sumCounts(executionRunRows);
+  const waitingActionCount = sumCounts(waitingActionRows);
   const handFailure1h = runtimeStore?.status === "ok" ? runtimeStore.handFailures.last1h : "-";
   const handFailureTone = runtimeStore?.status === "ok" && runtimeStore.handFailures.last1h > 0 ? "bad" : "good";
   const allHandsHealthy = (data?.tenantRemoteHands.health ?? []).every((item) => item.status === "ok");
@@ -527,7 +541,7 @@ export function RuntimeOperationsManager() {
               tone={allHandsHealthy ? "good" : "bad"}
             />
             <MetricCard
-              title="Running Sandbox"
+              title="非 Paused Sandbox"
               value={runningSandboxes}
               description={`${acsMeta?.sandboxes?.pausedCount ?? 0} 个 Paused / ${acsMeta?.sandboxes?.totalCount ?? 0} 总数`}
               tone={runningSandboxes > 0 ? "warn" : "good"}
@@ -539,9 +553,9 @@ export function RuntimeOperationsManager() {
               tone={handFailureTone}
             />
             <MetricCard
-              title="活跃 Run"
+              title="未终态执行轮次"
               value={activeRunCount}
-              description={runtimeStore?.status === "ok" ? "pending / running / waiting" : "无法读取 runtime store"}
+              description={runtimeStore?.status === "ok" ? `执行 ${executionRunCount} / 等待动作 ${waitingActionCount}` : "无法读取 runtime store"}
               tone={activeRunCount > 0 ? "warn" : "good"}
             />
           </div>
@@ -672,7 +686,7 @@ export function RuntimeOperationsManager() {
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Activity className="h-4 w-4" />
-                  ACS Sandbox
+                  ACS Sandbox / 容器池
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
@@ -737,7 +751,7 @@ export function RuntimeOperationsManager() {
                   <div className="flex flex-wrap items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => { void cleanupOrphanSnat(); }} disabled={!!applyingAction || !snat?.enabled || !snat.configured}>
                       {applyingAction === "清理 orphan SNAT" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
-                      清理 orphan SNAT
+                      清理孤儿 SNAT
                     </Button>
                     <div className="text-xs text-muted-foreground">
                       {snat?.configured ? `${snat.snatIp ?? "-"} / max ${snat.maxManagedEntries}` : "未配置云侧参数"}
@@ -771,7 +785,7 @@ export function RuntimeOperationsManager() {
                   <div className="flex flex-wrap items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => { void runNetworkPolicyProbe(); }} disabled={!!applyingAction}>
                       {applyingAction === "执行 network probe" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />}
-                      Run probe
+                      网络探测
                     </Button>
                     <div className="text-xs text-muted-foreground">
                       {acsMeta?.networkPolicy?.effectivePolicy?.checkedAt
@@ -792,16 +806,17 @@ export function RuntimeOperationsManager() {
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Clock3 className="h-4 w-4" />
-                  活跃 Run
+                  执行队列 / 未终态执行轮次
                 </CardTitle>
+                <div className="text-xs text-muted-foreground">一次用户消息、恢复或唤醒触发的一轮执行；不代表容器状态。</div>
               </CardHeader>
               <CardContent>
                 {runtimeStore?.status !== "ok" ? (
                   <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
                     {runtimeStore?.status === "error" ? runtimeStore.error : "Runtime EventStore 未启用 PG。"}
                   </div>
-                ) : runtimeStore.activeRuns.length === 0 ? (
-                  <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">当前没有 active run。</div>
+                ) : executionRunRows.length === 0 ? (
+                  <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">当前没有执行中的未终态轮次。</div>
                 ) : (
                   <div className="space-y-4">
                     <Table>
@@ -813,7 +828,7 @@ export function RuntimeOperationsManager() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {runtimeStore.activeRuns.map((row) => (
+                        {executionRunRows.map((row) => (
                           <TableRow key={row.status}>
                             <TableCell>{row.status}</TableCell>
                             <TableCell className="text-right tabular-nums">{row.count}</TableCell>
@@ -822,9 +837,9 @@ export function RuntimeOperationsManager() {
                         ))}
                       </TableBody>
                     </Table>
-                    {(runtimeStore.staleActiveRuns?.length ?? 0) > 0 && (
+                    {staleExecutionRuns.length > 0 && (
                       <div className="space-y-2">
-                        <div className="text-xs font-medium text-amber-700">超过 15 分钟未更新</div>
+                        <div className="text-xs font-medium text-amber-700">15 分钟未更新（疑似阻塞）</div>
                         <Table>
                           <TableHeader>
                             <TableRow>
@@ -836,7 +851,7 @@ export function RuntimeOperationsManager() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {(runtimeStore.staleActiveRuns ?? []).slice(0, 6).map((row) => (
+                            {staleExecutionRuns.slice(0, 6).map((row) => (
                               <TableRow key={row.run_id}>
                                 <TableCell>{row.status}</TableCell>
                                 <TableCell className="font-mono text-xs">{row.tenant_id}</TableCell>
@@ -858,6 +873,76 @@ export function RuntimeOperationsManager() {
               </CardContent>
             </Card>
 
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">等待用户动作</CardTitle>
+                <div className="text-xs text-muted-foreground">等待用户输入或管理员审批；通常是挂起状态，不默认视为故障。</div>
+              </CardHeader>
+              <CardContent>
+                {runtimeStore?.status !== "ok" ? (
+                  <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
+                    {runtimeStore?.status === "error" ? runtimeStore.error : "Runtime EventStore 未启用 PG。"}
+                  </div>
+                ) : waitingActionRows.length === 0 ? (
+                  <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">当前没有等待用户动作的轮次。</div>
+                ) : (
+                  <div className="space-y-4">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">数量</TableHead>
+                          <TableHead>最近更新</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {waitingActionRows.map((row) => (
+                          <TableRow key={row.status}>
+                            <TableCell>{row.status}</TableCell>
+                            <TableCell className="text-right tabular-nums">{row.count}</TableCell>
+                            <TableCell>{formatDateTime(row.latest_at)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                    {staleWaitingActionRuns.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="text-xs font-medium text-muted-foreground">15 分钟未更新（等待中）</div>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Status</TableHead>
+                              <TableHead>租户</TableHead>
+                              <TableHead>会话</TableHead>
+                              <TableHead>Run</TableHead>
+                              <TableHead>更新</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {staleWaitingActionRuns.slice(0, 6).map((row) => (
+                              <TableRow key={row.run_id}>
+                                <TableCell>{row.status}</TableCell>
+                                <TableCell className="font-mono text-xs">{row.tenant_id}</TableCell>
+                                <TableCell>
+                                  <a className="font-mono text-xs text-primary hover:underline" href={`/chat/${encodeURIComponent(row.session_id)}`}>
+                                    {row.session_id.slice(0, 8)}
+                                  </a>
+                                </TableCell>
+                                <TableCell className="font-mono text-xs">{row.run_id.slice(0, 8)}</TableCell>
+                                <TableCell>{formatDateTime(row.updated_at)}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-2">
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">近 24 小时工具路由</CardTitle>
@@ -885,13 +970,13 @@ export function RuntimeOperationsManager() {
                     </div>
                     <Table>
                       <TableHeader>
-                      <TableRow>
-                        <TableHead>时间</TableHead>
-                        <TableHead>租户</TableHead>
-                        <TableHead>会话</TableHead>
-                        <TableHead>工具</TableHead>
-                        <TableHead>路由</TableHead>
-                        <TableHead>Status</TableHead>
+                        <TableRow>
+                          <TableHead>时间</TableHead>
+                          <TableHead>租户</TableHead>
+                          <TableHead>会话</TableHead>
+                          <TableHead>工具</TableHead>
+                          <TableHead>路由</TableHead>
+                          <TableHead>Status</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -917,54 +1002,54 @@ export function RuntimeOperationsManager() {
                 )}
               </CardContent>
             </Card>
-          </div>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">最近执行环境故障</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {runtimeStore?.status !== "ok" ? (
-                <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">暂无 PG failure 数据。</div>
-              ) : runtimeStore.handFailures.recent.length === 0 ? (
-                <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">没有最近失败记录。</div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>时间</TableHead>
-                      <TableHead>租户</TableHead>
-                      <TableHead>会话</TableHead>
-                      <TableHead>Run</TableHead>
-                      <TableHead>池</TableHead>
-                      <TableHead>原因</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {runtimeStore.handFailures.recent.map((row) => (
-                      <TableRow key={`${row.timestamp}:${row.session_id}:${row.reason}`}>
-                        <TableCell>{formatDateTime(row.timestamp)}</TableCell>
-                        <TableCell className="font-mono text-xs">{row.tenant_id}</TableCell>
-                        <TableCell>
-                          <a className="font-mono text-xs text-primary hover:underline" href={`/chat/${encodeURIComponent(row.session_id)}`}>
-                            {row.session_id.slice(0, 8)}
-                          </a>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">{row.run_id ? row.run_id.slice(0, 8) : "-"}</TableCell>
-                        <TableCell>{routedHandLabel(row.hand_id ?? undefined)}</TableCell>
-                        <TableCell className="max-w-xl truncate">{row.reason ?? "-"}</TableCell>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">最近执行环境故障</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {runtimeStore?.status !== "ok" ? (
+                  <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">暂无 PG failure 数据。</div>
+                ) : runtimeStore.handFailures.recent.length === 0 ? (
+                  <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">没有最近失败记录。</div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>时间</TableHead>
+                        <TableHead>租户</TableHead>
+                        <TableHead>会话</TableHead>
+                        <TableHead>Run</TableHead>
+                        <TableHead>池</TableHead>
+                        <TableHead>原因</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-              {data?.generatedAt && (
-                <div className="mt-3 text-xs text-muted-foreground">
-                  更新时间：{formatDateTime(data.generatedAt)}，processRole: {data.processRole ?? "-"}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                    </TableHeader>
+                    <TableBody>
+                      {runtimeStore.handFailures.recent.map((row) => (
+                        <TableRow key={`${row.timestamp}:${row.session_id}:${row.reason}`}>
+                          <TableCell>{formatDateTime(row.timestamp)}</TableCell>
+                          <TableCell className="font-mono text-xs">{row.tenant_id}</TableCell>
+                          <TableCell>
+                            <a className="font-mono text-xs text-primary hover:underline" href={`/chat/${encodeURIComponent(row.session_id)}`}>
+                              {row.session_id.slice(0, 8)}
+                            </a>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">{row.run_id ? row.run_id.slice(0, 8) : "-"}</TableCell>
+                          <TableCell>{routedHandLabel(row.hand_id ?? undefined)}</TableCell>
+                          <TableCell className="max-w-xl truncate">{row.reason ?? "-"}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+                {data?.generatedAt && (
+                  <div className="mt-3 text-xs text-muted-foreground">
+                    更新时间：{formatDateTime(data.generatedAt)}，processRole: {data.processRole ?? "-"}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </>
       )}
       </div>

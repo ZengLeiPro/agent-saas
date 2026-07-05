@@ -89,7 +89,11 @@ import {
 const approvalResumeSemaphore = new Semaphore(8);
 
 function canViewContextUsageDetails(context: ChannelContext): boolean {
-  return context.user?.role === 'admin' && context.user.tenantId === DEFAULT_TENANT_ID;
+  return canViewContextUsageDetailsForUser(context.user);
+}
+
+function canViewContextUsageDetailsForUser(user: { role?: string; tenantId?: string } | undefined): boolean {
+  return user?.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID;
 }
 
 function redactContextUsageDetails(usage: ContextUsageData): ContextUsageData {
@@ -561,6 +565,7 @@ export class WebChannel implements BaseChannel {
     const streamId = input.streamId ?? input.runId;
     this.inProcessOutboundRuns.add(input.runId);
     const activeEntry = this.activeStreams.get(streamId);
+    const userRecord = this.userStore?.findById(input.userId ?? activeEntry?.userId ?? '');
     const ws = activeEntry?.ws ?? ({ readyState: 3, OPEN: 1 } as unknown as WebSocket);
     const sessionCtx: SessionContext = {
       sessionId: input.sessionId,
@@ -669,6 +674,16 @@ export class WebChannel implements BaseChannel {
         }
         break;
       }
+      case 'context_usage':
+        if (input.event.contextUsage) {
+          emitSession({
+            type: 'context_usage',
+            contextUsage: canViewContextUsageDetailsForUser(userRecord)
+              ? input.event.contextUsage
+              : redactContextUsageDetails(input.event.contextUsage),
+          });
+        }
+        break;
       case 'permission_request':
       case 'ask_user':
         emitSession({

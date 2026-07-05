@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WebChannel } from '../channels/web/channel.js';
 import type { AgentRunDispatch } from '../agent/types.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
 class FakeWebSocket extends EventEmitter {
   OPEN = 1;
@@ -328,6 +329,100 @@ describe('WebChannel active stream reconnect', () => {
 
     expect(emitted.some((d: { type: string }) => d.type === 'tool_result')).toBe(true);
     expect(emitted.some((d: { type: string }) => d.type === 'artifact_created')).toBe(false);
+  });
+
+  it('emits context_usage for in-process runtime live updates', () => {
+    const emitted: any[] = [];
+    const channel = new WebChannel({
+      agentCwd: '/tmp/workspace',
+      userStore: {
+        findById: vi.fn(() => ({
+          id: 'admin-1',
+          username: 'admin',
+          role: 'admin',
+          tenantId: DEFAULT_TENANT_ID,
+        })),
+      } as any,
+    }, noopDispatch);
+    channels.push(channel);
+    (channel as any).eventBus = {
+      ...fakeEventBus(),
+      emitSession: (_ctx: unknown, data: unknown) => emitted.push(data),
+    };
+
+    channel.publishRuntimeOutboundEvent({
+      sessionId: 'session-context-1',
+      runId: 'run-context-1',
+      userId: 'admin-1',
+      event: {
+        type: 'context_usage',
+        contextUsage: {
+          totalTokens: 1234,
+          maxTokens: 10000,
+          percentage: 0.1234,
+          categories: [{ name: 'system', tokens: 100, color: '#000' }],
+          memoryFiles: [{ path: 'MEMORY.md', type: 'long-term', tokens: 20 }],
+          mcpTools: [{ name: 'Search', serverName: 'memory', tokens: 10 }],
+        },
+      } as any,
+    });
+
+    expect(emitted).toContainEqual({
+      type: 'context_usage',
+      contextUsage: {
+        totalTokens: 1234,
+        maxTokens: 10000,
+        percentage: 0.1234,
+        categories: [{ name: 'system', tokens: 100, color: '#000' }],
+        memoryFiles: [{ path: 'MEMORY.md', type: 'long-term', tokens: 20 }],
+        mcpTools: [{ name: 'Search', serverName: 'memory', tokens: 10 }],
+      },
+    });
+  });
+
+  it('redacts context_usage details for non-platform admins on in-process runtime live updates', () => {
+    const emitted: any[] = [];
+    const channel = new WebChannel({
+      agentCwd: '/tmp/workspace',
+      userStore: {
+        findById: vi.fn(() => ({
+          id: 'user-1',
+          username: 'user',
+          role: 'user',
+          tenantId: 'kaiyan',
+        })),
+      } as any,
+    }, noopDispatch);
+    channels.push(channel);
+    (channel as any).eventBus = {
+      ...fakeEventBus(),
+      emitSession: (_ctx: unknown, data: unknown) => emitted.push(data),
+    };
+
+    channel.publishRuntimeOutboundEvent({
+      sessionId: 'session-context-2',
+      runId: 'run-context-2',
+      userId: 'user-1',
+      event: {
+        type: 'context_usage',
+        contextUsage: {
+          totalTokens: 4321,
+          categories: [{ name: 'system', tokens: 100, color: '#000' }],
+          memoryFiles: [{ path: 'MEMORY.md', type: 'long-term', tokens: 20 }],
+          mcpTools: [{ name: 'Search', serverName: 'memory', tokens: 10 }],
+        },
+      } as any,
+    });
+
+    expect(emitted).toContainEqual({
+      type: 'context_usage',
+      contextUsage: {
+        totalTokens: 4321,
+        categories: [],
+        memoryFiles: [],
+        mcpTools: [],
+      },
+    });
   });
 
   it('resume treats an active buffer as inactive when durable runStore has no active run', async () => {

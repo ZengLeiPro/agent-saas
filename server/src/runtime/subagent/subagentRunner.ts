@@ -119,6 +119,11 @@ export interface RunSubagentParams {
   limiter?: SubagentLimiter;
   /** 测试注入口；生产用 SUBAGENT_HARD_TIMEOUT_MS。 */
   hardTimeoutMs?: number;
+  /** 测试注入口：替换真实 model adapter（默认 createModelAdapterForProtocol，会发真实 HTTP）。 */
+  modelAdapterFactory?: (
+    connection: { apiKey: string; baseUrl: string },
+    providerOptions?: import('../../types/index.js').ModelProviderOptions,
+  ) => import('../types.js').ModelAdapter;
   /** 子 session/run 已建好、即将起跑时回调（AgentToolProvider 用它发 durable subagent_started）。 */
   onChildRunCreated?: (info: { childSessionId: string; childRunId: string; model: string }) => Promise<void> | void;
 }
@@ -295,7 +300,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     });
 
     const loop = new RawAgentLoop({
-      modelAdapter: createModelAdapterForProtocol({ apiKey, baseUrl }, providerOptions),
+      modelAdapter: (params.modelAdapterFactory ?? createModelAdapterForProtocol)({ apiKey, baseUrl }, providerOptions),
       eventStore,
       approvalStore: createApprovalStoreForSession(config, childRecord, eventStore),
       transcriptProjection: new LegacyTranscriptProjection(childRecord.transcriptPath),

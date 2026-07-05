@@ -78,9 +78,14 @@ export function assertAllowedTranscriptPath(transcriptPath: string): string {
 }
 
 /**
- * 校验 sessionId 格式（UUID v4 或 UUID 样式）
+ * 校验 sessionId 格式（UUID v4 或 UUID 样式）。
+ *
+ * 2026-07-06 起额外接受 `sub-<uuid>`：子 agent hidden session 的服务端生成 id
+ * （runtime/subagent/subagentRunner.ts，D2——前缀让日志 / Run Trace 一眼可辨）。
+ * 字符集不变（固定前缀字面量 + hex + 连字符），不引入路径穿越面；会话列表仍按
+ * meta.kind='subagent' 过滤，放行该 id 只是让 detail / catalog 能按 id 找回子会话。
  */
 export function isValidSessionId(sessionId: string): boolean {
-  const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  const uuidPattern = /^(?:sub-)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
   return uuidPattern.test(sessionId);
 }

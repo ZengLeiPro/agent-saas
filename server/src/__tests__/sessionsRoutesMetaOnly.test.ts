@@ -355,6 +355,23 @@ describe('sessions routes for meta-only runtime sessions', () => {
     }
   });
 
+  it('hides subagent hidden sessions from the list (kind=subagent)', async () => {
+    const visible = await writeRuntimeSession({ content: 'normal session' });
+    const hidden = await writeRuntimeSession({
+      content: 'subagent hidden session',
+      metaPatch: { kind: 'subagent' },
+    });
+
+    const { server, baseUrl } = await startServer(agentCwd);
+    try {
+      const json = await listSessions(baseUrl, '?fresh=1');
+      expect(json.sessions.some((session) => session.sessionId === visible.sessionId)).toBe(true);
+      expect(json.sessions.some((session) => session.sessionId === hidden.sessionId)).toBe(false);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it('de-duplicates sessions that have both transcript and meta files', async () => {
     const { sessionId, transcriptPath } = await writeRuntimeSession({ content: 'metadata prompt' });
     await mkdir(dirname(transcriptPath), { recursive: true });

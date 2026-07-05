@@ -18,26 +18,31 @@ describe('ACS runtime config', () => {
     const config = {
       maxRunningSandboxes: 8,
       warnRunningSandboxes: 6,
+      drainDeadlineMs: 120_000,
       runtimeConfigPath,
     } as AcsOrchestratorConfig;
 
     const snapshot = applyRuntimeConfigPatch(config, {
       maxRunningSandboxes: 4,
       warnRunningSandboxes: 3,
+      drainDeadlineMs: 900_000,
     });
 
     expect(snapshot).toMatchObject({
       maxRunningSandboxes: 4,
       warnRunningSandboxes: 3,
+      drainDeadlineMs: 900_000,
       persisted: true,
     });
     expect(runtimeConfigSnapshot(config)).toMatchObject({
       maxRunningSandboxes: 4,
       warnRunningSandboxes: 3,
+      drainDeadlineMs: 900_000,
     });
     expect(JSON.parse(readFileSync(runtimeConfigPath, 'utf-8'))).toEqual({
       maxRunningSandboxes: 4,
       warnRunningSandboxes: 3,
+      drainDeadlineMs: 900_000,
     });
   });
 
@@ -46,6 +51,8 @@ describe('ACS runtime config', () => {
       .toThrow(/warnRunningSandboxes/);
     expect(() => parseRuntimeConfigPatch({ maxRunningSandboxes: 1.5 }))
       .toThrow(/integer/);
+    expect(() => parseRuntimeConfigPatch({ drainDeadlineMs: 999 }))
+      .toThrow(/drainDeadlineMs/);
   });
 
   it('loads desired network policy from env without claiming enforcement', () => {

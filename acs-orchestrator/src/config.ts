@@ -48,6 +48,7 @@ export interface AcsOrchestratorConfig {
   sandboxOrphanGraceMs: number;
   maxRunningSandboxes: number;
   warnRunningSandboxes: number;
+  drainDeadlineMs: number;
   networkPolicy: NetworkPolicyConfig;
   snat: AcsSnatConfig;
   runtimeConfigPath?: string;
@@ -82,6 +83,7 @@ export interface AcsSnatConfig {
 export interface AcsRuntimeConfigSnapshot {
   maxRunningSandboxes: number;
   warnRunningSandboxes: number;
+  drainDeadlineMs: number;
   runtimeConfigPath?: string;
   persisted: boolean;
 }
@@ -89,6 +91,7 @@ export interface AcsRuntimeConfigSnapshot {
 export interface AcsRuntimeConfigPatch {
   maxRunningSandboxes?: number;
   warnRunningSandboxes?: number;
+  drainDeadlineMs?: number;
 }
 
 function readIntEnv(name: string, fallback: number, opts: { min?: number; max?: number } = {}): number {
@@ -171,6 +174,9 @@ export function parseRuntimeConfigPatch(input: unknown): AcsRuntimeConfigPatch {
   if ('warnRunningSandboxes' in raw) {
     patch.warnRunningSandboxes = parseRuntimeConfigInt('warnRunningSandboxes', raw.warnRunningSandboxes);
   }
+  if ('drainDeadlineMs' in raw) {
+    patch.drainDeadlineMs = parseRuntimeConfigDuration('drainDeadlineMs', raw.drainDeadlineMs);
+  }
   validateRuntimeConfigValues(patch);
   return patch;
 }
@@ -178,6 +184,12 @@ export function parseRuntimeConfigPatch(input: unknown): AcsRuntimeConfigPatch {
 function parseRuntimeConfigInt(name: string, value: unknown): number {
   if (typeof value !== 'number' || !Number.isInteger(value)) throw new Error(`${name} must be an integer`);
   if (value < 0 || value > 1_000) throw new Error(`${name} must be between 0 and 1000`);
+  return value;
+}
+
+function parseRuntimeConfigDuration(name: string, value: unknown): number {
+  if (typeof value !== 'number' || !Number.isInteger(value)) throw new Error(`${name} must be an integer`);
+  if (value < 1_000 || value > 24 * 60 * 60_000) throw new Error(`${name} must be between 1000 and 86400000`);
   return value;
 }
 
@@ -196,6 +208,7 @@ export function runtimeConfigSnapshot(config: AcsOrchestratorConfig): AcsRuntime
   return {
     maxRunningSandboxes: config.maxRunningSandboxes,
     warnRunningSandboxes: config.warnRunningSandboxes,
+    drainDeadlineMs: config.drainDeadlineMs,
     ...(config.runtimeConfigPath ? { runtimeConfigPath: config.runtimeConfigPath } : {}),
     persisted: Boolean(config.runtimeConfigPath),
   };
@@ -208,10 +221,12 @@ export function applyRuntimeConfigPatch(
   const next = {
     maxRunningSandboxes: patch.maxRunningSandboxes ?? config.maxRunningSandboxes,
     warnRunningSandboxes: patch.warnRunningSandboxes ?? config.warnRunningSandboxes,
+    drainDeadlineMs: patch.drainDeadlineMs ?? config.drainDeadlineMs,
   };
   validateRuntimeConfigValues(next);
   config.maxRunningSandboxes = next.maxRunningSandboxes;
   config.warnRunningSandboxes = next.warnRunningSandboxes;
+  config.drainDeadlineMs = next.drainDeadlineMs;
   if (config.runtimeConfigPath) {
     mkdirSync(dirname(config.runtimeConfigPath), { recursive: true });
     writeFileSync(config.runtimeConfigPath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
@@ -270,6 +285,7 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     sandboxOrphanGraceMs: readIntEnv('ACS_SANDBOX_ORPHAN_GRACE_MS', 30 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
     maxRunningSandboxes: readIntEnv('ACS_SANDBOX_MAX_RUNNING', 8, { min: 0, max: 1_000 }),
     warnRunningSandboxes: readIntEnv('ACS_SANDBOX_WARN_RUNNING', 6, { min: 0, max: 1_000 }),
+    drainDeadlineMs: readIntEnv('ACS_ORCH_DRAIN_DEADLINE_MS', 120_000, { min: 1_000, max: 24 * 60 * 60_000 }),
     networkPolicy: parseNetworkPolicyFromEnv(process.env, 'ACS_NETWORK_POLICY', DEFAULT_CODING_HAND_NETWORK_POLICY),
     snat: {
       mode: snatMode,

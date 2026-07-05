@@ -105,12 +105,14 @@ describe('runtime operations admin router', () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         maxRunningSandboxes: 4,
         warnRunningSandboxes: 3,
+        drainDeadlineMs: 900_000,
       });
       return new Response(JSON.stringify({
         status: 'ok',
         runtimeConfig: {
           maxRunningSandboxes: 4,
           warnRunningSandboxes: 3,
+          drainDeadlineMs: 900_000,
           persisted: true,
         },
       }), {
@@ -123,13 +125,14 @@ describe('runtime operations admin router', () => {
       const response = await fetch(`${baseUrl}/api/admin/runtime-operations/acs/runtime-config`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ maxRunningSandboxes: 4, warnRunningSandboxes: 3 }),
+        body: JSON.stringify({ maxRunningSandboxes: 4, warnRunningSandboxes: 3, drainDeadlineMs: 900_000 }),
       });
       expect(response.status).toBe(200);
       const body = await readJson(response);
       expect(body.runtimeConfig).toMatchObject({
         maxRunningSandboxes: 4,
         warnRunningSandboxes: 3,
+        drainDeadlineMs: 900_000,
         persisted: true,
       });
       expect(JSON.stringify(body)).not.toContain('secret-token-123');

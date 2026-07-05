@@ -581,5 +581,36 @@ jobs:
             exit 1
           fi
 
+          if command -v kubectl >/dev/null 2>&1; then
+            if [ -n "${ACS_KUBECONFIG:-}" ]; then KCFG_ARGS="--kubeconfig ${ACS_KUBECONFIG}"; else KCFG_ARGS=""; fi
+            # shellcheck disable=SC2086
+            kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" get sandbox \
+              -l "app.kubernetes.io/managed-by=agent-saas-acs-orchestrator" \
+              -o json >/tmp/acs-sandboxes.json 2>/dev/null || true
+            if [ -s /tmp/acs-sandboxes.json ]; then
+              CURRENT_IMAGE="$IMAGE" node <<'NODE'
+          const fs = require('node:fs');
+          const body = JSON.parse(fs.readFileSync('/tmp/acs-sandboxes.json', 'utf8') || '{"items":[]}');
+          const items = Array.isArray(body.items) ? body.items : [];
+          const currentImage = process.env.CURRENT_IMAGE;
+          const byPhaseImage = new Map();
+          let stalePaused = 0;
+          for (const item of items) {
+            const phase = item?.status?.phase || 'Unknown';
+            const containers = item?.spec?.template?.spec?.containers || [];
+            const image = containers.find((container) => !container.name || container.name === 'sandbox')?.image || 'unknown';
+            if (phase === 'Paused' && image !== currentImage) stalePaused += 1;
+            const key = `${phase}\t${image}`;
+            byPhaseImage.set(key, (byPhaseImage.get(key) || 0) + 1);
+          }
+          console.log(`ACS sandbox inventory: total=${items.length} stalePaused=${stalePaused}`);
+          for (const [key, count] of [...byPhaseImage.entries()].sort()) {
+            const [phase, image] = key.split('\t');
+            console.log(`  ${phase} x${count} ${image}`);
+          }
+NODE
+            fi
+          fi
+
           echo "ACS deploy OK: $IMAGE"
           REMOTE

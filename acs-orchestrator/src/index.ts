@@ -37,6 +37,7 @@ const executor = new AcsExecutor(config, kubectl, sandboxManager, logger, active
 const provisioner = new Provisioner(config, kubectl, sandboxManager, () => executor.busySandboxNames(), activeRegistry);
 let lifecycleTimer: ReturnType<typeof setInterval> | null = null;
 const lastAlertAtByEvent = new Map<string, number>();
+let staleImagePrewarmRunning = false;
 
 // ─── Graceful drain (SIGUSR2) ────────────────────────────────────
 // 用于零停机 deploy: `kill -USR2` -> 停接新的长运行请求 (/provision, /execute,
@@ -44,7 +45,6 @@ const lastAlertAtByEvent = new Map<string, number>();
 // 报告 draining + inflight 供 CI 脚本轮询。SIGTERM 沿用原短路径 (5s 硬退)。
 let inflightRequests = 0;
 let draining = false;
-const DRAIN_DEADLINE_MS = 120_000; // 与 CI 脚本超时对齐,给它留 20s buffer
 
 async function withInflight<T>(fn: () => Promise<T>): Promise<T> {
   inflightRequests++;
@@ -191,6 +191,7 @@ async function handleHealth(res: ServerResponse): Promise<void> {
       idlePauseMs: config.sandboxIdlePauseMs,
       ttlMs: config.sandboxTtlMs,
       orphanGraceMs: config.sandboxOrphanGraceMs,
+      drainDeadlineMs: config.drainDeadlineMs,
       maxRunningSandboxes: config.maxRunningSandboxes,
       warnRunningSandboxes: config.warnRunningSandboxes,
       alertWebhookConfigured: Boolean(config.alertWebhookUrl),
@@ -289,7 +290,8 @@ async function handleRuntimeConfig(req: IncomingMessage, res: ServerResponse): P
     const runtimeConfig = applyRuntimeConfigPatch(config, patch);
     logger.warn(
       `runtime_config_updated maxRunningSandboxes=${runtimeConfig.maxRunningSandboxes} `
-      + `warnRunningSandboxes=${runtimeConfig.warnRunningSandboxes} persisted=${runtimeConfig.persisted}`,
+      + `warnRunningSandboxes=${runtimeConfig.warnRunningSandboxes} `
+      + `drainDeadlineMs=${runtimeConfig.drainDeadlineMs} persisted=${runtimeConfig.persisted}`,
     );
     return sendJson(res, 200, { status: 'ok', runtimeConfig });
   } catch (err) {
@@ -556,9 +558,9 @@ process.on('SIGUSR2', () => {
       logger.info('drain complete, exiting cleanly');
       process.exit(0);
     }
-    if (Date.now() - startedAt >= DRAIN_DEADLINE_MS) {
+    if (Date.now() - startedAt >= config.drainDeadlineMs) {
       clearInterval(poll);
-      logger.warn(`drain deadline reached (${DRAIN_DEADLINE_MS}ms), forcing exit (inflight=${inflightRequests})`);
+      logger.warn(`drain deadline reached (${config.drainDeadlineMs}ms), forcing exit (inflight=${inflightRequests})`);
       process.exit(1);
     }
     logger.info(`draining... inflight=${inflightRequests}`);
@@ -571,43 +573,51 @@ function startLifecycleLoop(): void {
     logger.info('sandbox lifecycle loop disabled');
     return;
   }
-  // 07-05：orchestrator 启动时先 sweep 一次老镜像 Paused sandbox（image drift
-  // 主动扫描），避免修镜像后老会话下次唤醒才 lazy detect 的长尾。生产 restart
-  // orchestrator 通常伴随 ACS_SANDBOX_IMAGE tag 变更（acs-sandbox.yml build-deploy
-  // 会改 .env 然后 systemd restart），启动即扫是最合适的挂点。
-  void runStaleImageSweepOnce('startup');
+  // 07-05：orchestrator 启动时先预热一次老镜像 Paused sandbox。只处理
+  // Paused + image drift，不碰 Running，避免镜像部署后老会话下次唤醒才发现。
+  void runStaleImagePrewarmOnce('startup');
   void runLifecycleOnce('startup');
   lifecycleTimer = setInterval(() => {
+    void runStaleImagePrewarmOnce('interval');
     void runLifecycleOnce('interval');
   }, config.sandboxCleanupIntervalMs);
   lifecycleTimer.unref?.();
   logger.info(`sandbox lifecycle loop enabled intervalMs=${config.sandboxCleanupIntervalMs}`);
 }
 
-async function runStaleImageSweepOnce(reason: string): Promise<void> {
+async function runStaleImagePrewarmOnce(reason: string): Promise<void> {
+  if (staleImagePrewarmRunning) {
+    logger.info(`sandbox_stale_image_prewarm reason=${reason} skipped=already_running`);
+    return;
+  }
+  staleImagePrewarmRunning = true;
   try {
-    const result = await sandboxManager.sweepStaleImagePausedSandboxes({ busySandboxNames: executor.busySandboxNames() });
-    if (result.deleted.length > 0 || result.skipped.length > 0) {
+    const result = await provisioner.prewarmStaleImagePausedSandboxes({ busySandboxNames: activeBusySandboxNames() });
+    if (result.queued.length || result.skipped.length || result.skippedBusy.length || result.failed.length) {
       logger.warn(
-        `sandbox_stale_image_sweep reason=${reason} deleted=${result.deleted.length} skipped=${result.skipped.length}`,
+        `sandbox_stale_image_prewarm reason=${reason} queued=${result.queued.length} `
+        + `prewarmed=${result.prewarmed.length} adopted=${result.adopted.length} `
+        + `skipped=${result.skipped.length} skippedBusy=${result.skippedBusy.length} failed=${result.failed.length}`,
       );
       await emitAlert({
-        event: 'sandbox_stale_image_sweep',
-        severity: 'info',
-        message: `ACS Sandbox stale-image sweep deleted ${result.deleted.length} Paused sandbox${result.deleted.length === 1 ? '' : 'es'}`,
+        event: 'sandbox_stale_image_prewarm',
+        severity: result.failed.length ? 'warning' : 'info',
+        message: `ACS Sandbox stale-image prewarm processed ${result.queued.length} Paused sandbox${result.queued.length === 1 ? '' : 'es'}`,
         metadata: result,
       });
     } else {
-      logger.info(`sandbox_stale_image_sweep reason=${reason} deleted=0 skipped=0`);
+      logger.info(`sandbox_stale_image_prewarm reason=${reason} queued=0 skipped=0 failed=0`);
     }
   } catch (err) {
-    logger.error(`sandbox_stale_image_sweep_error reason=${reason} err=${err instanceof Error ? err.message : String(err)}`);
+    logger.error(`sandbox_stale_image_prewarm_error reason=${reason} err=${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    staleImagePrewarmRunning = false;
   }
 }
 
 async function runLifecycleOnce(reason: string): Promise<void> {
   try {
-    const report = await sandboxManager.cleanupSandboxes({ busySandboxNames: executor.busySandboxNames() });
+    const report = await sandboxManager.cleanupSandboxes({ busySandboxNames: activeBusySandboxNames() });
     if (report.paused.length || report.deleted.length || report.skippedBusy.length) {
       logger.warn(
         `sandbox_lifecycle_actions reason=${reason} checked=${report.checked} paused=${report.paused.length} `

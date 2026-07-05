@@ -150,6 +150,7 @@ function baseConfig(): AcsOrchestratorConfig {
     sandboxOrphanGraceMs: 1_800_000,
     maxRunningSandboxes: 8,
     warnRunningSandboxes: 6,
+    drainDeadlineMs: 120_000,
     networkPolicy: { mode: 'public-egress', denyPrivateNetworks: true },
     snat: {
       mode: 'disabled',

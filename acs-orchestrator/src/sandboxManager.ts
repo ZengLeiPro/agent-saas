@@ -25,8 +25,7 @@ export interface ManagedSandbox {
   createdAt?: string;
   lastActiveAt?: string;
   /**
-   * 当前 sandbox spec 里 podTemplate 主容器的 image tag。
-   * 07-05 加入：sweepStaleImagePausedSandboxes 需要它做 image drift 判定。
+   * 当前 sandbox spec 里 podTemplate 主容器的 image tag，用于 image drift 判定。
    */
   image?: string;
 }
@@ -48,6 +47,16 @@ export interface SandboxCleanupReport {
   snatUnexpected: number;
   runningCount: number;
   totalCount: number;
+}
+
+export interface SandboxStaleImagePrewarmReport {
+  checked: number;
+  queued: string[];
+  prewarmed: string[];
+  adopted: string[];
+  skipped: string[];
+  skippedBusy: string[];
+  failed: Array<{ name: string; error: string }>;
 }
 
 export interface SandboxInventorySummary {
@@ -80,6 +89,7 @@ const SANDBOX_TIMEZONE = 'Asia/Shanghai';
 export class SandboxManager {
   private readonly networkPolicyManager: AcsNetworkPolicyManager;
   private readonly snatManager: SnatManager;
+  private readonly prewarmInFlight = new Map<string, Promise<void>>();
 
   constructor(
     private readonly config: AcsOrchestratorConfig,
@@ -110,6 +120,7 @@ export class SandboxManager {
     options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
   ): Promise<SandboxRef> {
     const ref = this.ref(input);
+    await this.waitForPrewarm(ref.name);
     await this.ensureHostWorkspace(ref);
     let existing = await this.getStatus(ref.name);
     if (existing && this.existingMountSubPath(existing, ref) !== ref.mountSubPath) {
@@ -125,6 +136,15 @@ export class SandboxManager {
       this.logger.warn(
         `sandbox_image_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingImage(existing) ?? 'unknown'} new=${this.config.sandboxImage}`,
       );
+      if (existing.phase === 'Paused') {
+        if (!options.skipCapacityManagement) await this.ensureCapacity(ref.name, options.busySandboxNames);
+        await this.networkPolicyManager.reconcile(ref);
+        await this.applySandbox(ref);
+        await this.waitForPhase(ref.name, 'Running');
+        await this.snatManager.ensureForSandbox(ref);
+        await this.touch(ref.name);
+        return ref;
+      }
       await this.delete(ref, { activeKey: options.activeKey });
       existing = null;
     }
@@ -245,8 +265,8 @@ export class SandboxManager {
       const annotations = metadata.annotations && typeof metadata.annotations === 'object' ? metadata.annotations as Record<string, unknown> : {};
       const labels = metadata.labels && typeof metadata.labels === 'object' ? metadata.labels as Record<string, unknown> : {};
       const status = item.status && typeof item.status === 'object' ? item.status as Record<string, unknown> : {};
-      // 07-05: 从 spec.template.spec.containers[主容器].image 里抽出 image tag，
-      // 交给 sweepStaleImagePausedSandboxes 做 image drift 判定。找不到主容器时留 undefined。
+      // 从 spec.template.spec.containers[主容器].image 里抽出 image tag，
+      // 用于 Paused 旧镜像预热和 inventory 统计。找不到主容器时留 undefined。
       const spec = item.spec && typeof item.spec === 'object' ? item.spec as Record<string, unknown> : {};
       const template = spec.template && typeof spec.template === 'object' ? spec.template as Record<string, unknown> : {};
       const podSpec = template.spec && typeof template.spec === 'object' ? template.spec as Record<string, unknown> : {};
@@ -270,38 +290,83 @@ export class SandboxManager {
     }).filter((sandbox) => sandbox.name);
   }
 
-  /**
-   * 07-05：orchestrator 启动 / 镜像 tag 变更时主动扫描一次所有 Paused sandbox，
-   * spec.image 与当前 config.sandboxImage 不一致的立即 delete。避免"老会话下次
-   * 唤醒才 lazy detect image drift"的长尾——修镜像后 1 分钟内所有老镜像 Paused
-   * 就都被清干净，下次唤醒必然拉新镜像。
-   *
-   * 只处理 Paused（Running 里可能有 tool invocation 在跑；Failed/Pending 交给
-   * shouldDeleteOrphan 走 orphanGrace 通道）。缺 image 字段的（listManagedSandboxes
-   * 解析不到）也跳过——不能误删。busy 保护同 delete()。
-   */
-  async sweepStaleImagePausedSandboxes(input: { busySandboxNames?: Set<string> } = {}): Promise<{ deleted: string[]; skipped: string[] }> {
+  async prewarmStaleImagePausedSandboxes(input: {
+    busySandboxNames?: Set<string>;
+    bootstrap?: (ref: SandboxRef) => Promise<void>;
+  } = {}): Promise<SandboxStaleImagePrewarmReport> {
     const busySandboxNames = input.busySandboxNames ?? new Set<string>();
     const currentImage = this.config.sandboxImage;
     const sandboxes = await this.listManagedSandboxes();
-    const deleted: string[] = [];
+    const queued: string[] = [];
+    const prewarmed: string[] = [];
+    const adopted: string[] = [];
     const skipped: string[] = [];
+    const skippedBusy: string[] = [];
+    const failed: Array<{ name: string; error: string }> = [];
+    const candidates: SandboxRef[] = [];
     for (const sandbox of sandboxes) {
       if (sandbox.phase !== 'Paused') continue;
       if (!sandbox.image) { skipped.push(sandbox.name); continue; }
       if (sandbox.image === currentImage) continue;
-      if (this.isBusy(sandbox.name, busySandboxNames)) { skipped.push(sandbox.name); continue; }
-      this.logger.warn(
-        `sandbox_stale_image_paused_delete name=${sandbox.name} old=${sandbox.image} new=${currentImage}`,
-      );
-      await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
-        timeoutMs: this.config.sandboxWaitTimeoutMs,
-      });
-      await this.networkPolicyManager.deleteForSandboxName(sandbox.name);
-      await this.snatManager.deleteForSandboxName(sandbox.name);
-      deleted.push(sandbox.name);
+      if (!sandbox.workspaceId || !sandbox.sessionId) { skipped.push(sandbox.name); continue; }
+      if (this.isBusy(sandbox.name, busySandboxNames)) {
+        skippedBusy.push(sandbox.name);
+        continue;
+      }
+      let ref: SandboxRef;
+      try {
+        ref = this.ref({
+          workspaceId: sandbox.workspaceId,
+          sessionId: sandbox.sessionId,
+          sandboxScopeId: sandbox.sandboxScopeId,
+          mountSubPath: sandbox.mountSubPath,
+        });
+      } catch (err) {
+        skipped.push(sandbox.name);
+        this.logger.warn(`sandbox_stale_image_prewarm_skip name=${sandbox.name} reason=${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+      if (ref.name !== sandbox.name) {
+        skipped.push(sandbox.name);
+        this.logger.warn(`sandbox_stale_image_prewarm_skip name=${sandbox.name} reason=ref_name_mismatch expected=${ref.name}`);
+        continue;
+      }
+      queued.push(sandbox.name);
+      candidates.push(ref);
     }
-    return { deleted, skipped };
+
+    const runningCount = sandboxes.filter((sandbox) => isRunningCostPhase(sandbox.phase)).length;
+    const availableSlots = this.config.maxRunningSandboxes > 0
+      ? Math.max(1, this.config.maxRunningSandboxes - runningCount)
+      : candidates.length;
+    const concurrency = Math.min(candidates.length, availableSlots);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < candidates.length) {
+        const ref = candidates[cursor++]!;
+        await this.runPrewarmCandidate(ref, input.bootstrap, prewarmed, adopted, skipped, failed);
+      }
+    };
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    return { checked: sandboxes.length, queued, prewarmed, adopted, skipped, skippedBusy, failed };
+  }
+
+  private async runPrewarmCandidate(
+    ref: SandboxRef,
+    bootstrap: ((ref: SandboxRef) => Promise<void>) | undefined,
+    prewarmed: string[],
+    adopted: string[],
+    skipped: string[],
+    failed: Array<{ name: string; error: string }>,
+  ): Promise<void> {
+    try {
+      const result = await this.startPrewarm(ref, bootstrap);
+      if (result === 'prewarmed') prewarmed.push(ref.name);
+      else if (result === 'adopted') adopted.push(ref.name);
+      else skipped.push(ref.name);
+    } catch (err) {
+      failed.push({ name: ref.name, error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   async inventorySummary(): Promise<SandboxInventorySummary> {
@@ -427,8 +492,8 @@ export class SandboxManager {
     return { workspaceId: id, archived: true, archiveId, archivePath };
   }
 
-  async patchPaused(name: string, paused: boolean): Promise<void> {
-    if (paused) this.assertIdle(name, 'pause');
+  async patchPaused(name: string, paused: boolean, options: { activeKey?: string } = {}): Promise<void> {
+    if (paused) this.assertIdle(name, 'pause', options.activeKey);
     const result = await this.kubectl.run([
       'patch',
       this.resourceName(name),
@@ -487,6 +552,74 @@ export class SandboxManager {
       await new Promise((resolve) => setTimeout(resolve, 2_000));
     }
     throw new Error(`等待 Sandbox ${name} 进入 ${expected} 超时，lastPhase=${lastPhase}${lastError ? ` lastError=${lastError}` : ''}`);
+  }
+
+  private async waitForPrewarm(name: string): Promise<void> {
+    const pending = this.prewarmInFlight.get(name);
+    if (!pending) return;
+    this.logger.info(`sandbox_prewarm_join name=${name}`);
+    try {
+      await pending;
+    } catch (err) {
+      this.logger.warn(`sandbox_prewarm_join_failed name=${name} err=${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private async startPrewarm(
+    ref: SandboxRef,
+    bootstrap: ((ref: SandboxRef) => Promise<void>) | undefined,
+  ): Promise<'prewarmed' | 'adopted' | 'skipped'> {
+    const existing = this.prewarmInFlight.get(ref.name);
+    if (existing) {
+      await existing;
+      return 'skipped';
+    }
+    let outcome: 'prewarmed' | 'adopted' | 'skipped' = 'skipped';
+    const promise = this.prewarmPausedSandbox(ref, bootstrap).then((result) => {
+      outcome = result;
+    });
+    this.prewarmInFlight.set(ref.name, promise);
+    try {
+      await promise;
+      return outcome;
+    } finally {
+      if (this.prewarmInFlight.get(ref.name) === promise) this.prewarmInFlight.delete(ref.name);
+    }
+  }
+
+  private async prewarmPausedSandbox(
+    ref: SandboxRef,
+    bootstrap: ((ref: SandboxRef) => Promise<void>) | undefined,
+  ): Promise<'prewarmed' | 'adopted' | 'skipped'> {
+    const activeKey = `prewarm:${ref.name}:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
+    const releaseActive = this.activeRegistry?.acquire(ref.name, activeKey);
+    try {
+      const latest = await this.getStatus(ref.name);
+      if (!latest || latest.phase !== 'Paused') return 'skipped';
+      const oldImage = this.existingImage(latest);
+      if (!oldImage || oldImage === this.config.sandboxImage) return 'skipped';
+      if (this.isBusy(ref.name, undefined, activeKey)) return 'adopted';
+
+      this.logger.warn(`sandbox_stale_image_paused_prewarm name=${ref.name} old=${oldImage} new=${this.config.sandboxImage}`);
+      await this.ensureHostWorkspace(ref);
+      await this.ensureCapacity(ref.name);
+      await this.networkPolicyManager.reconcile(ref);
+      await this.applySandbox(ref);
+      await this.waitForPhase(ref.name, 'Running');
+      await this.snatManager.ensureForSandbox(ref);
+      await this.touch(ref.name);
+      await bootstrap?.(ref);
+
+      if (this.isBusy(ref.name, undefined, activeKey)) {
+        this.logger.info(`sandbox_stale_image_prewarm_adopted name=${ref.name}`);
+        return 'adopted';
+      }
+      await this.patchPaused(ref.name, true, { activeKey });
+      this.logger.info(`sandbox_stale_image_prewarm_paused name=${ref.name}`);
+      return 'prewarmed';
+    } finally {
+      releaseActive?.();
+    }
   }
 
   private async ensureHostWorkspace(ref: SandboxRef): Promise<void> {

@@ -101,6 +101,7 @@ interface RuntimeHandHealthMetadata {
     idlePauseMs?: number;
     ttlMs?: number;
     orphanGraceMs?: number;
+    drainDeadlineMs?: number;
     maxRunningSandboxes?: number;
     warnRunningSandboxes?: number;
     alertWebhookConfigured?: boolean;
@@ -197,6 +198,7 @@ function formatDateTime(value?: string | null): string {
 
 function formatDuration(ms?: number): string {
   if (!ms || ms <= 0) return "-";
+  if (ms < 60_000) return `${Math.round(ms / 1_000)} 秒`;
   const minutes = Math.round(ms / 60_000);
   if (minutes < 60) return `${minutes} 分钟`;
   const hours = Math.round(minutes / 60);
@@ -283,6 +285,16 @@ function parseLimitInput(label: string, value: string): number {
   return parsed;
 }
 
+function parseDurationMsInput(label: string, value: string): number {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) throw new Error(`${label} 必须是毫秒整数`);
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isInteger(parsed) || parsed < 1_000 || parsed > 24 * 60 * 60_000) {
+    throw new Error(`${label} 必须在 1000-86400000 毫秒之间`);
+  }
+  return parsed;
+}
+
 function MetricCard({ title, value, description, tone = "default" }: {
   title: string;
   value: string | number;
@@ -317,6 +329,7 @@ export function RuntimeOperationsManager() {
   const [applyingAction, setApplyingAction] = useState<string | null>(null);
   const [maxRunningText, setMaxRunningText] = useState("");
   const [warnRunningText, setWarnRunningText] = useState("");
+  const [drainDeadlineText, setDrainDeadlineText] = useState("");
 
   const load = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
     if (mode === "initial") setLoading(true);
@@ -364,7 +377,12 @@ export function RuntimeOperationsManager() {
     if (!acsMeta?.lifecycle) return;
     setMaxRunningText(String(acsMeta.lifecycle.maxRunningSandboxes ?? ""));
     setWarnRunningText(String(acsMeta.lifecycle.warnRunningSandboxes ?? ""));
-  }, [acsMeta?.lifecycle?.maxRunningSandboxes, acsMeta?.lifecycle?.warnRunningSandboxes]);
+    setDrainDeadlineText(String(acsMeta.lifecycle.drainDeadlineMs ?? ""));
+  }, [
+    acsMeta?.lifecycle?.maxRunningSandboxes,
+    acsMeta?.lifecycle?.warnRunningSandboxes,
+    acsMeta?.lifecycle?.drainDeadlineMs,
+  ]);
 
   const saveTenantRemoteHands = useCallback(async (nextHands: TenantRemoteHandConfig[], label: string) => {
     if (!data) return;
@@ -415,30 +433,31 @@ export function RuntimeOperationsManager() {
   }, [data, saveTenantRemoteHands]);
 
   const saveAcsRuntimeConfig = useCallback(async () => {
-    setApplyingAction("保存 ACS 上限");
+    setApplyingAction("保存 ACS 配置");
     setActionError(null);
     setActionMessage(null);
     try {
       const maxRunningSandboxes = parseLimitInput("Max running", maxRunningText);
       const warnRunningSandboxes = parseLimitInput("Warn running", warnRunningText);
+      const drainDeadlineMs = parseDurationMsInput("Drain deadline", drainDeadlineText);
       if (maxRunningSandboxes > 0 && warnRunningSandboxes > maxRunningSandboxes) {
         throw new Error("Warn running 不能大于 Max running");
       }
       const res = await authFetch(`${API_URL}/acs/runtime-config`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxRunningSandboxes, warnRunningSandboxes }),
+        body: JSON.stringify({ maxRunningSandboxes, warnRunningSandboxes, drainDeadlineMs }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-      setActionMessage("ACS 上限已保存");
+      setActionMessage("ACS 配置已保存");
       await load();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setApplyingAction(null);
     }
-  }, [load, maxRunningText, warnRunningText]);
+  }, [drainDeadlineText, load, maxRunningText, warnRunningText]);
 
   const runLifecycleCleanup = useCallback(async () => {
     if (!window.confirm("立即触发 ACS lifecycle cleanup？这只会按现有 idle/TTL 策略 pause/delete Sandbox CR，不会物理删除 NAS workspace。")) return;
@@ -506,10 +525,10 @@ export function RuntimeOperationsManager() {
             <Button
               size="sm"
               onClick={() => { void saveAcsRuntimeConfig(); }}
-              disabled={!!applyingAction || !maxRunningText || !warnRunningText}
+              disabled={!!applyingAction || !maxRunningText || !warnRunningText || !drainDeadlineText}
             >
-              {applyingAction === "保存 ACS 上限" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
-              保存上限
+              {applyingAction === "保存 ACS 配置" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+              保存配置
             </Button>
             <Button variant="outline" size="sm" onClick={() => { void load(); }} disabled={loading || refreshing}>
               {refreshing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
@@ -603,11 +622,11 @@ export function RuntimeOperationsManager() {
 
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">ACS 容量保护</CardTitle>
-                <div className="text-xs text-muted-foreground">调整 orchestrator 的运行时上限；生产会持久化到 runtime config 文件。</div>
+                <CardTitle className="text-base">ACS 运行保护</CardTitle>
+                <div className="text-xs text-muted-foreground">调整 orchestrator 的运行时上限与部署 drain 等待；生产会持久化到 runtime config 文件。</div>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-3 md:grid-cols-3">
                   <label className="space-y-1.5 text-sm">
                     <span className="text-xs font-medium text-muted-foreground">Max running</span>
                     <Input inputMode="numeric" value={maxRunningText} onChange={(event) => setMaxRunningText(event.target.value)} placeholder="8" />
@@ -615,6 +634,10 @@ export function RuntimeOperationsManager() {
                   <label className="space-y-1.5 text-sm">
                     <span className="text-xs font-medium text-muted-foreground">Warn running</span>
                     <Input inputMode="numeric" value={warnRunningText} onChange={(event) => setWarnRunningText(event.target.value)} placeholder="6" />
+                  </label>
+                  <label className="space-y-1.5 text-sm">
+                    <span className="text-xs font-medium text-muted-foreground">Drain deadline (ms)</span>
+                    <Input inputMode="numeric" value={drainDeadlineText} onChange={(event) => setDrainDeadlineText(event.target.value)} placeholder="120000" />
                   </label>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -721,6 +744,7 @@ export function RuntimeOperationsManager() {
                 <div className="space-y-1 border-t pt-3 text-xs text-muted-foreground">
                   <div>Idle pause: {formatDuration(acsMeta?.lifecycle?.idlePauseMs)}</div>
                   <div>TTL: {formatDuration(acsMeta?.lifecycle?.ttlMs)}</div>
+                  <div>Drain deadline: {formatDuration(acsMeta?.lifecycle?.drainDeadlineMs)}</div>
                   <div>Quota: warn {acsMeta?.lifecycle?.warnRunningSandboxes ?? "-"} / max {acsMeta?.lifecycle?.maxRunningSandboxes ?? "-"}</div>
                   <div>Alert webhook: {acsMeta?.lifecycle?.alertWebhookConfigured ? "已配置" : "未配置"}</div>
                 </div>

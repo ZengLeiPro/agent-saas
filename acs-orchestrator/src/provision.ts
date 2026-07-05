@@ -75,6 +75,23 @@ export class Provisioner {
     }
   }
 
+  async prewarmStaleImagePausedSandboxes(input: { busySandboxNames?: Set<string> } = {}) {
+    return await this.sandboxManager.prewarmStaleImagePausedSandboxes({
+      busySandboxNames: input.busySandboxNames ?? this.getBusySandboxNames(),
+      bootstrap: async (ref) => {
+        const runtimeBootstrap = await this.runRuntimeBootstrap(ref.name, {
+          workspaceId: ref.workspaceId,
+          sessionId: ref.sessionId,
+          sandboxScopeId: ref.sandboxScopeId,
+          mountSubPath: ref.mountSubPath,
+        }, RUNTIME_BOOTSTRAP_TIMEOUT_MS);
+        if (runtimeBootstrap.status === 'error') {
+          throw new Error(runtimeBootstrap.stderr || runtimeBootstrap.stdout || 'runtime bootstrap failed');
+        }
+      },
+    });
+  }
+
   private async provisionExclusive(
     recipe: WorkspaceRecipe,
     plannedRef: { name: string; workspaceId: string; sessionId: string; sandboxScopeId?: string; mountSubPath?: string },

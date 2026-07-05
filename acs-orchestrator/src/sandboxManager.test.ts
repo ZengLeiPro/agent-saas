@@ -162,7 +162,7 @@ describe('SandboxManager', () => {
     }
   });
 
-  it('recreates an existing Sandbox when only the current active key is using it', async () => {
+  it('refreshes a paused image-drift Sandbox in place when only the current active key is using it', async () => {
     const deleted: string[] = [];
     let sandboxApplied = false;
     const kubectl = {
@@ -229,7 +229,7 @@ describe('SandboxManager', () => {
       release();
     }
 
-    expect(deleted.some((name) => name.startsWith('sandbox/as-ws-kaiyan-test-'))).toBe(true);
+    expect(deleted.some((name) => name.startsWith('sandbox/as-ws-kaiyan-test-'))).toBe(false);
     expect(sandboxApplied).toBe(true);
   });
 
@@ -611,45 +611,66 @@ describe('SandboxManager', () => {
     }
   });
 
-  it('sweepStaleImagePausedSandboxes: 删除 Paused 且镜像与当前 config 不一致的 sandbox', async () => {
+  it('prewarmStaleImagePausedSandboxes: 预热 Paused 旧镜像 sandbox，成功后无人接管则重新 pause', async () => {
     const calls: string[][] = [];
     const currentImage = 'registry.example.com/agent-saas/acs-sandbox:new-tag';
+    let oldPausedName = '';
+    let currentPausedName = '';
+    let oldRunningName = '';
+    let oldBusyName = '';
+    let noImageName = '';
+    let oldPhase = 'Paused';
+    let appliedSandboxImage: string | undefined;
+    const annotationsFor = (workspaceId: string, sessionId: string) => ({
+      'agent-saas.kaiyan.net/workspace-id': workspaceId,
+      'agent-saas.kaiyan.net/session-id': sessionId,
+      'agent-saas.kaiyan.net/mount-subpath': workspaceId,
+    });
+    const sandboxItem = (name: string, workspaceId: string, sessionId: string, phase: string, image?: string) => ({
+      metadata: {
+        name,
+        annotations: annotationsFor(workspaceId, sessionId),
+      },
+      ...(image ? { spec: { template: { spec: { containers: [{ name: 'sandbox', image }] } } } } : { spec: { template: { spec: { containers: [] } } } }),
+      status: { phase },
+    });
     const kubectl = {
-      async run(args: string[]): Promise<KubectlResult> {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
         calls.push(args);
         if (args[0] === 'get' && args.includes('-l')) {
           return {
             stdout: JSON.stringify({
               items: [
-                {
-                  metadata: { name: 'as-old-paused' },
-                  spec: { template: { spec: { containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:old-tag' }] } } },
-                  status: { phase: 'Paused' },
-                },
-                {
-                  metadata: { name: 'as-current-paused' },
-                  spec: { template: { spec: { containers: [{ name: 'sandbox', image: currentImage }] } } },
-                  status: { phase: 'Paused' },
-                },
-                {
-                  metadata: { name: 'as-old-running' },
-                  spec: { template: { spec: { containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:old-tag' }] } } },
-                  status: { phase: 'Running' },
-                },
-                {
-                  metadata: { name: 'as-old-busy-paused' },
-                  spec: { template: { spec: { containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:old-tag' }] } } },
-                  status: { phase: 'Paused' },
-                },
-                {
-                  metadata: { name: 'as-no-image-paused' },
-                  spec: { template: { spec: { containers: [] } } },
-                  status: { phase: 'Paused' },
-                },
+                sandboxItem(oldPausedName, 'ws_old_paused', 'session-old-paused', oldPhase, 'registry.example.com/agent-saas/acs-sandbox:old-tag'),
+                sandboxItem(currentPausedName, 'ws_current_paused', 'session-current-paused', 'Paused', currentImage),
+                sandboxItem(oldRunningName, 'ws_old_running', 'session-old-running', 'Running', 'registry.example.com/agent-saas/acs-sandbox:old-tag'),
+                sandboxItem(oldBusyName, 'ws_old_busy', 'session-old-busy', 'Paused', 'registry.example.com/agent-saas/acs-sandbox:old-tag'),
+                sandboxItem(noImageName, 'ws_no_image', 'session-no-image', 'Paused'),
               ],
             }),
             stderr: '', exitCode: 0, signal: null,
           };
+        }
+        if (args[0] === 'get' && args[1] === `sandbox/${oldPausedName}`) {
+          return {
+            stdout: JSON.stringify({
+              spec: { template: { spec: { containers: [{ name: 'sandbox', image: oldPhase === 'Paused' ? 'registry.example.com/agent-saas/acs-sandbox:old-tag' : currentImage }] } } },
+              status: { phase: oldPhase },
+            }),
+            stderr: '', exitCode: 0, signal: null,
+          };
+        }
+        if (args[0] === 'apply') {
+          const manifest = JSON.parse(options.input ?? '{}') as { kind?: string; spec?: { template?: { spec?: { containers?: Array<{ image?: string }> } } } };
+          if (manifest.kind === 'Sandbox') {
+            appliedSandboxImage = manifest.spec?.template?.spec?.containers?.[0]?.image;
+            oldPhase = 'Running';
+          }
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'patch') {
+          if (args[1] === `sandbox/${oldPausedName}` && String(args[4] ?? '').includes('"paused":true')) oldPhase = 'Paused';
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
@@ -660,23 +681,27 @@ describe('SandboxManager', () => {
       ...baseConfig(),
       sandboxImage: currentImage,
     }, kubectl, noopLogger);
+    oldPausedName = manager.ref({ workspaceId: 'ws_old_paused', sessionId: 'session-old-paused' }).name;
+    currentPausedName = manager.ref({ workspaceId: 'ws_current_paused', sessionId: 'session-current-paused' }).name;
+    oldRunningName = manager.ref({ workspaceId: 'ws_old_running', sessionId: 'session-old-running' }).name;
+    oldBusyName = manager.ref({ workspaceId: 'ws_old_busy', sessionId: 'session-old-busy' }).name;
+    noImageName = manager.ref({ workspaceId: 'ws_no_image', sessionId: 'session-no-image' }).name;
+    const bootstrapped: string[] = [];
 
-    const result = await manager.sweepStaleImagePausedSandboxes({
-      busySandboxNames: new Set(['as-old-busy-paused']),
+    const result = await manager.prewarmStaleImagePausedSandboxes({
+      busySandboxNames: new Set([oldBusyName]),
+      bootstrap: async (ref) => { bootstrapped.push(ref.name); },
     });
 
-    // 只删了 Paused 且镜像老 且非 busy 的那 1 个
-    expect(result.deleted).toEqual(['as-old-paused']);
-    // busy Paused 和缺 image 字段的 Paused 都被 skip（不删也不算删）
-    expect(result.skipped).toEqual(expect.arrayContaining(['as-no-image-paused', 'as-old-busy-paused']));
-    // 关键断言：Running 的 sandbox 无论镜像新旧都不动
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-old-running')).toBe(false);
-    // 关键断言：镜像一致的 Paused 不动
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-current-paused')).toBe(false);
-    // 关键断言：busy 的老镜像 Paused 不动
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-old-busy-paused')).toBe(false);
-    // 真的删了老镜像非 busy Paused
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-old-paused')).toBe(true);
+    expect(result.queued).toEqual([oldPausedName]);
+    expect(result.prewarmed).toEqual([oldPausedName]);
+    expect(result.skippedBusy).toEqual([oldBusyName]);
+    expect(result.skipped).toEqual(expect.arrayContaining([noImageName]));
+    expect(bootstrapped).toEqual([oldPausedName]);
+    expect(appliedSandboxImage).toBe(currentImage);
+    expect(calls.some((args) => args[0] === 'delete')).toBe(false);
+    expect(calls.some((args) => args[0] === 'patch' && args[1] === `sandbox/${oldPausedName}` && String(args[4] ?? '').includes('"paused":true'))).toBe(true);
+    expect(calls.some((args) => args[0] === 'apply' && args[1] === '-f')).toBe(true);
   });
 
   it('cleanupSandboxes: as-ws-ci-* 前缀走 sandboxCiTtlMs 短 TTL', async () => {
@@ -783,15 +808,15 @@ describe('SandboxManager', () => {
     expect(report.deleted).toEqual([]);
   });
 
-  it('sweepStaleImagePausedSandboxes: 没有 sandbox 时返回空报告', async () => {
+  it('prewarmStaleImagePausedSandboxes: 没有 sandbox 时返回空报告', async () => {
     const kubectl = {
       async run(): Promise<KubectlResult> {
         return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
       },
     } as unknown as Kubectl;
     const manager = new SandboxManager(baseConfig(), kubectl, noopLogger);
-    const result = await manager.sweepStaleImagePausedSandboxes();
-    expect(result).toEqual({ deleted: [], skipped: [] });
+    const result = await manager.prewarmStaleImagePausedSandboxes();
+    expect(result).toEqual({ checked: 0, queued: [], prewarmed: [], adopted: [], skipped: [], skippedBusy: [], failed: [] });
   });
 });
 
@@ -834,6 +859,7 @@ function baseConfig(): AcsOrchestratorConfig {
     sandboxOrphanGraceMs: 1_800_000,
     maxRunningSandboxes: 8,
     warnRunningSandboxes: 6,
+    drainDeadlineMs: 120_000,
     networkPolicy: { mode: 'public-egress', denyPrivateNetworks: true },
     snat: {
       mode: 'disabled',

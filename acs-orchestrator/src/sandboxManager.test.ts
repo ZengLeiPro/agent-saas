@@ -274,6 +274,111 @@ describe('SandboxManager', () => {
     )).rejects.toThrow(/refuse to recreate while active/);
   });
 
+  it('recreates a broken Paused Sandbox instead of waiting for resume forever', async () => {
+    const calls: string[][] = [];
+    const currentImage = 'registry.example.com/agent-saas/acs-sandbox:test';
+    let state: 'broken' | 'running' = 'broken';
+    let appliedSandbox = false;
+    const kubectl = {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        calls.push(args);
+        if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
+          return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'get') {
+          if (state === 'broken') {
+            return {
+              stdout: JSON.stringify({
+                metadata: {
+                  annotations: {
+                    'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
+                  },
+                },
+                spec: {
+                  paused: false,
+                  template: {
+                    spec: {
+                      containers: [{ name: 'sandbox', image: currentImage }],
+                    },
+                  },
+                },
+                status: {
+                  phase: 'Paused',
+                  conditions: [{
+                    type: 'SandboxPaused',
+                    status: 'False',
+                    reason: 'ImageChanged',
+                    message: 'pause is not allowed',
+                  }],
+                  podInfo: {
+                    annotations: {
+                      'ops.alibabacloud.com/recreating': 'true',
+                    },
+                  },
+                },
+              }),
+              stderr: '',
+              exitCode: 0,
+              signal: null,
+            };
+          }
+          return {
+            stdout: JSON.stringify({
+              metadata: {
+                annotations: {
+                  'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
+                },
+              },
+              spec: {
+                paused: false,
+                template: { spec: { containers: [{ name: 'sandbox', image: currentImage }] } },
+              },
+              status: { phase: 'Running' },
+            }),
+            stderr: '',
+            exitCode: 0,
+            signal: null,
+          };
+        }
+        if (args[0] === 'delete') {
+          if (args[1]?.startsWith('sandbox/')) state = 'running';
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'apply') {
+          const manifest = JSON.parse(options.input ?? '{}') as { kind?: string };
+          if (manifest.kind === 'Sandbox') {
+            appliedSandbox = true;
+            state = 'running';
+          }
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+
+    const manager = new SandboxManager({
+      ...baseConfig(),
+      sandboxImage: currentImage,
+    }, kubectl, noopLogger);
+
+    const ref = manager.ref({
+      workspaceId: 'ws_kaiyan__test',
+      sessionId: 'session-123',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    });
+
+    await manager.ensureRunning({
+      workspaceId: 'ws_kaiyan__test',
+      sessionId: 'session-123',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    });
+
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === `sandbox/${ref.name}`)).toBe(true);
+    expect(appliedSandbox).toBe(true);
+    expect(calls.some((args) => args[0] === 'patch' && args[1] === `sandbox/${ref.name}` && String(args[4] ?? '').includes('"paused":false'))).toBe(false);
+  });
+
   it('rejects creating a new Sandbox when running quota is exhausted', async () => {
     const kubectl = {
       async run(args: string[]): Promise<KubectlResult> {
@@ -611,7 +716,7 @@ describe('SandboxManager', () => {
     }
   });
 
-  it('prewarmStaleImagePausedSandboxes: 预热 Paused 旧镜像 sandbox，成功后无人接管则重新 pause', async () => {
+  it('prewarmStaleImagePausedSandboxes: 预热 Paused 旧镜像 sandbox，成功后保持 Running 到 idle pause', async () => {
     const calls: string[][] = [];
     const currentImage = 'registry.example.com/agent-saas/acs-sandbox:new-tag';
     let oldPausedName = '';
@@ -700,8 +805,9 @@ describe('SandboxManager', () => {
     expect(bootstrapped).toEqual([oldPausedName]);
     expect(appliedSandboxImage).toBe(currentImage);
     expect(calls.some((args) => args[0] === 'delete')).toBe(false);
-    expect(calls.some((args) => args[0] === 'patch' && args[1] === `sandbox/${oldPausedName}` && String(args[4] ?? '').includes('"paused":true'))).toBe(true);
+    expect(calls.some((args) => args[0] === 'patch' && args[1] === `sandbox/${oldPausedName}` && String(args[4] ?? '').includes('"paused":true'))).toBe(false);
     expect(calls.some((args) => args[0] === 'apply' && args[1] === '-f')).toBe(true);
+    expect(oldPhase).toBe('Running');
   });
 
   it('cleanupSandboxes: as-ws-ci-* 前缀走 sandboxCiTtlMs 短 TTL', async () => {

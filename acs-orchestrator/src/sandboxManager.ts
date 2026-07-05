@@ -132,6 +132,16 @@ export class SandboxManager {
       await timing.step('waitPrewarm', () => this.waitForPrewarm(ref.name));
       await timing.step('ensureHostWorkspace', () => this.ensureHostWorkspace(ref));
       let existing = await timing.step('getStatus', () => this.getStatus(ref.name));
+      const brokenPausedState = existing ? this.brokenPausedStateReason(existing) : undefined;
+      if (existing && brokenPausedState) {
+        path = `recreate_broken_paused_${brokenPausedState}`;
+        this.assertNotBusyForRecreate(ref, options.busySandboxNames, brokenPausedState, options.activeKey);
+        this.logger.warn(
+          `sandbox_broken_paused_state name=${ref.name} reason=${brokenPausedState} phase=${existing.phase ?? 'unknown'}`,
+        );
+        await timing.step('deleteBrokenPaused', () => this.delete(ref, { activeKey: options.activeKey }));
+        existing = null;
+      }
       if (existing && this.existingMountSubPath(existing, ref) !== ref.mountSubPath) {
         path = 'recreate_mount_subpath_changed';
         this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'mountSubPath changed', options.activeKey);
@@ -638,8 +648,9 @@ export class SandboxManager {
         this.logger.info(`sandbox_stale_image_prewarm_adopted name=${ref.name}`);
         return 'adopted';
       }
-      await this.patchPaused(ref.name, true, { activeKey });
-      this.logger.info(`sandbox_stale_image_prewarm_paused name=${ref.name}`);
+      // Keep the freshly updated sandbox Running. Pausing immediately after a
+      // Paused image refresh can leave ACS in ImageChanged/recreating limbo.
+      this.logger.info(`sandbox_stale_image_prewarm_ready name=${ref.name}`);
       return 'prewarmed';
     } finally {
       releaseActive?.();
@@ -905,6 +916,30 @@ export class SandboxManager {
       && (!('name' in item) || item.name === this.config.sandboxContainerName)
     ));
     return container ? stringValue(container.image) : undefined;
+  }
+
+  private brokenPausedStateReason(status: SandboxStatus): string | undefined {
+    if (status.phase !== 'Paused') return undefined;
+    const raw = status.raw ?? {};
+    const spec = raw.spec && typeof raw.spec === 'object' ? raw.spec as Record<string, unknown> : {};
+    const statusBody = raw.status && typeof raw.status === 'object' ? raw.status as Record<string, unknown> : {};
+    const podInfo = statusBody.podInfo && typeof statusBody.podInfo === 'object' ? statusBody.podInfo as Record<string, unknown> : {};
+    const podAnnotations = podInfo.annotations && typeof podInfo.annotations === 'object' ? podInfo.annotations as Record<string, unknown> : {};
+    const conditions = Array.isArray(statusBody.conditions) ? statusBody.conditions : [];
+    const pausedCondition = conditions.find((condition): condition is Record<string, unknown> => (
+      Boolean(condition)
+      && typeof condition === 'object'
+      && (condition as Record<string, unknown>).type === 'SandboxPaused'
+    ));
+    const pausedReason = stringValue(pausedCondition?.reason);
+    const pausedStatus = stringValue(pausedCondition?.status);
+    const recreating = stringValue(podAnnotations['ops.alibabacloud.com/recreating']) === 'true';
+    const requestedRunning = spec.paused === false;
+
+    if (pausedReason === 'ImageChanged' && pausedStatus === 'False') return 'image_changed';
+    if (recreating) return 'recreating';
+    if (requestedRunning) return 'requested_running';
+    return undefined;
   }
 }
 

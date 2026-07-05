@@ -1,3 +1,5 @@
+import type { IndustryType } from "./scenario";
+
 export type SidebarLayoutPref = "double" | "single";
 
 export interface UserPreferences {
@@ -5,6 +7,10 @@ export interface UserPreferences {
   authorizationModeEnabled?: boolean;
   /** 会话列表是否显示头像；false（默认）时列表使用紧凑单行布局。 */
   showSessionListAvatar?: boolean;
+  /** 当前激活岗位包，用于开箱包推荐与岗位切换器。 */
+  activeRoleId?: string;
+  /** 用户选择或系统推断的业态偏好，用于推荐排序。 */
+  industryHint?: IndustryType;
 }
 
 export interface TenantFeatureFlags {

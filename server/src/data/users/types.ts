@@ -1,4 +1,5 @@
 import type { UserPermissions } from "../../types/index.js";
+import type { IndustryType } from "../../../../shared/src/types/scenario.js";
 
 export type UserRole = "admin" | "user";
 
@@ -16,13 +17,18 @@ export interface UserPreferences {
   authorizationModeEnabled?: boolean;
   /** 会话列表是否显示头像；false（默认）时列表使用紧凑单行布局。 */
   showSessionListAvatar?: boolean;
+  activeRoleId?: string;
+  industryHint?: IndustryType;
 }
 
 export const DEFAULT_USER_PREFERENCES = {
   sidebarLayout: "single",
   authorizationModeEnabled: true,
   showSessionListAvatar: false,
-} as const satisfies Required<UserPreferences>;
+} as const satisfies Pick<
+  UserPreferences,
+  "sidebarLayout" | "authorizationModeEnabled" | "showSessionListAvatar"
+>;
 
 export interface UserRecord {
   id: string;

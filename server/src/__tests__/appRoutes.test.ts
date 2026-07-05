@@ -10,6 +10,8 @@ const mocked = vi.hoisted(() => {
   const sessionsRouter = { id: 'sessions-router' };
   const searchRouter = { id: 'search-router' };
   const scenariosRouter = { id: 'scenarios-router' };
+  const contentOpsRouter = { id: 'content-ops-router' };
+  const userRoleRouter = { id: 'user-role-router' };
   const dingtalkRouter = { id: 'dingtalk-router' };
   const cronRouter = { id: 'cron-router' };
   const groupsRouter = { id: 'groups-router' };
@@ -30,6 +32,8 @@ const mocked = vi.hoisted(() => {
     sessionsRouter,
     searchRouter,
     scenariosRouter,
+    contentOpsRouter,
+    userRoleRouter,
     dingtalkRouter,
     cronRouter,
     groupsRouter,
@@ -48,6 +52,8 @@ const mocked = vi.hoisted(() => {
     createSessionsRouter: vi.fn(() => sessionsRouter),
     createSearchRouter: vi.fn(() => searchRouter),
     createScenariosRouter: vi.fn(() => scenariosRouter),
+    createContentOpsRouter: vi.fn(() => contentOpsRouter),
+    createUserRoleRouter: vi.fn(() => userRoleRouter),
     createDingtalkSessionRouter: vi.fn(() => dingtalkRouter),
     createCronRouter: vi.fn(() => cronRouter),
     createGroupsRouter: vi.fn(() => groupsRouter),
@@ -68,6 +74,8 @@ vi.mock('../routes/index.js', () => ({
   createSessionsRouter: mocked.createSessionsRouter,
   createSearchRouter: mocked.createSearchRouter,
   createScenariosRouter: mocked.createScenariosRouter,
+  createContentOpsRouter: mocked.createContentOpsRouter,
+  createUserRoleRouter: mocked.createUserRoleRouter,
   createCronRouter: mocked.createCronRouter,
   createGroupsRouter: mocked.createGroupsRouter,
   createPreviewRoutes: mocked.createPreviewRoutes,
@@ -103,6 +111,8 @@ describe('registerRoutes', () => {
     mocked.createSessionsRouter.mockClear();
     mocked.createSearchRouter.mockClear();
     mocked.createScenariosRouter.mockClear();
+    mocked.createContentOpsRouter.mockClear();
+    mocked.createUserRoleRouter.mockClear();
     mocked.createDingtalkSessionRouter.mockClear();
     mocked.createCronRouter.mockClear();
     mocked.createGroupsRouter.mockClear();
@@ -177,11 +187,11 @@ describe('registerRoutes', () => {
     expect(mocked.createCronRouter).not.toHaveBeenCalled();
 
     // Base routes: health + app-update + upload-guard + file-guard + upload + file + azeroth-proxy
-    //   + preview(token+serve) + voice + tts + search + scenarios + sessions + dingtalk
-    //   + tenant-remote-hands admin + runtime-operations admin + tool-controls admin + groups = 19
+    //   + preview(token+serve) + voice + tts + search + scenarios + contentops + sessions + dingtalk
+    //   + tenant-remote-hands admin + runtime-operations admin + tool-controls admin + groups = 20
     // 注：upload-guard / file-guard 是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(19);
+    expect(app.use).toHaveBeenCalledTimes(20);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.healthRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.appUpdateRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.uploadRouter);
@@ -190,6 +200,7 @@ describe('registerRoutes', () => {
     expect(app.use).toHaveBeenCalledWith('/preview', mocked.previewServeRouter);
     expect(app.use).toHaveBeenCalledWith('/api/search', mocked.searchRouter);
     expect(app.use).toHaveBeenCalledWith('/api/scenarios', mocked.scenariosRouter);
+    expect(app.use).toHaveBeenCalledWith('/api/contentops', mocked.contentOpsRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.sessionsRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.groupsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/dingtalk', mocked.requireAdmin, mocked.dingtalkRouter);

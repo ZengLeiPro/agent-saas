@@ -70,6 +70,36 @@ const cronConfigSchema = z.object({
   store: z.string().optional(),
 });
 
+const roleKitConfigSchema = z.object({
+  v2Enabled: z.boolean().optional(),
+  sanitizePreviewEnabled: z.boolean().optional(),
+  signalAdaptation: z.object({
+    dailyEmptyStreakToWeekly: z.number().int().min(1).max(14).optional(),
+    userNoOpenStreakToPause: z.number().int().min(1).max(30).optional(),
+    emptyContentFallback: z.string().optional(),
+  }).optional(),
+  activationFallback: z.object({
+    enabled: z.boolean().optional(),
+    defaultTitle: z.string().optional(),
+  }).optional(),
+  firstDayGuideBar: z.object({
+    enabled: z.boolean().optional(),
+    stageTimeoutMs: z.number().int().positive().optional(),
+    showOnMobile: z.boolean().optional(),
+  }).optional(),
+  roleSwitcher: z.object({
+    enabled: z.boolean().optional(),
+    position: z.enum(["top-left", "top-right"]).optional(),
+  }).optional(),
+  defaultPushSlot: z.object({
+    channel: z.enum(["ding_work_notification", "ding_group", "ding_both"]).optional(),
+    target: z.enum(["self", "manager", "group"]).optional(),
+    humanReviewRequired: z.boolean().optional(),
+  }).optional(),
+  libraryVersion: z.enum(["v1", "v2"]).optional(),
+  fallbackToV1OnValidationError: z.boolean().optional(),
+}).optional();
+
 const dingtalkRobotConfigSchema = z.object({
   name: z.string().min(1, '机器人名称不能为空'),
   enabled: z.boolean().optional(),
@@ -920,6 +950,7 @@ export const appConfigSchema = z.object({
   agent: agentConfigSchema,
   server: serverConfigSchema,
   cron: cronConfigSchema.optional(),
+  roleKit: roleKitConfigSchema,
   dingtalk: dingtalkConfigSchema.optional(),
   dingtalkSendMessage: dingtalkSendMessageConfigSchema.optional(),
   tts: ttsConfigSchema.optional(),
@@ -958,6 +989,7 @@ export type AgentSettingSource = z.infer<typeof agentSettingSourceSchema>;
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export type ServerConfig = z.infer<typeof serverConfigSchema>;
 export type CronConfig = z.infer<typeof cronConfigSchema>;
+export type RoleKitConfig = z.infer<typeof roleKitConfigSchema>;
 export type DingtalkRobotConfig = z.infer<typeof dingtalkRobotConfigSchema>;
 export type DingtalkConfig = z.infer<typeof dingtalkConfigSchema>;
 export type DingtalkSendMessageConfig = z.infer<typeof dingtalkSendMessageConfigSchema>;

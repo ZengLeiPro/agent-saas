@@ -87,6 +87,8 @@ const updatePreferencesSchema = z.object({
   sidebarLayout: z.enum(["double", "single"]).optional(),
   authorizationModeEnabled: z.boolean().optional(),
   showSessionListAvatar: z.boolean().optional(),
+  activeRoleId: z.string().min(1).optional(),
+  industryHint: z.enum(["manufacturing", "trade", "retail", "service", "export", "ecommerce"]).optional(),
 });
 
 const updatePhoneSchema = z.object({

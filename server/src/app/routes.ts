@@ -28,6 +28,8 @@ import {
   createArtifactsRouter,
   createSearchRouter,
   createScenariosRouter,
+  createContentOpsRouter,
+  createUserRoleRouter,
 } from "../routes/index.js";
 import { createAuthRouter } from "../routes/auth.js";
 import { createSignupRouter } from "../routes/signup.js";
@@ -156,7 +158,14 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createSearchRouter({ agentCwd, userStore: runtime.userStore }),
   );
   // 场景库：预置场景卡片（所有登录用户可读；服务端过滤未上架条目并剥离内部 source 字段）
-  app.use("/api/scenarios", createScenariosRouter());
+  app.use(
+    "/api/scenarios",
+    createScenariosRouter({
+      cronService: cronRuntime.service ?? undefined,
+      roleKit: config.roleKit,
+    }),
+  );
+  app.use("/api/contentops", createContentOpsRouter());
   const webChannel = channelManager.getChannel<WebChannel>("web");
   app.use(
     "/api",
@@ -382,6 +391,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           ? (userId: string) => webChannel.disconnectUser(userId)
           : undefined,
         skillConfigStore: runtime.skillConfigStore,
+      }),
+    );
+    app.use(
+      "/api/user",
+      createUserRoleRouter({
+        userStore: runtime.userStore,
       }),
     );
     // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES

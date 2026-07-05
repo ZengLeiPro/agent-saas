@@ -41,6 +41,8 @@ export class RuntimeScheduler {
   private timer: NodeJS.Timeout | null = null;
   private stopped = true;
   private ticking = false;
+  private tickAgainRequested = false;
+  private immediateTickScheduled = false;
   private readonly inFlightRuns = new Map<string, Promise<void>>();
   private readonly inFlightSessions = new Set<string>();
 
@@ -53,7 +55,9 @@ export class RuntimeScheduler {
   }
 
   async enqueue(input: Parameters<RunStore['upsertPending']>[0]): Promise<RunRecord> {
-    return this.options.runStore.upsertPending(input);
+    const record = await this.options.runStore.upsertPending(input);
+    this.scheduleImmediateTick('enqueue');
+    return record;
   }
 
   async start(): Promise<void> {
@@ -83,8 +87,22 @@ export class RuntimeScheduler {
   }
 
   async tick(): Promise<void> {
-    if (this.ticking) return;
+    if (this.ticking) {
+      this.tickAgainRequested = true;
+      return;
+    }
     this.ticking = true;
+    try {
+      do {
+        this.tickAgainRequested = false;
+        await this.tickOnce();
+      } while (this.tickAgainRequested && !this.stopped);
+    } finally {
+      this.ticking = false;
+    }
+  }
+
+  private async tickOnce(): Promise<void> {
     try {
       try {
         await this.cancelStaleWaitingApprovals();
@@ -110,8 +128,29 @@ export class RuntimeScheduler {
         this.launch(record);
       }
     } finally {
-      this.ticking = false;
+      this.immediateTickScheduled = false;
     }
+  }
+
+  private scheduleImmediateTick(reason: string): void {
+    if (this.stopped) return;
+    if (this.ticking) {
+      this.tickAgainRequested = true;
+      return;
+    }
+    if (this.immediateTickScheduled) return;
+    this.immediateTickScheduled = true;
+    const timer = setTimeout(() => {
+      if (this.stopped) {
+        this.immediateTickScheduled = false;
+        return;
+      }
+      void this.tick().catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        this.options.logger?.error(`Runtime scheduler immediate tick failed (${reason}): ${message}`);
+      });
+    }, 0);
+    timer.unref?.();
   }
 
   private async cancelStaleWaitingApprovals(): Promise<void> {

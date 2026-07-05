@@ -287,6 +287,55 @@ describe('RuntimeScheduler', () => {
     await expect(runStore.get('run-1')).resolves.toMatchObject({ status: 'completed', statusReason: 'done' });
   });
 
+  it('ticks immediately after enqueue when the scheduler is started', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    const started: string[] = [];
+
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      pollIntervalMs: 60_000,
+      autoWake: true,
+      wake: async (record, lease) => {
+        started.push(record.runId);
+        await lease.release('completed', 'done');
+      },
+    });
+
+    await scheduler.start();
+    await scheduler.enqueue({ runId: 'run-enqueue-1', sessionId: 'session-enqueue-1' });
+    await flushSchedulerMicrotasks();
+    await scheduler.stop();
+
+    expect(started).toEqual(['run-enqueue-1']);
+    await expect(runStore.get('run-enqueue-1')).resolves.toMatchObject({ status: 'completed', statusReason: 'done' });
+  });
+
+  it('does not tick after enqueue when the scheduler worker is not started', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    let wakeCalled = false;
+
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      pollIntervalMs: 60_000,
+      autoWake: true,
+      wake: async () => {
+        wakeCalled = true;
+      },
+    });
+
+    await scheduler.enqueue({ runId: 'run-enqueue-disabled', sessionId: 'session-enqueue-disabled' });
+    await flushSchedulerMicrotasks();
+
+    expect(wakeCalled).toBe(false);
+    await expect(runStore.get('run-enqueue-disabled')).resolves.toMatchObject({ status: 'pending' });
+  });
+
   it('marks runs failed when autoWake callback throws', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();

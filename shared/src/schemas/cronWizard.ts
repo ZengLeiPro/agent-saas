@@ -37,6 +37,8 @@ export const cronWizardResponseSchema = z.object({
   cronJobId: z.string().min(1),
   scenarioId: z.string().min(1),
   createdAt: z.string(),
+  runOnceImmediately: z.boolean(),
+  runOnceError: z.string().optional(),
 });
 
 export type CronWizardStep1 = z.infer<typeof cronWizardStep1Schema>;

@@ -22,7 +22,10 @@ function stopServer(server: Server): Promise<void> {
 /** 构造与生产一致的路由挂载：注入普通登录用户，挂到 /api/scenarios */
 async function startServer(
   dataPath?: string,
-  cronService?: { add(create: CronJobCreate, context?: { owner?: string; ownerName?: string }): Promise<CronJob> },
+  cronService?: {
+    add(create: CronJobCreate, context?: { owner?: string; ownerName?: string }): Promise<CronJob>;
+    runNow(id: string): Promise<{ ran: boolean; error?: string }>;
+  },
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
@@ -240,6 +243,7 @@ describe('scenarios routes', () => {
 
   it('creates a cron job from a recurring scenario', async () => {
     const calls: Array<{ create: CronJobCreate; context?: { owner?: string; ownerName?: string } }> = [];
+    const runNowCalls: string[] = [];
     const cronService = {
       async add(create: CronJobCreate, context?: { owner?: string; ownerName?: string }): Promise<CronJob> {
         calls.push({ create, context });
@@ -256,6 +260,10 @@ describe('scenarios routes', () => {
           updatedAtMs: 1_783_000_000_000,
           state: {},
         };
+      },
+      async runNow(id: string): Promise<{ ran: boolean }> {
+        runNowCalls.push(id);
+        return { ran: true };
       },
     };
     const { server, baseUrl } = await startServer(dataPath, cronService);
@@ -282,8 +290,10 @@ describe('scenarios routes', () => {
       await expect(response.json()).resolves.toMatchObject({
         cronJobId: 'cron-created-1',
         scenarioId: 'boss-competitor-daily',
+        runOnceImmediately: true,
       });
       expect(calls).toHaveLength(1);
+      expect(runNowCalls).toEqual(['cron-created-1']);
       expect(calls[0].context).toEqual({ owner: 'user-1', ownerName: 'alice' });
       expect(calls[0].create.payload).toMatchObject({
         kind: 'agentTurn',
@@ -297,6 +307,9 @@ describe('scenarios routes', () => {
   it('rejects create-cron for oneshot scenarios', async () => {
     const { server, baseUrl } = await startServer(dataPath, {
       async add() {
+        throw new Error('should not be called');
+      },
+      async runNow() {
         throw new Error('should not be called');
       },
     });

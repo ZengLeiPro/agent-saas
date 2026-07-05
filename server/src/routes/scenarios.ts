@@ -222,10 +222,13 @@ export function createScenariosRouter(
         buildCronCreate(scenario, body, req.user.sub),
         { owner: req.user.sub, ownerName: req.user.username },
       );
+      const runOnce = await options.cronService.runNow(created.id);
       res.status(200).json({
         cronJobId: created.id,
         scenarioId: scenario.id,
         createdAt: new Date(created.createdAtMs).toISOString(),
+        runOnceImmediately: runOnce.ran,
+        ...(runOnce.error ? { runOnceError: runOnce.error } : {}),
       });
     } catch (err) {
       res.status(500).json({ error: String(err instanceof Error ? err.message : err) });

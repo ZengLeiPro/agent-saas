@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -277,8 +278,10 @@ function formatDateTime(iso?: string): string {
   }
 }
 
-function formatQuota(value: number | undefined, unit = ""): string {
-  return value ? `${value.toLocaleString("zh-CN")}${unit}` : "不限制";
+function optionalPositiveInteger(value: string): number | undefined {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
 }
 
 type TenantDetailTab = "config" | "models" | "capabilities";
@@ -298,42 +301,177 @@ function TenantMetric({ label, value }: { label: string; value: string | number 
   );
 }
 
-function TenantCapabilitiesPanel({ tenant }: { tenant: Tenant }) {
-  const settings = tenant.settings ?? DEFAULT_TENANT_SETTINGS;
-  const features = [
-    ["文件", settings.features.filesEnabled],
-    ["定时任务", settings.features.cronEnabled],
-    ["MCP", settings.features.mcpEnabled],
-    ["自建 Skill", settings.features.customSkillsEnabled],
-    ["调试模式", settings.features.debugModeAllowed],
-    ["自动压缩", settings.features.autoCompactEnabled],
-    ["钉钉绑定", settings.security.requireDingtalkBinding],
+const capabilityFeatureFields: Array<{ key: keyof TenantSettings["features"]; label: string; description: string }> = [
+  { key: "filesEnabled", label: "文件能力", description: "允许组织用户访问文件浏览、上传和预览。" },
+  { key: "cronEnabled", label: "定时任务", description: "允许创建和运行 Cron 自动化任务。" },
+  { key: "mcpEnabled", label: "MCP 工具", description: "允许组织使用 MCP server 与工具密钥。" },
+  { key: "customSkillsEnabled", label: "自定义 Skill", description: "允许用户维护自定义 Agent Skill。" },
+  { key: "debugModeAllowed", label: "调试模式", description: "允许开启思考、工具和执行细节展示。" },
+  { key: "autoCompactEnabled", label: "自动压缩", description: "会话上下文超过模型窗口 80% 时，回合结束后自动压缩。" },
+];
+
+const quotaFields: Array<{ key: keyof TenantSettings["quotas"]; label: string; unit?: string }> = [
+  { key: "maxUsers", label: "用户上限" },
+  { key: "maxAdmins", label: "管理员上限" },
+  { key: "maxStorageMb", label: "存储上限", unit: "MB" },
+  { key: "monthlyTokenLimit", label: "月 Token 上限" },
+  { key: "maxTurnsPerRequest", label: "单次最大轮数" },
+  { key: "rateLimitMaxRequests", label: "限流请求数" },
+];
+
+function capabilitySnapshot(settings: TenantSettings): string {
+  return JSON.stringify({
+    features: settings.features,
+    quotas: settings.quotas,
+    requireDingtalkBinding: settings.security.requireDingtalkBinding,
+  });
+}
+
+function TenantCapabilitiesPanel({
+  tenant,
+  onActionsChange,
+  onSaved,
+}: {
+  tenant: Tenant;
+  onActionsChange?: (actions: ReactNode | null) => void;
+  onSaved?: () => Promise<void> | void;
+}) {
+  const initialSettings = tenant.settings ?? DEFAULT_TENANT_SETTINGS;
+  const [settings, setSettings] = useState<TenantSettings>(() => cloneTenantSettings(initialSettings));
+  const [baseline, setBaseline] = useState<TenantSettings>(() => cloneTenantSettings(initialSettings));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const dirty = capabilitySnapshot(settings) !== capabilitySnapshot(baseline);
+
+  useEffect(() => {
+    const next = cloneTenantSettings(tenant.settings ?? DEFAULT_TENANT_SETTINGS);
+    setSettings(next);
+    setBaseline(cloneTenantSettings(next));
+    setError(null);
+    setSaved(false);
+  }, [tenant.id, tenant.settings]);
+
+  const patch = useCallback((recipe: (draft: TenantSettings) => void) => {
+    setSettings(prev => {
+      const draft = cloneTenantSettings(prev);
+      recipe(draft);
+      return draft;
+    });
+    setSaved(false);
+  }, []);
+
+  const save = useCallback(async () => {
+    setSaving(true);
+    try {
+      const latestRes = await authFetch(`/api/tenants/${tenant.id}/settings`);
+      const latestData = await latestRes.json().catch(() => ({}));
+      if (!latestRes.ok) throw new Error((latestData as { error?: string }).error || "加载最新组织设置失败");
+
+      const payload = cloneTenantSettings((latestData as { settings: TenantSettings }).settings);
+      payload.features = { ...settings.features };
+      payload.quotas = { ...settings.quotas };
+      payload.security = {
+        ...payload.security,
+        requireDingtalkBinding: settings.security.requireDingtalkBinding,
+      };
+
+      const res = await authFetch(`/api/tenants/${tenant.id}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: payload }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as { error?: string }).error || "保存能力与配额失败");
+      const next = cloneTenantSettings((data as { settings: TenantSettings }).settings);
+      await onSaved?.();
+      setSettings(next);
+      setBaseline(cloneTenantSettings(next));
+      setSaved(true);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [onSaved, settings.features, settings.quotas, settings.security.requireDingtalkBinding, tenant.id]);
+
+  const actions = useMemo(() => (
+    <>
+      {saved && <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" />已保存</Badge>}
+      <Button size="sm" onClick={() => { void save(); }} disabled={!dirty || saving}>
+        {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+        保存能力与配额
+      </Button>
+    </>
+  ), [dirty, save, saved, saving]);
+
+  useEffect(() => {
+    onActionsChange?.(actions);
+    return () => onActionsChange?.(null);
+  }, [actions, onActionsChange]);
+
+  const securityToggles = [
+    {
+      key: "requireDingtalkBinding",
+      label: "钉钉绑定",
+      description: "要求组织成员完成钉钉绑定后使用相关登录与校验策略。",
+      checked: settings.security.requireDingtalkBinding,
+      onCheckedChange: (checked: boolean) => patch(draft => { draft.security.requireDingtalkBinding = checked; }),
+    },
   ] as const;
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">能力与配额</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {features.map(([label, enabled]) => (
-            <div key={label} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-              <span>{label}</span>
-              <Badge variant={enabled ? "secondary" : "outline"}>{enabled ? "开启" : "关闭"}</Badge>
+    <div className="space-y-4">
+      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">功能开关</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2">
+          {capabilityFeatureFields.map(field => (
+            <div key={field.key} className="flex items-start justify-between gap-4 rounded-xl border p-3">
+              <div>
+                <div className="text-sm font-medium">{field.label}</div>
+                <div className="text-xs leading-5 text-muted-foreground">{field.description}</div>
+              </div>
+              <Switch
+                checked={settings.features[field.key]}
+                onCheckedChange={checked => patch(draft => { draft.features[field.key] = checked; })}
+              />
             </div>
           ))}
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <TenantMetric label="用户上限" value={formatQuota(settings.quotas.maxUsers)} />
-          <TenantMetric label="管理员上限" value={formatQuota(settings.quotas.maxAdmins)} />
-          <TenantMetric label="存储上限" value={formatQuota(settings.quotas.maxStorageMb, " MB")} />
-          <TenantMetric label="月 Token 上限" value={formatQuota(settings.quotas.monthlyTokenLimit)} />
-          <TenantMetric label="单次最大轮数" value={formatQuota(settings.quotas.maxTurnsPerRequest)} />
-          <TenantMetric label="限流请求数" value={formatQuota(settings.quotas.rateLimitMaxRequests)} />
-        </div>
-      </CardContent>
-    </Card>
+          {securityToggles.map(field => (
+            <div key={field.key} className="flex items-start justify-between gap-4 rounded-xl border p-3">
+              <div>
+                <div className="text-sm font-medium">{field.label}</div>
+                <div className="text-xs leading-5 text-muted-foreground">{field.description}</div>
+              </div>
+              <Switch checked={field.checked} onCheckedChange={field.onCheckedChange} />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">配额</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-2">
+          {quotaFields.map(field => (
+            <div key={field.key} className="space-y-1.5">
+              <Label>{field.label}</Label>
+              <Input
+                type="number"
+                min={1}
+                value={settings.quotas[field.key] ?? ""}
+                onChange={event => patch(draft => { draft.quotas[field.key] = optionalPositiveInteger(event.target.value); })}
+                placeholder={`不限制${field.unit ? `（${field.unit}）` : ""}`}
+              />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -345,6 +483,7 @@ export function TenantManager() {
     createTenant,
     updateTenant,
     setTenantDisabled,
+    refresh,
   } = useTenants();
   const { users } = useUsers();
   const [showForm, setShowForm] = useState(false);
@@ -357,6 +496,7 @@ export function TenantManager() {
   const [nameSaved, setNameSaved] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [modelPolicyActions, setModelPolicyActions] = useState<ReactNode | null>(null);
+  const [capabilitiesActions, setCapabilitiesActions] = useState<ReactNode | null>(null);
 
   const openCreate = () => {
     setShowForm(true);
@@ -455,10 +595,12 @@ export function TenantManager() {
               </>
             )}
             {activeDetailTab === "models" && modelPolicyActions}
-            <Button variant="outline" size="sm" onClick={refreshAll} disabled={loading}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-              刷新
-            </Button>
+            {activeDetailTab === "capabilities" ? capabilitiesActions : (
+              <Button variant="outline" size="sm" onClick={refreshAll} disabled={loading}>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                刷新
+              </Button>
+            )}
             <Button size="sm" onClick={openCreate}>
               <Plus className="mr-1.5 h-3.5 w-3.5" />
               新建组织
@@ -556,7 +698,7 @@ export function TenantManager() {
             </TabsContent>
 
             <TabsContent value="capabilities" forceMount className="mt-0">
-              <TenantCapabilitiesPanel tenant={selectedTenant} />
+              <TenantCapabilitiesPanel tenant={selectedTenant} onActionsChange={setCapabilitiesActions} onSaved={refresh} />
             </TabsContent>
             </div>
           </Tabs>

@@ -20,7 +20,10 @@ import {
 import { DEFAULT_TENANT_ID } from "@/components/TenantManager/types";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
+import { ROLE_POSITION_OPTIONS } from "@/lib/roleOptions";
 import type { UserInfo, UserPermissions } from "./types";
+
+const POSITION_EMPTY_VALUE = "__none__";
 
 export interface UserFormData {
   username: string;
@@ -33,18 +36,6 @@ export interface UserFormData {
   permissions?: UserPermissions;
   tenantId?: string;
 }
-
-/** 岗位快捷建议（与场景库 8 岗位对齐，datalist 提示用，允许自由输入其他岗位） */
-const POSITION_SUGGESTIONS = [
-  "老板/总经理",
-  "销售",
-  "跟单/客服",
-  "采购",
-  "财务",
-  "人事行政",
-  "市场/电商运营",
-  "生产计划",
-];
 
 interface UserFormDialogProps {
   open: boolean;
@@ -87,6 +78,9 @@ export function UserFormDialog({
     !isPlatformAdmin;
   const canChangeRole = !isEditingSelf && !isEditingPeerAdmin;
   const canChangeTenant = isPlatformAdmin && !isEditingSelf;
+  const positionOptions = position && !ROLE_POSITION_OPTIONS.some((item) => item === position)
+    ? [position, ...ROLE_POSITION_OPTIONS]
+    : ROLE_POSITION_OPTIONS;
 
   useEffect(() => {
     if (open) {
@@ -192,21 +186,24 @@ export function UserFormDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="form-position">岗位</Label>
-            <Input
-              id="form-position"
-              value={position}
-              onChange={(e) => setPosition(e.target.value)}
+            <Label>岗位</Label>
+            <Select
+              value={position || POSITION_EMPTY_VALUE}
+              onValueChange={(value) => setPosition(value === POSITION_EMPTY_VALUE ? "" : value)}
               disabled={loading}
-              placeholder="可选，如「销售」——AI 会按岗位推荐场景"
-              list="form-position-suggestions"
-              maxLength={50}
-            />
-            <datalist id="form-position-suggestions">
-              {POSITION_SUGGESTIONS.map((p) => (
-                <option key={p} value={p} />
-              ))}
-            </datalist>
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="选择岗位，AI 同事按岗位为您准备场景" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={POSITION_EMPTY_VALUE}>暂不设置</SelectItem>
+                {positionOptions.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-2">
             <Label htmlFor="form-password">

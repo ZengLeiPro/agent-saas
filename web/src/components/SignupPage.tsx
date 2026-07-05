@@ -13,21 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TOKEN_KEY } from "@/lib/constants";
-
-/**
- * 岗位选项：与场景库 scenario-library-v1.json 的 roles 对齐（role.name 全文），
- * 保证注册写入的 position 一定命中场景推荐的岗位匹配（按「/」分段互含）。
- */
-const POSITION_OPTIONS = [
-  "老板/总经理",
-  "销售",
-  "跟单/客服",
-  "采购",
-  "财务",
-  "人事行政",
-  "市场/电商运营",
-  "生产计划",
-];
+import { ROLE_POSITION_OPTIONS } from "@/lib/roleOptions";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
@@ -265,7 +251,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
                     <SelectValue placeholder="选择岗位，AI 同事按岗位为您准备场景" />
                   </SelectTrigger>
                   <SelectContent>
-                    {POSITION_OPTIONS.map((p) => (
+                    {ROLE_POSITION_OPTIONS.map((p) => (
                       <SelectItem key={p} value={p}>
                         {p}
                       </SelectItem>

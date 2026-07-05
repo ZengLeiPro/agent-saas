@@ -171,10 +171,14 @@ function CompactSessionLeadingIcon({ selected = false }: { selected?: boolean })
 
 /** 紧凑模式下的分组前缀小图标：自定义分组=品牌蓝文件夹；cron 分组=teal 时钟。 */
 function CompactGroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
-  const Icon = kind === "cron" ? Clock : Folder;
+  if (kind === "cron") {
+    return <Clock className="h-4 w-4 shrink-0 text-teal-500" aria-hidden="true" />;
+  }
+
   return (
-    <Icon
-      className={cn("h-4 w-4 shrink-0", kind === "cron" ? "text-teal-500" : "text-brand-600")}
+    <Folder
+      className="h-4 w-4 shrink-0 fill-current text-brand-600 dark:text-brand-400"
+      strokeWidth={2.2}
       aria-hidden="true"
     />
   );

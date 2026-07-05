@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Building2, CheckCircle2, Cpu, Loader2, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Users } from "lucide-react";
+import { Building2, CheckCircle2, Cpu, Loader2, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,7 +20,6 @@ import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHe
 import type { ModelList } from "@/types/models";
 import { useUsers } from "@/components/UserManager/hooks";
 import type { UserInfo } from "@/components/UserManager/types";
-import { cn } from "@/lib/utils";
 import { useTenants } from "./hooks";
 import { TenantFormDialog } from "./TenantFormDialog";
 import { DEFAULT_TENANT_SETTINGS, type Tenant, type TenantSettings } from "./types";
@@ -282,11 +281,10 @@ function formatQuota(value: number | undefined, unit = ""): string {
   return value ? `${value.toLocaleString("zh-CN")}${unit}` : "不限制";
 }
 
-type TenantDetailTab = "config" | "members" | "models" | "capabilities";
+type TenantDetailTab = "config" | "models" | "capabilities";
 
 const tenantDetailTabs: Array<{ id: TenantDetailTab; label: string; icon: typeof Building2 }> = [
   { id: "config", label: "组织配置", icon: Building2 },
-  { id: "members", label: "成员", icon: Users },
   { id: "models", label: "模型策略", icon: Cpu },
   { id: "capabilities", label: "能力与配额", icon: SlidersHorizontal },
 ];
@@ -297,73 +295,6 @@ function TenantMetric({ label, value }: { label: string; value: string | number 
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 truncate text-sm font-medium">{value}</div>
     </div>
-  );
-}
-
-function UserAvatar({ user }: { user: UserInfo }) {
-  if (user.avatar) {
-    return <img src={user.avatar} alt="" className="h-7 w-7 shrink-0 rounded-full object-cover" />;
-  }
-  return (
-    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
-      {(user.realName || user.username).charAt(0).toUpperCase()}
-    </div>
-  );
-}
-
-function TenantMembersPanel({
-  users,
-  loading,
-  error,
-}: {
-  users: UserInfo[];
-  loading: boolean;
-  error: string | null;
-}) {
-  const admins = users.filter(user => user.role === "admin");
-  const disabledUsers = users.filter(user => user.disabled);
-
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-        <CardTitle className="text-base">成员</CardTitle>
-        <div className="text-xs text-muted-foreground">{admins.length} 管理员 · {disabledUsers.length} 已禁用</div>
-      </CardHeader>
-      <CardContent>
-        {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
-        {loading && users.length === 0 ? (
-          <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            加载成员...
-          </div>
-        ) : users.length === 0 ? (
-          <div className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">暂无成员</div>
-        ) : (
-          <div className="space-y-2">
-            {users.slice(0, 8).map(user => (
-              <div key={user.id} className={cn("flex items-center justify-between gap-3 rounded-lg border px-3 py-2", user.disabled && "opacity-60")}>
-                <div className="flex min-w-0 items-center gap-2">
-                  <UserAvatar user={user} />
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{user.realName || user.username}</div>
-                    <div className="truncate text-xs text-muted-foreground">{user.username}</div>
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <Badge variant={user.role === "admin" ? "default" : "secondary"}>{user.role === "admin" ? "管理员" : "用户"}</Badge>
-                  {user.disabled && <Badge variant="outline" className="border-destructive/50 text-destructive">已禁用</Badge>}
-                </div>
-              </div>
-            ))}
-            {users.length > 8 && (
-              <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                另有 {users.length - 8} 个成员未显示
-              </div>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -415,7 +346,7 @@ export function TenantManager() {
     updateTenant,
     setTenantDisabled,
   } = useTenants();
-  const { users, loading: usersLoading, error: usersError } = useUsers();
+  const { users } = useUsers();
   const [showForm, setShowForm] = useState(false);
   const [disableTarget, setDisableTarget] = useState<Tenant | null>(null);
   const [disableError, setDisableError] = useState<string | null>(null);
@@ -558,7 +489,7 @@ export function TenantManager() {
           ) : (
           <Tabs value={activeDetailTab} onValueChange={(value) => setActiveDetailTab(value as TenantDetailTab)} className="flex min-h-0 flex-1 flex-col">
             <div className="rounded-lg border bg-card p-1 shadow-sm">
-              <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-transparent p-0 text-muted-foreground lg:grid-cols-4">
+              <TabsList className="grid h-auto w-full grid-cols-1 gap-1 bg-transparent p-0 text-muted-foreground sm:grid-cols-3">
                 {tenantDetailTabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
@@ -618,10 +549,6 @@ export function TenantManager() {
                   </div>
                 </CardContent>
               </Card>
-            </TabsContent>
-
-            <TabsContent value="members" forceMount className="mt-0">
-              <TenantMembersPanel users={selectedUsers} loading={usersLoading} error={usersError} />
             </TabsContent>
 
             <TabsContent value="models" forceMount className="mt-0">

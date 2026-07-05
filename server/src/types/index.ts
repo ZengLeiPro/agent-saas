@@ -76,8 +76,8 @@ export interface CompactionOutboundData {
 
 export interface ContextUsageData {
   totalTokens: number;
-  maxTokens: number;
-  percentage: number;
+  maxTokens?: number;
+  percentage?: number;
   model?: string;
   categories: Array<{
     name: string;
@@ -92,6 +92,16 @@ export interface ContextUsageData {
     tokens: number;
     isLoaded?: boolean;
   }>;
+  /** Cumulative cache hit tokens in the current session/run snapshot. */
+  cacheReadTokens?: number;
+  /** Cumulative cache hit denominator with model-specific accounting applied. */
+  cacheHitDenominatorTokens?: number;
+  /** Cumulative cache hit ratio. Null means there is no valid denominator yet. */
+  cacheHitRatio?: number | null;
+  /** Cache hit ratio for the latest completed model request. */
+  lastRequestCacheHitRatio?: number | null;
+  lastRequestCacheReadTokens?: number;
+  lastRequestCacheHitDenominatorTokens?: number;
   autoCompactThreshold?: number;
   isAutoCompactEnabled?: boolean;
 }

@@ -35,6 +35,7 @@ import { DefaultToolPolicy } from './toolPolicy.js';
 import { standardizeToolError } from './agentPlanDefense.js';
 import { buildChatMessagesFromEvents, LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { buildContextProjection, type ContextReconstructionPolicy } from './contextProjection.js';
+import { RuntimeContextUsageTracker } from './contextUsage.js';
 import {
   buildRuntimeReplayState,
   type RuntimeReplayState,
@@ -374,6 +375,7 @@ export class RawAgentLoop implements AgentLoop {
     const recoveredEvents = recovery.recovered > 0
       ? await this.eventStore.list(context.sessionId)
       : priorEvents;
+    const contextUsageTracker = new RuntimeContextUsageTracker(context.model, recoveredEvents);
     const contextProjection = buildContextProjection(recoveredEvents, {
       sessionId: context.sessionId,
       runId: context.runId,
@@ -425,6 +427,7 @@ export class RawAgentLoop implements AgentLoop {
     try {
       for (turn = 1; turn <= input.maxTurns; turn++) {
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
+        let turnContextUsage: OutboundEvent['contextUsage'] | null = null;
         let turnText = '';
         let turnThinking = '';
         // 2026-07-03 起 assistant_stream_event delta 不再落库；UI 的"思考 Xs"
@@ -478,7 +481,10 @@ export class RawAgentLoop implements AgentLoop {
         }
 
         if (!completed) throw new Error('model stream completed without completion event');
-        if (completed.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
+        if (completed.usage) {
+          totalUsage = mergeUsage(totalUsage, completed.usage);
+          turnContextUsage = contextUsageTracker.record(context.model, completed.usage);
+        }
         if (turnThinking) {
           await this.append({
             type: 'assistant_thinking',
@@ -531,6 +537,7 @@ export class RawAgentLoop implements AgentLoop {
           if (textStarted) {
             yield { type: 'text_end' };
           }
+          if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
           const modelUsage = buildModelUsage(context.model, totalUsage);
           await this.append({
             type: 'run_finished',
@@ -575,6 +582,7 @@ export class RawAgentLoop implements AgentLoop {
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
         });
+        if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
         messages.push({
           role: 'assistant',
           content: completed.content || turnText || null,
@@ -1166,6 +1174,7 @@ export class RawAgentLoop implements AgentLoop {
       baseToolContext,
       context: resumeContext,
       maxTurns: input.maxTurns,
+      priorEvents: replayEvents,
     });
   }
 
@@ -1298,6 +1307,7 @@ export class RawAgentLoop implements AgentLoop {
       baseToolContext,
       context,
       maxTurns: input.maxTurns,
+      priorEvents: replayEvents,
     });
   }
 
@@ -1671,12 +1681,14 @@ export class RawAgentLoop implements AgentLoop {
     baseToolContext: ToolCallContext;
     context: RunContext;
     maxTurns: number;
+    priorEvents: PlatformEvent[];
   }): AsyncIterable<OutboundEvent> {
     let textStarted = false;
     let thinkingStarted = false;
     let totalUsage: ModelUsage | undefined;
     let finalText = '';
     let turn = 0;
+    const contextUsageTracker = new RuntimeContextUsageTracker(args.context.model, args.priorEvents);
 
     // RFC v1 P0.4：resume 路径同样接力 Responses API session state。
     let currentResponseId = await this.loadInitialResponseId(args.context.sessionId, args.context.model);
@@ -1684,6 +1696,7 @@ export class RawAgentLoop implements AgentLoop {
     try {
       for (turn = 1; turn <= args.maxTurns; turn++) {
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
+        let turnContextUsage: OutboundEvent['contextUsage'] | null = null;
         let turnText = '';
         let turnThinking = '';
         // 2026-07-03 起 assistant_stream_event delta 不再落库；UI 的"思考 Xs"
@@ -1737,7 +1750,10 @@ export class RawAgentLoop implements AgentLoop {
         }
 
         if (!completed) throw new Error('model stream completed without completion event');
-        if (completed.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
+        if (completed.usage) {
+          totalUsage = mergeUsage(totalUsage, completed.usage);
+          turnContextUsage = contextUsageTracker.record(args.context.model, completed.usage);
+        }
         if (turnThinking) {
           await this.append({
             type: 'assistant_thinking',
@@ -1784,6 +1800,7 @@ export class RawAgentLoop implements AgentLoop {
           if (textStarted) {
             yield { type: 'text_end' };
           }
+          if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
           const modelUsage = buildModelUsage(args.context.model, totalUsage);
           await this.append({
             type: 'run_finished',
@@ -1828,6 +1845,7 @@ export class RawAgentLoop implements AgentLoop {
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
         });
+        if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
         args.messages.push({
           role: 'assistant',
           content: completed.content || turnText || null,

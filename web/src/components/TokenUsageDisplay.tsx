@@ -19,6 +19,10 @@ function DetailRow({ label, value }: { label: string; value: number }) {
   );
 }
 
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
 export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDisplayProps) {
   const { isPlatformAdmin } = useAuth();
   const [open, setOpen] = useState(false);
@@ -45,6 +49,10 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
   // 才把 transcript/provider usage 当“当前上下文”显示。Responses 接力场景
   // 上游每轮 usage 仍报全量输入（Ark 实测），同样是 exact，与全量重发场景一视同仁展示。
   const hasRealtime = contextUsage != null && contextUsage.totalTokens > 0;
+  const hasContextWindow = hasRealtime
+    && typeof contextUsage!.maxTokens === 'number'
+    && contextUsage!.maxTokens > 0
+    && typeof contextUsage!.percentage === 'number';
   const hasExactFallback = !hasRealtime && accounting?.exact === true && (tokenUsage?.contextTokens ?? 0) > 0;
   const hasExactContext = hasRealtime || hasExactFallback;
   const displayTokens = hasRealtime
@@ -56,9 +64,9 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
 
   // 百分比接近 autoCompactThreshold 时变色预警
   // threshold 未定义时不计算预警（保持中性色），避免用 1 作为默认导致预警色永远不触发
-  const percentage = hasRealtime ? contextUsage!.percentage : 0;
+  const percentage = hasContextWindow ? contextUsage!.percentage! : 0;
   const threshold = contextUsage?.autoCompactThreshold;
-  const hasThreshold = hasRealtime && threshold != null;
+  const hasThreshold = hasContextWindow && threshold != null;
   const nearThreshold = hasThreshold && percentage >= threshold! * 0.8;
   const overThreshold = hasThreshold && percentage >= threshold!;
   const buttonColor = overThreshold ? 'text-red-600 dark:text-red-400'
@@ -67,14 +75,44 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
   const label = (
     <>
       {hasExactContext ? '上下文' : '累计'} {formatTokenCount(displayTokens)}
-      {hasRealtime && ` · ${(percentage * 100).toFixed(0)}%`}
+      {hasContextWindow && ` · ${(percentage * 100).toFixed(0)}%`}
     </>
   );
-  const title = hasRealtime
-    ? `上下文占用：${formatTokenCount(displayTokens)} / ${formatTokenCount(contextUsage!.maxTokens)} (${(percentage * 100).toFixed(1)}%)`
+  const title = hasRealtime && hasContextWindow
+    ? `上下文占用：${formatTokenCount(displayTokens)} / ${formatTokenCount(contextUsage!.maxTokens!)} (${(percentage * 100).toFixed(1)}%)`
+    : hasRealtime
+      ? `当前上下文：${formatTokenCount(displayTokens)}`
     : hasExactFallback
       ? `当前上下文：${formatTokenCount(displayTokens)}（provider usage）`
       : `${accounting?.label ?? '上下文不可确认'}：显示累计用量`;
+  const realtimeLastCacheRatio = contextUsage?.lastRequestCacheHitRatio;
+  const realtimeCacheRatio = typeof realtimeLastCacheRatio === 'number'
+    ? realtimeLastCacheRatio
+    : typeof contextUsage?.cacheHitRatio === 'number'
+      ? contextUsage.cacheHitRatio
+      : undefined;
+  const tokenCacheRatio = typeof tokenUsage?.cacheHitRatio === 'number'
+    ? tokenUsage.cacheHitRatio
+    : undefined;
+  const cacheMetric = hasRealtime && realtimeCacheRatio !== undefined
+    ? {
+      label: typeof realtimeLastCacheRatio === 'number' ? '最近缓存命中' : '累计缓存命中',
+      ratio: realtimeCacheRatio,
+      readTokens: typeof realtimeLastCacheRatio === 'number'
+        ? contextUsage?.lastRequestCacheReadTokens
+        : contextUsage?.cacheReadTokens,
+      denominatorTokens: typeof realtimeLastCacheRatio === 'number'
+        ? contextUsage?.lastRequestCacheHitDenominatorTokens
+        : contextUsage?.cacheHitDenominatorTokens,
+    }
+    : tokenCacheRatio !== undefined
+      ? {
+        label: '累计缓存命中',
+        ratio: tokenCacheRatio,
+        readTokens: tokenUsage?.totalCacheReadTokens,
+        denominatorTokens: tokenUsage?.cacheHitDenominatorTokens,
+      }
+      : null;
 
   return (
     <div ref={containerRef} className="relative" onClick={(e) => e.stopPropagation()}>
@@ -107,30 +145,49 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
             </div>
           </div>
 
+          {cacheMetric && (
+            <div className="mb-2 rounded-md border bg-muted/35 p-2">
+              <div className="flex items-center justify-between gap-3 text-[11px]">
+                <span className="text-muted-foreground">{cacheMetric.label}</span>
+                <span className="font-mono tabular-nums">{formatPercent(cacheMetric.ratio)}</span>
+              </div>
+              {cacheMetric.readTokens != null && cacheMetric.denominatorTokens != null && cacheMetric.denominatorTokens > 0 && (
+                <div className="mt-1 flex items-center justify-between gap-3 text-[10px] text-muted-foreground">
+                  <span>缓存读取 / 分母</span>
+                  <span className="font-mono tabular-nums">
+                    {formatTokenCount(cacheMetric.readTokens)} / {formatTokenCount(cacheMetric.denominatorTokens)}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
           {hasRealtime && (
             <>
               {/* 百分比进度条 */}
-              <div className="mb-2">
-                <div className="mb-1 flex items-center justify-between text-[11px]">
-                  <span className="text-muted-foreground">
-                    上下文占用 {formatTokenCount(contextUsage!.totalTokens)} / {formatTokenCount(contextUsage!.maxTokens)}
-                  </span>
-                  <span className={`font-mono tabular-nums ${buttonColor}`}>
-                    {(percentage * 100).toFixed(1)}%
-                  </span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={`h-full transition-all ${overThreshold ? 'bg-red-500' : nearThreshold ? 'bg-amber-500' : 'bg-blue-500'}`}
-                    style={{ width: `${Math.min(percentage * 100, 100)}%` }}
-                  />
-                </div>
-                {contextUsage!.isAutoCompactEnabled && contextUsage!.autoCompactThreshold != null && (
-                  <div className="mt-1 text-[10px] text-muted-foreground">
-                    自动压缩阈值：{(contextUsage!.autoCompactThreshold * 100).toFixed(0)}%
+              {hasContextWindow && (
+                <div className="mb-2">
+                  <div className="mb-1 flex items-center justify-between text-[11px]">
+                    <span className="text-muted-foreground">
+                      上下文占用 {formatTokenCount(contextUsage!.totalTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
+                    </span>
+                    <span className={`font-mono tabular-nums ${buttonColor}`}>
+                      {(percentage * 100).toFixed(1)}%
+                    </span>
                   </div>
-                )}
-              </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      className={`h-full transition-all ${overThreshold ? 'bg-red-500' : nearThreshold ? 'bg-amber-500' : 'bg-blue-500'}`}
+                      style={{ width: `${Math.min(percentage * 100, 100)}%` }}
+                    />
+                  </div>
+                  {contextUsage!.isAutoCompactEnabled && contextUsage!.autoCompactThreshold != null && (
+                    <div className="mt-1 text-[10px] text-muted-foreground">
+                      自动压缩阈值：{(contextUsage!.autoCompactThreshold * 100).toFixed(0)}%
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* 分类堆叠条 */}
               {contextUsage!.categories.length > 0 && (

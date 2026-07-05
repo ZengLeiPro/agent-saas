@@ -92,6 +92,10 @@ export interface TokenUsage {
   subagentTotalTokens: number;
   /** Cumulative token total with model-specific cache accounting applied. */
   totalTokens?: number;
+  /** Cache hit denominator with model-specific accounting applied. */
+  cacheHitDenominatorTokens?: number;
+  /** Cumulative cache hit ratio. Null means there is no valid denominator yet. */
+  cacheHitRatio?: number | null;
   contextAccounting?: TokenContextAccounting;
   /** 累积等效 API 成本（美元） */
   totalCostUsd?: number | null;
@@ -100,12 +104,22 @@ export interface TokenUsage {
 /** SDK 0.2.112+ getContextUsage() 实时返回的上下文占用细分 */
 export interface ContextUsageData {
   totalTokens: number;
-  maxTokens: number;
-  percentage: number;
+  maxTokens?: number;
+  percentage?: number;
   model?: string;
   categories: Array<{ name: string; tokens: number; color: string; isDeferred?: boolean }>;
   memoryFiles: Array<{ path: string; type: string; tokens: number }>;
   mcpTools: Array<{ name: string; serverName: string; tokens: number; isLoaded?: boolean }>;
+  /** Cumulative cache hit tokens in the current session/run snapshot. */
+  cacheReadTokens?: number;
+  /** Cumulative cache hit denominator with model-specific accounting applied. */
+  cacheHitDenominatorTokens?: number;
+  /** Cumulative cache hit ratio. Null means there is no valid denominator yet. */
+  cacheHitRatio?: number | null;
+  /** Cache hit ratio for the latest completed model request. */
+  lastRequestCacheHitRatio?: number | null;
+  lastRequestCacheReadTokens?: number;
+  lastRequestCacheHitDenominatorTokens?: number;
   autoCompactThreshold?: number;
   isAutoCompactEnabled?: boolean;
 }

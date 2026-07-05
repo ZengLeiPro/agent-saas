@@ -354,6 +354,23 @@ describe('RawAgentLoop', () => {
     expect(events.map((event) => event.type)).toContain('tool_result');
     expect(events.at(-1)).toEqual({ type: 'done' });
     expect(adapter.calls).toBe(2);
+    const contextUsageEvents = events.filter((event) => event.type === 'context_usage');
+    expect(contextUsageEvents).toHaveLength(2);
+    expect(contextUsageEvents[0]?.contextUsage).toMatchObject({
+      totalTokens: 25,
+      cacheHitRatio: 0,
+      cacheHitDenominatorTokens: 20,
+      lastRequestCacheHitRatio: 0,
+      lastRequestCacheHitDenominatorTokens: 20,
+    });
+    expect(contextUsageEvents[0]?.contextUsage?.maxTokens).toBeUndefined();
+    expect(contextUsageEvents[1]?.contextUsage).toMatchObject({
+      totalTokens: 14,
+      cacheHitRatio: 0,
+      cacheHitDenominatorTokens: 32,
+      lastRequestCacheHitRatio: 0,
+      lastRequestCacheHitDenominatorTokens: 12,
+    });
     const invocation = await toolInvocationStore.get('run-1:call_write_1');
     expect(invocation?.status).toBe('completed');
     expect(invocation?.toolName).toBe('Write');
@@ -648,6 +665,7 @@ describe('RawAgentLoop', () => {
       'text_start',
       'text_delta',
       'text_end',
+      'context_usage',
       'done',
     ]);
 
@@ -872,6 +890,7 @@ describe('RawAgentLoop', () => {
       'text_start',
       'text_delta',
       'text_end',
+      'context_usage',
       'done',
     ]);
 

@@ -7,7 +7,7 @@ import { createReadStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as readline from "node:readline";
 import { apiLogger } from "../../utils/logger.js";
-import { computeUsageTotalTokens, getUsageAccountingMode } from "../usage/pricing.js";
+import { computeCacheHitDenominatorTokens, computeUsageTotalTokens, getUsageAccountingMode } from "../usage/pricing.js";
 import { assertAllowedTranscriptPath } from "./projectKey.js";
 
 export type TranscriptBlockKind =
@@ -524,6 +524,10 @@ export interface TokenUsage {
   subagentTotalTokens: number;
   /** 主 agent 逐轮 total + 子 agent total 的累计 token，用于 UI 展示累计口径 */
   totalTokens: number;
+  /** 缓存命中率分母，按模型 accounting_mode 归一化 */
+  cacheHitDenominatorTokens: number;
+  /** 缓存命中率；无有效分母时为 null */
+  cacheHitRatio: number | null;
 }
 
 /**
@@ -563,6 +567,7 @@ export async function getTokenUsage(
   let totalOutputTokens = 0;
   let subagentTotalTokens = 0;
   let mainTotalTokens = 0;
+  let cacheHitDenominatorTokens = 0;
   let hasUsage = false;
 
   const rl = readline.createInterface({
@@ -616,6 +621,12 @@ export async function getTokenUsage(
       cacheCreationTokens: cc,
     });
     mainTotalTokens += turnTotal;
+    cacheHitDenominatorTokens += computeCacheHitDenominatorTokens(model, {
+      inputTokens: inp,
+      outputTokens: out,
+      cacheReadTokens: cr,
+      cacheCreationTokens: cc,
+    });
 
     // 当前上下文估算（跳过 usage 全为 0 的合成/错误消息）
     if (inp > 0 || out > 0) {
@@ -663,6 +674,8 @@ export async function getTokenUsage(
     totalOutputTokens,
     subagentTotalTokens,
     totalTokens: mainTotalTokens + subagentTotalTokens,
+    cacheHitDenominatorTokens,
+    cacheHitRatio: cacheHitDenominatorTokens > 0 ? totalCacheReadTokens / cacheHitDenominatorTokens : null,
   };
 }
 

@@ -29,6 +29,7 @@ import type {
   ChannelContext,
   UploadedFileInfo,
   OutboundEvent,
+  ContextUsageData,
 } from '../../types/index.js';
 import type { AgentRunDispatch, AgentRunHooks } from '../../agent/types.js';
 import { toRunModelOptions, type ResolvedModel } from '../../app/models.js';
@@ -86,6 +87,19 @@ import {
  * 多 session 突发时被打穿。
  */
 const approvalResumeSemaphore = new Semaphore(8);
+
+function canViewContextUsageDetails(context: ChannelContext): boolean {
+  return context.user?.role === 'admin' && context.user.tenantId === DEFAULT_TENANT_ID;
+}
+
+function redactContextUsageDetails(usage: ContextUsageData): ContextUsageData {
+  return {
+    ...usage,
+    categories: [],
+    memoryFiles: [],
+    mcpTools: [],
+  };
+}
 
 const INTERACTIVE_PERMISSION_TOOLS = new Set([
   'AskUserQuestion',
@@ -3162,7 +3176,10 @@ export class WebChannel implements BaseChannel {
       },
       // SDK 0.2.112+ 新事件透传
       onContextUsage(usage) {
-        send({ type: 'context_usage', contextUsage: usage });
+        send({
+          type: 'context_usage',
+          contextUsage: canViewContextUsageDetails(context) ? usage : redactContextUsageDetails(usage),
+        });
       },
       onPluginInstall(data) {
         send({ type: 'plugin_install', pluginInstall: data });

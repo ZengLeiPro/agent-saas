@@ -92,6 +92,8 @@ describe('getTokenUsage — contextTokens accounting', () => {
     expect(usage?.totalInputTokens).toBe(45570);
     expect(usage?.totalOutputTokens).toBe(260);
     expect(usage?.totalCacheReadTokens).toBe(34432);
+    expect(usage?.cacheHitDenominatorTokens).toBe(45570);
+    expect(usage?.cacheHitRatio).toBeCloseTo(34432 / 45570, 6);
   });
 
   it('input_includes_cache：中途 cache miss（如 /compact 清链后）自动重锚', async () => {
@@ -180,6 +182,22 @@ describe('getTokenUsage — contextTokens accounting', () => {
     expect(usage?.totalInputTokens).toBe(2200);
     expect(usage?.totalOutputTokens).toBe(120);
     expect(usage?.totalCacheReadTokens).toBe(800);
+  });
+
+  it('cache_tokens_separate：缓存命中率分母包含 input/cache read/cache creation', async () => {
+    const path = await writeTranscript('anthropic-cache-hit', [
+      assistantLine({
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_read_input_tokens: 800,
+        cache_creation_input_tokens: 200,
+      }, 'claude-opus-4-7'),
+    ]);
+
+    const usage = await getTokenUsage(path);
+
+    expect(usage?.cacheHitDenominatorTokens).toBe(1100);
+    expect(usage?.cacheHitRatio).toBeCloseTo(800 / 1100, 6);
   });
 });
 

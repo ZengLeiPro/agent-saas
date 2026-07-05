@@ -570,9 +570,12 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         authMetaMap = new Map(entries);
         markStage("readSessionMeta[user]", authMetaStageStartedAt);
         // 权限过滤：只保留属于当前用户的会话 + 排除软删除 + 隐藏系统轮询会话
+        // + 隐藏子 agent hidden session（kind='subagent'，2026-07-06——执行细节
+        //   经父会话的 SubagentBlock / Run Trace 观测，不作为独立会话展示）
         sessions = sessions.filter((s) => {
           const meta = authMetaMap!.get(s.sessionId);
           if (!meta || meta.userId !== userId || meta.deletedAt) return false;
+          if (meta.kind === "subagent") return false;
           if (isMemoryPollSessionMeta(meta)) return false;
           return true;
         });
@@ -591,6 +594,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         sessions = sessions.filter((s) => {
           const meta = authMetaMap!.get(s.sessionId);
           if (meta?.deletedAt) return false;
+          // 子 agent hidden session 对 admin 列表同样隐藏（Run Trace 按 parentRunId 可查）
+          if (meta?.kind === "subagent") return false;
           return true;
         });
       }

@@ -787,6 +787,11 @@ export class WebChannel implements BaseChannel {
       'tool_invocation_completed',
       'tool_output_delta',
       'tool_progress',
+      // 子 agent 生命周期（2026-07-06）：runner 不向父 outbound 流 yield 任何子事件，
+      // SubagentBlock 的唯一数据通路就是 durable PlatformEvent → NOTIFY → 本投影，
+      // 因此 in-process run 也必须放行这两类。
+      'subagent_started',
+      'subagent_finished',
     ].includes(event.type)) return;
     const active = runId ? this.findActiveStreamByRunId(runId) : undefined;
     const streamId = active?.streamId ?? (runId ? runId : undefined);
@@ -3421,6 +3426,25 @@ function projectRuntimePlatformEvent(
       }
       return { events };
     }
+    case 'subagent_started':
+      // 子 agent 工具（2026-07-06）：live 与 replay 共用本投影（durable 事件是
+      // SubagentBlock 唯一数据源，无同进程直推路径需要防重）。agentType 字段
+      // 填 description——前端 SubagentBlock 直接渲染该字段，任务概述比裸类型名
+      // （general/explore）对用户友好；toolId 用父 run 的 Agent 工具 callId 锚定。
+      return {
+        events: [{
+          type: 'subagent_start',
+          toolId: event.toolCallId,
+          agentType: event.description || event.agentType,
+        }],
+      };
+    case 'subagent_finished':
+      return {
+        events: [{
+          type: 'subagent_end',
+          toolId: event.toolCallId,
+        }],
+      };
     case 'compaction':
       // /compact v2：durable replay / 跨进程 NOTIFY 路径把压缩点投影为分界线状态事件
       // （同进程直推路径由 handleRuntimeOutboundEvent 的 compaction_end case 覆盖）

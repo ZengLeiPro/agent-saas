@@ -608,7 +608,7 @@ jobs:
             const [phase, image] = key.split('\t');
             console.log(`  ${phase} x${count} ${image}`);
           }
-NODE
+          NODE
             fi
           fi
 

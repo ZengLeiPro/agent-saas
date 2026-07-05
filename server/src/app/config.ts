@@ -436,6 +436,18 @@ const selfSignupSmsSchema = z.object({
   signName: z.string().optional(),
   /** aliyun：验证码模板 CODE（模板变量固定为 ${code}） */
   templateCode: z.string().optional(),
+  /** 验证码有效期，默认 300 秒 */
+  codeTtlSeconds: z.number().int().min(60).max(1800).default(300),
+  /** 同手机号发送冷却，默认 60 秒 */
+  cooldownSeconds: z.number().int().min(30).max(600).default(60),
+  /** 同手机号自然日发送上限，默认 10 条 */
+  dailyLimitPerPhone: z.number().int().min(1).max(50).default(10),
+  /** 单个验证码最多错误尝试次数，默认 5 次 */
+  maxVerifyAttempts: z.number().int().min(1).max(10).default(5),
+  /** 同 IP 每分钟发送验证码上限，默认 5 次 */
+  maxSendPerIpPerMinute: z.number().int().min(1).max(60).default(5),
+  /** 同 IP 每分钟注册提交上限，默认 5 次 */
+  maxRegisterPerIpPerMinute: z.number().int().min(1).max(60).default(5),
 });
 
 /**

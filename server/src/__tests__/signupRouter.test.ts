@@ -80,6 +80,7 @@ interface TestRig {
 async function makeTestRig(options?: {
   selfSignup?: SelfSignupConfig;
   failPolicy?: boolean;
+  injectCodeService?: boolean;
 }): Promise<TestRig> {
   const tmpRoot = mkdtempSync(join(tmpdir(), "signup-router-"));
   const tenantStore = new TenantStore(join(tmpRoot, "tenants.json"));
@@ -112,7 +113,7 @@ async function makeTestRig(options?: {
       agentCwd: join(tmpRoot, "workspaces"),
       sharedDir: join(tmpRoot, "shared"),
       loginLogFilePath: join(tmpRoot, "login.jsonl"),
-      codeService: selfSignup.enabled
+      codeService: selfSignup.enabled && options?.injectCodeService !== false
         ? new VerificationCodeService({ sender })
         : undefined,
     }),
@@ -152,6 +153,21 @@ const REGISTER_BODY = {
   utm: { utm_source: "website", utm_content: "ai-employee", evil: "drop-me" },
 };
 
+const DEV_SMS_LIMITS = {
+  provider: "dev",
+  codeTtlSeconds: 300,
+  cooldownSeconds: 60,
+  dailyLimitPerPhone: 10,
+  maxVerifyAttempts: 5,
+  maxSendPerIpPerMinute: 5,
+  maxRegisterPerIpPerMinute: 5,
+} satisfies NonNullable<SelfSignupConfig["sms"]>;
+
+const ALIYUN_SMS_LIMITS = {
+  ...DEV_SMS_LIMITS,
+  provider: "aliyun",
+} satisfies NonNullable<SelfSignupConfig["sms"]>;
+
 // ---- 验证码服务单测 ----
 
 describe("VerificationCodeService", () => {
@@ -185,10 +201,48 @@ describe("VerificationCodeService", () => {
 
   it("万能码（内测）可通过且不依赖已发送验证码", () => {
     const svc = new VerificationCodeService({
-      sender: new CaptureSender(),
+      sender: {
+        providerName: "dev",
+        sendCode: async () => {},
+      },
       universalCode: "424242",
     });
     expect(svc.verifyAndConsume(PHONE, "424242")).toBe(true);
+  });
+
+  it("万能码在非 dev sender 下被忽略", () => {
+    const svc = new VerificationCodeService({
+      sender: {
+        providerName: "aliyun",
+        sendCode: async () => {},
+      },
+      universalCode: "424242",
+    });
+    expect(svc.verifyAndConsume(PHONE, "424242")).toBe(false);
+  });
+
+  it("错误尝试次数可配置", async () => {
+    const sender = new CaptureSender();
+    const svc = new VerificationCodeService({
+      sender,
+      maxVerifyAttempts: 2,
+    });
+    await svc.requestCode(PHONE);
+    expect(svc.verifyAndConsume(PHONE, "000000")).toBe(false);
+    expect(svc.verifyAndConsume(PHONE, "111111")).toBe(false);
+    expect(svc.verifyAndConsume(PHONE, sender.lastCode)).toBe(false);
+  });
+
+  it("同号日限可配置", async () => {
+    const svc = new VerificationCodeService({
+      sender: new CaptureSender(),
+      cooldownMs: 0,
+      dailyLimitPerPhone: 1,
+    });
+    expect((await svc.requestCode(PHONE)).ok).toBe(true);
+    const second = await svc.requestCode(PHONE);
+    expect(second.ok).toBe(false);
+    expect(second.error).toBe("该手机号今日获取验证码次数已达上限");
   });
 });
 
@@ -208,6 +262,38 @@ describe("signup router", () => {
     expect(await res.json()).toEqual({ enabled: true });
   });
 
+  it("aliyun provider 配置不齐时失败关闭，不回退 dev", async () => {
+    const originalSecret = process.env.AGENT_SMS_ACCESS_KEY_SECRET;
+    delete process.env.AGENT_SMS_ACCESS_KEY_SECRET;
+    try {
+      h = await makeTestRig({
+        injectCodeService: false,
+        selfSignup: {
+          enabled: true,
+          grantCredits: 500,
+          sms: {
+            ...ALIYUN_SMS_LIMITS,
+            accessKeyId: "ak-test",
+            signName: "开沿科技",
+          },
+        },
+      });
+
+      const status = await h.request("/api/signup/status");
+      expect(status.status).toBe(200);
+      expect(await status.json()).toEqual({ enabled: false });
+      expect(
+        (await h.request("/api/signup/send-code", { phone: PHONE })).status,
+      ).toBe(403);
+    } finally {
+      if (originalSecret === undefined) {
+        delete process.env.AGENT_SMS_ACCESS_KEY_SECRET;
+      } else {
+        process.env.AGENT_SMS_ACCESS_KEY_SECRET = originalSecret;
+      }
+    }
+  });
+
   it("未启用时 send-code/register 拒绝但 status 可用", async () => {
     h = await makeTestRig({
       selfSignup: { enabled: false, grantCredits: 500 },
@@ -219,6 +305,26 @@ describe("signup router", () => {
     expect(
       (await h.request("/api/signup/register", REGISTER_BODY)).status,
     ).toBe(403);
+  });
+
+  it("发送验证码 IP 频控可配置", async () => {
+    h = await makeTestRig({
+      selfSignup: {
+        enabled: true,
+        grantCredits: 500,
+        sms: {
+          ...DEV_SMS_LIMITS,
+          maxSendPerIpPerMinute: 1,
+        },
+      },
+    });
+
+    expect(
+      (await h.request("/api/signup/send-code", { phone: PHONE })).status,
+    ).toBe(200);
+    expect(
+      (await h.request("/api/signup/send-code", { phone: "13900001111" })).status,
+    ).toBe(429);
   });
 
   it("完整注册链路：租户+模型白名单+用户+计费+token", async () => {

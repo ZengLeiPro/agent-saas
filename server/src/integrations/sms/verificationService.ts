@@ -8,7 +8,7 @@
  *   - 发送冷却：同号 60s
  *   - 日限额：同号每自然日 10 条（防短信费被刷）
  *   - 有效期：5 分钟
- *   - 防爆破：同一验证码错误尝试 5 次后作废
+ *   - 防爆破：同一验证码错误尝试 5 次后作废（可配置）
  *   - 一次性：验证成功即消费删除
  */
 
@@ -63,15 +63,17 @@ export interface VerificationCodeServiceOptions {
   dailyLimitPerPhone?: number;
   /**
    * 万能码（仅 dev/内测用；env AGENT_SMS_DEV_CODE 注入）。
-   * 配置后任何手机号都可用它通过验证；生产切 aliyun provider 后必须移除。
+   * 配置后任何手机号都可用它通过验证；非 dev sender 会被强制忽略。
    */
   universalCode?: string;
+  /** 单个验证码最多允许错误尝试次数，默认 5 */
+  maxVerifyAttempts?: number;
 }
 
 const DEFAULT_CODE_TTL_MS = 5 * 60_000;
 const DEFAULT_COOLDOWN_MS = 60_000;
 const DEFAULT_DAILY_LIMIT = 10;
-const MAX_VERIFY_ATTEMPTS = 5;
+const DEFAULT_MAX_VERIFY_ATTEMPTS = 5;
 
 function localDayKey(now: number): string {
   const d = new Date(now);
@@ -85,6 +87,7 @@ export class VerificationCodeService {
   private readonly cooldownMs: number;
   private readonly dailyLimit: number;
   private readonly universalCode?: string;
+  private readonly maxVerifyAttempts: number;
   readonly sender: SmsSender;
 
   constructor(options: VerificationCodeServiceOptions) {
@@ -92,7 +95,16 @@ export class VerificationCodeService {
     this.codeTtlMs = options.codeTtlMs ?? DEFAULT_CODE_TTL_MS;
     this.cooldownMs = options.cooldownMs ?? DEFAULT_COOLDOWN_MS;
     this.dailyLimit = options.dailyLimitPerPhone ?? DEFAULT_DAILY_LIMIT;
-    this.universalCode = options.universalCode || undefined;
+    this.maxVerifyAttempts =
+      options.maxVerifyAttempts ?? DEFAULT_MAX_VERIFY_ATTEMPTS;
+    this.universalCode = this.sender.providerName === "dev"
+      ? options.universalCode || undefined
+      : undefined;
+    if (options.universalCode && this.sender.providerName !== "dev") {
+      apiLogger.warn(
+        `[sms] 已忽略非 dev sender 的万能码配置 provider=${this.sender.providerName}`,
+      );
+    }
 
     // 定期清理过期条目（10 分钟一次），unref 不阻止进程退出
     const timer = setInterval(() => this.sweep(), 10 * 60_000);
@@ -167,7 +179,7 @@ export class VerificationCodeService {
     }
     if (entry.code !== code) {
       entry.attempts += 1;
-      if (entry.attempts >= MAX_VERIFY_ATTEMPTS) {
+      if (entry.attempts >= this.maxVerifyAttempts) {
         this.codes.delete(phone);
       }
       return false;

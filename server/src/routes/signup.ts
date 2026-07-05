@@ -71,6 +71,9 @@ function sanitizeUtm(
 
 // ---- IP 频控（phone 维度在 VerificationCodeService 内收口） ----
 
+const DEFAULT_SEND_CODE_IP_LIMIT_PER_MINUTE = 5;
+const DEFAULT_REGISTER_IP_LIMIT_PER_MINUTE = 5;
+
 interface RateBucket {
   startedAt: number;
   count: number;
@@ -131,24 +134,64 @@ export interface SignupRouterDeps {
   codeService?: VerificationCodeService;
 }
 
-function buildSmsSender(selfSignup: SelfSignupConfig): SmsSender {
+interface BuildSmsSenderResult {
+  sender?: SmsSender;
+  error?: string;
+}
+
+function optionalConfigValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function buildSmsSender(selfSignup: SelfSignupConfig): BuildSmsSenderResult {
   const sms = selfSignup.sms;
   if (sms?.provider === "aliyun") {
-    const accessKeySecret = process.env.AGENT_SMS_ACCESS_KEY_SECRET;
-    if (!sms.accessKeyId || !sms.signName || !sms.templateCode || !accessKeySecret) {
-      apiLogger.warn(
-        "[signup] sms.provider=aliyun 但 accessKeyId/signName/templateCode/AGENT_SMS_ACCESS_KEY_SECRET 不齐，回退 dev provider（验证码只打日志）",
-      );
-      return new DevSmsSender();
+    const accessKeyId = optionalConfigValue(sms.accessKeyId);
+    const signName = optionalConfigValue(sms.signName);
+    const templateCode = optionalConfigValue(sms.templateCode);
+    const accessKeySecret = optionalConfigValue(
+      process.env.AGENT_SMS_ACCESS_KEY_SECRET,
+    );
+    const missing = [
+      accessKeyId ? undefined : "auth.selfSignup.sms.accessKeyId",
+      signName ? undefined : "auth.selfSignup.sms.signName",
+      templateCode ? undefined : "auth.selfSignup.sms.templateCode",
+      accessKeySecret ? undefined : "AGENT_SMS_ACCESS_KEY_SECRET",
+    ].filter((item): item is string => Boolean(item));
+    if (missing.length > 0) {
+      return {
+        error: `阿里云短信配置缺失：${missing.join(", ")}`,
+      };
     }
-    return new AliyunSmsSender({
-      accessKeyId: sms.accessKeyId,
-      accessKeySecret,
-      signName: sms.signName,
-      templateCode: sms.templateCode,
-    });
+
+    return {
+      sender: new AliyunSmsSender({
+        accessKeyId: accessKeyId!,
+        accessKeySecret: accessKeySecret!,
+        signName: signName!,
+        templateCode: templateCode!,
+      }),
+    };
   }
-  return new DevSmsSender();
+  return { sender: new DevSmsSender() };
+}
+
+function buildVerificationCodeService(
+  selfSignup: SelfSignupConfig,
+  sender: SmsSender,
+): VerificationCodeService {
+  const sms = selfSignup.sms;
+  return new VerificationCodeService({
+    sender,
+    codeTtlMs: (sms?.codeTtlSeconds ?? 300) * 1000,
+    cooldownMs: (sms?.cooldownSeconds ?? 60) * 1000,
+    dailyLimitPerPhone: sms?.dailyLimitPerPhone,
+    maxVerifyAttempts: sms?.maxVerifyAttempts,
+    universalCode: sender.providerName === "dev"
+      ? process.env.AGENT_SMS_DEV_CODE
+      : undefined,
+  });
 }
 
 export function createSignupRouter(deps: SignupRouterDeps): Router {
@@ -181,31 +224,45 @@ export function createSignupRouter(deps: SignupRouterDeps): Router {
     );
   }
 
+  const smsBuildResult = enabled && !deps.codeService
+    ? buildSmsSender(selfSignup!)
+    : undefined;
+  if (enabled && smsBuildResult?.error) {
+    apiLogger.warn(`[signup] 自助注册短信不可用：${smsBuildResult.error}`);
+  }
   const codeService = enabled
     ? (deps.codeService ??
-      new VerificationCodeService({
-        sender: buildSmsSender(selfSignup!),
-        universalCode: process.env.AGENT_SMS_DEV_CODE,
-      }))
+      (smsBuildResult?.sender
+        ? buildVerificationCodeService(selfSignup!, smsBuildResult.sender)
+        : undefined))
     : undefined;
+  const publicEnabled = enabled && Boolean(codeService);
   if (enabled && codeService) {
     apiLogger.info(
       `[signup] 自助注册已启用 sms=${codeService.sender.providerName} grantCredits=${selfSignup!.grantCredits} models=${trialAllowedModels.join(",") || "(不限)"}`,
     );
   }
 
-  const sendCodeIpLimiter = createIpLimiter(5, 60_000);
-  const registerIpLimiter = createIpLimiter(5, 60_000);
+  const sendCodeIpLimiter = createIpLimiter(
+    selfSignup?.sms?.maxSendPerIpPerMinute ??
+      DEFAULT_SEND_CODE_IP_LIMIT_PER_MINUTE,
+    60_000,
+  );
+  const registerIpLimiter = createIpLimiter(
+    selfSignup?.sms?.maxRegisterPerIpPerMinute ??
+      DEFAULT_REGISTER_IP_LIMIT_PER_MINUTE,
+    60_000,
+  );
 
   // GET /api/signup/status — 始终可访问，前端据此决定注册入口显隐
   router.get("/status", (_req, res) => {
-    res.json({ enabled });
+    res.json({ enabled: publicEnabled });
   });
 
   // POST /api/signup/send-code
   router.post("/send-code", async (req, res) => {
     try {
-      if (!enabled || !codeService) {
+      if (!publicEnabled || !codeService) {
         res.status(403).json({ error: "当前未开放自助注册" });
         return;
       }
@@ -244,7 +301,7 @@ export function createSignupRouter(deps: SignupRouterDeps): Router {
 
   // POST /api/signup/register
   router.post("/register", async (req, res) => {
-    if (!enabled || !codeService) {
+    if (!publicEnabled || !codeService) {
       res.status(403).json({ error: "当前未开放自助注册" });
       return;
     }

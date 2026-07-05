@@ -37,12 +37,11 @@ CLI 已支持标准 CRUD，但写操作会真实修改业务系统数据：
 
 ## 第 0 步：确保 CLI 是最新版（每次会话首次使用 ky-data-query 时必跑一次）
 
-agent 平台已经按当前会话用户自动注入 `AZEROTH_TOKEN`（长期 PAT）和 `AZEROTH_API_URL` 到子进程 env。但 `azeroth` 二进制本身要从 ky-azeroth 生产服务按需拉取（保证与服务端同版本，永不漂移），第一次使用前必须 source 一次 ensure 脚本：
+agent 平台已经按当前会话用户自动注入 `AZEROTH_TOKEN`（长期 PAT）和 `AZEROTH_API_URL` 到子进程 env。但 `azeroth` 二进制本身要从 ky-azeroth 生产服务按需拉取（保证与服务端同版本，永不漂移）。平台 Shell 默认可能是 `/bin/sh`，且不同工具调用之间不会保留 `PATH`；因此每次执行 `azeroth ...` 的 Shell 命令，都在同一个 `bash -lc` 里先 `source` 一次 ensure 脚本：
 
 ```bash
-KY_DATA_QUERY_SKILL_DIR="<当前 ky-data-query skill 目录>"
-source "$KY_DATA_QUERY_SKILL_DIR/scripts/ensure-cli.sh"
-azeroth whoami    # 确认身份
+export KY_DATA_QUERY_SKILL_DIR="<当前 ky-data-query skill 目录>"
+bash -lc 'source "$KY_DATA_QUERY_SKILL_DIR/scripts/ensure-cli.sh" && azeroth whoami'
 ```
 
 ensure 脚本逻辑：
@@ -52,13 +51,13 @@ ensure 脚本逻辑：
 - 过期 → 调一次轻量 hash 端点比对，hash 一致只刷新 stamp 不下载
 - hash 变了 / cache 空 → 拉 ~1MB bundle 原子覆盖
 
-之后整个会话内可以直接 `azeroth ...`，无需关心路径（cache 已注入 PATH）。
+之后同一个 Shell 进程内可以直接 `azeroth ...`。新的工具调用要重新 `source` 一次，或把多个 `azeroth` 命令写在同一个 `bash -lc` 内。
 
 如果刚部署过 ky-azeroth，或 `azeroth describe <entity>` 看不到刚新增的字段，可能是 1h TTL 命中旧 cache；可强制刷新一次：
 
 ```bash
-KY_DATA_QUERY_SKILL_DIR="<当前 ky-data-query skill 目录>"
-AZEROTH_CLI_FORCE=1 source "$KY_DATA_QUERY_SKILL_DIR/scripts/ensure-cli.sh"
+export KY_DATA_QUERY_SKILL_DIR="<当前 ky-data-query skill 目录>"
+bash -lc 'AZEROTH_CLI_FORCE=1 source "$KY_DATA_QUERY_SKILL_DIR/scripts/ensure-cli.sh" && azeroth whoami'
 ```
 
 如果 `source` 报"No such file or directory"，说明当前运行时没有暴露 ky-data-query skill 资源或路径解析错误。**不要尝试自己复制脚本到 workspace**，停止并报告 agent-saas skill 挂载/安装问题。
@@ -152,7 +151,7 @@ azeroth customers list --customer-level A --deal-status 已赢单 --all --output
 azeroth customers list --keyword 福宠 --all --output ...
 ```
 
-**过滤结果必须做 sanity check**：带 `--customer-id` / `--charger-id` / 状态多选等 filter 的 `--all` 导出，先看 stderr 的 `total=...` 是否符合预期；如果查单个客户关联数据却返回几百条，视为过滤未生效，先 `AZEROTH_CLI_FORCE=1 source .../ensure-cli.sh` 强制刷新 CLI，再重跑。仍异常时不要直接引用结果，改为全量 dump 后用 DuckDB/grep 按 `customerId` 二次过滤，并在回答里说明 CLI 服务端过滤异常。
+**过滤结果必须做 sanity check**：带 `--customer-id` / `--charger-id` / 状态多选等 filter 的 `--all` 导出，先看 stderr 的 `total=...` 是否符合预期；如果查单个客户关联数据却返回几百条，视为过滤未生效，先在同一条 `bash -lc` 命令里 `AZEROTH_CLI_FORCE=1 source .../ensure-cli.sh` 强制刷新 CLI，再重跑。仍异常时不要直接引用结果，改为全量 dump 后用 DuckDB/grep 按 `customerId` 二次过滤，并在回答里说明 CLI 服务端过滤异常。
 
 判断标准：用户问的是"育新名下的客户""A 级客户"等可由 filter 表达的范围 → 用 filter；问的是"团队整体业绩排名"等需要全表聚合 → 全量。
 

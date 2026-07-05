@@ -380,12 +380,13 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
     // （wake / resume 路径）。两者都缺时返回 undefined → 下游 buildTenantScopedEnv
     // 按"匿名/平台兼容路径"走，保持向后兼容；ServerLocal Shell gate 也会因
     // identity 缺失自然 fail-closed（toolRuntime.ts:620）。
+    const identity = context.user ?? context.sessionOwner;
     const tenantId = context.user?.tenantId ?? context.sessionOwner?.tenantId;
     return {
       id: args.workspaceId ?? args.sessionId,
       root: resolve(args.cwd),
-      userId: context.user?.id,
-      username: context.user?.username,
+      userId: identity?.id,
+      username: identity?.username,
       ...(tenantId ? { tenantId } : {}),
       sessionId: args.sessionId,
       sandboxScopeId: args.sandboxScopeId,

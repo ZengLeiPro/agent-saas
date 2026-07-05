@@ -70,6 +70,28 @@ function workspace(root = '/tmp/workspace'): WorkspaceRef {
 }
 
 describe('PlatformToolRuntime', () => {
+  it('resolves workspace identity from sessionOwner on scheduler wake paths', () => {
+    const provider = new LocalWorkspaceProvider('server-container');
+    const workspace = provider.resolve({
+      channel: 'web',
+      sessionOwner: {
+        id: 'admin-1',
+        username: 'admin',
+        role: 'admin',
+        tenantId: DEFAULT_TENANT_ID,
+      },
+    }, {
+      cwd: '/tmp/workspace',
+      sessionId: 'session-1',
+      workspaceId: 'workspace-1',
+    });
+
+    expect(workspace.userId).toBe('admin-1');
+    expect(workspace.username).toBe('admin');
+    expect(workspace.tenantId).toBe(DEFAULT_TENANT_ID);
+    expect(workspace.executionTarget).toBe('server-container');
+  });
+
   it('exposes stable platform tool descriptors and risk levels', () => {
     const runtime = new PlatformToolRuntime();
     const descriptors = runtime.list();

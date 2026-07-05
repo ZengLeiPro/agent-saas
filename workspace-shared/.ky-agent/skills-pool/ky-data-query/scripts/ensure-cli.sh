@@ -23,9 +23,8 @@
 # ============================================================================
 set -euo pipefail
 
-CACHE_DIR="${HOME}/workspace/${USER}/.cache/azeroth-cli"
-# 实际 user 不一定是 $USER（agent dispatch 不一定改 $USER），用 cwd 推断更稳
-CACHE_DIR="$(pwd)/.cache/azeroth-cli"
+# 实际 user / USER env 在 ACS Sandbox 内不一定存在；用 cwd 推断更稳。
+CACHE_DIR="${AZEROTH_CLI_CACHE_DIR:-$(pwd)/.cache/azeroth-cli}"
 BIN_PATH="$CACHE_DIR/azeroth"
 STAMP_PATH="$CACHE_DIR/.last-check"
 TTL_SECS="${AZEROTH_CLI_TTL_SECS:-3600}"

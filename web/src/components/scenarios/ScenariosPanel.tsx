@@ -50,15 +50,20 @@ export function ScenariosPanel({
   const [activeRole, setActiveRole] = useState<string>("all");
   const [detail, setDetail] = useState<ScenarioItem | null>(null);
 
-  // 首次加载完成后，若用户岗位命中场景库岗位，则默认定位到该岗位 tab。
-  // 只自动执行一次，之后完全尊重用户的手动切换。
-  const autoRoleAppliedRef = useRef(false);
+  // 首次加载完成后，优先按用户主动选择的开箱包岗位定位；没有时再按资料岗位匹配。
+  // 用户手动切过场景库 tab 后，不再自动覆盖。
+  const lastAutoRoleRef = useRef<string | null>(null);
+  const userSelectedRoleRef = useRef(false);
   useEffect(() => {
-    if (autoRoleAppliedRef.current || !library) return;
-    autoRoleAppliedRef.current = true;
-    const matched = matchRoleIdByPosition(library.roles, user?.position);
-    if (matched) setActiveRole(matched);
-  }, [library, user?.position]);
+    if (!library || userSelectedRoleRef.current) return;
+    const activeRoleId = user?.preferences?.activeRoleId;
+    const preferred = activeRoleId && library.roles.some((role) => role.id === activeRoleId)
+      ? activeRoleId
+      : matchRoleIdByPosition(library.roles, user?.position);
+    if (!preferred || lastAutoRoleRef.current === preferred) return;
+    lastAutoRoleRef.current = preferred;
+    setActiveRole(preferred);
+  }, [library, user?.position, user?.preferences?.activeRoleId]);
 
   const roles = library?.roles ?? [];
   const scenarios = useMemo(() => {
@@ -137,7 +142,10 @@ export function ScenariosPanel({
           <button
             key={role.id}
             type="button"
-            onClick={() => setActiveRole(role.id)}
+            onClick={() => {
+              userSelectedRoleRef.current = true;
+              setActiveRole(role.id);
+            }}
             className={cn(
               "shrink-0 rounded-full border px-3 py-1.5 text-sm transition-colors",
               activeRole === role.id

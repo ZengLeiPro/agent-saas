@@ -43,7 +43,7 @@ interface Rig {
   close(): Promise<void>;
 }
 
-async function startRig(): Promise<Rig> {
+async function startRig(options: { position?: string; activeRoleId?: string } = {}): Promise<Rig> {
   const tmpRoot = await mkdtemp(join(tmpdir(), "user-role-routes-"));
   const dataPath = join(tmpRoot, "scenario-library.json");
   await writeFile(dataPath, JSON.stringify(LIBRARY), "utf-8");
@@ -54,7 +54,11 @@ async function startRig(): Promise<Rig> {
     role: "user",
     createdBy: "system",
     tenantId: "kaiyan",
+    position: options.position,
   });
+  if (options.activeRoleId) {
+    await userStore.updatePreferences(user.id, { activeRoleId: options.activeRoleId });
+  }
 
   const app = express();
   app.use(express.json());
@@ -97,7 +101,29 @@ describe("user role routes", () => {
     await rig.close();
   });
 
-  it("returns available roles and defaults to the first role", async () => {
+  it("returns available roles and defaults to the first role when position is empty", async () => {
+    const res = await rig.request("/api/user/available-roles");
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      availableRoleIds: ["boss", "sales"],
+      activeRoleId: "boss",
+    });
+  });
+
+  it("defaults active role from user position before falling back to first role", async () => {
+    await rig.close();
+    rig = await startRig({ position: "销售经理" });
+    const res = await rig.request("/api/user/available-roles");
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      availableRoleIds: ["boss", "sales"],
+      activeRoleId: "sales",
+    });
+  });
+
+  it("keeps explicit active role preference above user position matching", async () => {
+    await rig.close();
+    rig = await startRig({ position: "销售经理", activeRoleId: "boss" });
     const res = await rig.request("/api/user/available-roles");
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({

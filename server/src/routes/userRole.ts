@@ -43,6 +43,18 @@ function pickWelcomeMessage(role: ScenarioRole): string | null {
   return sanitizeCustomerFacingText(message.default ?? message.internal ?? message.export ?? "").output || null;
 }
 
+function matchRoleIdByPosition(roles: ScenarioRole[], position?: string): string | null {
+  const p = position?.trim();
+  if (!p) return null;
+  for (const role of roles) {
+    const segments = role.name.split("/").map((segment) => segment.trim()).filter(Boolean);
+    if (segments.some((segment) => p.includes(segment) || (p.length >= 2 && segment.includes(p)))) {
+      return role.id;
+    }
+  }
+  return null;
+}
+
 export function createUserRoleRouter(options: UserRoleRouterOptions): Router {
   const router = Router();
   const dataPath = options.dataPath ?? DEFAULT_DATA_PATH;
@@ -63,9 +75,12 @@ export function createUserRoleRouter(options: UserRoleRouterOptions): Router {
       const availableRoleIds = roles.map((role) => role.id);
       const record = options.userStore.findById(req.user.sub);
       const active = record?.preferences?.activeRoleId;
+      const matchedByPosition = matchRoleIdByPosition(roles, record?.position);
       res.json({
         availableRoleIds,
-        activeRoleId: active && availableRoleIds.includes(active) ? active : (availableRoleIds[0] ?? null),
+        activeRoleId: active && availableRoleIds.includes(active)
+          ? active
+          : (matchedByPosition ?? availableRoleIds[0] ?? null),
       });
     } catch (err) {
       res.status(500).json({ error: String(err instanceof Error ? err.message : err) });

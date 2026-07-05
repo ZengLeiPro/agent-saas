@@ -166,6 +166,15 @@ function PlaceholderSection({
   );
 }
 
+function SettingsSectionFallback() {
+  return (
+    <div className="flex h-full min-h-[240px] items-center justify-center text-sm text-muted-foreground">
+      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      加载中...
+    </div>
+  );
+}
+
 function clearRunShellApprovalStorage() {
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const key = localStorage.key(i);
@@ -801,7 +810,9 @@ export function SettingsModal({
         const isActive = id === activeConfig.id;
         return (
           <div key={id} className={cn("h-full min-h-0", !isActive && "hidden")} aria-hidden={!isActive}>
-            {node}
+            <Suspense fallback={<SettingsSectionFallback />}>
+              {node}
+            </Suspense>
           </div>
         );
       })}
@@ -861,9 +872,7 @@ export function SettingsModal({
           </button>
           <div className="min-h-0 flex-1 overflow-hidden p-8 pb-4 pt-5">
             <SettingsPanelHeaderStickyProvider>
-              <Suspense fallback={<div className="h-full" aria-hidden="true" />}>
-                {content}
-              </Suspense>
+              {content}
             </SettingsPanelHeaderStickyProvider>
           </div>
         </main>

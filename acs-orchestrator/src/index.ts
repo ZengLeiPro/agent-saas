@@ -571,12 +571,38 @@ function startLifecycleLoop(): void {
     logger.info('sandbox lifecycle loop disabled');
     return;
   }
+  // 07-05：orchestrator 启动时先 sweep 一次老镜像 Paused sandbox（image drift
+  // 主动扫描），避免修镜像后老会话下次唤醒才 lazy detect 的长尾。生产 restart
+  // orchestrator 通常伴随 ACS_SANDBOX_IMAGE tag 变更（acs-sandbox.yml build-deploy
+  // 会改 .env 然后 systemd restart），启动即扫是最合适的挂点。
+  void runStaleImageSweepOnce('startup');
   void runLifecycleOnce('startup');
   lifecycleTimer = setInterval(() => {
     void runLifecycleOnce('interval');
   }, config.sandboxCleanupIntervalMs);
   lifecycleTimer.unref?.();
   logger.info(`sandbox lifecycle loop enabled intervalMs=${config.sandboxCleanupIntervalMs}`);
+}
+
+async function runStaleImageSweepOnce(reason: string): Promise<void> {
+  try {
+    const result = await sandboxManager.sweepStaleImagePausedSandboxes({ busySandboxNames: executor.busySandboxNames() });
+    if (result.deleted.length > 0 || result.skipped.length > 0) {
+      logger.warn(
+        `sandbox_stale_image_sweep reason=${reason} deleted=${result.deleted.length} skipped=${result.skipped.length}`,
+      );
+      await emitAlert({
+        event: 'sandbox_stale_image_sweep',
+        severity: 'info',
+        message: `ACS Sandbox stale-image sweep deleted ${result.deleted.length} Paused sandbox${result.deleted.length === 1 ? '' : 'es'}`,
+        metadata: result,
+      });
+    } else {
+      logger.info(`sandbox_stale_image_sweep reason=${reason} deleted=0 skipped=0`);
+    }
+  } catch (err) {
+    logger.error(`sandbox_stale_image_sweep_error reason=${reason} err=${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 async function runLifecycleOnce(reason: string): Promise<void> {

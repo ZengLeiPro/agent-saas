@@ -445,7 +445,11 @@ jobs:
           APP_DIR="$ECS_DEPLOY_ROOT"
           ENV_FILE="/etc/agent-saas/acs-orchestrator.env"
           RELEASE_TGZ="/tmp/agent-saas-acs-release.tgz"
-          SMOKE_SESSION=""
+          # 07-05：SMOKE_SESSION 提前定型（改进 1A）。历史残留 CI sandbox（3d8h 前那批）
+          # 是因为 SMOKE_SESSION 之前在第 5 步 smoke 阶段才赋值——provision/deploy 阶段失败时
+          # cleanup 走到、SMOKE_SESSION 还是空 → cleanup 什么也不删 → sandbox 残留 7 天 TTL。
+          # 现在提前赋值，无论后续哪步失败，都能按 session-id 找到并清理 smoke sandbox。
+          SMOKE_SESSION="ci-acr-${GITHUB_RUN_ID}"
 
           cleanup() {
             if [ -n "${SMOKE_SESSION:-}" ] && command -v kubectl >/dev/null 2>&1; then
@@ -538,7 +542,7 @@ jobs:
           : "${ACS_ORCH_AUTH_TOKEN:?missing ACS_ORCH_AUTH_TOKEN in env file}"
 
           SMOKE_WS="ws_ci_acr_${GITHUB_RUN_ID}"
-          SMOKE_SESSION="ci-acr-${GITHUB_RUN_ID}"
+          # SMOKE_SESSION 已在 cleanup 定义前赋值（07-05 改进 1A），此处不再重复
           SMOKE_MOUNT="workspaces/_ci/${SMOKE_WS}"
           AUTH_HEADER="Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}"
 

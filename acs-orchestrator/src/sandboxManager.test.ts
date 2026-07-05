@@ -610,6 +610,189 @@ describe('SandboxManager', () => {
       release();
     }
   });
+
+  it('sweepStaleImagePausedSandboxes: 删除 Paused 且镜像与当前 config 不一致的 sandbox', async () => {
+    const calls: string[][] = [];
+    const currentImage = 'registry.example.com/agent-saas/acs-sandbox:new-tag';
+    const kubectl = {
+      async run(args: string[]): Promise<KubectlResult> {
+        calls.push(args);
+        if (args[0] === 'get' && args.includes('-l')) {
+          return {
+            stdout: JSON.stringify({
+              items: [
+                {
+                  metadata: { name: 'as-old-paused' },
+                  spec: { template: { spec: { containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:old-tag' }] } } },
+                  status: { phase: 'Paused' },
+                },
+                {
+                  metadata: { name: 'as-current-paused' },
+                  spec: { template: { spec: { containers: [{ name: 'sandbox', image: currentImage }] } } },
+                  status: { phase: 'Paused' },
+                },
+                {
+                  metadata: { name: 'as-old-running' },
+                  spec: { template: { spec: { containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:old-tag' }] } } },
+                  status: { phase: 'Running' },
+                },
+                {
+                  metadata: { name: 'as-old-busy-paused' },
+                  spec: { template: { spec: { containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:old-tag' }] } } },
+                  status: { phase: 'Paused' },
+                },
+                {
+                  metadata: { name: 'as-no-image-paused' },
+                  spec: { template: { spec: { containers: [] } } },
+                  status: { phase: 'Paused' },
+                },
+              ],
+            }),
+            stderr: '', exitCode: 0, signal: null,
+          };
+        }
+        if (args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+
+    const manager = new SandboxManager({
+      ...baseConfig(),
+      sandboxImage: currentImage,
+    }, kubectl, noopLogger);
+
+    const result = await manager.sweepStaleImagePausedSandboxes({
+      busySandboxNames: new Set(['as-old-busy-paused']),
+    });
+
+    // 只删了 Paused 且镜像老 且非 busy 的那 1 个
+    expect(result.deleted).toEqual(['as-old-paused']);
+    // busy Paused 和缺 image 字段的 Paused 都被 skip（不删也不算删）
+    expect(result.skipped).toEqual(expect.arrayContaining(['as-no-image-paused', 'as-old-busy-paused']));
+    // 关键断言：Running 的 sandbox 无论镜像新旧都不动
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-old-running')).toBe(false);
+    // 关键断言：镜像一致的 Paused 不动
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-current-paused')).toBe(false);
+    // 关键断言：busy 的老镜像 Paused 不动
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-old-busy-paused')).toBe(false);
+    // 真的删了老镜像非 busy Paused
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-old-paused')).toBe(true);
+  });
+
+  it('cleanupSandboxes: as-ws-ci-* 前缀走 sandboxCiTtlMs 短 TTL', async () => {
+    const calls: string[][] = [];
+    const kubectl = {
+      async run(args: string[]): Promise<KubectlResult> {
+        calls.push(args);
+        if (args[0] === 'get' && args.includes('-l')) {
+          return {
+            stdout: JSON.stringify({
+              items: [
+                {
+                  // CI sandbox，8h idle 已过 6h 短 TTL → 应该删
+                  metadata: {
+                    name: 'as-ws-ci-acr-12345-abc',
+                    annotations: {
+                      'agent-saas.kaiyan.net/created-at': '2026-06-26T16:00:00.000Z',
+                      'agent-saas.kaiyan.net/last-active-at': '2026-06-26T16:00:00.000Z',
+                    },
+                  },
+                  status: { phase: 'Paused' },
+                },
+                {
+                  // 用户 sandbox 同样 8h idle，普通 TTL 7d 未到 → 不该删
+                  metadata: {
+                    name: 'as-ws-pantheon-user-workspace-xxx',
+                    annotations: {
+                      'agent-saas.kaiyan.net/created-at': '2026-06-26T16:00:00.000Z',
+                      'agent-saas.kaiyan.net/last-active-at': '2026-06-26T16:00:00.000Z',
+                    },
+                  },
+                  status: { phase: 'Paused' },
+                },
+                {
+                  // CI sandbox 4h idle，未过 6h 短 TTL → 不该删
+                  metadata: {
+                    name: 'as-ws-ci-acs-manual-99999',
+                    annotations: {
+                      'agent-saas.kaiyan.net/created-at': '2026-06-26T20:00:00.000Z',
+                      'agent-saas.kaiyan.net/last-active-at': '2026-06-26T20:00:00.000Z',
+                    },
+                  },
+                  status: { phase: 'Paused' },
+                },
+              ],
+            }),
+            stderr: '', exitCode: 0, signal: null,
+          };
+        }
+        if (args[0] === 'delete' || args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+
+    const manager = new SandboxManager({
+      ...baseConfig(),
+      sandboxIdlePauseMs: 5 * 60_000,
+      sandboxTtlMs: 7 * 24 * 60 * 60_000,
+      sandboxCiTtlMs: 6 * 60 * 60_000,
+    }, kubectl, noopLogger);
+
+    // now = 2026-06-27 00:00：ci-acr idle 8h（应删）/ 用户 idle 8h（不删）/ ci-manual idle 4h（不删）
+    const report = await manager.cleanupSandboxes({ now: new Date('2026-06-27T00:00:00.000Z') });
+
+    expect(report.deleted).toEqual(['as-ws-ci-acr-12345-abc']);
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-ws-ci-acr-12345-abc')).toBe(true);
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-ws-pantheon-user-workspace-xxx')).toBe(false);
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-ws-ci-acs-manual-99999')).toBe(false);
+  });
+
+  it('cleanupSandboxes: sandboxCiTtlMs=0 时 CI sandbox 回退到普通 sandboxTtlMs', async () => {
+    const kubectl = {
+      async run(args: string[]): Promise<KubectlResult> {
+        if (args[0] === 'get' && args.includes('-l')) {
+          return {
+            stdout: JSON.stringify({
+              items: [{
+                metadata: {
+                  name: 'as-ws-ci-acr-12345',
+                  annotations: {
+                    'agent-saas.kaiyan.net/created-at': '2026-06-26T16:00:00.000Z',
+                    'agent-saas.kaiyan.net/last-active-at': '2026-06-26T16:00:00.000Z',
+                  },
+                },
+                status: { phase: 'Paused' },
+              }],
+            }),
+            stderr: '', exitCode: 0, signal: null,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0, signal: null };
+      },
+    } as unknown as Kubectl;
+
+    const manager = new SandboxManager({
+      ...baseConfig(),
+      sandboxIdlePauseMs: 5 * 60_000,
+      sandboxTtlMs: 7 * 24 * 60 * 60_000,
+      sandboxCiTtlMs: 0,  // 关闭 CI 短 TTL
+    }, kubectl, noopLogger);
+
+    // 8h idle 远小于 7d，不删
+    const report = await manager.cleanupSandboxes({ now: new Date('2026-06-27T00:00:00.000Z') });
+    expect(report.deleted).toEqual([]);
+  });
+
+  it('sweepStaleImagePausedSandboxes: 没有 sandbox 时返回空报告', async () => {
+    const kubectl = {
+      async run(): Promise<KubectlResult> {
+        return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
+      },
+    } as unknown as Kubectl;
+    const manager = new SandboxManager(baseConfig(), kubectl, noopLogger);
+    const result = await manager.sweepStaleImagePausedSandboxes();
+    expect(result).toEqual({ deleted: [], skipped: [] });
+  });
 });
 
 const noopLogger = {
@@ -647,6 +830,7 @@ function baseConfig(): AcsOrchestratorConfig {
     sandboxCleanupIntervalMs: 300_000,
     sandboxIdlePauseMs: 900_000,
     sandboxTtlMs: 7 * 24 * 60 * 60_000,
+    sandboxCiTtlMs: 6 * 60 * 60_000,
     sandboxOrphanGraceMs: 1_800_000,
     maxRunningSandboxes: 8,
     warnRunningSandboxes: 6,

@@ -39,6 +39,12 @@ export interface AcsOrchestratorConfig {
   sandboxCleanupIntervalMs: number;
   sandboxIdlePauseMs: number;
   sandboxTtlMs: number;
+  /**
+   * 07-05：CI 临时 sandbox（名字以 `as-ws-ci-` 开头）走的短 TTL，覆盖 sandboxTtlMs。
+   * CI sandbox 用完一次就没有复用价值，不该占 7 天 TTL 慢慢过期。默认 6h。
+   * 设为 0 = 关闭这条特殊路径，回退到普通 sandboxTtlMs。
+   */
+  sandboxCiTtlMs: number;
   sandboxOrphanGraceMs: number;
   maxRunningSandboxes: number;
   warnRunningSandboxes: number;
@@ -260,6 +266,7 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     sandboxCleanupIntervalMs: readIntEnv('ACS_SANDBOX_CLEANUP_INTERVAL_MS', 60_000, { min: 10_000, max: 24 * 60 * 60_000 }),
     sandboxIdlePauseMs: readIntEnv('ACS_SANDBOX_IDLE_PAUSE_MS', 5 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
     sandboxTtlMs: readIntEnv('ACS_SANDBOX_TTL_MS', 7 * 24 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
+    sandboxCiTtlMs: readIntEnv('ACS_SANDBOX_CI_TTL_MS', 6 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
     sandboxOrphanGraceMs: readIntEnv('ACS_SANDBOX_ORPHAN_GRACE_MS', 30 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
     maxRunningSandboxes: readIntEnv('ACS_SANDBOX_MAX_RUNNING', 8, { min: 0, max: 1_000 }),
     warnRunningSandboxes: readIntEnv('ACS_SANDBOX_WARN_RUNNING', 6, { min: 0, max: 1_000 }),

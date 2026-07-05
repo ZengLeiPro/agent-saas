@@ -24,6 +24,11 @@ export interface ManagedSandbox {
   phase?: string;
   createdAt?: string;
   lastActiveAt?: string;
+  /**
+   * 当前 sandbox spec 里 podTemplate 主容器的 image tag。
+   * 07-05 加入：sweepStaleImagePausedSandboxes 需要它做 image drift 判定。
+   */
+  image?: string;
 }
 
 export interface SandboxRef {
@@ -240,6 +245,17 @@ export class SandboxManager {
       const annotations = metadata.annotations && typeof metadata.annotations === 'object' ? metadata.annotations as Record<string, unknown> : {};
       const labels = metadata.labels && typeof metadata.labels === 'object' ? metadata.labels as Record<string, unknown> : {};
       const status = item.status && typeof item.status === 'object' ? item.status as Record<string, unknown> : {};
+      // 07-05: 从 spec.template.spec.containers[主容器].image 里抽出 image tag，
+      // 交给 sweepStaleImagePausedSandboxes 做 image drift 判定。找不到主容器时留 undefined。
+      const spec = item.spec && typeof item.spec === 'object' ? item.spec as Record<string, unknown> : {};
+      const template = spec.template && typeof spec.template === 'object' ? spec.template as Record<string, unknown> : {};
+      const podSpec = template.spec && typeof template.spec === 'object' ? template.spec as Record<string, unknown> : {};
+      const containers = Array.isArray(podSpec.containers) ? podSpec.containers : [];
+      const primaryContainer = containers.find((c): c is Record<string, unknown> => (
+        Boolean(c)
+        && typeof c === 'object'
+        && (!('name' in c) || c.name === this.config.sandboxContainerName)
+      ));
       return {
         name: typeof metadata.name === 'string' ? metadata.name : '',
         workspaceId: stringValue(annotations[WORKSPACE_ANNOTATION]) ?? stringValue(labels[WORKSPACE_LABEL]),
@@ -249,8 +265,43 @@ export class SandboxManager {
         phase: stringValue(status.phase),
         createdAt: stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
         lastActiveAt: stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]) ?? stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
+        image: primaryContainer ? stringValue(primaryContainer.image) : undefined,
       };
     }).filter((sandbox) => sandbox.name);
+  }
+
+  /**
+   * 07-05：orchestrator 启动 / 镜像 tag 变更时主动扫描一次所有 Paused sandbox，
+   * spec.image 与当前 config.sandboxImage 不一致的立即 delete。避免"老会话下次
+   * 唤醒才 lazy detect image drift"的长尾——修镜像后 1 分钟内所有老镜像 Paused
+   * 就都被清干净，下次唤醒必然拉新镜像。
+   *
+   * 只处理 Paused（Running 里可能有 tool invocation 在跑；Failed/Pending 交给
+   * shouldDeleteOrphan 走 orphanGrace 通道）。缺 image 字段的（listManagedSandboxes
+   * 解析不到）也跳过——不能误删。busy 保护同 delete()。
+   */
+  async sweepStaleImagePausedSandboxes(input: { busySandboxNames?: Set<string> } = {}): Promise<{ deleted: string[]; skipped: string[] }> {
+    const busySandboxNames = input.busySandboxNames ?? new Set<string>();
+    const currentImage = this.config.sandboxImage;
+    const sandboxes = await this.listManagedSandboxes();
+    const deleted: string[] = [];
+    const skipped: string[] = [];
+    for (const sandbox of sandboxes) {
+      if (sandbox.phase !== 'Paused') continue;
+      if (!sandbox.image) { skipped.push(sandbox.name); continue; }
+      if (sandbox.image === currentImage) continue;
+      if (this.isBusy(sandbox.name, busySandboxNames)) { skipped.push(sandbox.name); continue; }
+      this.logger.warn(
+        `sandbox_stale_image_paused_delete name=${sandbox.name} old=${sandbox.image} new=${currentImage}`,
+      );
+      await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
+        timeoutMs: this.config.sandboxWaitTimeoutMs,
+      });
+      await this.networkPolicyManager.deleteForSandboxName(sandbox.name);
+      await this.snatManager.deleteForSandboxName(sandbox.name);
+      deleted.push(sandbox.name);
+    }
+    return { deleted, skipped };
   }
 
   async inventorySummary(): Promise<SandboxInventorySummary> {
@@ -298,7 +349,14 @@ export class SandboxManager {
       const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt) ?? createdAtMs;
       const ageMs = createdAtMs === undefined ? 0 : nowMs - createdAtMs;
       const idleMs = lastActiveAtMs === undefined ? 0 : nowMs - lastActiveAtMs;
-      const shouldDeleteByTtl = this.config.sandboxTtlMs > 0 && idleMs >= this.config.sandboxTtlMs;
+      // 07-05：CI 临时 sandbox（as-ws-ci-* 前缀）走短 TTL（sandboxCiTtlMs，默认 6h）。
+      // CI 场景一次性使用无复用价值，不该跟用户会话共享 7 天 TTL。
+      // sandboxCiTtlMs=0 表示关闭这条特殊路径，退回普通 TTL。
+      const isCiSandbox = isCiSandboxName(sandbox.name);
+      const effectiveTtlMs = isCiSandbox && this.config.sandboxCiTtlMs > 0
+        ? this.config.sandboxCiTtlMs
+        : this.config.sandboxTtlMs;
+      const shouldDeleteByTtl = effectiveTtlMs > 0 && idleMs >= effectiveTtlMs;
       const orphanPhase = !['Running', 'Paused'].includes(phase);
       const shouldDeleteOrphan = this.config.sandboxOrphanGraceMs > 0 && orphanPhase && ageMs >= this.config.sandboxOrphanGraceMs;
       if (shouldDeleteByTtl || shouldDeleteOrphan) {
@@ -661,6 +719,17 @@ export class SandboxManager {
     ));
     return container ? stringValue(container.image) : undefined;
   }
+}
+
+/**
+ * 07-05：判断 sandbox 名字是否属于 CI 临时 sandbox（不是用户会话 sandbox）。
+ * 命名约定：CI workflow 触发的 sandbox 名字都以 `as-ws-ci-` 开头
+ * （acs-sandbox.yml build-deploy 里 build/smoke test 起的 sandbox），
+ * 用户会话的 sandbox 是 `as-ws-<tenantId>-<userId>-workspace-<hash>` 形态。
+ * 见生产 kubectl get sandbox 命名样本。
+ */
+export function isCiSandboxName(name: string): boolean {
+  return name.startsWith('as-ws-ci-');
 }
 
 function labelValue(value: string): string {

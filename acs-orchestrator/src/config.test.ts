@@ -111,6 +111,32 @@ describe('ACS runtime config', () => {
     }
   });
 
+  it('uses six hours as the default sandbox CI TTL (as-ws-ci-* prefix)', () => {
+    const originalEnv = { ...process.env };
+    process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
+    process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
+    delete process.env.ACS_SANDBOX_CI_TTL_MS;
+    try {
+      expect(loadConfigFromEnv().sandboxCiTtlMs).toBe(6 * 60 * 60_000);
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  it('honors ACS_SANDBOX_CI_TTL_MS override (including 0 to disable)', () => {
+    const originalEnv = { ...process.env };
+    process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
+    process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
+    try {
+      process.env.ACS_SANDBOX_CI_TTL_MS = '3600000';
+      expect(loadConfigFromEnv().sandboxCiTtlMs).toBe(3_600_000);
+      process.env.ACS_SANDBOX_CI_TTL_MS = '0';
+      expect(loadConfigFromEnv().sandboxCiTtlMs).toBe(0);
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
   it('enables production Agent runtime capabilities by default and allows explicit disable', () => {
     const originalEnv = { ...process.env };
     process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';

@@ -181,6 +181,7 @@ function baseConfig(aliyunCliPath: string): AcsOrchestratorConfig {
     sandboxCleanupIntervalMs: 300_000,
     sandboxIdlePauseMs: 900_000,
     sandboxTtlMs: 7 * 24 * 60 * 60_000,
+    sandboxCiTtlMs: 6 * 60 * 60_000,
     sandboxOrphanGraceMs: 1_800_000,
     maxRunningSandboxes: 8,
     warnRunningSandboxes: 6,

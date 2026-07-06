@@ -671,7 +671,7 @@ export function processWsEvent(
   }
 
   if (data.type === "artifact_created") {
-    // CreateArtifact 交付卡片：artifactId 是主 key,filePath 保留 sourcePath 作
+    // 兼容旧 artifact_created 事件：artifactId 是主 key,filePath 保留 sourcePath 作
     // 展示辅助（下载路径实际走 /api/artifacts/:id/read-url,不依赖 filePath）。
     msg.addMessage({
       type: "file_download",

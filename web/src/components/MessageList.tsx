@@ -47,7 +47,7 @@ function groupIntoBubbles(items: RenderItem[]): BubbleRenderItem[] {
   for (const item of items) {
     // file_download 两条路径,分别处理:
     //  - [FILE] 标记路径(无 artifactId): MessageItem 在 text 内联展开,顶层跳过。
-    //  - CreateArtifact 交付卡片(有 artifactId): 无关联 text 载体,作为独立顶层项
+    //  - legacy artifact_created 事件(有 artifactId): 无关联 text 载体,作为独立顶层项
     //    渲染(flushGroup 后 push,不进 AI bubble 避免与 thinking/tool_use 混排)。
     if (item.type === 'file_download') {
       if (!item.artifactId) continue;
@@ -345,7 +345,7 @@ export const MessageList = memo(function MessageList({
                   {item.items.map((sub) => {
                     // 双重保险:此层理论上不该出现 file_download。
                     // - [FILE] 内联(无 artifactId): groupIntoBubbles 已 continue 掉。
-                    // - CreateArtifact 卡片(有 artifactId): groupIntoBubbles 已独立提到顶层。
+                    // - legacy artifact_created 卡片(有 artifactId): groupIntoBubbles 已独立提到顶层。
                     if (sub.type === 'file_download') return null;
                     if (sub.type === 'activity_group') {
                       return (
@@ -451,7 +451,7 @@ export const MessageList = memo(function MessageList({
             );
           }
 
-          // --- file_download 顶层项: CreateArtifact 交付卡片(带 artifactId),
+          // --- file_download 顶层项: legacy artifact_created 卡片(带 artifactId),
           //     无关联 text 载体,独立渲染(不进气泡、无头像 header)。
           //     [FILE] 标记路径已在 groupIntoBubbles 阶段被跳过,不会走到这里。
           if (item.type === 'file_download') {

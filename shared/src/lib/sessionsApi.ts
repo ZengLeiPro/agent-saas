@@ -174,52 +174,6 @@ function extractFileMessages(blockId: string, content: string, owner?: string): 
   return results;
 }
 
-/**
- * 从 CreateArtifact 的 tool result 文本中提取 artifact 交付卡片消息。
- * 与 WS 实时通道 artifact_created 事件语义等价——两条路径都还原成同一份
- * file_download MessageItem（带 artifactId），前端渲染逻辑单入口。
- */
-function extractArtifactMessage(
-  blockId: string,
-  resultText: string | undefined,
-  owner?: string,
-): MessageItem | null {
-  if (!resultText) return null;
-  try {
-    const parsed = JSON.parse(resultText) as {
-      artifactId?: unknown;
-      fileName?: unknown;
-      kind?: unknown;
-      sourcePath?: unknown;
-      sizeBytes?: unknown;
-      mimeType?: unknown;
-    };
-    const artifactId = typeof parsed.artifactId === 'string' ? parsed.artifactId : undefined;
-    const fileName = typeof parsed.fileName === 'string' ? parsed.fileName : undefined;
-    if (!artifactId || !fileName) return null;
-    const kind = typeof parsed.kind === 'string'
-      ? (parsed.kind as 'file' | 'screenshot' | 'patch' | 'log' | 'blob')
-      : 'file';
-    const mimeType = typeof parsed.mimeType === 'string' ? parsed.mimeType : undefined;
-    const sourcePath = typeof parsed.sourcePath === 'string' ? parsed.sourcePath : undefined;
-    const sizeBytes = typeof parsed.sizeBytes === 'number' ? parsed.sizeBytes : 0;
-    return {
-      id: `${blockId}-artifact`,
-      type: 'file_download',
-      fileName,
-      fileType: mimeType ?? '',
-      filePath: sourcePath ?? fileName,
-      fileSize: sizeBytes,
-      artifactId,
-      artifactKind: kind,
-      ...(mimeType ? { mimeType } : {}),
-      ...(owner ? { owner } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
 // -- Strip AI-injected metadata from user prompt --
 
 const ATTACHMENT_INSTRUCTION_RE = /\n\n\[用户上传了以下附件[^\]]*\]\n[\s\S]*$/;
@@ -360,15 +314,6 @@ export function mapSessionDetailToMessages(detail: ApiSessionDetail, owner?: str
     if (msg) messages.push(msg);
     if (block.kind === "text") {
       messages.push(...extractFileMessages(block.id, block.content, owner));
-    }
-    // CreateArtifact tool_use block：把 tool result 里的 artifactId/fileName
-    // 展开成独立的 file_download 卡片消息，与 WS 实时通道的 artifact_created
-    // 事件对齐。tool_result block 由 mapBlock 内的 toolResultMap 抑制成
-    // resultText，这里直接从 map 取即可，避免重复。
-    if (block.kind === "tool_use" && block.toolName === "CreateArtifact" && block.toolId) {
-      const resultText = toolResultMap.get(block.toolId);
-      const artifactMsg = extractArtifactMessage(block.id, resultText, owner);
-      if (artifactMsg) messages.push(artifactMsg);
     }
   }
 

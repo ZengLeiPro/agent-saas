@@ -268,7 +268,7 @@ describe('WebChannel active stream reconnect', () => {
     expect(datas.some((d: { blockType?: string }) => d.blockType === 'tool_use')).toBe(true);
   });
 
-  it('emits artifact_created after tool_result for in-process CreateArtifact deliveries', () => {
+  it('does not emit artifact_created after tool_result for in-process CreateArtifact deliveries', () => {
     const channel = createChannel();
     const emitted: any[] = [];
     (channel as any).eventBus = {
@@ -276,8 +276,6 @@ describe('WebChannel active stream reconnect', () => {
       emitSession: (_ctx: unknown, data: unknown) => emitted.push(data),
     };
 
-    // raw runtime live 会话唯一通道：跨进程桥对 in-process run 的 tool_result
-    // 直接 return，因此直推路径必须自己补 artifact_created，否则 live 无文件卡片
     channel.publishRuntimeOutboundEvent({
       sessionId: 'session-artifact-1',
       runId: 'run-artifact-1',
@@ -297,15 +295,7 @@ describe('WebChannel active stream reconnect', () => {
     });
 
     expect(emitted.some((d: { type: string }) => d.type === 'tool_result')).toBe(true);
-    expect(emitted).toContainEqual({
-      type: 'artifact_created',
-      artifactId: 'artifact_test-1',
-      fileName: '客户清单.xlsx',
-      kind: 'file',
-      sourcePath: 'assets/20260704/客户清单.xlsx',
-      sizeBytes: 6454,
-      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    });
+    expect(emitted.some((d: { type: string }) => d.type === 'artifact_created')).toBe(false);
   });
 
   it('does not emit artifact_created for failed CreateArtifact (non-JSON tool error)', () => {

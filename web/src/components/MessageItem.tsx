@@ -289,7 +289,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   fileSize: number;
   filePreview: ReturnType<typeof useFilePreview> | null;
   owner?: string;
-  /** CreateArtifact 交付：优先走 artifact 签名 URL,不依赖 workspace 文件仍在原位。 */
+  /** legacy artifact_created 事件：优先走 artifact 签名 URL,不依赖 workspace 文件仍在原位。 */
   artifactId?: string;
 }) {
   const [resolvedSize, setResolvedSize] = useState(fileSize);

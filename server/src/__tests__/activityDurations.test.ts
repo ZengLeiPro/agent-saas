@@ -171,7 +171,7 @@ describe("transcript activity durations", () => {
     expect(messages[1]).toMatchObject({ type: "tool_use", durationMs: 850 });
   });
 
-  it("emits an artifact delivery card when a CreateArtifact tool_use has a matching result", () => {
+  it("does not emit an artifact delivery card from CreateArtifact tool results", () => {
     const detail: ApiSessionDetail = {
       sessionId: "session-artifact",
       stats: { lines: 2, parsedLines: 2, parseErrors: 0 },
@@ -207,22 +207,12 @@ describe("transcript activity durations", () => {
 
     const messages = mapSessionDetailToMessages(detail, "alice");
 
-    // tool_use 携带 resultReady + 独立的 file_download 卡片
-    expect(messages).toHaveLength(2);
+    // tool_use 只标记 resultReady；文件是否展示由最终回复里的 [FILE] 决定。
+    expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({
       type: "tool_use",
       toolName: "CreateArtifact",
       resultReady: true,
-    });
-    expect(messages[1]).toMatchObject({
-      type: "file_download",
-      fileName: "report.pdf",
-      filePath: "assets/20260702/report.pdf",
-      fileSize: 4096,
-      artifactId: "artifact_hist_123",
-      artifactKind: "file",
-      mimeType: "application/pdf",
-      owner: "alice",
     });
   });
 });

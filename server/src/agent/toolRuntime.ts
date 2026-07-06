@@ -1044,6 +1044,11 @@ class WorkspaceToolProvider implements ToolProvider {
           sizeBytes: artifact.sizeBytes,
           sha256: artifact.sha256,
           mimeType: artifact.mimeType,
+          userVisible: false,
+          ...(sourcePath ? { fileCardMarker: `[FILE]${JSON.stringify({ filePath: sourcePath })}[/FILE]` } : {}),
+          deliveryInstruction: sourcePath
+            ? 'This artifact has been registered but is not automatically shown to the user. To show it to the user, include fileCardMarker exactly in your final answer.'
+            : 'This artifact has been registered but is not automatically shown to the user.',
         }, null, 2),
       };
     }

@@ -86,14 +86,18 @@ describe('LocalArtifactBlobStore', () => {
         fileName?: string;
         sourcePath?: string;
         mimeType?: string;
+        userVisible?: boolean;
+        fileCardMarker?: string;
+        deliveryInstruction?: string;
       };
       expect(parsed.artifactId).toMatch(/^artifact_/);
       expect(parsed.kind).toBe('log');
-      // artifact_created 事件 + 历史回放都依赖 fileName / sourcePath 从 result 里
-      // 现拿现用（tool result 是唯一权威源）。锁死契约避免回退。
       expect(parsed.fileName).toBe('result.log');
       expect(parsed.sourcePath).toBe('logs/result.log');
       expect(parsed.mimeType).toBe('text/plain');
+      expect(parsed.userVisible).toBe(false);
+      expect(parsed.fileCardMarker).toBe('[FILE]{"filePath":"logs/result.log"}[/FILE]');
+      expect(parsed.deliveryInstruction).toContain('not automatically shown to the user');
       await expect(service.getContentBySignedToken(parsed.artifactId!, 'bad')).rejects.toThrow(/Invalid artifact token/);
     } finally {
       await rm(root, { recursive: true, force: true });

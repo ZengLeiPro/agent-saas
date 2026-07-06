@@ -659,19 +659,6 @@ export class WebChannel implements BaseChannel {
           result: input.event.toolResult ?? '',
           content: input.event.toolResult ?? '',
         });
-        // CreateArtifact 交付卡片：raw runtime 同进程直推是 live 会话的唯一通道
-        //（跨进程桥对 in-process run 的 tool_result 直接 return），必须与
-        // onToolResult（SDK 流）/ projectRuntimePlatformEvent（replay）一样补发
-        // artifact_created，否则前端 live 看不到文件卡片，只有冷加载历史才有。
-        // tool error 时 result 非 JSON，build 返回 null 自然跳过。
-        if (
-          input.event.toolName === 'CreateArtifact'
-          && typeof input.event.toolResult === 'string'
-          && input.event.toolResult.length > 0
-        ) {
-          const artifactEvent = buildArtifactCreatedEventFromToolResult(input.event.toolResult);
-          if (artifactEvent) emitSession(artifactEvent);
-        }
         break;
       }
       case 'context_usage':
@@ -3107,40 +3094,6 @@ export class WebChannel implements BaseChannel {
             result,
           });
         }
-        // CreateArtifact 交付卡片：解析 tool result JSON 拿到 artifactId + fileName
-        // 后额外 emit artifact_created 事件；前端据此渲染独立的文件卡片，走签名
-        // URL 拿内容（区别于 [FILE] 标记那条 workspace 直读通道）。
-        if (toolName === 'CreateArtifact' && typeof result === 'string' && result.length > 0) {
-          try {
-            const parsed = JSON.parse(result) as {
-              artifactId?: unknown;
-              fileName?: unknown;
-              kind?: unknown;
-              sourcePath?: unknown;
-              sizeBytes?: unknown;
-              mimeType?: unknown;
-              sha256?: unknown;
-            };
-            const artifactId = typeof parsed.artifactId === 'string' ? parsed.artifactId : undefined;
-            const fileName = typeof parsed.fileName === 'string' ? parsed.fileName : undefined;
-            const kind = typeof parsed.kind === 'string' ? parsed.kind : 'file';
-            if (artifactId && fileName) {
-              send({
-                type: 'artifact_created',
-                artifactId,
-                fileName,
-                kind: kind as 'file' | 'screenshot' | 'patch' | 'log' | 'blob',
-                ...(typeof parsed.sourcePath === 'string' ? { sourcePath: parsed.sourcePath } : {}),
-                ...(typeof parsed.sizeBytes === 'number' ? { sizeBytes: parsed.sizeBytes } : {}),
-                ...(typeof parsed.mimeType === 'string' ? { mimeType: parsed.mimeType } : {}),
-                ...(typeof parsed.sha256 === 'string' ? { sha256: parsed.sha256 } : {}),
-                ...(context.user ? { owner: context.user.username } : {}),
-              });
-            }
-          } catch {
-            // 非 JSON / 未识别形态，静默跳过——CreateArtifact 兜底走原 tool_result 展示
-          }
-        }
       },
 
       async onDone() {
@@ -3252,42 +3205,6 @@ export class WebChannel implements BaseChannel {
   }
 }
 
-/**
- * 从 CreateArtifact 工具的 result JSON 里解析出 artifact_created 事件。
- * 兼容实时 (onToolResult) 与 replay (projectRuntimePlatformEvent) 两条通道：
- * result 由 toolRuntime 侧写出，形态为 { artifactId, kind, fileName?, sourcePath?, sizeBytes?, mimeType?, sha256? }。
- * 缺 artifactId 或 fileName 则返回 null,让调用侧退化为普通 tool_result。
- */
-function buildArtifactCreatedEventFromToolResult(resultText: string): object | null {
-  try {
-    const parsed = JSON.parse(resultText) as {
-      artifactId?: unknown;
-      fileName?: unknown;
-      kind?: unknown;
-      sourcePath?: unknown;
-      sizeBytes?: unknown;
-      mimeType?: unknown;
-      sha256?: unknown;
-    };
-    const artifactId = typeof parsed.artifactId === 'string' ? parsed.artifactId : undefined;
-    const fileName = typeof parsed.fileName === 'string' ? parsed.fileName : undefined;
-    if (!artifactId || !fileName) return null;
-    const kind = typeof parsed.kind === 'string' ? parsed.kind : 'file';
-    return {
-      type: 'artifact_created',
-      artifactId,
-      fileName,
-      kind,
-      ...(typeof parsed.sourcePath === 'string' ? { sourcePath: parsed.sourcePath } : {}),
-      ...(typeof parsed.sizeBytes === 'number' ? { sizeBytes: parsed.sizeBytes } : {}),
-      ...(typeof parsed.mimeType === 'string' ? { mimeType: parsed.mimeType } : {}),
-      ...(typeof parsed.sha256 === 'string' ? { sha256: parsed.sha256 } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
 function projectRuntimePlatformEvent(
   event: PlatformEvent,
   options: {
@@ -3363,13 +3280,6 @@ function projectRuntimePlatformEvent(
         result: event.content,
         isError: event.isError,
       }];
-      // CreateArtifact 交付卡片：断线重连 / 会话切换回来时,replay 通道也要
-      // 把 artifact_created 事件补出去,前端才能看到文件卡片。判定条件同
-      // onToolResult 实时通道,保持形态一致。
-      if (event.toolName === 'CreateArtifact' && typeof event.content === 'string' && event.content.length > 0 && !event.isError) {
-        const artifactEvent = buildArtifactCreatedEventFromToolResult(event.content);
-        if (artifactEvent) events.push(artifactEvent);
-      }
       return { events };
     }
     case 'approval_requested':

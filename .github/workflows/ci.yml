@@ -123,12 +123,19 @@ jobs:
 
       - name: Upload release
         run: |
-          scp -i ~/.ssh/ecs_deploy_key agent-saas-release.tgz \
+          scp -i ~/.ssh/ecs_deploy_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            agent-saas-release.tgz \
             "$ECS_USER@$ECS_HOST:/tmp/agent-saas-${GITHUB_SHA}.tgz"
 
       - name: Deploy and restart
+        timeout-minutes: 16
         run: |
-          ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
+          REMOTE_DEPLOY_TIMEOUT_SECONDS=900
+          echo "Remote deploy timeout: ${REMOTE_DEPLOY_TIMEOUT_SECONDS}s"
+          timeout "${REMOTE_DEPLOY_TIMEOUT_SECONDS}s" ssh -i ~/.ssh/ecs_deploy_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$ECS_USER@$ECS_HOST" \
             "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_SHA}.tgz' RELEASE_ID='${GITHUB_SHA}' bash -s" <<'REMOTE'
           set -euo pipefail
 
@@ -145,24 +152,47 @@ jobs:
           HEALTHZ_URL="http://127.0.0.1:3200/api/healthz"
           DRAINZ_URL="http://127.0.0.1:3200/api/healthz/drain"
 
+          START_EPOCH=$(date +%s)
+          elapsed_seconds() {
+            echo $(( $(date +%s) - START_EPOCH ))
+          }
+          log() {
+            printf '[remote %s +%ss] %s\n' "$(date -Is)" "$(elapsed_seconds)" "$*"
+          }
+          on_error() {
+            local status=$?
+            log "ERROR status=$status line=$1 release=$RELEASE_ID"
+            exit "$status"
+          }
+          trap 'on_error $LINENO' ERR
+
+          log "deploy start release=$RELEASE_ID root=$DEPLOY_ROOT service=$SERVICE_NAME"
+          log "prepare release dir: $RELEASE_DIR"
           mkdir -p "$RELEASES_DIR" "$DATA_DIR"
           if [ -e "$RELEASE_DIR" ]; then
+            log "existing release dir found; moving aside"
             mv "$RELEASE_DIR" "$RELEASE_DIR.replaced.$(date +%Y%m%d%H%M%S)"
           fi
           mkdir -p "$RELEASE_DIR"
+          log "extract release archive: $RELEASE_TGZ"
           tar -xzf "$RELEASE_TGZ" -C "$RELEASE_DIR"
           ln -sfn "$DATA_DIR" "$RELEASE_DIR/server/data"
 
           cd "$RELEASE_DIR"
+          log "prepare pnpm"
           if command -v corepack >/dev/null 2>&1; then
             corepack enable
             corepack prepare pnpm@10.18.3 --activate
           fi
+          log "remote pnpm install start"
           NODE_ENV=development pnpm install --frozen-lockfile --filter server... --filter shared...
+          log "remote pnpm install done"
 
           prune_pnpm_store() {
             if command -v pnpm >/dev/null 2>&1; then
+              log "pnpm store prune start"
               pnpm store prune || echo "pnpm store prune failed; continuing" >&2
+              log "pnpm store prune done"
             fi
           }
 
@@ -194,12 +224,12 @@ jobs:
 
           # ── 等待空闲窗口：Web stream + durable active run 清零后再切换（等待期间旧版本照常服务）──
           # 首次发布该修复时，旧生产没有 /healthz/drain，走 bootstrap fallback；之后发布严格按 JSON 守门。
-          echo "Waiting for idle window (activeStreams=0, activeRuns.blocking=0, up to 360s)..."
+          log "waiting for idle window: activeStreams=0 activeRuns.blocking=0 timeout=360s"
           IDLE_WAITED=0
           while [ "$IDLE_WAITED" -lt 360 ]; do
             DRAIN_STATUS=$(read_drain_status || true)
             if [ -z "$DRAIN_STATUS" ]; then
-              echo "  drain status endpoint unavailable on current release; bootstrap fallback to healthz"
+              log "drain status endpoint unavailable; bootstrap fallback to healthz"
               healthz_ok || true
               break
             fi
@@ -210,16 +240,17 @@ jobs:
             TOTAL_ACTIVE_RUNS="$4"
             DRAIN_STATUS_TEXT="$5"
             if [ "$IDLE_STATE" = "idle" ]; then
+              log "idle window acquired after ${IDLE_WAITED}s status=$DRAIN_STATUS_TEXT activeStreams=$ACTIVE_STREAMS activeRuns.blocking=$BLOCKING_RUNS activeRuns.total=$TOTAL_ACTIVE_RUNS"
               break
             fi
             if [ $((IDLE_WAITED % 30)) -eq 0 ]; then
-              echo "  status=$DRAIN_STATUS_TEXT activeStreams=$ACTIVE_STREAMS activeRuns.blocking=$BLOCKING_RUNS activeRuns.total=$TOTAL_ACTIVE_RUNS, waited ${IDLE_WAITED}s"
+              log "still busy: status=$DRAIN_STATUS_TEXT activeStreams=$ACTIVE_STREAMS activeRuns.blocking=$BLOCKING_RUNS activeRuns.total=$TOTAL_ACTIVE_RUNS waited=${IDLE_WAITED}s"
             fi
             sleep 5
             IDLE_WAITED=$((IDLE_WAITED + 5))
           done
           if [ "$IDLE_WAITED" -ge 360 ]; then
-            echo "Idle window timeout after 360s — proceeding anyway (active run may be interrupted)"
+            log "idle window timeout after 360s; proceeding anyway (active run may be interrupted)"
           fi
 
           # ── 记录回滚目标 & 切换 ──
@@ -227,8 +258,10 @@ jobs:
           if [ -L "$APP_LINK" ]; then
             PREV_TARGET=$(readlink "$APP_LINK")
           elif [ -d "$APP_LINK" ]; then
+            log "legacy current dir found; moving aside"
             mv "$APP_LINK" "$DEPLOY_ROOT/legacy-current-$(date +%Y%m%d%H%M%S)"
           fi
+          log "switch current: prev=${PREV_TARGET:-<none>} next=$RELEASE_DIR"
           ln -sfn "$RELEASE_DIR" "$APP_LINK"
           if [ -n "$PREV_TARGET" ] && [ "$PREV_TARGET" != "$RELEASE_DIR" ]; then
             ln -sfn "$PREV_TARGET" "$PREV_LINK"
@@ -255,44 +288,61 @@ jobs:
           ROLLBACK
           chmod +x "$DEPLOY_ROOT/rollback.sh"
 
+          log "restart service: $SERVICE_NAME"
           systemctl restart "$SERVICE_NAME"
 
           # ── healthz 门禁：120s 内不过 → 自动回滚到上一 release ──
+          HEALTH_WAITED=0
           for _ in $(seq 1 120); do
             if healthz_ok; then
+              log "healthz ok after ${HEALTH_WAITED}s"
               prune_pnpm_store
+              log "remove uploaded release archive"
               rm -f "$RELEASE_TGZ"
               # 自动清理：保留最近 5 个 release + current/previous 指向
               # （盘只有 40G，每个 release 约 1.5G，不清会涨满打挂服务）
+              log "release cleanup start: keep last 5 releases plus current/previous"
               KEEP_CURRENT=$(readlink "$APP_LINK" 2>/dev/null || true)
               KEEP_PREV=$(readlink "$PREV_LINK" 2>/dev/null || true)
               (ls -dt "$RELEASES_DIR"/*/ 2>/dev/null || true) | tail -n +6 | while read -r old; do
                 old="${old%/}"
                 if [ -n "$old" ] && [ "$old" != "$KEEP_CURRENT" ] && [ "$old" != "$KEEP_PREV" ]; then
-                  echo "Pruning old release: $old"
+                  log "pruning old release: $old"
                   rm -rf "$old"
                 fi
               done
-              echo "Deploy OK: $RELEASE_ID"
+              log "release cleanup done"
+              log "deploy ok: $RELEASE_ID"
               exit 0
             fi
+            if [ $((HEALTH_WAITED % 10)) -eq 0 ]; then
+              log "waiting healthz waited=${HEALTH_WAITED}s"
+            fi
             sleep 1
+            HEALTH_WAITED=$((HEALTH_WAITED + 1))
           done
 
-          echo "healthz FAILED after 120s — rolling back to ${PREV_TARGET:-<none>}"
+          log "healthz failed after 120s; rolling back to ${PREV_TARGET:-<none>}"
           journalctl -u "$SERVICE_NAME" -n 120 --no-pager || true
           if [ -n "$PREV_TARGET" ] && [ -d "$PREV_TARGET" ]; then
+            log "rollback switch current=$PREV_TARGET previous=$RELEASE_DIR"
             ln -sfn "$PREV_TARGET" "$APP_LINK"
             ln -sfn "$RELEASE_DIR" "$PREV_LINK"
+            log "restart service for rollback"
             systemctl restart "$SERVICE_NAME"
+            ROLLBACK_WAITED=0
             for _ in $(seq 1 60); do
               if healthz_ok; then
-                echo "Rollback OK — production restored on previous release ($PREV_TARGET)"
+                log "rollback ok after ${ROLLBACK_WAITED}s; production restored on previous release ($PREV_TARGET)"
                 exit 1
               fi
+              if [ $((ROLLBACK_WAITED % 10)) -eq 0 ]; then
+                log "waiting rollback healthz waited=${ROLLBACK_WAITED}s"
+              fi
               sleep 1
+              ROLLBACK_WAITED=$((ROLLBACK_WAITED + 1))
             done
-            echo "ROLLBACK ALSO FAILED — manual intervention required"
+            log "rollback also failed; manual intervention required"
           fi
           exit 1
           REMOTE

@@ -20,6 +20,7 @@ import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
 import type { PlatformAdminSection } from "@/lib/urlSync";
 import { EntityLink } from "@/components/PlatformAdmin/common";
+import { formatChannel } from "@/components/PlatformAdmin/displayText";
 import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
 import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControls";
 import { OverviewPage, SandboxesPage, SessionsPage, TenantsPage, UsersPage } from "@/components/PlatformAdmin/pages";
@@ -37,7 +38,7 @@ interface ShellButton<T extends string> {
 
 const tenantSettingsSections: ShellButton<TenantSection>[] = [
   { id: "users", label: "成员", icon: Users },
-  { id: "skills", label: "Agent / Skill", icon: Puzzle },
+  { id: "skills", label: "Agent 与 Skill", icon: Puzzle },
   { id: "mcp", label: "MCP 工具", icon: Plug },
   { id: "billing", label: "计费", icon: WalletCards },
   { id: "files", label: "文件与数据", icon: Database },
@@ -310,9 +311,9 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
           <CardContent className="grid gap-3">
             <SettingSwitch label="文件能力" description="允许组织用户访问文件浏览、上传和预览。" checked={settings.features.filesEnabled} onCheckedChange={checked => patch(d => { d.features.filesEnabled = checked; })} />
             <SettingSwitch label="定时任务" description="允许创建和运行 Cron 自动化任务。" checked={settings.features.cronEnabled} onCheckedChange={checked => patch(d => { d.features.cronEnabled = checked; })} />
-            <SettingSwitch label="MCP 工具" description="允许组织使用 MCP server 与工具密钥。" checked={settings.features.mcpEnabled} onCheckedChange={checked => patch(d => { d.features.mcpEnabled = checked; })} />
+            <SettingSwitch label="MCP 工具" description="允许组织使用 MCP 服务与工具密钥。" checked={settings.features.mcpEnabled} onCheckedChange={checked => patch(d => { d.features.mcpEnabled = checked; })} />
             <SettingSwitch label="自定义 Skill" description="允许用户维护自定义 Agent Skill。" checked={settings.features.customSkillsEnabled} onCheckedChange={checked => patch(d => { d.features.customSkillsEnabled = checked; })} />
-            <SettingSwitch label="Debug 模式" description="允许开启思考、工具和执行细节展示。" checked={settings.features.debugModeAllowed} onCheckedChange={checked => patch(d => { d.features.debugModeAllowed = checked; })} />
+            <SettingSwitch label="调试模式" description="允许开启思考、工具和执行细节展示。" checked={settings.features.debugModeAllowed} onCheckedChange={checked => patch(d => { d.features.debugModeAllowed = checked; })} />
             <SettingSwitch label="自动压缩上下文" description="会话上下文超过模型窗口 80% 时，回合结束后自动压缩（还需模型配置 context_window）。" checked={settings.features.autoCompactEnabled} onCheckedChange={checked => patch(d => { d.features.autoCompactEnabled = checked; })} />
           </CardContent>
         </Card>
@@ -400,11 +401,11 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
         <Card>
           <CardHeader><CardTitle className="text-base">MCP 策略</CardTitle></CardHeader>
           <CardContent className="grid gap-3">
-            <SettingSwitch label="允许组织 MCP" description="允许组织管理员维护本组织共享 MCP server。" checked={settings.mcp.allowTenantServers} onCheckedChange={checked => patch(d => { d.mcp.allowTenantServers = checked; })} />
-            <SettingSwitch label="允许全局 MCP" description="允许组织用户使用平台全局 MCP server。" checked={settings.mcp.allowGlobalServers} onCheckedChange={checked => patch(d => { d.mcp.allowGlobalServers = checked; })} />
+            <SettingSwitch label="允许组织 MCP" description="允许组织管理员维护本组织共享 MCP 服务。" checked={settings.mcp.allowTenantServers} onCheckedChange={checked => patch(d => { d.mcp.allowTenantServers = checked; })} />
+            <SettingSwitch label="允许全局 MCP" description="允许组织用户使用平台全局 MCP 服务。" checked={settings.mcp.allowGlobalServers} onCheckedChange={checked => patch(d => { d.mcp.allowGlobalServers = checked; })} />
             <div className="space-y-1.5">
-              <Label>默认启用 MCP server ID</Label>
-              <textarea className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm" value={defaultMcpText} onChange={event => { setDefaultMcpText(event.target.value); setSaved(false); }} placeholder="每行一个 server id" />
+              <Label>默认启用 MCP 服务 ID</Label>
+              <textarea className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm" value={defaultMcpText} onChange={event => { setDefaultMcpText(event.target.value); setSaved(false); }} placeholder="每行一个服务 ID" />
             </div>
           </CardContent>
         </Card>
@@ -412,7 +413,7 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
           <CardHeader><CardTitle className="text-base">品牌</CardTitle></CardHeader>
           <CardContent className="grid gap-3">
             <div className="space-y-1.5"><Label>显示名称</Label><Input value={settings.branding.displayName ?? ""} onChange={event => patch(d => { d.branding.displayName = event.target.value.trim() || undefined; })} /></div>
-            <div className="space-y-1.5"><Label>Logo URL</Label><Input value={settings.branding.logoUrl ?? ""} onChange={event => patch(d => { d.branding.logoUrl = event.target.value.trim() || undefined; })} /></div>
+            <div className="space-y-1.5"><Label>Logo 地址</Label><Input value={settings.branding.logoUrl ?? ""} onChange={event => patch(d => { d.branding.logoUrl = event.target.value.trim() || undefined; })} /></div>
             <div className="space-y-1.5"><Label>主色</Label><Input value={settings.branding.primaryColor ?? ""} onChange={event => patch(d => { d.branding.primaryColor = event.target.value.trim() || undefined; })} placeholder="#2563eb" /></div>
           </CardContent>
         </Card>
@@ -460,6 +461,7 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   user_disabled: "禁用用户",
   user_enabled: "启用用户",
   user_password_changed: "修改密码",
+  user_phone_updated: "更新手机号",
   file_previewed: "预览文件",
   file_downloaded: "下载文件",
   file_deleted: "删除文件",
@@ -481,9 +483,18 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   mcp_server_updated: "更新 MCP 服务",
   mcp_server_deleted: "删除 MCP 服务",
   mcp_admin_user_selections_updated: "管理员更新 MCP",
+  skill_custom_uploaded: "上传自定义 Skill",
+  skill_tenant_uploaded: "上传组织 Skill",
+  skill_pool_uploaded: "上传平台 Skill",
   skill_document_updated: "更新 Skill 文档",
   skill_visibility_updated: "更新 Skill 可见性",
+  skill_platform_settings_updated: "更新平台 Skill 设置",
+  skill_tenant_selections_updated: "更新组织 Skill 选择",
+  skill_tenant_settings_updated: "更新组织 Skill 设置",
+  skill_tenant_own_settings_updated: "更新组织自有 Skill 设置",
+  skill_tenant_deleted: "删除组织 Skill",
   skill_promoted: "发布 Skill",
+  skill_promoted_to_tenant: "发布到组织 Skill",
   skill_custom_deleted: "删除自定义 Skill",
   skill_user_selections_updated: "更新 Skill 选择",
 };
@@ -505,8 +516,8 @@ const auditCategories = [
 
 const auditChannels = [
   { value: "", label: "全部渠道" },
-  { value: "web", label: "Web" },
-  { value: "mobile", label: "Mobile" },
+  { value: "web", label: "Web 端" },
+  { value: "mobile", label: "移动端" },
   { value: "dingtalk", label: "钉钉" },
 ];
 
@@ -618,14 +629,14 @@ function AuditEventsPanel({
           </div>
           <div className="space-y-1.5">
             <Label>用户名</Label>
-            <Input value={usernameFilter} onChange={event => setUsernameFilter(event.target.value)} placeholder="username" />
+            <Input value={usernameFilter} onChange={event => setUsernameFilter(event.target.value)} placeholder="用户名" />
           </div>
           <div className="space-y-1.5">
             <Label>租户 ID</Label>
             <Input
               value={scope === "tenant" ? tenantId || "" : tenantIdFilter}
               onChange={event => setTenantIdFilter(event.target.value)}
-              placeholder="tenantId"
+              placeholder="租户 ID"
               disabled={scope === "tenant"}
             />
           </div>
@@ -688,7 +699,7 @@ function AuditEventsPanel({
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground"><EntityLink kind="tenant" id={rowTenantId} /></TableCell>
                       <TableCell>
-                        <div className="text-xs">{entry.channel}</div>
+                        <div className="text-xs">{formatChannel(entry.channel)}</div>
                         <div className="text-xs text-muted-foreground">{entry.ip || "-"}</div>
                       </TableCell>
                       <TableCell className="max-w-sm truncate text-xs text-muted-foreground" title={entry.detail || entry.failReason || ""}>{entry.detail || entry.failReason || "-"}</TableCell>
@@ -853,7 +864,7 @@ export function TenantAdminShell({
             <div>
               <div className="text-sm text-muted-foreground">当前组织</div>
               <div className="mt-1 text-xl font-semibold">{currentTenant?.name || effectiveTenantId || "当前组织"}</div>
-              <div className="text-sm text-muted-foreground">slug: {effectiveTenantId || "-"}</div>
+              <div className="text-sm text-muted-foreground">组织标识：{effectiveTenantId || "-"}</div>
             </div>
             <Badge variant={currentTenant?.disabled ? "destructive" : "secondary"}>{currentTenant?.disabled ? "已禁用" : "启用中"}</Badge>
           </div>
@@ -869,7 +880,7 @@ export function TenantAdminShell({
   })();
 
   const settingsModal = (
-    <AdminSettingsModal open={settingsOpen} title="组织管理" description="" badge={isPlatformAdmin ? "平台 Admin" : "组织 Admin"} sections={tenantSettingsSections} active={settingsSection} onActiveChange={onSettingsSectionChange} onClose={onSettingsClose} headerControl={tenantSwitcher}>
+    <AdminSettingsModal open={settingsOpen} title="组织管理" description="" badge={isPlatformAdmin ? "平台管理员" : "组织管理员"} sections={tenantSettingsSections} active={settingsSection} onActiveChange={onSettingsSectionChange} onClose={onSettingsClose} headerControl={tenantSwitcher}>
       {settingsContent}
     </AdminSettingsModal>
   );
@@ -983,7 +994,7 @@ export function PlatformAdminShell({
   })();
 
   const settingsModal = (
-    <AdminSettingsModal open={settingsOpen} title="平台管理" description="" badge="平台 Admin" sections={platformSettingsSections} active={settingsSection} onActiveChange={onSettingsSectionChange} onClose={onSettingsClose}>
+    <AdminSettingsModal open={settingsOpen} title="平台管理" description="" badge="平台管理员" sections={platformSettingsSections} active={settingsSection} onActiveChange={onSettingsSectionChange} onClose={onSettingsClose}>
       {settingsContent}
     </AdminSettingsModal>
   );

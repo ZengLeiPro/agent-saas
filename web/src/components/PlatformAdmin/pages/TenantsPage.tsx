@@ -10,6 +10,7 @@ import { pushAdminSettingsUrl, pushPlatformAdminUrl } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
+import { RUN_LABEL, formatRole } from "../displayText";
 import { formatCredits, formatNumber, formatTime, formatYuan } from "../format";
 import type { PlatformRunRecord, PlatformSessionRecord, SandboxRecord, TenantOverviewItem } from "../types";
 
@@ -75,8 +76,8 @@ function TenantList() {
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="租户总数" value={formatNumber(items.length)} description="含已禁用组织" />
         <MetricCard title="启用中" value={formatNumber(activeCount)} description="可登录与执行" tone="good" />
-        <MetricCard title="活跃 Run" value={formatNumber(items.reduce((sum, item) => sum + item.activeRuns, 0))} description="按租户聚合" />
-        <MetricCard title="30d 成本" value={formatYuan(items.reduce((sum, item) => sum + item.costYuan30d, 0))} description="billing actual cost" />
+        <MetricCard title="活跃运行" value={formatNumber(items.reduce((sum, item) => sum + item.activeRuns, 0))} description="按租户聚合" />
+        <MetricCard title="30d 成本" value={formatYuan(items.reduce((sum, item) => sum + item.costYuan30d, 0))} description="模型实际成本" />
       </div>
       <AdminEntityTable
         title="租户列表"
@@ -91,8 +92,8 @@ function TenantList() {
         columns={[
           { key: "status", header: "状态", cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },
           { key: "name", header: "名称", cell: row => <div><div className="font-medium">{row.name}</div><EntityLink kind="tenant" id={row.id} /></div> },
-          { key: "users", header: "用户", cell: row => <span className="tabular-nums">{row.userCount} / admin {row.adminCount}</span> },
-          { key: "activeRuns", header: "活跃 Run", cell: row => <span className="tabular-nums">{row.activeRuns}</span> },
+          { key: "users", header: "用户", cell: row => <span className="tabular-nums">{row.userCount} / 管理员 {row.adminCount}</span> },
+          { key: "activeRuns", header: "活跃运行", cell: row => <span className="tabular-nums">{row.activeRuns}</span> },
           { key: "sessions", header: "7d 会话", cell: row => <span className="tabular-nums">{row.sessions7d}</span> },
           { key: "cost", header: "30d 成本", cell: row => <span className="tabular-nums">{formatYuan(row.costYuan30d)}</span> },
           { key: "balance", header: "余额", cell: row => <span className="tabular-nums">{formatCredits(row.balanceCredits)}</span> },
@@ -148,8 +149,8 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
           <>
             <Button variant="outline" size="sm" onClick={() => go("users", { tenantId })}>用户</Button>
             <Button variant="outline" size="sm" onClick={() => go("sessions", { tenantId })}>会话</Button>
-            <Button variant="outline" size="sm" onClick={() => go("runs", { tenantId })}>Run</Button>
-            <Button variant="outline" size="sm" onClick={() => go("sandboxes", { tenantId })}>容器</Button>
+            <Button variant="outline" size="sm" onClick={() => go("runs", { tenantId })}>{RUN_LABEL}</Button>
+            <Button variant="outline" size="sm" onClick={() => go("sandboxes", { tenantId })}>执行环境</Button>
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
               {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
               刷新
@@ -160,9 +161,9 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
       {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">加载失败：{error}</div>}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="状态" value={tenant?.disabled ? "已禁用" : "启用中"} description={tenantId} tone={tenant?.disabled ? "bad" : "good"} />
-        <MetricCard title="用户" value={formatNumber(tenant?.userCount)} description={`admin ${formatNumber(tenant?.adminCount)}`} />
+        <MetricCard title="用户" value={formatNumber(tenant?.userCount)} description={`管理员 ${formatNumber(tenant?.adminCount)}`} />
         <MetricCard title="30d 成本" value={formatYuan(tenant?.costYuan30d)} description={formatCredits(tenant?.balanceCredits)} />
-        <MetricCard title="活跃 Run" value={formatNumber(tenant?.activeRuns ?? activeRuns)} description={`最后活跃 ${formatTime(tenant?.lastActiveAt)}`} />
+        <MetricCard title="活跃运行" value={formatNumber(tenant?.activeRuns ?? activeRuns)} description={`最后活跃 ${formatTime(tenant?.lastActiveAt)}`} />
       </div>
       {loading && !tenant ? (
         <div className="flex h-40 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
@@ -180,7 +181,7 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
                     <div className="truncate font-medium">{user.realName || user.username}</div>
                     <EntityLink kind="user" id={user.id} />
                   </div>
-                  <Badge variant={user.disabled ? "destructive" : "secondary"}>{user.role}</Badge>
+	                  <Badge variant={user.disabled ? "destructive" : "secondary"}>{formatRole(user.role)}</Badge>
                 </div>
               ))}
               {users.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无用户</div>}
@@ -202,7 +203,7 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle className="text-base">最近 Run</CardTitle></CardHeader>
+	            <CardHeader><CardTitle className="text-base">最近运行</CardTitle></CardHeader>
             <CardContent className="space-y-2">
               {runs.map(run => (
                 <div key={run.runId} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
@@ -213,11 +214,11 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
                   <StatusBadge kind="run" status={run.status} />
                 </div>
               ))}
-              {runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无 Run</div>}
+	              {runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无运行记录</div>}
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle className="text-base">容器</CardTitle></CardHeader>
+	            <CardHeader><CardTitle className="text-base">执行环境</CardTitle></CardHeader>
             <CardContent className="space-y-2">
               {sandboxes.map(sandbox => (
                 <div key={sandbox.name} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
@@ -228,7 +229,7 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
                   <StatusBadge kind="sandbox" status={sandbox.phase ?? "Unknown"} />
                 </div>
               ))}
-              {sandboxes.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无容器</div>}
+	              {sandboxes.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无执行环境</div>}
             </CardContent>
           </Card>
         </div>

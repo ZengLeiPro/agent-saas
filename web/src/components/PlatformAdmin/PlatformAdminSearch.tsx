@@ -8,15 +8,16 @@ import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "./api";
+import { formatEntityKind } from "./displayText";
 import type { PlatformSearchMatch, SearchMatchKind } from "./types";
 
 const KIND_LABEL: Record<SearchMatchKind, string> = {
-  run: "Run",
-  session: "会话",
-  user: "用户",
-  tenant: "租户",
-  sandbox: "容器",
-  workspace: "Workspace",
+  run: formatEntityKind("run"),
+  session: formatEntityKind("session"),
+  user: formatEntityKind("user"),
+  tenant: formatEntityKind("tenant"),
+  sandbox: formatEntityKind("sandbox"),
+  workspace: formatEntityKind("workspace"),
 };
 
 function navigateTo(href: string) {
@@ -84,7 +85,7 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
               if (event.key === "Enter") void runSearch();
               if (event.key === "Escape") setOpen(false);
             }}
-            placeholder="搜索 run / session / user / tenant / sandbox"
+            placeholder="搜索运行 / 会话 / 用户 / 租户 / 执行环境"
             className="h-9 pl-7 pr-16 text-xs"
           />
           <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">/</span>

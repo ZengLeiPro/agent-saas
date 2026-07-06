@@ -12,6 +12,7 @@ import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { pushPlatformAdminUrl } from "@/lib/urlSync";
 
 import { platformAdminApi } from "../api";
+import { RUN_LABEL, formatChannel, formatSessionKind, formatSessionStatus } from "../displayText";
 import { formatNumber, formatTime, formatUsd, formatYuan } from "../format";
 import type { PlatformSessionRecord, SessionDetailResponse } from "../types";
 
@@ -65,7 +66,7 @@ function SessionList() {
     <div className="w-full space-y-5">
       <SettingsPanelHeader
         title="会话"
-        description="runtime_sessions 投影表驱动的会话列表与详情。"
+        description="基于会话投影表的会话列表与详情。"
         actions={
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
@@ -84,21 +85,21 @@ function SessionList() {
             <Input
               value={tenantId}
               onChange={(event) => adminQuery.patch({ tenantId: event.target.value, cursor: null })}
-              placeholder="tenantId"
+              placeholder="租户 ID"
               className="h-8 w-32 font-mono text-xs"
             />
             <Input
               value={userId}
               onChange={(event) => adminQuery.patch({ userId: event.target.value, cursor: null })}
-              placeholder="userId"
+              placeholder="用户 ID"
               className="h-8 w-44 font-mono text-xs"
             />
             <select className="h-8 rounded-md border bg-background px-2 text-xs" value={status} onChange={(event) => adminQuery.patch({ status: event.target.value, cursor: null })}>
-              {SESSION_STATUSES.map(item => <option key={item || "all"} value={item}>{item || "全部状态"}</option>)}
+              {SESSION_STATUSES.map(item => <option key={item || "all"} value={item}>{item ? formatSessionStatus(item) : "全部状态"}</option>)}
             </select>
             <select className="h-8 rounded-md border bg-background px-2 text-xs" value={kind} onChange={(event) => adminQuery.patch({ kind: event.target.value, cursor: null })}>
-              <option value="user">用户会话</option>
-              <option value="subagent">子 Agent</option>
+              <option value="user">{formatSessionKind("user")}</option>
+              <option value="subagent">{formatSessionKind("subagent")}</option>
             </select>
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Checkbox checked={includeDeleted} onCheckedChange={(checked) => adminQuery.patch({ includeDeleted: checked === true, cursor: null })} />
@@ -124,12 +125,12 @@ function SessionList() {
           adminQuery.patch({ cursor: nextCursor });
         }}
         columns={[
-          { key: "status", header: "状态", cell: row => <Badge variant={row.deletedAt ? "destructive" : "secondary"}>{row.deletedAt ? "已删除" : row.runtimeStatus || "active"}</Badge> },
+          { key: "status", header: "状态", cell: row => <Badge variant={row.deletedAt ? "destructive" : "secondary"}>{row.deletedAt ? "已删除" : formatSessionStatus(row.runtimeStatus)}</Badge> },
           { key: "title", header: "标题", cell: row => <div><div className="max-w-72 truncate font-medium" title={row.title ?? undefined}>{row.title || row.sessionId}</div><EntityLink kind="session" id={row.sessionId} /></div> },
           { key: "user", header: "用户", cell: row => <EntityLink kind="user" id={row.userId} label={row.username || undefined} /> },
           { key: "tenant", header: "租户", cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
-          { key: "channel", header: "渠道", cell: row => row.channel || "—" },
-          { key: "kind", header: "类型", cell: row => <Badge variant={row.kind === "subagent" ? "outline" : "secondary"}>{row.kind}</Badge> },
+          { key: "channel", header: "渠道", cell: row => row.channel ? formatChannel(row.channel) : "—" },
+          { key: "kind", header: "类型", cell: row => <Badge variant={row.kind === "subagent" ? "outline" : "secondary"}>{formatSessionKind(row.kind)}</Badge> },
           { key: "cost", header: "成本", cell: row => <span className="tabular-nums">{formatUsd(row.totalCostUsd)}</span> },
           { key: "updated", header: "最后活动", cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.updatedAt)}</span> },
         ]}
@@ -173,7 +174,7 @@ function SessionDetail({ sessionId }: { sessionId: string }) {
             {session && <Button variant="outline" size="sm" onClick={() => {
               pushPlatformAdminUrl({ section: "runs", search: { tenantId: session.tenantId, sessionId: session.sessionId } });
               window.dispatchEvent(new PopStateEvent("popstate"));
-            }}>全部 Run</Button>}
+            }}>全部{RUN_LABEL}</Button>}
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
               {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
               刷新
@@ -190,14 +191,14 @@ function SessionDetail({ sessionId }: { sessionId: string }) {
       ) : detail && session ? (
         <>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard title="状态" value={session.deletedAt ? "已删除" : session.runtimeStatus || "active"} description={session.kind} />
+            <MetricCard title="状态" value={session.deletedAt ? "已删除" : formatSessionStatus(session.runtimeStatus)} description={formatSessionKind(session.kind)} />
             <MetricCard title="用户" value={<EntityLink kind="user" id={session.userId} label={session.username || undefined} />} description={<EntityLink kind="tenant" id={session.tenantId} />} />
             <MetricCard title="成本" value={billingCost} description={`请求 ${formatNumber(detail.billing?.requestCount as number | undefined)}`} />
-            <MetricCard title="Run" value={formatNumber(detail.runs.length)} description={`最后活动 ${formatTime(session.updatedAt)}`} />
+            <MetricCard title={RUN_LABEL} value={formatNumber(detail.runs.length)} description={`最后活动 ${formatTime(session.updatedAt)}`} />
           </div>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_360px]">
             <Card>
-              <CardHeader><CardTitle className="text-base">Run 列表</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-base">运行记录列表</CardTitle></CardHeader>
               <CardContent className="space-y-2">
                 {detail.runs.map(run => (
                   <div key={run.runId} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
@@ -208,11 +209,11 @@ function SessionDetail({ sessionId }: { sessionId: string }) {
                     <StatusBadge kind="run" status={run.status} />
                   </div>
                 ))}
-                {detail.runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无 Run</div>}
+                {detail.runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无运行记录</div>}
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-base">容器</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-base">执行环境</CardTitle></CardHeader>
               <CardContent className="space-y-2">
                 {detail.sandboxes.map(sandbox => (
                   <div key={sandbox.name} className="rounded-md border p-2 text-sm">
@@ -223,7 +224,7 @@ function SessionDetail({ sessionId }: { sessionId: string }) {
                     <div className="mt-1 truncate text-xs text-muted-foreground">{sandbox.workspaceId || "—"}</div>
                   </div>
                 ))}
-                {detail.sandboxes.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无容器</div>}
+                {detail.sandboxes.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无执行环境</div>}
               </CardContent>
             </Card>
           </div>

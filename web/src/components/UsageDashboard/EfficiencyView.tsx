@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { EntityLink } from "@/components/PlatformAdmin/common";
+import { RUN_LABEL } from "@/components/PlatformAdmin/displayText";
 
 import { runTraceApi } from "@/components/RunTraceExplorer/api";
 import { formatCount, formatMs, formatRate, formatYuan } from "@/components/RunTraceExplorer/format";
@@ -113,8 +114,8 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
         <>
           {/* 1. 结果卡行 */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <StatCard label="Run 完成率" value={formatRate(data.outcome.completionRate)} sub={`成功 ${formatCount(data.outcome.success)}`} />
-            <StatCard label="总 Run 数" value={formatCount(data.outcome.totalRuns)} />
+            <StatCard label="运行完成率" value={formatRate(data.outcome.completionRate)} sub={`成功 ${formatCount(data.outcome.success)}`} />
+            <StatCard label="总运行数" value={formatCount(data.outcome.totalRuns)} />
             <StatCard
               label="失败数"
               value={formatCount(data.outcome.error)}
@@ -135,18 +136,18 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
           {/* 2. 失败原因 TopN */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">失败原因 Top {data.outcome.errorReasons.length || ""}</CardTitle>
+              <CardTitle className="text-sm font-medium">失败原因前 {data.outcome.errorReasons.length || ""} 项</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               {data.outcome.errorReasons.length === 0 ? (
-                <div className="py-6 text-center text-xs text-muted-foreground">区间内无失败 run</div>
+                <div className="py-6 text-center text-xs text-muted-foreground">区间内无失败运行记录</div>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>原因</TableHead>
                       <TableHead className="w-20 text-right">次数</TableHead>
-                      <TableHead className="w-32">样本 Run</TableHead>
+                      <TableHead className="w-32">样本{RUN_LABEL}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -166,15 +167,15 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
           {/* 3. 成本 */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             <StatCard label="总成本" value={formatYuan(data.cost.totalCostYuan, 2)} />
-            <StatCard label="¥/run P50" value={formatYuan(data.cost.perRun.p50)} />
-            <StatCard label="¥/run P90" value={formatYuan(data.cost.perRun.p90)} />
-            <StatCard label="¥/run P99" value={formatYuan(data.cost.perRun.p99)} />
+            <StatCard label="单次运行成本 P50" value={formatYuan(data.cost.perRun.p50)} />
+            <StatCard label="单次运行成本 P90" value={formatYuan(data.cost.perRun.p90)} />
+            <StatCard label="单次运行成本 P99" value={formatYuan(data.cost.perRun.p99)} />
             <StatCard
-              label="失败 run 沉没成本"
+              label="失败运行沉没成本"
               value={formatYuan(data.cost.failedRunsCostYuan, 2)}
               tone={data.cost.failedRunsCostYuan > 0 ? "warn" : "default"}
             />
-            <StatCard label="Cache 命中率" value={formatRate(data.cost.cacheHitRate)} />
+            <StatCard label="缓存命中率" value={formatRate(data.cost.cacheHitRate)} />
           </div>
 
           <Card>
@@ -194,7 +195,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
                       <TableHead className="text-right">输入</TableHead>
                       <TableHead className="text-right">缓存输入</TableHead>
                       <TableHead className="text-right">输出</TableHead>
-                      <TableHead className="text-right">Cache 命中率</TableHead>
+                      <TableHead className="text-right">缓存命中率</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -265,7 +266,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">最慢 Runs</CardTitle>
+                <CardTitle className="text-sm font-medium">最慢运行记录</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 {data.longTail.slowestRuns.length === 0 ? (
@@ -274,7 +275,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Run</TableHead>
+                        <TableHead>{RUN_LABEL}</TableHead>
                         <TableHead>状态</TableHead>
                         <TableHead>模型</TableHead>
                         <TableHead className="text-right">耗时</TableHead>
@@ -303,7 +304,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">最多轮次 Runs</CardTitle>
+                <CardTitle className="text-sm font-medium">最多轮次运行记录</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 {data.longTail.mostTurns.length === 0 ? (
@@ -312,7 +313,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Run</TableHead>
+                        <TableHead>{RUN_LABEL}</TableHead>
                         <TableHead>组织</TableHead>
                         <TableHead className="text-right">轮次</TableHead>
                       </TableRow>
@@ -379,7 +380,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
               </CardHeader>
               <CardContent className="space-y-2 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">涉及 run</span>
+                  <span className="text-muted-foreground">涉及运行记录</span>
                   <span className="font-mono tabular-nums">{formatCount(data.waste.duplicateToolCalls.affectedRuns)}</span>
                 </div>
                 <div className="flex items-center justify-between">
@@ -404,7 +405,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
               </CardHeader>
               <CardContent className="space-y-2 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">涉及 run</span>
+                  <span className="text-muted-foreground">涉及运行记录</span>
                   <span className="font-mono tabular-nums">{formatCount(data.waste.repeatedFileReads.affectedRuns)}</span>
                 </div>
                 {data.waste.repeatedFileReads.topFiles.length > 0 && (
@@ -424,7 +425,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">无修正 Retry</CardTitle>
+                <CardTitle className="text-sm font-medium">无修正重试</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-xs">
                 <div className="flex items-center justify-between">

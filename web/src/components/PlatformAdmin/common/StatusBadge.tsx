@@ -2,26 +2,7 @@ import { Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-
-const RUN_LABELS: Record<string, string> = {
-  pending: "排队中",
-  running: "运行中",
-  waiting_approval: "等待审批",
-  waiting_user: "等待用户",
-  waiting_hand: "等待执行环境",
-  completed: "已完成",
-  failed: "失败",
-  cancelled: "已取消",
-  orphaned: "孤儿态",
-};
-
-const SANDBOX_LABELS: Record<string, string> = {
-  Running: "运行中",
-  Paused: "已暂停",
-  Pending: "创建中",
-  Failed: "异常",
-  Unknown: "未知",
-};
+import { formatRunStatus, formatSandboxPhase } from "@/components/PlatformAdmin/displayText";
 
 function toneClass(tone: "persistent" | "transient" | "success" | "danger" | "muted") {
   switch (tone) {
@@ -66,7 +47,7 @@ export function StatusBadge({
   pulse?: boolean;
 }) {
   const tone = kind === "run" ? runTone(status) : sandboxTone(status);
-  const label = kind === "run" ? RUN_LABELS[status] ?? status : SANDBOX_LABELS[status] ?? status;
+  const label = kind === "run" ? formatRunStatus(status) : formatSandboxPhase(status);
   const showSpinner = pulse || tone === "transient";
   return (
     <Badge className={cn(toneClass(tone), className)}>

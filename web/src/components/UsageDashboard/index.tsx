@@ -56,12 +56,12 @@ function OverviewCards({ data }: { data: OverviewStats }) {
     {
       label: "总成本",
       value: formatUsd(data.totalCostUsd),
-      sub: data.totalCostUsd === 0 ? "无数据" : `${data.totalTurns.toLocaleString()} 次 Result`,
+      sub: data.totalCostUsd === 0 ? "无数据" : `${data.totalTurns.toLocaleString()} 次轮次`,
     },
     {
       label: "活跃用户",
       value: String(data.activeUsers),
-      sub: `${data.totalTurns.toLocaleString()} 次会话`,
+      sub: `${data.totalTurns.toLocaleString()} 次轮次`,
     },
     {
       label: "缓存命中",
@@ -285,8 +285,8 @@ function UserRankTable({
           <SortHeader {...headerProps} field="totalCacheReadTokens">缓存读</SortHeader>
           <SortHeader {...headerProps} field="totalCacheCreationTokens">缓存写</SortHeader>
           <SortHeader {...headerProps} field="cacheHitRatio">命中率</SortHeader>
-          <SortHeader {...headerProps} field="totalCostUsd">Cost</SortHeader>
-          <SortHeader {...headerProps} field="totalTurns">Turns</SortHeader>
+          <SortHeader {...headerProps} field="totalCostUsd">成本</SortHeader>
+          <SortHeader {...headerProps} field="totalTurns">轮次</SortHeader>
           <SortHeader {...headerProps} field="lastActiveDate" align="left" width="w-[110px]">最后活跃</SortHeader>
         </TableRow>
       </TableHeader>
@@ -541,8 +541,8 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
               Token 数据自 <span className="font-mono">{dataRange.earliestDate}</span> 起记录；
-              Cost 数据自 <span className="font-mono">{dataRange.firstCostDate}</span> 起完整
-              （此日之前为 jsonl 历史回填，SDK 未持久化 cost 字段）
+              成本数据自 <span className="font-mono">{dataRange.firstCostDate}</span> 起完整
+              （此日之前为 jsonl 历史回填，SDK 未持久化成本字段）
             </span>
           </div>
         )}

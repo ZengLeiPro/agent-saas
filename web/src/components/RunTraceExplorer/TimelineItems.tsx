@@ -15,6 +15,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { RUN_SHORT_LABEL, formatExecutionTarget, formatFailureClass, formatToolRisk } from "@/components/PlatformAdmin/displayText";
 
 import { formatMs, formatTime } from "./format";
 import { RUN_STATUS_LABELS, finishSubtypeClass, finishSubtypeLabel } from "./StatusBadge";
@@ -273,10 +274,10 @@ export function ToolCallRow({
           <span className="text-muted-foreground tabular-nums">{formatMs(audit.durationMs)}</span>
         )}
         {audit?.risk && (
-          <Badge variant="outline" className="text-[10px]">risk: {audit.risk}</Badge>
+          <Badge variant="outline" className="text-[10px]">风险：{formatToolRisk(audit.risk)}</Badge>
         )}
         {audit?.executionTarget && (
-          <Badge variant="outline" className="text-[10px]">{audit.executionTarget}</Badge>
+          <Badge variant="outline" className="text-[10px]">{formatExecutionTarget(audit.executionTarget)}</Badge>
         )}
         {failed && <Badge className="border-0 bg-destructive/15 text-[10px] text-destructive">失败</Badge>}
         {!finished && <span className="text-[10px] text-muted-foreground">无结果记录</span>}
@@ -284,7 +285,7 @@ export function ToolCallRow({
       {open && (
         <div className="space-y-2 border-t px-2.5 py-2">
           <div>
-            <div className="mb-1 text-[11px] font-medium text-muted-foreground">参数（callId: {callId}）</div>
+            <div className="mb-1 text-[11px] font-medium text-muted-foreground">参数（调用 ID：{callId}）</div>
             <CollapsibleText text={prettyArgs} mono className="rounded bg-muted/40 p-2" />
           </div>
           {result && (
@@ -362,7 +363,7 @@ export function OrphanToolEventItem({ event }: { event: TraceEvent }) {
       timestamp={event.timestamp}
       badges={
         <>
-          <span className="font-mono">{event.toolName ?? "(unknown)"}</span>
+          <span className="font-mono">{event.toolName ?? "（未知）"}</span>
           {event.durationMs != null && <span className="text-muted-foreground tabular-nums">{formatMs(event.durationMs)}</span>}
           {failed && <Badge className="border-0 bg-destructive/15 text-[10px] text-destructive">失败</Badge>}
           <TruncatedBadge event={event} />
@@ -437,14 +438,14 @@ export function HandFailureItem({ event }: { event: TraceEvent }) {
       timestamp={event.timestamp}
       badges={
         <>
-          {event.classifiedAs && <Badge className="border-0 bg-destructive/15 text-[10px] text-destructive">{event.classifiedAs}</Badge>}
+          {event.classifiedAs && <Badge className="border-0 bg-destructive/15 text-[10px] text-destructive">{formatFailureClass(event.classifiedAs)}</Badge>}
           {event.toolName && <span className="font-mono">{event.toolName}</span>}
         </>
       }
     >
       <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
         {event.error ?? "（无错误详情）"}
-        {event.handId != null && <div className="mt-1 font-mono text-[11px] opacity-80">hand: {String(event.handId)}</div>}
+        {event.handId != null && <div className="mt-1 font-mono text-[11px] opacity-80">执行环境：{String(event.handId)}</div>}
       </div>
     </EventShell>
   );
@@ -476,7 +477,7 @@ export function RunFinishedItem({ event }: { event: TraceEvent }) {
             ? "bg-destructive/15 text-destructive"
             : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
       )}
-      title="Run 结束"
+      title="运行结束"
       timestamp={event.timestamp}
     >
       <div className={cn("rounded-lg border p-3 text-xs", finishSubtypeClass(event.subtype))}>
@@ -495,16 +496,16 @@ export function GenericEventNode({ event }: { event: TraceEvent }) {
   let label: string;
   switch (event.type) {
     case "run_enqueued":
-      label = "run 入队";
+      label = `${RUN_SHORT_LABEL}入队`;
       break;
     case "run_lease_acquired":
-      label = `worker 领取${event.workerId ? `（${String(event.workerId)}）` : ""}`;
+      label = `执行器领取${event.workerId ? `（${String(event.workerId)}）` : ""}`;
       break;
     case "hand_provisioned":
       label = `执行环境就绪${event.handId ? `（${String(event.handId)}）` : ""}`;
       break;
     case "run_started":
-      label = "run 开始";
+      label = `${RUN_SHORT_LABEL}开始`;
       break;
     default:
       label = event.type;

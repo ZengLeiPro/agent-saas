@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { EntityLink } from "@/components/PlatformAdmin/common";
+import { RUN_LABEL, formatChannel } from "@/components/PlatformAdmin/displayText";
 
 import { runTraceApi } from "./api";
 import { formatMs, formatTime, runDurationMs } from "./format";
@@ -16,9 +17,9 @@ import type { RecentRunSummary } from "./types";
 
 /** 时间窗快捷选项 */
 const HOURS_OPTIONS: { value: number; label: string }[] = [
-  { value: 24, label: "24h" },
-  { value: 72, label: "72h" },
-  { value: 168, label: "7d" },
+  { value: 24, label: "24 小时" },
+  { value: 72, label: "72 小时" },
+  { value: 168, label: "7 天" },
 ];
 
 /** 状态分组快捷筛选 */
@@ -122,7 +123,7 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
             onKeyDown={(e) => {
               if (e.key === "Enter") onJump();
             }}
-            placeholder="runId / sessionId 直达"
+            placeholder="运行 ID / 会话 ID 直达"
             className="h-8 w-56 font-mono text-xs"
           />
           <Button variant="outline" size="sm" onClick={onJump} disabled={!jumpId.trim()}>
@@ -140,16 +141,16 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
         <CardContent className="p-0">
           {loading && !runs ? (
             <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载 run 列表...
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载运行列表...
             </div>
           ) : !runs || runs.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">时间窗内没有匹配的 run</div>
+            <div className="py-10 text-center text-sm text-muted-foreground">时间窗内没有匹配的运行记录</div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>状态</TableHead>
-                  <TableHead>Run</TableHead>
+	                  <TableHead>{RUN_LABEL}</TableHead>
                   <TableHead>会话</TableHead>
                   <TableHead>组织 / 用户</TableHead>
                   <TableHead>模型</TableHead>
@@ -192,7 +193,7 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
                       <TableCell className="max-w-44 truncate font-mono text-xs" title={run.model ?? undefined}>
                         {run.model ?? "—"}
                       </TableCell>
-                      <TableCell className="text-xs">{run.channel ?? "—"}</TableCell>
+                      <TableCell className="text-xs">{run.channel ? formatChannel(run.channel) : "—"}</TableCell>
                       <TableCell className="text-right font-mono text-xs tabular-nums">{formatMs(duration)}</TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">
                         {formatTime(run.startedAt ?? run.requestedAt)}

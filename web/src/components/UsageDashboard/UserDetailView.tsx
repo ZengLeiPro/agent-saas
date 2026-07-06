@@ -169,9 +169,9 @@ export function UserDetailView({
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               <DetailCard label="总 Token" value={formatTokens(totals.totalTokens)} />
               <DetailCard label="读写量" value={formatTokens(totals.ioTokens)} sub="不含缓存" />
-              <DetailCard label="Cost" value={formatUsd(totals.totalCostUsd)} sub={totals.totalCostUsd === 0 ? "无数据" : undefined} />
+              <DetailCard label="成本" value={formatUsd(totals.totalCostUsd)} sub={totals.totalCostUsd === 0 ? "无数据" : undefined} />
               <DetailCard label="缓存命中" value={formatPercent(totals.cacheHitRatio)} />
-              <DetailCard label="Turns" value={totals.totalTurns.toLocaleString()} />
+              <DetailCard label="轮次" value={totals.totalTurns.toLocaleString()} />
             </div>
           )}
 

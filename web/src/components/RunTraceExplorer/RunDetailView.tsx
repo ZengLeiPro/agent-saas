@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/components/UsageDashboard/format";
 import { EntityLink } from "@/components/PlatformAdmin/common";
+import { RUN_LABEL, WORKSPACE_LABEL, formatChannel, formatExecutionTarget } from "@/components/PlatformAdmin/displayText";
 
 import { runTraceApi } from "./api";
 import { formatMs, formatTime, formatYuan, runDurationMs } from "./format";
@@ -42,7 +43,7 @@ function aggregateToolAudits(events: TraceEvent[]): ToolAggRow[] {
   const map = new Map<string, ToolAggRow>();
   for (const e of events) {
     if (e.type !== "tool_audit") continue;
-    const name = e.toolName ?? "(unknown)";
+    const name = e.toolName ?? "（未知）";
     const row = map.get(name) ?? { toolName: name, calls: 0, errors: 0, totalDurationMs: 0 };
     row.calls += 1;
     if (e.status === "error") row.errors += 1;
@@ -147,7 +148,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
       <div className="space-y-4">
         {backButton}
         <div className="flex h-40 items-center justify-center rounded-2xl border bg-card text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载 run 详情...
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载运行详情...
         </div>
       </div>
     );
@@ -189,7 +190,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
         {hasTruncated && !fullLoaded && (
           <span className="text-xs text-muted-foreground">部分长文本已被截断，点「加载全文」查看完整内容</span>
         )}
-        {error && <span className="text-xs text-destructive">刷新失败:{error}</span>}
+        {error && <span className="text-xs text-destructive">刷新失败：{error}</span>}
       </div>
 
       {/* 汇总头卡 */}
@@ -197,7 +198,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
         <CardContent className="p-4">
           <div className="flex flex-wrap items-center gap-2">
             <RunStatusBadge status={run.status} />
-            <span className="text-xs text-muted-foreground">Run</span>
+            <span className="text-xs text-muted-foreground">{RUN_LABEL}</span>
             <EntityLink kind="run" id={data.runId} short={12} />
             <span className="text-xs text-muted-foreground">会话</span>
             <EntityLink kind="session" id={data.sessionId} short={12} />
@@ -213,7 +214,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
                 {billing.models.length > 0 ? billing.models.join(", ") : run.model ?? "—"}
               </span>
             </StatItem>
-            <StatItem label="本 run 成本">
+            <StatItem label="本次运行成本">
               <span className="tabular-nums">{formatYuan(billing.totalCostYuan)}</span>
             </StatItem>
             <StatItem label="Token（输入/缓存/输出/推理）">
@@ -221,13 +222,13 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
                 {formatTokens(billing.inputTokens)} / {formatTokens(billing.cachedInputTokens)} / {formatTokens(billing.outputTokens)} / {formatTokens(billing.reasoningTokens)}
               </span>
             </StatItem>
-            <StatItem label="执行目标">{run.executionTarget ?? "—"}</StatItem>
+            <StatItem label="执行目标">{run.executionTarget ? formatExecutionTarget(run.executionTarget) : "—"}</StatItem>
             <StatItem label="组织 / 用户">
               <EntityLink kind="tenant" id={run.tenantId} /> / <EntityLink kind="user" id={run.userId} />
             </StatItem>
-            <StatItem label="渠道">{run.channel ?? "—"}</StatItem>
+            <StatItem label="渠道">{run.channel ? formatChannel(run.channel) : "—"}</StatItem>
             <StatItem label="模型请求数">{billing.requestCount}</StatItem>
-            <StatItem label="Workspace">
+            <StatItem label={WORKSPACE_LABEL}>
               <span className="font-mono text-xs" title={run.workspaceId ?? undefined}>{run.workspaceId ?? "—"}</span>
             </StatItem>
             <StatItem label="累计输入 Token">{formatTokens(run.cumulativeInputTokens)}</StatItem>
@@ -308,11 +309,11 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
         <div className="space-y-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">工具调用 Top 10</CardTitle>
+              <CardTitle className="text-sm font-medium">工具调用前 10</CardTitle>
             </CardHeader>
             <CardContent>
               {toolAgg.length === 0 ? (
-                <div className="py-4 text-center text-xs text-muted-foreground">本 run 无工具调用</div>
+                <div className="py-4 text-center text-xs text-muted-foreground">本次运行无工具调用</div>
               ) : (
                 <div className="space-y-1.5">
                   {toolAgg.map((t) => (

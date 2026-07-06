@@ -1,16 +1,5 @@
 import { StatusBadge } from "@/components/PlatformAdmin/common";
-
-/** run 状态中文名（与后端 RUN_STATUS_WHITELIST 对齐） */
-export const RUN_STATUS_LABELS: Record<string, string> = {
-  pending: "排队中",
-  running: "运行中",
-  waiting_approval: "等待审批",
-  waiting_user: "等待用户",
-  waiting_hand: "等待执行环境",
-  completed: "已完成",
-  failed: "失败",
-  cancelled: "已取消",
-};
+export { RUN_STATUS_LABELS } from "@/components/PlatformAdmin/displayText";
 
 export function RunStatusBadge({ status, className }: { status: string; className?: string }) {
   return <StatusBadge kind="run" status={status} className={className} />;

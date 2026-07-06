@@ -9,6 +9,7 @@ import { buildPlatformAdminUrl, pushPlatformAdminUrl, type PlatformAdminSection 
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
+import { formatAttentionKind, formatAttentionTitle, formatRunStatus } from "../displayText";
 import { attentionSeverity, formatNumber, formatRate, formatTime, formatYuan } from "../format";
 import type { OverviewAttentionEntityRef, OverviewSnapshot } from "../types";
 
@@ -61,8 +62,8 @@ export function OverviewPage() {
 
   const attentionItems = useMemo(() => (snapshot?.attention ?? []).map((item, index) => ({
     id: `${item.kind}:${item.entityRef?.id ?? index}`,
-    title: item.title,
-    description: `${item.kind}${item.occurredAt ? ` · ${formatTime(item.occurredAt)}` : ""}`,
+    title: formatAttentionTitle(item),
+    description: `${formatAttentionKind(item.kind)}${item.occurredAt ? ` · ${formatTime(item.occurredAt)}` : ""}`,
     severity: attentionSeverity(item.severity),
     actionLabel: item.entityRef ? "查看" : undefined,
     onAction: item.entityRef ? () => navigateRef(item.entityRef) : undefined,
@@ -102,27 +103,27 @@ export function OverviewPage() {
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
-          title="活跃 Run"
+          title="活跃运行"
           value={formatNumber(health?.activeRuns.total)}
-          description="pending / running / waiting"
+          description={`${formatRunStatus("pending")} / ${formatRunStatus("running")} / 等待态`}
           tone={(health?.activeRuns.total ?? 0) > 0 ? "warn" : "good"}
           onClick={() => navigate("runs", { status: "active" })}
         />
         <MetricCard
-          title="容器 R / P"
+          title="执行环境运行/暂停"
           value={`${formatNumber(health?.sandboxes.running)} / ${formatNumber(health?.sandboxes.paused)}`}
-          description={`${formatNumber(health?.sandboxes.total)} total · ${formatNumber(health?.sandboxes.broken)} broken`}
+          description={`总数 ${formatNumber(health?.sandboxes.total)} · 异常 ${formatNumber(health?.sandboxes.broken)}`}
           tone={(health?.sandboxes.broken ?? 0) > 0 ? "bad" : "default"}
           onClick={() => navigate("sandboxes")}
         />
         <MetricCard
           title="今日成本"
           value={formatYuan(health?.todayCostYuan)}
-          description="billing usage events"
+          description="计费用量事件"
           onClick={() => navigate("efficiency")}
         />
         <MetricCard
-          title="今日 Run"
+          title="今日运行"
           value={formatNumber(health?.todayRuns)}
           description={`24h 完成率 ${formatRate(health?.completionRate24h)}`}
           onClick={() => navigate("runs", { hours: 24 })}
@@ -130,19 +131,19 @@ export function OverviewPage() {
         <MetricCard
           title="近 1 小时故障"
           value={formatNumber(health?.handFailures1h)}
-          description="hand_failure events"
+          description="执行环境故障事件"
           tone={(health?.handFailures1h ?? 0) > 0 ? "bad" : "good"}
           onClick={() => navigate("audit", { event: "hand_failure" })}
         />
         <MetricCard
           title="工具路由异常"
           value={formatNumber(health?.toolRouting24h?.failedCount)}
-          description={`${formatNumber(health?.toolRouting24h?.total)} calls / 24h`}
+          description={`${formatNumber(health?.toolRouting24h?.total)} 次调用 / 24h`}
           tone={(health?.toolRouting24h?.failedCount ?? 0) > 0 ? "warn" : "good"}
           onClick={() => navigate("efficiency")}
         />
         <MetricCard
-          title="Dispatch 错误"
+          title="调度错误"
           value={formatNumber(dispatch?.errors ?? dispatch?.dropped ?? 0)}
           description="当前进程指标快照"
           tone={(dispatch?.errors ?? dispatch?.dropped ?? 0) > 0 ? "warn" : "good"}
@@ -150,7 +151,7 @@ export function OverviewPage() {
         <MetricCard
           title="投影失败"
           value={formatNumber(projectionFailed)}
-          description="session meta projection"
+          description="会话元数据投影"
           tone={projectionFailed > 0 ? "bad" : "good"}
         />
       </div>
@@ -161,7 +162,7 @@ export function OverviewPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <AlertTriangle className="h-4 w-4" />
-              Snapshot
+              快照
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
@@ -172,7 +173,7 @@ export function OverviewPage() {
             <div className="flex justify-between gap-3">
               <span className="text-muted-foreground">活跃状态</span>
               <a className="text-primary hover:underline" href={buildPlatformAdminUrl({ section: "runs", search: { status: "active" } })}>
-                {formatNumber(health?.activeRuns.total)} runs
+                {formatNumber(health?.activeRuns.total)} 条运行记录
               </a>
             </div>
             <div className="rounded-md bg-muted/40 p-3 font-mono text-xs text-muted-foreground">

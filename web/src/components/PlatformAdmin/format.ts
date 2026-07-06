@@ -63,7 +63,7 @@ export function runDurationMs(run: {
 }
 
 export function sandboxOwnerText(owner?: { kind: string; tenantId: string | null; userId: string | null }): string {
-  if (!owner || owner.kind !== "user") return "system";
+  if (!owner || owner.kind !== "user") return "系统";
   return `${owner.tenantId ?? "—"} / ${owner.userId ?? "—"}`;
 }
 

@@ -13,6 +13,7 @@ import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { pushPlatformAdminUrl } from "@/lib/urlSync";
 
 import { platformAdminApi } from "../api";
+import { RUN_LABEL, formatRole, formatRunStatus } from "../displayText";
 import { formatNumber, formatTime, formatYuan } from "../format";
 import type { PlatformRunRecord, PlatformSessionRecord, UserSummaryResponse } from "../types";
 
@@ -77,7 +78,7 @@ function UserList() {
               <Input
                 value={q}
                 onChange={(event) => adminQuery.patch({ q: event.target.value, cursor: null })}
-                placeholder="用户名 / 姓名 / userId"
+                placeholder="用户名 / 姓名 / 用户 ID"
                 className="h-8 w-56 pl-7 text-xs"
               />
             </div>
@@ -111,7 +112,7 @@ function UserList() {
         columns={[
           { key: "user", header: "用户", cell: row => <div><div className="font-medium">{row.realName || row.username}</div><EntityLink kind="user" id={row.id} /></div> },
           { key: "tenant", header: "租户", cell: row => <EntityLink kind="tenant" id={row.tenantId} label={tenantName.get(row.tenantId) ?? row.tenantId} /> },
-          { key: "role", header: "角色", cell: row => <Badge variant={row.role === "admin" ? "default" : "secondary"}>{row.role}</Badge> },
+          { key: "role", header: "角色", cell: row => <Badge variant={row.role === "admin" ? "default" : "secondary"}>{formatRole(row.role)}</Badge> },
           { key: "position", header: "岗位", cell: row => row.position || "—" },
           { key: "status", header: "状态", cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },
           { key: "updated", header: "最后更新", cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.updatedAt)}</span> },
@@ -165,7 +166,7 @@ function UserDetail({ userId }: { userId: string }) {
             {user && <Button variant="outline" size="sm" onClick={() => {
               pushPlatformAdminUrl({ section: "runs", search: { tenantId: user.tenantId, userId: user.id } });
               window.dispatchEvent(new PopStateEvent("popstate"));
-            }}>Run</Button>}
+            }}>{RUN_LABEL}</Button>}
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
               {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
               刷新
@@ -182,14 +183,14 @@ function UserDetail({ userId }: { userId: string }) {
       ) : summary && user ? (
         <>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard title="角色" value={user.role} description={<EntityLink kind="tenant" id={user.tenantId} />} />
+            <MetricCard title="角色" value={formatRole(user.role)} description={<EntityLink kind="tenant" id={user.tenantId} />} />
             <MetricCard title="30d 会话" value={formatNumber(summary.sessions30d)} description={`最后活跃 ${formatTime(summary.lastActiveAt)}`} />
-            <MetricCard title="30d Run" value={formatNumber(summary.runs30d.total)} description={Object.entries(summary.runs30d.byStatus).map(([k, v]) => `${k}:${v}`).join(" · ") || "—"} />
+            <MetricCard title="30d 运行" value={formatNumber(summary.runs30d.total)} description={Object.entries(summary.runs30d.byStatus).map(([k, v]) => `${formatRunStatus(k)}:${v}`).join(" · ") || "—"} />
             <MetricCard title="成本" value={formatYuan(summary.costYuan30d)} description={`累计 ${formatYuan(summary.costYuanTotal)}`} />
           </div>
           <div className="grid gap-4 xl:grid-cols-3">
             <Card>
-              <CardHeader><CardTitle className="text-base">容器</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-base">执行环境</CardTitle></CardHeader>
               <CardContent className="space-y-2">
                 {summary.sandboxes.map(sandbox => (
                   <div key={sandbox.name} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
@@ -197,7 +198,7 @@ function UserDetail({ userId }: { userId: string }) {
                     <StatusBadge kind="sandbox" status={sandbox.phase ?? "Unknown"} />
                   </div>
                 ))}
-                {summary.sandboxes.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无容器</div>}
+                {summary.sandboxes.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无执行环境</div>}
               </CardContent>
             </Card>
             <Card>
@@ -216,7 +217,7 @@ function UserDetail({ userId }: { userId: string }) {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-base">最近 Run</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-base">最近运行</CardTitle></CardHeader>
               <CardContent className="space-y-2">
                 {runs.map(run => (
                   <div key={run.runId} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
@@ -224,7 +225,7 @@ function UserDetail({ userId }: { userId: string }) {
                     <StatusBadge kind="run" status={run.status} />
                   </div>
                 ))}
-                {runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无 Run</div>}
+                {runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无运行记录</div>}
               </CardContent>
             </Card>
           </div>

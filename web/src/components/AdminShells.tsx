@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { BarChart3, Building2, Cpu, Database, FileText, Gauge, Globe2, KeyRound, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, UserPlus, Users, X, WalletCards } from "lucide-react";
+import { Building2, Cpu, Database, Gauge, Globe2, KeyRound, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, UserPlus, Users, X, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +21,7 @@ import { PlatformBillingManager, TenantBillingPanel } from "@/components/Billing
 import type { PlatformAdminSection } from "@/lib/urlSync";
 import { EntityLink } from "@/components/PlatformAdmin/common";
 import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
+import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControls";
 import { OverviewPage, SandboxesPage, SessionsPage, TenantsPage, UsersPage } from "@/components/PlatformAdmin/pages";
 import { RunTraceExplorer } from "@/components/RunTraceExplorer";
 
@@ -33,12 +34,6 @@ interface ShellButton<T extends string> {
   icon: typeof Gauge;
   platformOnly?: boolean;
 }
-
-const tenantAnalysisSections: ShellButton<TenantSection>[] = [
-  { id: "overview", label: "概览", icon: Gauge },
-  { id: "usage", label: "用量与配额", icon: BarChart3 },
-  { id: "audit", label: "审计", icon: FileText },
-];
 
 const tenantSettingsSections: ShellButton<TenantSection>[] = [
   { id: "users", label: "成员", icon: Users },
@@ -68,65 +63,6 @@ const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "skill-pool", label: "Skill 池", icon: Puzzle },
   { id: "system", label: "系统配置", icon: Database },
 ];
-
-function ShellFrame<T extends string>({
-  title,
-  description,
-  badge,
-  sections,
-  active,
-  onActiveChange,
-  headerControl,
-  children,
-}: {
-  title: string;
-  description: string;
-  badge?: string;
-  sections: ShellButton<T>[];
-  active: T;
-  onActiveChange: (id: T) => void;
-  headerControl?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className="h-full overflow-auto bg-muted/20 p-4 sm:p-6">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
-        <div className="rounded-3xl border bg-card p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-lg font-semibold">{title}</h2>
-                {badge && <Badge variant="secondary">{badge}</Badge>}
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-            </div>
-            {headerControl && <div className="w-full min-w-[260px] sm:w-auto sm:flex-1 sm:max-w-xl">{headerControl}</div>}
-          </div>
-          <nav className="mt-4 flex flex-wrap gap-2" aria-label={`${title} 页面菜单`}>
-            {sections.map(item => {
-              const Icon = item.icon;
-              const selected = item.id === active;
-              return (
-                <Button
-                  key={item.id}
-                  type="button"
-                  size="sm"
-                  variant={selected ? "default" : "outline"}
-                  onClick={() => onActiveChange(item.id)}
-                  className="shrink-0 gap-2"
-                >
-                  <Icon className="h-4 w-4" />
-                  {item.label}
-                </Button>
-              );
-            })}
-          </nav>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
 
 function AdminSettingsModal<T extends string>({
   open,
@@ -647,7 +583,7 @@ function AuditEventsPanel({
   const emptyTenant = scope === "tenant" && tenantUsernames.length === 0;
 
   return (
-    <div className={cn("w-full space-y-5", scope === "tenant" && "mx-auto max-w-6xl")}>
+    <div className="w-full space-y-5">
       <SettingsPanelHeader
         title={scope === "tenant" ? "组织审计" : "平台审计"}
         description={scope === "tenant"
@@ -802,6 +738,9 @@ export function TenantAdminShell({
   onSettingsSectionChange,
   onSettingsClose,
   settingsOnly = false,
+  activeAnalysisSection,
+  onAnalysisSectionChange,
+  headerControlsPlacement = "inline",
 }: {
   renderUsers: (tenantId?: string, tenantName?: string) => ReactNode;
   renderSkills: (tenantId?: string, tenantName?: string) => ReactNode;
@@ -819,11 +758,16 @@ export function TenantAdminShell({
   onSettingsClose: () => void;
   /** 仅渲染设置 modal，不渲染背后的分析页；用于从任意页面打开管理弹窗时保持原页面不变。 */
   settingsOnly?: boolean;
+  activeAnalysisSection?: TenantSection;
+  onAnalysisSectionChange?: (section: TenantSection) => void;
+  headerControlsPlacement?: "inline" | "none";
 }) {
   const { user, isPlatformAdmin } = useAuth();
   const { users } = useUsers();
   const { tenants } = useTenants();
-  const [active, setActive] = useState<TenantSection>("overview");
+  const [internalActive, setInternalActive] = useState<TenantSection>("overview");
+  const active = activeAnalysisSection ?? internalActive;
+  const setActive = onAnalysisSectionChange ?? setInternalActive;
   const [targetTenantId, setTargetTenantId] = useState(user?.tenantId ?? "");
 
   useEffect(() => {
@@ -894,7 +838,7 @@ export function TenantAdminShell({
     if (active === "usage") return renderUsage(effectiveTenantId);
     if (active === "audit") return <AuditEventsPanel scope="tenant" tenantId={effectiveTenantId} tenantName={currentTenant?.name} />;
     return (
-      <div className="mx-auto w-full max-w-5xl space-y-5">
+      <div className="w-full space-y-5">
         <SettingsPanelHeader
           title="组织分析"
           description="保留组织概览、用量与配额、审计分析；成员、工具与组织管理收敛到头像菜单的设置入口。"
@@ -933,9 +877,20 @@ export function TenantAdminShell({
   if (settingsOnly) return settingsModal;
 
   return (
-    <>
-      <ShellFrame title="组织分析" description="组织级概览、用量与审计" badge={isPlatformAdmin ? "平台 Admin" : "组织 Admin"} sections={tenantAnalysisSections} active={active} onActiveChange={setActive}>{content}</ShellFrame>
-    </>
+    <div className="flex h-full min-h-0 flex-col bg-muted/20">
+      {headerControlsPlacement === "inline" && (
+        <div className="shrink-0 overflow-x-auto border-b bg-background px-3 py-2">
+          <TenantAdminHeaderControls
+            active={active}
+            onActiveChange={setActive}
+            className="min-w-[360px]"
+          />
+        </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-4">
+        {content}
+      </div>
+    </div>
   );
 }
 

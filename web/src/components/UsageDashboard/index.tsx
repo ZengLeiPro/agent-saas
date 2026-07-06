@@ -350,9 +350,10 @@ function UserRankTable({
 interface UsageDashboardProps {
   tenantId?: string;
   scope?: "platform" | "tenant";
+  fullWidth?: boolean;
 }
 
-export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platform" }: UsageDashboardProps = {}) {
+export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platform", fullWidth = false }: UsageDashboardProps = {}) {
   const { isPlatformAdmin } = useAuth();
   /** 顶部 tab：用量（现有内容）/ 效率（仅平台 admin 可见） */
   const [viewTab, setViewTab] = useState<"usage" | "efficiency">("usage");
@@ -470,7 +471,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
   // 详情视图
   if (selectedUser) {
     return (
-      <div className="mx-auto w-full max-w-5xl">
+      <div className={cn("w-full", !fullWidth && "mx-auto max-w-5xl")}>
         <UserDetailView
           username={selectedUser.username}
           realName={selectedUser.realName}
@@ -487,7 +488,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-4">
+    <div className={cn("w-full space-y-4", !fullWidth && "mx-auto max-w-5xl")}>
       {/* 用量 / 效率 tab（效率仅平台 admin 可见；组织 admin 维持现状不显示 tab 栏） */}
       {isPlatformAdmin && (
         <div className="inline-flex items-center self-start rounded-md border bg-card p-0.5">

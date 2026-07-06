@@ -12,6 +12,7 @@ import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { FontSizeToggle } from "@/components/FontSizeToggle";
 import { WidthToggle } from "@/components/WidthToggle";
 import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
+import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControls";
 import { useChatFontSize } from "@/hooks/useChatFontSize";
 import { useChatWidth } from "@/hooks/useChatWidth";
 import { useResizePanel } from "@/hooks/useResizePanel";
@@ -142,6 +143,7 @@ export function DesktopLayout(props: LayoutProps) {
   const [lastTriedScenario, setLastTriedScenario] = useState<ScenarioItem | null>(null);
   const [cronWizardOpen, setCronWizardOpen] = useState(false);
   const [cronWizardScenario, setCronWizardScenario] = useState<ScenarioItem | null>(null);
+  const [tenantAdminSection, setTenantAdminSection] = useState<TenantSection>("overview");
   useEffect(() => {
     if (activeTab === "cron" && !cronMounted) setCronMounted(true);
     if (activeTab === "scenarios" && !scenariosMounted) setScenariosMounted(true);
@@ -288,6 +290,13 @@ export function DesktopLayout(props: LayoutProps) {
             <PlatformAdminHeaderControls
               active={platformAdminSection}
               onActiveChange={(section) => setPlatformAdminRoute(section)}
+              className="min-w-0 flex-1"
+            />
+          )}
+          {activeTab === "tenant-admin" && (
+            <TenantAdminHeaderControls
+              active={tenantAdminSection}
+              onActiveChange={setTenantAdminSection}
               className="min-w-0 flex-1"
             />
           )}
@@ -479,7 +488,7 @@ export function DesktopLayout(props: LayoutProps) {
                 renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderMcp={() => <McpAdminCatalogPanel />}
-                renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
+                renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
             renderFiles={() => (
               <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />
             )}
@@ -488,6 +497,9 @@ export function DesktopLayout(props: LayoutProps) {
                 settingsSection={(adminSettings?.target === "tenant" ? adminSettings.section : "users") as TenantSection}
                 onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
                 onSettingsClose={closeAdminSettings}
+                activeAnalysisSection={tenantAdminSection}
+                onAnalysisSectionChange={setTenantAdminSection}
+                headerControlsPlacement="none"
               />
             </Suspense>
           </div>
@@ -523,7 +535,7 @@ export function DesktopLayout(props: LayoutProps) {
               renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
               renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
               renderMcp={() => <McpAdminCatalogPanel />}
-              renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
+              renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
               renderFiles={() => (
                 <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />
               )}

@@ -69,12 +69,16 @@ FROM ${BASE_REGISTRY}/node:22-bookworm-slim AS node-bookworm
 FROM ${BASE_REGISTRY}/python:3.12-slim-bookworm AS acs-base
 WORKDIR /app
 
-# 这是用户代码执行环境，不是控制面。保留通用 Agent 生产任务常用工具，但不要放
-# docker/kubectl/aliyun 这类可以触达宿主或云控制面的命令。
+# 这是用户代码执行环境，不是控制面。保留通用 Agent 生产任务常用工具。
+# docker/kubectl 这类可触达宿主或集群控制面的命令仍不放入镜像。
+# aliyun/gh 只内置 CLI 二进制，凭据必须由运行时按 tenant/user/任务临时注入，禁止烘进镜像。
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ARG DEBIAN_MIRROR=http://deb.debian.org/debian
 ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
+ARG GH_CLI_VERSION=2.96.0
+ARG ALIYUN_CLI_VERSION=3.4.4
+ARG ALIYUN_CLI_SHA256=11dc3c6999e0e2f3cdac6e38775920e14ace7b52567534ff1222db22ae327684
 
 COPY --from=node-bookworm /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-bookworm /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -85,6 +89,14 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries \
     && sed -i "s|http://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g; s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && mkdir -p -m 755 /etc/apt/keyrings \
+    && curl -fsSL -o /tmp/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    && echo '6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b  /tmp/githubcli-archive-keyring.gpg' | sha256sum -c - \
+    && install -m 0644 /tmp/githubcli-archive-keyring.gpg /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && rm -f /tmp/githubcli-archive-keyring.gpg \
+    && printf 'deb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
       bash \
@@ -101,6 +113,7 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https:
       ffmpeg \
       git \
       git-lfs \
+      gh=${GH_CLI_VERSION} \
       ghostscript \
       iproute2 \
       iputils-ping \
@@ -141,6 +154,14 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https:
     && echo Asia/Shanghai > /etc/timezone \
     && fc-cache -fv \
     && update-ca-certificates
+
+RUN curl -fsSL "https://aliyuncli.alicdn.com/aliyun-cli-linux-${ALIYUN_CLI_VERSION}-amd64.tgz" -o /tmp/aliyun-cli.tgz \
+    && echo "${ALIYUN_CLI_SHA256}  /tmp/aliyun-cli.tgz" | sha256sum -c - \
+    && tar xzf /tmp/aliyun-cli.tgz -C /tmp \
+    && install -m 0755 /tmp/aliyun /usr/local/bin/aliyun \
+    && rm -f /tmp/aliyun /tmp/aliyun-cli.tgz \
+    && aliyun version \
+    && gh --version
 
 RUN corepack enable \
     && corepack prepare pnpm@10.18.3 --activate \

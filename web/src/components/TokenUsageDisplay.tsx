@@ -124,6 +124,8 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
         <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border bg-popover p-3 text-xs shadow-lg">
           {hasRealtime && (
             <>
+              <div className="mb-1 font-medium">实时</div>
+
               {/* 百分比进度条 */}
               {hasContextWindow && (
                 <div className="mb-2">
@@ -236,11 +238,11 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
             </>
           )}
 
-          {/* 累计用量（从 transcript 解析） */}
+          {/* 计费口径（从 transcript 解析） */}
           <div className="space-y-1.5">
             {tokenUsage && (
               <>
-                <div className="mb-1 font-medium">累计用量</div>
+                <div className="mb-1 font-medium">计费口径</div>
                 <DetailRow label="上下文" value={formatTokenCount(displayTokens)} />
                 <DetailRow label="累计输入" value={tokenUsage.totalInputTokens} />
                 <DetailRow label="累计输出" value={tokenUsage.totalOutputTokens} />

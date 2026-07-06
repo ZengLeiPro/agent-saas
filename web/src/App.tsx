@@ -58,10 +58,10 @@ function App() {
   );
 
   const {
-    messages, input, loading, sessionId, sessions, activeTab, settingsOpen, settingsSection,
+    messages, input, loading, sessionId, sessions, activeTab, platformAdminSection, platformAdminEntityId, settingsOpen, settingsSection,
     uploadedFiles, uploading, uploadError, dismissUploadError, isDragging, isLoadingSessions, isLoadingMessages,
     deleteSessionId, deleteSessionCount, lastMessageRef, scrollContainerRef, isNearBottomRef,
-    setInput, setActiveTab, pushActiveTab, openSettings, closeSettings, setSettingsSection,
+    setInput, setActiveTab, pushActiveTab, setPlatformAdminRoute, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     newSession, selectSession,
     confirmDeleteSession, confirmDeleteSessions, cancelDeleteSession, handleDeleteSession, renameSession, autoTitleSession, compactSession,
@@ -126,7 +126,7 @@ function App() {
 
   const layoutProps: LayoutProps = {
     sidebarSessions, unreadAiReplySessionIds, sessionId, selectSession, newSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
-    isLoadingSessions, activeTab, setActiveTab, pushActiveTab, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
+    isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
     messages, loading, isLoadingMessages, retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,

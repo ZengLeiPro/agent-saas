@@ -14,6 +14,7 @@ export default defineConfig({
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
       "@agent/shared": fileURLToPath(new URL("../shared/src/index.ts", import.meta.url)),
+      "virtual:pwa-register": fileURLToPath(new URL("./src/test/pwaRegisterMock.ts", import.meta.url)),
       "react/jsx-dev-runtime": hoistedReactJsxDevRuntime,
       "react/jsx-runtime": hoistedReactJsxRuntime,
       "react-dom/client": hoistedReactDomClient,

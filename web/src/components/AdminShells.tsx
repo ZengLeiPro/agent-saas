@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { BarChart3, Building2, Cpu, Database, FileText, Gauge, Globe2, KeyRound, ListTree, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, UserPlus, Users, X, Activity, WalletCards } from "lucide-react";
+import { BarChart3, Building2, Cpu, Database, FileText, Gauge, Globe2, KeyRound, ListTree, Loader2, MessageSquareText, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, UserPlus, Users, X, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,10 +18,10 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type TenantSettings } from "@/components/TenantManager/types";
 import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
-import { RunTraceExplorer } from "@/components/RunTraceExplorer";
+import type { PlatformAdminSection } from "@/lib/urlSync";
 
 export type TenantSection = "overview" | "users" | "skills" | "mcp" | "usage" | "billing" | "files" | "audit" | "settings" | "company";
-export type PlatformSection = "overview" | "tenants" | "signup" | "models" | "billing" | "remote-hands" | "runtime" | "run-trace" | "tool-controls" | "global-mcp" | "skill-pool" | "security" | "system";
+export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "global-mcp" | "skill-pool" | "system";
 
 interface ShellButton<T extends string> {
   id: T;
@@ -46,9 +46,15 @@ const tenantSettingsSections: ShellButton<TenantSection>[] = [
   { id: "settings", label: "组织管理", icon: ShieldCheck },
 ];
 
-const platformAnalysisSections: ShellButton<PlatformSection>[] = [
+const platformAdminSections: ShellButton<PlatformAdminSection>[] = [
   { id: "overview", label: "概览", icon: Gauge },
-  { id: "security", label: "平台审计", icon: ShieldCheck },
+  { id: "tenants", label: "租户", icon: Building2 },
+  { id: "users", label: "用户", icon: Users },
+  { id: "sessions", label: "会话", icon: MessageSquareText },
+  { id: "runs", label: "Run", icon: ListTree },
+  { id: "sandboxes", label: "容器", icon: ServerCog },
+  { id: "audit", label: "审计", icon: ShieldCheck },
+  { id: "efficiency", label: "效率", icon: BarChart3 },
 ];
 
 const SETTINGS_NAV_ITEM_SELECTED =
@@ -64,8 +70,6 @@ const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "models", label: "模型", icon: Cpu },
   { id: "billing", label: "计费", icon: WalletCards },
   { id: "remote-hands", label: "执行环境池", icon: ServerCog },
-  { id: "runtime", label: "运行态", icon: Activity },
-  { id: "run-trace", label: "Run 追踪", icon: ListTree },
   { id: "tool-controls", label: "工具开关", icon: Globe2 },
   { id: "global-mcp", label: "全局 MCP", icon: KeyRound },
   { id: "skill-pool", label: "Skill 池", icon: Puzzle },
@@ -923,11 +927,13 @@ export function PlatformAdminShell({
   renderSignupConfig,
   renderModels,
   renderRemoteHands,
-  renderRuntimeOperations,
   renderToolControls,
   renderMcp,
   renderSkills,
   renderUsage,
+  activeSection,
+  entityId,
+  onSectionChange,
   settingsOpen,
   settingsSection,
   onSettingsSectionChange,
@@ -938,11 +944,13 @@ export function PlatformAdminShell({
   renderSignupConfig?: () => ReactNode;
   renderModels: () => ReactNode;
   renderRemoteHands: () => ReactNode;
-  renderRuntimeOperations: () => ReactNode;
   renderToolControls: () => ReactNode;
   renderMcp: () => ReactNode;
   renderSkills: () => ReactNode;
   renderUsage: () => ReactNode;
+  activeSection: PlatformAdminSection;
+  entityId: string | null;
+  onSectionChange: (section: PlatformAdminSection, entityId?: string | null) => void;
   settingsOpen: boolean;
   settingsSection: PlatformSection;
   onSettingsSectionChange: (section: PlatformSection) => void;
@@ -952,7 +960,6 @@ export function PlatformAdminShell({
 }) {
   const { users } = useUsers();
   const { tenants } = useTenants();
-  const [active, setActive] = useState<PlatformSection>("overview");
   const activeTenants = tenants.filter(t => !t.disabled);
   const platformAdmins = users.filter(u => u.role === "admin" && u.tenantId === DEFAULT_TENANT_ID);
 
@@ -971,8 +978,6 @@ export function PlatformAdminShell({
     { id: "models", node: renderModels() },
     { id: "billing", node: <PlatformBillingManager /> },
     { id: "remote-hands", node: renderRemoteHands() },
-    { id: "runtime", node: renderRuntimeOperations() },
-    { id: "run-trace", node: <RunTraceExplorer /> },
     { id: "tool-controls", node: renderToolControls() },
     { id: "global-mcp", node: renderMcp() },
     { id: "skill-pool", node: renderSkills() },
@@ -995,24 +1000,51 @@ export function PlatformAdminShell({
     </>
   );
 
+  const sectionLabel = platformAdminSections.find(item => item.id === activeSection)?.label ?? "概览";
+  const pendingSection = (title: string, description: string, points: string[]) => (
+    <PlaceholderAdminPanel
+      title={entityId ? `${title}详情` : title}
+      description={entityId ? `${description} 当前深链 ID: ${entityId}` : description}
+      points={points}
+    />
+  );
+
   const content = (() => {
-    if (active === "security") return <AuditEventsPanel scope="platform" />;
-    return (
-      <div className="mx-auto w-full max-w-5xl space-y-5">
-        <SettingsPanelHeader title="平台分析" description="保留平台概览和平台审计分析；组织、模型、Web 工具、全局 MCP、Skill 池和系统配置收敛到头像菜单的设置入口。" />
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard title="组织总数" value={tenants.length} description="包含已禁用组织" />
-          <MetricCard title="活跃组织" value={activeTenants.length} description="当前可接入资源" />
-          <MetricCard title="用户总数" value={users.length} description="跨组织账号总数" />
-          <MetricCard title="平台管理员" value={platformAdmins.length} description="默认平台组织管理员" />
+    if (activeSection === "audit") return <AuditEventsPanel scope="platform" />;
+    if (activeSection === "overview") {
+      return (
+        <div className="mx-auto w-full max-w-5xl space-y-5">
+          <SettingsPanelHeader title="平台总览" description="平台健康、资源和用量的集中视图。" />
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <MetricCard title="组织总数" value={tenants.length} description="包含已禁用组织" />
+            <MetricCard title="活跃组织" value={activeTenants.length} description="当前可接入资源" />
+            <MetricCard title="用户总数" value={users.length} description="跨组织账号总数" />
+            <MetricCard title="平台管理员" value={platformAdmins.length} description="默认平台组织管理员" />
+          </div>
+          <div className="rounded-2xl border bg-card p-5 shadow-sm">
+            <h3 className="text-sm font-semibold">平台管理信息架构</h3>
+            <p className="mt-1 text-sm text-muted-foreground">租户、用户、会话、Run、容器、审计和效率已拆分为独立分区。</p>
+          </div>
+          {renderUsage()}
         </div>
-        <div className="rounded-2xl border bg-card p-5 shadow-sm">
-          <h3 className="text-sm font-semibold">全局管理入口</h3>
-          <p className="mt-1 text-sm text-muted-foreground">组织、模型、Web 工具、全局 MCP、Skill 池和平台审计已从个人设置中心迁移到这里。</p>
-        </div>
-        {renderUsage()}
-      </div>
-    );
+      );
+    }
+    if (activeSection === "tenants") {
+      return pendingSection("租户", "租户列表和租户详情视图。", ["租户状态与余额", "关联用户、会话和 Run", "历史入口保持兼容"]);
+    }
+    if (activeSection === "users") {
+      return pendingSection("用户", "跨租户用户列表和用户详情视图。", ["账号、角色与租户", "会话与成本聚合", "登录与操作日志"]);
+    }
+    if (activeSection === "sessions") {
+      return pendingSection("会话", "会话列表和会话详情视图。", ["标题、渠道与状态", "关联用户和租户", "成本与 Run 聚合"]);
+    }
+    if (activeSection === "runs") {
+      return pendingSection("Run", "Run 列表和 trace 详情视图。", ["状态、模型与成本", "会话、用户和租户归属", "旧 Run 追踪入口自动迁移"]);
+    }
+    if (activeSection === "sandboxes") {
+      return pendingSection("容器", "ACS 容器列表和容器详情视图。", ["运行相位与健康状态", "镜像、TTL 与空闲时长", "旧运行态入口自动迁移"]);
+    }
+    return pendingSection("效率", "平台效率和工具调用表现视图。", ["7/14/30 天窗口", "模型与工具路由", "租户维度筛选"]);
   })();
 
   const settingsModal = (
@@ -1025,7 +1057,7 @@ export function PlatformAdminShell({
 
   return (
     <>
-      <ShellFrame title="平台分析" description="跨组织概览与平台审计" badge="平台 Admin" sections={platformAnalysisSections} active={active} onActiveChange={setActive}>{content}</ShellFrame>
+      <ShellFrame title="平台管理" description={`当前分区: ${sectionLabel}`} badge="平台 Admin" sections={platformAdminSections} active={activeSection} onActiveChange={(section) => onSectionChange(section)}>{content}</ShellFrame>
     </>
   );
 }

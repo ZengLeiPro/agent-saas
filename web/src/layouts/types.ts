@@ -11,6 +11,7 @@ import type { ConnectionState } from "@/hooks/useConnectionState";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
 import type { SettingsSectionId } from "@/types/settings";
 import type { AdminSettingsState, AdminSettingsTarget } from "@/lib/urlSync";
+import type { PlatformAdminSection } from "@/lib/urlSync";
 
 export interface LayoutProps {
   // 会话导航
@@ -27,9 +28,12 @@ export interface LayoutProps {
   compactSession: () => Promise<void>;
   isLoadingSessions: boolean;
   activeTab: AppTab;
+  platformAdminSection: PlatformAdminSection;
+  platformAdminEntityId: string | null;
   setActiveTab: (tab: AppTab) => void;
   /** push 版本的 setActiveTab：浏览器历史会新增一条记录（user menu 跳转用） */
   pushActiveTab: (tab: AppTab) => void;
+  setPlatformAdminRoute: (section: PlatformAdminSection, entityId?: string | null) => void;
   settingsOpen: boolean;
   settingsSection: SettingsSectionId;
   openSettings: (section?: SettingsSectionId) => void;

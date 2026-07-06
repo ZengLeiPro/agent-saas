@@ -32,7 +32,6 @@ const McpAdminCatalogPanel = lazy(() => import("@/components/McpManager").then(m
 const UsageDashboard = lazy(() => import("@/components/UsageDashboard").then(m => ({ default: m.UsageDashboard })));
 const ModelManagerPanel = lazy(() => import("@/components/ModelManager").then(m => ({ default: m.ModelManager })));
 const TenantRemoteHandsManagerPanel = lazy(() => import("@/components/TenantRemoteHandsManager").then(m => ({ default: m.TenantRemoteHandsManager })));
-const RuntimeOperationsManagerPanel = lazy(() => import("@/components/RuntimeOperationsManager").then(m => ({ default: m.RuntimeOperationsManager })));
 const ToolControlsManagerPanel = lazy(() => import("@/components/ToolControlsManager").then(m => ({ default: m.ToolControlsManager })));
 const SignupConfigManagerPanel = lazy(() => import("@/components/SignupConfigManager").then(m => ({ default: m.SignupConfigManager })));
 const SettingsModal = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsModal })));
@@ -50,7 +49,7 @@ const SuspenseFallback = (
 export function MobileLayout(props: LayoutProps) {
   const {
     sidebarSessions, unreadAiReplySessionIds, sessionId, selectSession, newSession, confirmDeleteSession, renameSession, autoTitleSession,
-    isLoadingSessions, activeTab, setActiveTab, pushActiveTab, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
+    isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
     messages, loading, isLoadingMessages, retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
@@ -269,11 +268,13 @@ export function MobileLayout(props: LayoutProps) {
                     renderSignupConfig={() => <SignupConfigManagerPanel />}
                     renderModels={() => <ModelManagerPanel />}
                     renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
-                    renderRuntimeOperations={() => <RuntimeOperationsManagerPanel />}
                     renderToolControls={() => <ToolControlsManagerPanel />}
                     renderMcp={() => <McpAdminCatalogPanel />}
                     renderSkills={() => <SkillManagerPanel mode="platform" />}
                     renderUsage={() => <UsageDashboard scope="platform" />}
+                    activeSection={platformAdminSection}
+                    entityId={platformAdminEntityId}
+                    onSectionChange={setPlatformAdminRoute}
                     settingsOpen={adminSettings?.target === "platform"}
                     settingsSection={(adminSettings?.target === "platform" ? adminSettings.section : "tenants") as PlatformSection}
                     onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
@@ -396,11 +397,13 @@ export function MobileLayout(props: LayoutProps) {
             renderSignupConfig={() => <SignupConfigManagerPanel />}
             renderModels={() => <ModelManagerPanel />}
             renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
-            renderRuntimeOperations={() => <RuntimeOperationsManagerPanel />}
             renderToolControls={() => <ToolControlsManagerPanel />}
             renderMcp={() => <McpAdminCatalogPanel />}
             renderSkills={() => <SkillManagerPanel mode="platform" />}
             renderUsage={() => <UsageDashboard scope="platform" />}
+            activeSection={platformAdminSection}
+            entityId={platformAdminEntityId}
+            onSectionChange={setPlatformAdminRoute}
             settingsOpen
             settingsOnly
             settingsSection={adminSettings.section as PlatformSection}

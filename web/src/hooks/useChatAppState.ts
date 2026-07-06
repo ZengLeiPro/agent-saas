@@ -29,9 +29,9 @@ import {
   createCompactionRunningItem,
 } from "@/lib/compaction";
 import type { CompactionMessageItem, CompactionStatusEvent } from "@/lib/compaction";
-import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, pushSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection } from "@/lib/urlSync";
+import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, pushSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl } from "@/lib/urlSync";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
-import type { AdminSettingsState, AdminSettingsTarget } from "@/lib/urlSync";
+import type { AdminSettingsState, AdminSettingsTarget, PlatformAdminSection } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSession } from "@/hooks/useSession";
@@ -67,6 +67,8 @@ export interface ChatAppState {
   sessionId: string | null;
   sessions: ApiSessionListItem[];
   activeTab: AppTab;
+  platformAdminSection: PlatformAdminSection;
+  platformAdminEntityId: string | null;
   settingsOpen: boolean;
   settingsSection: SettingsSectionId;
   uploadedFiles: UploadedFile[];
@@ -85,6 +87,7 @@ export interface ChatAppState {
   setActiveTab: (tab: AppTab) => void;
   /** push 版本的 setActiveTab：会在浏览器历史里创建一条记录，供 user menu 跳转使用 */
   pushActiveTab: (tab: AppTab) => void;
+  setPlatformAdminRoute: (section: PlatformAdminSection, entityId?: string | null) => void;
   openSettings: (section?: SettingsSectionId) => void;
   closeSettings: () => void;
   setSettingsSection: (section: SettingsSectionId) => void;
@@ -384,11 +387,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     };
   }, [clearPluginInstallTimer]);
   const [activeTab, setActiveTabRaw] = useState<AppTab>(urlState.tab);
+  const [platformAdminSection, setPlatformAdminSectionRaw] = useState<PlatformAdminSection>(urlState.adminSection ?? 'overview');
+  const [platformAdminEntityId, setPlatformAdminEntityIdRaw] = useState<string | null>(urlState.adminEntityId);
+  const [pendingCanonicalPath, setPendingCanonicalPath] = useState<string | null>(urlState.canonicalPath);
   const [settingsOpen, setSettingsOpen] = useState(() => urlState.settingsSection !== null);
   const [settingsSection, setSettingsSectionRaw] = useState<SettingsSectionId>(urlState.settingsSection ?? 'account');
   const [adminSettings, setAdminSettingsRaw] = useState<AdminSettingsState | null>(() => urlState.adminSettings);
   const activeTabRef = useRef<AppTab>(activeTab);
   activeTabRef.current = activeTab;
+  const platformAdminRouteRef = useRef<{ section: PlatformAdminSection; entityId: string | null }>({
+    section: platformAdminSection,
+    entityId: platformAdminEntityId,
+  });
+  platformAdminRouteRef.current = { section: platformAdminSection, entityId: platformAdminEntityId };
   const adminSettingsRef = useRef<AdminSettingsState | null>(adminSettings);
   adminSettingsRef.current = adminSettings;
   const streamNonceRef = useRef(0);
@@ -866,7 +877,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setSettingsOpen(false);
     setAdminSettingsRaw(null);
     setActiveTabRaw(tab);
-    replaceUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
+    if (tab === 'platform-admin') {
+      setPlatformAdminSectionRaw('overview');
+      setPlatformAdminEntityIdRaw(null);
+      replacePlatformAdminUrl({ section: 'overview' });
+    } else {
+      replaceUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
+    }
     // 上报非 chat/profile 的 tab 切换（profile 由 AgentProfile 组件自行上报）
     const label = TAB_LABELS[tab];
     if (label) reportActivity('page_viewed', { detail: label });
@@ -877,9 +894,24 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setSettingsOpen(false);
     setAdminSettingsRaw(null);
     setActiveTabRaw(tab);
-    pushUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
+    if (tab === 'platform-admin') {
+      setPlatformAdminSectionRaw('overview');
+      setPlatformAdminEntityIdRaw(null);
+      pushPlatformAdminUrl({ section: 'overview' });
+    } else {
+      pushUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
+    }
     const label = TAB_LABELS[tab];
     if (label) reportActivity('page_viewed', { detail: label });
+  }, []);
+
+  const setPlatformAdminRoute = useCallback((section: PlatformAdminSection, entityId: string | null = null) => {
+    setSettingsOpen(false);
+    setAdminSettingsRaw(null);
+    setActiveTabRaw('platform-admin');
+    setPlatformAdminSectionRaw(section);
+    setPlatformAdminEntityIdRaw(entityId);
+    pushPlatformAdminUrl({ section, entityId });
   }, []);
 
   const openSettings = useCallback((section: SettingsSectionId = 'account') => {
@@ -891,7 +923,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
-    pushUrl(activeTabRef.current, activeTabRef.current === 'chat' ? immediateSessionIdRef.current : null);
+    if (activeTabRef.current === 'platform-admin') {
+      pushPlatformAdminUrl(platformAdminRouteRef.current);
+    } else {
+      pushUrl(activeTabRef.current, activeTabRef.current === 'chat' ? immediateSessionIdRef.current : null);
+    }
   }, []);
 
   const setSettingsSection = useCallback((section: SettingsSectionId) => {
@@ -915,7 +951,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     // 从任意页面打开管理弹窗时，关闭后回到打开前的 activeTab/session；
     // 若用户是直接访问 /tenant-admin/settings 或 /platform-admin/settings，activeTab 本身就是 admin 页。
     const tab = activeTabRef.current;
-    pushUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
+    if (tab === 'platform-admin') {
+      pushPlatformAdminUrl(platformAdminRouteRef.current);
+    } else {
+      pushUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
+    }
   }, []);
 
   const setAdminSettingsSection = useCallback((section: string) => {
@@ -990,7 +1030,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // update-on-navigation：popstate 时 URL 已变，有 pending SW 更新且无守门
       // 条件直接原地 reload 到新版本，跳过本次 SPA 状态同步
       if (maybeReloadOnPopstate()) return;
-      const { tab, sessionId: urlSessionId, settingsSection: urlSettingsSection, adminSettings: urlAdminSettings } = parseUrl();
+      const {
+        tab,
+        sessionId: urlSessionId,
+        settingsSection: urlSettingsSection,
+        adminSection: urlAdminSection,
+        adminEntityId: urlAdminEntityId,
+        adminSettings: urlAdminSettings,
+        canonicalPath,
+      } = parseUrl();
+      setPendingCanonicalPath(canonicalPath);
       if (urlAdminSettings) {
         // admin settings modal 路径：activeTab 同步到 admin frame，modal 打开到对应 section
         setSettingsOpen(false);
@@ -1006,6 +1055,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       }
       setSettingsOpen(false);
       setAdminSettingsRaw(null);
+      if (tab === 'platform-admin') {
+        setPlatformAdminSectionRaw(urlAdminSection ?? 'overview');
+        setPlatformAdminEntityIdRaw(urlAdminEntityId);
+      }
       immediateSessionIdRef.current = urlSessionId;
       setActiveTabRaw(tab);
       if (tab === 'chat') {
@@ -1023,6 +1076,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // 兜底：确保 URL 始终与 state 一致（覆盖 delete fallback 等间接变更）
   useEffect(() => {
+    if (pendingCanonicalPath) {
+      const current = `${window.location.pathname}${window.location.search}`;
+      if (current !== pendingCanonicalPath) {
+        window.history.replaceState({}, '', pendingCanonicalPath);
+      }
+      setPendingCanonicalPath(null);
+      return;
+    }
     const expectedUrl = buildUrl(
       activeTab,
       activeTab === 'chat' ? session.sessionId : null,
@@ -1041,11 +1102,25 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       }
       return;
     }
+    if (activeTab === 'platform-admin') {
+      const expectedPath = buildPlatformAdminUrl({
+        section: platformAdminSection,
+        entityId: platformAdminEntityId,
+      });
+      if (expectedPath !== window.location.pathname) {
+        replacePlatformAdminUrl({
+          section: platformAdminSection,
+          entityId: platformAdminEntityId,
+          search: window.location.search,
+        });
+      }
+      return;
+    }
     if (expectedUrl !== window.location.pathname) {
       immediateSessionIdRef.current = session.sessionId;
       replaceUrl(activeTab, activeTab === 'chat' ? session.sessionId : null);
     }
-  }, [session.sessionId, activeTab, settingsOpen, settingsSection, adminSettings]);
+  }, [session.sessionId, activeTab, settingsOpen, settingsSection, adminSettings, platformAdminSection, platformAdminEntityId, pendingCanonicalPath]);
 
   // ---- Loading watchdog：超时保护，防止 done 事件丢失时 loading 永久锁定 ----
   const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2392,6 +2467,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     sessionId: session.sessionId,
     sessions: session.sessions,
     activeTab,
+    platformAdminSection,
+    platformAdminEntityId,
     settingsOpen,
     settingsSection,
     uploadedFiles: fileUpload.uploadedFiles,
@@ -2409,6 +2486,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setInput,
     setActiveTab,
     pushActiveTab,
+    setPlatformAdminRoute,
     openSettings,
     closeSettings,
     setSettingsSection,

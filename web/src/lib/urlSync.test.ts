@@ -1,0 +1,64 @@
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/swUpdate", () => ({
+  maybeNavigateWithUpdate: () => false,
+}));
+
+import { buildPlatformAdminUrl, parseUrl } from "@/lib/urlSync";
+
+describe("platform admin url sync", () => {
+  it("parses platform admin deep links without falling back to chat", () => {
+    expect(parseUrl("/platform-admin")).toMatchObject({
+      tab: "platform-admin",
+      adminSection: "overview",
+      adminEntityId: null,
+      canonicalPath: null,
+    });
+
+    expect(parseUrl("/platform-admin/runs/run_123", "?status=failed")).toMatchObject({
+      tab: "platform-admin",
+      adminSection: "runs",
+      adminEntityId: "run_123",
+      canonicalPath: null,
+    });
+  });
+
+  it("keeps platform settings modal routes separate from admin sections", () => {
+    expect(parseUrl("/platform-admin/settings/signup")).toMatchObject({
+      tab: "platform-admin",
+      adminSection: null,
+      adminSettings: { target: "platform", section: "signup" },
+      canonicalPath: null,
+    });
+  });
+
+  it("canonicalizes legacy runtime settings sections into entity sections", () => {
+    expect(parseUrl("/platform-admin/settings/run-trace", "?q=abc")).toMatchObject({
+      tab: "platform-admin",
+      adminSection: "runs",
+      adminSettings: null,
+      canonicalPath: "/platform-admin/runs?q=abc",
+    });
+
+    expect(parseUrl("/platform-admin/settings/runtime")).toMatchObject({
+      tab: "platform-admin",
+      adminSection: "sandboxes",
+      adminSettings: null,
+      canonicalPath: "/platform-admin/sandboxes",
+    });
+  });
+
+  it("canonicalizes unknown platform admin sections to overview", () => {
+    expect(parseUrl("/platform-admin/not-a-section", "?tenantId=kaiyan")).toMatchObject({
+      tab: "platform-admin",
+      adminSection: "overview",
+      adminEntityId: null,
+      canonicalPath: "/platform-admin/overview?tenantId=kaiyan",
+    });
+  });
+
+  it("builds platform admin urls with optional entity and query", () => {
+    expect(buildPlatformAdminUrl({ section: "sessions", entityId: "sub-123", search: { includeDeleted: true } }))
+      .toBe("/platform-admin/sessions/sub-123?includeDeleted=true");
+  });
+});

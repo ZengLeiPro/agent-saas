@@ -1589,8 +1589,13 @@ export function DesktopSessionSidebar({
   }, [deleteGroupId, selectedView, groupsHook]);
 
 
-  const sessionSearchBox = (
-    <div className="border-b px-3 py-2">
+  const renderSessionSearchBox = (variant: "section" | "inline" = "section") => (
+    <div
+      className={cn(
+        "px-3",
+        variant === "section" ? "border-b py-2" : "pb-2 pt-0",
+      )}
+    >
       <div className="relative">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
         <Input
@@ -1642,8 +1647,7 @@ export function DesktopSessionSidebar({
           beforeNavigate={() => setSingleExpandedGroupKey(null)}
         />
 
-        <div className="mx-2 my-1 border-t" />
-        {sessionSearchBox}
+        {renderSessionSearchBox("inline")}
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <div className="absolute inset-0 flex flex-col bg-card" style={{ transform: singleExpandedGroup ? "translateX(-100%)" : "translateX(0)", transition: "transform 233ms cubic-bezier(.25,.1,.25,1)" }}>
             <div className="relative flex h-12 items-center justify-between border-b px-3">
@@ -2185,7 +2189,7 @@ export function DesktopSessionSidebar({
                 </div>
 
                 {/* 会话搜索：结果态与主列表态隔离，避免影响分组/分页 state */}
-                {sessionSearchBox}
+                {renderSessionSearchBox()}
 
                 {/* 会话列表 */}
                 <ScrollArea

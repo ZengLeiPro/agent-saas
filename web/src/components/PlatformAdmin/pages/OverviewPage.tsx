@@ -82,7 +82,7 @@ export function OverviewPage() {
   const projectionFailed = Number(health?.sessionMetaProjection?.failed ?? 0);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
+    <div className="w-full space-y-5">
       <SettingsPanelHeader
         title="平台总览"
         description="运行健康、容器池、成本和异常队列。"

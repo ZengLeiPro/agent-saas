@@ -106,7 +106,7 @@ function SandboxList() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
+    <div className="w-full space-y-5">
       <SettingsPanelHeader
         title="容器"
         description="ACS Sandbox 池、属主、生命周期和网络状态。"
@@ -234,7 +234,7 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
   };
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
+    <div className="w-full space-y-5">
       <SettingsPanelHeader
         title={sandbox?.name ?? sandboxName}
         description={`容器详情 · ${sandboxName}`}

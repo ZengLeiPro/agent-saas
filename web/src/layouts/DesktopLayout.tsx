@@ -11,6 +11,7 @@ import { TokenUsageDisplay } from "@/components/TokenUsageDisplay";
 import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { FontSizeToggle } from "@/components/FontSizeToggle";
 import { WidthToggle } from "@/components/WidthToggle";
+import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
 import { useChatFontSize } from "@/hooks/useChatFontSize";
 import { useChatWidth } from "@/hooks/useChatWidth";
 import { useResizePanel } from "@/hooks/useResizePanel";
@@ -253,9 +254,9 @@ export function DesktopLayout(props: LayoutProps) {
       <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", chatFontLarge && "chat-font-large", chatWidthWide && "chat-width-wide")}>
         {/* 内容区 header */}
         <header
-          className="flex h-12 shrink-0 items-center justify-between border-b bg-background px-4"
+          className="flex h-12 shrink-0 items-center gap-3 border-b bg-background px-4"
           onClick={(e) => {
-            if ((e.target as HTMLElement).closest("button, a, [role=button]")) return;
+            if ((e.target as HTMLElement).closest("button, a, input, textarea, select, [role=button]")) return;
             (scrollContainerRef as React.RefObject<HTMLDivElement>)?.current?.scrollTo({ top: 0, behavior: "smooth" });
           }}
         >
@@ -283,8 +284,15 @@ export function DesktopLayout(props: LayoutProps) {
               </Badge>
             ) : null}
           </div>
+          {activeTab === "platform-admin" && (
+            <PlatformAdminHeaderControls
+              active={platformAdminSection}
+              onActiveChange={(section) => setPlatformAdminRoute(section)}
+              className="min-w-0 flex-1"
+            />
+          )}
           {activeTab === "chat" && (
-            <div className="flex items-center gap-2">
+            <div className="ml-auto flex items-center gap-2">
               {modelList?.showContextTokens !== false && (
                 <TokenUsageDisplay tokenUsage={tokenUsage} contextUsage={contextUsage} />
               )}
@@ -503,6 +511,7 @@ export function DesktopLayout(props: LayoutProps) {
                 settingsSection={(adminSettings?.target === "platform" ? adminSettings.section : "tenants") as PlatformSection}
                 onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
                 onSettingsClose={closeAdminSettings}
+                headerControlsPlacement="none"
               />
             </Suspense>
           </div>

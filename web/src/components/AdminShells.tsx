@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { BarChart3, Building2, Cpu, Database, FileText, Gauge, Globe2, KeyRound, ListTree, Loader2, MessageSquareText, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, UserPlus, Users, X, WalletCards } from "lucide-react";
+import { BarChart3, Building2, Cpu, Database, FileText, Gauge, Globe2, KeyRound, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, UserPlus, Users, X, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,7 +20,7 @@ import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
 import type { PlatformAdminSection } from "@/lib/urlSync";
 import { EntityLink } from "@/components/PlatformAdmin/common";
-import { PlatformAdminSearch } from "@/components/PlatformAdmin/PlatformAdminSearch";
+import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
 import { OverviewPage, SandboxesPage, SessionsPage, TenantsPage, UsersPage } from "@/components/PlatformAdmin/pages";
 import { RunTraceExplorer } from "@/components/RunTraceExplorer";
 
@@ -48,17 +48,6 @@ const tenantSettingsSections: ShellButton<TenantSection>[] = [
   { id: "files", label: "文件与数据", icon: Database },
   { id: "company", label: "公司信息", icon: Info },
   { id: "settings", label: "组织管理", icon: ShieldCheck },
-];
-
-const platformAdminSections: ShellButton<PlatformAdminSection>[] = [
-  { id: "overview", label: "概览", icon: Gauge },
-  { id: "tenants", label: "租户", icon: Building2 },
-  { id: "users", label: "用户", icon: Users },
-  { id: "sessions", label: "会话", icon: MessageSquareText },
-  { id: "runs", label: "Run", icon: ListTree },
-  { id: "sandboxes", label: "容器", icon: ServerCog },
-  { id: "audit", label: "审计", icon: ShieldCheck },
-  { id: "efficiency", label: "效率", icon: BarChart3 },
 ];
 
 const SETTINGS_NAV_ITEM_SELECTED =
@@ -658,7 +647,7 @@ function AuditEventsPanel({
   const emptyTenant = scope === "tenant" && tenantUsernames.length === 0;
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
+    <div className={cn("w-full space-y-5", scope === "tenant" && "mx-auto max-w-6xl")}>
       <SettingsPanelHeader
         title={scope === "tenant" ? "组织审计" : "平台审计"}
         description={scope === "tenant"
@@ -967,6 +956,7 @@ export function PlatformAdminShell({
   onSettingsSectionChange,
   onSettingsClose,
   settingsOnly = false,
+  headerControlsPlacement = "inline",
 }: {
   renderTenants: () => ReactNode;
   renderSignupConfig?: () => ReactNode;
@@ -985,6 +975,7 @@ export function PlatformAdminShell({
   onSettingsClose: () => void;
   /** 仅渲染设置 modal，不渲染背后的分析页；用于从任意页面打开管理弹窗时保持原页面不变。 */
   settingsOnly?: boolean;
+  headerControlsPlacement?: "inline" | "none";
 }) {
   // mount-once-visited（与 TenantAdminShell 同模式）
   const [visitedPlatformSections, setVisitedPlatformSections] = useState<Set<PlatformSection>>(() =>
@@ -1023,8 +1014,6 @@ export function PlatformAdminShell({
     </>
   );
 
-  const sectionLabel = platformAdminSections.find(item => item.id === activeSection)?.label ?? "概览";
-
   const content = (() => {
     if (activeSection === "audit") return <AuditEventsPanel scope="platform" />;
     if (activeSection === "overview") return <OverviewPage />;
@@ -1047,18 +1036,20 @@ export function PlatformAdminShell({
   if (settingsOnly) return settingsModal;
 
   return (
-    <>
-      <ShellFrame
-        title="平台管理"
-        description={`当前分区: ${sectionLabel}`}
-        badge="平台 Admin"
-        sections={platformAdminSections}
-        active={activeSection}
-        onActiveChange={(section) => onSectionChange(section)}
-        headerControl={<PlatformAdminSearch />}
-      >
+    <div className="flex h-full min-h-0 flex-col bg-muted/20">
+      {headerControlsPlacement === "inline" && (
+        <div className="shrink-0 overflow-x-auto border-b bg-background px-3 py-2">
+          <PlatformAdminHeaderControls
+            active={activeSection}
+            onActiveChange={(section) => onSectionChange(section)}
+            className="min-w-[720px]"
+            searchClassName="w-72 min-w-72"
+          />
+        </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-4">
         {content}
-      </ShellFrame>
-    </>
+      </div>
+    </div>
   );
 }

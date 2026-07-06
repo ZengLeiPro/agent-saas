@@ -32,7 +32,7 @@ export function RunTraceExplorer({
   }, [onRunIdChange]);
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+    <div className="flex h-full min-h-0 w-full flex-col">
       <SettingsPanelHeader
         title="Run 追踪"
         description="逐 run 复盘 Agent 执行过程：事件时间线、工具调用、审批与成本明细。"

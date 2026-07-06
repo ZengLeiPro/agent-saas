@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
+import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "./api";
 import type { PlatformSearchMatch, SearchMatchKind } from "./types";
@@ -23,7 +24,7 @@ function navigateTo(href: string) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
-export function PlatformAdminSearch() {
+export function PlatformAdminSearch({ className }: { className?: string } = {}) {
   const adminQuery = useAdminUrlQuery();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [q, setQ] = useState(adminQuery.get("q") ?? "");
@@ -68,7 +69,7 @@ export function PlatformAdminSearch() {
   }, [adminQuery, q]);
 
   return (
-    <div className="relative w-full max-w-xl">
+    <div className={cn("relative w-full max-w-xl", className)}>
       <div className="flex items-center gap-1.5">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />

@@ -54,7 +54,7 @@ function TenantList() {
   const activeCount = items.filter(item => !item.disabled).length;
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
+    <div className="w-full space-y-5">
       <SettingsPanelHeader
         title="租户"
         description="跨组织运行状态、用户、会话和成本入口。"
@@ -140,7 +140,7 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
   const activeRuns = useMemo(() => runs.filter(run => ["pending", "running", "waiting_approval", "waiting_user", "waiting_hand"].includes(run.status)).length, [runs]);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
+    <div className="w-full space-y-5">
       <SettingsPanelHeader
         title={tenant?.name ?? tenantId}
         description={`租户详情 · ${tenantId}`}

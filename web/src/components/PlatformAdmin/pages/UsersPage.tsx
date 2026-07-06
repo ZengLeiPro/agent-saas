@@ -53,7 +53,7 @@ function UserList() {
   const tenantName = useMemo(() => new Map(tenants.map(tenant => [tenant.id, tenant.name])), [tenants]);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
+    <div className="w-full space-y-5">
       <SettingsPanelHeader
         title="用户"
         description="跨租户用户定位、会话与运行入口。"
@@ -152,7 +152,7 @@ function UserDetail({ userId }: { userId: string }) {
   const user = summary?.user;
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
+    <div className="w-full space-y-5">
       <SettingsPanelHeader
         title={user?.realName || user?.username || userId}
         description={`用户详情 · ${userId}`}

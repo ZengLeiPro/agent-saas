@@ -62,7 +62,7 @@ function SessionList() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
+    <div className="w-full space-y-5">
       <SettingsPanelHeader
         title="会话"
         description="runtime_sessions 投影表驱动的会话列表与详情。"
@@ -164,7 +164,7 @@ function SessionDetail({ sessionId }: { sessionId: string }) {
     : formatUsd(session?.totalCostUsd);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
+    <div className="w-full space-y-5">
       <SettingsPanelHeader
         title={session?.title || sessionId}
         description={`会话详情 · ${sessionId}`}

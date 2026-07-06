@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ScenarioItem, ScenarioLibraryResponse } from "@agent/shared";
 
 import { EmptyChatRecommendCards, pickRoleTop3 } from "./EmptyChatRecommendCards";
@@ -51,6 +51,21 @@ const salesScenario: ScenarioItem = {
   role: "sales",
 };
 
+const DEFAULT_VIEWPORT_HEIGHT = 768;
+
+function setViewportHeight(height: number) {
+  Object.defineProperty(window, "innerHeight", {
+    configurable: true,
+    writable: true,
+    value: height,
+  });
+}
+
+afterEach(() => {
+  mocked.library = null;
+  setViewportHeight(DEFAULT_VIEWPORT_HEIGHT);
+});
+
 describe("EmptyChatRecommendCards", () => {
   it("renders role-first recommendations and sanitizes customer-facing text", () => {
     const onTryScenario = vi.fn();
@@ -88,5 +103,34 @@ describe("EmptyChatRecommendCards", () => {
     );
 
     expect(picked.map((item) => item.id)).toEqual(["rec", "high", "low"]);
+  });
+
+  it("shows two rows on tall screens and falls back to one row when height is tight", async () => {
+    setViewportHeight(900);
+    mocked.library = {
+      roles: [{ id: "boss", name: "老板/总经理", sort: 1 }],
+      scenarios: Array.from({ length: 6 }, (_, index) => ({
+        ...bossScenario,
+        id: `boss-${index + 1}`,
+        title: `老板任务 ${index + 1}`,
+      })),
+    };
+
+    render(
+      <EmptyChatRecommendCards
+        onTryScenario={vi.fn()}
+        onViewAll={vi.fn()}
+        onOpenRoleDetail={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByText(/^老板任务 /)).toHaveLength(6);
+
+    setViewportHeight(760);
+    fireEvent.resize(window);
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/^老板任务 /)).toHaveLength(3);
+    });
   });
 });

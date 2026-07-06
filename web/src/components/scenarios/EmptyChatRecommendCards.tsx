@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { ArrowRight, Clock3, Layers3 } from "lucide-react";
 import {
   buildScenarioPrompt,
@@ -28,13 +29,38 @@ const ahaScore: Record<NonNullable<ScenarioItem["firstAhaMode"]>, number> = {
   voice_then_result: 1,
 };
 
+const COMPACT_RECOMMENDATION_COUNT = 3;
+const EXPANDED_RECOMMENDATION_COUNT = 6;
+const TWO_ROW_RECOMMENDATION_MIN_HEIGHT = 820;
+
 function safeScenario(scenario: ScenarioItem): ScenarioItem {
   return sanitizeScenario({ ...scenario }).scenario as ScenarioItem;
+}
+
+function getRecommendationCount(): number {
+  if (typeof window === "undefined") return COMPACT_RECOMMENDATION_COUNT;
+  return window.innerHeight >= TWO_ROW_RECOMMENDATION_MIN_HEIGHT
+    ? EXPANDED_RECOMMENDATION_COUNT
+    : COMPACT_RECOMMENDATION_COUNT;
+}
+
+function useRecommendationCount(): number {
+  const [count, setCount] = useState(getRecommendationCount);
+
+  useEffect(() => {
+    const sync = () => setCount(getRecommendationCount());
+    sync();
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
+
+  return count;
 }
 
 export function pickRoleTop3(
   scenarios: readonly ScenarioItem[],
   roleId: string | null,
+  count = COMPACT_RECOMMENDATION_COUNT,
 ): ScenarioItem[] {
   const candidates = roleId
     ? scenarios.filter((scenario) => scenario.role === roleId)
@@ -48,7 +74,7 @@ export function pickRoleTop3(
     if (depA !== depB) return depA - depB;
     return a.id.localeCompare(b.id);
   });
-  return sorted.slice(0, 3);
+  return sorted.slice(0, count);
 }
 
 function roleName(roles: ScenarioRole[], roleId: string | null): string {
@@ -63,6 +89,7 @@ export function EmptyChatRecommendCards({
 }: EmptyChatRecommendCardsProps) {
   const { library, loading, error } = useScenarioLibrary();
   const { user } = useAuth();
+  const recommendationCount = useRecommendationCount();
 
   if (loading || error || !library || library.scenarios.length === 0) return null;
 
@@ -70,10 +97,10 @@ export function EmptyChatRecommendCards({
     user?.preferences?.activeRoleId && library.roles.some((role) => role.id === user.preferences?.activeRoleId)
       ? user.preferences.activeRoleId
       : matchRoleIdByPosition(library.roles, user?.position);
-  const roleTop3 = pickRoleTop3(library.scenarios, matchedRoleId);
-  const recommended = roleTop3.length > 0
-    ? roleTop3
-    : pickRecommendedScenarios(library.scenarios, 3, matchedRoleId);
+  const roleTopScenarios = pickRoleTop3(library.scenarios, matchedRoleId, recommendationCount);
+  const recommended = roleTopScenarios.length > 0
+    ? roleTopScenarios
+    : pickRecommendedScenarios(library.scenarios, recommendationCount, matchedRoleId);
   const cards = recommended.map(safeScenario);
 
   return (

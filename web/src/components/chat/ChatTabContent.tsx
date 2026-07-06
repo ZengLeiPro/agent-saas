@@ -8,6 +8,7 @@ import type { AgentProfile, SessionParticipants } from "@agent/shared";
 import { MessageList } from "@/components/MessageList";
 import { FileUpload } from "@/components/FileUpload";
 import { ChatInput } from "@/components/ChatInput";
+import { TodoPanel } from "@/components/TodoPanel";
 
 interface ChatTabContentProps {
   messages: MessageItem[];
@@ -115,6 +116,7 @@ export function ChatTabContent({
           </div>
         ) : (
           <>
+            <TodoPanel messages={messages} sessionId={sessionId} />
             <FileUpload
               uploadedFiles={uploadedFiles}
               uploading={uploading}

@@ -247,6 +247,8 @@ export { mapSessionDetailToMessages } from "./lib/sessionsApi";
 export { searchSessions } from "./lib/searchApi";
 export type { SearchSessionsParams } from "./lib/searchApi";
 export { mergeServerMessagesWithLocalTail } from "./lib/sessionMerge";
+export { extractLatestTodos } from "./lib/extractTodos";
+export type { TodoItem, TodoStatus } from "./lib/extractTodos";
 
 // Lib - groups API
 export {

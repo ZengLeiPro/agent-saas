@@ -716,6 +716,159 @@ describe('SandboxManager', () => {
     }
   });
 
+  it('listSandboxInventory: annotates busy, stale image, TTL, and broken paused reason', async () => {
+    const activeRegistry = new ActiveSandboxRegistry();
+    const manager = new SandboxManager({
+      ...baseConfig(),
+      sandboxTtlMs: 60 * 60_000,
+    }, {
+      async run(args: string[]): Promise<KubectlResult> {
+        if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
+          return {
+            stdout: JSON.stringify({
+              items: [{
+                metadata: {
+                  name: 'as-broken',
+                  annotations: {
+                    'agent-saas.kaiyan.net/workspace-id': 'ws_kaiyan__u-1',
+                    'agent-saas.kaiyan.net/session-id': 'session-1',
+                    'agent-saas.kaiyan.net/sandbox-scope-id': 'ws_kaiyan__u-1',
+                    'agent-saas.kaiyan.net/created-at': '2026-07-06T00:00:00.000Z',
+                    'agent-saas.kaiyan.net/last-active-at': '2026-07-06T00:20:00.000Z',
+                  },
+                },
+                spec: {
+                  paused: false,
+                  template: {
+                    spec: {
+                      containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:old' }],
+                    },
+                  },
+                },
+                status: {
+                  phase: 'Paused',
+                  conditions: [{ type: 'SandboxPaused', reason: 'ImageChanged', status: 'False' }],
+                },
+              }],
+            }),
+            stderr: '',
+            exitCode: 0,
+            signal: null,
+          };
+        }
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl, noopLogger, activeRegistry);
+    const release = activeRegistry.acquire('as-broken', 'invocation-1');
+
+    try {
+      const result = await manager.listSandboxInventory({
+        now: new Date('2026-07-06T00:30:00.000Z'),
+      });
+
+      expect(result).toMatchObject([{
+        name: 'as-broken',
+        workspaceId: 'ws_kaiyan__u-1',
+        phase: 'Paused',
+        brokenReason: 'image_changed',
+        busy: true,
+        imageStale: true,
+        idleMs: 10 * 60_000,
+        effectiveTtlMs: 60 * 60_000,
+        ttlRemainingMs: 50 * 60_000,
+      }]);
+    } finally {
+      release();
+    }
+  });
+
+  it('manual pause/resume/delete reject active Sandboxes with 409-class errors', async () => {
+    const calls: string[][] = [];
+    const activeRegistry = new ActiveSandboxRegistry();
+    const release = activeRegistry.acquire('as-active', 'invocation-1');
+    const manager = new SandboxManager(baseConfig(), {
+      async run(args: string[]): Promise<KubectlResult> {
+        calls.push(args);
+        return { stdout: '', stderr: '', exitCode: 0, signal: null };
+      },
+    } as unknown as Kubectl, noopLogger, activeRegistry);
+
+    try {
+      await expect(manager.pauseByName('as-active')).rejects.toMatchObject({ statusCode: 409 });
+      await expect(manager.resumeByName('as-active')).rejects.toMatchObject({ statusCode: 409 });
+      await expect(manager.deleteByName('as-active')).rejects.toMatchObject({ statusCode: 409 });
+      expect(calls).toEqual([]);
+    } finally {
+      release();
+    }
+  });
+
+  it('resumeByName rebuilds the ref from Sandbox annotations and delegates to ensureRunning', async () => {
+    const calls: string[][] = [];
+    let phase = 'Paused';
+    const manager = new SandboxManager({
+      ...baseConfig(),
+      maxRunningSandboxes: 0,
+      sandboxWaitTimeoutMs: 50,
+    }, {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        calls.push(args);
+        if (args[0] === 'get' && args[1]?.startsWith('sandbox/')) {
+          return {
+            stdout: JSON.stringify({
+              metadata: {
+                name: args[1].slice('sandbox/'.length),
+                annotations: {
+                  'agent-saas.kaiyan.net/workspace-id': 'ws_kaiyan__u-1',
+                  'agent-saas.kaiyan.net/session-id': 'session-1',
+                  'agent-saas.kaiyan.net/sandbox-scope-id': 'ws_kaiyan__u-1',
+                  'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
+                },
+              },
+              spec: {
+                template: {
+                  spec: {
+                    containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:test' }],
+                  },
+                },
+              },
+              status: { phase },
+            }),
+            stderr: '',
+            exitCode: 0,
+            signal: null,
+          };
+        }
+        if (args[0] === 'apply') {
+          JSON.parse(options.input ?? '{}');
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'patch') {
+          if (args[1]?.startsWith('sandbox/')) phase = 'Running';
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl, noopLogger);
+    const expectedName = manager.ref({
+      workspaceId: 'ws_kaiyan__u-1',
+      sessionId: 'session-1',
+      sandboxScopeId: 'ws_kaiyan__u-1',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    }).name;
+
+    const ref = await manager.resumeByName(expectedName);
+
+    expect(ref).toMatchObject({
+      name: expectedName,
+      workspaceId: 'ws_kaiyan__u-1',
+      sessionId: 'session-1',
+      sandboxScopeId: 'ws_kaiyan__u-1',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    });
+    expect(calls.some((args) => args[0] === 'patch' && args[1] === `sandbox/${expectedName}` && String(args[4]).includes('"paused":false'))).toBe(true);
+  });
+
   it('prewarmStaleImagePausedSandboxes: 预热 Paused 旧镜像 sandbox，成功后保持 Running 到 idle pause', async () => {
     const calls: string[][] = [];
     const currentImage = 'registry.example.com/agent-saas/acs-sandbox:new-tag';

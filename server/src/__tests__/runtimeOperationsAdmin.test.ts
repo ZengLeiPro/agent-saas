@@ -216,4 +216,92 @@ describe('runtime operations admin router', () => {
       expect((await readJson(cleanup)).report.deleted).toEqual(['snat-1']);
     }, { fetchImpl });
   });
+
+  it('proxies ACS sandbox endpoints through a strict whitelist and annotates owners', async () => {
+    const calls: Array<{ url: string; method?: string }> = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), method: init?.method });
+      expect(init?.headers).toMatchObject({ authorization: 'Bearer secret-token-123' });
+      if (String(input) === 'http://acs-hand:3400/sandboxes') {
+        expect(init?.method).toBe('GET');
+        return new Response(JSON.stringify({
+          status: 'ok',
+          sandboxes: [
+            { name: 'as-ws-kaiyan-user-abc', workspaceId: 'ws_kaiyan__u-1', phase: 'Running' },
+            { name: 'as-network-probe', workspaceId: 'network-probe', phase: 'Paused' },
+          ],
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (String(input) === 'http://acs-hand:3400/sandboxes/as-ws-kaiyan-user-abc' && init?.method === 'GET') {
+        expect(init?.method).toBe('GET');
+        return new Response(JSON.stringify({ status: 'ok', name: 'as-ws-kaiyan-user-abc', sandbox: { status: { phase: 'Running' } } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (String(input) === 'http://acs-hand:3400/sandboxes/as-ws-kaiyan-user-abc/pause') {
+        expect(init?.method).toBe('POST');
+        return new Response(JSON.stringify({ status: 'ok', paused: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (String(input) === 'http://acs-hand:3400/sandboxes/as-ws-kaiyan-user-abc/resume') {
+        expect(init?.method).toBe('POST');
+        return new Response(JSON.stringify({ status: 'ok', resumed: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (String(input) === 'http://acs-hand:3400/sandboxes/as-ws-kaiyan-user-abc' && init?.method === 'DELETE') {
+        expect(init?.method).toBe('DELETE');
+        return new Response(JSON.stringify({ status: 'ok', deleted: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected fetch ${String(input)}`);
+    }) as typeof fetch;
+
+    await withApp(async ({ baseUrl }) => {
+      const list = await fetch(`${baseUrl}/api/admin/runtime-operations/acs/sandboxes`);
+      expect(list.status).toBe(200);
+      expect(await readJson(list)).toMatchObject({
+        status: 'ok',
+        sandboxes: [
+          { name: 'as-ws-kaiyan-user-abc', owner: { kind: 'user', tenantId: 'kaiyan', userId: 'u-1' } },
+          { name: 'as-network-probe', owner: { kind: 'system', tenantId: null, userId: null } },
+        ],
+      });
+
+      const detail = await fetch(`${baseUrl}/api/admin/runtime-operations/acs/sandboxes/as-ws-kaiyan-user-abc`);
+      expect(detail.status).toBe(200);
+      expect((await readJson(detail)).sandbox.status.phase).toBe('Running');
+
+      const pause = await fetch(`${baseUrl}/api/admin/runtime-operations/acs/sandboxes/as-ws-kaiyan-user-abc/pause`, { method: 'POST' });
+      expect(pause.status).toBe(200);
+      expect((await readJson(pause)).paused).toBe(true);
+
+      const resume = await fetch(`${baseUrl}/api/admin/runtime-operations/acs/sandboxes/as-ws-kaiyan-user-abc/resume`, { method: 'POST' });
+      expect(resume.status).toBe(200);
+      expect((await readJson(resume)).resumed).toBe(true);
+
+      const deleted = await fetch(`${baseUrl}/api/admin/runtime-operations/acs/sandboxes/as-ws-kaiyan-user-abc`, { method: 'DELETE' });
+      expect(deleted.status).toBe(200);
+      expect((await readJson(deleted)).deleted).toBe(true);
+    }, { fetchImpl });
+
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      'GET http://acs-hand:3400/sandboxes',
+      'GET http://acs-hand:3400/sandboxes/as-ws-kaiyan-user-abc',
+      'POST http://acs-hand:3400/sandboxes/as-ws-kaiyan-user-abc/pause',
+      'POST http://acs-hand:3400/sandboxes/as-ws-kaiyan-user-abc/resume',
+      'DELETE http://acs-hand:3400/sandboxes/as-ws-kaiyan-user-abc',
+    ]);
+  });
+
+  it('rejects invalid ACS sandbox names before proxying', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}')) as typeof fetch;
+
+    await withApp(async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/api/admin/runtime-operations/acs/sandboxes/AS-UPPERCASE`, {
+        method: 'DELETE',
+      });
+      expect(response.status).toBe(400);
+      expect(await readJson(response)).toMatchObject({ status: 'error', error: 'invalid sandbox name' });
+    }, { fetchImpl });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });

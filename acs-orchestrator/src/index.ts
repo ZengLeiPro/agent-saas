@@ -19,7 +19,13 @@ import {
   parseWireRequest,
 } from './protocol.js';
 import { Provisioner } from './provision.js';
-import { SandboxManager } from './sandboxManager.js';
+import {
+  SandboxBusyError,
+  SandboxInvalidStateError,
+  SandboxManager,
+  SandboxNotFoundError,
+  brokenPausedStateReason,
+} from './sandboxManager.js';
 import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 
 const config = loadConfigFromEnv();
@@ -87,6 +93,12 @@ const server = createServer((req, res) => {
 
   if (req.url === '/snat/cleanup-orphans') {
     void handleSnatCleanup(req, res);
+    return;
+  }
+
+  const sandboxRoute = matchSandboxRoute(req.url);
+  if (sandboxRoute) {
+    void handleSandboxRoute(req, res, sandboxRoute);
     return;
   }
 
@@ -355,6 +367,87 @@ async function handleSnatCleanup(req: IncomingMessage, res: ServerResponse): Pro
   } catch (err) {
     return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+type SandboxRoute =
+  | { kind: 'list' }
+  | { kind: 'name'; rawName: string; action?: 'pause' | 'resume' };
+
+const SANDBOX_NAME_PATTERN = /^as-[a-z0-9-]{1,60}$/;
+
+function matchSandboxRoute(rawUrl: string | undefined): SandboxRoute | null {
+  const path = (rawUrl ?? '').split(/[?#]/)[0] ?? '';
+  if (path === '/sandboxes') return { kind: 'list' };
+  const match = /^\/sandboxes\/([^/]+)(?:\/(pause|resume))?$/.exec(path);
+  if (!match) return null;
+  return {
+    kind: 'name',
+    rawName: match[1]!,
+    ...(match[2] ? { action: match[2] as 'pause' | 'resume' } : {}),
+  };
+}
+
+function decodeSandboxName(rawName: string): string | null {
+  try {
+    const name = decodeURIComponent(rawName);
+    return SANDBOX_NAME_PATTERN.test(name) ? name : null;
+  } catch {
+    return null;
+  }
+}
+
+async function handleSandboxRoute(req: IncomingMessage, res: ServerResponse, route: SandboxRoute): Promise<void> {
+  if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
+  if (route.kind === 'list') {
+    if (req.method !== 'GET') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use GET' });
+    try {
+      const sandboxes = await sandboxManager.listSandboxInventory({ busySandboxNames: activeBusySandboxNames() });
+      return sendJson(res, 200, { status: 'ok', sandboxes });
+    } catch (err) {
+      return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  const name = decodeSandboxName(route.rawName);
+  if (!name) return sendJson(res, 400, { status: 'error', error: 'invalid sandbox name' });
+
+  try {
+    if (route.action === 'pause') {
+      if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+      await sandboxManager.pauseByName(name, { busySandboxNames: activeBusySandboxNames() });
+      return sendJson(res, 200, { status: 'ok', name, paused: true });
+    }
+    if (route.action === 'resume') {
+      if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+      const ref = await sandboxManager.resumeByName(name, { busySandboxNames: activeBusySandboxNames() });
+      return sendJson(res, 200, { status: 'ok', name, resumed: true, ref });
+    }
+    if (req.method === 'GET') {
+      const sandbox = await sandboxManager.getStatus(name);
+      if (!sandbox) return sendJson(res, 404, { status: 'error', error: 'sandbox not found' });
+      return sendJson(res, 200, {
+        status: 'ok',
+        name,
+        phase: sandbox.phase ?? null,
+        brokenReason: brokenPausedStateReason(sandbox) ?? null,
+        sandbox: sandbox.raw,
+      });
+    }
+    if (req.method === 'DELETE') {
+      await sandboxManager.deleteByName(name, { busySandboxNames: activeBusySandboxNames() });
+      return sendJson(res, 200, { status: 'ok', name, deleted: true });
+    }
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use GET or DELETE' });
+  } catch (err) {
+    return sendSandboxError(res, err);
+  }
+}
+
+function sendSandboxError(res: ServerResponse, err: unknown): void {
+  if (err instanceof SandboxBusyError) return sendJson(res, 409, { status: 'error', error: err.message });
+  if (err instanceof SandboxNotFoundError) return sendJson(res, 404, { status: 'error', error: err.message });
+  if (err instanceof SandboxInvalidStateError) return sendJson(res, 400, { status: 'error', error: err.message });
+  return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
 }
 
 async function handleProvision(req: IncomingMessage, res: ServerResponse): Promise<void> {

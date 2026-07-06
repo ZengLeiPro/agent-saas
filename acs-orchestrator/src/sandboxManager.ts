@@ -10,7 +10,7 @@ import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandbo
 import { SnatManager, type SnatCleanupReport, type SnatStatus } from './snatManager.js';
 import type { NetworkPolicyStatus } from 'server/runtime/networkPolicy.js';
 
-interface SandboxStatus {
+export interface SandboxStatus {
   phase?: string;
   raw?: Record<string, unknown>;
 }
@@ -27,12 +27,21 @@ export interface ManagedSandbox {
   sandboxScopeId?: string;
   mountSubPath?: string;
   phase?: string;
+  brokenReason?: string;
   createdAt?: string;
   lastActiveAt?: string;
   /**
    * 当前 sandbox spec 里 podTemplate 主容器的 image tag，用于 image drift 判定。
    */
   image?: string;
+}
+
+export interface ManagedSandboxInventory extends ManagedSandbox {
+  busy: boolean;
+  imageStale: boolean;
+  idleMs?: number;
+  ttlRemainingMs?: number;
+  effectiveTtlMs?: number;
 }
 
 export interface SandboxRef {
@@ -71,6 +80,18 @@ export interface SandboxInventorySummary {
   pausedCount: number;
   oldestCreatedAt?: string;
   newestLastActiveAt?: string;
+}
+
+export class SandboxBusyError extends Error {
+  readonly statusCode = 409;
+}
+
+export class SandboxNotFoundError extends Error {
+  readonly statusCode = 404;
+}
+
+export class SandboxInvalidStateError extends Error {
+  readonly statusCode = 400;
 }
 
 const MANAGED_BY_LABEL = 'agent-saas-acs-orchestrator';
@@ -132,7 +153,7 @@ export class SandboxManager {
       await timing.step('waitPrewarm', () => this.waitForPrewarm(ref.name));
       await timing.step('ensureHostWorkspace', () => this.ensureHostWorkspace(ref));
       let existing = await timing.step('getStatus', () => this.getStatus(ref.name));
-      const brokenPausedState = existing ? this.brokenPausedStateReason(existing) : undefined;
+      const brokenPausedState = existing ? brokenPausedStateReason(existing) : undefined;
       if (existing && brokenPausedState) {
         path = `recreate_broken_paused_${brokenPausedState}`;
         this.assertNotBusyForRecreate(ref, options.busySandboxNames, brokenPausedState, options.activeKey);
@@ -300,6 +321,7 @@ export class SandboxManager {
       const annotations = metadata.annotations && typeof metadata.annotations === 'object' ? metadata.annotations as Record<string, unknown> : {};
       const labels = metadata.labels && typeof metadata.labels === 'object' ? metadata.labels as Record<string, unknown> : {};
       const status = item.status && typeof item.status === 'object' ? item.status as Record<string, unknown> : {};
+      const phase = stringValue(status.phase);
       // 从 spec.template.spec.containers[主容器].image 里抽出 image tag，
       // 用于 Paused 旧镜像预热和 inventory 统计。找不到主容器时留 undefined。
       const spec = item.spec && typeof item.spec === 'object' ? item.spec as Record<string, unknown> : {};
@@ -317,12 +339,63 @@ export class SandboxManager {
         sessionId: stringValue(annotations[SESSION_ANNOTATION]) ?? stringValue(labels[SESSION_LABEL]),
         sandboxScopeId: stringValue(annotations[SANDBOX_SCOPE_ANNOTATION]) ?? stringValue(labels[SANDBOX_SCOPE_LABEL]),
         mountSubPath: stringValue(annotations[MOUNT_SUBPATH_ANNOTATION]),
-        phase: stringValue(status.phase),
+        phase,
+        ...optionalString('brokenReason', brokenPausedStateReason({ phase, raw: item })),
         createdAt: stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
         lastActiveAt: stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]) ?? stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
         image: primaryContainer ? stringValue(primaryContainer.image) : undefined,
       };
     }).filter((sandbox) => sandbox.name);
+  }
+
+  async listSandboxInventory(input: {
+    busySandboxNames?: Set<string>;
+    now?: Date;
+  } = {}): Promise<ManagedSandboxInventory[]> {
+    const nowMs = (input.now ?? new Date()).getTime();
+    return (await this.listManagedSandboxes()).map((sandbox) => {
+      const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt);
+      const idleMs = lastActiveAtMs === undefined ? undefined : Math.max(0, nowMs - lastActiveAtMs);
+      const effectiveTtlMs = this.effectiveTtlMs(sandbox.name);
+      const ttlRemainingMs = idleMs === undefined || effectiveTtlMs <= 0
+        ? undefined
+        : Math.max(0, effectiveTtlMs - idleMs);
+      return {
+        ...sandbox,
+        busy: this.isBusy(sandbox.name, input.busySandboxNames),
+        imageStale: Boolean(sandbox.image && sandbox.image !== this.config.sandboxImage),
+        ...(idleMs === undefined ? {} : { idleMs }),
+        ...(effectiveTtlMs > 0 ? { effectiveTtlMs } : {}),
+        ...(ttlRemainingMs === undefined ? {} : { ttlRemainingMs }),
+      };
+    });
+  }
+
+  async pauseByName(name: string, input: { busySandboxNames?: Set<string> } = {}): Promise<void> {
+    this.assertIdleByName(name, 'pause', input.busySandboxNames);
+    await this.patchPaused(name, true);
+  }
+
+  async resumeByName(name: string, input: { busySandboxNames?: Set<string> } = {}): Promise<SandboxRef> {
+    this.assertIdleByName(name, 'resume', input.busySandboxNames);
+    const status = await this.getStatus(name);
+    if (!status) throw new SandboxNotFoundError(`ACS Sandbox ${name} not found`);
+    const ref = this.refFromStatus(name, status);
+    return await this.ensureRunning({
+      workspaceId: ref.workspaceId,
+      sessionId: ref.sessionId,
+      sandboxScopeId: ref.sandboxScopeId,
+      mountSubPath: ref.mountSubPath,
+    }, { busySandboxNames: input.busySandboxNames });
+  }
+
+  async deleteByName(name: string, input: { busySandboxNames?: Set<string> } = {}): Promise<void> {
+    this.assertIdleByName(name, 'delete', input.busySandboxNames);
+    await this.kubectl.run(['delete', this.resourceName(name), '--ignore-not-found=true'], {
+      timeoutMs: this.config.sandboxWaitTimeoutMs,
+    });
+    await this.networkPolicyManager.deleteForSandboxName(name);
+    await this.snatManager.deleteForSandboxName(name);
   }
 
   async prewarmStaleImagePausedSandboxes(input: {
@@ -741,7 +814,37 @@ export class SandboxManager {
 
   private assertIdle(name: string, reason: string, activeKey?: string): void {
     if (!this.activeRegistry?.isBusy(name, { exceptKey: activeKey })) return;
-    throw new Error(`ACS Sandbox ${name} is busy; refuse to ${reason} while active`);
+    throw new SandboxBusyError(`ACS Sandbox ${name} is busy; refuse to ${reason} while active`);
+  }
+
+  private assertIdleByName(name: string, reason: string, busySandboxNames?: Set<string>, activeKey?: string): void {
+    if (!this.isBusy(name, busySandboxNames, activeKey)) return;
+    throw new SandboxBusyError(`ACS Sandbox ${name} is busy; refuse to ${reason} while active`);
+  }
+
+  private effectiveTtlMs(name: string): number {
+    return isCiSandboxName(name) && this.config.sandboxCiTtlMs > 0
+      ? this.config.sandboxCiTtlMs
+      : this.config.sandboxTtlMs;
+  }
+
+  private refFromStatus(name: string, status: SandboxStatus): SandboxRef {
+    const raw = status.raw ?? {};
+    const metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata as Record<string, unknown> : {};
+    const annotations = metadata.annotations && typeof metadata.annotations === 'object' ? metadata.annotations as Record<string, unknown> : {};
+    const labels = metadata.labels && typeof metadata.labels === 'object' ? metadata.labels as Record<string, unknown> : {};
+    const workspaceId = stringValue(annotations[WORKSPACE_ANNOTATION]) ?? stringValue(labels[WORKSPACE_LABEL]);
+    const sessionId = stringValue(annotations[SESSION_ANNOTATION]) ?? stringValue(labels[SESSION_LABEL]);
+    const sandboxScopeId = stringValue(annotations[SANDBOX_SCOPE_ANNOTATION]) ?? stringValue(labels[SANDBOX_SCOPE_LABEL]);
+    const mountSubPath = stringValue(annotations[MOUNT_SUBPATH_ANNOTATION]) ?? workspaceId;
+    if (!workspaceId || !sessionId || !mountSubPath) {
+      throw new SandboxInvalidStateError(`ACS Sandbox ${name} missing workspace/session annotations`);
+    }
+    const ref = this.ref({ workspaceId, sessionId, sandboxScopeId, mountSubPath });
+    if (ref.name !== name) {
+      throw new SandboxInvalidStateError(`ACS Sandbox ${name} annotations resolve to ${ref.name}`);
+    }
+    return ref;
   }
 
   private async waitForRunningAndEnsureSnat(ref: SandboxRef, timing: EnsureTiming): Promise<void> {
@@ -918,29 +1021,6 @@ export class SandboxManager {
     return container ? stringValue(container.image) : undefined;
   }
 
-  private brokenPausedStateReason(status: SandboxStatus): string | undefined {
-    if (status.phase !== 'Paused') return undefined;
-    const raw = status.raw ?? {};
-    const spec = raw.spec && typeof raw.spec === 'object' ? raw.spec as Record<string, unknown> : {};
-    const statusBody = raw.status && typeof raw.status === 'object' ? raw.status as Record<string, unknown> : {};
-    const podInfo = statusBody.podInfo && typeof statusBody.podInfo === 'object' ? statusBody.podInfo as Record<string, unknown> : {};
-    const podAnnotations = podInfo.annotations && typeof podInfo.annotations === 'object' ? podInfo.annotations as Record<string, unknown> : {};
-    const conditions = Array.isArray(statusBody.conditions) ? statusBody.conditions : [];
-    const pausedCondition = conditions.find((condition): condition is Record<string, unknown> => (
-      Boolean(condition)
-      && typeof condition === 'object'
-      && (condition as Record<string, unknown>).type === 'SandboxPaused'
-    ));
-    const pausedReason = stringValue(pausedCondition?.reason);
-    const pausedStatus = stringValue(pausedCondition?.status);
-    const recreating = stringValue(podAnnotations['ops.alibabacloud.com/recreating']) === 'true';
-    const requestedRunning = spec.paused === false;
-
-    if (pausedReason === 'ImageChanged' && pausedStatus === 'False') return 'image_changed';
-    if (recreating) return 'recreating';
-    if (requestedRunning) return 'requested_running';
-    return undefined;
-  }
 }
 
 /**
@@ -962,6 +1042,10 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined;
 }
 
+function optionalString<K extends string>(key: K, value: string | undefined): Partial<Record<K, string>> {
+  return value === undefined ? {} : { [key]: value } as Partial<Record<K, string>>;
+}
+
 function normalizeMountSubPath(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new Error('mountSubPath must not be empty');
@@ -977,6 +1061,30 @@ function parseDateMs(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function brokenPausedStateReason(status: SandboxStatus): string | undefined {
+  if (status.phase !== 'Paused') return undefined;
+  const raw = status.raw ?? {};
+  const spec = raw.spec && typeof raw.spec === 'object' ? raw.spec as Record<string, unknown> : {};
+  const statusBody = raw.status && typeof raw.status === 'object' ? raw.status as Record<string, unknown> : {};
+  const podInfo = statusBody.podInfo && typeof statusBody.podInfo === 'object' ? statusBody.podInfo as Record<string, unknown> : {};
+  const podAnnotations = podInfo.annotations && typeof podInfo.annotations === 'object' ? podInfo.annotations as Record<string, unknown> : {};
+  const conditions = Array.isArray(statusBody.conditions) ? statusBody.conditions : [];
+  const pausedCondition = conditions.find((condition): condition is Record<string, unknown> => (
+    Boolean(condition)
+    && typeof condition === 'object'
+    && (condition as Record<string, unknown>).type === 'SandboxPaused'
+  ));
+  const pausedReason = stringValue(pausedCondition?.reason);
+  const pausedStatus = stringValue(pausedCondition?.status);
+  const recreating = stringValue(podAnnotations['ops.alibabacloud.com/recreating']) === 'true';
+  const requestedRunning = spec.paused === false;
+
+  if (pausedReason === 'ImageChanged' && pausedStatus === 'False') return 'image_changed';
+  if (recreating) return 'recreating';
+  if (requestedRunning) return 'requested_running';
+  return undefined;
 }
 
 function isRunningCostPhase(phase: string | undefined): boolean {

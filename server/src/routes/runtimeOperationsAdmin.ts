@@ -9,6 +9,7 @@ import {
   probeTenantRemoteHandHealth,
   sanitizeTenantRemoteHands,
 } from './tenantRemoteHandsAdmin.js';
+import { parseWorkspaceId } from '../runtime/workspaceIdentity.js';
 
 const { Client } = pg;
 
@@ -58,7 +59,7 @@ async function requestAcsOrchestrator(args: {
   fetchImpl: typeof fetch;
   timeoutMs: number;
   path: string;
-  method: 'GET' | 'PATCH' | 'POST';
+  method: 'GET' | 'PATCH' | 'POST' | 'DELETE';
   body?: unknown;
 }): Promise<{ status: number; body: unknown }> {
   const hand = findAcsHand(args.config);
@@ -91,6 +92,35 @@ async function requestAcsOrchestrator(args: {
   } finally {
     clearTimeout(timer);
   }
+}
+
+const ACS_SANDBOX_NAME_PATTERN = /^as-[a-z0-9-]{1,60}$/;
+
+function validateAcsSandboxName(name: string): string | null {
+  return ACS_SANDBOX_NAME_PATTERN.test(name) ? name : null;
+}
+
+function attachSandboxOwners(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || !('sandboxes' in body)) return body;
+  const sandboxes = (body as { sandboxes?: unknown }).sandboxes;
+  if (!Array.isArray(sandboxes)) return body;
+  return {
+    ...(body as Record<string, unknown>),
+    sandboxes: sandboxes.map((sandbox) => attachSandboxOwner(sandbox)),
+  };
+}
+
+function attachSandboxOwner(sandbox: unknown): unknown {
+  if (!sandbox || typeof sandbox !== 'object') return sandbox;
+  const record = sandbox as Record<string, unknown>;
+  const workspaceId = typeof record.workspaceId === 'string' ? record.workspaceId : undefined;
+  const parsed = parseWorkspaceId(workspaceId);
+  return {
+    ...record,
+    owner: parsed
+      ? { kind: 'user', tenantId: parsed.tenantId, userId: parsed.userId }
+      : { kind: 'system', tenantId: null, userId: null },
+  };
 }
 
 async function queryRuntimePg(config: AppConfig) {
@@ -337,6 +367,76 @@ export function createRuntimeOperationsAdminRouter(
       path: '/snat/cleanup-orphans',
       method: 'POST',
       body: {},
+    });
+    res.status(result.status).json(result.body);
+  });
+
+  router.get('/acs/sandboxes', async (_req, res) => {
+    const result = await requestAcsOrchestrator({
+      config: options.config,
+      secretVault: options.secretVault,
+      fetchImpl,
+      timeoutMs: healthTimeoutMs,
+      path: '/sandboxes',
+      method: 'GET',
+    });
+    res.status(result.status).json(attachSandboxOwners(result.body));
+  });
+
+  router.get('/acs/sandboxes/:name', async (req, res) => {
+    const name = validateAcsSandboxName(req.params.name);
+    if (!name) return res.status(400).json({ status: 'error', error: 'invalid sandbox name' });
+    const result = await requestAcsOrchestrator({
+      config: options.config,
+      secretVault: options.secretVault,
+      fetchImpl,
+      timeoutMs: healthTimeoutMs,
+      path: `/sandboxes/${encodeURIComponent(name)}`,
+      method: 'GET',
+    });
+    res.status(result.status).json(result.body);
+  });
+
+  router.post('/acs/sandboxes/:name/pause', async (req, res) => {
+    const name = validateAcsSandboxName(req.params.name);
+    if (!name) return res.status(400).json({ status: 'error', error: 'invalid sandbox name' });
+    const result = await requestAcsOrchestrator({
+      config: options.config,
+      secretVault: options.secretVault,
+      fetchImpl,
+      timeoutMs: healthTimeoutMs,
+      path: `/sandboxes/${encodeURIComponent(name)}/pause`,
+      method: 'POST',
+      body: {},
+    });
+    res.status(result.status).json(result.body);
+  });
+
+  router.post('/acs/sandboxes/:name/resume', async (req, res) => {
+    const name = validateAcsSandboxName(req.params.name);
+    if (!name) return res.status(400).json({ status: 'error', error: 'invalid sandbox name' });
+    const result = await requestAcsOrchestrator({
+      config: options.config,
+      secretVault: options.secretVault,
+      fetchImpl,
+      timeoutMs: Math.max(healthTimeoutMs, 90_000),
+      path: `/sandboxes/${encodeURIComponent(name)}/resume`,
+      method: 'POST',
+      body: {},
+    });
+    res.status(result.status).json(result.body);
+  });
+
+  router.delete('/acs/sandboxes/:name', async (req, res) => {
+    const name = validateAcsSandboxName(req.params.name);
+    if (!name) return res.status(400).json({ status: 'error', error: 'invalid sandbox name' });
+    const result = await requestAcsOrchestrator({
+      config: options.config,
+      secretVault: options.secretVault,
+      fetchImpl,
+      timeoutMs: Math.max(healthTimeoutMs, 30_000),
+      path: `/sandboxes/${encodeURIComponent(name)}`,
+      method: 'DELETE',
     });
     res.status(result.status).json(result.body);
   });

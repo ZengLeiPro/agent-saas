@@ -133,6 +133,12 @@ const COMPACTION_REQUEST_PROMPT = [
  */
 const COMPACT_COMMAND_MODEL_CONTENT = '[系统命令] 用户请求压缩会话上下文（/compact）。这是平台指令，无需回应此消息本身。';
 
+const THINKING_ONLY_CONTINUATION_PROMPT = [
+  'Your previous assistant turn produced hidden reasoning only, with no user-visible content and no tool call.',
+  'Continue now from that reasoning. You must either call the next appropriate tool or provide the final user-visible answer.',
+  'Do not repeat hidden reasoning.',
+].join('\n');
+
 /** 压缩段（保留窗口之前）投影后少于这个消息数不值得压缩，直接回复无需压缩 */
 const MIN_COMPACTABLE_MESSAGES = 4;
 
@@ -417,6 +423,7 @@ export class RawAgentLoop implements AgentLoop {
     let totalUsage: ModelUsage | undefined;
     let finalText = '';
     let turn = 0;
+    let thinkingOnlyContinuationUsed = false;
 
     // RFC v1 P0.4：跨 run 接力 Responses API session state。
     // 启动时查上一已完成 run 的 last_response_id（72h 内未过期），赋给本 run。
@@ -519,6 +526,13 @@ export class RawAgentLoop implements AgentLoop {
           }
           const assistantContent = completed.content || turnText;
           if (!assistantContent) {
+            if (turnThinking && !thinkingOnlyContinuationUsed) {
+              thinkingOnlyContinuationUsed = true;
+              messages.push({ role: 'user', content: THINKING_ONLY_CONTINUATION_PROMPT });
+              if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
+              logger.warn(`[run] thinking-only empty turn recovered session=${context.sessionId} turn=${turn}`);
+              continue;
+            }
             throw new Error(
               `model returned empty turn (no content, no tool_calls, finish_reason=${
                 completed.finishReason ?? 'unknown'
@@ -1746,6 +1760,7 @@ export class RawAgentLoop implements AgentLoop {
     let totalUsage: ModelUsage | undefined;
     let finalText = '';
     let turn = 0;
+    let thinkingOnlyContinuationUsed = false;
     const contextUsageTracker = new RuntimeContextUsageTracker(args.context.model, args.priorEvents);
 
     // RFC v1 P0.4：resume 路径同样接力 Responses API session state。
@@ -1844,17 +1859,29 @@ export class RawAgentLoop implements AgentLoop {
             yield { type: 'text_delta', content: completed.content };
           }
           const assistantContent = completed.content || turnText;
-          if (assistantContent) {
-            await this.append({
-              type: 'assistant_message',
-              runId: args.context.runId,
-              sessionId: args.context.sessionId,
-              content: assistantContent,
-              model: args.context.model,
-              ...(completed.usage ? { usage: completed.usage } : {}),
-              ...(textStarted ? { streamed: true } : {}),
-            });
+          if (!assistantContent) {
+            if (turnThinking && !thinkingOnlyContinuationUsed) {
+              thinkingOnlyContinuationUsed = true;
+              args.messages.push({ role: 'user', content: THINKING_ONLY_CONTINUATION_PROMPT });
+              if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
+              logger.warn(`[resume] thinking-only empty turn recovered session=${args.context.sessionId} turn=${turn}`);
+              continue;
+            }
+            throw new Error(
+              `model returned empty turn (no content, no tool_calls, finish_reason=${
+                completed.finishReason ?? 'unknown'
+              }${turnThinking ? ', thinking-only' : ''})`,
+            );
           }
+          await this.append({
+            type: 'assistant_message',
+            runId: args.context.runId,
+            sessionId: args.context.sessionId,
+            content: assistantContent,
+            model: args.context.model,
+            ...(completed.usage ? { usage: completed.usage } : {}),
+            ...(textStarted ? { streamed: true } : {}),
+          });
           if (textStarted) {
             yield { type: 'text_end' };
           }

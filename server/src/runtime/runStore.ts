@@ -98,6 +98,16 @@ export interface LatestResponseSessionState {
   cumulativeInputTokens?: number;
 }
 
+export interface ActiveRunCounts {
+  pending: number;
+  running: number;
+  waitingApproval: number;
+  waitingUser: number;
+  waitingHand: number;
+  blocking: number;
+  total: number;
+}
+
 export interface RunStore {
   init?(): Promise<void>;
   upsertPending(input: UpsertRunInput): Promise<RunRecord>;
@@ -105,6 +115,7 @@ export interface RunStore {
   get(runId: string): Promise<RunRecord | null>;
   findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
   getActiveBySession?(sessionId: string): Promise<RunRecord | null>;
+  getActiveCounts?(): Promise<ActiveRunCounts>;
   listBySession?(sessionId: string, options?: { limit?: number; beforeUpdatedAt?: string }): Promise<RunRecord[]>;
   listRecoverable(now?: Date): Promise<RunRecord[]>;
   listStaleWaitingApproval?(cutoff: Date, limit?: number): Promise<RunRecord[]>;
@@ -293,6 +304,40 @@ export class PgRunStore implements RunStore {
       LIMIT 1
     `, [sessionId]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+  }
+
+  async getActiveCounts(): Promise<ActiveRunCounts> {
+    const result = await this.pool.query<{
+      pending: string | number | null;
+      running: string | number | null;
+      waiting_approval: string | number | null;
+      waiting_user: string | number | null;
+      waiting_hand: string | number | null;
+    }>(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+        COUNT(*) FILTER (WHERE status = 'running') AS running,
+        COUNT(*) FILTER (WHERE status = 'waiting_approval') AS waiting_approval,
+        COUNT(*) FILTER (WHERE status = 'waiting_user') AS waiting_user,
+        COUNT(*) FILTER (WHERE status = 'waiting_hand') AS waiting_hand
+      FROM ${this.runsTable}
+      WHERE status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+    `);
+    const row = result.rows[0];
+    const pending = parseCount(row?.pending);
+    const running = parseCount(row?.running);
+    const waitingApproval = parseCount(row?.waiting_approval);
+    const waitingUser = parseCount(row?.waiting_user);
+    const waitingHand = parseCount(row?.waiting_hand);
+    return {
+      pending,
+      running,
+      waitingApproval,
+      waitingUser,
+      waitingHand,
+      blocking: pending + running,
+      total: pending + running + waitingApproval + waitingUser + waitingHand,
+    };
   }
 
   async listBySession(sessionId: string, options: { limit?: number; beforeUpdatedAt?: string } = {}): Promise<RunRecord[]> {
@@ -513,6 +558,12 @@ export class PgRunStore implements RunStore {
 function sanitizeIdentifier(value: string): string {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) throw new Error(`非法 PG tablePrefix: ${value}`);
   return value;
+}
+
+function parseCount(value: string | number | null | undefined): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
+  return 0;
 }
 
 function normalizeRunRecord(raw: any): RunRecord {

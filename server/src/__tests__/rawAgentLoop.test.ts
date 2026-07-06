@@ -260,6 +260,35 @@ class ThinkingTextAdapter implements ModelAdapter {
   }
 }
 
+class ThinkingOnlyThenTextAdapter implements ModelAdapter {
+  calls = 0;
+  requests: ModelRequest[] = [];
+
+  async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    this.requests.push(request);
+    if (this.calls === 1) {
+      yield { type: 'thinking_delta', content: '已经想好下一步。' };
+      yield {
+        type: 'completed',
+        content: '',
+        toolCalls: [],
+        finishReason: 'stop',
+        usage: { inputTokens: 10, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      };
+      return;
+    }
+    yield { type: 'text_delta', content: '继续完成' };
+    yield {
+      type: 'completed',
+      content: '继续完成',
+      toolCalls: [],
+      finishReason: 'stop',
+      usage: { inputTokens: 3, outputTokens: 2, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+    };
+  }
+}
+
 class FailingAuditToolRuntime implements ToolRuntime {
   list(): ToolDescriptor[] {
     return [writeFileToolDescriptor];
@@ -909,6 +938,57 @@ describe('RawAgentLoop', () => {
     expect(transcript).toContain('"type":"thinking"');
     expect(transcript).toContain('"thinking":"先判断需求。再给结论。"');
     expect(transcript).toContain('"text":"完成"');
+  });
+
+  it('recovers one thinking-only empty turn with a hidden continuation prompt', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-thinking-only-'));
+    cleanupDirs.add(cwd);
+    const eventPath = join(cwd, 'session.runtime-events.jsonl');
+    const transcriptPath = join(cwd, 'session.jsonl');
+    const eventStore = new FileEventStore(eventPath);
+    const adapter = new ThinkingOnlyThenTextAdapter();
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-thinking-only'),
+      transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
+      toolRuntime: new PlatformToolRuntime(),
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '继续' },
+        prompt: '继续',
+        instructions: '正常回答。',
+        maxTurns: 2,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-thinking-only',
+        sessionId: 'session-thinking-only',
+        model: 'glm-5.2',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+      },
+    ));
+
+    expect(events.at(-1)).toEqual({ type: 'done' });
+    expect(adapter.calls).toBe(2);
+    expect(adapter.requests[1]?.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: expect.stringContaining('hidden reasoning only'),
+    });
+
+    const runtimeEvents = await eventStore.list('session-thinking-only');
+    expect(runtimeEvents.filter((event) => event.type === 'assistant_thinking')).toHaveLength(1);
+    expect(runtimeEvents.filter((event) => event.type === 'assistant_message')).toHaveLength(1);
+    expect(runtimeEvents.find((event) => event.type === 'assistant_message')).toMatchObject({
+      content: '继续完成',
+    });
+    expect(runtimeEvents.filter((event) => event.type === 'user_message')).toHaveLength(1);
   });
 
   it('resumes a pending approval from approval and runtime event logs after runtime rebuild', async () => {

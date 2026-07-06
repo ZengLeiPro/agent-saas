@@ -143,6 +143,7 @@ jobs:
           RELEASE_DIR="$RELEASES_DIR/$RELEASE_ID"
           DATA_DIR="/mnt/agent-saas/server-data"
           HEALTHZ_URL="http://127.0.0.1:3200/api/healthz"
+          DRAINZ_URL="http://127.0.0.1:3200/api/healthz/drain"
 
           mkdir -p "$RELEASES_DIR" "$DATA_DIR"
           if [ -e "$RELEASE_DIR" ]; then
@@ -169,17 +170,50 @@ jobs:
             curl -fsS -m 5 "$HEALTHZ_URL" >/dev/null 2>&1
           }
 
-          # ── 等待空闲窗口：活跃 run 流清零后再切换（等待期间旧版本照常服务，零影响）──
-          # healthz 返回 {"activeStreams":N,...}；最多等 6 分钟，超时打日志强切
-          echo "Waiting for idle window (activeStreams=0, up to 360s)..."
+          read_drain_status() {
+            local body
+            body=$(curl -sS -m 5 "$DRAINZ_URL" 2>/dev/null || true)
+            if [ -z "$body" ]; then
+              return 1
+            fi
+            node -e '
+              const body = process.argv[1];
+              let data;
+              try {
+                data = JSON.parse(body);
+              } catch {
+                process.exit(2);
+              }
+              const activeStreams = Number(data.activeStreams ?? 0);
+              const blockingRuns = Number(data.activeRuns?.blocking ?? 0);
+              const totalRuns = Number(data.activeRuns?.total ?? 0);
+              const idle = data.idle === true;
+              console.log(`${idle ? "idle" : "busy"} ${activeStreams} ${blockingRuns} ${totalRuns} ${data.status ?? "unknown"}`);
+            ' "$body"
+          }
+
+          # ── 等待空闲窗口：Web stream + durable active run 清零后再切换（等待期间旧版本照常服务）──
+          # 首次发布该修复时，旧生产没有 /healthz/drain，走 bootstrap fallback；之后发布严格按 JSON 守门。
+          echo "Waiting for idle window (activeStreams=0, activeRuns.blocking=0, up to 360s)..."
           IDLE_WAITED=0
           while [ "$IDLE_WAITED" -lt 360 ]; do
-            ACTIVE=$(curl -fsS -m 5 "$HEALTHZ_URL" 2>/dev/null | grep -o '"activeStreams":[0-9]*' | cut -d: -f2 || echo "")
-            if [ -z "$ACTIVE" ] || [ "$ACTIVE" = "0" ]; then
+            DRAIN_STATUS=$(read_drain_status || true)
+            if [ -z "$DRAIN_STATUS" ]; then
+              echo "  drain status endpoint unavailable on current release; bootstrap fallback to healthz"
+              healthz_ok || true
+              break
+            fi
+            set -- $DRAIN_STATUS
+            IDLE_STATE="$1"
+            ACTIVE_STREAMS="$2"
+            BLOCKING_RUNS="$3"
+            TOTAL_ACTIVE_RUNS="$4"
+            DRAIN_STATUS_TEXT="$5"
+            if [ "$IDLE_STATE" = "idle" ]; then
               break
             fi
             if [ $((IDLE_WAITED % 30)) -eq 0 ]; then
-              echo "  activeStreams=$ACTIVE, waited ${IDLE_WAITED}s"
+              echo "  status=$DRAIN_STATUS_TEXT activeStreams=$ACTIVE_STREAMS activeRuns.blocking=$BLOCKING_RUNS activeRuns.total=$TOTAL_ACTIVE_RUNS, waited ${IDLE_WAITED}s"
             fi
             sleep 5
             IDLE_WAITED=$((IDLE_WAITED + 5))

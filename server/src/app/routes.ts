@@ -99,6 +99,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createHealthRouter(config, {
       getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
       getActiveStreamCount: () => channelManager.getActiveStreamCount(),
+      getActiveRunCounts: runtime.runtimeRunStore?.getActiveCounts
+        ? () => runtime.runtimeRunStore!.getActiveCounts!()
+        : undefined,
       getIsDraining: () => channelManager.draining,
     }),
   );

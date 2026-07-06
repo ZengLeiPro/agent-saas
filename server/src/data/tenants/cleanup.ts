@@ -16,6 +16,7 @@ import type { ArtifactService } from '../../runtime/artifactService.js';
 import type { PgEventStore } from '../../runtime/pgEventStore.js';
 import type { PgHandStore } from '../../runtime/handStore.js';
 import type { PgRunStore } from '../../runtime/runStore.js';
+import type { PgSessionProjectionStore } from '../../runtime/sessionProjectionStore.js';
 import type { PgToolInvocationStore } from '../../runtime/toolInvocationStore.js';
 import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
 import { resolveTenantCwd } from '../../workspace/resolver.js';
@@ -50,6 +51,7 @@ export interface TenantDeletionReport {
     eventsDeleted: number;
     eventCursorsDeleted: number;
     runsDeleted: number;
+    sessionsDeleted: number;
     toolInvocationsDeleted: number;
     handsDeleted: number;
     artifactsDeleted: number;
@@ -76,6 +78,7 @@ export interface DeleteTenantResourcesOptions {
   billingService?: BillingService;
   runtimePgEventStore?: PgEventStore;
   runtimeRunStore?: PgRunStore;
+  runtimeSessionProjectionStore?: PgSessionProjectionStore;
   runtimeToolInvocationStore?: PgToolInvocationStore;
   runtimeHandStore?: PgHandStore;
   artifactService?: ArtifactService;
@@ -201,6 +204,9 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
   const runsDeleted = options.runtimeRunStore
     ? await options.runtimeRunStore.deleteByTenant(tenantId)
     : 0;
+  const sessionsDeleted = options.runtimeSessionProjectionStore
+    ? await options.runtimeSessionProjectionStore.deleteByTenant(tenantId)
+    : 0;
   const handsDeleted = options.runtimeHandStore
     ? await options.runtimeHandStore.deleteByWorkspaceIds(workspaceIds)
     : 0;
@@ -232,6 +238,7 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
       eventsDeleted: runtimeEvents.events,
       eventCursorsDeleted: runtimeEvents.cursors,
       runsDeleted,
+      sessionsDeleted,
       toolInvocationsDeleted,
       handsDeleted,
       artifactsDeleted: artifacts.deleted,

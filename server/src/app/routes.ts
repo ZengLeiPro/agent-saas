@@ -445,6 +445,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
               billingService: runtime.billingService,
               runtimePgEventStore: runtime.runtimePgEventStore,
               runtimeRunStore: runtime.runtimeRunStore,
+              runtimeSessionProjectionStore: runtime.runtimeSessionProjectionStore,
               runtimeToolInvocationStore: runtime.runtimeToolInvocationStore,
               runtimeHandStore: runtime.runtimeHandStore,
               artifactService: runtime.artifactService,

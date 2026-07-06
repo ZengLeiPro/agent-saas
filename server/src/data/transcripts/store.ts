@@ -16,6 +16,7 @@ import {
   isValidSessionId,
   type TranscriptOwnerRef,
 } from "./projectKey.js";
+import { notifySessionMetaDeleted } from "./meta.js";
 
 export interface SessionListItem {
   sessionId: string;
@@ -249,6 +250,7 @@ export async function deleteSession(
 
   const metaPath = transcriptPath.replace(/\.jsonl$/, '.meta.json');
   try { await fs.unlink(metaPath); } catch { /* meta may not exist */ }
+  notifySessionMetaDeleted(sessionId);
 
   let sidecarPath: string | undefined;
   if (options?.deleteSidecarDir) {
@@ -300,6 +302,7 @@ export async function deleteSessionMetaOnly(
   assertAllowedTranscriptPath(actualMetaPath);
 
   try { await fs.unlink(actualMetaPath); } catch { return { deleted: false }; }
+  notifySessionMetaDeleted(sessionId);
 
   if (options?.deleteSidecarDir) {
     const sidecarPath = path.join(path.dirname(actualMetaPath), sessionId);

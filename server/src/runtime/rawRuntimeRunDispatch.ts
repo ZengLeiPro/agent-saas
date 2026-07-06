@@ -1553,6 +1553,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       channel: context.channel,
       executionTarget,
       workspaceId: sessionRecord.workspaceId ?? sessionId,
+      sandboxScopeId,
       metadata: {
         cwd,
         transcriptPath,
@@ -1911,6 +1912,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       channel: request.context.channel,
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
+      sandboxScopeId,
       metadata: { cwd, transcriptPath, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}) },
     });
     directRuntimeLease = await acquireDirectRuntimeRunLease({
@@ -2177,6 +2179,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       channel: request.context.channel,
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
+      sandboxScopeId,
       metadata: { cwd, transcriptPath, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}) },
     });
     directRuntimeLease = await acquireDirectRuntimeRunLease({

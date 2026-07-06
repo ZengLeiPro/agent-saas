@@ -1,5 +1,6 @@
 import pg from 'pg';
 import type { ExecutionTargetKind, ToolDescriptor, ToolRisk } from '../agent/toolRuntime.js';
+import { parseWorkspaceId } from './workspaceIdentity.js';
 
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
@@ -44,6 +45,8 @@ export interface HandRecord {
   handId: string;
   sessionId?: string;
   workspaceId: string;
+  tenantId?: string;
+  userId?: string;
   type: ExecutionTargetKind;
   status: HandStatus;
   endpoint?: string;
@@ -145,19 +148,32 @@ export class PgHandStore implements HandStore {
     `);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_session_idx ON ${this.handsTable} (session_id)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_workspace_idx ON ${this.handsTable} (workspace_id)`);
+    await this.pool.query(`ALTER TABLE ${this.handsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
+    await this.pool.query(`ALTER TABLE ${this.handsTable} ADD COLUMN IF NOT EXISTS user_id TEXT`);
+    await this.pool.query(`
+      UPDATE ${this.handsTable}
+      SET tenant_id = split_part(substring(workspace_id from 4), '__', 1),
+          user_id = split_part(substring(workspace_id from 4), '__', 2)
+      WHERE tenant_id IS NULL
+        AND workspace_id ~ '^ws_[a-z][a-z0-9-]{1,30}__[A-Za-z0-9_-]{1,80}(__.*)?$'
+    `);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_tenant_idx ON ${this.handsTable} (tenant_id)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_status_idx ON ${this.handsTable} (status)`);
   }
 
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
 
   async register(input: RegisterHandInput): Promise<HandRecord> {
+    const owner = parseWorkspaceId(input.workspaceId);
     const result = await this.pool.query<{ row_json: unknown }>(`
       INSERT INTO ${this.handsTable}
-        (hand_id, session_id, workspace_id, type, status, endpoint, capabilities, lease_expires_at, metadata)
-      VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb)
+        (hand_id, session_id, workspace_id, tenant_id, user_id, type, status, endpoint, capabilities, lease_expires_at, metadata)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb)
       ON CONFLICT (hand_id) DO UPDATE SET
         session_id = EXCLUDED.session_id,
         workspace_id = EXCLUDED.workspace_id,
+        tenant_id = EXCLUDED.tenant_id,
+        user_id = EXCLUDED.user_id,
         type = EXCLUDED.type,
         status = EXCLUDED.status,
         endpoint = EXCLUDED.endpoint,
@@ -170,6 +186,8 @@ export class PgHandStore implements HandStore {
       input.handId,
       input.sessionId ?? null,
       input.workspaceId,
+      owner?.tenantId ?? null,
+      owner?.userId ?? null,
       input.type,
       input.status ?? 'ready',
       input.endpoint ?? null,
@@ -240,6 +258,8 @@ function normalizeHandRecord(raw: any): HandRecord {
     handId: raw.hand_id ?? raw.handId,
     sessionId: raw.session_id ?? raw.sessionId ?? undefined,
     workspaceId: raw.workspace_id ?? raw.workspaceId,
+    tenantId: raw.tenant_id ?? raw.tenantId ?? undefined,
+    userId: raw.user_id ?? raw.userId ?? undefined,
     type: raw.type,
     status: raw.status,
     endpoint: raw.endpoint ?? undefined,

@@ -37,6 +37,7 @@ export interface RunRecord {
   idempotencyKey?: string;
   executionTarget?: ExecutionTargetKind;
   workspaceId?: string;
+  sandboxScopeId?: string;
   metadata: Record<string, unknown>;
   // ── Responses API session state（RFC v1 P0.4） ──
   /** 本 run 结束时最后一个 store=true 的 response.id（用于跨 run 接力 reasoning chain）。 */
@@ -69,6 +70,7 @@ export interface UpsertRunInput {
   idempotencyKey?: string;
   executionTarget?: ExecutionTargetKind;
   workspaceId?: string;
+  sandboxScopeId?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -205,10 +207,14 @@ export class PgRunStore implements RunStore {
       // 2026-07-02：接力身份键（切模型后跨后端接力必炸，见 findLatestResponseSessionStateBySession 调用方）
       await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS last_response_model TEXT`);
       await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS cumulative_input_tokens BIGINT NOT NULL DEFAULT 0`);
+      await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS sandbox_scope_id TEXT`);
       // PR 3：多组织改造 — 加 tenant_id 列，旧数据回填 LEGACY_TENANT_ID，新 run 由
       // dispatch 层（PR 4）显式传入；UpsertRunInput 已加可选 tenantId 字段。
       await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'`);
+      await client.query(`UPDATE ${this.runsTable} SET sandbox_scope_id = metadata->>'sandboxScopeId' WHERE sandbox_scope_id IS NULL AND metadata ? 'sandboxScopeId'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_tenant_idx ON ${this.runsTable} (tenant_id, updated_at DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_user_idx ON ${this.runsTable} (user_id, updated_at DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_sandbox_scope_idx ON ${this.runsTable} (sandbox_scope_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_status_idx ON ${this.runsTable} (status, updated_at)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_session_idx ON ${this.runsTable} (session_id, updated_at DESC)`);
       // RFC v1 P0.4：按 sessionId 找最近完成 run 的 last_response_id（跨 run 接力查询路径）
@@ -228,8 +234,8 @@ export class PgRunStore implements RunStore {
     const now = new Date().toISOString();
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       INSERT INTO ${this.runsTable}
-        (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, metadata)
-      VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11::jsonb)
+        (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, metadata)
+      VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12::jsonb)
       ON CONFLICT (run_id) DO UPDATE SET
         updated_at = EXCLUDED.updated_at,
         status = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
@@ -240,9 +246,10 @@ export class PgRunStore implements RunStore {
                          THEN NULL ELSE ${this.runsTable}.worker_id END,
         lease_expires_at = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
                                 THEN NULL ELSE ${this.runsTable}.lease_expires_at END,
+        sandbox_scope_id = COALESCE(EXCLUDED.sandbox_scope_id, ${this.runsTable}.sandbox_scope_id),
         metadata = ${this.runsTable}.metadata || EXCLUDED.metadata
       RETURNING row_to_json(${this.runsTable}.*) AS row_json
-    `, [input.runId, input.sessionId, input.userId ?? null, input.tenantId ?? null, input.model ?? null, input.channel ?? null, now, input.idempotencyKey ?? null, input.executionTarget ?? null, input.workspaceId ?? null, JSON.stringify(input.metadata ?? {})]);
+    `, [input.runId, input.sessionId, input.userId ?? null, input.tenantId ?? null, input.model ?? null, input.channel ?? null, now, input.idempotencyKey ?? null, input.executionTarget ?? null, input.workspaceId ?? null, input.sandboxScopeId ?? null, JSON.stringify(input.metadata ?? {})]);
     return normalizeRunRecord(result.rows[0]!.row_json);
   }
 
@@ -600,6 +607,7 @@ function normalizeRunRecord(raw: any): RunRecord {
     idempotencyKey: raw.idempotency_key ?? raw.idempotencyKey ?? undefined,
     executionTarget: raw.execution_target ?? raw.executionTarget ?? undefined,
     workspaceId: raw.workspace_id ?? raw.workspaceId ?? undefined,
+    sandboxScopeId: raw.sandbox_scope_id ?? raw.sandboxScopeId ?? undefined,
     metadata: raw.metadata ?? {},
     lastResponseId: raw.last_response_id ?? raw.lastResponseId ?? undefined,
     lastResponseExpireAt: raw.last_response_expire_at

@@ -242,6 +242,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       channel: parentContext.channelContext.channel,
       executionTarget,
       workspaceId: parentWorkspace.id ?? childSessionId,
+      sandboxScopeId: parentWorkspace.sandboxScopeId,
       metadata: {
         subagent: true,
         parentRunId,

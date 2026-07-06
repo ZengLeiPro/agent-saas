@@ -233,6 +233,8 @@ export class PgBillingStore {
       `);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.usageEventsTable}_tenant_created_idx ON ${this.usageEventsTable} (tenant_id, created_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.usageEventsTable}_run_idx ON ${this.usageEventsTable} (run_id) WHERE run_id IS NOT NULL`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.usageEventsTable}_session_idx ON ${this.usageEventsTable} (session_id)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.usageEventsTable}_user_idx ON ${this.usageEventsTable} (tenant_id, user_id, created_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.creditLedgerTable}_tenant_created_idx ON ${this.creditLedgerTable} (tenant_id, created_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.creditLedgerTable}_run_idx ON ${this.creditLedgerTable} (run_id) WHERE run_id IS NOT NULL`);
       await this.ensureDefaultPricingVersion(client);

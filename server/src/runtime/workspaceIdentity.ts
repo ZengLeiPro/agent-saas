@@ -9,6 +9,11 @@ export interface StableWorkspaceUser {
   tenantId?: string;
 }
 
+export interface ParsedWorkspaceId {
+  tenantId: string;
+  userId: string;
+}
+
 export function deriveStableWorkspaceId(
   user: StableWorkspaceUser | undefined,
   fallbackWorkspaceId: string,
@@ -30,4 +35,21 @@ function safeUserIdSegment(userId: string): string {
   }
   const digest = createHash("sha256").update(userId).digest("base64url").slice(0, 16);
   return `h${digest}`;
+}
+
+export function parseWorkspaceId(workspaceId: string | undefined | null): ParsedWorkspaceId | null {
+  if (!workspaceId?.startsWith("ws_")) return null;
+  const body = workspaceId.slice(3);
+  const delimiter = body.indexOf("__");
+  if (delimiter <= 0) return null;
+
+  const tenantId = body.slice(0, delimiter);
+  const rest = body.slice(delimiter + 2);
+  const mountDelimiter = rest.indexOf("__");
+  const userId = mountDelimiter >= 0 ? rest.slice(0, mountDelimiter) : rest;
+
+  if (!TENANT_SLUG_PATTERN.test(tenantId)) return null;
+  if (!USER_ID_SEGMENT_PATTERN.test(userId)) return null;
+  if (userId.includes("..") || userId.startsWith(".")) return null;
+  return { tenantId, userId };
 }

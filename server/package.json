@@ -24,6 +24,7 @@
     "verify:audit-read": "tsx scripts/verify-runtime-audit-read.mts",
     "verify:server-remote-smoke": "tsx scripts/verify-server-remote-smoke.mts",
     "verify:pg-event-store": "tsx scripts/verify-pg-event-store.mts",
+    "backfill:runtime-sessions": "tsx scripts/backfill-runtime-sessions.mts",
     "migrate:platform-tenant-pantheon": "tsx scripts/migrate-platform-tenant-pantheon.mts",
     "migrate:events-file-to-pg": "tsx scripts/migrate-events-file-to-pg.mts",
     "verify:chaos": "tsx scripts/verify-runtime-chaos.mts",

@@ -1,6 +1,7 @@
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
+import { isValidSessionId } from './projectKey.js';
 
 export interface SessionMeta {
   userId: string;
@@ -71,6 +72,39 @@ async function atomicWriteJson(filePath: string, data: object): Promise<void> {
 
 /** Per-file 进程级互斥锁，序列化同一文件的 read-modify-write 操作 */
 const metaLocks = new Map<string, Promise<unknown>>();
+const projectionOperations = new Set<Promise<void>>();
+const projectionTails = new Map<string, Promise<void>>();
+
+export interface SessionMetaProjectionSink {
+  upsert(transcriptPath: string, meta: SessionMeta): Promise<void> | void;
+  delete(sessionId: string): Promise<void> | void;
+}
+
+export interface SessionMetaProjectionStats {
+  failures: number;
+  lastError?: string;
+  pending: number;
+}
+
+let projectionSink: SessionMetaProjectionSink | undefined;
+let projectionFailures = 0;
+let lastProjectionError: string | undefined;
+
+export function setSessionMetaProjectionSink(sink: SessionMetaProjectionSink | undefined): void {
+  projectionSink = sink;
+}
+
+export function getSessionMetaProjectionStats(): SessionMetaProjectionStats {
+  return {
+    failures: projectionFailures,
+    ...(lastProjectionError ? { lastError: lastProjectionError } : {}),
+    pending: projectionOperations.size,
+  };
+}
+
+export async function flushSessionMetaProjectionForTests(): Promise<void> {
+  await Promise.all([...projectionOperations]);
+}
 
 async function withMetaLock<T>(metaPath: string, fn: () => Promise<T>): Promise<T> {
   const prev = metaLocks.get(metaPath) ?? Promise.resolve();
@@ -88,7 +122,7 @@ async function withMetaLock<T>(metaPath: string, fn: () => Promise<T>): Promise<
 
 export async function writeSessionMeta(transcriptPath: string, meta: SessionMeta): Promise<void> {
   const metaPath = getMetaPath(transcriptPath);
-  await withMetaLock(metaPath, () => atomicWriteJson(metaPath, meta));
+  await withMetaLock(metaPath, () => persistSessionMeta(transcriptPath, meta));
 }
 
 /**
@@ -105,7 +139,7 @@ export async function addSessionCost(
     const meta = await readSessionMeta(transcriptPath);
     if (!meta) return;
     meta.totalCostUsd = (meta.totalCostUsd ?? 0) + costUsd;
-    await atomicWriteJson(metaPath, meta);
+    await persistSessionMeta(transcriptPath, meta);
   });
 }
 
@@ -135,7 +169,51 @@ export async function updateSessionMeta(
     if (!updated.customTitle) delete updated.customTitle;
     // 清除 deletedAt/deletedBy（用于恢复）
     if (!updated.deletedAt) { delete updated.deletedAt; delete updated.deletedBy; }
-    await atomicWriteJson(metaPath, updated);
+    await persistSessionMeta(transcriptPath, updated);
     return updated;
   });
+}
+
+export function notifySessionMetaDeleted(sessionId: string): void {
+  const sink = projectionSink;
+  if (!sink || !isValidSessionId(sessionId)) return;
+  scheduleProjection(sessionId, () => sink.delete(sessionId));
+}
+
+async function persistSessionMeta(transcriptPath: string, meta: SessionMeta): Promise<void> {
+  const metaPath = getMetaPath(transcriptPath);
+  await atomicWriteJson(metaPath, meta);
+  notifySessionMetaPersisted(transcriptPath, meta);
+}
+
+function notifySessionMetaPersisted(transcriptPath: string, meta: SessionMeta): void {
+  const sink = projectionSink;
+  if (!sink) return;
+  const sessionId = sessionIdFromTranscriptPath(transcriptPath);
+  if (!sessionId || !isValidSessionId(sessionId)) return;
+  scheduleProjection(sessionId, () => sink.upsert(transcriptPath, meta));
+}
+
+function scheduleProjection(sessionId: string, op: () => Promise<void> | void): void {
+  const prev = projectionTails.get(sessionId) ?? Promise.resolve();
+  const promise = prev
+    .then(op)
+    .catch((err) => {
+      projectionFailures++;
+      lastProjectionError = err instanceof Error ? err.message : String(err);
+      console.warn(`[session-meta-projection] ${lastProjectionError}`);
+    })
+    .finally(() => {
+      projectionOperations.delete(promise);
+      if (projectionTails.get(sessionId) === promise) projectionTails.delete(sessionId);
+    });
+  projectionTails.set(sessionId, promise);
+  projectionOperations.add(promise);
+}
+
+function sessionIdFromTranscriptPath(transcriptPath: string): string | null {
+  const name = basename(transcriptPath);
+  if (name.endsWith('.meta.json')) return name.slice(0, -'.meta.json'.length);
+  if (name.endsWith('.jsonl')) return name.slice(0, -'.jsonl'.length);
+  return null;
 }

@@ -18,6 +18,7 @@ import { PgRuntimeAuditQuery } from '../runtime/pgAuditQuery.js';
 import { PgSessionLock } from '../runtime/pgSessionLock.js';
 import { PgRunStore } from '../runtime/runStore.js';
 import { PgHandStore } from '../runtime/handStore.js';
+import { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
 import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import { PgClientDaemonRegistry } from '../runtime/clientDaemonRegistry.js';
 import {
@@ -95,6 +96,7 @@ import { configureModelPricing } from '../data/usage/pricing.js';
 import { PgBillingStore } from '../data/billing/pgBillingStore.js';
 import { BillingService } from '../data/billing/service.js';
 import { clearSessionsListCache } from '../routes/sessions.js';
+import { setSessionMetaProjectionSink } from '../data/transcripts/meta.js';
 import { createAuthMiddleware } from '../auth/middleware.js';
 import { sanitizeUserOverrides } from '../security/extraDirs.js';
 
@@ -153,6 +155,8 @@ export interface AppRuntime {
    * 运行监测读 API（/api/admin/runtime/trace）用它查 RunRecord 并取 runsTable 表名。
    */
   runtimeRunStore?: PgRunStore;
+  /** PG runtime session projection store（平台观测会话列表用；file backend 为 undefined）。 */
+  runtimeSessionProjectionStore?: PgSessionProjectionStore;
   /** PG runtime tool invocation store（组织删除清理用；file backend 为 undefined）。 */
   runtimeToolInvocationStore?: PgToolInvocationStore;
   /** PG runtime hand store（组织删除清理用；file backend 为 undefined）。 */
@@ -537,6 +541,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let runtimeEventStoreShutdown: (() => Promise<void>) | undefined;
   let pgEventStore: PgEventStore | undefined;
   let pgRunStore: PgRunStore | undefined;
+  let pgSessionProjectionStore: PgSessionProjectionStore | undefined;
   let pgHandStore: PgHandStore | undefined;
   let pgToolInvocationStore: PgToolInvocationStore | undefined;
   let pgClientDaemonRegistry: PgClientDaemonRegistry | undefined;
@@ -634,6 +639,19 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await pgRunStore.init();
+    pgSessionProjectionStore = new PgSessionProjectionStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await pgSessionProjectionStore.init();
+    setSessionMetaProjectionSink({
+      upsert: async (transcriptPath, meta) => {
+        await pgSessionProjectionStore!.upsertFromMeta(transcriptPath, meta);
+      },
+      delete: async (sessionId) => {
+        await pgSessionProjectionStore!.deleteBySessionId(sessionId);
+      },
+    });
     pgHandStore = new PgHandStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
@@ -698,6 +716,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       serverLogger.warn(`Recovered stale running tool invocations at startup: ${recoveryResult.recovered}/${recoveryResult.scanned}`);
     }
     runtimeEventStoreShutdown = async () => {
+      setSessionMetaProjectionSink(undefined);
       clientDaemonGateway?.close();
       handHealthScanner?.stop();
       await runtimeScheduler?.stop();
@@ -1604,6 +1623,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     billingService,
     runtimeAuditQuery,
     runtimeRunStore: pgRunStore,
+    runtimeSessionProjectionStore: pgSessionProjectionStore,
     runtimeToolInvocationStore: pgToolInvocationStore,
     runtimeHandStore: pgHandStore,
     runtimePgEventStore: pgEventStore,

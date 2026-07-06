@@ -200,7 +200,9 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
       setSandbox({ ...data, ...summary, raw: data.raw ?? summary?.raw ?? data });
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      if (/not found/i.test(message)) setSandbox(null);
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -208,15 +210,28 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
 
   useEffect(() => { void load(); }, [load]);
 
-  const runAction = useCallback(async (label: string, fn: () => Promise<unknown>) => {
+  const goBackToList = useCallback(() => {
+    pushPlatformAdminUrl({ section: "sandboxes" });
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, []);
+
+  const runAction = useCallback(async (
+    label: string,
+    fn: () => Promise<unknown>,
+    options: { reload?: boolean; onSuccess?: () => void } = {},
+  ) => {
     setAction(label);
+    setError(null);
+    let succeeded = false;
     try {
       await fn();
-      await load();
+      if (options.reload !== false) await load();
+      succeeded = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setAction(null);
+      if (succeeded) options.onSuccess?.();
     }
   }, [load]);
 
@@ -230,8 +245,13 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
   };
   const remove = () => {
     if (!window.confirm(`删除 Sandbox CR ${sandboxName}？这不会删除 NAS workspace。`)) return;
-    void runAction("delete", () => platformAdminApi.deleteSandbox(sandboxName));
+    void runAction("delete", () => platformAdminApi.deleteSandbox(sandboxName), {
+      reload: false,
+      onSuccess: goBackToList,
+    });
   };
+  const missing = !loading && !sandbox && /not found/i.test(error ?? "");
+  const actionDisabled = !!action || (!sandbox && (loading || !!error));
 
   return (
     <div className="w-full space-y-5">
@@ -240,15 +260,15 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
         description={`容器详情 · ${sandboxName}`}
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={pause} disabled={!!action}>
+            <Button variant="outline" size="sm" onClick={pause} disabled={actionDisabled}>
               <PauseCircle className="mr-1.5 h-3.5 w-3.5" />
               Pause
             </Button>
-            <Button variant="outline" size="sm" onClick={resume} disabled={!!action}>
+            <Button variant="outline" size="sm" onClick={resume} disabled={actionDisabled}>
               <PlayCircle className="mr-1.5 h-3.5 w-3.5" />
               Resume
             </Button>
-            <Button variant="destructive" size="sm" onClick={remove} disabled={!!action}>
+            <Button variant="destructive" size="sm" onClick={remove} disabled={actionDisabled}>
               <Trash2 className="mr-1.5 h-3.5 w-3.5" />
               Delete
             </Button>
@@ -259,11 +279,20 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
           </>
         }
       />
-      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">加载失败：{error}</div>}
+      {error && (
+        <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {missing ? "容器不存在或已删除。" : `加载失败：${error}`}
+        </div>
+      )}
       {loading && !sandbox ? (
         <div className="flex h-40 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           加载容器详情...
+        </div>
+      ) : missing ? (
+        <div className="flex h-40 flex-col items-center justify-center gap-3 rounded-lg border bg-card text-sm text-muted-foreground">
+          <div>当前容器不在 ACS 列表中。</div>
+          <Button variant="outline" size="sm" onClick={goBackToList}>返回列表</Button>
         </div>
       ) : sandbox ? (
         <>

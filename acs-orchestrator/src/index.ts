@@ -24,7 +24,7 @@ import {
   SandboxInvalidStateError,
   SandboxManager,
   SandboxNotFoundError,
-  brokenPausedStateReason,
+  brokenSandboxStateReason,
 } from './sandboxManager.js';
 import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 
@@ -429,7 +429,7 @@ async function handleSandboxRoute(req: IncomingMessage, res: ServerResponse, rou
         status: 'ok',
         name,
         phase: sandbox.phase ?? null,
-        brokenReason: brokenPausedStateReason(sandbox) ?? null,
+        brokenReason: brokenSandboxStateReason(sandbox) ?? null,
         sandbox: sandbox.raw,
       });
     }

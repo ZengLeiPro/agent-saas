@@ -379,6 +379,101 @@ describe('SandboxManager', () => {
     expect(calls.some((args) => args[0] === 'patch' && args[1] === `sandbox/${ref.name}` && String(args[4] ?? '').includes('"paused":false'))).toBe(false);
   });
 
+  it('recreates a Failed Sandbox with missing pod instead of waiting until provision timeout', async () => {
+    const calls: string[][] = [];
+    const currentImage = 'registry.example.com/agent-saas/acs-sandbox:test';
+    let state: 'failed' | 'running' = 'failed';
+    let appliedSandbox = false;
+    const kubectl = {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        calls.push(args);
+        if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
+          return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'get') {
+          if (state === 'failed') {
+            return {
+              stdout: JSON.stringify({
+                metadata: {
+                  annotations: {
+                    'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
+                  },
+                },
+                spec: {
+                  paused: false,
+                  template: { spec: { containers: [{ name: 'sandbox', image: currentImage }] } },
+                },
+                status: {
+                  phase: 'Failed',
+                  message: 'Pod Not Found',
+                  podInfo: {
+                    annotations: {
+                      'ops.alibabacloud.com/recreating': 'true',
+                    },
+                  },
+                },
+              }),
+              stderr: '',
+              exitCode: 0,
+              signal: null,
+            };
+          }
+          return {
+            stdout: JSON.stringify({
+              metadata: {
+                annotations: {
+                  'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
+                },
+              },
+              spec: {
+                paused: false,
+                template: { spec: { containers: [{ name: 'sandbox', image: currentImage }] } },
+              },
+              status: { phase: 'Running' },
+            }),
+            stderr: '',
+            exitCode: 0,
+            signal: null,
+          };
+        }
+        if (args[0] === 'delete') {
+          if (args[1]?.startsWith('sandbox/')) state = 'running';
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'apply') {
+          const manifest = JSON.parse(options.input ?? '{}') as { kind?: string };
+          if (manifest.kind === 'Sandbox') {
+            appliedSandbox = true;
+            state = 'running';
+          }
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+
+    const manager = new SandboxManager({
+      ...baseConfig(),
+      sandboxImage: currentImage,
+    }, kubectl, noopLogger);
+
+    const ref = manager.ref({
+      workspaceId: 'ws_kaiyan__test',
+      sessionId: 'session-123',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    });
+
+    await manager.ensureRunning({
+      workspaceId: 'ws_kaiyan__test',
+      sessionId: 'session-123',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    });
+
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === `sandbox/${ref.name}`)).toBe(true);
+    expect(appliedSandbox).toBe(true);
+  });
+
   it('rejects creating a new Sandbox when running quota is exhausted', async () => {
     const kubectl = {
       async run(args: string[]): Promise<KubectlResult> {

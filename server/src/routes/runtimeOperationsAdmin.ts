@@ -258,6 +258,7 @@ export function createRuntimeOperationsAdminRouter(
   const router = Router();
   const fetchImpl = options.fetchImpl ?? fetch;
   const healthTimeoutMs = options.healthTimeoutMs ?? 5_000;
+  const sandboxMutationTimeoutMs = Math.max(healthTimeoutMs, 310_000);
 
   router.use(requirePlatformAdmin);
 
@@ -419,7 +420,7 @@ export function createRuntimeOperationsAdminRouter(
       config: options.config,
       secretVault: options.secretVault,
       fetchImpl,
-      timeoutMs: Math.max(healthTimeoutMs, 90_000),
+      timeoutMs: sandboxMutationTimeoutMs,
       path: `/sandboxes/${encodeURIComponent(name)}/resume`,
       method: 'POST',
       body: {},
@@ -434,7 +435,7 @@ export function createRuntimeOperationsAdminRouter(
       config: options.config,
       secretVault: options.secretVault,
       fetchImpl,
-      timeoutMs: Math.max(healthTimeoutMs, 30_000),
+      timeoutMs: sandboxMutationTimeoutMs,
       path: `/sandboxes/${encodeURIComponent(name)}`,
       method: 'DELETE',
     });

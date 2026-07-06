@@ -153,14 +153,14 @@ export class SandboxManager {
       await timing.step('waitPrewarm', () => this.waitForPrewarm(ref.name));
       await timing.step('ensureHostWorkspace', () => this.ensureHostWorkspace(ref));
       let existing = await timing.step('getStatus', () => this.getStatus(ref.name));
-      const brokenPausedState = existing ? brokenPausedStateReason(existing) : undefined;
-      if (existing && brokenPausedState) {
-        path = `recreate_broken_paused_${brokenPausedState}`;
-        this.assertNotBusyForRecreate(ref, options.busySandboxNames, brokenPausedState, options.activeKey);
+      const brokenState = existing ? brokenSandboxStateReason(existing) : undefined;
+      if (existing && brokenState) {
+        path = `recreate_broken_${brokenState}`;
+        this.assertNotBusyForRecreate(ref, options.busySandboxNames, brokenState, options.activeKey);
         this.logger.warn(
-          `sandbox_broken_paused_state name=${ref.name} reason=${brokenPausedState} phase=${existing.phase ?? 'unknown'}`,
+          `sandbox_broken_state name=${ref.name} reason=${brokenState} phase=${existing.phase ?? 'unknown'}`,
         );
-        await timing.step('deleteBrokenPaused', () => this.delete(ref, { activeKey: options.activeKey }));
+        await timing.step('deleteBrokenState', () => this.delete(ref, { activeKey: options.activeKey }));
         existing = null;
       }
       if (existing && this.existingMountSubPath(existing, ref) !== ref.mountSubPath) {
@@ -340,7 +340,7 @@ export class SandboxManager {
         sandboxScopeId: stringValue(annotations[SANDBOX_SCOPE_ANNOTATION]) ?? stringValue(labels[SANDBOX_SCOPE_LABEL]),
         mountSubPath: stringValue(annotations[MOUNT_SUBPATH_ANNOTATION]),
         phase,
-        ...optionalString('brokenReason', brokenPausedStateReason({ phase, raw: item })),
+        ...optionalString('brokenReason', brokenSandboxStateReason({ phase, raw: item })),
         createdAt: stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
         lastActiveAt: stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]) ?? stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
         image: primaryContainer ? stringValue(primaryContainer.image) : undefined,
@@ -1063,8 +1063,7 @@ function parseDateMs(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-export function brokenPausedStateReason(status: SandboxStatus): string | undefined {
-  if (status.phase !== 'Paused') return undefined;
+export function brokenSandboxStateReason(status: SandboxStatus): string | undefined {
   const raw = status.raw ?? {};
   const spec = raw.spec && typeof raw.spec === 'object' ? raw.spec as Record<string, unknown> : {};
   const statusBody = raw.status && typeof raw.status === 'object' ? raw.status as Record<string, unknown> : {};
@@ -1080,11 +1079,25 @@ export function brokenPausedStateReason(status: SandboxStatus): string | undefin
   const pausedStatus = stringValue(pausedCondition?.status);
   const recreating = stringValue(podAnnotations['ops.alibabacloud.com/recreating']) === 'true';
   const requestedRunning = spec.paused === false;
+  const message = stringValue(statusBody.message);
+
+  if (status.phase === 'Failed') {
+    if (message && /pod not found/i.test(message)) return 'failed_pod_not_found';
+    if (recreating) return 'failed_recreating';
+    return 'failed';
+  }
+
+  if (status.phase !== 'Paused') return undefined;
 
   if (pausedReason === 'ImageChanged' && pausedStatus === 'False') return 'image_changed';
   if (recreating) return 'recreating';
   if (requestedRunning) return 'requested_running';
   return undefined;
+}
+
+export function brokenPausedStateReason(status: SandboxStatus): string | undefined {
+  if (status.phase !== 'Paused') return undefined;
+  return brokenSandboxStateReason(status);
 }
 
 function isRunningCostPhase(phase: string | undefined): boolean {

@@ -11,6 +11,8 @@ export interface DingtalkSessionInfo {
   createdAt: string;
   messageCount: number;
   modelRef?: string;
+  tenantId?: string;
+  userId?: string;
 }
 
 export interface DingtalkSessionStore {
@@ -24,4 +26,6 @@ export interface SaveSessionOptions {
   senderNick: string;
   senderId: string;
   conversationType: string;
+  tenantId?: string;
+  userId?: string;
 }

@@ -91,7 +91,7 @@ export function getAgentSession(conversationId: string, basePath: string): strin
 }
 
 export function saveAgentSession(opts: SaveSessionOptions, basePath: string): void {
-  const { conversationId, agentSessionId, sessionWebhook, senderNick, senderId, conversationType } = opts;
+  const { conversationId, agentSessionId, sessionWebhook, senderNick, senderId, conversationType, tenantId, userId } = opts;
   const sessions = getCache(basePath);
   const now = Date.now();
   const existing = sessions[conversationId];
@@ -105,7 +105,9 @@ export function saveAgentSession(opts: SaveSessionOptions, basePath: string): vo
     lastUpdated: now,
     lastUpdatedAt: formatDateTime(now),
     createdAt: existing?.createdAt || formatDateTime(now),
-    messageCount: (existing?.messageCount || 0) + 1
+    messageCount: (existing?.messageCount || 0) + 1,
+    tenantId: tenantId || existing?.tenantId,
+    userId: userId || existing?.userId,
   };
   queueWrite(basePath);
 }

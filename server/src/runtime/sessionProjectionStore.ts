@@ -53,6 +53,21 @@ export interface RuntimeSessionBackfillResult extends RuntimeSessionBackfillPlan
   deletedMissing: number;
 }
 
+export interface RuntimeSessionListQuery {
+  tenantId?: string;
+  userId?: string;
+  status?: string;
+  kind?: 'user' | 'subagent';
+  includeDeleted?: boolean;
+  cursor?: { updatedAt: string; sessionId: string };
+  limit?: number;
+}
+
+export interface RuntimeSessionListResult {
+  items: RuntimeSessionProjectionRecord[];
+  nextCursor?: { updatedAt: string; sessionId: string };
+}
+
 export interface PgSessionProjectionStoreOptions {
   pool?: PgPool;
   connectionString?: string;
@@ -174,6 +189,76 @@ export class PgSessionProjectionStore {
   async deleteByTenant(tenantId: string): Promise<number> {
     const result = await this.pool.query(`DELETE FROM ${this.sessionsTable} WHERE tenant_id = $1`, [tenantId]);
     return result.rowCount ?? 0;
+  }
+
+  async get(
+    sessionId: string,
+    options: { tenantId?: string; includeDeleted?: boolean } = {},
+  ): Promise<RuntimeSessionProjectionRecord | null> {
+    const params: unknown[] = [sessionId];
+    const clauses = ['session_id = $1'];
+    if (options.tenantId) {
+      params.push(options.tenantId);
+      clauses.push(`tenant_id = $${params.length}`);
+    }
+    if (!options.includeDeleted) clauses.push('deleted_at IS NULL');
+    const result = await this.pool.query<{ row_json: Record<string, unknown> }>(
+      `SELECT row_to_json(${this.sessionsTable}.*) AS row_json
+       FROM ${this.sessionsTable}
+       WHERE ${clauses.join(' AND ')}
+       LIMIT 1`,
+      params,
+    );
+    return result.rows[0] ? rowToRuntimeSessionProjectionRecord(result.rows[0].row_json) : null;
+  }
+
+  async list(query: RuntimeSessionListQuery = {}): Promise<RuntimeSessionListResult> {
+    const limit = Math.min(Math.max(query.limit ?? 50, 1), 100);
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+    if (query.tenantId) {
+      params.push(query.tenantId);
+      clauses.push(`tenant_id = $${params.length}`);
+    }
+    if (query.userId) {
+      params.push(query.userId);
+      clauses.push(`user_id = $${params.length}`);
+    }
+    if (query.status) {
+      params.push(query.status);
+      clauses.push(`runtime_status = $${params.length}`);
+    }
+    if (query.kind) {
+      params.push(query.kind);
+      clauses.push(`kind = $${params.length}`);
+    }
+    if (!query.includeDeleted) clauses.push('deleted_at IS NULL');
+    if (query.cursor) {
+      params.push(query.cursor.updatedAt, query.cursor.sessionId);
+      const updatedAtParam = params.length - 1;
+      const sessionIdParam = params.length;
+      clauses.push(
+        `(updated_at < $${updatedAtParam}::timestamptz OR (updated_at = $${updatedAtParam}::timestamptz AND session_id < $${sessionIdParam}))`,
+      );
+    }
+    params.push(limit + 1);
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const result = await this.pool.query<{ row_json: Record<string, unknown> }>(
+      `SELECT row_to_json(${this.sessionsTable}.*) AS row_json
+       FROM ${this.sessionsTable}
+       ${where}
+       ORDER BY updated_at DESC, session_id DESC
+       LIMIT $${params.length}`,
+      params,
+    );
+    const rows = result.rows.map((row) => rowToRuntimeSessionProjectionRecord(row.row_json));
+    const hasMore = rows.length > limit;
+    const items = rows.slice(0, limit);
+    const last = items[items.length - 1];
+    return {
+      items,
+      ...(hasMore && last ? { nextCursor: { updatedAt: last.updatedAt, sessionId: last.sessionId } } : {}),
+    };
   }
 
   async planBackfill(root = AGENT_LEGACY_TRANSCRIPTS_ROOT): Promise<RuntimeSessionBackfillPlan> {
@@ -361,6 +446,32 @@ function normalizeIso(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const time = Date.parse(value);
   return Number.isFinite(time) ? new Date(time).toISOString() : undefined;
+}
+
+function rowToRuntimeSessionProjectionRecord(raw: any): RuntimeSessionProjectionRecord {
+  const metaJson = typeof raw.meta_json === 'string'
+    ? JSON.parse(raw.meta_json) as SessionMeta
+    : raw.meta_json as SessionMeta;
+  return {
+    sessionId: raw.session_id ?? raw.sessionId,
+    tenantId: raw.tenant_id ?? raw.tenantId,
+    userId: raw.user_id ?? raw.userId ?? undefined,
+    username: raw.username ?? undefined,
+    channel: raw.channel ?? undefined,
+    kind: raw.kind === 'subagent' ? 'subagent' : 'user',
+    title: raw.title ?? undefined,
+    runtimeStatus: raw.runtime_status ?? raw.runtimeStatus ?? undefined,
+    model: raw.model ?? undefined,
+    executionTarget: raw.execution_target ?? raw.executionTarget ?? undefined,
+    workspaceId: raw.workspace_id ?? raw.workspaceId ?? undefined,
+    createdAt: raw.created_at ? new Date(raw.created_at).toISOString() : raw.createdAt,
+    updatedAt: new Date(raw.updated_at ?? raw.updatedAt).toISOString(),
+    deletedAt: raw.deleted_at ? new Date(raw.deleted_at).toISOString() : raw.deletedAt,
+    totalCostUsd: raw.total_cost_usd !== null && raw.total_cost_usd !== undefined
+      ? Number(raw.total_cost_usd)
+      : raw.totalCostUsd,
+    metaJson,
+  };
 }
 
 function sanitizeIdentifier(value: string): string {

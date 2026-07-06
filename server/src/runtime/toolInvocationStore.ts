@@ -142,15 +142,15 @@ export interface PgToolInvocationStoreOptions {
 }
 
 export class PgToolInvocationStore implements ToolInvocationStore {
-  private readonly table: string;
+  readonly toolInvocationsTable: string;
 
   constructor(private readonly options: PgToolInvocationStoreOptions) {
-    this.table = `${sanitizeIdentifier(options.tablePrefix ?? 'runtime')}_tool_invocations`;
+    this.toolInvocationsTable = `${sanitizeIdentifier(options.tablePrefix ?? 'runtime')}_tool_invocations`;
   }
 
   async init(): Promise<void> {
     await this.options.pool.query(`
-      CREATE TABLE IF NOT EXISTS ${this.table} (
+      CREATE TABLE IF NOT EXISTS ${this.toolInvocationsTable} (
         invocation_id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
@@ -168,28 +168,28 @@ export class PgToolInvocationStore implements ToolInvocationStore {
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb
       )
     `);
-    await this.options.pool.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS cancel_requested_at TIMESTAMPTZ`);
-    await this.options.pool.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS cancel_reason TEXT`);
-    await this.options.pool.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS cancel_delivered_at TIMESTAMPTZ`);
+    await this.options.pool.query(`ALTER TABLE ${this.toolInvocationsTable} ADD COLUMN IF NOT EXISTS cancel_requested_at TIMESTAMPTZ`);
+    await this.options.pool.query(`ALTER TABLE ${this.toolInvocationsTable} ADD COLUMN IF NOT EXISTS cancel_reason TEXT`);
+    await this.options.pool.query(`ALTER TABLE ${this.toolInvocationsTable} ADD COLUMN IF NOT EXISTS cancel_delivered_at TIMESTAMPTZ`);
     // PR 3：多组织改造 — 加 tenant_id 列。旧 invocation 回填 LEGACY_TENANT_ID；
     // 新 invocation 由调用方传入或走平台根 fallback。
-    await this.options.pool.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'`);
-    await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_session_idx ON ${this.table} (session_id)`);
-    await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_run_idx ON ${this.table} (run_id)`);
-    await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_status_idx ON ${this.table} (status)`);
-    await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_tenant_idx ON ${this.table} (tenant_id, started_at DESC)`);
+    await this.options.pool.query(`ALTER TABLE ${this.toolInvocationsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'`);
+    await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.toolInvocationsTable}_session_idx ON ${this.toolInvocationsTable} (session_id)`);
+    await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.toolInvocationsTable}_run_idx ON ${this.toolInvocationsTable} (run_id)`);
+    await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.toolInvocationsTable}_status_idx ON ${this.toolInvocationsTable} (status)`);
+    await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.toolInvocationsTable}_tenant_idx ON ${this.toolInvocationsTable} (tenant_id, started_at DESC)`);
   }
 
   async start(input: StartToolInvocationInput): Promise<ToolInvocationRecord> {
     const now = new Date().toISOString();
     const result = await this.options.pool.query<ToolInvocationRow>(`
-      INSERT INTO ${this.table}
+      INSERT INTO ${this.toolInvocationsTable}
         (invocation_id, run_id, session_id, tool_call_id, tool_name, execution_target, tenant_id, status, started_at, updated_at, metadata)
       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, '${DEFAULT_TENANT_ID}'), 'running', $8, $8, $9::jsonb)
       ON CONFLICT (invocation_id) DO UPDATE SET
         updated_at = EXCLUDED.updated_at,
-        tenant_id = CASE WHEN $7 IS NULL THEN ${this.table}.tenant_id ELSE EXCLUDED.tenant_id END,
-        metadata = ${this.table}.metadata || EXCLUDED.metadata
+        tenant_id = CASE WHEN $7 IS NULL THEN ${this.toolInvocationsTable}.tenant_id ELSE EXCLUDED.tenant_id END,
+        metadata = ${this.toolInvocationsTable}.metadata || EXCLUDED.metadata
       RETURNING *
     `, [
       input.invocationId,
@@ -208,7 +208,7 @@ export class PgToolInvocationStore implements ToolInvocationStore {
   async complete(invocationId: string, status: Exclude<ToolInvocationStatus, 'running'>, error?: string): Promise<ToolInvocationRecord | null> {
     const now = new Date().toISOString();
     const result = await this.options.pool.query<ToolInvocationRow>(`
-      UPDATE ${this.table}
+      UPDATE ${this.toolInvocationsTable}
       SET status = $2, updated_at = $3, completed_at = $3, error = $4
       WHERE invocation_id = $1 AND status = 'running'
       RETURNING *
@@ -219,7 +219,7 @@ export class PgToolInvocationStore implements ToolInvocationStore {
   async requestCancel(invocationId: string, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<ToolInvocationRecord | null> {
     const now = new Date().toISOString();
     const result = await this.options.pool.query<ToolInvocationRow>(`
-      UPDATE ${this.table}
+      UPDATE ${this.toolInvocationsTable}
       SET cancel_requested_at = COALESCE(cancel_requested_at, $2),
           cancel_reason = COALESCE(cancel_reason, $3),
           updated_at = $2,
@@ -233,7 +233,7 @@ export class PgToolInvocationStore implements ToolInvocationStore {
   async markCancelDeliveryAttempt(invocationId: string, metadataPatch: Record<string, unknown> = {}): Promise<ToolInvocationRecord | null> {
     const now = new Date().toISOString();
     const result = await this.options.pool.query<ToolInvocationRow>(`
-      UPDATE ${this.table}
+      UPDATE ${this.toolInvocationsTable}
       SET updated_at = $2,
           metadata = metadata || $3::jsonb
       WHERE invocation_id = $1
@@ -245,7 +245,7 @@ export class PgToolInvocationStore implements ToolInvocationStore {
   async markCancelDelivered(invocationId: string, metadataPatch: Record<string, unknown> = {}): Promise<ToolInvocationRecord | null> {
     const now = new Date().toISOString();
     const result = await this.options.pool.query<ToolInvocationRow>(`
-      UPDATE ${this.table}
+      UPDATE ${this.toolInvocationsTable}
       SET cancel_delivered_at = COALESCE(cancel_delivered_at, $2),
           updated_at = $2,
           metadata = metadata || $3::jsonb
@@ -256,26 +256,26 @@ export class PgToolInvocationStore implements ToolInvocationStore {
   }
 
   async get(invocationId: string): Promise<ToolInvocationRecord | null> {
-    const result = await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.table} WHERE invocation_id = $1`, [invocationId]);
+    const result = await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.toolInvocationsTable} WHERE invocation_id = $1`, [invocationId]);
     return result.rows[0] ? rowToRecord(result.rows[0]) : null;
   }
 
   async listRunning(sessionId?: string): Promise<ToolInvocationRecord[]> {
     const result = sessionId
-      ? await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.table} WHERE status = 'running' AND session_id = $1 ORDER BY started_at ASC`, [sessionId])
-      : await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.table} WHERE status = 'running' ORDER BY started_at ASC`);
+      ? await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.toolInvocationsTable} WHERE status = 'running' AND session_id = $1 ORDER BY started_at ASC`, [sessionId])
+      : await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.toolInvocationsTable} WHERE status = 'running' ORDER BY started_at ASC`);
     return result.rows.map(rowToRecord);
   }
 
   async listCancelRequested(sessionId?: string): Promise<ToolInvocationRecord[]> {
     const result = sessionId
-      ? await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.table} WHERE status = 'running' AND cancel_requested_at IS NOT NULL AND cancel_delivered_at IS NULL AND session_id = $1 ORDER BY cancel_requested_at ASC`, [sessionId])
-      : await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.table} WHERE status = 'running' AND cancel_requested_at IS NOT NULL AND cancel_delivered_at IS NULL ORDER BY cancel_requested_at ASC`);
+      ? await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.toolInvocationsTable} WHERE status = 'running' AND cancel_requested_at IS NOT NULL AND cancel_delivered_at IS NULL AND session_id = $1 ORDER BY cancel_requested_at ASC`, [sessionId])
+      : await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.toolInvocationsTable} WHERE status = 'running' AND cancel_requested_at IS NOT NULL AND cancel_delivered_at IS NULL ORDER BY cancel_requested_at ASC`);
     return result.rows.map(rowToRecord);
   }
 
   async deleteByTenant(tenantId: string): Promise<number> {
-    const result = await this.options.pool.query(`DELETE FROM ${this.table} WHERE tenant_id = $1`, [tenantId]);
+    const result = await this.options.pool.query(`DELETE FROM ${this.toolInvocationsTable} WHERE tenant_id = $1`, [tenantId]);
     return result.rowCount ?? 0;
   }
 }

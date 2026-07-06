@@ -26,6 +26,7 @@ export interface LoginLogEntry {
   event: LoginEvent;
   username: string;
   userId?: string;
+  tenantId?: string;
   ip: string;
   userAgent: string;
   channel: LoginChannel;
@@ -38,6 +39,7 @@ export interface LoginLogEntry {
 
 export interface LoginLogQuery {
   username?: string | string[];
+  tenantId?: string;
   event?: LoginEvent;
   /** 按事件类别筛选（login/activity/session/cron/user） */
   category?: string;

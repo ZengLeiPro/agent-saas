@@ -56,6 +56,9 @@ export async function queryLoginLogs(
       filtered = filtered.filter(e => e.username === query.username);
     }
   }
+  if (query.tenantId) {
+    filtered = filtered.filter(e => e.tenantId === query.tenantId);
+  }
   if (query.event) {
     filtered = filtered.filter(e => e.event === query.event);
   }

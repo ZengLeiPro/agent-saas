@@ -49,6 +49,8 @@ export class DingtalkPostprocessor {
       senderNick: source.senderNick || '',
       senderId: source.senderId || '',
       conversationType: source.conversationType || '',
+      tenantId: context.user?.tenantId,
+      userId: context.user?.id,
     });
 
     if (context.user && this.agentCwd) {

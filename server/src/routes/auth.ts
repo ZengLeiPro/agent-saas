@@ -327,6 +327,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
               timestamp: new Date().toISOString(),
               event: "login_fail",
               username: req.body?.username || "unknown",
+              tenantId: userStore.findByUsername(req.body?.username ?? "")?.tenantId,
               ip,
               userAgent,
               channel,
@@ -357,6 +358,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
               timestamp: new Date().toISOString(),
               event: "login_fail",
               username,
+              tenantId: userStore.findByUsername(username)?.tenantId,
               ip,
               userAgent,
               channel,
@@ -378,6 +380,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
               event: "login_fail",
               username: user.username,
               userId: user.id,
+              tenantId: user.tenantId,
               ip,
               userAgent,
               channel,
@@ -400,6 +403,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
               event: "login_fail",
               username: user.username,
               userId: user.id,
+              tenantId: loginTenantId,
               ip,
               userAgent,
               channel,
@@ -420,6 +424,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
             event: "login_success",
             username: user.username,
             userId: user.id,
+            tenantId: loginTenantId,
             ip,
             userAgent,
             channel,
@@ -1091,6 +1096,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
           event,
           username: req.user.username,
           userId: req.user.sub,
+          tenantId: req.user.tenantId,
           ip,
           userAgent,
           channel,
@@ -1115,8 +1121,17 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   router.get("/login-logs", requireAdmin, async (req, res) => {
     const startedAt = Date.now();
     try {
+      const requestedTenantId = req.query.tenantId as string | undefined;
+      if (requestedTenantId && !TENANT_SLUG_PATTERN.test(requestedTenantId)) {
+        res.status(400).json({ error: "tenantId 不合法" });
+        return;
+      }
+      const tenantId = isPlatformAdmin(req.user)
+        ? requestedTenantId
+        : req.user?.tenantId;
       const result = await queryLoginLogs(
         {
+          tenantId,
           username: (() => {
             const raw = req.query.username as string | undefined;
             if (!raw) return undefined;

@@ -48,7 +48,7 @@ const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
 
 /** 从 Express Request 构建并追加一条审计日志（fire-and-forget） */
 export function auditLog(
-  req: { ip?: string; socket?: { remoteAddress?: string }; headers: Record<string, string | string[] | undefined>; user?: { sub: string; username: string; role: string } },
+  req: { ip?: string; socket?: { remoteAddress?: string }; headers: Record<string, string | string[] | undefined>; user?: { sub: string; username: string; role: string; tenantId?: string } },
   event: LoginEvent,
   detail?: string,
 ): void {
@@ -60,6 +60,7 @@ export function auditLog(
     event,
     username: req.user?.username || 'anonymous',
     userId: req.user?.sub,
+    tenantId: req.user?.tenantId,
     ip: req.ip || req.socket?.remoteAddress || 'unknown',
     userAgent: (req.headers['user-agent'] as string) || 'unknown',
     channel: detectLoginChannel((req.headers['user-agent'] as string) || ''),

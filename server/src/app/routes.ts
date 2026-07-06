@@ -36,6 +36,7 @@ import { requireAdmin } from "../auth/middleware.js";
 import { createAgentsRouter } from "../routes/agents.js";
 import { createRuntimeAuditRouter } from "../routes/runtimeAudit.js";
 import { createRuntimeTraceRouter } from "../routes/runtimeTrace.js";
+import { createPlatformObservabilityRouter } from "../routes/platformObservability.js";
 import { RuntimeEfficiencyQuery } from "../runtime/efficiencyQuery.js";
 import { createSkillsRouter } from "../routes/skills.js";
 import { createMcpRouter } from "../routes/mcp.js";
@@ -342,6 +343,23 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
+
+  app.use(
+    "/api/admin",
+    requireAdmin,
+    createPlatformObservabilityRouter({
+      config,
+      secretVault: runtime.secretVault,
+      tenantStore: runtime.tenantStore,
+      userStore: runtime.userStore,
+      billingService: runtime.billingService,
+      runStore: runtime.runtimeRunStore,
+      sessionProjectionStore: runtime.runtimeSessionProjectionStore,
+      eventStore: runtime.runtimePgEventStore,
+      toolInvocationStore: runtime.runtimeToolInvocationStore,
+      getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
+    }),
+  );
 
   app.use(
     "/api",

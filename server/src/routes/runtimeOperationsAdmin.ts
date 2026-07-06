@@ -53,7 +53,7 @@ async function resolveHandToken(hand: TenantRemoteHand, vault: SecretVault | und
   return (await resolver.resolveForRegister(hand)).authToken;
 }
 
-async function requestAcsOrchestrator(args: {
+export async function requestAcsOrchestrator(args: {
   config: AppConfig;
   secretVault?: SecretVault;
   fetchImpl: typeof fetch;

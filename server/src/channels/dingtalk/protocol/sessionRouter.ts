@@ -5,6 +5,7 @@
  */
 import { Router } from 'express';
 import type { Request, Response } from 'express';
+import { isPlatformAdmin } from '../../../auth/types.js';
 
 // ============================================
 // Types
@@ -19,6 +20,8 @@ export interface DingtalkSessionSummary {
   lastUpdatedAt: string;
   messageCount: number;
   hasWebhook: boolean;
+  tenantId?: string;
+  userId?: string;
 }
 
 interface SessionInfo {
@@ -29,6 +32,8 @@ interface SessionInfo {
   lastUpdatedAt?: string;
   messageCount?: number;
   sessionWebhook?: string;
+  tenantId?: string;
+  userId?: string;
 }
 
 interface SessionReader {
@@ -59,10 +64,12 @@ export function createDingtalkSessionRouter(deps: DingtalkSessionRouterDeps): Ro
   const router = Router();
   const { sessionService, deliveryService } = deps;
 
-  router.get('/sessions', async (_req: Request, res: Response) => {
+  router.get('/sessions', async (req: Request, res: Response) => {
     try {
+      const tenantId = isPlatformAdmin(req.user) ? undefined : req.user?.tenantId;
       const sessions = sessionService.loadSessions();
       const items: DingtalkSessionSummary[] = Object.entries(sessions)
+        .filter(([, info]) => !tenantId || info.tenantId === tenantId)
         .map(([conversationId, info]) => ({
           conversationId,
           senderNick: info.senderNick,
@@ -72,6 +79,8 @@ export function createDingtalkSessionRouter(deps: DingtalkSessionRouterDeps): Ro
           lastUpdatedAt: info.lastUpdatedAt ?? '',
           messageCount: info.messageCount ?? 0,
           hasWebhook: !!info.sessionWebhook,
+          ...(info.tenantId ? { tenantId: info.tenantId } : {}),
+          ...(info.userId ? { userId: info.userId } : {}),
         }))
         .sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
 
@@ -98,6 +107,11 @@ export function createDingtalkSessionRouter(deps: DingtalkSessionRouterDeps): Ro
 
       const sessions = sessionService.loadSessions();
       const target = sessions[conversationId];
+      const tenantId = isPlatformAdmin(req.user) ? undefined : req.user?.tenantId;
+      if (tenantId && target?.tenantId !== tenantId) {
+        res.status(404).json({ error: 'DingTalk session not found' });
+        return;
+      }
       if (!target?.sessionWebhook) {
         res.status(404).json({
           error:

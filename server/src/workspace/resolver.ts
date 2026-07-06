@@ -113,6 +113,7 @@ export async function ensureUserWorkspace(
   // 如果用户目录已存在，仍要修复 runtime layout / owner，避免历史 root-owned 目录阻断 ACS。
   if (existsSync(agentDir(userCwd))) {
     writeWorkspaceMeta(userCwd, user);
+    syncScripts(userCwd, sharedDir);
     ensureWorkspaceRuntimeLayout(userCwd);
     return;
   }

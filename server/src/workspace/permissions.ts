@@ -77,6 +77,17 @@ export function ensureWorkspaceDir(path: string, mode: number, ownership = getWo
   applyPathModeAndOwner(path, mode, ownership);
 }
 
+function ensureWorkspaceDirUnlessSymlink(path: string, mode: number, ownership = getWorkspaceOwnership()): void {
+  try {
+    if (lstatSync(path).isSymbolicLink()) {
+      return;
+    }
+  } catch {
+    // Missing paths are created below. Other errors will surface through mkdir/stat.
+  }
+  ensureWorkspaceDir(path, mode, ownership);
+}
+
 export function repairWorkspacePath(path: string, mode?: number, ownership = getWorkspaceOwnership()): void {
   applyPathModeAndOwner(path, mode, ownership);
 }
@@ -122,7 +133,8 @@ export function ensureWorkspaceRuntimeLayout(userCwd: string): void {
 
   ensureWorkspaceDir(agentDir(userCwd), runtimeMode, ownership);
   ensureWorkspaceDir(agentPath(userCwd, 'skills'), dataMode, ownership);
-  ensureWorkspaceDir(agentPath(userCwd, 'scripts'), dataMode, ownership);
+  // syncScripts owns legacy symlink cleanup; do not mkdir through a broken link.
+  ensureWorkspaceDirUnlessSymlink(agentPath(userCwd, 'scripts'), dataMode, ownership);
   ensureWorkspaceDir(agentPath(userCwd, 'runtime'), runtimeMode, ownership);
   ensureWorkspaceDir(agentPath(userCwd, 'runtime', 'cache'), runtimeMode, ownership);
   ensureWorkspaceDir(agentPath(userCwd, 'runtime', 'cache', 'npm'), runtimeMode, ownership);

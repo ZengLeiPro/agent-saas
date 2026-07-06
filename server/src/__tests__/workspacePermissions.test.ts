@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,6 +30,22 @@ describe('workspace runtime layout', () => {
       await expect(access(join(root, 'memory'), constants.R_OK | constants.W_OK)).resolves.toBeUndefined();
       await expect(access(join(root, '.claude'))).rejects.toThrow();
       expect((await stat(join(root, '.ky-agent', 'runtime', 'browser-profile'))).mode & 0o777).toBe(0o700);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not mkdir through a legacy scripts symlink', async () => {
+    process.env.KY_AGENT_WORKSPACE_CHOWN = '0';
+    const root = await mkdtemp(join(tmpdir(), 'workspace-scripts-link-'));
+    try {
+      await mkdir(join(root, '.ky-agent'), { recursive: true });
+      await symlink(join(root, 'missing-shared-scripts'), join(root, '.ky-agent', 'scripts'));
+
+      ensureWorkspaceRuntimeLayout(root);
+
+      expect((await lstat(join(root, '.ky-agent', 'scripts'))).isSymbolicLink()).toBe(true);
+      await expect(access(join(root, '.ky-agent', 'runtime', 'browser-profile'))).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

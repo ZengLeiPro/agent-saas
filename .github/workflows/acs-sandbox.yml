@@ -1,4 +1,4 @@
-name: ACS Sandbox
+name: ACS CI / Deploy
 
 on:
   push:

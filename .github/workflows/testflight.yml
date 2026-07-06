@@ -5,7 +5,7 @@
 # 流程: install → eas build (cloud) → auto submit to TestFlight
 # ============================================================================
 
-name: TestFlight
+name: iOS Release
 
 on:
   workflow_dispatch:

@@ -7,18 +7,25 @@ function isInside(baseDir: string, candidate: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
-/**
- * 租户自有 skill 目录：`${sharedDir}/tenants/<tenantId>/skills/`（与 company.md 同级）。
- * 与 resolveTenantCompanyInfoPath 同口径：slug 校验 + 防路径穿越。
- */
-export function resolveTenantSkillsDir(sharedDir: string, tenantId: string): string {
+export function resolveTenantSkillsDirFromRoot(tenantsRootDir: string, tenantId: string): string {
   if (!TENANT_SLUG_PATTERN.test(tenantId)) {
     throw new Error(`Invalid tenant id "${tenantId}"`);
   }
-  const tenantsRoot = resolve(sharedDir, 'tenants');
+  const tenantsRoot = resolve(tenantsRootDir);
   const path = resolve(tenantsRoot, tenantId, 'skills');
   if (!isInside(tenantsRoot, path)) {
     throw new Error(`Invalid tenant skills path for "${tenantId}"`);
   }
   return path;
+}
+
+/**
+ * 租户自有 skill 目录：`${sharedDir}/tenants/<tenantId>/skills/`。
+ *
+ * 仅作为旧布局兼容入口保留。生产运行时应优先传入持久化的
+ * tenantSkillsRootDir，并调用 resolveTenantSkillsDirFromRoot()，避免在线上传的
+ * 组织 skill 写进 release 目录后被下一次部署覆盖。
+ */
+export function resolveTenantSkillsDir(sharedDir: string, tenantId: string): string {
+  return resolveTenantSkillsDirFromRoot(resolve(sharedDir, 'tenants'), tenantId);
 }

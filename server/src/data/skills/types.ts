@@ -49,7 +49,7 @@ export interface TenantSkillConfig {
 }
 
 export interface UserSkillConfig {
-  /** 用户选中开启的 pool skill ID 列表 */
+  /** 用户选中开启的 skill ID 列表（pool / tenant own / custom 共用） */
   selectedSkills: string[];
 }
 

@@ -1,6 +1,12 @@
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CronJob } from '../cron/types.js';
+import { SkillConfigStore } from '../data/skills/store.js';
+import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 
 const runAgentMock = vi.fn();
 
@@ -152,6 +158,61 @@ describe('cron executor', () => {
       }),
       expect.anything(),
     );
+  });
+
+  it('syncs selected tenant-owned skills from the persistent root before running owned jobs', async () => {
+    const tmpRoot = await mkdtemp(join(tmpdir(), 'cron-tenant-skill-'));
+    const agentCwd = join(tmpRoot, 'workspaces');
+    const sharedDir = join(tmpRoot, 'release', 'workspace-shared');
+    const tenantSkillsRootDir = join(tmpRoot, 'server-data', 'tenant-skills');
+    const skillConfigStore = new SkillConfigStore(join(tmpRoot, 'skills-config.json'));
+
+    await mkdir(join(sharedDir, '.ky-agent', 'skills-pool', 'browser'), { recursive: true });
+    await writeFile(
+      join(sharedDir, '.ky-agent', 'skills-pool', 'browser', 'SKILL.md'),
+      '---\nname: browser\ndescription: browser\n---\nbody',
+      'utf-8',
+    );
+    await writeFile(join(sharedDir, 'MEMORY.template.md'), '# {{displayName}}\n', 'utf-8');
+    await writeFile(join(sharedDir, 'PERSONA.template.md'), '# {{displayName}}\n', 'utf-8');
+    skillConfigStore.syncWithPool(new Set(['browser']));
+
+    const tenantSkillDir = join(resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, 'wain'), 'daily-follow-up-plan');
+    await mkdir(join(tenantSkillDir, 'scripts'), { recursive: true });
+    await writeFile(
+      join(tenantSkillDir, 'SKILL.md'),
+      '---\nname: daily-follow-up-plan\ndescription: follow up\n---\nbody',
+      'utf-8',
+    );
+    await writeFile(join(tenantSkillDir, 'scripts', 'run.md'), 'script body', 'utf-8');
+    await skillConfigStore.setUserSelectedSkills('wain_user', ['daily-follow-up-plan']);
+
+    runAgentMock.mockImplementation((_message: any, _context: any, _options: any, hooks: any) => (async function* () {
+      await hooks?.onSessionStart?.('session-owned-skill', join(tmpRoot, 'session-owned-skill.jsonl'));
+      await hooks?.onResult?.({ subtype: 'success', numTurns: 1, resultText: 'ok' });
+      yield { type: 'done' };
+    })());
+
+    const result = await executeJob(createOwnedCronJob('run task'), {
+      runAgent: (...args: any[]) => runAgentMock(...args),
+      agentCwd,
+      sharedDir,
+      userStore: {
+        findById: vi.fn(() => ({
+          id: 'u-wain',
+          username: 'wain_user',
+          role: 'user' as const,
+          tenantId: 'wain',
+        })),
+      },
+      skillConfigStore,
+      tenantSkillsRootDir,
+    });
+
+    const copiedSkillDir = join(agentCwd, 'wain', 'u-wain', '.ky-agent', 'skills', 'daily-follow-up-plan');
+    expect(result.status).toBe('ok');
+    expect(existsSync(join(copiedSkillDir, 'scripts', 'run.md'))).toBe(true);
+    await expect(readFile(join(copiedSkillDir, 'SKILL.md'), 'utf-8')).resolves.toContain('follow up');
   });
 
   it('does not dispatch when the cron owner tenant is disabled', async () => {

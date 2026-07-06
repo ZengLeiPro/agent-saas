@@ -22,6 +22,7 @@ export interface AgentsRouterDeps {
   agentAvatarsDir: string;
   agentCwd: string;
   sharedDir: string;
+  tenantSkillsRootDir?: string;
   userStore: UserStore;
   skillConfigStore?: SkillConfigStore;
   getMemoryIndexService?: () => MemoryIndexService | null | undefined;
@@ -63,7 +64,7 @@ function pick<T extends Record<string, unknown>>(obj: T, keys: readonly string[]
 }
 
 export function createAgentsRouter(deps: AgentsRouterDeps): Router {
-  const { agentStore, agentAvatarsDir, agentCwd, sharedDir, userStore, skillConfigStore } = deps;
+  const { agentStore, agentAvatarsDir, agentCwd, sharedDir, tenantSkillsRootDir, userStore, skillConfigStore } = deps;
   const router = Router();
   const displayName = (uname: string) => userStore.findByUsername(uname)?.realName || uname;
 
@@ -370,6 +371,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
         { id: auth.target.id, username: auth.target.username, role: auth.target.role as 'admin' | 'user', tenantId: auth.target.tenantId },
         { realName: auth.target.realName },
         skillConfigStore,
+        tenantSkillsRootDir,
       );
       await writeFile(personaPath, parsed.data.content, 'utf-8');
       repairWorkspacePath(personaPath, 0o664);
@@ -414,6 +416,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
         { id: auth.target.id, username: auth.target.username, role: auth.target.role as 'admin' | 'user', tenantId: auth.target.tenantId },
         { realName: auth.target.realName },
         skillConfigStore,
+        tenantSkillsRootDir,
       );
       await writeFile(memoryPath, parsed.data.content, 'utf-8');
       repairWorkspacePath(memoryPath, 0o664);

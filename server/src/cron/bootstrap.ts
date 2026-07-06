@@ -6,6 +6,7 @@ import { appendRunLog } from './run-log.js';
 import { CronService, type CronServiceDeps } from './service.js';
 import { loadJobs, resolveStorePath, saveJobs } from './store.js';
 import type { GroupStore } from '../data/groups/index.js';
+import type { SkillConfigStore } from '../data/skills/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import type { TenantStore } from '../data/tenants/store.js';
 
@@ -35,6 +36,8 @@ export interface CreateCronRuntimeOptions {
   userStore?: UserStoreLike;
   tenantStore?: TenantStore;
   tokenUsageStore?: TokenUsageStore;
+  skillConfigStore?: SkillConfigStore;
+  tenantSkillsRootDir?: string;
 }
 
 export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntime {
@@ -83,6 +86,8 @@ export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntim
       tenantStore: options.tenantStore,
       onSessionId: hooks?.onSessionId,
       tokenUsageStore: options.tokenUsageStore,
+      skillConfigStore: options.skillConfigStore,
+      tenantSkillsRootDir: options.tenantSkillsRootDir,
     }),
     appendRunLog: (entry) => appendRunLog(entry, { runsDir: cronRunsDir }),
     notify,

@@ -93,6 +93,7 @@ export interface CreateRunDispatchOptions {
   processCwd: string;
   globalAgentCwd?: string;
   sharedDir?: string;
+  tenantSkillsRootDir?: string;
   dispatch?: DispatchEngineOptions;
   observability?: ObservabilityOptions;
   metricsReporter?: DispatchMetricsReporter;
@@ -328,7 +329,7 @@ export function createMiddlewareRunDispatch(
             username: context.user.username,
             role: context.user.role as 'admin' | 'user',
             tenantId: context.user.tenantId,
-          }, undefined, options.skillConfigStore);
+          }, undefined, options.skillConfigStore, options.tenantSkillsRootDir);
 
           // 迁移已有用户：确保 symlink 与模板同步 + 版本驱动的 skill 同步
           // 注：refreshUserWorkspace 第 4 参数已废弃（writeMemory 内部 _isAdmin 未使用），
@@ -348,6 +349,7 @@ export function createMiddlewareRunDispatch(
             },
             { realName: context.user.realName },
             options.skillConfigStore,
+            options.tenantSkillsRootDir,
           );
 
           effectiveOptions = { ...effectiveOptions, cwd: userCwd };

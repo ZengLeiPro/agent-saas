@@ -157,6 +157,7 @@ export interface SignupRouterDeps {
   tokenExpiresIn: string;
   agentCwd: string;
   sharedDir: string;
+  tenantSkillsRootDir?: string;
   loginLogFilePath: string;
   skillConfigStore?: SkillConfigStore;
   /** 测试注入：覆盖内部按配置构建的验证码服务（capture sender 拿真码） */
@@ -255,6 +256,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
     tokenExpiresIn,
     agentCwd,
     sharedDir,
+    tenantSkillsRootDir,
     loginLogFilePath,
     skillConfigStore,
   } = deps;
@@ -492,6 +494,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
         identity,
         { realName: name, position },
         skillConfigStore,
+        tenantSkillsRootDir,
       );
 
       // 5. 计费：trial 模式 + 硬封顶 + 赠送积分。billing 失败必须阻断注册——

@@ -13,7 +13,7 @@ import { serverLogger } from '../utils/logger.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import { scanTenantOwnSkillIds } from '../data/skills/scanner.js';
 import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
-import { resolveTenantSkillsDir } from '../data/tenants/tenantSkillsPath.js';
+import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import {
   agentDir,
   agentPath,
@@ -86,6 +86,7 @@ export async function ensureUserWorkspace(
   user?: WorkspaceUser,
   meta?: WorkspaceUserMeta,
   skillConfigStore?: SkillConfigStore,
+  tenantSkillsRootDir?: string,
 ): Promise<void> {
   // 迁移：历史路径曾用过 <cwd>/<userId>、<cwd>/<username>、
   // <cwd>/<tenant>/<username>。当前统一为 <cwd>/<tenant>/<userId>。
@@ -162,7 +163,7 @@ export async function ensureUserWorkspace(
   }
 
   // 同步 skills（从 pool 按配置分配）+ scripts
-  syncSkills(userCwd, sharedDir, user, skillConfigStore);
+  syncSkills(userCwd, sharedDir, user, skillConfigStore, tenantSkillsRootDir);
   syncScripts(userCwd, sharedDir);
 
   // 写入初始版本标记
@@ -191,7 +192,13 @@ export async function ensureUserWorkspace(
  * 从 skills-pool 按用户角色同步 skill 到用户目录。
  * 系统 skill 全量覆盖，用户自建 skill 和 .system/ 不触碰。
  */
-export function syncSkills(userCwd: string, sharedDir: string, user?: WorkspaceUser, skillConfigStore?: SkillConfigStore): void {
+export function syncSkills(
+  userCwd: string,
+  sharedDir: string,
+  user?: WorkspaceUser,
+  skillConfigStore?: SkillConfigStore,
+  tenantSkillsRootDir?: string,
+): void {
   const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
   const userSkillsDir = agentSkillsDir(userCwd);
 
@@ -218,7 +225,9 @@ export function syncSkills(userCwd: string, sharedDir: string, user?: WorkspaceU
   let tenantOwnIds = new Set<string>();
   if (skillConfigStore && user?.tenantId) {
     try {
-      tenantSkillsSrcDir = resolveTenantSkillsDir(sharedDir, user.tenantId);
+      tenantSkillsSrcDir = tenantSkillsRootDir
+        ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, user.tenantId)
+        : resolveTenantSkillsDir(sharedDir, user.tenantId);
       tenantOwnIds = scanTenantOwnSkillIds(tenantSkillsSrcDir, poolSkills);
     } catch {
       // 非法 tenantId → 视为无租户层
@@ -502,6 +511,7 @@ export function refreshUserWorkspace(
   user?: WorkspaceUser,
   meta?: WorkspaceUserMeta,
   skillConfigStore?: SkillConfigStore,
+  tenantSkillsRootDir?: string,
 ): void {
   ensureWorkspaceRuntimeLayout(userCwd);
 
@@ -518,7 +528,7 @@ export function refreshUserWorkspace(
     } catch { /* file not found or unreadable */ }
 
     if (migrated || localVersion < currentVersion) {
-      syncSkills(userCwd, sharedDir, user, skillConfigStore);
+      syncSkills(userCwd, sharedDir, user, skillConfigStore, tenantSkillsRootDir);
       writeFileSync(versionFile, String(currentVersion), 'utf-8');
     }
   } else if (migrated) {

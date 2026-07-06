@@ -64,7 +64,7 @@ import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { McpConfigStore } from '../data/mcpConfig.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
 import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds, scanUserCustomSkills } from '../data/skills/scanner.js';
-import { resolveTenantSkillsDir } from '../data/tenants/tenantSkillsPath.js';
+import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import { syncSkills, resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, agentPath, resolveAgentPath } from '../workspace/namespace.js';
 import type { RawRuntimeRunDispatchConfig, SkillsDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
@@ -106,6 +106,7 @@ export interface AppRuntime {
   sessionBasePath: string;
   agentCwd: string;
   sharedDir: string;
+  tenantSkillsRootDir: string;
   uploadsDir: string;
   channelManager: ChannelManager;
   dispatchMetricsStore: DispatchMetricsStore;
@@ -286,6 +287,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const sharedDir = config.agent.sharedDir
     ? resolve(projectRoot, config.agent.sharedDir)
     : join(agentCwd, '.shared');  // 向后兼容
+  // 线上上传/提升的组织自有 skill 必须落持久数据目录，不能落 release 下的 workspace-shared。
+  // release 目录会在每次部署时切换 symlink，写进去的租户内容会天然丢失。
+  const tenantSkillsRootDir = resolve(processCwd, './data/tenant-skills');
   config.agent.userOverrides = sanitizeUserOverrides(config.agent.userOverrides, {
     processCwd,
     globalAgentCwd: agentCwd,
@@ -484,7 +488,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       const workspaceUser = { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId };
       const userCwd = resolveUserCwd(agentCwd, workspaceUser);
       if (existsSync(agentDir(userCwd))) {
-        syncSkills(userCwd, sharedDir, workspaceUser, skillConfigStore);
+        syncSkills(userCwd, sharedDir, workspaceUser, skillConfigStore, tenantSkillsRootDir);
         synced++;
       }
     }
@@ -495,12 +499,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // 3. 清理配置中的幽灵条目（sync 完成后再清理，避免 sync 时读不到历史记录）
     // 租户自有 skill 目录现状一并传入：保留 selectedSkills 中的租户 skill、清理 ownSkills 幽灵规则
     const tenantOwnIdsByTenant: Record<string, Set<string>> = {};
-    const tenantsRoot = join(sharedDir, 'tenants');
+    const tenantsRoot = tenantSkillsRootDir;
     if (existsSync(tenantsRoot)) {
       for (const entry of readdirSync(tenantsRoot)) {
         try {
           if (!statSync(join(tenantsRoot, entry)).isDirectory()) continue;
-          tenantOwnIdsByTenant[entry] = scanTenantOwnSkillIds(resolveTenantSkillsDir(sharedDir, entry), currentPoolIds);
+          tenantOwnIdsByTenant[entry] = scanTenantOwnSkillIds(resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, entry), currentPoolIds);
         } catch {
           // 非法目录名或读取失败，跳过
         }
@@ -832,15 +836,30 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           });
           const userSkillsDir = resolveAgentPath(userCwd, 'skills');
           const poolIds = new Set(all.map((s) => s.id));
+          const tenantSkillsDir = user.tenantId ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, user.tenantId) : null;
+          const tenantOwnIds = tenantSkillsDir ? scanTenantOwnSkillIds(tenantSkillsDir, poolIds) : new Set<string>();
+          const effectiveTenantOwn = new Set(
+            store.getUserEffectiveTenantOwnSkills(username, user.tenantId, tenantOwnIds),
+          );
+          const tenantResult = tenantSkillsDir
+            ? scanUserCustomSkills(tenantSkillsDir, poolIds)
+              .filter((s) => effectiveTenantOwn.has(s.id))
+              .map((s) => ({
+                id: s.id,
+                name: (s as { name?: string }).name || s.id,
+                description: s.description ?? '',
+              }))
+            : [];
           const selected = new Set(store.getUserSelectedSkills(username));
-          const customResult = scanUserCustomSkills(userSkillsDir, poolIds)
+          const customExcluded = new Set([...poolIds, ...tenantOwnIds]);
+          const customResult = scanUserCustomSkills(userSkillsDir, customExcluded)
             .filter((s) => selected.has(s.id))
             .map((s) => ({
               id: s.id,
               name: (s as { name?: string }).name || s.id,
               description: s.description ?? '',
             }));
-          return [...poolResult, ...customResult];
+          return [...poolResult, ...tenantResult, ...customResult];
         } catch {
           // 非法路径 / 扫描失败：静默降级为仅 pool，dispatch 不因单用户目录异常而崩
           return poolResult;
@@ -859,9 +878,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           : join(agentCwd, username); // 用户不存在时的兼容兜底
         const userDir = resolveAgentPath(userCwd, 'skills', skill);
         if (existsSync(userDir)) return userDir;
-        // 退回 pool（admin 在线编辑或 user 副本未同步时）
-        const pDir = join(poolDir, skill);
-        if (existsSync(pDir)) return pDir;
+        if (u) {
+          try {
+            syncSkills(userCwd, sharedDir, { id: u.id, username: u.username, role: u.role, tenantId: u.tenantId }, store, tenantSkillsRootDir);
+          } catch (err) {
+            serverLogger.warn(`Skill sync before invoke failed for ${username}/${skill}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          if (existsSync(userDir)) return userDir;
+        }
         return null;
       },
     };
@@ -1074,6 +1098,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         workspaceUser,
         { realName: userRecord.realName, position: userRecord.position },
         skillConfigStore,
+        tenantSkillsRootDir,
       );
     },
     logger: serverLogger.child('RawRuntime'),
@@ -1210,6 +1235,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     processCwd,
     globalAgentCwd: agentCwd,
     sharedDir,
+    tenantSkillsRootDir,
     dispatch: config.dispatch,
     observability: config.observability,
     metricsReporter: dispatchMetricsStore.report,
@@ -1334,6 +1360,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     userStore,
     tenantStore,
     tokenUsageStore,
+    skillConfigStore,
+    tenantSkillsRootDir,
     notify: createCronNotifier({
       resolveChannels: (notifyConfig) => {
         const channels: NotifyChannel[] = [];
@@ -1545,6 +1573,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     sessionBasePath,
     agentCwd,
     sharedDir,
+    tenantSkillsRootDir,
     uploadsDir,
     channelManager,
     dispatchMetricsStore,

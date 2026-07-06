@@ -36,6 +36,7 @@ interface TestRig {
   baseUrl: string;
   agentCwd: string;
   sharedDir: string;
+  tenantSkillsRootDir: string;
   poolDir: string;
   skillConfigStore: SkillConfigStore;
   setCaller(caller: JwtPayload): void;
@@ -210,6 +211,7 @@ async function makeTestRig(): Promise<TestRig> {
   const tmpRoot = mkdtempSync(join(tmpdir(), 'skills-tenant-iso-'));
   const agentCwd = join(tmpRoot, 'workspace');
   const sharedDir = join(tmpRoot, 'shared');
+  const tenantSkillsRootDir = join(tmpRoot, 'tenant-skills');
   const poolDir = join(sharedDir, '.ky-agent', 'skills-pool');
   mkdirSync(agentCwd, { recursive: true });
   mkdirSync(poolDir, { recursive: true });
@@ -235,11 +237,12 @@ async function makeTestRig(): Promise<TestRig> {
   const skillConfigStore = fakeSkillConfigStore();
   app.use((req, _res, next) => { req.user = currentCaller; next(); });
   app.use('/api/skills', createSkillsRouter({
-    skillConfigStore,
-    userStore: fakeUserStore(),
-    agentCwd,
-    sharedDir,
-  }));
+      skillConfigStore,
+      userStore: fakeUserStore(),
+      agentCwd,
+      sharedDir,
+      tenantSkillsRootDir,
+    }));
   // 跑 requireAdmin error 路径需要中间件链；这里整链已挂
   void requireAdmin;
   const server: Server = await new Promise(resolve => {
@@ -251,6 +254,7 @@ async function makeTestRig(): Promise<TestRig> {
     baseUrl,
     agentCwd,
     sharedDir,
+    tenantSkillsRootDir,
     poolDir,
     skillConfigStore,
     setCaller(c) { currentCaller = c; },
@@ -636,7 +640,7 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       fd.append('files', new Blob([`---\nname: ${skillName}\ndescription: d\n---\nbody`], { type: 'text/markdown' }), 'SKILL.md');
       return fd;
     }
-    const tenantSkillDir = (tenantId: string, skillId: string) => join(h.sharedDir, 'tenants', tenantId, 'skills', skillId);
+    const tenantSkillDir = (tenantId: string, skillId: string) => join(h.tenantSkillsRootDir, tenantId, 'skills', skillId);
 
     it('组织 admin POST /tenants/:own/import → 200，目录落 tenants/<id>/skills', async () => {
       h.setCaller(WAIN_ADMIN);

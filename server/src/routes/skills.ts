@@ -12,7 +12,7 @@ import { auditLog } from '../data/login-logs/index.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import type { PlatformSkillConfig, TenantSkillRule } from '../data/skills/types.js';
 import { scanPoolSkills, scanTenantOwnSkillIds, scanUserCustomSkills } from '../data/skills/scanner.js';
-import { resolveTenantSkillsDir } from '../data/tenants/tenantSkillsPath.js';
+import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import { resolveUserCwd, syncSkills } from '../workspace/resolver.js';
 import { agentDir, agentPath, agentSkillsDir, resolveAgentPath } from '../workspace/namespace.js';
 import { ensureWorkspaceDir, repairWorkspacePath, repairWorkspaceTree } from '../workspace/permissions.js';
@@ -28,10 +28,11 @@ export interface SkillsRouterDeps {
   userStore: UserStore;
   agentCwd: string;
   sharedDir: string;
+  tenantSkillsRootDir?: string;
 }
 
 export function createSkillsRouter(deps: SkillsRouterDeps): Router {
-  const { skillConfigStore, userStore, agentCwd, sharedDir } = deps;
+  const { skillConfigStore, userStore, agentCwd, sharedDir, tenantSkillsRootDir } = deps;
   const router = Router();
 
   const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
@@ -76,7 +77,9 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
   /** 租户自有 skill 目录（tenants/<tenantId>/skills/）；tenantId 非法时抛错 */
   function tenantSkillsDirFor(tenantId: string): string {
-    return resolveTenantSkillsDir(sharedDir, tenantId);
+    return tenantSkillsRootDir
+      ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, tenantId)
+      : resolveTenantSkillsDir(sharedDir, tenantId);
   }
 
   /** 租户自有 skill 现存 ID（与 pool 同名的被 shadow，不返回） */
@@ -91,14 +94,19 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
   /** 所有租户的自有 skill 现存 ID；供 pruneStaleSkills 使用 */
   function getAllTenantOwnSkillIds(): Record<string, Set<string>> {
-    const tenantsRoot = join(sharedDir, 'tenants');
+    const tenantsRoot = tenantSkillsRootDir ?? join(sharedDir, 'tenants');
     const result: Record<string, Set<string>> = {};
     if (!existsSync(tenantsRoot)) return result;
     const poolIds = getPoolSkillIds();
     for (const entry of readdirSync(tenantsRoot)) {
       try {
         if (!statSync(join(tenantsRoot, entry)).isDirectory()) continue;
-        result[entry] = scanTenantOwnSkillIds(resolveTenantSkillsDir(sharedDir, entry), poolIds);
+        result[entry] = scanTenantOwnSkillIds(
+          tenantSkillsRootDir
+            ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, entry)
+            : resolveTenantSkillsDir(sharedDir, entry),
+          poolIds,
+        );
       } catch {
         // 非法目录名或读取失败，跳过
       }
@@ -774,7 +782,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
         if (!existsSync(agentDir(userCwd))) {
           return res.status(404).json({ error: 'User workspace not initialized' });
         }
-        syncSkills(userCwd, sharedDir, { id: user.id, username: user.username, role: user.role as 'admin' | 'user', tenantId: user.tenantId }, skillConfigStore);
+        syncSkills(userCwd, sharedDir, { id: user.id, username: user.username, role: user.role as 'admin' | 'user', tenantId: user.tenantId }, skillConfigStore, tenantSkillsRootDir);
         syncedWorkspaces.push(userCwd);
         const configVersion = String(skillConfigStore.getConfigVersion());
         for (const cwd of syncedWorkspaces) writeVersion(cwd, configVersion);
@@ -785,7 +793,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
           if (!platform && u.tenantId !== req.user?.tenantId) continue;
           const userCwd = resolveUserCwd(agentCwd, { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId });
           if (existsSync(agentDir(userCwd))) {
-            syncSkills(userCwd, sharedDir, { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId }, skillConfigStore);
+            syncSkills(userCwd, sharedDir, { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId }, skillConfigStore, tenantSkillsRootDir);
             syncedWorkspaces.push(userCwd);
             synced.push(u.username);
           }
@@ -1185,7 +1193,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     try {
       return tenantSkillsDirFor(tenantId);
     } catch {
-      return join(sharedDir, 'tenants', '.invalid', 'skills');
+      return join(tenantSkillsRootDir ?? join(sharedDir, 'tenants'), '.invalid', 'skills');
     }
   }
 

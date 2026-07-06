@@ -233,6 +233,8 @@ export interface AuthRouterDeps {
   agentCwd: string;
   /** 共享资源目录 */
   sharedDir: string;
+  /** 租户自有 skill 持久根目录 */
+  tenantSkillsRootDir?: string;
   /** 用户被禁用时的回调（断开 WS 连接 + 中止活跃流） */
   onUserDisabled?: (userId: string) => void;
   /** Skill 配置 store，用于删除用户时清理孤儿条目 */
@@ -261,6 +263,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     loginLogFilePath,
     agentCwd,
     sharedDir,
+    tenantSkillsRootDir,
     skillConfigStore,
   } = deps;
   const router = Router();
@@ -612,6 +615,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         },
         { realName, position },
         skillConfigStore,
+        tenantSkillsRootDir,
       );
 
       auditLog(req, "user_created", `${username} (${role})`);

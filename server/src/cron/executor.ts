@@ -4,8 +4,9 @@
 import * as fs from "node:fs/promises";
 import { getTranscriptPath } from "../data/transcripts/store.js";
 import { writeSessionMeta } from "../data/transcripts/meta.js";
-import { resolveUserCwd, ensureUserWorkspace } from "../workspace/resolver.js";
+import { resolveUserCwd, ensureUserWorkspace, refreshUserWorkspace } from "../workspace/resolver.js";
 import type { ResolvedModel } from "../app/models.js";
+import type { SkillConfigStore } from "../data/skills/store.js";
 import type {
   InboundMessage,
   ChannelContext,
@@ -53,6 +54,10 @@ export interface ExecutorOptions {
   onSessionId?: (sessionId: string, transcriptPath?: string) => void;
   /** Token 用量统计 store（可选） */
   tokenUsageStore?: TokenUsageStore;
+  /** Skill 配置 store（用于 cron owner workspace 同步用户/组织 skill） */
+  skillConfigStore?: SkillConfigStore;
+  /** 线上上传的组织自有 skill 持久化根目录 */
+  tenantSkillsRootDir?: string;
 }
 
 export interface ExecuteResult {
@@ -125,7 +130,27 @@ async function executeAgentTurn(
     // 错路径到 kaiyan/<owner.username>/
     const workspaceUser = { id: owner.id, username: owner.username, role: owner.role, tenantId: owner.tenantId };
     effectiveAgentCwd = resolveUserCwd(opts.agentCwd, workspaceUser);
-    await ensureUserWorkspace(effectiveAgentCwd, opts.agentCwd, opts.sharedDir, workspaceUser);
+    await ensureUserWorkspace(
+      effectiveAgentCwd,
+      opts.agentCwd,
+      opts.sharedDir,
+      workspaceUser,
+      undefined,
+      opts.skillConfigStore,
+      opts.tenantSkillsRootDir,
+    );
+    if (opts.skillConfigStore) {
+      refreshUserWorkspace(
+        effectiveAgentCwd,
+        opts.agentCwd,
+        opts.sharedDir,
+        false,
+        workspaceUser,
+        undefined,
+        opts.skillConfigStore,
+        opts.tenantSkillsRootDir,
+      );
+    }
   }
 
   let output = "";

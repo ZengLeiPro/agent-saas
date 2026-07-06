@@ -85,6 +85,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     config,
     agentCwd,
     sharedDir,
+    tenantSkillsRootDir,
     sessionBasePath,
     dingtalkDeps,
     cronRuntime,
@@ -390,6 +391,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         loginLogFilePath,
         agentCwd,
         sharedDir,
+        tenantSkillsRootDir,
         onUserDisabled: webChannel
           ? (userId: string) => webChannel.disconnectUser(userId)
           : undefined,
@@ -411,6 +413,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         tokenExpiresIn: config.auth.tokenExpiresIn || "30d",
         agentCwd,
         sharedDir,
+        tenantSkillsRootDir,
         loginLogFilePath,
         skillConfigStore: runtime.skillConfigStore,
       });
@@ -443,6 +446,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           userStore: runtime.userStore!,
           agentCwd,
           sharedDir,
+          tenantSkillsRootDir: runtime.tenantSkillsRootDir,
         }),
       );
     }
@@ -473,6 +477,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           agentAvatarsDir,
           agentCwd: agentCwd,
           sharedDir,
+          tenantSkillsRootDir,
           userStore: runtime.userStore!,
           skillConfigStore: runtime.skillConfigStore,
           getMemoryIndexService: runtime.getMemoryIndexService,

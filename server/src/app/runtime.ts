@@ -38,7 +38,7 @@ import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { createMiddlewareRunDispatch } from '../engine/dispatch.js';
 import { DispatchMetricsStore } from '../engine/metricsStore.js';
 import { createMemoryMaintenanceHook, withMemoryMaintenance } from '../engine/memoryHook.js';
-import { getPublicModelList, isModelAllowedForTenant } from './models.js';
+import { getPublicModelList, getTenantPublicModelList, isModelAllowedForTenant } from './models.js';
 import { ChannelManager } from '../channels/manager.js';
 import { WebChannel } from '../channels/web/channel.js';
 import { DingtalkChannel } from '../channels/dingtalk/channel.js';
@@ -954,6 +954,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         return resolveModelRef(config.models!, ref);
       }
     : undefined;
+  const defaultModelResolver = config.models
+    ? (tenantId?: string) => {
+        const tenantSettings = tenantId ? tenantStore?.getSettings(tenantId) : undefined;
+        const ref = getTenantPublicModelList(config.models!, tenantSettings).default || config.models!.default;
+        const resolved = modelResolver?.(ref, tenantId);
+        return resolved ? { ref, ...resolved } : null;
+      }
+    : undefined;
 
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd,
@@ -1319,7 +1327,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runAgent: billedCronRunDispatch,
     defaultMaxTurns: config.agent.maxTurns || 10,
     defaultTimeoutSeconds: 1800,
+    defaultModel: config.models?.default,
     resolveModel: modelResolver,
+    resolveDefaultModel: defaultModelResolver,
     groupStore,
     userStore,
     tenantStore,

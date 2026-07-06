@@ -123,6 +123,7 @@ export interface CronServiceDeps {
     output?: string;
     sessionId?: string;
     transcriptPath?: string;
+    modelRef?: string;
   }>;
   appendRunLog: (entry: CronRunLogEntry) => Promise<void>;
   notify?: (args: { job: CronJob; run: CronRunLogEntry; output?: string; error?: string }) => Promise<void>;
@@ -436,6 +437,7 @@ export class CronService {
     let output: string | undefined;
     let sessionId: string | undefined;
     let transcriptPath: string | undefined;
+    let model: string | undefined;
 
     // 通过回调提前捕获 sessionId，确保 pTimeout 打断 promise 后仍可归组
     const onSessionId = (sid: string, tp?: string) => {
@@ -457,6 +459,7 @@ export class CronService {
       output = result.output;
       sessionId = result.sessionId;
       transcriptPath = result.transcriptPath;
+      model = result.modelRef;
     } catch (err) {
       status = "error";
       error = String(err);
@@ -482,7 +485,7 @@ export class CronService {
       job.state.nextRunAtMs = computeJobNextRunAtMs(job, endedAt);
     }
 
-    const model = job.payload.kind === "agentTurn" ? job.payload.model : undefined;
+    model = model ?? (job.payload.kind === "agentTurn" ? job.payload.model : undefined);
 
     await this.deps.appendRunLog({
       runId,

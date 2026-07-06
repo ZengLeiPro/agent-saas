@@ -26,9 +26,11 @@ export interface CreateCronRuntimeOptions {
   runAgent: AgentRunDispatch;
   defaultMaxTurns?: number;
   defaultTimeoutSeconds?: number;
+  defaultModel?: ExecutorOptions['defaultModel'];
   notify?: CronServiceDeps['notify'];
   onEvent?: CronServiceDeps['onEvent'];
   resolveModel?: ExecutorOptions['resolveModel'];
+  resolveDefaultModel?: ExecutorOptions['resolveDefaultModel'];
   groupStore?: GroupStore;
   userStore?: UserStoreLike;
   tenantStore?: TenantStore;
@@ -73,8 +75,10 @@ export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntim
       sharedDir,
       defaultMaxTurns,
       defaultTimeoutSeconds,
+      defaultModel: options.defaultModel,
       timezone: config.server.timezone,
       resolveModel: options.resolveModel,
+      resolveDefaultModel: options.resolveDefaultModel,
       userStore: options.userStore,
       tenantStore: options.tenantStore,
       onSessionId: hooks?.onSessionId,

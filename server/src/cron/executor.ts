@@ -42,7 +42,9 @@ export interface ExecutorOptions {
   /** 用户时区 */
   timezone?: string;
   /** 模型引用解析器：将 "groupId/modelId" 解析为 OpenAI Agents model + connection */
-  resolveModel?: (ref: string) => ResolvedModel | null;
+  resolveModel?: (ref: string, tenantId?: string) => ResolvedModel | null;
+  /** 默认模型解析器：按 owner 所在组织解析“使用默认模型”。 */
+  resolveDefaultModel?: (tenantId?: string) => (ResolvedModel & { ref: string }) | null;
   /** 用户存储（用于解析 owner 的 cwd） */
   userStore?: UserStoreLike;
   /** 组织存储（用于阻止 disabled tenant 的后台任务继续执行） */
@@ -59,6 +61,8 @@ export interface ExecuteResult {
   output?: string;
   sessionId?: string;
   transcriptPath?: string;
+  /** 本次实际使用的模型引用（group/model），用于 run log 展示与会话恢复。 */
+  modelRef?: string;
 }
 
 export async function executeJob(
@@ -127,6 +131,7 @@ async function executeAgentTurn(
   let output = "";
   let sessionId: string | undefined;
   let transcriptPath: string | undefined;
+  let modelRef: string | undefined;
 
   const deriveTranscriptPath = async () => {
     if (!sessionId || transcriptPath) return;
@@ -146,18 +151,40 @@ async function executeAgentTurn(
   };
 
   try {
-    let model: string | undefined = opts.defaultModel;
-    let openaiAgentsConnection: { apiKey?: string; baseUrl?: string } | undefined;
+    let model: string | undefined;
+    let modelConnection: { apiKey?: string; baseUrl?: string } | undefined;
+    let modelProviderOptions: ResolvedModel['providerOptions'] | undefined;
 
-    if (payload.model) {
-      if (payload.model.includes('/') && opts.resolveModel) {
-        const resolved = opts.resolveModel(payload.model);
-        if (resolved) {
-          model = resolved.model;
-          openaiAgentsConnection = resolved.connection;
-        }
+    const explicitModelRef = payload.model;
+    if (explicitModelRef) {
+      modelRef = explicitModelRef;
+      if (explicitModelRef.includes('/') && opts.resolveModel) {
+        const resolved = opts.resolveModel(explicitModelRef, owner?.tenantId);
+        if (!resolved) throw new Error(`定时任务模型不可用: ${explicitModelRef}`);
+        model = resolved.model;
+        modelConnection = resolved.connection;
+        modelProviderOptions = resolved.providerOptions;
       } else {
-        model = payload.model;
+        model = explicitModelRef;
+      }
+    } else {
+      const resolvedDefault = opts.resolveDefaultModel?.(owner?.tenantId);
+      if (resolvedDefault) {
+        modelRef = resolvedDefault.ref;
+        model = resolvedDefault.model;
+        modelConnection = resolvedDefault.connection;
+        modelProviderOptions = resolvedDefault.providerOptions;
+      } else if (opts.defaultModel) {
+        modelRef = opts.defaultModel;
+        if (opts.defaultModel.includes('/') && opts.resolveModel) {
+          const resolved = opts.resolveModel(opts.defaultModel, owner?.tenantId);
+          if (!resolved) throw new Error(`默认模型不可用: ${opts.defaultModel}`);
+          model = resolved.model;
+          modelConnection = resolved.connection;
+          modelProviderOptions = resolved.providerOptions;
+        } else {
+          model = opts.defaultModel;
+        }
       }
     }
 
@@ -198,7 +225,8 @@ async function executeAgentTurn(
         cwd: effectiveAgentCwd,
         maxTurns,
         ...(model !== undefined ? { model } : {}),
-        ...(openaiAgentsConnection ? { openaiAgentsConnection } : {}),
+        ...(modelConnection ? { modelConnection } : {}),
+        ...(modelProviderOptions ? { modelProviderOptions } : {}),
         persistSession: true,
         includePartialMessages: true,
         ...skipFlags,
@@ -296,14 +324,14 @@ async function executeAgentTurn(
     }
 
     await deriveTranscriptPath();
-    return { status: "ok", output, sessionId, transcriptPath };
+    return { status: "ok", output, sessionId, transcriptPath, modelRef };
   } catch (err) {
     let error = String(err);
     if (didTimeoutAbort) {
       error = `Execution timeout after ${timeoutSeconds}s`;
     }
     await deriveTranscriptPath();
-    return { status: "error", error, output, sessionId, transcriptPath };
+    return { status: "error", error, output, sessionId, transcriptPath, modelRef };
   } finally {
     if (timeout) clearTimeout(timeout);
   }

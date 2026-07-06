@@ -9,7 +9,7 @@
  *
  * 权限：仅在 PlatformAdminShell 挂载；后端 router 对非平台 admin 一律 403。
  */
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
@@ -17,8 +17,19 @@ import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHe
 import { RunDetailView } from "./RunDetailView";
 import { RunListView } from "./RunListView";
 
-export function RunTraceExplorer() {
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+export function RunTraceExplorer({
+  runId,
+  onRunIdChange,
+}: {
+  runId?: string | null;
+  onRunIdChange?: (runId: string | null) => void;
+}) {
+  const [localRunId, setLocalRunId] = useState<string | null>(null);
+  const selectedRunId = runId !== undefined ? runId : localRunId;
+  const setSelectedRunId = useCallback((next: string | null) => {
+    if (onRunIdChange) onRunIdChange(next);
+    else setLocalRunId(next);
+  }, [onRunIdChange]);
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">

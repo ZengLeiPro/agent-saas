@@ -32,6 +32,7 @@ const SkillsSectionPanel = lazy(() => import("@/components/AgentProfile").then(m
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
 const SkillManagerPanel = lazy(() => import("@/components/SkillManager").then(m => ({ default: m.SkillManager })));
 const UsageDashboard = lazy(() => import("@/components/UsageDashboard").then(m => ({ default: m.UsageDashboard })));
+const EfficiencyViewPanel = lazy(() => import("@/components/UsageDashboard/EfficiencyView").then(m => ({ default: m.EfficiencyView })));
 const McpManagerPanel = lazy(() => import("@/components/McpManager").then(m => ({ default: m.McpManager })));
 const McpAdminCatalogPanel = lazy(() => import("@/components/McpManager").then(m => ({ default: m.McpAdminCatalog })));
 const ModelManagerPanel = lazy(() => import("@/components/ModelManager").then(m => ({ default: m.ModelManager })));
@@ -503,6 +504,7 @@ export function DesktopLayout(props: LayoutProps) {
                 renderMcp={() => <McpAdminCatalogPanel />}
                 renderSkills={() => <SkillManagerPanel mode="platform" />}
                 renderUsage={() => <UsageDashboard scope="platform" />}
+                renderEfficiency={() => <EfficiencyViewPanel />}
                 activeSection={platformAdminSection}
                 entityId={platformAdminEntityId}
                 onSectionChange={setPlatformAdminRoute}
@@ -545,6 +547,7 @@ export function DesktopLayout(props: LayoutProps) {
               renderMcp={() => <McpAdminCatalogPanel />}
               renderSkills={() => <SkillManagerPanel mode="platform" />}
               renderUsage={() => <UsageDashboard scope="platform" />}
+              renderEfficiency={() => <EfficiencyViewPanel />}
               activeSection={platformAdminSection}
               entityId={platformAdminEntityId}
               onSectionChange={setPlatformAdminRoute}

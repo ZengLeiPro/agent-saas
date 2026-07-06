@@ -25,6 +25,8 @@ export interface LoginLogEntry {
   username: string;
   /** 登录失败（用户不存在）时缺失 */
   userId?: string;
+  /** 多租户归属；旧日志可能缺失 */
+  tenantId?: string;
   ip: string;
   userAgent: string;
   channel: LoginChannel;
@@ -38,6 +40,7 @@ export interface LoginLogEntry {
 
 export interface LoginLogQuery {
   username?: string | string[];
+  tenantId?: string;
   event?: LoginEvent;
   /** 按事件类别筛选（login/activity/session/group/cron/user/file/agent/skill/mcp/tenant） */
   category?: string;

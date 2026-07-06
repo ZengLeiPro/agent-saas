@@ -30,6 +30,7 @@ const SkillManagerPanel = lazy(() => import("@/components/SkillManager").then(m 
 const McpManagerPanel = lazy(() => import("@/components/McpManager").then(m => ({ default: m.McpManager })));
 const McpAdminCatalogPanel = lazy(() => import("@/components/McpManager").then(m => ({ default: m.McpAdminCatalog })));
 const UsageDashboard = lazy(() => import("@/components/UsageDashboard").then(m => ({ default: m.UsageDashboard })));
+const EfficiencyViewPanel = lazy(() => import("@/components/UsageDashboard/EfficiencyView").then(m => ({ default: m.EfficiencyView })));
 const ModelManagerPanel = lazy(() => import("@/components/ModelManager").then(m => ({ default: m.ModelManager })));
 const TenantRemoteHandsManagerPanel = lazy(() => import("@/components/TenantRemoteHandsManager").then(m => ({ default: m.TenantRemoteHandsManager })));
 const ToolControlsManagerPanel = lazy(() => import("@/components/ToolControlsManager").then(m => ({ default: m.ToolControlsManager })));
@@ -272,6 +273,7 @@ export function MobileLayout(props: LayoutProps) {
                     renderMcp={() => <McpAdminCatalogPanel />}
                     renderSkills={() => <SkillManagerPanel mode="platform" />}
                     renderUsage={() => <UsageDashboard scope="platform" />}
+                    renderEfficiency={() => <EfficiencyViewPanel />}
                     activeSection={platformAdminSection}
                     entityId={platformAdminEntityId}
                     onSectionChange={setPlatformAdminRoute}
@@ -401,6 +403,7 @@ export function MobileLayout(props: LayoutProps) {
             renderMcp={() => <McpAdminCatalogPanel />}
             renderSkills={() => <SkillManagerPanel mode="platform" />}
             renderUsage={() => <UsageDashboard scope="platform" />}
+            renderEfficiency={() => <EfficiencyViewPanel />}
             activeSection={platformAdminSection}
             entityId={platformAdminEntityId}
             onSectionChange={setPlatformAdminRoute}

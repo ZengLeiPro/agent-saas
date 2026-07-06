@@ -12,9 +12,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { EntityLink } from "@/components/PlatformAdmin/common";
 
 import { runTraceApi } from "@/components/RunTraceExplorer/api";
-import { CopyableId } from "@/components/RunTraceExplorer/CopyableId";
 import { formatCount, formatMs, formatRate, formatYuan } from "@/components/RunTraceExplorer/format";
 import { RunStatusBadge } from "@/components/RunTraceExplorer/StatusBadge";
 import type { EfficiencyReport } from "@/components/RunTraceExplorer/types";
@@ -154,7 +154,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
                       <TableRow key={r.reason}>
                         <TableCell className="max-w-md truncate text-xs" title={r.reason}>{r.reason}</TableCell>
                         <TableCell className="text-right font-mono text-xs tabular-nums">{r.count}</TableCell>
-                        <TableCell><CopyableId value={r.sampleRunId} /></TableCell>
+                        <TableCell><EntityLink kind="run" id={r.sampleRunId} /></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -284,8 +284,12 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
                       {data.longTail.slowestRuns.map((r) => (
                         <TableRow key={r.runId}>
                           <TableCell>
-                            <CopyableId value={r.runId} />
-                            <div className="text-[10px] text-muted-foreground">{r.tenantId ?? "—"}</div>
+                            <EntityLink kind="run" id={r.runId} />
+                            <div className="mt-0.5 text-[10px] text-muted-foreground">
+                              <EntityLink kind="tenant" id={r.tenantId} />
+                              <span className="mx-1">/</span>
+                              <EntityLink kind="session" id={r.sessionId} short={6} />
+                            </div>
                           </TableCell>
                           <TableCell><RunStatusBadge status={r.status} /></TableCell>
                           <TableCell className="max-w-32 truncate font-mono text-xs" title={r.model ?? undefined}>{r.model ?? "—"}</TableCell>
@@ -316,8 +320,8 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
                     <TableBody>
                       {data.longTail.mostTurns.map((r) => (
                         <TableRow key={r.runId}>
-                          <TableCell><CopyableId value={r.runId} /></TableCell>
-                          <TableCell className="text-xs">{r.tenantId ?? "—"}</TableCell>
+                          <TableCell><EntityLink kind="run" id={r.runId} /></TableCell>
+                          <TableCell className="text-xs"><EntityLink kind="tenant" id={r.tenantId} /></TableCell>
                           <TableCell className="text-right font-mono text-xs tabular-nums">{r.turns}</TableCell>
                         </TableRow>
                       ))}
@@ -411,7 +415,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
                           <span className="truncate font-mono" title={f.filePath}>{f.filePath}</span>
                           <span className="shrink-0 text-muted-foreground tabular-nums">×{f.repeats}</span>
                         </div>
-                        <CopyableId value={f.runId} className="text-[10px]" />
+                        <EntityLink kind="run" id={f.runId} className="text-[10px]" short={6} />
                       </div>
                     ))}
                   </div>

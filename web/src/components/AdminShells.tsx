@@ -19,6 +19,8 @@ import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type TenantSettings } from 
 import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
 import type { PlatformAdminSection } from "@/lib/urlSync";
+import { EntityLink } from "@/components/PlatformAdmin/common";
+import { RunTraceExplorer } from "@/components/RunTraceExplorer";
 
 export type TenantSection = "overview" | "users" | "skills" | "mcp" | "usage" | "billing" | "files" | "audit" | "settings" | "company";
 export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "global-mcp" | "skill-pool" | "system";
@@ -621,6 +623,8 @@ function AuditEventsPanel({
   const { users } = useUsers();
   const [category, setCategory] = useState("");
   const [channel, setChannel] = useState("");
+  const [usernameFilter, setUsernameFilter] = useState("");
+  const [tenantIdFilter, setTenantIdFilter] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
@@ -630,12 +634,13 @@ function AuditEventsPanel({
   );
   const tenantUsernames = useMemo(() => tenantUsers.map(user => user.username), [tenantUsers]);
   const filters: LoginLogFilters = useMemo(() => ({
-    username: scope === "tenant" ? (tenantUsernames.length > 0 ? tenantUsernames : ["__empty_tenant__"]) : undefined,
+    username: usernameFilter.trim() || (scope === "tenant" ? (tenantUsernames.length > 0 ? tenantUsernames : ["__empty_tenant__"]) : undefined),
+    tenantId: scope === "tenant" ? tenantId : tenantIdFilter.trim() || undefined,
     category: category || undefined,
     channel: channel || undefined,
     startTime: startDate ? new Date(startDate).toISOString() : undefined,
     endTime: endDate ? new Date(`${endDate}T23:59:59.999Z`).toISOString() : undefined,
-  }), [category, channel, endDate, scope, startDate, tenantUsernames]);
+  }), [category, channel, endDate, scope, startDate, tenantId, tenantIdFilter, tenantUsernames, usernameFilter]);
 
   const { entries, total, loading, error, offset, limit, refresh, nextPage, prevPage } = useLoginLogs(filters);
   const userMap = useMemo(() => new Map(users.map(user => [user.username, user])), [users]);
@@ -668,7 +673,7 @@ function AuditEventsPanel({
         <CardHeader>
           <CardTitle className="text-base">筛选条件</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-5">
+        <CardContent className="grid gap-3 md:grid-cols-7">
           <div className="space-y-1.5">
             <Label>事件类别</Label>
             <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={category} onChange={event => setCategory(event.target.value)}>
@@ -680,6 +685,19 @@ function AuditEventsPanel({
             <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={channel} onChange={event => setChannel(event.target.value)}>
               {auditChannels.map(item => <option key={item.value || "all"} value={item.value}>{item.label}</option>)}
             </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>用户名</Label>
+            <Input value={usernameFilter} onChange={event => setUsernameFilter(event.target.value)} placeholder="username" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>租户 ID</Label>
+            <Input
+              value={scope === "tenant" ? tenantId || "" : tenantIdFilter}
+              onChange={event => setTenantIdFilter(event.target.value)}
+              placeholder="tenantId"
+              disabled={scope === "tenant"}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>开始日期</Label>
@@ -725,15 +743,20 @@ function AuditEventsPanel({
               <TableBody>
                 {entries.map((entry: LoginLogEntry, index) => {
                   const actor = userMap.get(entry.username);
+                  const rowTenantId = entry.tenantId || actor?.tenantId || (scope === "tenant" ? tenantId : undefined);
                   return (
                     <TableRow key={`${entry.timestamp}-${entry.username}-${entry.event}-${index}`}>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatAuditTime(entry.timestamp)}</TableCell>
                       <TableCell><Badge className={auditEventBadgeClass(entry.event)}>{auditEventLabel(entry.event)}</Badge></TableCell>
                       <TableCell>
-                        <div className="font-medium">{actor?.realName || entry.username}</div>
+                        <div className="font-medium">
+                          {actor ? (
+                            <EntityLink kind="user" id={actor.id} label={actor.realName || entry.username} tenantId={actor.tenantId} />
+                          ) : entry.username}
+                        </div>
                         <div className="text-xs text-muted-foreground">{entry.username}</div>
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{actor?.tenantId || (scope === "tenant" ? tenantId : "-")}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground"><EntityLink kind="tenant" id={rowTenantId} /></TableCell>
                       <TableCell>
                         <div className="text-xs">{entry.channel}</div>
                         <div className="text-xs text-muted-foreground">{entry.ip || "-"}</div>
@@ -931,6 +954,7 @@ export function PlatformAdminShell({
   renderMcp,
   renderSkills,
   renderUsage,
+  renderEfficiency,
   activeSection,
   entityId,
   onSectionChange,
@@ -948,6 +972,7 @@ export function PlatformAdminShell({
   renderMcp: () => ReactNode;
   renderSkills: () => ReactNode;
   renderUsage: () => ReactNode;
+  renderEfficiency: () => ReactNode;
   activeSection: PlatformAdminSection;
   entityId: string | null;
   onSectionChange: (section: PlatformAdminSection, entityId?: string | null) => void;
@@ -1039,12 +1064,12 @@ export function PlatformAdminShell({
       return pendingSection("会话", "会话列表和会话详情视图。", ["标题、渠道与状态", "关联用户和租户", "成本与 Run 聚合"]);
     }
     if (activeSection === "runs") {
-      return pendingSection("Run", "Run 列表和 trace 详情视图。", ["状态、模型与成本", "会话、用户和租户归属", "旧 Run 追踪入口自动迁移"]);
+      return <RunTraceExplorer runId={entityId} onRunIdChange={(next) => onSectionChange("runs", next)} />;
     }
     if (activeSection === "sandboxes") {
       return pendingSection("容器", "ACS 容器列表和容器详情视图。", ["运行相位与健康状态", "镜像、TTL 与空闲时长", "旧运行态入口自动迁移"]);
     }
-    return pendingSection("效率", "平台效率和工具调用表现视图。", ["7/14/30 天窗口", "模型与工具路由", "租户维度筛选"]);
+    return renderEfficiency();
   })();
 
   const settingsModal = (

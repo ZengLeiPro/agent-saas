@@ -7,9 +7,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { EntityLink } from "@/components/PlatformAdmin/common";
 
 import { runTraceApi } from "./api";
-import { CopyableId } from "./CopyableId";
 import { formatMs, formatTime, runDurationMs } from "./format";
 import { RunStatusBadge } from "./StatusBadge";
 import type { RecentRunSummary } from "./types";
@@ -180,14 +180,14 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
                         </div>
                       </TableCell>
                       <TableCell>
-                        <CopyableId value={run.runId} />
+                        <EntityLink kind="run" id={run.runId} />
                       </TableCell>
                       <TableCell>
-                        <CopyableId value={run.sessionId} />
+                        <EntityLink kind="session" id={run.sessionId} />
                       </TableCell>
                       <TableCell>
-                        <div className="text-xs">{run.tenantId ?? "—"}</div>
-                        <div className="text-xs text-muted-foreground">{run.userId ?? "—"}</div>
+                        <div><EntityLink kind="tenant" id={run.tenantId} /></div>
+                        <div className="text-xs text-muted-foreground"><EntityLink kind="user" id={run.userId} /></div>
                       </TableCell>
                       <TableCell className="max-w-44 truncate font-mono text-xs" title={run.model ?? undefined}>
                         {run.model ?? "—"}

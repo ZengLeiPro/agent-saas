@@ -1,5 +1,4 @@
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { StatusBadge } from "@/components/PlatformAdmin/common";
 
 /** run 状态中文名（与后端 RUN_STATUS_WHITELIST 对齐） */
 export const RUN_STATUS_LABELS: Record<string, string> = {
@@ -13,33 +12,8 @@ export const RUN_STATUS_LABELS: Record<string, string> = {
   cancelled: "已取消",
 };
 
-function statusBadgeClass(status: string): string {
-  switch (status) {
-    case "completed":
-      return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-0";
-    case "failed":
-      return "bg-destructive/15 text-destructive border-0";
-    case "cancelled":
-      return "bg-muted text-muted-foreground border-0";
-    case "running":
-      return "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-0";
-    case "pending":
-      return "bg-muted text-muted-foreground border-0";
-    case "waiting_approval":
-    case "waiting_user":
-    case "waiting_hand":
-      return "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-0";
-    default:
-      return "bg-muted text-muted-foreground border-0";
-  }
-}
-
 export function RunStatusBadge({ status, className }: { status: string; className?: string }) {
-  return (
-    <Badge className={cn(statusBadgeClass(status), className)}>
-      {RUN_STATUS_LABELS[status] ?? status}
-    </Badge>
-  );
+  return <StatusBadge kind="run" status={status} className={className} />;
 }
 
 /** run_finished.subtype 的终态色块样式 */

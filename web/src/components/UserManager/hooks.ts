@@ -120,6 +120,7 @@ export function useUsers() {
 
 export interface LoginLogFilters {
   username?: string | string[];
+  tenantId?: string;
   event?: LoginEvent;
   category?: string;
   channel?: string;
@@ -144,6 +145,7 @@ export function useLoginLogs(filters: LoginLogFilters) {
         const val = Array.isArray(filters.username) ? filters.username.join(',') : filters.username;
         if (val) params.set("username", val);
       }
+      if (filters.tenantId) params.set("tenantId", filters.tenantId);
       if (filters.event) params.set("event", filters.event);
       if (filters.category) params.set("category", filters.category);
       if (filters.channel) params.set("channel", filters.channel);
@@ -167,7 +169,7 @@ export function useLoginLogs(filters: LoginLogFilters) {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [Array.isArray(filters.username) ? filters.username.join(',') : (filters.username || ''), filters.event, filters.category, filters.channel, filters.startTime, filters.endTime]);
+  }, [Array.isArray(filters.username) ? filters.username.join(',') : (filters.username || ''), filters.tenantId, filters.event, filters.category, filters.channel, filters.startTime, filters.endTime]);
 
   const refresh = useCallback(() => {
     setOffset(0);

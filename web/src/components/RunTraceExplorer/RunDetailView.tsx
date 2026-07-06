@@ -8,9 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/components/UsageDashboard/format";
+import { EntityLink } from "@/components/PlatformAdmin/common";
 
 import { runTraceApi } from "./api";
-import { CopyableId } from "./CopyableId";
 import { formatMs, formatTime, formatYuan, runDurationMs } from "./format";
 import { RunStatusBadge } from "./StatusBadge";
 import {
@@ -198,9 +198,9 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
           <div className="flex flex-wrap items-center gap-2">
             <RunStatusBadge status={run.status} />
             <span className="text-xs text-muted-foreground">Run</span>
-            <CopyableId value={data.runId} len={12} />
+            <EntityLink kind="run" id={data.runId} short={12} />
             <span className="text-xs text-muted-foreground">会话</span>
-            <CopyableId value={data.sessionId} len={12} />
+            <EntityLink kind="session" id={data.sessionId} short={12} />
             <span className="ml-auto text-xs text-muted-foreground tabular-nums">
               {formatTime(run.startedAt ?? run.requestedAt)} → {formatTime(run.completedAt ?? run.failedAt ?? run.cancelledAt)}
             </span>
@@ -223,10 +223,14 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
             </StatItem>
             <StatItem label="执行目标">{run.executionTarget ?? "—"}</StatItem>
             <StatItem label="组织 / 用户">
-              {run.tenantId ?? "—"} / {run.userId ?? "—"}
+              <EntityLink kind="tenant" id={run.tenantId} /> / <EntityLink kind="user" id={run.userId} />
             </StatItem>
             <StatItem label="渠道">{run.channel ?? "—"}</StatItem>
             <StatItem label="模型请求数">{billing.requestCount}</StatItem>
+            <StatItem label="Workspace">
+              <span className="font-mono text-xs" title={run.workspaceId ?? undefined}>{run.workspaceId ?? "—"}</span>
+            </StatItem>
+            <StatItem label="累计输入 Token">{formatTokens(run.cumulativeInputTokens)}</StatItem>
           </div>
           {failureReason && (
             <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">

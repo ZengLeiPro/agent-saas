@@ -131,7 +131,8 @@ export class WsServer {
                 client.lastActivityAt = Date.now();
                 try {
                     const msg = JSON.parse(rawData.toString()) as WsInboundMessage;
-                    // Application-level heartbeat with piggyback sync
+                    // Application-level heartbeat. Keep liveness separate from
+                    // metadata sync so sync payloads cannot delay pong delivery.
                     if (msg.action === 'ping') {
                         client.alive = true;
                         const { lastSeq, clientTs } = msg as WsPingMessage;
@@ -140,16 +141,17 @@ export class WsServer {
                         if (typeof heartbeatRttMs === 'number' && heartbeatRttMs >= 3000) {
                             chatLogger.warn(`WS heartbeat slow: user=${client.user?.username ?? 'anonymous'} rtt=${heartbeatRttMs}ms lastSeq=${typeof lastSeq === 'number' ? lastSeq : 'n/a'}`);
                         }
-                        // 心跳捎带 sync：如果客户端报告了 lastSeq，检查是否有漏掉的元数据事件
-                        if (typeof lastSeq === 'number' && userId) {
-                            const result = this.userEventLog.getEventsAfter(userId, lastSeq);
+                        if (userId) {
                             const currentSeq = this.userEventLog.getCurrentSeq(userId);
-                            if (result.gapDetected) {
-                                this.sendTo(ws, { data: { type: 'sync_overflow', seq: currentSeq } });
-                            } else if (result.events.length > 0) {
-                                this.sendTo(ws, { data: { type: 'sync_ok', seq: currentSeq, events: result.events } });
-                            } else {
-                                this.sendTo(ws, { data: { type: 'pong', seq: currentSeq } });
+                            this.sendTo(ws, { data: { type: 'pong', seq: currentSeq } });
+                            // 如果客户端报告了 lastSeq，另发 sync 回放漏掉的元数据事件。
+                            if (typeof lastSeq === 'number') {
+                                const result = this.userEventLog.getEventsAfter(userId, lastSeq);
+                                if (result.gapDetected) {
+                                    this.sendTo(ws, { data: { type: 'sync_overflow', seq: currentSeq } });
+                                } else if (result.events.length > 0) {
+                                    this.sendTo(ws, { data: { type: 'sync_ok', seq: currentSeq, events: result.events } });
+                                }
                             }
                         } else {
                             this.sendTo(ws, { data: { type: 'pong' } });

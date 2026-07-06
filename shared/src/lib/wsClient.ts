@@ -279,12 +279,15 @@ class WsClient {
         ws.onmessage = (event: MessageEvent) => {
             try {
                 const envelope = JSON.parse(event.data as string) as WsEnvelope;
+                const now = Date.now();
+                // Any inbound frame proves the WS path is alive. Do not depend on
+                // a pong/sync frame specifically; streaming frames may arrive while
+                // heartbeat replies are queued behind other downstream messages.
+                this.lastPongAt = now;
                 const msgType = envelope.data && (envelope.data as { type?: string }).type;
                 // Handle pong internally (don't forward to messageHandlers)
                 if (msgType === 'pong') {
-                    const now = Date.now();
                     const rttMs = this.lastPingSentAt > 0 ? now - this.lastPingSentAt : undefined;
-                    this.lastPongAt = now;
                     // 心跳 piggyback sync：从 pong 中更新 lastSeq
                     const seq = (envelope.data as Record<string, unknown>).seq;
                     if (typeof seq === 'number') this.lastSeq = seq;
@@ -296,9 +299,7 @@ class WsClient {
                 // sync_ok / sync_overflow 可能来自心跳 piggyback——视为有效心跳响应，
                 // 但不拦截，让其流入 messageHandlers 复用现有 sync 处理逻辑
                 if (msgType === 'sync_ok' || msgType === 'sync_overflow') {
-                    const now = Date.now();
                     const rttMs = this.lastPingSentAt > 0 ? now - this.lastPingSentAt : undefined;
-                    this.lastPongAt = now;
                     if (typeof rttMs === 'number' && rttMs >= 3000) {
                         console.warn(`[WS] Heartbeat sync response slow: ${msgType} ${rttMs}ms`);
                     }

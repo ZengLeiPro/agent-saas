@@ -210,6 +210,17 @@ export class TenantStore {
     return { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) };
   }
 
+  async delete(id: string): Promise<TenantRecord> {
+    const tenant = this.tenants.find(t => t.id === id);
+    if (!tenant) throw new Error('Tenant not found');
+    if (id === DEFAULT_TENANT_ID) {
+      throw new Error(`Cannot delete the default tenant "${DEFAULT_TENANT_ID}"`);
+    }
+    this.tenants = this.tenants.filter(t => t.id !== id);
+    await this.persist();
+    return { ...tenant, settings: cloneSettings(mergeSettings(tenant.settings)) };
+  }
+
   /**
    * 启动期幂等保证默认组织存在。
    * 用 'system' 作为 createdBy；如果已存在则不动。

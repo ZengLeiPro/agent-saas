@@ -279,6 +279,39 @@ export class SkillConfigStore {
     });
   }
 
+  async removeTenant(tenantId: string, usernames: Iterable<string> = []): Promise<{ usersRemoved: number; tenantConfigRemoved: boolean; platformRefsRemoved: number }> {
+    return await this.serialize(async () => {
+      let changed = false;
+      let usersRemoved = 0;
+      for (const username of usernames) {
+        if (!(username in this.data.users)) continue;
+        delete this.data.users[username];
+        usersRemoved++;
+        changed = true;
+      }
+
+      const tenantConfigRemoved = tenantId in this.data.tenants;
+      if (tenantConfigRemoved) {
+        delete this.data.tenants[tenantId];
+        changed = true;
+      }
+
+      let platformRefsRemoved = 0;
+      for (const config of Object.values(this.data.platform ?? {})) {
+        const before = config.tenantIds.length;
+        config.tenantIds = config.tenantIds.filter(id => id !== tenantId);
+        platformRefsRemoved += before - config.tenantIds.length;
+        if (before !== config.tenantIds.length) changed = true;
+      }
+
+      if (changed) {
+        this.bumpVersion();
+        await this.persist();
+      }
+      return { usersRemoved, tenantConfigRemoved, platformRefsRemoved };
+    });
+  }
+
   /**
    * Pool skill 文件内容变更时，仅推进配置版本，驱动用户工作区下次按版本重新同步。
    * 用于 admin 在线编辑 pool 的 SKILL.md 内容后失效活跃会话的 skill 缓存。

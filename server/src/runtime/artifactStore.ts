@@ -203,6 +203,7 @@ export interface ArtifactStore {
   create(input: CreateArtifactInput): Promise<ArtifactRecord>;
   get(artifactId: string): Promise<ArtifactRecord | null>;
   listForSession(sessionId: string): Promise<ArtifactRecord[]>;
+  listForSessions?(sessionIds: string[]): Promise<ArtifactRecord[]>;
   delete(artifactId: string): Promise<void>;
   listOlderThan(cutoffIso: string, limit?: number): Promise<ArtifactRecord[]>;
 }
@@ -235,6 +236,14 @@ export class InMemoryArtifactStore implements ArtifactStore {
   async listForSession(sessionId: string): Promise<ArtifactRecord[]> {
     return [...this.artifacts.values()]
       .filter((artifact) => artifact.sessionId === sessionId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async listForSessions(sessionIds: string[]): Promise<ArtifactRecord[]> {
+    const ids = new Set(sessionIds);
+    if (ids.size === 0) return [];
+    return [...this.artifacts.values()]
+      .filter((artifact) => ids.has(artifact.sessionId))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
@@ -328,6 +337,15 @@ export class PgArtifactStore implements ArtifactStore {
     const result = await this.pool.query<ArtifactRow>(
       `SELECT * FROM ${this.table} WHERE session_id = $1 ORDER BY created_at ASC`,
       [sessionId],
+    );
+    return result.rows.map(rowToArtifact);
+  }
+
+  async listForSessions(sessionIds: string[]): Promise<ArtifactRecord[]> {
+    if (sessionIds.length === 0) return [];
+    const result = await this.pool.query<ArtifactRow>(
+      `SELECT * FROM ${this.table} WHERE session_id = ANY($1::text[]) ORDER BY created_at ASC`,
+      [sessionIds],
     );
     return result.rows.map(rowToArtifact);
   }

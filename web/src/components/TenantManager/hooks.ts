@@ -110,6 +110,19 @@ export function useTenants() {
     await refresh();
   };
 
+  const deleteTenant = async (id: string, confirm: string) => {
+    const res = await authFetch(`${API_BASE}/${id}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error((data as { error?: string }).error || "删除组织失败");
+    }
+    await refresh();
+  };
+
   return {
     tenants,
     loading,
@@ -118,5 +131,6 @@ export function useTenants() {
     createTenant,
     updateTenant,
     setTenantDisabled,
+    deleteTenant,
   };
 }

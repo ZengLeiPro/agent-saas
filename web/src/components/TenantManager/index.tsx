@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Building2, CheckCircle2, Cpu, Loader2, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle2, Cpu, Loader2, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,7 +23,7 @@ import { useUsers } from "@/components/UserManager/hooks";
 import type { UserInfo } from "@/components/UserManager/types";
 import { useTenants } from "./hooks";
 import { TenantFormDialog } from "./TenantFormDialog";
-import { DEFAULT_TENANT_SETTINGS, type Tenant, type TenantSettings } from "./types";
+import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type Tenant, type TenantSettings } from "./types";
 
 function cloneTenantSettings(settings: TenantSettings): TenantSettings {
   return {
@@ -503,11 +503,16 @@ export function TenantManager() {
     createTenant,
     updateTenant,
     setTenantDisabled,
+    deleteTenant,
   } = useTenants();
   const { users } = useUsers();
   const [showForm, setShowForm] = useState(false);
   const [disableTarget, setDisableTarget] = useState<Tenant | null>(null);
   const [disableError, setDisableError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Tenant | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
   const [tenantNameDraft, setTenantNameDraft] = useState("");
   const [activeDetailTab, setActiveDetailTab] = useState<TenantDetailTab>("config");
@@ -583,6 +588,12 @@ export function TenantManager() {
     }
     setDisableTarget(tenant);
     setDisableError(null);
+  };
+
+  const requestDeleteTenant = (tenant: Tenant) => {
+    setDeleteTarget(tenant);
+    setDeleteConfirm("");
+    setDeleteError(null);
   };
 
   return (
@@ -698,7 +709,7 @@ export function TenantManager() {
                     <TenantMetric label="创建时间" value={formatDateTime(selectedTenant.createdAt)} />
                     <TenantMetric label="更新时间" value={formatDateTime(selectedTenant.updatedAt)} />
                   </div>
-                  <div className="flex justify-end">
+                  <div className="flex flex-wrap justify-end gap-2">
                     <Button
                       variant={selectedTenant.disabled ? "outline" : "destructive"}
                       size="sm"
@@ -706,6 +717,15 @@ export function TenantManager() {
                     >
                       {selectedTenant.disabled ? <Power className="mr-1.5 h-3.5 w-3.5" /> : <PowerOff className="mr-1.5 h-3.5 w-3.5" />}
                       {selectedTenant.disabled ? "启用组织" : "禁用组织"}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => requestDeleteTenant(selectedTenant)}
+                      disabled={selectedTenant.id === DEFAULT_TENANT_ID}
+                    >
+                      <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                      删除组织
                     </Button>
                   </div>
                 </CardContent>
@@ -782,6 +802,81 @@ export function TenantManager() {
               }}
             >
               禁用
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleting) {
+            setDeleteTarget(null);
+            setDeleteConfirm("");
+            setDeleteError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              删除组织
+            </DialogTitle>
+            <DialogDescription>
+              删除后，组织 <strong>{deleteTarget?.name}</strong>
+              （slug: <code className="font-mono">{deleteTarget?.id}</code>）
+              下的用户、会话、文件、任务、Skill、MCP、账单和运行记录都会被清空，不能恢复。
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && (
+            <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {deleteError}
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label>输入组织 slug 确认删除</Label>
+            <Input
+              value={deleteConfirm}
+              onChange={(event) => setDeleteConfirm(event.target.value)}
+              placeholder={deleteTarget?.id}
+              className="font-mono"
+              disabled={deleting}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteConfirm("");
+                setDeleteError(null);
+              }}
+              disabled={deleting}
+            >
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!deleteTarget || deleteConfirm !== deleteTarget.id || deleting}
+              onClick={async () => {
+                if (!deleteTarget) return;
+                setDeleting(true);
+                try {
+                  await deleteTenant(deleteTarget.id, deleteConfirm);
+                  setSelectedTenantId(null);
+                  setDeleteTarget(null);
+                  setDeleteConfirm("");
+                  setDeleteError(null);
+                } catch (err) {
+                  setDeleteError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+            >
+              {deleting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
+              删除并清空
             </Button>
           </div>
         </DialogContent>

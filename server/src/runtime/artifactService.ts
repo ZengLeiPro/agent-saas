@@ -185,6 +185,21 @@ export class ArtifactService {
     return { scanned: records.length, deleted };
   }
 
+  async deleteArtifactsForSessions(sessionIds: string[]): Promise<{ scanned: number; deleted: number }> {
+    const ids = Array.from(new Set(sessionIds.filter(Boolean)));
+    if (ids.length === 0) return { scanned: 0, deleted: 0 };
+    const records = this.options.artifactStore.listForSessions
+      ? await this.options.artifactStore.listForSessions(ids)
+      : (await Promise.all(ids.map(id => this.options.artifactStore.listForSession(id)))).flat();
+    let deleted = 0;
+    for (const record of records) {
+      await this.options.blobStore.delete(record.uri).catch(() => undefined);
+      await this.options.artifactStore.delete(record.artifactId);
+      deleted += 1;
+    }
+    return { scanned: records.length, deleted };
+  }
+
   private async assertCanAccessSession(sessionId: string, user?: RuntimeArtifactUser): Promise<void> {
     // 修 P1 BUG #3 延伸（2026-06-21）：原 user.role === 'admin' 让组织 admin 跳过
     // session ACL 校验，意味着任意客户组织 admin 可读其他组织的 artifact 内容

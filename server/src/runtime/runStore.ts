@@ -353,6 +353,19 @@ export class PgRunStore implements RunStore {
     return result.rows.map((row) => normalizeRunRecord(row.row_json));
   }
 
+  async listSessionIdsByTenant(tenantId: string): Promise<string[]> {
+    const result = await this.pool.query<{ session_id: string }>(
+      `SELECT DISTINCT session_id FROM ${this.runsTable} WHERE tenant_id = $1`,
+      [tenantId],
+    );
+    return result.rows.map(row => row.session_id);
+  }
+
+  async deleteByTenant(tenantId: string): Promise<number> {
+    const result = await this.pool.query(`DELETE FROM ${this.runsTable} WHERE tenant_id = $1`, [tenantId]);
+    return result.rowCount ?? 0;
+  }
+
   async listRecoverable(now = new Date()): Promise<RunRecord[]> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(${this.runsTable}.*) AS row_json

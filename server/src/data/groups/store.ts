@@ -140,6 +140,16 @@ export class GroupStore {
     return true;
   }
 
+  async deleteByUserIds(userIds: Iterable<string>): Promise<number> {
+    const targets = new Set(userIds);
+    if (targets.size === 0) return 0;
+    const before = this.groups.length;
+    this.groups = this.groups.filter(g => !targets.has(g.userId));
+    const deleted = before - this.groups.length;
+    if (deleted > 0) await this.persist();
+    return deleted;
+  }
+
   /**
    * Add sessions to a group.
    * Enforces single-group membership: removes these sessions from other groups of the same user first.

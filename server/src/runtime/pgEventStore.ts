@@ -334,6 +334,42 @@ export class PgEventStore implements EventStore {
     return result.rows[0] ? normalizeEventJson(result.rows[0].event_json) : null;
   }
 
+  async listSessionIdsByTenant(tenantId: string): Promise<string[]> {
+    const result = await this.pool.query<{ session_id: string }>(
+      `SELECT DISTINCT session_id FROM ${this.eventsTable} WHERE tenant_id = $1`,
+      [tenantId],
+    );
+    return result.rows.map(row => row.session_id);
+  }
+
+  async deleteByTenant(tenantId: string): Promise<{ events: number; cursors: number }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const sessions = await client.query<{ session_id: string }>(
+        `SELECT DISTINCT session_id FROM ${this.eventsTable} WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      const sessionIds = sessions.rows.map(row => row.session_id);
+      const events = await client.query(`DELETE FROM ${this.eventsTable} WHERE tenant_id = $1`, [tenantId]);
+      let cursorCount = 0;
+      if (sessionIds.length > 0) {
+        const cursors = await client.query(
+          `DELETE FROM ${this.cursorsTable} WHERE session_id = ANY($1::text[])`,
+          [sessionIds],
+        );
+        cursorCount = cursors.rowCount ?? 0;
+      }
+      await client.query('COMMIT');
+      return { events: events.rowCount ?? 0, cursors: cursorCount };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   private async notifyAppended(events: Array<PlatformEvent & { sequence: number }>): Promise<void> {
     await this.pool.query('SELECT pg_notify($1, $2)', [
       this.notifyChannel,

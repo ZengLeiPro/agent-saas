@@ -162,6 +162,16 @@ export class BillingService {
     });
   }
 
+  async deleteTenantData(tenantId: string): Promise<{ usageEvents: number; creditLedger: number; creditAccounts: number; tenantPolicies: number }> {
+    const store = this.options.store as unknown as {
+      deleteTenantData?: (tenantId: string) => Promise<{ usageEvents: number; creditLedger: number; creditAccounts: number; tenantPolicies: number }>;
+    };
+    if (!store.deleteTenantData) {
+      return { usageEvents: 0, creditLedger: 0, creditAccounts: 0, tenantPolicies: 0 };
+    }
+    return await store.deleteTenantData(tenantId);
+  }
+
   async getAuditSummary(query: { tenantId?: string; days?: number; includeDaily?: boolean }): Promise<BillingAuditSummary> {
     await this.ensureProjected();
     const audit = await this.options.store.getAuditSummary({ tenantId: query.tenantId, days: query.days });

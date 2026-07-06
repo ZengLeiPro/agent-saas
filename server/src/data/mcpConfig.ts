@@ -288,6 +288,44 @@ export class McpConfigStore {
     });
   }
 
+  async removeTenantData(tenantId: string, usernames: Iterable<string>): Promise<{ serversRemoved: number; usersRemoved: number }> {
+    return this.serialize(async () => {
+      const userSet = new Set(usernames);
+      const removedServerIds = new Set<string>();
+      for (const [id, server] of Object.entries(this.data.servers)) {
+        if (server.tenantId === tenantId || (server.ownerUsername && userSet.has(server.ownerUsername))) {
+          removedServerIds.add(id);
+          delete this.data.servers[id];
+        }
+      }
+
+      let usersRemoved = 0;
+      for (const username of userSet) {
+        if (!(username in this.data.users)) continue;
+        delete this.data.users[username];
+        usersRemoved++;
+      }
+
+      for (const cfg of Object.values(this.data.users)) {
+        if (removedServerIds.size > 0) {
+          cfg.enabledServers = cfg.enabledServers.filter(id => !removedServerIds.has(id));
+          if (cfg.secretRefs) {
+            for (const serverId of removedServerIds) {
+              delete cfg.secretRefs[serverId];
+            }
+          }
+        }
+      }
+
+      const serversRemoved = removedServerIds.size;
+      if (serversRemoved > 0 || usersRemoved > 0) {
+        this.bumpVersion();
+        await this.persist();
+      }
+      return { serversRemoved, usersRemoved };
+    });
+  }
+
   /**
    * 写入用户启用的 server 列表。
    * - 传 tenantId 时：仅保留该组织可见（同组织 + 全局）的 server id，过滤越界请求

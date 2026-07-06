@@ -100,6 +100,9 @@ export interface TokenUsageStore {
   /** 删某天某用户的全部行（回填路径分批清理用） */
   deleteUserDate: (username: string, date: string) => number;
 
+  /** 删除某组织的全部 SQLite token usage 行（组织删除路径使用）。 */
+  deleteTenant: (tenantId: string) => number;
+
   /** 读：指定日期所有行 */
   listByDate: (date: string) => UsageDailyRow[];
 
@@ -441,6 +444,12 @@ export function createTokenUsageStore(db: DatabaseSync): TokenUsageStore {
   const deleteUserDateMinuteStmt = db.prepare(
     `DELETE FROM token_usage_minutely WHERE username = ? AND date = ?`,
   );
+  const deleteTenantDailyStmt = db.prepare(
+    `DELETE FROM token_usage_daily WHERE tenant_id = ?`,
+  );
+  const deleteTenantMinuteStmt = db.prepare(
+    `DELETE FROM token_usage_minutely WHERE tenant_id = ?`,
+  );
 
   const listByDateStmt = db.prepare(`SELECT * FROM token_usage_daily WHERE date = ?`);
   const listByUserStmt = db.prepare(
@@ -573,6 +582,12 @@ export function createTokenUsageStore(db: DatabaseSync): TokenUsageStore {
     deleteUserDate(username: string, date: string): number {
       const r = deleteUserDateStmt.run(username, date);
       const mr = deleteUserDateMinuteStmt.run(username, date);
+      return Number(r.changes ?? 0) + Number(mr.changes ?? 0);
+    },
+
+    deleteTenant(tenantId: string): number {
+      const r = deleteTenantDailyStmt.run(tenantId);
+      const mr = deleteTenantMinuteStmt.run(tenantId);
       return Number(r.changes ?? 0) + Number(mr.changes ?? 0);
     },
 

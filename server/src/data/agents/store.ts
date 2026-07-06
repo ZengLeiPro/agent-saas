@@ -97,6 +97,17 @@ export class AgentStore {
     await this.persist();
   }
 
+  async removeMany(usernames: Iterable<string>): Promise<number> {
+    let removed = 0;
+    for (const username of usernames) {
+      if (!(username in this.agents)) continue;
+      delete this.agents[username];
+      removed++;
+    }
+    if (removed > 0) await this.persist();
+    return removed;
+  }
+
   /** 为不存在记录的用户写入默认 profile */
   initDefaults(usernames: string[]): void {
     let changed = false;

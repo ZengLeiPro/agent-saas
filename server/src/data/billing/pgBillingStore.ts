@@ -813,6 +813,29 @@ export class PgBillingStore {
     };
   }
 
+  async deleteTenantData(tenantId: string): Promise<{ usageEvents: number; creditLedger: number; creditAccounts: number; tenantPolicies: number }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const creditLedger = await client.query(`DELETE FROM ${this.creditLedgerTable} WHERE tenant_id = $1`, [tenantId]);
+      const usageEvents = await client.query(`DELETE FROM ${this.usageEventsTable} WHERE tenant_id = $1`, [tenantId]);
+      const creditAccounts = await client.query(`DELETE FROM ${this.creditAccountsTable} WHERE tenant_id = $1`, [tenantId]);
+      const tenantPolicies = await client.query(`DELETE FROM ${this.tenantPoliciesTable} WHERE tenant_id = $1`, [tenantId]);
+      await client.query('COMMIT');
+      return {
+        usageEvents: usageEvents.rowCount ?? 0,
+        creditLedger: creditLedger.rowCount ?? 0,
+        creditAccounts: creditAccounts.rowCount ?? 0,
+        tenantPolicies: tenantPolicies.rowCount ?? 0,
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async getAuditSummary(query: { tenantId?: string; days?: number }): Promise<BillingAuditSummary> {
     const days = Math.max(1, Math.min(query.days ?? 7, 90));
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();

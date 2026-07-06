@@ -311,6 +311,24 @@ export class CronService {
     return true;
   }
 
+  async removeByOwners(ownerIds: Iterable<string>): Promise<number> {
+    await this.ensureLoaded();
+
+    const targets = new Set(ownerIds);
+    if (targets.size === 0) return 0;
+
+    const before = this.jobs.length;
+    this.jobs = this.jobs.filter((job) => !job.owner || !targets.has(job.owner));
+    const removed = before - this.jobs.length;
+    if (removed === 0) return 0;
+
+    await this.persist();
+    this.armTimer();
+    this.emit({ type: "statusChanged", status: this.getStatus() });
+    cronLogger.info(`Removed ${removed} job(s) by owner cleanup`);
+    return removed;
+  }
+
   async runNow(id: string): Promise<{ ran: boolean; error?: string }> {
     await this.ensureLoaded();
 

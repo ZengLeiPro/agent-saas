@@ -14,6 +14,7 @@ import { auditLog } from '../data/login-logs/index.js';
 import { apiLogger } from '../utils/logger.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import { TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
+import type { TenantDeletionReport } from '../data/tenants/cleanup.js';
 import {
   MAX_COMPANY_INFO_CHARS,
   readTenantCompanyInfo,
@@ -34,6 +35,10 @@ const updateTenantSchema = z.object({
 
 const setDisabledSchema = z.object({
   disabled: z.boolean(),
+});
+
+const deleteTenantSchema = z.object({
+  confirm: z.string().min(1),
 });
 
 const optionalNumber = z.preprocess(
@@ -99,6 +104,8 @@ export interface CreateTenantsRouterOptions {
   sharedDir: string;
   /** 组织被禁用时的回调（断开 WS 连接 + 中止当前进程活跃流）。 */
   onTenantDisabled?: (tenantId: string) => void;
+  /** 组织删除时的全量清理实现，由 app runtime 注入完整依赖。 */
+  deleteTenantResources?: (tenantId: string) => Promise<TenantDeletionReport>;
 }
 
 // company.md 体量上限：留 200k，与 MEMORY 对齐
@@ -307,6 +314,44 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
         res.status(409).json({ error: msg });
       } else {
         res.status(400).json({ error: msg });
+      }
+    }
+  });
+
+  // DELETE /api/tenants/:id — hard delete tenant + tenant-owned resources
+  router.delete('/:id', requirePlatformAdmin, async (req, res) => {
+    const parsed = deleteTenantSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]!.message });
+      return;
+    }
+    if (parsed.data.confirm !== req.params.id) {
+      res.status(400).json({ error: '请填写完全一致的组织 slug 以确认删除' });
+      return;
+    }
+    const tenant = tenantStore.findById(req.params.id);
+    if (!tenant) {
+      res.status(404).json({ error: '组织不存在' });
+      return;
+    }
+    if (!opts.deleteTenantResources) {
+      res.status(501).json({ error: '当前服务未启用组织删除清理器' });
+      return;
+    }
+    try {
+      opts.onTenantDisabled?.(tenant.id);
+      const report = await opts.deleteTenantResources(tenant.id);
+      auditLog(req, 'tenant_deleted', `${tenant.id} (${tenant.name}) users=${report.usersDeleted}`);
+      res.json({ ok: true, report });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === 'Tenant not found') {
+        res.status(404).json({ error: '组织不存在' });
+      } else if (msg.includes('Cannot delete')) {
+        res.status(409).json({ error: msg });
+      } else {
+        apiLogger.warn(`删除组织失败（tenant=${req.params.id}）: ${msg}`);
+        res.status(500).json({ error: msg });
       }
     }
   });

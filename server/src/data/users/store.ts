@@ -319,6 +319,14 @@ export class UserStore {
     await this.persist();
   }
 
+  async deleteByTenant(tenantId: string): Promise<number> {
+    const before = this.users.length;
+    this.users = this.users.filter((u) => u.tenantId !== tenantId);
+    const deleted = before - this.users.length;
+    if (deleted > 0) await this.persist();
+    return deleted;
+  }
+
   async verifyPassword(
     username: string,
     password: string,

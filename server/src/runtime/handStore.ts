@@ -205,6 +205,15 @@ export class PgHandStore implements HandStore {
     return result.rows.map((r) => normalizeHandRecord(r.row_json));
   }
 
+  async deleteByWorkspaceIds(workspaceIds: string[]): Promise<number> {
+    if (workspaceIds.length === 0) return 0;
+    const result = await this.pool.query(
+      `DELETE FROM ${this.handsTable} WHERE workspace_id = ANY($1::text[])`,
+      [workspaceIds],
+    );
+    return result.rowCount ?? 0;
+  }
+
   async listByType(type: ExecutionTargetKind, opts?: { status?: HandStatus }): Promise<HandRecord[]> {
     if (opts?.status) {
       const result = await this.pool.query<{ row_json: unknown }>(

@@ -40,6 +40,7 @@ import { RuntimeEfficiencyQuery } from "../runtime/efficiencyQuery.js";
 import { createSkillsRouter } from "../routes/skills.js";
 import { createMcpRouter } from "../routes/mcp.js";
 import { createTenantsRouter } from "../routes/tenants.js";
+import { deleteTenantResources } from "../data/tenants/cleanup.js";
 import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
 import { createTenantRemoteHandsAdminRouter } from "../routes/tenantRemoteHandsAdmin.js";
 import { createRuntimeOperationsAdminRouter } from "../routes/runtimeOperationsAdmin.js";
@@ -429,6 +430,34 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           sharedDir,
           onTenantDisabled: webChannel
             ? (tenantId: string) => webChannel.disconnectTenant(tenantId)
+            : undefined,
+          deleteTenantResources: runtime.userStore
+            ? (tenantId: string) => deleteTenantResources({
+              tenantId,
+              tenantStore: runtime.tenantStore!,
+              userStore: runtime.userStore!,
+              agentStore: runtime.agentStore,
+              skillConfigStore: runtime.skillConfigStore,
+              mcpConfigStore: runtime.mcpConfigStore,
+              groupStore: runtime.groupStore,
+              cronService: runtime.cronRuntime.service,
+              tokenUsageStore: runtime.tokenUsageStore,
+              billingService: runtime.billingService,
+              runtimePgEventStore: runtime.runtimePgEventStore,
+              runtimeRunStore: runtime.runtimeRunStore,
+              runtimeToolInvocationStore: runtime.runtimeToolInvocationStore,
+              runtimeHandStore: runtime.runtimeHandStore,
+              artifactService: runtime.artifactService,
+              agentCwd,
+              sharedDir,
+              tenantSkillsRootDir: runtime.tenantSkillsRootDir,
+              avatarsDir: resolve(
+                processCwd,
+                config.auth?.usersFile || "./data/users.json",
+                "..",
+                "avatars",
+              ),
+            })
             : undefined,
         }),
       );

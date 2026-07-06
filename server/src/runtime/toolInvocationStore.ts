@@ -273,6 +273,11 @@ export class PgToolInvocationStore implements ToolInvocationStore {
       : await this.options.pool.query<ToolInvocationRow>(`SELECT * FROM ${this.table} WHERE status = 'running' AND cancel_requested_at IS NOT NULL AND cancel_delivered_at IS NULL ORDER BY cancel_requested_at ASC`);
     return result.rows.map(rowToRecord);
   }
+
+  async deleteByTenant(tenantId: string): Promise<number> {
+    const result = await this.options.pool.query(`DELETE FROM ${this.table} WHERE tenant_id = $1`, [tenantId]);
+    return result.rowCount ?? 0;
+  }
 }
 
 interface ToolInvocationRow {

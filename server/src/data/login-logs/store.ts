@@ -44,7 +44,7 @@ export async function queryLoginLogs(
     agent: ['agent_profile_viewed', 'agent_profile_updated', 'agent_persona_viewed', 'agent_persona_updated', 'agent_memory_viewed', 'agent_memory_updated', 'agent_avatar_uploaded', 'agent_avatar_reset'],
     skill: ['skill_visibility_updated', 'skill_promoted', 'skill_custom_deleted', 'skill_tenant_selections_updated', 'skill_user_selections_updated', 'skill_document_updated'],
     mcp: ['mcp_server_updated', 'mcp_server_deleted', 'mcp_user_selections_updated', 'mcp_admin_user_selections_updated', 'mcp_secret_bound', 'mcp_secret_rotated', 'mcp_secret_deleted', 'mcp_oauth_connected', 'mcp_oauth_revoked'],
-    tenant: ['tenant_created', 'tenant_updated', 'tenant_disabled', 'tenant_enabled'],
+    tenant: ['tenant_created', 'tenant_updated', 'tenant_disabled', 'tenant_enabled', 'tenant_deleted'],
   };
 
   let filtered = all;

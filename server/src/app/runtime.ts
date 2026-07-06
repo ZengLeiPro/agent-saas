@@ -153,6 +153,10 @@ export interface AppRuntime {
    * 运行监测读 API（/api/admin/runtime/trace）用它查 RunRecord 并取 runsTable 表名。
    */
   runtimeRunStore?: PgRunStore;
+  /** PG runtime tool invocation store（组织删除清理用；file backend 为 undefined）。 */
+  runtimeToolInvocationStore?: PgToolInvocationStore;
+  /** PG runtime hand store（组织删除清理用；file backend 为 undefined）。 */
+  runtimeHandStore?: PgHandStore;
   /**
    * PG runtime event store 直接句柄（仅 backend='pg'；file backend 为 undefined）。
    * 运行监测读 API 复用其 pool / eventsTable 做聚合查询，避免另开第二份连接池。
@@ -1600,6 +1604,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     billingService,
     runtimeAuditQuery,
     runtimeRunStore: pgRunStore,
+    runtimeToolInvocationStore: pgToolInvocationStore,
+    runtimeHandStore: pgHandStore,
     runtimePgEventStore: pgEventStore,
     validateToolSettingsConfig,
     updateToolSettingsConfig,

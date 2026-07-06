@@ -539,6 +539,7 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   tenant_updated: "更新组织",
   tenant_disabled: "禁用组织",
   tenant_enabled: "启用组织",
+  tenant_deleted: "删除组织",
   mcp_user_selections_updated: "更新 MCP 选择",
   mcp_secret_bound: "绑定 MCP 密钥",
   mcp_server_updated: "更新 MCP 服务",

@@ -1130,6 +1130,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     lastEventCursorRef.current = null;
     setLoading(false);
     setStopping(false);
+    sessionRef.current.setContextUsage(null);
 
     const queuedEntries = outboxRef.current.filter(e => e.state === 'queued');
     for (const entry of outboxRef.current) {
@@ -1728,6 +1729,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       }
 
       if (result === 'done') {
+        const latestSid = wsLatestSessionIdRef.current.value || sessionIdRef.current;
+        if (latestSid === sessionIdRef.current) {
+          sessionRef.current.setContextUsage(null);
+        }
         // 已 detach（切换会话后）或 loading 已被其他路径（watchdog/reject）清掉：
         // 仍需清理本轮 acked/sending，并推进排队消息，避免 queued 永远卡在 outbox。
         if (!loadingRef.current) {
@@ -1738,7 +1743,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         }
         clearWatchdog();
         dispatchConnection('complete');
-        const latestSid = wsLatestSessionIdRef.current.value || sessionIdRef.current;
         if (latestSid) {
           trackedAiReplyStreamsRef.current.delete(latestSid);
           const doneEvent = data as Extract<WsEvent, { type: 'done' }>;

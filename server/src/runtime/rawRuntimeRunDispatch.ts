@@ -514,6 +514,67 @@ export async function markRunState(
   await appendRunStateChanged(eventStore, sessionId, runId, status, before?.status, reason);
 }
 
+// cron/web fallback 直跑路径也会写 runtime_runs；不占 lease 时，scheduler 会把
+// 正在跑的 run 误判为可恢复并二次 wake。
+const DIRECT_RUNTIME_LEASE_MS = 120_000;
+const DIRECT_RUNTIME_LEASE_RENEW_INTERVAL_MS = 30_000;
+
+export interface DirectRuntimeLeaseHandle {
+  workerId: string;
+  release(): Promise<void>;
+}
+
+export async function acquireDirectRuntimeRunLease(input: {
+  runStore: RunStore | undefined;
+  runId: string;
+  runtimeWorkerId?: string;
+  logger?: RawRuntimeRunDispatchConfig['logger'];
+}): Promise<DirectRuntimeLeaseHandle | null> {
+  if (input.runtimeWorkerId || !input.runStore?.acquireLease) return null;
+
+  const workerId = `direct-${process.pid}-${randomUUID()}`;
+  const acquired = await input.runStore.acquireLease(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS).catch((err) => {
+    input.logger?.warn(`Direct runtime lease acquire failed run=${input.runId}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  });
+  if (!acquired) {
+    input.logger?.warn(`Direct runtime lease not acquired run=${input.runId}; continuing without scheduler recovery guard`);
+    return null;
+  }
+
+  let renewTimer: ReturnType<typeof setInterval> | null = null;
+  if (input.runStore.renewLease) {
+    renewTimer = setInterval(() => {
+      void input.runStore?.renewLease?.(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS)
+        .then((renewed) => {
+          if (!renewed && renewTimer) {
+            clearInterval(renewTimer);
+            renewTimer = null;
+            input.logger?.warn(`Direct runtime lease lost run=${input.runId} worker=${workerId}`);
+          }
+        })
+        .catch((err) => {
+          input.logger?.warn(`Direct runtime lease renew failed run=${input.runId}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+    }, DIRECT_RUNTIME_LEASE_RENEW_INTERVAL_MS);
+    renewTimer.unref?.();
+  }
+
+  return {
+    workerId,
+    async release() {
+      if (renewTimer) {
+        clearInterval(renewTimer);
+        renewTimer = null;
+      }
+      await input.runStore?.releaseLease?.(input.runId, workerId).catch((err) => {
+        input.logger?.warn(`Direct runtime lease release failed run=${input.runId}: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      });
+    },
+  };
+}
+
 
 
 function buildWorkspaceRecipe(
@@ -1481,6 +1542,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     yield { type: 'session_init', sessionId };
 
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
+    let directRuntimeLease: DirectRuntimeLeaseHandle | null = null;
     await config.runStore?.upsertPending({
       runId,
       sessionId,
@@ -1509,6 +1571,12 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       },
     });
     const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId);
+    directRuntimeLease = await acquireDirectRuntimeRunLease({
+      runStore: config.runStore,
+      runId,
+      runtimeWorkerId: options.runtimeWorkerId,
+      logger: config.logger,
+    });
     await markRunState(config.runStore, eventStore, sessionId, runId, 'running');
     await ensureRuntimeHandRegistered({
       handStore: config.handStore,
@@ -1661,6 +1729,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       logger.error(`Raw runtime run 失败: ${msg}`);
       yield { type: 'error', error: `Raw runtime 运行失败: ${msg}` };
     } finally {
+      await directRuntimeLease?.release();
       if (lockHandle) await lockHandle.release().catch(() => undefined);
     }
   };
@@ -1831,6 +1900,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     const pendingApproval = await approvalStore.get(request.approvalId);
     const resumeRunId = pendingApproval?.runId ?? `resume-${Date.now()}-${randomUUID()}`;
     enterSessionContext(request.sessionId, resumeRunId);
+    let directRuntimeLease: DirectRuntimeLeaseHandle | null = null;
     await config.runStore?.upsertPending({
       runId: resumeRunId,
       sessionId: request.sessionId,
@@ -1842,6 +1912,12 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       metadata: { cwd, transcriptPath, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}) },
+    });
+    directRuntimeLease = await acquireDirectRuntimeRunLease({
+      runStore: config.runStore,
+      runId: resumeRunId,
+      runtimeWorkerId: request.runtimeWorkerId,
+      logger: config.logger,
     });
     await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running');
     await ensureRuntimeHandRegistered({
@@ -1944,6 +2020,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       logger.error(`Raw approval resume 失败: ${msg}`);
       yield { type: 'error', error: `Raw approval resume 失败: ${msg}` };
     } finally {
+      await directRuntimeLease?.release();
       if (lockHandle) await lockHandle.release().catch(() => undefined);
     }
   };
@@ -2089,6 +2166,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     }
     const resumeRunId = requestEvent.runId ?? `resume-${Date.now()}-${randomUUID()}`;
     enterSessionContext(request.sessionId, resumeRunId);
+    let directRuntimeLease: DirectRuntimeLeaseHandle | null = null;
     await config.runStore?.upsertPending({
       runId: resumeRunId,
       sessionId: request.sessionId,
@@ -2100,6 +2178,12 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       metadata: { cwd, transcriptPath, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}) },
+    });
+    directRuntimeLease = await acquireDirectRuntimeRunLease({
+      runStore: config.runStore,
+      runId: resumeRunId,
+      runtimeWorkerId: request.runtimeWorkerId,
+      logger: config.logger,
     });
     await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running');
     await ensureRuntimeHandRegistered({
@@ -2202,6 +2286,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       logger.error(`Raw interaction resume 失败: ${msg}`);
       yield { type: 'error', error: `Raw interaction resume 失败: ${msg}` };
     } finally {
+      await directRuntimeLease?.release();
       if (lockHandle) await lockHandle.release().catch(() => undefined);
     }
   };

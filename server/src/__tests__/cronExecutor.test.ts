@@ -101,6 +101,7 @@ describe('cron executor', () => {
       expect.anything(),
       expect.objectContaining({
         model: 'glm-5.2',
+        modelRef: 'kaiyan-llm/glm-5.2',
         modelConnection: { apiKey: 'sk-default', baseUrl: 'https://models.example/v1' },
         modelProviderOptions: { protocol: 'responses' },
       }),
@@ -145,6 +146,7 @@ describe('cron executor', () => {
       expect.anything(),
       expect.objectContaining({
         model: 'glm-5.2',
+        modelRef: 'wain/glm-5.2',
         modelConnection: { apiKey: 'sk-tenant', baseUrl: 'https://models.example/v1' },
         modelProviderOptions: { protocol: 'responses' },
       }),

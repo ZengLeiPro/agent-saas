@@ -104,6 +104,8 @@ export interface AgentRunOptions {
   allowDangerouslySkipPermissions?: boolean;
   sandbox?: unknown;
   model?: string;
+  /** 配置侧模型引用（group/model），用于 session meta 与子 agent 继承；model 仍是上游模型 id。 */
+  modelRef?: string;
   maxTurns?: number;
   abortController?: AbortController;
   persistSession?: boolean;

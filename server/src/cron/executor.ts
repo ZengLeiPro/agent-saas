@@ -225,6 +225,7 @@ async function executeAgentTurn(
         cwd: effectiveAgentCwd,
         maxTurns,
         ...(model !== undefined ? { model } : {}),
+        ...(modelRef ? { modelRef } : {}),
         ...(modelConnection ? { modelConnection } : {}),
         ...(modelProviderOptions ? { modelProviderOptions } : {}),
         persistSession: true,

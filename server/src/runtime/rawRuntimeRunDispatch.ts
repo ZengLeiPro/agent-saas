@@ -1433,7 +1433,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const memorySearchEnabled = hasMemorySearchTool(config.memoryIndexService)
       && isToolEnabled(config.toolControls, 'MemorySearch');
     const isPlatformAdmin = resolveContextIsPlatformAdmin(context);
-    const sessionModelRef = existingSession?.modelRef ?? requestedModel ?? model;
+    const sessionModelRef = existingSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
     const workspaceId = deriveRuntimeWorkspaceId({
       existingSession,
       fallbackSessionId: sessionId,

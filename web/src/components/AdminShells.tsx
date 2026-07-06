@@ -15,11 +15,13 @@ import { useTenants } from "@/components/TenantManager/hooks";
 import { authFetch } from "@/lib/authFetch";
 import { refreshAll } from "@/lib/refreshBus";
 import { cn } from "@/lib/utils";
-import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type TenantSettings } from "@/components/TenantManager/types";
+import { DEFAULT_TENANT_SETTINGS, type TenantSettings } from "@/components/TenantManager/types";
 import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
 import type { PlatformAdminSection } from "@/lib/urlSync";
 import { EntityLink } from "@/components/PlatformAdmin/common";
+import { PlatformAdminSearch } from "@/components/PlatformAdmin/PlatformAdminSearch";
+import { OverviewPage, SandboxesPage, SessionsPage, TenantsPage, UsersPage } from "@/components/PlatformAdmin/pages";
 import { RunTraceExplorer } from "@/components/RunTraceExplorer";
 
 export type TenantSection = "overview" | "users" | "skills" | "mcp" | "usage" | "billing" | "files" | "audit" | "settings" | "company";
@@ -85,6 +87,7 @@ function ShellFrame<T extends string>({
   sections,
   active,
   onActiveChange,
+  headerControl,
   children,
 }: {
   title: string;
@@ -93,6 +96,7 @@ function ShellFrame<T extends string>({
   sections: ShellButton<T>[];
   active: T;
   onActiveChange: (id: T) => void;
+  headerControl?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -107,6 +111,7 @@ function ShellFrame<T extends string>({
               </div>
               <p className="mt-1 text-sm text-muted-foreground">{description}</p>
             </div>
+            {headerControl && <div className="w-full min-w-[260px] sm:w-auto sm:flex-1 sm:max-w-xl">{headerControl}</div>}
           </div>
           <nav className="mt-4 flex flex-wrap gap-2" aria-label={`${title} 页面菜单`}>
             {sections.map(item => {
@@ -953,7 +958,6 @@ export function PlatformAdminShell({
   renderToolControls,
   renderMcp,
   renderSkills,
-  renderUsage,
   renderEfficiency,
   activeSection,
   entityId,
@@ -971,7 +975,6 @@ export function PlatformAdminShell({
   renderToolControls: () => ReactNode;
   renderMcp: () => ReactNode;
   renderSkills: () => ReactNode;
-  renderUsage: () => ReactNode;
   renderEfficiency: () => ReactNode;
   activeSection: PlatformAdminSection;
   entityId: string | null;
@@ -983,11 +986,6 @@ export function PlatformAdminShell({
   /** 仅渲染设置 modal，不渲染背后的分析页；用于从任意页面打开管理弹窗时保持原页面不变。 */
   settingsOnly?: boolean;
 }) {
-  const { users } = useUsers();
-  const { tenants } = useTenants();
-  const activeTenants = tenants.filter(t => !t.disabled);
-  const platformAdmins = users.filter(u => u.role === "admin" && u.tenantId === DEFAULT_TENANT_ID);
-
   // mount-once-visited（与 TenantAdminShell 同模式）
   const [visitedPlatformSections, setVisitedPlatformSections] = useState<Set<PlatformSection>>(() =>
     settingsOpen ? new Set([settingsSection]) : new Set(),
@@ -1026,49 +1024,17 @@ export function PlatformAdminShell({
   );
 
   const sectionLabel = platformAdminSections.find(item => item.id === activeSection)?.label ?? "概览";
-  const pendingSection = (title: string, description: string, points: string[]) => (
-    <PlaceholderAdminPanel
-      title={entityId ? `${title}详情` : title}
-      description={entityId ? `${description} 当前深链 ID: ${entityId}` : description}
-      points={points}
-    />
-  );
 
   const content = (() => {
     if (activeSection === "audit") return <AuditEventsPanel scope="platform" />;
-    if (activeSection === "overview") {
-      return (
-        <div className="mx-auto w-full max-w-5xl space-y-5">
-          <SettingsPanelHeader title="平台总览" description="平台健康、资源和用量的集中视图。" />
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard title="组织总数" value={tenants.length} description="包含已禁用组织" />
-            <MetricCard title="活跃组织" value={activeTenants.length} description="当前可接入资源" />
-            <MetricCard title="用户总数" value={users.length} description="跨组织账号总数" />
-            <MetricCard title="平台管理员" value={platformAdmins.length} description="默认平台组织管理员" />
-          </div>
-          <div className="rounded-2xl border bg-card p-5 shadow-sm">
-            <h3 className="text-sm font-semibold">平台管理信息架构</h3>
-            <p className="mt-1 text-sm text-muted-foreground">租户、用户、会话、Run、容器、审计和效率已拆分为独立分区。</p>
-          </div>
-          {renderUsage()}
-        </div>
-      );
-    }
-    if (activeSection === "tenants") {
-      return pendingSection("租户", "租户列表和租户详情视图。", ["租户状态与余额", "关联用户、会话和 Run", "历史入口保持兼容"]);
-    }
-    if (activeSection === "users") {
-      return pendingSection("用户", "跨租户用户列表和用户详情视图。", ["账号、角色与租户", "会话与成本聚合", "登录与操作日志"]);
-    }
-    if (activeSection === "sessions") {
-      return pendingSection("会话", "会话列表和会话详情视图。", ["标题、渠道与状态", "关联用户和租户", "成本与 Run 聚合"]);
-    }
+    if (activeSection === "overview") return <OverviewPage />;
+    if (activeSection === "tenants") return <TenantsPage tenantId={entityId} />;
+    if (activeSection === "users") return <UsersPage userId={entityId} />;
+    if (activeSection === "sessions") return <SessionsPage sessionId={entityId} />;
     if (activeSection === "runs") {
       return <RunTraceExplorer runId={entityId} onRunIdChange={(next) => onSectionChange("runs", next)} />;
     }
-    if (activeSection === "sandboxes") {
-      return pendingSection("容器", "ACS 容器列表和容器详情视图。", ["运行相位与健康状态", "镜像、TTL 与空闲时长", "旧运行态入口自动迁移"]);
-    }
+    if (activeSection === "sandboxes") return <SandboxesPage sandboxName={entityId} />;
     return renderEfficiency();
   })();
 
@@ -1082,7 +1048,17 @@ export function PlatformAdminShell({
 
   return (
     <>
-      <ShellFrame title="平台管理" description={`当前分区: ${sectionLabel}`} badge="平台 Admin" sections={platformAdminSections} active={activeSection} onActiveChange={(section) => onSectionChange(section)}>{content}</ShellFrame>
+      <ShellFrame
+        title="平台管理"
+        description={`当前分区: ${sectionLabel}`}
+        badge="平台 Admin"
+        sections={platformAdminSections}
+        active={activeSection}
+        onActiveChange={(section) => onSectionChange(section)}
+        headerControl={<PlatformAdminSearch />}
+      >
+        {content}
+      </ShellFrame>
     </>
   );
 }

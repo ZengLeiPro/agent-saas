@@ -503,7 +503,6 @@ export function DesktopLayout(props: LayoutProps) {
                 renderToolControls={() => <ToolControlsManagerPanel />}
                 renderMcp={() => <McpAdminCatalogPanel />}
                 renderSkills={() => <SkillManagerPanel mode="platform" />}
-                renderUsage={() => <UsageDashboard scope="platform" />}
                 renderEfficiency={() => <EfficiencyViewPanel />}
                 activeSection={platformAdminSection}
                 entityId={platformAdminEntityId}
@@ -546,7 +545,6 @@ export function DesktopLayout(props: LayoutProps) {
               renderToolControls={() => <ToolControlsManagerPanel />}
               renderMcp={() => <McpAdminCatalogPanel />}
               renderSkills={() => <SkillManagerPanel mode="platform" />}
-              renderUsage={() => <UsageDashboard scope="platform" />}
               renderEfficiency={() => <EfficiencyViewPanel />}
               activeSection={platformAdminSection}
               entityId={platformAdminEntityId}

@@ -150,7 +150,9 @@ export interface ChatAppState {
   sessionParticipants: SessionParticipants | null;
   previewFilePath: string | null;
   previewFileOwner: string | undefined;
+  previewMode: "dialog" | "side";
   openFilePreview: (path: string, owner?: string) => void;
+  dockFilePreview: () => void;
   closeFilePreview: () => void;
   fileBrowserOpen: boolean;
   toggleFileBrowser: () => void;
@@ -236,13 +238,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // ---- File preview ----
   const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
   const [explicitPreviewOwner, setExplicitPreviewOwner] = useState<string | undefined>(undefined);
+  const [previewMode, setPreviewMode] = useState<"dialog" | "side">("dialog");
   const openFilePreview = useCallback((path: string, owner?: string) => {
     setPreviewFilePath(path);
     setExplicitPreviewOwner(owner);
+    setPreviewMode("dialog");
+  }, []);
+  const dockFilePreview = useCallback(() => {
+    setPreviewMode("side");
   }, []);
   const closeFilePreview = useCallback(() => {
     setPreviewFilePath(null);
     setExplicitPreviewOwner(undefined);
+    setPreviewMode("dialog");
   }, []);
 
   // ---- File browser ----
@@ -2540,7 +2548,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     sessionParticipants,
     previewFilePath,
     previewFileOwner,
+    previewMode,
     openFilePreview,
+    dockFilePreview,
     closeFilePreview,
     fileBrowserOpen,
     toggleFileBrowser,

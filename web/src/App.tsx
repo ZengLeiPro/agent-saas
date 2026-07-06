@@ -75,7 +75,7 @@ function App() {
     unreadAiReplySessionIds,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     agentProfile, sessionParticipants,
-    previewFilePath, previewFileOwner, openFilePreview, closeFilePreview,
+    previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, closeFilePreview,
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
   } = useChatAppState({ onVoiceEvent: handleVoiceEvent });
@@ -137,7 +137,7 @@ function App() {
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     agentProfile, sessionParticipants,
-    previewFilePath, previewFileOwner, openFilePreview, closeFilePreview,
+    previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, closeFilePreview,
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
   };

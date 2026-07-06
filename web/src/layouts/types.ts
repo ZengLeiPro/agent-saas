@@ -104,7 +104,9 @@ export interface LayoutProps {
   // File preview
   previewFilePath: string | null;
   previewFileOwner?: string;
+  previewMode: "dialog" | "side";
   openFilePreview: (path: string, owner?: string) => void;
+  dockFilePreview: () => void;
   closeFilePreview: () => void;
 
   // File browser

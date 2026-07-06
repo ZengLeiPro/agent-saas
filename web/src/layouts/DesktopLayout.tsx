@@ -4,11 +4,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
-import { MarkdownPreviewPanel } from "@/components/MarkdownPreviewPanel";
-import { HtmlPreviewPanel } from "@/components/HtmlPreviewPanel";
-import { CodePreviewPanel } from "@/components/CodePreviewPanel";
-import { PdfPreviewPanel } from "@/components/PdfPreviewPanel";
-import { VideoPreviewPanel } from "@/components/VideoPreviewPanel";
+import { FilePreviewDialog, FilePreviewPanel } from "@/components/FilePreviewPanel";
 import { DesktopSessionSidebar } from "@/components/DesktopSessionSidebar";
 import { TrashView } from "@/components/chat/TrashView";
 import { TokenUsageDisplay } from "@/components/TokenUsageDisplay";
@@ -18,7 +14,7 @@ import { WidthToggle } from "@/components/WidthToggle";
 import { useChatFontSize } from "@/hooks/useChatFontSize";
 import { useChatWidth } from "@/hooks/useChatWidth";
 import { useResizePanel } from "@/hooks/useResizePanel";
-import { getPreviewFileType, saveUserPreferences } from "@agent/shared";
+import { saveUserPreferences } from "@agent/shared";
 import type { LayoutProps } from "./types";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -70,7 +66,7 @@ export function DesktopLayout(props: LayoutProps) {
     sendMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handlePaste, ttsProps, ttsStateMap, modelList,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
-    previewFilePath, previewFileOwner, openFilePreview, closeFilePreview,
+    previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, closeFilePreview,
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
@@ -91,8 +87,9 @@ export function DesktopLayout(props: LayoutProps) {
   const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
   const { isWide: chatWidthWide, setIsWide: setChatWidthWide } = useChatWidth();
 
-  const rightPanelOpen = !!previewFilePath || fileBrowserOpen;
-  const rightPanelKey = previewFilePath || (fileBrowserOpen ? 'browser' : null);
+  const sidePreviewOpen = !!previewFilePath && previewMode === "side";
+  const rightPanelOpen = sidePreviewOpen || fileBrowserOpen;
+  const rightPanelKey = sidePreviewOpen ? previewFilePath : (fileBrowserOpen ? 'browser' : null);
   const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(0.5, 0.25, 0.75, rightPanelKey);
 
   // 侧边栏折叠
@@ -389,15 +386,10 @@ export function DesktopLayout(props: LayoutProps) {
                 <div className="pointer-events-none absolute inset-y-0 w-px bg-border transition-colors group-hover:w-[3px] group-hover:bg-primary/30" />
               </div>
               <div className="flex min-w-0 flex-col overflow-hidden" style={{ flexBasis: `${splitRatio * 100}%`, flexShrink: 0, flexGrow: 0 }}>
-                {previewFilePath && (() => {
-                  const previewType = getPreviewFileType(previewFilePath);
-                  if (previewType === 'html') return <HtmlPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} />;
-                  if (previewType === 'pdf') return <PdfPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} />;
-                  if (previewType === 'video') return <VideoPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} />;
-                  if (previewType === 'code') return <CodePreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} />;
-                  return <MarkdownPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} />;
-                })()}
-                <div className={cn("flex h-full flex-col", previewFilePath && "hidden")}>
+                {sidePreviewOpen && previewFilePath ? (
+                  <FilePreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} />
+                ) : null}
+                <div className={cn("flex h-full flex-col", sidePreviewOpen && "hidden")}>
                   <Suspense fallback={SuspenseFallback}>
                     <FileBrowserLazy
                       onClose={closeFileBrowser}
@@ -581,6 +573,13 @@ export function DesktopLayout(props: LayoutProps) {
             onOpenChange={setCronWizardOpen}
           />
         )}
+        <FilePreviewDialog
+          open={!!previewFilePath && previewMode === "dialog"}
+          filePath={previewFilePath}
+          owner={previewFileOwner}
+          onClose={closeFilePreview}
+          onDock={dockFilePreview}
+        />
         <Suspense fallback={null}>
           <SettingsModal
             open={settingsOpen}

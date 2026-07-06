@@ -124,7 +124,7 @@ export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
       if (record.mimeType) res.type(record.mimeType);
       res.setHeader('Content-Length', String(data.byteLength));
       const fileName = typeof record.metadata.fileName === 'string' ? record.metadata.fileName : `${record.artifactId}.bin`;
-      res.setHeader('Content-Disposition', `inline; filename="${safeHeaderFileName(fileName)}"`);
+      res.setHeader('Content-Disposition', buildContentDisposition('inline', fileName));
       res.send(data);
     } catch (err) {
       sendArtifactError(res, err);
@@ -147,6 +147,21 @@ function requestBaseUrl(req: Request): string {
   return `${proto}://${req.get('host')}`;
 }
 
-function safeHeaderFileName(fileName: string): string {
-  return fileName.replace(/["\r\n\\]/g, '_').slice(0, 255);
+function buildContentDisposition(disposition: 'inline' | 'attachment', fileName: string): string {
+  const fallback = asciiFileNameFallback(fileName);
+  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeRfc5987Value(fileName)}`;
+}
+
+function asciiFileNameFallback(fileName: string): string {
+  const fallback = fileName
+    .replace(/[^\x20-\x7E]/g, '_')
+    .replace(/["\r\n\\;]/g, '_')
+    .slice(0, 255);
+  return fallback || 'artifact.bin';
+}
+
+function encodeRfc5987Value(value: string): string {
+  return encodeURIComponent(value).replace(/['()*]/g, (char) =>
+    `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
 }

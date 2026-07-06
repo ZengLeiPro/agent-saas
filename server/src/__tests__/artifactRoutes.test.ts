@@ -103,6 +103,35 @@ describe('artifact routes', () => {
     }
   });
 
+  it('serves signed artifact content with non-ASCII filenames', async () => {
+    const { server, baseUrl } = await startServer(service, { sub: 'user-1', username: 'alice', role: 'user', tenantId: 'kaiyan' });
+    try {
+      const create = await fetch(`${baseUrl}/api/sessions/${SESSION_ID}/artifacts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: '中文 artifact',
+          fileName: '客户交付前AI助手验收报告.md',
+          mimeType: 'text/markdown',
+          kind: 'file',
+        }),
+      });
+      expect(create.status).toBe(201);
+      const created = await create.json() as { artifact: { artifactId: string } };
+
+      const readUrl = await fetch(`${baseUrl}/api/artifacts/${created.artifact.artifactId}/read-url?expiresInSeconds=60`);
+      expect(readUrl.status).toBe(200);
+      const signed = await readUrl.json() as { url: string };
+
+      const content = await fetch(signed.url);
+      expect(content.status).toBe(200);
+      expect(content.headers.get('content-disposition')).toContain("filename*=UTF-8''%E5%AE%A2%E6%88%B7");
+      await expect(content.text()).resolves.toBe('中文 artifact');
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it('hides artifacts from users who do not own the session', async () => {
     const artifact = await service.createFromBytes({
       sessionId: SESSION_ID,

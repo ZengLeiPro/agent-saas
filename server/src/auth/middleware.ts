@@ -17,6 +17,7 @@ const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   { path: /^\/signup\// },
   { path: "/health" },
   { path: "/healthz" },
+  { path: "/healthz/drain" },
   { path: "/config" },
   { method: "GET", path: "/app/version" },
   { path: /^\/dingtalk\/webhook\// },

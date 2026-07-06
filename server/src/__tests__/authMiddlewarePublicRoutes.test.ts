@@ -26,6 +26,8 @@ describe("auth middleware public routes", () => {
     app.get("/api/signup/status", (_req, res) => res.json({ ok: true }));
     app.post("/api/signup/send-code", (_req, res) => res.json({ ok: true }));
     app.post("/api/signup/register", (_req, res) => res.json({ ok: true }));
+    app.get("/api/healthz", (_req, res) => res.send("ok"));
+    app.get("/api/healthz/drain", (_req, res) => res.json({ idle: true }));
     app.get("/api/protected", (_req, res) => res.json({ ok: true }));
 
     server = await new Promise((resolve) => {
@@ -50,6 +52,11 @@ describe("auth middleware public routes", () => {
       (await fetch(`${baseUrl}/api/signup/register`, { method: "POST" }))
         .status,
     ).toBe(200);
+  });
+
+  it("healthz 与 drain 探针免登录可达", async () => {
+    expect((await fetch(`${baseUrl}/api/healthz`)).status).toBe(200);
+    expect((await fetch(`${baseUrl}/api/healthz/drain`)).status).toBe(200);
   });
 
   it("非公开路径无 token 仍 401（放行未扩大化）", async () => {

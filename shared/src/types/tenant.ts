@@ -83,6 +83,10 @@ export interface TenantSettings {
     logoUrl?: string;
     primaryColor?: string;
   };
+  personalization: {
+    /** 首日新手引导条。默认关闭，由平台/组织管理员按租户开启。 */
+    firstDayGuideBarEnabled: boolean;
+  };
   security: {
     passwordMinLength?: number;
     sessionTtlHours?: number;
@@ -113,6 +117,9 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     defaultEnabledServerIds: [],
   },
   branding: {},
+  personalization: {
+    firstDayGuideBarEnabled: false,
+  },
   security: {
     requireDingtalkBinding: false,
   },

@@ -162,6 +162,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createScenariosRouter({
       cronService: cronRuntime.service ?? undefined,
       roleKit: config.roleKit,
+      tenantStore: runtime.tenantStore,
     }),
   );
   app.use("/api/contentops", createContentOpsRouter());

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/authFetch";
+import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 
 export interface RoleKitPublicConfig {
   roleKitV2Enabled: boolean;
@@ -25,29 +26,53 @@ const DEFAULT_CONFIG: RoleKitPublicConfig = {
 
 let cachedConfig: RoleKitPublicConfig | null = null;
 let inflight: Promise<RoleKitPublicConfig> | null = null;
+let hookInstanceSeq = 0;
 
-async function fetchRoleKitConfig(): Promise<RoleKitPublicConfig> {
-  if (cachedConfig) return cachedConfig;
-  if (!inflight) {
-    inflight = (async () => {
-      const res = await authFetch("/api/scenarios/config");
-      if (!res.ok) return DEFAULT_CONFIG;
-      const data = (await res.json()) as Partial<RoleKitPublicConfig>;
-      const config: RoleKitPublicConfig = {
-        ...DEFAULT_CONFIG,
-        ...data,
-        firstDayGuideBar: {
-          ...DEFAULT_CONFIG.firstDayGuideBar,
-          ...(data.firstDayGuideBar ?? {}),
-        },
-      };
-      cachedConfig = config;
-      return config;
-    })().finally(() => {
-      inflight = null;
-    });
-  }
+async function fetchRoleKitConfig(force = false): Promise<RoleKitPublicConfig> {
+  if (force) cachedConfig = null;
+  if (!force && cachedConfig) return cachedConfig;
+  if (!force && inflight) return inflight;
+  inflight = (async () => {
+    const res = await authFetch("/api/scenarios/config");
+    if (!res.ok) return DEFAULT_CONFIG;
+    const data = (await res.json()) as Partial<RoleKitPublicConfig>;
+    const config: RoleKitPublicConfig = {
+      ...DEFAULT_CONFIG,
+      ...data,
+      firstDayGuideBar: {
+        ...DEFAULT_CONFIG.firstDayGuideBar,
+        ...(data.firstDayGuideBar ?? {}),
+      },
+    };
+    cachedConfig = config;
+    return config;
+  })().finally(() => {
+    inflight = null;
+  });
   return inflight;
+}
+
+export function invalidateRoleKitConfig(): void {
+  cachedConfig = null;
+  inflight = null;
+}
+
+async function refreshRoleKitConfig(): Promise<RoleKitPublicConfig> {
+  invalidateRoleKitConfig();
+  return fetchRoleKitConfig(true);
+}
+
+function nextHookInstanceKey(): string {
+  hookInstanceSeq += 1;
+  return `roleKitConfig:${hookInstanceSeq}`;
+}
+
+function useStableRefreshKey(): string {
+  const ref = useRef<string | null>(null);
+  if (!ref.current) {
+    ref.current = nextHookInstanceKey();
+  }
+  return ref.current;
 }
 
 export interface UseRoleKitConfigResult {
@@ -57,10 +82,25 @@ export interface UseRoleKitConfigResult {
 }
 
 export function useRoleKitConfig(): UseRoleKitConfigResult {
+  const refreshKey = useStableRefreshKey();
   const [config, setConfig] = useState<RoleKitPublicConfig>(cachedConfig ?? DEFAULT_CONFIG);
   const [loading, setLoading] = useState(!cachedConfig);
 
   const reload = useCallback(() => {
+    setLoading(true);
+    refreshRoleKitConfig()
+      .then((next) => {
+        setConfig(next);
+      })
+      .catch(() => {
+        setConfig(DEFAULT_CONFIG);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     setLoading(true);
     fetchRoleKitConfig()
@@ -78,7 +118,13 @@ export function useRoleKitConfig(): UseRoleKitConfigResult {
     };
   }, []);
 
-  useEffect(() => reload(), [reload]);
+  useEffect(() => {
+    registerRefresh(refreshKey, async () => {
+      const next = await refreshRoleKitConfig().catch(() => DEFAULT_CONFIG);
+      setConfig(next);
+    });
+    return () => unregisterRefresh(refreshKey);
+  }, [refreshKey]);
 
   return { config, loading, reload };
 }

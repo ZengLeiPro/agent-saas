@@ -39,6 +39,7 @@ function cloneSettings(settings: TenantSettings): TenantSettings {
       defaultEnabledServerIds: [...settings.mcp.defaultEnabledServerIds],
     },
     branding: { ...settings.branding },
+    personalization: { ...settings.personalization },
     security: { ...settings.security },
   };
 }
@@ -64,6 +65,7 @@ function mergeSettings(input?: TenantSettingsPatch): TenantSettings {
       defaultEnabledServerIds: [...(input?.mcp?.defaultEnabledServerIds ?? DEFAULT_TENANT_SETTINGS.mcp.defaultEnabledServerIds)],
     },
     branding: { ...DEFAULT_TENANT_SETTINGS.branding, ...(input?.branding ?? {}) },
+    personalization: { ...DEFAULT_TENANT_SETTINGS.personalization, ...(input?.personalization ?? {}) },
     security: { ...DEFAULT_TENANT_SETTINGS.security, ...(input?.security ?? {}) },
   };
 }

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createScenariosRouter } from '../routes/scenarios.js';
 import type { CronJob, CronJobCreate } from '../cron/types.js';
+import { DEFAULT_TENANT_SETTINGS } from '../data/tenants/types.js';
 
 const TEST_USER = {
   sub: 'user-1',
@@ -26,6 +27,7 @@ async function startServer(
     add(create: CronJobCreate, context?: { owner?: string; ownerName?: string }): Promise<CronJob>;
     runNow(id: string): Promise<{ ran: boolean; error?: string }>;
   },
+  options: { firstDayGuideBarEnabled?: boolean } = {},
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
@@ -40,6 +42,14 @@ async function startServer(
       v2Enabled: true,
       firstDayGuideBar: { enabled: true },
       libraryVersion: 'v2',
+    },
+    tenantStore: {
+      getSettings: () => ({
+        ...DEFAULT_TENANT_SETTINGS,
+        personalization: {
+          firstDayGuideBarEnabled: options.firstDayGuideBarEnabled === true,
+        },
+      }),
     },
   }));
 
@@ -231,8 +241,21 @@ describe('scenarios routes', () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({
         roleKitV2Enabled: true,
-        firstDayGuideBar: { enabled: true },
+        firstDayGuideBar: { enabled: false },
           libraryVersion: 'v2',
+      });
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('enables first-day guide bar only when the tenant setting is enabled', async () => {
+    const { server, baseUrl } = await startServer(dataPath, undefined, { firstDayGuideBarEnabled: true });
+    try {
+      const response = await fetch(`${baseUrl}/api/scenarios/config`);
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        firstDayGuideBar: { enabled: true },
       });
     } finally {
       await stopServer(server);

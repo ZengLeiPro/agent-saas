@@ -83,6 +83,9 @@ const tenantSettingsSchema = z.object({
     logoUrl: z.string().max(500).optional(),
     primaryColor: z.string().max(32).optional(),
   }).optional(),
+  personalization: z.object({
+    firstDayGuideBarEnabled: z.boolean().optional(),
+  }).optional(),
   security: z.object({
     passwordMinLength: optionalNumber,
     sessionTtlHours: optionalNumber,

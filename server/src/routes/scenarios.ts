@@ -32,6 +32,7 @@ import {
 } from "../../../shared/src/security/sanitizeCustomerFacingText.js";
 import type { CronService } from "../cron/service.js";
 import type { CronJobCreate, NotifyConfig } from "../cron/types.js";
+import type { TenantStore } from "../data/tenants/store.js";
 
 const DEFAULT_DATA_PATH = resolve(
   import.meta.dirname,
@@ -54,6 +55,7 @@ export interface ScenariosRouterOptions {
   dataPath?: string;
   cronService?: CronService;
   roleKit?: RoleKitPublicConfig;
+  tenantStore?: Pick<TenantStore, "getSettings">;
 }
 
 async function loadScenarioLibraryFile(dataPath: string): Promise<ScenarioLibraryFile> {
@@ -160,13 +162,16 @@ export function createScenariosRouter(
     return cache;
   }
 
-  router.get("/config", (_req: Request, res: Response) => {
+  router.get("/config", (req: Request, res: Response) => {
     const roleKit = options.roleKit ?? {};
+    const tenantSettings = req.user?.tenantId
+      ? options.tenantStore?.getSettings(req.user.tenantId)
+      : undefined;
     res.json({
       roleKitV2Enabled: roleKit.v2Enabled === true,
       sanitizePreviewEnabled: roleKit.sanitizePreviewEnabled === true,
       firstDayGuideBar: {
-        enabled: roleKit.firstDayGuideBar?.enabled === true,
+        enabled: tenantSettings?.personalization?.firstDayGuideBarEnabled === true,
         stageTimeoutMs: roleKit.firstDayGuideBar?.stageTimeoutMs ?? 5_400_000,
         showOnMobile: roleKit.firstDayGuideBar?.showOnMobile === true,
       },

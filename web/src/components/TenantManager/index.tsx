@@ -39,6 +39,7 @@ function cloneTenantSettings(settings: TenantSettings): TenantSettings {
       defaultEnabledServerIds: [...settings.mcp.defaultEnabledServerIds],
     },
     branding: { ...settings.branding },
+    personalization: { ...settings.personalization },
     security: { ...settings.security },
   };
 }
@@ -323,6 +324,7 @@ function capabilitySnapshot(settings: TenantSettings): string {
   return JSON.stringify({
     features: settings.features,
     quotas: settings.quotas,
+    personalization: settings.personalization,
     requireDingtalkBinding: settings.security.requireDingtalkBinding,
   });
 }
@@ -371,6 +373,7 @@ function TenantCapabilitiesPanel({
       const payload = cloneTenantSettings((latestData as { settings: TenantSettings }).settings);
       payload.features = { ...settings.features };
       payload.quotas = { ...settings.quotas };
+      payload.personalization = { ...settings.personalization };
       payload.security = {
         ...payload.security,
         requireDingtalkBinding: settings.security.requireDingtalkBinding,
@@ -394,7 +397,7 @@ function TenantCapabilitiesPanel({
     } finally {
       setSaving(false);
     }
-  }, [onSaved, settings.features, settings.quotas, settings.security.requireDingtalkBinding, tenant.id]);
+  }, [onSaved, settings.features, settings.personalization, settings.quotas, settings.security.requireDingtalkBinding, tenant.id]);
 
   const actions = useMemo(() => (
     <>
@@ -471,6 +474,23 @@ function TenantCapabilitiesPanel({
           ))}
         </CardContent>
       </Card>
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">个性化</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2">
+          <div className="flex items-start justify-between gap-4 rounded-xl border p-3">
+            <div>
+              <div className="text-sm font-medium">首日新手引导条</div>
+              <div className="text-xs leading-5 text-muted-foreground">在聊天输入框下方展示首日引导。默认关闭，需要时按组织开启。</div>
+            </div>
+            <Switch
+              checked={settings.personalization.firstDayGuideBarEnabled}
+              onCheckedChange={checked => patch(draft => { draft.personalization.firstDayGuideBarEnabled = checked; })}
+            />
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -483,7 +503,6 @@ export function TenantManager() {
     createTenant,
     updateTenant,
     setTenantDisabled,
-    refresh,
   } = useTenants();
   const { users } = useUsers();
   const [showForm, setShowForm] = useState(false);
@@ -698,7 +717,7 @@ export function TenantManager() {
             </TabsContent>
 
             <TabsContent value="capabilities" forceMount className="mt-0">
-              <TenantCapabilitiesPanel tenant={selectedTenant} onActionsChange={setCapabilitiesActions} onSaved={refresh} />
+              <TenantCapabilitiesPanel tenant={selectedTenant} onActionsChange={setCapabilitiesActions} onSaved={refreshAll} />
             </TabsContent>
             </div>
           </Tabs>

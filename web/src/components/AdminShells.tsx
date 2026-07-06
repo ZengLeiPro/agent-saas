@@ -13,6 +13,7 @@ import { useLoginLogs, useUsers, type LoginLogFilters } from "@/components/UserM
 import type { LoginLogEntry } from "@/components/UserManager/types";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { authFetch } from "@/lib/authFetch";
+import { refreshAll } from "@/lib/refreshBus";
 import { cn } from "@/lib/utils";
 import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type TenantSettings } from "@/components/TenantManager/types";
 import type { ModelList } from "@/types/models";
@@ -238,6 +239,7 @@ function cloneTenantSettings(settings: TenantSettings): TenantSettings {
     models: { ...settings.models, allowedModels: [...settings.models.allowedModels], displayOverrides: { ...(settings.models.displayOverrides ?? {}) } },
     mcp: { ...settings.mcp, defaultEnabledServerIds: [...settings.mcp.defaultEnabledServerIds] },
     branding: { ...settings.branding },
+    personalization: { ...settings.personalization },
     security: { ...settings.security },
   };
 }
@@ -330,6 +332,7 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
       const next = (data as { settings: TenantSettings }).settings;
       setSettings(next);
       setDefaultMcpText(next.mcp.defaultEnabledServerIds.join("\n"));
+      await refreshAll();
       setSaved(true);
       setError(null);
     } catch (err) {
@@ -399,6 +402,17 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
                 />
               </div>
             ))}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-base">个性化</CardTitle></CardHeader>
+          <CardContent className="grid gap-3">
+            <SettingSwitch
+              label="首日新手引导条"
+              description="在聊天输入框下方展示首日引导。默认关闭，需要时按组织开启。"
+              checked={settings.personalization.firstDayGuideBarEnabled}
+              onCheckedChange={checked => patch(d => { d.personalization.firstDayGuideBarEnabled = checked; })}
+            />
           </CardContent>
         </Card>
         <Card>

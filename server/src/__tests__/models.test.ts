@@ -9,6 +9,7 @@ import {
   toRunModelOptions,
 } from '../app/models.js';
 import type { ModelsConfig } from '../app/config.js';
+import { DEFAULT_TENANT_SETTINGS } from '../data/tenants/types.js';
 
 const modelsConfig: ModelsConfig = {
   default: 'openai-agents/doubao',
@@ -206,6 +207,7 @@ describe('OpenAI-only model resolver', () => {
         defaultEnabledServerIds: [],
       },
       branding: {},
+      personalization: DEFAULT_TENANT_SETTINGS.personalization,
       security: {
         requireDingtalkBinding: false,
       },
@@ -253,6 +255,7 @@ describe('OpenAI-only model resolver', () => {
         defaultEnabledServerIds: [],
       },
       branding: {},
+      personalization: DEFAULT_TENANT_SETTINGS.personalization,
       security: {
         requireDingtalkBinding: false,
       },
@@ -276,6 +279,7 @@ describe('OpenAI-only model resolver', () => {
         defaultEnabledServerIds: [],
       },
       branding: {},
+      personalization: DEFAULT_TENANT_SETTINGS.personalization,
       security: {
         requireDingtalkBinding: false,
       },

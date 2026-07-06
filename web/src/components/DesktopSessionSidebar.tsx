@@ -169,10 +169,10 @@ function CompactSessionLeadingIcon({ selected = false }: { selected?: boolean })
   return <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground/70" aria-hidden="true" />;
 }
 
-/** 紧凑模式下的分组前缀小图标：保留分组语义，但用浅品牌色降低视觉重量。 */
+/** 紧凑模式下的分组前缀小图标：普通分组用品牌蓝，定时任务用黄色填充区分。 */
 function CompactGroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
   if (kind === "cron") {
-    return <Clock className="h-4 w-4 shrink-0 text-teal-600/70 dark:text-teal-300/70" aria-hidden="true" />;
+    return <Clock className="h-4 w-4 shrink-0 fill-amber-100 text-amber-600 dark:fill-amber-900/35 dark:text-amber-300" aria-hidden="true" />;
   }
 
   return (

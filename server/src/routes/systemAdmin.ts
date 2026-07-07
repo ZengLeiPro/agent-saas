@@ -4,10 +4,11 @@ import { z } from 'zod';
 
 import { isPlatformAdmin } from '../auth/types.js';
 import { auditLog } from '../data/login-logs/index.js';
+import type { UserStore } from '../data/users/store.js';
 import type { AlertNotifier } from '../runtime/alertNotifier.js';
 import type { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { WorkspaceScanAlreadyRunningError } from '../runtime/systemMetricsCollector.js';
-import type { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
+import type { PgSystemMetricsStore, WorkspaceUsageRecord } from '../runtime/systemMetricsStore.js';
 import { archiveWorkspace, isWorkspaceScanFresh } from '../runtime/workspaceArchive.js';
 
 export interface SystemAdminRouterOptions {
@@ -15,7 +16,13 @@ export interface SystemAdminRouterOptions {
   systemMetricsStore?: PgSystemMetricsStore;
   systemMetricsCollector?: SystemMetricsCollector;
   alertNotifier?: AlertNotifier;
+  userStore?: UserStore;
 }
+
+type WorkspaceUsageResponseRecord = WorkspaceUsageRecord & {
+  username: string | null;
+  realName: string | null;
+};
 
 const metricsQuerySchema = z.object({
   hours: z.coerce.number().int().min(1).max(720).optional(),
@@ -77,11 +84,12 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
         store.getWorkspaceStorageSummary(),
         store.listWorkspaceUsage(),
       ]);
+      const enrichedWorkspaces = enrichWorkspaceUsage(workspaces, options.userStore);
       res.json({
         available: true,
         summary,
-        workspaces,
-        orphans: workspaces.filter((workspace) => workspace.status !== 'active'),
+        workspaces: enrichedWorkspaces,
+        orphans: enrichedWorkspaces.filter((workspace) => workspace.status !== 'active'),
         generatedAt: new Date().toISOString(),
       });
     } catch (err) {
@@ -183,4 +191,23 @@ function invalidBody(res: Response, error: z.ZodError): void {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function enrichWorkspaceUsage(
+  workspaces: WorkspaceUsageRecord[],
+  userStore?: UserStore,
+): WorkspaceUsageResponseRecord[] {
+  const usersByTenantAndId = new Map(
+    (userStore?.listAll() ?? []).map((user) => [`${user.tenantId}:${user.id}`, user]),
+  );
+  return workspaces.map((workspace) => {
+    const user = workspace.userId
+      ? usersByTenantAndId.get(`${workspace.tenantId}:${workspace.userId}`) ?? null
+      : null;
+    return {
+      ...workspace,
+      username: user?.username ?? null,
+      realName: user?.realName ?? null,
+    };
+  });
 }

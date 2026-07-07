@@ -26,6 +26,22 @@ const WAIN_ADMIN: JwtPayload = {
 
 const servers: Server[] = [];
 
+const userStore = {
+  findById: (id: string) => id === 'u-1'
+    ? {
+      id,
+      username: 'alice',
+      realName: 'Alice Chen',
+      role: 'user',
+      tenantId: 'wain',
+      createdAt: '2026-07-06T10:00:00.000Z',
+      createdBy: 'system',
+      updatedAt: '2026-07-06T10:00:00.000Z',
+    }
+    : undefined,
+  listAll: () => [],
+} as any;
+
 async function withApp<T>(
   user: JwtPayload,
   options: Partial<Parameters<typeof createPlatformObservabilityRouter>[0]>,
@@ -89,11 +105,16 @@ describe('platform observability router', () => {
     }));
     const sessionProjectionStore = { list } as any;
 
-    await withApp(WAIN_ADMIN, { sessionProjectionStore }, async (baseUrl) => {
+    await withApp(WAIN_ADMIN, { sessionProjectionStore, userStore }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/api/admin/sessions`);
       expect(res.status).toBe(200);
       const body = await res.json() as any;
-      expect(body.items[0]).toMatchObject({ sessionId: SESSION_ID, tenantId: 'wain' });
+      expect(body.items[0]).toMatchObject({
+        sessionId: SESSION_ID,
+        tenantId: 'wain',
+        username: 'alice',
+        realName: 'Alice Chen',
+      });
     });
 
     expect(list).toHaveBeenCalledWith(expect.objectContaining({
@@ -120,11 +141,16 @@ describe('platform observability router', () => {
     }));
     const runStore = { pool: { query }, runsTable: 'runtime_runs' } as any;
 
-    await withApp(WAIN_ADMIN, { runStore }, async (baseUrl) => {
+    await withApp(WAIN_ADMIN, { runStore, userStore }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/api/admin/runs?status=active`);
       expect(res.status).toBe(200);
       const body = await res.json() as any;
-      expect(body.items[0]).toMatchObject({ runId: RUN_ID, tenantId: 'wain' });
+      expect(body.items[0]).toMatchObject({
+        runId: RUN_ID,
+        tenantId: 'wain',
+        username: 'alice',
+        realName: 'Alice Chen',
+      });
     });
 
     const [sql, params] = query.mock.calls[0]! as unknown as [unknown, unknown[]];

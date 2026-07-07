@@ -32,6 +32,8 @@ export interface RecentRunSummary {
   sessionId: string;
   tenantId: string | null;
   userId: string | null;
+  username: string | null;
+  realName: string | null;
   status: string;
   statusReason: string | null;
   model: string | null;

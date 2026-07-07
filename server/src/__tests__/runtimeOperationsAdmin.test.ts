@@ -260,7 +260,16 @@ describe('runtime operations admin router', () => {
       expect(await readJson(list)).toMatchObject({
         status: 'ok',
         sandboxes: [
-          { name: 'as-ws-kaiyan-user-abc', owner: { kind: 'user', tenantId: 'kaiyan', userId: 'u-1' } },
+          {
+            name: 'as-ws-kaiyan-user-abc',
+            owner: {
+              kind: 'user',
+              tenantId: 'kaiyan',
+              userId: 'u-1',
+              username: 'alice',
+              realName: 'Alice Chen',
+            },
+          },
           { name: 'as-network-probe', owner: { kind: 'system', tenantId: null, userId: null } },
         ],
       });
@@ -280,7 +289,14 @@ describe('runtime operations admin router', () => {
       const deleted = await fetch(`${baseUrl}/api/admin/runtime-operations/acs/sandboxes/as-ws-kaiyan-user-abc`, { method: 'DELETE' });
       expect(deleted.status).toBe(200);
       expect((await readJson(deleted)).deleted).toBe(true);
-    }, { fetchImpl });
+    }, {
+      fetchImpl,
+      userStore: {
+        findById: (id: string) => id === 'u-1'
+          ? { id, username: 'alice', realName: 'Alice Chen', tenantId: 'kaiyan' }
+          : undefined,
+      } as any,
+    });
 
     expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
       'GET http://acs-hand:3400/sandboxes',

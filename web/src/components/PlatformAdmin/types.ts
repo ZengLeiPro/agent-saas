@@ -38,6 +38,7 @@ export interface PlatformSessionRecord {
   tenantId: string;
   userId: string | null;
   username: string | null;
+  realName: string | null;
   channel: string | null;
   kind: "user" | "subagent";
   title: string | null;
@@ -57,6 +58,8 @@ export interface PlatformRunRecord {
   sessionId: string;
   tenantId: string | null;
   userId: string | null;
+  username: string | null;
+  realName: string | null;
   status: string;
   statusReason: string | null;
   model: string | null;
@@ -78,6 +81,8 @@ export interface SandboxOwner {
   kind: "user" | "system";
   tenantId: string | null;
   userId: string | null;
+  username?: string | null;
+  realName?: string | null;
 }
 
 export interface SandboxRecord {
@@ -173,6 +178,8 @@ export interface WorkspaceUsageRecord {
   path: string;
   tenantId: string;
   userId: string | null;
+  username: string | null;
+  realName: string | null;
   status: WorkspaceUsageStatus;
   bytes: number;
   fileCount: number | null;

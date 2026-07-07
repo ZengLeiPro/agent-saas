@@ -211,6 +211,11 @@ async function startServer(overrides: FakeOverrides = {}): Promise<{
     runStore: { get: async (runId) => (runId === RUN_ID ? RUN_RECORD : null) },
     eventStore: { listByRun: async () => EVENTS },
     billingStore: { listUsageEvents: async () => USAGE_EVENTS },
+    userStore: {
+      findById: (id: string) => id === 'user-1'
+        ? { id, username: 'alice', realName: 'Alice Chen', tenantId: 'kaiyan' }
+        : undefined,
+    } as any,
     efficiencyQuery: {
       listRecentRuns: async (opts) => {
         calls.recentRuns.push(opts);
@@ -414,6 +419,7 @@ describe('/api/admin/runtime/trace', () => {
       const body1 = await res1.json();
       expect(body1.runs).toHaveLength(1);
       expect(body1.runs[0].runId).toBe(RUN_ID);
+      expect(body1.runs[0]).toMatchObject({ username: 'alice', realName: 'Alice Chen' });
       expect(body1.runs[0].durationMs).toBe(299_000);
       expect(calls.recentRuns[0]).toEqual({ hours: 24, limit: 50 });
 

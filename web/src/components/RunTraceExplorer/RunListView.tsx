@@ -152,7 +152,9 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
                   <TableHead>状态</TableHead>
 	                  <TableHead>{RUN_LABEL}</TableHead>
                   <TableHead>会话</TableHead>
-                  <TableHead>组织 / 用户</TableHead>
+                  <TableHead>组织 / 用户 ID</TableHead>
+                  <TableHead>用户名</TableHead>
+                  <TableHead>姓名</TableHead>
                   <TableHead>模型</TableHead>
                   <TableHead>渠道</TableHead>
                   <TableHead className="text-right">耗时</TableHead>
@@ -190,6 +192,8 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
                         <div><EntityLink kind="tenant" id={run.tenantId} /></div>
                         <div className="text-xs text-muted-foreground"><EntityLink kind="user" id={run.userId} /></div>
                       </TableCell>
+                      <TableCell className="font-mono text-xs">{run.username ?? "—"}</TableCell>
+                      <TableCell className="text-xs">{run.realName ?? "—"}</TableCell>
                       <TableCell className="max-w-44 truncate font-mono text-xs" title={run.model ?? undefined}>
                         {run.model ?? "—"}
                       </TableCell>

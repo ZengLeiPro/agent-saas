@@ -32,6 +32,7 @@ import { isPlatformAdmin } from '../auth/types.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import type { BillingUsageEvent } from '../data/billing/types.js';
+import type { UserStore } from '../data/users/store.js';
 import type {
   EfficiencyQueryOptions,
   EfficiencyReport,
@@ -45,6 +46,7 @@ export interface RuntimeTraceRouterOptions {
   billingStore: {
     listUsageEvents(query: { runId?: string; limit?: number }): Promise<BillingUsageEvent[]>;
   };
+  userStore?: UserStore;
   efficiencyQuery: {
     listRecentRuns(opts: RecentRunsQueryOptions): Promise<RecentRunSummary[]>;
     getEfficiency(opts: EfficiencyQueryOptions): Promise<EfficiencyReport>;
@@ -231,7 +233,7 @@ export function truncateTraceEvent(
 
 export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Router {
   const router = Router();
-  const { runStore, eventStore, billingStore, efficiencyQuery } = opts;
+  const { runStore, eventStore, billingStore, userStore, efficiencyQuery } = opts;
 
   // 平台 admin 硬拦：本 router 所有端点跨组织可见。未认证 401 / 非平台 admin 403
   // （区分两态便于排查：401=没带 token，403=组织 admin 越权）。
@@ -313,7 +315,7 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
         limit: parsed.data.limit ?? 50,
         ...(parsed.data.tenantId !== undefined ? { tenantId: parsed.data.tenantId } : {}),
       });
-      res.json({ runs });
+      res.json({ runs: runs.map((run) => enrichRecentRunSummary(run, userStore)) });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: `Recent runs query failed: ${msg}` });
@@ -340,4 +342,17 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
   });
 
   return router;
+}
+
+function enrichRecentRunSummary(run: RecentRunSummary, userStore?: UserStore): RecentRunSummary & {
+  username: string | null;
+  realName: string | null;
+} {
+  const user = run.userId ? userStore?.findById(run.userId) : undefined;
+  const matchesTenant = !!user && (!run.tenantId || user.tenantId === run.tenantId);
+  return {
+    ...run,
+    username: matchesTenant ? user.username : null,
+    realName: matchesTenant ? user.realName ?? null : null,
+  };
 }

@@ -84,7 +84,9 @@ function SandboxList() {
     if (!needle) return true;
     return item.name.toLowerCase().includes(needle)
       || (item.workspaceId ?? "").toLowerCase().includes(needle)
-      || (item.owner?.userId ?? "").toLowerCase().includes(needle);
+      || (item.owner?.userId ?? "").toLowerCase().includes(needle)
+      || (item.owner?.username ?? "").toLowerCase().includes(needle)
+      || (item.owner?.realName ?? "").toLowerCase().includes(needle);
   }), [phase, q, sandboxes, tenantId, workspaceId]);
 
   const runAction = useCallback(async (label: string, fn: () => Promise<unknown>) => {
@@ -149,7 +151,7 @@ function SandboxList() {
         loading={loading}
         toolbar={
           <div className="flex flex-wrap items-center gap-2">
-            <Input value={q} onChange={(event) => adminQuery.patch({ q: event.target.value })} placeholder="执行环境 / 工作区 / 用户" className="h-8 w-56 font-mono text-xs" />
+            <Input value={q} onChange={(event) => adminQuery.patch({ q: event.target.value })} placeholder="执行环境 / 工作区 / 用户名 / 姓名" className="h-8 w-64 font-mono text-xs" />
             <Input value={tenantId} onChange={(event) => adminQuery.patch({ tenantId: event.target.value })} placeholder="租户 ID" className="h-8 w-32 font-mono text-xs" />
             <Input value={workspaceId} onChange={(event) => adminQuery.patch({ workspaceId: event.target.value })} placeholder="工作区 ID" className="h-8 w-52 font-mono text-xs" />
             <select className="h-8 rounded-md border bg-background px-2 text-xs" value={phase} onChange={(event) => adminQuery.patch({ phase: event.target.value })}>
@@ -169,6 +171,8 @@ function SandboxList() {
           { key: "phase", header: "状态", cell: row => <div className="space-y-1"><StatusBadge kind="sandbox" status={row.phase ?? "Unknown"} /><div className="max-w-44 truncate text-[11px] text-destructive">{row.brokenReason}</div></div> },
           { key: "name", header: "名称", cell: row => <EntityLink kind="sandbox" id={row.name} /> },
           { key: "owner", header: "属主", cell: row => row.owner?.kind === "user" ? <div><EntityLink kind="tenant" id={row.owner.tenantId} /><div><EntityLink kind="user" id={row.owner.userId} /></div></div> : <span className="text-muted-foreground">{formatSystemOwner(row.owner?.kind)}</span> },
+          { key: "username", header: "用户名", cell: row => row.owner?.username ? <span className="font-mono text-xs">{row.owner.username}</span> : "—" },
+          { key: "realName", header: "姓名", cell: row => row.owner?.realName ?? "—" },
           { key: "busy", header: "占用", cell: row => <Badge variant={row.busy ? "default" : "secondary"}>{formatBusyState(row.busy)}</Badge> },
           { key: "image", header: "镜像", cell: row => <div className="max-w-48 truncate font-mono text-xs" title={row.image}>{row.image || "—"}{row.imageStale && <Badge variant="destructive" className="ml-1">过期</Badge>}</div> },
           { key: "idle", header: "空闲", cell: row => <span className="text-xs tabular-nums">{formatDuration(row.idleMs)}</span> },

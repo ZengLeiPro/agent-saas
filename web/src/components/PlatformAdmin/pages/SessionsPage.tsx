@@ -127,7 +127,8 @@ function SessionList() {
         columns={[
           { key: "status", header: "状态", cell: row => <Badge variant={row.deletedAt ? "destructive" : "secondary"}>{row.deletedAt ? "已删除" : formatSessionStatus(row.runtimeStatus)}</Badge> },
           { key: "title", header: "标题", cell: row => <div><div className="max-w-72 truncate font-medium" title={row.title ?? undefined}>{row.title || row.sessionId}</div><EntityLink kind="session" id={row.sessionId} /></div> },
-          { key: "user", header: "用户", cell: row => <EntityLink kind="user" id={row.userId} label={row.username || undefined} /> },
+          { key: "username", header: "用户名", cell: row => <EntityLink kind="user" id={row.userId} label={row.username || undefined} /> },
+          { key: "realName", header: "姓名", cell: row => row.realName ?? "—" },
           { key: "tenant", header: "租户", cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
           { key: "channel", header: "渠道", cell: row => row.channel ? formatChannel(row.channel) : "—" },
           { key: "kind", header: "类型", cell: row => <Badge variant={row.kind === "subagent" ? "outline" : "secondary"}>{formatSessionKind(row.kind)}</Badge> },

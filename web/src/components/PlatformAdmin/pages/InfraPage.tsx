@@ -205,8 +205,10 @@ export function InfraPage() {
           </div>
         }
         columns={[
-          { key: "path", header: "路径", className: "max-w-[360px]", cell: row => <span className="font-mono text-xs">{row.path}</span> },
+          { key: "path", header: "路径", className: "max-w-[320px]", cell: row => <span className="font-mono text-xs">{row.path}</span> },
           { key: "tenant", header: "租户", cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
+          { key: "username", header: "用户名", cell: row => row.username ? <span className="font-mono text-xs">{row.username}</span> : "—" },
+          { key: "realName", header: "姓名", cell: row => row.realName ?? "—" },
           { key: "status", header: "状态", cell: row => <WorkspaceStatusBadge status={row.status} /> },
           {
             key: "bytes",

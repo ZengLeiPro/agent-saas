@@ -8,6 +8,7 @@ import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { auditLog } from '../data/login-logs/index.js';
+import type { UserStore } from '../data/users/store.js';
 import { createSystemAdminRouter } from '../routes/systemAdmin.js';
 import type { PgSystemMetricsStore, WorkspaceUsageRecord } from '../runtime/systemMetricsStore.js';
 
@@ -17,7 +18,7 @@ vi.mock('../data/login-logs/index.js', () => ({
 
 const PLATFORM_ADMIN_USER = { sub: 'admin1', role: 'admin', tenantId: 'pantheon' };
 
-async function startServer(options: { agentCwd: string; store: unknown }) {
+async function startServer(options: { agentCwd: string; store: unknown; userStore?: unknown }) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -27,6 +28,7 @@ async function startServer(options: { agentCwd: string; store: unknown }) {
   app.use('/api/admin/system', createSystemAdminRouter({
     agentCwd: options.agentCwd,
     systemMetricsStore: options.store as PgSystemMetricsStore,
+    userStore: options.userStore as UserStore | undefined,
   }));
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
@@ -34,6 +36,7 @@ async function startServer(options: { agentCwd: string; store: unknown }) {
   const addr = server.address();
   const baseUrl = typeof addr === 'object' && addr ? `http://127.0.0.1:${addr.port}` : '';
   return {
+    storage: () => fetch(`${baseUrl}/api/admin/system/storage`),
     archive: (body: unknown) => fetch(`${baseUrl}/api/admin/system/storage/archive`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -66,6 +69,50 @@ describe('system admin workspace archive route', () => {
       ...overrides,
     };
   }
+
+  it('enriches workspace storage rows with username and real name', async () => {
+    const tmpRoot = await mkdtemp(join(tmpdir(), 'ws-storage-'));
+    tmpRoots.push(tmpRoot);
+    const agentCwd = join(tmpRoot, 'workspaces');
+    const store = {
+      getWorkspaceStorageSummary: vi.fn(async () => ({
+        totalBytes: 1024,
+        orphanBytes: 0,
+        orphanCount: 0,
+        byTenant: [{ tenantId: 'kaiyan', bytes: 1024, workspaceCount: 1 }],
+        lastScanAt: '2026-07-08T00:00:00.000Z',
+      })),
+      listWorkspaceUsage: vi.fn(async () => [usageRecord({
+        path: 'kaiyan/ky-user-1',
+        tenantId: 'kaiyan',
+        userId: 'ky-user-1',
+        status: 'active',
+      })]),
+    };
+    const userStore = {
+      listAll: vi.fn(() => [{
+        id: 'ky-user-1',
+        username: 'zenglei',
+        realName: '曾磊',
+        role: 'admin',
+        tenantId: 'kaiyan',
+        createdAt: '2026-07-08T00:00:00.000Z',
+        createdBy: 'system',
+        updatedAt: '2026-07-08T00:00:00.000Z',
+      }]),
+    };
+    const server = await startServer({ agentCwd, store, userStore });
+    servers.push(server);
+
+    const response = await server.storage();
+    expect(response.status).toBe(200);
+    const payload = await response.json() as { workspaces: Array<Record<string, unknown>> };
+    expect(payload.workspaces[0]).toMatchObject({
+      path: 'kaiyan/ky-user-1',
+      username: 'zenglei',
+      realName: '曾磊',
+    });
+  });
 
   it('archives via rename, deletes the usage row and writes the audit log', async () => {
     const tmpRoot = await mkdtemp(join(tmpdir(), 'ws-archive-'));

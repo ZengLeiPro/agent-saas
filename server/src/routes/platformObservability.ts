@@ -262,7 +262,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
         limit: parsed.data.limit ?? 50,
       });
       res.json({
-        items: result.items.map(serializeSessionRecord),
+        items: result.items.map((record) => serializeSessionRecord(record, options.userStore)),
         ...(result.nextCursor ? { nextCursor: encodeCursor({ updatedAt: result.nextCursor.updatedAt, id: result.nextCursor.sessionId }) } : {}),
       });
     } catch (err) {
@@ -282,7 +282,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
         listSandboxes(options),
       ]);
       res.json({
-        session: serializeSessionRecord(session),
+        session: serializeSessionRecord(session, options.userStore),
         runs,
         billing,
         sandboxes: sandboxes.filter((sandbox) => sandbox.workspaceId && sandbox.workspaceId === session.workspaceId),
@@ -719,7 +719,7 @@ async function queryRunsBySession(
      LIMIT 200`,
     [tenantId, sessionId],
   );
-  return result.rows.map((row) => serializeRunRow(row.row_json));
+  return result.rows.map((row) => serializeRunRow(row.row_json, options.userStore));
 }
 
 async function queryRunsPage(
@@ -755,7 +755,7 @@ async function queryRunsPage(
      LIMIT $${limitParam}`,
     params,
   );
-  const rows = result.rows.map((row) => serializeRunRow(row.row_json));
+  const rows = result.rows.map((row) => serializeRunRow(row.row_json, options.userStore));
   const items = rows.slice(0, query.limit);
   const last = items[items.length - 1];
   return {
@@ -929,12 +929,14 @@ function sandboxMatch(sandbox: SandboxSummary): SearchMatch {
   };
 }
 
-function serializeSessionRecord(record: RuntimeSessionProjectionRecord): Record<string, unknown> {
+function serializeSessionRecord(record: RuntimeSessionProjectionRecord, userStore?: UserStore): Record<string, unknown> {
+  const user = findUserIdentity(userStore, record.tenantId, record.userId);
   return {
     sessionId: record.sessionId,
     tenantId: record.tenantId,
     userId: record.userId ?? null,
-    username: record.username ?? null,
+    username: record.username ?? user?.username ?? null,
+    realName: user?.realName ?? null,
     channel: record.channel ?? null,
     kind: record.kind,
     title: record.title ?? null,
@@ -950,12 +952,17 @@ function serializeSessionRecord(record: RuntimeSessionProjectionRecord): Record<
   };
 }
 
-function serializeRunRow(raw: Record<string, any>): Record<string, unknown> {
+function serializeRunRow(raw: Record<string, any>, userStore?: UserStore): Record<string, unknown> {
+  const tenantId = raw.tenant_id ?? raw.tenantId ?? null;
+  const userId = raw.user_id ?? raw.userId ?? null;
+  const user = findUserIdentity(userStore, tenantId, userId);
   return {
     runId: raw.run_id ?? raw.runId,
     sessionId: raw.session_id ?? raw.sessionId,
-    tenantId: raw.tenant_id ?? raw.tenantId ?? null,
-    userId: raw.user_id ?? raw.userId ?? null,
+    tenantId,
+    userId,
+    username: user?.username ?? null,
+    realName: user?.realName ?? null,
     status: raw.status,
     statusReason: raw.status_reason ?? raw.statusReason ?? null,
     model: raw.model ?? null,
@@ -972,6 +979,17 @@ function serializeRunRow(raw: Record<string, any>): Record<string, unknown> {
     sandboxScopeId: raw.sandbox_scope_id ?? raw.sandboxScopeId ?? null,
     cumulativeInputTokens: Number(raw.cumulative_input_tokens ?? raw.cumulativeInputTokens ?? 0),
   };
+}
+
+function findUserIdentity(
+  userStore: UserStore | undefined,
+  tenantId: unknown,
+  userId: unknown,
+): { username: string; realName?: string } | null {
+  if (!userStore || typeof tenantId !== 'string' || typeof userId !== 'string') return null;
+  const user = userStore.findById(userId);
+  if (!user || user.tenantId !== tenantId) return null;
+  return { username: user.username, realName: user.realName };
 }
 
 function sanitizeUser(user: UserInfo): UserInfo {

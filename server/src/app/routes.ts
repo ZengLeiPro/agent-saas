@@ -261,6 +261,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       config,
       secretVault: runtime.secretVault,
       processRole: runtime.processRole,
+      userStore: runtime.userStore,
     }),
   );
   app.use(
@@ -336,6 +337,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         runStore: runtime.runtimeRunStore,
         eventStore: runtime.runtimePgEventStore,
         billingStore: runtimeTraceBillingStore,
+        userStore: runtime.userStore,
         efficiencyQuery: new RuntimeEfficiencyQuery({
           pool: runtime.runtimePgEventStore.pool,
           eventsTable: runtime.runtimePgEventStore.eventsTable,
@@ -372,6 +374,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       systemMetricsStore: runtime.systemMetricsStore,
       systemMetricsCollector: runtime.systemMetricsCollector,
       alertNotifier: runtime.alertNotifier,
+      userStore: runtime.userStore,
     }),
   );
 

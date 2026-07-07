@@ -448,15 +448,57 @@ jobs:
           # 07-05：SMOKE_SESSION 提前定型（改进 1A）。历史残留 CI sandbox（3d8h 前那批）
           # 是因为 SMOKE_SESSION 之前在第 5 步 smoke 阶段才赋值——provision/deploy 阶段失败时
           # cleanup 走到、SMOKE_SESSION 还是空 → cleanup 什么也不删 → sandbox 残留 7 天 TTL。
-          # 现在提前赋值，无论后续哪步失败，都能按 session-id 找到并清理 smoke sandbox。
+          # 现在提前赋值，无论后续哪步失败，都能按 annotation 找到并清理 smoke sandbox。
           SMOKE_SESSION="ci-acr-${GITHUB_RUN_ID}"
+          SMOKE_WS="ws_ci_acr_${GITHUB_RUN_ID}"
+          SMOKE_MOUNT="workspaces/_ci/${SMOKE_WS}"
+          SMOKE_WORKSPACE_DIR="/mnt/agent-saas/${SMOKE_MOUNT}"
 
           cleanup() {
             if [ -n "${SMOKE_SESSION:-}" ] && command -v kubectl >/dev/null 2>&1; then
               if [ -n "${ACS_KUBECONFIG:-}" ]; then KCFG_ARGS="--kubeconfig ${ACS_KUBECONFIG}"; else KCFG_ARGS=""; fi
               # shellcheck disable=SC2086
-              kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" delete sandbox \
-                -l "agent-saas.kaiyan.net/session-id=${SMOKE_SESSION}" --ignore-not-found=true >/dev/null 2>&1 || true
+              kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" get sandbox \
+                -l "app.kubernetes.io/managed-by=agent-saas-acs-orchestrator" \
+                -o json >/tmp/acs-cleanup-sandboxes.json 2>/dev/null || true
+              if [ -s /tmp/acs-cleanup-sandboxes.json ] && command -v node >/dev/null 2>&1; then
+                sandbox_names="$(
+                  SMOKE_SESSION="$SMOKE_SESSION" SMOKE_MOUNT="$SMOKE_MOUNT" node <<'NODE'
+          const fs = require('node:fs');
+          const body = JSON.parse(fs.readFileSync('/tmp/acs-cleanup-sandboxes.json', 'utf8') || '{"items":[]}');
+          const items = Array.isArray(body.items) ? body.items : [];
+          const sessionId = process.env.SMOKE_SESSION;
+          const mountSubPath = process.env.SMOKE_MOUNT;
+          for (const item of items) {
+            const annotations = item?.metadata?.annotations || {};
+            if (
+              annotations['agent-saas.kaiyan.net/session-id'] === sessionId
+              || annotations['agent-saas.kaiyan.net/mount-subpath'] === mountSubPath
+            ) {
+              console.log(item.metadata.name);
+            }
+          }
+          NODE
+                )"
+                if [ -n "$sandbox_names" ]; then
+                  printf '%s\n' "$sandbox_names" | while IFS= read -r sandbox_name; do
+                    [ -n "$sandbox_name" ] || continue
+                    # shellcheck disable=SC2086
+                    kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" delete sandbox "$sandbox_name" \
+                      --ignore-not-found=true >/dev/null 2>&1 || true
+                  done
+                fi
+              fi
+            fi
+            if [ -n "${SMOKE_WORKSPACE_DIR:-}" ]; then
+              case "$SMOKE_WORKSPACE_DIR" in
+                /mnt/agent-saas/workspaces/_ci/ws_ci_acr_*|/mnt/agent-saas/workspaces/_ci/ws_ci_acs_*)
+                  rm -rf -- "$SMOKE_WORKSPACE_DIR"
+                  ;;
+                *)
+                  echo "skip smoke workspace cleanup: unexpected path $SMOKE_WORKSPACE_DIR" >&2
+                  ;;
+              esac
             fi
             rm -f "$RELEASE_TGZ"
           }
@@ -541,9 +583,7 @@ jobs:
           set +a
           : "${ACS_ORCH_AUTH_TOKEN:?missing ACS_ORCH_AUTH_TOKEN in env file}"
 
-          SMOKE_WS="ws_ci_acr_${GITHUB_RUN_ID}"
-          # SMOKE_SESSION 已在 cleanup 定义前赋值（07-05 改进 1A），此处不再重复
-          SMOKE_MOUNT="workspaces/_ci/${SMOKE_WS}"
+          # SMOKE_SESSION/SMOKE_WS/SMOKE_MOUNT 已在 cleanup 定义前赋值，确保任何失败路径都能清理。
           AUTH_HEADER="Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}"
 
           SMOKE_OK=true

@@ -10,6 +10,7 @@ import {
   sanitizeTenantRemoteHands,
 } from './tenantRemoteHandsAdmin.js';
 import { parseWorkspaceId } from '../runtime/workspaceIdentity.js';
+import type { UserStore } from '../data/users/store.js';
 
 const { Client } = pg;
 
@@ -19,6 +20,7 @@ export interface CreateRuntimeOperationsAdminRouterOptions {
   fetchImpl?: typeof fetch;
   healthTimeoutMs?: number;
   processRole?: string;
+  userStore?: UserStore;
 }
 
 type RuntimeEventStoreResponse =
@@ -100,25 +102,32 @@ function validateAcsSandboxName(name: string): string | null {
   return ACS_SANDBOX_NAME_PATTERN.test(name) ? name : null;
 }
 
-function attachSandboxOwners(body: unknown): unknown {
+function attachSandboxOwners(body: unknown, userStore?: UserStore): unknown {
   if (!body || typeof body !== 'object' || !('sandboxes' in body)) return body;
   const sandboxes = (body as { sandboxes?: unknown }).sandboxes;
   if (!Array.isArray(sandboxes)) return body;
   return {
     ...(body as Record<string, unknown>),
-    sandboxes: sandboxes.map((sandbox) => attachSandboxOwner(sandbox)),
+    sandboxes: sandboxes.map((sandbox) => attachSandboxOwner(sandbox, userStore)),
   };
 }
 
-function attachSandboxOwner(sandbox: unknown): unknown {
+function attachSandboxOwner(sandbox: unknown, userStore?: UserStore): unknown {
   if (!sandbox || typeof sandbox !== 'object') return sandbox;
   const record = sandbox as Record<string, unknown>;
   const workspaceId = typeof record.workspaceId === 'string' ? record.workspaceId : undefined;
   const parsed = parseWorkspaceId(workspaceId);
+  const user = parsed ? userStore?.findById(parsed.userId) : undefined;
   return {
     ...record,
     owner: parsed
-      ? { kind: 'user', tenantId: parsed.tenantId, userId: parsed.userId }
+      ? {
+        kind: 'user',
+        tenantId: parsed.tenantId,
+        userId: parsed.userId,
+        username: user?.tenantId === parsed.tenantId ? user.username : null,
+        realName: user?.tenantId === parsed.tenantId ? user.realName ?? null : null,
+      }
       : { kind: 'system', tenantId: null, userId: null },
   };
 }
@@ -381,7 +390,7 @@ export function createRuntimeOperationsAdminRouter(
       path: '/sandboxes',
       method: 'GET',
     });
-    res.status(result.status).json(attachSandboxOwners(result.body));
+    res.status(result.status).json(attachSandboxOwners(result.body, options.userStore));
   });
 
   router.get('/acs/sandboxes/:name', async (req, res) => {

@@ -473,6 +473,42 @@ describe("signup router", () => {
     expect(trialTenants).toHaveLength(1);
     expect(trialTenants[0].disabled).toBe(true);
   });
+
+  it("waitlist 留资：注册关闭时仍可提交，重复提交幂等返回 ok", async () => {
+    h = await makeTestRig({
+      selfSignup: { enabled: false, grantCredits: 500 },
+    });
+    // 注册关闭：send-code/register 均 403，但 waitlist 可用
+    expect(
+      (await h.request("/api/signup/send-code", { phone: PHONE })).status,
+    ).toBe(403);
+    const first = await h.request("/api/signup/waitlist", {
+      phone: PHONE,
+      utm: { utm_source: "website", utm_content: "aiemp_hero", evil: "drop" },
+    });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ ok: true });
+    // 同号 1h 窗口内重复提交：仍 ok（幂等，不重复推送）
+    const dup = await h.request("/api/signup/waitlist", { phone: PHONE });
+    expect(dup.status).toBe(200);
+    expect(await dup.json()).toEqual({ ok: true });
+  });
+
+  it("waitlist 校验：手机号不合法 400，已注册手机号 409", async () => {
+    h = await makeTestRig();
+    expect(
+      (await h.request("/api/signup/waitlist", { phone: "12345" })).status,
+    ).toBe(400);
+    // 完成一次注册后，该手机号 waitlist 提示去登录
+    await h.request("/api/signup/send-code", { phone: PHONE });
+    await h.request("/api/signup/register", {
+      ...REGISTER_BODY,
+      code: h.sender.lastCode,
+    });
+    expect(
+      (await h.request("/api/signup/waitlist", { phone: PHONE })).status,
+    ).toBe(409);
+  });
 });
 
 // ---- 动态配置（SignupConfigStore 驱动，改完下一请求即生效） ----

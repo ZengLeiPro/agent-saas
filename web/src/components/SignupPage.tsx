@@ -31,6 +31,108 @@ interface SignupPageProps {
   onSwitchToLogin: () => void;
 }
 
+/**
+ * 留资兜底表单：注册未开放时的 waitlist、以及收不到验证码时的人工开通通道。
+ * 提交到 /api/signup/waitlist（推钉钉线索群，由开通专员回联）。
+ */
+function WaitlistForm({
+  description,
+  utm,
+  onSwitchToLogin,
+}: {
+  description: string;
+  utm?: Record<string, string>;
+  onSwitchToLogin: () => void;
+}) {
+  const [phone, setPhone] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!PHONE_PATTERN.test(phone)) {
+      setError("请输入有效的 11 位手机号");
+      return;
+    }
+    setError("");
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/signup/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, utm }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "提交失败，请稍后再试");
+      setDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "提交失败，请稍后再试");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (done) {
+    return (
+      <div className="space-y-4 text-center">
+        <p className="text-sm text-foreground">已收到您的手机号。</p>
+        <p className="text-sm text-muted-foreground">
+          开通专员会尽快联系您，为您开通试用账号。
+        </p>
+        <Button variant="outline" className="w-full" onClick={onSwitchToLogin}>
+          返回登录
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <p className="text-sm text-muted-foreground">{description}</p>
+      <div className="space-y-2">
+        <Label htmlFor="waitlist-phone">手机号</Label>
+        <Input
+          id="waitlist-phone"
+          type="tel"
+          inputMode="numeric"
+          autoComplete="tel"
+          maxLength={11}
+          value={phone}
+          onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
+          required
+          disabled={submitting}
+        />
+      </div>
+      {error && (
+        <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+      <Button type="submit" className="w-full" disabled={submitting}>
+        {submitting ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            提交中...
+          </>
+        ) : (
+          "留下手机号，等专员联系"
+        )}
+      </Button>
+      <p className="text-center text-xs text-muted-foreground">
+        已有账号？
+        <button
+          type="button"
+          className="ml-1 text-brand-600 hover:underline"
+          onClick={onSwitchToLogin}
+        >
+          去登录
+        </button>
+      </p>
+    </form>
+  );
+}
+
 export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [phone, setPhone] = useState("");
@@ -43,6 +145,11 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [countdown, setCountdown] = useState(0);
+  /** 发码失败过 → 展示「收不到验证码」的留资兜底入口（移动号段短信未通的过渡） */
+  const [sendFailed, setSendFailed] = useState(false);
+  /** 发过码（移动号失败是异步回执，API 成功≠收到；倒计时走完仍未注册时也给兜底） */
+  const [sentOnce, setSentOnce] = useState(false);
+  const [showWaitlist, setShowWaitlist] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval>>();
 
   const utm = useMemo(collectUtm, []);
@@ -83,9 +190,11 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(data.error || "验证码发送失败");
+      setSentOnce(true);
       startCountdown();
     } catch (err) {
       setError(err instanceof Error ? err.message : "验证码发送失败");
+      setSendFailed(true);
     } finally {
       setSending(false);
     }
@@ -163,14 +272,17 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : !enabled ? (
-            <div className="space-y-4 text-center">
-              <p className="text-sm text-muted-foreground">
-                当前未开放自助注册，请联系我们开通试用。
-              </p>
-              <Button variant="outline" className="w-full" onClick={onSwitchToLogin}>
-                返回登录
-              </Button>
-            </div>
+            <WaitlistForm
+              description="首批试用名额邀请制开放中。留下手机号，开通专员会联系您开通试用账号。"
+              utm={utm}
+              onSwitchToLogin={onSwitchToLogin}
+            />
+          ) : showWaitlist ? (
+            <WaitlistForm
+              description="收不到验证码？留下手机号，开通专员会联系您人工开通试用账号。"
+              utm={utm}
+              onSwitchToLogin={onSwitchToLogin}
+            />
           ) : (
             <form onSubmit={handleSubmit} className="space-y-3">
               <div className="space-y-2">
@@ -278,6 +390,18 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
                 <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
                   {error}
                 </div>
+              )}
+              {(sendFailed || (sentOnce && countdown === 0)) && (
+                <p className="text-xs text-muted-foreground">
+                  收不到验证码？（部分运营商短信通道升级中）
+                  <button
+                    type="button"
+                    className="ml-1 text-brand-600 hover:underline"
+                    onClick={() => setShowWaitlist(true)}
+                  >
+                    留下手机号，由专员人工开通 →
+                  </button>
+                </p>
               )}
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? (

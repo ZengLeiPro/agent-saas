@@ -8,6 +8,8 @@
  *   GET  /api/signup/status     — 是否开放注册（前端判显隐，始终可访问）
  *   POST /api/signup/send-code  — 发送验证码（IP 频控 + phone 冷却/日限在 service 内）
  *   POST /api/signup/register   — 验证码校验 → 开通 → 返回 {token, user}（与 login 同构）
+ *   POST /api/signup/waitlist   — 留资兜底（注册关闭 waitlist / 收不到验证码人工开通），
+ *                                 不依赖 enabled，推钉钉「官网线索」群 + server log
  *
  * 管理端点（requirePlatformAdmin，挂 /api/admin/signup-config）：
  *   GET  /  — 当前配置 + 短信通道自检（secret 不回显，只报 configured 与来源）
@@ -48,7 +50,10 @@ import {
   DEFAULT_SMS_VERIFY_IP_LIMIT_PER_MINUTE,
   optionalConfigValue,
 } from "../integrations/sms/configuredSms.js";
-import { sendSignupLeadNotification } from "../integrations/dingtalk/leadWebhook.js";
+import {
+  sendSignupLeadNotification,
+  sendWaitlistLeadNotification,
+} from "../integrations/dingtalk/leadWebhook.js";
 import {
   appendLoginLog,
   detectLoginChannel,
@@ -71,6 +76,11 @@ const registerSchema = z.object({
   name: z.string().trim().min(1, "请填写称呼").max(20, "称呼不超过 20 个字符"),
   position: z.string().trim().min(1, "请选择岗位").max(50, "岗位不超过 50 个字符"),
   company: z.string().trim().max(50, "公司名不超过 50 个字符").optional(),
+  utm: z.record(z.string(), z.string()).optional(),
+});
+
+const waitlistSchema = z.object({
+  phone: z.string().regex(PHONE_PATTERN, "请输入有效的 11 位手机号"),
   utm: z.record(z.string(), z.string()).optional(),
 });
 
@@ -319,6 +329,57 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
         `[signup] send-code 失败: ${err instanceof Error ? err.message : String(err)}`,
       );
       res.status(500).json({ error: "验证码发送失败，请稍后再试" });
+    }
+  });
+
+  // POST /api/signup/waitlist — 留资兜底（注册关闭时的 waitlist / 收不到验证码时人工开通）。
+  // 不依赖 enabled 状态：注册关闭时这就是唯一出口；开着时也作发码失败的兜底。
+  // 同号 1 小时窗口内幂等（重复提交仍返回 ok，但只推送一次，防刷群）。
+  const waitlistRecent = new Map<string, number>();
+  const WAITLIST_DEDUP_WINDOW_MS = 60 * 60 * 1000;
+  publicRouter.post("/waitlist", async (req, res) => {
+    try {
+      const rt = await getRuntime();
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!rt.registerIpLimiter(ip)) {
+        res.status(429).json({ error: "操作过于频繁，请稍后再试" });
+        return;
+      }
+      const parsed = waitlistSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0].message });
+        return;
+      }
+      const { phone } = parsed.data;
+      const utm = sanitizeUtm(parsed.data.utm);
+      if (userStore.listAll().some((u) => u.phone === phone || u.username === phone)) {
+        res.status(409).json({ error: "该手机号已注册，请直接登录" });
+        return;
+      }
+      const now = Date.now();
+      for (const [k, ts] of waitlistRecent) {
+        if (now - ts > WAITLIST_DEDUP_WINDOW_MS) waitlistRecent.delete(k);
+      }
+      const isDuplicate = waitlistRecent.has(phone);
+      if (!isDuplicate) {
+        waitlistRecent.set(phone, now);
+        // 日志兜底：webhook 未配置或推送失败时，server log 仍可追回留资
+        apiLogger.info(
+          `[signup] waitlist 留资 phone=${phone}${utm ? ` utm=${JSON.stringify(utm)}` : ""} webhook=${rt.cfg.dingtalkLeadWebhook ? "configured" : "missing"}`,
+        );
+        if (rt.cfg.dingtalkLeadWebhook) {
+          void sendWaitlistLeadNotification(rt.cfg.dingtalkLeadWebhook, {
+            phone,
+            utm,
+          });
+        }
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      apiLogger.warn(
+        `[signup] waitlist 失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      res.status(500).json({ error: "提交失败，请稍后再试" });
     }
   });
 

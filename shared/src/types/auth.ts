@@ -47,3 +47,8 @@ export interface LoginCredentials {
   username: string;
   password: string;
 }
+
+export interface SmsLoginCredentials {
+  phone: string;
+  code: string;
+}

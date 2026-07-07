@@ -39,12 +39,15 @@ import {
 import type { SignupConfigStore } from "../data/signupConfig.js";
 import type { SecretVault } from "../security/secretVault.js";
 import { requirePlatformAdmin } from "../auth/middleware.js";
+import type { VerificationCodeService } from "../integrations/sms/verificationService.js";
 import {
-  VerificationCodeService,
-  DevSmsSender,
-  type SmsSender,
-} from "../integrations/sms/verificationService.js";
-import { AliyunSmsSender } from "../integrations/sms/aliyunSms.js";
+  buildSmsSender,
+  buildVerificationCodeService,
+  createIpLimiter,
+  DEFAULT_SMS_SEND_CODE_IP_LIMIT_PER_MINUTE,
+  DEFAULT_SMS_VERIFY_IP_LIMIT_PER_MINUTE,
+  optionalConfigValue,
+} from "../integrations/sms/configuredSms.js";
 import { sendSignupLeadNotification } from "../integrations/dingtalk/leadWebhook.js";
 import {
   appendLoginLog,
@@ -96,36 +99,6 @@ function sanitizeUtm(
 
 // ---- IP 频控（phone 维度在 VerificationCodeService 内收口） ----
 
-const DEFAULT_SEND_CODE_IP_LIMIT_PER_MINUTE = 5;
-const DEFAULT_REGISTER_IP_LIMIT_PER_MINUTE = 5;
-
-interface RateBucket {
-  startedAt: number;
-  count: number;
-}
-
-function createIpLimiter(maxPerWindow: number, windowMs: number) {
-  const buckets = new Map<string, RateBucket>();
-  const timer = setInterval(() => {
-    const now = Date.now();
-    for (const [ip, bucket] of buckets) {
-      if (now - bucket.startedAt > windowMs) buckets.delete(ip);
-    }
-  }, windowMs * 2);
-  timer.unref();
-  return (ip: string): boolean => {
-    const now = Date.now();
-    const bucket = buckets.get(ip);
-    if (!bucket || now - bucket.startedAt > windowMs) {
-      buckets.set(ip, { startedAt: now, count: 1 });
-      return true;
-    }
-    if (bucket.count >= maxPerWindow) return false;
-    bucket.count += 1;
-    return true;
-  };
-}
-
 // ---- 试用租户 slug ----
 
 const TRIAL_SLUG_ALPHABET = "abcdefghjkmnpqrstvwxyz0123456789";
@@ -169,66 +142,6 @@ export interface SignupRouters {
   publicRouter: Router;
   /** 挂 /api/admin/signup-config（requirePlatformAdmin） */
   adminRouter: Router;
-}
-
-interface BuildSmsSenderResult {
-  sender?: SmsSender;
-  error?: string;
-}
-
-function optionalConfigValue(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-function buildSmsSender(
-  cfg: SelfSignupConfig,
-  accessKeySecret: string | undefined,
-): BuildSmsSenderResult {
-  const sms = cfg.sms;
-  if (sms?.provider === "aliyun") {
-    const accessKeyId = optionalConfigValue(sms.accessKeyId);
-    const signName = optionalConfigValue(sms.signName);
-    const templateCode = optionalConfigValue(sms.templateCode);
-    const missing = [
-      accessKeyId ? undefined : "sms.accessKeyId",
-      signName ? undefined : "sms.signName",
-      templateCode ? undefined : "sms.templateCode",
-      accessKeySecret ? undefined : "SMS AccessKey Secret（vault 或 env）",
-    ].filter((item): item is string => Boolean(item));
-    if (missing.length > 0) {
-      return {
-        error: `阿里云短信配置缺失：${missing.join(", ")}`,
-      };
-    }
-
-    return {
-      sender: new AliyunSmsSender({
-        accessKeyId: accessKeyId!,
-        accessKeySecret: accessKeySecret!,
-        signName: signName!,
-        templateCode: templateCode!,
-      }),
-    };
-  }
-  return { sender: new DevSmsSender() };
-}
-
-function buildVerificationCodeService(
-  cfg: SelfSignupConfig,
-  sender: SmsSender,
-): VerificationCodeService {
-  const sms = cfg.sms;
-  return new VerificationCodeService({
-    sender,
-    codeTtlMs: (sms?.codeTtlSeconds ?? 300) * 1000,
-    cooldownMs: (sms?.cooldownSeconds ?? 60) * 1000,
-    dailyLimitPerPhone: sms?.dailyLimitPerPhone,
-    maxVerifyAttempts: sms?.maxVerifyAttempts,
-    universalCode: sender.providerName === "dev"
-      ? process.env.AGENT_SMS_DEV_CODE
-      : undefined,
-  });
 }
 
 /** 单个配置版本对应的运行态（配置变更时整体替换） */
@@ -326,12 +239,12 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
       smsError,
       codeService,
       sendCodeIpLimiter: createIpLimiter(
-        cfg.sms?.maxSendPerIpPerMinute ?? DEFAULT_SEND_CODE_IP_LIMIT_PER_MINUTE,
+        cfg.sms?.maxSendPerIpPerMinute ?? DEFAULT_SMS_SEND_CODE_IP_LIMIT_PER_MINUTE,
         60_000,
       ),
       registerIpLimiter: createIpLimiter(
         cfg.sms?.maxRegisterPerIpPerMinute ??
-          DEFAULT_REGISTER_IP_LIMIT_PER_MINUTE,
+          DEFAULT_SMS_VERIFY_IP_LIMIT_PER_MINUTE,
         60_000,
       ),
       trialAllowedModels,
@@ -477,6 +390,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
         realName: name,
         position,
         phone,
+        phoneVerifiedAt: new Date().toISOString(),
       });
       userId = user.id;
 
@@ -603,6 +517,10 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
               `[signup] 回滚禁用租户失败 tenant=${tenantId}: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`,
             );
           });
+      }
+      if (msg === "Phone already exists" || msg === "Username already exists") {
+        res.status(409).json({ error: "该手机号已注册，请直接登录" });
+        return;
       }
       res.status(500).json({ error: "注册暂时不可用，请稍后再试或联系我们" });
     }

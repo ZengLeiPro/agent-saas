@@ -20,6 +20,17 @@ import {
 } from "../data/tenants/types.js";
 import { checkTenantAccess } from "../data/tenants/access.js";
 import type { SkillConfigStore } from "../data/skills/store.js";
+import type { SignupConfigStore } from "../data/signupConfig.js";
+import type { SecretVault } from "../security/secretVault.js";
+import type { VerificationCodeService } from "../integrations/sms/verificationService.js";
+import {
+  buildSmsSender,
+  buildVerificationCodeService,
+  createIpLimiter,
+  DEFAULT_SMS_SEND_CODE_IP_LIMIT_PER_MINUTE,
+  DEFAULT_SMS_VERIFY_IP_LIMIT_PER_MINUTE,
+  optionalConfigValue,
+} from "../integrations/sms/configuredSms.js";
 import {
   appendLoginLog,
   queryLoginLogs,
@@ -38,6 +49,17 @@ import { softDeleteUserResources } from "../data/users/cleanup.js";
 const loginSchema = z.object({
   username: z.string().min(1, "用户名不能为空"),
   password: z.string().min(1, "密码不能为空"),
+});
+
+const PHONE_PATTERN = /^1[3-9]\d{9}$/;
+
+const smsLoginSendCodeSchema = z.object({
+  phone: z.string().regex(PHONE_PATTERN, "请输入有效的 11 位手机号"),
+});
+
+const smsLoginSchema = z.object({
+  phone: z.string().regex(PHONE_PATTERN, "请输入有效的 11 位手机号"),
+  code: z.string().regex(/^\d{6}$/, "验证码为 6 位数字"),
 });
 
 const permissionsSchema = z
@@ -95,7 +117,7 @@ const updatePhoneSchema = z.object({
   phone: z
     .string()
     .refine(
-      (v) => v === "" || /^1[3-9]\d{9}$/.test(v),
+      (v) => v === "" || PHONE_PATTERN.test(v),
       "请输入有效的 11 位手机号",
     ),
 });
@@ -239,6 +261,12 @@ export interface AuthRouterDeps {
   onUserDisabled?: (userId: string) => void;
   /** Skill 配置 store，用于删除用户时清理孤儿条目 */
   skillConfigStore?: SkillConfigStore;
+  /** 动态注册配置 store：复用其中的 SMS provider 配置给短信验证码登录。 */
+  signupConfigStore?: SignupConfigStore;
+  /** SMS AccessKey Secret 的 vault；缺省回退 env AGENT_SMS_ACCESS_KEY_SECRET。 */
+  secretVault?: SecretVault;
+  /** 测试注入：覆盖按配置构建的验证码服务。 */
+  loginCodeService?: VerificationCodeService;
 }
 
 function avatarUrl(
@@ -265,6 +293,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     sharedDir,
     tenantSkillsRootDir,
     skillConfigStore,
+    signupConfigStore,
+    secretVault,
+    loginCodeService,
   } = deps;
   const router = Router();
 
@@ -280,6 +311,169 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       tenantStore?.getSettings(tenantId || DEFAULT_TENANT_ID)?.features ??
       DEFAULT_TENANT_SETTINGS.features
     );
+  }
+
+  function buildAuthResponse(user: UserRecord) {
+    const tenantId = user.tenantId || DEFAULT_TENANT_ID;
+    const token = jwt.sign(
+      {
+        sub: user.id,
+        username: user.username,
+        role: user.role,
+        tenantId,
+      },
+      jwtSecret,
+      { expiresIn: tokenExpiresIn } as SignOptions,
+    );
+    return {
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        tenantId,
+        realName: user.realName,
+        position: user.position,
+        phone: user.phone,
+        avatar: avatarUrl(user.id, user.avatar, user.avatarVersion),
+        avatarVersion: user.avatarVersion,
+        debugMode: user.debugMode === true,
+        tenantFeatures: tenantFeatures(tenantId),
+        preferences: user.preferences ?? {},
+      },
+    };
+  }
+
+  interface SmsLoginRuntime {
+    version: number;
+    publicEnabled: boolean;
+    smsError?: string;
+    codeService?: VerificationCodeService;
+    sendCodeIpLimiter: (ip: string) => boolean;
+    loginIpLimiter: (ip: string) => boolean;
+  }
+
+  async function resolveSmsSecret(): Promise<string | undefined> {
+    const ref = signupConfigStore?.getSmsAccessKeySecretRef();
+    if (ref && secretVault) {
+      try {
+        return await secretVault.getSecret(ref, { actor: "system" });
+      } catch (err) {
+        apiLogger.warn(
+          `[auth:sms] 从 secretVault 读取 SMS Secret 失败（ref=${ref}）：${err instanceof Error ? err.message : String(err)}`,
+        );
+        return undefined;
+      }
+    }
+    return optionalConfigValue(process.env.AGENT_SMS_ACCESS_KEY_SECRET);
+  }
+
+  async function buildSmsLoginRuntime(): Promise<SmsLoginRuntime> {
+    const version = signupConfigStore?.getConfigVersion() ?? 0;
+    const cfg = signupConfigStore?.getConfig();
+    const sendLimit =
+      cfg?.sms?.maxSendPerIpPerMinute ??
+      DEFAULT_SMS_SEND_CODE_IP_LIMIT_PER_MINUTE;
+    const loginLimit =
+      cfg?.sms?.maxRegisterPerIpPerMinute ??
+      DEFAULT_SMS_VERIFY_IP_LIMIT_PER_MINUTE;
+    const base = {
+      version,
+      sendCodeIpLimiter: createIpLimiter(sendLimit, 60_000),
+      loginIpLimiter: createIpLimiter(loginLimit, 60_000),
+    };
+
+    const smsConfigured = Boolean(loginCodeService || cfg?.enabled === true || cfg?.sms);
+    if (!smsConfigured) {
+      return {
+        ...base,
+        publicEnabled: false,
+        smsError: "短信通道未配置",
+      };
+    }
+    if (loginCodeService) {
+      return {
+        ...base,
+        publicEnabled: true,
+        codeService: loginCodeService,
+      };
+    }
+    if (!cfg) {
+      return {
+        ...base,
+        publicEnabled: false,
+        smsError: "短信通道未配置",
+      };
+    }
+
+    const secret = await resolveSmsSecret();
+    const built = buildSmsSender(cfg, secret);
+    const codeService = built.sender
+      ? buildVerificationCodeService(cfg, built.sender)
+      : undefined;
+    if (built.error) {
+      apiLogger.warn(`[auth:sms] 短信登录不可用：${built.error}`);
+    } else if (codeService) {
+      apiLogger.info(
+        `[auth:sms] 短信登录运行态已构建 v${version} sms=${codeService.sender.providerName}`,
+      );
+    }
+    return {
+      ...base,
+      publicEnabled: Boolean(codeService),
+      smsError: built.error,
+      codeService,
+    };
+  }
+
+  let cachedSmsLoginRuntime: SmsLoginRuntime | undefined;
+  let buildingSmsLoginRuntime: Promise<SmsLoginRuntime> | undefined;
+
+  async function getSmsLoginRuntime(): Promise<SmsLoginRuntime> {
+    const version = signupConfigStore?.getConfigVersion() ?? 0;
+    if (cachedSmsLoginRuntime && cachedSmsLoginRuntime.version === version) {
+      return cachedSmsLoginRuntime;
+    }
+    if (!buildingSmsLoginRuntime) {
+      buildingSmsLoginRuntime = buildSmsLoginRuntime().finally(() => {
+        buildingSmsLoginRuntime = undefined;
+      });
+    }
+    cachedSmsLoginRuntime = await buildingSmsLoginRuntime;
+    return cachedSmsLoginRuntime;
+  }
+
+  function resolveSmsLoginUser(phone: string):
+    | { ok: true; user: UserRecord }
+    | { ok: false; status: number; error: string; code?: string } {
+    const matches = userStore.findAllByPhone(phone);
+    if (matches.length === 0) {
+      return { ok: false, status: 404, error: "手机号未注册" };
+    }
+    if (matches.length > 1) {
+      return {
+        ok: false,
+        status: 409,
+        error: "该手机号绑定了多个账号，请联系管理员处理",
+        code: "PHONE_NOT_UNIQUE",
+      };
+    }
+    const user = matches[0];
+    const verified =
+      user.phone === phone &&
+      Boolean(
+        user.phoneVerifiedAt ||
+          (user.username === phone && user.createdBy === "self-signup"),
+      );
+    if (!verified) {
+      return {
+        ok: false,
+        status: 403,
+        error: "该手机号尚未完成验证，不能用于验证码登录",
+        code: "PHONE_NOT_VERIFIED",
+      };
+    }
+    return { ok: true, user };
   }
 
   // 确保头像目录存在
@@ -307,6 +501,184 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         cb(new Error("仅支持 PNG、JPEG、WebP 格式的图片"));
       }
     },
+  });
+
+  // POST /api/auth/sms/send-code
+  router.post("/sms/send-code", async (req, res) => {
+    try {
+      const rt = await getSmsLoginRuntime();
+      if (!rt.publicEnabled || !rt.codeService) {
+        res.status(403).json({ error: "当前未开放短信验证码登录" });
+        return;
+      }
+
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!rt.sendCodeIpLimiter(ip)) {
+        res.status(429).json({ error: "操作过于频繁，请稍后再试" });
+        return;
+      }
+
+      const parsed = smsLoginSendCodeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0].message });
+        return;
+      }
+      const { phone } = parsed.data;
+      const resolved = resolveSmsLoginUser(phone);
+      if (!resolved.ok) {
+        res.status(resolved.status).json({ error: resolved.error, code: resolved.code });
+        return;
+      }
+
+      const user = resolved.user;
+      if (user.disabled) {
+        res.status(403).json({ error: "账号已被禁用", code: "USER_DISABLED" });
+        return;
+      }
+      const tenantAccess = checkTenantAccess(
+        tenantStore,
+        user.tenantId || DEFAULT_TENANT_ID,
+      );
+      if (!tenantAccess.ok) {
+        res.status(403).json({ error: tenantAccess.message, code: tenantAccess.code });
+        return;
+      }
+
+      const result = await rt.codeService.requestCode(phone);
+      if (!result.ok) {
+        if (result.retryAfterSeconds) {
+          res.set("Retry-After", String(result.retryAfterSeconds));
+        }
+        res.status(429).json({ error: result.error });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      apiLogger.warn(
+        `[auth:sms] send-code 失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      res.status(500).json({ error: "验证码发送失败，请稍后再试" });
+    }
+  });
+
+  // POST /api/auth/sms/login
+  router.post("/sms/login", async (req, res) => {
+    try {
+      const rt = await getSmsLoginRuntime();
+      if (!rt.publicEnabled || !rt.codeService) {
+        res.status(403).json({ error: "当前未开放短信验证码登录" });
+        return;
+      }
+
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const userAgent = req.headers["user-agent"] || "unknown";
+      const channel = detectLoginChannel(userAgent);
+      if (!rt.loginIpLimiter(ip)) {
+        res.status(429).json({ error: "操作过于频繁，请稍后再试" });
+        return;
+      }
+
+      const parsed = smsLoginSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0].message });
+        return;
+      }
+      const { phone, code } = parsed.data;
+      const resolved = resolveSmsLoginUser(phone);
+      if (!resolved.ok) {
+        res.status(resolved.status).json({ error: resolved.error, code: resolved.code });
+        return;
+      }
+
+      const user = resolved.user;
+      if (user.disabled) {
+        if (user.role !== "admin") {
+          appendLoginLog(
+            {
+              timestamp: new Date().toISOString(),
+              event: "login_fail",
+              username: user.username,
+              userId: user.id,
+              tenantId: user.tenantId,
+              ip,
+              userAgent,
+              channel,
+              failReason: "account_disabled",
+            },
+            loginLogFilePath,
+          ).catch(() => {});
+        }
+        res.status(403).json({ error: "账号已被禁用", code: "USER_DISABLED" });
+        return;
+      }
+
+      const loginTenantId = user.tenantId || DEFAULT_TENANT_ID;
+      const tenantAccess = checkTenantAccess(tenantStore, loginTenantId);
+      if (!tenantAccess.ok) {
+        if (user.role !== "admin") {
+          appendLoginLog(
+            {
+              timestamp: new Date().toISOString(),
+              event: "login_fail",
+              username: user.username,
+              userId: user.id,
+              tenantId: loginTenantId,
+              ip,
+              userAgent,
+              channel,
+              failReason: tenantAccess.code === "TENANT_DISABLED" ? "tenant_disabled" : "tenant_not_found",
+            },
+            loginLogFilePath,
+          ).catch(() => {});
+        }
+        res.status(403).json({ error: tenantAccess.message, code: tenantAccess.code });
+        return;
+      }
+
+      if (!rt.codeService.verifyAndConsume(phone, code)) {
+        if (user.role !== "admin") {
+          appendLoginLog(
+            {
+              timestamp: new Date().toISOString(),
+              event: "login_fail",
+              username: user.username,
+              userId: user.id,
+              tenantId: loginTenantId,
+              ip,
+              userAgent,
+              channel,
+              failReason: "invalid_sms_code",
+            },
+            loginLogFilePath,
+          ).catch(() => {});
+        }
+        res.status(400).json({ error: "验证码错误或已过期" });
+        return;
+      }
+
+      if (user.role !== "admin") {
+        appendLoginLog(
+          {
+            timestamp: new Date().toISOString(),
+            event: "login_success",
+            username: user.username,
+            userId: user.id,
+            tenantId: loginTenantId,
+            ip,
+            userAgent,
+            channel,
+            detail: "sms_login",
+          },
+          loginLogFilePath,
+        ).catch(() => {});
+      }
+
+      res.json(buildAuthResponse(user));
+    } catch (err) {
+      res
+        .status(500)
+        .json({ error: String(err instanceof Error ? err.message : err) });
+    }
   });
 
   // POST /api/auth/login
@@ -433,35 +805,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         ).catch(() => {});
       }
 
-      const token = jwt.sign(
-        {
-          sub: user.id,
-          username: user.username,
-          role: user.role,
-          tenantId: user.tenantId || DEFAULT_TENANT_ID,
-        },
-        jwtSecret,
-        { expiresIn: tokenExpiresIn } as SignOptions,
-      );
-      res.json({
-        token,
-        user: {
-          id: user.id,
-          username: user.username,
-          role: user.role,
-          // 同 /me BUG #1：AuthUser 定义 tenantId 为 required，登录响应也必须返回，
-          // 前端 AuthContext 据此判定平台 admin / 组织 admin。
-          tenantId: user.tenantId || DEFAULT_TENANT_ID,
-          realName: user.realName,
-          position: user.position,
-          phone: user.phone,
-          avatar: avatarUrl(user.id, user.avatar, user.avatarVersion),
-          avatarVersion: user.avatarVersion,
-          debugMode: user.debugMode === true,
-          tenantFeatures: tenantFeatures(user.tenantId || DEFAULT_TENANT_ID),
-          preferences: user.preferences ?? {},
-        },
-      });
+      res.json(buildAuthResponse(user));
     } catch (err) {
       res
         .status(500)
@@ -632,6 +976,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === "Username already exists") {
         res.status(409).json({ error: "用户名已存在" });
+      } else if (msg === "Phone already exists") {
+        res.status(409).json({ error: "手机号已存在" });
       } else {
         res.status(500).json({ error: msg });
       }
@@ -731,6 +1077,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === "User not found") {
         res.status(404).json({ error: "用户不存在" });
+      } else if (msg === "Phone already exists") {
+        res.status(409).json({ error: "手机号已存在" });
       } else {
         res.status(400).json({ error: msg });
       }
@@ -899,9 +1247,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       auditLog(req, "user_phone_updated");
       res.json({ phone: updated.phone ?? null });
     } catch (err) {
-      res
-        .status(500)
-        .json({ error: err instanceof Error ? err.message : "更新失败" });
+      const msg = err instanceof Error ? err.message : "更新失败";
+      if (msg === "Phone already exists") {
+        res.status(409).json({ error: "手机号已存在" });
+        return;
+      }
+      res.status(500).json({ error: msg });
     }
   });
 

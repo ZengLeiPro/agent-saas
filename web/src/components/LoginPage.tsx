@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
+
+const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
 interface LoginPageProps {
   /** 切到注册页（AuthGate 提供；注册入口仅在后端开放自助注册时显示） */
@@ -13,12 +16,18 @@ interface LoginPageProps {
 }
 
 export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
-  const { login } = useAuth();
+  const { login, loginWithSms } = useAuth();
+  const [loginMode, setLoginMode] = useState<"password" | "sms">("password");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [countdown, setCountdown] = useState(0);
   const [signupEnabled, setSignupEnabled] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval>>();
 
   useEffect(() => {
     if (!onSwitchToSignup) return;
@@ -28,12 +37,59 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
       .catch(() => {});
   }, [onSwitchToSignup]);
 
+  useEffect(() => () => clearInterval(timerRef.current), []);
+
+  const startCountdown = () => {
+    clearInterval(timerRef.current);
+    setCountdown(60);
+    timerRef.current = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timerRef.current);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  const handleSendSmsCode = async () => {
+    if (!PHONE_PATTERN.test(phone)) {
+      setError("请输入有效的 11 位手机号");
+      return;
+    }
+    setError("");
+    setSendingCode(true);
+    try {
+      const res = await fetch("/api/auth/sms/send-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "验证码发送失败");
+      startCountdown();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "验证码发送失败");
+    } finally {
+      setSendingCode(false);
+    }
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
+    if (loginMode === "sms" && !PHONE_PATTERN.test(phone)) {
+      setError("请输入有效的 11 位手机号");
+      return;
+    }
     setLoading(true);
     try {
-      await login({ username, password });
+      if (loginMode === "password") {
+        await login({ username, password });
+      } else {
+        await loginWithSms({ phone, code });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
     } finally {
@@ -73,30 +129,84 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
             </p>
           </div>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="username">用户名</Label>
-              <Input
-                id="username"
-                type="text"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required
-                disabled={loading}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">密码</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={loading}
-              />
-            </div>
+            <Tabs value={loginMode} onValueChange={(value) => { setLoginMode(value as "password" | "sms"); setError(""); }}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="password">密码登录</TabsTrigger>
+                <TabsTrigger value="sms">验证码登录</TabsTrigger>
+              </TabsList>
+              <TabsContent value="password" className="mt-4 space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="username">用户名</Label>
+                  <Input
+                    id="username"
+                    type="text"
+                    autoComplete="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    required={loginMode === "password"}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password">密码</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required={loginMode === "password"}
+                    disabled={loading}
+                  />
+                </div>
+              </TabsContent>
+              <TabsContent value="sms" className="mt-4 space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="sms-phone">手机号</Label>
+                  <Input
+                    id="sms-phone"
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel"
+                    maxLength={11}
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
+                    required={loginMode === "sms"}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="sms-code">验证码</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="sms-code"
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={code}
+                      onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                      required={loginMode === "sms"}
+                      disabled={loading}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-32 shrink-0"
+                      onClick={handleSendSmsCode}
+                      disabled={sendingCode || countdown > 0 || loading}
+                    >
+                      {sendingCode ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : countdown > 0 ? (
+                        `${countdown}s 后重发`
+                      ) : (
+                        "获取验证码"
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </TabsContent>
+            </Tabs>
             {error && (
               <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {error}
@@ -109,7 +219,7 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
                   登录中...
                 </>
               ) : (
-                "登录"
+                loginMode === "password" ? "登录" : "验证码登录"
               )}
             </Button>
             {signupEnabled && onSwitchToSignup && (

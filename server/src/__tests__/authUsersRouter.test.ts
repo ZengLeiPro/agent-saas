@@ -11,6 +11,21 @@ import { TenantStore } from "../data/tenants/store.js";
 import { UserStore } from "../data/users/store.js";
 import type { UserInfo } from "../data/users/types.js";
 import { createAuthRouter } from "../routes/auth.js";
+import {
+  VerificationCodeService,
+  type SmsSender,
+} from "../integrations/sms/verificationService.js";
+
+class CaptureSender implements SmsSender {
+  readonly providerName = "capture";
+  lastPhone = "";
+  lastCode = "";
+
+  async sendCode(phone: string, code: string): Promise<void> {
+    this.lastPhone = phone;
+    this.lastCode = code;
+  }
+}
 
 interface TestRig {
   users: {
@@ -19,6 +34,7 @@ interface TestRig {
     wainAdminB: UserInfo;
     wainUser: UserInfo;
   };
+  sender: CaptureSender;
   setCaller(user: UserInfo): void;
   request(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
@@ -71,7 +87,10 @@ async function makeTestRig(): Promise<TestRig> {
     role: "user",
     createdBy: "system",
     tenantId: "wain",
+    phone: "13800001111",
+    phoneVerifiedAt: new Date().toISOString(),
   });
+  const sender = new CaptureSender();
 
   const app = express();
   app.use(express.json());
@@ -91,6 +110,7 @@ async function makeTestRig(): Promise<TestRig> {
       loginLogFilePath: join(tmpRoot, "login.jsonl"),
       agentCwd: join(tmpRoot, "workspaces"),
       sharedDir: join(tmpRoot, "shared"),
+      loginCodeService: new VerificationCodeService({ sender }),
     }),
   );
 
@@ -103,6 +123,7 @@ async function makeTestRig(): Promise<TestRig> {
 
   return {
     users: { platformAdmin, wainAdminA, wainAdminB, wainUser },
+    sender,
     setCaller(user) {
       currentCaller = asCaller(user);
     },
@@ -220,6 +241,85 @@ describe("auth users router admin boundaries", () => {
     await expect(res.json()).resolves.toMatchObject({
       id: h.users.wainAdminB.id,
       realName: "平台已修改",
+    });
+  });
+
+  it("短信验证码登录签发 token，验证码只能消费一次", async () => {
+    const send = await h.request("/api/auth/sms/send-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13800001111" }),
+    });
+    expect(send.status).toBe(200);
+    expect(h.sender.lastPhone).toBe("13800001111");
+    expect(h.sender.lastCode).toMatch(/^\d{6}$/);
+
+    const login = await h.request("/api/auth/sms/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone: "13800001111",
+        code: h.sender.lastCode,
+      }),
+    });
+    expect(login.status).toBe(200);
+    const data = (await login.json()) as {
+      token: string;
+      user: { id: string; username: string; tenantId: string; phone?: string };
+    };
+    expect(data.token).toBeTruthy();
+    expect(data.user).toMatchObject({
+      id: h.users.wainUser.id,
+      username: "wain_user",
+      tenantId: "wain",
+      phone: "13800001111",
+    });
+
+    const replay = await h.request("/api/auth/sms/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone: "13800001111",
+        code: h.sender.lastCode,
+      }),
+    });
+    expect(replay.status).toBe(400);
+    await expect(replay.json()).resolves.toMatchObject({
+      error: "验证码错误或已过期",
+    });
+  });
+
+  it("当前用户不能把手机号改成平台已有手机号", async () => {
+    h.setCaller(h.users.wainAdminA);
+    const res = await h.request("/api/auth/me/phone", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13800001111" }),
+    });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "手机号已存在",
+    });
+  });
+
+  it("未验证手机号不能用于短信登录", async () => {
+    h.setCaller(h.users.wainAdminA);
+    const setPhone = await h.request("/api/auth/me/phone", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13900001111" }),
+    });
+    expect(setPhone.status).toBe(200);
+
+    const send = await h.request("/api/auth/sms/send-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13900001111" }),
+    });
+    expect(send.status).toBe(403);
+    await expect(send.json()).resolves.toMatchObject({
+      code: "PHONE_NOT_VERIFIED",
     });
   });
 });

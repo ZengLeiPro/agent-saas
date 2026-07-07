@@ -415,6 +415,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           ? (userId: string) => webChannel.disconnectUser(userId)
           : undefined,
         skillConfigStore: runtime.skillConfigStore,
+        signupConfigStore: runtime.signupConfigStore,
+        secretVault: runtime.secretVault,
       }),
     );
     // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES

@@ -1,1 +1,1 @@
-export type { AuthUser, LoginCredentials } from '@agent/shared';
+export type { AuthUser, LoginCredentials, SmsLoginCredentials } from '@agent/shared';

@@ -422,6 +422,7 @@ describe("signup router", () => {
     // 用户持久化：phone 写入
     const record = h.userStore.findByUsername(PHONE);
     expect(record?.phone).toBe(PHONE);
+    expect(record?.phoneVerifiedAt).toBeTruthy();
   });
 
   it("验证码错误返回 400，不创建任何资源", async () => {

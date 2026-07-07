@@ -40,6 +40,8 @@ export interface UserRecord {
   position?: string;
   /** 手机号（用户自维护）。zod 层强校验 11 位中国大陆号码格式，存储层不约束。 */
   phone?: string;
+  /** 手机号验证时间。只有已验证手机号可作为短信验证码登录因子。 */
+  phoneVerifiedAt?: string;
   avatar?: string; // 头像文件相对路径，如 'avatars/uuid.jpg'
   avatarVersion?: number; // 头像版本号（上传时 Date.now()），用于客户端缓存控制
   /** 调试模式：开启时前端显示思考、工具、Skill 等执行细节；默认关闭。 */
@@ -79,6 +81,8 @@ export interface UserInfo {
   position?: string;
   /** 手机号（用户自维护，11 位中国大陆号码） */
   phone?: string;
+  /** 手机号验证时间。只有已验证手机号可作为短信验证码登录因子。 */
+  phoneVerifiedAt?: string;
   avatar?: string;
   avatarVersion?: number;
   /** 调试模式：开启时前端显示思考、工具、Skill 等执行细节；默认关闭。 */

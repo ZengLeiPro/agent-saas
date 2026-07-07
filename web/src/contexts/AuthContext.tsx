@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { AuthUser, LoginCredentials } from "@/types/auth";
+import type { AuthUser, LoginCredentials, SmsLoginCredentials } from "@/types/auth";
 import type { UserPreferences } from "@agent/shared";
 import { DEFAULT_TENANT_ID } from "@agent/shared";
 import { setOnUnauthorized } from "@/lib/authFetch";
@@ -25,6 +25,7 @@ interface AuthContextValue {
   /** 鉴权功能是否启用（后端未开启时为 false，此时无需登录） */
   authEnabled: boolean;
   login: (credentials: LoginCredentials) => Promise<void>;
+  loginWithSms: (credentials: SmsLoginCredentials) => Promise<void>;
   logout: () => void;
   /** 更新当前用户头像 URL + 版本号 */
   updateAvatar: (avatar: string | undefined, avatarVersion?: number) => void;
@@ -76,20 +77,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const login = useCallback(async (credentials: LoginCredentials) => {
-    const res = await fetch("/api/auth/login", {
+  const applyLoginResponse = useCallback((data: { token: string; user: AuthUser }) => {
+    localStorage.setItem(TOKEN_KEY, data.token);
+    setUser({ id: data.user.id, username: data.user.username, role: data.user.role, tenantId: data.user.tenantId, realName: data.user.realName, position: data.user.position, phone: data.user.phone, avatar: data.user.avatar, avatarVersion: data.user.avatarVersion, debugMode: data.user.debugMode === true, preferences: data.user.preferences ?? {} });
+  }, []);
+
+  const postLogin = useCallback(async (url: string, body: unknown) => {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(credentials),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error((data as { error?: string }).error || "登录失败");
     }
-    const data = await res.json();
-    localStorage.setItem(TOKEN_KEY, data.token);
-    setUser({ id: data.user.id, username: data.user.username, role: data.user.role, tenantId: data.user.tenantId, realName: data.user.realName, position: data.user.position, phone: data.user.phone, avatar: data.user.avatar, avatarVersion: data.user.avatarVersion, debugMode: data.user.debugMode === true, preferences: data.user.preferences ?? {} });
-  }, []);
+    applyLoginResponse(await res.json());
+  }, [applyLoginResponse]);
+
+  const login = useCallback(async (credentials: LoginCredentials) => {
+    await postLogin("/api/auth/login", credentials);
+  }, [postLogin]);
+
+  const loginWithSms = useCallback(async (credentials: SmsLoginCredentials) => {
+    await postLogin("/api/auth/sms/login", credentials);
+  }, [postLogin]);
 
   const updateAvatar = useCallback((avatar: string | undefined, avatarVersion?: number) => {
     setUser((prev) => prev ? { ...prev, avatar, avatarVersion } : prev);
@@ -112,12 +124,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isPlatformAdmin: user?.role === "admin" && user?.tenantId === DEFAULT_TENANT_ID,
       authEnabled,
       login,
+      loginWithSms,
       logout,
       updateAvatar,
       updatePhone,
       updatePreferences,
     }),
-    [user, isLoading, authEnabled, login, logout, updateAvatar, updatePhone, updatePreferences],
+    [user, isLoading, authEnabled, login, loginWithSms, logout, updateAvatar, updatePhone, updatePreferences],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

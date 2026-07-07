@@ -34,6 +34,7 @@ export type { WsBlockType, WsAskUserQuestion, WsEvent } from "./ws";
 export type {
   AuthUser,
   LoginCredentials,
+  SmsLoginCredentials,
   SidebarLayoutPref,
   UserPreferences,
   TenantFeatureFlags,

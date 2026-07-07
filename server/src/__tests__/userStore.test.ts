@@ -59,6 +59,97 @@ describe("UserStore user ids", () => {
   });
 });
 
+describe("UserStore phone uniqueness", () => {
+  it("enforces phone globally across phone fields and phone-like usernames", async () => {
+    const { store } = await tempUserStore();
+    const alice = await store.create({
+      username: "alice",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "kaiyan",
+      phone: "13800001111",
+    });
+    const bob = await store.create({
+      username: "bob",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "kaiyan",
+    });
+
+    await expect(
+      store.create({
+        username: "charlie",
+        password: "password123",
+        role: "user",
+        createdBy: "system",
+        tenantId: "kaiyan",
+        phone: "13800001111",
+      }),
+    ).rejects.toThrow("Phone already exists");
+
+    await expect(
+      store.create({
+        username: "13800001111",
+        password: "password123",
+        role: "user",
+        createdBy: "system",
+        tenantId: "kaiyan",
+      }),
+    ).rejects.toThrow("Phone already exists");
+
+    await expect(
+      store.update(bob.id, { phone: "13800001111" }),
+    ).rejects.toThrow("Phone already exists");
+
+    expect(store.findAllByPhone("13800001111").map((u) => u.id)).toEqual([
+      alice.id,
+    ]);
+  });
+
+  it("treats a phone-like username as a phone owner", async () => {
+    const { store } = await tempUserStore();
+    const user = await store.create({
+      username: "13900001111",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "kaiyan",
+      phone: "13900001111",
+    });
+
+    expect(store.findByPhone("13900001111")?.id).toBe(user.id);
+    await expect(
+      store.create({
+        username: "alice",
+        password: "password123",
+        role: "user",
+        createdBy: "system",
+        tenantId: "kaiyan",
+        phone: "13900001111",
+      }),
+    ).rejects.toThrow("Phone already exists");
+  });
+
+  it("clears phone verification when phone is manually changed", async () => {
+    const { store } = await tempUserStore();
+    const user = await store.create({
+      username: "alice",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "kaiyan",
+      phone: "13800001111",
+      phoneVerifiedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const updated = await store.update(user.id, { phone: "13900001111" });
+    expect(updated.phone).toBe("13900001111");
+    expect(updated.phoneVerifiedAt).toBeUndefined();
+  });
+});
+
 describe("UserStore tenant admin safety", () => {
   it("counts active admins per tenant", async () => {
     const { store } = await tempUserStore();

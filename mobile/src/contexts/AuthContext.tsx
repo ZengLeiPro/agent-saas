@@ -18,6 +18,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   login: (username: string, password: string) => Promise<{ ok: boolean; error?: string }>;
+  loginWithSms: (phone: string, code: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateAvatar: (avatar: string | undefined, avatarVersion?: number) => void;
   /** Re-fetch user info from server (e.g. when returning to foreground to pick up setting changes) */
@@ -118,12 +119,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const login = useCallback(async (username: string, password: string) => {
+  const applyLoginResponse = useCallback(async (data: { token: string; user: AuthUser }) => {
+    await mobileSecureStorage.setItem(TOKEN_KEY, data.token);
+    await AsyncStorage.setItem(CACHED_USER_KEY, JSON.stringify(data.user));
+    setUser(data.user);
+  }, []);
+
+  const postLogin = useCallback(async (url: string, body: unknown) => {
     try {
-      const res = await authFetch('/api/auth/login', {
+      const res = await authFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
@@ -132,17 +139,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const data = await res.json() as { token: string; user: AuthUser };
-      await mobileSecureStorage.setItem(TOKEN_KEY, data.token);
-      await AsyncStorage.setItem(CACHED_USER_KEY, JSON.stringify(data.user));
-      setUser(data.user);
+      await applyLoginResponse(data);
       return { ok: true };
     } catch {
       return { ok: false, error: '网络错误，请检查服务器地址' };
     }
-  }, []);
+  }, [applyLoginResponse]);
+
+  const login = useCallback(async (username: string, password: string) => {
+    return postLogin('/api/auth/login', { username, password });
+  }, [postLogin]);
+
+  const loginWithSms = useCallback(async (phone: string, code: string) => {
+    return postLogin('/api/auth/sms/login', { phone, code });
+  }, [postLogin]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, updateAvatar, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, login, loginWithSms, logout, updateAvatar, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

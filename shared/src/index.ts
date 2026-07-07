@@ -48,6 +48,7 @@ export type {
   WsEvent,
   AuthUser,
   LoginCredentials,
+  SmsLoginCredentials,
   SidebarLayoutPref,
   UserPreferences,
   TenantFeatureFlags,

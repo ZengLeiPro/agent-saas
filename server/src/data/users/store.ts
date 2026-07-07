@@ -21,6 +21,7 @@ const USER_ID_PREFIX = "ky";
 const USER_ID_RANDOM_LENGTH = 12;
 const USER_ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 const USER_ID_MAX_ATTEMPTS = 16;
+const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
 export const USER_ID_PATTERN = /^ky[0-9abcdefghjkmnpqrstvwxyz]{12}$/;
 
@@ -43,6 +44,8 @@ export interface CreateUserInput {
   position?: string;
   /** 手机号（自助注册链路创建时写入；路由层负责格式校验与查重） */
   phone?: string;
+  /** 手机号验证时间；短信注册链路通过验证码后写入。 */
+  phoneVerifiedAt?: string;
   dingtalkStaffId?: string;
   debugMode?: boolean;
   /**
@@ -63,6 +66,8 @@ export interface UpdateUserInput {
   position?: string;
   /** 手机号：空字符串 = 清除；非空 = 设置（路由层负责格式校验）。 */
   phone?: string;
+  /** 手机号验证时间；传空字符串清除。 */
+  phoneVerifiedAt?: string;
   avatar?: string;
   dingtalkStaffId?: string;
   debugMode?: boolean;
@@ -153,6 +158,24 @@ export class UserStore {
     return this.users.find((u) => u.username.toLowerCase() === lower);
   }
 
+  findAllByPhone(phone: string): UserRecord[] {
+    if (!PHONE_PATTERN.test(phone)) return [];
+    return this.users.filter((u) => u.phone === phone || u.username === phone);
+  }
+
+  findByPhone(phone: string): UserRecord | undefined {
+    return this.findAllByPhone(phone)[0];
+  }
+
+  private findPhoneOwner(phone: string, excludeUserId?: string): UserRecord | undefined {
+    if (!PHONE_PATTERN.test(phone)) return undefined;
+    return this.users.find(
+      (u) =>
+        u.id !== excludeUserId &&
+        (u.phone === phone || u.username === phone),
+    );
+  }
+
   findByDingtalkStaffId(staffId: string): UserRecord | undefined {
     return this.users.find((u) => u.dingtalkStaffId === staffId);
   }
@@ -212,6 +235,12 @@ export class UserStore {
     if (this.findByUsername(input.username)) {
       throw new Error("Username already exists");
     }
+    if (this.findPhoneOwner(input.username)) {
+      throw new Error("Phone already exists");
+    }
+    if (input.phone && this.findPhoneOwner(input.phone)) {
+      throw new Error("Phone already exists");
+    }
     const now = new Date().toISOString();
     const record: UserRecord = {
       id: this.generateUniqueUserId(),
@@ -222,6 +251,7 @@ export class UserStore {
       ...(input.realName ? { realName: input.realName } : {}),
       ...(input.position ? { position: input.position } : {}),
       ...(input.phone ? { phone: input.phone } : {}),
+      ...(input.phone && input.phoneVerifiedAt ? { phoneVerifiedAt: input.phoneVerifiedAt } : {}),
       ...(input.dingtalkStaffId
         ? { dingtalkStaffId: input.dingtalkStaffId }
         : {}),
@@ -277,7 +307,14 @@ export class UserStore {
       user.position = input.position || undefined;
     }
     if (input.phone !== undefined) {
+      if (input.phone && this.findPhoneOwner(input.phone, user.id)) {
+        throw new Error("Phone already exists");
+      }
       user.phone = input.phone || undefined;
+      user.phoneVerifiedAt = undefined;
+    }
+    if (input.phoneVerifiedAt !== undefined) {
+      user.phoneVerifiedAt = input.phoneVerifiedAt || undefined;
     }
     if (input.avatar !== undefined) {
       user.avatar = input.avatar || undefined;

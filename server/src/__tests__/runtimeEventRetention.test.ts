@@ -27,6 +27,7 @@ class FakePool {
   toolBatches: ArchiveRow[][] = [];
   handBatches: ArchiveRow[][] = [];
   deletedSequences: string[] = [];
+  toolSelectParams: unknown[][] = [];
   vacuumed = false;
   queries: string[] = [];
 
@@ -39,6 +40,7 @@ class FakePool {
       return { rows: [{ max_global_sequence: this.maxGlobalSequence }] };
     }
     if (text.includes('completed.event_type')) {
+      this.toolSelectParams.push(params ?? []);
       return { rows: this.toolBatches.shift() ?? [] };
     }
     if (text.includes('event_type = ANY($1::text[])')) {
@@ -70,6 +72,27 @@ describe('RuntimeEventRetention', () => {
   it('escapes CSV fields', () => {
     expect(csvField('plain')).toBe('plain');
     expect(csvField('a,"b"\n')).toBe('"a,""b""\n"');
+  });
+
+  it('does not start scheduled retention unless explicitly enabled', () => {
+    const pool = new FakePool();
+    const info = vi.fn();
+    const baseOptions = {
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      archiveDir: join(tmpdir(), 'runtime-retention-schedule'),
+      logger: { warn: vi.fn(), info },
+    };
+    const disabledByDefault = new RuntimeEventRetention(baseOptions);
+
+    disabledByDefault.start();
+    expect(info).not.toHaveBeenCalled();
+
+    const enabled = new RuntimeEventRetention({ ...baseOptions, enabled: true });
+    enabled.start();
+    expect(info).toHaveBeenCalledTimes(1);
+    enabled.stop();
   });
 
   it('refuses to delete when billing projection is behind runtime_events', async () => {
@@ -115,6 +138,8 @@ describe('RuntimeEventRetention', () => {
     expect(result.deleted).toBe(3);
     expect(result.archiveFiles).toHaveLength(2);
     expect(pool.deletedSequences).toEqual(['10', '11', '12']);
+    expect(pool.toolSelectParams[0]?.[1]).toBe(1);
+    expect(pool.toolSelectParams[0]?.[2]).toBe(7);
     expect(pool.vacuumed).toBe(true);
     expect(pool.queries.join('\n')).not.toContain('VACUUM FULL');
 

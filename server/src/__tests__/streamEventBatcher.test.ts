@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { StreamEventBatcher } from '../runtime/rawAgentLoop.js';
+import { StreamEventBatcher, ToolStreamSummaryBuilder } from '../runtime/rawAgentLoop.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 
 class FakeEventStore implements EventStore {
@@ -89,4 +89,67 @@ describe('StreamEventBatcher', () => {
     expect(store.appended.map((event) => 'content' in event ? event.content : '')).toEqual(['a', 'b']);
   });
 
+});
+
+describe('ToolStreamSummaryBuilder', () => {
+  const summaryArgs = {
+    runId: 'run-1',
+    sessionId: 'session-1',
+    invocationId: 'inv-1',
+    toolCallId: 'tool-1',
+    toolName: 'Shell',
+    status: 'success' as const,
+  };
+
+  it('builds a compact summary from stream output and progress chunks', () => {
+    const builder = new ToolStreamSummaryBuilder();
+
+    builder.observe({ type: 'output', channel: 'stdout', content: 'hello' });
+    builder.observe({ type: 'output', channel: 'stderr', content: '错误' });
+    builder.observe({ type: 'progress', message: 'step-1' });
+
+    expect(builder.build(summaryArgs)).toMatchObject({
+      type: 'tool_stream_summary',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      invocationId: 'inv-1',
+      toolCallId: 'tool-1',
+      toolName: 'Shell',
+      status: 'success',
+      stdoutBytes: 5,
+      stderrBytes: Buffer.byteLength('错误', 'utf8'),
+      outputChunks: 2,
+      progressCount: 1,
+      truncated: false,
+      stdoutTail: 'hello',
+      stderrTail: '错误',
+      progressTail: ['step-1'],
+    });
+  });
+
+  it('keeps bounded tails for long streams', () => {
+    const builder = new ToolStreamSummaryBuilder();
+
+    builder.observe({ type: 'output', channel: 'stdout', content: `${'a'.repeat(9_000)}END` });
+    for (let i = 0; i < 25; i += 1) {
+      builder.observe({ type: 'progress', message: `step-${i}` });
+    }
+
+    const summary = builder.build(summaryArgs);
+    if (!summary || summary.type !== 'tool_stream_summary') {
+      throw new Error('expected tool_stream_summary');
+    }
+    expect(summary.truncated).toBe(true);
+    expect(summary.stdoutTail).toHaveLength(8 * 1024);
+    expect(summary.stdoutTail).toMatch(/END$/);
+    expect(summary.progressTail).toHaveLength(20);
+    expect(summary.progressTail?.[0]).toBe('step-5');
+    expect(summary.progressTail?.[19]).toBe('step-24');
+  });
+
+  it('omits summaries when no stream chunks were observed', () => {
+    const builder = new ToolStreamSummaryBuilder();
+
+    expect(builder.build(summaryArgs)).toBeUndefined();
+  });
 });

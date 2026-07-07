@@ -979,7 +979,7 @@ const runtimeHandHealthScannerConfigSchema = z.object({
 });
 
 const runtimeEventRetentionConfigSchema = z.object({
-  /** 默认 true：PG runtime 下每日低峰清理 runtime_events 膨胀事件。 */
+  /** 默认 false：PG runtime 下显式开启后每日低峰清理 runtime_events 膨胀事件。 */
   enabled: z.boolean().optional(),
   /** 本机时区每日执行小时，默认 3。 */
   dailyAtHour: z.number().int().min(0).max(23).optional(),
@@ -989,9 +989,9 @@ const runtimeEventRetentionConfigSchema = z.object({
   archiveDir: z.string().min(1).optional(),
   /** 单批 select/delete 上限，默认 10000。 */
   batchLimit: z.number().int().min(1).max(100_000).optional(),
-  /** tool_output_delta/tool_progress 基础保留天数，默认 7。 */
+  /** tool_output_delta/tool_progress 基础保留天数，默认 1。 */
   toolDeltaRetentionDays: z.number().int().min(1).max(3650).optional(),
-  /** 失败 invocation 的 tool 输出保留天数，默认 30。 */
+  /** 失败 invocation 的 tool 输出保留天数，默认 7。 */
   failedInvocationRetentionDays: z.number().int().min(1).max(3650).optional(),
   /** hand_provisioning_log/hand_health_changed/hand_failure 保留天数，默认 30。 */
   handEventRetentionDays: z.number().int().min(1).max(3650).optional(),

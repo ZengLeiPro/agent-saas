@@ -446,6 +446,25 @@ export type PlatformEvent =
   | {
     id: string;
     timestamp: string;
+    type: 'tool_stream_summary';
+    runId: string;
+    sessionId: string;
+    invocationId: string;
+    toolCallId: string;
+    toolName: string;
+    status: 'success' | 'error' | 'cancelled';
+    stdoutBytes: number;
+    stderrBytes: number;
+    outputChunks: number;
+    progressCount: number;
+    truncated: boolean;
+    stdoutTail?: string;
+    stderrTail?: string;
+    progressTail?: string[];
+  }
+  | {
+    id: string;
+    timestamp: string;
     type: 'hand_provisioned';
     sessionId: string;
     handId: string;

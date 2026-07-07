@@ -244,6 +244,78 @@ export class StreamEventBatcher {
   }
 }
 
+const STREAM_SUMMARY_TAIL_CHARS = 8 * 1024;
+const STREAM_SUMMARY_PROGRESS_LIMIT = 20;
+
+export class ToolStreamSummaryBuilder {
+  private stdoutTail = '';
+  private stderrTail = '';
+  private readonly progressTail: string[] = [];
+  private stdoutBytes = 0;
+  private stderrBytes = 0;
+  private outputChunks = 0;
+  private progressCount = 0;
+  private truncated = false;
+
+  observe(chunk: import('./handProtocol.js').ToolInvocationStreamChunk): void {
+    if (chunk.type === 'output') {
+      this.outputChunks += 1;
+      const bytes = Buffer.byteLength(chunk.content, 'utf8');
+      if (chunk.channel === 'stderr') {
+        this.stderrBytes += bytes;
+        this.stderrTail = this.appendTail(this.stderrTail, chunk.content);
+      } else {
+        this.stdoutBytes += bytes;
+        this.stdoutTail = this.appendTail(this.stdoutTail, chunk.content);
+      }
+      return;
+    }
+    if (chunk.type === 'progress') {
+      this.progressCount += 1;
+      this.progressTail.push(chunk.message);
+      if (this.progressTail.length > STREAM_SUMMARY_PROGRESS_LIMIT) {
+        this.progressTail.splice(0, this.progressTail.length - STREAM_SUMMARY_PROGRESS_LIMIT);
+        this.truncated = true;
+      }
+    }
+  }
+
+  build(args: {
+    runId: string;
+    sessionId: string;
+    invocationId: string;
+    toolCallId: string;
+    toolName: string;
+    status: 'success' | 'error' | 'cancelled';
+  }): PlatformEventInput | undefined {
+    if (this.outputChunks === 0 && this.progressCount === 0) return undefined;
+    return {
+      type: 'tool_stream_summary',
+      runId: args.runId,
+      sessionId: args.sessionId,
+      invocationId: args.invocationId,
+      toolCallId: args.toolCallId,
+      toolName: args.toolName,
+      status: args.status,
+      stdoutBytes: this.stdoutBytes,
+      stderrBytes: this.stderrBytes,
+      outputChunks: this.outputChunks,
+      progressCount: this.progressCount,
+      truncated: this.truncated,
+      ...(this.stdoutTail ? { stdoutTail: this.stdoutTail } : {}),
+      ...(this.stderrTail ? { stderrTail: this.stderrTail } : {}),
+      ...(this.progressTail.length ? { progressTail: [...this.progressTail] } : {}),
+    };
+  }
+
+  private appendTail(current: string, next: string): string {
+    const combined = `${current}${next}`;
+    if (combined.length <= STREAM_SUMMARY_TAIL_CHARS) return combined;
+    this.truncated = true;
+    return combined.slice(combined.length - STREAM_SUMMARY_TAIL_CHARS);
+  }
+}
+
 export class RawAgentLoop implements AgentLoop {
   private readonly modelAdapter: ModelAdapter;
   private readonly eventStore: EventStore;
@@ -1585,6 +1657,7 @@ export class RawAgentLoop implements AgentLoop {
     const invocationId = `${args.context.runId}:${args.call.id}`;
     const executionAudit = createExecutionAuditRecorder();
     const streamBatcher = new StreamEventBatcher(this.eventStore, this.streamEventBatch);
+    const streamSummary = new ToolStreamSummaryBuilder();
     const hooks = args.baseToolContext.hooks?.onInteraction || args.descriptor.name !== 'AskUserQuestion'
       ? args.baseToolContext.hooks
       : {
@@ -1617,6 +1690,7 @@ export class RawAgentLoop implements AgentLoop {
       hooks,
       executionAudit,
       onStreamChunk: async (chunk) => {
+        streamSummary.observe(chunk);
         if (chunk.type === 'output') {
           await streamBatcher.push({
             type: 'tool_output_delta',
@@ -1689,6 +1763,14 @@ export class RawAgentLoop implements AgentLoop {
         status: 'success',
         durationMs: Date.now() - startedAt,
       });
+      await this.appendToolStreamSummary(streamSummary, {
+        runId: args.context.runId,
+        sessionId: args.context.sessionId,
+        invocationId,
+        toolCallId: args.call.id,
+        toolName: args.descriptor.name,
+        status: 'success',
+      }).catch(() => undefined);
       await this.append({
         type: 'tool_audit',
         runId: args.context.runId,
@@ -1726,6 +1808,14 @@ export class RawAgentLoop implements AgentLoop {
         durationMs: Date.now() - startedAt,
         error: message,
       });
+      await this.appendToolStreamSummary(streamSummary, {
+        runId: args.context.runId,
+        sessionId: args.context.sessionId,
+        invocationId,
+        toolCallId: args.call.id,
+        toolName: args.descriptor.name,
+        status: args.context.signal?.aborted ? 'cancelled' : 'error',
+      }).catch(() => undefined);
       await this.append({
         type: 'tool_audit',
         runId: args.context.runId,
@@ -1756,6 +1846,23 @@ export class RawAgentLoop implements AgentLoop {
         });
       }
       throw err;
+    }
+  }
+
+  private async appendToolStreamSummary(
+    builder: ToolStreamSummaryBuilder,
+    args: {
+      runId: string;
+      sessionId: string;
+      invocationId: string;
+      toolCallId: string;
+      toolName: string;
+      status: 'success' | 'error' | 'cancelled';
+    },
+  ): Promise<void> {
+    const event = builder.build(args);
+    if (event) {
+      await this.append(event);
     }
   }
 

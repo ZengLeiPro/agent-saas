@@ -91,8 +91,8 @@ export class RuntimeEventRetention {
     this.billingProjectionStateTable = sanitizeIdentifier(options.billingProjectionStateTable);
     this.archiveDir = options.archiveDir;
     this.batchLimit = clampInt(options.batchLimit ?? 10_000, 1, 100_000);
-    this.toolDeltaRetentionDays = clampInt(options.toolDeltaRetentionDays ?? 7, 1, 3650);
-    this.failedInvocationRetentionDays = clampInt(options.failedInvocationRetentionDays ?? 30, this.toolDeltaRetentionDays, 3650);
+    this.toolDeltaRetentionDays = clampInt(options.toolDeltaRetentionDays ?? 1, 1, 3650);
+    this.failedInvocationRetentionDays = clampInt(options.failedInvocationRetentionDays ?? 7, this.toolDeltaRetentionDays, 3650);
     this.handEventRetentionDays = clampInt(options.handEventRetentionDays ?? 30, 1, 3650);
     this.billingCatchupBatchLimit = clampInt(options.billingCatchupBatchLimit ?? 10_000, 1, 100_000);
     this.billingCatchupMaxBatches = clampInt(options.billingCatchupMaxBatches ?? 100, 1, 10_000);
@@ -101,7 +101,7 @@ export class RuntimeEventRetention {
   }
 
   start(): void {
-    if (this.options.enabled === false || !this.stopped) return;
+    if (this.options.enabled !== true || !this.stopped) return;
     this.stopped = false;
     this.scheduleNext();
     this.options.logger?.info?.(

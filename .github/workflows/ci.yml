@@ -278,7 +278,8 @@ jobs:
           echo "rollback: $CUR -> $PREV"
           ln -sfn "$PREV" "$ROOT/current"; ln -sfn "$CUR" "$ROOT/previous"
           systemctl restart agent-saas-server
-          for _ in $(seq 1 60); do
+          # 启动含全量 skills sync（随用户数增长，2026-07-07 实测 16 用户约 165s），窗口须给足
+          for _ in $(seq 1 420); do
             if curl -fsS -m 5 http://127.0.0.1:3200/api/healthz >/dev/null 2>&1; then
               echo "rollback ok"; exit 0
             fi
@@ -291,9 +292,11 @@ jobs:
           log "restart service: $SERVICE_NAME"
           systemctl restart "$SERVICE_NAME"
 
-          # ── healthz 门禁：120s 内不过 → 自动回滚到上一 release ──
+          # ── healthz 门禁：420s 内不过 → 自动回滚到上一 release ──
+          # 窗口依据：启动含全量 skills sync（每用户约 8s，随用户数增长），
+          # 2026-07-07 kaiyan 建 12 账号后实测启动 165s，120s 窗口误判失败+误判回滚失败。
           HEALTH_WAITED=0
-          for _ in $(seq 1 120); do
+          for _ in $(seq 1 420); do
             if healthz_ok; then
               log "healthz ok after ${HEALTH_WAITED}s"
               prune_pnpm_store
@@ -322,7 +325,7 @@ jobs:
             HEALTH_WAITED=$((HEALTH_WAITED + 1))
           done
 
-          log "healthz failed after 120s; rolling back to ${PREV_TARGET:-<none>}"
+          log "healthz failed after 420s; rolling back to ${PREV_TARGET:-<none>}"
           journalctl -u "$SERVICE_NAME" -n 120 --no-pager || true
           if [ -n "$PREV_TARGET" ] && [ -d "$PREV_TARGET" ]; then
             log "rollback switch current=$PREV_TARGET previous=$RELEASE_DIR"
@@ -331,7 +334,7 @@ jobs:
             log "restart service for rollback"
             systemctl restart "$SERVICE_NAME"
             ROLLBACK_WAITED=0
-            for _ in $(seq 1 60); do
+            for _ in $(seq 1 420); do
               if healthz_ok; then
                 log "rollback ok after ${ROLLBACK_WAITED}s; production restored on previous release ($PREV_TARGET)"
                 exit 1

@@ -360,3 +360,141 @@ describe('scenarios routes', () => {
     }
   });
 });
+
+/** 黄金静态示例结果（exampleResult）：下发、兼容、sanitize、校验 */
+describe('scenarios routes · exampleResult', () => {
+  const EXAMPLE_BODY = [
+    '## 示例结论',
+    '',
+    '| 客户 | 应收余额 | 状态 |',
+    '| --- | ---: | --- |',
+    '| 华跃鞋材 | 128,600.00 | 已逾期 |',
+    '| Claude 贸易 | 56,000.00 | 正常 |',
+    '',
+    '- 第 3 张发票与第 7 张同号',
+    '',
+    '## AI 做了什么',
+    '',
+    '1. 逐张核对台账',
+    '',
+    '## 换成你的资料需要什么',
+    '',
+    '- 上传应收台账表格',
+  ].join('\n');
+
+  /** 两条 enabled 场景：一条带 exampleResult（含红线词 + markdown 表格），一条不带 */
+  function buildExampleFixture(dataLabel: string) {
+    return {
+      version: 2,
+      updatedAt: '2026-07-08',
+      roles: [{ id: 'fin', name: '财务', sort: 1 }],
+      scenarios: [
+        {
+          id: 'fin-receivable-remind',
+          title: '应收回款跟踪提醒',
+          role: 'fin',
+          industries: ['all'],
+          mode: 'oneshot',
+          pitch: '每天一眼看清谁该催款',
+          story: '上传台账 → AI 分层 → 每日提醒',
+          promptTemplate: '帮我跟踪应收：{{ledger}}。',
+          slots: [{ key: 'ledger', label: '应收台账', example: '示例台账' }],
+          requires: ['upload'],
+          recommendCron: false,
+          exampleResult: { body: EXAMPLE_BODY, dataLabel },
+          source: 'internal:golden-example',
+          enabled: true,
+        },
+        {
+          id: 'fin-no-example',
+          title: '无示例的财务场景',
+          role: 'fin',
+          industries: ['all'],
+          mode: 'oneshot',
+          pitch: '兼容性对照组',
+          story: 'a → b → c',
+          promptTemplate: '测试',
+          slots: [],
+          requires: [],
+          recommendCron: false,
+          source: 'internal:draft',
+          enabled: true,
+        },
+      ],
+    };
+  }
+
+  let tmpDir = '';
+  let dataPath = '';
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'scenarios-example-'));
+    dataPath = join(tmpDir, 'scenario-library.json');
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('serves exampleResult as a public field with markdown structure intact after sanitize', async () => {
+    await writeFile(dataPath, JSON.stringify(buildExampleFixture('synthetic')), 'utf-8');
+    const { server, baseUrl } = await startServer(dataPath);
+    try {
+      const response = await fetch(`${baseUrl}/api/scenarios`);
+      expect(response.status).toBe(200);
+      const json = await response.json() as {
+        scenarios: Array<{ id: string; exampleResult?: { body: string; dataLabel: string } }>;
+      };
+      const item = json.scenarios.find((s) => s.id === 'fin-receivable-remind');
+      expect(item?.exampleResult).toBeDefined();
+      const { body, dataLabel } = item!.exampleResult!;
+      expect(dataLabel).toBe('synthetic');
+      // sanitize 生效：红线词被替换
+      expect(body).not.toContain('Claude');
+      expect(body).toContain('AI 大脑 贸易');
+      // markdown 结构完好：三段标题、表格表头/分隔行/数据行、列表、行数不变
+      expect(body).toContain('## 示例结论');
+      expect(body).toContain('## AI 做了什么');
+      expect(body).toContain('## 换成你的资料需要什么');
+      expect(body).toContain('| 客户 | 应收余额 | 状态 |');
+      expect(body).toContain('| --- | ---: | --- |');
+      expect(body).toContain('| 华跃鞋材 | 128,600.00 | 已逾期 |');
+      expect(body).toContain('- 第 3 张发票与第 7 张同号');
+      expect(body.split('\n').length).toBe(EXAMPLE_BODY.split('\n').length);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('keeps scenarios without exampleResult unaffected', async () => {
+    await writeFile(dataPath, JSON.stringify(buildExampleFixture('synthetic')), 'utf-8');
+    const { server, baseUrl } = await startServer(dataPath);
+    try {
+      const response = await fetch(`${baseUrl}/api/scenarios`);
+      expect(response.status).toBe(200);
+      const json = await response.json() as { scenarios: Array<Record<string, unknown>> };
+      const item = json.scenarios.find((s) => s.id === 'fin-no-example');
+      expect(item).toBeDefined();
+      expect(item).not.toHaveProperty('exampleResult');
+      // 内部字段照常剥离
+      expect(item).not.toHaveProperty('source');
+      expect(item).not.toHaveProperty('enabled');
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('rejects the library when exampleResult.dataLabel is invalid', async () => {
+    await writeFile(dataPath, JSON.stringify(buildExampleFixture('internal-secret')), 'utf-8');
+    const { server, baseUrl } = await startServer(dataPath);
+    try {
+      const response = await fetch(`${baseUrl}/api/scenarios`);
+      expect(response.status).toBe(500);
+      const json = await response.json() as { error: string };
+      expect(json.error).toContain('scenario-library validation failed');
+      expect(json.error).toContain('exampleResult.dataLabel');
+    } finally {
+      await stopServer(server);
+    }
+  });
+});

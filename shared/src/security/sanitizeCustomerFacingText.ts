@@ -223,6 +223,15 @@ export function sanitizeScenario<T extends Record<string, unknown>>(scenario: T)
       userSees: applyAt(`day1PathSteps[${i}].userSees`, step.userSees),
     }));
   }
+  if (clone.exampleResult && typeof clone.exampleResult === "object") {
+    const exampleResult = clone.exampleResult as Record<string, unknown>;
+    // body 是大段 markdown：清洗规则均为纯文本词面替换，不含 markdown 语法字符
+    //（#、|、-、` 等），表格/标题/列表结构在替换后保持完好；dataLabel 是受控枚举，无需清洗
+    clone.exampleResult = {
+      ...exampleResult,
+      body: applyAt("exampleResult.body", exampleResult.body),
+    };
+  }
 
   return { scenario: clone, hits, blocked, safeToPublish: blocked.length === 0 };
 }

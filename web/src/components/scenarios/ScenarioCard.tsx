@@ -5,11 +5,16 @@
  * 有意与 ScenariosPanel 拆成独立小模块：推荐位随聊天主视图打包，
  * 整页面板走 lazy 加载，避免互相拖入对方的 bundle。
  */
+import { lazy, Suspense, useState } from "react";
 import { Globe, MessageSquareShare, ShieldAlert, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ScenarioItem, ScenarioRequirement } from "@agent/shared";
+
+// 懒加载：仅点开「看示例结果」时才拉取弹层（内含 markdown 渲染），
+// 不拖累空会话推荐位所在的聊天主 bundle
+const ScenarioExampleDialogLazy = lazy(() => import("./ScenarioExampleDialog"));
 
 /** 形态徽标：recurring → 常驻；oneshot → 一次性 */
 export function ScenarioModeBadge({ mode }: { mode: ScenarioItem["mode"] }) {
@@ -81,7 +86,10 @@ interface ScenarioCardProps {
 
 export function ScenarioCard({ scenario, onTry, onOpenDetail, compact }: ScenarioCardProps) {
   const clickable = !!onOpenDetail;
+  const hasExample = !!scenario.exampleResult;
+  const [exampleOpen, setExampleOpen] = useState(false);
   return (
+    <>
     <div
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
@@ -110,19 +118,64 @@ export function ScenarioCard({ scenario, onTry, onOpenDetail, compact }: Scenari
       </p>
       {!compact && <ScenarioRequireBadges requires={scenario.requires} className="mt-auto" />}
       <div className={cn("flex items-center justify-end gap-2", compact ? "mt-auto" : "pt-1")}>
-        <Button
-          type="button"
-          size="sm"
-          className="h-7 px-3 text-xs"
-          onClick={(e) => {
-            // 阻止冒泡：避免同时触发卡片的「打开详情」
-            e.stopPropagation();
-            onTry(scenario);
-          }}
-        >
-          试一试
-        </Button>
+        {hasExample ? (
+          <>
+            {/* 原预填按钮保留为次按钮：行为不变，文案改为「换成我的资料」 */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-3 text-xs"
+              onClick={(e) => {
+                // 阻止冒泡：避免同时触发卡片的「打开详情」
+                e.stopPropagation();
+                onTry(scenario);
+              }}
+            >
+              换成我的资料
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 px-3 text-xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                setExampleOpen(true);
+              }}
+            >
+              看示例结果
+            </Button>
+          </>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            className="h-7 px-3 text-xs"
+            onClick={(e) => {
+              // 阻止冒泡：避免同时触发卡片的「打开详情」
+              e.stopPropagation();
+              onTry(scenario);
+            }}
+          >
+            试一试
+          </Button>
+        )}
       </div>
     </div>
+    {/* 弹层挂在卡片 div 的兄弟位置：Portal 内的合成事件不会冒泡进卡片的「打开详情」 */}
+    {hasExample && exampleOpen && (
+      <Suspense fallback={null}>
+        <ScenarioExampleDialogLazy
+          scenario={scenario}
+          open={exampleOpen}
+          onOpenChange={setExampleOpen}
+          onUseMyData={(s) => {
+            setExampleOpen(false);
+            onTry(s);
+          }}
+        />
+      </Suspense>
+    )}
+    </>
   );
 }

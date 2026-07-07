@@ -103,6 +103,24 @@ export interface ScenarioSlot {
   example: string;
 }
 
+/**
+ * 示例结果的数据来源标签。
+ * synthetic：完全虚构的示例数据；desensitized：真实数据脱除标识后的示例数据；
+ * public：来自公开渠道的数据。P0 批次全部为 synthetic。
+ */
+export type ScenarioExampleDataLabel = "synthetic" | "desensitized" | "public";
+
+/**
+ * 黄金静态示例结果：点场景卡即可秒开的预生成高质量示例交付物。
+ * 不跑模型、不写记忆，客户面字段（服务端不剥离，需过 sanitize）。
+ */
+export interface ScenarioExampleResult {
+  /** 完整示例交付物，markdown。内部按三段组织：示例结论 / AI 做了什么 / 换成你的资料需要什么 */
+  body: string;
+  /** 数据来源标签，本批全部 synthetic */
+  dataLabel: ScenarioExampleDataLabel;
+}
+
 export interface Day1PathStep {
   stage: Day1PathStage;
   userAction: string;
@@ -170,6 +188,8 @@ export interface ScenarioItem {
   pushSlot?: PushSlot;
   humanAuditPolicy?: HumanAuditPolicy;
   firstAhaMode?: FirstAhaMode;
+  /** 预生成的黄金示例结果；缺省表示该场景暂无静态示例（前端维持原有交互） */
+  exampleResult?: ScenarioExampleResult;
 }
 
 export interface ScenarioItemInternal extends ScenarioItem {

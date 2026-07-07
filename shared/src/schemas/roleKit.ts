@@ -41,6 +41,18 @@ export const scenarioSlotSchema = z.object({
   example: z.string().min(1),
 });
 
+export const scenarioExampleDataLabelSchema = z.enum([
+  "synthetic",
+  "desensitized",
+  "public",
+]);
+
+export const scenarioExampleResultSchema = z.object({
+  /** 完整示例交付物（markdown），单场景控制在 80-200 行 */
+  body: z.string().min(1).max(20_000),
+  dataLabel: scenarioExampleDataLabelSchema,
+});
+
 export const day1PathStepSchema = z.object({
   stage: day1PathStageSchema,
   userAction: z.string().min(1),
@@ -153,6 +165,7 @@ export const scenarioItemSchema = z
     pushSlot: pushSlotSchema.optional(),
     humanAuditPolicy: humanAuditPolicySchema.optional(),
     firstAhaMode: firstAhaModeSchema.optional(),
+    exampleResult: scenarioExampleResultSchema.optional(),
   })
   .superRefine((val, ctx) => {
     if (val.mode !== "recurring") return;

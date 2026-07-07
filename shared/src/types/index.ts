@@ -65,6 +65,8 @@ export type {
   DemoIndustryTag,
   RetentionPath7DayItem,
   ScenarioSlot,
+  ScenarioExampleDataLabel,
+  ScenarioExampleResult,
   Day1PathStep,
   SalesPitch,
   SalesPitchBossQnA,

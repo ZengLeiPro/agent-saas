@@ -284,6 +284,55 @@ describe("sanitizeScenario · scenario batch", () => {
     expect(dirty.title).toBe("Claude 标题");
     expect(dirty.slots[0]?.label).toBe("GPT 标签");
   });
+
+  it("[E4] sanitizes exampleResult.body while keeping markdown structure intact", () => {
+    const body = [
+      "## 示例结论",
+      "",
+      "| 客户 | 应收余额 | 状态 |",
+      "| --- | ---: | --- |",
+      "| 华跃鞋材 | 128,600.00 | 已逾期 |",
+      "| Claude 贸易 | 56,000.00 | 正常 |",
+      "",
+      "### 疑点清单",
+      "",
+      "- 第 3 张发票与第 7 张同号",
+      "- `INV-2026-0612` 日期倒挂",
+      "",
+      "## AI 做了什么",
+      "",
+      "1. 逐张提取发票字段",
+      "2. 用 workspace 汇总台账",
+    ].join("\n");
+    const dirty = {
+      id: "fin-x",
+      title: "干净标题",
+      exampleResult: { body, dataLabel: "synthetic" },
+    };
+
+    const report = sanitizeScenario(dirty);
+    const scenario = report.scenario as typeof dirty;
+    const output = scenario.exampleResult.body;
+
+    // 红线词已替换
+    expect(output).not.toContain("Claude");
+    expect(output).not.toContain("workspace");
+    expect(output).toContain("AI 大脑 贸易");
+    expect(output).toContain("用 工作台 汇总台账");
+    // markdown 结构完好：标题、表格（表头/分隔行/数据行）、列表、行内代码、行数不变
+    expect(output).toContain("## 示例结论");
+    expect(output).toContain("### 疑点清单");
+    expect(output).toContain("| 客户 | 应收余额 | 状态 |");
+    expect(output).toContain("| --- | ---: | --- |");
+    expect(output).toContain("| 华跃鞋材 | 128,600.00 | 已逾期 |");
+    expect(output).toContain("- 第 3 张发票与第 7 张同号");
+    expect(output).toContain("`INV-2026-0612` 日期倒挂");
+    expect(output.split("\n").length).toBe(body.split("\n").length);
+    // dataLabel 是受控枚举，原样保留
+    expect(scenario.exampleResult.dataLabel).toBe("synthetic");
+    expect(report.safeToPublish).toBe(true);
+    expect(report.hits.some((hit) => hit.path === "exampleResult.body")).toBe(true);
+  });
 });
 
 describe("sanitizeRole · role batch", () => {

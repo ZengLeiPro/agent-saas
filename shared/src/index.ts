@@ -77,6 +77,8 @@ export type {
   DemoIndustryTag,
   RetentionPath7DayItem,
   ScenarioSlot,
+  ScenarioExampleDataLabel,
+  ScenarioExampleResult,
   Day1PathStep,
   SalesPitch,
   SalesPitchBossQnA,
@@ -161,6 +163,8 @@ export {
   scenarioItemSchema,
   scenarioItemInternalSchema,
   scenarioRoleSchema,
+  scenarioExampleDataLabelSchema,
+  scenarioExampleResultSchema,
   roleKitSchema,
 } from "./schemas/roleKit";
 export {

@@ -54,6 +54,7 @@ import {
   sendSignupLeadNotification,
   sendWaitlistLeadNotification,
 } from "../integrations/dingtalk/leadWebhook.js";
+import { sendTrialSignupToCrm } from "../integrations/azeroth/websiteLeadSync.js";
 import {
   appendLoginLog,
   detectLoginChannel,
@@ -543,6 +544,17 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
           utm,
         });
       }
+      // CRM 单轨：注册事件推 azeroth 按手机号合流（fire-and-forget，未配置时跳过）
+      void sendTrialSignupToCrm({
+        userId: user.id,
+        phone,
+        name,
+        position,
+        company,
+        scenario,
+        tenantId,
+        utm,
+      });
 
       // 7. 签发 JWT（与 /api/auth/login 响应同构，前端复用登录态处理）
       const token = jwt.sign(

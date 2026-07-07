@@ -283,5 +283,6 @@ export type {
   ModelGroup,
   ModelsConfig,
   TitleGeneratorAppConfig,
+  RuntimeEventRetentionConfig,
   AppConfig,
 } from "../app/config.js";

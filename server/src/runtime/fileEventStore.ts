@@ -3,7 +3,7 @@ import { appendFile, mkdir } from 'fs/promises';
 import { dirname } from 'path';
 
 import { readFileCoalesce } from './fileReadCoalesce.js';
-import type { EventAppendContext, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
+import type { EventAppendContext, EventListOptions, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
 
 export function getRuntimeEventLogPath(transcriptPath: string): string {
   return transcriptPath.endsWith('.jsonl')
@@ -33,8 +33,11 @@ export class FileEventStore implements EventStore {
     return fullEvents;
   }
 
-  async list(_sessionId: string): Promise<PlatformEvent[]> {
-    return this.readAll();
+  async list(_sessionId: string, options: EventListOptions = {}): Promise<PlatformEvent[]> {
+    const events = await this.readAll();
+    if (!options.excludeTypes?.length) return events;
+    const excluded = new Set(options.excludeTypes);
+    return events.filter((event) => !excluded.has(event.type));
   }
 
   async listPage(_sessionId: string, options: {

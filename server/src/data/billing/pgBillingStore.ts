@@ -753,7 +753,6 @@ export class PgBillingStore {
       FROM ${this.eventsTable} e
       ${runJoin}
       WHERE e.global_sequence > $1
-        AND e.event_type IN ('assistant_message', 'assistant_tool_calls', 'run_finished')
       ORDER BY e.global_sequence ASC
       LIMIT $2
     `, [state, limit]);

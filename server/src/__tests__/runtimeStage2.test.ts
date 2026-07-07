@@ -73,6 +73,34 @@ describe('runtime stage 2 primitives', () => {
     expect(second?.hasMore).toBe(false);
   });
 
+  it('FileEventStore.list can exclude replay-heavy event types without changing the default list', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'eventstore-exclude-'));
+    cleanupDirs.add(cwd);
+    const store = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+
+    await store.appendBatch?.([
+      { type: 'run_started', runId: 'run-1', sessionId: 'session-1', model: 'gpt-5.5', channel: 'web' },
+      { type: 'tool_output_delta', runId: 'run-1', sessionId: 'session-1', invocationId: 'inv-1', toolCallId: 'call-1', content: 'chunk' },
+      { type: 'tool_progress', runId: 'run-1', sessionId: 'session-1', invocationId: 'inv-1', toolCallId: 'call-1', content: '50%' },
+      { type: 'assistant_stream_event', runId: 'run-1', sessionId: 'session-1', blockType: 'text', phase: 'delta', content: 'legacy' },
+      { type: 'assistant_message', runId: 'run-1', sessionId: 'session-1', content: 'done' },
+    ]);
+
+    expect((await store.list('session-1')).map((event) => event.type)).toEqual([
+      'run_started',
+      'tool_output_delta',
+      'tool_progress',
+      'assistant_stream_event',
+      'assistant_message',
+    ]);
+    expect((await store.list('session-1', {
+      excludeTypes: ['tool_output_delta', 'tool_progress', 'assistant_stream_event'],
+    })).map((event) => event.type)).toEqual([
+      'run_started',
+      'assistant_message',
+    ]);
+  });
+
   it('EventBackedApprovalStore persists approval state inside runtime events', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'approval-events-'));
     cleanupDirs.add(cwd);

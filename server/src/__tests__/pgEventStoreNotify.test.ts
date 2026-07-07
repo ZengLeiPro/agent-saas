@@ -37,6 +37,7 @@ const pgMock = vi.hoisted(() => {
     readonly queries: QueryCall[] = [];
     readonly notifyCalls: QueryCall[] = [];
     readonly byId = new Map<string, PlatformEvent>();
+    listRows: RangeRow[] = [];
     rangeRows: RangeRow[] = [];
 
     constructor() {
@@ -58,6 +59,22 @@ const pgMock = vi.hoisted(() => {
       if (text.includes('WHERE event_id = $1')) {
         const event = this.byId.get(String(params?.[0]));
         return { rows: event ? [{ event_json: event }] : [] };
+      }
+      if (
+        text.includes('FROM test_events')
+        && text.includes('WHERE session_id = $1')
+        && text.includes('ORDER BY session_sequence ASC')
+        && !text.includes('session_sequence > $2')
+      ) {
+        const sessionId = String(params?.[0]);
+        const excludeTypes = Array.isArray(params?.[1]) ? new Set(params?.[1] as string[]) : null;
+        return {
+          rows: this.listRows
+            .filter((row) => row.session_id === sessionId)
+            .filter((row) => !excludeTypes?.has(row.event_json.type))
+            .sort((a, b) => Number(a.session_sequence) - Number(b.session_sequence))
+            .map((row) => ({ event_json: row.event_json })),
+        };
       }
       // listPage（drainSession 用）：WHERE session_id = $1 AND session_sequence > $2 ORDER BY ... LIMIT $3
       if (text.includes('AND session_sequence > $2') && !text.includes('<= $3')) {
@@ -225,6 +242,53 @@ describe('PgEventStore notify coalescing', () => {
       toCursor: '12',
       count: 3,
     });
+  });
+
+  it('init does not recreate dead runtime_events indexes', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+
+    await store.init();
+
+    const ddl = pool.connection.queries.map((call) => call.text).join('\n');
+    expect(ddl).not.toContain('test_events_session_idx');
+    expect(ddl).not.toContain('test_events_event_json_gin_idx');
+    expect(ddl).not.toContain('test_events_run_idx');
+    expect(ddl).toContain('test_events_session_run_idx');
+  });
+
+  it('list excludes replay-heavy event types when requested', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    pool.listRows = [
+      rangeRow({
+        id: 'event-1',
+        timestamp: new Date(0).toISOString(),
+        sequence: 1,
+        type: 'tool_output_delta',
+        runId: 'run-1',
+        sessionId: 'session-1',
+        invocationId: 'inv-1',
+        toolCallId: 'call-1',
+        content: 'chunk',
+      } as PlatformEvent & { sequence: number }),
+      rangeRow({
+        id: 'event-2',
+        timestamp: new Date(0).toISOString(),
+        sequence: 2,
+        type: 'assistant_message',
+        runId: 'run-1',
+        sessionId: 'session-1',
+        content: 'done',
+      } as PlatformEvent & { sequence: number }),
+    ];
+
+    const events = await store.list('session-1', { excludeTypes: ['tool_output_delta'] });
+
+    expect(events.map((item) => item.id)).toEqual(['event-2']);
+    const lastQuery = pool.queries.at(-1);
+    expect(lastQuery?.text).toContain('event_type <> ALL($2::text[])');
+    expect(lastQuery?.params).toEqual(['session-1', ['tool_output_delta']]);
   });
 
   it('drains range payloads from the durable watermark and still accepts legacy ids', async () => {

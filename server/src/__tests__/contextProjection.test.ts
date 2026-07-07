@@ -53,6 +53,86 @@ describe('context projection', () => {
       .toEqual(['event-1', 'event-2']);
   });
 
+  it('keeps context replay identical when replay-heavy runtime events are omitted', () => {
+    const base: PlatformEvent[] = [
+      {
+        id: 'event-1',
+        timestamp: '2026-01-01T00:00:01.000Z',
+        type: 'user_message',
+        runId: 'run-x',
+        sessionId: 'session-1',
+        content: 'run a command',
+      },
+      {
+        id: 'event-2',
+        timestamp: '2026-01-01T00:00:02.000Z',
+        type: 'assistant_tool_calls',
+        runId: 'run-x',
+        sessionId: 'session-1',
+        content: '',
+        toolCalls: [{ id: 'call-1', name: 'Shell', arguments: '{"cmd":"echo ok"}' }],
+      },
+      {
+        id: 'event-3',
+        timestamp: '2026-01-01T00:00:03.000Z',
+        type: 'tool_result',
+        runId: 'run-x',
+        sessionId: 'session-1',
+        toolCallId: 'call-1',
+        toolName: 'Shell',
+        content: 'ok',
+      },
+      {
+        id: 'event-4',
+        timestamp: '2026-01-01T00:00:04.000Z',
+        type: 'assistant_message',
+        runId: 'run-x',
+        sessionId: 'session-1',
+        content: 'done',
+      },
+    ];
+    const noisy: PlatformEvent[] = [
+      base[0]!,
+      {
+        id: 'noise-1',
+        timestamp: '2026-01-01T00:00:01.500Z',
+        type: 'assistant_stream_event',
+        runId: 'run-x',
+        sessionId: 'session-1',
+        blockType: 'text',
+        phase: 'delta',
+        content: 'ignored',
+      },
+      base[1]!,
+      {
+        id: 'noise-2',
+        timestamp: '2026-01-01T00:00:02.500Z',
+        type: 'tool_output_delta',
+        runId: 'run-x',
+        sessionId: 'session-1',
+        invocationId: 'inv-1',
+        toolCallId: 'call-1',
+        content: 'chunk',
+      },
+      {
+        id: 'noise-3',
+        timestamp: '2026-01-01T00:00:02.600Z',
+        type: 'tool_progress',
+        runId: 'run-x',
+        sessionId: 'session-1',
+        invocationId: 'inv-1',
+        toolCallId: 'call-1',
+        content: '50%',
+      },
+      base[2]!,
+      base[3]!,
+    ];
+
+    expect(buildContextProjection(noisy, { sessionId: 'session-1', runId: 'run-next' }).messages).toEqual(
+      buildContextProjection(base, { sessionId: 'session-1', runId: 'run-next' }).messages,
+    );
+  });
+
   it('truncates older tool results while keeping the most recent ones intact (O2)', () => {
     const big = 'X'.repeat(8000);
     const messages: ModelChatMessage[] = [];

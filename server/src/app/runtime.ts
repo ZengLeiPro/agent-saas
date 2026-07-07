@@ -15,6 +15,7 @@ import { closeAuditDuckDb, getAuditDuckDb } from '../runtime/auditDuckDb.js';
 import { PgEventStore } from '../runtime/pgEventStore.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
 import type { EventStore } from '../runtime/types.js';
+import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
 import { PgRuntimeAuditQuery } from '../runtime/pgAuditQuery.js';
 import { PgSessionLock } from '../runtime/pgSessionLock.js';
 import { PgRunStore } from '../runtime/runStore.js';
@@ -568,6 +569,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let artifactShutdown: (() => Promise<void>) | undefined;
   let billingService: BillingService | undefined;
   let billingAuditTimer: NodeJS.Timeout | undefined;
+  let runtimeEventRetention: RuntimeEventRetention | undefined;
   let runtimeScheduler: RuntimeScheduler | undefined;
   let runtimeEventSubscriptionShutdown: (() => Promise<void>) | undefined;
   let cancelDeliveryRetryTimer: NodeJS.Timeout | undefined;
@@ -778,6 +780,29 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       });
     }, 24 * 60 * 60 * 1000);
     billingAuditTimer.unref?.();
+    const retentionConfig = config.runtimeEventRetention;
+    runtimeEventRetention = new RuntimeEventRetention({
+      pool: pgEventStore.pool,
+      eventsTable: pgEventStore.eventsTable,
+      billingProjectionStateTable: pgBillingStore.projectionStateTable,
+      archiveDir: resolve(processCwd, retentionConfig?.archiveDir ?? './data/runtime-event-archives'),
+      enabled: retentionConfig?.enabled,
+      dailyAtHour: retentionConfig?.dailyAtHour,
+      dailyAtMinute: retentionConfig?.dailyAtMinute,
+      batchLimit: retentionConfig?.batchLimit,
+      toolDeltaRetentionDays: retentionConfig?.toolDeltaRetentionDays,
+      failedInvocationRetentionDays: retentionConfig?.failedInvocationRetentionDays,
+      handEventRetentionDays: retentionConfig?.handEventRetentionDays,
+      billingCatchupBatchLimit: retentionConfig?.billingCatchupBatchLimit,
+      billingCatchupMaxBatches: retentionConfig?.billingCatchupMaxBatches,
+      projectBillingRuntimeEvents: (limit) => billingService!.projectRuntimeEvents(limit),
+      logger: serverLogger.child('RuntimeEventRetention'),
+    });
+    if (processRole === 'all') {
+      runtimeEventRetention.start();
+    } else {
+      serverLogger.info(`RuntimeEventRetention disabled for processRole=${processRole}`);
+    }
     const recoveryResult = await recoverRunningToolInvocations({
       toolInvocationStore: pgToolInvocationStore,
       eventStore: pgEventStore,
@@ -796,6 +821,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       await runtimeScheduler?.stop();
       if (cancelDeliveryRetryTimer) clearInterval(cancelDeliveryRetryTimer);
       if (billingAuditTimer) clearInterval(billingAuditTimer);
+      runtimeEventRetention?.stop();
       await runtimeEventSubscriptionShutdown?.();
       await pgEventStore!.close();
     };

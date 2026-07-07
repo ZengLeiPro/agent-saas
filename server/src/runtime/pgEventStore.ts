@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 
-import type { EventAppendContext, EventListPage, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
+import type { EventAppendContext, EventListOptions, EventListPage, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 
 const { Client, Pool } = pg;
@@ -93,18 +93,10 @@ export class PgEventStore implements EventStore {
         ALTER TABLE ${this.eventsTable}
         ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'
       `);
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS ${this.eventsTable}_session_idx
-        ON ${this.eventsTable} (session_id, session_sequence)
-      `);
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS ${this.eventsTable}_run_idx
-        ON ${this.eventsTable} (session_id, run_id, session_sequence)
-        WHERE run_id IS NOT NULL
-      `);
-      // Composite name is intentionally distinct from the legacy run_idx, whose
-      // earlier definition was only (run_id). Existing databases keep that index;
-      // this one is the query-downpush path used by SessionContextService.
+      // UNIQUE(session_id, session_sequence) 已自带同序 btree，不再创建
+      // ${this.eventsTable}_session_idx；event_json GIN 历史上 idx_scan=0，也不再创建。
+      // 旧库可能仍有 legacy ${this.eventsTable}_run_idx（早期为 run_id 单列），
+      // init 阶段不碰它；新库只创建当前查询下推使用的 session_run_idx。
       await client.query(`
         CREATE INDEX IF NOT EXISTS ${this.eventsTable}_session_run_idx
         ON ${this.eventsTable} (session_id, run_id, session_sequence)
@@ -118,10 +110,6 @@ export class PgEventStore implements EventStore {
         CREATE INDEX IF NOT EXISTS ${this.eventsTable}_tool_call_idx
         ON ${this.eventsTable} ((event_json->>'toolCallId'), session_id, session_sequence)
         WHERE event_json ? 'toolCallId'
-      `);
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS ${this.eventsTable}_event_json_gin_idx
-        ON ${this.eventsTable} USING GIN (event_json jsonb_path_ops)
       `);
       // PR 3：tenant_id 索引（按组织分页 / 计费 / 审计聚合时用）
       await client.query(`
@@ -211,7 +199,19 @@ export class PgEventStore implements EventStore {
     }
   }
 
-  async list(sessionId: string): Promise<PlatformEvent[]> {
+  async list(sessionId: string, options: EventListOptions = {}): Promise<PlatformEvent[]> {
+    const excludeTypes = [...new Set(options.excludeTypes ?? [])];
+    if (excludeTypes.length > 0) {
+      const result = await this.pool.query<{ event_json: PlatformEvent }>(
+        `SELECT event_json
+         FROM ${this.eventsTable}
+         WHERE session_id = $1
+           AND event_type <> ALL($2::text[])
+         ORDER BY session_sequence ASC`,
+        [sessionId, excludeTypes],
+      );
+      return result.rows.map((row) => normalizeEventJson(row.event_json));
+    }
     const result = await this.pool.query<{ event_json: PlatformEvent }>(
       `SELECT event_json
        FROM ${this.eventsTable}

@@ -580,10 +580,18 @@ export interface EventAppendContext {
   tenantId?: string;
 }
 
+export interface EventListOptions {
+  /**
+   * 仅用于 run 启动前的上下文/状态重放瘦身。断线重连的 durable replay 不传该参数，
+   * 仍按 EventStore 事实源全量补齐工具输出中间段。
+   */
+  excludeTypes?: PlatformEvent['type'][];
+}
+
 export interface EventStore {
   append(event: PlatformEventInput, ctx?: EventAppendContext): Promise<PlatformEvent>;
   appendBatch?(events: PlatformEventInput[], ctx?: EventAppendContext): Promise<PlatformEvent[]>;
-  list(sessionId: string): Promise<PlatformEvent[]>;
+  list(sessionId: string, options?: EventListOptions): Promise<PlatformEvent[]>;
   listPage?(sessionId: string, options?: {
     afterCursor?: string;
     limit?: number;

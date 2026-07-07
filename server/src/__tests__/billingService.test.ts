@@ -76,6 +76,38 @@ describe('BillingService hard cap guard', () => {
     expect(dispatch).not.toHaveBeenCalled();
     expect(events).toEqual([{ type: 'error', error: '组织积分余额不足，当前计费策略已启用硬封顶。' }]);
   });
+
+  it('advances runtime_events projection watermark across non-billable events', async () => {
+    const store = {
+      getProjectionState: vi.fn(async () => 0),
+      listUnprojectedRuntimeEvents: vi.fn(async () => [
+        {
+          globalSequence: 1,
+          eventId: 'event-delta',
+          eventType: 'tool_output_delta',
+          tenantId: 'tenant-1',
+          timestamp: '2026-07-07T00:00:00.000Z',
+          eventJson: { type: 'tool_output_delta' },
+        },
+        {
+          globalSequence: 2,
+          eventId: 'event-finished',
+          eventType: 'run_finished',
+          tenantId: 'tenant-1',
+          timestamp: '2026-07-07T00:00:01.000Z',
+          eventJson: { type: 'run_finished', runId: 'run-1' },
+        },
+      ]),
+      settleRunDebit: vi.fn(async () => null),
+      setProjectionState: vi.fn(async () => undefined),
+    };
+    const service = new BillingService({ store: store as any });
+
+    await expect(service.projectRuntimeEvents()).resolves.toMatchObject({ lastProjectedSequence: 2 });
+
+    expect(store.settleRunDebit).toHaveBeenCalledWith('tenant-1', 'run-1');
+    expect(store.setProjectionState).toHaveBeenCalledWith('runtime_events', 2);
+  });
 });
 
 function fakeStore(input: {

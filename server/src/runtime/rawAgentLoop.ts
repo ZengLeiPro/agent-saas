@@ -57,6 +57,11 @@ import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
  */
 const logger = createLogger('RawAgentLoop');
 const INTERACTIVE_TOOL_NAMES = new Set(['AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode']);
+const RUN_START_REPLAY_EXCLUDED_EVENT_TYPES = [
+  'tool_output_delta',
+  'tool_progress',
+  'assistant_stream_event',
+] satisfies PlatformEvent['type'][];
 
 function resolveRunTenantId(context: RunContext): string {
   return context.tenantId
@@ -367,7 +372,9 @@ export class RawAgentLoop implements AgentLoop {
     const descriptors = this.toolRuntime.list(baseToolContext);
     const descriptorsByName = new Map(descriptors.map((descriptor) => [descriptor.name, descriptor]));
     const tools = descriptors.map(toModelToolDefinition);
-    const priorEvents = await this.eventStore.list(context.sessionId);
+    const priorEvents = await this.eventStore.list(context.sessionId, {
+      excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+    });
     const replayState = buildRuntimeReplayState(
       priorEvents,
       await this.approvalStore.list(context.sessionId),
@@ -379,7 +386,9 @@ export class RawAgentLoop implements AgentLoop {
       return;
     }
     const recoveredEvents = recovery.recovered > 0
-      ? await this.eventStore.list(context.sessionId)
+      ? await this.eventStore.list(context.sessionId, {
+        excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+      })
       : priorEvents;
     const contextUsageTracker = new RuntimeContextUsageTracker(context.model, recoveredEvents);
     const contextProjection = buildContextProjection(recoveredEvents, {
@@ -683,7 +692,9 @@ export class RawAgentLoop implements AgentLoop {
    * transcript line 下发（前端 debugMode 决定是否提供展开查看）。
    */
   async *compact(input: CompactInput, context: RunContext): AsyncIterable<OutboundEvent> {
-    const priorEvents = await this.eventStore.list(context.sessionId);
+    const priorEvents = await this.eventStore.list(context.sessionId, {
+      excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+    });
     const projection = buildContextProjection(priorEvents, {
       sessionId: context.sessionId,
       runId: context.runId,
@@ -962,7 +973,9 @@ export class RawAgentLoop implements AgentLoop {
 
   private async assertNoOpenToolCallBatchesBeforeModel(sessionId: string): Promise<void> {
     const replayState = buildRuntimeReplayState(
-      await this.eventStore.list(sessionId),
+      await this.eventStore.list(sessionId, {
+        excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+      }),
       await this.approvalStore.list(sessionId),
       sessionId,
     );

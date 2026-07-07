@@ -978,6 +978,29 @@ const runtimeHandHealthScannerConfigSchema = z.object({
   healthTimeoutMs: z.number().int().min(500).max(60_000).optional(),
 });
 
+const runtimeEventRetentionConfigSchema = z.object({
+  /** 默认 true：PG runtime 下每日低峰清理 runtime_events 膨胀事件。 */
+  enabled: z.boolean().optional(),
+  /** 本机时区每日执行小时，默认 3。 */
+  dailyAtHour: z.number().int().min(0).max(23).optional(),
+  /** 本机时区每日执行分钟，默认 10。 */
+  dailyAtMinute: z.number().int().min(0).max(59).optional(),
+  /** 归档 csv.gz 目录，默认 ./data/runtime-event-archives。 */
+  archiveDir: z.string().min(1).optional(),
+  /** 单批 select/delete 上限，默认 10000。 */
+  batchLimit: z.number().int().min(1).max(100_000).optional(),
+  /** tool_output_delta/tool_progress 基础保留天数，默认 7。 */
+  toolDeltaRetentionDays: z.number().int().min(1).max(3650).optional(),
+  /** 失败 invocation 的 tool 输出保留天数，默认 30。 */
+  failedInvocationRetentionDays: z.number().int().min(1).max(3650).optional(),
+  /** hand_provisioning_log/hand_health_changed/hand_failure 保留天数，默认 30。 */
+  handEventRetentionDays: z.number().int().min(1).max(3650).optional(),
+  /** 删除前补齐 billing projection 的单批扫描上限，默认 10000。 */
+  billingCatchupBatchLimit: z.number().int().min(1).max(100_000).optional(),
+  /** 删除前最多补齐 billing projection 批数，默认 100。 */
+  billingCatchupMaxBatches: z.number().int().min(1).max(10_000).optional(),
+});
+
 export const appConfigSchema = z.object({
   proxy: proxyConfigSchema.optional(),
   agent: agentConfigSchema,
@@ -1004,6 +1027,7 @@ export const appConfigSchema = z.object({
   runtimeEventStore: runtimeEventStoreConfigSchema.optional(),
   runtimeScheduler: runtimeSchedulerConfigSchema.optional(),
   runtimeHandHealthScanner: runtimeHandHealthScannerConfigSchema.optional(),
+  runtimeEventRetention: runtimeEventRetentionConfigSchema.optional(),
   clientDaemon: clientDaemonConfigSchema,
   secretVault: secretVaultConfigSchema.optional(),
   webTools: webToolsConfigSchema,
@@ -1056,6 +1080,7 @@ export type TenantRemoteHandsConfig = NonNullable<z.infer<typeof tenantRemoteHan
 export type RuntimeEventStoreConfig = z.infer<typeof runtimeEventStoreConfigSchema>;
 export type RuntimeSchedulerConfig = z.infer<typeof runtimeSchedulerConfigSchema>;
 export type RuntimeHandHealthScannerConfig = z.infer<typeof runtimeHandHealthScannerConfigSchema>;
+export type RuntimeEventRetentionConfig = z.infer<typeof runtimeEventRetentionConfigSchema>;
 export type ClientDaemonConfig = NonNullable<z.infer<typeof clientDaemonConfigSchema>>;
 export type SecretVaultConfig = z.infer<typeof secretVaultConfigSchema>;
 export type WebToolsConfig = z.infer<typeof webToolsConfigSchema>;

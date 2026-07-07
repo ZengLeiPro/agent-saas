@@ -474,6 +474,28 @@ describe("signup router", () => {
     expect(trialTenants[0].disabled).toBe(true);
   });
 
+  it("场景直达：register 接受合法 scenario；非法 scenario 被静默丢弃不阻断注册", async () => {
+    h = await makeTestRig();
+    await h.request("/api/signup/send-code", { phone: PHONE });
+    const res = await h.request("/api/signup/register", {
+      ...REGISTER_BODY,
+      code: h.sender.lastCode,
+      scenario: "boss-competitor-daily",
+    });
+    expect(res.status).toBe(201);
+
+    // 非法 scenario（大写/非法字符）不应导致 400——catch(undefined) 静默丢弃
+    const phone2 = "13800002222";
+    await h.request("/api/signup/send-code", { phone: phone2 });
+    const res2 = await h.request("/api/signup/register", {
+      ...REGISTER_BODY,
+      phone: phone2,
+      code: h.sender.lastCode,
+      scenario: "INVALID/../SCENARIO",
+    });
+    expect(res2.status).toBe(201);
+  });
+
   it("waitlist 留资：注册关闭时仍可提交，重复提交幂等返回 ok", async () => {
     h = await makeTestRig({
       selfSignup: { enabled: false, grantCredits: 500 },

@@ -16,6 +16,7 @@ import { TokenUsageDisplay } from "@/components/TokenUsageDisplay";
 import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { getPreviewFileType } from "@agent/shared";
 import { useAuth } from "@/contexts/AuthContext";
+import { useScenarioDeepLink } from "@/components/scenarios/useScenarioDeepLink";
 import type { LayoutProps } from "./types";
 
 const CronManager = lazy(() => import("@/components/CronManager").then(m => ({ default: m.CronManager })));
@@ -71,6 +72,12 @@ export function MobileLayout(props: LayoutProps) {
     setSheetOpen(false);
     setActiveTab("chat");
   }, [setActiveTab]);
+
+  // 场景直达：消费 ?scenario=<id>（官网注册落地 / 销售场景链接），预填起手指令
+  const handleScenarioPrefill = useCallback((prompt: string) => {
+    setInput(prompt);
+  }, [setInput]);
+  useScenarioDeepLink(handleScenarioPrefill);
 
   useEffect(() => {
     if (!isAdmin && (activeTab === "skills" || activeTab === "usage" || activeTab === "tenant-admin")) {

@@ -45,6 +45,7 @@ import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
 import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
+import { useScenarioDeepLink } from "@/components/scenarios/useScenarioDeepLink";
 import { FirstDayGuideBar } from "@/components/onboarding/FirstDayGuideBar";
 import { CronCreationWizard } from "@/components/onboarding/CronCreationWizard";
 import type { ScenarioItem } from "@agent/shared";
@@ -173,6 +174,9 @@ export function DesktopLayout(props: LayoutProps) {
     if (scenario) setLastTriedScenario(scenario);
     setInput(prompt);
   }, [setInput]);
+
+  // 场景直达：消费 ?scenario=<id>（官网注册落地 / 销售场景链接），预填起手指令
+  useScenarioDeepLink(handlePrefillScenario);
 
   // 「查看全部场景」：push 版切换，浏览器后退可回到聊天
   const handleViewAllScenarios = useCallback(() => {

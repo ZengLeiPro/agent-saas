@@ -77,6 +77,16 @@ const registerSchema = z.object({
   position: z.string().trim().min(1, "请选择岗位").max(50, "岗位不超过 50 个字符"),
   company: z.string().trim().max(50, "公司名不超过 50 个字符").optional(),
   utm: z.record(z.string(), z.string()).optional(),
+  /**
+   * 场景直达：官网场景页带来的场景库 id（如 boss-competitor-daily）。
+   * 仅作归因记录 + 钉钉线索展示；落地预填由前端用同一参数自行完成，
+   * id 是否真实存在由前端匹配场景库兜底，server 只做格式清洗。
+   */
+  scenario: z
+    .string()
+    .regex(/^[a-z0-9-]{1,64}$/)
+    .optional()
+    .catch(undefined),
 });
 
 const waitlistSchema = z.object({
@@ -400,7 +410,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
       res.status(400).json({ error: parsed.error.issues[0].message });
       return;
     }
-    const { phone, code, password, name, position, company } = parsed.data;
+    const { phone, code, password, name, position, company, scenario } = parsed.data;
     const utm = sanitizeUtm(parsed.data.utm);
 
     // 查重先于验证码消费（已注册用户不该白白烧掉一个有效验证码）；
@@ -429,17 +439,24 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
         createdBy: SIGNUP_ACTOR,
       });
 
-      // 2. 租户模型白名单（锁默认模型，禁用户切换）
-      if (rt.trialAllowedModels.length > 0) {
-        await tenantStore.updateSettings(tenantId, {
-          models: {
-            ...DEFAULT_TENANT_SETTINGS.models,
-            defaultModel: rt.trialAllowedModels[0],
-            allowedModels: rt.trialAllowedModels,
-            allowUserModelSwitch: false,
-          },
-        });
-      }
+      // 2. 租户设置：模型白名单（锁默认模型，禁用户切换）+ 首日引导条默认开。
+      //    注意 updateSettings 是「DEFAULT + patch」全量替换语义，必须一次调用传齐，
+      //    分两次调用后一次会把前一次的改动冲回默认值。
+      await tenantStore.updateSettings(tenantId, {
+        ...(rt.trialAllowedModels.length > 0
+          ? {
+              models: {
+                ...DEFAULT_TENANT_SETTINGS.models,
+                defaultModel: rt.trialAllowedModels[0],
+                allowedModels: rt.trialAllowedModels,
+                allowUserModelSwitch: false,
+              },
+            }
+          : {}),
+        // 试用租户默认开首日引导条（aha→cron→sprint），生效还需全局
+        // roleKit.firstDayGuideBar.enabled 配置打开（生产 config.json）
+        personalization: { firstDayGuideBarEnabled: true },
+      });
 
       // 3. 用户（username = 手机号；role=user）
       const user = await userStore.create({
@@ -511,7 +528,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
           ip,
           userAgent,
           channel,
-          detail: `self-signup tenant=${tenantId}${utm ? ` utm=${JSON.stringify(utm)}` : ""}`,
+          detail: `self-signup tenant=${tenantId}${scenario ? ` scenario=${scenario}` : ""}${utm ? ` utm=${JSON.stringify(utm)}` : ""}`,
         },
         loginLogFilePath,
       ).catch(() => {});
@@ -522,6 +539,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
           position,
           company,
           tenantId,
+          scenario,
           utm,
         });
       }

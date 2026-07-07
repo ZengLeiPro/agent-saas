@@ -15,6 +15,8 @@ export interface SignupLeadInfo {
   position: string;
   company?: string;
   tenantId: string;
+  /** 场景直达：官网场景页带来的场景库 id（销售据此知道客户想跑什么） */
+  scenario?: string;
   /** 官网带过来的 utm_* 参数（已在路由层白名单过滤） */
   utm?: Record<string, string>;
 }
@@ -78,6 +80,7 @@ export async function sendSignupLeadNotification(
     `- 岗位：${lead.position}`,
     `- 公司：${lead.company || "未填写"}`,
     `- 试用组织：${lead.tenantId}`,
+    ...(lead.scenario ? [`- 直达场景：${lead.scenario}`] : []),
     `- 来源：${formatUtm(lead.utm)}`,
     "",
     "> 已自动开通试用账号，按接单 SOP 当天回访。",

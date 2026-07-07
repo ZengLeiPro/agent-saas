@@ -27,6 +27,12 @@ function collectUtm(): Record<string, string> | undefined {
   return Object.keys(utm).length > 0 ? utm : undefined;
 }
 
+/** 场景直达：官网场景页 CTA 带来的场景库 id，注册成功后落地该场景（预填起手指令） */
+function collectScenario(): string | undefined {
+  const value = new URLSearchParams(window.location.search).get("scenario");
+  return value && /^[a-z0-9-]{1,64}$/.test(value) ? value : undefined;
+}
+
 interface SignupPageProps {
   onSwitchToLogin: () => void;
 }
@@ -153,6 +159,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   const timerRef = useRef<ReturnType<typeof setInterval>>();
 
   const utm = useMemo(collectUtm, []);
+  const scenario = useMemo(collectScenario, []);
 
   useEffect(() => {
     fetch("/api/signup/status")
@@ -220,6 +227,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
           position,
           company: company || undefined,
           utm,
+          scenario,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -229,8 +237,9 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
       if (!res.ok || !data.token) throw new Error(data.error || "注册失败");
       // 与登录同构：写 token 后整页跳转回根路径（顺带清掉 /signup 与 utm 参数），
       // AuthContext 初始化时从 token 恢复登录态，直接进产品。
+      // 场景直达：保留 scenario 参数，落地后由 useScenarioDeepLink 预填该场景起手指令。
       localStorage.setItem(TOKEN_KEY, data.token);
-      window.location.replace("/");
+      window.location.replace(scenario ? `/?scenario=${scenario}` : "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "注册失败");
       setLoading(false);

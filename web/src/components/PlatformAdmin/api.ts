@@ -155,6 +155,9 @@ export const platformAdminApi = {
   archiveWorkspace(path: string, confirm: string): Promise<{ ok: boolean; result: { relativeArchivePath: string } }> {
     return mutateJson(buildAdminApiPath("/system/storage/archive"), "POST", { path, confirm });
   },
+  deleteWorkspace(path: string, confirm: string): Promise<{ ok: boolean; result: { relativePath: string; bytes: number; fileCount: number | null } }> {
+    return mutateJson(buildAdminApiPath("/system/storage/delete"), "POST", { path, confirm });
+  },
   alertingStatus(): Promise<AlertingStatus> {
     return getJson(buildAdminApiPath("/system/alerts/status"));
   },

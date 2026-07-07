@@ -9,7 +9,7 @@ import type { AlertNotifier } from '../runtime/alertNotifier.js';
 import type { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { WorkspaceScanAlreadyRunningError } from '../runtime/systemMetricsCollector.js';
 import type { PgSystemMetricsStore, WorkspaceUsageRecord } from '../runtime/systemMetricsStore.js';
-import { archiveWorkspace, isWorkspaceScanFresh } from '../runtime/workspaceArchive.js';
+import { archiveWorkspace, deleteWorkspace, isWorkspaceScanFresh } from '../runtime/workspaceArchive.js';
 
 export interface SystemAdminRouterOptions {
   agentCwd: string;
@@ -29,6 +29,11 @@ const metricsQuerySchema = z.object({
 });
 
 const archiveBodySchema = z.object({
+  path: z.string().min(1).max(1000),
+  confirm: z.string().min(1).max(255),
+});
+
+const deleteWorkspaceBodySchema = z.object({
   path: z.string().min(1).max(1000),
   confirm: z.string().min(1).max(255),
 });
@@ -140,6 +145,38 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
       });
       await store.deleteWorkspaceUsage(parsed.data.path);
       auditLog(req, 'workspace_archived', `${parsed.data.path} -> ${result.relativeArchivePath}`);
+      res.json({ ok: true, result });
+    } catch (err) {
+      res.status(400).json({ error: errorMessage(err) });
+    }
+  });
+
+  router.post('/storage/delete', async (req, res) => {
+    const parsed = deleteWorkspaceBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidBody(res, parsed.error);
+    const store = options.systemMetricsStore;
+    if (!store) {
+      res.status(503).json({ error: 'System metrics store is not configured' });
+      return;
+    }
+    try {
+      const usage = await store.getWorkspaceUsage(parsed.data.path);
+      if (!usage) {
+        res.status(404).json({ error: 'Workspace usage record not found; run a scan first' });
+        return;
+      }
+      if (!isWorkspaceScanFresh(usage.scannedAt)) {
+        res.status(409).json({ error: 'Workspace scan is stale; run a scan before deleting' });
+        return;
+      }
+      const result = await deleteWorkspace({
+        agentCwd: options.agentCwd,
+        path: parsed.data.path,
+        confirm: parsed.data.confirm,
+        usage,
+      });
+      await store.deleteWorkspaceUsage(parsed.data.path);
+      auditLog(req, 'workspace_deleted', `${parsed.data.path} (${result.bytes} bytes)`);
       res.json({ ok: true, result });
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });

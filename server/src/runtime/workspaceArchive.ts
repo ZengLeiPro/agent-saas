@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, rename } from 'node:fs/promises';
+import { lstat, mkdir, rename, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import type { WorkspaceUsageRecord, WorkspaceUsageStatus } from './systemMetricsStore.js';
@@ -24,7 +24,25 @@ export interface ArchiveWorkspaceResult {
   relativeArchivePath: string;
 }
 
+export interface DeleteWorkspaceInput {
+  agentCwd: string;
+  path: string;
+  confirm: string;
+  usage: WorkspaceUsageRecord;
+}
+
+export interface DeleteWorkspaceResult {
+  sourcePath: string;
+  relativePath: string;
+  bytes: number;
+  fileCount: number | null;
+}
+
 export function canArchiveWorkspaceStatus(status: WorkspaceUsageStatus): boolean {
+  return ARCHIVABLE_STATUSES.has(status);
+}
+
+export function canDeleteWorkspaceStatus(status: WorkspaceUsageStatus): boolean {
   return ARCHIVABLE_STATUSES.has(status);
 }
 
@@ -56,6 +74,34 @@ export async function archiveWorkspace(input: ArchiveWorkspaceInput): Promise<Ar
     sourcePath: safe.absolutePath,
     targetPath,
     relativeArchivePath: relative(dirname(input.agentCwd), targetPath),
+  };
+}
+
+export async function deleteWorkspace(input: DeleteWorkspaceInput): Promise<DeleteWorkspaceResult> {
+  const safe = resolveWorkspacePath(input.agentCwd, input.path);
+  if (input.usage.path !== input.path) {
+    throw new Error('Workspace usage record does not match requested path');
+  }
+  if (!canDeleteWorkspaceStatus(input.usage.status)) {
+    throw new Error('Only soft-deleted or orphan workspaces can be deleted');
+  }
+  const lastSegment = basename(safe.absolutePath);
+  if (input.confirm !== lastSegment) {
+    throw new Error('Confirmation does not match workspace directory name');
+  }
+  const stats = await lstat(safe.absolutePath).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === 'ENOENT') throw new Error('Workspace directory no longer exists');
+    throw err;
+  });
+  if (!stats.isDirectory()) {
+    throw new Error('Workspace path is not a directory');
+  }
+  await rm(safe.absolutePath, { recursive: true, force: false });
+  return {
+    sourcePath: safe.absolutePath,
+    relativePath: safe.relativePath,
+    bytes: input.usage.bytes,
+    fileCount: input.usage.fileCount,
   };
 }
 

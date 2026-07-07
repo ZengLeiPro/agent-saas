@@ -117,6 +117,21 @@ function SandboxList() {
     void runAction("snat-cleanup", () => platformAdminApi.cleanupOrphanSnat());
   };
 
+  const pauseSandbox = (row: SandboxRecord) => {
+    if (!window.confirm(`暂停执行环境 ${row.name}？`)) return;
+    void runAction(`pause:${row.name}`, () => platformAdminApi.pauseSandbox(row.name));
+  };
+
+  const startSandbox = (row: SandboxRecord) => {
+    if (!window.confirm(`启动执行环境 ${row.name}？`)) return;
+    void runAction(`resume:${row.name}`, () => platformAdminApi.resumeSandbox(row.name));
+  };
+
+  const deleteSandbox = (row: SandboxRecord) => {
+    if (!window.confirm(`删除执行环境资源（Sandbox CR）${row.name}？这不会删除 NAS 工作区。`)) return;
+    void runAction(`delete:${row.name}`, () => platformAdminApi.deleteSandbox(row.name));
+  };
+
   return (
     <div className="w-full space-y-5">
       <SettingsPanelHeader
@@ -178,6 +193,57 @@ function SandboxList() {
           { key: "idle", header: "空闲", cell: row => <span className="text-xs tabular-nums">{formatDuration(row.idleMs)}</span> },
           { key: "ttl", header: "剩余时间", cell: row => <span className="text-xs tabular-nums">{formatDuration(row.ttlRemainingMs)}</span> },
           { key: "created", header: "创建", cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.createdAt)}</span> },
+          {
+            key: "actions",
+            header: "操作",
+            className: "w-[132px] text-right",
+            cell: row => (
+              <div className="flex justify-end gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  title="暂停"
+                  disabled={!!action || row.phase === "Paused"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    pauseSandbox(row);
+                  }}
+                >
+                  {action === `pause:${row.name}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PauseCircle className="h-3.5 w-3.5" />}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  title="启动"
+                  disabled={!!action || row.phase !== "Paused"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    startSandbox(row);
+                  }}
+                >
+                  {action === `resume:${row.name}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5" />}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  title="删除执行环境"
+                  disabled={!!action}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    deleteSandbox(row);
+                  }}
+                >
+                  {action === `delete:${row.name}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
+            ),
+          },
         ]}
       />
       {snat?.entries && snat.entries.length > 0 && (
@@ -254,7 +320,7 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
     void runAction("pause", () => platformAdminApi.pauseSandbox(sandboxName));
   };
   const resume = () => {
-    if (!window.confirm(`恢复 ${sandboxName}？`)) return;
+    if (!window.confirm(`启动 ${sandboxName}？`)) return;
     void runAction("resume", () => platformAdminApi.resumeSandbox(sandboxName));
   };
   const remove = () => {
@@ -280,7 +346,7 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
             </Button>
             <Button variant="outline" size="sm" onClick={resume} disabled={actionDisabled}>
               <PlayCircle className="mr-1.5 h-3.5 w-3.5" />
-              恢复
+              启动
             </Button>
             <Button variant="destructive" size="sm" onClick={remove} disabled={actionDisabled}>
               <Trash2 className="mr-1.5 h-3.5 w-3.5" />

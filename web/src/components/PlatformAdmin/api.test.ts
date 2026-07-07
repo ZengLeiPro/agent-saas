@@ -24,5 +24,6 @@ describe("platform admin api", () => {
   it("builds system observability paths", () => {
     expect(buildAdminApiPath("/system/metrics", { hours: 24 })).toBe("/api/admin/system/metrics?hours=24");
     expect(buildAdminApiPath("/system/storage/scan")).toBe("/api/admin/system/storage/scan");
+    expect(buildAdminApiPath("/system/storage/delete")).toBe("/api/admin/system/storage/delete");
   });
 });

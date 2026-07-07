@@ -42,6 +42,11 @@ async function startServer(options: { agentCwd: string; store: unknown; userStor
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+    deleteWorkspace: (body: unknown) => fetch(`${baseUrl}/api/admin/system/storage/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
@@ -167,6 +172,63 @@ describe('system admin workspace archive route', () => {
 
     const response = await server.archive({ path: 'ghost/ky1', confirm: 'ky1' });
     expect(response.status).toBe(409);
+    expect(existsSync(sourceDir)).toBe(true);
+    expect(store.deleteWorkspaceUsage).not.toHaveBeenCalled();
+    expect(vi.mocked(auditLog)).not.toHaveBeenCalled();
+  });
+
+  it('physically deletes a non-active workspace directory after confirmation', async () => {
+    const tmpRoot = await mkdtemp(join(tmpdir(), 'ws-delete-'));
+    tmpRoots.push(tmpRoot);
+    const agentCwd = join(tmpRoot, 'workspaces');
+    const sourceDir = join(agentCwd, 'ghost', 'ky1');
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, 'notes.txt'), 'delete me');
+
+    const store = {
+      getWorkspaceUsage: vi.fn(async () => usageRecord({ bytes: 2048, fileCount: 1 })),
+      deleteWorkspaceUsage: vi.fn(async () => undefined),
+    };
+    const server = await startServer({ agentCwd, store });
+    servers.push(server);
+
+    const response = await server.deleteWorkspace({ path: 'ghost/ky1', confirm: 'ky1' });
+    expect(response.status).toBe(200);
+    const payload = await response.json() as { ok: boolean; result: { sourcePath: string; bytes: number } };
+    expect(payload.ok).toBe(true);
+    expect(payload.result).toMatchObject({ sourcePath: sourceDir, bytes: 2048 });
+
+    expect(existsSync(sourceDir)).toBe(false);
+    expect(store.deleteWorkspaceUsage).toHaveBeenCalledWith('ghost/ky1');
+    expect(vi.mocked(auditLog)).toHaveBeenCalledWith(
+      expect.anything(),
+      'workspace_deleted',
+      expect.stringContaining('ghost/ky1'),
+    );
+  });
+
+  it('refuses to delete active workspaces', async () => {
+    const tmpRoot = await mkdtemp(join(tmpdir(), 'ws-delete-'));
+    tmpRoots.push(tmpRoot);
+    const agentCwd = join(tmpRoot, 'workspaces');
+    const sourceDir = join(agentCwd, 'kaiyan', 'active-user');
+    await mkdir(sourceDir, { recursive: true });
+
+    const store = {
+      getWorkspaceUsage: vi.fn(async () => usageRecord({
+        path: 'kaiyan/active-user',
+        tenantId: 'kaiyan',
+        userId: 'active-user',
+        status: 'active',
+      })),
+      deleteWorkspaceUsage: vi.fn(async () => undefined),
+    };
+    const server = await startServer({ agentCwd, store });
+    servers.push(server);
+
+    const response = await server.deleteWorkspace({ path: 'kaiyan/active-user', confirm: 'active-user' });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining('Only soft-deleted or orphan') });
     expect(existsSync(sourceDir)).toBe(true);
     expect(store.deleteWorkspaceUsage).not.toHaveBeenCalled();
     expect(vi.mocked(auditLog)).not.toHaveBeenCalled();

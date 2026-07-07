@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, Loader2, RefreshCw } from "lucide-react";
+import { Archive, Loader2, RefreshCw, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ export function InfraPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [archivingPath, setArchivingPath] = useState<string | null>(null);
+  const [deletingPath, setDeletingPath] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<WorkspaceUsageStatus | "all">("all");
   const [error, setError] = useState<string | null>(null);
 
@@ -96,6 +97,23 @@ export function InfraPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setArchivingPath(null);
+    }
+  }, [load]);
+
+  const onDelete = useCallback(async (row: WorkspaceUsageRecord) => {
+    const lastSegment = row.path.split("/").at(-1) ?? row.path;
+    const sizeText = row.bytes < 0 ? "扫描失败" : formatBytes(row.bytes);
+    if (!window.confirm(`永久删除 workspace 目录 ${row.path}？\n\n大小：${sizeText}\n文件数：${formatNumber(row.fileCount)}\n\n此操作不可恢复。`)) return;
+    const confirmed = window.prompt(`输入目录名确认永久删除：${lastSegment}`);
+    if (confirmed !== lastSegment) return;
+    setDeletingPath(row.path);
+    try {
+      await platformAdminApi.deleteWorkspace(row.path, confirmed);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingPath(null);
     }
   }, [load]);
 
@@ -223,21 +241,38 @@ export function InfraPage() {
           {
             key: "actions",
             header: "",
-            className: "w-[96px] text-right",
+            className: "w-[104px] text-right",
             cell: row => row.status === "active" ? null : (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void onArchive(row);
-                }}
-                disabled={archivingPath === row.path}
-                title="归档=移动到 runtime/archive/，不删除数据"
-              >
-                {archivingPath === row.path ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />}
-              </Button>
+              <div className="flex justify-end gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onArchive(row);
+                  }}
+                  disabled={archivingPath === row.path || deletingPath === row.path}
+                  title="归档=移动到 runtime/archive/，不删除数据"
+                >
+                  {archivingPath === row.path ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onDelete(row);
+                  }}
+                  disabled={archivingPath === row.path || deletingPath === row.path}
+                  title="永久删除 workspace 目录"
+                >
+                  {deletingPath === row.path ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
             ),
           },
         ]}

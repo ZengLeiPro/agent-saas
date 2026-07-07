@@ -20,7 +20,7 @@ export type LoginEvent =
   | 'mcp_server_updated' | 'mcp_server_deleted' | 'mcp_user_selections_updated' | 'mcp_admin_user_selections_updated'
   | 'mcp_secret_bound' | 'mcp_secret_rotated' | 'mcp_secret_deleted' | 'mcp_oauth_connected' | 'mcp_oauth_revoked'
   | 'tenant_created' | 'tenant_updated' | 'tenant_disabled' | 'tenant_enabled' | 'tenant_deleted'
-  | 'workspace_archived';
+  | 'workspace_archived' | 'workspace_deleted';
 
 export interface LoginLogEntry {
   timestamp: string;

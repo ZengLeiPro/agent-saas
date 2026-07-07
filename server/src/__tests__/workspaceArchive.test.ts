@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { canArchiveWorkspaceStatus, isWorkspaceScanFresh, resolveWorkspacePath } from '../runtime/workspaceArchive.js';
+import { canArchiveWorkspaceStatus, canDeleteWorkspaceStatus, isWorkspaceScanFresh, resolveWorkspacePath } from '../runtime/workspaceArchive.js';
 
 describe('workspace archive guards', () => {
   it('rejects absolute and escaping paths', () => {
@@ -17,6 +17,10 @@ describe('workspace archive guards', () => {
     expect(canArchiveWorkspaceStatus('soft_deleted')).toBe(true);
     expect(canArchiveWorkspaceStatus('orphan_tenant')).toBe(true);
     expect(canArchiveWorkspaceStatus('orphan_user')).toBe(true);
+    expect(canDeleteWorkspaceStatus('active')).toBe(false);
+    expect(canDeleteWorkspaceStatus('soft_deleted')).toBe(true);
+    expect(canDeleteWorkspaceStatus('orphan_tenant')).toBe(true);
+    expect(canDeleteWorkspaceStatus('orphan_user')).toBe(true);
   });
 
   it('checks scan freshness', () => {

@@ -116,7 +116,7 @@ export function ChatTabContent({
           </div>
         ) : (
           <>
-            <TodoPanel messages={messages} sessionId={sessionId} />
+            <TodoPanel messages={messages} sessionId={sessionId} runActive={loading && !stopping} />
             <FileUpload
               uploadedFiles={uploadedFiles}
               uploading={uploading}

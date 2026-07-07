@@ -19,15 +19,21 @@ import type { PgRunStore, RunStatus } from '../runtime/runStore.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
 import type { PgSessionProjectionStore, RuntimeSessionProjectionRecord } from '../runtime/sessionProjectionStore.js';
 import type { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
+import type { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
 import { parseWorkspaceId } from '../runtime/workspaceIdentity.js';
-import { requestAcsOrchestrator } from './runtimeOperationsAdmin.js';
+import {
+  ACTIVE_RUN_STATUSES,
+  buildAttentionQueue,
+  fetchSandboxSummaries,
+  queryHandFailures1h,
+  type SandboxSummary,
+} from '../runtime/attention.js';
 
 const RUN_ID_RE = /^\d{13}-[0-9a-fA-F-]{36}$/;
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
 const SUB_SESSION_ID_RE = /^sub-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
 const SANDBOX_NAME_RE = /^as-[a-z0-9-]{1,60}$/;
 
-const ACTIVE_RUN_STATUSES = ['pending', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand'] as const;
 const RUN_STATUS_WHITELIST = new Set<RunStatus>([
   ...ACTIVE_RUN_STATUSES,
   'completed',
@@ -80,6 +86,7 @@ export interface PlatformObservabilityRouterOptions {
   sessionProjectionStore?: PgSessionProjectionStore;
   eventStore?: PgEventStore;
   toolInvocationStore?: PgToolInvocationStore;
+  systemMetricsStore?: PgSystemMetricsStore;
   getDispatchMetrics?: () => DispatchMetricsSnapshot;
 }
 
@@ -94,25 +101,6 @@ interface SearchMatch {
 interface CursorValue {
   updatedAt: string;
   id: string;
-}
-
-interface SandboxSummary {
-  name: string;
-  workspaceId?: string;
-  sandboxScopeId?: string;
-  sessionId?: string;
-  phase?: string;
-  createdAt?: string;
-  lastActiveAt?: string;
-  image?: string;
-  busy?: boolean;
-  imageStale?: boolean;
-  idleMs?: number;
-  ttlRemainingMs?: number;
-  effectiveTtlMs?: number;
-  brokenReason?: string;
-  owner?: { kind: 'user'; tenantId: string; userId: string } | { kind: 'system'; tenantId: null; userId: null };
-  raw: Record<string, unknown>;
 }
 
 export function createPlatformObservabilityRouter(options: PlatformObservabilityRouterOptions): Router {
@@ -334,25 +322,23 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
       return;
     }
     try {
-      const [runHealth, todayCostYuan, toolRouting24h, sandboxes, handFailures] = await Promise.all([
+      const [runHealth, todayCostYuan, toolRouting24h, sandboxes, handFailures, storageHealth] = await Promise.all([
         queryRunHealth(options),
         queryTodayCostYuan(options),
         queryToolRouting24h(options),
         listSandboxes(options),
         queryHandFailures1h(options),
+        queryStorageHealth(options),
       ]);
-      const attention = [
-        ...await buildRunAttention(options),
-        ...buildSandboxAttention(sandboxes),
-        ...handFailures.map((item) => ({
-          kind: 'hand_failure',
-          severity: 'high',
-          title: item.reason || 'hand_failure',
-          entityRef: item.run_id ? { kind: 'run', id: item.run_id } : { kind: 'session', id: item.session_id ?? '' },
-          occurredAt: toIsoOrNull(item.timestamp),
-          actions: ['view_session'],
-        })),
-      ].slice(0, 50);
+      const attention = await buildAttentionQueue({
+        runStore: options.runStore,
+        eventStore: options.eventStore,
+        systemMetricsStore: options.systemMetricsStore,
+        billingService: options.billingService,
+        dailyCostThresholdYuan: options.config.alerting?.dailyCostThresholdYuan,
+        sandboxes,
+        handFailures,
+      });
 
       res.json({
         generatedAt: new Date().toISOString(),
@@ -366,6 +352,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
           dispatch: options.getDispatchMetrics?.() ?? null,
           sessionMetaProjection: getSessionMetaProjectionStats(),
           handFailures1h: handFailures.length,
+          storage: storageHealth,
         },
         attention,
       });
@@ -849,130 +836,48 @@ async function queryToolRouting24h(options: PlatformObservabilityRouterOptions):
   };
 }
 
-async function buildRunAttention(options: PlatformObservabilityRouterOptions): Promise<Array<Record<string, unknown>>> {
-  if (!options.runStore) return [];
-  const [failed, stale] = await Promise.all([
-    options.runStore.pool.query<Record<string, unknown>>(
-      `SELECT run_id, session_id, tenant_id, user_id, status_reason, failed_at, updated_at
-       FROM ${options.runStore.runsTable}
-       WHERE status = 'failed'
-         AND updated_at >= now() - interval '24 hours'
-       ORDER BY updated_at DESC
-       LIMIT 20`,
-    ),
-    options.runStore.pool.query<Record<string, unknown>>(
-      `SELECT run_id, session_id, tenant_id, user_id, status, status_reason, updated_at
-       FROM ${options.runStore.runsTable}
-       WHERE status = ANY($1::text[])
-         AND updated_at < now() - interval '15 minutes'
-       ORDER BY updated_at ASC
-       LIMIT 20`,
-      [ACTIVE_RUN_STATUSES],
-    ),
-  ]);
-  return [
-    ...failed.rows.map((row) => ({
-      kind: 'failed_run',
-      severity: 'high',
-      title: `Run failed: ${row.status_reason ?? row.run_id}`,
-      entityRef: { kind: 'run', id: row.run_id },
-      occurredAt: toIsoOrNull((row.failed_at ?? row.updated_at) as Date | string | null),
-      actions: ['view_trace'],
-    })),
-    ...stale.rows.map((row) => ({
-      kind: 'stale_run',
-      severity: 'medium',
-      title: `Stale ${row.status} run`,
-      entityRef: { kind: 'run', id: row.run_id },
-      occurredAt: toIsoOrNull(row.updated_at as Date | string | null),
-      actions: ['view_trace'],
-    })),
-  ];
-}
-
-async function queryHandFailures1h(options: PlatformObservabilityRouterOptions): Promise<Array<Record<string, any>>> {
-  if (!options.eventStore) return [];
-  const result = await options.eventStore.pool.query<Record<string, any>>(
-    `SELECT timestamp, tenant_id, session_id, run_id,
-            COALESCE(event_json->>'reason', event_json->>'message', event_json->>'error') AS reason
-     FROM ${options.eventStore.eventsTable}
-     WHERE event_type = 'hand_failure'
-       AND timestamp >= now() - interval '1 hour'
-     ORDER BY timestamp DESC
-     LIMIT 20`,
-  );
-  return result.rows;
-}
-
-function buildSandboxAttention(sandboxes: SandboxSummary[]): Array<Record<string, unknown>> {
-  const now = Date.now();
-  const attention: Array<Record<string, unknown>> = [];
-  for (const sandbox of sandboxes) {
-    if (sandbox.brokenReason) {
-      attention.push({
-        kind: 'broken_sandbox',
-        severity: 'high',
-        title: sandbox.brokenReason,
-        entityRef: { kind: 'sandbox', id: sandbox.name },
-        occurredAt: sandbox.lastActiveAt ?? sandbox.createdAt ?? null,
-        actions: ['view_sandbox', 'delete_recreate'],
-      });
-    }
-    const phase = String(sandbox.phase ?? '');
-    const createdAtMs = sandbox.createdAt ? Date.parse(sandbox.createdAt) : NaN;
-    if (phase && phase !== 'Running' && phase !== 'Paused' && Number.isFinite(createdAtMs) && now - createdAtMs > 5 * 60_000) {
-      attention.push({
-        kind: 'transient_sandbox',
-        severity: 'medium',
-        title: `Sandbox stuck in ${phase}`,
-        entityRef: { kind: 'sandbox', id: sandbox.name },
-        occurredAt: sandbox.createdAt ?? null,
-        actions: ['view_sandbox', 'cleanup'],
-      });
-    }
-  }
-  return attention;
-}
-
 async function listSandboxes(options: PlatformObservabilityRouterOptions): Promise<SandboxSummary[]> {
-  const result = await requestAcsOrchestrator({
+  return await fetchSandboxSummaries({
     config: options.config,
     secretVault: options.secretVault,
     fetchImpl: options.fetchImpl ?? fetch,
-    timeoutMs: options.acsTimeoutMs ?? 5_000,
-    path: '/sandboxes',
-    method: 'GET',
+    acsTimeoutMs: options.acsTimeoutMs ?? 5_000,
   });
-  if (result.status < 200 || result.status >= 300) return [];
-  const body = result.body as { sandboxes?: unknown };
-  if (!Array.isArray(body.sandboxes)) return [];
-  return body.sandboxes
-    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
-    .map((item) => {
-      const workspaceId = typeof item.workspaceId === 'string' ? item.workspaceId : undefined;
-      const owner = parseWorkspaceId(workspaceId);
-      return {
-        name: typeof item.name === 'string' ? item.name : '',
-        workspaceId,
-        sandboxScopeId: typeof item.sandboxScopeId === 'string' ? item.sandboxScopeId : undefined,
-        sessionId: typeof item.sessionId === 'string' ? item.sessionId : undefined,
-        phase: typeof item.phase === 'string' ? item.phase : undefined,
-        createdAt: typeof item.createdAt === 'string' ? item.createdAt : undefined,
-        lastActiveAt: typeof item.lastActiveAt === 'string' ? item.lastActiveAt : undefined,
-        image: typeof item.image === 'string' ? item.image : undefined,
-        busy: typeof item.busy === 'boolean' ? item.busy : undefined,
-        imageStale: typeof item.imageStale === 'boolean' ? item.imageStale : undefined,
-        idleMs: typeof item.idleMs === 'number' ? item.idleMs : undefined,
-        ttlRemainingMs: typeof item.ttlRemainingMs === 'number' ? item.ttlRemainingMs : undefined,
-        effectiveTtlMs: typeof item.effectiveTtlMs === 'number' ? item.effectiveTtlMs : undefined,
-        brokenReason: typeof item.brokenReason === 'string' ? item.brokenReason : undefined,
-        owner: owner
-          ? { kind: 'user' as const, tenantId: owner.tenantId, userId: owner.userId }
-          : { kind: 'system' as const, tenantId: null, userId: null },
-        raw: item,
-      };
-    })
-    .filter((item) => item.name);
+}
+
+async function queryStorageHealth(options: PlatformObservabilityRouterOptions): Promise<Record<string, unknown> | null> {
+  const store = options.systemMetricsStore;
+  if (!store) return null;
+  const [latestMetrics, pgTopTables, workspace] = await Promise.all([
+    store.listLatestMetrics(),
+    store.listPgTopTables(5),
+    store.getWorkspaceStorageSummary(),
+  ]);
+  const latest = (metric: string, label = '') => latestMetrics.find((row) => row.metric === metric && row.label === label) ?? null;
+  const root = latest('disk_root');
+  const nas = latest('disk_nas');
+  const tlsRows = latestMetrics.filter((row) => row.metric === 'tls_cert_expiry');
+  const tlsCertDaysLeft = tlsRows.length > 0
+    ? Math.min(...tlsRows.map((row) => row.valueNum / 86_400))
+    : null;
+  const rootDetail = root?.detailJson as { usedBytes?: number; totalBytes?: number } | null | undefined;
+  return {
+    rootDisk: root ? {
+      usedPct: root.valueNum,
+      usedBytes: Number(rootDetail?.usedBytes ?? 0),
+      totalBytes: Number(rootDetail?.totalBytes ?? 0),
+      sampledAt: root.sampledAt,
+    } : null,
+    nasUsedBytes: nas?.valueNum ?? null,
+    pgTopTables,
+    workspace: {
+      totalBytes: workspace.totalBytes,
+      orphanCount: workspace.orphanCount,
+      orphanBytes: workspace.orphanBytes,
+      lastScanAt: workspace.lastScanAt,
+    },
+    tlsCertDaysLeft,
+  };
 }
 
 function summarizeSandboxes(sandboxes: SandboxSummary[]): Record<string, number> {

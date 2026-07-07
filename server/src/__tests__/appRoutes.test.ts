@@ -18,6 +18,8 @@ const mocked = vi.hoisted(() => {
   const tenantRemoteHandsAdminRouter = { id: 'tenant-remote-hands-admin-router' };
   const runtimeOperationsAdminRouter = { id: 'runtime-operations-admin-router' };
   const platformObservabilityRouter = { id: 'platform-observability-router' };
+  const systemAdminRouter = { id: 'system-admin-router' };
+  const internalAcsAlertsRouter = { id: 'internal-acs-alerts-router' };
   const toolControlsAdminRouter = { id: 'tool-controls-admin-router' };
   const previewTokenRouter = { id: 'preview-token-router' };
   const previewServeRouter = { id: 'preview-serve-router' };
@@ -41,6 +43,8 @@ const mocked = vi.hoisted(() => {
     tenantRemoteHandsAdminRouter,
     runtimeOperationsAdminRouter,
     platformObservabilityRouter,
+    systemAdminRouter,
+    internalAcsAlertsRouter,
     toolControlsAdminRouter,
     previewTokenRouter,
     previewServeRouter,
@@ -62,6 +66,8 @@ const mocked = vi.hoisted(() => {
     createTenantRemoteHandsAdminRouter: vi.fn(() => tenantRemoteHandsAdminRouter),
     createRuntimeOperationsAdminRouter: vi.fn(() => runtimeOperationsAdminRouter),
     createPlatformObservabilityRouter: vi.fn(() => platformObservabilityRouter),
+    createSystemAdminRouter: vi.fn(() => systemAdminRouter),
+    createInternalAcsAlertsRouter: vi.fn(() => internalAcsAlertsRouter),
     createToolControlsAdminRouter: vi.fn(() => toolControlsAdminRouter),
     createPreviewRoutes: vi.fn(() => ({ tokenRouter: previewTokenRouter, serveRouter: previewServeRouter })),
   };
@@ -95,6 +101,12 @@ vi.mock('../routes/runtimeOperationsAdmin.js', () => ({
 vi.mock('../routes/platformObservability.js', () => ({
   createPlatformObservabilityRouter: mocked.createPlatformObservabilityRouter,
 }));
+vi.mock('../routes/systemAdmin.js', () => ({
+  createSystemAdminRouter: mocked.createSystemAdminRouter,
+}));
+vi.mock('../routes/internalAcsAlerts.js', () => ({
+  createInternalAcsAlertsRouter: mocked.createInternalAcsAlertsRouter,
+}));
 vi.mock('../routes/toolControlsAdmin.js', () => ({
   createToolControlsAdminRouter: mocked.createToolControlsAdminRouter,
 }));
@@ -125,6 +137,8 @@ describe('registerRoutes', () => {
     mocked.createTenantRemoteHandsAdminRouter.mockClear();
     mocked.createRuntimeOperationsAdminRouter.mockClear();
     mocked.createPlatformObservabilityRouter.mockClear();
+    mocked.createSystemAdminRouter.mockClear();
+    mocked.createInternalAcsAlertsRouter.mockClear();
     mocked.createToolControlsAdminRouter.mockClear();
     mocked.createPreviewRoutes.mockClear();
   });
@@ -196,10 +210,10 @@ describe('registerRoutes', () => {
     // Base routes: health + app-update + upload-guard + file-guard + upload + file + azeroth-proxy
     //   + preview(token+serve) + voice + tts + search + scenarios + contentops + sessions + dingtalk
     //   + tenant-remote-hands admin + runtime-operations admin + observability admin
-    //   + tool-controls admin + groups = 21
+    //   + system admin + internal ACS alerts + tool-controls admin + groups = 23
     // 注：upload-guard / file-guard 是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(21);
+    expect(app.use).toHaveBeenCalledTimes(23);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.healthRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.appUpdateRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.uploadRouter);
@@ -215,6 +229,8 @@ describe('registerRoutes', () => {
     expect(app.use).toHaveBeenCalledWith('/api/admin/tenant-remote-hands', mocked.tenantRemoteHandsAdminRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/runtime-operations', mocked.runtimeOperationsAdminRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin', mocked.requireAdmin, mocked.platformObservabilityRouter);
+    expect(app.use).toHaveBeenCalledWith('/api/admin/system', mocked.requireAdmin, mocked.systemAdminRouter);
+    expect(app.use).toHaveBeenCalledWith('/api/internal', mocked.internalAcsAlertsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/tool-controls', mocked.toolControlsAdminRouter);
   });
 

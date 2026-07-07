@@ -21,6 +21,13 @@ describe("platform admin url sync", () => {
       adminEntityId: "run_123",
       canonicalPath: null,
     });
+
+    expect(parseUrl("/platform-admin/infra")).toMatchObject({
+      tab: "platform-admin",
+      adminSection: "infra",
+      adminEntityId: null,
+      canonicalPath: null,
+    });
   });
 
   it("keeps platform settings modal routes separate from admin sections", () => {
@@ -60,5 +67,6 @@ describe("platform admin url sync", () => {
   it("builds platform admin urls with optional entity and query", () => {
     expect(buildPlatformAdminUrl({ section: "sessions", entityId: "sub-123", search: { includeDeleted: true } }))
       .toBe("/platform-admin/sessions/sub-123?includeDeleted=true");
+    expect(buildPlatformAdminUrl({ section: "infra" })).toBe("/platform-admin/infra");
   });
 });

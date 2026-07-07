@@ -273,6 +273,8 @@ export type {
   DispatchConfig,
   ObservabilityAuditConfig,
   ObservabilityConfig,
+  SystemMonitorConfig,
+  AlertingConfig,
   MemoryInjectContextConfig,
   MemoryMaintenanceConfig,
   MemoryConfig,

@@ -1,4 +1,4 @@
-import { BarChart3, Building2, Gauge, ListTree, MessageSquareText, ServerCog, ShieldCheck, Users } from "lucide-react";
+import { BarChart3, Building2, Gauge, HardDrive, ListTree, MessageSquareText, ServerCog, ShieldCheck, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,7 @@ export const platformAdminSections: PlatformAdminNavItem[] = [
   { id: "sessions", label: "会话", icon: MessageSquareText },
   { id: "runs", label: RUN_SHORT_LABEL, icon: ListTree },
   { id: "sandboxes", label: "执行环境", icon: ServerCog },
+  { id: "infra", label: "基础设施", icon: HardDrive },
   { id: "audit", label: "审计", icon: ShieldCheck },
   { id: "efficiency", label: "效率", icon: BarChart3 },
 ];

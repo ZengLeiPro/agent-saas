@@ -37,6 +37,8 @@ import { createAgentsRouter } from "../routes/agents.js";
 import { createRuntimeAuditRouter } from "../routes/runtimeAudit.js";
 import { createRuntimeTraceRouter } from "../routes/runtimeTrace.js";
 import { createPlatformObservabilityRouter } from "../routes/platformObservability.js";
+import { createSystemAdminRouter } from "../routes/systemAdmin.js";
+import { createInternalAcsAlertsRouter } from "../routes/internalAcsAlerts.js";
 import { RuntimeEfficiencyQuery } from "../runtime/efficiencyQuery.js";
 import { createSkillsRouter } from "../routes/skills.js";
 import { createMcpRouter } from "../routes/mcp.js";
@@ -357,7 +359,27 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       sessionProjectionStore: runtime.runtimeSessionProjectionStore,
       eventStore: runtime.runtimePgEventStore,
       toolInvocationStore: runtime.runtimeToolInvocationStore,
+      systemMetricsStore: runtime.systemMetricsStore,
       getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
+    }),
+  );
+
+  app.use(
+    "/api/admin/system",
+    requireAdmin,
+    createSystemAdminRouter({
+      agentCwd,
+      systemMetricsStore: runtime.systemMetricsStore,
+      systemMetricsCollector: runtime.systemMetricsCollector,
+      alertNotifier: runtime.alertNotifier,
+    }),
+  );
+
+  app.use(
+    "/api/internal",
+    createInternalAcsAlertsRouter({
+      alertNotifier: runtime.alertNotifier,
+      inboundToken: process.env.ACS_ALERT_INBOUND_TOKEN,
     }),
   );
 

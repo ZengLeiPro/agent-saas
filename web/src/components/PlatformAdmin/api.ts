@@ -8,6 +8,9 @@ import type {
   RuntimeOperationsResponse,
   SandboxRecord,
   SessionDetailResponse,
+  AlertingStatus,
+  SystemMetricsResponse,
+  SystemStorageResponse,
   TenantOverviewResponse,
   UserSummaryResponse,
 } from "./types";
@@ -139,5 +142,23 @@ export const platformAdminApi = {
   },
   cleanupOrphanSnat(): Promise<unknown> {
     return mutateJson("/api/admin/runtime-operations/acs/snat/cleanup-orphans", "POST", {});
+  },
+  systemMetrics(query: { hours?: number } = {}): Promise<SystemMetricsResponse> {
+    return getJson(buildAdminApiPath("/system/metrics", query));
+  },
+  systemStorage(): Promise<SystemStorageResponse> {
+    return getJson(buildAdminApiPath("/system/storage"));
+  },
+  triggerStorageScan(): Promise<{ ok: boolean; result: { dirs: number; orphans: number; totalBytes: number; durationMs: number } }> {
+    return mutateJson(buildAdminApiPath("/system/storage/scan"), "POST", {});
+  },
+  archiveWorkspace(path: string, confirm: string): Promise<{ ok: boolean; result: { relativeArchivePath: string } }> {
+    return mutateJson(buildAdminApiPath("/system/storage/archive"), "POST", { path, confirm });
+  },
+  alertingStatus(): Promise<AlertingStatus> {
+    return getJson(buildAdminApiPath("/system/alerts/status"));
+  },
+  sendTestAlert(): Promise<{ ok: boolean }> {
+    return mutateJson(buildAdminApiPath("/system/alerts/test"), "POST", {});
   },
 };

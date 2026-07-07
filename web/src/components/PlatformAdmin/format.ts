@@ -8,6 +8,19 @@ export function formatYuan(value: number | null | undefined, digits = 2): string
   return `¥${value.toFixed(digits)}`;
 }
 
+export function formatBytes(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = Math.max(0, value);
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  const digits = unit <= 1 ? 0 : 1;
+  return `${size.toFixed(digits)} ${units[unit]}`;
+}
+
 export function formatUsd(value: number | null | undefined, digits = 4): string {
   if (value == null || !Number.isFinite(value)) return "—";
   return `$${value.toFixed(digits)}`;

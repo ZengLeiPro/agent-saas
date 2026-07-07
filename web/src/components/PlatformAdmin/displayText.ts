@@ -73,6 +73,18 @@ export const ATTENTION_KIND_LABELS: Record<string, string> = {
   broken_sandbox: "执行环境异常",
   transient_sandbox: "执行环境卡住",
   hand_failure: "执行环境故障",
+  disk_root_high: "根盘水位高",
+  workspace_scan_stale: "工作区扫描过期",
+  orphan_workspace: "孤儿工作区",
+  tls_cert_expiring: "证书即将过期",
+  cost_daily_high: "单日成本过高",
+};
+
+export const WORKSPACE_STATUS_LABELS: Record<string, string> = {
+  active: "活跃",
+  soft_deleted: "软删残留",
+  orphan_tenant: "孤儿组织",
+  orphan_user: "孤儿用户",
 };
 
 export const EXECUTION_TARGET_LABELS: Record<string, string> = {
@@ -197,4 +209,8 @@ export function formatAttentionTitle(item: { kind?: string; title?: string }): s
     default:
       return title || formatAttentionKind(item.kind);
   }
+}
+
+export function formatWorkspaceStatus(status: string | null | undefined): string {
+  return displayText(WORKSPACE_STATUS_LABELS, status, "未知");
 }

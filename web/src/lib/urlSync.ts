@@ -31,6 +31,7 @@ const PLATFORM_ADMIN_SECTIONS = [
   'sessions',
   'runs',
   'sandboxes',
+  'infra',
   'audit',
   'efficiency',
 ] as const;

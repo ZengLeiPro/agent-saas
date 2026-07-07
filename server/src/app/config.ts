@@ -255,6 +255,31 @@ const observabilityConfigSchema = z.object({
   audit: observabilityAuditSchema.optional(),
 });
 
+const systemMonitorConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  fastIntervalMs: z.number().int().positive().optional(),
+  workspaceScanIntervalMs: z.number().int().positive().optional(),
+  duConcurrency: z.number().int().min(1).max(8).optional(),
+  tlsCheckHosts: z.array(z.string().min(1)).optional(),
+}).optional();
+
+const alertSeveritySchema = z.enum(['critical', 'high', 'medium', 'low', 'info']);
+
+const alertingConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  dingtalkWebhook: z.string().url().optional(),
+  minSeverity: alertSeveritySchema.optional(),
+  evaluateIntervalMs: z.number().int().positive().optional(),
+  repeatIntervalMs: z.object({
+    critical: z.number().int().positive().optional(),
+    high: z.number().int().positive().optional(),
+    medium: z.number().int().positive().optional(),
+    low: z.number().int().positive().optional(),
+    info: z.number().int().positive().optional(),
+  }).optional(),
+  dailyCostThresholdYuan: z.number().positive().optional(),
+}).optional();
+
 const memoryInjectContextSchema = z.object({
   enabled: z.boolean().optional(),
   maxLines: z.number().int().positive().optional(),
@@ -966,6 +991,8 @@ export const appConfigSchema = z.object({
   messageDisplay: messageDisplayConfigSchema.optional(),
   dispatch: dispatchConfigSchema.optional(),
   observability: observabilityConfigSchema.optional(),
+  systemMonitor: systemMonitorConfigSchema,
+  alerting: alertingConfigSchema,
   memory: memoryConfigSchema.optional(),
   auth: authConfigSchema.optional(),
   models: modelsConfigSchema.optional(),
@@ -1010,6 +1037,8 @@ export type DispatchConfig = z.infer<typeof dispatchConfigSchema>;
 export type LoggingConfig = z.infer<typeof loggingConfigSchema>;
 export type ObservabilityAuditConfig = z.infer<typeof observabilityAuditSchema>;
 export type ObservabilityConfig = z.infer<typeof observabilityConfigSchema>;
+export type SystemMonitorConfig = z.infer<typeof systemMonitorConfigSchema>;
+export type AlertingConfig = z.infer<typeof alertingConfigSchema>;
 export type MemoryInjectContextConfig = z.infer<typeof memoryInjectContextSchema>;
 export type MemoryMaintenanceConfig = z.infer<typeof memoryMaintenanceSchema>;
 export type MemoryConfig = z.infer<typeof memoryConfigSchema>;

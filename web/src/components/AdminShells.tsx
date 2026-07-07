@@ -23,7 +23,8 @@ import { EntityLink } from "@/components/PlatformAdmin/common";
 import { formatChannel } from "@/components/PlatformAdmin/displayText";
 import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
 import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControls";
-import { OverviewPage, SandboxesPage, SessionsPage, TenantsPage, UsersPage } from "@/components/PlatformAdmin/pages";
+import { InfraPage, OverviewPage, SandboxesPage, SessionsPage, TenantsPage, UsersPage } from "@/components/PlatformAdmin/pages";
+import { SystemSettingsPanel } from "@/components/PlatformAdmin/SystemSettingsPanel";
 import { RunTraceExplorer } from "@/components/RunTraceExplorer";
 
 export type TenantSection = "overview" | "users" | "skills" | "mcp" | "usage" | "billing" | "files" | "audit" | "settings" | "company";
@@ -720,23 +721,6 @@ function AuditEventsPanel({
   );
 }
 
-function PlaceholderAdminPanel({ title, description, points }: { title: string; description: string; points: string[] }) {
-  return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
-      <SettingsPanelHeader title={title} description={description} />
-      <div className="min-h-0 flex-1 overflow-auto">
-      <Card>
-        <CardContent className="p-5">
-          <div className="grid gap-3 md:grid-cols-2">
-            {points.map(point => <div key={point} className="rounded-xl border bg-muted/20 p-3 text-sm text-muted-foreground">{point}</div>)}
-          </div>
-        </CardContent>
-      </Card>
-      </div>
-    </div>
-  );
-}
-
 export function TenantAdminShell({
   renderUsers,
   renderSkills,
@@ -961,7 +945,7 @@ export function PlatformAdminShell({
     { id: "tool-controls", node: renderToolControls() },
     { id: "global-mcp", node: renderMcp() },
     { id: "skill-pool", node: renderSkills() },
-    { id: "system", node: <PlaceholderAdminPanel title="系统配置" description="平台运行参数、集成、备份、存储和健康检查。" points={["钉钉与外部集成配置", "存储、备份、恢复与数据保留", "系统版本、健康检查、队列和任务状态", "平台公告、维护窗口和运营参数"]} /> },
+    { id: "system", node: <SystemSettingsPanel /> },
   ];
 
   const settingsContent = (
@@ -990,6 +974,7 @@ export function PlatformAdminShell({
       return <RunTraceExplorer runId={entityId} onRunIdChange={(next) => onSectionChange("runs", next)} />;
     }
     if (activeSection === "sandboxes") return <SandboxesPage sandboxName={entityId} />;
+    if (activeSection === "infra") return <InfraPage />;
     return renderEfficiency();
   })();
 

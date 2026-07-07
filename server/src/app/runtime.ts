@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'path';
 import { serverLogger, configureLogger } from '../utils/logger.js';
@@ -80,6 +81,10 @@ import { buildTenantScopedEnv } from '../agent/tenantEnv.js';
 import { ClientDaemonTransport } from '../runtime/clientDaemonTransport.js';
 import { ClientDaemonGateway } from '../runtime/clientDaemonGateway.js';
 import { HandHealthScanner } from '../runtime/handHealthScanner.js';
+import { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
+import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
+import { PgAlertStateStore } from '../runtime/alertStateStore.js';
+import { AlertNotifier } from '../runtime/alertNotifier.js';
 import type { ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
 
 // δ: skillsDispatchConfig.listForUser 的进程级 cache（configVersion 驱动失效），
@@ -161,6 +166,14 @@ export interface AppRuntime {
   runtimeToolInvocationStore?: PgToolInvocationStore;
   /** PG runtime hand store（组织删除清理用；file backend 为 undefined）。 */
   runtimeHandStore?: PgHandStore;
+  /** PG-backed platform/system metrics store. Undefined for file backend. */
+  systemMetricsStore?: PgSystemMetricsStore;
+  /** Periodic collector for disk/NAS/PG/workspace metrics. Started only by processRole=all. */
+  systemMetricsCollector?: SystemMetricsCollector;
+  /** PG-backed alert dedupe state store. Undefined for file backend. */
+  alertStateStore?: PgAlertStateStore;
+  /** Periodic DingTalk alert notifier. Started only by processRole=all and configured webhook. */
+  alertNotifier?: AlertNotifier;
   /**
    * PG runtime event store 直接句柄（仅 backend='pg'；file backend 为 undefined）。
    * 运行监测读 API 复用其 pool / eventsTable 做聚合查询，避免另开第二份连接池。
@@ -546,6 +559,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let pgToolInvocationStore: PgToolInvocationStore | undefined;
   let pgClientDaemonRegistry: PgClientDaemonRegistry | undefined;
   let pgArtifactStore: PgArtifactStore | undefined;
+  let systemMetricsStore: PgSystemMetricsStore | undefined;
+  let systemMetricsCollector: SystemMetricsCollector | undefined;
+  let alertStateStore: PgAlertStateStore | undefined;
+  let alertNotifier: AlertNotifier | undefined;
   let artifactStore: ArtifactStore | undefined;
   let artifactService: ArtifactService | undefined;
   let artifactShutdown: (() => Promise<void>) | undefined;
@@ -668,6 +685,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await pgArtifactStore.init();
     artifactStore = pgArtifactStore;
+    systemMetricsStore = new PgSystemMetricsStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await systemMetricsStore.init();
+    alertStateStore = new PgAlertStateStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await alertStateStore.init();
     // C1: per-device daemon registry (PG backend). dev/file backend uses the
     // shared bearer fallback path inside ClientDaemonGateway.
     pgClientDaemonRegistry = new PgClientDaemonRegistry({
@@ -689,10 +716,55 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       userStore,
       logger: billingLogger,
     });
+    alertNotifier = new AlertNotifier({
+      config,
+      alertStateStore,
+      runStore: pgRunStore,
+      eventStore: pgEventStore,
+      systemMetricsStore,
+      billingService,
+      secretVault,
+      logger: serverLogger.child('AlertNotifier'),
+    });
+    if (config.systemMonitor?.enabled !== false) {
+      systemMetricsCollector = new SystemMetricsCollector({
+        store: systemMetricsStore,
+        agentCwd,
+        processCwd,
+        tablePrefix: config.runtimeEventStore.tablePrefix,
+        tenantStore,
+        userStore,
+        enabled: config.systemMonitor?.enabled,
+        fastIntervalMs: config.systemMonitor?.fastIntervalMs,
+        workspaceScanIntervalMs: config.systemMonitor?.workspaceScanIntervalMs,
+        duConcurrency: config.systemMonitor?.duConcurrency,
+        tlsCheckHosts: config.systemMonitor?.tlsCheckHosts,
+        logger: serverLogger.child('SystemMetrics'),
+      });
+      if (processRole === 'all') {
+        systemMetricsCollector.start();
+      } else {
+        serverLogger.info(`SystemMetricsCollector worker disabled for processRole=${processRole}`);
+      }
+    }
+    if (processRole === 'all') {
+      alertNotifier.start();
+    } else {
+      serverLogger.info(`AlertNotifier worker disabled for processRole=${processRole}`);
+    }
     const runBillingAudit = async () => {
       const audit = await billingService!.getAuditSummary({ days: 7 });
       if (audit.alerts.length > 0) {
         billingLogger.warn(`Billing audit alerts: ${audit.alerts.join('；')}`);
+        await alertNotifier?.notifyExternal('billing_audit', audit.alerts.map((message) => ({
+          kind: 'billing_audit',
+          severity: 'high' as const,
+          title: message,
+          occurredAt: new Date().toISOString(),
+          actions: ['open_billing'],
+          // FIX-2: billing audit 每条 alert 语义不同，去重键保留 message hash（文档 §6.5）。
+          dedupeKey: createHash('sha1').update(message).digest('hex').slice(0, 16),
+        })));
       }
     };
     void billingService.projectRuntimeEvents(2000)
@@ -719,6 +791,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       setSessionMetaProjectionSink(undefined);
       clientDaemonGateway?.close();
       handHealthScanner?.stop();
+      systemMetricsCollector?.stop();
+      alertNotifier?.stop();
       await runtimeScheduler?.stop();
       if (cancelDeliveryRetryTimer) clearInterval(cancelDeliveryRetryTimer);
       if (billingAuditTimer) clearInterval(billingAuditTimer);
@@ -1626,6 +1700,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runtimeSessionProjectionStore: pgSessionProjectionStore,
     runtimeToolInvocationStore: pgToolInvocationStore,
     runtimeHandStore: pgHandStore,
+    systemMetricsStore,
+    systemMetricsCollector,
+    alertStateStore,
+    alertNotifier,
     runtimePgEventStore: pgEventStore,
     validateToolSettingsConfig,
     updateToolSettingsConfig,

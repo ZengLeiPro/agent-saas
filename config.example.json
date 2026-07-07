@@ -199,6 +199,28 @@
     }
   },
 
+  // ── 系统与存储监测（仅 PG runtime backend 装配）────────────
+  "systemMonitor": {
+    "enabled": true,
+    "fastIntervalMs": 600000,
+    "workspaceScanIntervalMs": 21600000,
+    "duConcurrency": 2,
+    "tlsCheckHosts": ["agent.kaiyan.net"]
+  },
+
+  // ── 平台告警推送（钉钉群机器人，关键词建议设为「告警」）────
+  "alerting": {
+    "enabled": false,
+    "dingtalkWebhook": "https://oapi.dingtalk.com/robot/send?access_token=REPLACE_ME",
+    "minSeverity": "high",
+    "evaluateIntervalMs": 120000,
+    "repeatIntervalMs": {
+      "critical": 14400000,
+      "high": 43200000
+    },
+    "dailyCostThresholdYuan": 300
+  },
+
   // ── Agent 记忆系统 ────────────────────────────────────────
   "memory": {
     "enabled": true,

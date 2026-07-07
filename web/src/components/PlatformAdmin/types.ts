@@ -138,8 +138,69 @@ export interface OverviewSnapshot {
       [key: string]: unknown;
     } | null;
     handFailures1h: number;
+    storage: StorageHealth | null;
   };
   attention: OverviewAttentionItem[];
+}
+
+export interface StorageHealth {
+  rootDisk: { usedPct: number; usedBytes: number; totalBytes: number; sampledAt: string } | null;
+  nasUsedBytes: number | null;
+  pgTopTables: Array<{ table: string; bytes: number; sampledAt: string }>;
+  workspace: { totalBytes: number; orphanCount: number; orphanBytes: number; lastScanAt: string | null } | null;
+  tlsCertDaysLeft: number | null;
+}
+
+export interface SystemMetricRecord {
+  id: number;
+  metric: string;
+  label: string;
+  valueNum: number;
+  detailJson: Record<string, unknown> | null;
+  sampledAt: string;
+}
+
+export interface SystemMetricsResponse {
+  available: boolean;
+  latest: SystemMetricRecord[];
+  series: SystemMetricRecord[];
+  generatedAt: string;
+}
+
+export type WorkspaceUsageStatus = "active" | "soft_deleted" | "orphan_tenant" | "orphan_user";
+
+export interface WorkspaceUsageRecord {
+  path: string;
+  tenantId: string;
+  userId: string | null;
+  status: WorkspaceUsageStatus;
+  bytes: number;
+  fileCount: number | null;
+  scannedAt: string;
+  archivedAt: string | null;
+}
+
+export interface SystemStorageResponse {
+  available: boolean;
+  summary: {
+    totalBytes: number;
+    orphanBytes: number;
+    orphanCount: number;
+    byTenant: Array<{ tenantId: string; bytes: number; workspaceCount: number }>;
+    lastScanAt: string | null;
+  };
+  workspaces: WorkspaceUsageRecord[];
+  orphans: WorkspaceUsageRecord[];
+  generatedAt: string;
+}
+
+export interface AlertingStatus {
+  configured: boolean;
+  webhookConfigured: boolean;
+  webhookMasked: string | null;
+  minSeverity: "critical" | "high" | "medium" | "low" | "info";
+  lastNotifiedAt: string | null;
+  notifyCount: number;
 }
 
 export interface UserSummaryResponse {

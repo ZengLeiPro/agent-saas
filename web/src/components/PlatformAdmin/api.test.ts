@@ -20,4 +20,9 @@ describe("platform admin api", () => {
       q: undefined,
     })).toBe("/api/admin/tenants/overview");
   });
+
+  it("builds system observability paths", () => {
+    expect(buildAdminApiPath("/system/metrics", { hours: 24 })).toBe("/api/admin/system/metrics?hours=24");
+    expect(buildAdminApiPath("/system/storage/scan")).toBe("/api/admin/system/storage/scan");
+  });
 });

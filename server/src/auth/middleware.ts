@@ -21,6 +21,7 @@ const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   { path: "/healthz" },
   { path: "/healthz/drain" },
   { path: "/config" },
+  { method: "POST", path: "/internal/acs-alerts" },
   { method: "GET", path: "/app/version" },
   { path: /^\/dingtalk\/webhook\// },
   { method: "GET", path: /^\/auth\/avatar\// },

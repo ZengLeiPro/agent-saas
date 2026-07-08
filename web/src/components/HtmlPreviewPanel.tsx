@@ -3,42 +3,72 @@ import { ChevronLeft, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/authFetch";
 
+const HTML_SANDBOX_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline' blob:",
+  "style-src 'unsafe-inline' data:",
+  "img-src data: blob:",
+  "font-src data:",
+  "media-src data: blob:",
+  "connect-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+  "navigate-to 'none'",
+].join("; ");
+
 interface HtmlPreviewPanelProps {
   filePath: string;
   owner?: string;
+  shareToken?: string;
   onBack: () => void;
   hideHeader?: boolean;
 }
 
-export function HtmlPreviewPanel({ filePath, owner, onBack, hideHeader }: HtmlPreviewPanelProps) {
+function htmlDownloadUrl(filePath: string, owner?: string) {
+  const ownerParam = owner ? `&owner=${encodeURIComponent(owner)}` : "";
+  return `/api/file/download?path=${encodeURIComponent(filePath)}${ownerParam}`;
+}
+
+function shareHtmlDownloadUrl(shareToken: string, filePath: string) {
+  return `/api/share/sessions/${encodeURIComponent(shareToken)}/file?path=${encodeURIComponent(filePath)}`;
+}
+
+function injectSandboxCsp(html: string) {
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${HTML_SANDBOX_CSP}">`;
+  const headMatch = html.match(/<head(\s[^>]*)?>/i);
+  if (!headMatch) return `${meta}${html}`;
+
+  const index = html.indexOf(headMatch[0]) + headMatch[0].length;
+  return `${html.slice(0, index)}${meta}${html.slice(index)}`;
+}
+
+export function HtmlPreviewPanel({ filePath, owner, shareToken, onBack, hideHeader }: HtmlPreviewPanelProps) {
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
-    | { status: "success"; previewUrl: string; filename: string }
+    | { status: "success"; html: string; filename: string }
   >({ status: "loading" });
 
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
 
-    authFetch("/api/file/preview-token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(owner ? { owner } : {}),
-    })
+    const request = shareToken
+      ? fetch(shareHtmlDownloadUrl(shareToken, filePath))
+      : authFetch(htmlDownloadUrl(filePath, owner));
+
+    request
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({ error: "Unknown error" }));
           throw new Error(body.error || `HTTP ${res.status}`);
         }
-        return res.json();
+        return res.text();
       })
-      .then((data: { token: string }) => {
+      .then((html) => {
         if (cancelled) return;
-        const encodedPath = filePath.split('/').map(s => encodeURIComponent(s)).join('/');
-        const previewUrl = `/preview/${data.token}/${encodedPath}`;
         const filename = filePath.split("/").pop() || filePath;
-        setState({ status: "success", previewUrl, filename });
+        setState({ status: "success", html: injectSandboxCsp(html), filename });
       })
       .catch((err) => {
         if (!cancelled) {
@@ -49,7 +79,7 @@ export function HtmlPreviewPanel({ filePath, owner, onBack, hideHeader }: HtmlPr
     return () => {
       cancelled = true;
     };
-  }, [filePath, owner]);
+  }, [filePath, owner, shareToken]);
 
   const filename =
     state.status === "success" ? state.filename : filePath.split("/").pop() || filePath;
@@ -85,8 +115,9 @@ export function HtmlPreviewPanel({ filePath, owner, onBack, hideHeader }: HtmlPr
         )}
         {state.status === "success" && (
           <iframe
-            src={state.previewUrl}
-            sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+            srcDoc={state.html}
+            sandbox="allow-scripts"
+            referrerPolicy="no-referrer"
             className="h-full w-full border-0"
             title={filename}
           />

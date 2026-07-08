@@ -6,8 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { FilePreviewProvider } from "@/contexts/FilePreviewContext";
+import { FilePreviewDialog } from "@/components/FilePreviewPanel";
 import { fetchPublicSessionShare, type PublicSessionShareResponse } from "@/lib/sessionShareApi";
 import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
+import { getPreviewFileType } from "@agent/shared";
 
 interface SessionSharePageProps {
   token: string;
@@ -18,6 +20,7 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
   const [data, setData] = useState<PublicSessionShareResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
   const lastMessageRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -54,6 +57,17 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
   const useSamePath = scenarioId
     ? `${isAuthenticated ? "/" : "/signup"}?scenario=${encodeURIComponent(scenarioId)}`
     : "";
+  const openSharedPreview = (filePath: string) => {
+    if (getPreviewFileType(filePath) === "html") {
+      setPreviewFilePath(filePath);
+      return;
+    }
+    window.open(
+      `/api/share/sessions/${encodeURIComponent(token)}/file?path=${encodeURIComponent(filePath)}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  };
 
   if (loading && !data) {
     return (
@@ -82,9 +96,7 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
 
   return (
     <FilePreviewProvider value={{
-      openPreview: (filePath) => {
-        window.open(`/api/share/sessions/${encodeURIComponent(token)}/file?path=${encodeURIComponent(filePath)}`, "_blank", "noopener,noreferrer");
-      },
+      openPreview: openSharedPreview,
       shareToken: token,
       ...(data.detail.owner?.username ? { owner: data.detail.owner.username } : {}),
     }}>
@@ -134,6 +146,13 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
           debugModeOverride={data.share.debugMode}
           agentProfile={null}
           sessionParticipants={data.detail.owner ? { owner: data.detail.owner, agent: null } : null}
+        />
+        <FilePreviewDialog
+          open={!!previewFilePath}
+          filePath={previewFilePath}
+          owner={data.detail.owner?.username}
+          shareToken={token}
+          onClose={() => setPreviewFilePath(null)}
         />
       </div>
     </FilePreviewProvider>

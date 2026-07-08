@@ -15,13 +15,14 @@ import { VideoPreviewPanel } from "@/components/VideoPreviewPanel";
 interface FilePreviewPanelProps {
   filePath: string;
   owner?: string;
+  shareToken?: string;
   onBack: () => void;
   hideHeader?: boolean;
 }
 
-export function FilePreviewPanel({ filePath, owner, onBack, hideHeader }: FilePreviewPanelProps) {
+export function FilePreviewPanel({ filePath, owner, shareToken, onBack, hideHeader }: FilePreviewPanelProps) {
   const previewType = getPreviewFileType(filePath);
-  if (previewType === "html") return <HtmlPreviewPanel filePath={filePath} owner={owner} onBack={onBack} hideHeader={hideHeader} />;
+  if (previewType === "html") return <HtmlPreviewPanel filePath={filePath} owner={owner} shareToken={shareToken} onBack={onBack} hideHeader={hideHeader} />;
   if (previewType === "pdf") return <PdfPreviewPanel filePath={filePath} owner={owner} onBack={onBack} hideHeader={hideHeader} />;
   if (previewType === "video") return <VideoPreviewPanel filePath={filePath} owner={owner} onBack={onBack} hideHeader={hideHeader} />;
   if (previewType === "code") return <CodePreviewPanel filePath={filePath} owner={owner} onBack={onBack} hideHeader={hideHeader} />;
@@ -32,11 +33,12 @@ interface FilePreviewDialogProps {
   open: boolean;
   filePath: string | null;
   owner?: string;
+  shareToken?: string;
   onClose: () => void;
-  onDock: () => void;
+  onDock?: () => void;
 }
 
-export function FilePreviewDialog({ open, filePath, owner, onClose, onDock }: FilePreviewDialogProps) {
+export function FilePreviewDialog({ open, filePath, owner, shareToken, onClose, onDock }: FilePreviewDialogProps) {
   const filename = filePath?.split("/").pop() || filePath || "";
   const dirPath = filePath?.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
 
@@ -54,22 +56,25 @@ export function FilePreviewDialog({ open, filePath, owner, onClose, onDock }: Fi
               </div>
             ) : null}
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            onClick={onDock}
-            title="在右侧预览栏打开"
-          >
-            <PanelRightOpen className="h-4 w-4" />
-            右侧打开
-          </Button>
+          {onDock ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={onDock}
+              title="在右侧预览栏打开"
+            >
+              <PanelRightOpen className="h-4 w-4" />
+              右侧打开
+            </Button>
+          ) : null}
         </header>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {filePath ? (
             <FilePreviewPanel
               filePath={filePath}
               owner={owner}
+              shareToken={shareToken}
               onBack={onClose}
               hideHeader
             />

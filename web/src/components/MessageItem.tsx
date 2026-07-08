@@ -339,7 +339,9 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
     return () => { cancelled = true; };
   }, [filePath, fileSize, ownerParam, artifactId, shareToken]);
 
-  const isPreviewable = !!getPreviewFileType(fileName);
+  const previewType = getPreviewFileType(fileName);
+  const isPreviewable = !!previewType;
+  const isHtml = previewType === 'html';
   const visual = getFileTypeVisual(fileName);
   const TypeIcon = CATEGORY_ICON[visual.category];
   const isImage = visual.category === 'image';
@@ -348,7 +350,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   const canOpenPreview = artifactId
     ? isImage
     : shareToken
-      ? (isImage || isPreviewable)
+      ? (isImage || (isHtml && !!filePreview))
       : (isImage || (isPreviewable && !!filePreview));
 
   const handleClick = () => {
@@ -364,8 +366,8 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
       const url = shareFileUrl(shareToken, filePath);
       if (isImage) {
         setPreviewSrc(url);
-      } else if (isPreviewable) {
-        window.open(url, '_blank', 'noopener,noreferrer');
+      } else if (isHtml && filePreview) {
+        filePreview.openPreview(filePath, owner);
       }
       return;
     }

@@ -248,6 +248,19 @@ async function authFetchDownload(filePath: string, fileName: string, owner?: str
   }
 }
 
+function shareFileUrl(shareToken: string, filePath: string): string {
+  return `/api/share/sessions/${encodeURIComponent(shareToken)}/file?path=${encodeURIComponent(filePath)}`;
+}
+
+async function shareFileDownload(shareToken: string, filePath: string, fileName: string) {
+  const a = document.createElement('a');
+  a.href = shareFileUrl(shareToken, filePath);
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 /**
  * Artifact 签名 URL 解析：调 /api/artifacts/:id/read-url,后端返回 15 min TTL
  * 的直读 URL（本地 blob=签名 token,OSS=预签名 URL）。失败时抛错让调用侧兜底。
@@ -283,7 +296,7 @@ const CATEGORY_ICON: Record<FileTypeCategory, LucideIcon> = {
   video: FileVideo, text: FileText, archive: FileArchive, default: File,
 };
 
-function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, artifactId }: {
+function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, artifactId, shareToken }: {
   fileName: string;
   filePath: string;
   fileSize: number;
@@ -291,6 +304,8 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   owner?: string;
   /** legacy artifact_created 事件：优先走 artifact 签名 URL,不依赖 workspace 文件仍在原位。 */
   artifactId?: string;
+  /** 只读分享页使用 share token 读取快照关联文件，不依赖登录态。 */
+  shareToken?: string;
 }) {
   const [resolvedSize, setResolvedSize] = useState(fileSize);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
@@ -301,6 +316,17 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
     // artifact 卡片：大小已由 tool result 带出（sizeBytes 常存在但可能为 0）
     // 这时不 fallback HEAD /api/file/download——sourcePath 可能不在工作区里。
     if (artifactId) return;
+    if (shareToken) {
+      let cancelled = false;
+      fetch(shareFileUrl(shareToken, filePath), { method: 'HEAD' })
+        .then(res => {
+          if (cancelled) return;
+          const cl = res.headers.get('content-length');
+          if (cl) setResolvedSize(Number(cl));
+        })
+        .catch(() => {});
+      return () => { cancelled = true; };
+    }
     let cancelled = false;
     authFetch(`/api/file/download?path=${encodeURIComponent(filePath)}${ownerParam}`, { method: 'HEAD' })
       .then(res => {
@@ -310,7 +336,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [filePath, fileSize, ownerParam, artifactId]);
+  }, [filePath, fileSize, ownerParam, artifactId, shareToken]);
 
   const isPreviewable = !!getPreviewFileType(fileName);
   const visual = getFileTypeVisual(fileName);
@@ -320,7 +346,9 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   // （filePreview 依赖工作区路径,artifact 不适用）。
   const canOpenPreview = artifactId
     ? isImage
-    : (isImage || (isPreviewable && !!filePreview));
+    : shareToken
+      ? (isImage || isPreviewable)
+      : (isImage || (isPreviewable && !!filePreview));
 
   const handleClick = () => {
     if (artifactId) {
@@ -328,6 +356,15 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
         void resolveArtifactUrl(artifactId)
           .then(setPreviewSrc)
           .catch(() => { /* 打开失败静默；下载按钮仍可用 */ });
+      }
+      return;
+    }
+    if (shareToken) {
+      const url = shareFileUrl(shareToken, filePath);
+      if (isImage) {
+        setPreviewSrc(url);
+      } else if (isPreviewable) {
+        window.open(url, '_blank', 'noopener,noreferrer');
       }
       return;
     }
@@ -364,6 +401,8 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
               e.stopPropagation();
               if (artifactId) {
                 void artifactDownload(artifactId, fileName);
+              } else if (shareToken) {
+                void shareFileDownload(shareToken, filePath, fileName);
               } else {
                 void authFetchDownload(filePath, fileName, owner);
               }
@@ -738,6 +777,7 @@ export const MessageItem = memo(function MessageItem({
                       fileSize={0}
                       filePreview={filePreview}
                       owner={message.owner}
+                      shareToken={filePreview?.shareToken}
                     />
                   </div>
                 ) : (
@@ -825,6 +865,7 @@ export const MessageItem = memo(function MessageItem({
         filePreview={filePreview}
         owner={message.owner}
         {...(message.artifactId ? { artifactId: message.artifactId } : {})}
+        shareToken={filePreview?.shareToken}
       />
     );
   }

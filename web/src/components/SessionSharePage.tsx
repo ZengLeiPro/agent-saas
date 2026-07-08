@@ -71,7 +71,13 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
   }
 
   return (
-    <FilePreviewProvider value={{ openPreview: () => undefined, ...(data.detail.owner?.username ? { owner: data.detail.owner.username } : {}) }}>
+    <FilePreviewProvider value={{
+      openPreview: (filePath) => {
+        window.open(`/api/share/sessions/${encodeURIComponent(token)}/file?path=${encodeURIComponent(filePath)}`, "_blank", "noopener,noreferrer");
+      },
+      shareToken: token,
+      ...(data.detail.owner?.username ? { owner: data.detail.owner.username } : {}),
+    }}>
       <div className="flex h-full min-h-screen flex-col bg-secondary">
         <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b bg-background px-4">
           <div className="flex min-w-0 items-center gap-2">

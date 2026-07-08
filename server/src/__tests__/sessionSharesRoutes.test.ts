@@ -245,4 +245,41 @@ describe('session share routes', () => {
       await stopServer(server);
     }
   });
+
+  it('serves shared workspace files through the public share token', async () => {
+    const { sessionId } = await writeSharedSession();
+    const userCwd = deps.resolveUserCwd(agentCwd, TEST_USER);
+    const relPath = 'assets/20260708/demo.html';
+    await mkdir(join(userCwd, 'assets/20260708'), { recursive: true });
+    await writeFile(join(userCwd, relPath), '<h1>Demo artifact</h1>');
+
+    const { server, baseUrl } = await startServer(agentCwd);
+    try {
+      const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ debugMode: false }),
+      });
+      const createdJson = await created.json() as { url: string };
+      const token = createdJson.url.split('/').pop()!;
+      const fileUrl = `${baseUrl}/api/share/sessions/${token}/file?path=${encodeURIComponent(relPath)}`;
+
+      const head = await fetch(fileUrl, { method: 'HEAD' });
+      expect(head.status).toBe(200);
+      expect(head.headers.get('content-length')).toBe(String('<h1>Demo artifact</h1>'.length));
+
+      const file = await fetch(fileUrl);
+      expect(file.status).toBe(200);
+      expect(file.headers.get('content-type')).toContain('text/html');
+      expect(await file.text()).toBe('<h1>Demo artifact</h1>');
+
+      const blocked = await fetch(`${baseUrl}/api/share/sessions/${token}/file?path=${encodeURIComponent('../secret.txt')}`);
+      expect(blocked.status).toBe(403);
+
+      const sensitive = await fetch(`${baseUrl}/api/share/sessions/${token}/file?path=${encodeURIComponent('.env')}`);
+      expect(sensitive.status).toBe(403);
+    } finally {
+      await stopServer(server);
+    }
+  });
 });

@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { useAuth } from "@/contexts/AuthContext";
 import {
   getSessionShare,
   revokeSessionShare,
@@ -28,9 +27,8 @@ interface SessionShareDialogProps {
 }
 
 export function SessionShareDialog({ open, session, onOpenChange }: SessionShareDialogProps) {
-  const { user } = useAuth();
   const [share, setShare] = useState<SessionShareSummary | null>(null);
-  const [debugMode, setDebugMode] = useState(user?.debugMode === true);
+  const [debugMode, setDebugMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [revoking, setRevoking] = useState(false);
@@ -43,7 +41,7 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
     setLoading(true);
     setError(null);
     setCopied(false);
-    setDebugMode(user?.debugMode === true);
+    setDebugMode(false);
     getSessionShare(session.id)
       .then((next) => {
         if (cancelled) return;
@@ -61,7 +59,7 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
     return () => {
       cancelled = true;
     };
-  }, [open, session, user?.debugMode]);
+  }, [open, session]);
 
   const fullUrl = useMemo(() => {
     if (!share?.url) return "";

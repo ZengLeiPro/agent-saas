@@ -7,6 +7,7 @@
  */
 import { Router } from "express";
 import type { Request, Response } from "express";
+import { createReadStream } from "node:fs";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import {
@@ -64,6 +65,7 @@ import type { AgentProfileInfo } from "../data/agents/types.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import type { SessionShareSnapshot, SessionShareStore } from "../data/sessionShares/store.js";
 import { isShareExpired } from "../data/sessionShares/store.js";
+import { resolveAuthorizedPath } from "../security/extraDirs.js";
 
 // 5 分钟。所有 mutation(create/delete/rename/restore/fork...)都已主动 sessionsListCache.clear(),
 // 所以 TTL 只是兜底,越长越好。
@@ -596,6 +598,138 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       accessCount: record.accessCount,
       lastAccessedAt: record.lastAccessedAt,
     };
+  }
+
+  function publicShareFileUrlToken(req: Request): string {
+    return String(req.params.token || "");
+  }
+
+  function validateShareToken(token: string): boolean {
+    return /^[a-zA-Z0-9_-]{16,128}$/.test(token);
+  }
+
+  async function getReadableShareRecord(token: string) {
+    const store = options.sessionShareStore;
+    if (!store || !validateShareToken(token)) return null;
+    const record = await store.getByToken(token);
+    if (!record || record.revokedAt || isShareExpired(record)) return null;
+    return record;
+  }
+
+  function shareFileContentType(fileName: string): string {
+    const ext = path.extname(fileName).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      ".pdf": "application/pdf",
+      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ".xls": "application/vnd.ms-excel",
+      ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ".doc": "application/msword",
+      ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      ".csv": "text/csv",
+      ".txt": "text/plain",
+      ".json": "application/json",
+      ".md": "text/markdown",
+      ".html": "text/html",
+      ".htm": "text/html",
+      ".zip": "application/zip",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".gif": "image/gif",
+      ".mp3": "audio/mpeg",
+      ".wav": "audio/wav",
+      ".mp4": "video/mp4",
+      ".mov": "video/quicktime",
+      ".webm": "video/webm",
+    };
+    return mimeMap[ext] || "application/octet-stream";
+  }
+
+  async function handlePublicShareFile(req: Request, res: Response): Promise<void> {
+    try {
+      const token = publicShareFileUrlToken(req);
+      const filePath = req.query.path as string | undefined;
+      if (!filePath) {
+        res.status(400).json({ error: "Missing path parameter" });
+        return;
+      }
+      const normalizedPath = filePath.replace(/\\/g, "/");
+      if (
+        normalizedPath === ".env" ||
+        normalizedPath.startsWith(".env.") ||
+        normalizedPath.includes("/.env") ||
+        normalizedPath.includes("/.git/") ||
+        normalizedPath.startsWith(".git/") ||
+        normalizedPath.includes("/.ssh/") ||
+        normalizedPath.startsWith(".ssh/") ||
+        normalizedPath.endsWith("/.npmrc") ||
+        normalizedPath === ".npmrc"
+      ) {
+        res.status(403).json({ error: "Access denied: sensitive file path" });
+        return;
+      }
+
+      const record = await getReadableShareRecord(token);
+      if (!record) {
+        res.status(404).json({ error: "Share not found" });
+        return;
+      }
+
+      const userCwd = resolveUserCwd(agentCwd, {
+        id: record.ownerUserId,
+        username: record.ownerUsername,
+        role: "user",
+        tenantId: record.tenantId,
+      });
+      const absolutePath = resolveAuthorizedPath(filePath, userCwd, []);
+      if (!absolutePath) {
+        res.status(403).json({ error: "Access denied: path outside shared workspace" });
+        return;
+      }
+
+      const stat = await fs.lstat(absolutePath);
+      if (stat.isSymbolicLink()) {
+        res.status(403).json({ error: "Access denied: symbolic links not allowed" });
+        return;
+      }
+      if (!stat.isFile()) {
+        res.status(400).json({ error: "Not a file" });
+        return;
+      }
+
+      const fileName = path.basename(absolutePath);
+      const contentType = shareFileContentType(fileName);
+      const disposition =
+        contentType.startsWith("image/") ||
+        contentType.startsWith("video/") ||
+        contentType === "application/pdf"
+          ? "inline"
+          : "attachment";
+
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Length", String(stat.size));
+      res.setHeader(
+        "Content-Disposition",
+        `${disposition}; filename="${encodeURIComponent(fileName)}"`,
+      );
+      if (req.method === "HEAD") {
+        res.end();
+        return;
+      }
+      const stream = createReadStream(absolutePath);
+      stream.pipe(res);
+      stream.on("error", () => {
+        if (!res.headersSent) res.status(500).json({ error: "Failed to read shared file" });
+      });
+    } catch (err: any) {
+      if (err?.code === "ENOENT") {
+        res.status(404).json({ error: "File not found" });
+        return;
+      }
+      res.status(500).json({ error: "Failed to read shared file" });
+    }
   }
 
   /**
@@ -1134,6 +1268,14 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const msg = String(err instanceof Error ? err.message : err);
       res.status(500).json({ error: msg });
     }
+  });
+
+  router.get("/share/sessions/:token/file", (req: Request, res: Response) => {
+    void handlePublicShareFile(req, res);
+  });
+
+  router.head("/share/sessions/:token/file", (req: Request, res: Response) => {
+    void handlePublicShareFile(req, res);
   });
 
   /**

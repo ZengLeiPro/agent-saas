@@ -31,6 +31,7 @@ describe("auth middleware public routes", () => {
     app.get("/api/healthz", (_req, res) => res.send("ok"));
     app.get("/api/healthz/drain", (_req, res) => res.json({ idle: true }));
     app.get("/api/share/sessions/test-token", (_req, res) => res.json({ ok: true }));
+    app.get("/api/share/sessions/test-token/file", (_req, res) => res.json({ ok: true }));
     app.get("/api/protected", (_req, res) => res.json({ ok: true }));
 
     server = await new Promise((resolve) => {
@@ -75,6 +76,10 @@ describe("auth middleware public routes", () => {
 
   it("会话分享公开读取端点免登录可达", async () => {
     expect((await fetch(`${baseUrl}/api/share/sessions/test-token`)).status).toBe(200);
+  });
+
+  it("会话分享文件端点免登录可达", async () => {
+    expect((await fetch(`${baseUrl}/api/share/sessions/test-token/file?path=assets%2Fdemo.html`)).status).toBe(200);
   });
 
   it("非公开路径无 token 仍 401（放行未扩大化）", async () => {

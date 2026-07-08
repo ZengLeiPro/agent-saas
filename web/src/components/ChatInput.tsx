@@ -324,17 +324,20 @@ export function ChatInput({
         disabled={isDisabled}
       />
 
+      {topSlot && (
+        <div className="bg-secondary">
+          <div className="content-container pt-3">
+            {topSlot}
+          </div>
+        </div>
+      )}
+
       <div
         ref={wrapperRef}
         className="border-t border-border bg-secondary"
         style={{ paddingBottom: "var(--sab)" }}
       >
         <div className="content-container pt-3 pb-1">
-          {topSlot && (
-            <div className="pb-3">
-              {topSlot}
-            </div>
-          )}
           <div
             className="flex flex-col rounded-lg bg-card shadow-sm"
             onClick={() => !isDisabled && !voiceRecorder.isRecording && textareaRef.current?.focus()}

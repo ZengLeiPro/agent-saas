@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, PenLine, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, PenLine, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { AskUserAnswers } from "@agent/shared";
@@ -14,6 +14,36 @@ const CUSTOM_VALUE = "__custom__";
 
 function optionKey(qIndex: number, label: string) {
   return `${qIndex}:${label}`;
+}
+
+function ChoiceIndicator({ selected, multiSelect }: { selected: boolean; multiSelect: boolean }) {
+  if (multiSelect) {
+    return (
+      <span
+        className={cn(
+          "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+          selected
+            ? "border-success bg-success text-success-foreground"
+            : "border-muted-foreground/45 bg-background",
+        )}
+        aria-hidden
+      >
+        {selected && <Check className="h-3 w-3" strokeWidth={3} />}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={cn(
+        "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors",
+        selected ? "border-success" : "border-muted-foreground/45 bg-background",
+      )}
+      aria-hidden
+    >
+      {selected && <span className="h-2 w-2 rounded-full bg-success" />}
+    </span>
+  );
 }
 
 export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelProps) {
@@ -106,12 +136,12 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
   if (!question) return null;
 
   return (
-    <div className="rounded-[1.75rem] border border-border/70 bg-card p-3 shadow-[0_8px_30px_-18px_rgba(15,23,42,0.35)] md:p-4">
+    <div className="msg-user-text rounded-t-[1.75rem] rounded-b-none border-x border-t border-border/70 bg-card p-3 shadow-[0_8px_30px_-18px_rgba(15,23,42,0.35)] md:p-4">
       <div className="flex items-start gap-3 px-1 pb-3">
-        <h3 className="min-w-0 flex-1 text-base font-semibold leading-7 text-foreground md:text-lg">
+        <h3 className="min-w-0 flex-1 text-[inherit] font-semibold leading-[inherit] text-foreground">
           {question.question}
         </h3>
-        <div className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-2 text-[0.92em] text-muted-foreground">
           <button
             type="button"
             className="flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-muted"
@@ -121,7 +151,7 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
-          <span className="min-w-10 text-center text-base tabular-nums text-foreground/80">
+          <span className="min-w-10 text-center tabular-nums text-foreground/80">
             {activeIndex + 1}/{total}
           </span>
           <button
@@ -137,8 +167,8 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
             type="button"
             className="flex h-8 w-8 items-center justify-center rounded-full text-foreground transition-colors hover:bg-muted"
             onClick={() => submitAnswers(buildAnswers(false))}
-            aria-label="跳过提问"
-            title="跳过"
+            aria-label="全部跳过"
+            title="全部跳过"
           >
             <X className="h-5 w-5" />
           </button>
@@ -146,7 +176,7 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border/50">
-        {question.options.map((option, index) => {
+        {question.options.map((option) => {
           const isSelected = selected.has(option.label);
           return (
             <button
@@ -155,17 +185,15 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
               className={cn(
                 "flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left transition-colors",
                 "border-b border-border/50 last:border-b-0",
-                isSelected ? "bg-muted" : "hover:bg-muted/50",
+                "hover:bg-muted/50",
               )}
               onClick={() => handleOptionClick(option.label)}
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-background text-base text-foreground shadow-sm">
-                {index + 1}
-              </span>
+              <ChoiceIndicator selected={isSelected} multiSelect={question.multiSelect} />
               <span className="min-w-0 flex-1">
-                <span className="block text-base leading-6 text-foreground">{option.label}</span>
+                <span className="block text-[inherit] leading-[inherit] text-foreground">{option.label}</span>
                 {option.description && (
-                  <span className="mt-0.5 block text-sm leading-5 text-muted-foreground">{option.description}</span>
+                  <span className="mt-0.5 block text-[0.92em] leading-[1.45] text-muted-foreground">{option.description}</span>
                 )}
               </span>
               {isSelected && !question.multiSelect && (
@@ -187,7 +215,7 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-background text-foreground shadow-sm">
               <PenLine className="h-4 w-4" />
             </span>
-            <span className="text-base text-muted-foreground">其他补充...</span>
+            <span className="text-[inherit] text-muted-foreground">其他补充...</span>
           </button>
           {customSelected && (
             <div className="px-3 pb-3">
@@ -205,21 +233,21 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
       </div>
 
       <div className="flex items-center justify-between gap-2 pt-3">
-        <span className="text-xs text-muted-foreground">
+        <span className="rounded-full bg-[#FDF2E8] px-2 py-1 text-[0.82em] font-medium leading-none text-[#A0500E] dark:bg-[#E8843A]/20 dark:text-[#F5B078]">
           {question.multiSelect ? "可多选" : "单选"}
         </span>
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="rounded-full bg-muted px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted/80"
+            className="rounded-full bg-muted px-4 py-2 text-[0.92em] font-medium text-foreground transition-colors hover:bg-muted/80"
             onClick={() => submitAnswers(buildAnswers(false))}
           >
-            跳过
+            全部跳过
           </button>
           {(question.multiSelect || customSelected || total > 1 || hasCurrentAnswer) && (
             <button
               type="button"
-              className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+              className="rounded-full bg-primary px-4 py-2 text-[0.92em] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
               disabled={!hasCurrentAnswer && activeIndex === total - 1}
               onClick={() => goNextOrSubmit()}
             >

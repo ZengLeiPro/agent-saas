@@ -210,6 +210,8 @@ interface MessageListProps {
   ttsStateMap?: Record<string, TtsState>;
   agentProfile?: AgentProfile | null;
   sessionParticipants?: SessionParticipants | null;
+  /** 分享页等只读上下文可显式指定调试模式；未传时沿用当前登录用户设置。 */
+  debugModeOverride?: boolean;
   /**
    * 空会话槽位：会话没有任何消息且不在加载中时渲染（场景推荐卡等）。
    * 注意：本组件被 memo，上层需传入引用稳定（useMemo）的节点，避免破坏 memo。
@@ -232,6 +234,7 @@ export const MessageList = memo(function MessageList({
   ttsStateMap,
   agentProfile,
   sessionParticipants,
+  debugModeOverride,
   emptySlot,
 }: MessageListProps) {
   const NEAR_BOTTOM_THRESHOLD = 150;
@@ -303,7 +306,7 @@ export const MessageList = memo(function MessageList({
   }, [bubbleItems]);
 
   const { user } = useAuth();
-  const debugMode = user?.debugMode === true;
+  const debugMode = debugModeOverride ?? user?.debugMode === true;
   const displayUser = useMemo(() => {
     const owner = sessionParticipants?.owner;
     if (owner) {

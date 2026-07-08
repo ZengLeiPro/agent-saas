@@ -44,7 +44,7 @@ const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
   'workspace_archived', 'workspace_deleted',
   'file_deleted',
   'session_soft_deleted', 'session_restored', 'session_permanently_deleted',
-  'session_renamed', 'session_forked',
+  'session_renamed', 'session_forked', 'session_share_updated', 'session_share_revoked',
 ]);
 
 /** 从 Express Request 构建并追加一条审计日志（fire-and-forget） */

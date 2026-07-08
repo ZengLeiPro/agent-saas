@@ -196,6 +196,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getEventBus: webChannel ? () => webChannel.getEventBus() : undefined,
       runtimeEventStoreFor: runtime.runtimeEventStoreFor,
       resolveContextAccounting: (modelRef) => resolveContextAccountingFromModels(config.models, modelRef),
+      sessionShareStore: runtime.sessionShareStore,
     }),
   );
   app.use(

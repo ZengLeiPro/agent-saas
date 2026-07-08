@@ -62,6 +62,8 @@ import { canAccessSession, isMemoryPollSessionMeta } from "../data/sessions/acce
 import type { AgentStore } from "../data/agents/store.js";
 import type { AgentProfileInfo } from "../data/agents/types.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
+import type { SessionShareSnapshot, SessionShareStore } from "../data/sessionShares/store.js";
+import { isShareExpired } from "../data/sessionShares/store.js";
 
 // 5 分钟。所有 mutation(create/delete/rename/restore/fork...)都已主动 sessionsListCache.clear(),
 // 所以 TTL 只是兜底,越长越好。
@@ -175,6 +177,8 @@ export interface SessionsRouterOptions {
    * exact current context.
    */
   resolveContextAccounting?: ContextAccountingResolver;
+  /** 会话只读分享存储。 */
+  sessionShareStore?: SessionShareStore;
 }
 
 interface ResolvedSessionPath {
@@ -444,6 +448,153 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       ...(profile.signature !== undefined ? { signature: profile.signature } : {}),
       ...(profile.avatar !== undefined ? { avatar: profile.avatar } : {}),
       ...(profile.avatarVersion !== undefined ? { avatarVersion: profile.avatarVersion } : {}),
+    };
+  }
+
+  async function buildSessionDetailSnapshot(
+    req: Request,
+    sessionId: string,
+    optionsForBuild: { includeDeleted?: boolean } = {},
+  ): Promise<
+    | {
+        ok: true;
+        meta: SessionMeta | null;
+        transcriptPath: string;
+        parseDurationMs: number;
+        detail: SessionShareSnapshot;
+      }
+    | { ok: false; status: number; error: string }
+  > {
+    const userCwd = resolveUserCwd(
+      agentCwd,
+      req.user
+        ? {
+            id: req.user.sub,
+            username: req.user.username,
+            role: req.user.role,
+            tenantId: req.user.tenantId,
+          }
+        : undefined,
+    );
+
+    const resolvedPath = await resolveSessionPathForRead(userCwd, sessionId, reqTranscriptOwner(req.user));
+    if (!resolvedPath) return { ok: false, status: 404, error: "Session not found" };
+    const { transcriptPath, hasTranscript } = resolvedPath;
+
+    const meta = await readSessionMeta(transcriptPath);
+    if (!canAccessSession(req.user, meta, options.userStore)) {
+      return { ok: false, status: 403, error: "Access denied" };
+    }
+    if (meta?.deletedAt && !optionsForBuild.includeDeleted) {
+      return { ok: false, status: 404, error: "Session not found" };
+    }
+    if (req.user?.role !== "admin" && meta && isMemoryPollSessionMeta(meta)) {
+      return { ok: false, status: 404, error: "Session not found" };
+    }
+
+    const detailEventStore = runtimeEventStoreFor
+      ? runtimeEventStoreFor(transcriptPath)
+      : new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+    const parseStartedAt = Date.now();
+    let parsed = hasTranscript
+      ? await parseTranscriptFile(transcriptPath)
+      : await buildMetaOnlyTranscript(
+          sessionId,
+          transcriptPath,
+          runtimeEventStoreFor,
+        );
+    if (parsed.blocks.some((block) => block.kind === "thinking" || block.kind === "tool_use")) {
+      try {
+        parsed = enrichTranscriptActivityDurations(
+          parsed,
+          await listActivityDurationEvents(detailEventStore, sessionId),
+          sessionId,
+        );
+      } catch (err) {
+        apiLogger.warn(
+          `[sessions] activity duration enrichment failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    const parseDurationMs = Date.now() - parseStartedAt;
+    const lastRunState = await getLastRunState(detailEventStore, sessionId);
+
+    const owner = meta
+      ? (() => {
+          const ownerRecord = options.userStore?.findById(meta.userId);
+          return {
+            userId: meta.userId,
+            username: meta.username,
+            realName: ownerRecord?.realName,
+            avatar: ownerRecord?.avatar,
+            avatarVersion: ownerRecord?.avatarVersion,
+          };
+        })()
+      : undefined;
+
+    const source =
+      meta?.channel === "cron"
+        ? { type: "cron" as const, label: meta.cronJobName || "定时任务" }
+        : undefined;
+
+    return {
+      ok: true,
+      meta,
+      transcriptPath,
+      parseDurationMs,
+      detail: {
+        sessionId: parsed.sessionId ?? sessionId,
+        stats: parsed.stats,
+        blocks: parsed.blocks,
+        ...(owner ? { owner } : {}),
+        ...(source ? { source } : {}),
+        ...(lastRunState ? { lastRunState } : {}),
+      },
+    };
+  }
+
+  async function readAccessibleSessionMetaForRequest(
+    req: Request,
+    sessionId: string,
+  ): Promise<{ ok: true; meta: SessionMeta } | { ok: false; status: number; error: string }> {
+    const userCwd = resolveUserCwd(
+      agentCwd,
+      req.user
+        ? {
+            id: req.user.sub,
+            username: req.user.username,
+            role: req.user.role,
+            tenantId: req.user.tenantId,
+          }
+        : undefined,
+    );
+    const resolvedPath = await resolveSessionPathForRead(userCwd, sessionId, reqTranscriptOwner(req.user));
+    if (!resolvedPath) return { ok: false, status: 404, error: "Session not found" };
+    const meta = await readSessionMeta(resolvedPath.transcriptPath);
+    if (!meta) return { ok: false, status: 404, error: "Session not found" };
+    if (!canAccessSession(req.user, meta, options.userStore)) {
+      return { ok: false, status: 403, error: "Access denied" };
+    }
+    if (meta?.deletedAt) return { ok: false, status: 404, error: "Session not found" };
+    if (req.user?.role !== "admin" && isMemoryPollSessionMeta(meta)) {
+      return { ok: false, status: 404, error: "Session not found" };
+    }
+    return { ok: true, meta };
+  }
+
+  function toShareResponse(record: Awaited<ReturnType<SessionShareStore["upsertActive"]>>) {
+    return {
+      enabled: !record.revokedAt && !isShareExpired(record),
+      shareId: record.shareId,
+      sessionId: record.sessionId,
+      url: `/share/${record.token}`,
+      debugMode: record.debugMode,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      expiresAt: record.expiresAt,
+      revokedAt: record.revokedAt,
+      accessCount: record.accessCount,
+      lastAccessedAt: record.lastAccessedAt,
     };
   }
 
@@ -927,6 +1078,204 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
   });
 
   /**
+   * GET /api/share/sessions/:token
+   *
+   * 公开只读分享页读取快照。鉴权中间件会放行该路径；这里不触达原会话权限。
+   */
+  router.get("/share/sessions/:token", async (req: Request, res: Response) => {
+    try {
+      const store = options.sessionShareStore;
+      if (!store) {
+        res.status(404).json({ error: "Share not found" });
+        return;
+      }
+      const token = String(req.params.token || "");
+      if (!/^[a-zA-Z0-9_-]{16,128}$/.test(token)) {
+        res.status(404).json({ error: "Share not found" });
+        return;
+      }
+
+      const record = await store.getByToken(token);
+      if (!record) {
+        res.status(404).json({ error: "Share not found" });
+        return;
+      }
+      if (record.revokedAt) {
+        res.status(410).json({ error: "Share revoked" });
+        return;
+      }
+      if (isShareExpired(record)) {
+        res.status(410).json({ error: "Share expired" });
+        return;
+      }
+
+      await store.markAccessed(record.shareId).catch((err) => {
+        apiLogger.warn(
+          `[sessions] mark share accessed failed shareId=${record.shareId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        share: {
+          shareId: record.shareId,
+          sessionId: record.sessionId,
+          ownerUsername: record.ownerUsername,
+          debugMode: record.debugMode,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+          expiresAt: record.expiresAt,
+          accessCount: record.accessCount + 1,
+          lastAccessedAt: new Date().toISOString(),
+        },
+        detail: record.snapshot,
+      });
+    } catch (err) {
+      const msg = String(err instanceof Error ? err.message : err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /api/sessions/:sessionId/share
+   *
+   * 获取当前会话的有效分享设置。
+   */
+  router.get("/sessions/:sessionId/share", async (req: Request, res: Response) => {
+    try {
+      const { sessionId } = req.params;
+      if (!isValidSessionId(sessionId)) {
+        res.status(400).json({ error: "Invalid sessionId format" });
+        return;
+      }
+      const store = options.sessionShareStore;
+      if (!store) {
+        res.status(501).json({ error: "Session share store not configured" });
+        return;
+      }
+
+      const access = await readAccessibleSessionMetaForRequest(req, sessionId);
+      if (!access.ok) {
+        res.status(access.status).json({ error: access.error });
+        return;
+      }
+
+      const record = await store.getActiveBySession(sessionId, access.meta.userId);
+      if (!record) {
+        res.json({ enabled: false });
+        return;
+      }
+      res.json(toShareResponse(record));
+    } catch (err) {
+      const msg = String(err instanceof Error ? err.message : err);
+      if (msg.includes("outside allowed directory")) {
+        res.status(403).json({ error: msg });
+        return;
+      }
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /api/sessions/:sessionId/share
+   *
+   * 生成或更新当前会话的只读分享快照。
+   */
+  router.post("/sessions/:sessionId/share", async (req: Request, res: Response) => {
+    try {
+      const { sessionId } = req.params;
+      if (!isValidSessionId(sessionId)) {
+        res.status(400).json({ error: "Invalid sessionId format" });
+        return;
+      }
+      const store = options.sessionShareStore;
+      if (!store) {
+        res.status(501).json({ error: "Session share store not configured" });
+        return;
+      }
+
+      const body = (req.body ?? {}) as { debugMode?: unknown; expiresAt?: unknown };
+      const debugMode = body.debugMode === true;
+      let expiresAt: string | undefined;
+      if (typeof body.expiresAt === "string" && body.expiresAt.trim()) {
+        const parsed = Date.parse(body.expiresAt);
+        if (!Number.isFinite(parsed)) {
+          res.status(400).json({ error: "Invalid expiresAt" });
+          return;
+        }
+        expiresAt = new Date(parsed).toISOString();
+      }
+
+      const built = await buildSessionDetailSnapshot(req, sessionId);
+      if (!built.ok) {
+        res.status(built.status).json({ error: built.error });
+        return;
+      }
+      if (!built.meta) {
+        res.status(404).json({ error: "Session not found" });
+        return;
+      }
+
+      const record = await store.upsertActive({
+        sessionId,
+        tenantId: req.user?.tenantId || DEFAULT_TENANT_ID,
+        ownerUserId: built.meta.userId,
+        ownerUsername: built.meta.username,
+        createdByUserId: req.user?.sub || built.meta.userId,
+        debugMode,
+        snapshot: built.detail,
+        ...(expiresAt ? { expiresAt } : {}),
+      });
+      auditLog(req, "session_share_updated", sessionId);
+      res.json(toShareResponse(record));
+    } catch (err) {
+      const msg = String(err instanceof Error ? err.message : err);
+      if (msg.includes("outside allowed directory")) {
+        res.status(403).json({ error: msg });
+        return;
+      }
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * DELETE /api/sessions/:sessionId/share
+   *
+   * 撤销当前会话的公开分享链接。
+   */
+  router.delete("/sessions/:sessionId/share", async (req: Request, res: Response) => {
+    try {
+      const { sessionId } = req.params;
+      if (!isValidSessionId(sessionId)) {
+        res.status(400).json({ error: "Invalid sessionId format" });
+        return;
+      }
+      const store = options.sessionShareStore;
+      if (!store) {
+        res.status(501).json({ error: "Session share store not configured" });
+        return;
+      }
+
+      const access = await readAccessibleSessionMetaForRequest(req, sessionId);
+      if (!access.ok) {
+        res.status(access.status).json({ error: access.error });
+        return;
+      }
+
+      const revoked = await store.revokeBySession(sessionId, access.meta.userId);
+      if (revoked) auditLog(req, "session_share_revoked", sessionId);
+      res.json({ ok: true, enabled: false });
+    } catch (err) {
+      const msg = String(err instanceof Error ? err.message : err);
+      if (msg.includes("outside allowed directory")) {
+        res.status(403).json({ error: msg });
+        return;
+      }
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
    * GET /api/sessions/:sessionId
    *
    * 获取会话详情（历史消息）
@@ -942,114 +1291,28 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
 
-      const userCwd = resolveUserCwd(
-        agentCwd,
-        req.user
-          ? {
-              id: req.user.sub,
-              username: req.user.username,
-              role: req.user.role,
-            }
-          : undefined,
-      );
-
-      const resolvedPath = await resolveSessionPathForRead(userCwd, sessionId, reqTranscriptOwner(req.user));
-      if (!resolvedPath) {
-        res.status(404).json({ error: "Session not found" });
-        return;
-      }
-      const { transcriptPath, hasTranscript } = resolvedPath;
-
-      // 读取 meta（用于归属校验 + admin 获取 owner）
-      const meta = await readSessionMeta(transcriptPath);
       const includeDeleted =
         req.query.includeDeleted === "1" || req.query.includeDeleted === "true";
 
-      // 会话归属校验
-      if (!canAccessSession(req.user, meta, options.userStore)) {
-        res.status(403).json({ error: "Access denied" });
+      const built = await buildSessionDetailSnapshot(req, sessionId, { includeDeleted });
+      if (!built.ok) {
+        res.status(built.status).json({ error: built.error });
         return;
       }
-      if (meta?.deletedAt && !includeDeleted) {
-        res.status(404).json({ error: "Session not found" });
-        return;
-      }
-      // 对非 admin 屏蔽「记忆轮询 / 心跳轮询」会话
-      // 即使用户本人是 owner，也不允许通过单点接口直接读取轮询 transcript
-      if (req.user?.role !== "admin" && meta && isMemoryPollSessionMeta(meta)) {
-        res.status(404).json({ error: "Session not found" });
-        return;
-      }
-
-      const detailEventStore = runtimeEventStoreFor
-        ? runtimeEventStoreFor(transcriptPath)
-        : new FileEventStore(getRuntimeEventLogPath(transcriptPath));
-      const parseStartedAt = Date.now();
-      let parsed = hasTranscript
-        ? await parseTranscriptFile(transcriptPath)
-        : await buildMetaOnlyTranscript(
-            sessionId,
-            transcriptPath,
-            runtimeEventStoreFor,
-          );
-      if (parsed.blocks.some((block) => block.kind === "thinking" || block.kind === "tool_use")) {
-        try {
-          parsed = enrichTranscriptActivityDurations(
-            parsed,
-            await listActivityDurationEvents(detailEventStore, sessionId),
-            sessionId,
-          );
-        } catch (err) {
-          apiLogger.warn(
-            `[sessions] activity duration enrichment failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-      const parseDurationMs = Date.now() - parseStartedAt;
-
-      // a-2 对账：拉最近一条 run_state_changed 派生 lastRunState,
-      // 让前端进会话时能识别"后端已 failed/cancelled,但 UI 还在转" 的鬼状态。
-      const lastRunState = await getLastRunState(detailEventStore, sessionId);
 
       // 审计：记录会话打开（silent 参数标记自动刷新，跳过审计）
       if (!req.query.silent) {
         auditLog(req, "session_opened", sessionId);
       }
 
-      const owner = meta
-        ? (() => {
-            const ownerRecord = options.userStore?.findById(meta.userId);
-            return {
-              userId: meta.userId,
-              username: meta.username,
-              realName: ownerRecord?.realName,
-              avatar: ownerRecord?.avatar,
-              avatarVersion: ownerRecord?.avatarVersion,
-            };
-          })()
-        : undefined;
-
-      // cron 会话附加 source 信息，供前端生成 displayContent
-      const source =
-        meta?.channel === "cron"
-          ? { type: "cron" as const, label: meta.cronJobName || "定时任务" }
-          : undefined;
-
       const totalDurationMs = Date.now() - requestStartedAt;
-      if (totalDurationMs >= 800 || parseDurationMs >= 800) {
+      if (totalDurationMs >= 800 || built.parseDurationMs >= 800) {
         apiLogger.warn(
-          `[sessions] slow detail total=${totalDurationMs}ms parse=${parseDurationMs}ms sessionId=${sessionId} silent=${req.query.silent ? "1" : "0"} blocks=${parsed.blocks.length} lines=${parsed.stats.lines}`,
+          `[sessions] slow detail total=${totalDurationMs}ms parse=${built.parseDurationMs}ms sessionId=${sessionId} silent=${req.query.silent ? "1" : "0"} blocks=${built.detail.blocks.length} lines=${built.detail.stats.lines}`,
         );
       }
 
-      res.json({
-        sessionId: parsed.sessionId ?? sessionId,
-        stats: parsed.stats,
-        blocks: parsed.blocks,
-        ...(owner ? { owner } : {}),
-        ...(source ? { source } : {}),
-        ...(lastRunState ? { lastRunState } : {}),
-      });
+      res.json(built.detail);
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
       if (msg.includes("outside allowed directory")) {
@@ -1839,6 +2102,12 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         res.json({ ok: true, softDeleted: true });
         return;
       }
+
+      await options.sessionShareStore?.revokeBySession(sessionId, meta.userId).catch((err) => {
+        apiLogger.warn(
+          `[sessions] revoke share on delete failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
 
       // 软删除：写入 deletedAt + deletedBy
       await updateSessionMeta(transcriptPath, {

@@ -5,6 +5,7 @@ import App from "@/App";
 
 const LoginPage = lazy(() => import("@/components/LoginPage").then(m => ({ default: m.LoginPage })));
 const SignupPage = lazy(() => import("@/components/SignupPage").then(m => ({ default: m.SignupPage })));
+const SessionSharePage = lazy(() => import("@/components/SessionSharePage").then(m => ({ default: m.SessionSharePage })));
 
 /**
  * 注册模式判定：支持 path `/signup` 与 query `?signup`（官网 CTA 两种链接形态都兼容；
@@ -15,6 +16,11 @@ function initialSignupMode(): boolean {
     window.location.pathname === "/signup" ||
     new URLSearchParams(window.location.search).has("signup")
   );
+}
+
+function currentShareToken(): string | null {
+  const match = window.location.pathname.match(/^\/share\/([^/?#]+)$/);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 function FullscreenSpinner() {
@@ -28,6 +34,15 @@ function FullscreenSpinner() {
 export function AuthGate() {
   const { isLoading, isAuthenticated, authEnabled } = useAuth();
   const [signupMode, setSignupMode] = useState(initialSignupMode);
+  const shareToken = currentShareToken();
+
+  if (shareToken) {
+    return (
+      <Suspense fallback={<FullscreenSpinner />}>
+        <SessionSharePage token={shareToken} />
+      </Suspense>
+    );
+  }
 
   if (isLoading) {
     return <FullscreenSpinner />;

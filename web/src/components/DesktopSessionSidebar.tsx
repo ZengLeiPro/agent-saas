@@ -31,12 +31,14 @@ import {
   UserCog,
   Search,
   LayoutGrid,
+  Share2,
 } from "lucide-react";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
 import { DeleteGroupDialog } from "@/components/chat/DeleteGroupDialog";
 import { AddToGroupDialog } from "@/components/chat/AddToGroupDialog";
 import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDialog";
+import { SessionShareDialog } from "@/components/chat/SessionShareDialog";
 import { TrashView } from "@/components/chat/TrashView";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
@@ -211,6 +213,7 @@ function SessionRow({
   onDelete,
   onRename,
   onAutoTitle,
+  onShare,
   actionMenuId,
   setActionMenuId,
   actionMenuRef,
@@ -232,6 +235,7 @@ function SessionRow({
   onDelete?: (id: string) => void;
   onRename?: (sessionId: string, newTitle: string) => Promise<boolean>;
   onAutoTitle?: (sessionId: string) => Promise<boolean>;
+  onShare?: (sessionId: string) => void;
   actionMenuId: string | null;
   setActionMenuId: (id: string | null) => void;
   actionMenuRef: React.RefObject<HTMLDivElement>;
@@ -247,7 +251,7 @@ function SessionRow({
   compact?: boolean;
 }) {
   const menuOpen = actionMenuId === session.id;
-  const hasMenu = !selectionMode && Boolean(onDelete || onRename || onAddToGroup);
+  const hasMenu = !selectionMode && Boolean(onDelete || onRename || onAutoTitle || onShare || onAddToGroup || onRemoveFromGroup || onCompact);
 
   const menuDropdown = menuOpen ? (
     <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] rounded-lg border bg-popover py-1 shadow-md">
@@ -277,6 +281,20 @@ function SessionRow({
         >
           <Sparkles className="h-3.5 w-3.5" />
           自动命名
+        </button>
+      )}
+      {onShare && (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            setActionMenuId(null);
+            onShare(session.id);
+          }}
+        >
+          <Share2 className="h-3.5 w-3.5" />
+          分享
         </button>
       )}
       {onAddToGroup && (
@@ -787,6 +805,8 @@ interface SidebarDialogsProps {
   onRename?: (sessionId: string, newTitle: string) => Promise<boolean>;
   renameSessionId: string | null;
   setRenameSessionId: (id: string | null) => void;
+  shareSessionId: string | null;
+  setShareSessionId: (id: string | null) => void;
   renameGroupId: string | null;
   setRenameGroupId: (id: string | null) => void;
   deleteGroupId: string | null;
@@ -819,6 +839,8 @@ function SidebarDialogs({
   onRename,
   renameSessionId,
   setRenameSessionId,
+  shareSessionId,
+  setShareSessionId,
   renameGroupId,
   setRenameGroupId,
   deleteGroupId,
@@ -856,6 +878,14 @@ function SidebarDialogs({
           onConfirm={(newTitle) => onRename(renameSessionId!, newTitle)}
         />
       )}
+
+      <SessionShareDialog
+        open={shareSessionId !== null}
+        session={sessions.find((s) => s.id === shareSessionId) ?? null}
+        onOpenChange={(open) => {
+          if (!open) setShareSessionId(null);
+        }}
+      />
 
       <RenameSessionDialog
         open={renameGroupId !== null}
@@ -1030,6 +1060,7 @@ export function DesktopSessionSidebar({
 
   // 重命名弹窗状态
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
+  const [shareSessionId, setShareSessionId] = useState<string | null>(null);
 
   // 会话搜索状态：独立于主 sessions 列表，避免污染分页/分组/未读状态。
   const [sessionSearchQuery, setSessionSearchQuery] = useState("");
@@ -1682,7 +1713,7 @@ export function DesktopSessionSidebar({
                 ) : singleColumnEntries.length === 0 ? (
                   <div className="px-2 py-6 text-center text-sm text-muted-foreground">暂无会话</div>
                 ) : singleColumnEntries.map((entry) => entry.type === "session" ? (
-                  <SessionRow key={entry.session.id} session={entry.session} active={!singleSelectionMode && entry.session.id === activeSessionId} isLoading={isLoading} onSelect={handleSelect} onDelete={onDelete} onRename={onRename} onAutoTitle={onAutoTitle} actionMenuId={actionMenuId} setActionMenuId={setActionMenuId} actionMenuRef={actionMenuRef} setRenameSessionId={setRenameSessionId} onAddToGroup={isReadOnlyGroups ? undefined : setAddToGroupSessionId} onCompact={entry.session.id === activeSessionId && onCompact ? () => setCompactDialogOpen(true) : undefined} selectionMode={singleSelectionMode} selected={selectedSingleSessionIds.has(entry.session.id)} singleColumn compact={compactList} />
+                  <SessionRow key={entry.session.id} session={entry.session} active={!singleSelectionMode && entry.session.id === activeSessionId} isLoading={isLoading} onSelect={handleSelect} onDelete={onDelete} onRename={onRename} onAutoTitle={onAutoTitle} onShare={setShareSessionId} actionMenuId={actionMenuId} setActionMenuId={setActionMenuId} actionMenuRef={actionMenuRef} setRenameSessionId={setRenameSessionId} onAddToGroup={isReadOnlyGroups ? undefined : setAddToGroupSessionId} onCompact={entry.session.id === activeSessionId && onCompact ? () => setCompactDialogOpen(true) : undefined} selectionMode={singleSelectionMode} selected={selectedSingleSessionIds.has(entry.session.id)} singleColumn compact={compactList} />
                 ) : compactList ? (
                   <button key={entry.group.groupKey} type="button" className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted" onClick={() => { setActionMenuId(null); setSingleExpandedGroupKey(entry.group.groupKey); void onLoadGroupSessions?.(entry.group.groupKey); }}>
                     <CompactGroupLeadingIcon kind={entry.group.kind} />
@@ -1751,7 +1782,7 @@ export function DesktopSessionSidebar({
             </div>
             <ScrollArea className="flex-1 [&_[style*=table]]:!block">
               <div className="px-2 py-1">
-                {isSessionSearchActive ? <SessionSearchResults hits={sessionSearch.hits} activeSessionId={activeSessionId} isSearching={sessionSearch.isSearching} isLoadingMore={sessionSearch.isLoadingMore} hasMore={sessionSearch.hasMore} error={sessionSearch.error} onSelect={handleSelect} onLoadMore={sessionSearch.loadMore} /> : visibleSingleSessions.length === 0 ? <div className="px-2 py-6 text-center text-sm text-muted-foreground">暂无会话</div> : <div className="flex flex-col gap-1">{visibleSingleSessions.map((s) => <SessionRow key={s.id} session={s} active={!singleSelectionMode && s.id === activeSessionId} isLoading={isLoading} onSelect={handleSelect} onDelete={onDelete} onRename={onRename} onAutoTitle={onAutoTitle} actionMenuId={actionMenuId} setActionMenuId={setActionMenuId} actionMenuRef={actionMenuRef} setRenameSessionId={setRenameSessionId} onAddToGroup={isReadOnlyGroups ? undefined : setAddToGroupSessionId} onRemoveFromGroup={!isReadOnlyGroups ? (id) => singleExpandedGroup && groupsHook.removeSessionsFromGroup(singleExpandedGroup.groupKey, [id]) : undefined} isInManualGroup={!isReadOnlyGroups} onCompact={s.id === activeSessionId && onCompact ? () => setCompactDialogOpen(true) : undefined} selectionMode={singleSelectionMode} selected={selectedSingleSessionIds.has(s.id)} singleColumn compact={compactList} />)}</div>}
+                {isSessionSearchActive ? <SessionSearchResults hits={sessionSearch.hits} activeSessionId={activeSessionId} isSearching={sessionSearch.isSearching} isLoadingMore={sessionSearch.isLoadingMore} hasMore={sessionSearch.hasMore} error={sessionSearch.error} onSelect={handleSelect} onLoadMore={sessionSearch.loadMore} /> : visibleSingleSessions.length === 0 ? <div className="px-2 py-6 text-center text-sm text-muted-foreground">暂无会话</div> : <div className="flex flex-col gap-1">{visibleSingleSessions.map((s) => <SessionRow key={s.id} session={s} active={!singleSelectionMode && s.id === activeSessionId} isLoading={isLoading} onSelect={handleSelect} onDelete={onDelete} onRename={onRename} onAutoTitle={onAutoTitle} onShare={setShareSessionId} actionMenuId={actionMenuId} setActionMenuId={setActionMenuId} actionMenuRef={actionMenuRef} setRenameSessionId={setRenameSessionId} onAddToGroup={isReadOnlyGroups ? undefined : setAddToGroupSessionId} onRemoveFromGroup={!isReadOnlyGroups ? (id) => singleExpandedGroup && groupsHook.removeSessionsFromGroup(singleExpandedGroup.groupKey, [id]) : undefined} isInManualGroup={!isReadOnlyGroups} onCompact={s.id === activeSessionId && onCompact ? () => setCompactDialogOpen(true) : undefined} selectionMode={singleSelectionMode} selected={selectedSingleSessionIds.has(s.id)} singleColumn compact={compactList} />)}</div>}
               </div>
             </ScrollArea>
           </div>
@@ -1790,6 +1821,8 @@ export function DesktopSessionSidebar({
           onRename={onRename}
           renameSessionId={renameSessionId}
           setRenameSessionId={setRenameSessionId}
+          shareSessionId={shareSessionId}
+          setShareSessionId={setShareSessionId}
           renameGroupId={renameGroupId}
           setRenameGroupId={setRenameGroupId}
           deleteGroupId={deleteGroupId}
@@ -2232,10 +2265,11 @@ export function DesktopSessionSidebar({
                               metaText={buildSessionMetaText(s)}
                               isLoading={isLoading}
                               onSelect={handleSelect}
-                              onDelete={onDelete}
-                              onRename={onRename}
-                              onAutoTitle={onAutoTitle}
-                              actionMenuId={actionMenuId}
+	                              onDelete={onDelete}
+	                              onRename={onRename}
+	                              onAutoTitle={onAutoTitle}
+	                              onShare={setShareSessionId}
+	                              actionMenuId={actionMenuId}
                               setActionMenuId={setActionMenuId}
                               actionMenuRef={actionMenuRef}
                               setRenameSessionId={setRenameSessionId}
@@ -2298,6 +2332,8 @@ export function DesktopSessionSidebar({
         onRename={onRename}
         renameSessionId={renameSessionId}
         setRenameSessionId={setRenameSessionId}
+        shareSessionId={shareSessionId}
+        setShareSessionId={setShareSessionId}
         renameGroupId={renameGroupId}
         setRenameGroupId={setRenameGroupId}
         deleteGroupId={deleteGroupId}

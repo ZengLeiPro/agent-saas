@@ -71,6 +71,8 @@ const EVENT_LABELS: Record<string, string> = {
   session_permanently_deleted: "永久删除",
   session_renamed: "重命名会话",
   session_forked: "复刻会话",
+  session_share_updated: "更新会话分享",
+  session_share_revoked: "撤销会话分享",
   group_created: "创建分组",
   group_updated: "更新分组",
   group_deleted: "删除分组",

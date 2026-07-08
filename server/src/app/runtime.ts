@@ -32,6 +32,11 @@ import {
   type ArtifactStore,
 } from '../runtime/artifactStore.js';
 import { ArtifactService } from '../runtime/artifactService.js';
+import {
+  InMemorySessionShareStore,
+  PgSessionShareStore,
+  type SessionShareStore,
+} from '../data/sessionShares/store.js';
 import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
 import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from '../runtime/toolInvocationCancelDelivery.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
@@ -188,6 +193,8 @@ export interface AppRuntime {
   updateMemoryIndexConfig?: (memoryIndex: NonNullable<NonNullable<AppConfig['memory']>['index']> | undefined) => Promise<void>;
   /** Artifact metadata/blob service for runtime-produced artifacts. */
   artifactService?: ArtifactService;
+  /** 会话只读分享存储。 */
+  sessionShareStore: SessionShareStore;
   /** Artifact GC timer cleanup. */
   artifactShutdown?: () => Promise<void>;
   /** Reverse WebSocket gateway for customer-side client daemon hands. */
@@ -566,6 +573,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let alertNotifier: AlertNotifier | undefined;
   let artifactStore: ArtifactStore | undefined;
   let artifactService: ArtifactService | undefined;
+  let sessionShareStore: SessionShareStore | undefined;
   let artifactShutdown: (() => Promise<void>) | undefined;
   let billingService: BillingService | undefined;
   let billingAuditTimer: NodeJS.Timeout | undefined;
@@ -687,6 +695,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await pgArtifactStore.init();
     artifactStore = pgArtifactStore;
+    const pgSessionShareStore = new PgSessionShareStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await pgSessionShareStore.init();
+    sessionShareStore = pgSessionShareStore;
     systemMetricsStore = new PgSystemMetricsStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
@@ -849,6 +863,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ? (_transcriptPath) => pgEventStore!  // PG backend：共享 pool，按 session_id 过滤
     : (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath));
 
+  sessionShareStore ??= new InMemorySessionShareStore();
   artifactStore ??= new InMemoryArtifactStore();
   const artifactConfig = config.artifact;
   let artifactBlobStore: ArtifactBlobStore;
@@ -1735,6 +1750,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     updateToolSettingsConfig,
     updateMemoryIndexConfig,
     artifactService,
+    sessionShareStore,
     artifactShutdown,
     clientDaemonGateway,
     runtimeEventStoreFor,

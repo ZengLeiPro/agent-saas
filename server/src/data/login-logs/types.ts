@@ -3,6 +3,7 @@ export type LoginEvent =
   | 'login_success' | 'login_fail' | 'app_foreground' | 'app_background' | 'page_viewed'
   | 'chat_message_sent'
   | 'session_opened' | 'session_soft_deleted' | 'session_restored' | 'session_permanently_deleted' | 'session_renamed' | 'session_forked'
+  | 'session_share_updated' | 'session_share_revoked'
   | 'group_created' | 'group_updated' | 'group_deleted' | 'group_sessions_added' | 'group_sessions_removed' | 'group_sorting_updated'
   | 'cron_job_created' | 'cron_job_updated' | 'cron_job_deleted' | 'cron_job_toggled' | 'cron_job_triggered'
   | 'user_created' | 'user_updated' | 'user_deleted' | 'user_avatar_updated'

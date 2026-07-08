@@ -36,6 +36,8 @@ interface ChatInputProps {
   autoApproveRunShell?: boolean;
   onAutoApproveRunShellChange?: (checked: boolean) => void;
   onSendVoice?: (wavBlob: Blob, durationMs: number) => Promise<void>;
+  disabled?: boolean;
+  disabledPlaceholder?: string;
 }
 
 const MIN_HEIGHT = 36;
@@ -68,7 +70,10 @@ export function ChatInput({
   autoApproveRunShell,
   onAutoApproveRunShellChange,
   onSendVoice,
+  disabled,
+  disabledPlaceholder = "只读状态无法发送消息",
 }: ChatInputProps) {
+  const isDisabled = disabled === true;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -76,6 +81,7 @@ export function ChatInput({
 
   const voiceRecorder = useVoiceRecorder({
     onVoiceSend: async (wavBlob, durationMs) => {
+      if (isDisabled) return;
       await onSendVoice?.(wavBlob, durationMs);
     },
     onTooShort: () => {
@@ -129,12 +135,13 @@ export function ChatInput({
   }, [scrollContainerRef]);
 
   const handleFocus = useCallback(() => {
+    if (isDisabled) return;
     setTimeout(() => {
       if (isNearBottomRef?.current !== false && scrollContainerRef?.current) {
         scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
       }
     }, 350);
-  }, [scrollContainerRef, isNearBottomRef]);
+  }, [scrollContainerRef, isNearBottomRef, isDisabled]);
 
   // IME composition 跨浏览器处理：
   // Chrome: keydown(isComposing=true) → compositionend — isComposing 可靠
@@ -151,6 +158,7 @@ export function ChatInput({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (isDisabled) return;
     if (e.nativeEvent.isComposing || isComposingRef.current) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -160,8 +168,8 @@ export function ChatInput({
 
   const hasContent = !!input.trim() || hasUploadedFiles;
   const showStop = !!loading && (!hasContent || !!stopping) && !!onStop;
-  const disableAttach = uploading;
-  const showVoice = !!onSendVoice && voiceRecorder.isSupported;
+  const disableAttach = uploading || isDisabled;
+  const showVoice = !isDisabled && !!onSendVoice && voiceRecorder.isSupported;
 
   // 会话已开始时锁定组
   const lockedGroupId = useMemo(() => {
@@ -189,6 +197,7 @@ export function ChatInput({
   }, [modelList, lockedGroupId]);
 
   const handleMicClick = useCallback(async () => {
+    if (isDisabled) return;
     try {
       const granted = await voiceRecorder.ensurePermission();
       if (!granted) {
@@ -200,10 +209,23 @@ export function ChatInput({
       console.error('[Voice] startRecording failed:', err);
       alert('录音启动失败，请重试。');
     }
-  }, [voiceRecorder.ensurePermission, voiceRecorder.startRecording]);
+  }, [isDisabled, voiceRecorder.ensurePermission, voiceRecorder.startRecording]);
 
   // 右侧按钮：loading/stopping → stop → recording → hasContent → send → mic/send
   const renderRightButton = () => {
+    if (isDisabled) {
+      return (
+        <button
+          type="button"
+          disabled
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted-foreground/10 text-muted-foreground cursor-not-allowed"
+          title={disabledPlaceholder}
+          aria-label={disabledPlaceholder}
+        >
+          <ArrowUp className="h-5 w-5" strokeWidth={2.5} />
+        </button>
+      );
+    }
     if (loading && stopping) {
       return (
         <button
@@ -297,6 +319,7 @@ export function ChatInput({
         style={{ display: 'none' }}
         onChange={onFileSelect}
         accept="*/*"
+        disabled={isDisabled}
       />
 
       <div
@@ -307,7 +330,7 @@ export function ChatInput({
         <div className="content-container pt-3 pb-1">
           <div
             className="flex flex-col rounded-lg bg-card shadow-sm"
-            onClick={() => !voiceRecorder.isRecording && textareaRef.current?.focus()}
+            onClick={() => !isDisabled && !voiceRecorder.isRecording && textareaRef.current?.focus()}
           >
             {/* 文本输入区 / 录音指示器 */}
             {voiceRecorder.isRecording ? (
@@ -334,20 +357,23 @@ export function ChatInput({
               <textarea
                 ref={textareaRef}
                 value={input}
-                onChange={(e) => onInputChange(e.target.value)}
+                onChange={(e) => {
+                  if (!isDisabled) onInputChange(e.target.value);
+                }}
                 onKeyDown={handleKeyDown}
                 onCompositionStart={handleCompositionStart}
                 onCompositionEnd={handleCompositionEnd}
-                onPaste={onPaste}
+                onPaste={isDisabled ? undefined : onPaste}
                 onFocus={handleFocus}
                 enterKeyHint="send"
-                placeholder={hasUploadedFiles ? "附件已添加，输入消息..." : "输入消息..."}
+                placeholder={isDisabled ? disabledPlaceholder : hasUploadedFiles ? "附件已添加，输入消息..." : "输入消息..."}
                 rows={1}
+                disabled={isDisabled}
                 className={cn(
                   "w-full bg-transparent px-4 pt-3 pb-1 text-sm",
                   "placeholder:text-muted-foreground/60",
                   "focus:outline-none",
-                  "disabled:cursor-not-allowed disabled:opacity-50",
+                  "disabled:cursor-not-allowed disabled:text-foreground disabled:placeholder:text-muted-foreground/60",
                   "resize-none"
                 )}
                 style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT, overflowY: "hidden" }}
@@ -391,6 +417,7 @@ export function ChatInput({
                     <Switch
                       checked={!!autoApproveRunShell}
                       onCheckedChange={onAutoApproveRunShellChange}
+                      disabled={isDisabled}
                       aria-label="自动授权工具"
                     />
                   </div>
@@ -398,7 +425,7 @@ export function ChatInput({
 
                 {/* 模型选择器 */}
                 {modelList && selectedModel && onModelChange && !voiceRecorder.isRecording && (
-                  <Select value={selectedModel} onValueChange={onModelChange}>
+                  <Select value={selectedModel} onValueChange={onModelChange} disabled={isDisabled}>
                     <SelectTrigger
                       className={cn(
                         "inline-flex h-7 w-auto items-center gap-1 rounded-md px-2",

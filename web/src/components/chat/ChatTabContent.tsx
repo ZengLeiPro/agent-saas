@@ -44,6 +44,8 @@ interface ChatTabContentProps {
   onAutoApproveRunShellChange?: (checked: boolean) => void;
   onSendVoice?: (wavBlob: Blob, durationMs: number) => Promise<void>;
   readOnly?: boolean;
+  readOnlyInputPlaceholder?: string;
+  debugModeOverride?: boolean;
   agentProfile?: AgentProfile | null;
   sessionParticipants?: SessionParticipants | null;
   /** 空会话槽位（透传给 MessageList）：新会话空白态展示的内容，如场景推荐卡 */
@@ -84,6 +86,8 @@ export function ChatTabContent({
   onAutoApproveRunShellChange,
   onSendVoice,
   readOnly,
+  readOnlyInputPlaceholder,
+  debugModeOverride,
   agentProfile,
   sessionParticipants,
   emptySlot,
@@ -105,11 +109,33 @@ export function ChatTabContent({
         ttsStateMap={ttsStateMap}
         agentProfile={agentProfile}
         sessionParticipants={sessionParticipants}
+        debugModeOverride={debugModeOverride}
         emptySlot={readOnly ? undefined : emptySlot}
       />
 
       <div className="shrink-0">
-        {readOnly ? (
+        {readOnly && readOnlyInputPlaceholder ? (
+          <ChatInput
+            input=""
+            loading={false}
+            uploading={false}
+            hasUploadedFiles={false}
+            onInputChange={() => undefined}
+            onSend={() => undefined}
+            onFileSelect={() => undefined}
+            scrollContainerRef={scrollContainerRef as React.RefObject<HTMLDivElement>}
+            isNearBottomRef={isNearBottomRef}
+            modelList={modelList}
+            selectedModel={selectedModel}
+            sessionId={sessionId}
+            onModelChange={onModelChange}
+            canAutoApproveRunShell={canAutoApproveRunShell}
+            autoApproveRunShell={autoApproveRunShell}
+            onAutoApproveRunShellChange={onAutoApproveRunShellChange}
+            disabled
+            disabledPlaceholder={readOnlyInputPlaceholder}
+          />
+        ) : readOnly ? (
           <div className="flex items-center justify-center gap-2 border-t bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
             <Trash2 className="h-4 w-4" />
             正在预览已删除的会话（只读）

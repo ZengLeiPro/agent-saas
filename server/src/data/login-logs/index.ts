@@ -29,7 +29,7 @@ export function initAuditLog(filePath: string): void {
  */
 const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
   'user_created', 'user_updated', 'user_deleted', 'user_disabled', 'user_enabled',
-  'user_password_changed', 'user_avatar_updated',
+  'user_password_changed', 'user_avatar_updated', 'user_phone_verified',
   'cron_job_created', 'cron_job_updated', 'cron_job_deleted', 'cron_job_toggled', 'cron_job_triggered',
   'group_created', 'group_updated', 'group_deleted', 'group_sessions_added',
   'group_sessions_removed', 'group_sorting_updated',

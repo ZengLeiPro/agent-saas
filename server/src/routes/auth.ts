@@ -62,6 +62,15 @@ const smsLoginSchema = z.object({
   code: z.string().regex(/^\d{6}$/, "验证码为 6 位数字"),
 });
 
+const phoneVerificationSendCodeSchema = z.object({
+  phone: z.string().regex(PHONE_PATTERN, "请输入有效的 11 位手机号"),
+});
+
+const phoneVerificationSchema = z.object({
+  phone: z.string().regex(PHONE_PATTERN, "请输入有效的 11 位手机号"),
+  code: z.string().regex(/^\d{6}$/, "验证码为 6 位数字"),
+});
+
 const permissionsSchema = z
   .object({
     maxTurns: z.number().int().positive().optional(),
@@ -104,7 +113,7 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(6, "新密码至少 6 个字符"),
 });
 
-// PATCH /me/phone：空字符串 = 清除手机号；非空必须匹配中国大陆 11 位号码格式。
+// PATCH /me/phone：仅保留清除手机号；绑定/更换手机号必须走验证码验证接口。
 const updatePreferencesSchema = z.object({
   sidebarLayout: z.enum(["double", "single"]).optional(),
   authorizationModeEnabled: z.boolean().optional(),
@@ -335,6 +344,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         realName: user.realName,
         position: user.position,
         phone: user.phone,
+        phoneVerifiedAt: user.phoneVerifiedAt,
         avatar: avatarUrl(user.id, user.avatar, user.avatarVersion),
         avatarVersion: user.avatarVersion,
         debugMode: user.debugMode === true,
@@ -474,6 +484,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       };
     }
     return { ok: true, user };
+  }
+
+  function phoneBelongsToAnotherUser(phone: string, userId: string): boolean {
+    return userStore.findAllByPhone(phone).some((u) => u.id !== userId);
   }
 
   // 确保头像目录存在
@@ -835,6 +849,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       realName: record?.realName,
       position: record?.position,
       phone: record?.phone,
+      phoneVerifiedAt: record?.phoneVerifiedAt,
       createdAt: record?.createdAt,
       createdBy: resolveCreatedBy(record?.createdBy),
       permissions: record?.permissions,
@@ -1229,7 +1244,105 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     }
   });
 
-  // PATCH /api/auth/me/phone — 当前用户修改自己的手机号
+  // POST /api/auth/me/phone/send-code — 当前用户绑定/更换手机号前发送验证码
+  router.post("/me/phone/send-code", async (req, res) => {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Not authenticated" });
+        return;
+      }
+      const parsed = phoneVerificationSendCodeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0].message });
+        return;
+      }
+      const { phone } = parsed.data;
+      if (phoneBelongsToAnotherUser(phone, req.user.sub)) {
+        res.status(409).json({ error: "手机号已存在" });
+        return;
+      }
+
+      const rt = await getSmsLoginRuntime();
+      if (!rt.publicEnabled || !rt.codeService) {
+        res.status(403).json({ error: "当前未开放手机号验证" });
+        return;
+      }
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!rt.sendCodeIpLimiter(ip)) {
+        res.status(429).json({ error: "操作过于频繁，请稍后再试" });
+        return;
+      }
+      const result = await rt.codeService.requestCode(phone);
+      if (!result.ok) {
+        if (result.retryAfterSeconds) {
+          res.set("Retry-After", String(result.retryAfterSeconds));
+        }
+        res.status(429).json({ error: result.error });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      apiLogger.warn(
+        `[auth:phone] send-code 失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      res.status(500).json({ error: "验证码发送失败，请稍后再试" });
+    }
+  });
+
+  // POST /api/auth/me/phone/verify — 当前用户验证并绑定手机号
+  router.post("/me/phone/verify", async (req, res) => {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Not authenticated" });
+        return;
+      }
+      const parsed = phoneVerificationSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0].message });
+        return;
+      }
+      const { phone, code } = parsed.data;
+      if (phoneBelongsToAnotherUser(phone, req.user.sub)) {
+        res.status(409).json({ error: "手机号已存在" });
+        return;
+      }
+
+      const rt = await getSmsLoginRuntime();
+      if (!rt.publicEnabled || !rt.codeService) {
+        res.status(403).json({ error: "当前未开放手机号验证" });
+        return;
+      }
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!rt.loginIpLimiter(ip)) {
+        res.status(429).json({ error: "操作过于频繁，请稍后再试" });
+        return;
+      }
+      if (!rt.codeService.verifyAndConsume(phone, code)) {
+        res.status(400).json({ error: "验证码错误或已过期" });
+        return;
+      }
+      const phoneVerifiedAt = new Date().toISOString();
+      const updated = await userStore.update(req.user.sub, {
+        phone,
+        phoneVerifiedAt,
+      });
+      auditLog(req, "user_phone_verified");
+      res.json({
+        phone: updated.phone ?? null,
+        phoneVerifiedAt: updated.phoneVerifiedAt ?? null,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "验证失败";
+      if (msg === "Phone already exists") {
+        res.status(409).json({ error: "手机号已存在" });
+        return;
+      }
+      apiLogger.warn(`[auth:phone] verify 失败: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // PATCH /api/auth/me/phone — 当前用户清除手机号；绑定/更换手机号必须走验证码验证接口
   router.patch("/me/phone", async (req, res) => {
     try {
       if (!req.user) {
@@ -1239,6 +1352,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       const parsed = updatePhoneSchema.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({ error: parsed.error.issues[0].message });
+        return;
+      }
+      if (parsed.data.phone !== "") {
+        res.status(400).json({ error: "请先通过验证码完成手机号验证" });
         return;
       }
       const updated = await userStore.update(req.user.sub, {

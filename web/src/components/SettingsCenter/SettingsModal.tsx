@@ -269,9 +269,14 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
   const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false);
   const [copiedUserId, setCopiedUserId] = useState(false);
   const [phone, setPhone] = useState(user?.phone?.trim() || "");
+  const [phoneVerifiedAt, setPhoneVerifiedAt] = useState(user?.phoneVerifiedAt);
   const [draftPhone, setDraftPhone] = useState(phone);
+  const [phoneCode, setPhoneCode] = useState("");
+  const [sendingPhoneCode, setSendingPhoneCode] = useState(false);
+  const [phoneCountdown, setPhoneCountdown] = useState(0);
   const [savingPhone, setSavingPhone] = useState(false);
   const [phoneError, setPhoneError] = useState<string | null>(null);
+  const phoneTimerRef = useRef<ReturnType<typeof setInterval>>();
   // 人格定义 进入后接管整个账户面板（类似 settings/memory 那样的全屏 layout）
   const [personaEditing, setPersonaEditing] = useState(false);
 
@@ -279,13 +284,57 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
     const nextPhone = user?.phone?.trim() || "";
     setPhone(nextPhone);
     setDraftPhone(nextPhone);
-  }, [user?.phone]);
+    setPhoneVerifiedAt(user?.phoneVerifiedAt);
+  }, [user?.phone, user?.phoneVerifiedAt]);
+
+  useEffect(() => () => clearInterval(phoneTimerRef.current), []);
+
+  const startPhoneCountdown = useCallback(() => {
+    clearInterval(phoneTimerRef.current);
+    setPhoneCountdown(60);
+    phoneTimerRef.current = setInterval(() => {
+      setPhoneCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(phoneTimerRef.current);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, []);
 
   const openPhoneDialog = useCallback(() => {
     setDraftPhone(phone);
+    setPhoneCode("");
     setPhoneError(null);
     setPhoneDialogOpen(true);
   }, [phone]);
+
+  const sendPhoneCode = useCallback(async () => {
+    const trimmed = draftPhone.trim();
+    if (!/^1[3-9]\d{9}$/.test(trimmed)) {
+      setPhoneError("请输入有效的 11 位手机号");
+      return;
+    }
+    setSendingPhoneCode(true);
+    setPhoneError(null);
+    try {
+      const res = await authFetch("/api/auth/me/phone/send-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: trimmed }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error || "验证码发送失败");
+      }
+      startPhoneCountdown();
+    } catch (err) {
+      setPhoneError(err instanceof Error ? err.message : "验证码发送失败");
+    } finally {
+      setSendingPhoneCode(false);
+    }
+  }, [draftPhone, startPhoneCountdown]);
 
   const savePhone = useCallback(async () => {
     const trimmed = draftPhone.trim();
@@ -294,29 +343,53 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
       setPhoneError("请输入有效的 11 位手机号");
       return;
     }
+    if (trimmed !== "" && !/^\d{6}$/.test(phoneCode)) {
+      setPhoneError("请输入 6 位验证码");
+      return;
+    }
     setSavingPhone(true);
     setPhoneError(null);
     try {
-      const res = await authFetch("/api/auth/me/phone", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: trimmed }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error((data as { error?: string }).error || "保存失败");
+      if (trimmed === "") {
+        const res = await authFetch("/api/auth/me/phone", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone: "" }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error((data as { error?: string }).error || "保存失败");
+        }
+        setPhone("");
+        setPhoneVerifiedAt(undefined);
+        updatePhone(undefined, undefined);
+      } else {
+        const res = await authFetch("/api/auth/me/phone/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone: trimmed, code: phoneCode }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error((data as { error?: string }).error || "验证失败");
+        }
+        const data = (await res.json()) as { phone: string | null; phoneVerifiedAt: string | null };
+        const next = data.phone ?? "";
+        const verifiedAt = data.phoneVerifiedAt ?? undefined;
+        setPhone(next);
+        setPhoneVerifiedAt(verifiedAt);
+        updatePhone(next || undefined, verifiedAt);
       }
-      const data = (await res.json()) as { phone: string | null };
-      const next = data.phone ?? "";
-      setPhone(next);
-      updatePhone(next || undefined);
+      clearInterval(phoneTimerRef.current);
+      setPhoneCountdown(0);
+      setPhoneCode("");
       setPhoneDialogOpen(false);
     } catch (err) {
-      setPhoneError(err instanceof Error ? err.message : "保存失败");
+      setPhoneError(err instanceof Error ? err.message : "验证失败");
     } finally {
       setSavingPhone(false);
     }
-  }, [draftPhone, updatePhone]);
+  }, [draftPhone, phoneCode, updatePhone]);
 
   const userId = user?.id || user?.username || "未知";
 
@@ -379,7 +452,9 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
                 </div>
                 <div className="grid gap-x-3 gap-y-2 sm:grid-cols-[72px_minmax(0,1fr)_auto] sm:items-center">
                   <div className="text-sm font-medium">手机号</div>
-                  <div className="truncate text-sm text-muted-foreground">{phone || "暂无"}</div>
+                  <div className="truncate text-sm text-muted-foreground">
+                    {phone ? `${phone} · ${phoneVerifiedAt ? "已验证" : "未验证"}` : "暂无"}
+                  </div>
                   <Button size="sm" variant="outline" className="min-w-20 justify-self-end" onClick={openPhoneDialog}>更改</Button>
                 </div>
                 <div className="grid gap-x-3 gap-y-2 sm:grid-cols-[72px_minmax(0,1fr)_auto] sm:items-center">
@@ -419,26 +494,58 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
         <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>更改手机号</DialogTitle>
-            <DialogDescription>留空可清除手机号；当前暂不接入验证码。</DialogDescription>
+            <DialogDescription>手机号验证后可用于验证码登录；留空可清除手机号。</DialogDescription>
           </DialogHeader>
-          <Input
-            inputMode="tel"
-            placeholder="请输入手机号"
-            value={draftPhone}
-            maxLength={11}
-            onChange={(event) => {
-              setDraftPhone(event.target.value);
-              if (phoneError) setPhoneError(null);
-            }}
-            onKeyDown={(event) => { if (event.key === "Enter") { void savePhone(); } }}
-            autoFocus
-          />
+          <div className="space-y-3">
+            <Input
+              inputMode="tel"
+              placeholder="请输入手机号"
+              value={draftPhone}
+              maxLength={11}
+              onChange={(event) => {
+                setDraftPhone(event.target.value.replace(/\D/g, ""));
+                setPhoneCode("");
+                if (phoneError) setPhoneError(null);
+              }}
+              autoFocus
+            />
+            {draftPhone.trim() !== "" && (
+              <div className="flex gap-2">
+                <Input
+                  inputMode="numeric"
+                  placeholder="验证码"
+                  value={phoneCode}
+                  maxLength={6}
+                  onChange={(event) => {
+                    setPhoneCode(event.target.value.replace(/\D/g, ""));
+                    if (phoneError) setPhoneError(null);
+                  }}
+                  onKeyDown={(event) => { if (event.key === "Enter") { void savePhone(); } }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-28 shrink-0"
+                  onClick={() => { void sendPhoneCode(); }}
+                  disabled={sendingPhoneCode || phoneCountdown > 0 || savingPhone}
+                >
+                  {sendingPhoneCode ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : phoneCountdown > 0 ? (
+                    `${phoneCountdown}s`
+                  ) : (
+                    "获取验证码"
+                  )}
+                </Button>
+              </div>
+            )}
+          </div>
           {phoneError && <div className="text-sm text-destructive">{phoneError}</div>}
           <DialogFooter>
             <Button variant="outline" onClick={() => setPhoneDialogOpen(false)} disabled={savingPhone}>取消</Button>
             <Button onClick={() => { void savePhone(); }} disabled={savingPhone}>
               {savingPhone ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
-              保存
+              {draftPhone.trim() === "" ? "清除手机号" : "完成验证"}
             </Button>
           </DialogFooter>
         </DialogContent>

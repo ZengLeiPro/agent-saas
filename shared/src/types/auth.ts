@@ -35,6 +35,8 @@ export interface AuthUser {
   /** 岗位（自由文本），空会话场景推荐按此优先排序 */
   position?: string;
   phone?: string;
+  /** 手机号验证时间；存在时才允许验证码登录。 */
+  phoneVerifiedAt?: string;
   avatar?: string;
   avatarVersion?: number;
   /** 调试模式：开启时前端显示思考、工具、Skill 等可展开执行细节。 */

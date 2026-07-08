@@ -110,7 +110,7 @@ async function makeTestRig(): Promise<TestRig> {
       loginLogFilePath: join(tmpRoot, "login.jsonl"),
       agentCwd: join(tmpRoot, "workspaces"),
       sharedDir: join(tmpRoot, "shared"),
-      loginCodeService: new VerificationCodeService({ sender }),
+      loginCodeService: new VerificationCodeService({ sender, cooldownMs: 0 }),
     }),
   );
 
@@ -289,10 +289,10 @@ describe("auth users router admin boundaries", () => {
     });
   });
 
-  it("当前用户不能把手机号改成平台已有手机号", async () => {
+  it("当前用户不能验证平台已有手机号", async () => {
     h.setCaller(h.users.wainAdminA);
-    const res = await h.request("/api/auth/me/phone", {
-      method: "PATCH",
+    const res = await h.request("/api/auth/me/phone/send-code", {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ phone: "13800001111" }),
     });
@@ -303,23 +303,63 @@ describe("auth users router admin boundaries", () => {
     });
   });
 
-  it("未验证手机号不能用于短信登录", async () => {
+  it("当前用户必须通过验证码验证手机号，验证后可用于短信登录", async () => {
     h.setCaller(h.users.wainAdminA);
     const setPhone = await h.request("/api/auth/me/phone", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ phone: "13900001111" }),
     });
-    expect(setPhone.status).toBe(200);
+    expect(setPhone.status).toBe(400);
+    await expect(setPhone.json()).resolves.toMatchObject({
+      error: "请先通过验证码完成手机号验证",
+    });
 
-    const send = await h.request("/api/auth/sms/send-code", {
+    const send = await h.request("/api/auth/me/phone/send-code", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ phone: "13900001111" }),
     });
-    expect(send.status).toBe(403);
-    await expect(send.json()).resolves.toMatchObject({
-      code: "PHONE_NOT_VERIFIED",
+    expect(send.status).toBe(200);
+    expect(h.sender.lastPhone).toBe("13900001111");
+
+    const verify = await h.request("/api/auth/me/phone/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone: "13900001111",
+        code: h.sender.lastCode,
+      }),
+    });
+    expect(verify.status).toBe(200);
+    const verified = (await verify.json()) as {
+      phone: string;
+      phoneVerifiedAt: string;
+    };
+    expect(verified.phone).toBe("13900001111");
+    expect(verified.phoneVerifiedAt).toBeTruthy();
+
+    const sendLoginCode = await h.request("/api/auth/sms/send-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13900001111" }),
+    });
+    expect(sendLoginCode.status).toBe(200);
+
+    const login = await h.request("/api/auth/sms/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone: "13900001111",
+        code: h.sender.lastCode,
+      }),
+    });
+    expect(login.status).toBe(200);
+    await expect(login.json()).resolves.toMatchObject({
+      user: {
+        id: h.users.wainAdminA.id,
+        phone: "13900001111",
+      },
     });
   });
 });

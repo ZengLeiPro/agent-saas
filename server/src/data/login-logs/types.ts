@@ -7,7 +7,7 @@ export type LoginEvent =
   | 'group_created' | 'group_updated' | 'group_deleted' | 'group_sessions_added' | 'group_sessions_removed' | 'group_sorting_updated'
   | 'cron_job_created' | 'cron_job_updated' | 'cron_job_deleted' | 'cron_job_toggled' | 'cron_job_triggered'
   | 'user_created' | 'user_updated' | 'user_deleted' | 'user_avatar_updated'
-  | 'user_disabled' | 'user_enabled' | 'user_password_changed' | 'user_phone_updated'
+  | 'user_disabled' | 'user_enabled' | 'user_password_changed' | 'user_phone_updated' | 'user_phone_verified'
   | 'file_previewed' | 'file_downloaded' | 'file_deleted'
   | 'agent_profile_viewed' | 'agent_profile_updated'
   | 'agent_persona_viewed' | 'agent_persona_updated'

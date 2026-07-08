@@ -465,6 +465,7 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   user_enabled: "启用用户",
   user_password_changed: "修改密码",
   user_phone_updated: "更新手机号",
+  user_phone_verified: "验证手机号",
   file_previewed: "预览文件",
   file_downloaded: "下载文件",
   file_deleted: "删除文件",

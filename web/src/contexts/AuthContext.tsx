@@ -29,8 +29,8 @@ interface AuthContextValue {
   logout: () => void;
   /** 更新当前用户头像 URL + 版本号 */
   updateAvatar: (avatar: string | undefined, avatarVersion?: number) => void;
-  /** 更新当前用户手机号（PATCH /me/phone 成功后回写本地 user 状态） */
-  updatePhone: (phone: string | undefined) => void;
+  /** 更新当前用户手机号验证状态 */
+  updatePhone: (phone: string | undefined, phoneVerifiedAt?: string) => void;
   updatePreferences: (preferences: UserPreferences) => void;
 }
 
@@ -65,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     authPreload.then((result) => {
       if (result.status === "authenticated") {
-        setUser({ id: result.user.id, username: result.user.username, role: result.user.role, tenantId: result.user.tenantId, realName: result.user.realName, position: result.user.position, phone: result.user.phone, avatar: result.user.avatar, avatarVersion: result.user.avatarVersion, debugMode: result.user.debugMode === true, preferences: result.user.preferences ?? {} });
+        setUser({ id: result.user.id, username: result.user.username, role: result.user.role, tenantId: result.user.tenantId, realName: result.user.realName, position: result.user.position, phone: result.user.phone, phoneVerifiedAt: result.user.phoneVerifiedAt, avatar: result.user.avatar, avatarVersion: result.user.avatarVersion, debugMode: result.user.debugMode === true, preferences: result.user.preferences ?? {} });
         setAuthEnabled(true);
       } else if (result.status === "no-auth") {
         setAuthEnabled(false);
@@ -79,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const applyLoginResponse = useCallback((data: { token: string; user: AuthUser }) => {
     localStorage.setItem(TOKEN_KEY, data.token);
-    setUser({ id: data.user.id, username: data.user.username, role: data.user.role, tenantId: data.user.tenantId, realName: data.user.realName, position: data.user.position, phone: data.user.phone, avatar: data.user.avatar, avatarVersion: data.user.avatarVersion, debugMode: data.user.debugMode === true, preferences: data.user.preferences ?? {} });
+    setUser({ id: data.user.id, username: data.user.username, role: data.user.role, tenantId: data.user.tenantId, realName: data.user.realName, position: data.user.position, phone: data.user.phone, phoneVerifiedAt: data.user.phoneVerifiedAt, avatar: data.user.avatar, avatarVersion: data.user.avatarVersion, debugMode: data.user.debugMode === true, preferences: data.user.preferences ?? {} });
   }, []);
 
   const postLogin = useCallback(async (url: string, body: unknown) => {
@@ -107,8 +107,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((prev) => prev ? { ...prev, avatar, avatarVersion } : prev);
   }, []);
 
-  const updatePhone = useCallback((phone: string | undefined) => {
-    setUser((prev) => prev ? { ...prev, phone } : prev);
+  const updatePhone = useCallback((phone: string | undefined, phoneVerifiedAt?: string) => {
+    setUser((prev) => prev ? { ...prev, phone, phoneVerifiedAt } : prev);
   }, []);
 
   const updatePreferences = useCallback((preferences: UserPreferences) => {

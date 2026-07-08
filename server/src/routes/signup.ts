@@ -580,6 +580,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
           realName: user.realName,
           position: user.position,
           phone: user.phone,
+          phoneVerifiedAt: user.phoneVerifiedAt,
           debugMode: false,
           tenantFeatures:
             tenantStore.getSettings(user.tenantId)?.features ??

@@ -4,8 +4,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import type { AskUserAnswers } from "@agent/shared";
 
-interface AskUserQuestion {
+export interface AskUserQuestion {
   question: string;
   header: string;
   options: Array<{ label: string; description: string }>;
@@ -15,8 +16,13 @@ interface AskUserQuestion {
 interface AskUserBlockProps {
   questions: AskUserQuestion[];
   status: "pending" | "answered";
-  answers?: Record<string, string>;
-  onSubmit: (answers: Record<string, string>) => void;
+  answers?: AskUserAnswers;
+  onSubmit: (answers: AskUserAnswers) => void;
+}
+
+export function formatAskUserAnswer(answer: AskUserAnswers[string] | undefined): string {
+  if (Array.isArray(answer)) return answer.length > 0 ? answer.join(", ") : "(no answer)";
+  return answer && answer.length > 0 ? answer : "(no answer)";
 }
 
 function QuestionSection({
@@ -129,14 +135,19 @@ export function AskUserBlock({ questions, status, answers, onSubmit }: AskUserBl
   }, []);
 
   const handleSubmit = useCallback(() => {
-    const result: Record<string, string> = {};
+    const result: AskUserAnswers = {};
     questions.forEach((q, i) => {
       const selected = selections[i] ?? new Set();
+      const customValue = (customInputs[i] ?? "").trim();
+      const labels = Array.from(selected).filter((label) => label !== "__custom__");
       if (selected.has("__custom__")) {
-        result[q.question] = (customInputs[i] ?? "").trim();
+        if (q.multiSelect) {
+          result[q.question] = customValue ? [...labels, customValue] : labels;
+        } else {
+          result[q.question] = customValue;
+        }
       } else {
-        const labels = Array.from(selected);
-        result[q.question] = labels.join(", ");
+        result[q.question] = q.multiSelect ? labels : (labels[0] ?? "");
       }
     });
     onSubmit(result);
@@ -181,7 +192,7 @@ export function AskUserBlock({ questions, status, answers, onSubmit }: AskUserBl
                   <span className="text-sm">{q.question}</span>
                 </div>
                 <p className="text-sm text-muted-foreground pl-1">
-                  {answers?.[q.question] ?? "(no answer)"}
+                  {formatAskUserAnswer(answers?.[q.question])}
                 </p>
               </div>
             ))}

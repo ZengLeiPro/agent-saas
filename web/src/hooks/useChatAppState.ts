@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { ChangeEvent, ClipboardEvent, DragEvent, RefObject } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem, TokenUsage } from "@/lib/sessionsApi";
-import type { ContextUsageData, NotificationData, MemoryRecallData, PluginInstallData } from "@agent/shared";
+import type { AskUserAnswers, ContextUsageData, NotificationData, MemoryRecallData, PluginInstallData } from "@agent/shared";
 import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
@@ -121,7 +121,7 @@ export interface ChatAppState {
   handleDragLeave: (event: DragEvent) => void;
   handleDrop: (event: DragEvent) => Promise<void>;
   handlePermissionResponse: (interactionId: string, allow: boolean) => Promise<void>;
-  handleAskUserResponse: (interactionId: string, answers: Record<string, string>) => Promise<void>;
+  handleAskUserResponse: (interactionId: string, answers: AskUserAnswers) => Promise<void>;
   modelList: ModelList | null;
   selectedModel: string | null;
   onModelChange: (ref: string) => void;
@@ -2403,7 +2403,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   const handleAskUserResponse = useCallback(async (
     interactionId: string,
-    answers: Record<string, string>,
+    answers: AskUserAnswers,
   ) => {
     await respondToInteraction(interactionId, { answers });
 

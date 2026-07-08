@@ -3,6 +3,7 @@ import { AppState, type AppStateStatus } from "react-native";
 import { File } from "expo-file-system";
 import type {
   MessageItem,
+  AskUserAnswers,
   UploadedFile,
   ApiSessionListItem,
   TokenUsage,
@@ -69,7 +70,7 @@ export interface ChatAppState {
   ) => Promise<void>;
   handleAskUserResponse: (
     interactionId: string,
-    answers: Record<string, string>,
+    answers: AskUserAnswers,
   ) => Promise<void>;
   onModelChange: (ref: string) => void;
   loadMoreSessions: () => Promise<void>;
@@ -1653,7 +1654,7 @@ export function useChatAppStateCore(): ChatAppState {
   );
 
   const handleAskUserResponse = useCallback(
-    async (interactionId: string, answers: Record<string, string>) => {
+    async (interactionId: string, answers: AskUserAnswers) => {
       await respondToInteraction(interactionId, { answers });
       const idx = msg.messagesRef.current.findIndex(
         (m) => m.type === "ask_user" && m.interactionId === interactionId,

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMe
 import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, FileText, FileCode, FileImage, FileVideo, FileSpreadsheet, FileArchive, Presentation, File, Download, X, GitFork, Paperclip, ImageIcon, Mic } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { MessageItem as MessageItemType, formatFileSize } from './types';
+import type { AskUserAnswers } from '@agent/shared';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolBlock, ToolResultBlock } from './ToolBlock';
 import { PermissionBlock } from './PermissionBlock';
@@ -571,7 +572,7 @@ interface MessageItemProps {
   message: MessageItemType;
   index: number;
   onPermissionResponse?: (interactionId: string, allow: boolean) => void;
-  onAskUserResponse?: (interactionId: string, answers: Record<string, string>) => void;
+  onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => void;
   onRetry?: (message: MessageItemType) => void;
   onFork?: (message: MessageItemType) => void;
   /** 是否为第一条用户消息（不显示 fork） */

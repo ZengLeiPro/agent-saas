@@ -6,7 +6,7 @@ import type { TtsState } from "@/hooks/useTtsPlayer";
 import type { ModelList } from "@/types/models";
 import type { UseTtsPlayerReturn } from "@/hooks/useTtsPlayer";
 import type { TokenUsage } from "@/lib/sessionsApi";
-import type { ContextUsageData } from "@agent/shared";
+import type { AskUserAnswers, ContextUsageData } from "@agent/shared";
 import type { ConnectionState } from "@/hooks/useConnectionState";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
 import type { SettingsSectionId } from "@/types/settings";
@@ -60,7 +60,7 @@ export interface LayoutProps {
   scrollContainerRef: Ref<HTMLDivElement>;
   isNearBottomRef: MutableRefObject<boolean>;
   handlePermissionResponse: (interactionId: string, allow: boolean) => Promise<void>;
-  handleAskUserResponse: (interactionId: string, answers: Record<string, string>) => Promise<void>;
+  handleAskUserResponse: (interactionId: string, answers: AskUserAnswers) => Promise<void>;
   uploadedFiles: UploadedFile[];
   removeFile: (index: number) => void;
   input: string;

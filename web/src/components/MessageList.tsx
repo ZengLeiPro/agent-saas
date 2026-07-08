@@ -11,7 +11,7 @@ import type { TtsState } from '@/hooks/useTtsPlayer';
 import { useVoicePlayer } from '@/hooks/useVoicePlayer';
 import { useAuth } from '@/contexts/AuthContext';
 import { AgentAvatar, UserAvatar } from './AgentAvatar';
-import type { AgentProfile, SessionParticipants } from '@agent/shared';
+import type { AgentProfile, AskUserAnswers, SessionParticipants } from '@agent/shared';
 
 // ---------------------------------------------------------------------------
 // AI Bubble Grouping — mirrors mobile's groupIntoBubbles()
@@ -199,7 +199,7 @@ interface MessageListProps {
   loading: boolean;
   isLoadingMessages?: boolean;
   onPermissionResponse?: (interactionId: string, allow: boolean) => void;
-  onAskUserResponse?: (interactionId: string, answers: Record<string, string>) => void;
+  onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => void;
   onRetry?: (message: MessageItemType) => void;
   onFork?: (message: MessageItemType) => void;
   lastMessageRef?: Ref<HTMLDivElement>;

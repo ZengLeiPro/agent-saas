@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import { View, StyleSheet, Text, ActivityIndicator, Animated } from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
-import type { MessageItem, RenderItem, AgentProfile } from '@agent/shared';
+import type { AskUserAnswers, MessageItem, RenderItem, AgentProfile } from '@agent/shared';
 import { groupMessages } from '@agent/shared';
 import { MessageItemView } from './MessageItem';
 import { CompactionDivider } from './CompactionDivider';
@@ -226,7 +226,7 @@ interface AiBubbleViewProps {
   skipAnimation: boolean;
   lastActivityGroupId: string | null;
   onPermissionResponse?: (interactionId: string, allow: boolean) => Promise<void>;
-  onAskUserResponse?: (interactionId: string, answers: Record<string, string>) => Promise<void>;
+  onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => Promise<void>;
   onPreviewMd?: (filePath: string) => void;
   onTtsPlay?: (key: string, text: string) => void;
   loading: boolean;
@@ -321,7 +321,7 @@ interface MessageListProps {
   isNearBottomRef: React.MutableRefObject<boolean>;
   listRef?: React.RefObject<FlashListRef<RenderItem> | null>;
   onPermissionResponse?: (interactionId: string, allow: boolean) => Promise<void>;
-  onAskUserResponse?: (interactionId: string, answers: Record<string, string>) => Promise<void>;
+  onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => Promise<void>;
   onRetryMessage?: (message: MessageItem) => void;
   onForkMessage?: (message: MessageItem) => void;
   onPreviewMd?: (filePath: string) => void;

@@ -1,14 +1,16 @@
-import { type Ref, type MutableRefObject } from "react";
+import { type Ref, type MutableRefObject, useMemo } from "react";
 import { Trash2 } from "lucide-react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { TtsProps } from "@/components/MessageItem";
 import type { TtsState } from "@/hooks/useTtsPlayer";
 import type { ModelList } from "@/types/models";
+import type { AskUserAnswers } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
 import { MessageList } from "@/components/MessageList";
 import { FileUpload } from "@/components/FileUpload";
 import { ChatInput } from "@/components/ChatInput";
 import { TodoPanel } from "@/components/TodoPanel";
+import { AskUserPromptPanel } from "@/components/AskUserPromptPanel";
 
 interface ChatTabContentProps {
   messages: MessageItem[];
@@ -18,7 +20,7 @@ interface ChatTabContentProps {
   scrollContainerRef: Ref<HTMLDivElement>;
   isNearBottomRef?: MutableRefObject<boolean>;
   onPermissionResponse?: (interactionId: string, allow: boolean) => void;
-  onAskUserResponse?: (interactionId: string, answers: Record<string, string>) => void;
+  onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => void;
   onRetry?: (message: MessageItem) => void;
   onFork?: (message: MessageItem) => void;
   uploadedFiles: UploadedFile[];
@@ -92,14 +94,30 @@ export function ChatTabContent({
   sessionParticipants,
   emptySlot,
 }: ChatTabContentProps) {
+  const activeAskUser = useMemo(() => {
+    if (readOnly) return null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message.type === "ask_user" && message.status === "pending") {
+        return message;
+      }
+    }
+    return null;
+  }, [messages, readOnly]);
+
+  const visibleMessages = useMemo(() => {
+    if (!activeAskUser) return messages;
+    return messages.filter((message) => message.id !== activeAskUser.id);
+  }, [activeAskUser, messages]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <MessageList
         lastMessageRef={lastMessageRef}
         scrollContainerRef={scrollContainerRef}
         isNearBottomRef={isNearBottomRef}
-        messages={messages}
-        loading={loading}
+        messages={visibleMessages}
+        loading={activeAskUser ? false : loading}
         isLoadingMessages={isLoadingMessages}
         onPermissionResponse={readOnly ? undefined : onPermissionResponse}
         onAskUserResponse={readOnly ? undefined : onAskUserResponse}
@@ -171,6 +189,13 @@ export function ChatTabContent({
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={onAutoApproveRunShellChange}
               onSendVoice={onSendVoice}
+              topSlot={activeAskUser ? (
+                <AskUserPromptPanel
+                  key={activeAskUser.interactionId}
+                  questions={activeAskUser.questions}
+                  onSubmit={(answers) => onAskUserResponse?.(activeAskUser.interactionId, answers)}
+                />
+              ) : undefined}
             />
           </>
         )}

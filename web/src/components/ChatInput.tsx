@@ -38,6 +38,7 @@ interface ChatInputProps {
   onSendVoice?: (wavBlob: Blob, durationMs: number) => Promise<void>;
   disabled?: boolean;
   disabledPlaceholder?: string;
+  topSlot?: React.ReactNode;
 }
 
 const MIN_HEIGHT = 36;
@@ -72,6 +73,7 @@ export function ChatInput({
   onSendVoice,
   disabled,
   disabledPlaceholder = "只读状态无法发送消息",
+  topSlot,
 }: ChatInputProps) {
   const isDisabled = disabled === true;
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -328,6 +330,11 @@ export function ChatInput({
         style={{ paddingBottom: "var(--sab)" }}
       >
         <div className="content-container pt-3 pb-1">
+          {topSlot && (
+            <div className="pb-3">
+              {topSlot}
+            </div>
+          )}
           <div
             className="flex flex-col rounded-lg bg-card shadow-sm"
             onClick={() => !isDisabled && !voiceRecorder.isRecording && textareaRef.current?.focus()}

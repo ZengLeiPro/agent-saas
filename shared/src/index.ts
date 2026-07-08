@@ -25,6 +25,8 @@ export {
 export type {
   MessageItem,
   MessageItemInput,
+  AskUserAnswerValue,
+  AskUserAnswers,
   UploadedFile,
   ActivityGroup,
   RenderItem,

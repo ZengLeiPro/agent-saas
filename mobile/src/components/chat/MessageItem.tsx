@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { DropdownMenu, type DropdownSection } from '../overlays/DropdownMenu';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import type { MessageItem, RenderItem, ActivityGroup } from '@agent/shared';
+import type { AskUserAnswers, MessageItem, RenderItem, ActivityGroup } from '@agent/shared';
 import { truncateContent, formatJson, formatFileSize, authFetch, parseToolResult, getPreviewFileType, getToolDisplayLabel, getToolDisplayInfo, getFileTypeVisual } from '@agent/shared';
 import type { FileTypeCategory } from '@agent/shared';
 import { fileCacheService } from '../../services/fileCacheService';
@@ -336,7 +336,7 @@ interface MessageItemViewProps {
   isLast?: boolean;
   skipAnimation?: boolean;
   onPermissionResponse?: (interactionId: string, allow: boolean) => Promise<void>;
-  onAskUserResponse?: (interactionId: string, answers: Record<string, string>) => Promise<void>;
+  onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => Promise<void>;
   onRetryMessage?: (message: MessageItem) => void;
   onForkMessage?: (message: MessageItem) => void;
   isFirstUser?: boolean;
@@ -1004,7 +1004,7 @@ function PermissionBlock({ message, onResponse }: {
 // --- Ask User Block ---
 function AskUserBlock({ message, onResponse }: {
   message: MessageItem & { type: 'ask_user' };
-  onResponse?: (interactionId: string, answers: Record<string, string>) => Promise<void>;
+  onResponse?: (interactionId: string, answers: AskUserAnswers) => Promise<void>;
 }) {
   const colors = useColors();
   const typo = useChatTypography();
@@ -1037,13 +1037,16 @@ function AskUserBlock({ message, onResponse }: {
 
   const handleSubmit = useCallback(() => {
     if (!onResponse) return;
-    const answers: Record<string, string> = {};
+    const answers: AskUserAnswers = {};
     for (const q of message.questions) {
       const selected = selections[q.question];
       if (selected?.has('__custom__')) {
-        answers[q.question] = customInputs[q.question] ?? '';
+        const labels = Array.from(selected).filter(label => label !== '__custom__');
+        const customValue = customInputs[q.question] ?? '';
+        answers[q.question] = q.multiSelect ? [...labels, customValue].filter(Boolean) : customValue;
       } else {
-        answers[q.question] = selected ? Array.from(selected).join(', ') : '';
+        const labels = selected ? Array.from(selected) : [];
+        answers[q.question] = q.multiSelect ? labels : (labels[0] ?? '');
       }
     }
     void onResponse(message.interactionId, answers);
@@ -1062,7 +1065,7 @@ function AskUserBlock({ message, onResponse }: {
     if (!isAnswered || !message.answers) return {} as Record<string, Set<string>>;
     const result: Record<string, Set<string>> = {};
     for (const [k, v] of Object.entries(message.answers)) {
-      result[k] = new Set(v ? v.split(', ') : []);
+      result[k] = new Set(Array.isArray(v) ? v : (v ? v.split(', ') : []));
     }
     return result;
   }, [isAnswered, message.answers]);
@@ -1109,7 +1112,8 @@ function AskUserBlock({ message, onResponse }: {
               );
             })}
             {(() => {
-              const answerText = isAnswered ? (message.answers?.[q.question] ?? '') : '';
+              const answer = isAnswered ? message.answers?.[q.question] : '';
+              const answerText = Array.isArray(answer) ? answer.join(', ') : (answer ?? '');
               const matchesOptions = q.options.some(opt => selectedSet.has(opt.label));
               const isCustomAnswer = isAnswered && !matchesOptions && answerText.length > 0;
 

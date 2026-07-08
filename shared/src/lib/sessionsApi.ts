@@ -4,6 +4,7 @@
  */
 
 import type { MessageItem } from '../types/message';
+import type { AskUserAnswers } from '../types/message';
 import type { ApiSessionDetail, ApiTranscriptBlock } from '../types/session';
 import { resolveDisplayToolName } from './toolDisplay';
 
@@ -18,8 +19,8 @@ const INTERACTIVE_RESULT_TOOLS = new Set([
 function parseAnswersFromResult(
   resultText: string,
   knownQuestions?: string[],
-): Record<string, string> {
-  const answers: Record<string, string> = {};
+): AskUserAnswers {
+  const answers: AskUserAnswers = {};
   // SDK result 文案前缀随版本变化，需同时兼容：
   //   - 旧（≤0.2.x）: User has answered your question(s): "q1"="a1", "q2"="a2". You can now ...
   //   - 新（0.3.156+）: Your question(s) has/have been answered: "q1"="a1", "q2"="a2". You can now ...
@@ -72,7 +73,7 @@ function tryConvertAskUser(
       // fall back to parsing from resultText using known questions as anchors
       const knownQuestions = input.questions.map((q: { question: string }) => q.question);
       const answers = (input.answers && typeof input.answers === 'object' && Object.keys(input.answers).length > 0)
-        ? input.answers as Record<string, string>
+        ? input.answers as AskUserAnswers
         : parseAnswersFromResult(resultText, knownQuestions);
       return {
         id: block.id,

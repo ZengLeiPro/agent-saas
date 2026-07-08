@@ -1,3 +1,6 @@
+export type AskUserAnswerValue = string | string[];
+export type AskUserAnswers = Record<string, AskUserAnswerValue>;
+
 export type MessageItem =
   | { id: string; type: "user"; content: string; displayContent?: string; attachments?: Array<{ name: string; isImage?: boolean }>; isVoiceTranscript?: boolean; status?: 'pending' | 'sent' | 'failed'; timestamp?: number; clientMsgId?: string; failedReason?: string }
   | { id: string; type: "text"; content: string; streaming?: boolean; voiceMarkers?: Array<{ text: string; voice?: string; speed?: number }>; owner?: string; timestamp?: number }
@@ -47,7 +50,7 @@ export type MessageItem =
         multiSelect: boolean;
       }>;
       status: "pending" | "answered";
-      answers?: Record<string, string>;
+      answers?: AskUserAnswers;
     }
   | {
       id: string;

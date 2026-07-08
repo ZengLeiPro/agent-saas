@@ -402,6 +402,7 @@ describe('scenarios routes · exampleResult', () => {
           requires: ['upload'],
           recommendCron: false,
           exampleResult: { body: EXAMPLE_BODY, dataLabel },
+          demoShareToken: 'demo_share_token_1234567890',
           source: 'internal:golden-example',
           enabled: true,
         },
@@ -443,10 +444,11 @@ describe('scenarios routes · exampleResult', () => {
       const response = await fetch(`${baseUrl}/api/scenarios`);
       expect(response.status).toBe(200);
       const json = await response.json() as {
-        scenarios: Array<{ id: string; exampleResult?: { body: string; dataLabel: string } }>;
+        scenarios: Array<{ id: string; exampleResult?: { body: string; dataLabel: string }; demoShareToken?: string }>;
       };
       const item = json.scenarios.find((s) => s.id === 'fin-receivable-remind');
       expect(item?.exampleResult).toBeDefined();
+      expect(item?.demoShareToken).toBe('demo_share_token_1234567890');
       const { body, dataLabel } = item!.exampleResult!;
       expect(dataLabel).toBe('synthetic');
       // sanitize 生效：红线词被替换
@@ -493,6 +495,22 @@ describe('scenarios routes · exampleResult', () => {
       const json = await response.json() as { error: string };
       expect(json.error).toContain('scenario-library validation failed');
       expect(json.error).toContain('exampleResult.dataLabel');
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('rejects the library when demoShareToken is invalid', async () => {
+    const fixture = buildExampleFixture('synthetic');
+    fixture.scenarios[0]!.demoShareToken = '../not-a-share-token';
+    await writeFile(dataPath, JSON.stringify(fixture), 'utf-8');
+    const { server, baseUrl } = await startServer(dataPath);
+    try {
+      const response = await fetch(`${baseUrl}/api/scenarios`);
+      expect(response.status).toBe(500);
+      const json = await response.json() as { error: string };
+      expect(json.error).toContain('scenario-library validation failed');
+      expect(json.error).toContain('demoShareToken');
     } finally {
       await stopServer(server);
     }

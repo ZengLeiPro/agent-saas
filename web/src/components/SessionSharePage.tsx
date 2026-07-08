@@ -3,6 +3,8 @@ import { Loader2, Share2 } from "lucide-react";
 
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/contexts/AuthContext";
 import { FilePreviewProvider } from "@/contexts/FilePreviewContext";
 import { fetchPublicSessionShare, type PublicSessionShareResponse } from "@/lib/sessionShareApi";
 import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
@@ -12,6 +14,7 @@ interface SessionSharePageProps {
 }
 
 export function SessionSharePage({ token }: SessionSharePageProps) {
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [data, setData] = useState<PublicSessionShareResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +47,13 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
   }, [data]);
 
   const title = data?.detail.owner?.realName || data?.detail.owner?.username || "会话分享";
+  const scenarioId = useMemo(() => {
+    const raw = new URLSearchParams(window.location.search).get("scenario")?.trim();
+    return raw && /^[a-zA-Z0-9_-]{1,128}$/.test(raw) ? raw : "";
+  }, []);
+  const useSamePath = scenarioId
+    ? `${isAuthenticated ? "/" : "/signup"}?scenario=${encodeURIComponent(scenarioId)}`
+    : "";
 
   if (loading && !data) {
     return (
@@ -86,8 +96,21 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
               只读分享
             </Badge>
           </div>
-          <div className="hidden shrink-0 text-xs text-muted-foreground sm:block">
-            {data.share.debugMode ? "调试模式已开启" : "调试模式已关闭"}
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="hidden text-xs text-muted-foreground sm:block">
+              {data.share.debugMode ? "调试模式已开启" : "调试模式已关闭"}
+            </div>
+            {useSamePath && (
+              <Button
+                type="button"
+                size="sm"
+                className="h-8"
+                disabled={authLoading}
+                onClick={() => window.location.assign(useSamePath)}
+              >
+                换成我的资料
+              </Button>
+            )}
           </div>
         </header>
 

@@ -16,6 +16,13 @@ import type { ScenarioItem, ScenarioRequirement } from "@agent/shared";
 // 不拖累空会话推荐位所在的聊天主 bundle
 const ScenarioExampleDialogLazy = lazy(() => import("./ScenarioExampleDialog"));
 
+export function scenarioDemoSharePath(scenario: ScenarioItem): string | null {
+  const token = scenario.demoShareToken?.trim();
+  if (!token) return null;
+  const params = new URLSearchParams({ scenario: scenario.id });
+  return `/share/${encodeURIComponent(token)}?${params.toString()}`;
+}
+
 /** 形态徽标：recurring → 常驻；oneshot → 一次性 */
 export function ScenarioModeBadge({ mode }: { mode: ScenarioItem["mode"] }) {
   return (
@@ -86,7 +93,8 @@ interface ScenarioCardProps {
 
 export function ScenarioCard({ scenario, onTry, onOpenDetail, compact }: ScenarioCardProps) {
   const clickable = !!onOpenDetail;
-  const hasExample = !!scenario.exampleResult;
+  const demoSharePath = scenarioDemoSharePath(scenario);
+  const hasExample = !!scenario.exampleResult || !!demoSharePath;
   const [exampleOpen, setExampleOpen] = useState(false);
   return (
     <>
@@ -140,6 +148,10 @@ export function ScenarioCard({ scenario, onTry, onOpenDetail, compact }: Scenari
               className="h-7 px-3 text-xs"
               onClick={(e) => {
                 e.stopPropagation();
+                if (demoSharePath) {
+                  window.location.assign(demoSharePath);
+                  return;
+                }
                 setExampleOpen(true);
               }}
             >
@@ -163,7 +175,7 @@ export function ScenarioCard({ scenario, onTry, onOpenDetail, compact }: Scenari
       </div>
     </div>
     {/* 弹层挂在卡片 div 的兄弟位置：Portal 内的合成事件不会冒泡进卡片的「打开详情」 */}
-    {hasExample && exampleOpen && (
+    {scenario.exampleResult && exampleOpen && (
       <Suspense fallback={null}>
         <ScenarioExampleDialogLazy
           scenario={scenario}

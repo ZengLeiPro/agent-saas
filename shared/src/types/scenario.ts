@@ -190,6 +190,8 @@ export interface ScenarioItem {
   firstAhaMode?: FirstAhaMode;
   /** 预生成的黄金示例结果；缺省表示该场景暂无静态示例（前端维持原有交互） */
   exampleResult?: ScenarioExampleResult;
+  /** 真实 demo 会话的公开分享 token；存在时「看示例结果」直接进入只读回放页 */
+  demoShareToken?: string;
 }
 
 export interface ScenarioItemInternal extends ScenarioItem {

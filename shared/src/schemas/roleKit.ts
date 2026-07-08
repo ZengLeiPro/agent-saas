@@ -53,6 +53,8 @@ export const scenarioExampleResultSchema = z.object({
   dataLabel: scenarioExampleDataLabelSchema,
 });
 
+export const demoShareTokenSchema = z.string().regex(/^[a-zA-Z0-9_-]{16,128}$/);
+
 export const day1PathStepSchema = z.object({
   stage: day1PathStageSchema,
   userAction: z.string().min(1),
@@ -166,6 +168,7 @@ export const scenarioItemSchema = z
     humanAuditPolicy: humanAuditPolicySchema.optional(),
     firstAhaMode: firstAhaModeSchema.optional(),
     exampleResult: scenarioExampleResultSchema.optional(),
+    demoShareToken: demoShareTokenSchema.optional(),
   })
   .superRefine((val, ctx) => {
     if (val.mode !== "recurring") return;

@@ -165,6 +165,7 @@ export {
   scenarioRoleSchema,
   scenarioExampleDataLabelSchema,
   scenarioExampleResultSchema,
+  demoShareTokenSchema,
   roleKitSchema,
 } from "./schemas/roleKit";
 export {

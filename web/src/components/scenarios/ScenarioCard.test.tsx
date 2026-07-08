@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { describe, expect, it, vi } from "vitest";
 import type { ScenarioItem } from "@agent/shared";
 
-import { ScenarioCard } from "./ScenarioCard";
+import { ScenarioCard, scenarioDemoSharePath } from "./ScenarioCard";
 import { EXAMPLE_DISCLAIMER } from "./ScenarioExampleDialog";
 
 const baseScenario: ScenarioItem = {
@@ -40,6 +40,11 @@ const scenarioWithExample: ScenarioItem = {
   exampleResult: { body: EXAMPLE_BODY, dataLabel: "synthetic" },
 };
 
+const scenarioWithDemoShare: ScenarioItem = {
+  ...baseScenario,
+  demoShareToken: "demo_share_token_1234567890",
+};
+
 describe("ScenarioCard · 无 exampleResult（现状不变）", () => {
   it("仍然只渲染「试一试」，点击触发 onTry", () => {
     const onTry = vi.fn();
@@ -51,6 +56,20 @@ describe("ScenarioCard · 无 exampleResult（现状不变）", () => {
     fireEvent.click(screen.getByRole("button", { name: "试一试" }));
     expect(onTry).toHaveBeenCalledTimes(1);
     expect(onTry).toHaveBeenCalledWith(expect.objectContaining({ id: baseScenario.id }));
+  });
+});
+
+describe("ScenarioCard · 有 demoShareToken", () => {
+  it("进入示例双按钮形态，并生成带 scenario 的分享路径", () => {
+    const onTry = vi.fn();
+    render(<ScenarioCard scenario={scenarioWithDemoShare} onTry={onTry} />);
+
+    expect(screen.getByRole("button", { name: "看示例结果" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "换成我的资料" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "试一试" })).toBeNull();
+    expect(scenarioDemoSharePath(scenarioWithDemoShare)).toBe(
+      "/share/demo_share_token_1234567890?scenario=fin-receivable-remind",
+    );
   });
 });
 

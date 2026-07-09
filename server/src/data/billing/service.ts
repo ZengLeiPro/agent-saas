@@ -47,7 +47,7 @@ export class BillingService {
           const inserted = await this.projectAssistantUsageEvent(row);
           if (inserted) usageEventsInserted++;
         }
-        if (row.eventType === 'run_finished') {
+        if (row.eventType === 'run_finished' || shouldSettleOnRunState(row.eventJson)) {
           const tenantId = row.tenantId;
           const runId = typeof row.eventJson.runId === 'string' ? row.eventJson.runId : undefined;
           if (runId) {
@@ -255,6 +255,17 @@ function isUsageObject(value: unknown): value is ProjectedRuntimeUsageInput['usa
       typeof (value as { inputTokens?: unknown }).inputTokens === 'number'
       || typeof (value as { outputTokens?: unknown }).outputTokens === 'number'
     );
+}
+
+function shouldSettleOnRunState(event: Record<string, unknown>): boolean {
+  if (event.type !== 'run_state_changed') return false;
+  return event.status === 'waiting_user'
+    || event.status === 'waiting_approval'
+    || event.status === 'waiting_hand'
+    || event.status === 'completed'
+    || event.status === 'failed'
+    || event.status === 'cancelled'
+    || event.status === 'orphaned';
 }
 
 function currentMonthStartIso(): string {

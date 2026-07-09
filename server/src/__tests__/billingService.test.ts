@@ -108,6 +108,103 @@ describe('BillingService hard cap guard', () => {
     expect(store.settleRunDebit).toHaveBeenCalledWith('tenant-1', 'run-1');
     expect(store.setProjectionState).toHaveBeenCalledWith('runtime_events', 2);
   });
+
+  it('settles billable usage when a run pauses for user interaction', async () => {
+    const store = {
+      getProjectionState: vi.fn(async () => 0),
+      listUnprojectedRuntimeEvents: vi.fn(async () => [
+        {
+          globalSequence: 1,
+          eventId: 'event-usage',
+          eventType: 'assistant_tool_calls',
+          tenantId: 'tenant-1',
+          timestamp: '2026-07-07T00:00:00.000Z',
+          eventJson: {
+            type: 'assistant_tool_calls',
+            id: 'event-usage',
+            runId: 'run-1',
+            sessionId: 'session-1',
+            model: 'glm-5.2',
+            usage: { inputTokens: 1000, outputTokens: 100 },
+          },
+        },
+        {
+          globalSequence: 2,
+          eventId: 'event-waiting',
+          eventType: 'run_state_changed',
+          tenantId: 'tenant-1',
+          timestamp: '2026-07-07T00:00:01.000Z',
+          eventJson: {
+            type: 'run_state_changed',
+            runId: 'run-1',
+            sessionId: 'session-1',
+            status: 'waiting_user',
+          },
+        },
+      ]),
+      insertUsageEvent: vi.fn(async () => ({ id: 'usage-1' })),
+      settleRunDebit: vi.fn(async () => ({ id: 'ledger-1' })),
+      setProjectionState: vi.fn(async () => undefined),
+    };
+    const service = new BillingService({ store: store as any });
+
+    await expect(service.projectRuntimeEvents()).resolves.toMatchObject({
+      usageEventsInserted: 1,
+      debitEntriesInserted: 1,
+      lastProjectedSequence: 2,
+    });
+
+    expect(store.insertUsageEvent).toHaveBeenCalledTimes(1);
+    expect(store.settleRunDebit).toHaveBeenCalledWith('tenant-1', 'run-1');
+  });
+
+  it('settles billable usage when a run is cancelled without run_finished', async () => {
+    const store = {
+      getProjectionState: vi.fn(async () => 0),
+      listUnprojectedRuntimeEvents: vi.fn(async () => [
+        {
+          globalSequence: 1,
+          eventId: 'event-usage',
+          eventType: 'assistant_message',
+          tenantId: 'tenant-1',
+          timestamp: '2026-07-07T00:00:00.000Z',
+          eventJson: {
+            type: 'assistant_message',
+            id: 'event-usage',
+            runId: 'run-1',
+            sessionId: 'session-1',
+            model: 'glm-5.2',
+            usage: { inputTokens: 1000, outputTokens: 100 },
+          },
+        },
+        {
+          globalSequence: 2,
+          eventId: 'event-cancelled',
+          eventType: 'run_state_changed',
+          tenantId: 'tenant-1',
+          timestamp: '2026-07-07T00:00:01.000Z',
+          eventJson: {
+            type: 'run_state_changed',
+            runId: 'run-1',
+            sessionId: 'session-1',
+            status: 'cancelled',
+          },
+        },
+      ]),
+      insertUsageEvent: vi.fn(async () => ({ id: 'usage-1' })),
+      settleRunDebit: vi.fn(async () => ({ id: 'ledger-1' })),
+      setProjectionState: vi.fn(async () => undefined),
+    };
+    const service = new BillingService({ store: store as any });
+
+    await expect(service.projectRuntimeEvents()).resolves.toMatchObject({
+      usageEventsInserted: 1,
+      debitEntriesInserted: 1,
+      lastProjectedSequence: 2,
+    });
+
+    expect(store.settleRunDebit).toHaveBeenCalledWith('tenant-1', 'run-1');
+  });
 });
 
 function fakeStore(input: {

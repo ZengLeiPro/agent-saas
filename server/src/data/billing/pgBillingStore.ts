@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import {
   CREDIT_MICRO,
@@ -613,11 +613,14 @@ export class PgBillingStore {
     const pricing = await this.getActivePricingVersion();
     const usageEvents = await this.listUsageEvents({ tenantId, runId, billable: true, limit: 500 });
     if (usageEvents.length === 0) return null;
-    const idempotencyKey = `debit:run:v1:${runId}`;
     return await this.withAccountLock(tenantId, async (client, account) => {
+      const chargedUsageEventIds = await this.listDebitedUsageEventIds(client, tenantId, runId);
+      const pendingUsageEvents = usageEvents.filter((item) => !chargedUsageEventIds.has(item.id));
+      if (pendingUsageEvents.length === 0) return null;
+      const idempotencyKey = `debit:usage:v1:${runId}:${usageEventIdHash(pendingUsageEvents.map((item) => item.id))}`;
       const existing = await this.getLedgerByIdempotencyKey(client, idempotencyKey);
       if (existing) return existing;
-      const actualCostYuanMicro = usageEvents.reduce((sum, item) => sum + item.actualCostYuanMicro, 0);
+      const actualCostYuanMicro = pendingUsageEvents.reduce((sum, item) => sum + item.actualCostYuanMicro, 0);
       const revenueYuanMicro = computeRevenueYuanMicro(actualCostYuanMicro, policy);
       const creditsToChargeMicro = roundUpCreditsMicro(
         Math.ceil((revenueYuanMicro * CREDIT_MICRO) / Math.max(1, pricing.creditValueYuanMicro)),
@@ -635,8 +638,8 @@ export class PgBillingStore {
         accountId: tenantId,
         type: 'debit',
         source: 'usage_event',
-        relatedUsageEventIds: usageEvents.map((item) => item.id),
-        sessionId: usageEvents[0]?.sessionId,
+        relatedUsageEventIds: pendingUsageEvents.map((item) => item.id),
+        sessionId: pendingUsageEvents[0]?.sessionId,
         runId,
         creditsDeltaMicro: -creditsToChargeMicro,
         balanceBeforeMicro: before,
@@ -648,7 +651,7 @@ export class PgBillingStore {
         grossMarginBps: revenueYuanMicro > 0 ? Math.round((grossProfitYuanMicro / revenueYuanMicro) * 10_000) : undefined,
         pricingVersion: pricing.version,
         billingPolicyVersion: policy.policyVersion,
-        note: `run usage debit (${usageEvents.length} usage event${usageEvents.length === 1 ? '' : 's'})`,
+        note: `run usage debit (${pendingUsageEvents.length} usage event${pendingUsageEvents.length === 1 ? '' : 's'})`,
         createdBy: 'system',
       });
     });
@@ -975,6 +978,18 @@ export class PgBillingStore {
     return result.rows[0] ? normalizeLedgerEntry(result.rows[0].row_json) : null;
   }
 
+  private async listDebitedUsageEventIds(client: PgClient, tenantId: string, runId: string): Promise<Set<string>> {
+    const result = await client.query<{ usage_event_id: string }>(`
+      SELECT DISTINCT unnest(related_usage_event_ids) AS usage_event_id
+      FROM ${this.creditLedgerTable}
+      WHERE tenant_id = $1
+        AND run_id = $2
+        AND type = 'debit'
+        AND source = 'usage_event'
+    `, [tenantId, runId]);
+    return new Set(result.rows.map((row) => row.usage_event_id));
+  }
+
   private async insertLedgerAndUpdateAccount(client: PgClient, input: Omit<BillingLedgerEntry, 'id' | 'createdAt'>): Promise<BillingLedgerEntry> {
     const now = new Date().toISOString();
     const result = await client.query<{ row_json: Record<string, unknown> }>(`
@@ -1030,6 +1045,10 @@ function computeRevenueYuanMicro(actualCostYuanMicro: number, policy: TenantBill
 function roundUpCreditsMicro(value: number): number {
   const step = 10_000; // 0.01 credit
   return Math.ceil(value / step) * step;
+}
+
+function usageEventIdHash(ids: string[]): string {
+  return createHash('sha1').update([...ids].sort().join('\n')).digest('hex').slice(0, 16);
 }
 
 export class BillingPricingConflictError extends Error {

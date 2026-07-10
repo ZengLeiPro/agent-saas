@@ -1,6 +1,9 @@
-import { Folder, FileText, FileImage, FileCode, File, ChevronRight, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { ChevronRight, Trash2 } from "lucide-react";
 import { formatFileSize, formatShortDate } from "@agent/shared";
 import type { FileEntry } from "@agent/shared";
+import { cn } from "@/lib/utils";
+import { FileIconTile } from "./fileIcons";
 
 interface FileListItemProps {
   entry: FileEntry;
@@ -9,58 +12,76 @@ interface FileListItemProps {
   showPath?: boolean;
 }
 
-const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico"]);
-const CODE_EXTS = new Set([".json", ".js", ".ts", ".jsx", ".tsx", ".css", ".py", ".sh"]);
-const TEXT_EXTS = new Set([".md", ".txt", ".html", ".htm", ".csv", ".xml", ".log"]);
-
-function getFileIcon(entry: FileEntry) {
-  if (entry.isDirectory) return <Folder className="h-5 w-5 text-link" />;
-  if (TEXT_EXTS.has(entry.extension)) return <FileText className="h-5 w-5 text-muted-foreground" />;
-  if (IMAGE_EXTS.has(entry.extension)) return <FileImage className="h-5 w-5 text-success" />;
-  if (CODE_EXTS.has(entry.extension)) return <FileCode className="h-5 w-5 text-warning" />;
-  return <File className="h-5 w-5 text-muted-foreground" />;
-}
-
-/** 从 "assets/20260321/file.md" 提取 "20260321" */
+/** 从 "assets/20260321/xx/file.md" 提取中间目录 "20260321/xx" 用于「所有文件」视图展示相对路径 */
 function getParentFolder(path: string): string {
   const parts = path.split("/");
   return parts.length > 2 ? parts.slice(1, -1).join("/") : "";
 }
 
 export function FileListItem({ entry, onClick, onDelete, showPath }: FileListItemProps) {
+  const [hover, setHover] = useState(false);
   const parentFolder = showPath ? getParentFolder(entry.path) : "";
 
   return (
-    <div className="group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent">
+    <div
+      className={cn(
+        "group relative flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors",
+        "hover:bg-accent/60",
+      )}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        className="flex min-w-0 flex-1 items-center gap-3 text-left focus:outline-none"
         onClick={() => onClick(entry)}
       >
-        <span className="shrink-0">{getFileIcon(entry)}</span>
+        <FileIconTile entry={entry} size="sm" open={entry.isDirectory && hover} />
+
         <span className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{entry.name}</div>
-          {showPath && parentFolder && (
-            <div className="truncate text-xs text-muted-foreground/60">{parentFolder}/</div>
-          )}
+          <div className="truncate text-[13px] font-medium leading-5 text-foreground">
+            {entry.name}
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] leading-4 text-muted-foreground">
+            {showPath && parentFolder ? (
+              <>
+                <span className="truncate text-muted-foreground/80">{parentFolder}/</span>
+                <span className="text-muted-foreground/40">·</span>
+              </>
+            ) : null}
+            {!entry.isDirectory && (
+              <>
+                <span>{formatFileSize(entry.size)}</span>
+                <span className="text-muted-foreground/40">·</span>
+              </>
+            )}
+            <span className="truncate">{formatShortDate(entry.modifiedAt)}</span>
+          </div>
         </span>
-        {entry.isDirectory ? (
-          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50" />
-        ) : (
-          <span className="shrink-0 text-right text-xs text-muted-foreground">
-            <div>{formatShortDate(entry.modifiedAt)}</div>
-            <div className="text-muted-foreground/60">{formatFileSize(entry.size)}</div>
-          </span>
+
+        {entry.isDirectory && (
+          <ChevronRight
+            className={cn(
+              "h-4 w-4 shrink-0 text-muted-foreground/40 transition-transform",
+              "group-hover:translate-x-0.5 group-hover:text-muted-foreground",
+            )}
+          />
         )}
       </button>
+
       {onDelete && (
         <button
           type="button"
-          className="shrink-0 rounded p-1 opacity-0 transition-opacity hover:bg-destructive/10 group-hover:opacity-100"
+          className={cn(
+            "shrink-0 rounded-md p-1.5 text-muted-foreground/60 transition-all",
+            "opacity-0 -mr-1 group-hover:opacity-100 group-hover:mr-0",
+            "hover:bg-destructive/10 hover:text-destructive focus:opacity-100 focus:outline-none",
+          )}
           onClick={(e) => { e.stopPropagation(); onDelete(entry); }}
           title="删除"
+          aria-label={`删除 ${entry.name}`}
         >
-          <Trash2 className="h-4 w-4 text-destructive/70" />
+          <Trash2 className="h-3.5 w-3.5" />
         </button>
       )}
     </div>

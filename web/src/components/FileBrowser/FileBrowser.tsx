@@ -1,5 +1,8 @@
-import { useState, useCallback, useMemo } from "react";
-import { RefreshCw, X, Loader2, FolderOpen, FolderTree, List, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { useState, useCallback, useMemo, type ReactNode } from "react";
+import {
+  RefreshCw, X, FolderTree, List, ArrowUpDown, ArrowUp, ArrowDown,
+  LayoutGrid, Rows3, FolderX,
+} from "lucide-react";
 import { getPreviewFileType, FILE_SORT_LABELS } from "@agent/shared";
 import type { FileEntry, FileSortKey, FileSortOrder } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
@@ -17,6 +20,9 @@ import {
 } from "@/components/ui/dialog";
 import { Breadcrumb } from "./Breadcrumb";
 import { FileListItem } from "./FileListItem";
+import { FileGridItem } from "./FileGridItem";
+import { FileListSkeleton } from "./FileListSkeleton";
+import { EmptyState } from "./EmptyState";
 import { useFileList } from "./useFileList";
 
 export interface FileBrowserProps {
@@ -28,6 +34,7 @@ export interface FileBrowserProps {
 }
 
 type ViewMode = "folder" | "all";
+type LayoutMode = "list" | "grid";
 
 function sortEntries(entries: FileEntry[], sortKey: FileSortKey, sortOrder: FileSortOrder): FileEntry[] {
   const sorted = [...entries];
@@ -58,6 +65,7 @@ function sortEntries(entries: FileEntry[], sortKey: FileSortKey, sortOrder: File
 const SORT_KEYS: FileSortKey[] = ["name", "modifiedAt", "size", "extension"];
 
 const SORT_STORAGE_KEY = "files.sort";
+const LAYOUT_STORAGE_KEY = "files.layout";
 
 interface SortPrefs {
   folder: { key: FileSortKey; order: FileSortOrder };
@@ -83,6 +91,53 @@ function loadSortPrefs(): SortPrefs {
   return DEFAULT_SORT;
 }
 
+function loadLayoutMode(): LayoutMode {
+  try {
+    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (raw === "grid" || raw === "list") return raw;
+  } catch { /* ignore */ }
+  return "list";
+}
+
+/** 分段控件容器：视图模式和布局模式共享一致的圆角胶囊样式 */
+function SegmentedGroup({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex shrink-0 items-center rounded-lg bg-muted/60 p-0.5 ring-1 ring-inset ring-border/40">
+      {children}
+    </div>
+  );
+}
+
+function SegmentedButton({
+  active,
+  onClick,
+  title,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "flex h-6 w-6 items-center justify-center rounded-md transition-all",
+        active
+          ? "bg-card text-foreground shadow-sm ring-1 ring-inset ring-border/60"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      aria-pressed={active}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCloseButtonSpace }: FileBrowserProps) {
   const { user: authUser } = useAuth();
   // 历史 admin OwnerPicker 已移除（任何角色都不允许查看他人文件目录，
@@ -91,6 +146,7 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
 
   const [currentPath, setCurrentPath] = useState("assets");
   const [viewMode, setViewMode] = useState<ViewMode>("folder");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(loadLayoutMode);
   const [sortPrefs, setSortPrefs] = useState<SortPrefs>(loadSortPrefs);
 
   const sortKey = sortPrefs[viewMode].key;
@@ -104,6 +160,11 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
     });
   }, []);
 
+  const updateLayoutMode = useCallback((mode: LayoutMode) => {
+    setLayoutMode(mode);
+    try { localStorage.setItem(LAYOUT_STORAGE_KEY, mode); } catch { /* ignore */ }
+  }, []);
+
   const [deleteTarget, setDeleteTarget] = useState<FileEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -114,6 +175,17 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
     () => sortEntries(rawEntries, sortKey, sortOrder),
     [rawEntries, sortKey, sortOrder],
   );
+
+  const stats = useMemo(() => {
+    let folders = 0;
+    let files = 0;
+    let totalSize = 0;
+    for (const e of rawEntries) {
+      if (e.isDirectory) folders += 1;
+      else { files += 1; totalSize += e.size; }
+    }
+    return { folders, files, totalSize };
+  }, [rawEntries]);
 
   const handleSortClick = useCallback((key: FileSortKey) => {
     if (key === sortKey) {
@@ -163,100 +235,177 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
 
   return (
     <div className="flex h-full flex-col bg-card">
-      {/* Header */}
-      <div className={cn("flex h-12 shrink-0 items-center gap-2 border-b px-3", reserveCloseButtonSpace && "pr-10")}>
+      {/* Header：面包屑 + 视图切换 + 刷新 */}
+      <div
+        className={cn(
+          "flex h-12 shrink-0 items-center gap-1.5 border-b border-border/60 px-3",
+          reserveCloseButtonSpace && "pr-10",
+        )}
+      >
         <div className="min-w-0 flex-1">
           {viewMode === "folder" ? (
             <Breadcrumb currentPath={currentPath} onNavigate={setCurrentPath} />
           ) : (
-            <span className="text-sm font-medium">所有文件</span>
+            <div className="flex items-center gap-1.5 text-[13px] font-semibold text-foreground">
+              <List className="h-3.5 w-3.5" />
+              所有文件
+            </div>
           )}
         </div>
-        {/* 视图切换 */}
-        <div className="flex shrink-0 rounded-md border">
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn("h-7 w-7 rounded-r-none", viewMode === "folder" && "bg-accent")}
+
+        {/* 视图模式：文件夹 / 所有文件 */}
+        <SegmentedGroup>
+          <SegmentedButton
+            active={viewMode === "folder"}
             onClick={() => setViewMode("folder")}
             title="文件夹视图"
           >
             <FolderTree className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn("h-7 w-7 rounded-l-none border-l", viewMode === "all" && "bg-accent")}
+          </SegmentedButton>
+          <SegmentedButton
+            active={viewMode === "all"}
             onClick={() => setViewMode("all")}
             title="所有文件"
           >
             <List className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={refresh} title="刷新">
-          <RefreshCw className="h-4 w-4 text-muted-foreground" />
+          </SegmentedButton>
+        </SegmentedGroup>
+
+        {/* 布局模式：列表 / 网格 */}
+        <SegmentedGroup>
+          <SegmentedButton
+            active={layoutMode === "list"}
+            onClick={() => updateLayoutMode("list")}
+            title="列表布局"
+          >
+            <Rows3 className="h-3.5 w-3.5" />
+          </SegmentedButton>
+          <SegmentedButton
+            active={layoutMode === "grid"}
+            onClick={() => updateLayoutMode("grid")}
+            title="网格布局"
+          >
+            <LayoutGrid className="h-3.5 w-3.5" />
+          </SegmentedButton>
+        </SegmentedGroup>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+          onClick={refresh}
+          title="刷新"
+          disabled={loading}
+        >
+          <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
         </Button>
+
         {!fullPage && onClose && (
-          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={onClose} title="关闭">
-            <X className="h-4 w-4 text-muted-foreground" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={onClose}
+            title="关闭"
+          >
+            <X className="h-3.5 w-3.5" />
           </Button>
         )}
       </div>
 
-      {/* 排序栏 */}
-      <div className="flex shrink-0 items-center gap-1 border-b px-3 py-1">
-        <ArrowUpDown className="mr-1 h-3 w-3 text-muted-foreground/60" />
-        {SORT_KEYS.map((key) => (
-          <button
-            key={key}
-            type="button"
-            className={cn(
-              "flex items-center gap-0.5 rounded px-2 py-0.5 text-xs transition-colors",
-              sortKey === key
-                ? "bg-accent font-medium text-foreground"
-                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-            )}
-            onClick={() => handleSortClick(key)}
-          >
-            {FILE_SORT_LABELS[key]}
-            {sortKey === key && (
-              sortOrder === "asc"
-                ? <ArrowUp className="h-3 w-3" />
-                : <ArrowDown className="h-3 w-3" />
-            )}
-          </button>
-        ))}
+      {/* 排序栏：chip 风格 */}
+      <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-3 py-1.5">
+        <ArrowUpDown className="mr-0.5 h-3 w-3 text-muted-foreground/50" />
+        {SORT_KEYS.map((key) => {
+          const active = sortKey === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              className={cn(
+                "flex items-center gap-0.5 rounded-md px-2 py-1 text-[11px] leading-none transition-all",
+                active
+                  ? "bg-brand-50 font-medium text-brand-700 ring-1 ring-inset ring-brand-200/60 dark:bg-brand-900/40 dark:text-brand-200 dark:ring-brand-700/40"
+                  : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+              )}
+              onClick={() => handleSortClick(key)}
+              aria-pressed={active}
+            >
+              {FILE_SORT_LABELS[key]}
+              {active && (
+                sortOrder === "asc"
+                  ? <ArrowUp className="h-3 w-3" />
+                  : <ArrowDown className="h-3 w-3" />
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Content */}
+      {/* 主体内容区 */}
       {loading ? (
-        <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
+        <ScrollArea className="flex-1">
+          <FileListSkeleton layout={layoutMode} />
+        </ScrollArea>
       ) : error ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
-          <p className="text-sm text-destructive">{error}</p>
-          <Button variant="outline" size="sm" onClick={refresh}>重试</Button>
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10 text-destructive ring-1 ring-inset ring-destructive/20">
+            <FolderX className="h-7 w-7" strokeWidth={1.5} />
+          </div>
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium text-foreground">加载失败</p>
+            <p className="text-xs text-muted-foreground">{error}</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={refresh}>
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+            重试
+          </Button>
         </div>
       ) : entries.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
-          <FolderOpen className="h-10 w-10" />
-          <p className="text-sm">暂无文件</p>
-        </div>
+        <EmptyState variant={viewMode} />
       ) : (
         <ScrollArea className="flex-1">
-          <div className="p-2">
-            {entries.map((entry) => (
-              <FileListItem
-                key={entry.path}
-                entry={entry}
-                onClick={handleEntryClick}
-                onDelete={setDeleteTarget}
-                showPath={viewMode === "all"}
-              />
-            ))}
-          </div>
+          {layoutMode === "list" ? (
+            <div className="space-y-0.5 p-2">
+              {entries.map((entry) => (
+                <FileListItem
+                  key={entry.path}
+                  entry={entry}
+                  onClick={handleEntryClick}
+                  onDelete={setDeleteTarget}
+                  showPath={viewMode === "all"}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-1 p-2">
+              {entries.map((entry) => (
+                <FileGridItem
+                  key={entry.path}
+                  entry={entry}
+                  onClick={handleEntryClick}
+                  onDelete={setDeleteTarget}
+                />
+              ))}
+            </div>
+          )}
         </ScrollArea>
+      )}
+
+      {/* 底部统计栏：只有内容时展示，帮助扫读整体规模 */}
+      {!loading && !error && entries.length > 0 && (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
+          <span>
+            {stats.folders > 0 && `${stats.folders} 个文件夹`}
+            {stats.folders > 0 && stats.files > 0 && " · "}
+            {stats.files > 0 && `${stats.files} 个文件`}
+          </span>
+          {stats.files > 0 && (
+            <span className="tabular-nums text-muted-foreground/70">
+              {formatBytesCompact(stats.totalSize)}
+            </span>
+          )}
+        </div>
       )}
 
       {/* 删除确认对话框 */}
@@ -288,4 +437,17 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
       </Dialog>
     </div>
   );
+}
+
+/** 底部合计使用极简单位显示：与 shared 的 formatFileSize 拉齐，但输出更短。 */
+function formatBytesCompact(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let val = bytes / 1024;
+  let i = 0;
+  while (val >= 1024 && i < units.length - 1) {
+    val /= 1024;
+    i += 1;
+  }
+  return `${val.toFixed(val >= 100 ? 0 : 1)} ${units[i]}`;
 }

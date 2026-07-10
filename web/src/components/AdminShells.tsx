@@ -26,6 +26,7 @@ import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControl
 import { InfraPage, OverviewPage, SandboxesPage, SessionsPage, TenantsPage, UsersPage } from "@/components/PlatformAdmin/pages";
 import { SystemSettingsPanel } from "@/components/PlatformAdmin/SystemSettingsPanel";
 import { RunTraceExplorer } from "@/components/RunTraceExplorer";
+import { OverviewSection as TenantOverviewSection } from "@/components/TenantAnalytics/OverviewSection";
 
 export type TenantSection = "overview" | "users" | "skills" | "mcp" | "usage" | "billing" | "files" | "audit" | "settings" | "company";
 export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "global-mcp" | "skill-pool" | "system";
@@ -761,7 +762,6 @@ export function TenantAdminShell({
   headerControlsPlacement?: "inline" | "none";
 }) {
   const { user, isPlatformAdmin } = useAuth();
-  const { users } = useUsers();
   const { tenants } = useTenants();
   const [internalActive, setInternalActive] = useState<TenantSection>("overview");
   const active = activeAnalysisSection ?? internalActive;
@@ -774,9 +774,6 @@ export function TenantAdminShell({
 
   const effectiveTenantId = isPlatformAdmin ? targetTenantId || user?.tenantId || "" : user?.tenantId || "";
   const currentTenant = tenants.find(t => t.id === effectiveTenantId);
-  const tenantUsers = useMemo(() => users.filter(u => u.tenantId === effectiveTenantId), [users, effectiveTenantId]);
-  const admins = tenantUsers.filter(u => u.role === "admin");
-  const disabledUsers = tenantUsers.filter(u => u.disabled);
 
   const tenantSwitcher = isPlatformAdmin && tenants.length > 0 ? (
     <label className="block space-y-1.5">
@@ -836,33 +833,10 @@ export function TenantAdminShell({
     if (active === "usage") return renderUsage(effectiveTenantId);
     if (active === "audit") return <AuditEventsPanel scope="tenant" tenantId={effectiveTenantId} tenantName={currentTenant?.name} />;
     return (
-      <div className="w-full space-y-5">
-        <SettingsPanelHeader
-          title="组织分析"
-          description="保留组织概览、用量与配额、审计分析；成员、工具与组织管理收敛到头像菜单的设置入口。"
-          actions={isPlatformAdmin && tenants.length > 0 ? (
-            <select className="h-9 rounded-md border bg-background px-3 text-sm" value={effectiveTenantId} onChange={event => setTargetTenantId(event.target.value)}>
-              {tenants.map(tenant => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}
-            </select>
-          ) : undefined}
-        />
-        <div className="rounded-2xl border bg-card p-5 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-sm text-muted-foreground">当前组织</div>
-              <div className="mt-1 text-xl font-semibold">{currentTenant?.name || effectiveTenantId || "当前组织"}</div>
-              <div className="text-sm text-muted-foreground">组织标识：{effectiveTenantId || "-"}</div>
-            </div>
-            <Badge variant={currentTenant?.disabled ? "destructive" : "secondary"}>{currentTenant?.disabled ? "已禁用" : "启用中"}</Badge>
-          </div>
-        </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard title="成员" value={tenantUsers.length} description="当前组织用户总数" />
-          <MetricCard title="管理员" value={admins.length} description="可管理组织能力的账号" />
-          <MetricCard title="已禁用" value={disabledUsers.length} description="当前不可登录账号" />
-          <MetricCard title="管理范围" value={isPlatformAdmin ? "跨组织" : "本组织"} description="由当前角色决定" />
-        </div>
-      </div>
+      <TenantOverviewSection
+        tenantId={effectiveTenantId}
+        onTenantChange={isPlatformAdmin ? setTargetTenantId : undefined}
+      />
     );
   })();
 

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { Sparkles } from "lucide-react";
 import { authFetch } from "@/lib/authFetch";
+import { Separator } from "@/components/ui/separator";
 import {
   consumePendingBillingBadgeOpen,
   subscribeBillingBadgeOpen,
@@ -112,19 +114,36 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="inline-flex h-7 items-center rounded-md border border-brand-200 bg-brand-50 px-2.5 text-xs font-semibold text-brand-700 shadow-sm tabular-nums transition-colors hover:border-brand-300 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-900/35 dark:text-brand-100 dark:hover:bg-brand-900/55"
+        className="inline-flex h-7 items-center gap-1 rounded-md border border-brand-200 bg-brand-50 px-2.5 text-xs font-semibold text-brand-700 shadow-sm tabular-nums transition-colors hover:border-brand-300 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-900/35 dark:text-brand-100 dark:hover:bg-brand-900/55"
         title="组织积分余额"
       >
+        <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
         {formatCredits(summary.balanceCredits)}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-lg border bg-popover p-3 text-xs shadow-lg">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="font-medium">积分余额</div>
-            <div className="text-[10px] text-muted-foreground">{billingModeLabel(summary.billingMode)}</div>
+        <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl">
+          <div className="px-4 pb-3 pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-1.5 text-sm font-medium">
+                <Sparkles className="h-4 w-4 text-brand-600 dark:text-brand-300" aria-hidden="true" />
+                积分余额
+              </div>
+              <div className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                {billingModeLabel(summary.billingMode)}
+              </div>
+            </div>
+            <div className="mt-3 text-right text-2xl font-semibold leading-none tabular-nums">
+              {formatCredits(summary.balanceCredits)}
+            </div>
+            {summary.lowBalance && (
+              <div className="mt-2 text-right text-[11px] text-destructive">余额较低</div>
+            )}
           </div>
-          <div className="space-y-1.5">
+
+          <Separator />
+
+          <div className="space-y-2 px-4 py-3 text-xs">
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted-foreground">可用余额</span>
               <span className="font-mono tabular-nums">{formatCredits(summary.balanceCredits)}</span>
@@ -145,6 +164,10 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
                 <span className="font-mono tabular-nums">{formatCredits(sessionSummary.creditsUsed)}</span>
               </div>
             )}
+          </div>
+
+          <div className="border-t bg-muted/35 px-4 py-2 text-[10px] leading-relaxed text-muted-foreground">
+            积分用于 Agent 服务，实际消耗以平台计费记录为准。
           </div>
         </div>
       )}

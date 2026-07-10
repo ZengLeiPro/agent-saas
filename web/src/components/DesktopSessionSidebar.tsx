@@ -32,6 +32,8 @@ import {
   Search,
   LayoutGrid,
   Share2,
+  ArrowLeftRight,
+  Coins,
 } from "lucide-react";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
@@ -49,6 +51,7 @@ import {
 import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
 
 import { refreshAll } from "@/lib/refreshBus";
+import { requestOpenBillingBadge } from "@/lib/billingBadgeBus";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -611,6 +614,7 @@ interface SidebarUserMenuFooterProps {
   onChangePassword: () => void;
   onNavigateAdminTab?: (tab: AppTab) => void;
   onOpenAdminSettings?: (target: AdminSettingsTarget) => void;
+  onOpenBilling?: () => void;
   logout: () => void;
 }
 
@@ -629,6 +633,7 @@ function SidebarUserMenuFooter({
   onChangePassword,
   onNavigateAdminTab,
   onOpenAdminSettings,
+  onOpenBilling,
   logout,
 }: SidebarUserMenuFooterProps) {
   return (
@@ -724,7 +729,25 @@ function SidebarUserMenuFooter({
               </div>
             )}
 
+            {onOpenBilling && (
+              <div className={USER_MENU_SECTION}>
+                <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenBilling(); }}>
+                  <Coins className="h-3.5 w-3.5" />
+                  我的积分
+                </button>
+              </div>
+            )}
+
             <div className={USER_MENU_SECTION}>
+              <button
+                type="button"
+                className={USER_MENU_ITEM}
+                onClick={() => { setShowUserMenu(false); logout(); }}
+                title="退出当前账号并返回登录页，可换其他账号登录"
+              >
+                <ArrowLeftRight className="h-3.5 w-3.5" />
+                切换账号
+              </button>
               <button type="button" className={cn(USER_MENU_ITEM, "text-destructive hover:bg-destructive/10")} onClick={() => { setShowUserMenu(false); logout(); }}>
                 <LogOut className="h-3.5 w-3.5" />
                 退出登录
@@ -1803,6 +1826,11 @@ export function DesktopSessionSidebar({
           onChangePassword={() => setShowPasswordDialog(true)}
           onNavigateAdminTab={(tab) => (onPushTab ?? onTabChange)?.(tab)}
           onOpenAdminSettings={onOpenAdminSettings}
+          onOpenBilling={() => {
+            // BillingMiniBadge 只在 chat tab 上渲染，先切回 chat，再命令展开面板。
+            (onPushTab ?? onTabChange)?.("chat");
+            requestOpenBillingBadge();
+          }}
           logout={logout}
         />
 
@@ -2147,6 +2175,12 @@ export function DesktopSessionSidebar({
             onOpenAdminSettings={(target) => {
               setSubPanelOpen(false);
               onOpenAdminSettings?.(target);
+            }}
+            onOpenBilling={() => {
+              // BillingMiniBadge 只在 chat tab 上渲染，先关闭子面板并切回 chat，再命令展开面板。
+              setSubPanelOpen(false);
+              (onPushTab ?? onTabChange)?.("chat");
+              requestOpenBillingBadge();
             }}
             logout={logout}
           />

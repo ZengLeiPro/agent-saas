@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/authFetch";
+import {
+  consumePendingBillingBadgeOpen,
+  subscribeBillingBadgeOpen,
+} from "@/lib/billingBadgeBus";
 
 interface BillingSummary {
   balanceCredits: number;
@@ -91,6 +95,15 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
+
+  // 响应外部（侧边栏用户菜单「我的积分」入口）打开请求：挂载时消费 pending 标志，同时订阅后续请求。
+  useEffect(() => {
+    if (consumePendingBillingBadgeOpen()) setOpen(true);
+    const unsub = subscribeBillingBadgeOpen(() => {
+      if (consumePendingBillingBadgeOpen()) setOpen(true);
+    });
+    return unsub;
+  }, []);
 
   if (!summary || !summary.billingEnabled || summary.billingMode === "internal") return null;
 

@@ -10,6 +10,8 @@ import type {
   ToolApprovalPolicyOptions,
 } from '../agent/types.js';
 import type { AgentStore } from '../data/agents/store.js';
+import type { OrgAgentStore } from '../data/orgAgents/store.js';
+import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import type { BillingService } from '../data/billing/service.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
@@ -212,6 +214,8 @@ export interface RawRuntimeRunDispatchConfig {
   memory?: { enabled?: boolean; maxLines?: number };
   memoryIndexService?: MemoryIndexService | null;
   agentStore?: AgentStore;
+  /** 公司级专职 Agent store。orgAgentId 会话解析限定提示语 + skill 白名单用；未配置时 orgAgentId 会话 fail-closed。 */
+  orgAgentStore?: OrgAgentStore;
   tenantStore?: TenantStore;
   resolveUserRole?: (identity: { userId?: string; username?: string }) => 'admin' | 'user' | undefined;
   /** Default raw loop turn budget when a run does not specify maxTurns. */
@@ -1166,6 +1170,45 @@ function filterRuntimeSkills(skills: SkillEntry[], filter: RuntimeSkillFilter): 
   return skills.filter(filter);
 }
 
+/** AND 组合多个 skill filter：任一 filter 拒绝即拒绝（browser-hand filter 与 org agent 白名单叠加用，不是替换）。 */
+export function composeSkillFilters(...filters: RuntimeSkillFilter[]): RuntimeSkillFilter {
+  return (skill) => filters.every((filter) => filter(skill));
+}
+
+/** 专职 Agent skill 白名单 filter：可用清单 ∩ allowedSkills（按 id 或 name 命中）。 */
+export function buildOrgAgentSkillFilter(agent: Pick<OrgAgentRecord, 'allowedSkills'>): RuntimeSkillFilter {
+  const allowed = new Set(agent.allowedSkills);
+  return (skill) => allowed.has(skill.id) || allowed.has(skill.name);
+}
+
+/**
+ * 解析专职 Agent 覆盖三态：
+ *   - null：orgAgentId 缺省 → 个人 Agent 路径照旧（兼容红线：零行为变化）
+ *   - { error }：record 缺失 / disabled / 租户不符 / store 未配置 → 调用方 yield error
+ *     **fail-closed**，绝不静默回退个人 persona + 全量 skill（漏一处 = 审批恢复后越权）
+ *   - { agent }：正常应用覆盖（org 名 / 限定提示语 / skill 白名单 / 跳过 persona+memory）
+ */
+export function resolveOrgAgentOverrides(
+  config: Pick<RawRuntimeRunDispatchConfig, 'orgAgentStore'>,
+  orgAgentId: string | undefined,
+  tenantId: string | undefined,
+): null | { error: string } | { agent: OrgAgentRecord } {
+  if (!orgAgentId) return null;
+  const store = config.orgAgentStore;
+  if (!store) {
+    return { error: `专职 Agent 服务不可用（orgAgentId=${orgAgentId}），已终止本次运行` };
+  }
+  const record = store.get(orgAgentId);
+  if (!record || !record.enabled) {
+    return { error: '该专职 Agent 已被停用或删除，请联系组织管理员' };
+  }
+  if (record.tenantId !== tenantId) {
+    // 跨租户/租户身份缺失一律 fail-closed（与 channel 侧 org_agent_unavailable 防枚举语义一致）
+    return { error: '该专职 Agent 已被停用或删除，请联系组织管理员' };
+  }
+  return { agent: record };
+}
+
 export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSkillFilter {
   const hasTenantAcsHand = availableHands.some((hand) => (
     typeof hand.metadata?.tenantRemoteHandId === 'string'
@@ -1295,7 +1338,7 @@ function normalizeApprovalPolicy(value: unknown): ToolApprovalPolicyOptions | un
  * static.md「## 运行态」静态规则。删除后 instructions 无易变尾巴，per-user
  * 段之后逐字节稳定。
  */
-function buildInstructions(params: {
+export function buildInstructions(params: {
   sharedDir: string;
   tenantId?: string;
   agentName: string;
@@ -1305,8 +1348,10 @@ function buildInstructions(params: {
   executionTarget: ExecutionTargetKind;
   memorySearchEnabled: boolean;
   isPlatformAdmin: boolean;
+  /** 专职 Agent 覆盖：注入 {{ORG_AGENT_INSTRUCTIONS}}，IF_PERSONA/IF_NO_PERSONA 强制 false，AGENT_NAME 用 org 名。 */
+  orgAgent?: Pick<OrgAgentRecord, 'name' | 'instructions'>;
 }): string {
-  const personaBody = params.persona.trim();
+  const personaBody = params.orgAgent ? '' : params.persona.trim();
   const hasPersona = personaBody.length > 0;
 
   const sharedVars: PromptVars = {
@@ -1315,12 +1360,14 @@ function buildInstructions(params: {
   const visibleCwd = visibleWorkspaceCwd(params.cwd, params.executionTarget);
   const personalVars: PromptVars = {
     CURRENT_USER: params.userName || '当前用户',
-    AGENT_NAME: params.agentName,
+    AGENT_NAME: params.orgAgent ? params.orgAgent.name : params.agentName,
     PERSONA: personaBody,
     USER_CWD: visibleCwd,
-    IF_PERSONA: hasPersona,
-    IF_NO_PERSONA: !hasPersona,
+    IF_PERSONA: !params.orgAgent && hasPersona,
+    IF_NO_PERSONA: !params.orgAgent && !hasPersona,
     IF_NOT_ADMIN: !params.isPlatformAdmin,
+    IF_ORG_AGENT: !!params.orgAgent,
+    ORG_AGENT_INSTRUCTIONS: params.orgAgent?.instructions ?? '',
   };
 
   const sections: string[] = [
@@ -1459,6 +1506,17 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const transcriptPath = existingSession?.transcriptPath ?? getTranscriptPath(cwd, sessionId, { userId: identitySource?.id, tenantId: identitySource?.tenantId });
     await mkdir(dirname(transcriptPath), { recursive: true });
 
+    // 专职 Agent 解析（在 session lock / run record 之前 fail-fast）：
+    // 新会话由 options.orgAgentId 携带；resume 以 session meta 为准。
+    const orgAgentId = options.orgAgentId ?? existingSession?.orgAgentId;
+    const orgAgentResolution = resolveOrgAgentOverrides(config, orgAgentId, effectiveTenantId);
+    if (orgAgentResolution && 'error' in orgAgentResolution) {
+      logger.warn(`Org agent fail-closed: session=${sessionId} orgAgentId=${orgAgentId} reason=${orgAgentResolution.error}`);
+      yield { type: 'error', error: orgAgentResolution.error };
+      return;
+    }
+    const orgAgent = orgAgentResolution?.agent;
+
     // Session-level lock：尽早占用，失败即退让；resume 路径多 brain 抢同一
     // session 时只让一个进入 dispatch。lock 必须在 try/finally 内 release。
     let lockHandle = config.sessionLock ? await config.sessionLock.tryAcquire(sessionId) : null;
@@ -1481,17 +1539,19 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const agentProfile = identitySource && config.agentStore
       ? config.agentStore.get(identitySource.username)
       : undefined;
-    const agentName = agentProfile?.name || '开开';
+    // 专职 Agent 覆盖：org 名 + 跳过个人 persona / memory 注入，memory search 关闭
+    const agentName = orgAgent ? orgAgent.name : (agentProfile?.name || '开开');
     const userName = identitySource ? (identitySource.realName || identitySource.username || '') : '';
-    const persona = options.skipPersona ? '' : ((await loadPersona(cwd)) || '');
+    const persona = (orgAgent || options.skipPersona) ? '' : ((await loadPersona(cwd)) || '');
 
     let memoryContext: string | undefined;
-    if (memoryEnabled && !isResume && !options.skipMemory) {
+    if (memoryEnabled && !isResume && !options.skipMemory && !orgAgent) {
       const memory = await loadMemoryContext(cwd, memoryMaxLines);
       if (memory) memoryContext = memory;
     }
     const prompt = buildPrompt(message, context);
-    const memorySearchEnabled = hasMemorySearchTool(config.memoryIndexService)
+    const memorySearchEnabled = !orgAgent
+      && hasMemorySearchTool(config.memoryIndexService)
       && isToolEnabled(config.toolControls, 'MemorySearch');
     const isPlatformAdmin = resolveContextIsPlatformAdmin(context);
     const sessionModelRef = existingSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
@@ -1515,6 +1575,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         modelRef: sessionModelRef,
         executionTarget,
         status: 'running',
+        ...(orgAgentId ? { orgAgentId } : {}),
       })),
       sessionId,
       userId: identitySource?.id ?? existingSession?.userId ?? '',
@@ -1530,6 +1591,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       executionTarget,
       workspaceId,
       status: 'running',
+      ...(orgAgentId ? { orgAgentId } : {}),
       updatedAt: new Date().toISOString(),
     };
     await sessionCatalog.upsert(sessionRecord);
@@ -1600,10 +1662,12 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(sessionId) : [];
+    const baseSkillFilter = buildRuntimeSkillFilter(availableHands);
     const tooling = await collectRuntimeTooling(
       config,
       identitySource?.username,
-      buildRuntimeSkillFilter(availableHands),
+      // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
+      orgAgent ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent)) : baseSkillFilter,
       { executionTransportRegistry, tenantHandResolver },
     );
     const instructions = options.skipSystemPrompt
@@ -1618,6 +1682,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           executionTarget,
           memorySearchEnabled,
           isPlatformAdmin,
+          ...(orgAgent ? { orgAgent } : {}),
         });
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
     const projection = new LegacyTranscriptProjection(transcriptPath);
@@ -1837,13 +1902,25 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
 
     const identitySource = request.context.sessionOwner || request.context.user;
     const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
+    // 专职 Agent 覆盖（approval resume 同样应用，漏一处 = 审批恢复后越权）。
+    // resume 路径 orgAgentId 只信 session meta（existingSession）。
+    const orgAgentId = existingSession?.orgAgentId;
+    const orgAgentResolution = resolveOrgAgentOverrides(config, orgAgentId, effectiveTenantId);
+    if (orgAgentResolution && 'error' in orgAgentResolution) {
+      if (lockHandle) await lockHandle.release().catch(() => undefined);
+      logger.warn(`Org agent fail-closed (approval resume): session=${request.sessionId} orgAgentId=${orgAgentId}`);
+      yield { type: 'error', error: orgAgentResolution.error };
+      return;
+    }
+    const orgAgent = orgAgentResolution?.agent;
     const agentProfile = identitySource && config.agentStore
       ? config.agentStore.get(identitySource.username)
       : undefined;
-    const agentName = agentProfile?.name || '开开';
+    const agentName = orgAgent ? orgAgent.name : (agentProfile?.name || '开开');
     const userName = identitySource ? (identitySource.realName || identitySource.username || '') : '';
-    const persona = (await loadPersona(cwd)) || '';
-    const memorySearchEnabled = hasMemorySearchTool(config.memoryIndexService)
+    const persona = orgAgent ? '' : ((await loadPersona(cwd)) || '');
+    const memorySearchEnabled = !orgAgent
+      && hasMemorySearchTool(config.memoryIndexService)
       && isToolEnabled(config.toolControls, 'MemorySearch');
     // resume 路径 identitySource 优先 sessionRecord.username（dispatch 首跑时已记录），
     // 防止重启 / anonymous 路径上 user.username 缺失导致 skill / MCP 全部消失。
@@ -1943,10 +2020,12 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
+    const resumeBaseSkillFilter = buildRuntimeSkillFilter(availableHands);
     const resumeTooling = await collectRuntimeTooling(
       config,
       resumeUsername,
-      buildRuntimeSkillFilter(availableHands),
+      // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
+      orgAgent ? composeSkillFilters(resumeBaseSkillFilter, buildOrgAgentSkillFilter(orgAgent)) : resumeBaseSkillFilter,
       { executionTransportRegistry, tenantHandResolver },
     );
     const instructions = buildInstructions({
@@ -1959,6 +2038,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTarget,
       memorySearchEnabled,
       isPlatformAdmin: resumeIsPlatformAdmin,
+      ...(orgAgent ? { orgAgent } : {}),
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);
     const modelAdapter = createModelAdapterForProtocol({ apiKey, baseUrl }, modelProviderOptions);
@@ -2092,13 +2172,25 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
 
     const identitySource = request.context.sessionOwner || request.context.user;
     const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
+    // 专职 Agent 覆盖（interaction resume 同样应用，漏一处 = 交互恢复后越权）。
+    // resume 路径 orgAgentId 只信 session meta（existingSession）。
+    const orgAgentId = existingSession?.orgAgentId;
+    const orgAgentResolution = resolveOrgAgentOverrides(config, orgAgentId, effectiveTenantId);
+    if (orgAgentResolution && 'error' in orgAgentResolution) {
+      if (lockHandle) await lockHandle.release().catch(() => undefined);
+      logger.warn(`Org agent fail-closed (interaction resume): session=${request.sessionId} orgAgentId=${orgAgentId}`);
+      yield { type: 'error', error: orgAgentResolution.error };
+      return;
+    }
+    const orgAgent = orgAgentResolution?.agent;
     const agentProfile = identitySource && config.agentStore
       ? config.agentStore.get(identitySource.username)
       : undefined;
-    const agentName = agentProfile?.name || '开开';
+    const agentName = orgAgent ? orgAgent.name : (agentProfile?.name || '开开');
     const userName = identitySource ? (identitySource.realName || identitySource.username || '') : '';
-    const persona = (await loadPersona(cwd)) || '';
-    const memorySearchEnabled = hasMemorySearchTool(config.memoryIndexService)
+    const persona = orgAgent ? '' : ((await loadPersona(cwd)) || '');
+    const memorySearchEnabled = !orgAgent
+      && hasMemorySearchTool(config.memoryIndexService)
       && isToolEnabled(config.toolControls, 'MemorySearch');
     const resumeUsername = identitySource?.username || existingSession?.username || undefined;
     const resumeIsPlatformAdmin = resolveContextIsPlatformAdmin(request.context);
@@ -2210,10 +2302,12 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
+    const resumeBaseSkillFilter = buildRuntimeSkillFilter(availableHands);
     const resumeTooling = await collectRuntimeTooling(
       config,
       resumeUsername,
-      buildRuntimeSkillFilter(availableHands),
+      // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
+      orgAgent ? composeSkillFilters(resumeBaseSkillFilter, buildOrgAgentSkillFilter(orgAgent)) : resumeBaseSkillFilter,
       { executionTransportRegistry, tenantHandResolver },
     );
     const instructions = buildInstructions({
@@ -2226,6 +2320,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTarget,
       memorySearchEnabled,
       isPlatformAdmin: resumeIsPlatformAdmin,
+      ...(orgAgent ? { orgAgent } : {}),
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);
     const modelAdapter = createModelAdapterForProtocol({ apiKey, baseUrl }, modelProviderOptions);

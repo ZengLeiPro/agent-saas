@@ -35,6 +35,7 @@ const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
   'group_sessions_removed', 'group_sorting_updated',
   'agent_profile_updated', 'agent_persona_updated', 'agent_memory_updated',
   'agent_avatar_uploaded', 'agent_avatar_reset',
+  'org_agent_created', 'org_agent_updated', 'org_agent_deleted',
   'skill_visibility_updated', 'skill_platform_settings_updated', 'skill_tenant_settings_updated',
   'skill_promoted', 'skill_custom_deleted', 'skill_tenant_selections_updated',
   'skill_user_selections_updated', 'skill_document_updated',

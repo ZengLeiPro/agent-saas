@@ -29,6 +29,11 @@ export interface SessionMeta {
   customTitle?: string;
   generatedTitle?: string;
   model?: string;
+  /**
+   * 公司级专职 Agent 绑定（2026-07 唯恩批次）。会话创建时由 dispatch/channel 写入；
+   * 缺省 = 个人 Agent 会话（存量行为零变化）。PG meta_json 自动投影。
+   */
+  orgAgentId?: string;
   /** 软删除时间戳（ISO 8601），存在即表示已删除 */
   deletedAt?: string;
   /** 执行删除操作的用户名 */

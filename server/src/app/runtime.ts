@@ -60,6 +60,9 @@ import { loadAppConfig } from './config.js';
 import { resolveModelRef } from './models.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
+import type { GuardrailModelConfig } from '../agent/guardrail.js';
+import { OrgAgentStore } from '../data/orgAgents/store.js';
+import { PgGuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
 import { MemoryIndexService } from '../memory/index/service.js';
 import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
@@ -153,6 +156,23 @@ export interface AppRuntime {
    * 主返回空 content 或 catch 后会按顺序尝试 fallback。
    */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  /**
+   * 公司级专职 Agent store（2026-07 唯恩批次）。仅 auth 启用时实例化
+   * （与 agentStore 同生命周期）；routes 挂 /api/org-agents 用。
+   */
+  orgAgentStore?: OrgAgentStore;
+  /**
+   * 门禁事件落库（仅 runtimeEventStore.backend='pg'；file backend 为 undefined，
+   * WebChannel 降级 log）。阶段 2 质检台 /api/admin/qa/guardrail-events 消费。
+   */
+  guardrailEventStore?: PgGuardrailEventStore;
+  /**
+   * 门禁模型配置链 getter（主 + fallback）。空数组 = 门禁模块未激活。
+   * WebChannel 持有同一 getter——热更后取到的永远是最新链。
+   */
+  getGuardrailModelConfigs: () => GuardrailModelConfig[];
+  /** 模型列表热更新时重建门禁配置链（routes.ts onModelsUpdated 写回）。 */
+  updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => void;
   agentOptionsConfig: AgentOptionsConfig;
   tokenUsageStore?: TokenUsageStore;
   /** PG-backed credit billing service. Undefined for file/runtime dev backends. */
@@ -406,11 +426,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 检测：resolveModelRef 在 ref 失败时会**静默回退到 default**——
   // 之前 titleGenerator.model 配 "openai-agents/glm-5.2" 实际跑的是 default
   // "ark-agents/glm-5.2"，几个月没人察觉。比对 ref modelId 与解析结果，不一致就 warn。
-  const detectSilentFallback = (ref: string, resolvedModel: string) => {
+  const detectSilentFallback = (ref: string, resolvedModel: string, label = 'Title generator') => {
     const refModelId = ref.split('/').pop() ?? '';
     if (refModelId && resolvedModel !== refModelId) {
       serverLogger.warn(
-        `Title generator: ref "${ref}" silently fell back to default ` +
+        `${label}: ref "${ref}" silently fell back to default ` +
           `(resolved="${resolvedModel}"); check models.groups for the correct groupId.`,
       );
     }
@@ -443,6 +463,28 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     titleGeneratorConfigs.push({ model: fallbackModel });
   }
 
+  // 门禁模型配置链（主 + fallback；2026-07 唯恩批次）。与 title 不同：
+  // config.guardrail 缺省 = 门禁模块不激活（空数组，checkTopicScope fail-open
+  // 短路），**没有** env 默认模型兜底。热更由 routes.ts onModelsUpdated 经
+  // updateGuardrailModelConfigs 写回本变量；WebChannel 拿的是 getter——避开
+  // titleGeneratorConfigs 构造时被捕获旧数组引用的 stale 坑。
+  let guardrailModelConfigs: GuardrailModelConfig[] = [];
+  if (config.guardrail?.model && config.models) {
+    for (const ref of [config.guardrail.model, ...(config.guardrail.fallbackModels ?? [])]) {
+      const resolved = resolveModelRef(config.models, ref);
+      if (resolved) {
+        guardrailModelConfigs.push({ model: resolved.model, connection: resolved.connection });
+        serverLogger.info(`Guardrail: model "${resolved.model}" from "${ref}"`);
+        detectSilentFallback(ref, resolved.model, 'Guardrail');
+      } else {
+        serverLogger.warn(`Guardrail: model ref "${ref}" not found, skipped`);
+      }
+    }
+    if (guardrailModelConfigs.length === 0) {
+      serverLogger.warn('Guardrail: no model resolved from config.guardrail, module inactive');
+    }
+  }
+
   // Auth 初始化（需要在 dispatch 之前，因为 agentStore 依赖 userStore）
   let userStore: UserStore | undefined;
   let tenantStore: TenantStore | undefined;
@@ -470,6 +512,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentStore = new AgentStore(agentStoreFile);
     const allUsernames = userStore.listAll().map(u => u.username);
     agentStore.initDefaults(allUsernames);
+  }
+
+  // 公司级专职 Agent store（2026-07 唯恩批次）：组织管理员定义、员工使用。
+  // 仅 auth 启用时装配（org agent 依赖租户/用户身份）；文件与 agents.json 同目录。
+  let orgAgentStore: OrgAgentStore | undefined;
+  if (userStore) {
+    orgAgentStore = new OrgAgentStore(resolve(processCwd, './data/org-agents.json'));
+    serverLogger.info(`Org agent store loaded: ${orgAgentStore.listAll().length} agent(s)`);
   }
 
   // Skills config store
@@ -566,6 +616,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let pgHandStore: PgHandStore | undefined;
   let pgToolInvocationStore: PgToolInvocationStore | undefined;
   let pgClientDaemonRegistry: PgClientDaemonRegistry | undefined;
+  let guardrailEventStore: PgGuardrailEventStore | undefined;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -689,6 +740,19 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await pgToolInvocationStore.init();
+    // 门禁事件落库（专职 Agent 话题门禁；2026-07 唯恩批次）。init 失败降级
+    // undefined（WebChannel 侧落库降级 log）——门禁是体验增强，不因表初始化
+    // 失败阻塞启动（兼容红线：PG 不可用时门禁照常判定）。
+    try {
+      const store = new PgGuardrailEventStore({
+        pool: pgEventStore.pool,
+        tablePrefix: config.runtimeEventStore.tablePrefix,
+      });
+      await store.init();
+      guardrailEventStore = store;
+    } catch (err) {
+      serverLogger.warn(`PgGuardrailEventStore init failed, guardrail events degrade to log: ${err instanceof Error ? err.message : String(err)}`);
+    }
     pgArtifactStore = new PgArtifactStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
@@ -1134,6 +1198,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     },
     memoryIndexService: memoryIndexServiceRef.current,
     agentStore,
+    orgAgentStore,
     tenantStore,
     resolveUserRole: ({ userId, username }: { userId?: string; username?: string }) => {
       const user = userId
@@ -1592,6 +1657,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     getIsDraining: () => channelManager.draining,
     tokenUsageStore,
     tenantStore,
+    // 专职 Agent + LLM 话题门禁（2026-07 唯恩批次）。getGuardrailModelConfigs
+    // 必须是 getter：热更后 channel 每次调用都取到最新链（title 的 stale 数组
+    // 引用坑勿复刻）。guardrailEventStore 仅 PG backend 存在，file backend 降级 log。
+    orgAgentStore,
+    getGuardrailModelConfigs: () => guardrailModelConfigs,
+    guardrailEventStore,
+    ...(config.guardrail ? {
+      guardrailOptions: {
+        ...(config.guardrail.timeoutMs !== undefined ? { timeoutMs: config.guardrail.timeoutMs } : {}),
+        ...(config.guardrail.maxRecentRounds !== undefined ? { maxRecentRounds: config.guardrail.maxRecentRounds } : {}),
+      },
+    } : {}),
     resumeApprovalDispatch: billedResumeApprovalDispatch,
     executionConfig,
     runtimeEventStoreFor,
@@ -1733,6 +1810,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     groupStore,
     authMiddleware,
     titleGeneratorConfigs,
+    orgAgentStore,
+    guardrailEventStore,
+    getGuardrailModelConfigs: () => guardrailModelConfigs,
+    updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig,
     tokenUsageStore,
     billingService,

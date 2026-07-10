@@ -27,7 +27,9 @@ export type ChatRejectReasonCode =
     | 'session_locked'         // 同会话上一条还在处理
     | 'server_draining'        // 服务端优雅关闭中
     | 'model_not_allowed'      // 组织模型策略不允许使用所选模型
-    | 'duplicate_inflight';    // 同 client_msg_id 已在处理
+    | 'duplicate_inflight'     // 同 client_msg_id 已在处理
+    | 'personal_agent_disabled' // 租户关闭个人 Agent，普通用户仅可用专职 Agent
+    | 'org_agent_unavailable'; // 专职 Agent 不存在/已禁用/未被指派（跨租户防枚举同码）
 
 export interface WsChatMessage {
     action: 'chat';
@@ -35,6 +37,11 @@ export interface WsChatMessage {
     client_msg_id?: string;
     message: string;
     sessionId?: string;
+    /**
+     * 公司级专职 Agent 绑定。**仅新会话首条消息生效**；带 sessionId 的消息
+     * 以会话 meta 为准（不一致时 log warn 采用 meta，防伪造/串线）。
+     */
+    orgAgentId?: string;
     attachments?: UploadedFileInfo[];
     model?: string;
     /** 内部管理员验收开关：选择工具执行后端。普通 UI 不暴露。 */

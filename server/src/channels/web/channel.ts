@@ -7,10 +7,10 @@
  * WS 消息协议见 wsTypes.ts。
  */
 
-import { readdir, readFile, stat } from 'fs/promises';
+import { appendFile, mkdir, readdir, readFile, stat } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { homedir } from 'os';
-import { join, resolve as resolvePath } from 'path';
+import { dirname, join, resolve as resolvePath } from 'path';
 import type { Express } from 'express';
 import type { WebSocket } from 'ws';
 import {
@@ -32,6 +32,7 @@ import type {
   ContextUsageData,
 } from '../../types/index.js';
 import type { AgentRunDispatch, AgentRunHooks } from '../../agent/types.js';
+import type { ExecutionTargetKind } from '../../agent/toolRuntime.js';
 import { toRunModelOptions, type ResolvedModel } from '../../app/models.js';
 import { createEventConsumer, type EventHandler } from '../eventConsumer.js';
 import { interactionStore } from './interactionStore.js';
@@ -46,6 +47,11 @@ import { speechToText, type SttConfig } from '../../integrations/stt/sttClient.j
 import { EventBufferStore } from './eventBuffer.js';
 import { clearSessionsListCache } from '../../routes/sessions.js';
 import { extractTitleContext, generateTitleWithFallback, type TitleGeneratorConfig } from '../../agent/titleGenerator.js';
+import { checkTopicScope, extractRecentDialog, type GuardrailModelConfig } from '../../agent/guardrail.js';
+import { isCompactCommand } from '../../agent/prompt.js';
+import { isAssignedToOrgAgent, type OrgAgentStore } from '../../data/orgAgents/store.js';
+import type { OrgAgentRecord } from '../../data/orgAgents/types.js';
+import type { GuardrailEventStore, GuardrailEventVerdict } from '../../data/guardrail/pgGuardrailEventStore.js';
 import { WsServer, type WsClient } from './wsServer.js';
 import { EventBus, type SessionContext } from './eventBus.js';
 import type { WsChatMessage, WsRespondMessage, WsAbortMessage, WsRunStatusMessage, WsResumeMessage, WsSyncMessage, WsInboundMessage, ChatRejectReasonCode } from './wsTypes.js';
@@ -114,6 +120,9 @@ const INTERACTIVE_PERMISSION_TOOLS = new Set([
 
 const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'orphaned']);
 
+/** 语音转写前缀标记（STT 注入 / 门禁判定前剥离共用） */
+const VOICE_STT_TAG = '[这是一条语音转文字的消息，可能存在识别准确度问题] ';
+
 function wantsToolAutoApproval(policy: { autoApproveTools?: boolean; autoApproveRunShell?: boolean } | undefined): boolean {
   return policy?.autoApproveTools === true || policy?.autoApproveRunShell === true;
 }
@@ -139,6 +148,18 @@ export interface WebChannelConfig {
   tokenUsageStore?: TokenUsageStore;
   /** Tenant store for disabled-tenant hard-stop checks. */
   tenantStore?: TenantStore;
+  /** 公司级专职 Agent store（orgAgentId 解析/audience 校验/门禁配置来源）。 */
+  orgAgentStore?: OrgAgentStore;
+  /**
+   * 门禁模型配置链 getter（主 + fallback）。**必须是 getter**：模型列表热更新
+   * 时 routes.ts 换新数组，channel 每次调用取最新链——避开 titleGeneratorConfigs
+   * 构造时捕获旧数组引用的 stale 坑。空数组/缺省 = 门禁模块未激活（fail-open 短路）。
+   */
+  getGuardrailModelConfigs?: () => GuardrailModelConfig[];
+  /** 门禁事件落库（PG backend）。缺省（file backend）时降级 log，判定照常。 */
+  guardrailEventStore?: GuardrailEventStore;
+  /** 门禁调用参数（config.json guardrail 段 timeoutMs / maxRecentRounds）。 */
+  guardrailOptions?: { timeoutMs?: number; maxRecentRounds?: number };
   /** raw runtime 持久化 approval 的恢复入口 */
   resumeApprovalDispatch?: (request: RawApprovalResumeRequest) => AsyncGenerator<OutboundEvent>;
   /**
@@ -1861,7 +1882,6 @@ export class WebChannel implements BaseChannel {
       try {
         chatLogger.info(`Voice STT: processing ${voiceFile.savedPath} (${voiceFile.duration}ms)`);
         const sttResult = await speechToText(voiceFile.savedPath, this.config.sttConfig);
-        const VOICE_STT_TAG = '[这是一条语音转文字的消息，可能存在识别准确度问题] ';
         if (sttResult.text) {
           const displayText = sttResult.text;
           resolvedMessage = VOICE_STT_TAG + displayText;
@@ -1926,10 +1946,15 @@ export class WebChannel implements BaseChannel {
     let validSessionId = sessionId;
     let targetCwd: string | undefined;
     let sessionOwner: ChannelContext['sessionOwner'];
+    // 专职 Agent 门禁需要的会话上下文：meta（orgAgentId 事实源）+ transcript 路径（最近对话）
+    let gateSessionMeta: SessionMeta | null = null;
+    let gateTranscriptPath: string | undefined;
     if (sessionId) {
       const resumeCwd = resolveUserCwd(this.config.agentCwd!, userIdentity);
       const resumeTranscriptPath = getTranscriptPath(resumeCwd, sessionId, user ? { tenantId: user.tenantId, userId: user.sub } : undefined);
       const resumeMeta = await readSessionMeta(resumeTranscriptPath);
+      gateSessionMeta = resumeMeta;
+      gateTranscriptPath = resumeTranscriptPath;
       const resumeSessionExists = (await sessionExists(resumeCwd, sessionId))
         || (!!resumeMeta && (!user || user.role === 'admin' || resumeMeta.userId === user.sub));
       if (!resumeSessionExists) {
@@ -1938,6 +1963,8 @@ export class WebChannel implements BaseChannel {
           const transcriptPath = await findTranscriptOrMetaPathBySessionId(sessionId);
           if (transcriptPath) {
             const meta = await readSessionMeta(transcriptPath);
+            gateSessionMeta = meta;
+            gateTranscriptPath = transcriptPath;
             if (meta?.username) {
               // PR 7 P1-2：admin resume 时按 ownerRecord.tenantId 落对路径
               const ownerRecord = this.userStore?.findById(meta.userId);
@@ -1959,10 +1986,14 @@ export class WebChannel implements BaseChannel {
           } else {
             chatLogger.warn(`Session ${sessionId} transcript not found globally, starting new session`);
             validSessionId = undefined;
+            gateSessionMeta = null;
+            gateTranscriptPath = undefined;
           }
         } else {
           chatLogger.warn(`Session ${sessionId} transcript not found, starting new session`);
           validSessionId = undefined;
+          gateSessionMeta = null;
+          gateTranscriptPath = undefined;
         }
       }
     }
@@ -1994,6 +2025,142 @@ export class WebChannel implements BaseChannel {
       this.sendChatRejected(ws, clientMsgId, 'access_denied', targetTenantAccessError);
       return;
     }
+
+    // ── 公司级专职 Agent 解析与门禁（2026-07 唯恩批次）──────────────────
+    // 0) /compact 等平台命令直通（跳过校验与门禁，决策 4）
+    // 1) 解析 orgAgentId：带 sessionId 以会话 meta 为准（忽略客户端值防伪造）；新会话取 msg.orgAgentId
+    // 2) org agent 校验：存在 + enabled + 同租户 + 被指派（admin 豁免 audience）→ 否则 org_agent_unavailable
+    // 3) personalAgent gate：无 orgAgentId 且租户关闭个人 Agent 时普通用户被拒
+    // 4) LLM 话题门禁：off_topic → 合成气泡不启动 run；uncertain → 放行 + pass_flagged 打标落库
+    let orgAgentId: string | undefined;
+    let orgAgentRecord: OrgAgentRecord | undefined;
+    let guardrailMark: 'pass_flagged' | 'fail_open' | undefined;
+    /** uncertain/纯附件的落库负载：延迟到 sessionId 确定后 flush（新会话 id 在 enqueue 时才生成） */
+    let pendingGuardrailEvent: { messageText: string; model?: string; latencyMs?: number } | undefined;
+    if (validSessionId) {
+      orgAgentId = gateSessionMeta?.orgAgentId;
+      if (msg.orgAgentId && msg.orgAgentId !== orgAgentId) {
+        chatLogger.warn(`[org-agent] client orgAgentId=${msg.orgAgentId} ignored, session meta wins (${orgAgentId ?? 'none'}, session=${validSessionId})`);
+      }
+    } else {
+      orgAgentId = msg.orgAgentId;
+    }
+    const isPlatformCommand = isCompactCommand(resolvedMessage);
+    if (orgAgentId && !isPlatformCommand) {
+      const record = this.config.orgAgentStore?.get(orgAgentId);
+      const gateIdentity = sessionOwner ?? userIdentity;
+      const assigned = !!record && (user?.role === 'admin' || isAssignedToOrgAgent(record, gateIdentity?.username));
+      if (!record || !record.enabled || record.tenantId !== gateIdentity?.tenantId || !assigned) {
+        // 跨租户/缺失/停用/未指派一律同码防枚举（决策 8）；读留发禁（决策 1/3）
+        this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+        this.sendChatRejected(ws, clientMsgId, 'org_agent_unavailable', '该专职 Agent 当前不可用，请联系组织管理员');
+        return;
+      }
+      orgAgentRecord = record;
+    }
+    if (!orgAgentId && !isPlatformCommand && user && user.role !== 'admin') {
+      const features = this.config.tenantStore?.getSettings(user.tenantId ?? DEFAULT_TENANT_ID)?.features;
+      if (features?.personalAgentEnabled === false) {
+        this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+        this.sendChatRejected(ws, clientMsgId, 'personal_agent_disabled', '当前组织未开放个人助理，请使用组织为你配置的专职 Agent');
+        return;
+      }
+    }
+    if (orgAgentRecord?.guardrail.enabled && !isPlatformCommand) {
+      const guardrailConfigs = this.config.getGuardrailModelConfigs?.() ?? [];
+      if (guardrailConfigs.length > 0) {
+        const isPureAttachment = resolvedMessage === AI_FALLBACK_TEXT && !!attachments?.length;
+        if (isPureAttachment) {
+          // 决策 5：纯附件消息跳过门禁模型调用，按 uncertain 放行 + 打标（message_text 记附件名清单）
+          guardrailMark = 'pass_flagged';
+          pendingGuardrailEvent = {
+            messageText: `[附件] ${attachments!.map((a: UploadedFileInfo) => a.originalName).join(', ')}`,
+          };
+        } else {
+          // 决策 6：语音只看 STT 后文本（剥 VOICE_STT_TAG）
+          const guardText = resolvedMessage.startsWith(VOICE_STT_TAG)
+            ? resolvedMessage.slice(VOICE_STT_TAG.length)
+            : resolvedMessage;
+          const recentDialog = gateTranscriptPath
+            ? await extractRecentDialog(gateTranscriptPath, this.config.guardrailOptions?.maxRecentRounds ?? 2)
+            : [];
+          const check = await checkTopicScope(
+            {
+              message: guardText,
+              scopeDescription: orgAgentRecord.guardrail.scopeDescription,
+              strictness: orgAgentRecord.guardrail.strictness,
+              recentDialog,
+            },
+            guardrailConfigs,
+            {
+              timeoutMs: this.config.guardrailOptions?.timeoutMs,
+              onUsage: async (usageModel, usage) => {
+                // 记账 channel='guardrail'（沿 title 先例，不进 PG credits）
+                const tokenStore = this.config.tokenUsageStore;
+                if (!tokenStore || !user) return;
+                try {
+                  tokenStore.recordResult({
+                    username: user.username,
+                    tenantId: user.tenantId ?? DEFAULT_TENANT_ID,
+                    channel: 'guardrail',
+                    modelUsage: { [usageModel]: usage },
+                    occurredAtMs: Date.now(),
+                  });
+                } catch (err) {
+                  chatLogger.warn(`[guardrail] usage record failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
+              },
+            },
+          );
+          if (check.verdict === 'off_topic') {
+            await this.handleGuardrailRejection({
+              ws,
+              user,
+              userIdentity,
+              sessionOwner,
+              targetCwd,
+              validSessionId,
+              clientMsgId,
+              orgAgent: orgAgentRecord,
+              model,
+              executionTarget: resolvedExecutionTarget,
+              resolvedMessage,
+              userDisplayContent,
+              attachmentMeta,
+              guardrailModel: check.model,
+              guardrailLatencyMs: check.latencyMs,
+            });
+            return;
+          }
+          if (check.verdict === 'uncertain') {
+            guardrailMark = 'pass_flagged';
+            pendingGuardrailEvent = {
+              messageText: guardText,
+              ...(check.model ? { model: check.model } : {}),
+              latencyMs: check.latencyMs,
+            };
+          } else if (check.source === 'fail_open') {
+            // fail_open 打 metadata 不落库（与 pass_flagged 区分，避免污染需求雷达数据）
+            guardrailMark = 'fail_open';
+          }
+        }
+      }
+    }
+    const flushPendingGuardrailEvent = (resolvedGuardrailSessionId: string | undefined): void => {
+      if (!pendingGuardrailEvent || !orgAgentRecord) return;
+      this.insertGuardrailEvent({
+        orgAgent: orgAgentRecord,
+        user,
+        sessionId: resolvedGuardrailSessionId,
+        clientMsgId,
+        verdict: 'pass_flagged',
+        messageText: pendingGuardrailEvent.messageText,
+        model: pendingGuardrailEvent.model,
+        latencyMs: pendingGuardrailEvent.latencyMs,
+      });
+      pendingGuardrailEvent = undefined;
+    };
+    // ── 门禁段结束 ─────────────────────────────────────────────────
 
     if (validSessionId) {
       void this.appendDurableWebCommand(validSessionId, {
@@ -2052,8 +2219,11 @@ export class WebChannel implements BaseChannel {
           executionTarget: resolvedExecutionTarget,
           workspaceId: enqueueWorkspaceId,
           status: 'running',
+          ...(orgAgentId ? { orgAgentId } : {}),
         });
         await enqueueRuntime.sessionCatalog.upsert(sessionRecord);
+        // 门禁 uncertain/纯附件的 pass_flagged 落库：sessionId 到这里才确定
+        flushPendingGuardrailEvent(enqueueSessionId);
         const controller = new AbortController();
         this.activeStreams.set(streamId, {
           controller,
@@ -2092,6 +2262,7 @@ export class WebChannel implements BaseChannel {
             streamId,
             clientMsgId,
             ...(approvalPolicy ? { approvalPolicy } : {}),
+            ...(guardrailMark ? { guardrail: guardrailMark } : {}),
             wakeMessage: {
               channel: inbound.channel,
               chatId: enqueueSessionId,
@@ -2550,10 +2721,13 @@ export class WebChannel implements BaseChannel {
       }
       const modelOptions = resolved ? toRunModelOptions(resolved) : {};
 
+      // 门禁 pass_flagged 落库（非 enqueue 路径：新会话 id 由 SDK 侧生成，此处只带续聊 id）
+      flushPendingGuardrailEvent(validSessionId);
       const events = this.dispatch(inbound, context, {
         ...modelOptions,
         executionTarget: resolvedExecutionTarget,
         ...(approvalPolicy ? { approvalPolicy } : {}),
+        ...(orgAgentId ? { orgAgentId } : {}),
         abortController: userAbortController,
       }, hooks);
       if (validSessionId) {
@@ -2622,6 +2796,194 @@ export class WebChannel implements BaseChannel {
         this.sessionLocks.delete(lockKey);
       }
     }
+  }
+
+  /**
+   * 门禁 off_topic 的合成气泡：前端看到一条正常 AI 文本回复（预设话术），
+   * 刷新后仍在（legacy transcript 两行），**不创建 run、不写 runtime EventStore**
+   * （保持模型上下文干净），幂等置 done。
+   *
+   * 事件序列（仿 enqueue accept + publishRuntimeOutboundEvent done 映射）：
+   *   stream_id → session → user_message(buffer) → block_start → text → block_end
+   *   → done → session_status(completed) → session_updated
+   */
+  private async handleGuardrailRejection(args: {
+    ws: WebSocket;
+    user: WsClient['user'];
+    userIdentity: ChannelContext['user'];
+    sessionOwner: ChannelContext['sessionOwner'];
+    targetCwd?: string;
+    validSessionId?: string;
+    clientMsgId: string;
+    orgAgent: OrgAgentRecord;
+    model?: string;
+    executionTarget: ExecutionTargetKind;
+    resolvedMessage: string;
+    userDisplayContent: string;
+    attachmentMeta?: Array<{ name: string; isImage?: boolean }>;
+    guardrailModel?: string;
+    guardrailLatencyMs?: number;
+  }): Promise<void> {
+    const { ws, user, orgAgent } = args;
+    const sessionId = args.validSessionId ?? randomUUID();
+    const streamId = String(++this.streamIdCounter);
+    const rejectionMessage = orgAgent.guardrail.rejectionMessage;
+    const owner = args.sessionOwner ?? args.userIdentity;
+    const cwd = args.targetCwd || resolveUserCwd(this.config.agentCwd!, args.userIdentity);
+    const enqueueRuntime = this.config.enqueueRuntime?.enabled === false ? undefined : this.config.enqueueRuntime;
+
+    // (a) enqueue 模式：session catalog upsert（status finished，无 run）——刷新后会话在列表可见
+    let transcriptPath: string;
+    if (enqueueRuntime) {
+      const existing = args.validSessionId
+        ? await enqueueRuntime.sessionCatalog.get(sessionId).catch(() => null)
+        : null;
+      const record = createRuntimeSessionRecord({
+        sessionId,
+        userId: owner?.id,
+        username: owner?.username,
+        userRole: owner?.role,
+        tenantId: owner?.tenantId,
+        channel: 'web',
+        cwd,
+        modelRef: args.model,
+        executionTarget: args.executionTarget,
+        workspaceId: existing?.workspaceId ?? deriveStableWorkspaceId(owner, sessionId),
+        status: 'finished',
+        orgAgentId: orgAgent.id,
+      });
+      transcriptPath = existing?.transcriptPath ?? record.transcriptPath;
+      try {
+        await enqueueRuntime.sessionCatalog.upsert({ ...record, transcriptPath });
+      } catch (err) {
+        chatLogger.warn(`[guardrail] session upsert failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else {
+      transcriptPath = getTranscriptPath(cwd, sessionId, owner ? { tenantId: owner.tenantId, userId: owner.id } : undefined);
+    }
+
+    // (b) legacy transcript 追加 user + assistant 两行（刷新后气泡仍在）
+    try {
+      await this.appendGuardrailTranscript(transcriptPath, sessionId, args.resolvedMessage, rejectionMessage);
+    } catch (err) {
+      chatLogger.warn(`[guardrail] transcript append failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // (c) guardrail_events 落库（需求雷达；fire-and-forget 内部吞错）
+    this.insertGuardrailEvent({
+      orgAgent,
+      user,
+      sessionId,
+      clientMsgId: args.clientMsgId,
+      verdict: 'off_topic',
+      messageText: args.resolvedMessage.startsWith(VOICE_STT_TAG)
+        ? args.resolvedMessage.slice(VOICE_STT_TAG.length)
+        : args.resolvedMessage,
+      model: args.guardrailModel,
+      latencyMs: args.guardrailLatencyMs,
+    });
+
+    // (d) 幂等置 done（同 client_msg_id 重发不再触发）
+    this.idempotencySet(user?.sub, args.clientMsgId, 'done', streamId, { sessionId });
+
+    // (e) WS 合成气泡序列
+    const sendReply = (data: object) => {
+      if (this.eventBus) this.eventBus.emitReply(ws, data);
+      else this.wsSend(ws, data);
+    };
+    sendReply({ type: 'stream_id', streamId, client_msg_id: args.clientMsgId });
+    sendReply({ type: 'session', sessionId });
+    this.eventBufferStore.create(sessionId, user?.sub);
+    if (args.userDisplayContent || args.attachmentMeta) {
+      this.eventBufferStore.push(sessionId, JSON.stringify({
+        type: 'user_message',
+        content: args.userDisplayContent,
+        ...(args.attachmentMeta ? { attachments: args.attachmentMeta } : {}),
+        timestamp: Date.now(),
+        client_msg_id: args.clientMsgId,
+      }));
+    }
+    this.wsActiveStream.set(ws, streamId);
+    const sessionCtx: SessionContext = { sessionId, streamId, ws, userId: user?.sub };
+    const emitSession = (data: object) => {
+      if (this.eventBus) this.eventBus.emitSession(sessionCtx, data);
+      else this.wsSend(ws, data);
+    };
+    emitSession({ type: 'block_start', blockType: 'text' });
+    emitSession({ type: 'text', content: rejectionMessage });
+    emitSession({ type: 'block_end', blockType: 'text' });
+    emitSession({ type: 'done', client_msg_id: args.clientMsgId });
+    this.eventBufferStore.complete(sessionId);
+    if (user?.sub && this.eventBus) {
+      this.eventBus.emitUser(user.sub, {
+        type: 'session_status',
+        sessionId,
+        status: 'completed',
+        streamId,
+      });
+      this.eventBus.emitDual(user.sub, sessionId, {
+        type: 'session_updated',
+        sessionId,
+        updatedAtMs: Date.now(),
+        preview: rejectionMessage.slice(0, 200),
+      });
+    }
+    clearSessionsListCache();
+    chatLogger.info(`[guardrail] off_topic rejected via synthetic bubble: session=${sessionId} orgAgent=${orgAgent.id} client_msg_id=${args.clientMsgId}`);
+  }
+
+  /** 门禁拒绝的 legacy transcript 两行（格式照 legacyTranscriptProjection line builder）。 */
+  private async appendGuardrailTranscript(
+    transcriptPath: string,
+    sessionId: string,
+    userContent: string,
+    assistantContent: string,
+  ): Promise<void> {
+    const lines = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: userContent },
+      sessionId,
+      timestamp: new Date().toISOString(),
+    }) + '\n' + JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: assistantContent }] },
+      sessionId,
+      timestamp: new Date().toISOString(),
+    }) + '\n';
+    await mkdir(dirname(transcriptPath), { recursive: true });
+    await appendFile(transcriptPath, lines, 'utf-8');
+  }
+
+  /** guardrail_events 落库（PG 不可用/未配置时降级 log，绝不阻塞聊天链路）。 */
+  private insertGuardrailEvent(args: {
+    orgAgent: OrgAgentRecord;
+    user: WsClient['user'];
+    sessionId?: string;
+    clientMsgId?: string;
+    verdict: GuardrailEventVerdict;
+    messageText: string;
+    model?: string;
+    latencyMs?: number;
+  }): void {
+    const store = this.config.guardrailEventStore;
+    if (!store) {
+      chatLogger.info(`[guardrail] event not persisted (no PG store): verdict=${args.verdict} orgAgent=${args.orgAgent.id} session=${args.sessionId ?? 'n/a'}`);
+      return;
+    }
+    void store.insert({
+      tenantId: args.orgAgent.tenantId,
+      orgAgentId: args.orgAgent.id,
+      ...(args.user?.sub ? { userId: args.user.sub } : {}),
+      ...(args.user?.username ? { username: args.user.username } : {}),
+      ...(args.sessionId ? { sessionId: args.sessionId } : {}),
+      ...(args.clientMsgId ? { clientMsgId: args.clientMsgId } : {}),
+      verdict: args.verdict,
+      messageText: args.messageText.slice(0, 2000),
+      ...(args.model ? { model: args.model } : {}),
+      ...(args.latencyMs !== undefined ? { latencyMs: args.latencyMs } : {}),
+    }).catch((err) => {
+      chatLogger.warn(`[guardrail] event insert failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
   async stop(): Promise<void> {

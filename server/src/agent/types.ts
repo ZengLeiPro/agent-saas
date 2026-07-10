@@ -111,6 +111,13 @@ export interface AgentRunOptions {
   persistSession?: boolean;
   includePartialMessages?: boolean;
   resumeSessionId?: string;
+  /**
+   * 公司级专职 Agent 绑定（2026-07 唯恩批次）。新会话由 channel 从 WsChatMessage
+   * 解析后传入；resume 路径以 session meta 为准兜底。dispatch 侧解析失败
+   * （record 缺失/disabled/租户不符）一律 fail-closed yield error，绝不静默
+   * 回退个人 persona + 全量 skill。
+   */
+  orgAgentId?: string;
   env?: Record<string, string>;
   additionalDirectories?: string[];
   /** 预批准的工具白名单（dontAsk 模式下，白名单外的工具一律拒绝） */

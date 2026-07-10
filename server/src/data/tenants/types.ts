@@ -45,6 +45,17 @@ export interface TenantSettings {
      * 生效还需模型配置 context_window（见 config.json models）。
      */
     autoCompactEnabled: boolean;
+    /**
+     * 个人 Agent 开关（默认 true）。false 时该租户普通用户（admin 除外）
+     * 发非专职 Agent 会话消息被拒 personal_agent_disabled。
+     * 旁路说明：cron/钉钉通道本期不 gate（唯恩员工只用 web 可接受）。
+     */
+    personalAgentEnabled?: boolean;
+    /**
+     * 租户共享 KB 文件路由开关（默认 false）。不复用 filesEnabled——
+     * 可能关掉个人文件能力但仍需要引用溯源。阶段 2 的 /api/kb/file 消费。
+     */
+    kbEnabled?: boolean;
   };
   quotas: {
     maxUsers?: number;
@@ -98,6 +109,8 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     customSkillsEnabled: true,
     debugModeAllowed: false,
     autoCompactEnabled: false,
+    personalAgentEnabled: true,
+    kbEnabled: false,
   },
   quotas: {},
   models: {

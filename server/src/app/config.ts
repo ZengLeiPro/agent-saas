@@ -448,6 +448,17 @@ const titleGeneratorConfigSchema = z.object({
   fallbackModels: z.array(z.string().min(1)).optional(),
 });
 
+// 专职 Agent LLM 话题门禁（2026-07 唯恩批次）。缺省 = 门禁模块不激活。
+// model 必须是 Chat Completions 协议模型（"groupId/modelId" 引用）。
+const guardrailConfigSchema = z.object({
+  model: z.string().min(1),
+  fallbackModels: z.array(z.string().min(1)).optional(),
+  /** 单次门禁模型调用超时，默认 6000ms */
+  timeoutMs: z.number().int().positive().optional(),
+  /** 门禁读取 transcript 最近对话轮数，默认 2 */
+  maxRecentRounds: z.number().int().min(0).max(10).optional(),
+});
+
 const selfSignupSmsSchema = z.object({
   /** dev = 验证码只打 server log（配合 env AGENT_SMS_DEV_CODE 万能码内测）；aliyun = 真实发送 */
   provider: z.enum(['dev', 'aliyun']).default('dev'),
@@ -1020,6 +1031,7 @@ export const appConfigSchema = z.object({
   auth: authConfigSchema.optional(),
   models: modelsConfigSchema.optional(),
   titleGenerator: titleGeneratorConfigSchema.optional(),
+  guardrail: guardrailConfigSchema.optional(),
   audit: auditConfigSchema.optional(),
   artifact: artifactConfigSchema.optional(),
   serverRemote: serverRemoteConfigSchema.optional(),
@@ -1073,6 +1085,7 @@ export type ModelItem = z.infer<typeof modelItemSchema>;
 export type ModelGroup = z.infer<typeof modelGroupSchema>;
 export type ModelsConfig = z.infer<typeof modelsConfigSchema>;
 export type TitleGeneratorAppConfig = z.infer<typeof titleGeneratorConfigSchema>;
+export type GuardrailAppConfig = z.infer<typeof guardrailConfigSchema>;
 export type AuditConfig = z.infer<typeof auditConfigSchema>;
 export type ArtifactConfig = z.infer<typeof artifactConfigSchema>;
 export type ServerRemoteConfig = z.infer<typeof serverRemoteConfigSchema>;

@@ -982,6 +982,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
+              ...(meta?.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
                 : {}),
@@ -1016,6 +1017,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
+              ...(meta?.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
                 : {}),
@@ -1030,6 +1032,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
+              ...(meta?.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
                 : {}),

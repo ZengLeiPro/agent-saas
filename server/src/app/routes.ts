@@ -5,6 +5,7 @@ import type { Express, Request, Response } from "express";
 import type { AppRuntime } from "./runtime.js";
 import type { TenantStore } from "../data/tenants/store.js";
 import type { TitleGeneratorConfig } from "../agent/titleGenerator.js";
+import type { GuardrailModelConfig } from "../agent/guardrail.js";
 import {
   getPublicModelList,
   getTenantPublicModelList,
@@ -34,6 +35,7 @@ import { createAuthRouter } from "../routes/auth.js";
 import { createSignupRouters } from "../routes/signup.js";
 import { requireAdmin } from "../auth/middleware.js";
 import { createAgentsRouter } from "../routes/agents.js";
+import { createOrgAgentsRouter } from "../routes/orgAgents.js";
 import { createRuntimeAuditRouter } from "../routes/runtimeAudit.js";
 import { createRuntimeTraceRouter } from "../routes/runtimeTrace.js";
 import { createPlatformObservabilityRouter } from "../routes/platformObservability.js";
@@ -224,10 +226,27 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         config,
         onModelsUpdated: (models) => {
           configureModelPricing(models);
+          const merged = { ...models, default: models.default };
+          // 门禁链热更（放在 title 之前：title 的 early-return 不能吞掉门禁重建）。
+          // 主模型解析失败保留原链——避免热更瞬时把门禁打挂。
+          if (config.guardrail?.model) {
+            const nextGuardrail: GuardrailModelConfig[] = [];
+            const mainGuardrail = resolveModelRef(merged, config.guardrail.model);
+            if (mainGuardrail) {
+              nextGuardrail.push({
+                model: mainGuardrail.model,
+                connection: mainGuardrail.connection,
+              });
+              for (const ref of config.guardrail.fallbackModels ?? []) {
+                const fb = resolveModelRef(merged, ref);
+                if (fb) nextGuardrail.push({ model: fb.model, connection: fb.connection });
+              }
+              runtime.updateGuardrailModelConfigs(nextGuardrail);
+            }
+          }
           // 模型列表热更新：重建 titleGenerator 配置链。
           // resolveModelRef 找不到任一引用都保留原链——避免热更瞬时把功能打挂。
           if (!config.titleGenerator?.model) return;
-          const merged = { ...models, default: models.default };
           const next: TitleGeneratorConfig[] = [];
           const resolvedMain = resolveModelRef(
             merged,
@@ -560,6 +579,13 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           skillConfigStore: runtime.skillConfigStore,
           getMemoryIndexService: runtime.getMemoryIndexService,
         }),
+      );
+    }
+    // 公司级专职 Agent（组织管理员配置、员工使用；2026-07 唯恩批次）
+    if (runtime.orgAgentStore) {
+      app.use(
+        "/api/org-agents",
+        createOrgAgentsRouter({ orgAgentStore: runtime.orgAgentStore }),
       );
     }
   }

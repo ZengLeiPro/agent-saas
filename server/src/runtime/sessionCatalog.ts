@@ -22,6 +22,8 @@ export interface RuntimeSessionRecord {
    * session：不进会话列表，Run Trace 可见。与 SessionMeta.kind 一一对应。
    */
   kind?: 'subagent';
+  /** 公司级专职 Agent 绑定（2026-07 唯恩批次）。缺省 = 个人 Agent 会话。 */
+  orgAgentId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -62,6 +64,8 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(record.modelRef ? { model: record.modelRef } : {}),
       ...(record.executionTarget ? { executionTarget: record.executionTarget } : {}),
       ...(record.kind ? { kind: record.kind } : {}),
+      // orgAgentId 缺省时保留 existing 值（resume 路径 record 可能不带），不清除既有绑定
+      ...(record.orgAgentId ? { orgAgentId: record.orgAgentId } : {}),
     } as SessionMeta & { transcriptPath?: string };
     await writeSessionMeta(record.transcriptPath, meta);
   }
@@ -103,6 +107,7 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(meta.workspaceId ? { workspaceId: meta.workspaceId } : {}),
       ...(isRuntimeSessionStatus(meta.runtimeStatus) ? { status: meta.runtimeStatus } : {}),
       ...(meta.kind === 'subagent' ? { kind: 'subagent' as const } : {}),
+      ...(meta.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
       createdAt: meta.createdAt,
       updatedAt: meta.updatedAt ?? meta.createdAt ?? now,
     };
@@ -122,6 +127,7 @@ export function createRuntimeSessionRecord(args: {
   workspaceId?: string;
   status?: RuntimeSessionStatus;
   kind?: 'subagent';
+  orgAgentId?: string;
 }): RuntimeSessionRecord {
   const now = new Date().toISOString();
   return {
@@ -138,6 +144,7 @@ export function createRuntimeSessionRecord(args: {
     workspaceId: args.workspaceId ?? args.sessionId,
     status: args.status ?? 'running',
     ...(args.kind ? { kind: args.kind } : {}),
+    ...(args.orgAgentId ? { orgAgentId: args.orgAgentId } : {}),
     createdAt: now,
     updatedAt: now,
   };

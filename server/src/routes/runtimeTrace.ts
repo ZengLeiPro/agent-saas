@@ -1,8 +1,16 @@
 /**
- * Agent 运行监测读 API（platform-admin-only）
+ * Agent 运行监测读 API（admin-only，租户隔离）
  *
- * 路由前缀：/api/admin/runtime/trace（在 app/routes.ts 通过 requireAdmin 包裹；
- * router 内再以 isPlatformAdmin 硬拦——本 API 天然跨组织，组织 admin 一律 403）
+ * 路由前缀：/api/admin/runtime/trace（在 app/routes.ts 通过 requireAdmin 包裹）
+ *
+ * 权限模型（2026-07-10 起从「平台 admin 硬拦」下放为 resolveTenant 模式，
+ * 供租户综合分析复用效率诊断）：
+ *   - 平台 admin：query.tenantId 任意（缺省 = 跨组织全量）
+ *   - 组织 admin：强制锁定本租户；query 指定他人 tenantId → 403；
+ *     run drill-down 访问他租户 run → 404（不泄露存在性）
+ *   - 成本脱敏：组织 admin 且 tenant policy.showCost !== true 时，响应裁剪
+ *     ¥ 实际成本字段（efficiency.cost 区、run billing 摘要），只保留 token 口径，
+ *     并标 costRedacted: true。policy 不可得时宁可脱敏。
  *
  * 端点：
  *   GET /runs/:runId/events   → 单 run trace drill-down
@@ -51,6 +59,11 @@ export interface RuntimeTraceRouterOptions {
     listRecentRuns(opts: RecentRunsQueryOptions): Promise<RecentRunSummary[]>;
     getEfficiency(opts: EfficiencyQueryOptions): Promise<EfficiencyReport>;
   };
+  /**
+   * 组织 admin 成本可见性来源（tenant billing policy 的 showCost）。
+   * 未注入或查询失败时对组织 admin 一律脱敏（fail-closed）。
+   */
+  getTenantPolicy?: (tenantId: string) => Promise<{ showCost?: boolean } | null | undefined>;
 }
 
 /** run 状态白名单（recent-runs 的 status 过滤只接受这些值，防注入 + 防拼错悄悄空结果）。 */
@@ -178,6 +191,57 @@ export function summarizeRunBilling(events: BillingUsageEvent[]): {
 }
 
 /**
+ * run billing 摘要成本脱敏（导出供单测）：去掉 ¥ 字段，保留 token 口径。
+ */
+export function redactBillingSummary(summary: ReturnType<typeof summarizeRunBilling>): {
+  requestCount: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  models: string[];
+  requests: Array<{
+    requestIndex: number;
+    actualModel: string;
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    reasoningTokens: number;
+    createdAt: string;
+  }>;
+  costRedacted: true;
+} {
+  const { totalCostYuan: _total, requests, ...rest } = summary;
+  return {
+    ...rest,
+    requests: requests.map(({ costYuan: _cost, ...request }) => request),
+    costRedacted: true,
+  };
+}
+
+/**
+ * 效率报告成本脱敏（导出供单测）：cost 区只保留 byModel 的 token 聚合与缓存命中率，
+ * 去掉 totalCostYuan / perRun 分位 / failedRunsCostYuan 与 byModel.costYuan。
+ */
+export function redactEfficiencyCost(report: EfficiencyReport): Omit<EfficiencyReport, 'cost'> & {
+  cost: {
+    byModel: Array<Omit<EfficiencyReport['cost']['byModel'][number], 'costYuan'>>;
+    cacheHitRate: number | null;
+  };
+  costRedacted: true;
+} {
+  const { byModel, cacheHitRate } = report.cost;
+  return {
+    ...report,
+    cost: {
+      byModel: byModel.map(({ costYuan: _cost, ...model }) => model),
+      cacheHitRate,
+    },
+    costRedacted: true,
+  };
+}
+
+/**
  * 事件大字段截断（导出供单测）：
  * - 顶层字符串字段（content / error / modelContent 等）超限 → 截断
  * - toolCalls[].arguments（JSON 字符串）超限 → 截断
@@ -231,19 +295,48 @@ export function truncateTraceEvent(
   return out;
 }
 
+/**
+ * caller + query.tenantId → 生效租户范围（与 usage.ts 的 resolveQueryTenant 同规则）：
+ *   - 平台 admin：tenantId = query.tenantId（undefined = 跨组织全量）
+ *   - 组织 admin：强制 = caller.tenantId；query 指定他人 tenant → 403
+ */
+function resolveTenantScope(req: Request, queryTenantId: string | undefined):
+  | { ok: true; platform: boolean; tenantId: string | undefined }
+  | { ok: false; status: 401 | 403; error: string } {
+  if (!req.user) return { ok: false, status: 401, error: 'Authentication required' };
+  if (isPlatformAdmin(req.user)) {
+    return { ok: true, platform: true, tenantId: queryTenantId };
+  }
+  if (queryTenantId !== undefined && queryTenantId !== req.user.tenantId) {
+    return { ok: false, status: 403, error: '跨组织访问被拒绝' };
+  }
+  return { ok: true, platform: false, tenantId: req.user.tenantId };
+}
+
 export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Router {
   const router = Router();
-  const { runStore, eventStore, billingStore, userStore, efficiencyQuery } = opts;
+  const { runStore, eventStore, billingStore, userStore, efficiencyQuery, getTenantPolicy } = opts;
 
-  // 平台 admin 硬拦：本 router 所有端点跨组织可见。未认证 401 / 非平台 admin 403
-  // （区分两态便于排查：401=没带 token，403=组织 admin 越权）。
+  /** 组织 admin 是否需要脱敏 ¥ 成本：policy.showCost === true 才放行；不可得时 fail-closed。 */
+  async function shouldRedactCost(platform: boolean, tenantId: string | undefined): Promise<boolean> {
+    if (platform) return false;
+    if (!tenantId || !getTenantPolicy) return true;
+    try {
+      const policy = await getTenantPolicy(tenantId);
+      return policy?.showCost !== true;
+    } catch {
+      return true;
+    }
+  }
+
+  // 未认证 401（挂载层 requireAdmin 已保证 role=admin；这里防御性兜底）。
   router.use((req: Request, res: Response, next) => {
     if (!req.user) {
       res.status(401).json({ error: 'Authentication required' });
       return;
     }
-    if (!isPlatformAdmin(req.user)) {
-      res.status(403).json({ error: 'Platform admin access required' });
+    if (req.user.role !== 'admin') {
+      res.status(403).json({ error: 'Admin access required' });
       return;
     }
     next();
@@ -266,24 +359,33 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
       ? new Set(parsed.data.types.split(',').map((t) => t.trim()).filter((t) => t.length > 0))
       : undefined;
 
+    const scope = resolveTenantScope(req, undefined);
+    if (!scope.ok) {
+      res.status(scope.status).json({ error: scope.error });
+      return;
+    }
+
     try {
       const run = await runStore.get(runId);
-      if (!run) {
+      // 组织 admin 访问他租户 run：与"不存在"同样返回 404，不泄露 run 存在性
+      if (!run || (!scope.platform && run.tenantId !== scope.tenantId)) {
         res.status(404).json({ error: 'Run not found' });
         return;
       }
-      const [events, usageEvents] = await Promise.all([
+      const [events, usageEvents, redactCost] = await Promise.all([
         eventStore.listByRun(run.sessionId, runId),
         billingStore.listUsageEvents({ runId, limit: 1000 }),
+        shouldRedactCost(scope.platform, scope.tenantId),
       ]);
       const filtered = events.filter((event) => (
         typeWhitelist ? typeWhitelist.has(event.type) : event.type !== 'assistant_stream_event'
       ));
+      const billing = summarizeRunBilling(usageEvents);
       res.json({
         runId,
         sessionId: run.sessionId,
         run: pickRunSummary(run),
-        billing: summarizeRunBilling(usageEvents),
+        billing: redactCost ? redactBillingSummary(billing) : billing,
         events: filtered.map((event) => truncateTraceEvent(event, maxContentLength)),
       });
     } catch (err) {
@@ -308,12 +410,17 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
         return;
       }
     }
+    const scope = resolveTenantScope(req, parsed.data.tenantId);
+    if (!scope.ok) {
+      res.status(scope.status).json({ error: scope.error });
+      return;
+    }
     try {
       const runs = await efficiencyQuery.listRecentRuns({
         ...(statuses ? { statuses } : {}),
         hours: parsed.data.hours ?? 24,
         limit: parsed.data.limit ?? 50,
-        ...(parsed.data.tenantId !== undefined ? { tenantId: parsed.data.tenantId } : {}),
+        ...(scope.tenantId !== undefined ? { tenantId: scope.tenantId } : {}),
       });
       res.json({ runs: runs.map((run) => enrichRecentRunSummary(run, userStore)) });
     } catch (err) {
@@ -329,12 +436,20 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
       return;
     }
+    const scope = resolveTenantScope(req, parsed.data.tenantId);
+    if (!scope.ok) {
+      res.status(scope.status).json({ error: scope.error });
+      return;
+    }
     try {
-      const report = await efficiencyQuery.getEfficiency({
-        days: parsed.data.days ?? 7,
-        ...(parsed.data.tenantId !== undefined ? { tenantId: parsed.data.tenantId } : {}),
-      });
-      res.json(report);
+      const [report, redactCost] = await Promise.all([
+        efficiencyQuery.getEfficiency({
+          days: parsed.data.days ?? 7,
+          ...(scope.tenantId !== undefined ? { tenantId: scope.tenantId } : {}),
+        }),
+        shouldRedactCost(scope.platform, scope.tenantId),
+      ]);
+      res.json(redactCost ? redactEfficiencyCost(report) : report);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: `Efficiency query failed: ${msg}` });

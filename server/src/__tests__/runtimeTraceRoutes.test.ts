@@ -2,7 +2,10 @@
  * Agent 运行监测读 API 路由测试（/api/admin/runtime/trace）
  *
  * 覆盖：
- *   - 权限：未认证 401 / 组织 admin（role=admin 但非平台 tenant）403 / 平台 admin 200
+ *   - 权限（2026-07-10 起 resolveTenant 模式）：未认证 401 / 平台 admin 全量 /
+ *     组织 admin 锁本租户（query 指定他人 tenantId → 403；他租户 run → 404）
+ *   - 成本脱敏：组织 admin 且 policy.showCost !== true → billing/efficiency 裁剪 ¥ 字段
+ *     并标 costRedacted；showCost=true 放行；getTenantPolicy 未注入/抛错 fail-closed
  *   - GET /runs/:runId/events
  *     - run 不存在 → 404
  *     - 正常返回 shape（run + billing + events），billing 明细按 requestIndex 升序
@@ -22,6 +25,8 @@ import type { Server } from 'node:http';
 import {
   createRuntimeTraceRouter,
   pickRunSummary,
+  redactBillingSummary,
+  redactEfficiencyCost,
   summarizeRunBilling,
   truncateTraceEvent,
   type RuntimeTraceRouterOptions,
@@ -76,6 +81,14 @@ const RUN_RECORD: RunRecord = {
   workspaceId: 'ws-1',
   metadata: {},
   cumulativeInputTokens: 1234,
+};
+
+/** 他租户 run：组织 admin 访问应 404（不泄露存在性） */
+const OTHER_RUN_ID = 'run-trace-other';
+const OTHER_RUN_RECORD: RunRecord = {
+  ...RUN_RECORD,
+  runId: OTHER_RUN_ID,
+  tenantId: 'other-co',
 };
 
 const LONG_TEXT = 'x'.repeat(120);
@@ -208,9 +221,17 @@ async function startServer(overrides: FakeOverrides = {}): Promise<{
 }> {
   const calls: RecordedCalls = { recentRuns: [], efficiency: [] };
   const options: RuntimeTraceRouterOptions = {
-    runStore: { get: async (runId) => (runId === RUN_ID ? RUN_RECORD : null) },
+    runStore: {
+      get: async (runId) => {
+        if (runId === RUN_ID) return RUN_RECORD;
+        if (runId === OTHER_RUN_ID) return OTHER_RUN_RECORD;
+        return null;
+      },
+    },
     eventStore: { listByRun: async () => EVENTS },
     billingStore: { listUsageEvents: async () => USAGE_EVENTS },
+    // 缺省注入 showCost=false（生产默认口径）；用例可覆盖
+    getTenantPolicy: async () => ({ showCost: false }),
     userStore: {
       findById: (id: string) => id === 'user-1'
         ? { id, username: 'alice', realName: 'Alice Chen', tenantId: 'kaiyan' }
@@ -287,18 +308,104 @@ describe('/api/admin/runtime/trace', () => {
       expect(calls.recentRuns).toHaveLength(0);
     });
 
-    it('组织 admin（role=admin 但非平台 tenant）→ 403', async () => {
-      ({ server, baseUrl } = await startServer({ user: ORG_ADMIN }));
+    it('组织 admin → 200，且 recent-runs/efficiency 强制锁本租户', async () => {
+      let calls: RecordedCalls;
+      ({ server, baseUrl, calls } = await startServer({ user: ORG_ADMIN }));
       for (const path of [`/runs/${RUN_ID}/events`, '/recent-runs', '/efficiency']) {
         const res = await fetch(`${baseUrl}/api/admin/runtime/trace${path}`);
-        expect(res.status).toBe(403);
+        expect(res.status).toBe(200);
       }
+      expect(calls.recentRuns[0]).toMatchObject({ tenantId: 'kaiyan' });
+      expect(calls.efficiency[0]).toMatchObject({ tenantId: 'kaiyan' });
     });
 
-    it('平台 admin → 200', async () => {
-      ({ server, baseUrl } = await startServer());
-      const res = await fetch(`${baseUrl}/api/admin/runtime/trace/recent-runs`);
+    it('组织 admin query 指定他人 tenantId → 403', async () => {
+      let calls: RecordedCalls;
+      ({ server, baseUrl, calls } = await startServer({ user: ORG_ADMIN }));
+      for (const path of ['/recent-runs', '/efficiency']) {
+        const res = await fetch(`${baseUrl}/api/admin/runtime/trace${path}?tenantId=other-co`);
+        expect(res.status).toBe(403);
+      }
+      expect(calls.recentRuns).toHaveLength(0);
+      expect(calls.efficiency).toHaveLength(0);
+    });
+
+    it('组织 admin 访问他租户 run → 404（不泄露存在性）', async () => {
+      ({ server, baseUrl } = await startServer({ user: ORG_ADMIN }));
+      const res = await fetch(`${baseUrl}/api/admin/runtime/trace/runs/${OTHER_RUN_ID}/events`);
+      expect(res.status).toBe(404);
+    });
+
+    it('平台 admin → 200，query tenantId 任意透传', async () => {
+      let calls: RecordedCalls;
+      ({ server, baseUrl, calls } = await startServer());
+      const res = await fetch(`${baseUrl}/api/admin/runtime/trace/recent-runs?tenantId=other-co`);
       expect(res.status).toBe(200);
+      expect(calls.recentRuns[0]).toMatchObject({ tenantId: 'other-co' });
+      const other = await fetch(`${baseUrl}/api/admin/runtime/trace/runs/${OTHER_RUN_ID}/events`);
+      expect(other.status).toBe(200);
+    });
+  });
+
+  describe('成本脱敏（policy.showCost）', () => {
+    it('组织 admin + showCost=false → billing/efficiency 裁剪 ¥ 字段并标 costRedacted', async () => {
+      ({ server, baseUrl } = await startServer({ user: ORG_ADMIN }));
+
+      const runRes = await fetch(`${baseUrl}/api/admin/runtime/trace/runs/${RUN_ID}/events`);
+      const runBody = await runRes.json();
+      expect(runBody.billing.costRedacted).toBe(true);
+      expect(runBody.billing.totalCostYuan).toBeUndefined();
+      expect(runBody.billing.requests[0].costYuan).toBeUndefined();
+      // token 口径保留
+      expect(runBody.billing.inputTokens).toBe(3000);
+      expect(runBody.billing.requestCount).toBe(2);
+
+      const effRes = await fetch(`${baseUrl}/api/admin/runtime/trace/efficiency`);
+      const effBody = await effRes.json();
+      expect(effBody.costRedacted).toBe(true);
+      expect(effBody.cost.totalCostYuan).toBeUndefined();
+      expect(effBody.cost.perRun).toBeUndefined();
+      expect(effBody.cost.failedRunsCostYuan).toBeUndefined();
+    });
+
+    it('组织 admin + showCost=true → 不脱敏', async () => {
+      ({ server, baseUrl } = await startServer({
+        user: ORG_ADMIN,
+        options: { getTenantPolicy: async () => ({ showCost: true }) },
+      }));
+      const runRes = await fetch(`${baseUrl}/api/admin/runtime/trace/runs/${RUN_ID}/events`);
+      const runBody = await runRes.json();
+      expect(runBody.billing.costRedacted).toBeUndefined();
+      expect(runBody.billing.totalCostYuan).toBe(0.79);
+      const effRes = await fetch(`${baseUrl}/api/admin/runtime/trace/efficiency`);
+      const effBody = await effRes.json();
+      expect(effBody.costRedacted).toBeUndefined();
+      expect(effBody.cost.totalCostYuan).toBe(0);
+    });
+
+    it('getTenantPolicy 未注入或抛错 → fail-closed 脱敏', async () => {
+      ({ server, baseUrl } = await startServer({
+        user: ORG_ADMIN,
+        options: { getTenantPolicy: undefined },
+      }));
+      const res1 = await fetch(`${baseUrl}/api/admin/runtime/trace/efficiency`);
+      expect((await res1.json()).costRedacted).toBe(true);
+      await stopServer(server!);
+
+      ({ server, baseUrl } = await startServer({
+        user: ORG_ADMIN,
+        options: { getTenantPolicy: async () => { throw new Error('pg down'); } },
+      }));
+      const res2 = await fetch(`${baseUrl}/api/admin/runtime/trace/efficiency`);
+      expect((await res2.json()).costRedacted).toBe(true);
+    });
+
+    it('平台 admin 永不脱敏', async () => {
+      ({ server, baseUrl } = await startServer());
+      const runRes = await fetch(`${baseUrl}/api/admin/runtime/trace/runs/${RUN_ID}/events`);
+      const runBody = await runRes.json();
+      expect(runBody.billing.costRedacted).toBeUndefined();
+      expect(runBody.billing.totalCostYuan).toBe(0.79);
     });
   });
 
@@ -496,6 +603,38 @@ describe('runtimeTrace 纯转换函数', () => {
     const summary = summarizeRunBilling([makeUsageEvent({ actualCostYuanMicro: 123_456 })]);
     expect(summary.models).toEqual(['gpt-5.5-fallback']);
     expect(summary.totalCostYuan).toBe(0.123456);
+  });
+
+  it('redactBillingSummary：去 ¥ 字段保留 token 口径，标 costRedacted', () => {
+    const redacted = redactBillingSummary(summarizeRunBilling(USAGE_EVENTS));
+    expect(redacted.costRedacted).toBe(true);
+    expect((redacted as Record<string, unknown>).totalCostYuan).toBeUndefined();
+    expect(redacted.inputTokens).toBe(3000);
+    expect(redacted.requests).toHaveLength(2);
+    expect((redacted.requests[0] as Record<string, unknown>).costYuan).toBeUndefined();
+    expect(redacted.requests[0]!.inputTokens).toBe(1000);
+  });
+
+  it('redactEfficiencyCost：cost 区只留 byModel token 聚合 + cacheHitRate', () => {
+    const report: EfficiencyReport = {
+      ...EMPTY_REPORT,
+      cost: {
+        totalCostYuan: 9.9,
+        byModel: [{ model: 'm', costYuan: 9.9, requests: 3, inputTokens: 100, cachedInputTokens: 40, outputTokens: 10, cacheHitRate: 0.4 }],
+        perRun: { p50: 1, p90: 2, p99: 3 },
+        failedRunsCostYuan: 0.5,
+        cacheHitRate: 0.4,
+      },
+    };
+    const redacted = redactEfficiencyCost(report);
+    expect(redacted.costRedacted).toBe(true);
+    const cost = redacted.cost as Record<string, unknown>;
+    expect(cost.totalCostYuan).toBeUndefined();
+    expect(cost.perRun).toBeUndefined();
+    expect(cost.failedRunsCostYuan).toBeUndefined();
+    expect(cost.cacheHitRate).toBe(0.4);
+    expect((redacted.cost.byModel[0] as Record<string, unknown>).costYuan).toBeUndefined();
+    expect(redacted.cost.byModel[0]!.inputTokens).toBe(100);
   });
 
   it('truncateTraceEvent：非字符串大对象（approval input）序列化后截断', () => {

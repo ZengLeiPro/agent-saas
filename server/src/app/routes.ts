@@ -322,7 +322,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     );
   }
 
-  // Agent 运行监测读 API（平台 admin-only，router 内 isPlatformAdmin 再硬拦一层）：
+  // Agent 运行监测读 API（admin-only，router 内 resolveTenant 隔离：平台 admin 全量、
+  // 组织 admin 锁本租户 + ¥ 成本按 policy.showCost 脱敏）：
   // run trace drill-down + 最近 run 列表 + 效率聚合。仅 PG runtime backend 可用
   // （依赖 runtime_runs / runtime_events / billing usage 三张表）；依赖不齐时不挂载。
   const runtimeTraceBillingStore = runtime.billingService?.store;
@@ -339,6 +340,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         eventStore: runtime.runtimePgEventStore,
         billingStore: runtimeTraceBillingStore,
         userStore: runtime.userStore,
+        getTenantPolicy: (tenantId) => runtimeTraceBillingStore.getTenantPolicy(tenantId),
         efficiencyQuery: new RuntimeEfficiencyQuery({
           pool: runtime.runtimePgEventStore.pool,
           eventsTable: runtime.runtimePgEventStore.eventsTable,

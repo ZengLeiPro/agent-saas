@@ -1,9 +1,13 @@
 /**
- * 效率视图（platform-admin-only tab）
+ * 效率视图（admin tab：平台 admin 全量；组织 admin 锁本租户）
  *
  * 数据后端：GET /api/admin/runtime/trace/efficiency（见 server/src/runtime/efficiencyQuery.ts）
  * 布局分区：结果卡行 → 失败原因 → 成本 → 工具健康 → 长尾榜 → 审批摩擦 → 浪费探测。
  * 所有可空数值防 null 显示 "—"；成本只展示累计口径（¥）。
+ *
+ * 租户上下文（linkEntities=false）：
+ * - 后端按 policy.showCost 脱敏 ¥ 字段（costRedacted）→ 成本区退化为 token 口径；
+ * - EntityLink 走 plain 模式（不渲染 platform-admin 跳转），组织列隐藏。
  */
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
@@ -47,11 +51,16 @@ function StatCard({ label, value, sub, tone = "default" }: {
   );
 }
 
-export function EfficiencyView({ tenantId }: { tenantId?: string }) {
+export function EfficiencyView({ tenantId, linkEntities = true }: {
+  tenantId?: string;
+  /** false = 租户上下文：EntityLink 纯文本、组织列隐藏 */
+  linkEntities?: boolean;
+}) {
   const [days, setDays] = useState<number>(7);
   const [data, setData] = useState<EfficiencyReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const plain = !linkEntities;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -155,7 +164,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
                       <TableRow key={r.reason}>
                         <TableCell className="max-w-md truncate text-xs" title={r.reason}>{r.reason}</TableCell>
                         <TableCell className="text-right font-mono text-xs tabular-nums">{r.count}</TableCell>
-                        <TableCell><EntityLink kind="run" id={r.sampleRunId} /></TableCell>
+                        <TableCell><EntityLink kind="run" id={r.sampleRunId} plain={plain} /></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -164,57 +173,72 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
             </CardContent>
           </Card>
 
-          {/* 3. 成本 */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <StatCard label="总成本" value={formatYuan(data.cost.totalCostYuan, 2)} />
-            <StatCard label="单次运行成本 P50" value={formatYuan(data.cost.perRun.p50)} />
-            <StatCard label="单次运行成本 P90" value={formatYuan(data.cost.perRun.p90)} />
-            <StatCard label="单次运行成本 P99" value={formatYuan(data.cost.perRun.p99)} />
-            <StatCard
-              label="失败运行沉没成本"
-              value={formatYuan(data.cost.failedRunsCostYuan, 2)}
-              tone={data.cost.failedRunsCostYuan > 0 ? "warn" : "default"}
-            />
-            <StatCard label="缓存命中率" value={formatRate(data.cost.cacheHitRate)} />
-          </div>
+          {/* 3. 成本（后端脱敏时退化为 token 口径，隐藏 ¥ 卡） */}
+          {(() => {
+            const costRedacted = data.costRedacted === true || data.cost.totalCostYuan === undefined;
+            return (
+              <>
+                {costRedacted ? (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                    <StatCard label="缓存命中率" value={formatRate(data.cost.cacheHitRate)} />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                    <StatCard label="总成本" value={formatYuan(data.cost.totalCostYuan ?? 0, 2)} />
+                    <StatCard label="单次运行成本 P50" value={formatYuan(data.cost.perRun?.p50 ?? null)} />
+                    <StatCard label="单次运行成本 P90" value={formatYuan(data.cost.perRun?.p90 ?? null)} />
+                    <StatCard label="单次运行成本 P99" value={formatYuan(data.cost.perRun?.p99 ?? null)} />
+                    <StatCard
+                      label="失败运行沉没成本"
+                      value={formatYuan(data.cost.failedRunsCostYuan ?? 0, 2)}
+                      tone={(data.cost.failedRunsCostYuan ?? 0) > 0 ? "warn" : "default"}
+                    />
+                    <StatCard label="缓存命中率" value={formatRate(data.cost.cacheHitRate)} />
+                  </div>
+                )}
 
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">按模型成本</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              {data.cost.byModel.length === 0 ? (
-                <div className="py-6 text-center text-xs text-muted-foreground">区间内无计费数据</div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>模型</TableHead>
-                      <TableHead className="text-right">成本</TableHead>
-                      <TableHead className="text-right">请求数</TableHead>
-                      <TableHead className="text-right">输入</TableHead>
-                      <TableHead className="text-right">缓存输入</TableHead>
-                      <TableHead className="text-right">输出</TableHead>
-                      <TableHead className="text-right">缓存命中率</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {data.cost.byModel.map((m) => (
-                      <TableRow key={m.model}>
-                        <TableCell className="max-w-56 truncate font-mono text-xs" title={m.model}>{m.model}</TableCell>
-                        <TableCell className="text-right font-mono text-xs tabular-nums">{formatYuan(m.costYuan, 2)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs tabular-nums">{formatCount(m.requests)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs tabular-nums">{formatTokens(m.inputTokens)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs tabular-nums">{formatTokens(m.cachedInputTokens)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs tabular-nums">{formatTokens(m.outputTokens)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs tabular-nums">{formatRate(m.cacheHitRate)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium">{costRedacted ? "按模型用量" : "按模型成本"}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    {data.cost.byModel.length === 0 ? (
+                      <div className="py-6 text-center text-xs text-muted-foreground">区间内无计费数据</div>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>模型</TableHead>
+                            {!costRedacted && <TableHead className="text-right">成本</TableHead>}
+                            <TableHead className="text-right">请求数</TableHead>
+                            <TableHead className="text-right">输入</TableHead>
+                            <TableHead className="text-right">缓存输入</TableHead>
+                            <TableHead className="text-right">输出</TableHead>
+                            <TableHead className="text-right">缓存命中率</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {data.cost.byModel.map((m) => (
+                            <TableRow key={m.model}>
+                              <TableCell className="max-w-56 truncate font-mono text-xs" title={m.model}>{m.model}</TableCell>
+                              {!costRedacted && (
+                                <TableCell className="text-right font-mono text-xs tabular-nums">{formatYuan(m.costYuan ?? 0, 2)}</TableCell>
+                              )}
+                              <TableCell className="text-right font-mono text-xs tabular-nums">{formatCount(m.requests)}</TableCell>
+                              <TableCell className="text-right font-mono text-xs tabular-nums">{formatTokens(m.inputTokens)}</TableCell>
+                              <TableCell className="text-right font-mono text-xs tabular-nums">{formatTokens(m.cachedInputTokens)}</TableCell>
+                              <TableCell className="text-right font-mono text-xs tabular-nums">{formatTokens(m.outputTokens)}</TableCell>
+                              <TableCell className="text-right font-mono text-xs tabular-nums">{formatRate(m.cacheHitRate)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            );
+          })()}
 
           {/* 4. 工具健康 */}
           <Card>
@@ -285,11 +309,15 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
                       {data.longTail.slowestRuns.map((r) => (
                         <TableRow key={r.runId}>
                           <TableCell>
-                            <EntityLink kind="run" id={r.runId} />
+                            <EntityLink kind="run" id={r.runId} plain={plain} />
                             <div className="mt-0.5 text-[10px] text-muted-foreground">
-                              <EntityLink kind="tenant" id={r.tenantId} />
-                              <span className="mx-1">/</span>
-                              <EntityLink kind="session" id={r.sessionId} short={6} />
+                              {linkEntities && (
+                                <>
+                                  <EntityLink kind="tenant" id={r.tenantId} />
+                                  <span className="mx-1">/</span>
+                                </>
+                              )}
+                              <EntityLink kind="session" id={r.sessionId} short={6} plain={plain} />
                             </div>
                           </TableCell>
                           <TableCell><RunStatusBadge status={r.status} /></TableCell>
@@ -314,15 +342,15 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
                     <TableHeader>
                       <TableRow>
                         <TableHead>{RUN_LABEL}</TableHead>
-                        <TableHead>组织</TableHead>
+                        {linkEntities && <TableHead>组织</TableHead>}
                         <TableHead className="text-right">轮次</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {data.longTail.mostTurns.map((r) => (
                         <TableRow key={r.runId}>
-                          <TableCell><EntityLink kind="run" id={r.runId} /></TableCell>
-                          <TableCell className="text-xs"><EntityLink kind="tenant" id={r.tenantId} /></TableCell>
+                          <TableCell><EntityLink kind="run" id={r.runId} plain={plain} /></TableCell>
+                          {linkEntities && <TableCell className="text-xs"><EntityLink kind="tenant" id={r.tenantId} /></TableCell>}
                           <TableCell className="text-right font-mono text-xs tabular-nums">{r.turns}</TableCell>
                         </TableRow>
                       ))}
@@ -416,7 +444,7 @@ export function EfficiencyView({ tenantId }: { tenantId?: string }) {
                           <span className="truncate font-mono" title={f.filePath}>{f.filePath}</span>
                           <span className="shrink-0 text-muted-foreground tabular-nums">×{f.repeats}</span>
                         </div>
-                        <EntityLink kind="run" id={f.runId} className="text-[10px]" short={6} />
+                        <EntityLink kind="run" id={f.runId} className="text-[10px]" short={6} plain={plain} />
                       </div>
                     ))}
                   </div>

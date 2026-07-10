@@ -836,6 +836,7 @@ export function TenantAdminShell({
       <TenantOverviewSection
         tenantId={effectiveTenantId}
         onTenantChange={isPlatformAdmin ? setTargetTenantId : undefined}
+        onNavigateUsage={() => setActive("usage")}
       />
     );
   })();

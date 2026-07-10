@@ -489,28 +489,26 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
 
   return (
     <div className={cn("w-full space-y-4", !fullWidth && "mx-auto max-w-5xl")}>
-      {/* 用量 / 效率 tab（效率仅平台 admin 可见；组织 admin 维持现状不显示 tab 栏） */}
-      {isPlatformAdmin && (
-        <div className="inline-flex items-center self-start rounded-md border bg-card p-0.5">
-          {([["usage", "用量"], ["efficiency", "效率"]] as const).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setViewTab(key)}
-              className={cn(
-                "rounded px-4 py-1 text-xs font-medium transition-colors",
-                viewTab === key
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
-      {isPlatformAdmin && viewTab === "efficiency" ? (
-        <EfficiencyView tenantId={tenantId} />
+      {/* 用量 / 效率 tab（2026-07-10 起效率对组织 admin 开放：后端锁本租户 + 成本按 policy 脱敏） */}
+      <div className="inline-flex items-center self-start rounded-md border bg-card p-0.5">
+        {([["usage", "用量"], ["efficiency", "效率"]] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setViewTab(key)}
+            className={cn(
+              "rounded px-4 py-1 text-xs font-medium transition-colors",
+              viewTab === key
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {viewTab === "efficiency" ? (
+        <EfficiencyView tenantId={tenantId} linkEntities={isPlatformAdmin} />
       ) : (
         <>
       {/* Header */}

@@ -11,7 +11,7 @@ interface TenantAdminNavItem {
 }
 
 const tenantAdminSections: TenantAdminNavItem[] = [
-  { id: "overview", label: "概览", icon: Gauge },
+  { id: "overview", label: "综合分析", icon: Gauge },
   { id: "usage", label: "用量与配额", icon: BarChart3 },
   { id: "audit", label: "审计", icon: FileText },
 ];

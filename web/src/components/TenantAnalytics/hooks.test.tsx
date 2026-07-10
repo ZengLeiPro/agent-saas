@@ -44,4 +44,22 @@ describe("useTenantUsageBundle", () => {
     expect(result.current.overview).toBeNull();
     expect(result.current.byModel).toBeNull();
   });
+
+  it("range 参数透传 usage API 且变化时重拉", async () => {
+    const { result, rerender } = renderHook(
+      ({ range }: { range: "7d" | "30d" }) => useTenantUsageBundle("tenant-a", { range }),
+      { initialProps: { range: "7d" as const } },
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(vi.mocked(usageApi.overview)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ range: "7d", tenantId: "tenant-a" }),
+    );
+
+    rerender({ range: "30d" as "7d" | "30d" as never });
+
+    await waitFor(() => expect(vi.mocked(usageApi.overview)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ range: "30d", tenantId: "tenant-a" }),
+    ));
+  });
 });

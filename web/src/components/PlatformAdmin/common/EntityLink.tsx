@@ -27,6 +27,7 @@ export function EntityLink({
   tenantId,
   className,
   short = 8,
+  plain = false,
 }: {
   kind: EntityKind;
   id: string | null | undefined;
@@ -34,6 +35,8 @@ export function EntityLink({
   tenantId?: string | null;
   className?: string;
   short?: number;
+  /** 纯文本模式：不渲染 platform-admin 跳转链接（租户上下文使用），保留复制按钮 */
+  plain?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const section = ENTITY_SECTION[kind];
@@ -63,6 +66,9 @@ export function EntityLink({
 
   return (
     <span className={cn("group inline-flex max-w-full items-center gap-1 align-middle", className)} title={tenantId ? `${id} · ${tenantId}` : id}>
+      {plain ? (
+        <span className={cn("min-w-0 truncate px-1 text-xs", !label && "font-mono")}>{text}</span>
+      ) : (
       <a
         href={href}
         onClick={onNavigate}
@@ -73,6 +79,7 @@ export function EntityLink({
       >
         {text}
       </a>
+      )}
       <Button
         type="button"
         variant="ghost"

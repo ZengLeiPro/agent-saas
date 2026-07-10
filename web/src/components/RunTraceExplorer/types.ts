@@ -77,12 +77,14 @@ export interface BillingRequestRow {
   cachedInputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
-  costYuan: number;
+  /** 组织 admin 且 policy.showCost !== true 时后端脱敏省略 */
+  costYuan?: number;
   createdAt: string;
 }
 
 export interface RunBillingSummary {
-  totalCostYuan: number;
+  /** 组织 admin 且 policy.showCost !== true 时后端脱敏省略 */
+  totalCostYuan?: number;
   requestCount: number;
   inputTokens: number;
   cachedInputTokens: number;
@@ -90,6 +92,8 @@ export interface RunBillingSummary {
   reasoningTokens: number;
   models: string[];
   requests: BillingRequestRow[];
+  /** 后端脱敏标记 */
+  costRedacted?: boolean;
 }
 
 export interface TraceToolCall {
@@ -184,18 +188,19 @@ export interface EfficiencyReport {
     handFailures: number;
   };
   cost: {
-    totalCostYuan: number;
+    /** 组织 admin 且 policy.showCost !== true 时后端脱敏省略（下同） */
+    totalCostYuan?: number;
     byModel: Array<{
       model: string;
-      costYuan: number;
+      costYuan?: number;
       requests: number;
       inputTokens: number;
       cachedInputTokens: number;
       outputTokens: number;
       cacheHitRate: number | null;
     }>;
-    perRun: { p50: number | null; p90: number | null; p99: number | null };
-    failedRunsCostYuan: number;
+    perRun?: { p50: number | null; p90: number | null; p99: number | null };
+    failedRunsCostYuan?: number;
     cacheHitRate: number | null;
   };
   longTail: {
@@ -231,4 +236,6 @@ export interface EfficiencyReport {
       byTool: Array<{ toolName: string; count: number }>;
     };
   };
+  /** 后端成本脱敏标记（组织 admin 且 policy.showCost !== true） */
+  costRedacted?: boolean;
 }

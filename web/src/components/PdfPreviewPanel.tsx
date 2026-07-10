@@ -6,6 +6,8 @@ import { resolveImageSrc } from "@agent/shared";
 interface PdfPreviewPanelProps {
   filePath: string;
   owner?: string;
+  /** 只读分享 token；提供时通过 /api/share/sessions/:token/file 拉取 PDF（无需登录）。 */
+  shareToken?: string;
   onBack: () => void;
   /** 隐藏内置 header（移动端由外层 Layout 统一渲染） */
   hideHeader?: boolean;
@@ -14,7 +16,7 @@ interface PdfPreviewPanelProps {
 // iOS Safari 的 iframe 无法可靠内嵌 PDF（空白/不可滚动），降级为「新标签打开」
 const IS_IOS = typeof navigator !== "undefined" && /iP(hone|ad|od)/.test(navigator.userAgent);
 
-export function PdfPreviewPanel({ filePath, owner, onBack, hideHeader }: PdfPreviewPanelProps) {
+export function PdfPreviewPanel({ filePath, owner, shareToken, onBack, hideHeader }: PdfPreviewPanelProps) {
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
@@ -24,13 +26,19 @@ export function PdfPreviewPanel({ filePath, owner, onBack, hideHeader }: PdfPrev
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
+    if (shareToken) {
+      // 分享页公开接口本身按 path 直读快照文件，浏览器可直接 iframe 渲染 PDF。
+      const url = `/api/share/sessions/${encodeURIComponent(shareToken)}/file?path=${encodeURIComponent(filePath)}`;
+      setState({ status: "success", url });
+      return () => { cancelled = true; };
+    }
     // resolveImageSrc 返回带 token 的 /api/file/download URL，后端对 .pdf 走 inline，
     // 浏览器原生 PDF 阅读器在 iframe 内渲染；Range 支持保证大文件按页流式加载
     resolveImageSrc(filePath, owner)
       .then((url) => { if (!cancelled) setState({ status: "success", url }); })
       .catch((err) => { if (!cancelled) setState({ status: "error", message: (err as Error).message }); });
     return () => { cancelled = true; };
-  }, [filePath, owner]);
+  }, [filePath, owner, shareToken]);
 
   const filename = filePath.split("/").pop() || filePath;
   const dirPath = filePath.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "";

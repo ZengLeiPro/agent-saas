@@ -140,12 +140,14 @@ interface MarkdownPreviewPanelProps {
   filePath: string;
   /** 文件所属用户（admin 查看其他用户会话时需要） */
   owner?: string;
+  /** 只读分享 token；提供时通过 /api/share/sessions/:token/file 读取快照内容。 */
+  shareToken?: string;
   onBack: () => void;
   /** 隐藏内置 header（移动端由外层 Layout 统一渲染） */
   hideHeader?: boolean;
 }
 
-export function MarkdownPreviewPanel({ filePath, owner, onBack, hideHeader }: MarkdownPreviewPanelProps) {
+export function MarkdownPreviewPanel({ filePath, owner, shareToken, onBack, hideHeader }: MarkdownPreviewPanelProps) {
   const [state, setState] = useState<
     { status: "loading" } | { status: "error"; message: string } | { status: "success"; content: string; filename: string }
   >({ status: "loading" });
@@ -154,16 +156,30 @@ export function MarkdownPreviewPanel({ filePath, owner, onBack, hideHeader }: Ma
     let cancelled = false;
     setState({ status: "loading" });
 
-    const ownerParam = owner ? `&owner=${encodeURIComponent(owner)}` : '';
-    authFetch(`/api/file/read?path=${encodeURIComponent(filePath)}${ownerParam}`)
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({ error: "Unknown error" }));
-          throw new Error(body.error || `HTTP ${res.status}`);
-        }
-        return res.json();
-      })
-      .then((data: { content: string; filename: string }) => {
+    // 分享页无登录态，直接 fetch 公开 share file 接口拿原始文本；主站点走
+    // /api/file/read（JSON 响应带 filename 兜底文件名解析）+ 鉴权 token。
+    const request = shareToken
+      ? fetch(`/api/share/sessions/${encodeURIComponent(shareToken)}/file?path=${encodeURIComponent(filePath)}`)
+        .then(async (res) => {
+          if (!res.ok) {
+            const bodyText = await res.text().catch(() => '');
+            throw new Error(bodyText ? bodyText.slice(0, 200) : `HTTP ${res.status}`);
+          }
+          const content = await res.text();
+          const filename = filePath.split('/').pop() || filePath;
+          return { content, filename };
+        })
+      : authFetch(`/api/file/read?path=${encodeURIComponent(filePath)}${owner ? `&owner=${encodeURIComponent(owner)}` : ''}`)
+        .then(async (res) => {
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({ error: "Unknown error" }));
+            throw new Error(body.error || `HTTP ${res.status}`);
+          }
+          return res.json() as Promise<{ content: string; filename: string }>;
+        });
+
+    request
+      .then((data) => {
         if (!cancelled) {
           setState({ status: "success", content: data.content, filename: data.filename });
         }
@@ -175,7 +191,7 @@ export function MarkdownPreviewPanel({ filePath, owner, onBack, hideHeader }: Ma
       });
 
     return () => { cancelled = true; };
-  }, [filePath, owner]);
+  }, [filePath, owner, shareToken]);
 
   const filename = state.status === "success" ? state.filename : filePath.split("/").pop() || filePath;
   const dirPath = filePath.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "";

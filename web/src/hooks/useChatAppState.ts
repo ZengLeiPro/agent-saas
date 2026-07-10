@@ -151,7 +151,7 @@ export interface ChatAppState {
   previewFilePath: string | null;
   previewFileOwner: string | undefined;
   previewMode: "dialog" | "side";
-  openFilePreview: (path: string, owner?: string) => void;
+  openFilePreview: (path: string, owner?: string, options?: { mode?: "dialog" | "side" }) => void;
   dockFilePreview: () => void;
   closeFilePreview: () => void;
   fileBrowserOpen: boolean;
@@ -239,10 +239,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
   const [explicitPreviewOwner, setExplicitPreviewOwner] = useState<string | undefined>(undefined);
   const [previewMode, setPreviewMode] = useState<"dialog" | "side">("dialog");
-  const openFilePreview = useCallback((path: string, owner?: string) => {
+  const openFilePreview = useCallback((path: string, owner?: string, options?: { mode?: "dialog" | "side" }) => {
     setPreviewFilePath(path);
     setExplicitPreviewOwner(owner);
-    setPreviewMode("dialog");
+    // md/PDF 附件卡默认走 "side"（右侧面板），让用户可以边预览边继续对话；
+    // FileBrowser、代码块内联路径等调用点保持默认 "dialog" 弹窗行为。
+    setPreviewMode(options?.mode ?? "dialog");
   }, []);
   const dockFilePreview = useCallback(() => {
     setPreviewMode("side");

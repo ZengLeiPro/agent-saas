@@ -58,7 +58,10 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
     ? `${isAuthenticated ? "/" : "/signup"}?scenario=${encodeURIComponent(scenarioId)}`
     : "";
   const openSharedPreview = (filePath: string) => {
-    if (getPreviewFileType(filePath) === "html") {
+    // 分享页只有 html/md/PDF 三种面板已改造支持公开 shareToken 读取快照，
+    // 其它类型仍走新标签下载（后端 /api/share/sessions/:token/file 直接返回原文/二进制）。
+    const previewType = getPreviewFileType(filePath);
+    if (previewType === "html" || previewType === "md" || previewType === "pdf") {
       setPreviewFilePath(filePath);
       return;
     }

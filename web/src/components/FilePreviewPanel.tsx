@@ -23,10 +23,10 @@ interface FilePreviewPanelProps {
 export function FilePreviewPanel({ filePath, owner, shareToken, onBack, hideHeader }: FilePreviewPanelProps) {
   const previewType = getPreviewFileType(filePath);
   if (previewType === "html") return <HtmlPreviewPanel filePath={filePath} owner={owner} shareToken={shareToken} onBack={onBack} hideHeader={hideHeader} />;
-  if (previewType === "pdf") return <PdfPreviewPanel filePath={filePath} owner={owner} onBack={onBack} hideHeader={hideHeader} />;
+  if (previewType === "pdf") return <PdfPreviewPanel filePath={filePath} owner={owner} shareToken={shareToken} onBack={onBack} hideHeader={hideHeader} />;
   if (previewType === "video") return <VideoPreviewPanel filePath={filePath} owner={owner} onBack={onBack} hideHeader={hideHeader} />;
   if (previewType === "code") return <CodePreviewPanel filePath={filePath} owner={owner} onBack={onBack} hideHeader={hideHeader} />;
-  return <MarkdownPreviewPanel filePath={filePath} owner={owner} onBack={onBack} hideHeader={hideHeader} />;
+  return <MarkdownPreviewPanel filePath={filePath} owner={owner} shareToken={shareToken} onBack={onBack} hideHeader={hideHeader} />;
 }
 
 interface FilePreviewDialogProps {

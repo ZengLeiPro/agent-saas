@@ -341,7 +341,9 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
 
   const previewType = getPreviewFileType(fileName);
   const isPreviewable = !!previewType;
-  const isHtml = previewType === 'html';
+  // 分享页只有 html/md/PDF 三种预览面板支持公开 shareToken 读取（其它面板仍走
+  // 登录态 /api/file/read）；code/text/video 分享场景仍走新标签下载兜底。
+  const isShareable = previewType === 'html' || previewType === 'md' || previewType === 'pdf';
   const visual = getFileTypeVisual(fileName);
   const TypeIcon = CATEGORY_ICON[visual.category];
   const isImage = visual.category === 'image';
@@ -350,7 +352,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   const canOpenPreview = artifactId
     ? isImage
     : shareToken
-      ? (isImage || (isHtml && !!filePreview))
+      ? (isImage || (isShareable && !!filePreview))
       : (isImage || (isPreviewable && !!filePreview));
 
   const handleClick = () => {
@@ -366,7 +368,9 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
       const url = shareFileUrl(shareToken, filePath);
       if (isImage) {
         setPreviewSrc(url);
-      } else if (isHtml && filePreview) {
+      } else if (isShareable && filePreview) {
+        // 分享页 md/PDF/html 走 FilePreviewDialog（分享页只有 dialog 通道，没有
+        // side dock 面板），预览面板内部会通过 shareToken 读取快照内容。
         filePreview.openPreview(filePath, owner);
       }
       return;
@@ -376,7 +380,9 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
         .then(setPreviewSrc)
         .catch(() => setPreviewSrc(filePath));
     } else if (isPreviewable && filePreview) {
-      filePreview.openPreview(filePath, owner);
+      // md/PDF/text/code/video 附件卡直接 dock 到右侧面板，让用户在预览的同时
+      // 继续对话；FileBrowser、代码块内联路径等其他调用点默认仍是 dialog。
+      filePreview.openPreview(filePath, owner, { mode: "side" });
     }
   };
 

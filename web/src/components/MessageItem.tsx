@@ -16,8 +16,10 @@ import { VoiceBar } from './VoiceBar';
 import { useFilePreview } from '@/contexts/FilePreviewContext';
 import { authFetch } from '@/lib/authFetch';
 import { extractTextFromChildren, getCellMinWidthPx } from '@/lib/tableCellWidth';
-import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual } from '@agent/shared';
+import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual, splitByMessageMarkers, stripPartialCiteMarker } from '@agent/shared';
 import type { FileTypeCategory } from '@agent/shared';
+import { CitationCard } from './CitationCard';
+import { MessageFeedbackButton } from './MessageFeedback';
 import type { TtsState } from '@/hooks/useTtsPlayer';
 import type { UseVoicePlayerReturn } from '@/hooks/useVoicePlayer';
 import type { Components } from 'react-markdown';
@@ -210,29 +212,8 @@ function stripNonFileMediaMarkers(text: string): string {
   return text.replace(/\[(?:VIDEO|AUDIO)\]\{.*?\}\[\/(?:VIDEO|AUDIO)\]/g, '').trim();
 }
 
-const FILE_MARKER_RE = /\[FILE\](\{.*?\})\[\/FILE\]/g;
-
-type TextSegment = { type: 'text'; content: string } | { type: 'file'; filePath: string; fileName: string };
-
-/** Split text content by [FILE] markers, returning interleaved text and file segments */
-function splitByFileMarkers(text: string): TextSegment[] {
-  const segments: TextSegment[] = [];
-  let lastIndex = 0;
-  for (const match of text.matchAll(FILE_MARKER_RE)) {
-    const before = text.slice(lastIndex, match.index);
-    if (before.trim()) segments.push({ type: 'text', content: before });
-    try {
-      const json = JSON.parse(match[1]);
-      const filePath = json.filePath || '';
-      const fileName = filePath.split('/').pop() || filePath;
-      segments.push({ type: 'file', filePath, fileName });
-    } catch { /* malformed JSON — skip */ }
-    lastIndex = match.index! + match[0].length;
-  }
-  const tail = text.slice(lastIndex);
-  if (tail.trim()) segments.push({ type: 'text', content: tail });
-  return segments;
-}
+// [FILE]/[CITE] 标记切分已泛化到 shared splitByMessageMarkers（FILE 行为逐行为等价，
+// 兼容性红线有 markers.test.ts 回归锁）；CITE 段渲染为 CitationCard。
 
 /** 触发文件下载：构造带 ?token= 的 URL，交给浏览器原生流式下载（避免大文件被 fetch 整入内存） */
 async function authFetchDownload(filePath: string, fileName: string, owner?: string) {
@@ -543,19 +524,22 @@ function TtsButton({
   );
 }
 
-/** 操作按钮组：TTS + 复制 */
+/** 操作按钮组：TTS + 复制（+ 专职 Agent 会话的反馈按钮，context 缺省零渲染） */
 function ActionButtons({
   text,
   ttsState,
   showTts,
   onTtsPlay,
   onTtsTogglePause,
+  feedback,
 }: {
   text: string;
   ttsState: TtsState;
   showTts: boolean;
   onTtsPlay: () => void;
   onTtsTogglePause: () => void;
+  /** AI 文本消息传入（type==='text' && !streaming）；MessageFeedbackProvider 未挂载时按钮零渲染 */
+  feedback?: { messageId: string; content: string };
 }) {
   return (
     <>
@@ -563,6 +547,9 @@ function ActionButtons({
         <TtsButton state={ttsState} onPlay={onTtsPlay} onTogglePause={onTtsTogglePause} />
       )}
       <CopyButton text={text} />
+      {feedback && (
+        <MessageFeedbackButton messageId={feedback.messageId} content={feedback.content} />
+      )}
     </>
   );
 }
@@ -761,10 +748,12 @@ export const MessageItem = memo(function MessageItem({
 
   if (message.type === "text") {
     const voiceStripped = stripVoiceMarkers(message.content);
-    const segments = splitByFileMarkers(voiceStripped);
-    // Fallback: if no FILE markers, treat entire content as single text segment
-    const hasFileSegments = segments.some(s => s.type === 'file');
-    const cleanContent = hasFileSegments ? '' : stripNonFileMediaMarkers(voiceStripped);
+    // 流式渲染时抑制尾部未闭合的 [CITE] 半截标记（只裁尾部；FILE 保持现状）
+    const displaySource = message.streaming ? stripPartialCiteMarker(voiceStripped) : voiceStripped;
+    const segments = splitByMessageMarkers(displaySource);
+    // Fallback: if no FILE/CITE markers, treat entire content as single text segment
+    const hasMarkerSegments = segments.some(s => s.type !== 'text');
+    const cleanContent = hasMarkerSegments ? '' : stripNonFileMediaMarkers(displaySource);
     const showFooter = showTextFooter;
     return (
       <div className="flex justify-start">
@@ -776,7 +765,7 @@ export const MessageItem = memo(function MessageItem({
               isPlaying && "border-l-2 border-primary pl-2",
             )}
           >
-            {hasFileSegments ? (
+            {hasMarkerSegments ? (
               segments.map((seg, si) =>
                 seg.type === 'file' ? (
                   <div key={`file-${si}`} className="my-2 not-prose">
@@ -788,6 +777,10 @@ export const MessageItem = memo(function MessageItem({
                       owner={message.owner}
                       shareToken={filePreview?.shareToken}
                     />
+                  </div>
+                ) : seg.type === 'citation' ? (
+                  <div key={`cite-${si}`} className="my-1.5 not-prose">
+                    <CitationCard doc={seg.doc} page={seg.page} label={seg.label} />
                   </div>
                 ) : (
                   <Suspense key={`text-${si}`} fallback={<div className="whitespace-pre-wrap break-words">{seg.content}</div>}>
@@ -832,6 +825,7 @@ export const MessageItem = memo(function MessageItem({
                   showTts={showTts}
                   onTtsPlay={() => tts?.play(msgKey, cleanContent)}
                   onTtsTogglePause={() => tts?.togglePause(msgKey)}
+                  feedback={{ messageId: message.id, content: message.content }}
                 />
               </div>
             </div>

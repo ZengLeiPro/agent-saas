@@ -1,5 +1,5 @@
-import { PanelRightOpen } from "lucide-react";
-import { getPreviewFileType } from "@agent/shared";
+import { PanelRightOpen, FileQuestion } from "lucide-react";
+import { getPreviewFileType, isKbPath, parseKbPath } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -21,6 +21,20 @@ interface FilePreviewPanelProps {
 }
 
 export function FilePreviewPanel({ filePath, owner, shareToken, onBack, hideHeader }: FilePreviewPanelProps) {
+  // kb:// 伪协议（引用溯源卡）：pdf 走 PdfPreviewPanel kb 分支（带 #page=N 定位）；
+  // 其余类型引用卡内部已自行处理（lightbox/新标签），此处仅兜底提示。
+  if (isKbPath(filePath)) {
+    const kb = parseKbPath(filePath);
+    if (kb && getPreviewFileType(kb.doc) === "pdf") {
+      return <PdfPreviewPanel filePath={kb.doc} kbSource page={kb.page} onBack={onBack} hideHeader={hideHeader} />;
+    }
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
+        <FileQuestion className="h-6 w-6" />
+        <span className="text-sm">该引用类型不支持内嵌预览</span>
+      </div>
+    );
+  }
   const previewType = getPreviewFileType(filePath);
   if (previewType === "html") return <HtmlPreviewPanel filePath={filePath} owner={owner} shareToken={shareToken} onBack={onBack} hideHeader={hideHeader} />;
   if (previewType === "pdf") return <PdfPreviewPanel filePath={filePath} owner={owner} shareToken={shareToken} onBack={onBack} hideHeader={hideHeader} />;

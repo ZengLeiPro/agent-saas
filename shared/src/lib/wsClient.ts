@@ -28,6 +28,11 @@ export interface WsChatMessage {
     client_msg_id?: string;
     message: string;
     sessionId?: string;
+    /**
+     * 公司级专职 Agent 绑定（2026-07 唯恩批次）。仅新会话首条消息生效；
+     * 带 sessionId 时服务端以会话 meta 为准（忽略客户端值）。
+     */
+    orgAgentId?: string;
     attachments?: Array<{
         originalName: string;
         savedPath: string;

@@ -101,6 +101,10 @@ export interface ChatAppState {
   setAdminSettingsSection: (section: string) => void;
   newSession: () => void;
   selectSession: (id: string) => void;
+  /** 专职 Agent 新会话：新建空会话并挂起 orgAgentId（首条消息 WS payload 带上） */
+  startOrgAgentSession: (agentId: string) => void;
+  /** 挂起中的专职 Agent id（新会话空白态 banner 展示用；缺省 null） */
+  pendingOrgAgentId: string | null;
   confirmDeleteSession: (id: string) => void;
   confirmDeleteSessions: (ids: string[]) => void;
   cancelDeleteSession: () => void;
@@ -976,20 +980,40 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     pushAdminSettingsUrl(current.target, sec);
   }, []);
 
+  // ---- 专职 Agent 挂起态（2026-07 唯恩批次）----
+  // ref：sendChatViaWs 首条消息（无 sessionId）时带上 orgAgentId，ACK 后清除；
+  // state：新会话空白态的顶部 banner 展示（会话入列表带 orgAgentId 后由列表接管）。
+  const pendingOrgAgentIdRef = useRef<string | null>(null);
+  const [pendingOrgAgentId, setPendingOrgAgentId] = useState<string | null>(null);
+  const clearPendingOrgAgent = useCallback(() => {
+    pendingOrgAgentIdRef.current = null;
+    setPendingOrgAgentId(null);
+  }, []);
+
   const selectSessionWithUrl = useCallback((id: string) => {
     setTrashPreviewSessionId(null); // 选择正常会话时退出回收站预览
+    clearPendingOrgAgent(); // 切换既有会话 = 放弃挂起的专职 Agent 新会话
     clearUnreadAiReply(id);
     immediateSessionIdRef.current = id;
     session.selectSession(id);
     pushUrl('chat', id);
-  }, [clearUnreadAiReply, session.selectSession]);
+  }, [clearPendingOrgAgent, clearUnreadAiReply, session.selectSession]);
 
   const newSessionWithUrl = useCallback(() => {
     setTrashPreviewSessionId(null);
+    clearPendingOrgAgent(); // 普通新会话 = 个人 Agent 路径
     immediateSessionIdRef.current = null;
     session.newSession();
     pushUrl('chat', null);
-  }, [session.newSession]);
+  }, [clearPendingOrgAgent, session.newSession]);
+
+  /** 专职 Agent 新会话：新建空会话并挂起 orgAgentId，首条消息 WS payload 带上 */
+  const startOrgAgentSession = useCallback((agentId: string) => {
+    newSessionWithUrl();
+    pendingOrgAgentIdRef.current = agentId;
+    setPendingOrgAgentId(agentId);
+    if (activeTabRef.current !== 'chat') setActiveTab('chat');
+  }, [newSessionWithUrl, setActiveTab]);
 
   const previewTrashSession = useCallback(async (id: string | null) => {
     if (id) {
@@ -1746,6 +1770,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           if (t) { clearTimeout(t); ackTimersRef.current.delete(clientMsgId); }
           const entry = outboxRef.current.find(e => e.clientMsgId === clientMsgId);
           if (entry) entry.state = 'acked';
+          // 专职 Agent 首条消息回执后清 ref（会话已在服务端绑定 orgAgentId；
+          // banner 展示态保留到会话列表接管或用户切换会话）
+          pendingOrgAgentIdRef.current = null;
         },
         onChatRejected: (clientMsgId) => {
           // 服务端拒绝：清 ACK 定时器、从 outbox 移除；bubble 已在 wsEventProcessor 翻 failed
@@ -2068,6 +2095,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       client_msg_id: clientMsgId,
       message: inputText || "Please check the attachments I uploaded",
       sessionId: activeSessionId || undefined,
+      // 专职 Agent 绑定：仅新会话首条消息带（带 sessionId 时服务端以 meta 为准）
+      ...(pendingOrgAgentIdRef.current && !activeSessionId
+        ? { orgAgentId: pendingOrgAgentIdRef.current }
+        : {}),
       model: selectedModelRef.current || undefined,
       ...(autoApproveRunShellForMessage ? { approvalPolicy: { autoApproveTools: true } } : {}),
       attachments: attachments.length > 0
@@ -2506,6 +2537,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setAdminSettingsSection,
     newSession: newSessionWithUrl,
     selectSession: selectSessionWithUrl,
+    startOrgAgentSession,
+    pendingOrgAgentId,
     confirmDeleteSession: session.confirmDeleteSession,
     confirmDeleteSessions: session.confirmDeleteSessions,
     cancelDeleteSession: session.cancelDeleteSession,

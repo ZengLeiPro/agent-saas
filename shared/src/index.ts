@@ -23,6 +23,10 @@ export {
   isInternalTenantId,
 } from "./types/index";
 export type {
+  OrgAgentAudience,
+  OrgAgentGuardrailConfig,
+  OrgAgentRecord,
+  OrgAgentSummary,
   MessageItem,
   MessageItemInput,
   AskUserAnswerValue,
@@ -386,6 +390,24 @@ export { truncateContent, formatJson, formatFileSize } from "./lib/format";
 
 // Lib - coordinate transform (WGS-84 → GCJ-02)
 export { wgs84ToGcj02 } from "./lib/coordTransform";
+
+// Lib - message markers (FILE/CITE 统一切分；引用溯源卡)
+export {
+  MESSAGE_MARKER_RE,
+  splitByMessageMarkers,
+  parseCitationPayload,
+  stripPartialCiteMarker,
+} from "./lib/markers";
+export type { MarkerSegment, CitationSegment } from "./lib/markers";
+
+// Lib - 租户共享 KB 文件访问（kb:// 伪协议 + 带 token 的文件 URL）
+export {
+  KB_SCHEME,
+  isKbPath,
+  buildKbPreviewPath,
+  parseKbPath,
+  resolveKbFileSrc,
+} from "./lib/kbApi";
 
 // Lib - file utilities (cross-platform pure functions)
 export {

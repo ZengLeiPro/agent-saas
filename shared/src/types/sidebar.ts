@@ -13,6 +13,10 @@ export interface ChatSessionIndexItem {
   agent?: AgentProfile | null;
   cronJobId?: string;
   cronJobName?: string;
+  /** 公司级专职 Agent 绑定（2026-07 唯恩批次）；缺省 = 个人 Agent 会话 */
+  orgAgentId?: string;
+  /** 专职 Agent 名称（列表行徽标展示用） */
+  orgAgentName?: string;
 }
 
 export type AppTab = "chat" | "scenarios" | "cron" | "tenants" | "tenant-admin" | "platform-admin" | "files" | "profile" | "skills" | "usage" | "mcp" | "models" | "settings" | "trash";

@@ -31,6 +31,10 @@ export interface ApiSessionListItem {
   model?: string;
   cronJobId?: string;
   cronJobName?: string;
+  /** 公司级专职 Agent 绑定（2026-07 唯恩批次）；缺省 = 个人 Agent 会话 */
+  orgAgentId?: string;
+  /** 专职 Agent 名称（server 列表序列化时按 orgAgentId join；Agent 已删除时缺省） */
+  orgAgentName?: string;
   /** 软删除时间戳，仅回收站列表返回 */
   deletedAt?: string;
   /** 执行删除的用户名，仅回收站列表返回 */

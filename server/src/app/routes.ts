@@ -36,6 +36,9 @@ import { createSignupRouters } from "../routes/signup.js";
 import { requireAdmin } from "../auth/middleware.js";
 import { createAgentsRouter } from "../routes/agents.js";
 import { createOrgAgentsRouter } from "../routes/orgAgents.js";
+import { createKbFilesRouter } from "../routes/kbFiles.js";
+import { createOrgQaRouter } from "../routes/orgQa.js";
+import { createFeedbackRouter } from "../routes/feedback.js";
 import { createRuntimeAuditRouter } from "../routes/runtimeAudit.js";
 import { createRuntimeTraceRouter } from "../routes/runtimeTrace.js";
 import { createPlatformObservabilityRouter } from "../routes/platformObservability.js";
@@ -63,7 +66,8 @@ function tenantFeatureGuard(
     | "filesEnabled"
     | "cronEnabled"
     | "mcpEnabled"
-    | "customSkillsEnabled",
+    | "customSkillsEnabled"
+    | "kbEnabled",
   label: string,
 ) {
   return (req: Request, res: Response, next: express.NextFunction): void => {
@@ -147,6 +151,20 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     );
   }
 
+  // 租户共享知识库文件只读服务（引用溯源卡；2026-07 唯恩批次）。
+  // 独立开关 kbEnabled（默认 false，不复用 filesEnabled——关掉个人文件能力仍可溯源）。
+  app.use(
+    "/api/kb",
+    tenantFeatureGuard(runtime.tenantStore, "kbEnabled", "知识库"),
+    createKbFilesRouter({ kbRootDir: resolve(processCwd, "./data/kb") }),
+  );
+
+  // 消息反馈（专职 Agent 会话 owner-only 点踩；PG 未装配时路由内 503）
+  app.use(
+    "/api/feedback",
+    createFeedbackRouter({ messageFeedbackStore: runtime.messageFeedbackStore }),
+  );
+
   // Azeroth 透明反向代理：mobile/web 通过 /api/azeroth/* 调用 azeroth API，
   // 由 server 注入对应员工的 PAT，新增 azeroth 接口零代码。
   // 依赖：index.ts 中 express.json() 已配置为跳过 /api/azeroth/* 路径
@@ -186,6 +204,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       groupStore: runtime.groupStore,
       userStore: runtime.userStore,
       agentStore: runtime.agentStore,
+      orgAgentStore: runtime.orgAgentStore,
       getStreamStatus: webChannel
         ? (sid) => webChannel.getStreamStatus(sid)
         : undefined,
@@ -369,6 +388,20 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
+
+  // 组织对话质检台（会话记录/门禁日志/反馈标注；2026-07 唯恩批次）。
+  // 须挂在 /api/admin 观测路由之前，避免前缀匹配先落进 observability router。
+  app.use(
+    "/api/admin/qa",
+    requireAdmin,
+    createOrgQaRouter({
+      sessionProjectionStore: runtime.runtimeSessionProjectionStore,
+      orgAgentStore: runtime.orgAgentStore,
+      guardrailEventStore: runtime.guardrailEventStore,
+      messageFeedbackStore: runtime.messageFeedbackStore,
+      userStore: runtime.userStore,
+    }),
+  );
 
   app.use(
     "/api/admin",

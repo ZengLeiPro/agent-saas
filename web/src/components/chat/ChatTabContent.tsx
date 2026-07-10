@@ -52,6 +52,11 @@ interface ChatTabContentProps {
   sessionParticipants?: SessionParticipants | null;
   /** 空会话槽位（透传给 MessageList）：新会话空白态展示的内容，如场景推荐卡 */
   emptySlot?: React.ReactNode;
+  /**
+   * 公司级专职 Agent 顶部细条 banner（2026-07 唯恩批次）。
+   * 缺省零变化；不污染 agentProfile（头像/参与者渲染不受影响）。
+   */
+  orgAgent?: { id: string; name: string; avatar?: string } | null;
 }
 
 export function ChatTabContent({
@@ -93,6 +98,7 @@ export function ChatTabContent({
   agentProfile,
   sessionParticipants,
   emptySlot,
+  orgAgent,
 }: ChatTabContentProps) {
   const activeAskUser = useMemo(() => {
     if (readOnly) return null;
@@ -112,6 +118,13 @@ export function ChatTabContent({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {orgAgent && (
+        <div className="flex shrink-0 items-center gap-1.5 border-b bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
+          <span aria-hidden="true" className="text-sm leading-none">{orgAgent.avatar || "🤖"}</span>
+          <span className="font-medium text-foreground">{orgAgent.name}</span>
+          <span>· 公司专职 Agent</span>
+        </div>
+      )}
       <MessageList
         lastMessageRef={lastMessageRef}
         scrollContainerRef={scrollContainerRef}

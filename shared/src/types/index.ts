@@ -142,6 +142,13 @@ export { FILE_SORT_LABELS } from "./file";
 export type { AgentProfile, AgentProfileDetail } from "./agent";
 
 export type {
+  OrgAgentAudience,
+  OrgAgentGuardrailConfig,
+  OrgAgentRecord,
+  OrgAgentSummary,
+} from "./orgAgent";
+
+export type {
   SkillInfo,
   PlatformSkillExposure,
   TenantSkillMemberExposure,

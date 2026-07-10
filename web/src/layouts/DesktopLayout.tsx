@@ -50,6 +50,7 @@ import { FirstDayGuideBar } from "@/components/onboarding/FirstDayGuideBar";
 import { CronCreationWizard } from "@/components/onboarding/CronCreationWizard";
 import type { ScenarioItem } from "@agent/shared";
 const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
+const OrgAgentManagerPanel = lazy(() => import("@/components/OrgAgentManager").then(m => ({ default: m.OrgAgentManager })));
 
 const SuspenseFallback = (
   <div className="flex flex-1 items-center justify-center">
@@ -73,6 +74,7 @@ export function DesktopLayout(props: LayoutProps) {
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
+    startOrgAgentSession, activeOrgAgent,
   } = props;
 
   const { user: authUser, updatePreferences } = useAuth();
@@ -254,6 +256,7 @@ export function DesktopLayout(props: LayoutProps) {
         onPreviewTrashSession={previewTrashSession}
         trashPreviewSessionId={trashPreviewSessionId}
         sidebarLayout={sidebarLayout}
+        onStartOrgAgentSession={startOrgAgentSession}
       />
 
       {/* 右侧内容区 */}
@@ -392,7 +395,8 @@ export function DesktopLayout(props: LayoutProps) {
               readOnly={isTrashPreview}
               agentProfile={agentProfile}
               sessionParticipants={sessionParticipants}
-              emptySlot={chatEmptySlot}
+              emptySlot={activeOrgAgent ? undefined : chatEmptySlot}
+              orgAgent={isTrashPreview ? null : activeOrgAgent}
             />
           </div>
           {rightPanelOpen && (
@@ -491,6 +495,7 @@ export function DesktopLayout(props: LayoutProps) {
               <TenantAdminShell
                 renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
+                renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
                 renderMcp={() => <McpAdminCatalogPanel />}
                 renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
             renderFiles={() => (
@@ -538,6 +543,7 @@ export function DesktopLayout(props: LayoutProps) {
             <TenantAdminShell
               renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
               renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
+              renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
               renderMcp={() => <McpAdminCatalogPanel />}
               renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
               renderFiles={() => (

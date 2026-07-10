@@ -1,13 +1,18 @@
 import { useState, useEffect } from "react";
 import { ChevronLeft, Loader2, AlertCircle, ExternalLink, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { resolveImageSrc } from "@agent/shared";
+import { resolveImageSrc, resolveKbFileSrc } from "@agent/shared";
+import { authFetch } from "@/lib/authFetch";
 
 interface PdfPreviewPanelProps {
   filePath: string;
   owner?: string;
   /** 只读分享 token；提供时通过 /api/share/sessions/:token/file 拉取 PDF（无需登录）。 */
   shareToken?: string;
+  /** 租户共享 KB 文档（引用溯源卡）：走 /api/kb/file + HEAD 预检 + #page 定位。 */
+  kbSource?: boolean;
+  /** 浏览器原生 viewer 页码定位（仅 kbSource；越界由浏览器自动 clamp）。 */
+  page?: number;
   onBack: () => void;
   /** 隐藏内置 header（移动端由外层 Layout 统一渲染） */
   hideHeader?: boolean;
@@ -16,7 +21,7 @@ interface PdfPreviewPanelProps {
 // iOS Safari 的 iframe 无法可靠内嵌 PDF（空白/不可滚动），降级为「新标签打开」
 const IS_IOS = typeof navigator !== "undefined" && /iP(hone|ad|od)/.test(navigator.userAgent);
 
-export function PdfPreviewPanel({ filePath, owner, shareToken, onBack, hideHeader }: PdfPreviewPanelProps) {
+export function PdfPreviewPanel({ filePath, owner, shareToken, kbSource, page, onBack, hideHeader }: PdfPreviewPanelProps) {
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
@@ -26,6 +31,26 @@ export function PdfPreviewPanel({ filePath, owner, shareToken, onBack, hideHeade
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
+    if (kbSource) {
+      // KB 文档：HEAD 预检（403=未开通/无权限，404=文档不存在）后再 iframe，
+      // 避免浏览器原生 viewer 吞掉错误只显示空白。#page=N 交给原生 viewer 定位。
+      (async () => {
+        try {
+          const head = await authFetch(`/api/kb/file?path=${encodeURIComponent(filePath)}`, { method: "HEAD" });
+          if (cancelled) return;
+          if (!head.ok) {
+            setState({ status: "error", message: "文档不存在或知识库未开通" });
+            return;
+          }
+          const url = await resolveKbFileSrc(filePath);
+          if (cancelled) return;
+          setState({ status: "success", url: page ? `${url}#page=${page}` : url });
+        } catch (err) {
+          if (!cancelled) setState({ status: "error", message: (err as Error).message });
+        }
+      })();
+      return () => { cancelled = true; };
+    }
     if (shareToken) {
       // 分享页公开接口本身按 path 直读快照文件，浏览器可直接 iframe 渲染 PDF。
       const url = `/api/share/sessions/${encodeURIComponent(shareToken)}/file?path=${encodeURIComponent(filePath)}`;
@@ -38,7 +63,7 @@ export function PdfPreviewPanel({ filePath, owner, shareToken, onBack, hideHeade
       .then((url) => { if (!cancelled) setState({ status: "success", url }); })
       .catch((err) => { if (!cancelled) setState({ status: "error", message: (err as Error).message }); });
     return () => { cancelled = true; };
-  }, [filePath, owner, shareToken]);
+  }, [filePath, owner, shareToken, kbSource, page]);
 
   const filename = filePath.split("/").pop() || filePath;
   const dirPath = filePath.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
@@ -91,7 +116,8 @@ export function PdfPreviewPanel({ filePath, owner, shareToken, onBack, hideHeade
               </Button>
             </div>
           ) : (
-            <iframe src={state.url} className="h-full w-full border-0" title={filename} />
+            // key={url}：同文档不同页码时强制 iframe 重建（浏览器不对 fragment 变化重载 PDF）
+            <iframe key={state.url} src={state.url} className="h-full w-full border-0" title={filename} />
           ))}
       </div>
     </>

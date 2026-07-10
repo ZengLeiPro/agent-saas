@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Building2, Cpu, Database, Gauge, Globe2, KeyRound, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, UserPlus, Users, X, WalletCards } from "lucide-react";
+import { Bot, Building2, Cpu, Database, Gauge, Globe2, KeyRound, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, UserPlus, Users, X, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,8 +27,9 @@ import { InfraPage, OverviewPage, SandboxesPage, SessionsPage, TenantsPage, User
 import { SystemSettingsPanel } from "@/components/PlatformAdmin/SystemSettingsPanel";
 import { RunTraceExplorer } from "@/components/RunTraceExplorer";
 import { OverviewSection as TenantOverviewSection } from "@/components/TenantAnalytics/OverviewSection";
+import { QaConsole } from "@/components/QaConsole";
 
-export type TenantSection = "overview" | "users" | "skills" | "mcp" | "usage" | "billing" | "files" | "audit" | "settings" | "company";
+export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company";
 export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "global-mcp" | "skill-pool" | "system";
 
 interface ShellButton<T extends string> {
@@ -41,6 +42,7 @@ interface ShellButton<T extends string> {
 const tenantSettingsSections: ShellButton<TenantSection>[] = [
   { id: "users", label: "成员", icon: Users },
   { id: "skills", label: "Agent 与 Skill", icon: Puzzle },
+  { id: "org-agents", label: "专职 Agent", icon: Bot },
   { id: "mcp", label: "MCP 工具", icon: Plug },
   { id: "billing", label: "计费", icon: WalletCards },
   { id: "files", label: "文件与数据", icon: Database },
@@ -728,6 +730,7 @@ function AuditEventsPanel({
 export function TenantAdminShell({
   renderUsers,
   renderSkills,
+  renderOrgAgents,
   renderMcp,
   renderUsage,
   renderFiles,
@@ -743,6 +746,12 @@ export function TenantAdminShell({
 }: {
   renderUsers: (tenantId?: string, tenantName?: string) => ReactNode;
   renderSkills: (tenantId?: string, tenantName?: string) => ReactNode;
+  /**
+   * 「专职 Agent」section（2026-07 唯恩批次）。Desktop 两处 TenantAdminShell 实例
+   * 都必须传（漏一处 = 从聊天页打开设置 modal 时 section 空白）；mobile 本期不做，
+   * 缺省时导航项整体隐藏（零变化）。
+   */
+  renderOrgAgents?: (tenantId?: string, tenantName?: string) => ReactNode;
   renderMcp: () => ReactNode;
   renderUsage: (tenantId?: string) => ReactNode;
   renderFiles: () => ReactNode;
@@ -803,9 +812,14 @@ export function TenantAdminShell({
     setVisitedTenantSections(prev => (prev.has(settingsSection) ? prev : new Set(prev).add(settingsSection)));
   }, [settingsOpen, settingsSection]);
 
+  const visibleTenantSettingsSections = renderOrgAgents
+    ? tenantSettingsSections
+    : tenantSettingsSections.filter((section) => section.id !== "org-agents");
+
   const tenantSectionsToRender: { id: TenantSection; node: ReactNode }[] = [
     { id: "users", node: renderUsers(effectiveTenantId, currentTenant?.name) },
     { id: "skills", node: renderSkills(effectiveTenantId, currentTenant?.name) },
+    ...(renderOrgAgents ? [{ id: "org-agents" as TenantSection, node: renderOrgAgents(effectiveTenantId, currentTenant?.name) }] : []),
     { id: "mcp", node: renderMcp() },
     { id: "billing", node: <TenantBillingPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} /> },
     { id: "files", node: renderFiles() },
@@ -831,6 +845,7 @@ export function TenantAdminShell({
 
   const content = (() => {
     if (active === "usage") return renderUsage(effectiveTenantId);
+    if (active === "qa") return <QaConsole tenantId={effectiveTenantId} />;
     if (active === "audit") return <AuditEventsPanel scope="tenant" tenantId={effectiveTenantId} tenantName={currentTenant?.name} />;
     return (
       <TenantOverviewSection
@@ -842,7 +857,7 @@ export function TenantAdminShell({
   })();
 
   const settingsModal = (
-    <AdminSettingsModal open={settingsOpen} title="组织管理" description="" badge={isPlatformAdmin ? "平台管理员" : "组织管理员"} sections={tenantSettingsSections} active={settingsSection} onActiveChange={onSettingsSectionChange} onClose={onSettingsClose} headerControl={tenantSwitcher}>
+    <AdminSettingsModal open={settingsOpen} title="组织管理" description="" badge={isPlatformAdmin ? "平台管理员" : "组织管理员"} sections={visibleTenantSettingsSections} active={settingsSection} onActiveChange={onSettingsSectionChange} onClose={onSettingsClose} headerControl={tenantSwitcher}>
       {settingsContent}
     </AdminSettingsModal>
   );

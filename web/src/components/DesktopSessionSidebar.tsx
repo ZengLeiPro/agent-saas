@@ -71,6 +71,7 @@ import { useGroups } from "@/hooks/useGroups";
 import {
   applyGroupOrder,
 } from "@agent/shared";
+import { useOrgAgents } from "@/hooks/useOrgAgents";
 import { useResizableWidth } from "@/hooks/useResizableWidth";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
@@ -111,6 +112,11 @@ interface DesktopSessionSidebarProps {
   /** 完整未读集（不受分页影响），用于左栏各视图/分组的聚合红点 */
   unreadAiReplySessionIds?: ReadonlySet<string>;
   sidebarLayout?: "double" | "single";
+  /**
+   * 专职 Agent 入口（2026-07 唯恩批次）：点击无既有会话时新建并挂起 orgAgentId，
+   * 首条消息的 WS payload 带上。缺省时入口零渲染。
+   */
+  onStartOrgAgentSession?: (agentId: string) => void;
 }
 
 /** 稳定的空集兜底，避免 prop 缺省时每次 render 新建 Set 触发 useMemo 失效 */
@@ -378,6 +384,15 @@ function SessionRow({
         <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5">
           {session.title || "新会话"}
         </span>
+        {session.orgAgentId && (
+          <span
+            className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-brand-50 text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
+            title={session.orgAgentName || "公司专职 Agent"}
+            aria-label={`专职 Agent：${session.orgAgentName || ""}`}
+          >
+            <Bot className="h-3 w-3" />
+          </span>
+        )}
         <span
           className={cn(
             "shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground/60 transition-opacity",
@@ -439,6 +454,15 @@ function SessionRow({
               </span>
             )}
             <span className="truncate">{session.title || "新会话"}</span>
+            {session.orgAgentId && (
+              <span
+                className="ml-1 flex h-4 w-4 shrink-0 items-center justify-center rounded bg-brand-50 text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
+                title={session.orgAgentName || "公司专职 Agent"}
+                aria-label={`专职 Agent：${session.orgAgentName || ""}`}
+              >
+                <Bot className="h-3 w-3" />
+              </span>
+            )}
           </div>
           <div className="mt-1 text-xs text-muted-foreground/60">
             <span className="block truncate pr-28">{metaText}</span>
@@ -596,6 +620,64 @@ function RoleKitSidebarHint({
         <span className="block truncate text-muted-foreground">查看开箱场景</span>
       </span>
     </button>
+  );
+}
+
+/**
+ * 专职 Agent 侧边栏入口（仿 RoleKitSidebarHint；2026-07 唯恩批次）
+ *
+ * 仅被指派 ≥1 个专职 Agent 时渲染（未指派用户 UI 零变化）。点击：
+ * 存在绑定该 Agent 的最新会话 → 复用（onSelectSession）；否则新建会话并
+ * 挂起 orgAgentId（onStartOrgAgentSession → pendingOrgAgentIdRef + onNew）。
+ */
+function OrgAgentSidebarSection({
+  sessions,
+  onSelectSession,
+  onStartOrgAgentSession,
+  beforeNavigate,
+}: {
+  sessions: ChatSessionIndexItem[];
+  onSelectSession: (sessionId: string) => void;
+  onStartOrgAgentSession?: (agentId: string) => void;
+  beforeNavigate?: () => void;
+}) {
+  const { agents } = useOrgAgents();
+  if (agents.length === 0) return null;
+
+  const handleClick = (agentId: string) => {
+    beforeNavigate?.();
+    let latest: ChatSessionIndexItem | null = null;
+    for (const session of sessions) {
+      if (session.orgAgentId === agentId && (!latest || session.updatedAt > latest.updatedAt)) {
+        latest = session;
+      }
+    }
+    if (latest) {
+      onSelectSession(latest.id);
+    } else {
+      onStartOrgAgentSession?.(agentId);
+    }
+  };
+
+  return (
+    <div className="mx-2 mb-2 space-y-1">
+      {agents.map((agent) => (
+        <button
+          key={agent.id}
+          type="button"
+          className="flex w-full items-center gap-2 rounded-lg border bg-card px-2 py-2 text-left text-xs transition-colors hover:bg-muted/60"
+          onClick={() => handleClick(agent.id)}
+        >
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-sm dark:bg-brand-900/35" aria-hidden="true">
+            {agent.avatar || <Bot className="h-3.5 w-3.5 text-brand-600" />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">{agent.name}</span>
+            <span className="block truncate text-muted-foreground">公司专职 Agent</span>
+          </span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -1026,6 +1108,7 @@ export function DesktopSessionSidebar({
   trashPreviewSessionId,
   unreadAiReplySessionIds,
   sidebarLayout = "double",
+  onStartOrgAgentSession,
 }: DesktopSessionSidebarProps) {
   const { user: authUser, logout, authEnabled, updateAvatar } = useAuth();
   // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
@@ -1700,6 +1783,12 @@ export function DesktopSessionSidebar({
           onTabChange={onTabChange}
           beforeNavigate={() => setSingleExpandedGroupKey(null)}
         />
+        <OrgAgentSidebarSection
+          sessions={sessions}
+          onSelectSession={handleSelect}
+          onStartOrgAgentSession={onStartOrgAgentSession}
+          beforeNavigate={() => setSingleExpandedGroupKey(null)}
+        />
 
         {renderSessionSearchBox("inline")}
         <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -1918,6 +2007,11 @@ export function DesktopSessionSidebar({
             onTabChange={onTabChange}
           />
           <RoleKitSidebarHint onTabChange={onTabChange} />
+          <OrgAgentSidebarSection
+            sessions={sessions}
+            onSelectSession={handleSelect}
+            onStartOrgAgentSession={onStartOrgAgentSession}
+          />
 
           {/* 导航与分组之间的分隔线 */}
           <div className="mx-2 my-1 border-t" />

@@ -62,6 +62,7 @@ import type { EventBus } from "../channels/web/eventBus.js";
 import { canAccessSession, isMemoryPollSessionMeta } from "../data/sessions/access.js";
 import type { AgentStore } from "../data/agents/store.js";
 import type { AgentProfileInfo } from "../data/agents/types.js";
+import type { OrgAgentStore } from "../data/orgAgents/store.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import type { SessionShareSnapshot, SessionShareStore } from "../data/sessionShares/store.js";
 import { isShareExpired } from "../data/sessionShares/store.js";
@@ -154,6 +155,8 @@ export interface SessionsRouterOptions {
   userStore?: UserStore;
   /** AgentStore for resolving session owner's agent display info */
   agentStore?: AgentStore;
+  /** OrgAgentStore：会话列表按 meta.orgAgentId join 出专职 Agent 名称（徽标展示） */
+  orgAgentStore?: OrgAgentStore;
   /** 查询会话流状态（由 WebChannel 提供） */
   getStreamStatus?: (sessionId: string) => Promise<{ active: boolean; streamId?: string; runId?: string }>;
   /** 广播事件到指定用户的所有 WS 连接 */
@@ -439,6 +442,13 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     runtimeEventStoreFor,
   } = options;
   const router = Router();
+
+  /** 会话列表透传专职 Agent 绑定：orgAgentId 来自 meta，名称按 store join（Agent 已删则缺省） */
+  function orgAgentFields(meta: SessionMeta | null): { orgAgentId?: string; orgAgentName?: string } {
+    if (!meta?.orgAgentId) return {};
+    const name = options.orgAgentStore?.get(meta.orgAgentId)?.name;
+    return { orgAgentId: meta.orgAgentId, ...(name ? { orgAgentName: name } : {}) };
+  }
 
   function getSessionAgent(username?: string): SessionAgent | undefined {
     if (!username) return undefined;
@@ -982,7 +992,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
-              ...(meta?.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
+              ...orgAgentFields(meta),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
                 : {}),
@@ -1017,7 +1027,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
-              ...(meta?.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
+              ...orgAgentFields(meta),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
                 : {}),
@@ -1032,7 +1042,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
-              ...(meta?.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
+              ...orgAgentFields(meta),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
                 : {}),

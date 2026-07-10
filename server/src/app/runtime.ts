@@ -63,6 +63,7 @@ import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import { PgGuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
+import { PgMessageFeedbackStore } from '../data/feedback/store.js';
 import { MemoryIndexService } from '../memory/index/service.js';
 import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
@@ -166,6 +167,11 @@ export interface AppRuntime {
    * WebChannel 降级 log）。阶段 2 质检台 /api/admin/qa/guardrail-events 消费。
    */
   guardrailEventStore?: PgGuardrailEventStore;
+  /**
+   * 消息反馈落库（仅 runtimeEventStore.backend='pg'；file backend 为 undefined，
+   * /api/feedback 与质检台 /api/admin/qa/feedback 路由 503 → 前端隐藏入口）。
+   */
+  messageFeedbackStore?: PgMessageFeedbackStore;
   /**
    * 门禁模型配置链 getter（主 + fallback）。空数组 = 门禁模块未激活。
    * WebChannel 持有同一 getter——热更后取到的永远是最新链。
@@ -617,6 +623,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let pgToolInvocationStore: PgToolInvocationStore | undefined;
   let pgClientDaemonRegistry: PgClientDaemonRegistry | undefined;
   let guardrailEventStore: PgGuardrailEventStore | undefined;
+  let messageFeedbackStore: PgMessageFeedbackStore | undefined;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -752,6 +759,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       guardrailEventStore = store;
     } catch (err) {
       serverLogger.warn(`PgGuardrailEventStore init failed, guardrail events degrade to log: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // 消息反馈落库（质检台需求雷达的另一半）。init 失败降级 undefined →
+    // 反馈路由 503，前端隐藏入口——反馈是体验增强，不阻塞启动。
+    try {
+      const store = new PgMessageFeedbackStore({
+        pool: pgEventStore.pool,
+        tablePrefix: config.runtimeEventStore.tablePrefix,
+      });
+      await store.init();
+      messageFeedbackStore = store;
+    } catch (err) {
+      serverLogger.warn(`PgMessageFeedbackStore init failed, feedback routes degrade to 503: ${err instanceof Error ? err.message : String(err)}`);
     }
     pgArtifactStore = new PgArtifactStore({
       pool: pgEventStore.pool,
@@ -1812,6 +1831,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     titleGeneratorConfigs,
     orgAgentStore,
     guardrailEventStore,
+    messageFeedbackStore,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig,

@@ -68,6 +68,7 @@ export function createAuthMiddleware(
         /^\/agents\/avatar\//,
         /^\/voice\/play$/,
         /^\/file\/download$/,
+        /^\/kb\/file$/,
       ];
       if (QUERY_TOKEN_PATHS.some((p) => p.test(req.path))) {
         token = req.query.token;

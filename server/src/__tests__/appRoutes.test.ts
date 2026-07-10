@@ -23,6 +23,9 @@ const mocked = vi.hoisted(() => {
   const toolControlsAdminRouter = { id: 'tool-controls-admin-router' };
   const previewTokenRouter = { id: 'preview-token-router' };
   const previewServeRouter = { id: 'preview-serve-router' };
+  const kbFilesRouter = { id: 'kb-files-router' };
+  const orgQaRouter = { id: 'org-qa-router' };
+  const feedbackRouter = { id: 'feedback-router' };
   const requireAdmin = vi.fn((_req: unknown, _res: unknown, next: () => void) => next());
 
   return {
@@ -48,6 +51,9 @@ const mocked = vi.hoisted(() => {
     toolControlsAdminRouter,
     previewTokenRouter,
     previewServeRouter,
+    kbFilesRouter,
+    orgQaRouter,
+    feedbackRouter,
     requireAdmin,
     createHealthRouter: vi.fn(() => healthRouter),
     createAppUpdateRouter: vi.fn(() => appUpdateRouter),
@@ -70,6 +76,9 @@ const mocked = vi.hoisted(() => {
     createInternalAcsAlertsRouter: vi.fn(() => internalAcsAlertsRouter),
     createToolControlsAdminRouter: vi.fn(() => toolControlsAdminRouter),
     createPreviewRoutes: vi.fn(() => ({ tokenRouter: previewTokenRouter, serveRouter: previewServeRouter })),
+    createKbFilesRouter: vi.fn(() => kbFilesRouter),
+    createOrgQaRouter: vi.fn(() => orgQaRouter),
+    createFeedbackRouter: vi.fn(() => feedbackRouter),
   };
 });
 
@@ -91,6 +100,15 @@ vi.mock('../routes/index.js', () => ({
 }));
 vi.mock('../channels/dingtalk/protocol/sessionRouter.js', () => ({
   createDingtalkSessionRouter: mocked.createDingtalkSessionRouter,
+}));
+vi.mock('../routes/kbFiles.js', () => ({
+  createKbFilesRouter: mocked.createKbFilesRouter,
+}));
+vi.mock('../routes/orgQa.js', () => ({
+  createOrgQaRouter: mocked.createOrgQaRouter,
+}));
+vi.mock('../routes/feedback.js', () => ({
+  createFeedbackRouter: mocked.createFeedbackRouter,
 }));
 vi.mock('../routes/tenantRemoteHandsAdmin.js', () => ({
   createTenantRemoteHandsAdminRouter: mocked.createTenantRemoteHandsAdminRouter,
@@ -211,9 +229,13 @@ describe('registerRoutes', () => {
     //   + preview(token+serve) + voice + tts + search + scenarios + contentops + sessions + dingtalk
     //   + tenant-remote-hands admin + runtime-operations admin + observability admin
     //   + system admin + internal ACS alerts + tool-controls admin + groups = 23
+    //   + kb files（kbEnabled guard 与 router 同一次 use 注册）+ feedback + qa admin = 26
     // 注：upload-guard / file-guard 是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(23);
+    expect(app.use).toHaveBeenCalledTimes(26);
+    expect(app.use).toHaveBeenCalledWith('/api/kb', expect.any(Function), mocked.kbFilesRouter);
+    expect(app.use).toHaveBeenCalledWith('/api/feedback', mocked.feedbackRouter);
+    expect(app.use).toHaveBeenCalledWith('/api/admin/qa', mocked.requireAdmin, mocked.orgQaRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.healthRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.appUpdateRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.uploadRouter);

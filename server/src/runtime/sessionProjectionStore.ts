@@ -58,6 +58,14 @@ export interface RuntimeSessionListQuery {
   userId?: string;
   status?: string;
   kind?: 'user' | 'subagent';
+  /** 按公司级专职 Agent 过滤（meta_json->>'orgAgentId'；2026-07 唯恩批次质检台） */
+  orgAgentId?: string;
+  /** true = 只要绑定了任意专职 Agent 的会话（orgAgentId 未指定时的"全部专职会话"视图） */
+  hasOrgAgent?: boolean;
+  /** updated_at 下界（ISO 8601，含；质检台时间过滤） */
+  updatedFrom?: string;
+  /** updated_at 上界（ISO 8601，含） */
+  updatedTo?: string;
   includeDeleted?: boolean;
   cursor?: { updatedAt: string; sessionId: string };
   limit?: number;
@@ -231,6 +239,20 @@ export class PgSessionProjectionStore {
     if (query.kind) {
       params.push(query.kind);
       clauses.push(`kind = $${params.length}`);
+    }
+    if (query.orgAgentId) {
+      params.push(query.orgAgentId);
+      clauses.push(`meta_json->>'orgAgentId' = $${params.length}`);
+    } else if (query.hasOrgAgent) {
+      clauses.push(`meta_json->>'orgAgentId' IS NOT NULL`);
+    }
+    if (query.updatedFrom) {
+      params.push(query.updatedFrom);
+      clauses.push(`updated_at >= $${params.length}::timestamptz`);
+    }
+    if (query.updatedTo) {
+      params.push(query.updatedTo);
+      clauses.push(`updated_at <= $${params.length}::timestamptz`);
     }
     if (!query.includeDeleted) clauses.push('deleted_at IS NULL');
     if (query.cursor) {

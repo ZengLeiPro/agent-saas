@@ -10,6 +10,8 @@ import { useTtsPlayer } from "@/hooks/useTtsPlayer";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useAuth } from "@/contexts/AuthContext";
 import { FilePreviewProvider } from "@/contexts/FilePreviewContext";
+import { MessageFeedbackProvider } from "@/contexts/MessageFeedbackContext";
+import { useOrgAgents } from "@/hooks/useOrgAgents";
 import { DeleteSessionDialog } from "@/components/chat/DeleteSessionDialog";
 
 import { DesktopLayout } from "@/layouts/DesktopLayout";
@@ -38,6 +40,8 @@ function toSidebarSessions(
     agent: s.agent ?? (currentAgent && (!s.owner || s.owner.username === currentAgent.username) ? currentAgent : undefined),
     cronJobId: s.cronJobId,
     cronJobName: s.cronJobName,
+    orgAgentId: s.orgAgentId,
+    orgAgentName: s.orgAgentName,
   }));
 }
 
@@ -78,7 +82,22 @@ function App() {
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, closeFilePreview,
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
+    startOrgAgentSession, pendingOrgAgentId,
   } = useChatAppState({ onVoiceEvent: handleVoiceEvent });
+
+  // 专职 Agent（2026-07 唯恩批次）：当前会话绑定态 = 列表项 orgAgentId 或挂起态
+  const { agents: myOrgAgents } = useOrgAgents();
+  const activeOrgAgent = useMemo(() => {
+    const currentItem = sessionId ? sessions.find((s) => s.sessionId === sessionId) : null;
+    const orgAgentId = currentItem?.orgAgentId ?? pendingOrgAgentId ?? null;
+    if (!orgAgentId) return null;
+    const mine = myOrgAgents.find((agent) => agent.id === orgAgentId);
+    return {
+      id: orgAgentId,
+      name: mine?.name ?? currentItem?.orgAgentName ?? "专职 Agent",
+      ...(mine?.avatar ? { avatar: mine.avatar } : {}),
+    };
+  }, [sessionId, sessions, pendingOrgAgentId, myOrgAgents]);
 
   // iOS PWA 生命周期：后台恢复时刷新数据，进入后台时保存状态
   const onResume = useCallback(() => {
@@ -140,7 +159,12 @@ function App() {
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, closeFilePreview,
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
+    startOrgAgentSession, activeOrgAgent,
   };
+
+  // 反馈 Provider 仅在当前会话绑定专职 Agent 时挂载（缺省 context=null → 按钮零渲染）
+  const feedbackSessionId = sessionId && activeOrgAgent ? sessionId : null;
+  const layoutNode = isMobile ? <MobileLayout {...layoutProps} /> : <DesktopLayout {...layoutProps} />;
 
   return (
     <div
@@ -158,7 +182,13 @@ function App() {
       ) : null}
 
       <FilePreviewProvider value={{ openPreview: openFilePreview, owner: previewFileOwner }}>
-        {isMobile ? <MobileLayout {...layoutProps} /> : <DesktopLayout {...layoutProps} />}
+        {feedbackSessionId ? (
+          <MessageFeedbackProvider sessionId={feedbackSessionId}>
+            {layoutNode}
+          </MessageFeedbackProvider>
+        ) : (
+          layoutNode
+        )}
       </FilePreviewProvider>
 
       {/* SDK 0.2.112+ REPL 通知（右上角悬浮，按 priority 色彩，timeoutMs 自动消失）*/}

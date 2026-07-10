@@ -101,6 +101,14 @@ export interface SessionOptions {
 
 const RECENT_LOCAL_SESSION_TTL_MS = 60_000;
 
+// sessionsPreload 是模块级 Promise，只在页面加载时用当时的 token 拉了一次会话。
+// 首次挂载消费它可以省一次 waterfall；但账号 A 登出 → 账号 B 登录时 <App/> 会重新
+// 挂载，useSession 也随之重跑 mount effect——此时 sessionsPreload 里躺着 A 的数据，
+// 直接 setSessions 会把 A 的会话列表灌进 B 的 UI。
+// 用模块级 flag 保证 preload 只被"当前页面生命周期内的第一次挂载"消费一次；
+// 之后所有重新挂载都改走 fresh fetch，从根上堵掉跨账号会话残留。
+let sessionsPreloadConsumed = false;
+
 export function useSession(
   callbacks: SessionCallbacks,
   options?: SessionOptions,
@@ -763,19 +771,28 @@ export function useSession(
     }
 
     // Step 2: 消费预取结果或发起 API 请求
-    sessionsPreload.then((preloaded) => {
-      if (cancelled) return;
-      if (preloaded) {
-        const freshSessions = preloaded.sessions as ApiSessionListItem[];
-        const freshHasMore = preloaded.hasMore;
-        setSessions(freshSessions);
-        setHasMore(freshHasMore);
-        setIsLoadingSessions(false);
-      } else {
-        // 有缓存时静默加载，避免 loading 状态闪烁
-        void loadSessions({ silent: !!cached });
-      }
-    });
+    // 只有首次挂载能吃 sessionsPreload 的红利；账号切换后重新挂载走 fresh fetch，
+    // 避免把旧账号的 preload 结果灌到新账号的 sidebar。
+    if (!sessionsPreloadConsumed) {
+      sessionsPreloadConsumed = true;
+      sessionsPreload.then((preloaded) => {
+        if (cancelled) return;
+        if (preloaded) {
+          const freshSessions = preloaded.sessions as ApiSessionListItem[];
+          const freshHasMore = preloaded.hasMore;
+          setSessions(freshSessions);
+          setHasMore(freshHasMore);
+          setIsLoadingSessions(false);
+        } else {
+          // 有缓存时静默加载，避免 loading 状态闪烁
+          void loadSessions({ silent: !!cached });
+        }
+      });
+    } else {
+      // 二次挂载（如登出 → 换号登录）: 直接拉最新数据，
+      // 缓存已在 logout 里清掉，此处显式 fresh 确保拿到当前账号的会话。
+      void loadSessions({ silent: !!cached, fresh: true });
+    }
     return () => {
       cancelled = true;
     };

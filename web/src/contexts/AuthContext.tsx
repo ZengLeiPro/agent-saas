@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from "react";
 import type { AuthUser, LoginCredentials, SmsLoginCredentials } from "@/types/auth";
 import type { UserPreferences } from "@agent/shared";
-import { DEFAULT_TENANT_ID } from "@agent/shared";
+import { DEFAULT_TENANT_ID, clearGroupsCache } from "@agent/shared";
 import { setOnUnauthorized } from "@/lib/authFetch";
 import { wsClient } from "@/lib/wsClient";
 import { TOKEN_KEY, SESSION_STORAGE_KEY, INPUT_DRAFT_KEY } from "@/lib/constants";
@@ -48,6 +48,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearSessionListCache();
     clearUnreadAiReplyCache();
     void clearAllMessageCache();
+    // groups 也是账号相关：sidebar 的分组行来自这份缓存，
+    // 若不清，换号后会闪一下旧账号的分组直至下一次 API 拉取。
+    void clearGroupsCache();
     setUser(null);
   }, []);
 

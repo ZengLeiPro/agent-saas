@@ -128,20 +128,20 @@ export function createKbFilesRouter(options: KbFilesRouterOptions): Router {
       }
 
       // Range 请求支持（浏览器原生 PDF viewer 按页分片加载）
+      // RFC 7233 语义（2026-07 审查 F4）：suffix（bytes=-N）取末 N 字节回 206；
+      // 无法解析（NaN/负数/start>end）忽略 Range 回 200 全量；end 越界 clamp 回 206；
+      // start ≥ size → 416（带 Content-Range: bytes */size）
       const range = req.headers.range;
-      if (range) {
-        const parts = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
-
-        if (start >= stats.size || end >= stats.size || start > end) {
-          res
-            .status(416)
-            .setHeader("Content-Range", `bytes */${stats.size}`)
-            .end();
-          return;
-        }
-
+      const parsedRange = range ? parseByteRange(range, stats.size) : null;
+      if (parsedRange?.kind === "unsatisfiable") {
+        res
+          .status(416)
+          .setHeader("Content-Range", `bytes */${stats.size}`)
+          .end();
+        return;
+      }
+      if (parsedRange?.kind === "range") {
+        const { start, end } = parsedRange;
         res.writeHead(206, {
           "Content-Range": `bytes ${start}-${end}/${stats.size}`,
           "Content-Length": end - start + 1,
@@ -180,4 +180,31 @@ export function createKbFilesRouter(options: KbFilesRouterOptions): Router {
   });
 
   return router;
+}
+
+type ParsedByteRange =
+  | { kind: "range"; start: number; end: number }
+  | { kind: "unsatisfiable" }
+  | null;
+
+/**
+ * 解析单段 Range 头（RFC 7233）。
+ * - `bytes=A-B` / `bytes=A-`：end 越界 clamp 到 size-1；start ≥ size → unsatisfiable（416）
+ * - `bytes=-N`：suffix 范围，取文件末 N 字节；N=0 或空文件 → unsatisfiable（416）
+ * - 语法无法解析（NaN/负数/start>end/多段）→ null（忽略 Range 回 200 全量）
+ */
+function parseByteRange(header: string, size: number): ParsedByteRange {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match || (!match[1] && !match[2])) return null;
+  if (!match[1]) {
+    const suffix = parseInt(match[2], 10);
+    if (suffix <= 0 || size === 0) return { kind: "unsatisfiable" };
+    return { kind: "range", start: Math.max(0, size - suffix), end: size - 1 };
+  }
+  const start = parseInt(match[1], 10);
+  if (start >= size) return { kind: "unsatisfiable" };
+  const end = match[2] ? Math.min(parseInt(match[2], 10), size - 1) : size - 1;
+  // last-byte-pos < first-byte-pos：语法无效，整个 Range 头忽略（RFC 7233 §2.1）
+  if (start > end) return null;
+  return { kind: "range", start, end };
 }

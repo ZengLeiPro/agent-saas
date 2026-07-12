@@ -120,10 +120,11 @@ describe('skill 白名单与 browser filter AND 组合', () => {
     expect(composed(browserSkill)).toBe(false); // 白名单内但 base（无 browser hand）拒绝
   });
 
-  it('白名单按 id 或 name 命中', () => {
+  it('白名单仅按 id 命中（F10：name 可被同名 skill 冒用扩权，不再命中）', () => {
     const filter = buildOrgAgentSkillFilter(orgAgentRecord({ allowedSkills: ['wain-kb'] }));
     expect(filter({ id: 'wain-kb', name: '唯恩知识库', description: '' })).toBe(true);
-    expect(filter({ id: 'skill-123', name: 'wain-kb', description: '' })).toBe(true);
+    // 仅 name 撞白名单（id 不同）→ 拒绝
+    expect(filter({ id: 'skill-123', name: 'wain-kb', description: '' })).toBe(false);
     expect(filter({ id: 'docx', name: 'docx', description: '' })).toBe(false);
   });
 });

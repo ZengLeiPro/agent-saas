@@ -8,6 +8,8 @@
  * - owner-only：canAccessSession（任何身份只能反馈自己的会话）
  * - 会话必须绑定 orgAgentId，否则 400（个人 Agent 会话不收反馈）
  * - orgAgentId 从会话 meta 取（防客户端伪造归因）
+ * - content 服务端校验（2026-07 审查 F7）：必须命中该会话 transcript 中某个
+ *   assistant 文本块（sha256 比对），否则 400——保证 message_excerpt 是真实 AI 输出
  * - content_hash 由 server 计算 sha256（幂等键），excerpt 截前 500 字
  * - store 未装配（file backend）→ 503，前端隐藏入口
  */
@@ -19,7 +21,7 @@ import { z } from 'zod';
 import { canAccessSession } from '../data/sessions/access.js';
 import type { MessageFeedbackStore } from '../data/feedback/store.js';
 import { readSessionMeta } from '../data/transcripts/meta.js';
-import { findTranscriptOrMetaPathBySessionId, isValidSessionId } from '../data/transcripts/index.js';
+import { findTranscriptOrMetaPathBySessionId, isValidSessionId, parseTranscriptFile } from '../data/transcripts/index.js';
 import { auditLog } from '../data/login-logs/index.js';
 
 /** body 总量上限（16KB）：content 是消息全文，超长直接拒绝防滥用 */
@@ -69,7 +71,7 @@ export function createFeedbackRouter(deps: FeedbackRouterDeps): Router {
       res.status(403).json({ error: 'Access denied' });
       return null;
     }
-    return meta;
+    return { meta, transcriptPath };
   }
 
   router.post('/', async (req, res) => {
@@ -94,14 +96,25 @@ export function createFeedbackRouter(deps: FeedbackRouterDeps): Router {
     const { sessionId, messageId, content, comment } = parsed.data;
 
     try {
-      const meta = await loadOwnedSessionMeta(req, res, sessionId);
-      if (!meta) return;
+      const loaded = await loadOwnedSessionMeta(req, res, sessionId);
+      if (!loaded) return;
+      const { meta, transcriptPath } = loaded;
       if (!meta.orgAgentId) {
         res.status(400).json({ error: '仅专职 Agent 会话支持反馈' });
         return;
       }
 
       const contentHash = createHash('sha256').update(content, 'utf-8').digest('hex');
+      // 服务端校验 content 真实性（2026-07 审查 F7）：必须与 transcript 中某个 assistant
+      // 文本块逐字一致（sha256 比对）；transcript 缺失/解析失败一律 fail-closed 拒绝
+      const transcript = await parseTranscriptFile(transcriptPath).catch(() => null);
+      const matched = !!transcript?.blocks.some((block) =>
+        block.kind === 'text'
+        && createHash('sha256').update(block.content, 'utf-8').digest('hex') === contentHash);
+      if (!matched) {
+        res.status(400).json({ error: '反馈内容与会话消息不匹配' });
+        return;
+      }
       const { duplicated } = await store.insert({
         tenantId: meta.tenantId ?? user.tenantId,
         sessionId,
@@ -131,9 +144,11 @@ export function createFeedbackRouter(deps: FeedbackRouterDeps): Router {
     const store = requireStore(res);
     if (!store) return;
     try {
-      const meta = await loadOwnedSessionMeta(req, res, req.params.sessionId);
-      if (!meta) return;
-      const items = await store.listBySessionUser(req.params.sessionId, user.sub);
+      const loaded = await loadOwnedSessionMeta(req, res, req.params.sessionId);
+      if (!loaded) return;
+      // tenantId 与插入口径一致（meta 优先，legacy meta 缺失回退 JWT），索引前缀可用（F11）
+      const tenantId = loaded.meta.tenantId ?? user.tenantId;
+      const items = await store.listBySessionUser(tenantId, req.params.sessionId, user.sub);
       res.json({ items });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : '获取反馈失败' });

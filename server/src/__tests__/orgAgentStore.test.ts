@@ -116,6 +116,22 @@ describe('OrgAgentStore persist-reload 往返', () => {
     expect(updated?.createdBy).toBe('wain_admin');
   });
 
+  it('并发 create 两条记录都持久化到磁盘（F6 写队列串行化）', async () => {
+    const filePath = await tmpStorePath();
+    const store = new OrgAgentStore(filePath);
+
+    // 不 await 单个 create，模拟并发写；写队列应串行化「内存变更+persist」
+    const [a, b] = await Promise.all([
+      store.create(createInput({ name: '并发助手 A' }), 'wain_admin'),
+      store.create(createInput({ name: '并发助手 B' }), 'wain_admin'),
+    ]);
+
+    const reloaded = new OrgAgentStore(filePath);
+    expect(reloaded.get(a.id)?.name).toBe('并发助手 A');
+    expect(reloaded.get(b.id)?.name).toBe('并发助手 B');
+    expect(reloaded.listByTenant('wain')).toHaveLength(2);
+  });
+
   it('listForUser 只返回本租户 enabled + 被指派的裁剪视图', async () => {
     const filePath = await tmpStorePath();
     const store = new OrgAgentStore(filePath);

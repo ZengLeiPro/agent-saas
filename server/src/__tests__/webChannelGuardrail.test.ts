@@ -18,6 +18,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WebChannel, type WebChannelConfig } from '../channels/web/channel.js';
+import { findTranscriptOrMetaPathBySessionId } from '../data/transcripts/index.js';
+import { readSessionMeta } from '../data/transcripts/meta.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { GuardrailEventInsert, GuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
 import type { TenantStore } from '../data/tenants/store.js';
@@ -367,6 +369,67 @@ describe('WebChannel 专职 Agent 门禁', () => {
     await rig.send(WAIN_USER, { message: 'hi', orgAgentId: agent.id });
     expect(rig.ws.sent.find((m) => m.data?.type === 'chat_rejected')).toBeUndefined();
     expect(rig.enqueued).toHaveLength(2);
+  });
+
+  it('跨租户组织 admin 续聊他租户 org 会话 → access_denied（F1b resume 收口）', async () => {
+    const rig = await makeRig();
+    const agent = await seedOrgAgent(rig, {
+      guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' },
+    });
+    // 成员先建立 org 会话（enqueue 路径写 session meta：tenantId=wain + orgAgentId）
+    await rig.send(WAIN_USER, { message: '选型问题', orgAgentId: agent.id });
+    expect(rig.enqueued).toHaveLength(1);
+    const sessionId = rig.enqueued[0].sessionId;
+
+    // 断言 access_denied：admin 全局 resume 分支解析 meta 后即被 F1b 收口拒绝，
+    // 早于 org gate（org gate 的同码拒绝为 org_agent_unavailable）——以实际先触发的为准
+    const OTHER_ADMIN: TestUser = { sub: 'u-oa', username: 'other_admin', role: 'admin', tenantId: 'other' };
+    rig.ws.sent.length = 0;
+    await rig.send(OTHER_ADMIN, { message: '继续', sessionId });
+    expect(rig.ws.sent.find((m) => m.data?.type === 'chat_rejected')?.data?.reason_code).toBe('access_denied');
+    expect(rig.enqueued).toHaveLength(1);
+  });
+
+  it('同租户 admin 续聊本租户成员 org 会话仍可（F1a admin 豁免 audience 生效）', async () => {
+    const rig = await makeRig();
+    const agent = await seedOrgAgent(rig, {
+      // admin 不在指派名单：resume 与新会话都要靠同租户 admin 豁免通过 org gate
+      audience: { exposure: 'allow_users', usernames: ['wain_user'] },
+      guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' },
+    });
+    await rig.send(WAIN_USER, { message: '选型问题', orgAgentId: agent.id });
+    expect(rig.enqueued).toHaveLength(1);
+    const sessionId = rig.enqueued[0].sessionId;
+
+    // 续聊成员会话：F1b 放行（同租户）+ org gate 放行
+    rig.ws.sent.length = 0;
+    await rig.send(WAIN_ADMIN, { message: '继续', sessionId });
+    expect(rig.ws.sent.find((m) => m.data?.type === 'chat_rejected')).toBeUndefined();
+    expect(rig.enqueued).toHaveLength(2);
+    expect(rig.enqueued[1].sessionId).toBe(sessionId);
+
+    // 新会话直连该 org agent：admin 不在 audience，仅靠 F1a 同租户豁免通过
+    rig.ws.sent.length = 0;
+    await rig.send(WAIN_ADMIN, { message: '新会话', orgAgentId: agent.id });
+    expect(rig.ws.sent.find((m) => m.data?.type === 'chat_rejected')).toBeUndefined();
+    expect(rig.enqueued).toHaveLength(3);
+  });
+
+  it('file backend（enqueueRuntime 缺省）off_topic 拒绝后 session meta 写入 orgAgentId（F2）', async () => {
+    const rig = await makeRig({ enqueueRuntime: undefined });
+    const agent = await seedOrgAgent(rig);
+    queueVerdict('off_topic');
+
+    await rig.send(WAIN_USER, { message: '帮我写一首诗', orgAgentId: agent.id });
+
+    const sessionId = rig.ws.sent.find((m) => m.data?.type === 'session')?.data?.sessionId;
+    expect(sessionId).toBeTruthy();
+    // 无 enqueue（file backend）也要有 meta：orgAgentId 绑定事实源，第二条消息 resume 门禁依赖它
+    const transcriptPath = await findTranscriptOrMetaPathBySessionId(sessionId);
+    expect(transcriptPath).toBeTruthy();
+    const meta = await readSessionMeta(transcriptPath!);
+    expect(meta?.orgAgentId).toBe(agent.id);
+    expect(meta?.tenantId).toBe('wain');
   });
 
   it('orgAgentId 无效（缺失/停用/未指派）→ org_agent_unavailable，不 enqueue', async () => {

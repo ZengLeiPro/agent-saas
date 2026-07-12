@@ -29,10 +29,19 @@ export function isAssignedToOrgAgent(record: Pick<OrgAgentRecord, 'audience'>, u
 export class OrgAgentStore {
   private agents: OrgAgentRecord[] = [];
   private filePath: string;
+  /** 写队列尾（2026-07 审查 F6）：「内存变更 + persist」整体串行，防并发写 last-write-wins 丢更新 */
+  private writeTail: Promise<void> = Promise.resolve();
 
   constructor(filePath: string) {
     this.filePath = filePath;
     this.load();
+  }
+
+  /** 写操作入队：调用方 await 的是本次 op 的结果/异常；队列尾吞错避免一次失败卡死后续写 */
+  private enqueueWrite<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.writeTail.then(op);
+    this.writeTail = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   private load(): void {
@@ -87,53 +96,79 @@ export class OrgAgentStore {
   }
 
   async create(input: CreateOrgAgentInput, createdBy: string): Promise<OrgAgentRecord> {
-    const now = new Date().toISOString();
-    const record: OrgAgentRecord = {
-      id: `oa-${randomUUID()}`,
-      tenantId: input.tenantId,
-      name: input.name,
-      ...(input.avatar ? { avatar: input.avatar } : {}),
-      instructions: input.instructions,
-      allowedSkills: [...input.allowedSkills],
-      audience: { exposure: input.audience.exposure, usernames: [...input.audience.usernames] },
-      guardrail: { ...input.guardrail },
-      enabled: input.enabled,
-      createdAt: now,
-      createdBy,
-      updatedAt: now,
-      updatedBy: createdBy,
-    };
-    this.agents.push(record);
-    await this.persist();
-    return { ...record };
+    return this.enqueueWrite(async () => {
+      const now = new Date().toISOString();
+      const record: OrgAgentRecord = {
+        id: `oa-${randomUUID()}`,
+        tenantId: input.tenantId,
+        name: input.name,
+        ...(input.avatar ? { avatar: input.avatar } : {}),
+        instructions: input.instructions,
+        allowedSkills: [...input.allowedSkills],
+        audience: { exposure: input.audience.exposure, usernames: [...input.audience.usernames] },
+        guardrail: { ...input.guardrail },
+        enabled: input.enabled,
+        createdAt: now,
+        createdBy,
+        updatedAt: now,
+        updatedBy: createdBy,
+      };
+      this.agents.push(record);
+      try {
+        await this.persist();
+      } catch (err) {
+        // persist 失败回滚内存变更，避免内存/磁盘分叉
+        this.agents = this.agents.filter((agent) => agent.id !== record.id);
+        throw err;
+      }
+      return { ...record };
+    });
   }
 
   async update(id: string, patch: UpdateOrgAgentInput, updatedBy: string): Promise<OrgAgentRecord | null> {
-    const record = this.agents.find((agent) => agent.id === id);
-    if (!record) return null;
-    if (patch.name !== undefined) record.name = patch.name;
-    if (patch.avatar !== undefined) {
-      if (patch.avatar) record.avatar = patch.avatar;
-      else delete record.avatar;
-    }
-    if (patch.instructions !== undefined) record.instructions = patch.instructions;
-    if (patch.allowedSkills !== undefined) record.allowedSkills = [...patch.allowedSkills];
-    if (patch.audience !== undefined) {
-      record.audience = { exposure: patch.audience.exposure, usernames: [...patch.audience.usernames] };
-    }
-    if (patch.guardrail !== undefined) record.guardrail = { ...patch.guardrail };
-    if (patch.enabled !== undefined) record.enabled = patch.enabled;
-    record.updatedAt = new Date().toISOString();
-    record.updatedBy = updatedBy;
-    await this.persist();
-    return { ...record };
+    return this.enqueueWrite(async () => {
+      const index = this.agents.findIndex((agent) => agent.id === id);
+      if (index < 0) return null;
+      const record = this.agents[index];
+      const snapshot = structuredClone(record);
+      if (patch.name !== undefined) record.name = patch.name;
+      if (patch.avatar !== undefined) {
+        if (patch.avatar) record.avatar = patch.avatar;
+        else delete record.avatar;
+      }
+      if (patch.instructions !== undefined) record.instructions = patch.instructions;
+      if (patch.allowedSkills !== undefined) record.allowedSkills = [...patch.allowedSkills];
+      if (patch.audience !== undefined) {
+        record.audience = { exposure: patch.audience.exposure, usernames: [...patch.audience.usernames] };
+      }
+      if (patch.guardrail !== undefined) record.guardrail = { ...patch.guardrail };
+      if (patch.enabled !== undefined) record.enabled = patch.enabled;
+      record.updatedAt = new Date().toISOString();
+      record.updatedBy = updatedBy;
+      try {
+        await this.persist();
+      } catch (err) {
+        // persist 失败回滚旧值快照
+        this.agents[index] = snapshot;
+        throw err;
+      }
+      return { ...record };
+    });
   }
 
   async remove(id: string): Promise<boolean> {
-    const index = this.agents.findIndex((agent) => agent.id === id);
-    if (index < 0) return false;
-    this.agents.splice(index, 1);
-    await this.persist();
-    return true;
+    return this.enqueueWrite(async () => {
+      const index = this.agents.findIndex((agent) => agent.id === id);
+      if (index < 0) return false;
+      const [removed] = this.agents.splice(index, 1);
+      try {
+        await this.persist();
+      } catch (err) {
+        // persist 失败回滚删除
+        this.agents.splice(index, 0, removed);
+        throw err;
+      }
+      return true;
+    });
   }
 }

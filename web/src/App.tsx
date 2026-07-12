@@ -162,7 +162,8 @@ function App() {
     startOrgAgentSession, activeOrgAgent,
   };
 
-  // 反馈 Provider 仅在当前会话绑定专职 Agent 时挂载（缺省 context=null → 按钮零渲染）
+  // 反馈 Provider 恒挂载（2026-07 审查 F8：条件包裹会让 Layout 卸载重挂丢 DOM 状态）；
+  // 仅当前会话绑定专职 Agent 时提供实值，否则 context=null → 按钮零渲染
   const feedbackSessionId = sessionId && activeOrgAgent ? sessionId : null;
   const layoutNode = isMobile ? <MobileLayout {...layoutProps} /> : <DesktopLayout {...layoutProps} />;
 
@@ -182,13 +183,9 @@ function App() {
       ) : null}
 
       <FilePreviewProvider value={{ openPreview: openFilePreview, owner: previewFileOwner }}>
-        {feedbackSessionId ? (
-          <MessageFeedbackProvider sessionId={feedbackSessionId}>
-            {layoutNode}
-          </MessageFeedbackProvider>
-        ) : (
-          layoutNode
-        )}
+        <MessageFeedbackProvider sessionId={feedbackSessionId}>
+          {layoutNode}
+        </MessageFeedbackProvider>
       </FilePreviewProvider>
 
       {/* SDK 0.2.112+ REPL 通知（右上角悬浮，按 priority 色彩，timeoutMs 自动消失）*/}

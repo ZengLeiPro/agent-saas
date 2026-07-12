@@ -981,7 +981,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }, []);
 
   // ---- 专职 Agent 挂起态（2026-07 唯恩批次）----
-  // ref：sendChatViaWs 首条消息（无 sessionId）时带上 orgAgentId，ACK 后清除；
+  // ref：sendChatViaWs 首条消息（无 sessionId）时带上 orgAgentId，收到 'session' 事件
+  //（会话真实建立、服务端已写 meta）后清除——ACK 只代表入队，rejected 后重发仍要带上
+  //（2026-07 审查 F9）；
   // state：新会话空白态的顶部 banner 展示（会话入列表带 orgAgentId 后由列表接管）。
   const pendingOrgAgentIdRef = useRef<string | null>(null);
   const [pendingOrgAgentId, setPendingOrgAgentId] = useState<string | null>(null);
@@ -1770,9 +1772,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           if (t) { clearTimeout(t); ackTimersRef.current.delete(clientMsgId); }
           const entry = outboxRef.current.find(e => e.clientMsgId === clientMsgId);
           if (entry) entry.state = 'acked';
-          // 专职 Agent 首条消息回执后清 ref（会话已在服务端绑定 orgAgentId；
-          // banner 展示态保留到会话列表接管或用户切换会话）
-          pendingOrgAgentIdRef.current = null;
+          // 专职 Agent 挂起 ref 不在 ACK 清（2026-07 审查 F9）：ACK 只代表消息入队，
+          // 门禁/入队失败（chat_rejected）后重发仍需带 orgAgentId；
+          // 改在 'session' 事件（服务端已写 meta 绑定）后清除
         },
         onChatRejected: (clientMsgId) => {
           // 服务端拒绝：清 ACK 定时器、从 outbox 移除；bubble 已在 wsEventProcessor 翻 failed
@@ -1807,6 +1809,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         replaceUrl('chat', (data as any).sessionId);
         // 自己发起的新会话流：id 确定后纳入未读追踪，确保切走后流完成（idle）时能标记未读
         trackedAiReplyStreamsRef.current.add((data as any).sessionId);
+        // 专职 Agent 挂起 ref 此时才清（2026-07 审查 F9）：会话真实建立、
+        // 服务端已写 meta 绑定 orgAgentId，后续 resume 以 meta 为准
+        pendingOrgAgentIdRef.current = null;
       }
 
       if (data.type === 'session_updated' && !data.isNew && trackedAiReplyStreamsRef.current.delete(data.sessionId)) {

@@ -26,7 +26,7 @@ interface TestUser {
   tenantId: string;
 }
 
-function record(sessionId: string, tenantId: string, orgAgentId: string): RuntimeSessionProjectionRecord {
+function record(sessionId: string, tenantId: string, orgAgentId?: string): RuntimeSessionProjectionRecord {
   return {
     sessionId,
     tenantId,
@@ -36,7 +36,7 @@ function record(sessionId: string, tenantId: string, orgAgentId: string): Runtim
     title: `会话 ${sessionId.slice(0, 8)}`,
     updatedAt: '2026-07-10T08:00:00.000Z',
     createdAt: '2026-07-10T07:00:00.000Z',
-    metaJson: { userId: `u-${tenantId}`, username: `emp-${tenantId}`, tenantId, channel: 'web', createdAt: '2026-07-10T07:00:00.000Z', orgAgentId } as SessionMeta,
+    metaJson: { userId: `u-${tenantId}`, username: `emp-${tenantId}`, tenantId, channel: 'web', createdAt: '2026-07-10T07:00:00.000Z', ...(orgAgentId ? { orgAgentId } : {}) } as SessionMeta,
   };
 }
 
@@ -177,5 +177,20 @@ describe('/api/admin/qa routes', () => {
     } finally {
       await stopServer(bare.server);
     }
+  });
+
+  it('同租户个人会话 sessionId 请求 messages → 404（F3：质检台仅限 org 会话，防个人会话探测）', async () => {
+    const SESSION_PERSONAL = '33333333-3333-4333-8333-333333333333';
+    projection = memoryProjection([
+      record(SESSION_PERSONAL, 'tenant-a'), // 无 orgAgentId = 个人会话
+    ]);
+    ({ server, baseUrl } = await startServer({
+      sessionProjectionStore: projection,
+      orgAgentStore,
+      resolveTranscriptPath: async () => null,
+    }, orgAdminA));
+
+    const res = await fetch(`${baseUrl}/api/admin/qa/sessions/${SESSION_PERSONAL}/messages`);
+    expect(res.status).toBe(404);
   });
 });

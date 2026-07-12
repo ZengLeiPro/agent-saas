@@ -49,6 +49,9 @@ export interface GuardrailCheckOptions {
 
 const DEFAULT_TIMEOUT_MS = 6000;
 const VERDICT_FALLBACK_RE = /"verdict"\s*:\s*"(in_scope|off_topic|uncertain)"/;
+const FENCED_BLOCK_RE = /```(?:json)?\s*([\s\S]*?)```/;
+/** 正则兜底仅对短响应启用（2026-07 审查 F12：防长解释文本/prompt 回显中夹带 verdict 字样误匹配） */
+const VERDICT_FALLBACK_MAX_LEN = 200;
 
 const GUARDRAIL_SYSTEM_PROMPT = '你是一个话题范围审查器。你的唯一任务：判断「用户最新提问」是否属于给定的话题范围。禁止回答提问本身，禁止输出判定 JSON 以外的任何内容。只输出一行严格 JSON（无代码块标记、无解释）：{"verdict":"in_scope"} 或 {"verdict":"off_topic"} 或 {"verdict":"uncertain"}';
 
@@ -228,19 +231,38 @@ async function checkTopicScopeOnce(
   }
 }
 
-function parseVerdict(raw: string, model: string): GuardrailVerdict | null {
-  const trimmed = raw.trim();
+function tryParseJsonVerdict(text: string): GuardrailVerdict | null {
   try {
-    const parsed = JSON.parse(trimmed);
-    const verdict = parsed?.verdict;
+    const verdict = JSON.parse(text)?.verdict;
     if (verdict === 'in_scope' || verdict === 'off_topic' || verdict === 'uncertain') {
       return verdict;
     }
   } catch {
-    // markdown 代码块包裹 / 前后杂讯：正则兜底
+    // 交由调用方按解析顺序继续尝试
   }
-  const match = VERDICT_FALLBACK_RE.exec(trimmed);
-  if (match) return match[1] as GuardrailVerdict;
+  return null;
+}
+
+/**
+ * 解析顺序收紧（2026-07 审查 F12）：
+ *   ① trim 后整段严格 JSON.parse
+ *   ② fenced code block（```json ... ```）内文本 parse
+ *   ③ 正则兜底仅当响应 ≤200 字符时启用（长解释文本/回显夹带 verdict 字样不作数）
+ * 三者皆失败 → null（该模型失败，进入回落链）
+ */
+function parseVerdict(raw: string, model: string): GuardrailVerdict | null {
+  const trimmed = raw.trim();
+  const direct = tryParseJsonVerdict(trimmed);
+  if (direct) return direct;
+  const fenced = FENCED_BLOCK_RE.exec(trimmed);
+  if (fenced) {
+    const fromFence = tryParseJsonVerdict(fenced[1].trim());
+    if (fromFence) return fromFence;
+  }
+  if (trimmed.length <= VERDICT_FALLBACK_MAX_LEN) {
+    const match = VERDICT_FALLBACK_RE.exec(trimmed);
+    if (match) return match[1] as GuardrailVerdict;
+  }
   guardrailLogger.warn(
     `Guardrail verdict unparsable (model=${model}) raw=${JSON.stringify(trimmed.slice(0, 120))}`,
   );

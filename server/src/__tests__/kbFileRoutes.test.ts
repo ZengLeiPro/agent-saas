@@ -101,6 +101,44 @@ describe('/api/kb/file routes', () => {
     expect(outOfRange.status).toBe(416);
   });
 
+  it('F4: suffix Range（bytes=-N）→ 206 取末 N 字节；N 超文件大小时取全文件', async () => {
+    ({ server, baseUrl } = await startServer(kbRoot, userA));
+    const url = `${baseUrl}/api/kb/file?path=${encodeURIComponent('docs/manual.pdf')}`;
+
+    // N > size：start clamp 到 0，等价整个文件的 206
+    const bigSuffix = await fetch(url, { headers: { Range: 'bytes=-500' } });
+    expect(bigSuffix.status).toBe(206);
+    expect(bigSuffix.headers.get('content-range')).toBe(`bytes 0-${PDF_BYTES.length - 1}/${PDF_BYTES.length}`);
+    const bigBody = Buffer.from(await bigSuffix.arrayBuffer());
+    expect(bigBody.length).toBe(PDF_BYTES.length);
+    expect(bigBody.equals(PDF_BYTES)).toBe(true);
+
+    // 常规 suffix：末 10 字节
+    const tail = await fetch(url, { headers: { Range: 'bytes=-10' } });
+    expect(tail.status).toBe(206);
+    expect(tail.headers.get('content-range')).toBe(`bytes ${PDF_BYTES.length - 10}-${PDF_BYTES.length - 1}/${PDF_BYTES.length}`);
+    expect(Buffer.from(await tail.arrayBuffer()).equals(PDF_BYTES.subarray(-10))).toBe(true);
+  });
+
+  it('F4: malformed Range（bytes=abc-def）→ 忽略 Range 回 200 全量', async () => {
+    ({ server, baseUrl } = await startServer(kbRoot, userA));
+    const res = await fetch(`${baseUrl}/api/kb/file?path=${encodeURIComponent('docs/manual.pdf')}`, {
+      headers: { Range: 'bytes=abc-def' },
+    });
+    expect(res.status).toBe(200);
+    expect(Buffer.from(await res.arrayBuffer()).equals(PDF_BYTES)).toBe(true);
+  });
+
+  it('F4: end 越界（bytes=0-999999999）→ 206 clamp 到 size-1', async () => {
+    ({ server, baseUrl } = await startServer(kbRoot, userA));
+    const res = await fetch(`${baseUrl}/api/kb/file?path=${encodeURIComponent('docs/manual.pdf')}`, {
+      headers: { Range: 'bytes=0-999999999' },
+    });
+    expect(res.status).toBe(206);
+    expect(res.headers.get('content-range')).toBe(`bytes 0-${PDF_BYTES.length - 1}/${PDF_BYTES.length}`);
+    expect(Buffer.from(await res.arrayBuffer()).equals(PDF_BYTES)).toBe(true);
+  });
+
   it('用例15: 路径穿越/绝对路径/符号链接/白名单外扩展名 → 403；跨租户不可达', async () => {
     ({ server, baseUrl } = await startServer(kbRoot, userA));
 

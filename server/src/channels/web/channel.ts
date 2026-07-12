@@ -80,6 +80,7 @@ import type { RuntimeScheduler } from '../../runtime/scheduler.js';
 import type { RunStore } from '../../runtime/runStore.js';
 import type { ToolInvocationStore } from '../../runtime/toolInvocationStore.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
+import { isPlatformAdmin } from '../../auth/types.js';
 import { runtimeRunController } from '../../runtime/runController.js';
 import {
   buildPendingInteractionsFromEvents,
@@ -100,6 +101,12 @@ function canViewContextUsageDetails(context: ChannelContext): boolean {
 
 function canViewContextUsageDetailsForUser(user: { role?: string; tenantId?: string } | undefined): boolean {
   return user?.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID;
+}
+
+/** WsUser（tenantId 可选）适配 auth/types 的 isPlatformAdmin（JwtPayload tenantId 必选）。 */
+function isPlatformAdminUser(user: WsClient['user']): boolean {
+  if (!user?.tenantId) return false;
+  return isPlatformAdmin({ sub: user.sub, username: user.username, role: user.role, tenantId: user.tenantId });
 }
 
 function redactContextUsageDetails(usage: ContextUsageData): ContextUsageData {
@@ -1963,6 +1970,19 @@ export class WebChannel implements BaseChannel {
           const transcriptPath = await findTranscriptOrMetaPathBySessionId(sessionId);
           if (transcriptPath) {
             const meta = await readSessionMeta(transcriptPath);
+            // 跨租户收口（2026-07 审查 F1b）：组织 admin 仅可代操作本租户会话；
+            // 平台 admin 保留全局代操作。legacy meta 可能缺 tenantId，按 ownerRecord 回退
+            //（与下方 targetCwd 解析同口径）；解析不出 owner 租户时 fail-closed。
+            if (!isPlatformAdminUser(user)) {
+              const ownerTenantId = meta
+                ? (this.userStore?.findById(meta.userId)?.tenantId || meta.tenantId)
+                : undefined;
+              if (ownerTenantId !== user.tenantId) {
+                this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+                this.sendChatRejected(ws, clientMsgId, 'access_denied', '无权访问该会话');
+                return;
+              }
+            }
             gateSessionMeta = meta;
             gateTranscriptPath = transcriptPath;
             if (meta?.username) {
@@ -2049,7 +2069,11 @@ export class WebChannel implements BaseChannel {
     if (orgAgentId && !isPlatformCommand) {
       const record = this.config.orgAgentStore?.get(orgAgentId);
       const gateIdentity = sessionOwner ?? userIdentity;
-      const assigned = !!record && (user?.role === 'admin' || isAssignedToOrgAgent(record, gateIdentity?.username));
+      // admin 豁免 audience 收紧（2026-07 审查 F1a）：仅平台 admin 或与该 org agent
+      // 同租户的组织 admin；跨租户组织 admin → assigned=false → org_agent_unavailable（同码防枚举）
+      const adminExempt = user?.role === 'admin'
+        && (isPlatformAdminUser(user) || record?.tenantId === user.tenantId);
+      const assigned = !!record && (adminExempt || isAssignedToOrgAgent(record, gateIdentity?.username));
       if (!record || !record.enabled || record.tenantId !== gateIdentity?.tenantId || !assigned) {
         // 跨租户/缺失/停用/未指派一律同码防枚举（决策 8）；读留发禁（决策 1/3）
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
@@ -2860,6 +2884,27 @@ export class WebChannel implements BaseChannel {
       }
     } else {
       transcriptPath = getTranscriptPath(cwd, sessionId, owner ? { tenantId: owner.tenantId, userId: owner.id } : undefined);
+      // file backend 也要写 session meta（2026-07 审查 F2）：orgAgentId 绑定的事实源在 meta，
+      // 不写则第二条消息 readSessionMeta 拿不到 orgAgentId → 静默回退个人 Agent 路径
+      try {
+        const existingMeta = await readSessionMeta(transcriptPath);
+        const now = new Date().toISOString();
+        await writeSessionMeta(transcriptPath, {
+          ...(existingMeta ?? {}),
+          userId: existingMeta?.userId ?? owner?.id ?? '',
+          username: existingMeta?.username ?? owner?.username ?? '',
+          ...(existingMeta?.tenantId ?? owner?.tenantId
+            ? { tenantId: existingMeta?.tenantId ?? owner?.tenantId }
+            : {}),
+          channel: existingMeta?.channel ?? 'web',
+          cwd: existingMeta?.cwd ?? cwd,
+          orgAgentId: orgAgent.id,
+          createdAt: existingMeta?.createdAt ?? now,
+          updatedAt: now,
+        });
+      } catch (err) {
+        chatLogger.warn(`[guardrail] session meta write failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     // (b) legacy transcript 追加 user + assistant 两行（刷新后气泡仍在）

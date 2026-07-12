@@ -100,4 +100,17 @@ describe('MessageFeedback', () => {
     expect(container.innerHTML).toBe('');
     expect(authFetchMock).not.toHaveBeenCalled();
   });
+
+  it('F8: Provider sessionId=null（恒挂载）→ children 正常渲染且按钮零渲染、不拉取', () => {
+    render(
+      <MessageFeedbackProvider sessionId={null}>
+        <div data-testid="layout-child">
+          <MessageFeedbackButton messageId="line-1" content="个人 Agent 会话消息" />
+        </div>
+      </MessageFeedbackProvider>,
+    );
+    expect(screen.getByTestId('layout-child')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '反馈这个回答有问题' })).toBeNull();
+    expect(authFetchMock).not.toHaveBeenCalled();
+  });
 });

@@ -1,7 +1,8 @@
 /**
  * 消息反馈 Context（专职 Agent 会话点「踩」，2026-07 唯恩批次）
  *
- * - Provider 仅在当前会话绑定 orgAgentId 时挂载（App.tsx）；缺省 context=null，
+ * - Provider 恒挂载（App.tsx），JSX 树形状恒定防 Layout 重挂（2026-07 审查 F8）；
+ *   仅当前会话绑定 orgAgentId 时提供实值，否则 context=null，
  *   MessageFeedbackButton 零渲染——兼容性红线：个人 Agent 会话 UI 零变化。
  * - 幂等键 = sha256(消息全文)：消息 id 跨刷新不稳定（流式=随机 id，刷新后=line-N），
  *   进会话时 GET /api/feedback/session/:id 拉回本人已反馈的 contentHash 集合，
@@ -34,7 +35,7 @@ export async function sha256Hex(text: string): Promise<string> {
     .join('');
 }
 
-export function MessageFeedbackProvider({ sessionId, children }: { sessionId: string; children: ReactNode }) {
+export function MessageFeedbackProvider({ sessionId, children }: { sessionId: string | null; children: ReactNode }) {
   const [submittedHashes, setSubmittedHashes] = useState<ReadonlySet<string>>(new Set());
   const [enabled, setEnabled] = useState(true);
 
@@ -42,6 +43,7 @@ export function MessageFeedbackProvider({ sessionId, children }: { sessionId: st
     let cancelled = false;
     setSubmittedHashes(new Set());
     setEnabled(true);
+    if (!sessionId) return;
     authFetch(`/api/feedback/session/${encodeURIComponent(sessionId)}`)
       .then(async (res) => {
         if (cancelled) return;
@@ -64,6 +66,7 @@ export function MessageFeedbackProvider({ sessionId, children }: { sessionId: st
   );
 
   const submit = useCallback(async (args: { messageId: string; content: string; comment?: string }) => {
+    if (!sessionId) return false;
     try {
       const res = await authFetch('/api/feedback', {
         method: 'POST',
@@ -94,13 +97,12 @@ export function MessageFeedbackProvider({ sessionId, children }: { sessionId: st
     }
   }, [sessionId]);
 
-  if (!enabled) {
-    // 数据面不可用：不提供 context（按钮零渲染），与 file backend 503 red-line 对齐
-    return <>{children}</>;
-  }
-
+  // JSX 树形状恒定（2026-07 审查 F8）：Provider 元素恒渲染，仅 value 在 null/实值间切换。
+  // 无 org 会话或数据面不可用（file backend 503）→ value=null，按钮零渲染红线不变。
+  const value: MessageFeedbackContextValue | null =
+    sessionId && enabled ? { enabled, isSubmitted, submit } : null;
   return (
-    <MessageFeedbackContext.Provider value={{ enabled, isSubmitted, submit }}>
+    <MessageFeedbackContext.Provider value={value}>
       {children}
     </MessageFeedbackContext.Provider>
   );

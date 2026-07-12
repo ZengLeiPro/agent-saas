@@ -1175,10 +1175,10 @@ export function composeSkillFilters(...filters: RuntimeSkillFilter[]): RuntimeSk
   return (skill) => filters.every((filter) => filter(skill));
 }
 
-/** 专职 Agent skill 白名单 filter：可用清单 ∩ allowedSkills（按 id 或 name 命中）。 */
+/** 专职 Agent skill 白名单 filter：可用清单 ∩ allowedSkills（仅按 id 命中，2026-07 审查 F10：name 可被同名 skill 冒用扩权）。 */
 export function buildOrgAgentSkillFilter(agent: Pick<OrgAgentRecord, 'allowedSkills'>): RuntimeSkillFilter {
   const allowed = new Set(agent.allowedSkills);
-  return (skill) => allowed.has(skill.id) || allowed.has(skill.name);
+  return (skill) => allowed.has(skill.id);
 }
 
 /**
@@ -2251,10 +2251,12 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     ));
     const resolution = getInteractionResolution(priorEvents, request.sessionId, request.interactionId);
     if (!requestEvent) {
+      if (lockHandle) await lockHandle.release().catch(() => undefined);
       yield { type: 'error', error: `Raw interaction resume 找不到 interaction_requested: ${request.interactionId}` };
       return;
     }
     if (!resolution) {
+      if (lockHandle) await lockHandle.release().catch(() => undefined);
       yield { type: 'error', error: `Raw interaction resume 缺少 durable interaction_resolved: ${request.interactionId}` };
       return;
     }

@@ -126,6 +126,8 @@ export class PgSessionProjectionStore {
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.sessionsTable}_tenant_idx ON ${this.sessionsTable} (tenant_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.sessionsTable}_user_idx ON ${this.sessionsTable} (user_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.sessionsTable}_ws_idx ON ${this.sessionsTable} (workspace_id)`);
+      // 质检台会话列表按 orgAgentId 过滤（2026-07 审查 F13）：partial 表达式索引，个人会话（无 orgAgentId）不占空间
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.sessionsTable}_org_agent_idx ON ${this.sessionsTable} ((meta_json->>'orgAgentId'), updated_at DESC) WHERE meta_json->>'orgAgentId' IS NOT NULL`);
     } finally {
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
       client.release();

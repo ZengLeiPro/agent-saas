@@ -59,8 +59,8 @@ export interface MessageFeedbackStore {
   /** 幂等插入。重复（同 tenant+session+user+contentHash）→ { duplicated: true } */
   insert(item: MessageFeedbackInsert): Promise<{ duplicated: boolean }>;
   listByTenant(filter: MessageFeedbackListFilter): Promise<{ items: MessageFeedbackRecord[]; total: number }>;
-  /** 本人在某会话的反馈（进会话时恢复"已反馈"态） */
-  listBySessionUser(sessionId: string, userId: string): Promise<MessageFeedbackOwnItem[]>;
+  /** 本人在某会话的反馈（进会话时恢复"已反馈"态）。tenantId 让 UNIQUE 索引前缀可用（2026-07 审查 F11） */
+  listBySessionUser(tenantId: string, sessionId: string, userId: string): Promise<MessageFeedbackOwnItem[]>;
 }
 
 export interface PgMessageFeedbackStoreOptions {
@@ -171,13 +171,14 @@ export class PgMessageFeedbackStore implements MessageFeedbackStore {
     return { items, total };
   }
 
-  async listBySessionUser(sessionId: string, userId: string): Promise<MessageFeedbackOwnItem[]> {
+  async listBySessionUser(tenantId: string, sessionId: string, userId: string): Promise<MessageFeedbackOwnItem[]> {
+    // tenant_id 前置让 UNIQUE (tenant_id, session_id, user_id, content_hash) 索引前缀命中
     const result = await this.pool.query(
       `SELECT content_hash, comment, created_at
          FROM ${this.feedbackTable}
-        WHERE session_id = $1 AND user_id = $2
+        WHERE tenant_id = $1 AND session_id = $2 AND user_id = $3
         ORDER BY created_at ASC`,
-      [sessionId, userId],
+      [tenantId, sessionId, userId],
     );
     return result.rows.map((row) => ({
       contentHash: row.content_hash,

@@ -92,11 +92,23 @@ describe('checkTopicScope', () => {
     expect(createCalls()[0]).toMatchObject({ temperature: 0, max_tokens: 48 });
   });
 
-  it('markdown 代码块包裹 JSON 走正则兜底', async () => {
+  it('markdown 代码块包裹 JSON 走 fenced block 解析（F12 收紧后仍支持）', async () => {
     queueResponse('guard-main', { content: '```json\n{"verdict":"off_topic"}\n```' });
     const result = await checkTopicScope(checkInput(), [MAIN]);
     expect(result.verdict).toBe('off_topic');
     expect(result.source).toBe('model');
+  });
+
+  it('F12: 长解释文本（>200 字符）夹带 verdict 字样 → 不误匹配，按该模型失败回落', async () => {
+    const longExplanation = '让我先分析一下这个问题的性质和上下文背景。'.repeat(10)
+      + '按照格式要求本应输出 {"verdict":"off_topic"}，但我想先解释一下原因……';
+    expect(longExplanation.length).toBeGreaterThan(200);
+    queueResponse('guard-main', { content: longExplanation });
+    queueResponse('guard-fallback', { content: '{"verdict":"in_scope"}' });
+    const result = await checkTopicScope(checkInput(), [MAIN, FALLBACK]);
+    // 主模型长文本中夹带的 verdict 不作数（视为解析失败）→ 回落 fallback 模型判定
+    expect(result).toMatchObject({ verdict: 'in_scope', source: 'model', model: 'guard-fallback' });
+    expect(createCalls().map((c) => c.model)).toEqual(['guard-main', 'guard-fallback']);
   });
 
   it('configs 空数组（门禁未激活）→ 不调模型直接 fail_open', async () => {

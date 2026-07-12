@@ -7,12 +7,12 @@
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import type { Server } from 'node:http';
 
 import { createFeedbackRouter } from '../routes/feedback.js';
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/index.js';
 import type {
   MessageFeedbackInsert,
   MessageFeedbackListFilter,
@@ -51,9 +51,9 @@ class MemoryFeedbackStore implements MessageFeedbackStore {
     return { items, total: items.length };
   }
 
-  async listBySessionUser(sessionId: string, userId: string) {
+  async listBySessionUser(tenantId: string, sessionId: string, userId: string) {
     return this.records
-      .filter((r) => r.sessionId === sessionId && r.userId === userId)
+      .filter((r) => r.tenantId === tenantId && r.sessionId === sessionId && r.userId === userId)
       .map((r) => ({ contentHash: r.contentHash, ...(r.comment ? { comment: r.comment } : {}), createdAt: r.createdAt }));
   }
 }
@@ -98,13 +98,23 @@ describe('/api/feedback routes', () => {
   const owner: TestUser = { sub: 'u-owner', username: 'owner', role: 'user', tenantId: 'tenant-a' };
   const other: TestUser = { sub: 'u-other', username: 'other', role: 'user', tenantId: 'tenant-a' };
 
+  /** transcript 中真实存在的 assistant 回答（F7 服务端校验以此为准） */
+  const ASSISTANT_TEXT = '这是一段专职 Agent 的回答文本';
+  const USER_PROMPT = '这个连接器怎么选';
+
   beforeEach(async () => {
-    transcriptDir = await mkdtemp(join(tmpdir(), 'feedback-routes-test-'));
+    // parseTranscriptFile 强制 allowed-root 断言，临时目录放在真实 transcript 根下
+    await mkdir(AGENT_LEGACY_TRANSCRIPTS_ROOT, { recursive: true });
+    transcriptDir = await mkdtemp(join(AGENT_LEGACY_TRANSCRIPTS_ROOT, 'feedback-routes-test-'));
     store = new MemoryFeedbackStore();
     await writeMeta(transcriptDir, ORG_SESSION, {
       userId: owner.sub, username: owner.username, tenantId: 'tenant-a',
       channel: 'web', createdAt: '2026-07-10T07:00:00.000Z', orgAgentId: 'oa-1',
     });
+    await writeFile(join(transcriptDir, `${ORG_SESSION}.jsonl`), [
+      JSON.stringify({ type: 'user', message: { content: USER_PROMPT } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: ASSISTANT_TEXT }] } }),
+    ].join('\n') + '\n');
     await writeMeta(transcriptDir, PERSONAL_SESSION, {
       userId: owner.sub, username: owner.username, tenantId: 'tenant-a',
       channel: 'web', createdAt: '2026-07-10T07:00:00.000Z',
@@ -184,5 +194,43 @@ describe('/api/feedback routes', () => {
       body: JSON.stringify({ sessionId: ORG_SESSION, messageId: 'msg-1', content }),
     });
     expect(res503.status).toBe(503);
+  });
+
+  it('F7: content 与 transcript 中 assistant 文本一致 → 200 落库', async () => {
+    const { server, baseUrl } = await startServer(store, transcriptDir, owner);
+    servers.push(server);
+
+    const res = await fetch(`${baseUrl}/api/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: ORG_SESSION, messageId: 'msg-1', content: ASSISTANT_TEXT }),
+    });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+    expect(store.records).toHaveLength(1);
+    expect(store.records[0].messageExcerpt).toBe(ASSISTANT_TEXT);
+  });
+
+  it('F7: 伪造 content（不在 transcript assistant 文本中）→ 400 不落库', async () => {
+    const { server, baseUrl } = await startServer(store, transcriptDir, owner);
+    servers.push(server);
+
+    // 完全伪造的文本
+    const forged = await fetch(`${baseUrl}/api/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: ORG_SESSION, messageId: 'msg-1', content: '伪造的不实内容' }),
+    });
+    expect(forged.status).toBe(400);
+    expect(((await forged.json()) as { error: string }).error).toBe('反馈内容与会话消息不匹配');
+
+    // 用户 prompt 文本也不算 AI 输出（只认 assistant 文本块）
+    const promptAsContent = await fetch(`${baseUrl}/api/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: ORG_SESSION, messageId: 'msg-1', content: USER_PROMPT }),
+    });
+    expect(promptAsContent.status).toBe(400);
+    expect(store.records).toHaveLength(0);
   });
 });

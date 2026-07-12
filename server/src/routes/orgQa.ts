@@ -165,6 +165,8 @@ export function createOrgQaRouter(deps: OrgQaRouterDeps): Router {
     try {
       const record = await deps.sessionProjectionStore.get(sessionId, { tenantId, includeDeleted: true });
       if (!record) return res.status(404).json({ error: 'Session not found' });
+      // 质检台只暴露专职 Agent 会话（与列表口径一致）；个人会话同 404 防探测（2026-07 审查 F3）
+      if (!record.metaJson?.orgAgentId) return res.status(404).json({ error: 'Session not found' });
 
       const transcriptPath = await resolveTranscriptPath(sessionId);
       const parsed = transcriptPath

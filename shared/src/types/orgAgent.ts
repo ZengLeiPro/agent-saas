@@ -28,6 +28,7 @@ export interface OrgAgentRecord {
   /** emoji */
   avatar?: string;
   instructions: string;
+  /** 该 Agent 的固有 Skill 能力，不依赖成员个人勾选 */
   allowedSkills: string[];
   audience: OrgAgentAudience;
   guardrail: OrgAgentGuardrailConfig;

@@ -32,7 +32,7 @@ export interface OrgAgentRecord {
   avatar?: string;
   /** 限定提示语 ≤8000，注入 {{ORG_AGENT_INSTRUCTIONS}} */
   instructions: string;
-  /** skill id 白名单（与用户可用清单取交集） */
+  /** skill id 白名单；绑定项是该 Agent 的固有能力，不依赖成员个人 Skill 勾选 */
   allowedSkills: string[];
   audience: OrgAgentAudience;
   guardrail: OrgAgentGuardrailConfig;

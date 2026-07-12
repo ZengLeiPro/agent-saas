@@ -68,4 +68,29 @@ describe('tenant-owned skills persistence root', () => {
 
     expect(existsSync(join(userCwd, '.ky-agent', 'skills', 'release-only'))).toBe(false);
   });
+
+  it('materializes org Agent skills without writing them into the member personal selection', async () => {
+    const user = { id: 'u-demo', username: 'demo', role: 'user' as const, tenantId: 'acme' };
+    const userCwd = resolveUserCwd(agentCwd, user);
+    const tenantSkillDir = join(resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, 'acme'), 'wain-kb');
+    mkdirSync(tenantSkillDir, { recursive: true });
+    writeFileSync(
+      join(tenantSkillDir, 'SKILL.md'),
+      '---\nname: wain-kb\ndescription: tenant knowledge base\n---\nbody',
+      'utf-8',
+    );
+    await store.setTenantSkillRules('acme', {
+      browser: { enabled: true, exposure: 'allow_users', usernames: ['someone-else'] },
+    });
+    await store.setTenantOwnSkillRules('acme', {
+      'wain-kb': { enabled: true, exposure: 'allow_users', usernames: ['someone-else'] },
+    });
+    await store.setUserSelectedSkills('demo', []);
+
+    syncSkills(userCwd, sharedDir, user, store, tenantSkillsRootDir, ['browser', 'wain-kb']);
+
+    expect(existsSync(join(userCwd, '.ky-agent', 'skills', 'browser', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(userCwd, '.ky-agent', 'skills', 'wain-kb', 'SKILL.md'))).toBe(true);
+    expect(store.getUserSelectedSkills('demo')).toEqual([]);
+  });
 });

@@ -59,6 +59,27 @@ describe('SkillConfigStore ownSkills', () => {
     expect(store.getUserEffectiveTenantOwnSkills('bob', undefined, new Set(['own_a']))).toEqual([]);
   });
 
+  it('专职 Agent skill 忽略成员个人勾选与 exposure，但仍服从 enabled', async () => {
+    await store.setTenantSkillRules('wain', {
+      pool_agent: { enabled: true, exposure: 'allow_users', usernames: ['alice'] },
+      pool_disabled: { enabled: false, exposure: 'all', usernames: [] },
+    });
+    await store.setTenantOwnSkillRules('wain', {
+      own_agent: { enabled: true, exposure: 'allow_users', usernames: ['alice'] },
+      own_disabled: { enabled: false, exposure: 'all', usernames: [] },
+    });
+    await store.setUserSelectedSkills('bob', []);
+
+    expect(store.getOrgAgentEffectivePoolSkills('wain', ['pool_agent', 'pool_disabled'])).toEqual(['pool_agent']);
+    expect(store.getOrgAgentEffectiveTenantOwnSkills(
+      'wain',
+      new Set(['own_agent', 'own_disabled']),
+      ['own_agent', 'own_disabled', 'own_missing'],
+    )).toEqual(['own_agent']);
+    expect(store.getUserEffectivePoolSkills('bob', 'wain')).toEqual([]);
+    expect(store.getUserEffectiveTenantOwnSkills('bob', 'wain', new Set(['own_agent']))).toEqual([]);
+  });
+
   it('pruneStaleSkills 保留 selectedSkills 中的租户自有 skill，清理 ownSkills 幽灵条目', async () => {
     await store.setPoolVisibility({ pool_x: true, pool_stale: true });
     await store.setUserSelectedSkills('bob', ['pool_x', 'pool_stale', 'own_alive', 'own_dead']);

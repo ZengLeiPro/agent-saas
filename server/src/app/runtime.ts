@@ -1035,12 +1035,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       return scanned;
     }
     return {
-      listForUser(username: string | undefined): SkillEntry[] {
+      listForUser(username: string | undefined, requiredSkillIds: readonly string[] = []): SkillEntry[] {
         if (!username) return [];
         const all = getAllPoolEntries();
         const user = userStore?.findByUsername(username);
         const tenantId = user?.tenantId;
-        const effective = new Set(store.getUserEffectivePoolSkills(username, tenantId));
+        const effective = new Set([
+          ...store.getUserEffectivePoolSkills(username, tenantId),
+          ...store.getOrgAgentEffectivePoolSkills(tenantId, requiredSkillIds),
+        ]);
         const poolResult = all.filter((s) => effective.has(s.id));
 
         // 追加用户自建 skill：与前端 SkillSelector「自建」tab 同源。
@@ -1060,7 +1063,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           const tenantSkillsDir = user.tenantId ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, user.tenantId) : null;
           const tenantOwnIds = tenantSkillsDir ? scanTenantOwnSkillIds(tenantSkillsDir, poolIds) : new Set<string>();
           const effectiveTenantOwn = new Set(
-            store.getUserEffectiveTenantOwnSkills(username, user.tenantId, tenantOwnIds),
+            [
+              ...store.getUserEffectiveTenantOwnSkills(username, user.tenantId, tenantOwnIds),
+              ...store.getOrgAgentEffectiveTenantOwnSkills(user.tenantId, tenantOwnIds, requiredSkillIds),
+            ],
           );
           const tenantResult = tenantSkillsDir
             ? scanUserCustomSkills(tenantSkillsDir, poolIds)
@@ -1086,7 +1092,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           return poolResult;
         }
       },
-      resolveSkillDir(username: string | undefined, skill: string): string | null {
+      resolveSkillDir(username: string | undefined, skill: string, requiredSkillIds: readonly string[] = []): string | null {
         if (!username) return null;
         if (!SAFE_SKILL_NAME_RE.test(skill)) return null; // 防 path traversal
         // 优先 user workspace 副本（已被 syncSkills 复制）
@@ -1101,7 +1107,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         if (existsSync(userDir)) return userDir;
         if (u) {
           try {
-            syncSkills(userCwd, sharedDir, { id: u.id, username: u.username, role: u.role, tenantId: u.tenantId }, store, tenantSkillsRootDir);
+            syncSkills(
+              userCwd,
+              sharedDir,
+              { id: u.id, username: u.username, role: u.role, tenantId: u.tenantId },
+              store,
+              tenantSkillsRootDir,
+              requiredSkillIds,
+            );
           } catch (err) {
             serverLogger.warn(`Skill sync before invoke failed for ${username}/${skill}: ${err instanceof Error ? err.message : String(err)}`);
           }

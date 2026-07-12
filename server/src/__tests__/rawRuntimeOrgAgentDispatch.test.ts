@@ -3,7 +3,7 @@
  *
  * 覆盖（计划测试 13-14）：
  *   - org 会话：instructions 含组织专职段、无 PERSONA/记忆注入、agentName=org 名、
- *     skill = 可用清单 ∩ allowedSkills 且与 browser filter AND 组合（不是替换）
+ *     skill = Agent 固有能力 ∩ allowedSkills 且与 browser filter AND 组合（不是替换）
  *   - orgAgentId 指向 disabled/缺失/跨租户 → fail-closed（dispatch yield error，
  *     绝不静默回退个人 persona + 全量 skill）
  *   - orgAgentId 缺省 → resolveOrgAgentOverrides 返回 null，个人路径零行为变化
@@ -19,6 +19,7 @@ import {
   buildInstructions,
   buildOrgAgentSkillFilter,
   buildRuntimeSkillFilter,
+  buildRuntimeSkillsResolver,
   composeSkillFilters,
   createRawRuntimeRunDispatch,
   resolveOrgAgentOverrides,
@@ -26,6 +27,8 @@ import {
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import type { HandRecord } from '../runtime/handStore.js';
+import type { SkillsDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
+import type { ToolCallContext } from '../agent/toolRuntime.js';
 import type { ChannelContext, OutboundEvent } from '../types/index.js';
 
 // 指向真实 workspace-shared/prompts/（与 runtimeStage2.test.ts 同款），
@@ -108,7 +111,7 @@ describe('skill 白名单与 browser filter AND 组合', () => {
     metadata: { tenantRemoteHandId: 'agent-saas-acs' },
   };
 
-  it('组合后 = 可用清单 ∩ allowedSkills，且 browser filter 仍生效（AND 不是替换）', () => {
+  it('组合后 = Agent 固有能力 ∩ allowedSkills，且 browser filter 仍生效（AND 不是替换）', () => {
     const base = buildRuntimeSkillFilter([acsHandWithoutBrowser]);
     // 故意把 browser 放进白名单：若 allowlist 是"替换"而非 AND，browser 会漏进来
     const composed = composeSkillFilters(base, buildOrgAgentSkillFilter(orgAgentRecord({
@@ -126,6 +129,35 @@ describe('skill 白名单与 browser filter AND 组合', () => {
     // 仅 name 撞白名单（id 不同）→ 拒绝
     expect(filter({ id: 'skill-123', name: 'wain-kb', description: '' })).toBe(false);
     expect(filter({ id: 'docx', name: 'docx', description: '' })).toBe(false);
+  });
+
+  it('专职 Agent allowedSkills 作为 requiredSkillIds 透传给清单与物理目录解析', () => {
+    const calls: Array<{ kind: 'list' | 'resolve'; required: readonly string[] | undefined }> = [];
+    const skills: SkillsDispatchConfig = {
+      listForUser: (_username, required) => {
+        calls.push({ kind: 'list', required });
+        return [kbSkill, docSkill];
+      },
+      resolveSkillDir: (_username, _skill, required) => {
+        calls.push({ kind: 'resolve', required });
+        return '/tmp/wain-kb';
+      },
+    };
+    const resolver = buildRuntimeSkillsResolver(
+      skills,
+      buildOrgAgentSkillFilter(orgAgentRecord()),
+      ['wain-kb'],
+    );
+    const context = {
+      channelContext: { channel: 'web', user: { id: 'u-1', username: 'alice', role: 'user', tenantId: 'wain' } },
+    } as unknown as ToolCallContext;
+
+    expect(resolver.list(context)).toEqual([kbSkill]);
+    expect(resolver.resolveSkillDir('wain-kb', context)).toBe('/tmp/wain-kb');
+    expect(calls).toEqual([
+      { kind: 'list', required: ['wain-kb'] },
+      { kind: 'resolve', required: ['wain-kb'] },
+    ]);
   });
 });
 

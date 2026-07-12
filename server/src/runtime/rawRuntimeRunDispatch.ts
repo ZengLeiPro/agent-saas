@@ -200,8 +200,9 @@ export function resolveRuntimeModelOptions(
  * 缝进来。
  */
 export interface SkillsDispatchConfig {
-  listForUser(username: string | undefined): SkillEntry[];
-  resolveSkillDir(username: string | undefined, skill: string): string | null;
+  /** requiredSkillIds 由专职 Agent 提供，是独立于成员个人勾选的固有能力。 */
+  listForUser(username: string | undefined, requiredSkillIds?: readonly string[]): SkillEntry[];
+  resolveSkillDir(username: string | undefined, skill: string, requiredSkillIds?: readonly string[]): string | null;
 }
 
 export interface RawRuntimeRunDispatchConfig {
@@ -1085,6 +1086,7 @@ async function collectRuntimeTooling(
   config: RawRuntimeRunDispatchConfig,
   username: string | undefined,
   skillFilter: RuntimeSkillFilter = allowAllRuntimeSkills,
+  requiredSkillIds: readonly string[] = [],
   subagentDeps?: SubagentToolingDeps,
 ): Promise<{
   providers: ToolProvider[];
@@ -1095,16 +1097,7 @@ async function collectRuntimeTooling(
   // 派生用户实际可用清单并拼进工具 description（模型注意力最集中的位置）。原
   // <available-skills> xml section 已废弃（2026-07-03）。
   if (config.skills && isToolEnabled(config.toolControls, 'Skill')) {
-    providers.push(
-      new SkillToolProvider({
-        list: (ctx) => filterRuntimeSkills(
-          config.skills!.listForUser(resolveSkillContextUsername(ctx.channelContext)),
-          skillFilter,
-        ),
-        resolveSkillDir: (skill, ctx) =>
-          config.skills!.resolveSkillDir(resolveSkillContextUsername(ctx.channelContext), skill),
-      }),
-    );
+    providers.push(new SkillToolProvider(buildRuntimeSkillsResolver(config.skills, skillFilter, requiredSkillIds)));
   }
 
   // 2. BuiltinTools（TodoWrite/AskUserQuestion；workspace 文件工具由 WorkspaceToolProvider 提供）
@@ -1170,12 +1163,31 @@ function filterRuntimeSkills(skills: SkillEntry[], filter: RuntimeSkillFilter): 
   return skills.filter(filter);
 }
 
+/**
+ * 构造 Skill resolver。requiredSkillIds 只负责把专职 Agent 固有能力传给底层
+ * SkillsDispatchConfig；最终仍会经过 runtime/browser filter 与 Agent 白名单。
+ */
+export function buildRuntimeSkillsResolver(
+  skills: SkillsDispatchConfig,
+  skillFilter: RuntimeSkillFilter = allowAllRuntimeSkills,
+  requiredSkillIds: readonly string[] = [],
+): EffectiveSkillsResolver {
+  return {
+    list: (ctx) => filterRuntimeSkills(
+      skills.listForUser(resolveSkillContextUsername(ctx.channelContext), requiredSkillIds),
+      skillFilter,
+    ),
+    resolveSkillDir: (skill, ctx) =>
+      skills.resolveSkillDir(resolveSkillContextUsername(ctx.channelContext), skill, requiredSkillIds),
+  };
+}
+
 /** AND 组合多个 skill filter：任一 filter 拒绝即拒绝（browser-hand filter 与 org agent 白名单叠加用，不是替换）。 */
 export function composeSkillFilters(...filters: RuntimeSkillFilter[]): RuntimeSkillFilter {
   return (skill) => filters.every((filter) => filter(skill));
 }
 
-/** 专职 Agent skill 白名单 filter：可用清单 ∩ allowedSkills（仅按 id 命中，2026-07 审查 F10：name 可被同名 skill 冒用扩权）。 */
+/** 专职 Agent skill 白名单 filter：固有能力清单 ∩ allowedSkills（仅按 id 命中，2026-07 审查 F10：name 可被同名 skill 冒用扩权）。 */
 export function buildOrgAgentSkillFilter(agent: Pick<OrgAgentRecord, 'allowedSkills'>): RuntimeSkillFilter {
   const allowed = new Set(agent.allowedSkills);
   return (skill) => allowed.has(skill.id);
@@ -1668,6 +1680,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       identitySource?.username,
       // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
       orgAgent ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent)) : baseSkillFilter,
+      orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
     );
     const instructions = options.skipSystemPrompt
@@ -2026,6 +2039,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       resumeUsername,
       // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
       orgAgent ? composeSkillFilters(resumeBaseSkillFilter, buildOrgAgentSkillFilter(orgAgent)) : resumeBaseSkillFilter,
+      orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
     );
     const instructions = buildInstructions({
@@ -2310,6 +2324,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       resumeUsername,
       // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
       orgAgent ? composeSkillFilters(resumeBaseSkillFilter, buildOrgAgentSkillFilter(orgAgent)) : resumeBaseSkillFilter,
+      orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
     );
     const instructions = buildInstructions({

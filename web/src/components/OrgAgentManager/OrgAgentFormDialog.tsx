@@ -141,7 +141,7 @@ export function OrgAgentFormDialog({
 
           <div className="space-y-1.5">
             <Label>Skill 白名单</Label>
-            <p className="text-xs text-muted-foreground">仅勾选的 Skill 对该 Agent 可用（与成员个人可用清单取交集）。</p>
+            <p className="text-xs text-muted-foreground">勾选的 Skill 是该 Agent 的固有能力；成员被指派后自动可用，无需个人勾选。</p>
             {skillsLoading ? (
               <div className="flex items-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />加载租户 Skill 清单...

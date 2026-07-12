@@ -198,6 +198,7 @@ export function syncSkills(
   user?: WorkspaceUser,
   skillConfigStore?: SkillConfigStore,
   tenantSkillsRootDir?: string,
+  orgAgentSkills: readonly string[] = [],
 ): void {
   const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
   const userSkillsDir = agentSkillsDir(userCwd);
@@ -244,6 +245,16 @@ export function syncSkills(
     }
     for (const id of skillConfigStore.getUserEffectiveTenantOwnSkills(username, user?.tenantId, tenantOwnIds)) {
       targetSkills.add(id);
+    }
+    // 专职 Agent 绑定的 skill 是该 Agent 的固有能力，不依赖成员个人勾选。
+    // 这里仅做 workspace 物化，不写回 selectedSkills，避免污染个人 Agent 能力。
+    if (orgAgentSkills.length > 0) {
+      for (const id of skillConfigStore.getOrgAgentEffectivePoolSkills(user?.tenantId, orgAgentSkills)) {
+        if (poolSkills.has(id)) targetSkills.add(id);
+      }
+      for (const id of skillConfigStore.getOrgAgentEffectiveTenantOwnSkills(user?.tenantId, tenantOwnIds, orgAgentSkills)) {
+        targetSkills.add(id);
+      }
     }
   } else {
     // 兼容回退：从旧 _manifest.json 读取

@@ -128,6 +128,18 @@ export class SkillConfigStore {
     return selected.filter(id => this.isTenantSkillAvailableToUser(id, tenantId, username));
   }
 
+  /**
+   * 专职 Agent 的有效 pool skill：Agent 绑定本身就是授权来源，因此不看成员
+   * selectedSkills / 成员 exposure；仍服从平台对租户的开放范围与租户 enabled 开关。
+   */
+  getOrgAgentEffectivePoolSkills(tenantId: string | undefined, allowedSkills: readonly string[]): string[] {
+    if (!tenantId) return [];
+    return [...new Set(allowedSkills)].filter(id =>
+      this.isPoolSkillAvailableToTenant(id, tenantId)
+      && this.getTenantSkillRule(tenantId, id).enabled,
+    );
+  }
+
   // ── 租户自有 skill（tenants/<tenantId>/skills/）────────
 
   /** 租户自有 skill 的治理规则；未配置默认 enabled + 全员开放 */
@@ -158,6 +170,21 @@ export class SkillConfigStore {
     if (!tenantId) return [];
     return this.getUserSelectedSkills(username)
       .filter(id => availableOwnIds.has(id) && this.isTenantOwnSkillAvailableToUser(tenantId, id, username));
+  }
+
+  /**
+   * 专职 Agent 的有效组织自有 skill：忽略成员个人勾选与成员 exposure，
+   * 只要求组织 skill 仍存在且未被组织管理员停用。
+   */
+  getOrgAgentEffectiveTenantOwnSkills(
+    tenantId: string | undefined,
+    availableOwnIds: Set<string>,
+    allowedSkills: readonly string[],
+  ): string[] {
+    if (!tenantId) return [];
+    return [...new Set(allowedSkills)].filter(id =>
+      availableOwnIds.has(id) && this.getTenantOwnSkillRule(tenantId, id).enabled,
+    );
   }
 
   async setTenantOwnSkillRules(tenantId: string, updates: Record<string, TenantSkillRule>): Promise<void> {

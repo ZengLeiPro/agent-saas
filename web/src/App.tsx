@@ -42,6 +42,7 @@ function toSidebarSessions(
     cronJobName: s.cronJobName,
     orgAgentId: s.orgAgentId,
     orgAgentName: s.orgAgentName,
+    orgAgentAvailable: s.orgAgentAvailable,
   }));
 }
 
@@ -87,17 +88,22 @@ function App() {
 
   // 专职 Agent（2026-07 唯恩批次）：当前会话绑定态 = 列表项 orgAgentId 或挂起态
   const { agents: myOrgAgents } = useOrgAgents();
+  const currentSessionItem = useMemo(
+    () => sessionId ? sessions.find((s) => s.sessionId === sessionId) ?? null : null,
+    [sessionId, sessions],
+  );
   const activeOrgAgent = useMemo(() => {
-    const currentItem = sessionId ? sessions.find((s) => s.sessionId === sessionId) : null;
-    const orgAgentId = currentItem?.orgAgentId ?? pendingOrgAgentId ?? null;
+    const orgAgentId = currentSessionItem?.orgAgentId ?? pendingOrgAgentId ?? null;
     if (!orgAgentId) return null;
     const mine = myOrgAgents.find((agent) => agent.id === orgAgentId);
     return {
       id: orgAgentId,
-      name: mine?.name ?? currentItem?.orgAgentName ?? "专职 Agent",
+      name: mine?.name ?? currentSessionItem?.orgAgentName ?? "专职 Agent",
       ...(mine?.avatar ? { avatar: mine.avatar } : {}),
     };
-  }, [sessionId, sessions, pendingOrgAgentId, myOrgAgents]);
+  }, [currentSessionItem, pendingOrgAgentId, myOrgAgents]);
+  const activeOrgAgentReadOnly = currentSessionItem?.orgAgentId !== undefined
+    && currentSessionItem.orgAgentAvailable === false;
 
   // iOS PWA 生命周期：后台恢复时刷新数据，进入后台时保存状态
   const onResume = useCallback(() => {
@@ -159,7 +165,7 @@ function App() {
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, closeFilePreview,
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
-    startOrgAgentSession, activeOrgAgent,
+    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents,
   };
 
   // 反馈 Provider 恒挂载（2026-07 审查 F8：条件包裹会让 Layout 卸载重挂丢 DOM 状态）；

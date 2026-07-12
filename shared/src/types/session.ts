@@ -35,6 +35,8 @@ export interface ApiSessionListItem {
   orgAgentId?: string;
   /** 专职 Agent 名称（server 列表序列化时按 orgAgentId join；Agent 已删除时缺省） */
   orgAgentName?: string;
+  /** 当前登录用户是否仍可续聊该专职 Agent 会话；false 时前端进入只读态 */
+  orgAgentAvailable?: boolean;
   /** 软删除时间戳，仅回收站列表返回 */
   deletedAt?: string;
   /** 执行删除的用户名，仅回收站列表返回 */

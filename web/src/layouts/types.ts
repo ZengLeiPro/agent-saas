@@ -8,7 +8,7 @@ import type { UseTtsPlayerReturn } from "@/hooks/useTtsPlayer";
 import type { TokenUsage } from "@/lib/sessionsApi";
 import type { AskUserAnswers, ContextUsageData } from "@agent/shared";
 import type { ConnectionState } from "@/hooks/useConnectionState";
-import type { AgentProfile, SessionParticipants } from "@agent/shared";
+import type { AgentProfile, OrgAgentSummary, SessionParticipants } from "@agent/shared";
 import type { SettingsSectionId } from "@/types/settings";
 import type { AdminSettingsState, AdminSettingsTarget } from "@/lib/urlSync";
 import type { PlatformAdminSection } from "@/lib/urlSync";
@@ -25,6 +25,10 @@ export interface LayoutProps {
   startOrgAgentSession: (agentId: string) => void;
   /** 当前会话绑定的专职 Agent（含挂起态）；null = 个人 Agent 会话（banner 零渲染） */
   activeOrgAgent: { id: string; name: string; avatar?: string } | null;
+  /** 当前专职 Agent 会话已停用、删除或取消指派，输入区应只读 */
+  activeOrgAgentReadOnly: boolean;
+  /** 当前用户被指派且启用的专职 Agent 列表（桌面侧栏入口） */
+  myOrgAgents: OrgAgentSummary[];
   confirmDeleteSession: (id: string) => void;
   confirmDeleteSessions: (ids: string[]) => void;
   renameSession: (sessionId: string, newTitle: string) => Promise<boolean>;

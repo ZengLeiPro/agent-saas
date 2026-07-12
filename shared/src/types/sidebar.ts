@@ -17,6 +17,8 @@ export interface ChatSessionIndexItem {
   orgAgentId?: string;
   /** 专职 Agent 名称（列表行徽标展示用） */
   orgAgentName?: string;
+  /** 当前登录用户是否仍可续聊该专职 Agent 会话 */
+  orgAgentAvailable?: boolean;
 }
 
 export type AppTab = "chat" | "scenarios" | "cron" | "tenants" | "tenant-admin" | "platform-admin" | "files" | "profile" | "skills" | "usage" | "mcp" | "models" | "settings" | "trash";

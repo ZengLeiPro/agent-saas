@@ -71,7 +71,7 @@ import { useGroups } from "@/hooks/useGroups";
 import {
   applyGroupOrder,
 } from "@agent/shared";
-import { useOrgAgents } from "@/hooks/useOrgAgents";
+import type { OrgAgentSummary } from "@agent/shared";
 import { useResizableWidth } from "@/hooks/useResizableWidth";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
@@ -117,6 +117,8 @@ interface DesktopSessionSidebarProps {
    * 首条消息的 WS payload 带上。缺省时入口零渲染。
    */
   onStartOrgAgentSession?: (agentId: string) => void;
+  /** App 单一数据源下发，避免侧栏重复请求及账号切换状态分叉。 */
+  orgAgents?: OrgAgentSummary[];
 }
 
 /** 稳定的空集兜底，避免 prop 缺省时每次 render 新建 Set 触发 useMemo 失效 */
@@ -631,17 +633,18 @@ function RoleKitSidebarHint({
  * 挂起 orgAgentId（onStartOrgAgentSession → pendingOrgAgentIdRef + onNew）。
  */
 function OrgAgentSidebarSection({
+  agents,
   sessions,
   onSelectSession,
   onStartOrgAgentSession,
   beforeNavigate,
 }: {
+  agents: OrgAgentSummary[];
   sessions: ChatSessionIndexItem[];
   onSelectSession: (sessionId: string) => void;
   onStartOrgAgentSession?: (agentId: string) => void;
   beforeNavigate?: () => void;
 }) {
-  const { agents } = useOrgAgents();
   if (agents.length === 0) return null;
 
   const handleClick = (agentId: string) => {
@@ -1109,6 +1112,7 @@ export function DesktopSessionSidebar({
   unreadAiReplySessionIds,
   sidebarLayout = "double",
   onStartOrgAgentSession,
+  orgAgents = [],
 }: DesktopSessionSidebarProps) {
   const { user: authUser, logout, authEnabled, updateAvatar } = useAuth();
   // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
@@ -1784,6 +1788,7 @@ export function DesktopSessionSidebar({
           beforeNavigate={() => setSingleExpandedGroupKey(null)}
         />
         <OrgAgentSidebarSection
+          agents={orgAgents}
           sessions={sessions}
           onSelectSession={handleSelect}
           onStartOrgAgentSession={onStartOrgAgentSession}
@@ -2008,6 +2013,7 @@ export function DesktopSessionSidebar({
           />
           <RoleKitSidebarHint onTabChange={onTabChange} />
           <OrgAgentSidebarSection
+            agents={orgAgents}
             sessions={sessions}
             onSelectSession={handleSelect}
             onStartOrgAgentSession={onStartOrgAgentSession}

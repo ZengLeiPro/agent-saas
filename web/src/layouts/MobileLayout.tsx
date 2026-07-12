@@ -63,6 +63,7 @@ export function MobileLayout(props: LayoutProps) {
     previewFilePath, previewFileOwner, openFilePreview, closeFilePreview,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
+    activeOrgAgentReadOnly,
   } = props;
   const { user: authUser } = useAuth();
   const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
@@ -344,7 +345,8 @@ export function MobileLayout(props: LayoutProps) {
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}
-              readOnly={isTrashPreview}
+              readOnly={isTrashPreview || activeOrgAgentReadOnly}
+              readOnlyInputPlaceholder={!isTrashPreview && activeOrgAgentReadOnly ? "该专职 Agent 当前不可用，请联系组织管理员" : undefined}
               agentProfile={agentProfile}
               sessionParticipants={sessionParticipants}
             />

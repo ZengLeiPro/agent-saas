@@ -62,7 +62,7 @@ import type { EventBus } from "../channels/web/eventBus.js";
 import { canAccessSession, isMemoryPollSessionMeta } from "../data/sessions/access.js";
 import type { AgentStore } from "../data/agents/store.js";
 import type { AgentProfileInfo } from "../data/agents/types.js";
-import type { OrgAgentStore } from "../data/orgAgents/store.js";
+import { isAssignedToOrgAgent, type OrgAgentStore } from "../data/orgAgents/store.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import type { SessionShareSnapshot, SessionShareStore } from "../data/sessionShares/store.js";
 import { isShareExpired } from "../data/sessionShares/store.js";
@@ -443,11 +443,28 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
   } = options;
   const router = Router();
 
-  /** 会话列表透传专职 Agent 绑定：orgAgentId 来自 meta，名称按 store join（Agent 已删则缺省） */
-  function orgAgentFields(meta: SessionMeta | null): { orgAgentId?: string; orgAgentName?: string } {
+  /**
+   * 会话列表透传专职 Agent 绑定和当前请求人的可用态。
+   * 可用态与 Web 消息入口保持一致：存在、启用、同租户，且员工被指派；
+   * 平台 admin / 同租户组织 admin 豁免 audience。
+   */
+  function orgAgentFields(
+    meta: SessionMeta | null,
+    reqUser: Request["user"] | undefined,
+  ): { orgAgentId?: string; orgAgentName?: string; orgAgentAvailable?: boolean } {
     if (!meta?.orgAgentId) return {};
-    const name = options.orgAgentStore?.get(meta.orgAgentId)?.name;
-    return { orgAgentId: meta.orgAgentId, ...(name ? { orgAgentName: name } : {}) };
+    const record = options.orgAgentStore?.get(meta.orgAgentId);
+    const adminExempt = reqUser?.role === "admin"
+      && (reqUser.tenantId === DEFAULT_TENANT_ID || record?.tenantId === reqUser.tenantId);
+    const available = !!record
+      && record.enabled
+      && record.tenantId === meta.tenantId
+      && (adminExempt || isAssignedToOrgAgent(record, meta.username));
+    return {
+      orgAgentId: meta.orgAgentId,
+      ...(record?.name ? { orgAgentName: record.name } : {}),
+      orgAgentAvailable: available,
+    };
   }
 
   function getSessionAgent(username?: string): SessionAgent | undefined {
@@ -992,7 +1009,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
-              ...orgAgentFields(meta),
+              ...orgAgentFields(meta, req.user),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
                 : {}),
@@ -1027,7 +1044,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
-              ...orgAgentFields(meta),
+              ...orgAgentFields(meta, req.user),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
                 : {}),
@@ -1042,7 +1059,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
-              ...orgAgentFields(meta),
+              ...orgAgentFields(meta, req.user),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
                 : {}),

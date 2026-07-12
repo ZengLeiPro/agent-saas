@@ -74,7 +74,7 @@ export function DesktopLayout(props: LayoutProps) {
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
-    startOrgAgentSession, activeOrgAgent,
+    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents,
   } = props;
 
   const { user: authUser, updatePreferences } = useAuth();
@@ -257,6 +257,7 @@ export function DesktopLayout(props: LayoutProps) {
         trashPreviewSessionId={trashPreviewSessionId}
         sidebarLayout={sidebarLayout}
         onStartOrgAgentSession={startOrgAgentSession}
+        orgAgents={myOrgAgents}
       />
 
       {/* 右侧内容区 */}
@@ -392,7 +393,8 @@ export function DesktopLayout(props: LayoutProps) {
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}
-              readOnly={isTrashPreview}
+              readOnly={isTrashPreview || activeOrgAgentReadOnly}
+              readOnlyInputPlaceholder={!isTrashPreview && activeOrgAgentReadOnly ? "该专职 Agent 当前不可用，请联系组织管理员" : undefined}
               agentProfile={agentProfile}
               sessionParticipants={sessionParticipants}
               emptySlot={activeOrgAgent ? undefined : chatEmptySlot}

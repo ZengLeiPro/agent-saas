@@ -11,6 +11,7 @@ import { getTranscriptPath } from '../data/transcripts/store.js';
 import { writeSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
 import { resolveUserCwd, type WorkspaceUser } from '../workspace/resolver.js';
+import { OrgAgentStore } from '../data/orgAgents/store.js';
 
 const TEST_USER = {
   id: 'user-1',
@@ -25,6 +26,9 @@ type SessionListResponse = {
     title?: string;
     preview?: string;
     updatedAtMs: number;
+    orgAgentId?: string;
+    orgAgentName?: string;
+    orgAgentAvailable?: boolean;
   }>;
   hasMore: boolean;
 };
@@ -43,6 +47,7 @@ async function startServer(
       label: string;
       reason?: string;
     };
+    orgAgentStore?: OrgAgentStore;
   } = {},
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
@@ -55,6 +60,7 @@ async function startServer(
     agentCwd,
     runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
     resolveContextAccounting: options.resolveContextAccounting,
+    orgAgentStore: options.orgAgentStore,
   }));
 
   return new Promise((resolve) => {
@@ -184,6 +190,48 @@ describe('sessions routes for meta-only runtime sessions', () => {
       const stats = await fetch(`${baseUrl}/api/sessions/${sessionId}/stats`);
       expect(stats.status).toBe(200);
       await expect(stats.json()).resolves.toMatchObject({ tokenUsage: null });
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('returns orgAgentAvailable=false after a bound Agent is disabled', async () => {
+    const orgAgentStore = new OrgAgentStore(join(agentCwd, 'data', 'org-agents.json'));
+    const agent = await orgAgentStore.create({
+      tenantId: TEST_USER.tenantId,
+      name: '产品选型助手',
+      instructions: '只回答选型问题',
+      allowedSkills: ['wain-kb'],
+      audience: { exposure: 'allow_users', usernames: [TEST_USER.username] },
+      guardrail: {
+        enabled: true,
+        scopeDescription: '连接器产品选型',
+        rejectionMessage: '超出职责范围',
+        strictness: 'lenient',
+      },
+      enabled: true,
+    }, 'admin');
+    const { sessionId } = await writeRuntimeSession({
+      content: '推荐一个连接器',
+      metaPatch: { tenantId: TEST_USER.tenantId, orgAgentId: agent.id },
+    });
+
+    const { server, baseUrl } = await startServer(agentCwd, { orgAgentStore });
+    try {
+      const active = await listSessions(baseUrl, '?fresh=1');
+      expect(active.sessions.find((item) => item.sessionId === sessionId)).toMatchObject({
+        orgAgentId: agent.id,
+        orgAgentName: '产品选型助手',
+        orgAgentAvailable: true,
+      });
+
+      await orgAgentStore.update(agent.id, { enabled: false }, 'admin');
+      const disabled = await listSessions(baseUrl, '?fresh=1');
+      expect(disabled.sessions.find((item) => item.sessionId === sessionId)).toMatchObject({
+        orgAgentId: agent.id,
+        orgAgentName: '产品选型助手',
+        orgAgentAvailable: false,
+      });
     } finally {
       await stopServer(server);
     }

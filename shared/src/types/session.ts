@@ -89,6 +89,22 @@ export interface TokenContextAccounting {
   lastRequestTokens?: number;
 }
 
+/** 子 Agent 独立 child session 的累计模型用量。 */
+export interface SubagentUsageBreakdown {
+  childCount: number;
+  requestCount: number;
+  /** Provider 输入口径；OpenAI-compatible 模型中已包含缓存命中部分。 */
+  inputTokens: number;
+  uncachedInputTokens: number;
+  cacheReadTokens: number;
+  /** Provider 上报值；0 不代表一定没有创建缓存。 */
+  cacheCreationTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cacheHitDenominatorTokens: number;
+  cacheHitRatio: number | null;
+}
+
 export interface TokenUsage {
   contextTokens: number;
   totalInputTokens: number;
@@ -96,6 +112,8 @@ export interface TokenUsage {
   totalCacheCreationTokens: number;
   totalOutputTokens: number;
   subagentTotalTokens: number;
+  /** 新 Agent 工具的 durable child-session 用量分项。 */
+  subagentUsage?: SubagentUsageBreakdown;
   /** Cumulative token total with model-specific cache accounting applied. */
   totalTokens?: number;
   /** Cache hit denominator with model-specific accounting applied. */

@@ -44,6 +44,11 @@ import {
 import type { GroupStore } from "../data/groups/index.js";
 import type { UserStore } from "../data/users/store.js";
 import type { TokenUsageStore } from "../data/usage/store.js";
+import {
+  computeCacheHitDenominatorTokens,
+  computeUsageTotalTokens,
+  getUsageAccountingMode,
+} from "../data/usage/pricing.js";
 import { interactionStore } from "../channels/web/interactionStore.js";
 import { EventBackedApprovalStore } from "../runtime/approvalStore.js";
 import {
@@ -140,6 +145,127 @@ function attachContextAccounting<T extends { contextTokens: number }>(
       lastRequestTokens: usage.contextTokens,
     },
   };
+}
+
+interface DurableSubagentUsage {
+  childCount: number;
+  requestCount: number;
+  inputTokens: number;
+  uncachedInputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cacheHitDenominatorTokens: number;
+  cacheHitRatio: number | null;
+}
+
+async function listRuntimeEventsByType(
+  eventStore: EventStore,
+  sessionId: string,
+  type: PlatformEvent["type"],
+): Promise<PlatformEvent[]> {
+  if (!eventStore.listPage) {
+    return (await eventStore.list(sessionId)).filter(
+      (event) => event.sessionId === sessionId && event.type === type,
+    );
+  }
+
+  const events: PlatformEvent[] = [];
+  let afterCursor: string | undefined;
+  do {
+    const page = await eventStore.listPage(sessionId, {
+      ...(afterCursor ? { afterCursor } : {}),
+      limit: 500,
+      type,
+    });
+    events.push(...page.events.filter(
+      (event) => event.sessionId === sessionId && event.type === type,
+    ));
+    if (!page.hasMore || !page.nextCursor || page.nextCursor === afterCursor) break;
+    afterCursor = page.nextCursor;
+  } while (afterCursor);
+  return events;
+}
+
+async function getDurableSubagentUsage(
+  sessionId: string,
+  transcriptPath: string,
+  runtimeEventStoreFor?: (transcriptPath: string) => EventStore,
+): Promise<DurableSubagentUsage | null> {
+  const parentEventStore = runtimeEventStoreFor
+    ? runtimeEventStoreFor(transcriptPath)
+    : new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+  const finishedEvents = await listRuntimeEventsByType(
+    parentEventStore,
+    sessionId,
+    "subagent_finished",
+  );
+  const children = new Map<string, string>();
+  for (const event of finishedEvents) {
+    if (event.type !== "subagent_finished") continue;
+    children.set(event.childRunId, event.childSessionId);
+  }
+  if (children.size === 0) return null;
+
+  const usage: DurableSubagentUsage = {
+    childCount: children.size,
+    requestCount: 0,
+    inputTokens: 0,
+    uncachedInputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    cacheHitDenominatorTokens: 0,
+    cacheHitRatio: null,
+  };
+
+  await Promise.all([...children.values()].map(async (childSessionId) => {
+    const childTranscriptPath = await findTranscriptPathBySessionId(childSessionId);
+    const childEventStore = childTranscriptPath
+      ? runtimeEventStoreFor
+        ? runtimeEventStoreFor(childTranscriptPath)
+        : new FileEventStore(getRuntimeEventLogPath(childTranscriptPath))
+      : parentEventStore;
+    const [toolCallEvents, messageEvents] = await Promise.all([
+      listRuntimeEventsByType(childEventStore, childSessionId, "assistant_tool_calls"),
+      listRuntimeEventsByType(childEventStore, childSessionId, "assistant_message"),
+    ]);
+
+    for (const event of [...toolCallEvents, ...messageEvents]) {
+      if (
+        (event.type !== "assistant_tool_calls" && event.type !== "assistant_message")
+        || !event.usage
+      ) continue;
+      const model = event.model ?? "";
+      const inputTokens = Math.max(0, Math.floor(event.usage.inputTokens ?? 0));
+      const outputTokens = Math.max(0, Math.floor(event.usage.outputTokens ?? 0));
+      const cacheReadTokens = Math.max(0, Math.floor(event.usage.cacheReadInputTokens ?? 0));
+      const cacheCreationTokens = Math.max(0, Math.floor(event.usage.cacheCreationInputTokens ?? 0));
+      const amounts = {
+        inputTokens,
+        outputTokens,
+        cacheReadTokens,
+        cacheCreationTokens,
+      };
+      usage.requestCount += Math.max(1, Math.floor(event.usage.apiRequestCount ?? 1));
+      usage.inputTokens += inputTokens;
+      usage.outputTokens += outputTokens;
+      usage.cacheReadTokens += cacheReadTokens;
+      usage.cacheCreationTokens += cacheCreationTokens;
+      usage.uncachedInputTokens += getUsageAccountingMode(model) === "cache_tokens_separate"
+        ? inputTokens
+        : Math.max(0, inputTokens - cacheReadTokens - cacheCreationTokens);
+      usage.totalTokens += computeUsageTotalTokens(model, amounts);
+      usage.cacheHitDenominatorTokens += computeCacheHitDenominatorTokens(model, amounts);
+    }
+  }));
+
+  usage.cacheHitRatio = usage.cacheHitDenominatorTokens > 0
+    ? usage.cacheReadTokens / usage.cacheHitDenominatorTokens
+    : null;
+  return usage;
 }
 
 
@@ -1963,9 +2089,30 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
 
-        const rawTokenUsage = hasTranscript
+        let rawTokenUsage = hasTranscript
           ? await getTokenUsage(transcriptPath)
           : null;
+        if (rawTokenUsage) {
+          try {
+            const subagentUsage = await getDurableSubagentUsage(
+              sessionId,
+              transcriptPath,
+              runtimeEventStoreFor,
+            );
+            if (subagentUsage) {
+              rawTokenUsage = {
+                ...rawTokenUsage,
+                subagentTotalTokens: rawTokenUsage.subagentTotalTokens + subagentUsage.totalTokens,
+                totalTokens: rawTokenUsage.totalTokens + subagentUsage.totalTokens,
+                subagentUsage,
+              };
+            }
+          } catch (err) {
+            apiLogger.warn(
+              `[sessions] subagent usage aggregation failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
         const tokenUsage = rawTokenUsage
           ? attachContextAccounting(
             rawTokenUsage,

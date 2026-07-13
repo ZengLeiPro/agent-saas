@@ -449,6 +449,110 @@ describe('sessions routes for meta-only runtime sessions', () => {
     }
   });
 
+  it('adds durable child-session usage to stats without inflating parent context', async () => {
+    const { sessionId, transcriptPath } = await writeRuntimeSession({
+      metaPatch: { model: 'kaiyan-llm/gpt55-high' },
+    });
+    await writeAssistantUsageTranscript(transcriptPath, sessionId, {
+      inputTokens: 100,
+      outputTokens: 20,
+    });
+
+    const childSessionId = `sub-${randomUUID()}`;
+    const childRunId = `${Date.now()}-${randomUUID()}`;
+    const { transcriptPath: childTranscriptPath } = await writeRuntimeSession({
+      sessionId: childSessionId,
+      metaPatch: { model: 'kaiyan-llm/gpt55-high' },
+    });
+    await writeFile(childTranscriptPath, '');
+
+    const parentEvents = new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+    await parentEvents.append({
+      type: 'subagent_finished',
+      runId: `${Date.now()}-${randomUUID()}`,
+      sessionId,
+      toolCallId: 'tool-agent-1',
+      agentType: 'general',
+      description: '核对数据',
+      childSessionId,
+      childRunId,
+      model: 'gpt-5.5',
+      status: 'completed',
+      totalTokens: 2500,
+      toolUseCount: 1,
+      durationMs: 1000,
+    });
+
+    const childEvents = new FileEventStore(getRuntimeEventLogPath(childTranscriptPath));
+    await childEvents.append({
+      type: 'assistant_tool_calls',
+      runId: childRunId,
+      sessionId: childSessionId,
+      content: '',
+      model: 'gpt-5.5',
+      usage: {
+        inputTokens: 1000,
+        outputTokens: 100,
+        cacheReadInputTokens: 600,
+        cacheCreationInputTokens: 0,
+        apiRequestCount: 1,
+      },
+      toolCalls: [{ id: 'tool-1', name: 'Read', arguments: '{}' }],
+    });
+    await childEvents.append({
+      type: 'assistant_message',
+      runId: childRunId,
+      sessionId: childSessionId,
+      content: 'done',
+      model: 'gpt-5.5',
+      usage: {
+        inputTokens: 1200,
+        outputTokens: 200,
+        cacheReadInputTokens: 800,
+        cacheCreationInputTokens: 0,
+        apiRequestCount: 1,
+      },
+    });
+
+    const { server, baseUrl } = await startServer(agentCwd, {
+      resolveContextAccounting: () => ({
+        exact: true,
+        kind: 'exact_current',
+        source: 'provider_usage',
+        label: '当前上下文',
+      }),
+    });
+    try {
+      const stats = await fetch(`${baseUrl}/api/sessions/${sessionId}/stats`);
+      expect(stats.status).toBe(200);
+      await expect(stats.json()).resolves.toMatchObject({
+        tokenUsage: {
+          contextTokens: 120,
+          subagentTotalTokens: 2500,
+          totalTokens: 2620,
+          subagentUsage: {
+            childCount: 1,
+            requestCount: 2,
+            inputTokens: 2200,
+            uncachedInputTokens: 800,
+            cacheReadTokens: 1400,
+            cacheCreationTokens: 0,
+            outputTokens: 300,
+            totalTokens: 2500,
+            cacheHitDenominatorTokens: 2200,
+            cacheHitRatio: 1400 / 2200,
+          },
+          contextAccounting: {
+            exact: true,
+            lastRequestTokens: 120,
+          },
+        },
+      });
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it('lists meta-only sessions before the transcript is projected', async () => {
     const { sessionId } = await writeRuntimeSession({ content: '调用浏览器skill，打开google' });
 

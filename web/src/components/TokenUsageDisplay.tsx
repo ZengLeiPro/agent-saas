@@ -99,6 +99,10 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
   const cacheHitRatio = hasRealtime && realtimeCacheRatio !== undefined
     ? realtimeCacheRatio
     : tokenCacheRatio;
+  const subagentUsage = tokenUsage?.subagentUsage;
+  const parentCumulativeTokens = tokenUsage
+    ? Math.max(0, cumulativeTokens - tokenUsage.subagentTotalTokens)
+    : 0;
 
   return (
     <div ref={containerRef} className="relative" onClick={(e) => e.stopPropagation()}>
@@ -242,28 +246,50 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
           <div className="space-y-1.5">
             {tokenUsage && (
               <>
-                <div className="mb-1 font-medium">计费口径</div>
+                <div className="mb-1 font-medium">父 Agent</div>
                 <DetailRow label="上下文" value={formatTokenCount(displayTokens)} />
+                <DetailRow label="累计消耗" value={formatTokenCount(parentCumulativeTokens)} />
                 <DetailRow label="累计输入" value={tokenUsage.totalInputTokens} />
                 <DetailRow label="累计输出" value={tokenUsage.totalOutputTokens} />
                 <DetailRow label="缓存读取" value={tokenUsage.totalCacheReadTokens} />
                 <DetailRow label="缓存写入" value={tokenUsage.totalCacheCreationTokens} />
-                {tokenUsage.subagentTotalTokens > 0 && (
-                  <>
-                    <div className="my-1.5 border-t" />
-                    <DetailRow label="子 Agent" value={tokenUsage.subagentTotalTokens} />
-                  </>
-                )}
                 {cacheHitRatio !== undefined && (
                   <DetailRow label="缓存命中率" value={formatPercent(cacheHitRatio)} />
                 )}
                 {tokenUsage.totalCostUsd != null && tokenUsage.totalCostUsd > 0 && (
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-muted-foreground">
+                      {tokenUsage.subagentTotalTokens > 0 ? '父 Agent 等效成本' : '等效成本'}
+                    </span>
+                    <span className="font-mono tabular-nums">${tokenUsage.totalCostUsd.toFixed(4)}</span>
+                  </div>
+                )}
+                {tokenUsage.subagentTotalTokens > 0 && (
                   <>
                     <div className="my-1.5 border-t" />
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-muted-foreground">等效成本</span>
-                      <span className="font-mono tabular-nums">${tokenUsage.totalCostUsd.toFixed(4)}</span>
+                    <div className="mb-1 font-medium">
+                      子 Agent{subagentUsage ? `（${subagentUsage.childCount} 个 · ${subagentUsage.requestCount} 次调用）` : ''}
                     </div>
+                    <DetailRow label="累计消耗" value={formatTokenCount(tokenUsage.subagentTotalTokens)} />
+                    {subagentUsage && (
+                      <>
+                        <DetailRow label="输入（含缓存）" value={subagentUsage.inputTokens} />
+                        <DetailRow label="非缓存输入" value={subagentUsage.uncachedInputTokens} />
+                        <DetailRow label="缓存读取" value={subagentUsage.cacheReadTokens} />
+                        <DetailRow label="缓存写入（上报）" value={subagentUsage.cacheCreationTokens} />
+                        <DetailRow label="输出" value={subagentUsage.outputTokens} />
+                        {subagentUsage.cacheHitRatio != null && (
+                          <DetailRow label="缓存命中率" value={formatPercent(subagentUsage.cacheHitRatio)} />
+                        )}
+                        {subagentUsage.cacheCreationTokens === 0 && (
+                          <div className="pt-0.5 text-[10px] leading-snug text-muted-foreground">
+                            缓存写入为 provider 上报值；0 不代表一定未创建缓存。
+                          </div>
+                        )}
+                      </>
+                    )}
+                    <div className="my-1.5 border-t" />
+                    <DetailRow label="任务总消耗" value={formatTokenCount(cumulativeTokens)} />
                   </>
                 )}
               </>

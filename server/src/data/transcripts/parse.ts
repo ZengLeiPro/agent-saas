@@ -524,6 +524,19 @@ export interface TokenUsage {
   totalOutputTokens: number;
   /** 子 agent（Task 工具）的 totalTokens 累加 */
   subagentTotalTokens: number;
+  /** 新 Agent 工具的 durable child-session 用量分项（由 sessions stats 路由补充）。 */
+  subagentUsage?: {
+    childCount: number;
+    requestCount: number;
+    inputTokens: number;
+    uncachedInputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cacheHitDenominatorTokens: number;
+    cacheHitRatio: number | null;
+  };
   /** 主 agent 逐轮 total + 子 agent total 的累计 token，用于 UI 展示累计口径 */
   totalTokens: number;
   /** 缓存命中率分母，按模型 accounting_mode 归一化 */

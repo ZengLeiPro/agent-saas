@@ -644,24 +644,24 @@ function SidebarUserMenuFooter({
               <img
                 src={authUser.avatar}
                 alt=""
-                className="h-6 w-6 shrink-0 rounded-full object-cover ring-1 ring-brand-100 ring-offset-1 ring-offset-background"
+                className="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-brand-100 ring-offset-1 ring-offset-background"
               />
             ) : (
-              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-[11px] font-semibold text-primary-foreground shadow-[0_2px_6px_rgba(46,86,225,0.32)]">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-[11px] font-semibold text-primary-foreground shadow-[0_2px_6px_rgba(46,86,225,0.32)]">
                 {authUser.username.charAt(0).toUpperCase()}
               </div>
             )
           ) : (
-            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
               <User className="h-3 w-3 text-muted-foreground" />
             </div>
           )}
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[12px] font-semibold leading-tight">
+            <span className="block truncate text-[13px] font-semibold leading-tight">
               {authUser ? authUser.realName || authUser.username : "未登录"}
             </span>
             {authUser && (
-              <span className="mt-px block truncate text-[10px] leading-tight text-muted-foreground">
+              <span className="mt-px block truncate text-[11px] leading-tight text-muted-foreground">
                 {roleLabel}
               </span>
             )}
@@ -676,7 +676,7 @@ function SidebarUserMenuFooter({
           onChange={onAvatarUpload}
         />
         {showUserMenu && authEnabled && authUser && (
-          <div className="absolute bottom-full left-0 z-50 mb-2 w-52 overflow-visible rounded-xl border bg-popover p-1 shadow-xl">
+          <div className="absolute bottom-full left-0 z-50 mb-2 w-44 overflow-visible rounded-xl border bg-popover p-1 shadow-xl">
             <div
               className="relative"
               onMouseEnter={() => setShowAccountMenu(true)}
@@ -691,7 +691,7 @@ function SidebarUserMenuFooter({
               </button>
 
               {showAccountMenu && (
-                <div className="absolute bottom-0 left-full z-[60] w-72 pl-2" role="menu">
+                <div className="absolute bottom-0 left-full z-[60] w-60 pl-2" role="menu">
                   <div className="rounded-xl border bg-popover p-1.5 shadow-xl">
                     {accounts.map((account) => {
                       const active = account.key === currentAccountKey;

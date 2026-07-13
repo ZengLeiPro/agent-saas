@@ -322,7 +322,7 @@ const capabilityFeatureFields: Array<{ key: keyof TenantSettings["features"]; la
   { key: "mcpEnabled", label: "MCP 工具", description: "允许组织使用 MCP server 与工具密钥。" },
   { key: "customSkillsEnabled", label: "自定义技能", description: "允许用户维护自定义 Agent 技能。" },
   { key: "debugModeAllowed", label: "调试模式", description: "允许开启思考、工具和执行细节展示。" },
-  { key: "autoCompactEnabled", label: "自动压缩", description: "会话上下文超过模型窗口 80% 时，回合结束后自动压缩。" },
+  { key: "autoCompactEnabled", label: "自动压缩", description: "会话上下文达到各模型配置的触发线时，回合结束后自动压缩。" },
 ];
 
 const quotaFields: Array<{ key: keyof TenantSettings["quotas"]; label: string; unit?: string }> = [

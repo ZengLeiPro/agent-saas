@@ -15,11 +15,15 @@
  * 3. 防死循环：最后一条 compaction 事件晚于最后一条带 usage 的 assistant 事件
  *    时（刚压缩过、还没有新的模型轮），不触发；另有 enqueue 冷却兜底。
  *
- * 生效前提：租户 features.autoCompactEnabled=true 且模型配置了 context_window。
+ * 生效前提：租户 features.autoCompactEnabled=true 且模型配置了 context_window；
+ * 触发比例读取模型的 auto_compact_threshold，未配置时兼容默认 0.8。
  */
 import { randomUUID } from 'node:crypto';
 
-import { getModelContextWindow } from '../data/usage/pricing.js';
+import {
+  getModelAutoCompactThreshold,
+  getModelContextWindow,
+} from '../data/usage/pricing.js';
 import { createLogger } from '../utils/logger.js';
 import { calculateCurrentContextTokens } from './contextAccounting.js';
 import { runtimeRunController } from './runController.js';
@@ -29,8 +33,6 @@ import type { RunRecord, RunStore } from './runStore.js';
 
 const logger = createLogger('AutoCompaction');
 
-/** 触发阈值：当前上下文 ≥ contextWindow × 该比例。留 20% 余量给单次 run 增长。 */
-export const AUTO_COMPACT_THRESHOLD_RATIO = 0.8;
 /** enqueue 后冷却：期间不再评估该 session（防重复 enqueue）。 */
 const ENQUEUE_COOLDOWN_MS = 5 * 60_000;
 /** 抢占后等待锁释放的重试窗口。 */
@@ -65,6 +67,8 @@ export interface AutoCompactionEvaluation {
   reason: string;
   currentTokens?: number;
   contextWindow?: number;
+  thresholdRatio?: number;
+  thresholdTokens?: number;
 }
 
 /**
@@ -85,6 +89,8 @@ export function evaluateAutoCompaction(input: {
   if (!contextWindow) {
     return { shouldCompact: false, reason: 'no_context_window_configured' };
   }
+  const thresholdRatio = getModelAutoCompactThreshold(input.model);
+  const thresholdTokens = Math.floor(contextWindow * thresholdRatio);
 
   let lastUsageIndex = -1;
   let lastCompactionIndex = -1;
@@ -101,22 +107,35 @@ export function evaluateAutoCompaction(input: {
     if (lastUsageIndex >= 0 && lastCompactionIndex >= 0) break;
   }
   if (lastUsageIndex < 0) {
-    return { shouldCompact: false, reason: 'no_usage_events', contextWindow };
+    return { shouldCompact: false, reason: 'no_usage_events', contextWindow, thresholdRatio, thresholdTokens };
   }
   // 防死循环：最后一次压缩之后还没有新的模型轮 → usage 反映的是压缩前的上下文，
   // 据其触发会无限重压。等下一轮真实交互后再评估。
   if (lastCompactionIndex > lastUsageIndex) {
-    return { shouldCompact: false, reason: 'just_compacted', contextWindow };
+    return { shouldCompact: false, reason: 'just_compacted', contextWindow, thresholdRatio, thresholdTokens };
   }
   const currentTokens = calculateCurrentContextTokens(input.events, input.model);
   if (currentTokens == null) {
-    return { shouldCompact: false, reason: 'no_usage_events', contextWindow };
+    return { shouldCompact: false, reason: 'no_usage_events', contextWindow, thresholdRatio, thresholdTokens };
   }
-  const threshold = Math.floor(contextWindow * AUTO_COMPACT_THRESHOLD_RATIO);
-  if (currentTokens < threshold) {
-    return { shouldCompact: false, reason: 'below_threshold', currentTokens, contextWindow };
+  if (currentTokens < thresholdTokens) {
+    return {
+      shouldCompact: false,
+      reason: 'below_threshold',
+      currentTokens,
+      contextWindow,
+      thresholdRatio,
+      thresholdTokens,
+    };
   }
-  return { shouldCompact: true, reason: 'threshold_exceeded', currentTokens, contextWindow };
+  return {
+    shouldCompact: true,
+    reason: 'threshold_exceeded',
+    currentTokens,
+    contextWindow,
+    thresholdRatio,
+    thresholdTokens,
+  };
 }
 
 export class AutoCompactionService {
@@ -185,7 +204,9 @@ export class AutoCompactionService {
       this.cooldownUntil.set(input.sessionId, now + ENQUEUE_COOLDOWN_MS);
       logger.info(
         `[auto-compact] enqueued session=${input.sessionId} run=${runId} `
-        + `tokens=${evaluation.currentTokens}/${evaluation.contextWindow} model=${input.model} modelRef=${input.modelRef}`,
+        + `tokens=${evaluation.currentTokens}/${evaluation.contextWindow} `
+        + `threshold=${evaluation.thresholdTokens}(${evaluation.thresholdRatio}) `
+        + `model=${input.model} modelRef=${input.modelRef}`,
       );
     } catch (err) {
       logger.warn(`[auto-compact] schedule failed session=${input.sessionId}: ${err instanceof Error ? err.message : String(err)}`);

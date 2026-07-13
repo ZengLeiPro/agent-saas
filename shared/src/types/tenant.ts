@@ -44,7 +44,7 @@ export interface TenantSettings {
     mcpEnabled: boolean;
     customSkillsEnabled: boolean;
     debugModeAllowed: boolean;
-    /** 会话上下文自动压缩（post-run 超阈值触发）。默认关闭。 */
+    /** 会话上下文自动压缩（达到各模型配置的触发线后 post-run 触发）。默认关闭。 */
     autoCompactEnabled: boolean;
   };
   quotas: {

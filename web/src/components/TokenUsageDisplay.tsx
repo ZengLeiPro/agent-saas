@@ -149,7 +149,8 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage, allowDetails = fal
                   </div>
                   {contextUsage!.isAutoCompactEnabled && contextUsage!.autoCompactThreshold != null && (
                     <div className="mt-1 text-[10px] text-muted-foreground">
-                      自动压缩阈值：{(contextUsage!.autoCompactThreshold * 100).toFixed(0)}%
+                      自动压缩阈值：{formatTokenCount(Math.floor(contextUsage!.maxTokens! * contextUsage!.autoCompactThreshold))}
+                      （{(contextUsage!.autoCompactThreshold * 100).toFixed(1)}%）
                     </div>
                   )}
                 </div>

@@ -419,6 +419,11 @@ const modelItemSchema = z.object({
    * 不配置 = 该模型不启用自动压缩（无内置默认，配错比不配危害大）。
    */
   context_window: z.number().int().positive().optional(),
+  /**
+   * 自动压缩触发比例（0~1，不含端点）。例如 0.7 表示达到模型窗口 70% 时触发。
+   * 不配置时使用平台默认值 0.8；仅在 context_window 已配置且租户已开启自动压缩时生效。
+   */
+  auto_compact_threshold: z.number().gt(0).lt(1).optional(),
 }).extend(modelProviderOptionsSchema.shape)
   .extend(modelResponsesOptionsSchema.shape);
 

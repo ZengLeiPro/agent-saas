@@ -2,9 +2,9 @@ import type { ContextUsageData } from '../types/index.js';
 import {
   computeCacheHitDenominatorTokens,
   computeUsageTotalTokens,
+  getModelAutoCompactThreshold,
   getModelContextWindow,
 } from '../data/usage/pricing.js';
-import { AUTO_COMPACT_THRESHOLD_RATIO } from './autoCompaction.js';
 import { ContextTokenAccumulator } from './contextAccounting.js';
 import type { ModelResponseMode, ModelUsage, PlatformEvent } from './types.js';
 
@@ -114,6 +114,7 @@ export class RuntimeContextUsageTracker {
 
   private toContextUsage(model: string, lastRequest: LastRequestCacheMetrics | null): ContextUsageData {
     const maxTokens = getModelContextWindow(model);
+    const autoCompactThreshold = getModelAutoCompactThreshold(model);
     const cacheHitRatio = this.state.cacheHitDenominatorTokens > 0
       ? this.state.totalCacheReadTokens / this.state.cacheHitDenominatorTokens
       : null;
@@ -122,7 +123,7 @@ export class RuntimeContextUsageTracker {
       ...(maxTokens ? {
         maxTokens,
         percentage: this.state.contextTokens / maxTokens,
-        autoCompactThreshold: AUTO_COMPACT_THRESHOLD_RATIO,
+        autoCompactThreshold,
       } : {}),
       model,
       categories: [

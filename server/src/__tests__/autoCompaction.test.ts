@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { configureModelPricing, getModelContextWindow } from '../data/usage/pricing.js';
+import {
+  configureModelPricing,
+  getModelAutoCompactThreshold,
+  getModelContextWindow,
+} from '../data/usage/pricing.js';
 import { AutoCompactionService, evaluateAutoCompaction } from '../runtime/autoCompaction.js';
+import { RuntimeContextUsageTracker } from '../runtime/contextUsage.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import type { RunRecord, RunStore } from '../runtime/runStore.js';
 
@@ -40,7 +45,7 @@ describe('evaluateAutoCompaction（自动压缩判定）', () => {
   beforeEach(() => {
     configureModelPricing({
       groups: [{
-        models: [{ value: 'glm-5.2', context_window: 100_000 }],
+        models: [{ value: 'glm-5.2', context_window: 100_000, auto_compact_threshold: 0.7 }],
       }],
     });
   });
@@ -64,22 +69,55 @@ describe('evaluateAutoCompaction（自动压缩判定）', () => {
     expect(getModelContextWindow('unknown-model')).toBeUndefined();
   });
 
-  it('低于阈值（80%）：不触发；达到阈值：触发', () => {
+  it('按模型配置的 70% 阈值触发，并返回实际 token 线', () => {
     const below = evaluateAutoCompaction({
-      events: [assistantEvent(0, 70_000, 100)],
+      events: [assistantEvent(0, 69_899, 100)],
       model: 'glm-5.2',
       autoCompactEnabled: true,
     });
-    expect(below).toMatchObject({ shouldCompact: false, reason: 'below_threshold' });
+    expect(below).toMatchObject({
+      shouldCompact: false,
+      reason: 'below_threshold',
+      currentTokens: 69_999,
+      thresholdRatio: 0.7,
+      thresholdTokens: 70_000,
+    });
 
     const above = evaluateAutoCompaction({
-      events: [assistantEvent(0, 85_000, 100)],
+      events: [assistantEvent(0, 69_900, 100)],
       model: 'glm-5.2',
       autoCompactEnabled: true,
     });
     expect(above).toMatchObject({ shouldCompact: true, reason: 'threshold_exceeded' });
-    expect(above.currentTokens).toBe(85_100);
+    expect(above.currentTokens).toBe(70_000);
     expect(above.contextWindow).toBe(100_000);
+    expect(getModelAutoCompactThreshold('glm-5.2')).toBe(0.7);
+  });
+
+  it('模型未配置触发比例时兼容默认 80%', () => {
+    configureModelPricing({
+      groups: [{ models: [{ value: 'glm-5.2', context_window: 100_000 }] }],
+    });
+    const result = evaluateAutoCompaction({
+      events: [assistantEvent(0, 79_900, 100)],
+      model: 'glm-5.2',
+      autoCompactEnabled: true,
+    });
+    expect(result).toMatchObject({
+      shouldCompact: true,
+      thresholdRatio: 0.8,
+      thresholdTokens: 80_000,
+    });
+  });
+
+  it('上下文用量数据暴露模型级阈值，供前端显示实际触发线', () => {
+    const tracker = new RuntimeContextUsageTracker('glm-5.2', []);
+    const usage = tracker.record('glm-5.2', { inputTokens: 10_000, outputTokens: 100 });
+    expect(usage).toMatchObject({
+      totalTokens: 10_100,
+      maxTokens: 100_000,
+      autoCompactThreshold: 0.7,
+    });
   });
 
   it('全量请求以最后一条 usage 重锚，不累计更早轮次', () => {

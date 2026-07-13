@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseAppConfig } from '../app/config.js';
 import { createToolControlsAdminRouter } from '../routes/toolControlsAdmin.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { InMemorySecretVault } from '../security/secretVault.js';
 
 const servers: Array<{ close: () => void }> = [];
 
@@ -177,6 +178,45 @@ describe('tool controls admin router', () => {
       expect(written.webTools.search.apiKeyRef).toBe('brave-search-api-key');
       expect(written.webTools.search.apiKey).toBeUndefined();
     }, { validateToolSettingsConfig, onToolSettingsUpdated });
+  });
+
+  it('stores a newly submitted WebSearch apiKey in the secret vault and persists only its ref', async () => {
+    const secretVault = new InMemorySecretVault();
+    await withApp({
+      agent: { cwd: '/tmp/agent' },
+      server: { port: 3200 },
+    }, async ({ baseUrl, configPath, runtimeConfig }) => {
+      const response = await fetch(`${baseUrl}/api/admin/tool-controls`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          toolControls: { tools: {} },
+          webTools: {
+            enabled: true,
+            search: {
+              enabled: true,
+              provider: 'tencent_wsa',
+              apiKey: 'tencent-wsa-secret',
+              maxResults: 5,
+            },
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await readJson(response);
+      expect(body.webTools.search.hasApiKey).toBe(true);
+      expect(body.webTools.search.apiKey).toBeUndefined();
+      expect(body.webTools.search.apiKeyRef).toEqual(expect.any(String));
+
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.webTools.search.apiKey).toBeUndefined();
+      expect(written.webTools.search.apiKeyRef).toBe(body.webTools.search.apiKeyRef);
+      expect(runtimeConfig.webTools?.search?.apiKey).toBeUndefined();
+      expect(runtimeConfig.webTools?.search?.apiKeyRef).toBe(body.webTools.search.apiKeyRef);
+      await expect(secretVault.getSecret(body.webTools.search.apiKeyRef, { actor: 'system' }))
+        .resolves.toBe('tencent-wsa-secret');
+    }, { secretVault });
   });
 
   it('rejects enabled WebSearch without credentials before writing config.json', async () => {

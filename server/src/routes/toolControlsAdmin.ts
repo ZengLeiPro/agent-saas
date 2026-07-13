@@ -6,10 +6,12 @@ import { requirePlatformAdmin } from '../auth/middleware.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
 import type { AppConfig, ToolControlsConfig, WebToolsConfig } from '../app/config.js';
 import { isToolEnabled } from '../agent/toolRuntime.js';
+import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
 
 export interface CreateToolControlsAdminRouterOptions {
   processCwd: string;
   config: AppConfig;
+  secretVault?: SecretVault;
   validateToolSettingsConfig?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void> | void;
   onToolSettingsUpdated?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void> | void;
 }
@@ -109,7 +111,32 @@ export function sanitizeWebToolsConfig(webTools: WebToolsConfig) {
     ...rest,
     search: {
       ...safeSearch,
-      hasApiKey: typeof apiKey === 'string' && apiKey.length > 0,
+      hasApiKey: (typeof apiKey === 'string' && apiKey.length > 0)
+        || (typeof safeSearch.apiKeyRef === 'string' && safeSearch.apiKeyRef.length > 0),
+    },
+  };
+}
+
+async function persistSearchCredential(
+  settings: Pick<AppConfig, 'toolControls' | 'webTools'>,
+  secretVault?: SecretVault,
+): Promise<Pick<AppConfig, 'toolControls' | 'webTools'>> {
+  const search = settings.webTools?.search;
+  if (!secretVault || !search?.apiKey) return settings;
+
+  const { apiKey, ...safeSearch } = search;
+  const ref = await secretVault.putSecret(GLOBAL_OWNER_ID, 'web_tools', apiKey, {
+    provider: search.provider,
+    purpose: 'web-search',
+  });
+  return {
+    ...settings,
+    webTools: {
+      ...settings.webTools,
+      search: {
+        ...safeSearch,
+        apiKeyRef: ref.id,
+      },
     },
   };
 }
@@ -163,6 +190,7 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
       const rawConfig = parseJsonc(configText);
       nextSettings = validateToolSettingsUpdate(rawConfig, req.body?.toolControls, req.body?.webTools);
       await options.validateToolSettingsConfig?.(nextSettings);
+      nextSettings = await persistSearchCredential(nextSettings, options.secretVault);
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
       return;

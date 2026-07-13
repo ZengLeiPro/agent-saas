@@ -308,6 +308,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createToolControlsAdminRouter({
       processCwd,
       config,
+      secretVault: runtime.secretVault,
       validateToolSettingsConfig: runtime.validateToolSettingsConfig,
       onToolSettingsUpdated: runtime.updateToolSettingsConfig,
     }),

@@ -17,7 +17,7 @@ import {
   shouldSendWebBlock,
   shouldSendWebToolResult,
   getWebDisplayConfig,
-  isInteractiveTool,
+  isDedicatedWebTool,
 } from './displayFilter.js';
 import { chatLogger } from '../../utils/logger.js';
 import { parseVoiceMarkers } from '../../utils/voiceMarkers.js';
@@ -657,6 +657,7 @@ export class WebChannel implements BaseChannel {
         emitSession({ type: 'block_end', blockType: 'thinking' });
         break;
       case 'tool_start':
+        if (isDedicatedWebTool(input.event.toolName)) break;
         emitSession({
           type: 'block_start',
           blockType: 'tool_use',
@@ -665,6 +666,7 @@ export class WebChannel implements BaseChannel {
         });
         break;
       case 'tool_input_delta':
+        if (isDedicatedWebTool(input.event.toolName)) break;
         emitSession({
           type: 'tool_input',
           toolId: input.event.toolId,
@@ -673,6 +675,7 @@ export class WebChannel implements BaseChannel {
         });
         break;
       case 'tool_end':
+        if (isDedicatedWebTool(input.event.toolName)) break;
         emitSession({
           type: 'block_end',
           blockType: 'tool_use',
@@ -680,6 +683,7 @@ export class WebChannel implements BaseChannel {
         });
         break;
       case 'tool_execution_start':
+        if (isDedicatedWebTool(input.event.toolName)) break;
         emitSession({
           type: 'tool_execution',
           phase: 'started',
@@ -689,6 +693,7 @@ export class WebChannel implements BaseChannel {
         });
         break;
       case 'tool_execution_end':
+        if (isDedicatedWebTool(input.event.toolName)) break;
         emitSession({
           type: 'tool_execution',
           phase: 'completed',
@@ -701,6 +706,7 @@ export class WebChannel implements BaseChannel {
         });
         break;
       case 'tool_result': {
+        if (isDedicatedWebTool(input.event.toolName)) break;
         emitSession({
           type: 'tool_result',
           toolId: input.event.toolId,
@@ -3710,12 +3716,11 @@ function projectRuntimePlatformEvent(
         }],
       };
     case 'tool_invocation_started':
-      // 交互型工具（AskUserQuestion / EnterPlanMode / ExitPlanMode）由 ask_user /
-      // permission_request 侧通道独立驱动 UI，不该走 tool_execution 通道，
-      // 否则前端会在交互卡片之外再叠加一条"AskUserQuestion 执行中"骨架。
+      // 拥有独立卡片的工具由 ask_user / permission_request / subagent 侧通道驱动，
+      // 不该再走通用 tool_execution 通道，否则前端会叠加第二条工具骨架。
       // live 通道 onToolStart 已用 shouldSendWebBlock 过滤,这里补上 replay/
       // durable/跨进程 NOTIFY 路径的兜底,与 displayFilter.ts 语义对齐。
-      if (isInteractiveTool(event.toolName)) return { events: [] };
+      if (isDedicatedWebTool(event.toolName)) return { events: [] };
       return {
         events: [{
           type: 'tool_execution',
@@ -3726,7 +3731,7 @@ function projectRuntimePlatformEvent(
         }],
       };
     case 'tool_invocation_completed':
-      if (isInteractiveTool(event.toolName)) return { events: [] };
+      if (isDedicatedWebTool(event.toolName)) return { events: [] };
       return {
         events: [{
           type: 'tool_execution',
@@ -3740,7 +3745,7 @@ function projectRuntimePlatformEvent(
         }],
       };
     case 'tool_result': {
-      if (isInteractiveTool(event.toolName)) return { events: [] };
+      if (isDedicatedWebTool(event.toolName)) return { events: [] };
       const events: object[] = [{
         type: 'tool_result',
         toolId: event.toolCallId,
@@ -3794,9 +3799,8 @@ function projectRuntimePlatformEvent(
         );
       }
       for (const call of event.toolCalls) {
-        // 交互型工具的 tool call 由 ask_user / permission_request 侧通道单独渲染,
-        // 不产生 tool_use 骨架,避免与交互卡片双条并存。
-        if (isInteractiveTool(call.name)) continue;
+        // 拥有独立卡片的工具不产生通用 tool_use 骨架，避免双条并存。
+        if (isDedicatedWebTool(call.name)) continue;
         events.push(
           { type: 'block_start', blockType: 'tool_use', toolId: call.id, toolName: call.name },
           { type: 'tool_input', toolId: call.id, toolName: call.name, content: call.arguments },

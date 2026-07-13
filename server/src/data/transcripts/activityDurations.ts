@@ -1,9 +1,12 @@
 import type { ParsedTranscript, TranscriptBlock } from "./parse.js";
 import type { EventStore, PlatformEvent } from "../../runtime/types.js";
 
-interface ActivityDurations {
+type ToolExecutionStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+interface ActivityMetadata {
   thinkingDurations: number[];
   toolDurationById: Map<string, number>;
+  toolStatusById: Map<string, ToolExecutionStatus>;
 }
 
 function toTimestampMs(value: string): number | undefined {
@@ -15,11 +18,13 @@ function isValidDuration(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
-function isDurationEvent(event: PlatformEvent): boolean {
+function isActivityEvent(event: PlatformEvent): boolean {
   return (
     event.type === "assistant_thinking"
     || event.type === "assistant_stream_event"
+    || event.type === "tool_invocation_started"
     || event.type === "tool_invocation_completed"
+    || event.type === "run_state_changed"
   );
 }
 
@@ -52,26 +57,31 @@ export async function listActivityDurationEvents(
   sessionId: string,
 ): Promise<PlatformEvent[]> {
   if (!eventStore.listPage) {
-    return (await eventStore.list(sessionId)).filter(isDurationEvent);
+    return (await eventStore.list(sessionId)).filter(isActivityEvent);
   }
 
-  const [thinkingEvents, streamEvents, toolCompletionEvents] = await Promise.all([
+  const [thinkingEvents, streamEvents, toolStartEvents, toolCompletionEvents, runStateEvents] = await Promise.all([
     listEventsByType(eventStore, sessionId, "assistant_thinking"),
     // 存量 fallback：2026-07-03 前的历史数据无 durationMs，靠 delta start/end 配对
     listEventsByType(eventStore, sessionId, "assistant_stream_event"),
+    listEventsByType(eventStore, sessionId, "tool_invocation_started"),
     listEventsByType(eventStore, sessionId, "tool_invocation_completed"),
+    listEventsByType(eventStore, sessionId, "run_state_changed"),
   ]);
-  return [...thinkingEvents, ...streamEvents, ...toolCompletionEvents].sort(
+  return [...thinkingEvents, ...streamEvents, ...toolStartEvents, ...toolCompletionEvents, ...runStateEvents].sort(
     (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
   );
 }
 
-export function buildActivityDurationsFromEvents(
+export function buildActivityMetadataFromEvents(
   events: PlatformEvent[],
   sessionId: string,
-): ActivityDurations {
+): ActivityMetadata {
   const thinkingDurations: number[] = [];
   const toolDurationById = new Map<string, number>();
+  const toolStatusById = new Map<string, ToolExecutionStatus>();
+  const toolRunById = new Map<string, string>();
+  const runStatusById = new Map<string, string>();
   let thinkingStartedAt: number | undefined;
 
   for (const event of events) {
@@ -99,12 +109,44 @@ export function buildActivityDurationsFromEvents(
       continue;
     }
 
-    if (event.type === "tool_invocation_completed" && isValidDuration(event.durationMs)) {
-      toolDurationById.set(event.toolCallId, event.durationMs);
+    if (event.type === "tool_invocation_started") {
+      toolRunById.set(event.toolCallId, event.runId);
+      toolStatusById.set(event.toolCallId, "running");
+      continue;
+    }
+
+    if (event.type === "tool_invocation_completed") {
+      toolRunById.set(event.toolCallId, event.runId);
+      toolStatusById.set(
+        event.toolCallId,
+        event.status === "success"
+          ? "completed"
+          : event.status === "cancelled"
+            ? "cancelled"
+            : "failed",
+      );
+      if (isValidDuration(event.durationMs)) {
+        toolDurationById.set(event.toolCallId, event.durationMs);
+      }
+      continue;
+    }
+
+    if (event.type === "run_state_changed") {
+      runStatusById.set(event.runId, event.status);
     }
   }
 
-  return { thinkingDurations, toolDurationById };
+  // 工具 start 后若进程在 completed 事件前终止，不能在刷新后永久显示“执行中”。
+  for (const [toolCallId, status] of toolStatusById) {
+    if (status !== "running") continue;
+    const runId = toolRunById.get(toolCallId);
+    const runStatus = runId ? runStatusById.get(runId) : undefined;
+    if (runStatus === "completed") toolStatusById.set(toolCallId, "completed");
+    else if (runStatus === "cancelled") toolStatusById.set(toolCallId, "cancelled");
+    else if (runStatus === "failed" || runStatus === "orphaned") toolStatusById.set(toolCallId, "failed");
+  }
+
+  return { thinkingDurations, toolDurationById, toolStatusById };
 }
 
 export function enrichTranscriptActivityDurations(
@@ -116,8 +158,12 @@ export function enrichTranscriptActivityDurations(
     return parsed;
   }
 
-  const durations = buildActivityDurationsFromEvents(events, sessionId);
-  if (durations.thinkingDurations.length === 0 && durations.toolDurationById.size === 0) {
+  const metadata = buildActivityMetadataFromEvents(events, sessionId);
+  if (
+    metadata.thinkingDurations.length === 0
+    && metadata.toolDurationById.size === 0
+    && metadata.toolStatusById.size === 0
+  ) {
     return parsed;
   }
 
@@ -125,7 +171,7 @@ export function enrichTranscriptActivityDurations(
   let thinkingIndex = 0;
   const blocks = parsed.blocks.map((block): TranscriptBlock => {
     if (block.kind === "thinking") {
-      const durationMs = durations.thinkingDurations[thinkingIndex++];
+      const durationMs = metadata.thinkingDurations[thinkingIndex++];
       if (isValidDuration(durationMs) && block.durationMs !== durationMs) {
         changed = true;
         return { ...block, durationMs };
@@ -134,11 +180,17 @@ export function enrichTranscriptActivityDurations(
     }
 
     if (block.kind === "tool_use" && block.toolId) {
-      const durationMs = durations.toolDurationById.get(block.toolId);
-      if (isValidDuration(durationMs) && block.durationMs !== durationMs) {
-        changed = true;
-        return { ...block, durationMs };
-      }
+      const durationMs = metadata.toolDurationById.get(block.toolId);
+      const executionStatus = metadata.toolStatusById.get(block.toolId);
+      const durationChanged = isValidDuration(durationMs) && block.durationMs !== durationMs;
+      const statusChanged = executionStatus !== undefined && block.executionStatus !== executionStatus;
+      if (!durationChanged && !statusChanged) return block;
+      changed = true;
+      return {
+        ...block,
+        ...(isValidDuration(durationMs) ? { durationMs } : {}),
+        ...(executionStatus ? { executionStatus } : {}),
+      };
     }
 
     return block;

@@ -13,8 +13,17 @@ const INTERACTIVE_TOOLS = new Set([
   'ExitPlanMode',
 ]);
 
-export function isInteractiveTool(toolName: string | undefined): boolean {
-  return !!toolName && INTERACTIVE_TOOLS.has(toolName);
+/**
+ * 拥有独立 Web 卡片的工具：交互工具走 ask_user / permission_request，Agent
+ * 走 subagent_start / subagent_end。它们都不能再进入通用 tool_use 通道。
+ */
+const DEDICATED_WEB_TOOLS = new Set([
+  ...INTERACTIVE_TOOLS,
+  'Agent',
+]);
+
+export function isDedicatedWebTool(toolName: string | undefined): boolean {
+  return !!toolName && DEDICATED_WEB_TOOLS.has(toolName);
 }
 
 export function shouldSendWebBlock(
@@ -31,7 +40,7 @@ export function shouldSendWebBlock(
   }
 
   if (blockType === 'tool_use') {
-    if (isInteractiveTool(toolName)) return false;
+    if (isDedicatedWebTool(toolName)) return false;
     return isSkillTool(toolName) ? config.skillInput !== false : config.toolInput !== false;
   }
 
@@ -42,7 +51,7 @@ export function shouldSendWebToolResult(
   toolName: string | undefined,
   config: WebMessageDisplayConfig,
 ): boolean {
-  if (isInteractiveTool(toolName)) return false;
+  if (isDedicatedWebTool(toolName)) return false;
   return isSkillTool(toolName) ? config.skillResult !== false : config.toolResult !== false;
 }
 

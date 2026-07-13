@@ -172,5 +172,6 @@ export interface ApiTranscriptBlock {
   toolName?: string;
   toolId?: string;
   durationMs?: number;
+  executionStatus?: "pending" | "running" | "completed" | "failed" | "cancelled";
   isVoiceTranscript?: boolean;
 }

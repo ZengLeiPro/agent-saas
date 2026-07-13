@@ -574,12 +574,10 @@ describe('wsEventProcessor artifact_created', () => {
   });
 });
 
-describe('wsEventProcessor interactive tool passthrough', () => {
-  // 回归：AskUserQuestion 等交互工具由 ask_user / permission_request 卡片渲染，
-  // durable replay 通道曾漏过滤 → 前端叠加"AskUserQuestion 执行中"骨架 + 交互卡
-  // 片两条并存。前端兜底：block_start / tool_execution / tool_result 三分支都
-  // 应识别交互工具并跳过,不新增 tool_use 骨架。
-  for (const toolName of ['AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode']) {
+describe('wsEventProcessor dedicated tool passthrough', () => {
+  // 回归：拥有独立卡片的工具不能再叠加通用工具骨架。前端兜底覆盖旧 buffer
+  // 与跨版本重连，block_start / tool_execution / tool_result 三路都必须跳过。
+  for (const toolName of ['AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode', 'Agent']) {
     it(`ignores block_start(tool_use) for ${toolName}`, () => {
       const { messages, ctx } = createTestRig();
       const block = { currentBlockIndex: -1, currentBlockType: null };
@@ -640,5 +638,37 @@ describe('wsEventProcessor interactive tool passthrough', () => {
     }, ctx);
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({ type: 'ask_user', interactionId: 'ix-1' });
+  });
+
+  it('replaces an old generic Agent row and keeps subagent_start idempotent', () => {
+    const { messages, ctx } = createTestRig();
+    messages.push({
+      id: 'legacy-agent-row',
+      type: 'tool_use',
+      toolName: 'Agent',
+      toolInput: '{}',
+      toolId: 'call-agent-1',
+      executionStatus: 'running',
+    });
+
+    process({
+      type: 'subagent_start',
+      toolId: 'call-agent-1',
+      agentType: '检索代码路径',
+    }, ctx);
+    process({
+      type: 'subagent_start',
+      toolId: 'call-agent-1',
+      agentType: '检索代码路径',
+    }, ctx);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      id: 'legacy-agent-row',
+      type: 'subagent',
+      toolId: 'call-agent-1',
+      agentType: '检索代码路径',
+      status: 'running',
+    });
   });
 });

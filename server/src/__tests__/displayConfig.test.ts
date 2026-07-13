@@ -86,6 +86,15 @@ describe('DisplayConfig', () => {
       });
     });
 
+    describe('tool_use blocks - dedicated Agent card', () => {
+      it('should never send Agent through the generic tool channel', () => {
+        expect(shouldSendWebBlock('tool_use', 'Agent', {})).toBe(false);
+        expect(shouldSendWebBlock('tool_use', 'Agent', { toolInput: true })).toBe(false);
+        expect(shouldSendWebToolResult('Agent', {})).toBe(false);
+        expect(shouldSendWebToolResult('Agent', { toolResult: true })).toBe(false);
+      });
+    });
+
     describe('tool_use blocks - Skill tools', () => {
       it('should send Skill blocks by default', () => {
         expect(shouldSendWebBlock('tool_use', 'Skill', {})).toBe(true);

@@ -14,7 +14,21 @@ const INTERACTIVE_RESULT_TOOLS = new Set([
   "AskUserQuestion",
   "EnterPlanMode",
   "ExitPlanMode",
+  "Agent",
 ]);
+
+function parseSubagentDescription(content: string): string {
+  try {
+    const input = JSON.parse(content) as { description?: unknown; agent_type?: unknown };
+    if (typeof input.description === "string" && input.description.trim()) {
+      return input.description.trim();
+    }
+    if (typeof input.agent_type === "string" && input.agent_type.trim()) {
+      return input.agent_type.trim();
+    }
+  } catch { /* parse failure */ }
+  return "子任务";
+}
 
 function parseAnswersFromResult(
   resultText: string,
@@ -256,6 +270,19 @@ function mapBlock(
       if (block.toolName === "EnterPlanMode" || block.toolName === "ExitPlanMode") {
         return tryConvertPlanMode(block, resultText);
       }
+      if (block.toolName === "Agent") {
+        const terminal = resultText !== undefined
+          || block.executionStatus === "completed"
+          || block.executionStatus === "failed"
+          || block.executionStatus === "cancelled";
+        return {
+          id,
+          type: "subagent",
+          toolId: block.toolId || "",
+          agentType: parseSubagentDescription(block.content),
+          status: terminal ? "completed" : "running",
+        };
+      }
       const resolvedName = resolveDisplayToolName({
         toolId: block.toolId || "",
         toolName: block.toolName || "unknown",
@@ -269,6 +296,11 @@ function mapBlock(
         toolId: block.toolId || "",
         streaming: false,
         ...(typeof block.durationMs === "number" ? { durationMs: block.durationMs } : {}),
+        ...(block.executionStatus
+          ? { executionStatus: block.executionStatus }
+          : resultText !== undefined
+            ? { executionStatus: "completed" as const }
+            : {}),
         ...(resultText !== undefined ? { result: resultText, resultReady: true } : {}),
       };
     }

@@ -37,6 +37,8 @@ export interface TranscriptBlock {
   toolId?: string;
   /** Activity duration derived from runtime events, when available */
   durationMs?: number;
+  /** Tool lifecycle state derived from durable runtime events */
+  executionStatus?: "pending" | "running" | "completed" | "failed" | "cancelled";
   /** User prompt originated from mobile voice transcription */
   isVoiceTranscript?: boolean;
   /** compaction block：被摘要替代的历史事件数 */

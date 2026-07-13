@@ -8,21 +8,19 @@ import type { WsEvent } from '../types/ws';
 import { formatRuntimeFailureMessage } from './runtimeErrorMessage';
 
 /**
- * 交互性工具：由 canUseTool 侧通道驱动交互 UI（ask_user / permission_request），
- * 不该走通用 tool_use / tool_result 展示通道。live 通道已用后端 shouldSendWebBlock
- * 过滤，但 durable replay/跨进程 NOTIFY 路径的 projectRuntimePlatformEvent 曾漏过
- * 滤 → 前端同时收到 `tool_execution(AskUserQuestion)` 与 `ask_user`，出现"执行中"
- * 骨架 + "Agent Question / Answered" 两行并存的丑陋 UI。此常量作为前端兜底，与
- * 后端 `channels/web/displayFilter.ts` 的 INTERACTIVE_TOOLS 一致。
+ * 拥有独立卡片的工具：交互工具走 ask_user / permission_request，Agent 走
+ * subagent_start / subagent_end。它们不该再走通用 tool_use / tool_result 通道。
+ * 此常量是旧 buffer / 跨版本重连的前端兜底，与后端 displayFilter 保持一致。
  */
-const INTERACTIVE_TOOL_NAMES = new Set<string>([
+const DEDICATED_TOOL_NAMES = new Set<string>([
   "AskUserQuestion",
   "EnterPlanMode",
   "ExitPlanMode",
+  "Agent",
 ]);
 
-function isInteractiveToolName(toolName: string | undefined | null): boolean {
-  return !!toolName && INTERACTIVE_TOOL_NAMES.has(toolName);
+function isDedicatedToolName(toolName: string | undefined | null): boolean {
+  return !!toolName && DEDICATED_TOOL_NAMES.has(toolName);
 }
 
 /** Plan mode tool display mapping */
@@ -342,11 +340,9 @@ export function processWsEvent(
       const owner = ctx.sessionOwnerRef?.current;
       block.currentBlockIndex = msg.addMessage({ type: "text", content: "", streaming: true, ...(owner ? { owner } : {}), timestamp: Date.now() });
     } else if (data.blockType === "tool_use") {
-      // 交互型工具（AskUserQuestion / EnterPlanMode / ExitPlanMode）走
-      // ask_user / permission_request 独立卡片渲染，不产生 tool_use 骨架，
-      // 避免与交互卡片双条并存。currentBlockIndex 保持 -1 让 tool_input /
-      // block_end 也自动跳过。
-      if (isInteractiveToolName(data.toolName)) {
+      // 独立卡片工具不产生通用 tool_use 骨架。currentBlockIndex 保持 -1，
+      // 让 tool_input / block_end 也自动跳过。
+      if (isDedicatedToolName(data.toolName)) {
         return;
       }
       const existingIdx = findToolUseIndex(msg.messagesRef.current, data.toolId, data.toolName);
@@ -430,11 +426,10 @@ export function processWsEvent(
   }
 
   if (data.type === "tool_execution") {
-    // 交互型工具的 tool_invocation_started/completed 会被 durable replay 投影
-    // 成 tool_execution 事件；这里兜底跳过，防出现 "AskUserQuestion 执行中" 骨架。
+    // 独立卡片工具的 invocation 可能被旧 buffer 投影成 tool_execution；这里兜底跳过。
     // toolName 只在 phase=started/completed 里携带，progress 时靠 toolId 找已有骨架，
-    // 交互型工具本就没有骨架，findToolUseIndex 找不到会走 addMessage —— 一并挡住。
-    if (isInteractiveToolName(data.toolName)) {
+    // 独立卡片工具本就没有骨架，findToolUseIndex 找不到会走 addMessage —— 一并挡住。
+    if (isDedicatedToolName(data.toolName)) {
       removeRuntimeStatusMessages(msg);
       return;
     }
@@ -482,9 +477,8 @@ export function processWsEvent(
   }
 
   if (data.type === "tool_result") {
-    // 交互型工具的 tool_result 由 ask_user / permission_request 卡片自身呈现，
-    // 兜底跳过（与 sessionsApi.ts 的 INTERACTIVE_RESULT_TOOLS 行为一致）。
-    if (isInteractiveToolName(data.toolName)) {
+    // 独立卡片工具的结果由各自卡片呈现，兜底跳过。
+    if (isDedicatedToolName(data.toolName)) {
       removeRuntimeStatusMessages(msg);
       return;
     }
@@ -542,6 +536,28 @@ export function processWsEvent(
 
   if (data.type === "subagent_start") {
     removeRuntimeStatusMessages(msg);
+    const msgs = msg.messagesRef.current;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const current = msgs[i];
+      if (current.type === "subagent" && current.toolId === data.toolId) {
+        msg.updateMessageAt(i, (message) =>
+          message.type === "subagent"
+            ? { ...message, agentType: data.agentType, status: "running" as const }
+            : message
+        );
+        return;
+      }
+      if (current.type === "tool_use" && current.toolId === data.toolId) {
+        msg.updateMessageAt(i, (message) => ({
+          id: message.id,
+          type: "subagent",
+          toolId: data.toolId,
+          agentType: data.agentType,
+          status: "running" as const,
+        }));
+        return;
+      }
+    }
     msg.addMessage({ type: "subagent", toolId: data.toolId, agentType: data.agentType, status: "running" });
     return;
   }

@@ -268,6 +268,53 @@ describe('WebChannel active stream reconnect', () => {
     expect(datas.some((d: { blockType?: string }) => d.blockType === 'tool_use')).toBe(true);
   });
 
+  it('projects Agent only through the dedicated subagent lifecycle', () => {
+    const channel = createChannel();
+    (channel as any).eventBus = fakeEventBus();
+    const base = {
+      timestamp: new Date().toISOString(),
+      runId: 'run-agent-1',
+      sessionId: 'session-agent-1',
+    };
+
+    channel.publishRuntimePlatformEvent({
+      ...base,
+      id: 'evt-agent-call',
+      type: 'assistant_tool_calls',
+      content: '',
+      streamed: true,
+      toolCalls: [{ id: 'call-agent-1', name: 'Agent', arguments: '{}' }],
+    } as any);
+    channel.publishRuntimePlatformEvent({
+      ...base,
+      id: 'evt-agent-invocation',
+      type: 'tool_invocation_started',
+      invocationId: 'inv-agent-1',
+      toolCallId: 'call-agent-1',
+      toolName: 'Agent',
+      executionTarget: 'server-local',
+    } as any);
+    channel.publishRuntimePlatformEvent({
+      ...base,
+      id: 'evt-agent-started',
+      type: 'subagent_started',
+      toolCallId: 'call-agent-1',
+      agentType: 'explore',
+      description: '定位刷新状态',
+      childSessionId: 'sub-1',
+      childRunId: 'child-run-1',
+      model: 'test/model',
+    } as any);
+
+    const buffer = (channel as any).eventBufferStore.get('session-agent-1');
+    const datas = buffer.events.map((event: { data: string }) => JSON.parse(event.data));
+    expect(datas).toEqual([{
+      type: 'subagent_start',
+      toolId: 'call-agent-1',
+      agentType: '定位刷新状态',
+    }]);
+  });
+
   it('does not emit artifact_created after tool_result for in-process CreateArtifact deliveries', () => {
     const channel = createChannel();
     const emitted: any[] = [];

@@ -626,7 +626,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         );
       } catch (err) {
         apiLogger.warn(
-          `[sessions] activity duration enrichment failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+          `[sessions] activity enrichment failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }

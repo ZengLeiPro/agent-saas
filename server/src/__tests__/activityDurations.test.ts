@@ -61,6 +61,17 @@ describe("transcript activity durations", () => {
         phase: "end",
       },
       {
+        id: "e-tool-started",
+        timestamp: "2026-07-01T14:00:02.000Z",
+        type: "tool_invocation_started",
+        runId: "run-1",
+        sessionId: "session-1",
+        invocationId: "run-1:call-shell",
+        toolCallId: "call-shell",
+        toolName: "Shell",
+        executionTarget: "server-local",
+      },
+      {
         id: "e-tool-completed",
         timestamp: "2026-07-01T14:00:05.000Z",
         type: "tool_invocation_completed",
@@ -77,7 +88,44 @@ describe("transcript activity durations", () => {
     const enriched = enrichTranscriptActivityDurations(parsed, events, "session-1");
 
     expect(enriched.blocks[0]).toMatchObject({ kind: "thinking", durationMs: 1750 });
-    expect(enriched.blocks[1]).toMatchObject({ kind: "tool_use", durationMs: 3210 });
+    expect(enriched.blocks[1]).toMatchObject({
+      kind: "tool_use",
+      durationMs: 3210,
+      executionStatus: "completed",
+    });
+  });
+
+  it("keeps active tools running and closes dangling tools with the parent run", () => {
+    const parsed: ParsedTranscript = {
+      sessionId: "session-status",
+      blocks: [
+        { id: "a", kind: "tool_use", title: "A", defaultOpen: false, content: "{}", toolName: "Read", toolId: "call-running" },
+        { id: "b", kind: "tool_use", title: "B", defaultOpen: false, content: "{}", toolName: "Write", toolId: "call-cancelled" },
+      ],
+      stats: { lines: 2, parsedLines: 2, parseErrors: 0 },
+    };
+    const events: PlatformEvent[] = [
+      {
+        id: "start-running", timestamp: "2026-07-01T10:00:00.000Z",
+        type: "tool_invocation_started", runId: "run-active", sessionId: "session-status",
+        invocationId: "inv-running", toolCallId: "call-running", toolName: "Read", executionTarget: "server-local",
+      },
+      {
+        id: "start-cancelled", timestamp: "2026-07-01T10:00:01.000Z",
+        type: "tool_invocation_started", runId: "run-cancelled", sessionId: "session-status",
+        invocationId: "inv-cancelled", toolCallId: "call-cancelled", toolName: "Write", executionTarget: "server-local",
+      },
+      {
+        id: "run-cancelled", timestamp: "2026-07-01T10:00:02.000Z",
+        type: "run_state_changed", runId: "run-cancelled", sessionId: "session-status",
+        status: "cancelled", previousStatus: "running",
+      },
+    ];
+
+    const enriched = enrichTranscriptActivityDurations(parsed, events, "session-status");
+
+    expect(enriched.blocks[0]).toMatchObject({ executionStatus: "running" });
+    expect(enriched.blocks[1]).toMatchObject({ executionStatus: "cancelled" });
   });
 
   it("prefers assistant_thinking.durationMs and mixes with legacy delta pairing in order", () => {
@@ -161,6 +209,7 @@ describe("transcript activity durations", () => {
           toolName: "Read",
           toolId: "call-read",
           durationMs: 850,
+          executionStatus: "running",
         },
       ],
     };
@@ -168,7 +217,32 @@ describe("transcript activity durations", () => {
     const messages = mapSessionDetailToMessages(detail);
 
     expect(messages[0]).toMatchObject({ type: "thinking", durationMs: 1200 });
-    expect(messages[1]).toMatchObject({ type: "tool_use", durationMs: 850 });
+    expect(messages[1]).toMatchObject({ type: "tool_use", durationMs: 850, executionStatus: "running" });
+  });
+
+  it("restores Agent history as one dedicated subagent row", () => {
+    const detail: ApiSessionDetail = {
+      sessionId: "session-agent",
+      stats: { lines: 1, parsedLines: 1, parseErrors: 0 },
+      blocks: [{
+        id: "tool-agent",
+        kind: "tool_use",
+        title: "工具调用: Agent",
+        defaultOpen: false,
+        content: JSON.stringify({ agent_type: "explore", description: "定位刷新状态" }),
+        toolName: "Agent",
+        toolId: "call-agent",
+        executionStatus: "running",
+      }],
+    };
+
+    expect(mapSessionDetailToMessages(detail)).toEqual([{
+      id: "tool-agent",
+      type: "subagent",
+      toolId: "call-agent",
+      agentType: "定位刷新状态",
+      status: "running",
+    }]);
   });
 
   it("does not emit an artifact delivery card from CreateArtifact tool results", () => {

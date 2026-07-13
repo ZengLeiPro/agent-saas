@@ -74,6 +74,7 @@ import {
 import type { OrgAgentSummary } from "@agent/shared";
 import { useResizableWidth } from "@/hooks/useResizableWidth";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
+import { useTenantBillingVisibility } from "@/hooks/useTenantBillingVisibility";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
 import { baseNavItems, formatShortDate } from "@/types/sidebar";
@@ -1115,6 +1116,7 @@ export function DesktopSessionSidebar({
   orgAgents = [],
 }: DesktopSessionSidebarProps) {
   const { user: authUser, logout, authEnabled, updateAvatar } = useAuth();
+  const showBilling = useTenantBillingVisibility(authUser?.tenantId);
   // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
   const compactList = authUser?.preferences?.showSessionListAvatar !== true;
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -2276,12 +2278,12 @@ export function DesktopSessionSidebar({
               setSubPanelOpen(false);
               onOpenAdminSettings?.(target);
             }}
-            onOpenBilling={() => {
+            onOpenBilling={showBilling ? () => {
               // BillingMiniBadge 只在 chat tab 上渲染，先关闭子面板并切回 chat，再命令展开面板。
               setSubPanelOpen(false);
               (onPushTab ?? onTabChange)?.("chat");
               requestOpenBillingBadge();
-            }}
+            } : undefined}
             logout={logout}
           />
 

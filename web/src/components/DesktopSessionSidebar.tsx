@@ -117,7 +117,6 @@ interface DesktopSessionSidebarProps {
 const EMPTY_UNREAD_SET: ReadonlySet<string> = new Set();
 
 // 侧边栏导航/分组的选中态：左侧 brand-accent rail + 暖橙浅底 + 字加粗。
-// 与上方「新建会话」brand-100 CTA 的语言彻底脱钩：颜色管动作，形态（rail）管状态。
 const NAV_ITEM_SELECTED =
   "relative bg-brand-accent-soft text-foreground font-semibold " +
   "before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 " +
@@ -552,10 +551,15 @@ function SidebarNav({ navItems, activeTab, isLoading, onNew, onTabChange, before
           if (activeTab !== "chat") onTabChange("chat");
         }}
         disabled={isLoading}
-        className={cn("relative flex w-full items-center rounded-lg bg-brand-600 px-2 py-2 text-sm font-medium text-white transition-all hover:bg-brand-700 hover:shadow-[0_2px_8px_-2px_rgba(46,86,225,0.35)] disabled:opacity-50 disabled:hover:bg-brand-600 disabled:hover:shadow-none", constrainNewButton && "max-w-[200px]")}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors",
+          NAV_ITEM_UNSELECTED,
+          "disabled:pointer-events-none disabled:opacity-50",
+          constrainNewButton && "max-w-[200px]",
+        )}
       >
-        <Plus className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" />
-        <span className="w-full text-center">新建会话</span>
+        <Plus className="h-4 w-4" />
+        <span>新建会话</span>
       </button>
       {navItems.map(({ tab, label }) => {
         const Icon = getNavIcon(tab);

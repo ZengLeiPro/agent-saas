@@ -10,10 +10,10 @@ import { useColors } from '../theme';
 // Shared base
 // ---------------------------------------------------------------------------
 
-function AvatarShell({ uri, fallback, size }: { uri: string | null; fallback: React.ReactNode; size: number }) {
+function AvatarShell({ uri, fallback, size }: { uri: string | number | null; fallback: React.ReactNode; size: number }) {
   const colors = useColors();
 
-  if (!uri) {
+  if (uri == null) {
     return (
       <View style={{
         width: size, height: size, borderRadius: size / 2,
@@ -27,12 +27,16 @@ function AvatarShell({ uri, fallback, size }: { uri: string | null; fallback: Re
 
   return (
     <Image
-      source={{ uri }}
+      source={typeof uri === 'number' ? uri : { uri }}
       style={{ width: size, height: size, borderRadius: size / 2 }}
       cachePolicy="disk"
     />
   );
 }
+
+/** 空值与旧的 "🤖" 哨兵值统一渲染品牌默认头像「开开」 */
+const DEFAULT_AVATAR_SENTINEL = '🤖';
+const DEFAULT_AVATAR_SOURCE = require('../../assets/kaikai-avatar.png');
 
 // ---------------------------------------------------------------------------
 // Agent Avatar
@@ -49,10 +53,14 @@ export function AgentAvatar({ avatar, username, size = 40, version }: AgentAvata
   const isEmoji = isEmojiAvatar(avatar);
 
   if (isEmoji) {
+    const isDefault = !avatar || avatar === DEFAULT_AVATAR_SENTINEL;
+    if (isDefault) {
+      return <AvatarShell uri={DEFAULT_AVATAR_SOURCE} fallback={null} size={size} />;
+    }
     return (
       <AvatarShell
         uri={null}
-        fallback={<Text style={{ fontSize: size * 0.5 }}>{avatar || '🤖'}</Text>}
+        fallback={<Text style={{ fontSize: size * 0.5 }}>{avatar}</Text>}
         size={size}
       />
     );
@@ -61,8 +69,8 @@ export function AgentAvatar({ avatar, username, size = 40, version }: AgentAvata
   const url = getAgentAvatarUrl(username || '', avatar, getServerUrl(), version);
   return (
     <AvatarShell
-      uri={url}
-      fallback={<Text style={{ fontSize: size * 0.5 }}>🤖</Text>}
+      uri={url ?? DEFAULT_AVATAR_SOURCE}
+      fallback={null}
       size={size}
     />
   );

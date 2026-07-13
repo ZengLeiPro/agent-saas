@@ -1,4 +1,4 @@
-import { Building2, MessageSquareText } from "lucide-react";
+import { MessageSquareText } from "lucide-react";
 import type { OrgAgentSummary } from "@agent/shared";
 
 export function ExpertWelcome({
@@ -14,8 +14,12 @@ export function ExpertWelcome({
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col items-center px-4 py-10 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-50 text-3xl shadow-sm dark:bg-brand-900/35" aria-hidden="true">
-        {expert.avatar || <Building2 className="h-8 w-8 text-brand-600" />}
+      <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-brand-50 text-3xl shadow-sm dark:bg-brand-900/35" aria-hidden="true">
+        {expert.avatar && expert.avatar !== "🤖" ? (
+          expert.avatar
+        ) : (
+          <img src="/kaikai-avatar.png" alt="" className="h-full w-full object-cover" />
+        )}
       </div>
       <h2 className="mt-4 text-xl font-semibold text-foreground">{expert.name}</h2>
       <div className="mt-1 text-xs font-medium text-brand-600">企业专家</div>

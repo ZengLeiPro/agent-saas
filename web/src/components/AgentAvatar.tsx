@@ -13,17 +13,32 @@ interface AgentAvatarProps {
   version?: number;
 }
 
+/** 空值与旧的 "🤖" 哨兵值统一渲染品牌默认头像「开开」 */
+const DEFAULT_AVATAR_SENTINEL = "🤖";
+const DEFAULT_AVATAR_SRC = "/kaikai-avatar.png";
+
 export function AgentAvatar({ avatar, username, size = "md", className, version }: AgentAvatarProps) {
   const px = typeof size === "number" ? size : SIZE_MAP[size];
   const isEmoji = isEmojiAvatar(avatar);
 
   if (isEmoji) {
+    const isDefault = !avatar || avatar === DEFAULT_AVATAR_SENTINEL;
+    if (isDefault) {
+      return (
+        <img
+          src={DEFAULT_AVATAR_SRC}
+          alt="开开"
+          className={cn("rounded-full object-cover shrink-0", className)}
+          style={{ width: px, height: px }}
+        />
+      );
+    }
     return (
       <div
         className={cn("flex items-center justify-center rounded-full bg-muted shrink-0", className)}
         style={{ width: px, height: px, fontSize: px * 0.5 }}
       >
-        {avatar || "🤖"}
+        {avatar}
       </div>
     );
   }

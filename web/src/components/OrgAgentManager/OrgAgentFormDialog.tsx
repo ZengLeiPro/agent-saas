@@ -1,5 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ImagePlus, Loader2, UserRound, X } from 'lucide-react';
+import { getAgentAvatarUrl } from '@agent/shared';
+
+/** 开开 8 岗位预设头像（web/public/kaikai-presets/，与场景库 8 岗位对齐） */
+const AVATAR_PRESETS = [
+  { key: 'boss', label: '老板/管理者' },
+  { key: 'sales', label: '销售' },
+  { key: 'marketing', label: '市场/运营' },
+  { key: 'procurement', label: '采购' },
+  { key: 'finance', label: '财务' },
+  { key: 'hr', label: '人事行政' },
+  { key: 'cs', label: '跟单/客服' },
+  { key: 'production', label: '项目/生产/交付' },
+] as const;
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -28,6 +41,7 @@ export function OrgAgentFormDialog({
   editing,
   onClose,
   onSubmit,
+  onUploadAvatar,
 }: {
   open: boolean;
   tenantId?: string;
@@ -35,10 +49,35 @@ export function OrgAgentFormDialog({
   editing: OrgAgentRecord | null;
   onClose: () => void;
   onSubmit: (values: OrgAgentFormValues) => Promise<void>;
+  /** 上传图片头像（仅编辑态可用；上传即时生效） */
+  onUploadAvatar?: (id: string, file: File) => Promise<{ avatar: string; avatarVersion: number }>;
 }) {
   const [values, setValues] = useState<OrgAgentFormValues>(emptyFormValues());
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [presetsOpen, setPresetsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /** 选预设 = 拉取静态图转 File 走上传链路（复用图片头像存储，零额外后端逻辑） */
+  const applyPreset = async (key: string) => {
+    if (!editing || !onUploadAvatar) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/kaikai-presets/${key}.jpg`);
+      if (!res.ok) throw new Error('预设图片加载失败');
+      const blob = await res.blob();
+      const file = new File([blob], `${key}.jpg`, { type: 'image/jpeg' });
+      const data = await onUploadAvatar(editing.id, file);
+      setValues((prev) => ({ ...prev, avatarImageUrl: data.avatar, avatar: '' }));
+      setPresetsOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+    }
+  };
   const { users } = useUsers();
   const { skills, loading: skillsLoading } = useTenantSkillOptions(tenantId);
 
@@ -51,9 +90,13 @@ export function OrgAgentFormDialog({
     if (!open) return;
     setError(null);
     if (editing) {
+      const isImageAvatar = !!editing.avatar?.startsWith('org-agent-avatars/');
       setValues({
         name: editing.name,
-        avatar: editing.avatar ?? '',
+        avatar: isImageAvatar ? '' : editing.avatar ?? '',
+        avatarImageUrl: isImageAvatar
+          ? getAgentAvatarUrl(`org-agent:${editing.id}`, editing.avatar, undefined, editing.avatarVersion)
+          : null,
         description: editing.description,
         starterPromptsText: editing.starterPrompts.join('\n'),
         instructions: editing.instructions,
@@ -134,15 +177,93 @@ export function OrgAgentFormDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label>头像 emoji</Label>
-              <Input
-                value={values.avatar}
-                maxLength={16}
-                onChange={(e) => patch({ avatar: e.target.value })}
-                placeholder="🤖"
-              />
+              <Label>头像</Label>
+              {values.avatarImageUrl ? (
+                <div className="flex items-center gap-1.5">
+                  <img src={values.avatarImageUrl} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground"
+                    title="移除图片头像（保存后生效）"
+                    onClick={() => patch({ avatarImageUrl: null })}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <Input
+                  value={values.avatar}
+                  maxLength={16}
+                  onChange={(e) => patch({ avatar: e.target.value })}
+                  placeholder="emoji，留空用开开"
+                />
+              )}
+              {editing && onUploadAvatar && (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) return;
+                      setUploading(true);
+                      setError(null);
+                      onUploadAvatar(editing.id, file)
+                        .then((data) => patch({ avatarImageUrl: data.avatar, avatar: '' }))
+                        .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+                        .finally(() => setUploading(false));
+                    }}
+                  />
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline disabled:opacity-50"
+                      disabled={uploading}
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ImagePlus className="h-3 w-3" />}
+                      {uploading ? '上传中...' : '上传图片'}
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline disabled:opacity-50"
+                      disabled={uploading}
+                      onClick={() => setPresetsOpen((prev) => !prev)}
+                    >
+                      <UserRound className="h-3 w-3" />岗位预设
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
+
+          {editing && onUploadAvatar && presetsOpen && (
+            <div className="grid grid-cols-4 gap-2 rounded-md border p-3 sm:grid-cols-8">
+              {AVATAR_PRESETS.map((preset) => (
+                <button
+                  key={preset.key}
+                  type="button"
+                  className="group flex flex-col items-center gap-1 disabled:opacity-50"
+                  disabled={uploading}
+                  title={preset.label}
+                  onClick={() => { void applyPreset(preset.key); }}
+                >
+                  <img
+                    src={`/kaikai-presets/${preset.key}.jpg`}
+                    alt={preset.label}
+                    className="h-10 w-10 rounded-full object-cover ring-1 ring-border transition group-hover:ring-2 group-hover:ring-brand-400"
+                  />
+                  <span className="w-full truncate text-center text-[10px] text-muted-foreground">{preset.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>公开说明</Label>

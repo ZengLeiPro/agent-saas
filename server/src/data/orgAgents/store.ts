@@ -17,7 +17,10 @@ export interface CreateOrgAgentInput {
   enabled: boolean;
 }
 
-export type UpdateOrgAgentInput = Partial<Omit<CreateOrgAgentInput, 'tenantId'>>;
+export type UpdateOrgAgentInput = Partial<Omit<CreateOrgAgentInput, 'tenantId'>> & {
+  /** 仅上传接口写入（伴随 avatar 路径值） */
+  avatarVersion?: number;
+};
 
 /** audience 三态匹配：用户是否被指派该专职 Agent */
 export function isAssignedToOrgAgent(record: Pick<OrgAgentRecord, 'audience'>, username: string | undefined): boolean {
@@ -102,6 +105,7 @@ export class OrgAgentStore {
         id: agent.id,
         name: agent.name,
         ...(agent.avatar ? { avatar: agent.avatar } : {}),
+        ...(agent.avatarVersion ? { avatarVersion: agent.avatarVersion } : {}),
         description: agent.description,
         starterPrompts: [...agent.starterPrompts],
         skillCount: agent.allowedSkills.length,
@@ -149,8 +153,12 @@ export class OrgAgentStore {
       if (patch.name !== undefined) record.name = patch.name;
       if (patch.avatar !== undefined) {
         if (patch.avatar) record.avatar = patch.avatar;
-        else delete record.avatar;
+        else {
+          delete record.avatar;
+          delete record.avatarVersion;
+        }
       }
+      if (patch.avatarVersion !== undefined) record.avatarVersion = patch.avatarVersion;
       if (patch.description !== undefined) record.description = patch.description;
       if (patch.starterPrompts !== undefined) record.starterPrompts = [...patch.starterPrompts];
       if (patch.instructions !== undefined) record.instructions = patch.instructions;

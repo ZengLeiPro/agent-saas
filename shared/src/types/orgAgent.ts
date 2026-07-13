@@ -25,8 +25,10 @@ export interface OrgAgentRecord {
   id: string;
   tenantId: string;
   name: string;
-  /** emoji */
+  /** emoji 或 `org-agent-avatars/<id>.<ext>` 图片路径（路径值仅由上传接口写入） */
   avatar?: string;
+  /** 图片头像的缓存版本号（上传时间戳） */
+  avatarVersion?: number;
   /** 面向成员展示的职责说明，不包含内部提示语或门禁规则 */
   description: string;
   /** 面向成员展示的示例问题，点击后仅预填输入框 */
@@ -48,6 +50,7 @@ export interface OrgAgentSummary {
   id: string;
   name: string;
   avatar?: string;
+  avatarVersion?: number;
   description: string;
   starterPrompts: string[];
   /** 只公开固有 Skill 数量，不泄漏内部 Skill id */

@@ -10,6 +10,9 @@
 
 import { Router } from 'express';
 import type { Request, Response } from 'express';
+import multer from 'multer';
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { extname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { isPlatformAdmin } from '../auth/middleware.js';
 import { auditLog } from '../data/login-logs/index.js';
@@ -18,6 +21,8 @@ import type { OrgAgentRecord, OrgAgentSummary } from '../data/orgAgents/types.js
 
 export interface OrgAgentsRouterDeps {
   orgAgentStore: OrgAgentStore;
+  /** 图片头像落盘目录（缺省 ./data/org-agent-avatars，测试可不传） */
+  orgAgentAvatarsDir?: string;
 }
 
 const audienceSchema = z.object({
@@ -71,6 +76,7 @@ function toSummary(record: OrgAgentRecord): OrgAgentSummary {
     id: record.id,
     name: record.name,
     ...(record.avatar ? { avatar: record.avatar } : {}),
+    ...(record.avatarVersion ? { avatarVersion: record.avatarVersion } : {}),
     description: record.description,
     starterPrompts: [...record.starterPrompts],
     skillCount: record.allowedSkills.length,
@@ -79,7 +85,45 @@ function toSummary(record: OrgAgentRecord): OrgAgentSummary {
 
 export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
   const { orgAgentStore } = deps;
+  const avatarsDir = deps.orgAgentAvatarsDir ?? resolve(process.cwd(), './data/org-agent-avatars');
   const router = Router();
+
+  // multer：文件名 = 记录 id + 原扩展名；目录 lazy 创建（避免测试环境目录副作用）
+  const avatarStorage = multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      try {
+        if (!existsSync(avatarsDir)) mkdirSync(avatarsDir, { recursive: true });
+        cb(null, avatarsDir);
+      } catch (err) {
+        cb(err as Error, avatarsDir);
+      }
+    },
+    filename: (req, file, cb) => {
+      const ext = extname(file.originalname).toLowerCase() || '.jpg';
+      cb(null, `${req.params.id}${ext}`);
+    },
+  });
+  const avatarUpload = multer({
+    storage: avatarStorage,
+    limits: { fileSize: 2 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (['image/png', 'image/jpeg', 'image/webp'].includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error('仅支持 PNG/JPEG/WebP 格式'));
+      }
+    },
+  });
+
+  /** 删除某记录的头像文件（含历史扩展名残留）；容错，失败不阻断主流程 */
+  function removeAvatarFiles(id: string, keep?: string): void {
+    try {
+      if (!existsSync(avatarsDir)) return;
+      for (const f of readdirSync(avatarsDir)) {
+        if (f.startsWith(`${id}.`) && f !== keep) unlinkSync(join(avatarsDir, f));
+      }
+    } catch { /* ignore cleanup errors */ }
+  }
 
   function requireUser(req: Request, res: Response): NonNullable<Request['user']> | null {
     const user = req.user;
@@ -147,6 +191,75 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
       res.json(orgAgentStore.listForUser(user.tenantId, user.username));
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : '获取失败' });
+    }
+  });
+
+  // GET /api/org-agents/avatar/:id — 公开：返回图片头像文件（注册必须先于 GET /:id）
+  router.get('/avatar/:id', (req, res) => {
+    const record = orgAgentStore.get(req.params.id);
+    if (!record?.avatar || !record.avatar.startsWith('org-agent-avatars/')) {
+      // 204 而非 404，避免 id 存在性枚举
+      res.status(204).end();
+      return;
+    }
+    const filePath = resolve(avatarsDir, '..', record.avatar);
+    // 防路径穿越：resolve 后必须落在 avatarsDir 内
+    if (!filePath.startsWith(avatarsDir + '/')) {
+      res.status(404).end();
+      return;
+    }
+    if (!existsSync(filePath)) {
+      res.status(404).end();
+      return;
+    }
+    if (req.query.v) {
+      res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      res.set('Cache-Control', 'public, max-age=86400');
+    }
+    res.sendFile(filePath);
+  });
+
+  // POST /api/org-agents/:id/avatar — 上传图片头像（admin + 租户守卫）
+  // 路径值仅在此写入；PATCH 的 avatar 字段 max(16) 只收 emoji，防止指向他租户文件
+  router.post('/:id/avatar', (req, res, next) => {
+    // 先做权限/租户守卫，再进 multer（避免越权者触发落盘）
+    const record = authorizeAdminRecordAccess(req, res, req.params.id);
+    if (!record) return;
+    avatarUpload.single('avatar')(req, res, (err: unknown) => {
+      if (err) {
+        if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+          res.status(413).json({ error: '文件大小超过 2MB 限制' });
+          return;
+        }
+        res.status(400).json({ error: err instanceof Error ? err.message : '上传失败' });
+        return;
+      }
+      next();
+    });
+  }, async (req, res) => {
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: '请选择图片文件' });
+      return;
+    }
+    try {
+      const filename = file.filename;
+      removeAvatarFiles(req.params.id, filename);
+      const version = Date.now();
+      const updated = await orgAgentStore.update(
+        req.params.id,
+        { avatar: `org-agent-avatars/${filename}`, avatarVersion: version },
+        req.user!.username,
+      );
+      if (!updated) {
+        res.status(404).json({ error: '企业专家不存在' });
+        return;
+      }
+      auditLog(req, 'org_agent_avatar_uploaded', `${updated.name}（${updated.id}）`);
+      res.json({ avatar: `/api/org-agents/avatar/${req.params.id}?v=${version}`, avatarVersion: version });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : '上传失败' });
     }
   });
 
@@ -246,6 +359,7 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
     if (!record) return;
     try {
       await orgAgentStore.remove(record.id);
+      removeAvatarFiles(record.id);
       auditLog(req, 'org_agent_deleted', `${record.name}（${record.id}）`);
       res.json({ ok: true });
     } catch (err) {

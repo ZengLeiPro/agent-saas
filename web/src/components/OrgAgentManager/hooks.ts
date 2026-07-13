@@ -65,7 +65,20 @@ export function useOrgAgentAdmin(tenantId?: string) {
     await refresh();
   }, [refresh]);
 
-  return { agents, loading, error, refresh, create, update, remove };
+  const uploadAvatar = useCallback(async (id: string, file: File): Promise<{ avatar: string; avatarVersion: number }> => {
+    const formData = new FormData();
+    formData.append('avatar', file);
+    const res = await authFetch(`/api/org-agents/${encodeURIComponent(id)}/avatar`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) throw new Error(await readError(res, '上传头像失败'));
+    const data = await res.json() as { avatar: string; avatarVersion: number };
+    await refresh();
+    return data;
+  }, [refresh]);
+
+  return { agents, loading, error, refresh, create, update, remove, uploadAvatar };
 }
 
 /** 租户可用 skill 清单：平台池启用给该租户的 + 租户自有启用的（skill 白名单多选数据源） */

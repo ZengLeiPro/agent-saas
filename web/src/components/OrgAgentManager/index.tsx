@@ -14,15 +14,27 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { SettingsPanelHeader } from '@/components/SettingsCenter/SettingsPanelHeader';
+import { OrgAgentAvatarContent } from '@/components/OrgAgentAvatar';
 import { cn } from '@/lib/utils';
 import { OrgAgentFormDialog } from './OrgAgentFormDialog';
 import { useOrgAgentAdmin } from './hooks';
 import type { OrgAgentFormValues, OrgAgentRecord } from './types';
 
-function formValuesToPayload(values: OrgAgentFormValues) {
+function formValuesToPayload(values: OrgAgentFormValues, editing: OrgAgentRecord | null) {
+  // avatar 三态：有图片头像 → 不发字段（路径值仅上传接口写入，PATCH 发路径会被 schema 拒）；
+  // emoji → 发值；原图片被移除且无 emoji → 发空串显式清除
+  const hadImage = !!editing?.avatar?.startsWith('org-agent-avatars/');
+  const emoji = values.avatar.trim();
+  const avatarPatch = values.avatarImageUrl
+    ? {}
+    : emoji
+      ? { avatar: emoji }
+      : hadImage
+        ? { avatar: '' }
+        : {};
   return {
     name: values.name.trim(),
-    ...(values.avatar.trim() ? { avatar: values.avatar.trim() } : {}),
+    ...avatarPatch,
     description: values.description.trim(),
     starterPrompts: values.starterPromptsText
       .split('\n')
@@ -58,7 +70,7 @@ function audienceText(agent: OrgAgentRecord): string {
  * DELETE 为硬删（危险操作二次确认）；日常下线引导用启用开关。
  */
 export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; tenantName?: string }) {
-  const { agents, loading, error, refresh, create, update, remove } = useOrgAgentAdmin(tenantId);
+  const { agents, loading, error, refresh, create, update, remove, uploadAvatar } = useOrgAgentAdmin(tenantId);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<OrgAgentRecord | null>(null);
   const [deleting, setDeleting] = useState<OrgAgentRecord | null>(null);
@@ -66,7 +78,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
   const [actionError, setActionError] = useState<string | null>(null);
 
   const handleSubmit = async (values: OrgAgentFormValues) => {
-    const payload = formValuesToPayload(values);
+    const payload = formValuesToPayload(values, editing);
     if (editing) {
       await update(editing.id, payload);
     } else {
@@ -146,8 +158,8 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                     <TableRow key={agent.id}>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-base">
-                            {agent.avatar || <Bot className="h-4 w-4 text-muted-foreground" />}
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-base">
+                            <OrgAgentAvatarContent agent={agent} />
                           </span>
                           <div className="min-w-0">
                             <div className="truncate text-sm font-medium">{agent.name}</div>
@@ -210,6 +222,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
         editing={editing}
         onClose={() => { setFormOpen(false); setEditing(null); }}
         onSubmit={handleSubmit}
+        onUploadAvatar={uploadAvatar}
       />
 
       <Dialog open={!!deleting} onOpenChange={(next) => { if (!next) setDeleting(null); }}>

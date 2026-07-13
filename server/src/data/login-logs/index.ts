@@ -35,7 +35,7 @@ const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
   'group_sessions_removed', 'group_sorting_updated',
   'agent_profile_updated', 'agent_persona_updated', 'agent_memory_updated',
   'agent_avatar_uploaded', 'agent_avatar_reset',
-  'org_agent_created', 'org_agent_updated', 'org_agent_deleted',
+  'org_agent_created', 'org_agent_updated', 'org_agent_deleted', 'org_agent_avatar_uploaded',
   // 质检台打开成员会话属组织管理权力行使，必须留痕（admin 也强制记录）
   'qa_session_opened',
   'skill_visibility_updated', 'skill_platform_settings_updated', 'skill_tenant_settings_updated',

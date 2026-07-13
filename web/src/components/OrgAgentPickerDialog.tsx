@@ -1,5 +1,5 @@
-import { Bot } from "lucide-react";
 import type { OrgAgentSummary } from "@agent/shared";
+import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
 
 import {
   Dialog,
@@ -43,8 +43,8 @@ export function OrgAgentPickerDialog({
               className="flex w-full items-center gap-3 rounded-lg border bg-card px-3 py-3 text-left transition-colors hover:bg-muted/60"
               onClick={() => onSelect(agent.id)}
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-base dark:bg-brand-900/35" aria-hidden="true">
-                {agent.avatar || <Bot className="h-4 w-4 text-brand-600" />}
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-50 text-base dark:bg-brand-900/35" aria-hidden="true">
+                <OrgAgentAvatarContent agent={agent} />
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{agent.name}</span>

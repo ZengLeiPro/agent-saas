@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Bot, Building2, MessageSquarePlus, Plug, Puzzle } from "lucide-react";
 import type { OrgAgentSummary } from "@agent/shared";
+import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -88,8 +89,8 @@ export function CapabilityCenter({
                   <Card key={expert.id} className="overflow-hidden transition-shadow hover:shadow-md">
                     <CardContent className="flex h-full flex-col p-5">
                       <div className="flex items-start gap-3">
-                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-2xl dark:bg-brand-900/35" aria-hidden="true">
-                          {expert.avatar || <Building2 className="h-5 w-5 text-brand-600" />}
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-brand-50 text-2xl dark:bg-brand-900/35" aria-hidden="true">
+                          <OrgAgentAvatarContent agent={expert} />
                         </span>
                         <div className="min-w-0">
                           <div className="truncate font-semibold">{expert.name}</div>

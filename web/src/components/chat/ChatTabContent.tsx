@@ -1,5 +1,6 @@
 import { type Ref, type MutableRefObject, useMemo } from "react";
-import { Building2, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
+import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { TtsProps } from "@/components/MessageItem";
 import type { TtsState } from "@/hooks/useTtsPlayer";
@@ -71,8 +72,8 @@ export function OrgAgentComposerChip({
 }) {
   return (
     <div className="flex min-w-0 items-center gap-2 rounded-lg border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-50 text-base dark:bg-brand-900/35" aria-hidden="true">
-        {orgAgent.avatar || <Building2 className="h-4 w-4 text-brand-600" />}
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-50 text-base dark:bg-brand-900/35" aria-hidden="true">
+        <OrgAgentAvatarContent agent={orgAgent} />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium text-foreground">{orgAgent.name}</span>
@@ -168,6 +169,7 @@ export function ChatTabContent({
       username: `org-agent:${orgAgent.id}`,
       name: orgAgent.name,
       ...(orgAgent.avatar ? { avatar: orgAgent.avatar } : {}),
+      ...(orgAgent.avatarVersion ? { avatarVersion: orgAgent.avatarVersion } : {}),
       updatedAt: "",
       updatedBy: "organization",
     };

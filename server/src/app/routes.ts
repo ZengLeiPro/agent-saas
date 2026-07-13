@@ -619,7 +619,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     if (runtime.orgAgentStore) {
       app.use(
         "/api/org-agents",
-        createOrgAgentsRouter({ orgAgentStore: runtime.orgAgentStore }),
+        createOrgAgentsRouter({
+          orgAgentStore: runtime.orgAgentStore,
+          orgAgentAvatarsDir: resolve(processCwd, "./data/org-agent-avatars"),
+        }),
       );
     }
   }

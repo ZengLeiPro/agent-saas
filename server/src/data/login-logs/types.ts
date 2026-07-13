@@ -13,7 +13,7 @@ export type LoginEvent =
   | 'agent_persona_viewed' | 'agent_persona_updated'
   | 'agent_memory_viewed' | 'agent_memory_updated'
   | 'agent_avatar_uploaded' | 'agent_avatar_reset'
-  | 'org_agent_created' | 'org_agent_updated' | 'org_agent_deleted'
+  | 'org_agent_created' | 'org_agent_updated' | 'org_agent_deleted' | 'org_agent_avatar_uploaded'
   | 'kb_file_read' | 'qa_session_opened' | 'message_feedback_submitted'
   | 'skill_visibility_updated' | 'skill_platform_settings_updated' | 'skill_tenant_settings_updated'
   | 'skill_promoted' | 'skill_custom_uploaded' | 'skill_custom_deleted' | 'skill_tenant_selections_updated' | 'skill_user_selections_updated'

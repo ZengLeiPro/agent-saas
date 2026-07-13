@@ -79,16 +79,18 @@ export async function uploadAgentAvatar(username: string, file: File | Blob | { 
   return data.avatar;
 }
 
-/** 判断 avatar 是 emoji 还是文件路径 */
+/** 判断 avatar 是 emoji 还是文件路径（个人 agent-avatars/ 与企业专家 org-agent-avatars/ 两种路径前缀） */
 export function isEmojiAvatar(avatar?: string): boolean {
   if (!avatar) return true;
-  return !avatar.startsWith('agent-avatars/');
+  return !avatar.startsWith('agent-avatars/') && !avatar.startsWith('org-agent-avatars/');
 }
 
-/** 获取 avatar 的显示 URL */
+/** 获取 avatar 的显示 URL；企业专家的 username 约定为 `org-agent:<id>`（见 ChatTabContent displayAgentProfile） */
 export function getAgentAvatarUrl(username: string, avatar?: string, serverUrl?: string, version?: number): string | null {
   if (!avatar || isEmojiAvatar(avatar)) return null;
   const base = serverUrl || '';
-  const url = `${base}/api/agents/avatar/${username}`;
+  const url = avatar.startsWith('org-agent-avatars/')
+    ? `${base}/api/org-agents/avatar/${encodeURIComponent(username.replace(/^org-agent:/, ''))}`
+    : `${base}/api/agents/avatar/${username}`;
   return version ? `${url}?v=${version}` : url;
 }

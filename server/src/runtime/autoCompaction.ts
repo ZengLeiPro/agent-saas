@@ -45,6 +45,9 @@ export interface AutoCompactionScheduleInput {
   sessionId: string;
   /** 刚结束的 run（评估来源，不是压缩 run） */
   finishedRunId: string;
+  /** 可被 resolveRuntimeModelOptions 解析的配置引用（group/model）。 */
+  modelRef: string;
+  /** provider 实际模型名，用于 usage / context_window 计量。 */
   model: string;
   tenantId?: string;
   userId?: string;
@@ -163,7 +166,7 @@ export class AutoCompactionService {
         sessionId: input.sessionId,
         userId: input.userId,
         tenantId: input.tenantId,
-        model: input.model,
+        model: input.modelRef,
         channel: input.channel ?? 'web',
         executionTarget: input.executionTarget,
         workspaceId: input.workspaceId,
@@ -182,7 +185,7 @@ export class AutoCompactionService {
       this.cooldownUntil.set(input.sessionId, now + ENQUEUE_COOLDOWN_MS);
       logger.info(
         `[auto-compact] enqueued session=${input.sessionId} run=${runId} `
-        + `tokens=${evaluation.currentTokens}/${evaluation.contextWindow} model=${input.model}`,
+        + `tokens=${evaluation.currentTokens}/${evaluation.contextWindow} model=${input.model} modelRef=${input.modelRef}`,
       );
     } catch (err) {
       logger.warn(`[auto-compact] schedule failed session=${input.sessionId}: ${err instanceof Error ? err.message : String(err)}`);

@@ -182,6 +182,7 @@ describe('AutoCompactionService（调度 / 让路 / 抢占）', () => {
   const scheduleInput = {
     sessionId: 'session-1',
     finishedRunId: 'run-finished',
+    modelRef: 'ark-agents/glm-5.2',
     model: 'glm-5.2',
     tenantId: 'kaiyan',
     userId: 'user-1',
@@ -193,8 +194,9 @@ describe('AutoCompactionService（调度 / 让路 / 抢占）', () => {
     const { service, upserted } = makeService();
     await service.maybeScheduleAfterRun(scheduleInput);
     expect(upserted).toHaveLength(1);
-    const run = upserted[0] as { sessionId: string; metadata: Record<string, unknown> };
+    const run = upserted[0] as { sessionId: string; model: string; metadata: Record<string, unknown> };
     expect(run.sessionId).toBe('session-1');
+    expect(run.model).toBe('ark-agents/glm-5.2');
     expect(run.metadata.autoCompaction).toBe(true);
     expect((run.metadata.wakeMessage as { content: string }).content).toBe('/compact');
   });

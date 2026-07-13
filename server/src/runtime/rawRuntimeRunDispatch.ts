@@ -1809,6 +1809,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             .then((allEvents) => autoCompaction.maybeScheduleAfterRun({
               sessionId,
               finishedRunId: runId,
+              modelRef: sessionModelRef,
               model,
               tenantId: sessionRecord.tenantId,
               userId: identitySource?.id,

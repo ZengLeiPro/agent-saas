@@ -40,6 +40,8 @@ function orgAgentRecord(overrides: Partial<OrgAgentRecord> = {}): OrgAgentRecord
     id: 'oa-test-1',
     tenantId: 'wain',
     name: '产品选型助手',
+    description: '帮助成员完成产品选型。',
+    starterPrompts: [],
     instructions: '只回答唯恩重载连接器选型问题。',
     allowedSkills: ['wain-kb'],
     audience: { exposure: 'all', usernames: [] },

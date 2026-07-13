@@ -17,7 +17,7 @@ import { useTenantSkillOptions } from './hooks';
 import { emptyFormValues, type OrgAgentFormValues, type OrgAgentRecord } from './types';
 
 /**
- * 专职 Agent 创建/编辑表单（组织管理 modal，仿 UserFormDialog 结构）
+ * 企业专家创建/编辑表单（组织管理 modal，仿 UserFormDialog 结构）
  *
  * 字段：名称 / emoji 头像 / 限定提示语 / skill 白名单多选（租户可用清单）/
  * 指派（全员 或 成员多选）/ 门禁（开关+范围描述+拒绝话术+严格度两档）/ 启用。
@@ -54,6 +54,8 @@ export function OrgAgentFormDialog({
       setValues({
         name: editing.name,
         avatar: editing.avatar ?? '',
+        description: editing.description,
+        starterPromptsText: editing.starterPrompts.join('\n'),
         instructions: editing.instructions,
         allowedSkills: [...editing.allowedSkills],
         audienceExposure: editing.audience.exposure === 'allow_users' ? 'allow_users' : 'all',
@@ -79,6 +81,20 @@ export function OrgAgentFormDialog({
       setError('名称不能为空');
       return;
     }
+    const starterPrompts = values.starterPromptsText.split('\n').map((item) => item.trim()).filter(Boolean);
+    if (starterPrompts.length > 6) {
+      setError('示例问题最多 6 条');
+      return;
+    }
+    const overlongPromptIndex = starterPrompts.findIndex((item) => item.length > 200);
+    if (overlongPromptIndex >= 0) {
+      setError(`第 ${overlongPromptIndex + 1} 条示例问题不能超过 200 个字符`);
+      return;
+    }
+    if (new Set(starterPrompts).size !== starterPrompts.length) {
+      setError('示例问题不能重复');
+      return;
+    }
     if (values.guardrailEnabled && !values.guardrailRejectionMessage.trim()) {
       setError('开启门禁时拒绝话术不能为空');
       return;
@@ -98,9 +114,9 @@ export function OrgAgentFormDialog({
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent className="flex max-h-[min(760px,calc(100vh-64px))] w-[min(640px,calc(100vw-48px))] max-w-none flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="shrink-0 border-b px-6 py-4">
-          <DialogTitle>{editing ? '编辑专职 Agent' : '创建专职 Agent'}</DialogTitle>
+          <DialogTitle>{editing ? '编辑企业专家' : '创建企业专家'}</DialogTitle>
           <DialogDescription>
-            限定提示语 + Skill 白名单 + 指派范围；员工能用不能改。
+            配置成员能看到的专家资料，以及内部提示语、固有 Skills、指派范围与门禁。
           </DialogDescription>
         </DialogHeader>
 
@@ -129,7 +145,29 @@ export function OrgAgentFormDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label>限定提示语</Label>
+            <Label>公开说明</Label>
+            <textarea
+              className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm"
+              value={values.description}
+              maxLength={500}
+              onChange={(e) => patch({ description: e.target.value })}
+              placeholder="用一两句话告诉成员：这位专家能解决什么问题"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>示例问题</Label>
+            <p className="text-xs text-muted-foreground">每行一条，最多 6 条；成员点击后只会预填输入框。</p>
+            <textarea
+              className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm"
+              value={values.starterPromptsText}
+              onChange={(e) => patch({ starterPromptsText: e.target.value })}
+              placeholder={'帮我推荐适合的产品型号\n对比这两个型号的参数'}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>内部提示语</Label>
             <textarea
               className="min-h-28 w-full rounded-md border bg-background px-3 py-2 text-sm"
               value={values.instructions}
@@ -140,8 +178,8 @@ export function OrgAgentFormDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label>Skill 白名单</Label>
-            <p className="text-xs text-muted-foreground">勾选的 Skill 是该 Agent 的固有能力；成员被指派后自动可用，无需个人勾选。</p>
+            <Label>固有 Skills</Label>
+            <p className="text-xs text-muted-foreground">勾选后成为这位企业专家的固有能力；成员无需在个人设置中再次启用。</p>
             {skillsLoading ? (
               <div className="flex items-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />加载租户 Skill 清单...

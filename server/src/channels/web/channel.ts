@@ -405,6 +405,27 @@ export class WebChannel implements BaseChannel {
     chatLogger.warn(`[chat_rejected] ${reasonCode}: ${reason} (client_msg_id=${clientMsgId})`);
   }
 
+  /** 企业专家会话的后续动作统一重新鉴权，避免停用/取消指派后从特殊路径继续执行。 */
+  private orgAgentActionAccessError(
+    client: WsClient,
+    orgAgentId: string | undefined,
+    expectedTenantId?: string,
+    assignedUsername?: string,
+  ): string | null {
+    if (!orgAgentId) return null;
+    const record = this.config.orgAgentStore?.get(orgAgentId);
+    const actor = client.user;
+    const adminExempt = actor?.role === 'admin'
+      && (isPlatformAdminUser(actor) || record?.tenantId === actor.tenantId);
+    const tenantMatches = !!record && (expectedTenantId
+      ? record.tenantId === expectedTenantId
+      : (isPlatformAdminUser(actor) || record.tenantId === actor?.tenantId));
+    const assigned = !!record && (adminExempt || isAssignedToOrgAgent(record, assignedUsername ?? actor?.username));
+    return record && record.enabled && tenantMatches && assigned
+      ? null
+      : '该企业专家当前不可用，请联系组织管理员';
+  }
+
   private resumeSubscriptions = new WeakMap<WebSocket, () => void>();
   /**
    * 追踪每个 WS 连接当前绑定的 streamId。
@@ -606,7 +627,7 @@ export class WebChannel implements BaseChannel {
     switch (input.event.type) {
       case 'session_init':
         this.eventBufferStore.create(input.sessionId, input.userId);
-        emitSession({ type: 'session', sessionId: input.event.sessionId ?? input.sessionId });
+        emitSession({ type: 'session', sessionId: input.event.sessionId ?? input.sessionId, ...(input.clientMsgId ? { client_msg_id: input.clientMsgId } : {}) });
         if (input.userId) {
           this.eventBus.emitUser(input.userId, {
             type: 'session_status',
@@ -951,6 +972,11 @@ export class WebChannel implements BaseChannel {
     // 在 resolve 之前获取 sessionId（resolve 会删除 entry）
     const pendingInteraction = interactionStore.get(interactionId);
     const sessionId = pendingInteraction?.sessionId ?? interactionStore.getSessionId(interactionId);
+    const orgAgentAccessError = this.orgAgentActionAccessError(client, pendingInteraction?.orgAgentId);
+    if (orgAgentAccessError) {
+      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: orgAgentAccessError });
+      return;
+    }
     const resolved = interactionStore.resolve(interactionId, response);
     if (!resolved) {
       const resumed = await this.tryResumePersistedInteraction(client, interactionId, response, fallbackSessionId);
@@ -1042,6 +1068,16 @@ export class WebChannel implements BaseChannel {
         this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Access denied' });
         return true;
       }
+    }
+    const orgAgentAccessError = this.orgAgentActionAccessError(
+      client,
+      meta?.orgAgentId,
+      meta?.tenantId,
+      meta?.username,
+    );
+    if (orgAgentAccessError) {
+      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: orgAgentAccessError });
+      return true;
     }
 
     const userRecord = client.user ? this.userStore?.findById(client.user.sub) : undefined;
@@ -1854,7 +1890,7 @@ export class WebChannel implements BaseChannel {
           });
         }
         if (dupEntry.sessionId) {
-          this.wsSend(ws, { type: 'session', sessionId: dupEntry.sessionId });
+          this.wsSend(ws, { type: 'session', sessionId: dupEntry.sessionId, client_msg_id: clientMsgId });
         }
         return;
       }
@@ -1871,7 +1907,7 @@ export class WebChannel implements BaseChannel {
         this.idempotencySet(user?.sub, clientMsgId, 'in_flight', streamId, { sessionId: durableRun.sessionId, runId: durableRun.runId });
         this.sendChatAck(ws, clientMsgId);
         this.wsSend(ws, { type: 'stream_id', streamId: streamId || durableRun.runId, runId: durableRun.runId, client_msg_id: clientMsgId });
-        this.wsSend(ws, { type: 'session', sessionId: durableRun.sessionId });
+        this.wsSend(ws, { type: 'session', sessionId: durableRun.sessionId, client_msg_id: clientMsgId });
         return;
       }
       this.sendChatRejected(ws, clientMsgId, 'duplicate_inflight', '该消息已处理，请发新消息');
@@ -2047,7 +2083,7 @@ export class WebChannel implements BaseChannel {
     }
 
     // ── 公司级专职 Agent 解析与门禁（2026-07 唯恩批次）──────────────────
-    // 0) /compact 等平台命令直通（跳过校验与门禁，决策 4）
+    // 0) /compact 等平台命令只跳过 LLM 话题门禁，企业专家授权校验仍必须执行
     // 1) 解析 orgAgentId：带 sessionId 以会话 meta 为准（忽略客户端值防伪造）；新会话取 msg.orgAgentId
     // 2) org agent 校验：存在 + enabled + 同租户 + 被指派（admin 豁免 audience）→ 否则 org_agent_unavailable
     // 3) personalAgent gate：无 orgAgentId 且租户关闭个人 Agent 时普通用户被拒
@@ -2066,7 +2102,7 @@ export class WebChannel implements BaseChannel {
       orgAgentId = msg.orgAgentId;
     }
     const isPlatformCommand = isCompactCommand(resolvedMessage);
-    if (orgAgentId && !isPlatformCommand) {
+    if (orgAgentId) {
       const record = this.config.orgAgentStore?.get(orgAgentId);
       const gateIdentity = sessionOwner ?? userIdentity;
       // admin 豁免 audience 收紧（2026-07 审查 F1a）：仅平台 admin 或与该 org agent
@@ -2077,7 +2113,7 @@ export class WebChannel implements BaseChannel {
       if (!record || !record.enabled || record.tenantId !== gateIdentity?.tenantId || !assigned) {
         // 跨租户/缺失/停用/未指派一律同码防枚举（决策 8）；读留发禁（决策 1/3）
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-        this.sendChatRejected(ws, clientMsgId, 'org_agent_unavailable', '该专职 Agent 当前不可用，请联系组织管理员');
+        this.sendChatRejected(ws, clientMsgId, 'org_agent_unavailable', '该企业专家当前不可用，请联系组织管理员');
         return;
       }
       orgAgentRecord = record;
@@ -2086,7 +2122,7 @@ export class WebChannel implements BaseChannel {
       const features = this.config.tenantStore?.getSettings(user.tenantId ?? DEFAULT_TENANT_ID)?.features;
       if (features?.personalAgentEnabled === false) {
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-        this.sendChatRejected(ws, clientMsgId, 'personal_agent_disabled', '当前组织未开放个人助理，请使用组织为你配置的专职 Agent');
+        this.sendChatRejected(ws, clientMsgId, 'personal_agent_disabled', '当前组织未开放个人通用 Agent，请使用组织为你配置的企业专家');
         return;
       }
     }
@@ -2223,6 +2259,7 @@ export class WebChannel implements BaseChannel {
       const enqueueSessionId = validSessionId ?? randomUUID();
       const enqueueRunId = `${Date.now()}-${randomUUID()}`;
       const streamId = String(++this.streamIdCounter);
+      let sessionPersisted = false;
       try {
         const enqueueCwd = targetCwd || resolveUserCwd(this.config.agentCwd!, userIdentity);
         const existingSessionRecord = validSessionId
@@ -2246,6 +2283,7 @@ export class WebChannel implements BaseChannel {
           ...(orgAgentId ? { orgAgentId } : {}),
         });
         await enqueueRuntime.sessionCatalog.upsert(sessionRecord);
+        sessionPersisted = true;
         // 门禁 uncertain/纯附件的 pass_flagged 落库：sessionId 到这里才确定
         flushPendingGuardrailEvent(enqueueSessionId);
         const controller = new AbortController();
@@ -2305,7 +2343,7 @@ export class WebChannel implements BaseChannel {
 
         const send = (data: object) => this.eventBus!.emitReply(ws, data);
         send({ type: 'stream_id', streamId, runId: enqueueRunId, client_msg_id: clientMsgId });
-        send({ type: 'session', sessionId: enqueueSessionId });
+        send({ type: 'session', sessionId: enqueueSessionId, client_msg_id: clientMsgId });
         if (userDisplayContent || attachmentMeta) {
           this.eventBufferStore.push(enqueueSessionId, JSON.stringify({
             type: 'user_message',
@@ -2338,9 +2376,20 @@ export class WebChannel implements BaseChannel {
         this.activeStreams.delete(streamId);
         this.wsActiveStream.delete(ws);
         await enqueueRuntime.runStore.markStatus(enqueueRunId, 'failed', errorMessage).catch(() => null);
+        if (sessionPersisted) {
+          await enqueueRuntime.sessionCatalog.markStatus(enqueueSessionId, 'error').catch((statusError) => {
+            chatLogger.warn(`[chat] failed to mark session error session=${enqueueSessionId}: ${statusError instanceof Error ? statusError.message : String(statusError)}`);
+          });
+        }
         if (this.eventBus) {
+          if (!validSessionId && sessionPersisted) {
+            this.eventBus.emitReply(ws, { type: 'session', sessionId: enqueueSessionId, client_msg_id: clientMsgId });
+          }
           this.eventBus.emitReply(ws, { type: 'done', client_msg_id: clientMsgId, error: errorMessage });
         } else {
+          if (!validSessionId && sessionPersisted) {
+            this.wsSend(ws, { type: 'session', sessionId: enqueueSessionId, client_msg_id: clientMsgId });
+          }
           this.wsSend(ws, { type: 'done', client_msg_id: clientMsgId, error: errorMessage });
         }
       }
@@ -2662,6 +2711,7 @@ export class WebChannel implements BaseChannel {
             toolCallId: event.toolCallId,
             invocationId: event.invocationId,
             userId: user?.sub,
+            orgAgentId,
             questions: event.questions,
             toolId: event.toolId,
             toolName: event.toolName,
@@ -2880,7 +2930,13 @@ export class WebChannel implements BaseChannel {
       try {
         await enqueueRuntime.sessionCatalog.upsert({ ...record, transcriptPath });
       } catch (err) {
-        chatLogger.warn(`[guardrail] session upsert failed: ${err instanceof Error ? err.message : String(err)}`);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        chatLogger.warn(`[guardrail] session upsert failed: ${errorMessage}`);
+        if (!args.validSessionId) {
+          this.idempotencySet(user?.sub, args.clientMsgId, 'failed', streamId);
+          this.sendChatRejected(ws, args.clientMsgId, 'org_agent_unavailable', '企业专家会话创建失败，请重试');
+          return;
+        }
       }
     } else {
       transcriptPath = getTranscriptPath(cwd, sessionId, owner ? { tenantId: owner.tenantId, userId: owner.id } : undefined);
@@ -2903,7 +2959,13 @@ export class WebChannel implements BaseChannel {
           updatedAt: now,
         });
       } catch (err) {
-        chatLogger.warn(`[guardrail] session meta write failed: ${err instanceof Error ? err.message : String(err)}`);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        chatLogger.warn(`[guardrail] session meta write failed: ${errorMessage}`);
+        if (!args.validSessionId) {
+          this.idempotencySet(user?.sub, args.clientMsgId, 'failed', streamId);
+          this.sendChatRejected(ws, args.clientMsgId, 'org_agent_unavailable', '企业专家会话创建失败，请重试');
+          return;
+        }
       }
     }
 
@@ -2937,7 +2999,7 @@ export class WebChannel implements BaseChannel {
       else this.wsSend(ws, data);
     };
     sendReply({ type: 'stream_id', streamId, client_msg_id: args.clientMsgId });
-    sendReply({ type: 'session', sessionId });
+    sendReply({ type: 'session', sessionId, client_msg_id: args.clientMsgId });
     this.eventBufferStore.create(sessionId, user?.sub);
     if (args.userDisplayContent || args.attachmentMeta) {
       this.eventBufferStore.push(sessionId, JSON.stringify({
@@ -3292,7 +3354,7 @@ export class WebChannel implements BaseChannel {
             markRealContent();
           }
         }
-        send({ type: 'session', sessionId });
+        send({ type: 'session', sessionId, ...(titleCtx?.clientMsgId ? { client_msg_id: titleCtx.clientMsgId } : {}) });
         // 新会话创建后立即清除缓存，确保客户端 loadSessions() 能发现新会话
         clearSessionsListCache();
         if (context.user && agentCwd && sessionId) {

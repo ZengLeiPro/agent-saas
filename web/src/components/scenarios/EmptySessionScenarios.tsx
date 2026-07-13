@@ -39,7 +39,7 @@ export function EmptySessionScenarios({ onTryScenario, onViewAll }: EmptySession
   return (
     <div className="mx-auto w-full max-w-2xl pt-[12vh]">
       <div className="mb-3 text-center text-sm text-muted-foreground">
-        不知道从哪开始？试试这些场景——点一下就把起手话术填进输入框
+        不知道从哪开始？试试这些任务模板——点一下就把起手话术填进输入框
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {recommended.map((scenario) => (
@@ -57,7 +57,7 @@ export function EmptySessionScenarios({ onTryScenario, onViewAll }: EmptySession
           onClick={onViewAll}
           className="inline-flex items-center gap-1 text-sm text-link hover:underline"
         >
-          查看全部场景
+          查看全部模板
           <ArrowRight className="h-3.5 w-3.5" />
         </button>
       </div>

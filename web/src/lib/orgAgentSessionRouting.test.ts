@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isCurrentAuthOwner, resolveNewSessionTarget } from "./orgAgentSessionRouting";
+import { resolveNewSessionTarget } from "./orgAgentSessionRouting";
 
 describe("resolveNewSessionTarget", () => {
   it("当前专职 Agent 可用时继续新建同一 Agent 会话", () => {
@@ -40,8 +40,4 @@ describe("resolveNewSessionTarget", () => {
     })).toEqual({ kind: "unavailable" });
   });
 
-  it("账号切换后拒绝旧账号迟到的专职 Agent 会话响应", () => {
-    expect(isCurrentAuthOwner("tenant-a:user-a", "tenant-b:user-b")).toBe(false);
-    expect(isCurrentAuthOwner("tenant-b:user-b", "tenant-b:user-b")).toBe(true);
-  });
 });

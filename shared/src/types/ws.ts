@@ -24,13 +24,16 @@ export type ChatRejectReasonCode =
     | 'stt_not_configured'
     | 'session_locked'
     | 'server_draining'
-    | 'duplicate_inflight';
+    | 'model_not_allowed'
+    | 'duplicate_inflight'
+    | 'personal_agent_disabled'
+    | 'org_agent_unavailable';
 
 export type WsEvent =
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string }
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
-    | { type: 'session'; sessionId: string }
+    | { type: 'session'; sessionId: string; client_msg_id?: string }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string }
     | { type: 'thinking'; content: string }
     | { type: 'text'; content: string }

@@ -463,7 +463,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       && (adminExempt || isAssignedToOrgAgent(record, meta.username));
     return {
       orgAgentId: meta.orgAgentId,
-      ...(record?.name ? { orgAgentName: record.name } : {}),
+      ...(record && record.tenantId === meta.tenantId && record.name ? { orgAgentName: record.name } : {}),
       orgAgentAvailable: available,
     };
   }
@@ -509,7 +509,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const assigned = !!record
         && (adminExempt || isAssignedToOrgAgent(record, user.username));
       if (!record || !record.enabled || record.tenantId !== user.tenantId || !assigned) {
-        res.status(403).json({ error: "该专职 Agent 当前不可用，请联系组织管理员" });
+        res.status(403).json({ error: "该企业专家当前不可用，请联系组织管理员" });
         return;
       }
 

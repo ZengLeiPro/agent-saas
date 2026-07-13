@@ -175,7 +175,7 @@ export function FirstDayGuideBar({
     },
     sprint: {
       title: "今天再跑 3 个真实任务",
-      cta: "打开场景库",
+      cta: "打开任务模板",
       action: onOpenExampleDemo,
     },
     done: {

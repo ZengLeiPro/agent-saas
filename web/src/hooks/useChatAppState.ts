@@ -31,7 +31,6 @@ import {
 import type { CompactionMessageItem, CompactionStatusEvent } from "@/lib/compaction";
 import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, pushSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl } from "@/lib/urlSync";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
-import { isCurrentAuthOwner } from "@/lib/orgAgentSessionRouting";
 import type { AdminSettingsState, AdminSettingsTarget, PlatformAdminSection } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
 import { useAuth } from "@/contexts/AuthContext";
@@ -102,9 +101,9 @@ export interface ChatAppState {
   setAdminSettingsSection: (section: string) => void;
   newSession: () => void;
   selectSession: (id: string) => void;
-  /** 专职 Agent 新会话：新建空会话并挂起 orgAgentId（首条消息 WS payload 带上） */
-  startOrgAgentSession: (agentId: string) => Promise<string | null>;
-  /** 挂起中的专职 Agent id（新会话空白态 banner 展示用；缺省 null） */
+  /** 企业专家新草稿：不创建服务端会话，首条消息 WS payload 才带上 orgAgentId */
+  startOrgAgentSession: (agentId: string) => void;
+  /** 草稿中的企业专家 id；缺省 null */
   pendingOrgAgentId: string | null;
   confirmDeleteSession: (id: string) => void;
   confirmDeleteSessions: (ids: string[]) => void;
@@ -577,6 +576,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const wsUserMsgIndexRef = useRef(-1);
   /** 是否已挂载到某个流（detach 后为 false，发起/订阅流时为 true） */
   const wsAttachedRef = useRef(false);
+  /** 新会话首条消息与服务端 session 事件的关联键；切换草稿后迟到事件不得接管当前页面。 */
+  const pendingNewSessionClientMsgIdRef = useRef<string | null>(null);
+  /** 标记所有尚未收到 session 事件的新会话消息；即使浏览器导航清掉当前草稿，也能识别迟到事件。 */
+  const newSessionClientMsgIdsRef = useRef<Set<string>>(new Set());
   /** 记录其他连接发起的流，等 idle 到达时标为 AI 回复未读 */
   const trackedAiReplyStreamsRef = useRef<Set<string>>(new Set());
   /** 引用 sendChatViaWs（定义在下面），用于在它之前定义的 callback 中 flush 排队消息 */
@@ -886,7 +889,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // ---- URL 路由同步 ----
   const TAB_LABELS: Partial<Record<AppTab, string>> = {
-    cron: '定时任务', files: '文件管理', scenarios: '场景库',
+    cron: '定时任务', files: '文件管理', scenarios: '任务模板', capabilities: '专家与能力',
   };
   const setActiveTab = useCallback((tab: AppTab) => {
     setSettingsOpen(false);
@@ -981,7 +984,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     pushAdminSettingsUrl(current.target, sec);
   }, []);
 
-  // ---- 专职 Agent 挂起态（2026-07 唯恩批次）----
+  // ---- 企业专家草稿态（2026-07 唯恩批次）----
   // ref：sendChatViaWs 首条消息（无 sessionId）时带上 orgAgentId，收到 'session' 事件
   //（会话真实建立、服务端已写 meta）后清除——ACK 只代表入队，rejected 后重发仍要带上
   //（2026-07 审查 F9）；
@@ -989,8 +992,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const pendingOrgAgentIdRef = useRef<string | null>(null);
   const [pendingOrgAgentId, setPendingOrgAgentId] = useState<string | null>(null);
   const authOwnerKey = user ? `${user.tenantId}:${user.id}` : "anonymous";
-  const authOwnerKeyRef = useRef(authOwnerKey);
-  authOwnerKeyRef.current = authOwnerKey;
   const clearPendingOrgAgent = useCallback(() => {
     pendingOrgAgentIdRef.current = null;
     setPendingOrgAgentId(null);
@@ -999,6 +1000,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const selectSessionWithUrl = useCallback((id: string) => {
     setTrashPreviewSessionId(null); // 选择正常会话时退出回收站预览
     clearPendingOrgAgent(); // 切换既有会话 = 放弃挂起的专职 Agent 新会话
+    pendingNewSessionClientMsgIdRef.current = null;
     clearUnreadAiReply(id);
     immediateSessionIdRef.current = id;
     session.selectSession(id);
@@ -1008,56 +1010,28 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const newSessionWithUrl = useCallback(() => {
     setTrashPreviewSessionId(null);
     clearPendingOrgAgent(); // 普通新会话 = 个人 Agent 路径
+    pendingNewSessionClientMsgIdRef.current = null;
     immediateSessionIdRef.current = null;
     session.newSession();
     pushUrl('chat', null);
   }, [clearPendingOrgAgent, session.newSession]);
 
   /**
-   * 专职 Agent 新会话：服务端先写现有 session meta，点击时立即获得真实 sessionId。
-   * owner key 二次核对用于拦截账号切换期间返回的旧请求，避免跨账号串 orgAgentId。
+   * 企业专家新草稿：只切换前端会话目标，不制造 meta-only 空会话。
+   * 首条消息沿用下方 sendChatViaWs 的 orgAgentId payload，由服务端一次性创建并绑定。
    */
-  const startOrgAgentSession = useCallback(async (agentId: string): Promise<string | null> => {
+  const startOrgAgentSession = useCallback((agentId: string): void => {
     const normalizedAgentId = agentId.trim();
-    if (!normalizedAgentId || !user) return null;
-    const requestOwnerKey = `${user.tenantId}:${user.id}`;
-    try {
-      const response = await authFetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orgAgentId: normalizedAgentId }),
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(payload.error || `创建专职 Agent 会话失败（${response.status}）`);
-      }
-      const payload = await response.json() as { session: ApiSessionListItem };
-      const created = payload.session;
-      if (!created?.sessionId || !isCurrentAuthOwner(requestOwnerKey, authOwnerKeyRef.current)) return null;
-
-      session.upsertSession({
-        sessionId: created.sessionId,
-        title: created.title,
-        preview: created.preview,
-        createdAtMs: created.createdAtMs,
-        updatedAtMs: created.updatedAtMs,
-        model: created.model,
-        username: created.owner?.username,
-        agent: created.agent,
-        orgAgentId: created.orgAgentId,
-        orgAgentName: created.orgAgentName,
-        orgAgentAvailable: created.orgAgentAvailable,
-      });
-      selectSessionWithUrl(created.sessionId);
-      if (activeTabRef.current !== 'chat') setActiveTab('chat');
-      return created.sessionId;
-    } catch (err) {
-      if (isCurrentAuthOwner(requestOwnerKey, authOwnerKeyRef.current)) {
-        console.error('创建专职 Agent 会话失败:', err);
-      }
-      return null;
-    }
-  }, [selectSessionWithUrl, session.upsertSession, setActiveTab, user]);
+    if (!normalizedAgentId || !user || loadingRef.current) return;
+    setTrashPreviewSessionId(null);
+    immediateSessionIdRef.current = null;
+    session.newSession();
+    pendingNewSessionClientMsgIdRef.current = null;
+    pendingOrgAgentIdRef.current = normalizedAgentId;
+    setPendingOrgAgentId(normalizedAgentId);
+    pushUrl('chat', null);
+    if (activeTabRef.current !== 'chat') setActiveTab('chat');
+  }, [session.newSession, setActiveTab, user]);
 
   useEffect(() => {
     clearPendingOrgAgent();
@@ -1467,6 +1441,15 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (data.type === 'respond_ok' || data.type === 'respond_error') {
         return;
       }
+
+      if (data.type === 'session' && data.client_msg_id && newSessionClientMsgIdsRef.current.has(data.client_msg_id)) {
+        const expectedClientMsgId = pendingNewSessionClientMsgIdRef.current;
+        newSessionClientMsgIdsRef.current.delete(data.client_msg_id);
+        if (expectedClientMsgId !== data.client_msg_id) {
+          console.warn(`[chat] ignored stale session event for ${data.client_msg_id}`);
+          return;
+        }
+      }
       if (data.type === 'abort_ok') {
         if ((data.runId && data.runId === runIdRef.current) || (data.streamId && data.streamId === streamIdRef.current)) {
           setStopping(true);
@@ -1827,6 +1810,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           const t = ackTimersRef.current.get(clientMsgId);
           if (t) { clearTimeout(t); ackTimersRef.current.delete(clientMsgId); }
           outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
+          if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
+          newSessionClientMsgIdsRef.current.delete(clientMsgId);
           // 若无其他 inflight 条目，清 loading 让用户能继续发
           if (outboxRef.current.every(e => e.state !== 'acked' && e.state !== 'sending')) {
             wsAttachedRef.current = false;
@@ -1840,6 +1825,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           const t = ackTimersRef.current.get(clientMsgId);
           if (t) { clearTimeout(t); ackTimersRef.current.delete(clientMsgId); }
           outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
+          if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
+          newSessionClientMsgIdsRef.current.delete(clientMsgId);
         },
       };
 
@@ -1858,6 +1845,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         // 专职 Agent 挂起 ref 此时才清（2026-07 审查 F9）：会话真实建立、
         // 服务端已写 meta 绑定 orgAgentId，后续 resume 以 meta 为准
         pendingOrgAgentIdRef.current = null;
+        pendingNewSessionClientMsgIdRef.current = null;
       }
 
       if (data.type === 'session_updated' && !data.isNew && trackedAiReplyStreamsRef.current.delete(data.sessionId)) {
@@ -2050,6 +2038,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 出队：移除该 entry
       const entry = outboxRef.current.find(e => e.clientMsgId === clientMsgId);
       outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
+      if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
+      newSessionClientMsgIdsRef.current.delete(clientMsgId);
       if (!entry) return;
       console.warn(`[chat] ACK timeout for ${clientMsgId}`);
       markBubbleFailed(clientMsgId, -1, '发送超时，请重试');
@@ -2081,6 +2071,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (activeSessionId) trackedAiReplyStreamsRef.current.add(activeSessionId);
     // 生成或复用 clientMsgId（vote 重试或 voice 二次调用时复用）
     const clientMsgId = existingClientMsgId || (crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    if (!activeSessionId) {
+      pendingNewSessionClientMsgIdRef.current = clientMsgId;
+      newSessionClientMsgIdsRef.current.add(clientMsgId);
+    }
 
     wsLatestSessionIdRef.current = { value: activeSessionId };
     wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
@@ -2171,6 +2165,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       markBubbleFailed(clientMsgId, wsUserMsgIndexRef.current, '网络连接失败，请重试');
       wsAttachedRef.current = false;
       setLoading(false);
+      if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
+      newSessionClientMsgIdsRef.current.delete(clientMsgId);
     } else {
       // 启动 ACK 超时定时器
       armAckTimeout(clientMsgId);

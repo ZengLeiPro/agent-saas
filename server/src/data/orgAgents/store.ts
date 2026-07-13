@@ -8,6 +8,8 @@ export interface CreateOrgAgentInput {
   tenantId: string;
   name: string;
   avatar?: string;
+  description?: string;
+  starterPrompts?: string[];
   instructions: string;
   allowedSkills: string[];
   audience: OrgAgentAudience;
@@ -53,7 +55,15 @@ export class OrgAgentStore {
     try {
       const raw = readFileSync(this.filePath, 'utf-8');
       const data: OrgAgentsFileData = JSON.parse(raw);
-      this.agents = Array.isArray(data.agents) ? data.agents : [];
+      this.agents = Array.isArray(data.agents)
+        ? data.agents.map((agent) => ({
+            ...agent,
+            description: typeof agent.description === 'string' ? agent.description : '',
+            starterPrompts: Array.isArray(agent.starterPrompts)
+              ? agent.starterPrompts.filter((item): item is string => typeof item === 'string')
+              : [],
+          }))
+        : [];
     } catch {
       this.agents = [];
     }
@@ -92,6 +102,9 @@ export class OrgAgentStore {
         id: agent.id,
         name: agent.name,
         ...(agent.avatar ? { avatar: agent.avatar } : {}),
+        description: agent.description,
+        starterPrompts: [...agent.starterPrompts],
+        skillCount: agent.allowedSkills.length,
       }));
   }
 
@@ -103,6 +116,8 @@ export class OrgAgentStore {
         tenantId: input.tenantId,
         name: input.name,
         ...(input.avatar ? { avatar: input.avatar } : {}),
+        description: input.description ?? '',
+        starterPrompts: [...(input.starterPrompts ?? [])],
         instructions: input.instructions,
         allowedSkills: [...input.allowedSkills],
         audience: { exposure: input.audience.exposure, usernames: [...input.audience.usernames] },
@@ -136,6 +151,8 @@ export class OrgAgentStore {
         if (patch.avatar) record.avatar = patch.avatar;
         else delete record.avatar;
       }
+      if (patch.description !== undefined) record.description = patch.description;
+      if (patch.starterPrompts !== undefined) record.starterPrompts = [...patch.starterPrompts];
       if (patch.instructions !== undefined) record.instructions = patch.instructions;
       if (patch.allowedSkills !== undefined) record.allowedSkills = [...patch.allowedSkills];
       if (patch.audience !== undefined) {

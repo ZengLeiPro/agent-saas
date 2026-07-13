@@ -1208,15 +1208,15 @@ export function resolveOrgAgentOverrides(
   if (!orgAgentId) return null;
   const store = config.orgAgentStore;
   if (!store) {
-    return { error: `专职 Agent 服务不可用（orgAgentId=${orgAgentId}），已终止本次运行` };
+    return { error: `企业专家服务不可用（orgAgentId=${orgAgentId}），已终止本次运行` };
   }
   const record = store.get(orgAgentId);
   if (!record || !record.enabled) {
-    return { error: '该专职 Agent 已被停用或删除，请联系组织管理员' };
+    return { error: '该企业专家已被停用或删除，请联系组织管理员' };
   }
   if (record.tenantId !== tenantId) {
     // 跨租户/租户身份缺失一律 fail-closed（与 channel 侧 org_agent_unavailable 防枚举语义一致）
-    return { error: '该专职 Agent 已被停用或删除，请联系组织管理员' };
+    return { error: '该企业专家已被停用或删除，请联系组织管理员' };
   }
   return { agent: record };
 }

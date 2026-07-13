@@ -41,9 +41,9 @@ interface ShellButton<T extends string> {
 
 const tenantSettingsSections: ShellButton<TenantSection>[] = [
   { id: "users", label: "成员", icon: Users },
-  { id: "skills", label: "Agent 与 Skill", icon: Puzzle },
-  { id: "org-agents", label: "专职 Agent", icon: Bot },
-  { id: "mcp", label: "MCP 工具", icon: Plug },
+  { id: "skills", label: "Skills", icon: Puzzle },
+  { id: "org-agents", label: "企业专家", icon: Bot },
+  { id: "mcp", label: "连接器", icon: Plug },
   { id: "billing", label: "计费", icon: WalletCards },
   { id: "files", label: "文件与数据", icon: Database },
   { id: "company", label: "公司信息", icon: Info },
@@ -747,7 +747,7 @@ export function TenantAdminShell({
   renderUsers: (tenantId?: string, tenantName?: string) => ReactNode;
   renderSkills: (tenantId?: string, tenantName?: string) => ReactNode;
   /**
-   * 「专职 Agent」section（2026-07 唯恩批次）。Desktop 两处 TenantAdminShell 实例
+   * 「企业专家」section（2026-07 唯恩批次）。Desktop 两处 TenantAdminShell 实例
    * 都必须传（漏一处 = 从聊天页打开设置 modal 时 section 空白）；mobile 本期不做，
    * 缺省时导航项整体隐藏（零变化）。
    */

@@ -175,7 +175,7 @@ export function EmptyChatRecommendCards({
           className="h-8 gap-1 text-sm"
           onClick={onViewAll}
         >
-          查看全部场景
+          查看全部模板
           <ArrowRight className="h-3.5 w-3.5" />
         </Button>
       </div>

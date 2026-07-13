@@ -25,8 +25,6 @@ const UserManager = lazy(() => import("@/components/UserManager").then(m => ({ d
 const TenantManager = lazy(() => import("@/components/TenantManager").then(m => ({ default: m.TenantManager })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.AgentProfile })));
-const AllAgentsListPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.AllAgentsList })));
-const SkillsSectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.SkillsSection })));
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
 const SkillManagerPanel = lazy(() => import("@/components/SkillManager").then(m => ({ default: m.SkillManager })));
 const UsageDashboard = lazy(() => import("@/components/UsageDashboard").then(m => ({ default: m.UsageDashboard })));
@@ -41,6 +39,7 @@ const SettingsModal = lazy(() => import("@/components/SettingsCenter").then(m =>
 const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
 const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.PlatformAdminShell })));
 const ScenariosPanelLazy = lazy(() => import("@/components/scenarios/ScenariosPanel").then(m => ({ default: m.ScenariosPanel })));
+const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
@@ -48,6 +47,7 @@ import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
 import { useScenarioDeepLink } from "@/components/scenarios/useScenarioDeepLink";
 import { FirstDayGuideBar } from "@/components/onboarding/FirstDayGuideBar";
 import { CronCreationWizard } from "@/components/onboarding/CronCreationWizard";
+import { ExpertWelcome } from "@/components/experts/ExpertWelcome";
 import type { ScenarioItem } from "@agent/shared";
 const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
 const OrgAgentManagerPanel = lazy(() => import("@/components/OrgAgentManager").then(m => ({ default: m.OrgAgentManager })));
@@ -60,7 +60,7 @@ const SuspenseFallback = (
 
 export function DesktopLayout(props: LayoutProps) {
   const {
-    sidebarSessions, unreadAiReplySessionIds, sessionId, selectSession, newSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
+    sidebarSessions, unreadAiReplySessionIds, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
     isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
@@ -74,7 +74,7 @@ export function DesktopLayout(props: LayoutProps) {
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
-    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents,
+    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
 
   const { user: authUser, updatePreferences } = useAuth();
@@ -116,7 +116,8 @@ export function DesktopLayout(props: LayoutProps) {
   // Header 标题：根据 activeTab 动态显示
   const headerTitle = useMemo(() => {
     if (activeTab === "profile") return "我的 Agent";
-    if (activeTab === "scenarios") return "场景库";
+    if (activeTab === "capabilities") return "专家与能力";
+    if (activeTab === "scenarios") return "任务模板";
     if (activeTab === "cron") return "定时任务";
     if (activeTab === "tenants") return "组织分析";
     if (activeTab === "tenant-admin") return "组织分析";
@@ -127,8 +128,8 @@ export function DesktopLayout(props: LayoutProps) {
     if (activeTab === "models") return "模型管理";
     if (activeTab === "trash") return "回收站";
     if (isTrashPreview) return "回收站预览";
-    return sidebarSessions.find(s => s.id === sessionId)?.title || agentProfile?.name || "KY Agent";
-  }, [activeTab, isTrashPreview, sidebarSessions, sessionId, agentProfile]);
+    return sidebarSessions.find(s => s.id === sessionId)?.title || activeOrgAgent?.name || (orgAgentIdentityLoading ? "企业专家" : agentProfile?.name) || "KY Agent";
+  }, [activeTab, isTrashPreview, sidebarSessions, sessionId, activeOrgAgent, agentProfile, orgAgentIdentityLoading]);
 
   // mount-once-visited：首次切换到 tab 后永久挂载
   const [cronMounted, setCronMounted] = useState(false);
@@ -142,6 +143,7 @@ export function DesktopLayout(props: LayoutProps) {
   const [platformAdminMounted, setPlatformAdminMounted] = useState(false);
   const [trashMounted, setTrashMounted] = useState(false);
   const [scenariosMounted, setScenariosMounted] = useState(false);
+  const [capabilitiesMounted, setCapabilitiesMounted] = useState(false);
   const [roleDetailId, setRoleDetailId] = useState<string | null>(null);
   const [lastTriedScenario, setLastTriedScenario] = useState<ScenarioItem | null>(null);
   const [cronWizardOpen, setCronWizardOpen] = useState(false);
@@ -149,6 +151,7 @@ export function DesktopLayout(props: LayoutProps) {
   const [tenantAdminSection, setTenantAdminSection] = useState<TenantSection>("overview");
   useEffect(() => {
     if (activeTab === "cron" && !cronMounted) setCronMounted(true);
+    if (activeTab === "capabilities" && !capabilitiesMounted) setCapabilitiesMounted(true);
     if (activeTab === "scenarios" && !scenariosMounted) setScenariosMounted(true);
     if (activeTab === "tenants" && !tenantsMounted && isPlatformAdmin) setTenantsMounted(true);
     if (activeTab === "profile" && !profileMounted) setProfileMounted(true);
@@ -159,23 +162,25 @@ export function DesktopLayout(props: LayoutProps) {
     if (activeTab === "tenant-admin" && !tenantAdminMounted && isAdmin) setTenantAdminMounted(true);
     if (activeTab === "platform-admin" && !platformAdminMounted && isPlatformAdmin) setPlatformAdminMounted(true);
     if (activeTab === "trash" && !trashMounted) setTrashMounted(true);
-  }, [activeTab, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, tenantAdminMounted, platformAdminMounted, trashMounted, scenariosMounted, isAdmin, isPlatformAdmin]);
+  }, [activeTab, capabilitiesMounted, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, tenantAdminMounted, platformAdminMounted, trashMounted, scenariosMounted, isAdmin, isPlatformAdmin]);
 
   // ---- 场景库「试一试」链路 ----
   // 整页场景库里点「试一试」：新建会话 → 预填起手 prompt（不自动发送）→ 切回聊天视图。
   // 顺序不能反：newSession 内部会清空输入框（clearComposer），必须先建会话再 setInput。
   const handleTryScenario = useCallback((prompt: string, scenario?: ScenarioItem) => {
+    if (!personalAgentEnabled || loading) return;
     if (scenario) setLastTriedScenario(scenario);
-    newSession();
+    newPersonalSession();
     setInput(prompt);
     setActiveTab("chat");
-  }, [newSession, setInput, setActiveTab]);
+  }, [loading, newPersonalSession, personalAgentEnabled, setInput, setActiveTab]);
 
   // 空会话推荐卡：当前会话本来就是空的，直接预填当前输入框即可，无需再新建会话
   const handlePrefillScenario = useCallback((prompt: string, scenario?: ScenarioItem) => {
+    if (!personalAgentEnabled || loading) return;
     if (scenario) setLastTriedScenario(scenario);
     setInput(prompt);
-  }, [setInput]);
+  }, [loading, personalAgentEnabled, setInput]);
 
   // 场景直达：消费 ?scenario=<id>（官网注册落地 / 销售场景链接），预填起手指令
   useScenarioDeepLink(handlePrefillScenario);
@@ -216,16 +221,37 @@ export function DesktopLayout(props: LayoutProps) {
     )
   ), [handleOpenRoleDetail, handlePrefillScenario, handleViewAllScenarios, roleKitV2Enabled]);
 
+  const expertEmptySlot = useMemo(() => activeOrgAgent ? (
+    <ExpertWelcome expert={activeOrgAgent} onPrefill={setInput} />
+  ) : null, [activeOrgAgent, setInput]);
+
+  const unavailableEmptySlot = useMemo(() => (
+    <div className="mx-auto flex max-w-xl flex-col items-center px-4 py-16 text-center">
+      <div className="text-lg font-semibold">当前没有可用的企业专家</div>
+      <p className="mt-2 text-sm text-muted-foreground">请联系组织管理员完成专家指派后再开始对话。</p>
+    </div>
+  ), []);
+  const identityLoadingEmptySlot = useMemo(() => (
+    <div className="mx-auto flex max-w-xl flex-col items-center px-4 py-16 text-center">
+      <div className="text-lg font-semibold">正在加载企业专家</div>
+      <p className="mt-2 text-sm text-muted-foreground">正在同步组织为你配置的专家与会话。</p>
+    </div>
+  ), []);
+
   // 非 admin 用户访问 admin-only tab 时重定向到 chat
   // 组织分析对 admin 可见；平台分析仅限平台 admin。
   useEffect(() => {
+    if (!personalAgentEnabled && (activeTab === "scenarios" || activeTab === "profile")) {
+      setActiveTab("capabilities");
+      return;
+    }
     if (!isAdmin && (activeTab === "skills" || activeTab === "usage" || activeTab === "tenant-admin")) {
       setActiveTab("chat");
     }
     if (!isPlatformAdmin && (activeTab === "tenants" || activeTab === "models" || activeTab === "platform-admin")) {
       setActiveTab("chat");
     }
-  }, [isAdmin, isPlatformAdmin, activeTab, setActiveTab]);
+  }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -256,8 +282,7 @@ export function DesktopLayout(props: LayoutProps) {
         onPreviewTrashSession={previewTrashSession}
         trashPreviewSessionId={trashPreviewSessionId}
         sidebarLayout={sidebarLayout}
-        onStartOrgAgentSession={startOrgAgentSession}
-        orgAgents={myOrgAgents}
+        personalAgentEnabled={personalAgentEnabled}
       />
 
       {/* 右侧内容区 */}
@@ -393,14 +418,17 @@ export function DesktopLayout(props: LayoutProps) {
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}
-              readOnly={isTrashPreview || activeOrgAgentReadOnly}
-              readOnlyInputPlaceholder={!isTrashPreview && activeOrgAgentReadOnly ? "该专职 Agent 当前不可用，请联系组织管理员" : undefined}
-              agentProfile={agentProfile}
+              readOnly={isTrashPreview || activeOrgAgentReadOnly || orgAgentIdentityLoading}
+              readOnlyInputPlaceholder={!isTrashPreview && orgAgentIdentityLoading ? "正在加载企业专家..." : (!isTrashPreview && activeOrgAgentReadOnly ? "该企业专家当前不可用，请联系组织管理员" : undefined)}
+              agentProfile={orgAgentIdentityLoading ? null : agentProfile}
               sessionParticipants={sessionParticipants}
-              emptySlot={activeOrgAgent ? undefined : chatEmptySlot}
+              emptySlot={activeOrgAgent ? expertEmptySlot : (orgAgentIdentityLoading ? identityLoadingEmptySlot : (personalAgentEnabled ? chatEmptySlot : unavailableEmptySlot))}
               orgAgent={isTrashPreview ? null : activeOrgAgent}
-              onNewOrgAgentConversation={activeOrgAgent && !activeOrgAgentReadOnly
-                ? () => { void startOrgAgentSession(activeOrgAgent.id); }
+              onNewOrgAgentConversation={activeOrgAgent && !activeOrgAgentReadOnly && !loading
+                ? () => { startOrgAgentSession(activeOrgAgent.id); }
+                : undefined}
+              onSwitchOrgAgent={activeOrgAgent && myOrgAgents.length > 1 && !loading
+                ? () => { pushActiveTab("capabilities"); }
                 : undefined}
             />
           </div>
@@ -432,6 +460,18 @@ export function DesktopLayout(props: LayoutProps) {
             </>
           )}
         </div>
+        {capabilitiesMounted && (
+          <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "capabilities" && "hidden")}>
+            <Suspense fallback={SuspenseFallback}>
+              <CapabilityCenterPanel
+                experts={myOrgAgents}
+                personalAgentEnabled={personalAgentEnabled}
+                onStartExpert={startOrgAgentSession}
+                actionsDisabled={loading}
+              />
+            </Suspense>
+          </div>
+        )}
         {scenariosMounted && (
           <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "scenarios" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
@@ -594,7 +634,7 @@ export function DesktopLayout(props: LayoutProps) {
             />
           </div>
         )}
-        {activeTab === "chat" && roleKitV2Enabled && roleKitConfig.firstDayGuideBar.enabled && (
+        {personalAgentEnabled && activeTab === "chat" && roleKitV2Enabled && roleKitConfig.firstDayGuideBar.enabled && (
           <FirstDayGuideBar
             activeScenario={lastTriedScenario ?? undefined}
             onOpenCronWizard={handleOpenCronWizard}
@@ -602,7 +642,7 @@ export function DesktopLayout(props: LayoutProps) {
             stageTimeoutMs={roleKitConfig.firstDayGuideBar.stageTimeoutMs}
           />
         )}
-        {roleKitV2Enabled && (
+        {personalAgentEnabled && roleKitV2Enabled && (
           <CronCreationWizard
             open={cronWizardOpen}
             scenario={cronWizardScenario}
@@ -622,11 +662,8 @@ export function DesktopLayout(props: LayoutProps) {
             section={settingsSection}
             onSectionChange={setSettingsSection}
             onClose={closeSettings}
-            renderAllAgents={() => <AllAgentsListPanel />}
             renderMemory={() => <MemorySectionPanel />}
-            renderSkills={() => <SkillsSectionPanel />}
             renderCron={() => <CronManager onJobCountChange={handleCronJobCountChange} />}
-            renderMcp={() => <McpAdminCatalogPanel />}
             renderFiles={() => (
               <FileBrowserLazy
                 onPreviewFile={openFilePreview}
@@ -637,6 +674,7 @@ export function DesktopLayout(props: LayoutProps) {
             )}
             sidebarLayout={sidebarLayout}
             onSidebarLayoutChange={handleSidebarLayoutChange}
+            personalAgentEnabled={personalAgentEnabled}
             renderTrash={() => (
               <TrashView
                 onClose={closeSettings}

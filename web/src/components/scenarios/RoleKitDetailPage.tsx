@@ -197,7 +197,7 @@ export function RoleKitDetailPage({
           </p>
         </div>
         <Badge variant="outline" className="shrink-0">
-          {roleScenarios.length} 个场景
+          {roleScenarios.length} 个任务模板
         </Badge>
       </div>
 

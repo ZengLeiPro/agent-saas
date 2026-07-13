@@ -6,7 +6,7 @@
  *   - persist → reload 往返（tmpfile+rename 原子持久化后新实例可读回）
  */
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -26,6 +26,8 @@ function createInput(overrides: Record<string, unknown> = {}) {
     tenantId: 'wain',
     name: '产品选型助手',
     avatar: '🔌',
+    description: '帮助成员完成产品选型与参数查询。',
+    starterPrompts: ['帮我推荐一个型号'],
     instructions: '你负责唯恩产品选型问答。',
     allowedSkills: ['wain-kb'],
     audience: { exposure: 'all' as const, usernames: [] },
@@ -89,6 +91,8 @@ describe('OrgAgentStore persist-reload 往返', () => {
       tenantId: 'wain',
       name: '产品选型助手',
       avatar: '🔌',
+      description: '帮助成员完成产品选型与参数查询。',
+      starterPrompts: ['帮我推荐一个型号'],
       instructions: '你负责唯恩产品选型问答。',
       allowedSkills: ['wain-kb'],
       audience: { exposure: 'all', usernames: [] },
@@ -147,7 +151,29 @@ describe('OrgAgentStore persist-reload 往返', () => {
 
     const list = store.listForUser('wain', 'alice');
     expect(list).toHaveLength(1);
-    // 裁剪视图：只有 id/name/avatar，不泄漏 instructions/guardrail/audience
-    expect(list[0]).toEqual({ id: visible.id, name: '产品选型助手', avatar: '🔌' });
+    // 裁剪视图：只含安全公开资料，不泄漏 instructions/guardrail/audience/Skill id
+    expect(list[0]).toEqual({
+      id: visible.id,
+      name: '产品选型助手',
+      avatar: '🔌',
+      description: '帮助成员完成产品选型与参数查询。',
+      starterPrompts: ['帮我推荐一个型号'],
+      skillCount: 1,
+    });
+  });
+
+  it('旧版记录缺公开字段时加载为空值，保持生产文件兼容', async () => {
+    const filePath = await tmpStorePath();
+    await writeFile(filePath, JSON.stringify({
+      version: 1,
+      agents: [{
+        id: 'oa-legacy', tenantId: 'wain', name: '旧专家', instructions: '', allowedSkills: [],
+        audience: { exposure: 'all', usernames: [] },
+        guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超范围', strictness: 'strict' },
+        enabled: true, createdAt: '', createdBy: '', updatedAt: '', updatedBy: '',
+      }],
+    }));
+    const store = new OrgAgentStore(filePath);
+    expect(store.get('oa-legacy')).toMatchObject({ description: '', starterPrompts: [] });
   });
 });

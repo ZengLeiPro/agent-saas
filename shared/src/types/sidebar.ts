@@ -21,7 +21,7 @@ export interface ChatSessionIndexItem {
   orgAgentAvailable?: boolean;
 }
 
-export type AppTab = "chat" | "scenarios" | "cron" | "tenants" | "tenant-admin" | "platform-admin" | "files" | "profile" | "skills" | "usage" | "mcp" | "models" | "settings" | "trash";
+export type AppTab = "chat" | "capabilities" | "scenarios" | "cron" | "tenants" | "tenant-admin" | "platform-admin" | "files" | "profile" | "skills" | "usage" | "mcp" | "models" | "settings" | "trash";
 
 export const baseNavItems: { tab: AppTab; label: string; adminOnly?: boolean }[] = [];
 

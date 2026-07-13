@@ -26,7 +26,7 @@ export function useOrgAgentAdmin(tenantId?: string) {
     try {
       const query = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
       const res = await authFetch(`/api/org-agents${query}`);
-      if (!res.ok) throw new Error(await readError(res, '获取专职 Agent 失败'));
+      if (!res.ok) throw new Error(await readError(res, '获取企业专家失败'));
       const data = await res.json();
       setAgents(Array.isArray(data) ? data : []);
       setError(null);
@@ -45,7 +45,7 @@ export function useOrgAgentAdmin(tenantId?: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...(tenantId ? { tenantId } : {}), ...input }),
     });
-    if (!res.ok) throw new Error(await readError(res, '创建专职 Agent 失败'));
+    if (!res.ok) throw new Error(await readError(res, '创建企业专家失败'));
     await refresh();
   }, [refresh, tenantId]);
 
@@ -55,13 +55,13 @@ export function useOrgAgentAdmin(tenantId?: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });
-    if (!res.ok) throw new Error(await readError(res, '更新专职 Agent 失败'));
+    if (!res.ok) throw new Error(await readError(res, '更新企业专家失败'));
     await refresh();
   }, [refresh]);
 
   const remove = useCallback(async (id: string) => {
     const res = await authFetch(`/api/org-agents/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error(await readError(res, '删除专职 Agent 失败'));
+    if (!res.ok) throw new Error(await readError(res, '删除企业专家失败'));
     await refresh();
   }, [refresh]);
 

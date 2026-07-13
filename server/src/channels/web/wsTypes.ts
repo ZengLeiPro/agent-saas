@@ -150,7 +150,7 @@ export type WsDownstreamEvent =
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string }
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
-    | { type: 'session'; sessionId: string }
+    | { type: 'session'; sessionId: string; client_msg_id?: string }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string }
     | { type: 'thinking'; content: string }
     | { type: 'text'; content: string }

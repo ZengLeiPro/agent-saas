@@ -27,8 +27,3 @@ export function resolveNewSessionTarget({
   if (uniqueAgentIds.length > 1) return { kind: "picker" };
   return { kind: "unavailable" };
 }
-
-/** 异步创建返回时再次核对账号，旧账号响应不得写入当前账号状态。 */
-export function isCurrentAuthOwner(requestOwnerKey: string, currentOwnerKey: string): boolean {
-  return requestOwnerKey === currentOwnerKey;
-}

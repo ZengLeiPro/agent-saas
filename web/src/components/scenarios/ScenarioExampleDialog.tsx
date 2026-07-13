@@ -49,7 +49,7 @@ export function ScenarioExampleDialog({
             {scenario.title} · 示例结果
           </DialogTitle>
           <DialogDescription className="sr-only">
-            这是一份预生成的示例交付物，展示该场景跑完后的样子
+            这是一份预生成的示例交付物，展示该任务模板跑完后的样子
           </DialogDescription>
         </DialogHeader>
 

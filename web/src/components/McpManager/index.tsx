@@ -269,8 +269,8 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
-        title="MCP 配置"
-        description={mode === "admin" ? "维护组织或全局 MCP Server Catalog。" : "添加个人 MCP、绑定密钥，并选择新会话要加载的工具。"}
+        title={mode === "admin" ? "连接器管理" : "连接器"}
+        description={mode === "admin" ? "维护组织或全局 MCP Server Catalog。" : "为我的通用 Agent 添加 MCP 连接器、绑定密钥，并选择新会话要加载的工具。"}
         actions={
           <>
             {dirty && (

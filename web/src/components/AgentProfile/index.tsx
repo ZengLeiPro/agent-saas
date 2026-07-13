@@ -30,7 +30,7 @@ export function SkillsSection() {
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SkillSelector
         headerTitle="Skills"
-        headerDescription="为 Agent 选择启用的 Skills，新会话生效。"
+        headerDescription="为我的通用 Agent 选择启用的 Skills，新会话生效。"
       />
     </div>
   );

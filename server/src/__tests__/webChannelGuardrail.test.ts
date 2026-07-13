@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WebChannel, type WebChannelConfig } from '../channels/web/channel.js';
+import { interactionStore } from '../channels/web/interactionStore.js';
 import { findTranscriptOrMetaPathBySessionId } from '../data/transcripts/index.js';
 import { readSessionMeta } from '../data/transcripts/meta.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
@@ -257,6 +258,7 @@ describe('WebChannel 专职 Agent 门禁', () => {
     // transcript 两行（刷新后气泡仍在）
     const sessionId = rig.ws.sent.find((m) => m.data?.type === 'session')?.data?.sessionId;
     expect(sessionId).toBeTruthy();
+    expect(rig.ws.sent.find((m) => m.data?.type === 'session')?.data?.client_msg_id).toBe(clientMsgId);
     const record = await rig.sessionCatalog.get(sessionId);
     expect(record?.orgAgentId).toBe(agent.id);
     const lines = (await readFile(record!.transcriptPath, 'utf-8')).trim().split('\n');
@@ -328,6 +330,95 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(rig.enqueued[1].metadata?.guardrail).toBe('pass_flagged');
     expect(rig.guardrailEvents).toHaveLength(1);
     expect(rig.guardrailEvents[0].messageText).toBe('[附件] 选型表.pdf');
+  });
+
+  it('/compact 只跳过话题分类，取消指派后的旧专家会话仍必须拒绝', async () => {
+    const rig = await makeRig();
+    const agent = await seedOrgAgent(rig, {
+      guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' },
+    });
+    await rig.send(WAIN_USER, { message: '选型问题', orgAgentId: agent.id });
+    const sessionId = rig.enqueued[0].sessionId;
+    await rig.orgAgentStore.update(agent.id, {
+      audience: { exposure: 'allow_users', usernames: ['someone_else'] },
+    }, 'wain_admin');
+
+    rig.ws.sent.length = 0;
+    await rig.send(WAIN_USER, { message: '/compact', sessionId });
+    expect(rig.ws.sent.find((m) => m.data?.type === 'chat_rejected')?.data?.reason_code).toBe('org_agent_unavailable');
+    expect(rig.enqueued).toHaveLength(1);
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  it('off_topic 新会话的专家绑定写入失败时 fail-closed，不发送 session 或合成回复', async () => {
+    const rig = await makeRig();
+    const agent = await seedOrgAgent(rig);
+    queueVerdict('off_topic');
+    vi.spyOn(rig.sessionCatalog, 'upsert').mockRejectedValueOnce(new Error('disk failed'));
+
+    await rig.send(WAIN_USER, { message: '帮我写一首诗', orgAgentId: agent.id, client_msg_id: 'msg-persist-fail' });
+
+    expect(rig.ws.sent.some((m) => m.data?.type === 'session')).toBe(false);
+    expect(rig.ws.sent.some((m) => m.data?.type === 'text')).toBe(false);
+    expect(rig.ws.sent.find((m) => m.data?.type === 'chat_rejected')?.data).toMatchObject({
+      client_msg_id: 'msg-persist-fail',
+      reason_code: 'org_agent_unavailable',
+    });
+    expect(rig.guardrailEvents).toHaveLength(0);
+    expect(rig.enqueued).toHaveLength(0);
+  });
+
+  it('首条消息调度失败时返回已绑定会话并标记 error，不留下 running 幽灵会话', async () => {
+    const rig = await makeRig();
+    const agent = await seedOrgAgent(rig, {
+      guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' },
+    });
+    const scheduler = (rig.channel as any).config.enqueueRuntime.scheduler;
+    vi.spyOn(scheduler, 'enqueue').mockRejectedValueOnce(new Error('scheduler unavailable'));
+
+    await rig.send(WAIN_USER, {
+      message: '帮我选型',
+      orgAgentId: agent.id,
+      client_msg_id: 'msg-scheduler-failed',
+    });
+
+    const sessionEvent = rig.ws.sent.find((item) => item.data?.type === 'session')?.data;
+    const doneEvent = rig.ws.sent.find((item) => item.data?.type === 'done')?.data;
+    expect(sessionEvent).toMatchObject({ client_msg_id: 'msg-scheduler-failed' });
+    expect(doneEvent).toMatchObject({ client_msg_id: 'msg-scheduler-failed', error: 'scheduler unavailable' });
+    expect(rig.ws.sent.findIndex((item) => item.data?.type === 'session'))
+      .toBeLessThan(rig.ws.sent.findIndex((item) => item.data?.type === 'done'));
+    await expect(rig.sessionCatalog.get(sessionEvent.sessionId)).resolves.toMatchObject({
+      status: 'error',
+      orgAgentId: agent.id,
+    });
+  });
+
+  it('企业专家停用或取消指派后，不消费内存中的悬挂交互', async () => {
+    const rig = await makeRig();
+    const agent = await seedOrgAgent(rig, {
+      guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' },
+    });
+    const client = { ws: rig.ws as any, user: WAIN_USER, alive: true, lastActivityAt: Date.now() };
+
+    for (const [interactionId, patch] of [
+      ['interaction-unassigned', { audience: { exposure: 'allow_users', usernames: ['someone_else'] } }],
+      ['interaction-disabled', { audience: { exposure: 'all', usernames: [] }, enabled: false }],
+    ] as const) {
+      await rig.orgAgentStore.update(agent.id, patch as any, 'wain_admin');
+      const pending = interactionStore.create(interactionId, 'ask_user', {
+        sessionId: 'session-pending',
+        userId: WAIN_USER.sub,
+        orgAgentId: agent.id,
+      });
+      rig.ws.sent.length = 0;
+      (rig.channel as any).handleRespond(client, { action: 'respond', interactionId, answers: {} });
+      await flushMicrotasks();
+      expect(rig.ws.sent.find((m) => m.data?.type === 'respond_error')?.data?.error).toContain('企业专家当前不可用');
+      expect(interactionStore.get(interactionId)).toBeTruthy();
+      interactionStore.resolve(interactionId, { answers: {} });
+      await pending;
+    }
   });
 
   it('门禁配置链缺省 → 门禁旁路，org 会话行为与改造前一致（兼容红线）', async () => {

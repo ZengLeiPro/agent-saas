@@ -4,7 +4,7 @@
  * 权限三档（仿 agents.ts）：
  *   - 平台 admin：跨组织全量（?tenantId= 过滤）
  *   - 组织 admin：仅本租户，全字段读写；创建时 body.tenantId 强制覆写为自身租户
- *   - 普通用户：仅本租户 enabled + 被指派的裁剪视图（id/name/avatar），
+ *   - 普通用户：仅本租户 enabled + 被指派的安全公开视图（资料/示例问题/Skill 数量），
  *     不泄漏 instructions/guardrail/audience；未被指派 GET /:id 一律 404 防枚举
  */
 
@@ -32,10 +32,16 @@ const guardrailSchema = z.object({
   strictness: z.enum(['strict', 'lenient']).default('strict'),
 });
 
+const starterPromptsSchema = z.array(z.string().trim().min(1).max(200))
+  .max(6)
+  .refine((items) => new Set(items).size === items.length, 'starter prompts must be unique');
+
 const createOrgAgentSchema = z.object({
   tenantId: z.string().min(1).max(64).optional(),
-  name: z.string().min(1).max(30),
+  name: z.string().trim().min(1).max(30),
   avatar: z.string().max(16).optional(),
+  description: z.string().trim().max(500).default(''),
+  starterPrompts: starterPromptsSchema.default([]),
   instructions: z.string().max(8000).default(''),
   allowedSkills: z.array(z.string().min(1).max(200)).default([]),
   audience: audienceSchema.default({ exposure: 'all', usernames: [] }),
@@ -49,8 +55,10 @@ const createOrgAgentSchema = z.object({
 });
 
 const updateOrgAgentSchema = z.object({
-  name: z.string().min(1).max(30).optional(),
+  name: z.string().trim().min(1).max(30).optional(),
   avatar: z.string().max(16).optional(),
+  description: z.string().trim().max(500).optional(),
+  starterPrompts: starterPromptsSchema.optional(),
   instructions: z.string().max(8000).optional(),
   allowedSkills: z.array(z.string().min(1).max(200)).optional(),
   audience: audienceSchema.optional(),
@@ -63,6 +71,9 @@ function toSummary(record: OrgAgentRecord): OrgAgentSummary {
     id: record.id,
     name: record.name,
     ...(record.avatar ? { avatar: record.avatar } : {}),
+    description: record.description,
+    starterPrompts: [...record.starterPrompts],
+    skillCount: record.allowedSkills.length,
   };
 }
 
@@ -92,7 +103,7 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
     }
     const record = orgAgentStore.get(id);
     if (!record) {
-      res.status(404).json({ error: '专职 Agent 不存在' });
+      res.status(404).json({ error: '企业专家不存在' });
       return null;
     }
     if (!isPlatformAdmin(user) && record.tenantId !== user.tenantId) {
@@ -161,6 +172,8 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
         tenantId,
         name: parsed.data.name,
         ...(parsed.data.avatar ? { avatar: parsed.data.avatar } : {}),
+        description: parsed.data.description,
+        starterPrompts: parsed.data.starterPrompts,
         instructions: parsed.data.instructions,
         allowedSkills: parsed.data.allowedSkills,
         audience: parsed.data.audience,
@@ -181,7 +194,7 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
     const record = orgAgentStore.get(req.params.id);
     if (user.role === 'admin') {
       if (!record) {
-        res.status(404).json({ error: '专职 Agent 不存在' });
+        res.status(404).json({ error: '企业专家不存在' });
         return;
       }
       if (!isPlatformAdmin(user) && record.tenantId !== user.tenantId) {
@@ -198,7 +211,7 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
       || !record.enabled
       || !isAssignedToOrgAgent(record, user.username)
     ) {
-      res.status(404).json({ error: '专职 Agent 不存在' });
+      res.status(404).json({ error: '企业专家不存在' });
       return;
     }
     res.json(toSummary(record));
@@ -216,7 +229,7 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
     try {
       const updated = await orgAgentStore.update(record.id, parsed.data, req.user!.username);
       if (!updated) {
-        res.status(404).json({ error: '专职 Agent 不存在' });
+        res.status(404).json({ error: '企业专家不存在' });
         return;
       }
       const changed = Object.keys(parsed.data).join(', ');

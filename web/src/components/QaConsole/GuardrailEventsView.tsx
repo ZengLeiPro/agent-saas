@@ -42,7 +42,7 @@ export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-4">
           <div className="space-y-1.5">
-            <Label>专职 Agent</Label>
+            <Label>企业专家</Label>
             <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={orgAgentId} onChange={(e) => setOrgAgentId(e.target.value)}>
               <option value="">全部</option>
               {orgAgents.map((agent) => (
@@ -91,7 +91,7 @@ export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string
                 <TableRow>
                   <TableHead>时间</TableHead>
                   <TableHead>成员</TableHead>
-                  <TableHead>专职 Agent</TableHead>
+                  <TableHead>企业专家</TableHead>
                   <TableHead>判定</TableHead>
                   <TableHead>提问内容</TableHead>
                 </TableRow>

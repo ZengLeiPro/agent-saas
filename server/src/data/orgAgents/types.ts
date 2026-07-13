@@ -30,6 +30,10 @@ export interface OrgAgentRecord {
   name: string;
   /** emoji */
   avatar?: string;
+  /** 面向成员展示的职责说明，不包含内部提示语或门禁规则 */
+  description: string;
+  /** 面向成员展示的示例问题，点击后仅预填输入框 */
+  starterPrompts: string[];
   /** 限定提示语 ≤8000，注入 {{ORG_AGENT_INSTRUCTIONS}} */
   instructions: string;
   /** skill id 白名单；绑定项是该 Agent 的固有能力，不依赖成员个人 Skill 勾选 */
@@ -43,11 +47,15 @@ export interface OrgAgentRecord {
   updatedBy: string;
 }
 
-/** 普通用户可见的裁剪视图（不泄漏 instructions/guardrail/audience） */
+/** 普通用户可见的安全公开视图（不泄漏 instructions/guardrail/audience/Skill id） */
 export interface OrgAgentSummary {
   id: string;
   name: string;
   avatar?: string;
+  description: string;
+  starterPrompts: string[];
+  /** 只公开固有 Skill 数量，不泄漏内部 Skill id */
+  skillCount: number;
 }
 
 export interface OrgAgentsFileData {

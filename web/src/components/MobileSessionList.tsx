@@ -53,6 +53,8 @@ interface MobileSessionListProps {
   renderTenantAdmin?: () => ReactNode;
   renderPlatformAdmin?: () => ReactNode;
   renderFileBrowser?: () => ReactNode;
+  renderCapabilities?: () => ReactNode;
+  renderTaskTemplates?: () => ReactNode;
   renderAgentProfile?: () => ReactNode;
   renderSkillManager?: () => ReactNode;
   renderMcpManager?: () => ReactNode;
@@ -90,6 +92,8 @@ export function MobileSessionList({
   renderTenantAdmin,
   renderPlatformAdmin,
   renderFileBrowser,
+  renderCapabilities,
+  renderTaskTemplates,
   renderAgentProfile,
   renderSkillManager,
   renderMcpManager,
@@ -220,6 +224,7 @@ export function MobileSessionList({
   // 有行刚收回时（300ms 内），点击任意位置不执行选择
   const handleSelect = useCallback(
     (id: string) => {
+      if (isLoading && !activeSessionIdRef.current) return;
       if (swipeOpenIdRef.current) {
         setSwipeOpenId(null);
         return;
@@ -229,7 +234,7 @@ export function MobileSessionList({
       }
       onSelect(id);
     },
-    [onSelect],
+    [isLoading, onSelect],
   );
 
   // 点击分组（带防误触）
@@ -261,8 +266,12 @@ export function MobileSessionList({
 
 
   const navItems = useMemo(
-    () => baseNavItems.filter((item) => !item.adminOnly || isAdmin),
-    [isAdmin],
+    () => [
+      ...baseNavItems.filter((item) => !item.adminOnly || isAdmin),
+      { tab: "capabilities" as AppTab, label: "专家与能力" },
+      ...(renderTaskTemplates ? [{ tab: "scenarios" as AppTab, label: "任务模板" }] : []),
+    ],
+    [isAdmin, renderTaskTemplates],
   );
 
   // 打开重命名弹窗
@@ -351,6 +360,7 @@ export function MobileSessionList({
           </div>
           <div className="mt-1 text-xs text-muted-foreground/60">
             <span>{sourceDisplayText(s.source)}</span>
+            {s.orgAgentName && <span> · {s.orgAgentName}</span>}
             {isAdmin && s.owner && (
               <span> - {s.owner.realName || s.owner.username}</span>
             )}
@@ -760,13 +770,13 @@ export function MobileSessionList({
             {/* Pill tabs */}
             {onTabChange && (
               <nav className="px-4 pb-3">
-                <div className="flex gap-2">
+                <div className="flex gap-2 overflow-x-auto pb-1">
                   {navItems.map(({ tab, label }) => (
                     <button
                       key={tab}
                       type="button"
                       className={cn(
-                        "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+                        "shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
                         activeTab === tab && !showTrash
                           ? "bg-foreground text-background"
                           : "border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -779,7 +789,7 @@ export function MobileSessionList({
                   <button
                     type="button"
                     className={cn(
-                      "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+                      "shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
                       activeTab === "files" && !showTrash
                         ? "bg-foreground text-background"
                         : "border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -791,7 +801,7 @@ export function MobileSessionList({
                   <button
                     type="button"
                     className={cn(
-                      "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+                      "shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
                       showTrash
                         ? "bg-foreground text-background"
                         : "border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -849,6 +859,18 @@ export function MobileSessionList({
                 </div>
               </ScrollArea>
             </div>
+
+            {renderCapabilities && (
+              <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "capabilities" && "hidden")} style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+                {renderCapabilities()}
+              </div>
+            )}
+
+            {renderTaskTemplates && (
+              <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "scenarios" && "hidden")} style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+                {renderTaskTemplates()}
+              </div>
+            )}
 
             {/* Cron tab */}
             {renderCronManager && (

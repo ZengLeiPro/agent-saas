@@ -89,7 +89,7 @@ export function ScenariosPanel({
     return (
       <div className="flex h-full items-center justify-center gap-2 text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
-        <span className="text-sm">加载场景库...</span>
+        <span className="text-sm">加载任务模板...</span>
       </div>
     );
   }
@@ -97,7 +97,7 @@ export function ScenariosPanel({
   if (error || !library) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
-        <span className="text-sm">{error || "场景库暂时不可用"}</span>
+        <span className="text-sm">{error || "任务模板暂时不可用"}</span>
         <Button type="button" variant="outline" size="sm" onClick={reload}>
           重试
         </Button>
@@ -123,9 +123,9 @@ export function ScenariosPanel({
       <div className="mb-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold">场景库</h1>
+            <h1 className="text-xl font-semibold">任务模板</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              每个岗位，一个 AI 同事——挑一个场景，点「试一试」即可开跑，起手话术可再编辑。
+              按岗位挑一个任务模板，点「试一试」即可预填起手话术，发送前仍可编辑。
             </p>
           </div>
           {activeRole !== "all" && onOpenRoleDetail && (
@@ -161,7 +161,7 @@ export function ScenariosPanel({
       {/* 卡片流网格 */}
       {scenarios.length === 0 ? (
         <div className="py-16 text-center text-sm text-muted-foreground">
-          该岗位暂无预置场景
+          该岗位暂无任务模板
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -196,7 +196,7 @@ export function ScenariosPanel({
 
                 {/* 三段式剧本：以「→」切分为步骤 */}
                 <div>
-                  <div className="mb-2 font-medium">这个场景怎么跑</div>
+                  <div className="mb-2 font-medium">这个任务怎么跑</div>
                   <ol className="space-y-2">
                     {detail.story.split("→").map((step, idx) => (
                       <li key={idx} className="flex gap-2">

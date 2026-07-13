@@ -18,7 +18,7 @@ async function fetchScenarioLibrary(): Promise<ScenarioLibraryResponse> {
     inflight = (async () => {
       const res = await authFetch("/api/scenarios");
       if (!res.ok) {
-        throw new Error(`加载场景库失败 (${res.status})`);
+        throw new Error(`加载任务模板失败 (${res.status})`);
       }
       const data = (await res.json()) as ScenarioLibraryResponse;
       cachedLibrary = data;

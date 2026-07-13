@@ -17,15 +17,15 @@ import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { getPreviewFileType } from "@agent/shared";
 import { useAuth } from "@/contexts/AuthContext";
 import { useScenarioDeepLink } from "@/components/scenarios/useScenarioDeepLink";
+import { ExpertWelcome } from "@/components/experts/ExpertWelcome";
 import type { LayoutProps } from "./types";
+import type { ScenarioItem } from "@agent/shared";
 
 const CronManager = lazy(() => import("@/components/CronManager").then(m => ({ default: m.CronManager })));
 const UserManager = lazy(() => import("@/components/UserManager").then(m => ({ default: m.UserManager })));
 const TenantManager = lazy(() => import("@/components/TenantManager").then(m => ({ default: m.TenantManager })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.AgentProfile })));
-const AllAgentsListPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.AllAgentsList })));
-const SkillsSectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.SkillsSection })));
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
 const SkillManagerPanel = lazy(() => import("@/components/SkillManager").then(m => ({ default: m.SkillManager })));
 const McpManagerPanel = lazy(() => import("@/components/McpManager").then(m => ({ default: m.McpManager })));
@@ -37,6 +37,8 @@ const TenantRemoteHandsManagerPanel = lazy(() => import("@/components/TenantRemo
 const ToolControlsManagerPanel = lazy(() => import("@/components/ToolControlsManager").then(m => ({ default: m.ToolControlsManager })));
 const SignupConfigManagerPanel = lazy(() => import("@/components/SignupConfigManager").then(m => ({ default: m.SignupConfigManager })));
 const SettingsModal = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsModal })));
+const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
+const ScenariosPanelLazy = lazy(() => import("@/components/scenarios/ScenariosPanel").then(m => ({ default: m.ScenariosPanel })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
 const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
@@ -50,7 +52,7 @@ const SuspenseFallback = (
 
 export function MobileLayout(props: LayoutProps) {
   const {
-    sidebarSessions, unreadAiReplySessionIds, sessionId, selectSession, newSession, confirmDeleteSession, renameSession, autoTitleSession,
+    sidebarSessions, unreadAiReplySessionIds, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, renameSession, autoTitleSession,
     isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
@@ -63,7 +65,7 @@ export function MobileLayout(props: LayoutProps) {
     previewFilePath, previewFileOwner, openFilePreview, closeFilePreview,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
-    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly,
+    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
   const { user: authUser } = useAuth();
   const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
@@ -74,20 +76,30 @@ export function MobileLayout(props: LayoutProps) {
     setActiveTab("chat");
   }, [setActiveTab]);
 
+  // 一级页面实际渲染在移动端抽屉中：直达 URL 与浏览器前进/后退时必须同步打开。
+  useEffect(() => {
+    if (activeTab !== "chat") setSheetOpen(true);
+  }, [activeTab]);
+
   // 场景直达：消费 ?scenario=<id>（官网注册落地 / 销售场景链接），预填起手指令
   const handleScenarioPrefill = useCallback((prompt: string) => {
+    if (!personalAgentEnabled || loading) return;
     setInput(prompt);
-  }, [setInput]);
+  }, [loading, personalAgentEnabled, setInput]);
   useScenarioDeepLink(handleScenarioPrefill);
 
   useEffect(() => {
+    if (!personalAgentEnabled && (activeTab === "scenarios" || activeTab === "profile")) {
+      setActiveTab("capabilities");
+      return;
+    }
     if (!isAdmin && (activeTab === "skills" || activeTab === "usage" || activeTab === "tenant-admin")) {
       setActiveTab("chat");
     }
     if (!isPlatformAdmin && (activeTab === "tenants" || activeTab === "models" || activeTab === "platform-admin")) {
       setActiveTab("chat");
     }
-  }, [isAdmin, isPlatformAdmin, activeTab, setActiveTab]);
+  }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
 
   // iOS 键盘适配
   useEffect(() => {
@@ -173,7 +185,7 @@ export function MobileLayout(props: LayoutProps) {
               </span>
             ) : (
               <>
-                <div className="truncate text-base font-semibold">KY Agent</div>
+                <div className="truncate text-base font-semibold">{activeOrgAgent?.name || (orgAgentIdentityLoading ? "企业专家" : agentProfile?.name) || "KY Agent"}</div>
                 {sessionId ? (
                   <Badge variant="secondary" className="hidden sm:inline-flex">
                     {sessionId.slice(0, 8)}
@@ -300,6 +312,31 @@ export function MobileLayout(props: LayoutProps) {
                   />
                 </Suspense>
               )}
+              renderCapabilities={() => (
+                <Suspense fallback={SuspenseFallback}>
+                  <CapabilityCenterPanel
+                    experts={myOrgAgents}
+                    personalAgentEnabled={personalAgentEnabled}
+                    actionsDisabled={loading}
+                    onStartExpert={(expertId) => {
+                      startOrgAgentSession(expertId);
+                      closeDrawer();
+                    }}
+                  />
+                </Suspense>
+              )}
+              renderTaskTemplates={personalAgentEnabled ? () => (
+                <Suspense fallback={SuspenseFallback}>
+                  <ScenariosPanelLazy
+                    onTryScenario={(prompt: string, _scenario: ScenarioItem) => {
+                      if (loading) return;
+                      newPersonalSession();
+                      setInput(prompt);
+                      closeDrawer();
+                    }}
+                  />
+                </Suspense>
+              ) : undefined}
               renderAgentProfile={() => <Suspense fallback={SuspenseFallback}><AgentProfilePanel /></Suspense>}
               renderSkillManager={() => <Suspense fallback={SuspenseFallback}><SkillManagerPanel mode={isPlatformAdmin ? "platform" : "tenant"} tenantIdScope={isPlatformAdmin ? undefined : authUser?.tenantId} /></Suspense>}
               renderMcpManager={() => <Suspense fallback={SuspenseFallback}><McpManagerPanel /></Suspense>}
@@ -345,13 +382,29 @@ export function MobileLayout(props: LayoutProps) {
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}
-              readOnly={isTrashPreview || activeOrgAgentReadOnly}
-              readOnlyInputPlaceholder={!isTrashPreview && activeOrgAgentReadOnly ? "该专职 Agent 当前不可用，请联系组织管理员" : undefined}
-              agentProfile={agentProfile}
+              readOnly={isTrashPreview || activeOrgAgentReadOnly || orgAgentIdentityLoading}
+              readOnlyInputPlaceholder={!isTrashPreview && orgAgentIdentityLoading ? "正在加载企业专家..." : (!isTrashPreview && activeOrgAgentReadOnly ? "该企业专家当前不可用，请联系组织管理员" : undefined)}
+              agentProfile={orgAgentIdentityLoading ? null : agentProfile}
               sessionParticipants={sessionParticipants}
+              emptySlot={activeOrgAgent
+                ? <ExpertWelcome expert={activeOrgAgent} onPrefill={setInput} />
+                : (orgAgentIdentityLoading ? (
+                  <div className="px-6 py-16 text-center">
+                    <div className="font-semibold">正在加载企业专家</div>
+                    <p className="mt-2 text-sm text-muted-foreground">正在同步组织配置。</p>
+                  </div>
+                ) : (!personalAgentEnabled ? (
+                  <div className="px-6 py-16 text-center">
+                    <div className="font-semibold">当前没有可用的企业专家</div>
+                    <p className="mt-2 text-sm text-muted-foreground">请联系组织管理员完成专家指派。</p>
+                  </div>
+                ) : undefined))}
               orgAgent={isTrashPreview ? null : activeOrgAgent}
-              onNewOrgAgentConversation={activeOrgAgent && !activeOrgAgentReadOnly
-                ? () => { void startOrgAgentSession(activeOrgAgent.id); }
+              onNewOrgAgentConversation={activeOrgAgent && !activeOrgAgentReadOnly && !loading
+                ? () => { startOrgAgentSession(activeOrgAgent.id); }
+                : undefined}
+              onSwitchOrgAgent={activeOrgAgent && myOrgAgents.length > 1 && !loading
+                ? () => { setActiveTab("capabilities"); setSheetOpen(true); }
                 : undefined}
             />
           }
@@ -375,11 +428,8 @@ export function MobileLayout(props: LayoutProps) {
           section={settingsSection}
           onSectionChange={setSettingsSection}
           onClose={closeSettings}
-          renderAllAgents={() => <AllAgentsListPanel />}
           renderMemory={() => <MemorySectionPanel />}
-          renderSkills={() => <SkillsSectionPanel />}
           renderCron={() => <CronManager />}
-          renderMcp={() => <McpAdminCatalogPanel />}
           renderFiles={() => (
             <FileBrowserLazy
               onPreviewFile={openFilePreview}
@@ -388,6 +438,7 @@ export function MobileLayout(props: LayoutProps) {
               reserveCloseButtonSpace
             />
           )}
+          personalAgentEnabled={personalAgentEnabled}
         />
 
         {adminSettings?.target === "tenant" && (

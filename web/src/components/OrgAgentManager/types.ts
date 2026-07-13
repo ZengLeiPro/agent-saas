@@ -9,6 +9,8 @@ export type {
 export interface OrgAgentFormValues {
   name: string;
   avatar: string;
+  description: string;
+  starterPromptsText: string;
   instructions: string;
   allowedSkills: string[];
   audienceExposure: 'all' | 'allow_users';
@@ -26,6 +28,8 @@ export function emptyFormValues(): OrgAgentFormValues {
   return {
     name: '',
     avatar: '',
+    description: '',
+    starterPromptsText: '',
     instructions: '',
     allowedSkills: [],
     audienceExposure: 'all',

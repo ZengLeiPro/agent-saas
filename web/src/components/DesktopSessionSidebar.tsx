@@ -43,11 +43,6 @@ import { SessionShareDialog } from "@/components/chat/SessionShareDialog";
 import { TrashView } from "@/components/chat/TrashView";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
-import {
-  matchRoleIdByPosition,
-  useScenarioLibrary,
-} from "@/components/scenarios/useScenarioLibrary";
-import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
 
 import { refreshAll } from "@/lib/refreshBus";
 import { requestOpenBillingBadge } from "@/lib/billingBadgeBus";
@@ -70,7 +65,6 @@ import { useGroups } from "@/hooks/useGroups";
 import {
   applyGroupOrder,
 } from "@agent/shared";
-import type { OrgAgentSummary } from "@agent/shared";
 import { useResizableWidth } from "@/hooks/useResizableWidth";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTenantBillingVisibility } from "@/hooks/useTenantBillingVisibility";
@@ -115,13 +109,8 @@ interface DesktopSessionSidebarProps {
   /** 完整未读集（不受分页影响），用于左栏各视图/分组的聚合红点 */
   unreadAiReplySessionIds?: ReadonlySet<string>;
   sidebarLayout?: "double" | "single";
-  /**
-   * 专职 Agent 入口（2026-07 唯恩批次）：点击无既有会话时新建并挂起 orgAgentId，
-   * 首条消息的 WS payload 带上。缺省时入口零渲染。
-   */
-  onStartOrgAgentSession?: (agentId: string) => void | Promise<string | null>;
-  /** App 单一数据源下发，避免侧栏重复请求及账号切换状态分叉。 */
-  orgAgents?: OrgAgentSummary[];
+  /** 关闭时隐藏只适用于个人通用 Agent 的任务模板入口。 */
+  personalAgentEnabled?: boolean;
 }
 
 /** 稳定的空集兜底，避免 prop 缺省时每次 render 新建 Set 触发 useMemo 失效 */
@@ -391,11 +380,12 @@ function SessionRow({
         </span>
         {session.orgAgentId && (
           <span
-            className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-brand-50 text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
-            title={session.orgAgentName || "公司专职 Agent"}
-            aria-label={`专职 Agent：${session.orgAgentName || ""}`}
+            className="flex max-w-24 shrink-0 items-center gap-1 rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
+            title={session.orgAgentName || "企业专家"}
+            aria-label={`企业专家：${session.orgAgentName || ""}`}
           >
             <Bot className="h-3 w-3" />
+            <span className="truncate">{session.orgAgentName || "企业专家"}</span>
           </span>
         )}
         <span
@@ -462,8 +452,8 @@ function SessionRow({
             {session.orgAgentId && (
               <span
                 className="ml-1 flex h-4 w-4 shrink-0 items-center justify-center rounded bg-brand-50 text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
-                title={session.orgAgentName || "公司专职 Agent"}
-                aria-label={`专职 Agent：${session.orgAgentName || ""}`}
+                title={session.orgAgentName || "企业专家"}
+                aria-label={`企业专家：${session.orgAgentName || ""}`}
               >
                 <Bot className="h-3 w-3" />
               </span>
@@ -542,6 +532,7 @@ interface SidebarNavProps {
 
 function getNavIcon(tab: AppTab) {
   if (tab === "profile") return Bot;
+  if (tab === "capabilities") return Building2;
   if (tab === "settings") return Settings2;
   if (tab === "cron") return Clock;
   if (tab === "mcp") return Plug;
@@ -587,179 +578,6 @@ function SidebarNav({ navItems, activeTab, isLoading, onNew, onTabChange, before
         );
       })}
     </nav>
-  );
-}
-
-function RoleKitSidebarHint({
-  onTabChange,
-  beforeNavigate,
-}: {
-  onTabChange?: (tab: AppTab) => void;
-  beforeNavigate?: () => void;
-}) {
-  const { user } = useAuth();
-  const { config } = useRoleKitConfig();
-  const { library, loading, error } = useScenarioLibrary();
-
-  if (!config.roleKitV2Enabled || loading || error || !library) return null;
-
-  const activeRoleId =
-    user?.preferences?.activeRoleId && library.roles.some((role) => role.id === user.preferences?.activeRoleId)
-      ? user.preferences.activeRoleId
-      : matchRoleIdByPosition(library.roles, user?.position);
-  const role = library.roles.find((item) => item.id === activeRoleId);
-  if (!role) return null;
-
-  return (
-    <button
-      type="button"
-      className="mx-2 mb-2 flex w-[calc(100%-1rem)] items-center gap-2 rounded-lg border bg-card px-2 py-2 text-left text-xs transition-colors hover:bg-muted/60"
-      onClick={() => {
-        beforeNavigate?.();
-        onTabChange?.("scenarios");
-      }}
-    >
-      <LayoutGrid className="h-3.5 w-3.5 shrink-0 text-brand-600" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium">{role.name}</span>
-        <span className="block truncate text-muted-foreground">查看开箱场景</span>
-      </span>
-    </button>
-  );
-}
-
-/**
- * 专职 Agent 侧边栏入口（仿 RoleKitSidebarHint；2026-07 唯恩批次）
- *
- * 仅被指派 ≥1 个专职 Agent 时渲染（未指派用户 UI 零变化）。点击：
- * 存在绑定该 Agent 的最新会话 → 复用（onSelectSession）；否则新建会话并
- * 挂起 orgAgentId（onStartOrgAgentSession → pendingOrgAgentIdRef + onNew）。
- */
-export function OrgAgentSidebarSection({
-  agents,
-  sessions,
-  onSelectSession,
-  onStartOrgAgentSession,
-  beforeNavigate,
-}: {
-  agents: OrgAgentSummary[];
-  sessions: ChatSessionIndexItem[];
-  onSelectSession: (sessionId: string) => void;
-  onStartOrgAgentSession?: (agentId: string) => void | Promise<string | null>;
-  beforeNavigate?: () => void;
-}) {
-  const [expandedAgentIds, setExpandedAgentIds] = useState<Set<string>>(() => new Set());
-  if (agents.length === 0) return null;
-
-  const sessionsByAgent = new Map<string, ChatSessionIndexItem[]>();
-  for (const agent of agents) sessionsByAgent.set(agent.id, []);
-  for (const session of sessions) {
-    if (!session.orgAgentId || !sessionsByAgent.has(session.orgAgentId)) continue;
-    sessionsByAgent.get(session.orgAgentId)!.push(session);
-  }
-  for (const items of sessionsByAgent.values()) {
-    items.sort((a, b) => b.updatedAt - a.updatedAt);
-  }
-
-  const handleOpenLatest = (agentId: string) => {
-    beforeNavigate?.();
-    const latest = sessionsByAgent.get(agentId)?.[0];
-    if (latest) {
-      onSelectSession(latest.id);
-    } else {
-      void onStartOrgAgentSession?.(agentId);
-    }
-  };
-
-  const handleStart = (agentId: string) => {
-    beforeNavigate?.();
-    void onStartOrgAgentSession?.(agentId);
-  };
-
-  const toggleHistory = (agentId: string) => {
-    setExpandedAgentIds((current) => {
-      const next = new Set(current);
-      if (next.has(agentId)) next.delete(agentId);
-      else next.add(agentId);
-      return next;
-    });
-  };
-
-  return (
-    <div className="mx-2 mb-2 space-y-1">
-      {agents.map((agent) => {
-        const agentSessions = sessionsByAgent.get(agent.id) ?? [];
-        const expanded = expandedAgentIds.has(agent.id);
-        return (
-          <div key={agent.id} className="overflow-hidden rounded-lg border bg-card" data-testid={`org-agent-card-${agent.id}`}>
-            <div className="flex items-stretch">
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left text-xs transition-colors hover:bg-muted/60"
-                onClick={() => handleOpenLatest(agent.id)}
-                aria-label={`打开${agent.name}最近对话`}
-              >
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-sm dark:bg-brand-900/35" aria-hidden="true">
-                  {agent.avatar || <Bot className="h-3.5 w-3.5 text-brand-600" />}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{agent.name}</span>
-                  <span className="block truncate text-muted-foreground">公司专职 Agent</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                className="flex w-9 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-brand-50 hover:text-brand-600 dark:hover:bg-brand-900/35"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  handleStart(agent.id);
-                }}
-                title={`使用${agent.name}发起新对话`}
-                aria-label={`使用${agent.name}发起新对话`}
-              >
-                <Plus className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                className="flex w-9 shrink-0 items-center justify-center border-l text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleHistory(agent.id);
-                }}
-                title={`查看${agent.name}历史对话`}
-                aria-label={`查看${agent.name}历史对话`}
-                aria-expanded={expanded}
-              >
-                <ChevronRight className={cn("h-4 w-4 transition-transform", expanded && "rotate-90")} />
-              </button>
-            </div>
-            {expanded && (
-              <div className="border-t bg-muted/20 px-1 py-1" aria-label={`${agent.name}历史对话`}>
-                {agentSessions.length === 0 ? (
-                  <div className="px-2 py-2 text-xs text-muted-foreground">暂无历史对话</div>
-                ) : agentSessions.map((history) => (
-                  <button
-                    key={history.id}
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/70"
-                    onClick={() => {
-                      beforeNavigate?.();
-                      onSelectSession(history.id);
-                    }}
-                  >
-                    <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">{history.title || "新会话"}</span>
-                    <time className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                      {formatShortDate(history.updatedAt)}
-                    </time>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
@@ -1254,8 +1072,7 @@ export function DesktopSessionSidebar({
   trashPreviewSessionId,
   unreadAiReplySessionIds,
   sidebarLayout = "double",
-  onStartOrgAgentSession,
-  orgAgents = [],
+  personalAgentEnabled = true,
 }: DesktopSessionSidebarProps) {
   const { user: authUser, accounts, switchAccount, authEnabled, updateAvatar } = useAuth();
   const showBilling = useTenantBillingVisibility(authUser?.tenantId);
@@ -1473,6 +1290,7 @@ export function DesktopSessionSidebar({
   const buildSessionMetaText = useCallback(
     (session: ChatSessionIndexItem) => {
       const parts: string[] = [];
+      if (session.orgAgentName) parts.push(session.orgAgentName);
       if (selectedView === "__all__") {
         parts.push(sessionGroupNameMap.get(session.id) || "未分组");
       } else if (selectedView === "__ungrouped__") {
@@ -1684,10 +1502,10 @@ export function DesktopSessionSidebar({
   const navItems = useMemo(
     () => [
       ...baseNavItems.filter((item) => !item.adminOnly || isAdmin),
-      // 场景库入口仅桌面端展示（不进 baseNavItems，避免移动端 MobileSessionList 跟着出现）
-      { tab: "scenarios" as AppTab, label: "场景库" },
+      { tab: "capabilities" as AppTab, label: "专家 / Skills / 连接器" },
+      ...(personalAgentEnabled ? [{ tab: "scenarios" as AppTab, label: "任务模板" }] : []),
     ],
-    [isAdmin],
+    [isAdmin, personalAgentEnabled],
   );
 
   const [singleSelectionMode, setSingleSelectionMode] = useState(false);
@@ -1721,6 +1539,8 @@ export function DesktopSessionSidebar({
   // 选择会话
   const handleSelect = useCallback(
     (id: string) => {
+      // 首条消息尚未拿到 sessionId 时不能切走，否则迟到的 session 事件会失去草稿归属。
+      if (isLoading && !activeSessionId) return;
       if (singleSelectionMode) {
         toggleSingleSelection(id);
         return;
@@ -1730,7 +1550,7 @@ export function DesktopSessionSidebar({
       onSelect(id);
       if (activeTab !== "chat" && onTabChange) onTabChange("chat");
     },
-    [singleSelectionMode, toggleSingleSelection, onSelect, activeTab, onTabChange],
+    [activeSessionId, activeTab, isLoading, onSelect, onTabChange, singleSelectionMode, toggleSingleSelection],
   );
 
   // 点击左栏视图项(全部/未分组/真实分组)
@@ -1927,18 +1747,6 @@ export function DesktopSessionSidebar({
           beforeNavigate={() => setSingleExpandedGroupKey(null)}
           constrainNewButton={false}
         />
-        <RoleKitSidebarHint
-          onTabChange={onTabChange}
-          beforeNavigate={() => setSingleExpandedGroupKey(null)}
-        />
-        <OrgAgentSidebarSection
-          agents={orgAgents}
-          sessions={sessions}
-          onSelectSession={handleSelect}
-          onStartOrgAgentSession={onStartOrgAgentSession}
-          beforeNavigate={() => setSingleExpandedGroupKey(null)}
-        />
-
         {renderSessionSearchBox("inline")}
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <div className="absolute inset-0 flex flex-col bg-card" style={{ transform: singleExpandedGroup ? "translateX(-100%)" : "translateX(0)", transition: "transform 233ms cubic-bezier(.25,.1,.25,1)" }}>
@@ -2156,14 +1964,6 @@ export function DesktopSessionSidebar({
             onNew={onNew}
             onTabChange={onTabChange}
           />
-          <RoleKitSidebarHint onTabChange={onTabChange} />
-          <OrgAgentSidebarSection
-            agents={orgAgents}
-            sessions={sessions}
-            onSelectSession={handleSelect}
-            onStartOrgAgentSession={onStartOrgAgentSession}
-          />
-
           {/* 导航与分组之间的分隔线 */}
           <div className="mx-2 my-1 border-t" />
 

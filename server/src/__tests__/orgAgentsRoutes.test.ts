@@ -62,6 +62,8 @@ function postBody(overrides: Record<string, unknown> = {}) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name: '产品选型助手',
+      description: '帮助成员完成产品选型与参数查询。',
+      starterPrompts: ['帮我推荐一个型号'],
       instructions: '只回答唯恩产品选型问题',
       allowedSkills: ['wain-kb'],
       audience: { exposure: 'all', usernames: [] },
@@ -142,13 +144,48 @@ describe('org-agents 路由权限', () => {
       expect(res.status).toBe(200);
       const list = await res.json() as Array<Record<string, unknown>>;
       expect(list).toHaveLength(1);
-      expect(Object.keys(list[0]).sort()).toEqual(['id', 'name']);
+      expect(Object.keys(list[0]).sort()).toEqual(['description', 'id', 'name', 'skillCount', 'starterPrompts']);
       expect(list[0].id).toBe(created.id);
+      expect(list[0].description).toBe('帮助成员完成产品选型与参数查询。');
+      expect(list[0].starterPrompts).toEqual(['帮我推荐一个型号']);
+      expect(list[0].skillCount).toBe(1);
     }
     // 被指派用户 GET /:id 也只拿到裁剪视图
     const detail = await (await h.request(`/api/org-agents/${created.id}`)).json() as Record<string, unknown>;
     expect(detail.instructions).toBeUndefined();
     expect(detail.guardrail).toBeUndefined();
     expect(detail.audience).toBeUndefined();
+  });
+
+  it('公开资料边界：trim 输入、拒绝空白/超长/重复，并允许 PATCH 清空示例问题', async () => {
+    h.setCaller(WAIN_ADMIN);
+    const createdRes = await h.request('/api/org-agents', postBody({
+      name: '  产品选型助手  ',
+      description: '  公开说明  ',
+      starterPrompts: ['  问题一  ', '问题二'],
+    }));
+    expect(createdRes.status).toBe(201);
+    const created = await createdRes.json() as OrgAgentRecord;
+    expect(created.name).toBe('产品选型助手');
+    expect(created.description).toBe('公开说明');
+    expect(created.starterPrompts).toEqual(['问题一', '问题二']);
+
+    for (const starterPrompts of [
+      ['   '],
+      Array.from({ length: 7 }, (_, index) => `问题${index}`),
+      ['x'.repeat(201)],
+      ['重复', '重复'],
+    ]) {
+      const res = await h.request('/api/org-agents', postBody({ starterPrompts }));
+      expect(res.status).toBe(400);
+    }
+
+    const clearRes = await h.request(`/api/org-agents/${created.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ starterPrompts: [] }),
+    });
+    expect(clearRes.status).toBe(200);
+    expect((await clearRes.json() as OrgAgentRecord).starterPrompts).toEqual([]);
   });
 });

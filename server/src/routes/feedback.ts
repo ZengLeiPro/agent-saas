@@ -100,7 +100,7 @@ export function createFeedbackRouter(deps: FeedbackRouterDeps): Router {
       if (!loaded) return;
       const { meta, transcriptPath } = loaded;
       if (!meta.orgAgentId) {
-        res.status(400).json({ error: '仅专职 Agent 会话支持反馈' });
+        res.status(400).json({ error: '仅企业专家会话支持反馈' });
         return;
       }
 

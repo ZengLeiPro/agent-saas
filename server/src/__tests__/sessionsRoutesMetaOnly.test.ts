@@ -237,6 +237,40 @@ describe('sessions routes for meta-only runtime sessions', () => {
     }
   });
 
+  it('does not expose an org Agent name across tenant boundaries', async () => {
+    const orgAgentStore = new OrgAgentStore(join(agentCwd, 'data', 'org-agents.json'));
+    const externalAgent = await orgAgentStore.create({
+      tenantId: 'other-tenant',
+      name: '其他租户的内部专家',
+      instructions: 'tenant secret',
+      allowedSkills: [],
+      audience: { exposure: 'all', usernames: [] },
+      guardrail: {
+        enabled: false,
+        scopeDescription: '',
+        rejectionMessage: '拒绝',
+        strictness: 'strict',
+      },
+      enabled: true,
+    }, 'admin');
+    const { sessionId } = await writeRuntimeSession({
+      content: '历史会话',
+      metaPatch: { tenantId: TEST_USER.tenantId, orgAgentId: externalAgent.id },
+    });
+
+    const { server, baseUrl } = await startServer(agentCwd, { orgAgentStore });
+    try {
+      const listed = await listSessions(baseUrl, '?fresh=1');
+      expect(listed.sessions.find((item) => item.sessionId === sessionId)).toEqual(expect.objectContaining({
+        orgAgentId: externalAgent.id,
+        orgAgentAvailable: false,
+      }));
+      expect(listed.sessions.find((item) => item.sessionId === sessionId)?.orgAgentName).toBeUndefined();
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it('creates distinct meta-only sessions bound to the requested available org Agent', async () => {
     const orgAgentStore = new OrgAgentStore(join(agentCwd, 'data', 'org-agents.json'));
     const agent = await orgAgentStore.create({

@@ -50,7 +50,7 @@ export function SessionsView({ tenantId, orgAgents }: { tenantId?: string; orgAg
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-4">
           <div className="space-y-1.5">
-            <Label>专职 Agent</Label>
+            <Label>企业专家</Label>
             <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={orgAgentId} onChange={(e) => setOrgAgentId(e.target.value)}>
               <option value="">全部</option>
               {orgAgents.map((agent) => (
@@ -87,14 +87,14 @@ export function SessionsView({ tenantId, orgAgents }: { tenantId?: string; orgAg
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />加载会话...
             </div>
           ) : items.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">暂无专职 Agent 会话</div>
+            <div className="py-10 text-center text-sm text-muted-foreground">暂无企业专家会话</div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>会话</TableHead>
                   <TableHead>成员</TableHead>
-                  <TableHead>专职 Agent</TableHead>
+                  <TableHead>企业专家</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>最近活跃</TableHead>
                 </TableRow>

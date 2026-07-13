@@ -13,6 +13,8 @@ export interface PendingInteraction {
   invocationId?: string;
   /** 创建者的 userId，用于归属校验 */
   userId?: string;
+  /** 企业专家会话在交互恢复时重新鉴权；缺省表示个人 Agent。 */
+  orgAgentId?: string;
   /** ask_user 专用：存储问题列表 */
   questions?: AskUserQuestion[];
   /** permission_request 专用：存储工具名 */
@@ -49,6 +51,7 @@ class InteractionStore {
       toolCallId?: string;
       invocationId?: string;
       userId?: string;
+      orgAgentId?: string;
       questions?: AskUserQuestion[];
       toolId?: string;
       toolName?: string;
@@ -75,6 +78,7 @@ class InteractionStore {
         toolCallId: options?.toolCallId,
         invocationId: options?.invocationId,
         userId: options?.userId,
+        orgAgentId: options?.orgAgentId,
         questions: options?.questions,
         toolId: options?.toolId,
         toolName: options?.toolName,

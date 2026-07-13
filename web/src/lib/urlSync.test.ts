@@ -4,7 +4,7 @@ vi.mock("@/lib/swUpdate", () => ({
   maybeNavigateWithUpdate: () => false,
 }));
 
-import { buildPlatformAdminUrl, parseUrl } from "@/lib/urlSync";
+import { buildPlatformAdminUrl, buildUrl, parseUrl } from "@/lib/urlSync";
 
 describe("platform admin url sync", () => {
   it("parses platform admin deep links without falling back to chat", () => {
@@ -68,5 +68,31 @@ describe("platform admin url sync", () => {
     expect(buildPlatformAdminUrl({ section: "sessions", entityId: "sub-123", search: { includeDeleted: true } }))
       .toBe("/platform-admin/sessions/sub-123?includeDeleted=true");
     expect(buildPlatformAdminUrl({ section: "infra" })).toBe("/platform-admin/infra");
+  });
+});
+
+describe("专家与任务模板 URL", () => {
+  it("能力中心使用独立一级路径", () => {
+    expect(parseUrl("/capabilities").tab).toBe("capabilities");
+    expect(parseUrl("/capabilities/experts").tab).toBe("capabilities");
+    expect(parseUrl("/capabilities/skills").tab).toBe("capabilities");
+    expect(parseUrl("/capabilities/connectors").tab).toBe("capabilities");
+    expect(buildUrl("capabilities", null)).toBe("/capabilities");
+  });
+
+  it("旧 Skills、MCP 与所有 Agent 入口收敛到对应能力标签", () => {
+    expect(parseUrl("/settings/skills")).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/skills" });
+    for (const path of ["/settings/mcp", "/mcp"]) {
+      expect(parseUrl(path)).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/connectors" });
+    }
+    for (const path of ["/agents", "/all-agents", "/settings/all-agents"]) {
+      expect(parseUrl(path)).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/experts" });
+    }
+  });
+
+  it("旧场景库路径 canonical 到任务模板", () => {
+    expect(parseUrl("/scenarios")).toMatchObject({ tab: "scenarios", canonicalPath: "/templates" });
+    expect(parseUrl("/templates").tab).toBe("scenarios");
+    expect(buildUrl("scenarios", null)).toBe("/templates");
   });
 });

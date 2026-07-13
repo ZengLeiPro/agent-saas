@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, Suspense, type ReactNode } from "react";
 import {
-  Bot,
   Brain,
   Clock,
   Database,
@@ -9,8 +8,6 @@ import {
   LogOut,
   Monitor,
   Palette,
-  Plug,
-  Puzzle,
   Save,
   Settings2,
   User,
@@ -42,12 +39,9 @@ import type { SettingsSectionConfig, SettingsSectionGroup, SettingsSectionId } f
 export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
   { id: "account", label: "账户", description: "账号资料、安全和登录状态。", group: "account", icon: User },
   { id: "general", label: "通用", description: "界面、语言、声音和基础偏好。", group: "account", icon: Settings2 },
-  { id: "personalization", label: "个性化", description: "默认 Agent、记忆和工作偏好。", group: "account", icon: Palette },
-  { id: "all-agents", label: "所有 Agent", description: "查看所有用户的 Agent 列表。", group: "features", icon: Bot },
+  { id: "personalization", label: "个性化", description: "侧边栏、会话列表和界面偏好。", group: "account", icon: Palette },
   { id: "memory", label: "记忆", description: "查看和编辑 Agent 长期记忆（MEMORY.md）。", group: "features", icon: Brain },
-  { id: "skills", label: "Skills", description: "为 Agent 选择启用的 Skills。", group: "features", icon: Puzzle },
   { id: "cron", label: "定时任务", description: "创建和管理个人自动化任务。", group: "features", icon: Clock },
-  { id: "mcp", label: "MCP", description: "管理个人工具服务器和密钥绑定。", group: "features", icon: Plug },
   { id: "files", label: "文件", description: "浏览个人工作区文件和预览内容。", group: "features", icon: Monitor },
   { id: "data", label: "回收站", description: "查看已删除会话，必要时进行恢复或彻底清理。", group: "features", icon: Database },
 ];
@@ -260,9 +254,10 @@ interface AccountSectionProps {
   avatarInputRef: React.RefObject<HTMLInputElement>;
   avatarUploading: boolean;
   onChangePassword: () => void;
+  showAgentSettings: boolean;
 }
 
-function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onChangePassword }: AccountSectionProps) {
+function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onChangePassword, showAgentSettings }: AccountSectionProps) {
   const { user, logout, updatePhone } = useAuth();
   const displayName = user?.realName || user?.username || "未登录";
   const [phoneDialogOpen, setPhoneDialogOpen] = useState(false);
@@ -465,7 +460,7 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
               </div>
             </div>
           </section>
-          <AgentAccountSection onOpenPersona={() => setPersonaEditing(true)} />
+          {showAgentSettings && <AgentAccountSection onOpenPersona={() => setPersonaEditing(true)} />}
           <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -726,15 +721,14 @@ export interface SettingsModalProps {
   section: SettingsSectionId;
   onSectionChange: (section: SettingsSectionId) => void;
   onClose: () => void;
-  renderAllAgents?: () => ReactNode;
   renderMemory?: () => ReactNode;
-  renderSkills?: () => ReactNode;
   renderCron?: () => ReactNode;
-  renderMcp?: () => ReactNode;
   renderFiles?: () => ReactNode;
   renderTrash?: () => ReactNode;
   sidebarLayout?: SidebarLayoutPref;
   onSidebarLayoutChange?: (layout: SidebarLayoutPref) => void;
+  /** false 时隐藏只服务个人通用 Agent 的设置；管理员调用方应传 true。 */
+  personalAgentEnabled?: boolean;
 }
 
 export function SettingsModal({
@@ -742,15 +736,13 @@ export function SettingsModal({
   section,
   onSectionChange,
   onClose,
-  renderAllAgents,
   renderMemory,
-  renderSkills,
   renderCron,
-  renderMcp,
   renderFiles,
   renderTrash,
   sidebarLayout = "double",
   onSidebarLayoutChange,
+  personalAgentEnabled = true,
 }: SettingsModalProps) {
   const { user, isAdmin, isPlatformAdmin, updateAvatar, updatePreferences } = useAuth();
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -768,8 +760,12 @@ export function SettingsModal({
   }, [onSectionChange]);
 
   const visibleSections = useMemo(
-    () => SETTINGS_SECTIONS.filter(item => canAccess(item, isAdmin, isPlatformAdmin)),
-    [isAdmin, isPlatformAdmin],
+    () => SETTINGS_SECTIONS.filter((item) => {
+      if (!canAccess(item, isAdmin, isPlatformAdmin)) return false;
+      if (personalAgentEnabled) return true;
+      return item.id !== "memory";
+    }),
+    [isAdmin, isPlatformAdmin, personalAgentEnabled],
   );
 
   useEffect(() => {
@@ -869,7 +865,7 @@ export function SettingsModal({
   const sectionsToRender: { id: SettingsSectionId; node: ReactNode }[] = [
     {
       id: "account",
-      node: <AccountSection avatarInputRef={avatarInputRef} avatarUploading={avatarUploading} onAvatarUpload={handleAvatarUpload} onChangePassword={() => setShowPasswordDialog(true)} />,
+      node: <AccountSection avatarInputRef={avatarInputRef} avatarUploading={avatarUploading} onAvatarUpload={handleAvatarUpload} onChangePassword={() => setShowPasswordDialog(true)} showAgentSettings={personalAgentEnabled} />,
     },
     {
       id: "general",
@@ -880,7 +876,7 @@ export function SettingsModal({
       node: (
         <PlaceholderSection
           title="个性化"
-          description="配置默认 Agent、记忆、输出偏好和工作习惯。"
+          description="配置侧边栏、会话列表和其他界面偏好。"
           actions={(
             <>
               {personalizationSaved && <span className="text-sm text-success">已保存</span>}
@@ -898,11 +894,8 @@ export function SettingsModal({
         </PlaceholderSection>
       ),
     },
-    { id: "all-agents", node: renderAllAgents?.() ?? null },
     { id: "memory", node: renderMemory?.() ?? null },
-    { id: "skills", node: renderSkills?.() ?? null },
     { id: "cron", node: renderCron?.() ?? null },
-    { id: "mcp", node: renderMcp?.() ?? null },
     { id: "files", node: renderFiles?.() ?? null },
     {
       id: "data",

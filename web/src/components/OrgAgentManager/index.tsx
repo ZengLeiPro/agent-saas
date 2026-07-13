@@ -23,6 +23,12 @@ function formValuesToPayload(values: OrgAgentFormValues) {
   return {
     name: values.name.trim(),
     ...(values.avatar.trim() ? { avatar: values.avatar.trim() } : {}),
+    description: values.description.trim(),
+    starterPrompts: values.starterPromptsText
+      .split('\n')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 6),
     instructions: values.instructions,
     allowedSkills: values.allowedSkills,
     audience: {
@@ -46,7 +52,7 @@ function audienceText(agent: OrgAgentRecord): string {
 }
 
 /**
- * 组织管理 modal「专职 Agent」section（仿 UserManager 结构）
+ * 组织管理 modal「企业专家」section（仿 UserManager 结构）
  *
  * 列表（名称/头像/指派/门禁/启用开关/编辑/删除）+ 创建/编辑表单弹窗。
  * DELETE 为硬删（危险操作二次确认）；日常下线引导用启用开关。
@@ -94,15 +100,15 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
-        title="专职 Agent"
-        description={`为 ${tenantName || tenantId || '当前组织'} 定义岗位型 Agent：限定提示语 + Skill 白名单 + 指派成员，可选话题门禁。`}
+        title="企业专家"
+        description={`为 ${tenantName || tenantId || '当前组织'} 定义专岗专家：公开说明 + 固有 Skills + 指派成员，可选话题门禁。`}
         actions={
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => { void refresh(); }} disabled={loading}>
               <RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} />刷新
             </Button>
             <Button onClick={() => { setEditing(null); setFormOpen(true); }}>
-              <Plus className="mr-2 h-4 w-4" />创建专职 Agent
+              <Plus className="mr-2 h-4 w-4" />创建企业专家
             </Button>
           </div>
         }
@@ -116,12 +122,12 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
           <CardContent className="p-0">
             {loading && agents.length === 0 ? (
               <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />加载专职 Agent...
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />加载企业专家...
               </div>
             ) : agents.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
                 <Bot className="h-6 w-6" />
-                <span>还没有专职 Agent，点击右上角创建。</span>
+                <span>还没有企业专家，点击右上角创建。</span>
               </div>
             ) : (
               <Table>
@@ -209,7 +215,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
       <Dialog open={!!deleting} onOpenChange={(next) => { if (!next) setDeleting(null); }}>
         <DialogContent className="w-[min(420px,calc(100vw-48px))]">
           <DialogHeader>
-            <DialogTitle>删除专职 Agent</DialogTitle>
+            <DialogTitle>删除企业专家</DialogTitle>
             <DialogDescription>
               将永久删除「{deleting?.name}」的配置（已有会话记录保留）。若只是暂时下线，建议改用启用开关。
             </DialogDescription>

@@ -1,11 +1,11 @@
 import { type Ref, type MutableRefObject, useMemo } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Building2, Plus, Trash2 } from "lucide-react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { TtsProps } from "@/components/MessageItem";
 import type { TtsState } from "@/hooks/useTtsPlayer";
 import type { ModelList } from "@/types/models";
 import type { AskUserAnswers } from "@agent/shared";
-import type { AgentProfile, SessionParticipants } from "@agent/shared";
+import type { AgentProfile, OrgAgentSummary, SessionParticipants } from "@agent/shared";
 import { MessageList } from "@/components/MessageList";
 import { FileUpload } from "@/components/FileUpload";
 import { ChatInput } from "@/components/ChatInput";
@@ -52,37 +52,51 @@ interface ChatTabContentProps {
   sessionParticipants?: SessionParticipants | null;
   /** 空会话槽位（透传给 MessageList）：新会话空白态展示的内容，如场景推荐卡 */
   emptySlot?: React.ReactNode;
-  /**
-   * 公司级专职 Agent 顶部细条 banner（2026-07 唯恩批次）。
-   * 缺省零变化；不污染 agentProfile（头像/参与者渲染不受影响）。
-   */
-  orgAgent?: { id: string; name: string; avatar?: string } | null;
-  /** 当前专职 Agent 会话头部的新对话入口；只读/停用会话不提供。 */
+  /** 当前企业专家（包含未发送草稿态）；缺省 = 个人通用 Agent。 */
+  orgAgent?: OrgAgentSummary | null;
+  /** 当前企业专家的新对话入口；只读/停用会话不提供。 */
   onNewOrgAgentConversation?: () => void;
+  /** 前往专家列表选择另一位专家。 */
+  onSwitchOrgAgent?: () => void;
 }
 
-export function OrgAgentConversationHeader({
+export function OrgAgentComposerChip({
   orgAgent,
   onNewConversation,
+  onSwitch,
 }: {
-  orgAgent: { id: string; name: string; avatar?: string };
+  orgAgent: OrgAgentSummary;
   onNewConversation?: () => void;
+  onSwitch?: () => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-1.5 border-b bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
-      <span aria-hidden="true" className="text-sm leading-none">{orgAgent.avatar || "🤖"}</span>
-      <span className="font-medium text-foreground">{orgAgent.name}</span>
-      <span>· 公司专职 Agent</span>
+    <div className="flex min-w-0 items-center gap-2 rounded-lg border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-50 text-base dark:bg-brand-900/35" aria-hidden="true">
+        {orgAgent.avatar || <Building2 className="h-4 w-4 text-brand-600" />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium text-foreground">{orgAgent.name}</span>
+        <span className="block truncate">企业专家{orgAgent.skillCount > 0 ? ` · ${orgAgent.skillCount} 个固有 Skills` : ""}</span>
+      </span>
       {onNewConversation && (
         <button
           type="button"
-          className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium text-brand-600 transition-colors hover:bg-brand-50 dark:hover:bg-brand-900/35"
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 font-medium text-brand-600 transition-colors hover:bg-brand-50 dark:hover:bg-brand-900/35"
           onClick={onNewConversation}
           title={`使用${orgAgent.name}发起新对话`}
           aria-label={`使用${orgAgent.name}发起新对话`}
         >
           <Plus className="h-3.5 w-3.5" />
           新对话
+        </button>
+      )}
+      {onSwitch && (
+        <button
+          type="button"
+          className="shrink-0 rounded-md px-2 py-1 font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          onClick={onSwitch}
+        >
+          切换
         </button>
       )}
     </div>
@@ -130,6 +144,7 @@ export function ChatTabContent({
   emptySlot,
   orgAgent,
   onNewOrgAgentConversation,
+  onSwitchOrgAgent,
 }: ChatTabContentProps) {
   const activeAskUser = useMemo(() => {
     if (readOnly) return null;
@@ -147,14 +162,24 @@ export function ChatTabContent({
     return messages.filter((message) => message.id !== activeAskUser.id);
   }, [activeAskUser, messages]);
 
+  const displayAgentProfile = useMemo<AgentProfile | null | undefined>(() => {
+    if (!orgAgent) return agentProfile;
+    return {
+      username: `org-agent:${orgAgent.id}`,
+      name: orgAgent.name,
+      ...(orgAgent.avatar ? { avatar: orgAgent.avatar } : {}),
+      updatedAt: "",
+      updatedBy: "organization",
+    };
+  }, [agentProfile, orgAgent]);
+
+  const displaySessionParticipants = useMemo<SessionParticipants | null | undefined>(() => {
+    if (!orgAgent || !sessionParticipants) return sessionParticipants;
+    return { ...sessionParticipants, agent: displayAgentProfile ?? null };
+  }, [displayAgentProfile, orgAgent, sessionParticipants]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {orgAgent && (
-        <OrgAgentConversationHeader
-          orgAgent={orgAgent}
-          onNewConversation={onNewOrgAgentConversation}
-        />
-      )}
       <MessageList
         lastMessageRef={lastMessageRef}
         scrollContainerRef={scrollContainerRef}
@@ -168,8 +193,8 @@ export function ChatTabContent({
         onFork={readOnly ? undefined : onFork}
         tts={tts}
         ttsStateMap={ttsStateMap}
-        agentProfile={agentProfile}
-        sessionParticipants={sessionParticipants}
+        agentProfile={displayAgentProfile}
+        sessionParticipants={displaySessionParticipants}
         debugModeOverride={debugModeOverride}
         emptySlot={readOnly ? undefined : emptySlot}
       />
@@ -232,12 +257,23 @@ export function ChatTabContent({
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={onAutoApproveRunShellChange}
               onSendVoice={onSendVoice}
-              topSlot={activeAskUser ? (
-                <AskUserPromptPanel
-                  key={activeAskUser.interactionId}
-                  questions={activeAskUser.questions}
-                  onSubmit={(answers) => onAskUserResponse?.(activeAskUser.interactionId, answers)}
-                />
+              topSlot={(orgAgent || activeAskUser) ? (
+                <div className="space-y-2">
+                  {orgAgent && (
+                    <OrgAgentComposerChip
+                      orgAgent={orgAgent}
+                      onNewConversation={onNewOrgAgentConversation}
+                      onSwitch={onSwitchOrgAgent}
+                    />
+                  )}
+                  {activeAskUser && (
+                    <AskUserPromptPanel
+                      key={activeAskUser.interactionId}
+                      questions={activeAskUser.questions}
+                      onSubmit={(answers) => onAskUserResponse?.(activeAskUser.interactionId, answers)}
+                    />
+                  )}
+                </div>
               ) : undefined}
             />
           </>

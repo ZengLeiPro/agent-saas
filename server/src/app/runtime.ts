@@ -1240,6 +1240,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           : undefined;
       return user?.role as 'admin' | 'user' | undefined;
     },
+    // scheduler wake 不经过 Web channel，需要从账户资料恢复系统提示语使用的全名。
+    resolveUserRealName: ({ userId, username }: { userId?: string; username?: string }) => {
+      const user = userId
+        ? userStore?.findById(userId)
+        : username
+          ? userStore?.findByUsername(username)
+          : undefined;
+      return user?.realName;
+    },
     // B1: 把 UserStore.tenantId 暴露给 dispatch，让 tenant remote hand
     // tenantIds allow-list 可在 attach 时按用户身份自动决策。
     resolveUserTenantId: ({ userId, username }: { userId?: string; username?: string }) => {

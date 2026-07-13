@@ -219,6 +219,8 @@ export interface RawRuntimeRunDispatchConfig {
   orgAgentStore?: OrgAgentStore;
   tenantStore?: TenantStore;
   resolveUserRole?: (identity: { userId?: string; username?: string }) => 'admin' | 'user' | undefined;
+  /** Resolve the account profile full name for scheduler wake identity injection. */
+  resolveUserRealName?: (identity: { userId?: string; username?: string }) => string | undefined;
   /** Default raw loop turn budget when a run does not specify maxTurns. */
   defaultMaxTurns?: number;
   /** Optional per-user cap; applied even when scheduler wake bypasses engine/dispatch. */
@@ -1283,6 +1285,27 @@ function resolveSessionOwnerRole(
   return session.userRole
     ?? config.resolveUserRole?.({ userId: session.userId, username: session.username })
     ?? 'user';
+}
+
+/** Rebuild the original account identity for every scheduler wake/resume path. */
+export function resolveWakeSessionOwner(
+  config: RawRuntimeRunDispatchConfig,
+  session: RuntimeSessionRecord,
+  fallbackUserId?: string,
+): NonNullable<ChannelContext['sessionOwner']> {
+  const userId = session.userId || fallbackUserId || '';
+  const realName = config.resolveUserRealName?.({
+    userId: userId || undefined,
+    username: session.username || undefined,
+  });
+
+  return {
+    id: userId,
+    username: session.username || 'unknown',
+    role: resolveSessionOwnerRole(config, session),
+    tenantId: resolveSessionOwnerTenantId(config, session),
+    ...(realName ? { realName } : {}),
+  };
 }
 
 /**
@@ -2553,12 +2576,7 @@ export async function wakeRuntimeSession(
         context: {
           channel: 'web',
           resumeSessionId: run.sessionId,
-          sessionOwner: {
-            id: session.userId || run.userId || '',
-            username: session.username || 'unknown',
-            role: resolveSessionOwnerRole(config, session),
-            tenantId: resolveSessionOwnerTenantId(config, session),
-          },
+          sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
           targetCwd: session.cwd,
         },
         model: run.model ?? session.modelRef,
@@ -2609,12 +2627,7 @@ export async function wakeRuntimeSession(
         context: {
           channel: 'web',
           resumeSessionId: run.sessionId,
-          sessionOwner: {
-            id: session.userId || run.userId || '',
-            username: session.username || 'unknown',
-            role: resolveSessionOwnerRole(config, session),
-            tenantId: resolveSessionOwnerTenantId(config, session),
-          },
+          sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
           targetCwd: session.cwd,
         },
         model: run.model ?? session.modelRef,
@@ -2639,12 +2652,7 @@ export async function wakeRuntimeSession(
   const context: ChannelContext = {
     channel: 'web',
     resumeSessionId: run.sessionId,
-    sessionOwner: {
-      id: session.userId || run.userId || '',
-      username: session.username || 'unknown',
-      role: resolveSessionOwnerRole(config, session),
-      tenantId: resolveSessionOwnerTenantId(config, session),
-    },
+    sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
     targetCwd: session.cwd,
   };
   const dispatch = createRawRuntimeRunDispatch(config);

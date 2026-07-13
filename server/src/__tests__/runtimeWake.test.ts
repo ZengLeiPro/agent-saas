@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   HIDDEN_WAKE_CONTINUE_PROMPT,
   resolveSessionOwnerTenantId,
+  resolveWakeSessionOwner,
   resolveWakePrompt,
   wakeRuntimeSession,
   type RawRuntimeRunDispatchConfig,
@@ -462,6 +463,61 @@ describe('wakeRuntimeSession', () => {
     }
 
     expect(releases).toEqual([]);
+  });
+});
+
+describe('resolveWakeSessionOwner', () => {
+  const session: RuntimeSessionRecord = {
+    sessionId: 'session-real-name',
+    userId: 'user-zenglei',
+    username: 'zenglei',
+    userRole: 'admin',
+    channel: 'web',
+    cwd: '/tmp/zenglei',
+    transcriptPath: '/tmp/zenglei/session.jsonl',
+    modelRef: 'gpt-5.4-mini',
+    executionTarget: 'server-local',
+    workspaceId: 'workspace-zenglei',
+    status: 'running',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  function makeConfig(overrides: Partial<RawRuntimeRunDispatchConfig> = {}): RawRuntimeRunDispatchConfig {
+    return {
+      agentCwd: '/tmp',
+      sharedDir: '/tmp',
+      ...overrides,
+    } as RawRuntimeRunDispatchConfig;
+  }
+
+  it('restores the account full name instead of using the username on scheduler wake', () => {
+    const seen: Array<{ userId?: string; username?: string }> = [];
+    const owner = resolveWakeSessionOwner(makeConfig({
+      resolveUserRealName: (identity) => {
+        seen.push(identity);
+        return '曾磊';
+      },
+      resolveUserTenantId: () => 'kaiyan',
+    }), session);
+
+    expect(seen).toEqual([{ userId: 'user-zenglei', username: 'zenglei' }]);
+    expect(owner).toEqual({
+      id: 'user-zenglei',
+      username: 'zenglei',
+      role: 'admin',
+      tenantId: 'kaiyan',
+      realName: '曾磊',
+    });
+  });
+
+  it('keeps username fallback behavior when the account has no full name', () => {
+    const owner = resolveWakeSessionOwner(makeConfig({
+      resolveUserRealName: () => undefined,
+    }), session);
+
+    expect(owner.username).toBe('zenglei');
+    expect(owner).not.toHaveProperty('realName');
   });
 });
 

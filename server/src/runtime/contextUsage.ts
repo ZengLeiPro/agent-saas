@@ -3,15 +3,13 @@ import {
   computeCacheHitDenominatorTokens,
   computeUsageTotalTokens,
   getModelContextWindow,
-  getUsageAccountingMode,
 } from '../data/usage/pricing.js';
 import { AUTO_COMPACT_THRESHOLD_RATIO } from './autoCompaction.js';
+import { ContextTokenAccumulator } from './contextAccounting.js';
 import type { ModelUsage, PlatformEvent } from './types.js';
 
 interface UsageAccumulator {
   contextTokens: number;
-  accumulatingContextTokens: number;
-  sawFirstUsage: boolean;
   totalInputTokens: number;
   totalOutputTokens: number;
   totalCacheReadTokens: number;
@@ -32,21 +30,10 @@ function nonNegativeInt(value: number | undefined): number {
   return Math.max(0, Math.floor(value));
 }
 
-function assistantUsageEvents(events: PlatformEvent[]): Array<{ model: string | undefined; usage: ModelUsage }> {
-  const result: Array<{ model: string | undefined; usage: ModelUsage }> = [];
-  for (const event of events) {
-    if ((event.type === 'assistant_message' || event.type === 'assistant_tool_calls') && event.usage) {
-      result.push({ model: event.model, usage: event.usage });
-    }
-  }
-  return result;
-}
-
 export class RuntimeContextUsageTracker {
+  private readonly contextAccumulator = new ContextTokenAccumulator();
   private readonly state: UsageAccumulator = {
     contextTokens: 0,
-    accumulatingContextTokens: 0,
-    sawFirstUsage: false,
     totalInputTokens: 0,
     totalOutputTokens: 0,
     totalCacheReadTokens: 0,
@@ -60,19 +47,26 @@ export class RuntimeContextUsageTracker {
     private readonly defaultModel: string,
     priorEvents: PlatformEvent[],
   ) {
-    for (const event of assistantUsageEvents(priorEvents)) {
-      this.applyUsage(event.model ?? defaultModel, event.usage);
+    for (const event of priorEvents) {
+      if (event.type === 'compaction') {
+        this.contextAccumulator.reset();
+        this.state.contextTokens = 0;
+        continue;
+      }
+      if ((event.type === 'assistant_message' || event.type === 'assistant_tool_calls') && event.usage) {
+        this.applyUsage(event.model ?? defaultModel, event.usage, event.responseChained);
+      }
     }
   }
 
-  record(model: string, usage: ModelUsage | undefined): ContextUsageData | null {
+  record(model: string, usage: ModelUsage | undefined, responseChained?: boolean): ContextUsageData | null {
     if (!usage) return this.state.hasUsage ? this.toContextUsage(model, null) : null;
-    const lastRequest = this.applyUsage(model, usage);
+    const lastRequest = this.applyUsage(model, usage, responseChained);
     if (!this.state.hasUsage) return null;
     return this.toContextUsage(model, lastRequest);
   }
 
-  private applyUsage(model: string, usage: ModelUsage): LastRequestCacheMetrics {
+  private applyUsage(model: string, usage: ModelUsage, responseChained?: boolean): LastRequestCacheMetrics {
     const inputTokens = nonNegativeInt(usage.inputTokens);
     const outputTokens = nonNegativeInt(usage.outputTokens);
     const cacheReadTokens = nonNegativeInt(usage.cacheReadInputTokens);
@@ -94,21 +88,7 @@ export class RuntimeContextUsageTracker {
     this.state.cacheHitDenominatorTokens += denominatorTokens;
     this.state.hasUsage = true;
 
-    if (inputTokens > 0 || outputTokens > 0) {
-      const mode = getUsageAccountingMode(model);
-      if (mode === 'input_includes_cache') {
-        if (!this.state.sawFirstUsage || cacheReadTokens === 0) {
-          this.state.accumulatingContextTokens = inputTokens + outputTokens;
-        } else {
-          this.state.accumulatingContextTokens += Math.max(0, inputTokens - cacheReadTokens) + outputTokens;
-        }
-        this.state.contextTokens = this.state.accumulatingContextTokens;
-      } else {
-        if (turnTotal > 0) this.state.contextTokens = turnTotal;
-        this.state.accumulatingContextTokens = this.state.contextTokens;
-      }
-      this.state.sawFirstUsage = true;
-    }
+    this.state.contextTokens = this.contextAccumulator.apply(model, usage, responseChained);
 
     return {
       cacheReadTokens,

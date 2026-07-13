@@ -99,6 +99,7 @@ describe('ResponsesApiAdapter', () => {
         responseExpireAt: 1781900000,
         actualModel: 'doubao-seed-2-0-pro-260215',
         finishReason: 'stop',
+        responseChained: false,
       }),
     ]);
   });
@@ -114,7 +115,7 @@ describe('ResponsesApiAdapter', () => {
       { protocol: 'responses' },
     );
 
-    await collect(adapter.stream({
+    const events = await collect(adapter.stream({
       model: 'glm-5.2',
       messages: [
         { role: 'system', content: 'sys' },
@@ -131,6 +132,7 @@ describe('ResponsesApiAdapter', () => {
     expect(body.instructions).toBeUndefined();
     expect(body.input).toHaveLength(1);
     expect(body.input[0].content[0].text).toMatch(/^\[\d{4}\/\d{2}\/\d{2}\s+周[一二三四五六日]\s+\d{2}:\d{2}\]\s+继续$/);
+    expect(events.find((event) => event.type === 'completed')).toMatchObject({ responseChained: true });
   });
 
   it('tool_result 增量转 function_call_output 接力 input items', async () => {
@@ -211,7 +213,7 @@ describe('ResponsesApiAdapter', () => {
     expect(secondBody.input.length).toBeGreaterThan(1);
 
     const completed = events.find((e) => e.type === 'completed');
-    expect(completed).toMatchObject({ type: 'completed', responseId: 'resp_new' });
+    expect(completed).toMatchObject({ type: 'completed', responseId: 'resp_new', responseChained: false });
   });
 
   it('不带 previous_response_id 时 400 不触发降级重试，立即抛', async () => {

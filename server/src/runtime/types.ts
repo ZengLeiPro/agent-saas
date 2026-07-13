@@ -126,6 +126,8 @@ export type ModelEvent =
     responseExpireAt?: number;
     /** response.model 字段实际值（用于 actualModelSeen 校验）。 */
     actualModel?: string;
+    /** 本次 Responses 请求是否实际使用 previous_response_id；降级全量重试时为 false。 */
+    responseChained?: boolean;
   };
 
 export interface ModelAdapter {
@@ -172,6 +174,8 @@ export type PlatformEvent =
     content: string;
     model?: string;
     usage?: ModelUsage;
+    /** 本次模型请求是否实际使用 previous_response_id。存量事件可能缺失。 */
+    responseChained?: boolean;
     /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
   }
@@ -210,6 +214,8 @@ export type PlatformEvent =
     content: string;
     model?: string;
     usage?: ModelUsage;
+    /** 本次模型请求是否实际使用 previous_response_id。存量事件可能缺失。 */
+    responseChained?: boolean;
     /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
     toolCalls: ModelToolCall[];

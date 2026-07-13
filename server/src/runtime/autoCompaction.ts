@@ -19,8 +19,9 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { computeUsageTotalTokens, getModelContextWindow } from '../data/usage/pricing.js';
+import { getModelContextWindow } from '../data/usage/pricing.js';
 import { createLogger } from '../utils/logger.js';
+import { calculateCurrentContextTokens } from './contextAccounting.js';
 import { runtimeRunController } from './runController.js';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import type { PlatformEvent } from './types.js';
@@ -66,9 +67,8 @@ export interface AutoCompactionEvaluation {
 /**
  * 纯判定逻辑（可单测）：从事件流估算当前上下文并与模型窗口比较。
  *
- * 当前上下文口径与 token-stats 一致（2026-07-03 0c8d51e）：最后一轮带 usage 的
- * assistant 事件的 input+output——全量重发与 Responses 接力两种场景下都是
- * 准确的当前上下文。
+ * 当前上下文口径与 RuntimeContextUsageTracker 一致：全量请求以最后 leg 重锚；
+ * Responses previous_response_id 接力按 (input-cache_read)+output 跨 leg 累加。
  */
 export function evaluateAutoCompaction(input: {
   events: PlatformEvent[];
@@ -84,7 +84,6 @@ export function evaluateAutoCompaction(input: {
   }
 
   let lastUsageIndex = -1;
-  let currentTokens = 0;
   let lastCompactionIndex = -1;
   for (let i = input.events.length - 1; i >= 0; i--) {
     const event = input.events[i]!;
@@ -95,12 +94,6 @@ export function evaluateAutoCompaction(input: {
       && (event.type === 'assistant_message' || event.type === 'assistant_tool_calls')
       && event.usage) {
       lastUsageIndex = i;
-      currentTokens = computeUsageTotalTokens(input.model, {
-        inputTokens: event.usage.inputTokens ?? 0,
-        outputTokens: event.usage.outputTokens ?? 0,
-        cacheReadTokens: event.usage.cacheReadInputTokens ?? 0,
-        cacheCreationTokens: event.usage.cacheCreationInputTokens ?? 0,
-      });
     }
     if (lastUsageIndex >= 0 && lastCompactionIndex >= 0) break;
   }
@@ -111,6 +104,10 @@ export function evaluateAutoCompaction(input: {
   // 据其触发会无限重压。等下一轮真实交互后再评估。
   if (lastCompactionIndex > lastUsageIndex) {
     return { shouldCompact: false, reason: 'just_compacted', contextWindow };
+  }
+  const currentTokens = calculateCurrentContextTokens(input.events, input.model);
+  if (currentTokens == null) {
+    return { shouldCompact: false, reason: 'no_usage_events', contextWindow };
   }
   const threshold = Math.floor(contextWindow * AUTO_COMPACT_THRESHOLD_RATIO);
   if (currentTokens < threshold) {

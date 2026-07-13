@@ -5,7 +5,12 @@ import { AutoCompactionService, evaluateAutoCompaction } from '../runtime/autoCo
 import type { PlatformEvent } from '../runtime/types.js';
 import type { RunRecord, RunStore } from '../runtime/runStore.js';
 
-function assistantEvent(index: number, inputTokens: number, outputTokens = 100): PlatformEvent {
+function assistantEvent(
+  index: number,
+  inputTokens: number,
+  outputTokens = 100,
+  options: { cacheReadInputTokens?: number; responseChained?: boolean; model?: string } = {},
+): PlatformEvent {
   return {
     id: `event-${index}`,
     timestamp: new Date(2026, 6, 3, 0, 0, index).toISOString(),
@@ -13,7 +18,9 @@ function assistantEvent(index: number, inputTokens: number, outputTokens = 100):
     runId: `run-${index}`,
     sessionId: 'session-1',
     content: `回复 ${index}`,
-    usage: { inputTokens, outputTokens },
+    model: options.model ?? 'glm-5.2',
+    usage: { inputTokens, outputTokens, cacheReadInputTokens: options.cacheReadInputTokens ?? 0 },
+    ...(options.responseChained !== undefined ? { responseChained: options.responseChained } : {}),
   } as PlatformEvent;
 }
 
@@ -75,14 +82,50 @@ describe('evaluateAutoCompaction（自动压缩判定）', () => {
     expect(above.contextWindow).toBe(100_000);
   });
 
-  it('以最后一条带 usage 的 assistant 事件为准（当前上下文口径）', () => {
+  it('全量请求以最后一条 usage 重锚，不累计更早轮次', () => {
     const result = evaluateAutoCompaction({
-      events: [assistantEvent(0, 95_000), assistantEvent(1, 10_000)],
+      events: [
+        assistantEvent(0, 95_000, 100, { responseChained: false }),
+        assistantEvent(1, 10_000, 100, { cacheReadInputTokens: 9_000, responseChained: false }),
+      ],
       model: 'glm-5.2',
       autoCompactEnabled: true,
     });
     // 最后一轮 10k，不是更早的 95k
     expect(result).toMatchObject({ shouldCompact: false, reason: 'below_threshold' });
+  });
+
+  it('Responses 接力按跨 leg 净新增累计，最后 leg 未达阈值也能正确触发', () => {
+    const result = evaluateAutoCompaction({
+      events: [
+        assistantEvent(0, 60_000, 1_000, { responseChained: false }),
+        assistantEvent(1, 50_000, 7_000, { cacheReadInputTokens: 45_000, responseChained: true }),
+        assistantEvent(2, 50_000, 8_000, { cacheReadInputTokens: 45_000, responseChained: true }),
+      ],
+      model: 'glm-5.2',
+      autoCompactEnabled: true,
+    });
+
+    // 61k + (50k-45k+7k) + (50k-45k+8k) = 86k；最后 leg 仅 58k。
+    expect(result).toMatchObject({
+      shouldCompact: true,
+      reason: 'threshold_exceeded',
+      currentTokens: 86_000,
+    });
+  });
+
+  it('Responses 接力降级为全量请求后显式重锚', () => {
+    const result = evaluateAutoCompaction({
+      events: [
+        assistantEvent(0, 70_000, 5_000, { responseChained: false }),
+        assistantEvent(1, 30_000, 3_000, { cacheReadInputTokens: 25_000, responseChained: true }),
+        assistantEvent(2, 20_000, 1_000, { cacheReadInputTokens: 18_000, responseChained: false }),
+      ],
+      model: 'glm-5.2',
+      autoCompactEnabled: true,
+    });
+
+    expect(result).toMatchObject({ shouldCompact: false, currentTokens: 21_000 });
   });
 
   it('防死循环：最后一次压缩之后没有新的模型轮 → 不触发', () => {

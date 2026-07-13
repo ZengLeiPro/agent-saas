@@ -408,6 +408,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       ...(responseId ? { responseId } : {}),
       ...(typeof responseExpireAt === 'number' ? { responseExpireAt } : {}),
       ...(actualModel ? { actualModel } : {}),
+      responseChained: usePrevious,
     };
   }
 

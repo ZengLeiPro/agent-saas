@@ -596,7 +596,7 @@ export class RawAgentLoop implements AgentLoop {
         if (!completed) throw new Error('model stream completed without completion event');
         if (completed.usage) {
           totalUsage = mergeUsage(totalUsage, completed.usage);
-          turnContextUsage = contextUsageTracker.record(context.model, completed.usage);
+          turnContextUsage = contextUsageTracker.record(context.model, completed.usage, completed.responseChained);
         }
         if (turnThinking) {
           await this.append({
@@ -652,6 +652,7 @@ export class RawAgentLoop implements AgentLoop {
             content: assistantContent,
             model: context.model,
             ...(completed.usage ? { usage: completed.usage } : {}),
+            ...(completed.responseChained !== undefined ? { responseChained: completed.responseChained } : {}),
             ...(textStarted ? { streamed: true } : {}),
           });
           if (textStarted) {
@@ -699,6 +700,7 @@ export class RawAgentLoop implements AgentLoop {
           content: completed.content || turnText,
           model: context.model,
           ...(completed.usage ? { usage: completed.usage } : {}),
+          ...(completed.responseChained !== undefined ? { responseChained: completed.responseChained } : {}),
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
         });
@@ -1990,7 +1992,7 @@ export class RawAgentLoop implements AgentLoop {
         if (!completed) throw new Error('model stream completed without completion event');
         if (completed.usage) {
           totalUsage = mergeUsage(totalUsage, completed.usage);
-          turnContextUsage = contextUsageTracker.record(args.context.model, completed.usage);
+          turnContextUsage = contextUsageTracker.record(args.context.model, completed.usage, completed.responseChained);
         }
         if (turnThinking) {
           await this.append({
@@ -2045,6 +2047,7 @@ export class RawAgentLoop implements AgentLoop {
             content: assistantContent,
             model: args.context.model,
             ...(completed.usage ? { usage: completed.usage } : {}),
+            ...(completed.responseChained !== undefined ? { responseChained: completed.responseChained } : {}),
             ...(textStarted ? { streamed: true } : {}),
           });
           if (textStarted) {
@@ -2092,6 +2095,7 @@ export class RawAgentLoop implements AgentLoop {
           content: completed.content || turnText,
           model: args.context.model,
           ...(completed.usage ? { usage: completed.usage } : {}),
+          ...(completed.responseChained !== undefined ? { responseChained: completed.responseChained } : {}),
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
         });

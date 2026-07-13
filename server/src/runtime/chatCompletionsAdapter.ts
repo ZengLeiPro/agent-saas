@@ -230,6 +230,7 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       toolCalls: validToolCalls,
       ...(usage ? { usage } : {}),
       ...(finishReason ? { finishReason } : {}),
+      responseChained: false,
     };
   }
 }

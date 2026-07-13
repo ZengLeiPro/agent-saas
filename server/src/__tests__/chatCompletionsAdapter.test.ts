@@ -97,13 +97,14 @@ describe('ChatCompletionsModelAdapter', () => {
         type: 'completed',
         content: '你好',
         toolCalls: [{ id: 'call_1', name: 'Write', arguments: '{"path":"a.txt"}' }],
-        usage: {
+         usage: {
           inputTokens: 10,
           outputTokens: 3,
           cacheReadInputTokens: 2,
           cacheCreationInputTokens: 0,
-          reasoningTokens: 0,
-        },
+           reasoningTokens: 0,
+         },
+        responseChained: false,
       },
     ]);
   });
@@ -145,8 +146,9 @@ describe('ChatCompletionsModelAdapter', () => {
         cacheCreationInputTokens: 0,
         reasoningTokens: 0,
       },
-      finishReason: 'stop',
-    });
+       finishReason: 'stop',
+      responseChained: false,
+     });
   });
 });
 

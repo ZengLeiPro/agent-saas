@@ -371,16 +371,21 @@ describe('WebChannel active stream reconnect', () => {
     expect(emitted.some((d: { type: string }) => d.type === 'artifact_created')).toBe(false);
   });
 
-  it('emits context_usage for in-process runtime live updates', () => {
+  it('emits context_usage details when the tenant policy allows them', () => {
     const emitted: any[] = [];
     const channel = new WebChannel({
       agentCwd: '/tmp/workspace',
       userStore: {
         findById: vi.fn(() => ({
-          id: 'admin-1',
-          username: 'admin',
-          role: 'admin',
-          tenantId: DEFAULT_TENANT_ID,
+          id: 'user-allowed',
+          username: 'member',
+          role: 'user',
+          tenantId: 'kaiyan',
+        })),
+      } as any,
+      tenantStore: {
+        getSettings: vi.fn(() => ({
+          models: { showContextTokens: true, allowContextTokenDetails: true },
         })),
       } as any,
     }, noopDispatch);
@@ -393,7 +398,7 @@ describe('WebChannel active stream reconnect', () => {
     channel.publishRuntimeOutboundEvent({
       sessionId: 'session-context-1',
       runId: 'run-context-1',
-      userId: 'admin-1',
+      userId: 'user-allowed',
       event: {
         type: 'context_usage',
         contextUsage: {
@@ -420,7 +425,7 @@ describe('WebChannel active stream reconnect', () => {
     });
   });
 
-  it('redacts context_usage details for non-platform admins on in-process runtime live updates', () => {
+  it('redacts context_usage details when the tenant policy disables them', () => {
     const emitted: any[] = [];
     const channel = new WebChannel({
       agentCwd: '/tmp/workspace',
@@ -430,6 +435,11 @@ describe('WebChannel active stream reconnect', () => {
           username: 'user',
           role: 'user',
           tenantId: 'kaiyan',
+        })),
+      } as any,
+      tenantStore: {
+        getSettings: vi.fn(() => ({
+          models: { showContextTokens: true, allowContextTokenDetails: false },
         })),
       } as any,
     }, noopDispatch);

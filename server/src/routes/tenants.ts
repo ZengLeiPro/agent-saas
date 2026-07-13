@@ -73,6 +73,7 @@ const tenantSettingsSchema = z.object({
     allowUserModelSwitch: z.boolean(),
     showGroupNames: z.boolean().optional(),
     showContextTokens: z.boolean().optional(),
+    allowContextTokenDetails: z.boolean().optional(),
     displayOverrides: z.record(z.string().max(200), z.object({
       displayName: z.string().max(100).optional(),
       description: z.string().max(500).optional(),
@@ -225,6 +226,24 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]!.message });
       return;
+    }
+    if (!isPlatformAdmin(req.user)) {
+      const current = tenantStore.getSettings(req.params.id);
+      if (!current) {
+        res.status(404).json({ error: '组织不存在' });
+        return;
+      }
+      const requested = parsed.data.models?.allowContextTokenDetails;
+      const currentValue = current.models.allowContextTokenDetails === true;
+      if (requested !== undefined && requested !== currentValue) {
+        res.status(403).json({ error: '上下文 Token 明细仅平台管理员可配置' });
+        return;
+      }
+      parsed.data.models = {
+        ...current.models,
+        ...(parsed.data.models ?? {}),
+        allowContextTokenDetails: currentValue,
+      };
     }
     try {
       const settings = await tenantStore.updateSettings(req.params.id, parsed.data);

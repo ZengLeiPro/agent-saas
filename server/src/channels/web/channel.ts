@@ -95,12 +95,18 @@ import {
  */
 const approvalResumeSemaphore = new Semaphore(8);
 
-function canViewContextUsageDetails(context: ChannelContext): boolean {
-  return canViewContextUsageDetailsForUser(context.user);
+function canViewContextUsageDetails(context: ChannelContext, tenantStore: TenantStore | undefined): boolean {
+  return canViewContextUsageDetailsForUser(context.user, tenantStore);
 }
 
-function canViewContextUsageDetailsForUser(user: { role?: string; tenantId?: string } | undefined): boolean {
-  return user?.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID;
+function canViewContextUsageDetailsForUser(
+  user: { tenantId?: string } | undefined,
+  tenantStore: TenantStore | undefined,
+): boolean {
+  if (!user?.tenantId) return false;
+  const settings = tenantStore?.getSettings(user.tenantId);
+  return settings?.models.showContextTokens !== false
+    && settings?.models.allowContextTokenDetails === true;
 }
 
 /** WsUser（tenantId 可选）适配 auth/types 的 isPlatformAdmin（JwtPayload tenantId 必选）。 */
@@ -720,7 +726,7 @@ export class WebChannel implements BaseChannel {
         if (input.event.contextUsage) {
           emitSession({
             type: 'context_usage',
-            contextUsage: canViewContextUsageDetailsForUser(userRecord)
+            contextUsage: canViewContextUsageDetailsForUser(userRecord, this.config.tenantStore)
               ? input.event.contextUsage
               : redactContextUsageDetails(input.event.contextUsage),
           });
@@ -3626,7 +3632,9 @@ export class WebChannel implements BaseChannel {
       onContextUsage(usage) {
         send({
           type: 'context_usage',
-          contextUsage: canViewContextUsageDetails(context) ? usage : redactContextUsageDetails(usage),
+          contextUsage: canViewContextUsageDetails(context, self.config.tenantStore)
+            ? usage
+            : redactContextUsageDetails(usage),
         });
       },
       onPluginInstall(data) {

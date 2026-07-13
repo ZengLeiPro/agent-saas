@@ -44,6 +44,7 @@ describe('OpenAI-only model resolver', () => {
       allowCrossGroupSwitch: false,
       showGroupNames: true,
       showContextTokens: true,
+      allowContextTokenDetails: false,
       groups: [
         {
           id: 'openai-agents',
@@ -218,6 +219,7 @@ describe('OpenAI-only model resolver', () => {
       allowCrossGroupSwitch: false,
       showGroupNames: true,
       showContextTokens: true,
+      allowContextTokenDetails: false,
       groups: [
         {
           id: 'openai-agents',
@@ -296,6 +298,28 @@ describe('OpenAI-only model resolver', () => {
       },
     }).showContextTokens).toBe(false);
 
+    expect(getTenantPublicModelList(modelsConfig, {
+      ...baseSettings,
+      models: {
+        allowedModels: [],
+        allowUserModelSwitch: true,
+        showGroupNames: false,
+        showContextTokens: true,
+        allowContextTokenDetails: true,
+      },
+    }).allowContextTokenDetails).toBe(true);
+
+    expect(getTenantPublicModelList(modelsConfig, {
+      ...baseSettings,
+      models: {
+        allowedModels: [],
+        allowUserModelSwitch: true,
+        showGroupNames: false,
+        showContextTokens: false,
+        allowContextTokenDetails: true,
+      },
+    }).allowContextTokenDetails).toBe(false);
+
     // 缺省（存量租户）= 显示
     expect(getTenantPublicModelList(modelsConfig, {
       ...baseSettings,
@@ -308,5 +332,6 @@ describe('OpenAI-only model resolver', () => {
 
     // 无租户 settings（平台视图）= 显示
     expect(getPublicModelList(modelsConfig).showContextTokens).toBe(true);
+    expect(getPublicModelList(modelsConfig).allowContextTokenDetails).toBe(false);
   });
 });

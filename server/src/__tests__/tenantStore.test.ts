@@ -135,6 +135,20 @@ describe('TenantStore', () => {
   });
 
   describe('update / setDisabled', () => {
+    it('上下文 Token 明细默认关闭，且隐藏统计时强制关闭明细', async () => {
+      const store = new TenantStore(storePath);
+      const tenant = await store.create({ id: 'wain', name: '唯恩', createdBy: 's' });
+      expect(tenant.settings?.models.allowContextTokenDetails).toBe(false);
+
+      const settings = store.getSettings('wain')!;
+      settings.models.showContextTokens = false;
+      settings.models.allowContextTokenDetails = true;
+      const updated = await store.updateSettings('wain', settings);
+
+      expect(updated.models.showContextTokens).toBe(false);
+      expect(updated.models.allowContextTokenDetails).toBe(false);
+    });
+
     it('update 改 name，slug 不可改', async () => {
       const store = new TenantStore(storePath);
       await store.create({ id: 'wain', name: '唯恩', createdBy: 's' });

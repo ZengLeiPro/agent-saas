@@ -18,4 +18,6 @@ export interface ModelList {
   showGroupNames: boolean;
   /** 是否向当前组织成员显示顶部上下文/Token 统计（租户策略，缺省 true）。 */
   showContextTokens: boolean;
+  /** 是否允许当前组织成员点击展开上下文/Token 明细（租户策略，缺省 false）。 */
+  allowContextTokenDetails: boolean;
 }

@@ -197,7 +197,11 @@ export function MobileLayout(props: LayoutProps) {
           {!previewFilePath && (
             <div className="flex items-center gap-2">
               {modelList?.showContextTokens !== false && (
-                <TokenUsageDisplay tokenUsage={tokenUsage} contextUsage={contextUsage} />
+                <TokenUsageDisplay
+                  tokenUsage={tokenUsage}
+                  contextUsage={contextUsage}
+                  allowDetails={modelList?.allowContextTokenDetails === true}
+                />
               )}
               <BillingMiniBadge sessionId={sessionId} />
               {ttsPlayer.available && (

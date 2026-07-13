@@ -47,18 +47,23 @@ function cloneSettings(settings: TenantSettings): TenantSettings {
 type TenantSettingsPatch = { [K in keyof TenantSettings]?: Partial<TenantSettings[K]> };
 
 function mergeSettings(input?: TenantSettingsPatch): TenantSettings {
+  const models = {
+    ...DEFAULT_TENANT_SETTINGS.models,
+    ...(input?.models ?? {}),
+    allowedModels: [...(input?.models?.allowedModels ?? DEFAULT_TENANT_SETTINGS.models.allowedModels)],
+    displayOverrides: {
+      ...(DEFAULT_TENANT_SETTINGS.models.displayOverrides ?? {}),
+      ...(input?.models?.displayOverrides ?? {}),
+    },
+  };
+  if (models.showContextTokens === false) {
+    models.allowContextTokenDetails = false;
+  }
+
   return {
     features: { ...DEFAULT_TENANT_SETTINGS.features, ...(input?.features ?? {}) },
     quotas: { ...DEFAULT_TENANT_SETTINGS.quotas, ...(input?.quotas ?? {}) },
-    models: {
-      ...DEFAULT_TENANT_SETTINGS.models,
-      ...(input?.models ?? {}),
-      allowedModels: [...(input?.models?.allowedModels ?? DEFAULT_TENANT_SETTINGS.models.allowedModels)],
-      displayOverrides: {
-        ...(DEFAULT_TENANT_SETTINGS.models.displayOverrides ?? {}),
-        ...(input?.models?.displayOverrides ?? {}),
-      },
-    },
+    models,
     mcp: {
       ...DEFAULT_TENANT_SETTINGS.mcp,
       ...(input?.mcp ?? {}),

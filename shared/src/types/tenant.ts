@@ -62,6 +62,8 @@ export interface TenantSettings {
     showGroupNames: boolean;
     /** 是否向组织成员显示顶部上下文/Token 统计。缺省 = true（显示）。 */
     showContextTokens?: boolean;
+    /** 是否允许组织成员点击展开上下文/Token 明细。仅平台管理员可配置，缺省 = false。 */
+    allowContextTokenDetails?: boolean;
     displayOverrides?: Record<
       string,
       {
@@ -109,6 +111,7 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     allowUserModelSwitch: true,
     showGroupNames: false,
     showContextTokens: true,
+    allowContextTokenDetails: false,
     displayOverrides: {},
   },
   mcp: {

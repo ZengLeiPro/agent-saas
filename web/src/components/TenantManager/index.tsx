@@ -142,6 +142,7 @@ function TenantModelPolicyPanel({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as { error?: string }).error || "保存组织模型策略失败");
       setSettings(cloneTenantSettings((data as { settings: TenantSettings }).settings));
+      await refreshAll();
       setSaved(true);
       setError(null);
     } catch (err) {
@@ -211,8 +212,21 @@ function TenantModelPolicyPanel({
             <span>显示分组名</span>
           </label>
           <label className="flex items-start gap-2 text-sm md:col-span-2">
-            <input type="checkbox" className="mt-0.5" checked={settings.models.showContextTokens !== false} onChange={(event) => patch(draft => { draft.models.showContextTokens = event.target.checked; })} />
+            <input type="checkbox" className="mt-0.5" checked={settings.models.showContextTokens !== false} onChange={(event) => patch(draft => {
+              draft.models.showContextTokens = event.target.checked;
+              if (!event.target.checked) draft.models.allowContextTokenDetails = false;
+            })} />
             <span>显示上下文 Token 统计<span className="block text-xs text-muted-foreground">关闭后，组织成员在会话顶部完全看不到上下文/Token 数字。</span></span>
+          </label>
+          <label className={`flex items-start gap-2 text-sm md:col-span-2 ${settings.models.showContextTokens === false ? "cursor-not-allowed opacity-50" : ""}`}>
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={settings.models.showContextTokens !== false && settings.models.allowContextTokenDetails === true}
+              disabled={settings.models.showContextTokens === false}
+              onChange={(event) => patch(draft => { draft.models.allowContextTokenDetails = event.target.checked; })}
+            />
+            <span>允许展开上下文 Token 明细<span className="block text-xs text-muted-foreground">开启后，组织成员可点击顶部统计查看输入、输出、缓存和子 Agent 消耗。</span></span>
           </label>
         </CardContent>
       </Card>

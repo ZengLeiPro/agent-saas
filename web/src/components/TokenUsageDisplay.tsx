@@ -2,12 +2,13 @@ import { useState, useRef, useEffect } from "react";
 import type { TokenUsage } from "@/lib/sessionsApi";
 import type { ContextUsageData } from "@agent/shared";
 import { formatTokenCount } from "@/lib/sessionsApi";
-import { useAuth } from "@/contexts/AuthContext";
 
 interface TokenUsageDisplayProps {
   tokenUsage: TokenUsage | null;
   /** SDK 0.2.112+ 实时推送的上下文占用细分，优先于 tokenUsage 展示 */
   contextUsage?: ContextUsageData | null;
+  /** 租户模型策略：是否允许点击展开 Token 明细。 */
+  allowDetails?: boolean;
 }
 
 function DetailRow({ label, value }: { label: string; value: number | string }) {
@@ -25,8 +26,7 @@ function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDisplayProps) {
-  const { isPlatformAdmin } = useAuth();
+export function TokenUsageDisplay({ tokenUsage, contextUsage, allowDetails = false }: TokenUsageDisplayProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -106,7 +106,7 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
 
   return (
     <div ref={containerRef} className="relative" onClick={(e) => e.stopPropagation()}>
-      {isPlatformAdmin ? (
+      {allowDetails ? (
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -124,7 +124,7 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage }: TokenUsageDispla
         </span>
       )}
 
-      {open && isPlatformAdmin && (
+      {open && allowDetails && (
         <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border bg-popover p-3 text-xs shadow-lg">
           {hasRealtime && (
             <>

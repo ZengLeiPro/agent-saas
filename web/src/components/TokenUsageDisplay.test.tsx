@@ -1,17 +1,14 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
-
-vi.mock("@/contexts/AuthContext", () => ({
-  useAuth: () => ({ isPlatformAdmin: true }),
-}));
 
 describe("TokenUsageDisplay", () => {
   it("separates parent context from durable subagent usage", async () => {
     render(
       <TokenUsageDisplay
+        allowDetails
         contextUsage={{
           totalTokens: 217626,
           model: "gpt-5.6-sol",
@@ -56,5 +53,23 @@ describe("TokenUsageDisplay", () => {
     expect(screen.getByText("任务总消耗")).toBeTruthy();
     expect(screen.getByText("33.5M")).toBeTruthy();
     expect(screen.getByText("缓存写入为 provider 上报值；0 不代表一定未创建缓存。")).toBeTruthy();
+  });
+
+  it("renders a non-interactive value when tenant policy disables details", () => {
+    render(
+      <TokenUsageDisplay
+        allowDetails={false}
+        contextUsage={{
+          totalTokens: 1234,
+          categories: [],
+          memoryFiles: [],
+          mcpTools: [],
+        }}
+        tokenUsage={null}
+      />,
+    );
+
+    expect(screen.getByText("上下文 1.2k")).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

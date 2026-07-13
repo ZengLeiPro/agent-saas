@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Camera, ChevronRight, FileText, Lock, SquarePen, X, type LucideIcon } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { authFetch } from '@agent/shared';
@@ -345,19 +345,19 @@ export default function UserDetailScreen() {
   // 编辑资料: always (admin can edit anyone, user can edit self)
   // 修改密码: self only (admin resets password via edit form)
   // 操作日志: admin only
-  const actionRows: { key: string; icon: string; label: string; onPress: () => void }[] = [];
+  const actionRows: { key: string; Icon: LucideIcon; label: string; onPress: () => void }[] = [];
 
   if (isSelf || isAdmin) {
-    actionRows.push({ key: 'avatar', icon: 'camera-outline', label: '修改头像', onPress: () => void handleAvatarUpload() });
+    actionRows.push({ key: 'avatar', Icon: Camera, label: '修改头像', onPress: () => void handleAvatarUpload() });
   }
   if (isAdmin) {
-    actionRows.push({ key: 'edit', icon: 'create-outline', label: '编辑资料', onPress: handleEdit });
+    actionRows.push({ key: 'edit', Icon: SquarePen, label: '编辑资料', onPress: handleEdit });
   }
   if (isSelf) {
-    actionRows.push({ key: 'password', icon: 'lock-closed-outline', label: '修改密码', onPress: () => router.push('/change-password') });
+    actionRows.push({ key: 'password', Icon: Lock, label: '修改密码', onPress: () => router.push('/change-password') });
   }
   if (isAdmin) {
-    actionRows.push({ key: 'logs', icon: 'document-text-outline', label: '操作日志', onPress: handleViewLogs });
+    actionRows.push({ key: 'logs', Icon: FileText, label: '操作日志', onPress: handleViewLogs });
   }
 
   return (
@@ -407,10 +407,10 @@ export default function UserDetailScreen() {
                 activeOpacity={0.7}
               >
                 <View style={styles.rowLeft}>
-                  <Ionicons name={item.icon as any} size={20} color={colors.primary} />
+                  <item.Icon size={20} color={colors.primary} strokeWidth={2} />
                   <Text style={styles.rowLabel}>{item.label}</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+                <ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} />
               </TouchableOpacity>
             ))}
           </View>
@@ -478,7 +478,7 @@ export default function UserDetailScreen() {
       <Modal visible={avatarModalVisible} transparent animationType="fade">
         <Pressable style={styles.modalOverlay} onPress={() => setAvatarModalVisible(false)}>
           <TouchableOpacity style={styles.modalClose} onPress={() => setAvatarModalVisible(false)} activeOpacity={0.7}>
-            <Ionicons name="close" size={28} color={colors.onOverlay} />
+            <X size={28} color={colors.onOverlay} strokeWidth={2} />
           </TouchableOpacity>
           {avatarUri && (
             <Image source={{ uri: avatarUri }} style={styles.modalImage} contentFit="contain" cachePolicy="disk" />

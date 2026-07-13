@@ -2,7 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { View, StyleSheet, TouchableOpacity } from 'react-native';
 import { Stack, useRouter, useFocusEffect } from 'expo-router';
 import { reportActivity } from '@agent/shared';
-import { Ionicons } from '@expo/vector-icons';
+import { Plus } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { CronJob } from '@agent/shared';
 import { useCronJobs } from '../../src/hooks/useCronJobs';
@@ -51,12 +51,12 @@ export default function CronListScreen() {
         options={{
           headerRight: () => (
             <TouchableOpacity onPress={handleAdd} activeOpacity={0.7}>
-              <Ionicons name="add" size={24} color={colors.foreground} />
+              <Plus size={24} color={colors.foreground} strokeWidth={2} />
             </TouchableOpacity>
           ),
           unstable_headerRightItems: () => [glassFree(
             <TouchableOpacity onPress={handleAdd} activeOpacity={0.7}>
-              <Ionicons name="add" size={24} color={colors.foreground} />
+              <Plus size={24} color={colors.foreground} strokeWidth={2} />
             </TouchableOpacity>
           )],
         }}

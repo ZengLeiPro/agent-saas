@@ -7,7 +7,7 @@ import {
   Pressable,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
-import { Ionicons } from '@expo/vector-icons';
+import { Check, Folder, Image, FileText, FileCode, File, type LucideIcon } from 'lucide-react-native';
 import { formatFileSize, formatShortDate } from '@agent/shared';
 import type { FileEntry } from '@agent/shared';
 import { SwipeableRow, type SwipeAction, type Swipeable } from '../SwipeableRow';
@@ -33,12 +33,12 @@ const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 const TEXT_EXTS = new Set(['.md', '.txt', '.html', '.htm', '.csv', '.log']);
 const CODE_EXTS = new Set(['.json', '.js', '.ts', '.jsx', '.tsx', '.css', '.py', '.sh']);
 
-function getIconInfo(entry: FileEntry, colors: ThemeColors): { name: string; color: string } {
-  if (entry.isDirectory) return { name: 'folder-outline', color: colors.statusIcon.info };
-  if (IMAGE_EXTS.has(entry.extension)) return { name: 'image-outline', color: colors.statusIcon.success };
-  if (TEXT_EXTS.has(entry.extension)) return { name: 'document-text-outline', color: colors.statusIcon.purple };
-  if (CODE_EXTS.has(entry.extension)) return { name: 'code-slash-outline', color: colors.link };
-  return { name: 'document-outline', color: colors.mutedForeground };
+function getIconInfo(entry: FileEntry, colors: ThemeColors): { Icon: LucideIcon; color: string } {
+  if (entry.isDirectory) return { Icon: Folder, color: colors.statusIcon.info };
+  if (IMAGE_EXTS.has(entry.extension)) return { Icon: Image, color: colors.statusIcon.success };
+  if (TEXT_EXTS.has(entry.extension)) return { Icon: FileText, color: colors.statusIcon.purple };
+  if (CODE_EXTS.has(entry.extension)) return { Icon: FileCode, color: colors.link };
+  return { Icon: File, color: colors.mutedForeground };
 }
 
 function getParentFolder(path: string): string {
@@ -99,11 +99,11 @@ function FileRow({ entry, onPress, onDelete, openRowRef, colors, showPath, enabl
     >
       {selectMode && (
         <View style={[styles.checkbox, { borderColor: colors.mutedForeground }, selected && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
-          {selected && <Ionicons name="checkmark" size={16} color={colors.primaryForeground} />}
+          {selected && <Check size={16} color={colors.primaryForeground} strokeWidth={2.5} />}
         </View>
       )}
       <View style={styles.iconContainer}>
-        <Ionicons name={icon.name as any} size={20} color={icon.color} />
+        <icon.Icon size={20} color={icon.color} strokeWidth={2} />
       </View>
       <Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>
         {entry.name}

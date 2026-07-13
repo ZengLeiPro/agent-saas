@@ -1,6 +1,6 @@
 import React, { useMemo, type MutableRefObject } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { MessageCircle, Check } from 'lucide-react-native';
 import type { ChatSessionIndexItem } from '@agent/shared';
 import { formatShortDate } from '@agent/shared';
 import { SwipeableRow, type SwipeAction, type Swipeable } from './SwipeableRow';
@@ -131,7 +131,7 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
     </View>
   ) : (
     <View style={styles.avatarCircle}>
-      <Ionicons name="chatbubble" size={20} color={colors.primaryForeground} />
+      <MessageCircle size={20} color={colors.primaryForeground} strokeWidth={2} />
     </View>
   );
 
@@ -142,7 +142,7 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
     >
       {selectMode && (
         <View style={[styles.checkbox, selected && styles.checkboxSelected]}>
-          {selected && <Ionicons name="checkmark" size={16} color={colors.primaryForeground} />}
+          {selected && <Check size={16} color={colors.primaryForeground} strokeWidth={2} />}
         </View>
       )}
       {avatarElement}

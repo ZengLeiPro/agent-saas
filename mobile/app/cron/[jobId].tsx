@@ -8,7 +8,7 @@ import {
   Alert,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { SquarePen, Play, Pause } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCronJobs, useRunHistory } from '../../src/hooks/useCronJobs';
 import { RunHistory } from '../../src/components/cron/RunHistory';
@@ -73,7 +73,7 @@ export default function JobDetailScreen() {
               onPress={() => router.push({ pathname: '/cron-form', params: { jobId: job.id, jobJson: JSON.stringify(job) } })}
               activeOpacity={0.7}
             >
-              <Ionicons name="create-outline" size={22} color={colors.primary} />
+              <SquarePen size={22} color={colors.primary} strokeWidth={2} />
             </TouchableOpacity>
           ),
           unstable_headerRightItems: () => [glassFree(
@@ -81,7 +81,7 @@ export default function JobDetailScreen() {
               onPress={() => router.push({ pathname: '/cron-form', params: { jobId: job.id, jobJson: JSON.stringify(job) } })}
               activeOpacity={0.7}
             >
-              <Ionicons name="create-outline" size={22} color={colors.primary} />
+              <SquarePen size={22} color={colors.primary} strokeWidth={2} />
             </TouchableOpacity>
           )],
         }}
@@ -107,18 +107,18 @@ export default function JobDetailScreen() {
         {/* Actions */}
         <View style={styles.actions}>
           <TouchableOpacity style={styles.actionBtn} onPress={handleRun}>
-            <Ionicons name="play" size={16} color={colors.primaryForeground} />
+            <Play size={16} color={colors.primaryForeground} strokeWidth={2} />
             <Text style={styles.actionText}>立即执行</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionBtn, styles.actionSecondary]}
             onPress={() => void toggleJob(job)}
           >
-            <Ionicons
-              name={job.enabled ? 'pause' : 'play'}
-              size={16}
-              color={colors.foreground}
-            />
+            {job.enabled ? (
+              <Pause size={16} color={colors.foreground} strokeWidth={2} />
+            ) : (
+              <Play size={16} color={colors.foreground} strokeWidth={2} />
+            )}
             <Text style={[styles.actionText, styles.actionTextSecondary]}>
               {job.enabled ? '禁用' : '启用'}
             </Text>

@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform, Keyboard, Alert, An
 import { showTextPrompt } from '../../src/lib/prompt';
 import { Stack, useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { ChevronDown } from 'lucide-react-native';
 import { type RenderItem, type MessageItem, getPreviewFileType, useGroups, fetchAgentProfile, getSortedGroupItems } from '@agent/shared';
 import { BackButton } from '../../src/components/BackButton';
 import type { PickerExtraSection } from '../../src/components/chat/ModelPicker';
@@ -367,7 +367,7 @@ export default function ChatDetailScreen() {
                     <Text style={[styles.navModelText, { color: colors.mutedForeground }]} numberOfLines={1}>
                       {modelLabel ?? '模型'}
                     </Text>
-                    <Ionicons name="chevron-down" size={10} color={colors.mutedForeground} />
+                    <ChevronDown size={10} color={colors.mutedForeground} strokeWidth={2} />
                   </View>
                 </View>
               </View>
@@ -466,7 +466,7 @@ export default function ChatDetailScreen() {
           pointerEvents={showScrollBtn ? 'auto' : 'none'}
         >
           <TouchableOpacity style={styles.scrollBtn} onPress={scrollToBottom} activeOpacity={0.7}>
-            <Ionicons name="chevron-down" size={20} color={colors.mutedForeground} />
+            <ChevronDown size={20} color={colors.mutedForeground} strokeWidth={2} />
           </TouchableOpacity>
         </Animated.View>
       </KeyboardStickyView>

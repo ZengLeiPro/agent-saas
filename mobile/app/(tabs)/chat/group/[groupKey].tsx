@@ -14,7 +14,7 @@ import { FlashList } from '@shopify/flash-list';
 import type { ChatSessionIndexItem, ApiSessionListItem, AgentProfile } from '@agent/shared';
 import { useGroups, useGroupedSessions, fetchGroupSessions, authFetch, fetchAllAgentProfiles, fetchAgentProfile } from '@agent/shared';
 import { DropdownMenu, type DropdownSection } from '../../../../src/components/overlays/DropdownMenu';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { MoreHorizontal, ChevronLeft, Trash2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatAppState } from '../../../../src/contexts/ChatAppStateContext';
 import { useAuth } from '../../../../src/contexts/AuthContext';
@@ -457,7 +457,7 @@ export default function GroupDetailScreen() {
               </TouchableOpacity>
             ) : !isReadOnlyGroups ? (
               <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu} hitSlop={8}>
-                <Ionicons name="ellipsis-horizontal" size={22} color={colors.foreground} />
+                <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
               </Pressable>
             ) : null,
           unstable_headerRightItems: () =>
@@ -469,7 +469,7 @@ export default function GroupDetailScreen() {
               </TouchableOpacity>
             )] : !isReadOnlyGroups ? [glassFree(
               <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu} hitSlop={8}>
-                <Ionicons name="ellipsis-horizontal" size={22} color={colors.foreground} />
+                <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
               </Pressable>
             )] : [],
           headerBackVisible: false,
@@ -480,7 +480,7 @@ export default function GroupDetailScreen() {
           ) : (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                <Feather name="chevron-left" size={22} color={colors.foreground} />
+                <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
               </TouchableOpacity>
               <TouchableOpacity onPress={enterSelectMode} activeOpacity={0.7}>
                 <Text style={styles.headerText}>选择</Text>
@@ -496,7 +496,7 @@ export default function GroupDetailScreen() {
             : [
                 glassFree(
                   <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                    <Feather name="chevron-left" size={22} color={colors.foreground} />
+                    <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
                   </TouchableOpacity>
                 ),
                 glassFree(
@@ -553,7 +553,7 @@ export default function GroupDetailScreen() {
 
           <TouchableOpacity onPress={handleBatchDelete} disabled={!hasSelection} activeOpacity={0.7}>
             {renderGlass(styles.iconPillInner, (
-              <Ionicons name="trash" size={24} color={hasSelection ? colors.destructive : colors.foreground} />
+              <Trash2 size={24} color={hasSelection ? colors.destructive : colors.foreground} strokeWidth={2} />
             ))}
           </TouchableOpacity>
         </View>

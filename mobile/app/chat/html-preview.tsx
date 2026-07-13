@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { View, Text, ActivityIndicator, StyleSheet, Linking, Pressable, TouchableOpacity, Alert } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { MoreHorizontal } from 'lucide-react-native';
 import { DropdownMenu, type DropdownSection } from '../../src/components/overlays/DropdownMenu';
 import { BackButton } from '../../src/components/BackButton';
 import * as Clipboard from 'expo-clipboard';
@@ -138,12 +138,12 @@ export default function HtmlPreviewScreen() {
         )],
         headerRight: () => (
           <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu} hitSlop={8}>
-            <Ionicons name="ellipsis-horizontal" size={22} color={colors.foreground} />
+            <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
           </Pressable>
         ),
         unstable_headerRightItems: () => [glassFree(
           <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu} hitSlop={8}>
-            <Ionicons name="ellipsis-horizontal" size={22} color={colors.foreground} />
+            <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
           </Pressable>
         )],
       }} />

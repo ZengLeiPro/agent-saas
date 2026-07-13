@@ -9,7 +9,7 @@ import {
   Switch,
 } from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import { Ionicons } from '@expo/vector-icons';
+import { Clock, CheckCheck, ArrowRight } from 'lucide-react-native';
 import type { CronJob } from '@agent/shared';
 import { useColors, spacing, typography, radius, type ThemeColors } from '../../theme';
 import { hapticLight } from '../../lib/haptics';
@@ -144,7 +144,7 @@ function JobCard({
             </Text>
           </View>
           <View style={styles.cardMeta}>
-            <Ionicons name="time-outline" size={14} color={colors.mutedForeground} />
+            <Clock size={14} color={colors.mutedForeground} strokeWidth={2} />
             <Text style={styles.metaText}>{formatSchedule(job)}</Text>
             {getModelLabel(job) && (
               <>
@@ -155,7 +155,7 @@ function JobCard({
           </View>
           {job.state.lastRunAtMs ? (
             <View style={styles.cardMeta}>
-              <Ionicons name="checkmark-done-outline" size={14} color={colors.mutedForeground} />
+              <CheckCheck size={14} color={colors.mutedForeground} strokeWidth={2} />
               <Text style={styles.metaText}>
                 上次: {new Date(job.state.lastRunAtMs).toLocaleString()}
               </Text>
@@ -163,7 +163,7 @@ function JobCard({
           ) : null}
           {job.state.nextRunAtMs && (
             <View style={styles.cardMeta}>
-              <Ionicons name="arrow-forward-outline" size={14} color={colors.mutedForeground} />
+              <ArrowRight size={14} color={colors.mutedForeground} strokeWidth={2} />
               <Text style={styles.metaText}>
                 下次: {new Date(job.state.nextRunAtMs).toLocaleString()}
               </Text>

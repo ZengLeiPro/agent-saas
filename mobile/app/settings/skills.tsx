@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Puzzle, Hammer } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, typography, radius } from '../../src/theme';
 import { useSkills } from '../../src/hooks/useSkills';
@@ -107,7 +107,7 @@ export default function SkillsScreen() {
                     >
                       <View style={styles.rowLeft}>
                         <View style={styles.rowIcon}>
-                          <Ionicons name="extension-puzzle-outline" size={18} color={colors.primary} />
+                          <Puzzle size={18} color={colors.primary} strokeWidth={2} />
                         </View>
                         <View style={styles.rowText}>
                           <Text style={styles.rowName}>{skill.name}</Text>
@@ -140,7 +140,7 @@ export default function SkillsScreen() {
                     >
                       <View style={styles.rowLeft}>
                         <View style={styles.rowIcon}>
-                          <Ionicons name="hammer-outline" size={18} color={colors.primary} />
+                          <Hammer size={18} color={colors.primary} strokeWidth={2} />
                         </View>
                         <View style={styles.rowText}>
                           <Text style={styles.rowName}>{skill.name}</Text>

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { View, Text, TouchableOpacity, Pressable, Alert } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { MoreHorizontal, ChevronLeft, Trash2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DropdownMenu, type DropdownSection } from '../../../src/components/overlays/DropdownMenu';
 import { FILE_SORT_LABELS, authFetch, getPreviewFileType } from '@agent/shared';
@@ -219,7 +219,7 @@ export default function BrowseFolderScreen() {
               </TouchableOpacity>
             ) : (
               <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu}>
-                <Ionicons name="ellipsis-horizontal" size={22} color={colors.foreground} />
+                <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
               </Pressable>
             ),
           unstable_headerRightItems: () => isSelectMode
@@ -232,14 +232,14 @@ export default function BrowseFolderScreen() {
               )]
             : [glassFree(
                 <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu}>
-                  <Ionicons name="ellipsis-horizontal" size={22} color={colors.foreground} />
+                  <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
                 </Pressable>
               )],
           headerBackVisible: false,
           headerLeft: isRootMode
             ? () => (
                 <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                  <Feather name="chevron-left" size={22} color={colors.foreground} />
+                  <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
                 </TouchableOpacity>
               )
             : () => isSelectMode ? (
@@ -249,7 +249,7 @@ export default function BrowseFolderScreen() {
               ) : (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                   <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                    <Feather name="chevron-left" size={22} color={colors.foreground} />
+                    <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
                   </TouchableOpacity>
                   <TouchableOpacity onPress={enterSelectMode} activeOpacity={0.7}>
                     <Text style={headerTextStyle}>选择</Text>
@@ -259,7 +259,7 @@ export default function BrowseFolderScreen() {
           unstable_headerLeftItems: isRootMode
             ? () => [glassFree(
                 <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                  <Feather name="chevron-left" size={22} color={colors.foreground} />
+                  <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
                 </TouchableOpacity>
               )]
             : () => isSelectMode
@@ -271,7 +271,7 @@ export default function BrowseFolderScreen() {
               : [
                   glassFree(
                     <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                      <Feather name="chevron-left" size={22} color={colors.foreground} />
+                      <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
                     </TouchableOpacity>
                   ),
                   glassFree(
@@ -318,7 +318,7 @@ export default function BrowseFolderScreen() {
           <TouchableOpacity onPress={handleBatchDelete} disabled={!hasSelection} activeOpacity={0.7}>
             {renderGlass(
               { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
-              <Ionicons name="trash" size={24} color={hasSelection ? colors.destructive : colors.foreground} />,
+              <Trash2 size={24} color={hasSelection ? colors.destructive : colors.foreground} strokeWidth={2} />,
             )}
           </TouchableOpacity>
         </View>

@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Modal, View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { X } from 'lucide-react-native';
 import { WebView } from 'react-native-webview';
 import { marked } from 'marked';
 import { useColors, typography, spacing } from '../../theme';
@@ -69,7 +69,7 @@ export function TextSelectModal({ visible, onClose, content }: TextSelectModalPr
           <View style={styles.headerSpacer} />
           <Text style={styles.headerTitle}>选择文本</Text>
           <Pressable onPress={onClose} style={styles.closeButton} hitSlop={8}>
-            <Ionicons name="close" size={24} color={colors.foreground} />
+            <X size={24} color={colors.foreground} strokeWidth={2} />
           </Pressable>
         </View>
         <WebView

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, Linking, ScrollView, Dimensions, type ImageStyle } from 'react-native';
 import { Image } from 'expo-image';
-import { Ionicons } from '@expo/vector-icons';
+import { Check, Copy } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc } from '@agent/shared';
 import { useColors, typography as defaultTypography, radius, spacing } from '../../theme';
@@ -50,11 +50,11 @@ function CopyButton({ content }: { content: string }) {
 
   return (
     <Pressable onPress={handleCopy} style={styles.copyButton}>
-      <Ionicons
-        name={copied ? 'checkmark' : 'copy-outline'}
-        size={16}
-        color={copied ? colors.success : colors.mutedForeground}
-      />
+      {copied ? (
+        <Check size={16} color={colors.success} strokeWidth={2} />
+      ) : (
+        <Copy size={16} color={colors.mutedForeground} strokeWidth={2} />
+      )}
     </Pressable>
   );
 }

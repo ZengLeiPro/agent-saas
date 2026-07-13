@@ -2,7 +2,7 @@ import React from "react";
 import { Platform, View, Text, Pressable, StyleSheet } from "react-native";
 import { Tabs } from "expo-router";
 import { NativeTabs } from "expo-router/unstable-native-tabs";
-import Ionicons from "@expo/vector-icons/Ionicons";
+import { MessagesSquare, Folder, Settings } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DEFAULT_TENANT_SETTINGS } from "@agent/shared";
 import { useColors, type ThemeColors } from "../../src/theme";
@@ -15,8 +15,7 @@ const allTabs = [
   {
     name: "chat",
     label: "对话",
-    icon: "chatbubbles-outline" as const,
-    iconFill: "chatbubbles" as const,
+    Icon: MessagesSquare,
     sf: {
       default: "bubble.left.and.bubble.right",
       selected: "bubble.left.and.bubble.right.fill",
@@ -25,15 +24,13 @@ const allTabs = [
   {
     name: "files",
     label: "文件",
-    icon: "folder-outline" as const,
-    iconFill: "folder" as const,
+    Icon: Folder,
     sf: { default: "folder", selected: "folder.fill" },
   },
   {
     name: "settings",
     label: "设置",
-    icon: "settings-outline" as const,
-    iconFill: "settings" as const,
+    Icon: Settings,
     sf: { default: "gearshape", selected: "gearshape.fill" },
   },
 ] as const;
@@ -70,15 +67,7 @@ function IOSTabs() {
     >
       {visibleTabs.map((tab) => (
         <NativeTabs.Trigger key={tab.name} name={tab.name}>
-          <NativeTabs.Trigger.Icon
-            sf={tab.sf}
-            src={
-              <NativeTabs.Trigger.VectorIcon
-                family={Ionicons}
-                name={tab.icon}
-              />
-            }
-          />
+          <NativeTabs.Trigger.Icon sf={tab.sf} />
           <NativeTabs.Trigger.Label>{tab.label}</NativeTabs.Trigger.Label>
         </NativeTabs.Trigger>
       ))}
@@ -113,7 +102,7 @@ function AndroidCustomTabBar({ state, descriptors, navigation }: any) {
 
         const focused = state.index === index;
         const color = focused ? colors.primary : colors.mutedForeground;
-        const iconName = focused ? tab.iconFill : tab.icon;
+        const TabIcon = tab.Icon;
 
         const onPress = () => {
           const event = navigation.emit({
@@ -142,7 +131,7 @@ function AndroidCustomTabBar({ state, descriptors, navigation }: any) {
               pressed && { opacity: 0.6 },
             ]}
           >
-            <Ionicons name={iconName} size={22} color={color} />
+            <TabIcon size={22} color={color} strokeWidth={focused ? 2.5 : 2} />
             <Text style={[androidStyles.label, { color }]}>{tab.label}</Text>
           </Pressable>
         );

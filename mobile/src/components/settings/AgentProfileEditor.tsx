@@ -22,7 +22,16 @@ import {
   Platform,
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import {
+  Camera,
+  ChevronRight,
+  Layers,
+  Palette,
+  Puzzle,
+  RefreshCw,
+  X,
+  type LucideIcon,
+} from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors, spacing, typography, radius } from "../../theme";
@@ -169,13 +178,13 @@ export function AgentProfileEditor({
   const hasCustomAvatar = !!avatar && avatar.startsWith("agent-avatars/");
   const actionRows: {
     key: string;
-    icon: string;
+    Icon: LucideIcon;
     label: string;
     onPress: () => void;
   }[] = [
     {
       key: "avatar",
-      icon: "camera-outline",
+      Icon: Camera,
       label: "修改头像",
       onPress: () => void handlePickAvatar(),
     },
@@ -183,14 +192,14 @@ export function AgentProfileEditor({
   if (hasCustomAvatar) {
     actionRows.push({
       key: "reset",
-      icon: "refresh-outline",
+      Icon: RefreshCw,
       label: "重置头像",
       onPress: () => void handleResetAvatar(),
     });
   }
   actionRows.push({
     key: "persona",
-    icon: "color-palette-outline",
+    Icon: Palette,
     label: "人格定义",
     onPress: () =>
       router.push({
@@ -200,7 +209,7 @@ export function AgentProfileEditor({
   });
   actionRows.push({
     key: "memory",
-    icon: "layers-outline",
+    Icon: Layers,
     label: "Agent 记忆",
     onPress: () =>
       router.push({
@@ -211,7 +220,7 @@ export function AgentProfileEditor({
   if (customSkillsEnabled) {
     actionRows.push({
       key: "skills",
-      icon: "extension-puzzle-outline",
+      Icon: Puzzle,
       label: "技能",
       onPress: () => router.push("/settings/skills"),
     });
@@ -219,7 +228,7 @@ export function AgentProfileEditor({
   // Hidden for now — may re-enable later
   // actionRows.push({
   //   key: 'memory-files',
-  //   icon: 'folder-open-outline',
+  //   Icon: FolderOpen,
   //   label: '日常记忆',
   //   onPress: () => router.push({ pathname: '/memory-browser', params: { path: 'memory' } }),
   // });
@@ -447,17 +456,17 @@ export function AgentProfileEditor({
                     activeOpacity={0.7}
                   >
                     <View style={styles.rowLeft}>
-                      <Ionicons
-                        name={item.icon as any}
+                      <item.Icon
                         size={20}
                         color={colors.primary}
+                        strokeWidth={2}
                       />
                       <Text style={styles.rowLabel}>{item.label}</Text>
                     </View>
-                    <Ionicons
-                      name="chevron-forward"
+                    <ChevronRight
                       size={16}
                       color={colors.mutedForeground}
+                      strokeWidth={2}
                     />
                   </TouchableOpacity>
                 ))}
@@ -493,7 +502,7 @@ export function AgentProfileEditor({
             onPress={() => setAvatarPreview(false)}
             activeOpacity={0.7}
           >
-            <Ionicons name="close" size={28} color={colors.onOverlay} />
+            <X size={28} color={colors.onOverlay} strokeWidth={2} />
           </TouchableOpacity>
           {!isEmojiAvatar(avatar) && (
             <Image

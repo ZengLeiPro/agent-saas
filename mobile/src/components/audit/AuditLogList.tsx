@@ -17,7 +17,22 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FlashList } from "@shopify/flash-list";
-import { Ionicons } from "@expo/vector-icons";
+import {
+  Circle,
+  CircleCheck,
+  CircleX,
+  Clock,
+  File,
+  Layers,
+  MessageCircle,
+  Palette,
+  Search,
+  Send,
+  Smartphone,
+  Timer,
+  User,
+  type LucideIcon,
+} from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { wgs84ToGcj02, authFetch, type LoginLogEntry } from "@agent/shared";
 import { useLoginLogs } from "../../hooks/useLoginLogs";
@@ -89,34 +104,34 @@ const FAIL_LABELS: Record<string, string> = {
 };
 
 type EventIconInfo = {
-  name: keyof typeof Ionicons.glyphMap;
+  Icon: LucideIcon;
   color: string;
 };
 
 function getEventIcon(event: string, colors: ThemeColors): EventIconInfo {
   if (event === "login_success")
-    return { name: "checkmark-circle", color: colors.statusIcon.success };
+    return { Icon: CircleCheck, color: colors.statusIcon.success };
   if (event === "login_fail")
-    return { name: "close-circle", color: colors.destructive };
+    return { Icon: CircleX, color: colors.destructive };
   if (event === "app_foreground")
-    return { name: "phone-portrait", color: colors.statusIcon.info };
+    return { Icon: Smartphone, color: colors.statusIcon.info };
   if (event === "app_background")
-    return { name: "phone-portrait", color: colors.mutedForeground };
+    return { Icon: Smartphone, color: colors.mutedForeground };
   if (event === "chat_message_sent")
-    return { name: "send", color: colors.statusIcon.purple };
+    return { Icon: Send, color: colors.statusIcon.purple };
   if (event.startsWith("session_"))
-    return { name: "chatbubble", color: colors.statusIcon.purple };
+    return { Icon: MessageCircle, color: colors.statusIcon.purple };
   if (event.startsWith("group_"))
-    return { name: "albums", color: colors.statusIcon.purple };
+    return { Icon: Layers, color: colors.statusIcon.purple };
   if (event.startsWith("cron_"))
-    return { name: "timer", color: colors.statusIcon.warning };
+    return { Icon: Timer, color: colors.statusIcon.warning };
   if (event.startsWith("user_"))
-    return { name: "person", color: colors.statusIcon.cyan };
+    return { Icon: User, color: colors.statusIcon.cyan };
   if (event.startsWith("file_"))
-    return { name: "document", color: colors.statusIcon.info };
+    return { Icon: File, color: colors.statusIcon.info };
   if (event.startsWith("agent_"))
-    return { name: "color-palette", color: colors.statusIcon.purple };
-  return { name: "ellipse", color: colors.mutedForeground };
+    return { Icon: Palette, color: colors.statusIcon.purple };
+  return { Icon: Circle, color: colors.mutedForeground };
 }
 
 function formatTime(iso: string): string {
@@ -420,10 +435,10 @@ export const AuditLogList = forwardRef<AuditLogListRef, AuditLogListProps>(
 
         return (
           <View style={styles.row}>
-            <Ionicons
-              name={icon.name}
+            <icon.Icon
               size={18}
               color={icon.color}
+              strokeWidth={2}
               style={styles.icon}
             />
             <View style={styles.rowContent}>
@@ -520,11 +535,11 @@ export const AuditLogList = forwardRef<AuditLogListRef, AuditLogListProps>(
             ListEmptyComponent={
               !loading ? (
                 <View style={styles.empty}>
-                  <Ionicons
-                    name={category ? "search-outline" : "time-outline"}
-                    size={48}
-                    color={colors.mutedForeground}
-                  />
+                  {category ? (
+                    <Search size={48} color={colors.mutedForeground} strokeWidth={2} />
+                  ) : (
+                    <Clock size={48} color={colors.mutedForeground} strokeWidth={2} />
+                  )}
                   <Text style={styles.emptyTitle}>
                     {category ? "该分类暂无记录" : "暂无操作日志"}
                   </Text>

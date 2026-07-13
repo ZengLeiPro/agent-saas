@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { ChevronRight, ChevronDown } from 'lucide-react-native';
 import { useColors } from '../../theme';
 import { hapticLight } from '../../lib/haptics';
 import { DropdownMenu, type DropdownSection } from '../overlays/DropdownMenu';
@@ -66,12 +66,11 @@ export function FormPickerRow({
       <Text style={[styles.value, { color: colors.mutedForeground }]} numberOfLines={1}>
         {displayLabel}
       </Text>
-      <Ionicons
-        name={Platform.OS === 'ios' ? 'chevron-forward' : 'chevron-down'}
-        size={16}
-        color={colors.mutedForeground}
-        style={styles.chevron}
-      />
+      {Platform.OS === 'ios' ? (
+        <ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} style={styles.chevron} />
+      ) : (
+        <ChevronDown size={16} color={colors.mutedForeground} strokeWidth={2} style={styles.chevron} />
+      )}
     </View>
   );
 

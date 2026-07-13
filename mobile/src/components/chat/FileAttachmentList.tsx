@@ -8,7 +8,7 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Play, Video, File, CircleX, CircleAlert, X } from 'lucide-react-native';
 import type { UploadedFile } from '@agent/shared';
 import { useColors, spacing, typography, radius } from '../../theme';
 
@@ -115,20 +115,22 @@ export function FileAttachmentList({ files, uploading, uploadError, onRemove, on
                 <Image source={{ uri: file.previewUrl }} style={styles.preview} />
                 {isVideo && (
                   <View style={styles.playBadge}>
-                    <Ionicons name="play" size={16} color={colors.onOverlay} />
+                    <Play size={16} color={colors.onOverlay} strokeWidth={2} />
                   </View>
                 )}
               </View>
             ) : (
               <View style={styles.fileIcon}>
-                <Ionicons name={isVideo ? 'videocam-outline' : 'document-outline'} size={24} color={colors.mutedForeground} />
+                {isVideo
+                  ? <Video size={24} color={colors.mutedForeground} strokeWidth={2} />
+                  : <File size={24} color={colors.mutedForeground} strokeWidth={2} />}
               </View>
             )}
             <Text style={styles.fileName} numberOfLines={1}>
               {file.originalName}
             </Text>
             <TouchableOpacity style={styles.removeButton} onPress={() => onRemove(index)}>
-              <Ionicons name="close-circle" size={18} color={colors.mutedForeground} />
+              <CircleX size={18} color={colors.mutedForeground} strokeWidth={2} />
             </TouchableOpacity>
           </View>
           );
@@ -142,13 +144,13 @@ export function FileAttachmentList({ files, uploading, uploadError, onRemove, on
       )}
       {uploadError && (
         <View style={styles.errorBar}>
-          <Ionicons name="alert-circle-outline" size={16} color={colors.destructive} />
+          <CircleAlert size={16} color={colors.destructive} strokeWidth={2} />
           <Text style={styles.errorText} numberOfLines={2}>
             {uploadError}
           </Text>
           {onDismissError && (
             <TouchableOpacity style={styles.errorDismiss} onPress={onDismissError}>
-              <Ionicons name="close" size={16} color={colors.destructive} />
+              <X size={16} color={colors.destructive} strokeWidth={2} />
             </TouchableOpacity>
           )}
         </View>

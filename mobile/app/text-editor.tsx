@@ -9,7 +9,7 @@ import {
   Platform,
 } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { X, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useColors, spacing, typography } from '../src/theme';
@@ -48,7 +48,7 @@ export default function TextEditorScreen() {
   const headerLeft = useCallback(
     () => (
       <TouchableOpacity onPress={handleClose} activeOpacity={0.7}>
-        <Ionicons name="close" size={24} color={colors.foreground} />
+        <X size={24} color={colors.foreground} strokeWidth={2} />
       </TouchableOpacity>
     ),
     [handleClose, colors.foreground],
@@ -57,7 +57,7 @@ export default function TextEditorScreen() {
   const headerRight = useCallback(
     () => (
       <TouchableOpacity onPress={handleSave} activeOpacity={0.7}>
-        <Feather name="check" size={24} color={colors.foreground} />
+        <Check size={24} color={colors.foreground} strokeWidth={2} />
       </TouchableOpacity>
     ),
     [handleSave, colors.foreground],

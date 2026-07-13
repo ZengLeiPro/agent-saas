@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useCallback, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { ChevronDown } from 'lucide-react-native';
 import type { ModelList } from '@agent/shared';
 import { useColors, typography } from '../../theme';
 import { hapticLight } from '../../lib/haptics';
@@ -167,7 +167,7 @@ export function ModelPicker({
             <Text style={[defaultStyles.triggerText, { color: colors.mutedForeground }]} numberOfLines={1}>
               {selectedModelLabel ?? '模型'}
             </Text>
-            <Ionicons name="chevron-down" size={12} color={colors.mutedForeground} />
+            <ChevronDown size={12} color={colors.mutedForeground} strokeWidth={2} />
           </View>
         )}
       </Pressable>

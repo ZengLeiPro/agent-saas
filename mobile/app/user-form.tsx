@@ -1,8 +1,7 @@
 import React, { useRef, useCallback } from 'react';
 import { View, TouchableOpacity } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { Feather } from '@expo/vector-icons';
+import { X, Check } from 'lucide-react-native';
 import type { CreateUserInput, UpdateUserInput } from '@agent/shared';
 import { useUsers } from '../src/hooks/useUsers';
 import { UserForm, type UserFormRef } from '../src/components/user/UserForm';
@@ -52,22 +51,22 @@ export default function UserFormScreen() {
           title: isEditing ? '编辑用户' : '创建用户',
           headerLeft: () => (
             <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
-              <Ionicons name="close" size={24} color={colors.foreground} />
+              <X size={24} color={colors.foreground} strokeWidth={2} />
             </TouchableOpacity>
           ),
           unstable_headerLeftItems: () => [glassFree(
             <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
-              <Ionicons name="close" size={24} color={colors.foreground} />
+              <X size={24} color={colors.foreground} strokeWidth={2} />
             </TouchableOpacity>
           )],
           headerRight: () => (
             <TouchableOpacity onPress={() => formRef.current?.submit()} activeOpacity={0.7}>
-              <Feather name="check" size={24} color={colors.foreground} />
+              <Check size={24} color={colors.foreground} strokeWidth={2} />
             </TouchableOpacity>
           ),
           unstable_headerRightItems: () => [glassFree(
             <TouchableOpacity onPress={() => formRef.current?.submit()} activeOpacity={0.7}>
-              <Feather name="check" size={24} color={colors.foreground} />
+              <Check size={24} color={colors.foreground} strokeWidth={2} />
             </TouchableOpacity>
           )],
         }}

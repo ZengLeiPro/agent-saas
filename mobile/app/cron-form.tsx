@@ -1,7 +1,7 @@
 import React, { useRef, useState, useMemo, useCallback } from 'react';
 import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { X, Check } from 'lucide-react-native';
 import type { CronJob, CronJobCreate } from '@agent/shared';
 import { useCronJobs } from '../src/hooks/useCronJobs';
 import { CronJobForm, type CronJobFormRef } from '../src/components/cron/CronJobForm';
@@ -100,7 +100,7 @@ export default function CronFormScreen() {
       )
     : () => (
         <TouchableOpacity onPress={handleCloseEdit} activeOpacity={0.7}>
-          <Ionicons name="close" size={24} color={colors.foreground} />
+          <X size={24} color={colors.foreground} strokeWidth={2} />
         </TouchableOpacity>
       );
 
@@ -112,7 +112,7 @@ export default function CronFormScreen() {
       )
     : () => (
         <TouchableOpacity onPress={() => formRef.current?.submit()} activeOpacity={0.7}>
-          <Feather name="check" size={24} color={colors.foreground} />
+          <Check size={24} color={colors.foreground} strokeWidth={2} />
         </TouchableOpacity>
       );
 
@@ -124,7 +124,7 @@ export default function CronFormScreen() {
       )]
     : () => [glassFree(
         <TouchableOpacity onPress={handleCloseEdit} activeOpacity={0.7}>
-          <Ionicons name="close" size={24} color={colors.foreground} />
+          <X size={24} color={colors.foreground} strokeWidth={2} />
         </TouchableOpacity>
       )];
 
@@ -136,7 +136,7 @@ export default function CronFormScreen() {
       )]
     : () => [glassFree(
         <TouchableOpacity onPress={() => formRef.current?.submit()} activeOpacity={0.7}>
-          <Feather name="check" size={24} color={colors.foreground} />
+          <Check size={24} color={colors.foreground} strokeWidth={2} />
         </TouchableOpacity>
       )];
 

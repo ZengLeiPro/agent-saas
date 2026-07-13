@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Pressable, Alert } from 'react-native';
 import { Stack, useRouter, useFocusEffect } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { MoreHorizontal, Trash2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DropdownMenu, type DropdownSection } from '../../../src/components/overlays/DropdownMenu';
 import SegmentedControl from '@react-native-segmented-control/segmented-control';
@@ -330,7 +330,7 @@ export default function FilesScreen() {
               </TouchableOpacity>
             ) : (
               <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu}>
-                <Ionicons name="ellipsis-horizontal" size={22} color={colors.foreground} />
+                <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
               </Pressable>
             ),
           unstable_headerRightItems: () => isSelectMode
@@ -343,7 +343,7 @@ export default function FilesScreen() {
               )]
             : [glassFree(
                 <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu}>
-                  <Ionicons name="ellipsis-horizontal" size={22} color={colors.foreground} />
+                  <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
                 </Pressable>
               )],
         }}
@@ -384,7 +384,7 @@ export default function FilesScreen() {
           <TouchableOpacity onPress={handleBatchDelete} disabled={!hasSelection} activeOpacity={0.7}>
             {renderGlass(
               { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
-              <Ionicons name="trash" size={24} color={hasSelection ? colors.destructive : colors.foreground} />,
+              <Trash2 size={24} color={hasSelection ? colors.destructive : colors.foreground} strokeWidth={2} />,
             )}
           </TouchableOpacity>
         </View>

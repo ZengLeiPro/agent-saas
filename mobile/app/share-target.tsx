@@ -24,7 +24,7 @@ import {
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
+import { CirclePlus, File, CircleAlert, ChevronRight } from "lucide-react-native";
 import type { ShareIntentFile } from "expo-share-intent";
 import type { UploadedFile, ApiSessionListItem } from "@agent/shared";
 import { DEFAULT_TENANT_SETTINGS, formatShortDate } from "@agent/shared";
@@ -218,10 +218,10 @@ export default function ShareTargetScreen() {
         ]}
         disabled={!allDone}
       >
-        <Ionicons
-          name="add-circle-outline"
+        <CirclePlus
           size={22}
           color={colors.primaryForeground}
+          strokeWidth={2}
         />
         <Text style={styles.newSessionText}>新建会话上传</Text>
       </Pressable>
@@ -278,10 +278,10 @@ function FilePreviewCard({
             style={cardStyles(colors).thumbImage}
           />
         ) : (
-          <Ionicons
-            name="document-outline"
+          <File
             size={28}
             color={colors.mutedForeground}
+            strokeWidth={2}
           />
         )}
         {slot.status === "uploading" && (
@@ -296,7 +296,7 @@ function FilePreviewCard({
               { backgroundColor: "rgba(220,50,50,0.5)" },
             ]}
           >
-            <Ionicons name="alert-circle" size={20} color="#fff" />
+            <CircleAlert size={20} color="#fff" strokeWidth={2} />
           </View>
         )}
       </View>
@@ -346,10 +346,10 @@ function SessionListItem({
           </Text>
         ) : null}
       </View>
-      <Ionicons
-        name="chevron-forward"
+      <ChevronRight
         size={18}
         color={colors.mutedForeground}
+        strokeWidth={2}
       />
     </Pressable>
   );

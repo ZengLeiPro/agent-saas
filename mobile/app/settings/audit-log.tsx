@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, Pressable, Alert, StyleSheet } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { MoreHorizontal } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DropdownMenu, type DropdownSection } from '../../src/components/overlays/DropdownMenu';
 import { AuditLogList, type AuditLogListRef } from '../../src/components/audit/AuditLogList';
@@ -106,7 +106,7 @@ export default function AuditLogScreen() {
     if (username) return undefined;
     return () => (
       <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu} hitSlop={8}>
-        <Ionicons name="ellipsis-horizontal" size={22} color={colors.foreground} />
+        <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
       </Pressable>
     );
   }, [username, handleOpenHeaderMenu, colors.foreground]);
@@ -115,7 +115,7 @@ export default function AuditLogScreen() {
     if (username) return undefined;
     return () => [glassFree(
       <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu} hitSlop={8}>
-        <Ionicons name="ellipsis-horizontal" size={22} color={colors.foreground} />
+        <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
       </Pressable>
     )];
   }, [username, handleOpenHeaderMenu, colors.foreground]);

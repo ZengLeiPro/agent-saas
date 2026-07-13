@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Modal, View, Text, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { ChevronLeft, ChevronRight, Check } from 'lucide-react-native';
 import { useColors, spacing, radius, typography, type ThemeColors } from '../../theme';
 import { hapticLight } from '../../lib/haptics';
 
@@ -124,7 +124,7 @@ export function DropdownMenu({
             /* ── Drill-down page ── */
             <View>
               <Pressable style={styles.drillHeader} onPress={handleBack}>
-                <Ionicons name="chevron-back" size={16} color={colors.mutedForeground} />
+                <ChevronLeft size={16} color={colors.mutedForeground} strokeWidth={2} />
                 <Text style={[styles.drillTitle, { color: colors.foreground }]}>
                   {activeDrillDown.title}
                 </Text>
@@ -180,12 +180,12 @@ export function DropdownMenu({
                           {action.label}
                         </Text>
                         {hasDrillDown && (
-                          <Ionicons name="chevron-forward" size={12} color={colors.mutedForeground} />
+                          <ChevronRight size={12} color={colors.mutedForeground} strokeWidth={2} />
                         )}
                         {hasCheck && (
                           <View style={styles.checkSlot}>
                             {action.checked && (
-                              <Ionicons name="checkmark" size={16} color={colors.foreground} />
+                              <Check size={16} color={colors.foreground} strokeWidth={2} />
                             )}
                           </View>
                         )}

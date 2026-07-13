@@ -6,7 +6,7 @@ import {
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { CircleCheck, CircleX, CircleMinus, Circle, type LucideIcon } from 'lucide-react-native';
 import type { CronRunLogEntry } from '@agent/shared';
 import { useColors, spacing, typography, radius, type ThemeColors } from '../../theme';
 
@@ -23,12 +23,12 @@ function formatDuration(ms: number): string {
   return `${m}m ${s % 60}s`;
 }
 
-function getStatusIcon(status: string, colors: ThemeColors): { name: keyof typeof Ionicons.glyphMap; color: string } {
+function getStatusIcon(status: string, colors: ThemeColors): { Icon: LucideIcon; color: string } {
   switch (status) {
-    case 'ok': return { name: 'checkmark-circle', color: colors.statusIcon.success };
-    case 'error': return { name: 'close-circle', color: colors.destructive };
-    case 'skipped': return { name: 'remove-circle-outline', color: colors.statusIcon.warning };
-    default: return { name: 'ellipse-outline', color: colors.mutedForeground };
+    case 'ok': return { Icon: CircleCheck, color: colors.statusIcon.success };
+    case 'error': return { Icon: CircleX, color: colors.destructive };
+    case 'skipped': return { Icon: CircleMinus, color: colors.statusIcon.warning };
+    default: return { Icon: Circle, color: colors.mutedForeground };
   }
 }
 
@@ -105,7 +105,7 @@ export function RunHistory({ entries, loading }: RunHistoryProps) {
         const icon = getStatusIcon(entry.status, colors);
         return (
           <View key={entry.runId} style={styles.row}>
-            <Ionicons name={icon.name} size={18} color={icon.color} />
+            <icon.Icon size={18} color={icon.color} strokeWidth={2} />
             <View style={styles.rowContent}>
               <View style={styles.rowHeader}>
                 <Text style={styles.time}>

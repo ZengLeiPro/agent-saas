@@ -13,7 +13,35 @@ import {
   ScrollView,
   TextInput,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import {
+  Archive,
+  BookOpen,
+  Check,
+  ChevronRight,
+  Circle,
+  CircleAlert,
+  CircleCheck,
+  CircleDot,
+  CircleX,
+  Clock,
+  Download,
+  File,
+  FileCode,
+  FileText,
+  Image as ImageIcon,
+  Lightbulb,
+  Mic,
+  Paperclip,
+  Presentation,
+  Square,
+  SquareCheck,
+  Table,
+  TriangleAlert,
+  Video,
+  Volume2,
+  Wrench,
+  type LucideIcon,
+} from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import { DropdownMenu, type DropdownSection } from '../overlays/DropdownMenu';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -31,18 +59,12 @@ import { createMarkdownStyles } from './markdownStyles';
 import { createMarkdownRules } from './markdownRules';
 import { hapticLight } from '../../lib/haptics';
 
-const CATEGORY_IONICON: Record<FileTypeCategory, React.ComponentProps<typeof Ionicons>['name']> = {
-  pdf: 'reader-outline', word: 'document-text-outline', ppt: 'easel-outline',
-  excel: 'grid-outline', code: 'code-slash-outline', image: 'image-outline',
-  video: 'videocam-outline', text: 'document-text-outline', archive: 'archive-outline',
-  default: 'document-outline',
+const CATEGORY_ICON: Record<FileTypeCategory, LucideIcon> = {
+  pdf: BookOpen, word: FileText, ppt: Presentation,
+  excel: Table, code: FileCode, image: ImageIcon,
+  video: Video, text: FileText, archive: Archive,
+  default: File,
 };
-
-const USER_VOICE_MARKER = '🎙 ';
-
-function formatUserVoiceText(text: string): string {
-  return `${USER_VOICE_MARKER}${text}`;
-}
 
 function useMessageStyles(colors: ThemeColors, typo: typeof typography) {
   return useMemo(() => StyleSheet.create({
@@ -467,7 +489,7 @@ function UserMessage({ message, onRetry, onFork, isFirstUser, isLoading }: {
   }, []);
 
   const messageText = message.displayContent ?? message.content;
-  const displayText = message.isVoiceTranscript ? formatUserVoiceText(messageText) : messageText;
+  const displayText = messageText;
 
   return (
     <View style={styles.userBubbleContainer}>
@@ -477,13 +499,22 @@ function UserMessage({ message, onRetry, onFork, isFirstUser, isLoading }: {
       >
         <View style={[styles.userBubble, message.status === 'failed' && styles.failedBubble]}>
           {displayText ? (
-            <Text style={styles.userText}>{displayText}</Text>
+            message.isVoiceTranscript ? (
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 4 }}>
+                <Mic size={14} color={colors.foreground} strokeWidth={2} style={{ marginTop: 3 }} />
+                <Text style={[styles.userText, { flexShrink: 1 }]}>{displayText}</Text>
+              </View>
+            ) : (
+              <Text style={styles.userText}>{displayText}</Text>
+            )
           ) : null}
           {message.attachments && message.attachments.length > 0 && (
             <View style={[styles.attachmentChips, displayText ? { marginTop: 6 } : undefined]}>
               {message.attachments.map((att, i) => (
                 <View key={i} style={styles.attachmentChip}>
-                  <Ionicons name={att.isImage ? 'image-outline' : 'attach'} size={12} color={colors.mutedForeground} />
+                  {att.isImage
+                    ? <ImageIcon size={12} color={colors.mutedForeground} strokeWidth={2} />
+                    : <Paperclip size={12} color={colors.mutedForeground} strokeWidth={2} />}
                   <Text style={styles.attachmentChipText} numberOfLines={1}>{att.name}</Text>
                 </View>
               ))}
@@ -610,7 +641,7 @@ function InlineFileCard({ segment, onPreviewMd, colors, styles: s }: {
       disabled={downloading}
     >
       <View style={[s.fileIconBadge, { backgroundColor: fileVisual.color }]}>
-        <Ionicons name={CATEGORY_IONICON[fileVisual.category]} size={20} color="#FFFFFF" />
+        {React.createElement(CATEGORY_ICON[fileVisual.category], { size: 20, color: '#FFFFFF', strokeWidth: 2 })}
       </View>
       <View style={s.fileCardInfo}>
         <Text style={s.fileName} numberOfLines={1}>{segment.fileName}</Text>
@@ -620,10 +651,10 @@ function InlineFileCard({ segment, onPreviewMd, colors, styles: s }: {
         <ActivityIndicator size="small" color={colors.primary} />
       ) : isPreviewable && onPreviewMd ? (
         <TouchableOpacity hitSlop={8} onPress={(e) => { e.stopPropagation(); void handleDownload(); }}>
-          <Ionicons name="download-outline" size={20} color={colors.mutedForeground} />
+          <Download size={20} color={colors.mutedForeground} strokeWidth={2} />
         </TouchableOpacity>
       ) : (
-        <Ionicons name="download-outline" size={20} color={colors.mutedForeground} />
+        <Download size={20} color={colors.mutedForeground} strokeWidth={2} />
       )}
     </TouchableOpacity>
   );
@@ -772,12 +803,12 @@ function ThinkingBlock({ message }: { message: MessageItem & { type: 'thinking' 
   return (
     <View>
       <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow}>
-        <Ionicons name="bulb-outline" size={16} color={colors.mutedForeground} />
+        <Lightbulb size={16} color={colors.mutedForeground} strokeWidth={2} />
         <Text style={styles.toolLabel}>{message.streaming ? '思考中...' : '已思考'}</Text>
-        <Ionicons
-          name="chevron-forward"
+        <ChevronRight
           size={16}
           color={colors.mutedForeground}
+          strokeWidth={2}
           style={expanded ? { transform: [{ rotate: '90deg' }] } : undefined}
         />
       </Pressable>
@@ -815,13 +846,13 @@ function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' }
   );
 
   const icon = message.streaming || message.executionStatus === 'running'
-    ? <Ionicons name="build-outline" size={16} color={colors.mutedForeground} />
+    ? <Wrench size={16} color={colors.mutedForeground} strokeWidth={2} />
     : hasIssue
-      ? <Ionicons name="alert-circle-outline" size={16} color={colors.warning} />
+      ? <CircleAlert size={16} color={colors.warning} strokeWidth={2} />
       : isCancelled
-        ? <Ionicons name="close-circle-outline" size={16} color={colors.mutedForeground} />
+        ? <CircleX size={16} color={colors.mutedForeground} strokeWidth={2} />
     : hasResult
-      ? <Ionicons name="checkmark-circle-outline" size={16} color={colors.mutedForeground} />
+      ? <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} />
       : <ActivityIndicator size={16} color={colors.primary} />;
 
   return (
@@ -850,10 +881,10 @@ function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' }
           </Text>
         )}
         {hasIssue && <Text style={{ color: colors.warning, fontSize: 11 }}>有异常</Text>}
-        <Ionicons
-          name="chevron-forward"
+        <ChevronRight
           size={16}
           color={colors.mutedForeground}
+          strokeWidth={2}
           style={expanded ? { transform: [{ rotate: '90deg' }] } : undefined}
         />
       </Pressable>
@@ -923,12 +954,12 @@ function ToolResultBlock({ message }: { message: MessageItem & { type: 'tool_res
   return (
     <View>
       <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow}>
-        <Ionicons name="checkmark-circle-outline" size={16} color={colors.mutedForeground} />
+        <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} />
         <Text style={styles.toolLabel} numberOfLines={1}>Result: {message.toolName}</Text>
-        <Ionicons
-          name="chevron-forward"
+        <ChevronRight
           size={16}
           color={colors.mutedForeground}
+          strokeWidth={2}
           style={expanded ? { transform: [{ rotate: '90deg' }] } : undefined}
         />
       </Pressable>
@@ -1096,9 +1127,9 @@ function AskUserBlock({ message, onResponse }: {
             </View>
             {q.options.map((opt, oi) => {
               const isSelected = selectedSet.has(opt.label);
-              const iconName = q.multiSelect
-                ? (isSelected ? 'checkbox' : 'square-outline')
-                : (isSelected ? 'radio-button-on' : 'radio-button-off');
+              const OptionIcon = q.multiSelect
+                ? (isSelected ? SquareCheck : Square)
+                : (isSelected ? CircleDot : Circle);
               return (
                 <TouchableOpacity
                   key={oi}
@@ -1110,7 +1141,7 @@ function AskUserBlock({ message, onResponse }: {
                   onPress={() => isPending && handleOptionSelect(q, opt.label)}
                   disabled={!isPending}
                 >
-                  <Ionicons name={iconName} size={18} color={isSelected ? colors.primary : colors.mutedForeground} />
+                  <OptionIcon size={18} color={isSelected ? colors.primary : colors.mutedForeground} strokeWidth={2} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.optionLabel}>{opt.label}</Text>
                     {opt.description ? <Text style={styles.optionDesc}>{opt.description}</Text> : null}
@@ -1127,9 +1158,9 @@ function AskUserBlock({ message, onResponse }: {
               if (!isPending && !isCustomAnswer) return null;
 
               const isCustomSelected = isPending ? selectedSet.has('__custom__') : true;
-              const customIconName = q.multiSelect
-                ? (isCustomSelected ? 'checkbox' : 'square-outline')
-                : (isCustomSelected ? 'radio-button-on' : 'radio-button-off');
+              const CustomOptionIcon = q.multiSelect
+                ? (isCustomSelected ? SquareCheck : Square)
+                : (isCustomSelected ? CircleDot : Circle);
               return (
                 <>
                   <TouchableOpacity
@@ -1141,7 +1172,7 @@ function AskUserBlock({ message, onResponse }: {
                     onPress={() => isPending && handleOptionSelect(q, '__custom__')}
                     disabled={!isPending}
                   >
-                    <Ionicons name={customIconName} size={18} color={isCustomSelected ? colors.primary : colors.mutedForeground} />
+                    <CustomOptionIcon size={18} color={isCustomSelected ? colors.primary : colors.mutedForeground} strokeWidth={2} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.optionLabel}>Other</Text>
                       <Text style={styles.optionDesc}>{isCustomAnswer ? answerText : '输入自定义回答'}</Text>
@@ -1193,13 +1224,14 @@ function SubagentBlock({ message }: { message: MessageItem & { type: 'subagent' 
   const styles = useMessageStyles(colors, typo);
 
   const hasIssue = message.status === 'failed' || message.status === 'timeout';
-  const iconName = message.status === 'running'
-    ? 'time-outline'
+  const iconColor = hasIssue ? colors.warning : colors.mutedForeground;
+  const statusIcon = message.status === 'running'
+    ? <Clock size={14} color={iconColor} strokeWidth={2} />
     : hasIssue
-      ? 'alert-circle-outline'
+      ? <TriangleAlert size={14} color={iconColor} strokeWidth={2} />
       : message.status === 'cancelled'
-        ? 'close-circle-outline'
-        : 'checkmark-outline';
+        ? <Circle size={14} color={iconColor} strokeWidth={2} />
+        : <Check size={14} color={iconColor} strokeWidth={2} />;
   const statusText = message.status === 'running'
     ? `子任务: ${message.agentType}`
     : message.status === 'failed'
@@ -1212,7 +1244,7 @@ function SubagentBlock({ message }: { message: MessageItem & { type: 'subagent' 
 
   return (
     <View style={[styles.subagentBlock, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
-      <Ionicons name={iconName} size={14} color={hasIssue ? colors.warning : colors.mutedForeground} />
+      {statusIcon}
       <Text style={[styles.subagentText, hasIssue && { color: colors.warning }]}>{statusText}</Text>
     </View>
   );
@@ -1296,7 +1328,7 @@ function FileDownloadCard({ message, onPreviewMd }: {
       disabled={downloading}
     >
       <View style={[styles.fileIconBadge, { backgroundColor: fileVisual.color }]}>
-        <Ionicons name={CATEGORY_IONICON[fileVisual.category]} size={20} color="#FFFFFF" />
+        {React.createElement(CATEGORY_ICON[fileVisual.category], { size: 20, color: '#FFFFFF', strokeWidth: 2 })}
       </View>
       <View style={styles.fileCardInfo}>
         <Text style={styles.fileName} numberOfLines={1}>{message.fileName}</Text>
@@ -1311,10 +1343,10 @@ function FileDownloadCard({ message, onPreviewMd }: {
           hitSlop={8}
           onPress={(e) => { e.stopPropagation(); void handleDownload(); }}
         >
-          <Ionicons name="download-outline" size={20} color={colors.mutedForeground} />
+          <Download size={20} color={colors.mutedForeground} strokeWidth={2} />
         </TouchableOpacity>
       ) : (
-        <Ionicons name="download-outline" size={20} color={colors.mutedForeground} />
+        <Download size={20} color={colors.mutedForeground} strokeWidth={2} />
       )}
     </TouchableOpacity>
   );
@@ -1327,8 +1359,9 @@ function VoiceBlock({ message }: { message: MessageItem & { type: 'voice' } }) {
   const styles = useMessageStyles(colors, typo);
 
   return (
-    <View style={styles.voiceBlock}>
-      <Text style={styles.voiceText}>🔊 语音消息 ({message.voiceMarkers.length} 段)</Text>
+    <View style={[styles.voiceBlock, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+      <Volume2 size={14} color={colors.mutedForeground} strokeWidth={2} />
+      <Text style={styles.voiceText}>语音消息 ({message.voiceMarkers.length} 段)</Text>
     </View>
   );
 }
@@ -1342,12 +1375,15 @@ function UserVoiceBlock({ message }: { message: MessageItem & { type: 'user-voic
     : message.status === 'transcribing' ? '识别中...'
     : message.status === 'failed' ? message.failedReason || '发送失败'
     : '';
-  const displayText = formatUserVoiceText(message.transcribedText || fallbackText);
+  const displayText = message.transcribedText || fallbackText;
 
   return (
     <View style={styles.userBubbleContainer}>
       <View style={[styles.userBubble, message.status === 'failed' && styles.failedBubble]}>
-        <Text style={styles.userText}>{displayText}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 4 }}>
+          <Mic size={14} color={colors.foreground} strokeWidth={2} style={{ marginTop: 3 }} />
+          <Text style={[styles.userText, { flexShrink: 1 }]}>{displayText}</Text>
+        </View>
       </View>
     </View>
   );
@@ -1411,15 +1447,15 @@ function ActivityGroupView({ group }: { group: ActivityGroup; isLast?: boolean }
         {group.isActive
           ? <ActivityIndicator size={16} color={colors.primary} />
           : issueCount > 0
-            ? <Ionicons name="alert-circle-outline" size={16} color={colors.warning} />
-            : <Ionicons name="checkmark-circle-outline" size={16} color={colors.mutedForeground} style={{ opacity: 0.6 }} />
+            ? <CircleAlert size={16} color={colors.warning} strokeWidth={2} />
+          : <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} style={{ opacity: 0.6 }} />
         }
         <Text style={[styles.activitySummaryText, { maxWidth: 384 }, issueCount > 0 && { color: colors.warning }]} numberOfLines={1} ellipsizeMode={summary.ellipsizeMode}>{summary.text}</Text>
         <Text style={styles.activityCount}>({group.items.length})</Text>
-        <Ionicons
-          name="chevron-forward"
+        <ChevronRight
           size={16}
           color={colors.mutedForeground}
+          strokeWidth={2}
           style={expanded ? { transform: [{ rotate: '90deg' }] } : undefined}
         />
       </TouchableOpacity>

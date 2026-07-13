@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Modal, View, Pressable, StyleSheet, Dimensions } from 'react-native';
 import { Image } from 'expo-image';
-import { Ionicons } from '@expo/vector-icons';
+import { X } from 'lucide-react-native';
 import { useColors } from '../../theme';
 
 interface ImageLightboxProps {
@@ -44,7 +44,7 @@ export function ImageLightbox({ visible, uri, onClose }: ImageLightboxProps) {
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={styles.closeButton} onPress={onClose}>
-          <Ionicons name="close" size={24} color={colors.onOverlay} />
+          <X size={24} color={colors.onOverlay} strokeWidth={2} />
         </Pressable>
         <Image
           source={{ uri }}

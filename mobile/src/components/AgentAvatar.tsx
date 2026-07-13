@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 import { Image } from 'expo-image';
-import { Ionicons } from '@expo/vector-icons';
+import { User } from 'lucide-react-native';
 import { isEmojiAvatar, getAgentAvatarUrl } from '@agent/shared';
 import { getServerUrl } from '../platform/mobileConfig';
 import { useColors } from '../theme';
@@ -97,7 +97,7 @@ export function UserAvatar({ userId, avatar, size = 40, version }: UserAvatarPro
   return (
     <AvatarShell
       uri={url}
-      fallback={<Ionicons name="person" size={size * 0.5} color={colors.mutedForeground} />}
+      fallback={<User size={size * 0.5} color={colors.mutedForeground} strokeWidth={2} />}
       size={size}
     />
   );

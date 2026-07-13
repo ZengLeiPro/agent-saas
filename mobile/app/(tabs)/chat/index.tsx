@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { FlashList } from "@shopify/flash-list";
-import { Ionicons } from "@expo/vector-icons";
+import { Plus, Trash2, Timer, Folder } from "lucide-react-native";
 import {
   DropdownMenu,
   type DropdownSection,
@@ -687,11 +687,19 @@ export default function SessionListScreen() {
                   : styles.avatarManual,
               ]}
             >
-              <Ionicons
-                name={item.group.kind === "cron" ? "timer" : "folder"}
-                size={20}
-                color={colors.primaryForeground}
-              />
+              {item.group.kind === "cron" ? (
+                <Timer
+                  size={20}
+                  color={colors.primaryForeground}
+                  strokeWidth={2}
+                />
+              ) : (
+                <Folder
+                  size={20}
+                  color={colors.primaryForeground}
+                  strokeWidth={2}
+                />
+              )}
             </View>
             <View style={styles.groupContent}>
               <View style={styles.titleRow}>
@@ -848,7 +856,7 @@ export default function SessionListScreen() {
               </TouchableOpacity>
             ) : (
               <TouchableOpacity onPress={handleNewSession} activeOpacity={0.7}>
-                <Ionicons name="add" size={24} color={colors.foreground} />
+                <Plus size={24} color={colors.foreground} strokeWidth={2} />
               </TouchableOpacity>
             ),
           unstable_headerRightItems: () =>
@@ -874,10 +882,10 @@ export default function SessionListScreen() {
                       onPress={handleNewSession}
                       activeOpacity={0.7}
                     >
-                      <Ionicons
-                        name="add"
+                      <Plus
                         size={24}
                         color={colors.foreground}
+                        strokeWidth={2}
                       />
                     </TouchableOpacity>,
                   ),
@@ -967,7 +975,7 @@ export default function SessionListScreen() {
       >
         {renderGlass(
           styles.iconPillInner,
-          <Ionicons name="trash" size={24} color={color} />,
+          <Trash2 size={24} color={color} strokeWidth={2} />,
         )}
       </TouchableOpacity>
     );

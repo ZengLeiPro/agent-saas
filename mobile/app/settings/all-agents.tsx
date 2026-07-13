@@ -12,7 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Stack } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, typography, radius } from '../../src/theme';
 import { AgentAvatar } from '../../src/components/AgentAvatar';
@@ -131,7 +131,7 @@ export default function AllAgentsScreen() {
       <Modal visible={!!previewProfile} transparent animationType="fade">
         <Pressable style={styles.modalOverlay} onPress={() => setPreviewProfile(null)}>
           <TouchableOpacity style={styles.modalClose} onPress={() => setPreviewProfile(null)} activeOpacity={0.7}>
-            <Ionicons name="close" size={28} color={colors.onOverlay} />
+            <X size={28} color={colors.onOverlay} strokeWidth={2} />
           </TouchableOpacity>
           {previewProfile && !isEmojiAvatar(previewProfile.avatar) && (
             <Image

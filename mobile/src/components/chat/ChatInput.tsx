@@ -10,7 +10,7 @@ import {
   Animated,
   ActivityIndicator,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Square, CircleStop, ArrowUp, Mic, Plus } from 'lucide-react-native';
 import type { UploadedFile } from '@agent/shared';
 import { useColors, useTheme, spacing, typography, radius } from '../../theme';
 import { FileAttachmentList } from './FileAttachmentList';
@@ -254,21 +254,21 @@ export function ChatInput({
     if (showStop) {
       return (
         <TouchableOpacity style={[btnBase, styles.stopBtn]} onPress={onStop} activeOpacity={0.7}>
-          <Ionicons name="stop" size={16} color={colors.primaryForeground} />
+          <Square size={16} color={colors.primaryForeground} strokeWidth={2} />
         </TouchableOpacity>
       );
     }
     if (isRecording) {
       return (
         <TouchableOpacity style={[btnBase, styles.sendBtn]} onPress={handleRecordPressOut} activeOpacity={0.7}>
-          <Ionicons name="stop-circle" size={20} color={colors.primaryForeground} />
+          <CircleStop size={20} color={colors.primaryForeground} strokeWidth={2} />
         </TouchableOpacity>
       );
     }
     if (hasContent) {
       return (
         <TouchableOpacity style={[btnBase, styles.sendBtn]} onPress={handleSend} activeOpacity={0.7}>
-          <Ionicons name="arrow-up" size={18} color={colors.primaryForeground} />
+          <ArrowUp size={18} color={colors.primaryForeground} strokeWidth={2} />
         </TouchableOpacity>
       );
     }
@@ -279,7 +279,7 @@ export function ChatInput({
         onPressOut={handleRecordPressOut}
         activeOpacity={0.7}
       >
-        <Ionicons name="mic-outline" size={20} color={colors.foreground} />
+        <Mic size={20} color={colors.foreground} strokeWidth={2} />
       </TouchableOpacity>
     );
   };
@@ -311,10 +311,10 @@ export function ChatInput({
           disabled={isRecording}
           activeOpacity={0.7}
         >
-          <Ionicons
-            name="add"
+          <Plus
             size={24}
             color={colors.mutedForeground}
+            strokeWidth={2}
           />
         </TouchableOpacity>
 

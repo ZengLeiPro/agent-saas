@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { useRouter, useFocusEffect } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import { ChevronRight } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../../src/contexts/AuthContext";
 import { useTtsPlayer } from "../../../src/hooks/useTtsPlayer";
@@ -313,10 +313,10 @@ export default function SettingsScreen() {
               <Text style={styles.avatarUsername}>
                 {agentProfile?.realName || user?.username || "-"}
               </Text>
-              <Ionicons
-                name="chevron-forward"
+              <ChevronRight
                 size={16}
                 color={colors.mutedForeground}
+                strokeWidth={2}
               />
             </TouchableOpacity>
           </View>
@@ -340,10 +340,10 @@ export default function SettingsScreen() {
               <Text style={styles.avatarUsername}>
                 {agentProfile?.name || "AI 助手"}
               </Text>
-              <Ionicons
-                name="chevron-forward"
+              <ChevronRight
                 size={16}
                 color={colors.mutedForeground}
+                strokeWidth={2}
               />
             </TouchableOpacity>
             <TouchableOpacity
@@ -352,10 +352,10 @@ export default function SettingsScreen() {
               activeOpacity={0.7}
             >
               <Text style={styles.rowLabel}>所有 Agent</Text>
-              <Ionicons
-                name="chevron-forward"
+              <ChevronRight
                 size={16}
                 color={colors.mutedForeground}
+                strokeWidth={2}
               />
             </TouchableOpacity>
             {tenantFeatures.cronEnabled && (
@@ -365,10 +365,10 @@ export default function SettingsScreen() {
                 activeOpacity={0.7}
               >
                 <Text style={styles.rowLabel}>定时任务</Text>
-                <Ionicons
-                  name="chevron-forward"
+                <ChevronRight
                   size={16}
                   color={colors.mutedForeground}
+                  strokeWidth={2}
                 />
               </TouchableOpacity>
             )}
@@ -428,10 +428,10 @@ export default function SettingsScreen() {
                 <Text style={styles.rowValue} numberOfLines={1}>
                   {getServerUrl()}
                 </Text>
-                <Ionicons
-                  name="chevron-forward"
+                <ChevronRight
                   size={16}
                   color={colors.mutedForeground}
+                  strokeWidth={2}
                 />
               </View>
             </TouchableOpacity>
@@ -458,10 +458,10 @@ export default function SettingsScreen() {
                 <Text style={styles.rowValue} numberOfLines={1}>
                   {getLanUrl() || "未设置"}
                 </Text>
-                <Ionicons
-                  name="chevron-forward"
+                <ChevronRight
                   size={16}
                   color={colors.mutedForeground}
+                  strokeWidth={2}
                 />
               </View>
             </TouchableOpacity>
@@ -479,10 +479,10 @@ export default function SettingsScreen() {
                 activeOpacity={0.7}
               >
                 <Text style={styles.rowLabel}>用户管理</Text>
-                <Ionicons
-                  name="chevron-forward"
+                <ChevronRight
                   size={16}
                   color={colors.mutedForeground}
+                  strokeWidth={2}
                 />
               </TouchableOpacity>
               {tenantFeatures.customSkillsEnabled && (
@@ -492,10 +492,10 @@ export default function SettingsScreen() {
                   activeOpacity={0.7}
                 >
                   <Text style={styles.rowLabel}>技能管理</Text>
-                  <Ionicons
-                    name="chevron-forward"
+                  <ChevronRight
                     size={16}
                     color={colors.mutedForeground}
+                    strokeWidth={2}
                   />
                 </TouchableOpacity>
               )}
@@ -505,10 +505,10 @@ export default function SettingsScreen() {
                 activeOpacity={0.7}
               >
                 <Text style={styles.rowLabel}>操作日志</Text>
-                <Ionicons
-                  name="chevron-forward"
+                <ChevronRight
                   size={16}
                   color={colors.mutedForeground}
+                  strokeWidth={2}
                 />
               </TouchableOpacity>
             </View>

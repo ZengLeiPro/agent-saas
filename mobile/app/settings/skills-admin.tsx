@@ -11,7 +11,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { RefreshCw } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors, spacing, typography, radius } from '../../src/theme';
 import { useAdminPoolSkills, useAdminCustomSkills } from '../../src/hooks/useAdminSkills';
@@ -171,7 +171,7 @@ export default function SkillsAdminScreen() {
                 {syncing ? (
                   <ActivityIndicator size="small" color={colors.primary} />
                 ) : (
-                  <Ionicons name="sync-outline" size={14} color={colors.primary} />
+                  <RefreshCw size={14} color={colors.primary} strokeWidth={2} />
                 )}
                 <Text style={styles.syncBtnText}>强制同步</Text>
               </TouchableOpacity>

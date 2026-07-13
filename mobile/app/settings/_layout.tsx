@@ -25,8 +25,8 @@ export default function SettingsDetailLayout() {
       <Stack.Screen name="audit-log" />
       <Stack.Screen name="all-agents" options={{ title: "所有 Agent" }} />
       <Stack.Screen name="agent-profile" options={{ headerShown: false }} />
-      <Stack.Screen name="skills" options={{ title: "Skills" }} />
-      <Stack.Screen name="skills-admin" options={{ title: "Skill 管理" }} />
+      <Stack.Screen name="skills" options={{ title: "技能" }} />
+      <Stack.Screen name="skills-admin" options={{ title: "技能管理" }} />
     </Stack>
   );
 }

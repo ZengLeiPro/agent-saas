@@ -1444,7 +1444,7 @@ export function DesktopSessionSidebar({
   const navItems = useMemo(
     () => [
       ...baseNavItems.filter((item) => !item.adminOnly || isAdmin),
-      { tab: "capabilities" as AppTab, label: "专家 / Skills / 连接器" },
+      { tab: "capabilities" as AppTab, label: "专家 / 技能 / 连接器" },
       ...(personalAgentEnabled ? [{ tab: "scenarios" as AppTab, label: "任务模板" }] : []),
     ],
     [isAdmin, personalAgentEnabled],

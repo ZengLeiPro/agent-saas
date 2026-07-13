@@ -32,7 +32,7 @@ export const BUILTIN_TOOL_CATALOG = [
   { id: 'MemoryList', name: 'MemoryList', category: 'memory', label: '列出记忆文件' },
   { id: 'ReadCompanyInfo', name: 'ReadCompanyInfo', category: 'memory', label: '读取组织资料' },
   { id: 'UpdateCompanyInfo', name: 'UpdateCompanyInfo', category: 'memory', label: '更新组织资料' },
-  { id: 'Skill', name: 'Skill', category: 'skill', label: '调用 Skill' },
+  { id: 'Skill', name: 'Skill', category: 'skill', label: '调用技能' },
   { id: 'TodoWrite', name: 'TodoWrite', category: 'meta', label: '管理 TODO' },
   { id: 'AskUserQuestion', name: 'AskUserQuestion', category: 'meta', label: '向用户提问' },
   { id: 'SessionGetEvents', name: 'SessionGetEvents', category: 'session', label: '读取会话事件' },

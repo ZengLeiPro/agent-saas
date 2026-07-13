@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   composeToolNameResolver,
+  isSkillTool,
   normalizeInternalToolNameStrategy,
   resolveDisplayToolName,
   resolveMcpToolNameStrategy,
@@ -25,7 +26,10 @@ describe('toolNameResolver strategies', () => {
       toolId: '1',
       toolName: 'Skill',
       toolInput: '{"skill":"commit"}',
-    })).toBe('Skill:commit');
+    })).toBe('技能：commit');
+    expect(resolveDisplayToolName({ toolId: '2', toolName: 'Skill', toolInput: '' })).toBe('技能');
+    expect(isSkillTool('技能')).toBe(true);
+    expect(isSkillTool('技能：commit')).toBe(true);
   });
 
   it('supports composed strategies with deterministic order', () => {
@@ -39,6 +43,6 @@ describe('toolNameResolver strategies', () => {
       toolId: 'x',
       toolName: 'skill',
       toolInput: '{"skill":"release"}',
-    })).toBe('Skill:release');
+    })).toBe('技能：release');
   });
 });

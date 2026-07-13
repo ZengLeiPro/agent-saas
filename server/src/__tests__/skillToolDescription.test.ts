@@ -38,7 +38,7 @@ describe('SkillToolProvider description injection', () => {
     const [descriptor] = provider.list(makeContext());
     expect(descriptor.description).toContain('- `browser`: Browser automation via playwright.');
     expect(descriptor.description).toContain('- `dws`: 钉钉全产品能力管理。');
-    expect(descriptor.description).toContain('当前用户可用 Skill 清单');
+    expect(descriptor.description).toContain('当前用户可用技能清单');
   });
 
   it('does not leak the historical case-study fake example into schema hints', () => {
@@ -56,7 +56,7 @@ describe('SkillToolProvider description injection', () => {
     // 空集合时不能保持沉默——glm 类模型可能仍会盲调工具试探；显式告知全部会失败。
     const provider = makeProvider([]);
     const [descriptor] = provider.list(makeContext());
-    expect(descriptor.description).toContain('未启用任何 skill');
+    expect(descriptor.description).toContain('未启用任何技能');
     expect(descriptor.description).toContain('不要调用');
   });
 

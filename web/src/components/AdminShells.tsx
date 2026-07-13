@@ -41,7 +41,7 @@ interface ShellButton<T extends string> {
 
 const tenantSettingsSections: ShellButton<TenantSection>[] = [
   { id: "users", label: "成员", icon: Users },
-  { id: "skills", label: "Skills", icon: Puzzle },
+  { id: "skills", label: "技能", icon: Puzzle },
   { id: "org-agents", label: "企业专家", icon: Bot },
   { id: "mcp", label: "连接器", icon: Plug },
   { id: "billing", label: "计费", icon: WalletCards },
@@ -65,7 +65,7 @@ const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "remote-hands", label: "执行环境池", icon: ServerCog },
   { id: "tool-controls", label: "工具开关", icon: Globe2 },
   { id: "global-mcp", label: "全局 MCP", icon: KeyRound },
-  { id: "skill-pool", label: "Skill 池", icon: Puzzle },
+  { id: "skill-pool", label: "技能池", icon: Puzzle },
   { id: "system", label: "系统配置", icon: Database },
 ];
 
@@ -316,7 +316,7 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
             <SettingSwitch label="文件能力" description="允许组织用户访问文件浏览、上传和预览。" checked={settings.features.filesEnabled} onCheckedChange={checked => patch(d => { d.features.filesEnabled = checked; })} />
             <SettingSwitch label="定时任务" description="允许创建和运行 Cron 自动化任务。" checked={settings.features.cronEnabled} onCheckedChange={checked => patch(d => { d.features.cronEnabled = checked; })} />
             <SettingSwitch label="MCP 工具" description="允许组织使用 MCP 服务与工具密钥。" checked={settings.features.mcpEnabled} onCheckedChange={checked => patch(d => { d.features.mcpEnabled = checked; })} />
-            <SettingSwitch label="自定义 Skill" description="允许用户维护自定义 Agent Skill。" checked={settings.features.customSkillsEnabled} onCheckedChange={checked => patch(d => { d.features.customSkillsEnabled = checked; })} />
+            <SettingSwitch label="自定义技能" description="允许用户维护自定义 Agent 技能。" checked={settings.features.customSkillsEnabled} onCheckedChange={checked => patch(d => { d.features.customSkillsEnabled = checked; })} />
             <SettingSwitch label="调试模式" description="允许开启思考、工具和执行细节展示。" checked={settings.features.debugModeAllowed} onCheckedChange={checked => patch(d => { d.features.debugModeAllowed = checked; })} />
             <SettingSwitch label="自动压缩上下文" description="会话上下文超过模型窗口 80% 时，回合结束后自动压缩（还需模型配置 context_window）。" checked={settings.features.autoCompactEnabled} onCheckedChange={checked => patch(d => { d.features.autoCompactEnabled = checked; })} />
           </CardContent>
@@ -490,20 +490,20 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   mcp_server_updated: "更新 MCP 服务",
   mcp_server_deleted: "删除 MCP 服务",
   mcp_admin_user_selections_updated: "管理员更新 MCP",
-  skill_custom_uploaded: "上传自定义 Skill",
-  skill_tenant_uploaded: "上传组织 Skill",
-  skill_pool_uploaded: "上传平台 Skill",
-  skill_document_updated: "更新 Skill 文档",
-  skill_visibility_updated: "更新 Skill 可见性",
-  skill_platform_settings_updated: "更新平台 Skill 设置",
-  skill_tenant_selections_updated: "更新组织 Skill 选择",
-  skill_tenant_settings_updated: "更新组织 Skill 设置",
-  skill_tenant_own_settings_updated: "更新组织自有 Skill 设置",
-  skill_tenant_deleted: "删除组织 Skill",
-  skill_promoted: "发布 Skill",
-  skill_promoted_to_tenant: "发布到组织 Skill",
-  skill_custom_deleted: "删除自定义 Skill",
-  skill_user_selections_updated: "更新 Skill 选择",
+  skill_custom_uploaded: "上传自定义技能",
+  skill_tenant_uploaded: "上传组织技能",
+  skill_pool_uploaded: "上传平台技能",
+  skill_document_updated: "更新技能文档",
+  skill_visibility_updated: "更新技能可见性",
+  skill_platform_settings_updated: "更新平台技能设置",
+  skill_tenant_selections_updated: "更新组织技能选择",
+  skill_tenant_settings_updated: "更新组织技能设置",
+  skill_tenant_own_settings_updated: "更新组织自有技能设置",
+  skill_tenant_deleted: "删除组织技能",
+  skill_promoted: "发布技能",
+  skill_promoted_to_tenant: "发布到组织技能",
+  skill_custom_deleted: "删除自定义技能",
+  skill_user_selections_updated: "更新技能选择",
 };
 
 const auditCategories = [
@@ -516,7 +516,7 @@ const auditCategories = [
   { value: "user", label: "用户管理" },
   { value: "file", label: "文件" },
   { value: "agent", label: "Agent" },
-  { value: "skill", label: "Skill" },
+  { value: "skill", label: "技能" },
   { value: "mcp", label: "MCP" },
   { value: "tenant", label: "组织" },
 ];
@@ -606,7 +606,7 @@ function AuditEventsPanel({
         title={scope === "tenant" ? "组织审计" : "平台审计"}
         description={scope === "tenant"
           ? `查看 ${tenantName || tenantId || "当前组织"} 的登录、成员、文件、工具和配置变更记录。`
-          : "查看跨组织登录、用户、组织、工具、Skill、文件和运行时相关操作记录。"}
+          : "查看跨组织登录、用户、组织、工具、技能、文件和运行时相关操作记录。"}
         actions={<Button variant="outline" onClick={() => { void refresh(); }} disabled={loading}><RefreshCw className={cn("mr-2 h-4 w-4", loading && "animate-spin")} />刷新</Button>}
       />
 

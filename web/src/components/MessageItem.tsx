@@ -581,7 +581,7 @@ interface MessageItemProps {
   voicePlayer?: UseVoicePlayerReturn;
   /** user-voice 消息的播放状态（从外部注入以支持 memo） */
   voicePlayState?: import('@/hooks/useVoicePlayer').VoicePlayState;
-  /** 是否显示思考、工具、Skill/子任务等执行细节。 */
+  /** 是否显示思考、工具、技能/子任务等执行细节。 */
   debugMode?: boolean;
 }
 

@@ -491,7 +491,7 @@ export default function SettingsScreen() {
                   onPress={() => router.push("/settings/skills-admin")}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.rowLabel}>Skill 管理</Text>
+                  <Text style={styles.rowLabel}>技能管理</Text>
                   <Ionicons
                     name="chevron-forward"
                     size={16}

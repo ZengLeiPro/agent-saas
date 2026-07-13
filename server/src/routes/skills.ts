@@ -232,7 +232,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   function moveSkillIntoPlace(res: Response, skillRoot: string, parentDir: string, skillId: string, workspaceManaged: boolean): string | null {
     const targetDir = join(parentDir, skillId);
     if (existsSync(targetDir)) {
-      res.status(409).json({ error: `Skill '${skillId}' 已存在` });
+      res.status(409).json({ error: `技能“${skillId}”已存在` });
       return null;
     }
     if (workspaceManaged) {
@@ -268,7 +268,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!meta) return res.status(400).json({ error: 'SKILL.md 必须包含 YAML frontmatter，name 需为小写字母/数字/连字符且 description 非空' });
 
     const skillId = skillIdFromName(meta.name);
-    if (!skillId) return res.status(400).json({ error: 'SKILL.md 的 name 不能转换为有效 skill ID' });
+    if (!skillId) return res.status(400).json({ error: 'SKILL.md 的 name 不能转换为有效技能 ID' });
 
     if (target.kind === 'user') {
       // 仅 user 目标需要 UserRecord（解析 workspace 路径）；pool/tenant 目标写共享目录，不依赖调用者记录
@@ -276,7 +276,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       if (!user) return res.status(404).json({ error: 'User not found' });
       // 与系统层（pool + 已注册 + 本租户自有）撞名会被 shadow 且下次 sync 时被覆盖删除，直接拒绝
       if (getKnownSystemSkillIds().has(skillId) || getTenantOwnSkillIds(user.tenantId).has(skillId)) {
-        return res.status(409).json({ error: `Skill '${skillId}' 与系统或组织 Skill 同名，请改名后重试` });
+        return res.status(409).json({ error: `技能“${skillId}”与系统或组织技能同名，请改名后重试` });
       }
       const dir = moveSkillIntoPlace(res, skillRoot, getUserSkillsDir(user), skillId, true);
       if (!dir) return;
@@ -292,13 +292,13 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
     if (target.kind === 'tenant') {
       if (getKnownSystemSkillIds().has(skillId)) {
-        return res.status(409).json({ error: `Skill '${skillId}' 与平台 Skill 同名，请改名后重试` });
+        return res.status(409).json({ error: `技能“${skillId}”与平台技能同名，请改名后重试` });
       }
       // 与本租户成员的自建 skill 撞名会静默覆盖删除用户数据，拒绝
       for (const u of userStore.listAll()) {
         if (u.tenantId !== target.tenantId) continue;
         if (existsSync(join(getUserSkillsDir(u), skillId))) {
-          return res.status(409).json({ error: `Skill '${skillId}' 与成员 ${u.username} 的自建 Skill 同名，请改名后重试` });
+          return res.status(409).json({ error: `技能“${skillId}”与成员 ${u.username} 的自建技能同名，请改名后重试` });
         }
       }
       const dir = moveSkillIntoPlace(res, skillRoot, tenantSkillsDirFor(target.tenantId), skillId, false);
@@ -348,7 +348,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       return await installUploadedSkill(req, res, uploadDir, target);
     } catch (err) {
       serverLogger.error(`Skill import (${target.kind}) error: ${err}`);
-      return res.status(500).json({ error: 'Failed to import skill' });
+      return res.status(500).json({ error: '导入技能失败' });
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -384,7 +384,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ skills });
     } catch (err) {
       serverLogger.error(`GET /pool error: ${err}`);
-      res.status(500).json({ error: 'Failed to scan skill pool' });
+      res.status(500).json({ error: '扫描技能池失败' });
     }
   });
 
@@ -415,11 +415,11 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     // δ: skillId 必须 ∈ scanPoolSkills 视图，避免 admin 编辑非注册目录（如
     // 误放在 pool 下的 .env/.tmp/READMEs）
     if (!getPoolSkillIds().has(skillId)) {
-      return res.status(404).json({ error: `Skill '${skillId}' not registered in pool` });
+      return res.status(404).json({ error: `技能“${skillId}”未在技能池中注册` });
     }
     const skillDir = join(poolDir, skillId);
     if (!existsSync(skillDir)) {
-      return res.status(404).json({ error: `Skill '${skillId}' not found in pool` });
+      return res.status(404).json({ error: `技能池中不存在技能“${skillId}”` });
     }
 
     try {
@@ -427,7 +427,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ skillId, source: 'pool', ...doc });
     } catch (err) {
       serverLogger.error(`GET /pool/${skillId}/document error: ${err}`);
-      res.status(500).json({ error: 'Failed to read skill document' });
+      res.status(500).json({ error: '读取技能文档失败' });
     }
   });
 
@@ -446,11 +446,11 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
 
     if (!getPoolSkillIds().has(skillId)) {
-      return res.status(404).json({ error: `Skill '${skillId}' not registered in pool` });
+      return res.status(404).json({ error: `技能“${skillId}”未在技能池中注册` });
     }
     const skillDir = join(poolDir, skillId);
     if (!existsSync(skillDir)) {
-      return res.status(404).json({ error: `Skill '${skillId}' not found in pool` });
+      return res.status(404).json({ error: `技能池中不存在技能“${skillId}”` });
     }
 
     try {
@@ -460,7 +460,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true, skillId, source: 'pool', ...doc });
     } catch (err) {
       serverLogger.error(`PUT /pool/${skillId}/document error: ${err}`);
-      res.status(500).json({ error: 'Failed to write skill document' });
+      res.status(500).json({ error: '写入技能文档失败' });
     }
   });
 
@@ -484,7 +484,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   router.patch('/pool/settings', requirePlatformAdmin, async (req, res) => {
     const parsed = platformSkillSettingsSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: 'Invalid platform skill settings', details: parsed.error.format() });
+      return res.status(400).json({ error: '平台技能设置无效', details: parsed.error.format() });
     }
     try {
       const poolIds = getPoolSkillIds();
@@ -503,7 +503,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true });
     } catch (err) {
       serverLogger.error(`PATCH /pool/settings error: ${err}`);
-      res.status(500).json({ error: 'Failed to update platform skill settings' });
+      res.status(500).json({ error: '更新平台技能设置失败' });
     }
   });
 
@@ -532,7 +532,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ tenantId, skills });
     } catch (err) {
       serverLogger.error(`GET /tenants/${tenantId}/pool error: ${err}`);
-      res.status(500).json({ error: 'Failed to fetch tenant skills' });
+      res.status(500).json({ error: '获取组织技能失败' });
     }
   });
 
@@ -552,7 +552,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true });
     } catch (err) {
       serverLogger.error(`PUT /tenants/${tenantId}/pool/selections error: ${err}`);
-      res.status(500).json({ error: 'Failed to update tenant skills' });
+      res.status(500).json({ error: '更新组织技能失败' });
     }
   });
 
@@ -562,7 +562,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!tenantId) return;
     const parsed = tenantSkillSettingsSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: 'Invalid tenant skill settings', details: parsed.error.format() });
+      return res.status(400).json({ error: '组织技能设置无效', details: parsed.error.format() });
     }
     try {
       const availableIds = new Set(platformPoolSkillsForTenant(tenantId).map(s => s.id));
@@ -585,7 +585,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true });
     } catch (err) {
       serverLogger.error(`PUT /tenants/${tenantId}/pool/settings error: ${err}`);
-      res.status(500).json({ error: 'Failed to update tenant skill settings' });
+      res.status(500).json({ error: '更新组织技能设置失败' });
     }
   });
 
@@ -616,7 +616,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ users });
     } catch (err) {
       serverLogger.error(`GET /custom error: ${err}`);
-      res.status(500).json({ error: 'Failed to scan custom skills' });
+      res.status(500).json({ error: '扫描自定义技能失败' });
     }
   });
 
@@ -643,10 +643,10 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     const dstDir = join(poolDir, skillId);
 
     if (!existsSync(srcDir)) {
-      return res.status(404).json({ error: `Skill '${skillId}' not found in ${sourceUsername}'s workspace` });
+      return res.status(404).json({ error: `用户 ${sourceUsername} 的工作区中不存在技能“${skillId}”` });
     }
     if (existsSync(dstDir)) {
-      return res.status(409).json({ error: `Skill '${skillId}' already exists in pool` });
+      return res.status(409).json({ error: `技能“${skillId}”已存在于技能池` });
     }
 
     try {
@@ -656,7 +656,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true });
     } catch (err) {
       serverLogger.error(`POST /custom/${skillId}/promote error: ${err}`);
-      res.status(500).json({ error: 'Failed to promote skill' });
+      res.status(500).json({ error: '发布技能失败' });
     }
   });
 
@@ -668,18 +668,18 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!usernameParam || !skillId) return res.status(400).json({ error: 'Invalid username or skillId' });
     const target = resolveAdminTargetUser(req, res, usernameParam);
     if (!target) return;
-    if (getKnownSystemSkillIds().has(skillId)) return res.status(400).json({ error: 'Pool skill documents must be managed via /pool' });
-    if (getTenantOwnSkillIds(target.tenantId).has(skillId)) return res.status(400).json({ error: 'Tenant skill documents must be managed via /tenants' });
+    if (getKnownSystemSkillIds().has(skillId)) return res.status(400).json({ error: '技能池文档必须通过 /pool 管理' });
+    if (getTenantOwnSkillIds(target.tenantId).has(skillId)) return res.status(400).json({ error: '组织技能文档必须通过 /tenants 管理' });
 
     const skillDir = join(getUserSkillsDir(target), skillId);
-    if (!existsSync(skillDir)) return res.status(404).json({ error: `Skill '${skillId}' not found in ${target.username}'s workspace` });
+    if (!existsSync(skillDir)) return res.status(404).json({ error: `用户 ${target.username} 的工作区中不存在技能“${skillId}”` });
 
     try {
       const doc = await readSkillDocument(skillDir, skillId);
       res.json({ skillId, source: 'custom', username: target.username, ...doc });
     } catch (err) {
       serverLogger.error(`GET /custom/${target.username}/${skillId}/document error: ${err}`);
-      res.status(500).json({ error: 'Failed to read custom skill document' });
+      res.status(500).json({ error: '读取自定义技能文档失败' });
     }
   });
 
@@ -690,8 +690,8 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!usernameParam || !skillId) return res.status(400).json({ error: 'Invalid username or skillId' });
     const target = resolveAdminTargetUser(req, res, usernameParam);
     if (!target) return;
-    if (getKnownSystemSkillIds().has(skillId)) return res.status(400).json({ error: 'Pool skill documents must be managed via /pool' });
-    if (getTenantOwnSkillIds(target.tenantId).has(skillId)) return res.status(400).json({ error: 'Tenant skill documents must be managed via /tenants' });
+    if (getKnownSystemSkillIds().has(skillId)) return res.status(400).json({ error: '技能池文档必须通过 /pool 管理' });
+    if (getTenantOwnSkillIds(target.tenantId).has(skillId)) return res.status(400).json({ error: '组织技能文档必须通过 /tenants 管理' });
 
     const parsed = skillDocumentSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -702,7 +702,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (meta.name !== skillId) return res.status(400).json({ error: `SKILL.md name 必须与目录 ID '${skillId}' 保持一致` });
 
     const skillDir = join(getUserSkillsDir(target), skillId);
-    if (!existsSync(skillDir)) return res.status(404).json({ error: `Skill '${skillId}' not found in ${target.username}'s workspace` });
+    if (!existsSync(skillDir)) return res.status(404).json({ error: `用户 ${target.username} 的工作区中不存在技能“${skillId}”` });
 
     try {
       const doc = await writeSkillDocument(skillDir, skillId, parsed.data.content);
@@ -710,7 +710,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true, skillId, source: 'custom', username: target.username, ...doc });
     } catch (err) {
       serverLogger.error(`PUT /custom/${target.username}/${skillId}/document error: ${err}`);
-      res.status(500).json({ error: 'Failed to write custom skill document' });
+      res.status(500).json({ error: '写入自定义技能文档失败' });
     }
   });
 
@@ -727,15 +727,15 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     const poolIds = getKnownSystemSkillIds();
 
     if (poolIds.has(skillId)) {
-      return res.status(400).json({ error: 'Cannot delete a pool skill via this endpoint' });
+      return res.status(400).json({ error: '不能通过此接口删除技能池中的技能' });
     }
     if (getTenantOwnSkillIds(target.tenantId).has(skillId)) {
-      return res.status(400).json({ error: 'Cannot delete a tenant skill via this endpoint' });
+      return res.status(400).json({ error: '不能通过此接口删除组织技能' });
     }
 
     const skillDir = join(getUserSkillsDir(target), skillId);
     if (!existsSync(skillDir)) {
-      return res.status(404).json({ error: `Skill '${skillId}' not found in ${target.username}'s workspace` });
+      return res.status(404).json({ error: `用户 ${target.username} 的工作区中不存在技能“${skillId}”` });
     }
 
     try {
@@ -744,7 +744,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true });
     } catch (err) {
       serverLogger.error(`DELETE /custom/${target.username}/${skillId} error: ${err}`);
-      res.status(500).json({ error: 'Failed to delete custom skill' });
+      res.status(500).json({ error: '删除自定义技能失败' });
     }
   });
 
@@ -763,7 +763,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     try {
       const currentPoolIds = getPoolSkillIds();
       if (currentPoolIds.size === 0) {
-        return res.status(409).json({ error: 'Skills pool is empty or missing; refusing to sync' });
+        return res.status(409).json({ error: '技能池为空或不存在，已拒绝同步' });
       }
 
       const discovered = platform ? skillConfigStore.syncWithPool(currentPoolIds) : 0;
@@ -805,7 +805,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       }
     } catch (err) {
       serverLogger.error(`POST /sync error: ${err}`);
-      res.status(500).json({ error: 'Failed to sync skills' });
+      res.status(500).json({ error: '同步技能失败' });
     }
   });
 
@@ -830,7 +830,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ tenantId, skills });
     } catch (err) {
       serverLogger.error(`GET /tenants/${tenantId}/skills error: ${err}`);
-      res.status(500).json({ error: 'Failed to fetch tenant own skills' });
+      res.status(500).json({ error: '获取组织自有技能失败' });
     }
   });
 
@@ -840,7 +840,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!tenantId) return;
     const parsed = tenantSkillSettingsSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: 'Invalid tenant own skill settings', details: parsed.error.format() });
+      return res.status(400).json({ error: '组织自有技能设置无效', details: parsed.error.format() });
     }
     try {
       const ownIds = getTenantOwnSkillIds(tenantId);
@@ -861,7 +861,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true });
     } catch (err) {
       serverLogger.error(`PUT /tenants/${tenantId}/skills/settings error: ${err}`);
-      res.status(500).json({ error: 'Failed to update tenant own skill settings' });
+      res.status(500).json({ error: '更新组织自有技能设置失败' });
     }
   });
 
@@ -872,13 +872,13 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     const skillId = safeName(req.params.skillId);
     if (!skillId) return res.status(400).json({ error: 'Invalid skillId' });
     const skillDir = join(tenantSkillsDirFor(tenantId), skillId);
-    if (!existsSync(skillDir)) return res.status(404).json({ error: `Skill '${skillId}' not found in tenant ${tenantId}` });
+    if (!existsSync(skillDir)) return res.status(404).json({ error: `组织 ${tenantId} 中不存在技能“${skillId}”` });
     try {
       const doc = await readSkillDocument(skillDir, skillId);
       res.json({ skillId, source: 'tenant', tenantId, ...doc });
     } catch (err) {
       serverLogger.error(`GET /tenants/${tenantId}/skills/${skillId}/document error: ${err}`);
-      res.status(500).json({ error: 'Failed to read tenant skill document' });
+      res.status(500).json({ error: '读取组织技能文档失败' });
     }
   });
 
@@ -896,7 +896,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!meta) return res.status(400).json({ error: 'SKILL.md 必须包含 YAML frontmatter，name 需为小写字母/数字/连字符且 description 非空' });
     if (meta.name !== skillId) return res.status(400).json({ error: `SKILL.md name 必须与目录 ID '${skillId}' 保持一致` });
     const skillDir = join(tenantSkillsDirFor(tenantId), skillId);
-    if (!existsSync(skillDir)) return res.status(404).json({ error: `Skill '${skillId}' not found in tenant ${tenantId}` });
+    if (!existsSync(skillDir)) return res.status(404).json({ error: `组织 ${tenantId} 中不存在技能“${skillId}”` });
     try {
       const doc = await writeSkillDocument(skillDir, skillId, parsed.data.content);
       // 已物化到成员 workspace 的副本按 configVersion 重新同步
@@ -905,7 +905,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true, skillId, source: 'tenant', tenantId, ...doc });
     } catch (err) {
       serverLogger.error(`PUT /tenants/${tenantId}/skills/${skillId}/document error: ${err}`);
-      res.status(500).json({ error: 'Failed to write tenant skill document' });
+      res.status(500).json({ error: '写入组织技能文档失败' });
     }
   });
 
@@ -916,7 +916,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     const skillId = safeName(req.params.skillId);
     if (!skillId) return res.status(400).json({ error: 'Invalid skillId' });
     const skillDir = join(tenantSkillsDirFor(tenantId), skillId);
-    if (!existsSync(skillDir)) return res.status(404).json({ error: `Skill '${skillId}' not found in tenant ${tenantId}` });
+    if (!existsSync(skillDir)) return res.status(404).json({ error: `组织 ${tenantId} 中不存在技能“${skillId}”` });
     try {
       rmSync(skillDir, { recursive: true, force: true });
       // ownSkills 规则条目保留作为「曾存在」记忆，驱动成员 workspace 清理残留副本；prune 时按目录现状清掉
@@ -925,7 +925,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true });
     } catch (err) {
       serverLogger.error(`DELETE /tenants/${tenantId}/skills/${skillId} error: ${err}`);
-      res.status(500).json({ error: 'Failed to delete tenant skill' });
+      res.status(500).json({ error: '删除组织技能失败' });
     }
   });
 
@@ -946,14 +946,14 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
     const srcDir = join(getUserSkillsDir(sourceUser), skillId);
     if (!existsSync(srcDir)) {
-      return res.status(404).json({ error: `Skill '${skillId}' not found in ${sourceUsername}'s workspace` });
+      return res.status(404).json({ error: `用户 ${sourceUsername} 的工作区中不存在技能“${skillId}”` });
     }
     if (getKnownSystemSkillIds().has(skillId)) {
-      return res.status(409).json({ error: `Skill '${skillId}' 与平台 Skill 同名` });
+      return res.status(409).json({ error: `技能“${skillId}”与平台技能同名` });
     }
     const dstDir = join(tenantSkillsDirFor(tenantId), skillId);
     if (existsSync(dstDir)) {
-      return res.status(409).json({ error: `Skill '${skillId}' 已存在于组织 Skills` });
+      return res.status(409).json({ error: `技能“${skillId}”已存在于组织技能中` });
     }
 
     try {
@@ -971,7 +971,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true });
     } catch (err) {
       serverLogger.error(`POST /tenants/${tenantId}/promote error: ${err}`);
-      res.status(500).json({ error: 'Failed to promote skill to tenant' });
+      res.status(500).json({ error: '发布技能到组织失败' });
     }
   });
 
@@ -982,9 +982,9 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     const skillId = safeName(req.params.skillId);
     if (!skillId) return res.status(400).json({ error: 'Invalid skillId' });
     const srcDir = join(tenantSkillsDirFor(tenantId), skillId);
-    if (!existsSync(srcDir)) return res.status(404).json({ error: `Skill '${skillId}' not found in tenant ${tenantId}` });
+    if (!existsSync(srcDir)) return res.status(404).json({ error: `组织 ${tenantId} 中不存在技能“${skillId}”` });
     const dstDir = join(poolDir, skillId);
-    if (existsSync(dstDir)) return res.status(409).json({ error: `Skill '${skillId}' already exists in pool` });
+    if (existsSync(dstDir)) return res.status(409).json({ error: `技能“${skillId}”已存在于技能池` });
 
     try {
       cpSync(srcDir, dstDir, { recursive: true, dereference: false });
@@ -993,7 +993,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true });
     } catch (err) {
       serverLogger.error(`POST /tenants/${tenantId}/skills/${skillId}/promote error: ${err}`);
-      res.status(500).json({ error: 'Failed to promote tenant skill to pool' });
+      res.status(500).json({ error: '发布组织技能到技能池失败' });
     }
   });
 
@@ -1009,7 +1009,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json(buildUserSkillsResponse(user));
     } catch (err) {
       serverLogger.error(`GET /me error: ${err}`);
-      res.status(500).json({ error: 'Failed to fetch skills' });
+      res.status(500).json({ error: '获取技能失败' });
     }
   });
 
@@ -1072,15 +1072,15 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
 
     // 与 admin DELETE /custom/:username/:skillId 同口径：拒绝删除系统 pool / 组织自有 skill。
     if (getKnownSystemSkillIds().has(skillId)) {
-      return res.status(400).json({ error: 'Cannot delete a pool skill via this endpoint' });
+      return res.status(400).json({ error: '不能通过此接口删除技能池中的技能' });
     }
     if (getTenantOwnSkillIds(user.tenantId).has(skillId)) {
-      return res.status(400).json({ error: 'Cannot delete a tenant skill via this endpoint' });
+      return res.status(400).json({ error: '不能通过此接口删除组织技能' });
     }
 
     const skillDir = join(getUserSkillsDir(user), skillId);
     if (!existsSync(skillDir)) {
-      return res.status(404).json({ error: `Skill '${skillId}' not found in your workspace` });
+      return res.status(404).json({ error: `你的工作区中不存在技能“${skillId}”` });
     }
 
     try {
@@ -1094,7 +1094,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json({ ok: true });
     } catch (err) {
       serverLogger.error(`DELETE /me/skills/${skillId} error: ${err}`);
-      res.status(500).json({ error: 'Failed to delete custom skill' });
+      res.status(500).json({ error: '删除自定义技能失败' });
     }
   });
 
@@ -1113,7 +1113,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       res.json(buildUserSkillsResponse(target));
     } catch (err) {
       serverLogger.error(`GET /users/${target.username} error: ${err}`);
-      res.status(500).json({ error: 'Failed to fetch user skills' });
+      res.status(500).json({ error: '获取用户技能失败' });
     }
   });
 

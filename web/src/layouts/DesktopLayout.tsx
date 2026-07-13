@@ -121,7 +121,7 @@ export function DesktopLayout(props: LayoutProps) {
     if (activeTab === "tenants") return "组织分析";
     if (activeTab === "tenant-admin") return "组织分析";
     if (activeTab === "platform-admin") return "平台分析";
-    if (activeTab === "skills") return "Skill 管理";
+    if (activeTab === "skills") return "技能管理";
     if (activeTab === "usage") return "Token 用量";
     if (activeTab === "mcp") return "MCP 配置";
     if (activeTab === "models") return "模型管理";

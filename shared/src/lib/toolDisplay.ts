@@ -61,12 +61,16 @@ export const resolveMcpToolNameStrategy: ToolNameStrategy = ({ currentName }) =>
 };
 
 export const resolveSkillToolNameStrategy: ToolNameStrategy = ({ currentName, toolInput }) => {
+  if (currentName.startsWith('技能：') || currentName.startsWith('技能:')) {
+    return undefined;
+  }
   if (currentName.startsWith('Skill:')) {
+    return `技能：${currentName.slice('Skill:'.length)}`;
+  }
+  if (currentName !== 'Skill' && currentName !== '技能') {
     return undefined;
   }
-  if (currentName !== 'Skill' || !toolInput) {
-    return undefined;
-  }
+  if (!toolInput) return '技能';
 
   try {
     const params = JSON.parse(toolInput) as { skill?: unknown };
@@ -74,9 +78,9 @@ export const resolveSkillToolNameStrategy: ToolNameStrategy = ({ currentName, to
     const skillName = typeof rawSkill === 'string' && rawSkill.trim()
       ? rawSkill.trim()
       : '未知';
-    return `Skill:${skillName}`;
+    return `技能：${skillName}`;
   } catch {
-    return undefined;
+    return '技能';
   }
 };
 
@@ -99,7 +103,7 @@ export function composeToolNameResolver(strategies: ToolNameStrategy[]): ToolNam
  * Display-layer tool name resolver (composable strategies):
  * 1) Normalize internal tool names (bash → Bash)
  * 2) Format MCP tool names (mcp__server__tool → MCP:server/tool)
- * 3) Parameterize Skill names (Skill → Skill:commit)
+ * 3) Localize and parameterize skill names (Skill → 技能：commit)
  */
 export const resolveDisplayToolName: ToolNameResolver = composeToolNameResolver([
   normalizeInternalToolNameStrategy,
@@ -107,9 +111,13 @@ export const resolveDisplayToolName: ToolNameResolver = composeToolNameResolver(
   resolveSkillToolNameStrategy,
 ]);
 
-/** Check if a tool name refers to a Skill tool (e.g. "Skill", "Skill:commit") */
+/** Check if a tool name refers to a skill tool in protocol or display form. */
 export function isSkillTool(toolName: string | undefined): boolean {
-  return toolName === 'Skill' || (toolName?.startsWith('Skill:') ?? false);
+  return toolName === 'Skill'
+    || toolName === '技能'
+    || (toolName?.startsWith('Skill:') ?? false)
+    || (toolName?.startsWith('技能：') ?? false)
+    || (toolName?.startsWith('技能:') ?? false);
 }
 
 // ============================================

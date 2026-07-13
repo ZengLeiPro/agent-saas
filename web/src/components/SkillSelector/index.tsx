@@ -129,7 +129,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
       const result = await importMySkill(files);
       setImportDialogOpen(false);
       setImportOk(true);
-      setImportMsg(`已导入 Skill：${result.skill.name}`);
+      setImportMsg(`已导入技能：${result.skill.name}`);
       await refresh();
       setTimeout(() => setImportMsg(null), 2200);
     } catch (err) {
@@ -198,7 +198,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
           ) : (
             <Upload className="mr-1.5 h-4 w-4" />
           )}
-          导入 Skill
+          导入技能
         </Button>
       )}
       {saveMsg && (
@@ -235,11 +235,11 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
         <div className="mb-4 shrink-0 rounded-lg border bg-card p-1 shadow-sm">
           <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-transparent p-0 text-muted-foreground">
             <TabsTrigger value="system" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
-              系统 Skills
+              系统技能
               <span className="ml-1.5 text-xs font-normal">({poolSkills.length + tenantSkills.length})</span>
             </TabsTrigger>
             <TabsTrigger value="custom" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
-              自建 Skills
+              自建技能
               <span className="ml-1.5 text-xs font-normal">({customSkills.length})</span>
             </TabsTrigger>
           </TabsList>
@@ -248,7 +248,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
         <div className="min-h-0 flex-1 overflow-auto">
           <TabsContent value="system" forceMount className="mt-0">
             {poolSkills.length === 0 && tenantSkills.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">暂无系统 Skills</div>
+            <div className="py-8 text-center text-sm text-muted-foreground">暂无系统技能</div>
           ) : (
             <div className="space-y-2">
               {poolSkills.map(s => (
@@ -275,7 +275,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
           </TabsContent>
           <TabsContent value="custom" forceMount className="mt-0">
             {customSkills.length === 0 ? (
-              <div className="py-8 text-center text-sm text-muted-foreground">暂无自建 Skills，点下方「导入 Skill」上传 SKILL.md / 文件夹 / zip</div>
+              <div className="py-8 text-center text-sm text-muted-foreground">暂无自建技能，点下方「导入技能」上传 SKILL.md / 文件夹 / zip</div>
             ) : (
               <div className="space-y-2">
                 {customSkills.map(s => (
@@ -332,7 +332,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
           <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
             <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
               <DialogHeader>
-                <DialogTitle>导入 Skill</DialogTitle>
+                <DialogTitle>导入技能</DialogTitle>
                 <DialogDescription>
                   支持 SKILL.md 单文件、包含 SKILL.md 的文件夹，或包含同样结构的 zip 压缩包。SKILL.md 需要包含 name 和 description frontmatter。
                 </DialogDescription>
@@ -372,9 +372,9 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
         >
           <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-sm">
             <DialogHeader>
-              <DialogTitle>删除自建 Skill</DialogTitle>
+              <DialogTitle>删除自建技能</DialogTitle>
               <DialogDescription>
-                确定删除自建 Skill「{deleteTarget?.name}」？操作不可撤销，SKILL.md 及关联 references/scripts 会一并从你的 workspace 中移除。
+                确定删除自建技能“{deleteTarget?.name}”？操作不可撤销，SKILL.md 及关联 references/scripts 会一并从你的 workspace 中移除。
               </DialogDescription>
             </DialogHeader>
             {deleteErr && <div className="text-sm text-destructive">{deleteErr}</div>}

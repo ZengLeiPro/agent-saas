@@ -71,7 +71,7 @@ const DEFAULT_WEB_TOOLS: WebToolsConfig = {
 const TOOL_GROUPS = [
   { id: "workspace", label: "工作区", icon: Terminal },
   { id: "memory", label: "记忆", icon: Database },
-  { id: "skill", label: "Skill", icon: Puzzle },
+  { id: "skill", label: "技能", icon: Puzzle },
   { id: "meta", label: "协作", icon: ListChecks },
   { id: "session", label: "会话追踪", icon: MessageSquare },
   { id: "web", label: "Web", icon: Globe2 },

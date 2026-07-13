@@ -15,7 +15,7 @@ import type {
 
 export async function fetchMySkills(): Promise<MySkillsResponse> {
   const res = await authFetch('/api/skills/me');
-  if (!res.ok) throw new Error(`Failed to fetch my skills: ${res.status}`);
+  if (!res.ok) throw new Error(`获取我的技能失败：${res.status}`);
   return res.json() as Promise<MySkillsResponse>;
 }
 
@@ -25,7 +25,7 @@ export async function updateMySelections(selectedSkills: string[]): Promise<void
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ selectedSkills }),
   });
-  if (!res.ok) throw new Error(`Failed to update skill selections: ${res.status}`);
+  if (!res.ok) throw new Error(`更新技能选择失败：${res.status}`);
 }
 
 /** DELETE /api/skills/me/skills/:skillId — 用户自删自建 skill（同时移除 selection） */
@@ -34,7 +34,7 @@ export async function deleteMySkill(skillId: string): Promise<void> {
     method: 'DELETE',
   });
   if (!res.ok) {
-    let message = `Failed to delete custom skill: ${res.status}`;
+    let message = `删除自定义技能失败：${res.status}`;
     try {
       const data = await res.json() as { error?: string };
       if (data.error) message = data.error;
@@ -45,7 +45,7 @@ export async function deleteMySkill(skillId: string): Promise<void> {
 
 export async function fetchUserSkills(username: string): Promise<MySkillsResponse> {
   const res = await authFetch(`/api/skills/users/${encodeURIComponent(username)}`);
-  if (!res.ok) throw new Error(`Failed to fetch user skills: ${res.status}`);
+  if (!res.ok) throw new Error(`获取用户技能失败：${res.status}`);
   return res.json() as Promise<MySkillsResponse>;
 }
 
@@ -55,14 +55,14 @@ export async function updateUserSelections(username: string, selectedSkills: str
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ selectedSkills }),
   });
-  if (!res.ok) throw new Error(`Failed to update user skill selections: ${res.status}`);
+  if (!res.ok) throw new Error(`更新用户技能选择失败：${res.status}`);
 }
 
 // ── Admin 管理 ────────────────────────────────────────────
 
 export async function fetchSkillPool(): Promise<SkillPoolResponse> {
   const res = await authFetch('/api/skills/pool');
-  if (!res.ok) throw new Error(`Failed to fetch skill pool: ${res.status}`);
+  if (!res.ok) throw new Error(`获取技能池失败：${res.status}`);
   return res.json() as Promise<SkillPoolResponse>;
 }
 
@@ -72,7 +72,7 @@ export async function updatePoolVisibility(visibility: Record<string, boolean>):
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(visibility),
   });
-  if (!res.ok) throw new Error(`Failed to update pool visibility: ${res.status}`);
+  if (!res.ok) throw new Error(`更新技能池可见范围失败：${res.status}`);
 }
 
 export async function updatePoolSkillSettings(updates: Record<string, PlatformSkillSettings>): Promise<void> {
@@ -81,12 +81,12 @@ export async function updatePoolSkillSettings(updates: Record<string, PlatformSk
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updates),
   });
-  if (!res.ok) throw new Error(`Failed to update pool skill settings: ${res.status}`);
+  if (!res.ok) throw new Error(`更新技能池设置失败：${res.status}`);
 }
 
 export async function fetchTenantSkillPool(tenantId: string): Promise<TenantSkillPoolResponse> {
   const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/pool`);
-  if (!res.ok) throw new Error(`Failed to fetch tenant skill pool: ${res.status}`);
+  if (!res.ok) throw new Error(`获取组织技能池失败：${res.status}`);
   return res.json() as Promise<TenantSkillPoolResponse>;
 }
 
@@ -96,7 +96,7 @@ export async function updateTenantSkillSelections(tenantId: string, enabledSkill
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabledSkills }),
   });
-  if (!res.ok) throw new Error(`Failed to update tenant skill selections: ${res.status}`);
+  if (!res.ok) throw new Error(`更新组织技能选择失败：${res.status}`);
 }
 
 export async function updateTenantSkillSettings(tenantId: string, updates: Record<string, TenantSkillSettings>): Promise<void> {
@@ -105,12 +105,12 @@ export async function updateTenantSkillSettings(tenantId: string, updates: Recor
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updates),
   });
-  if (!res.ok) throw new Error(`Failed to update tenant skill settings: ${res.status}`);
+  if (!res.ok) throw new Error(`更新组织技能设置失败：${res.status}`);
 }
 
 export async function fetchCustomSkills(): Promise<CustomSkillsResponse> {
   const res = await authFetch('/api/skills/custom');
-  if (!res.ok) throw new Error(`Failed to fetch custom skills: ${res.status}`);
+  if (!res.ok) throw new Error(`获取自定义技能失败：${res.status}`);
   return res.json() as Promise<CustomSkillsResponse>;
 }
 
@@ -120,12 +120,12 @@ export async function promoteSkill(skillId: string, sourceUser: string): Promise
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sourceUser }),
   });
-  if (!res.ok) throw new Error(`Failed to promote skill: ${res.status}`);
+  if (!res.ok) throw new Error(`发布技能失败：${res.status}`);
 }
 
 export async function fetchCustomSkillDocument(username: string, skillId: string): Promise<SkillDocumentResponse> {
   const res = await authFetch(`/api/skills/custom/${encodeURIComponent(username)}/${encodeURIComponent(skillId)}/document`);
-  if (!res.ok) throw new Error(`Failed to fetch custom skill document: ${res.status}`);
+  if (!res.ok) throw new Error(`获取自定义技能文档失败：${res.status}`);
   return res.json() as Promise<SkillDocumentResponse>;
 }
 
@@ -136,7 +136,7 @@ export async function updateCustomSkillDocument(username: string, skillId: strin
     body: JSON.stringify({ content }),
   });
   if (!res.ok) {
-    let message = `Failed to update custom skill document: ${res.status}`;
+    let message = `更新自定义技能文档失败：${res.status}`;
     try {
       const data = await res.json() as { error?: string };
       if (data.error) message = data.error;
@@ -149,7 +149,7 @@ export async function deleteCustomSkill(username: string, skillId: string): Prom
   const res = await authFetch(`/api/skills/custom/${encodeURIComponent(username)}/${encodeURIComponent(skillId)}`, {
     method: 'DELETE',
   });
-  if (!res.ok) throw new Error(`Failed to delete custom skill: ${res.status}`);
+  if (!res.ok) throw new Error(`删除自定义技能失败：${res.status}`);
 }
 
 export async function syncSkills(username?: string): Promise<void> {
@@ -157,7 +157,7 @@ export async function syncSkills(username?: string): Promise<void> {
     ? `/api/skills/sync?username=${encodeURIComponent(username)}`
     : '/api/skills/sync';
   const res = await authFetch(url, { method: 'POST' });
-  if (!res.ok) throw new Error(`Failed to sync skills: ${res.status}`);
+  if (!res.ok) throw new Error(`同步技能失败：${res.status}`);
 }
 
 async function importSkillTo(url: string, files: File[]): Promise<SkillImportResponse> {
@@ -171,7 +171,7 @@ async function importSkillTo(url: string, files: File[]): Promise<SkillImportRes
     body: formData,
   });
   if (!res.ok) {
-    let message = `Failed to import skill: ${res.status}`;
+    let message = `导入技能失败：${res.status}`;
     try {
       const data = await res.json() as { error?: string };
       if (data.error) message = data.error;
@@ -199,7 +199,7 @@ export async function importTenantSkill(tenantId: string, files: File[]): Promis
 
 export async function fetchTenantOwnSkills(tenantId: string): Promise<TenantOwnSkillsResponse> {
   const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/skills`);
-  if (!res.ok) throw new Error(`Failed to fetch tenant own skills: ${res.status}`);
+  if (!res.ok) throw new Error(`获取组织自有技能失败：${res.status}`);
   return res.json() as Promise<TenantOwnSkillsResponse>;
 }
 
@@ -209,12 +209,12 @@ export async function updateTenantOwnSkillSettings(tenantId: string, updates: Re
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updates),
   });
-  if (!res.ok) throw new Error(`Failed to update tenant own skill settings: ${res.status}`);
+  if (!res.ok) throw new Error(`更新组织自有技能设置失败：${res.status}`);
 }
 
 export async function fetchTenantOwnSkillDocument(tenantId: string, skillId: string): Promise<SkillDocumentResponse> {
   const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/skills/${encodeURIComponent(skillId)}/document`);
-  if (!res.ok) throw new Error(`Failed to fetch tenant skill document: ${res.status}`);
+  if (!res.ok) throw new Error(`获取组织技能文档失败：${res.status}`);
   return res.json() as Promise<SkillDocumentResponse>;
 }
 
@@ -225,7 +225,7 @@ export async function updateTenantOwnSkillDocument(tenantId: string, skillId: st
     body: JSON.stringify({ content }),
   });
   if (!res.ok) {
-    let message = `Failed to update tenant skill document: ${res.status}`;
+    let message = `更新组织技能文档失败：${res.status}`;
     try {
       const data = await res.json() as { error?: string };
       if (data.error) message = data.error;
@@ -238,7 +238,7 @@ export async function deleteTenantOwnSkill(tenantId: string, skillId: string): P
   const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/skills/${encodeURIComponent(skillId)}`, {
     method: 'DELETE',
   });
-  if (!res.ok) throw new Error(`Failed to delete tenant skill: ${res.status}`);
+  if (!res.ok) throw new Error(`删除组织技能失败：${res.status}`);
 }
 
 /** 把成员自建 skill 提升为组织自有 skill */
@@ -249,7 +249,7 @@ export async function promoteSkillToTenant(tenantId: string, skillId: string, so
     body: JSON.stringify({ skillId, sourceUser }),
   });
   if (!res.ok) {
-    let message = `Failed to promote skill to tenant: ${res.status}`;
+    let message = `发布技能到组织失败：${res.status}`;
     try {
       const data = await res.json() as { error?: string };
       if (data.error) message = data.error;
@@ -264,7 +264,7 @@ export async function promoteTenantSkillToPool(tenantId: string, skillId: string
     method: 'POST',
   });
   if (!res.ok) {
-    let message = `Failed to promote tenant skill to pool: ${res.status}`;
+    let message = `发布组织技能到技能池失败：${res.status}`;
     try {
       const data = await res.json() as { error?: string };
       if (data.error) message = data.error;

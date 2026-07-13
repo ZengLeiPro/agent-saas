@@ -1,6 +1,6 @@
 ---
 name: video-subtitle
-description: 视频字幕制作全流程：Whisper 生成 SRT 字幕 → AI 翻译字幕 → FFmpeg 烧录硬字幕到视频。仅在用户明确需要「加字幕」「烧字幕」「翻译字幕」「生成 SRT 文件」时触发。如果用户只想把视频/音频内容转成文字用于阅读、总结、分析，不要用本 skill，应使用 media-download + audio-transcribe 组合。
+description: 视频字幕制作全流程：Whisper 生成 SRT 字幕 → AI 翻译字幕 → FFmpeg 烧录硬字幕到视频。仅在用户明确需要「加字幕」「烧字幕」「翻译字幕」「生成 SRT 文件」时触发。如果用户只想把视频/音频内容转成文字用于阅读、总结、分析，不要用本技能，应使用 media-download + audio-transcribe 组合。
 ---
 
 # Video Subtitle

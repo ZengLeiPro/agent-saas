@@ -7,10 +7,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SkillSelector } from "@/components/SkillSelector";
 import { McpManager } from "@/components/McpManager";
 
-function ManagedCapabilityNotice({ kind }: { kind: "Skills" | "连接器" }) {
+function ManagedCapabilityNotice({ kind }: { kind: "技能" | "连接器" }) {
   return (
     <div className="mx-auto flex max-w-xl flex-col items-center rounded-2xl border border-dashed bg-muted/20 px-6 py-12 text-center">
-      {kind === "Skills" ? <Puzzle className="h-8 w-8 text-brand-600" /> : <Plug className="h-8 w-8 text-brand-600" />}
+      {kind === "技能" ? <Puzzle className="h-8 w-8 text-brand-600" /> : <Plug className="h-8 w-8 text-brand-600" />}
       <h3 className="mt-4 text-base font-semibold">{kind} 由组织统一配置</h3>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">
         当前组织未开放个人通用 Agent。企业专家所需的 {kind} 已由管理员配置，成员无需重复启用。
@@ -67,7 +67,7 @@ export function CapabilityCenter({
       <Tabs value={activeCapabilityTab} onValueChange={handleTabChange} className="flex min-h-0 flex-1 flex-col">
         <TabsList className="grid h-auto w-full max-w-xl shrink-0 grid-cols-3 bg-muted/60 p-1">
           <TabsTrigger value="experts" className="gap-1.5"><Building2 className="h-4 w-4" />专家</TabsTrigger>
-          <TabsTrigger value="skills" className="gap-1.5"><Puzzle className="h-4 w-4" />Skills</TabsTrigger>
+          <TabsTrigger value="skills" className="gap-1.5"><Puzzle className="h-4 w-4" />技能</TabsTrigger>
           <TabsTrigger value="connectors" className="gap-1.5"><Plug className="h-4 w-4" />连接器</TabsTrigger>
         </TabsList>
 
@@ -100,7 +100,7 @@ export function CapabilityCenter({
                         {expert.description || "由组织统一配置的企业专家，在限定职责范围内协助你完成工作。"}
                       </p>
                       <div className="mt-3 text-xs text-muted-foreground">
-                        {expert.skillCount > 0 ? `${expert.skillCount} 个固有 Skills` : "专属职责与回答范围"}
+                        {expert.skillCount > 0 ? `${expert.skillCount} 个固有技能` : "专属职责与回答范围"}
                       </div>
                       <Button className="mt-5 w-full" disabled={actionsDisabled} onClick={() => onStartExpert(expert.id)}>
                         <MessageSquarePlus className="mr-2 h-4 w-4" />开始对话
@@ -115,10 +115,10 @@ export function CapabilityCenter({
           <TabsContent value="skills" className="mt-0 h-full">
             {personalAgentEnabled ? (
               <SkillSelector
-                headerTitle="我的通用 Agent Skills"
-                headerDescription="选择通用 Agent 在新会话中可以使用的 Skills。企业专家的固有 Skills 不受这里控制。"
+                headerTitle="我的通用 Agent 技能"
+                headerDescription="选择通用 Agent 在新会话中可以使用的技能。企业专家的固有技能不受这里控制。"
               />
-            ) : <ManagedCapabilityNotice kind="Skills" />}
+            ) : <ManagedCapabilityNotice kind="技能" />}
           </TabsContent>
 
           <TabsContent value="connectors" className="mt-0 h-full">

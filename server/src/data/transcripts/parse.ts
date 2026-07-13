@@ -265,7 +265,7 @@ async function parseTranscriptFileUncached(
             const maybeSkill = toolName === "Skill" ? block?.input?.skill : undefined;
             const title =
               toolName === "Skill" && typeof maybeSkill === "string" && maybeSkill.trim()
-                ? `工具调用: Skill (${maybeSkill.trim()})`
+                ? `工具调用：技能（${maybeSkill.trim()}）`
                 : `工具调用: ${toolName}`;
 
             // 记录 toolId -> toolName 映射
@@ -351,7 +351,7 @@ async function parseTranscriptFileUncached(
                 id: `line-${lines}-user-${idx}`,
                 tsMs,
                 kind: "meta",
-                title: "Skill 上下文（自动注入）",
+                title: "技能上下文（自动注入）",
                 defaultOpen: false,
                 content: text,
               });
@@ -403,7 +403,7 @@ async function parseTranscriptFileUncached(
             id: `line-${lines}-user`,
             tsMs,
             kind: "meta",
-            title: "Skill 上下文（自动注入）",
+            title: "技能上下文（自动注入）",
             defaultOpen: false,
             content: text,
           });

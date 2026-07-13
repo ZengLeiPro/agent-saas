@@ -116,7 +116,7 @@ export function OrgAgentFormDialog({
         <DialogHeader className="shrink-0 border-b px-6 py-4">
           <DialogTitle>{editing ? '编辑企业专家' : '创建企业专家'}</DialogTitle>
           <DialogDescription>
-            配置成员能看到的专家资料，以及内部提示语、固有 Skills、指派范围与门禁。
+            配置成员能看到的专家资料，以及内部提示语、固有技能、指派范围与门禁。
           </DialogDescription>
         </DialogHeader>
 
@@ -178,14 +178,14 @@ export function OrgAgentFormDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label>固有 Skills</Label>
+            <Label>固有技能</Label>
             <p className="text-xs text-muted-foreground">勾选后成为这位企业专家的固有能力；成员无需在个人设置中再次启用。</p>
             {skillsLoading ? (
               <div className="flex items-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />加载租户 Skill 清单...
+                <Loader2 className="h-4 w-4 animate-spin" />加载组织技能清单...
               </div>
             ) : skills.length === 0 ? (
-              <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">当前组织暂无可用 Skill。</div>
+              <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">当前组织暂无可用技能。</div>
             ) : (
               <div className="grid max-h-40 gap-2 overflow-auto rounded-md border p-3 sm:grid-cols-2">
                 {skills.map((skill) => (

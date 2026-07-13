@@ -33,13 +33,13 @@ export default function SkillsScreen() {
   const handleSave = async () => {
     try {
       await save();
-      Alert.alert('已保存', 'Skill 配置已更新，新会话生效');
+      Alert.alert('已保存', '技能配置已更新，新会话生效');
     } catch (err) {
       Alert.alert('保存失败', err instanceof Error ? err.message : '未知错误');
     }
   };
 
-  const title = username ? `${username} 的 Skills` : 'Skills';
+  const title = username ? `${username} 的技能` : '技能';
 
   const styles = useMemo(() => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
@@ -98,7 +98,7 @@ export default function SkillsScreen() {
           <ScrollView contentContainerStyle={styles.scrollContent}>
             {poolSkills.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>系统 Skills</Text>
+                <Text style={styles.sectionTitle}>系统技能</Text>
                 <View style={styles.card}>
                   {poolSkills.map((skill, idx) => (
                     <View
@@ -131,7 +131,7 @@ export default function SkillsScreen() {
 
             {customSkills.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>自建 Skills</Text>
+                <Text style={styles.sectionTitle}>自建技能</Text>
                 <View style={styles.card}>
                   {customSkills.map((skill, idx) => (
                     <View
@@ -159,7 +159,7 @@ export default function SkillsScreen() {
             )}
 
             {poolSkills.length === 0 && customSkills.length === 0 && (
-              <Text style={styles.emptyText}>暂无可用 Skill</Text>
+              <Text style={styles.emptyText}>暂无可用技能</Text>
             )}
 
             {(poolSkills.length > 0 || customSkills.length > 0) && (

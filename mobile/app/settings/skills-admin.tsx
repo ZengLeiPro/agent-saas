@@ -64,14 +64,14 @@ export default function SkillsAdminScreen() {
   };
 
   const handlePromote = (skillId: string, skillName: string, sourceUser: string) => {
-    Alert.alert('提升到系统', `确定将「${skillName}」提升到系统 Skill 池？`, [
+    Alert.alert('提升到系统', `确定将“${skillName}”提升到系统技能池？`, [
       { text: '取消', style: 'cancel' },
       {
         text: '确定', onPress: async () => {
           try {
             await custom.promote(skillId, sourceUser);
             pool.refresh();
-            Alert.alert('成功', 'Skill 已提升到系统池');
+            Alert.alert('成功', '技能已提升到系统池');
           } catch {
             Alert.alert('操作失败', '提升失败');
           }
@@ -81,13 +81,13 @@ export default function SkillsAdminScreen() {
   };
 
   const handleDelete = (username: string, skillId: string, skillName: string) => {
-    Alert.alert('删除 Skill', `确定删除用户 ${username} 的「${skillName}」？此操作不可恢复。`, [
+    Alert.alert('删除技能', `确定删除用户 ${username} 的“${skillName}”？此操作不可恢复。`, [
       { text: '取消', style: 'cancel' },
       {
         text: '删除', style: 'destructive', onPress: async () => {
           try {
             await custom.remove(username, skillId);
-            Alert.alert('成功', 'Skill 已删除');
+            Alert.alert('成功', '技能已删除');
           } catch {
             Alert.alert('操作失败', '删除失败');
           }
@@ -150,7 +150,7 @@ export default function SkillsAdminScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: 'Skill 管理' }} />
+      <Stack.Screen options={{ title: '技能管理' }} />
       <View style={styles.container}>
         {loading ? (
           <View style={styles.loadingCenter}>
@@ -179,7 +179,7 @@ export default function SkillsAdminScreen() {
 
             {pool.skills.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Pool Skills</Text>
+                <Text style={styles.sectionTitle}>系统技能</Text>
                 <View style={styles.card}>
                   {pool.skills.map((skill, idx) => (
                     <View
@@ -207,7 +207,7 @@ export default function SkillsAdminScreen() {
 
             {usernames.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>用户自建 Skills</Text>
+                <Text style={styles.sectionTitle}>用户自建技能</Text>
                 <View style={styles.card}>
                   {usernames.map((user, uIdx) => {
                     const skills = custom.users[user];
@@ -257,7 +257,7 @@ export default function SkillsAdminScreen() {
             )}
 
             {pool.skills.length === 0 && usernames.length === 0 && (
-              <Text style={styles.emptyText}>暂无 Skill</Text>
+              <Text style={styles.emptyText}>暂无技能</Text>
             )}
           </ScrollView>
         )}

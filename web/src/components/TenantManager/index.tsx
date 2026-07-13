@@ -320,7 +320,7 @@ const capabilityFeatureFields: Array<{ key: keyof TenantSettings["features"]; la
   { key: "filesEnabled", label: "文件能力", description: "允许组织用户访问文件浏览、上传和预览。" },
   { key: "cronEnabled", label: "定时任务", description: "允许创建和运行 Cron 自动化任务。" },
   { key: "mcpEnabled", label: "MCP 工具", description: "允许组织使用 MCP server 与工具密钥。" },
-  { key: "customSkillsEnabled", label: "自定义 Skill", description: "允许用户维护自定义 Agent Skill。" },
+  { key: "customSkillsEnabled", label: "自定义技能", description: "允许用户维护自定义 Agent 技能。" },
   { key: "debugModeAllowed", label: "调试模式", description: "允许开启思考、工具和执行细节展示。" },
   { key: "autoCompactEnabled", label: "自动压缩", description: "会话上下文超过模型窗口 80% 时，回合结束后自动压缩。" },
 ];
@@ -840,7 +840,7 @@ export function TenantManager() {
             <DialogDescription>
               删除后，组织 <strong>{deleteTarget?.name}</strong>
               （slug: <code className="font-mono">{deleteTarget?.id}</code>）
-              下的用户、会话、文件、任务、Skill、MCP、账单和运行记录都会被清空，不能恢复。
+              下的用户、会话、文件、任务、技能、MCP、账单和运行记录都会被清空，不能恢复。
             </DialogDescription>
           </DialogHeader>
           {deleteError && (

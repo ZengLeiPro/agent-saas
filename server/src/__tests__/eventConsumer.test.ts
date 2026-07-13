@@ -42,8 +42,8 @@ describe('EventConsumer tool name resolver', () => {
       onToolResult,
     });
 
-    expect(onToolEnd).toHaveBeenCalledWith('tool-1', 'Skill:commit', '{"skill":"commit"}');
-    expect(onToolResult).toHaveBeenCalledWith('tool-1', 'Skill:commit', 'ok');
+    expect(onToolEnd).toHaveBeenCalledWith('tool-1', '技能：commit', '{"skill":"commit"}');
+    expect(onToolResult).toHaveBeenCalledWith('tool-1', '技能：commit', 'ok');
   });
 
   it('formats MCP tool name from tool_start', async () => {

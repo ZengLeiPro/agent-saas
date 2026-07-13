@@ -101,7 +101,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
         title="企业专家"
-        description={`为 ${tenantName || tenantId || '当前组织'} 定义专岗专家：公开说明 + 固有 Skills + 指派成员，可选话题门禁。`}
+        description={`为 ${tenantName || tenantId || '当前组织'} 定义专岗专家：公开说明 + 固有技能 + 指派成员，可选话题门禁。`}
         actions={
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => { void refresh(); }} disabled={loading}>
@@ -135,7 +135,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                   <TableRow>
                     <TableHead>名称</TableHead>
                     <TableHead>指派</TableHead>
-                    <TableHead>Skill</TableHead>
+                    <TableHead>技能</TableHead>
                     <TableHead>门禁</TableHead>
                     <TableHead>启用</TableHead>
                     <TableHead className="w-24 text-right">操作</TableHead>

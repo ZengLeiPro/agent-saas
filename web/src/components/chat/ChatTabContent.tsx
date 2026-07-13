@@ -76,7 +76,7 @@ export function OrgAgentComposerChip({
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium text-foreground">{orgAgent.name}</span>
-        <span className="block truncate">企业专家{orgAgent.skillCount > 0 ? ` · ${orgAgent.skillCount} 个固有 Skills` : ""}</span>
+        <span className="block truncate">企业专家{orgAgent.skillCount > 0 ? ` · ${orgAgent.skillCount} 个固有技能` : ""}</span>
       </span>
       {onNewConversation && (
         <button

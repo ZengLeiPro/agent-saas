@@ -276,7 +276,7 @@ export function UserFormDialog({
             <div className="space-y-1">
               <Label htmlFor="form-debug-mode">调试模式</Label>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                关闭时，该用户只能看到 Agent 输出；思考、工具调用和 Skill 执行细节会显示为等待提示。
+                关闭时，该用户只能看到 Agent 输出；思考、工具调用和技能执行细节会显示为等待提示。
               </p>
             </div>
             <Switch

@@ -59,13 +59,13 @@ const BASE_SKILL_DESCRIPTION = loadToolDescription('Skill');
 export const skillToolDescriptor: ToolDescriptor<SkillInput> = {
   id: 'Skill',
   name: 'Skill',
-  displayName: 'Skill',
+  displayName: '技能',
   description: BASE_SKILL_DESCRIPTION,
   schema: z.object({
     // 不写 "e.g." + 具体 skill 名——历史上写过 "image-gen"/"case-study"，case-study 07-01 已删，
     // 对 xml 注意力弱的模型会把示例误当实际可用 skill 幻觉调用。改指向工具描述里动态注入的清单。
-    skill: z.string().min(1).describe('Skill name — must exactly match one of the skills listed under "当前用户可用 Skill 清单" in this tool description above. Do not guess from other examples.'),
-    args: z.string().optional().describe('Optional plain-text arguments forwarded into the skill body.'),
+    skill: z.string().min(1).describe('技能名称——必须与下方“当前用户可用技能清单”中的 name 完全一致，不要根据其他示例猜测。'),
+    args: z.string().optional().describe('可选的纯文本参数，会传入技能正文。'),
   }),
   risk: 'safe',
   approvalMode: 'never',
@@ -80,14 +80,14 @@ export const skillToolDescriptor: ToolDescriptor<SkillInput> = {
 function renderSkillDescription(skills: SkillEntry[]): string {
   if (skills.length === 0) {
     return BASE_SKILL_DESCRIPTION
-      + '\n\n## 当前用户可用 Skill 清单\n\n（当前会话未启用任何 skill。不要调用此工具——所有调用都会失败。）';
+      + '\n\n## 当前用户可用技能清单\n\n（当前会话未启用任何技能。不要调用此工具——所有调用都会失败。）';
   }
   const lines = skills.map((s) => `- \`${s.name}\`: ${s.description}`).join('\n');
   return BASE_SKILL_DESCRIPTION
-    + '\n\n## 当前用户可用 Skill 清单（唯一可信来源）\n\n'
+    + '\n\n## 当前用户可用技能清单（唯一可信来源）\n\n'
     + lines
-    + '\n\n**重要**：只调用上面列出的 skill。参数 `skill` 必须与上表中的 `name` 完全一致。'
-    + '不要从其他工具的示例、SKILL.md 引用、或推测出来的名字调用 skill——那样调用会失败。';
+    + '\n\n**重要**：只调用上面列出的技能。参数 `skill` 必须与上表中的 `name` 完全一致。'
+    + '不要从其他工具的示例、SKILL.md 引用或推测出来的名字调用技能——那样调用会失败。';
 }
 
 export class SkillToolProvider implements ToolProvider {
@@ -117,26 +117,26 @@ export class SkillToolProvider implements ToolProvider {
     // δ: 防御性 safeName，拒绝 path traversal 字符与隐藏目录
     if (!isSafeSkillName(input.skill)) {
       return {
-        content: `Skill "${input.skill}" 名字非法（必须 ^[a-zA-Z][a-zA-Z0-9_-]{0,63}$）。`,
+        content: `技能“${input.skill}”名称非法（必须 ^[a-zA-Z][a-zA-Z0-9_-]{0,63}$）。`,
       };
     }
     const allowedSkill = this.resolver.list(context).find((s) => s.name === input.skill || s.id === input.skill);
     if (!allowedSkill) {
       return {
         content:
-          `Skill "${input.skill}" 当前用户不可用。请用 Skill 工具描述里「当前用户可用 Skill 清单」的 name 调用，`
-            + `若需新 skill 请联系 admin 在 pool 中开启。`,
+          `技能“${input.skill}”当前用户不可用。请使用技能工具描述中“当前用户可用技能清单”的 name 调用，`
+            + `若需新技能，请联系管理员在技能池中开启。`,
       };
     }
     const skillDir = this.resolver.resolveSkillDir(input.skill, context);
     if (!skillDir || !existsSync(skillDir)) {
-      return { content: `Skill "${input.skill}" 物理目录不存在或尚未同步到当前 workspace。` };
+      return { content: `技能“${input.skill}”的物理目录不存在或尚未同步到当前 workspace。` };
     }
 
     const docPath = getSkillDocPath(skillDir, input.skill);
     if (!docPath || !existsSync(docPath)) {
       return {
-        content: `Skill "${input.skill}" 缺少 SKILL.md 或 ${input.skill}.md（约定的两种命名都没找到）。`,
+        content: `技能“${input.skill}”缺少 SKILL.md 或 ${input.skill}.md（约定的两种命名都没找到）。`,
       };
     }
 
@@ -152,7 +152,7 @@ export class SkillToolProvider implements ToolProvider {
       `\n\n---\n`
       + `（提示：上面 SKILL.md 可能引用 references/*.md 或 scripts/*；如有，请用 Read 按需加载，`
       + `workspace 相对路径为 ${workspaceSkillDir}/...。Shell 的默认 cwd 是 workspace 根；`
-      + `在 Shell 里引用 skill 文件时使用 $(pwd)/${workspaceSkillDir}/... 或相对路径，不要使用服务端物理路径。）`;
+      + `在 Shell 里引用技能文件时使用 $(pwd)/${workspaceSkillDir}/... 或相对路径，不要使用服务端物理路径。）`;
 
     return {
       content: `<skill-doc name="${input.skill}" path="${basename(docPath)}">\n${body}\n</skill-doc>${argsLine}${hint}`,

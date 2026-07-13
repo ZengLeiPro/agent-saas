@@ -568,7 +568,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     if (runtime.skillConfigStore) {
       app.use(
         "/api/skills",
-        tenantFeatureGuard(runtime.tenantStore, "customSkillsEnabled", "Skill"),
+        tenantFeatureGuard(runtime.tenantStore, "customSkillsEnabled", "自定义技能"),
       );
       app.use(
         "/api/skills",

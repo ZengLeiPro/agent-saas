@@ -212,7 +212,7 @@ export function AgentProfileEditor({
     actionRows.push({
       key: "skills",
       icon: "extension-puzzle-outline",
-      label: "Skills",
+      label: "技能",
       onPress: () => router.push("/settings/skills"),
     });
   }

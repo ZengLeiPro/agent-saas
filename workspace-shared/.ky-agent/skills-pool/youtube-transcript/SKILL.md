@@ -1,6 +1,6 @@
 ---
 name: youtube-transcript
-description: 从 YouTube 视频提取已有的字幕/CC 文本（不做语音识别，零成本零延迟）。仅适用于 YouTube 且视频必须已有字幕。当用户给了 YouTube 链接并需要文字内容时，优先尝试本 skill（最快）。如果视频无字幕会失败，此时应改用 media-download -a + audio-transcribe 组合。非 YouTube 平台不要触发本 skill。
+description: 从 YouTube 视频提取已有的字幕/CC 文本（不做语音识别，零成本零延迟）。仅适用于 YouTube 且视频必须已有字幕。当用户给了 YouTube 链接并需要文字内容时，优先尝试本技能（最快）。如果视频无字幕会失败，此时应改用 media-download -a + audio-transcribe 组合。非 YouTube 平台不要触发本技能。
 ---
 
 # YouTube Transcript

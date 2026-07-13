@@ -125,7 +125,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
         : await importPoolSkill(files);
       setImportDialogOpen(false);
       setImportOk(true);
-      setImportMsg(`已上传 Skill：${result.skill.name}`);
+      setImportMsg(`已上传技能：${result.skill.name}`);
       await refreshAll();
       setTimeout(() => setImportMsg(null), 2200);
     } catch (err) {
@@ -300,8 +300,8 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
-        title={isTenantMode && tenantName ? `${tenantName} · Skill 管理` : "Skill 管理"}
-        description={isTenantMode ? "管理当前组织可用的 Agent Skill 与用户自建 Skill。" : "管理平台全局 Agent Skill 池，支持启用、禁用和同步。"}
+        title={isTenantMode && tenantName ? `${tenantName} · 技能管理` : "技能管理"}
+        description={isTenantMode ? "管理当前组织可用的 Agent 技能与用户自建技能。" : "管理平台全局 Agent 技能池，支持启用、禁用和同步。"}
         actions={
           <>
             {!isTenantMode && (
@@ -330,7 +330,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
               ) : (
                 <Upload className="mr-1.5 h-3.5 w-3.5" />
               )}
-              上传 Skill
+              上传技能
             </Button>
             <Button
               variant="outline"
@@ -361,11 +361,11 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
             <div className="shrink-0 rounded-lg border bg-card p-1 shadow-sm">
               <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-transparent p-0 text-muted-foreground">
                 <TabsTrigger value="global" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
-                  {isTenantMode ? "组织 Skills" : "平台 Skills"}
+                  {isTenantMode ? "组织技能" : "平台技能"}
                   <span className="ml-1.5 text-xs font-normal">({activePoolSkillsCount})</span>
                 </TabsTrigger>
                 <TabsTrigger value="user" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
-                  用户Skills
+                  用户技能
                   <span className="ml-1.5 text-xs font-normal">({userSkillCount})</span>
                 </TabsTrigger>
               </TabsList>
@@ -376,7 +376,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                 <div className="rounded-2xl border bg-card shadow-sm">
                   <div className="space-y-1 p-4">
             {activePoolSkillsCount === 0 ? (
-              <div className="py-4 text-center text-sm text-muted-foreground">暂无{isTenantMode ? "组织" : "平台"} Skills</div>
+              <div className="py-4 text-center text-sm text-muted-foreground">暂无{isTenantMode ? "组织" : "平台"}技能</div>
             ) : isTenantMode ? (
               <>
               {ownError && (
@@ -384,7 +384,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
               )}
               {ownSkills.length > 0 && (
                 <>
-                  <div className="mb-1 mt-1 text-xs font-medium text-muted-foreground">组织自有 Skills（上传/沉淀）</div>
+                  <div className="mb-1 mt-1 text-xs font-medium text-muted-foreground">组织自有技能（上传/沉淀）</div>
                   {ownSkills.map(skill => (
                     <div key={skill.id} className="rounded-lg p-2.5 transition-colors hover:bg-muted/50">
                       <div className="flex items-start gap-3">
@@ -408,7 +408,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                               variant="ghost"
                               size="sm"
                               className="h-7 px-2 text-xs"
-                              title="提升到平台 Skills 池"
+                              title="提升到平台技能池"
                               onClick={() => { void handlePromoteOwnToPool(skill.id); }}
                             >
                               <ArrowUpCircle className="h-3.5 w-3.5" />
@@ -466,7 +466,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                     </div>
                   ))}
                   {tenantSkills.length > 0 && (
-                    <div className="mb-1 mt-3 text-xs font-medium text-muted-foreground">平台 Skills（组织内启用范围）</div>
+                    <div className="mb-1 mt-3 text-xs font-medium text-muted-foreground">平台技能（组织内启用范围）</div>
                   )}
                 </>
               )}
@@ -587,7 +587,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                 <div className="rounded-2xl border bg-card shadow-sm">
                   <div className="p-4">
             {!hasCustomSkills ? (
-              <div className="py-4 text-center text-sm text-muted-foreground">暂无用户Skills</div>
+              <div className="py-4 text-center text-sm text-muted-foreground">暂无用户技能</div>
             ) : (
               <div className="space-y-4">
                 {Object.entries(visibleCustomUsers).map(([username, skills]) => {
@@ -651,9 +651,9 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
       <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open) setEditTarget(null); }}>
         <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>{editTarget?.kind === "tenantOwn" ? "编辑组织 Skill" : "接管编辑 Skill"}</DialogTitle>
+            <DialogTitle>{editTarget?.kind === "tenantOwn" ? "编辑组织技能" : "接管编辑技能"}</DialogTitle>
             <DialogDescription>
-              正在编辑{editTarget?.kind === "tenantOwn" ? "组织" : ` ${editTarget?.username} `}的 Skill “{editTarget?.name}”。保存时会校验 SKILL.md frontmatter，且 name 必须与 Skill ID 保持一致。
+              正在编辑{editTarget?.kind === "tenantOwn" ? "组织" : ` ${editTarget?.username} `}的技能“{editTarget?.name}”。保存时会校验 SKILL.md frontmatter，且 name 必须与技能 ID 保持一致。
             </DialogDescription>
           </DialogHeader>
           {editLoading ? (
@@ -684,7 +684,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           <DialogHeader>
             <DialogTitle>确认删除</DialogTitle>
             <DialogDescription>
-              确定要删除{deleteTarget?.kind === "tenantOwn" ? "组织" : ` ${deleteTarget?.username} `}的 Skill "{deleteTarget?.name}" 吗？此操作不可撤销。
+              确定要删除{deleteTarget?.kind === "tenantOwn" ? "组织" : ` ${deleteTarget?.username} `}的技能“{deleteTarget?.name}”吗？此操作不可撤销。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -719,10 +719,10 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
         <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>上传 Skill 到{isTenantMode ? "组织" : "平台"} Skills</DialogTitle>
+            <DialogTitle>上传技能到{isTenantMode ? "组织" : "平台"}技能池</DialogTitle>
             <DialogDescription>
               支持 SKILL.md 单文件、包含 SKILL.md 的文件夹，或包含同样结构的 zip 压缩包。SKILL.md 需要包含 name 和 description frontmatter。
-              {isTenantMode ? "上传后组织成员可在自己的 Skill 设置中启用。" : "上传后按平台/租户/成员三级范围控制开放。"}
+              {isTenantMode ? "上传后组织成员可在自己的技能设置中启用。" : "上传后按平台/组织/成员三级范围控制开放。"}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">

@@ -29,8 +29,8 @@ export function SkillsSection() {
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SkillSelector
-        headerTitle="Skills"
-        headerDescription="为我的通用 Agent 选择启用的 Skills，新会话生效。"
+        headerTitle="技能"
+        headerDescription="为我的通用 Agent 选择启用的技能，新会话生效。"
       />
     </div>
   );
@@ -206,7 +206,7 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
       ) : (
         <SettingsPanelHeader
           title="我的 Agent"
-          description="维护 Agent 名称、签名、Persona、记忆和启用的 Skill。"
+          description="维护 Agent 名称、签名、Persona、记忆和启用的技能。"
         />
       )}
 
@@ -291,7 +291,7 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
             >
               <div className="flex items-center gap-2">
                 <Puzzle className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">Skills</span>
+                <span className="text-sm font-medium">技能</span>
               </div>
               <ChevronRight className="h-4 w-4 text-muted-foreground" />
             </button>

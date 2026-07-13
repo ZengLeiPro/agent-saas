@@ -51,11 +51,11 @@ describe("sanitizeCustomerFacingText · redlineReplacements", () => {
     expect(result.output).toBe("工作台 里的工作台会自动整理");
   });
 
-  it("[A7] replaces skill / Skill with word boundaries", () => {
-    const result = sanitizeCustomerFacingText("把您的 skill 沉淀成 Skill 库");
+  it("[A7] localizes skill / Skill with word boundaries", () => {
+    const result = sanitizeCustomerFacingText("把您的 skill 沉淀成 Skill 库和 SKILLS 清单");
     const fieldName = sanitizeCustomerFacingText("skillCandidates 是内部字段名");
 
-    expect(result.output).toBe("把您的 公司规范 沉淀成 公司规范 库");
+    expect(result.output).toBe("把您的 技能 沉淀成 技能 库和 技能 清单");
     expect(fieldName.output).toBe("skillCandidates 是内部字段名");
     expect(fieldName.hits).toHaveLength(0);
   });

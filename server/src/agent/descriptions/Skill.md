@@ -1,3 +1,3 @@
-Execute (or progressively load) one of the skills bundled in this workspace.
-Pass the skill `name` (see the list below) and optional `args` (a short task summary, not a prompt).
-Returns the full SKILL.md body. Read it first, then load any referenced `references/*.md` or scripts via Read before acting.
+执行或渐进式加载当前工作区内置的一项技能。
+传入技能 `name`（见下方清单）和可选的 `args`（简短任务摘要，而非提示词）。
+返回完整的 SKILL.md 正文。先阅读正文，再按需通过 Read 加载其中引用的 `references/*.md` 或脚本，然后执行任务。

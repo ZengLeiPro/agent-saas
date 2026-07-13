@@ -38,7 +38,18 @@ function getSummary(item: MessageItem): SummaryInfo {
     case 'tool_result':
       return { text: `Result: ${item.toolName}`, truncateStart: false };
     case 'subagent':
-      return { text: item.status === 'running' ? `子任务 ${item.agentType}...` : `子任务 ${item.agentType}`, truncateStart: false };
+      return {
+        text: item.status === 'running'
+          ? `子任务 ${item.agentType}...`
+          : item.status === 'failed'
+            ? `子任务失败：${item.agentType}`
+            : item.status === 'timeout'
+              ? `子任务超时：${item.agentType}`
+              : item.status === 'cancelled'
+                ? `子任务已取消：${item.agentType}`
+                : `子任务 ${item.agentType}`,
+        truncateStart: false,
+      };
     default:
       return { text: '', truncateStart: false };
   }
@@ -108,7 +119,7 @@ function getActivityDurationMs(items: MessageItem[]): number | undefined {
   let total = 0;
   let hasDuration = false;
   for (const item of items) {
-    if ((item.type === 'thinking' || item.type === 'tool_use') && typeof item.durationMs === 'number') {
+    if ((item.type === 'thinking' || item.type === 'tool_use' || item.type === 'subagent') && typeof item.durationMs === 'number') {
       total += item.durationMs;
       hasDuration = true;
     }
@@ -117,7 +128,10 @@ function getActivityDurationMs(items: MessageItem[]): number | undefined {
 }
 
 function getFailureSummary(items: MessageItem[]): GroupSummaryInfo | null {
-  const failedCount = items.filter(item => item.type === 'tool_use' && item.executionStatus === 'failed').length;
+  const failedCount = items.filter(item => (
+    (item.type === 'tool_use' && item.executionStatus === 'failed')
+    || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
+  )).length;
   if (failedCount > 0) {
     const completedCount = items.filter(item =>
       (item.type === 'thinking' && !item.streaming) ||
@@ -199,6 +213,15 @@ function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
   }
 
   if (item.type === 'subagent') {
+    if (item.status === 'failed') {
+      return { text: `子任务失败：${item.agentType}`, truncateStart: false, tone: 'danger', badge: '失败', progress, active: false };
+    }
+    if (item.status === 'timeout') {
+      return { text: `子任务超时：${item.agentType}`, truncateStart: false, tone: 'warning', badge: '超时', progress, active: false };
+    }
+    if (item.status === 'cancelled') {
+      return { text: `子任务已取消：${item.agentType}`, truncateStart: false, tone: 'neutral', badge: '已取消', progress, active: false };
+    }
     return {
       text: item.status === 'running' ? `子任务 ${item.agentType}...` : `子任务 ${item.agentType}`,
       truncateStart: false,
@@ -223,7 +246,10 @@ function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryI
   const failureSummary = getFailureSummary(items);
   if (failureSummary) return failureSummary;
 
-  const cancelledCount = items.filter(item => item.type === 'tool_use' && item.executionStatus === 'cancelled').length;
+  const cancelledCount = items.filter(item => (
+    (item.type === 'tool_use' && item.executionStatus === 'cancelled')
+    || (item.type === 'subagent' && item.status === 'cancelled')
+  )).length;
   if (cancelledCount > 0) {
     return {
       text: `已取消 ${cancelledCount} 条 · 共 ${items.length} 条`,
@@ -273,7 +299,7 @@ function ActivityItem({ item }: { item: MessageItem }) {
     case 'tool_result':
       return <ToolResultBlock toolName={item.toolName} result={item.result} />;
     case 'subagent':
-      return <SubagentBlock agentType={item.agentType} status={item.status} />;
+      return <SubagentBlock {...item} />;
     default:
       return null;
   }

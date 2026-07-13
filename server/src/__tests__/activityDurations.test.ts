@@ -245,6 +245,59 @@ describe("transcript activity durations", () => {
     }]);
   });
 
+  it("restores durable subagent ids, metrics and failed status instead of collapsing to completed", () => {
+    const parsed: ParsedTranscript = {
+      sessionId: "session-agent-failed",
+      blocks: [{
+        id: "tool-agent-failed",
+        kind: "tool_use",
+        title: "工具调用: Agent",
+        defaultOpen: false,
+        content: JSON.stringify({ agent_type: "general", description: "调研金球奖" }),
+        toolName: "Agent",
+        toolId: "call-agent-failed",
+      }],
+      stats: { lines: 1, parsedLines: 1, parseErrors: 0 },
+    };
+    const events: PlatformEvent[] = [
+      {
+        id: "sub-start", timestamp: "2026-07-13T12:00:00.000Z", type: "subagent_started",
+        runId: "parent-run", sessionId: "session-agent-failed", toolCallId: "call-agent-failed",
+        agentType: "general", description: "调研金球奖", childSessionId: "sub-child",
+        childRunId: "child-run", model: "gpt-5.6",
+      },
+      {
+        id: "sub-finish", timestamp: "2026-07-13T12:10:00.000Z", type: "subagent_finished",
+        runId: "parent-run", sessionId: "session-agent-failed", toolCallId: "call-agent-failed",
+        agentType: "general", description: "调研金球奖", childSessionId: "sub-child",
+        childRunId: "child-run", model: "gpt-5.6", status: "failed", totalTokens: 123_456,
+        toolUseCount: 67, turnCount: 42, durationMs: 600_000, errorMessage: "upstream EOF",
+        resultPreview: "部分材料",
+      },
+    ];
+
+    const enriched = enrichTranscriptActivityDurations(parsed, events, "session-agent-failed");
+    const detail: ApiSessionDetail = {
+      sessionId: "session-agent-failed",
+      stats: parsed.stats,
+      blocks: enriched.blocks as ApiSessionDetail["blocks"],
+    };
+
+    expect(mapSessionDetailToMessages(detail)).toEqual([expect.objectContaining({
+      type: "subagent",
+      status: "failed",
+      childSessionId: "sub-child",
+      childRunId: "child-run",
+      model: "gpt-5.6",
+      totalTokens: 123_456,
+      toolUseCount: 67,
+      turnCount: 42,
+      durationMs: 600_000,
+      errorMessage: "upstream EOF",
+      resultPreview: "部分材料",
+    })]);
+  });
+
   it("does not emit an artifact delivery card from CreateArtifact tool results", () => {
     const detail: ApiSessionDetail = {
       sessionId: "session-artifact",

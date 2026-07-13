@@ -312,6 +312,9 @@ describe('WebChannel active stream reconnect', () => {
       type: 'subagent_start',
       toolId: 'call-agent-1',
       agentType: '定位刷新状态',
+      childSessionId: 'sub-1',
+      childRunId: 'child-run-1',
+      model: 'test/model',
     }]);
   });
 

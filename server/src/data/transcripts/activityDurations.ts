@@ -1,4 +1,4 @@
-import type { ParsedTranscript, TranscriptBlock } from "./parse.js";
+import type { ParsedTranscript, TranscriptBlock, TranscriptSubagentActivity } from "./parse.js";
 import type { EventStore, PlatformEvent } from "../../runtime/types.js";
 
 type ToolExecutionStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -7,6 +7,7 @@ interface ActivityMetadata {
   thinkingDurations: number[];
   toolDurationById: Map<string, number>;
   toolStatusById: Map<string, ToolExecutionStatus>;
+  subagentByToolId: Map<string, TranscriptSubagentActivity>;
 }
 
 function toTimestampMs(value: string): number | undefined {
@@ -25,6 +26,8 @@ function isActivityEvent(event: PlatformEvent): boolean {
     || event.type === "tool_invocation_started"
     || event.type === "tool_invocation_completed"
     || event.type === "run_state_changed"
+    || event.type === "subagent_started"
+    || event.type === "subagent_finished"
   );
 }
 
@@ -60,15 +63,17 @@ export async function listActivityDurationEvents(
     return (await eventStore.list(sessionId)).filter(isActivityEvent);
   }
 
-  const [thinkingEvents, streamEvents, toolStartEvents, toolCompletionEvents, runStateEvents] = await Promise.all([
+  const [thinkingEvents, streamEvents, toolStartEvents, toolCompletionEvents, runStateEvents, subagentStartEvents, subagentFinishEvents] = await Promise.all([
     listEventsByType(eventStore, sessionId, "assistant_thinking"),
     // 存量 fallback：2026-07-03 前的历史数据无 durationMs，靠 delta start/end 配对
     listEventsByType(eventStore, sessionId, "assistant_stream_event"),
     listEventsByType(eventStore, sessionId, "tool_invocation_started"),
     listEventsByType(eventStore, sessionId, "tool_invocation_completed"),
     listEventsByType(eventStore, sessionId, "run_state_changed"),
+    listEventsByType(eventStore, sessionId, "subagent_started"),
+    listEventsByType(eventStore, sessionId, "subagent_finished"),
   ]);
-  return [...thinkingEvents, ...streamEvents, ...toolStartEvents, ...toolCompletionEvents, ...runStateEvents].sort(
+  return [...thinkingEvents, ...streamEvents, ...toolStartEvents, ...toolCompletionEvents, ...runStateEvents, ...subagentStartEvents, ...subagentFinishEvents].sort(
     (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
   );
 }
@@ -80,6 +85,7 @@ export function buildActivityMetadataFromEvents(
   const thinkingDurations: number[] = [];
   const toolDurationById = new Map<string, number>();
   const toolStatusById = new Map<string, ToolExecutionStatus>();
+  const subagentByToolId = new Map<string, TranscriptSubagentActivity>();
   const toolRunById = new Map<string, string>();
   const runStatusById = new Map<string, string>();
   let thinkingStartedAt: number | undefined;
@@ -115,6 +121,36 @@ export function buildActivityMetadataFromEvents(
       continue;
     }
 
+    if (event.type === "subagent_started") {
+      subagentByToolId.set(event.toolCallId, {
+        agentType: event.agentType,
+        description: event.description,
+        childSessionId: event.childSessionId,
+        childRunId: event.childRunId,
+        model: event.model,
+        status: "running",
+      });
+      continue;
+    }
+
+    if (event.type === "subagent_finished") {
+      subagentByToolId.set(event.toolCallId, {
+        agentType: event.agentType,
+        description: event.description,
+        childSessionId: event.childSessionId,
+        childRunId: event.childRunId,
+        ...(event.model ? { model: event.model } : {}),
+        status: event.status,
+        durationMs: event.durationMs,
+        totalTokens: event.totalTokens,
+        toolUseCount: event.toolUseCount,
+        turnCount: event.turnCount,
+        ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
+        ...(event.resultPreview ? { resultPreview: event.resultPreview } : {}),
+      });
+      continue;
+    }
+
     if (event.type === "tool_invocation_completed") {
       toolRunById.set(event.toolCallId, event.runId);
       toolStatusById.set(
@@ -146,7 +182,7 @@ export function buildActivityMetadataFromEvents(
     else if (runStatus === "failed" || runStatus === "orphaned") toolStatusById.set(toolCallId, "failed");
   }
 
-  return { thinkingDurations, toolDurationById, toolStatusById };
+  return { thinkingDurations, toolDurationById, toolStatusById, subagentByToolId };
 }
 
 export function enrichTranscriptActivityDurations(
@@ -163,6 +199,7 @@ export function enrichTranscriptActivityDurations(
     metadata.thinkingDurations.length === 0
     && metadata.toolDurationById.size === 0
     && metadata.toolStatusById.size === 0
+    && metadata.subagentByToolId.size === 0
   ) {
     return parsed;
   }
@@ -182,14 +219,17 @@ export function enrichTranscriptActivityDurations(
     if (block.kind === "tool_use" && block.toolId) {
       const durationMs = metadata.toolDurationById.get(block.toolId);
       const executionStatus = metadata.toolStatusById.get(block.toolId);
+      const subagent = metadata.subagentByToolId.get(block.toolId);
       const durationChanged = isValidDuration(durationMs) && block.durationMs !== durationMs;
       const statusChanged = executionStatus !== undefined && block.executionStatus !== executionStatus;
-      if (!durationChanged && !statusChanged) return block;
+      const subagentChanged = subagent !== undefined;
+      if (!durationChanged && !statusChanged && !subagentChanged) return block;
       changed = true;
       return {
         ...block,
         ...(isValidDuration(durationMs) ? { durationMs } : {}),
         ...(executionStatus ? { executionStatus } : {}),
+        ...(subagent ? { subagent } : {}),
       };
     }
 

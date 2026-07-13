@@ -90,6 +90,7 @@ export interface SubagentOutcome {
   errorMessage?: string;
   totalTokens: number;
   toolUseCount: number;
+  turnCount: number;
   durationMs: number;
   childSessionId: string;
   childRunId: string;
@@ -322,12 +323,13 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     //     ApprovalPendingWithoutInteractionHook 静默挂起子 run，绝不允许）。
     //   - onResult：捕获 runtime outcome（subtype/resultText/modelUsage），
     //     终态判定唯一依据，不解析模型文本。
-    let resultMeta: { subtype?: string; resultText?: string; modelUsage?: Record<string, SdkResultModelUsage> } | null = null;
+    let resultMeta: { subtype?: string; resultText?: string; numTurns?: number; modelUsage?: Record<string, SdkResultModelUsage> } | null = null;
     const childHooks: AgentRunHooks = {
       onResult: (meta) => {
         resultMeta = {
           subtype: meta.subtype,
           resultText: meta.resultText,
+          numTurns: meta.numTurns,
           ...(meta.modelUsage ? { modelUsage: meta.modelUsage } : {}),
         };
       },
@@ -387,7 +389,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
 
     // ── 终态判定（关键不变量 4）：信号状态 > onResult subtype，绝不读模型文本 ──
     const durationMs = Date.now() - startedAt;
-    const meta = resultMeta as { subtype?: string; resultText?: string; modelUsage?: Record<string, SdkResultModelUsage> } | null;
+    const meta = resultMeta as { subtype?: string; resultText?: string; numTurns?: number; modelUsage?: Record<string, SdkResultModelUsage> } | null;
     let status: SubagentStatus;
     let errorMessage: string | undefined;
     if (timeoutController.signal.aborted) {
@@ -442,6 +444,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       ...(errorMessage ? { errorMessage } : {}),
       totalTokens,
       toolUseCount,
+      turnCount: meta?.numTurns ?? 0,
       durationMs,
       childSessionId,
       childRunId,

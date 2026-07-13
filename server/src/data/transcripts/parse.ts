@@ -19,6 +19,21 @@ export type TranscriptBlockKind =
   | "compaction"
   | "meta";
 
+export interface TranscriptSubagentActivity {
+  agentType: string;
+  description: string;
+  childSessionId: string;
+  childRunId: string;
+  model?: string;
+  status: "running" | "completed" | "failed" | "cancelled" | "timeout";
+  durationMs?: number;
+  totalTokens?: number;
+  toolUseCount?: number;
+  turnCount?: number;
+  errorMessage?: string;
+  resultPreview?: string;
+}
+
 export interface TranscriptBlock {
   id: string;
   tsMs?: number;
@@ -39,6 +54,8 @@ export interface TranscriptBlock {
   durationMs?: number;
   /** Tool lifecycle state derived from durable runtime events */
   executionStatus?: "pending" | "running" | "completed" | "failed" | "cancelled";
+  /** Agent 工具对应的 durable child run 元数据。 */
+  subagent?: TranscriptSubagentActivity;
   /** User prompt originated from mobile voice transcription */
   isVoiceTranscript?: boolean;
   /** compaction block：被摘要替代的历史事件数 */

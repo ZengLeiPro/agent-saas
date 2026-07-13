@@ -942,8 +942,7 @@ export const MessageItem = memo(function MessageItem({
     if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.status === "running"} />;
     return (
       <SubagentBlock
-        agentType={message.agentType}
-        status={message.status}
+        {...message}
       />
     );
   }

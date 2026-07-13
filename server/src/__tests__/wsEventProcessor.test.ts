@@ -671,4 +671,40 @@ describe('wsEventProcessor dedicated tool passthrough', () => {
       status: 'running',
     });
   });
+
+  it('keeps the real child terminal status and drill-down metadata', () => {
+    const { messages, ctx } = createTestRig();
+    process({
+      type: 'subagent_start',
+      toolId: 'call-agent-failed',
+      agentType: '调研金球奖',
+      childSessionId: 'sub-child',
+      childRunId: 'child-run',
+      model: 'gpt-5.6',
+    }, ctx);
+    process({
+      type: 'subagent_end',
+      toolId: 'call-agent-failed',
+      agentType: '调研金球奖',
+      status: 'failed',
+      childSessionId: 'sub-child',
+      childRunId: 'child-run',
+      model: 'gpt-5.6',
+      durationMs: 600_000,
+      totalTokens: 123_456,
+      toolUseCount: 67,
+      turnCount: 42,
+      errorMessage: 'upstream EOF',
+      resultPreview: '部分材料',
+    }, ctx);
+
+    expect(messages).toEqual([expect.objectContaining({
+      type: 'subagent',
+      status: 'failed',
+      childSessionId: 'sub-child',
+      childRunId: 'child-run',
+      turnCount: 42,
+      errorMessage: 'upstream EOF',
+    })]);
+  });
 });

@@ -3819,6 +3819,9 @@ function projectRuntimePlatformEvent(
           type: 'subagent_start',
           toolId: event.toolCallId,
           agentType: event.description || event.agentType,
+          childSessionId: event.childSessionId,
+          childRunId: event.childRunId,
+          model: event.model,
         }],
       };
     case 'subagent_finished':
@@ -3826,6 +3829,17 @@ function projectRuntimePlatformEvent(
         events: [{
           type: 'subagent_end',
           toolId: event.toolCallId,
+          agentType: event.description || event.agentType,
+          status: event.status,
+          childSessionId: event.childSessionId,
+          childRunId: event.childRunId,
+          model: event.model,
+          durationMs: event.durationMs,
+          totalTokens: event.totalTokens,
+          toolUseCount: event.toolUseCount,
+          turnCount: event.turnCount,
+          errorMessage: event.errorMessage,
+          resultPreview: event.resultPreview,
         }],
       };
     case 'compaction':

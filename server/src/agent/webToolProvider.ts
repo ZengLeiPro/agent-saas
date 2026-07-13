@@ -35,6 +35,28 @@ const DEFAULT_FETCH_MAX_REDIRECTS = 3;
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
+/**
+ * WebFetch 失败熔断：正常调研允许少量 403/404，但不允许搜索降级后无界扩散 URL。
+ * - 滚动窗口需要足够样本才判定，避免头几次偶发失败误杀；
+ * - 连续失败单独设闸门，覆盖目标站点集体封锁/网络持续异常。
+ */
+export const WEB_FETCH_FAILURE_WINDOW_SIZE = 20;
+export const WEB_FETCH_FAILURE_RATE_THRESHOLD = 0.6;
+export const WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT = 8;
+
+interface WebFetchFailureState {
+  outcomes: boolean[];
+  consecutiveFailures: number;
+  circuitReason?: string;
+}
+
+export class WebFetchCircuitOpenError extends Error {
+  constructor(readonly reason: string, options?: ErrorOptions) {
+    super(reason, options);
+    this.name = 'WebFetchCircuitOpenError';
+  }
+}
+
 const webSearchSchema = z.object({
   query: z.string().min(1).describe('Search query.'),
   count: z.number().int().min(1).max(10).optional().describe('Number of results to return. Default 5, max 10.'),
@@ -76,6 +98,9 @@ export const webFetchToolDescriptor: ToolDescriptor<WebFetchInput> = {
 };
 
 export class WebToolProvider implements ToolProvider {
+  /** provider 由父 dispatch 复用给多个 child；必须按 runId 隔离，不能让一个子任务熔断其他任务。 */
+  private readonly fetchFailureStates = new Map<string, WebFetchFailureState>();
+
   constructor(
     private readonly config: ResolvedWebToolsConfig = {},
     private readonly fetchImpl: typeof fetch = fetch,
@@ -101,9 +126,51 @@ export class WebToolProvider implements ToolProvider {
     }
     if (call.toolId === webFetchToolDescriptor.id) {
       const input = webFetchToolDescriptor.schema.parse(call.input) as WebFetchInput;
-      return { content: await this.runFetch(input, context.signal) };
+      const state = this.getFetchFailureState(context);
+      if (state.circuitReason) throw new WebFetchCircuitOpenError(state.circuitReason);
+      try {
+        const content = await this.runFetch(input, context.signal);
+        this.recordFetchOutcome(state, true);
+        return { content };
+      } catch (err) {
+        const reason = this.recordFetchOutcome(state, false);
+        if (reason) {
+          const lastError = err instanceof Error ? err.message : String(err);
+          throw new WebFetchCircuitOpenError(`${reason}；最后一次错误：${lastError}`, { cause: err });
+        }
+        throw err;
+      }
     }
     return undefined;
+  }
+
+  private getFetchFailureState(context: ToolCallContext): WebFetchFailureState {
+    const key = context.runId ?? context.sessionId ?? context.workspace.sessionId ?? 'unknown-run';
+    let state = this.fetchFailureStates.get(key);
+    if (!state) {
+      state = { outcomes: [], consecutiveFailures: 0 };
+      this.fetchFailureStates.set(key, state);
+    }
+    return state;
+  }
+
+  /** true=成功、false=失败；首次触发熔断时返回面向模型的明确收束原因。 */
+  private recordFetchOutcome(state: WebFetchFailureState, succeeded: boolean): string | undefined {
+    state.outcomes.push(succeeded);
+    if (state.outcomes.length > WEB_FETCH_FAILURE_WINDOW_SIZE) state.outcomes.shift();
+    state.consecutiveFailures = succeeded ? 0 : state.consecutiveFailures + 1;
+
+    const failures = state.outcomes.filter((outcome) => !outcome).length;
+    const failureRate = failures / state.outcomes.length;
+    const rollingLimitReached = state.outcomes.length >= WEB_FETCH_FAILURE_WINDOW_SIZE
+      && failureRate >= WEB_FETCH_FAILURE_RATE_THRESHOLD;
+    const consecutiveLimitReached = state.consecutiveFailures >= WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT;
+    if (!rollingLimitReached && !consecutiveLimitReached) return undefined;
+
+    state.circuitReason = consecutiveLimitReached
+      ? `WebFetch 已熔断：连续 ${state.consecutiveFailures} 次失败`
+      : `WebFetch 已熔断：最近 ${state.outcomes.length} 次中 ${failures} 次失败（${Math.round(failureRate * 100)}%）`;
+    return state.circuitReason;
   }
 
   private async runSearch(input: WebSearchInput, signal?: AbortSignal): Promise<string> {

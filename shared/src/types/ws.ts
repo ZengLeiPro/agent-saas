@@ -4,6 +4,7 @@ import type {
     NotificationData,
     MemoryRecallData,
 } from './session';
+import type { SubagentStatus } from './message';
 
 export type WsBlockType = 'thinking' | 'text' | 'tool_use';
 
@@ -43,8 +44,8 @@ export type WsEvent =
     | { type: 'tool_result'; toolName?: string; toolId?: string; result?: string; isError?: boolean }
     | { type: 'permission_request'; interactionId: string; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string }
     | { type: 'ask_user'; interactionId: string; questions: WsAskUserQuestion[] }
-    | { type: 'subagent_start'; toolId: string; agentType: string }
-    | { type: 'subagent_end'; toolId: string }
+    | { type: 'subagent_start'; toolId: string; agentType: string; childSessionId?: string; childRunId?: string; model?: string }
+    | { type: 'subagent_end'; toolId: string; agentType?: string; status?: Exclude<SubagentStatus, 'running'>; childSessionId?: string; childRunId?: string; model?: string; durationMs?: number; totalTokens?: number; toolUseCount?: number; turnCount?: number; errorMessage?: string; resultPreview?: string }
     | { type: 'file_download'; fileName: string; fileType: string; filePath: string; fileSize: number; owner?: string }
     | { type: 'artifact_created'; artifactId: string; fileName: string; kind: 'file' | 'screenshot' | 'patch' | 'log' | 'blob'; sourcePath?: string; sizeBytes?: number; mimeType?: string; sha256?: string; owner?: string }
     | { type: 'voice'; text: string; voice?: string; speed?: number; standalone?: boolean }

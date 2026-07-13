@@ -542,7 +542,14 @@ export function processWsEvent(
       if (current.type === "subagent" && current.toolId === data.toolId) {
         msg.updateMessageAt(i, (message) =>
           message.type === "subagent"
-            ? { ...message, agentType: data.agentType, status: "running" as const }
+            ? {
+                ...message,
+                agentType: data.agentType,
+                status: "running" as const,
+                ...(data.childSessionId ? { childSessionId: data.childSessionId } : {}),
+                ...(data.childRunId ? { childRunId: data.childRunId } : {}),
+                ...(data.model ? { model: data.model } : {}),
+              }
             : message
         );
         return;
@@ -554,11 +561,22 @@ export function processWsEvent(
           toolId: data.toolId,
           agentType: data.agentType,
           status: "running" as const,
+          ...(data.childSessionId ? { childSessionId: data.childSessionId } : {}),
+          ...(data.childRunId ? { childRunId: data.childRunId } : {}),
+          ...(data.model ? { model: data.model } : {}),
         }));
         return;
       }
     }
-    msg.addMessage({ type: "subagent", toolId: data.toolId, agentType: data.agentType, status: "running" });
+    msg.addMessage({
+      type: "subagent",
+      toolId: data.toolId,
+      agentType: data.agentType,
+      status: "running",
+      ...(data.childSessionId ? { childSessionId: data.childSessionId } : {}),
+      ...(data.childRunId ? { childRunId: data.childRunId } : {}),
+      ...(data.model ? { model: data.model } : {}),
+    });
     return;
   }
 
@@ -571,8 +589,37 @@ export function processWsEvent(
     }
     if (idx >= 0) {
       msg.updateMessageAt(idx, (m) =>
-        m.type === "subagent" ? { ...m, status: "completed" as const } : m
+        m.type === "subagent" ? {
+          ...m,
+          status: data.status ?? "completed",
+          ...(data.agentType ? { agentType: data.agentType } : {}),
+          ...(data.childSessionId ? { childSessionId: data.childSessionId } : {}),
+          ...(data.childRunId ? { childRunId: data.childRunId } : {}),
+          ...(data.model ? { model: data.model } : {}),
+          ...(typeof data.durationMs === "number" ? { durationMs: data.durationMs } : {}),
+          ...(typeof data.totalTokens === "number" ? { totalTokens: data.totalTokens } : {}),
+          ...(typeof data.toolUseCount === "number" ? { toolUseCount: data.toolUseCount } : {}),
+          ...(typeof data.turnCount === "number" ? { turnCount: data.turnCount } : {}),
+          ...(data.errorMessage ? { errorMessage: data.errorMessage } : {}),
+          ...(data.resultPreview ? { resultPreview: data.resultPreview } : {}),
+        } : m
       );
+    } else if (data.agentType) {
+      msg.addMessage({
+        type: "subagent",
+        toolId: data.toolId,
+        agentType: data.agentType,
+        status: data.status ?? "completed",
+        ...(data.childSessionId ? { childSessionId: data.childSessionId } : {}),
+        ...(data.childRunId ? { childRunId: data.childRunId } : {}),
+        ...(data.model ? { model: data.model } : {}),
+        ...(typeof data.durationMs === "number" ? { durationMs: data.durationMs } : {}),
+        ...(typeof data.totalTokens === "number" ? { totalTokens: data.totalTokens } : {}),
+        ...(typeof data.toolUseCount === "number" ? { toolUseCount: data.toolUseCount } : {}),
+        ...(typeof data.turnCount === "number" ? { turnCount: data.turnCount } : {}),
+        ...(data.errorMessage ? { errorMessage: data.errorMessage } : {}),
+        ...(data.resultPreview ? { resultPreview: data.resultPreview } : {}),
+      });
     }
     return;
   }

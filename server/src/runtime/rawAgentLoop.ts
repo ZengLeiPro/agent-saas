@@ -47,6 +47,7 @@ import { pickSoleReadyTenantHandId, type HandStore } from './handStore.js';
 import type { RunStore } from './runStore.js';
 import { createLogger } from '../utils/logger.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { WebFetchCircuitOpenError } from '../agent/webToolProvider.js';
 
 /**
  * RawAgentLoop 自身原本完全依赖 EventStore 留痕,不打 logger 日志。
@@ -62,6 +63,11 @@ const RUN_START_REPLAY_EXCLUDED_EVENT_TYPES = [
   'tool_progress',
   'assistant_stream_event',
 ] satisfies PlatformEvent['type'][];
+const WEB_FETCH_SYNTHESIS_PROMPT = [
+  '[平台收束指令]',
+  'WebFetch 已因持续高失败率熔断。停止继续扩散 URL，也不要再调用其他工具。',
+  '请立即基于当前上下文中已经取得的材料完成任务；明确区分已核实事实、证据不足项与未完成项。',
+].join('\n');
 
 function resolveRunTenantId(context: RunContext): string {
   return context.tenantId
@@ -330,6 +336,8 @@ export class RawAgentLoop implements AgentLoop {
   private readonly runStore?: RunStore;
   private readonly streamEventBatch: Required<StreamEventBatchOptions>;
   private readonly zombieToolCallTimeoutMs: number;
+  private webFetchSynthesisReason?: string;
+  private webFetchSynthesisPromptAppended = false;
 
   constructor(options: RawAgentLoopOptions) {
     this.modelAdapter = options.modelAdapter;
@@ -421,6 +429,21 @@ export class RawAgentLoop implements AgentLoop {
     } catch {
       // 持久化失败不阻断 agent loop（下个 turn 会重试）
     }
+  }
+
+  private forceWebFetchSynthesis(reason: string, context: RunContext): void {
+    if (this.webFetchSynthesisReason) return;
+    this.webFetchSynthesisReason = reason;
+    logger.warn(`[web-fetch-circuit] force synthesis session=${context.sessionId} run=${context.runId}: ${reason}`);
+  }
+
+  private prepareForcedSynthesis(messages: ModelChatMessage[]): boolean {
+    if (!this.webFetchSynthesisReason) return false;
+    if (!this.webFetchSynthesisPromptAppended) {
+      messages.push({ role: 'user', content: `${WEB_FETCH_SYNTHESIS_PROMPT}\n原因：${this.webFetchSynthesisReason}` });
+      this.webFetchSynthesisPromptAppended = true;
+    }
+    return true;
   }
 
   async *run(input: RunInput, context: RunContext): AsyncIterable<OutboundEvent> {
@@ -524,11 +547,13 @@ export class RawAgentLoop implements AgentLoop {
         let thinkingSegmentStartedAt: number | undefined;
 
         await this.assertNoOpenToolCallBatchesBeforeModel(context.sessionId);
+        const forceSynthesis = this.prepareForcedSynthesis(messages);
         for await (const event of this.modelAdapter.stream({
           model: context.model,
           messages,
           tools,
           signal: context.signal,
+          ...(forceSynthesis ? { toolChoice: 'none' as const } : {}),
           ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
         }, context)) {
           if (event.type === 'thinking_delta') {
@@ -1509,6 +1534,20 @@ export class RawAgentLoop implements AgentLoop {
       };
     }
 
+    if (call.name === 'WebFetch' && this.webFetchSynthesisReason) {
+      return {
+        call,
+        descriptor,
+        input,
+        result: {
+          content: standardizeToolError(
+            `${this.webFetchSynthesisReason}；本次调用未出网，请基于已有材料收束回答`,
+          ),
+        },
+        isError: true,
+      };
+    }
+
     const policyContext = await this.refreshApprovalPolicy(context);
     const decision = await this.toolPolicy.decide(descriptor, input, policyContext);
     if (decision.type === 'requires_approval') {
@@ -1575,6 +1614,9 @@ export class RawAgentLoop implements AgentLoop {
       });
       return { call, descriptor, input, result };
     } catch (err) {
+      if (err instanceof WebFetchCircuitOpenError) {
+        this.forceWebFetchSynthesis(err.reason, context);
+      }
       if (err instanceof InteractionPendingWithoutInteractionHook) throw err;
       return {
         call,
@@ -1898,11 +1940,13 @@ export class RawAgentLoop implements AgentLoop {
         let thinkingSegmentStartedAt: number | undefined;
 
         await this.assertNoOpenToolCallBatchesBeforeModel(args.context.sessionId);
+        const forceSynthesis = this.prepareForcedSynthesis(args.messages);
         for await (const event of this.modelAdapter.stream({
           model: args.context.model,
           messages: args.messages,
           tools: args.tools,
           signal: args.context.signal,
+          ...(forceSynthesis ? { toolChoice: 'none' as const } : {}),
           ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
         }, args.context)) {
           if (event.type === 'thinking_delta') {

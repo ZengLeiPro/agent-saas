@@ -15,6 +15,7 @@ import {
   type ToolRuntime,
 } from '../agent/toolRuntime.js';
 import { createBuiltinTools } from '../agent/builtinTools.js';
+import { WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT, WebToolProvider } from '../agent/webToolProvider.js';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { buildContextProjection } from '../runtime/contextProjection.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
@@ -78,6 +79,30 @@ class StaticToolCallsAdapter implements ModelAdapter {
       type: 'completed',
       content: '',
       toolCalls: this.toolCalls,
+    };
+  }
+}
+
+class WebFetchUntilForcedSynthesisAdapter implements ModelAdapter {
+  calls = 0;
+  requests: ModelRequest[] = [];
+
+  async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    this.requests.push(request);
+    if (request.toolChoice === 'none') {
+      yield { type: 'text_delta', content: '基于已有材料收束。' };
+      yield { type: 'completed', content: '基于已有材料收束。', toolCalls: [] };
+      return;
+    }
+    yield {
+      type: 'completed',
+      content: '',
+      toolCalls: [{
+        id: `call_fetch_${this.calls}`,
+        name: 'WebFetch',
+        arguments: JSON.stringify({ url: `https://93.184.216.34/missing-${this.calls}` }),
+      }],
     };
   }
 }
@@ -326,6 +351,54 @@ describe('RawAgentLoop', () => {
       await rm(dir, { recursive: true, force: true });
     }
     cleanupDirs.clear();
+  });
+
+  it('forces a no-tool synthesis turn after the WebFetch failure circuit opens', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-web-fetch-circuit-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new WebFetchUntilForcedSynthesisAdapter();
+    const fetchImpl = vi.fn(async () => new Response('missing', {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'text/plain' },
+    })) as unknown as typeof fetch;
+    const webProvider = new WebToolProvider({
+      fetch: {},
+      egress: { allowedHosts: ['93.184.216.34'] },
+    }, fetchImpl);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-web-fetch-circuit'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime({ providers: [webProvider] }),
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '调研' },
+        prompt: '调研',
+        instructions: '先找资料再回答。',
+        maxTurns: WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT + 2,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-web-fetch-circuit',
+        sessionId: 'session-web-fetch-circuit',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      },
+    ));
+
+    expect(events.at(-1)).toEqual({ type: 'done' });
+    expect(fetchImpl).toHaveBeenCalledTimes(WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT);
+    expect(adapter.requests.at(-1)?.toolChoice).toBe('none');
+    expect(adapter.requests.at(-1)?.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: expect.stringContaining('WebFetch 已因持续高失败率熔断'),
+    });
   });
 
   it('persists approval before executing Write and projects legacy transcript', async () => {

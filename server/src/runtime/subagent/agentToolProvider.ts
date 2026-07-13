@@ -51,6 +51,7 @@ import {
 import { runSubagent, type SubagentOutcome } from './subagentRunner.js';
 
 const logger = createLogger('AgentToolProvider');
+const SUBAGENT_RESULT_PREVIEW_CHARS = 2_000;
 
 const agentToolSchema = z.object({
   description: z.string().min(1).max(120)
@@ -173,7 +174,9 @@ export class AgentToolProvider implements ToolProvider {
           status: 'failed',
           totalTokens: 0,
           toolUseCount: 0,
+          turnCount: 0,
           durationMs: 0,
+          errorMessage: err instanceof Error ? err.message : String(err),
         });
       }
       throw err;
@@ -192,7 +195,12 @@ export class AgentToolProvider implements ToolProvider {
       status: outcome.status,
       totalTokens: outcome.totalTokens,
       toolUseCount: outcome.toolUseCount,
+      turnCount: outcome.turnCount,
       durationMs: outcome.durationMs,
+      ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
+      ...(outcome.text.trim()
+        ? { resultPreview: outcome.text.trim().slice(0, SUBAGENT_RESULT_PREVIEW_CHARS) }
+        : {}),
     });
 
     return { content: await this.formatOutcome(outcome, context) };

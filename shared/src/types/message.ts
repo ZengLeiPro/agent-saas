@@ -1,5 +1,6 @@
 export type AskUserAnswerValue = string | string[];
 export type AskUserAnswers = Record<string, AskUserAnswerValue>;
+export type SubagentStatus = "running" | "completed" | "failed" | "cancelled" | "timeout";
 
 export type MessageItem =
   | { id: string; type: "user"; content: string; displayContent?: string; attachments?: Array<{ name: string; isImage?: boolean }>; isVoiceTranscript?: boolean; status?: 'pending' | 'sent' | 'failed'; timestamp?: number; clientMsgId?: string; failedReason?: string }
@@ -57,7 +58,16 @@ export type MessageItem =
       type: "subagent";
       toolId: string;
       agentType: string;
-      status: "running" | "completed";
+      status: SubagentStatus;
+      childSessionId?: string;
+      childRunId?: string;
+      model?: string;
+      durationMs?: number;
+      totalTokens?: number;
+      toolUseCount?: number;
+      turnCount?: number;
+      errorMessage?: string;
+      resultPreview?: string;
     }
   | {
       id: string;

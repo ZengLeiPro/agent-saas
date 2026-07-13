@@ -567,7 +567,13 @@ export type PlatformEvent =
     status: 'completed' | 'failed' | 'cancelled' | 'timeout';
     totalTokens: number;
     toolUseCount: number;
+    /** 存量事件可能缺失；新事件始终写入。 */
+    turnCount?: number;
     durationMs: number;
+    /** 运行时错误的原始摘要；成功时缺省。 */
+    errorMessage?: string;
+    /** 子任务最终文本的短预览；完整过程仍读取 childSessionId。 */
+    resultPreview?: string;
   };
 
 export type PlatformEventInput = PlatformEvent extends infer Event

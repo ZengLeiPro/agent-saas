@@ -178,6 +178,21 @@ export function formatTokenCount(count: number): string {
 }
 
 /** API transcript block */
+export interface ApiSubagentActivity {
+  agentType: string;
+  description: string;
+  childSessionId: string;
+  childRunId: string;
+  model?: string;
+  status: "running" | "completed" | "failed" | "cancelled" | "timeout";
+  durationMs?: number;
+  totalTokens?: number;
+  toolUseCount?: number;
+  turnCount?: number;
+  errorMessage?: string;
+  resultPreview?: string;
+}
+
 export interface ApiTranscriptBlock {
   id: string;
   tsMs?: number;
@@ -191,5 +206,6 @@ export interface ApiTranscriptBlock {
   toolId?: string;
   durationMs?: number;
   executionStatus?: "pending" | "running" | "completed" | "failed" | "cancelled";
+  subagent?: ApiSubagentActivity;
   isVoiceTranscript?: boolean;
 }

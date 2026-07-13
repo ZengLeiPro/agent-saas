@@ -275,12 +275,31 @@ function mapBlock(
           || block.executionStatus === "completed"
           || block.executionStatus === "failed"
           || block.executionStatus === "cancelled";
+        const subagentStatus = block.subagent?.status
+          ?? (block.executionStatus === "failed"
+            ? "failed"
+            : block.executionStatus === "cancelled"
+              ? "cancelled"
+              : terminal
+                ? "completed"
+                : "running");
+        const resultPreview = block.subagent?.resultPreview
+          ?? (resultText?.trim() ? resultText.trim().slice(0, 2_000) : undefined);
         return {
           id,
           type: "subagent",
           toolId: block.toolId || "",
-          agentType: parseSubagentDescription(block.content),
-          status: terminal ? "completed" : "running",
+          agentType: block.subagent?.description || parseSubagentDescription(block.content),
+          status: subagentStatus,
+          ...(block.subagent?.childSessionId ? { childSessionId: block.subagent.childSessionId } : {}),
+          ...(block.subagent?.childRunId ? { childRunId: block.subagent.childRunId } : {}),
+          ...(block.subagent?.model ? { model: block.subagent.model } : {}),
+          ...(typeof block.subagent?.durationMs === "number" ? { durationMs: block.subagent.durationMs } : {}),
+          ...(typeof block.subagent?.totalTokens === "number" ? { totalTokens: block.subagent.totalTokens } : {}),
+          ...(typeof block.subagent?.toolUseCount === "number" ? { toolUseCount: block.subagent.toolUseCount } : {}),
+          ...(typeof block.subagent?.turnCount === "number" ? { turnCount: block.subagent.turnCount } : {}),
+          ...(block.subagent?.errorMessage ? { errorMessage: block.subagent.errorMessage } : {}),
+          ...(resultPreview ? { resultPreview } : {}),
         };
       }
       const resolvedName = resolveDisplayToolName({

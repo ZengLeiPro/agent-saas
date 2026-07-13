@@ -3,6 +3,7 @@ export type {
   MessageItemInput,
   AskUserAnswerValue,
   AskUserAnswers,
+  SubagentStatus,
   UploadedFile,
   ActivityGroup,
   RenderItem,
@@ -20,6 +21,7 @@ export type {
   NotificationData,
   MemoryRecallData,
   ApiTranscriptBlock,
+  ApiSubagentActivity,
 } from "./session";
 export { formatTokenCount } from "./session";
 

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { WebToolProvider } from '../agent/webToolProvider.js';
+import {
+  WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT,
+  WebFetchCircuitOpenError,
+  WebToolProvider,
+} from '../agent/webToolProvider.js';
 import type { ToolCallContext } from '../agent/toolRuntime.js';
 
 function context(): ToolCallContext {
@@ -180,5 +184,84 @@ describe('WebToolProvider', () => {
     );
 
     expect(result?.content).toContain('[Content truncated at 100 chars.]');
+  });
+
+  it('opens a per-run circuit after consecutive failures and skips later network calls', async () => {
+    const fetchImpl = vi.fn(async () => new Response('missing', {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'text/plain' },
+    })) as unknown as typeof fetch;
+    const provider = new WebToolProvider({
+      fetch: {},
+      egress: { allowedHosts: ['93.184.216.34'] },
+    }, fetchImpl);
+    const failedRun = { ...context(), runId: 'run-failing' };
+    const call = {
+      toolId: 'WebFetch',
+      input: { url: 'https://93.184.216.34/missing' },
+      authorization: { approved: true as const, source: 'policy_auto' as const },
+    };
+
+    for (let i = 1; i < WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT; i += 1) {
+      await expect(provider.invoke(call, failedRun)).rejects.toThrow(/HTTP 404/);
+    }
+    await expect(provider.invoke(call, failedRun)).rejects.toBeInstanceOf(WebFetchCircuitOpenError);
+    await expect(provider.invoke(call, failedRun)).rejects.toBeInstanceOf(WebFetchCircuitOpenError);
+    expect(fetchImpl).toHaveBeenCalledTimes(WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT);
+
+    await expect(provider.invoke(call, { ...context(), runId: 'run-independent' })).rejects.toThrow(/HTTP 404/);
+    expect(fetchImpl).toHaveBeenCalledTimes(WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT + 1);
+  });
+
+  it('opens a circuit when the rolling failure rate reaches the threshold', async () => {
+    const outcomes = [
+      false, false, true,
+      false, false, true,
+      false, false, true,
+      false, false, true,
+      false, true,
+      false, true,
+      false, true,
+      false, true,
+    ];
+    const fetchImpl = vi.fn(async () => {
+      const succeeded = outcomes[fetchImpl.mock.calls.length - 1];
+      return succeeded
+        ? new Response('<html><body>useful evidence</body></html>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          })
+        : new Response('missing', {
+            status: 404,
+            statusText: 'Not Found',
+            headers: { 'content-type': 'text/plain' },
+          });
+    });
+    const provider = new WebToolProvider({
+      fetch: {},
+      egress: { allowedHosts: ['93.184.216.34'] },
+    }, fetchImpl as unknown as typeof fetch);
+    const runContext = { ...context(), runId: 'run-rolling-failures' };
+
+    for (let i = 0; i < outcomes.length; i += 1) {
+      const call = {
+        toolId: 'WebFetch',
+        input: { url: `https://93.184.216.34/page-${i}` },
+        authorization: { approved: true as const, source: 'policy_auto' as const },
+      };
+      if (outcomes[i]) {
+        await expect(provider.invoke(call, runContext)).resolves.toBeTruthy();
+      } else {
+        await expect(provider.invoke(call, runContext)).rejects.toThrow(/HTTP 404/);
+      }
+    }
+
+    await expect(provider.invoke({
+      toolId: 'WebFetch',
+      input: { url: 'https://93.184.216.34/page-after-threshold' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, runContext)).rejects.toBeInstanceOf(WebFetchCircuitOpenError);
+    expect(fetchImpl).toHaveBeenCalledTimes(outcomes.length);
   });
 });

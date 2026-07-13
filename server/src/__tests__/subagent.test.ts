@@ -461,6 +461,7 @@ describe('AgentToolProvider', () => {
       text: '结论文本',
       totalTokens: 100,
       toolUseCount: 3,
+      turnCount: 4,
       durationMs: 1200,
       childSessionId: `sub-${randomUUID()}`,
       childRunId: `${Date.now()}-${randomUUID()}`,
@@ -507,11 +508,12 @@ describe('AgentToolProvider', () => {
     expect(descriptor!.description).toContain('explore');
     expect(SUBAGENT_TYPES.general.maxTurns).toBe(SUBAGENT_MAX_TURNS);
     expect(SUBAGENT_TYPES.explore.maxTurns).toBe(SUBAGENT_MAX_TURNS);
+    expect(SUBAGENT_MAX_TURNS).toBe(200);
   });
 
   it('durable 事件形态：subagent_started/finished 写父 session，字段完整', async () => {
     const fixture = await makeFixture({ cleanupDirs });
-    const outcome = fakeOutcome(fixture, { status: 'completed', totalTokens: 42, toolUseCount: 2 });
+    const outcome = fakeOutcome(fixture, { status: 'completed', totalTokens: 42, toolUseCount: 2, turnCount: 6 });
     const provider = makeProvider(fixture, { outcome });
     const result = await provider.invoke(
       { toolId: 'Agent', input: { description: '整理调研', prompt: '做事' }, authorization: { approved: true, source: 'policy_auto' } },
@@ -537,7 +539,9 @@ describe('AgentToolProvider', () => {
       status: 'completed',
       totalTokens: 42,
       toolUseCount: 2,
+      turnCount: 6,
       childSessionId: outcome.childSessionId,
+      resultPreview: '结论文本',
     });
   });
 

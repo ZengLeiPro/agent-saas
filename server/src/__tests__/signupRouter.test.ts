@@ -182,7 +182,14 @@ async function makeTestRig(options?: {
       }),
     close: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      rmSync(tmpRoot, { recursive: true, force: true });
+      // 注册成功后的审计日志是 fire-and-forget；满套并行测试下可能仍在收尾写入。
+      // rmSync 的 ENOTEMPTY 重试只在 recursive 模式下生效，避免 teardown 偶发竞态。
+      rmSync(tmpRoot, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 20,
+      });
     },
   };
 }

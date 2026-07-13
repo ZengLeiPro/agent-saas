@@ -26,6 +26,8 @@ const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   { path: /^\/dingtalk\/webhook\// },
   { method: "GET", path: /^\/auth\/avatar\// },
   { method: "GET", path: /^\/agents\/avatar\// },
+  // 企业专家图片头像：<img> 加载不带鉴权头，与 agents/avatar 同口径公开（204 防枚举在路由内）
+  { method: "GET", path: /^\/org-agents\/avatar\// },
   { method: "GET", path: /^\/artifacts\/[^/]+\/content$/ },
   { method: "GET", path: /^\/share\/sessions\/[^/]+$/ },
   { path: /^\/share\/sessions\/[^/]+\/file$/ },

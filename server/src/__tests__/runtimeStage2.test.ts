@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // 指向真实 workspace-shared/prompts/，避免每个 tmp cwd 都要拷模板
 const SHARED_DIR = resolve(process.cwd(), '../workspace-shared');
@@ -10,6 +10,7 @@ import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import {
   createRawApprovalResumeDispatch,
+  createRawRuntimeRunDispatch,
   loadRawRuntimeWakeState,
   type SessionLockAcquirer,
   type SessionLockHandle,
@@ -42,10 +43,43 @@ describe('runtime stage 2 primitives', () => {
   const cleanupDirs = new Set<string>();
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const dir of cleanupDirs) {
       await rm(dir, { recursive: true, force: true });
     }
     cleanupDirs.clear();
+  });
+
+  it('web abort 后把 session 从 running 收口为 idle', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'runtime-web-abort-'));
+    cleanupDirs.add(cwd);
+    const sessionCatalog = new MemorySessionCatalog();
+    const abortController = new AbortController();
+    abortController.abort('web_abort');
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('aborted', 'AbortError'));
+
+    const dispatch = createRawRuntimeRunDispatch({
+      agentCwd: cwd,
+      sharedDir: SHARED_DIR,
+      sessionCatalog,
+      memory: { enabled: false },
+    });
+    let sessionId: string | undefined;
+    for await (const event of dispatch(
+      { channel: 'web', chatId: 'chat-abort', content: '停止测试' },
+      { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      {
+        abortController,
+        modelConnection: { apiKey: 'sk-test' },
+        skipSystemPrompt: true,
+        maxTurns: 1,
+      },
+    )) {
+      if (event.type === 'session_init') sessionId = event.sessionId;
+    }
+
+    expect(sessionId).toBeTruthy();
+    expect((await sessionCatalog.get(sessionId!))?.status).toBe('idle');
   });
 
   it('FileEventStore supports appendBatch and cursor pages without changing list()', async () => {

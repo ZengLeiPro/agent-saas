@@ -41,22 +41,22 @@ function compaction(index: number): PlatformEvent {
 describe('ContextTokenAccumulator', () => {
   it('全量请求始终以本 leg 重锚，即使命中了大量 prompt cache', () => {
     const accumulator = new ContextTokenAccumulator();
-    expect(accumulator.apply('gpt-5.6-sol', usage(90_000, 80_000, 1_000), false)).toBe(91_000);
-    expect(accumulator.apply('gpt-5.6-sol', usage(40_000, 39_000, 500), false)).toBe(40_500);
+    expect(accumulator.apply('gpt-5.6-sol', usage(90_000, 80_000, 1_000), 'full')).toBe(91_000);
+    expect(accumulator.apply('gpt-5.6-sol', usage(40_000, 39_000, 500), 'full')).toBe(40_500);
   });
 
   it('Responses 接力只累计本 leg 净新增', () => {
     const accumulator = new ContextTokenAccumulator();
-    expect(accumulator.apply('glm-5.2', usage(60_000, 0, 1_000), false)).toBe(61_000);
-    expect(accumulator.apply('glm-5.2', usage(50_000, 45_000, 7_000), true)).toBe(73_000);
-    expect(accumulator.apply('glm-5.2', usage(50_000, 45_000, 8_000), true)).toBe(86_000);
+    expect(accumulator.apply('glm-5.2', usage(60_000, 0, 1_000), 'full')).toBe(61_000);
+    expect(accumulator.apply('glm-5.2', usage(50_000, 45_000, 7_000), 'relay')).toBe(73_000);
+    expect(accumulator.apply('glm-5.2', usage(50_000, 45_000, 8_000), 'relay')).toBe(86_000);
   });
 
   it('切换模型与 Responses 降级全量都会重锚', () => {
     const accumulator = new ContextTokenAccumulator();
-    accumulator.apply('glm-5.2', usage(60_000, 0, 1_000), false);
-    expect(accumulator.apply('minimax-m3', usage(20_000, 18_000, 500), true)).toBe(20_500);
-    expect(accumulator.apply('minimax-m3', usage(15_000, 14_000, 300), false)).toBe(15_300);
+    accumulator.apply('glm-5.2', usage(60_000, 0, 1_000), 'full');
+    expect(accumulator.apply('minimax-m3', usage(20_000, 18_000, 500), 'relay')).toBe(20_500);
+    expect(accumulator.apply('minimax-m3', usage(15_000, 14_000, 300), 'fallback_full')).toBe(15_300);
   });
 });
 

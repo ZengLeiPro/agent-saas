@@ -1,7 +1,7 @@
 import { appendFile, mkdir } from 'fs/promises';
 import { dirname } from 'path';
 
-import type { ModelChatMessage, ModelUsage, PlatformEvent } from './types.js';
+import type { ModelChatMessage, ModelResponseMode, ModelUsage, PlatformEvent } from './types.js';
 
 function jsonl(obj: unknown): string {
   return JSON.stringify(obj) + '\n';
@@ -19,7 +19,16 @@ function userLine(content: string, sessionId: string): string {
 function assistantLine(
   content: unknown[],
   sessionId: string,
-  extra: { model?: string; usage?: ModelUsage } = {},
+  extra: {
+    model?: string;
+    usage?: ModelUsage;
+    responseMode?: ModelResponseMode;
+    responseChained?: boolean;
+    modelRequestAttemptCount?: number;
+    promptCacheKey?: string;
+    requestInputPrefixHash?: string;
+    requestBodyBytes?: number;
+  } = {},
 ): string {
   const message: Record<string, unknown> = { role: 'assistant', content };
   if (extra.model) message.model = extra.model;
@@ -32,6 +41,14 @@ function assistantLine(
       api_request_count: extra.usage.apiRequestCount ?? 1,
     };
   }
+  if (extra.responseMode) message.response_mode = extra.responseMode;
+  if (extra.responseChained !== undefined) message.response_chained = extra.responseChained;
+  if (extra.modelRequestAttemptCount !== undefined) {
+    message.model_request_attempt_count = extra.modelRequestAttemptCount;
+  }
+  if (extra.promptCacheKey) message.prompt_cache_key = extra.promptCacheKey;
+  if (extra.requestInputPrefixHash) message.request_input_prefix_hash = extra.requestInputPrefixHash;
+  if (extra.requestBodyBytes !== undefined) message.request_body_bytes = extra.requestBodyBytes;
   return jsonl({
     type: 'assistant',
     message,
@@ -87,6 +104,16 @@ export class LegacyTranscriptProjection {
           {
             ...(event.model ? { model: event.model } : {}),
             ...(event.usage ? { usage: event.usage } : {}),
+            ...(event.responseMode ? { responseMode: event.responseMode } : {}),
+            ...(event.responseChained !== undefined ? { responseChained: event.responseChained } : {}),
+            ...(event.modelRequestAttemptCount !== undefined
+              ? { modelRequestAttemptCount: event.modelRequestAttemptCount }
+              : {}),
+            ...(event.promptCacheKey ? { promptCacheKey: event.promptCacheKey } : {}),
+            ...(event.requestInputPrefixHash
+              ? { requestInputPrefixHash: event.requestInputPrefixHash }
+              : {}),
+            ...(event.requestBodyBytes !== undefined ? { requestBodyBytes: event.requestBodyBytes } : {}),
           },
         );
       case 'assistant_thinking':
@@ -110,6 +137,14 @@ export class LegacyTranscriptProjection {
         return assistantLine(content, event.sessionId, {
           ...(event.model ? { model: event.model } : {}),
           ...(event.usage ? { usage: event.usage } : {}),
+          ...(event.responseMode ? { responseMode: event.responseMode } : {}),
+          ...(event.responseChained !== undefined ? { responseChained: event.responseChained } : {}),
+          ...(event.modelRequestAttemptCount !== undefined
+            ? { modelRequestAttemptCount: event.modelRequestAttemptCount }
+            : {}),
+          ...(event.promptCacheKey ? { promptCacheKey: event.promptCacheKey } : {}),
+          ...(event.requestInputPrefixHash ? { requestInputPrefixHash: event.requestInputPrefixHash } : {}),
+          ...(event.requestBodyBytes !== undefined ? { requestBodyBytes: event.requestBodyBytes } : {}),
         });
       }
       case 'tool_result':

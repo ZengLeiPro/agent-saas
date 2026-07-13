@@ -596,7 +596,12 @@ export class RawAgentLoop implements AgentLoop {
         if (!completed) throw new Error('model stream completed without completion event');
         if (completed.usage) {
           totalUsage = mergeUsage(totalUsage, completed.usage);
-          turnContextUsage = contextUsageTracker.record(context.model, completed.usage, completed.responseChained);
+          turnContextUsage = contextUsageTracker.record(
+            context.model,
+            completed.usage,
+            completed.responseMode,
+            completed.responseChained,
+          );
         }
         if (turnThinking) {
           await this.append({
@@ -653,6 +658,15 @@ export class RawAgentLoop implements AgentLoop {
             model: context.model,
             ...(completed.usage ? { usage: completed.usage } : {}),
             ...(completed.responseChained !== undefined ? { responseChained: completed.responseChained } : {}),
+            ...(completed.responseMode ? { responseMode: completed.responseMode } : {}),
+            ...(completed.modelRequestAttemptCount !== undefined
+              ? { modelRequestAttemptCount: completed.modelRequestAttemptCount }
+              : {}),
+            ...(completed.promptCacheKey ? { promptCacheKey: completed.promptCacheKey } : {}),
+            ...(completed.requestInputPrefixHash
+              ? { requestInputPrefixHash: completed.requestInputPrefixHash }
+              : {}),
+            ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
             ...(textStarted ? { streamed: true } : {}),
           });
           if (textStarted) {
@@ -701,6 +715,15 @@ export class RawAgentLoop implements AgentLoop {
           model: context.model,
           ...(completed.usage ? { usage: completed.usage } : {}),
           ...(completed.responseChained !== undefined ? { responseChained: completed.responseChained } : {}),
+          ...(completed.responseMode ? { responseMode: completed.responseMode } : {}),
+          ...(completed.modelRequestAttemptCount !== undefined
+            ? { modelRequestAttemptCount: completed.modelRequestAttemptCount }
+            : {}),
+          ...(completed.promptCacheKey ? { promptCacheKey: completed.promptCacheKey } : {}),
+          ...(completed.requestInputPrefixHash
+            ? { requestInputPrefixHash: completed.requestInputPrefixHash }
+            : {}),
+          ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
         });
@@ -1992,7 +2015,12 @@ export class RawAgentLoop implements AgentLoop {
         if (!completed) throw new Error('model stream completed without completion event');
         if (completed.usage) {
           totalUsage = mergeUsage(totalUsage, completed.usage);
-          turnContextUsage = contextUsageTracker.record(args.context.model, completed.usage, completed.responseChained);
+          turnContextUsage = contextUsageTracker.record(
+            args.context.model,
+            completed.usage,
+            completed.responseMode,
+            completed.responseChained,
+          );
         }
         if (turnThinking) {
           await this.append({
@@ -2048,6 +2076,15 @@ export class RawAgentLoop implements AgentLoop {
             model: args.context.model,
             ...(completed.usage ? { usage: completed.usage } : {}),
             ...(completed.responseChained !== undefined ? { responseChained: completed.responseChained } : {}),
+            ...(completed.responseMode ? { responseMode: completed.responseMode } : {}),
+            ...(completed.modelRequestAttemptCount !== undefined
+              ? { modelRequestAttemptCount: completed.modelRequestAttemptCount }
+              : {}),
+            ...(completed.promptCacheKey ? { promptCacheKey: completed.promptCacheKey } : {}),
+            ...(completed.requestInputPrefixHash
+              ? { requestInputPrefixHash: completed.requestInputPrefixHash }
+              : {}),
+            ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
             ...(textStarted ? { streamed: true } : {}),
           });
           if (textStarted) {
@@ -2096,6 +2133,15 @@ export class RawAgentLoop implements AgentLoop {
           model: args.context.model,
           ...(completed.usage ? { usage: completed.usage } : {}),
           ...(completed.responseChained !== undefined ? { responseChained: completed.responseChained } : {}),
+          ...(completed.responseMode ? { responseMode: completed.responseMode } : {}),
+          ...(completed.modelRequestAttemptCount !== undefined
+            ? { modelRequestAttemptCount: completed.modelRequestAttemptCount }
+            : {}),
+          ...(completed.promptCacheKey ? { promptCacheKey: completed.promptCacheKey } : {}),
+          ...(completed.requestInputPrefixHash
+            ? { requestInputPrefixHash: completed.requestInputPrefixHash }
+            : {}),
+          ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
         });

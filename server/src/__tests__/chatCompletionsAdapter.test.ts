@@ -103,8 +103,9 @@ describe('ChatCompletionsModelAdapter', () => {
           cacheReadInputTokens: 2,
           cacheCreationInputTokens: 0,
            reasoningTokens: 0,
-         },
+        },
         responseChained: false,
+        responseMode: 'full',
       },
     ]);
   });
@@ -148,6 +149,7 @@ describe('ChatCompletionsModelAdapter', () => {
       },
        finishReason: 'stop',
       responseChained: false,
+      responseMode: 'full',
      });
   });
 });

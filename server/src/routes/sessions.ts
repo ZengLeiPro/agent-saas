@@ -134,15 +134,16 @@ function unknownContextAccounting(): Omit<TokenContextAccounting, "lastRequestTo
 
 function attachContextAccounting<T extends { contextTokens: number }>(
   usage: T,
-  resolver: ContextAccountingResolver | undefined,
-  modelRef: string | undefined,
+  accounting: Omit<TokenContextAccounting, "lastRequestTokens">,
 ): T & { contextAccounting: TokenContextAccounting } {
-  const accounting = resolver?.(modelRef) ?? unknownContextAccounting();
+  const lastRequestTokens = 'lastRequestTokens' in usage && typeof usage.lastRequestTokens === 'number'
+    ? usage.lastRequestTokens
+    : usage.contextTokens;
   return {
     ...usage,
     contextAccounting: {
       ...accounting,
-      lastRequestTokens: usage.contextTokens,
+      lastRequestTokens,
     },
   };
 }
@@ -2089,8 +2090,15 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
 
+        const contextAccounting = options.resolveContextAccounting?.(meta?.model)
+          ?? unknownContextAccounting();
+        const legacyResponseMode = contextAccounting.kind === 'exact_current'
+          ? 'full'
+          : contextAccounting.kind === 'stateful_response_exact'
+            ? 'relay'
+            : undefined;
         let rawTokenUsage = hasTranscript
-          ? await getTokenUsage(transcriptPath)
+          ? await getTokenUsage(transcriptPath, { legacyResponseMode })
           : null;
         if (rawTokenUsage) {
           try {
@@ -2116,8 +2124,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         const tokenUsage = rawTokenUsage
           ? attachContextAccounting(
             rawTokenUsage,
-            options.resolveContextAccounting,
-            meta?.model,
+            contextAccounting,
           )
           : null;
         res.json({ tokenUsage, totalCostUsd: meta?.totalCostUsd ?? null });

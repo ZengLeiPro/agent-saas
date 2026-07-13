@@ -1825,7 +1825,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       }
       await sessionCatalog.markStatus(sessionId, 'idle');
     } catch (err) {
-      if (options.abortController?.signal.aborted) return;
+      if (options.abortController?.signal.aborted) {
+        await sessionCatalog.markStatus(sessionId, 'idle').catch(() => undefined);
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       await markRunState(config.runStore, eventStore, sessionId, runId, 'failed', msg).catch(() => undefined);
       await sessionCatalog.markStatus(sessionId, 'error');
@@ -2133,7 +2136,10 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       );
       await sessionCatalog.markStatus(request.sessionId, 'idle');
     } catch (err) {
-      if (request.abortController?.signal.aborted) return;
+      if (request.abortController?.signal.aborted) {
+        await sessionCatalog.markStatus(request.sessionId, 'idle').catch(() => undefined);
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'failed', msg).catch(() => undefined);
       await sessionCatalog.markStatus(request.sessionId, 'error');
@@ -2418,7 +2424,10 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       );
       await sessionCatalog.markStatus(request.sessionId, 'idle');
     } catch (err) {
-      if (request.abortController?.signal.aborted) return;
+      if (request.abortController?.signal.aborted) {
+        await sessionCatalog.markStatus(request.sessionId, 'idle').catch(() => undefined);
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'failed', msg).catch(() => undefined);
       await sessionCatalog.markStatus(request.sessionId, 'error');

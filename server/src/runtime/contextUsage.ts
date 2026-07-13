@@ -6,7 +6,7 @@ import {
 } from '../data/usage/pricing.js';
 import { AUTO_COMPACT_THRESHOLD_RATIO } from './autoCompaction.js';
 import { ContextTokenAccumulator } from './contextAccounting.js';
-import type { ModelUsage, PlatformEvent } from './types.js';
+import type { ModelResponseMode, ModelUsage, PlatformEvent } from './types.js';
 
 interface UsageAccumulator {
   contextTokens: number;
@@ -54,19 +54,34 @@ export class RuntimeContextUsageTracker {
         continue;
       }
       if ((event.type === 'assistant_message' || event.type === 'assistant_tool_calls') && event.usage) {
-        this.applyUsage(event.model ?? defaultModel, event.usage, event.responseChained);
+        this.applyUsage(
+          event.model ?? defaultModel,
+          event.usage,
+          event.responseMode,
+          event.responseChained,
+        );
       }
     }
   }
 
-  record(model: string, usage: ModelUsage | undefined, responseChained?: boolean): ContextUsageData | null {
+  record(
+    model: string,
+    usage: ModelUsage | undefined,
+    responseMode?: ModelResponseMode,
+    responseChained?: boolean,
+  ): ContextUsageData | null {
     if (!usage) return this.state.hasUsage ? this.toContextUsage(model, null) : null;
-    const lastRequest = this.applyUsage(model, usage, responseChained);
+    const lastRequest = this.applyUsage(model, usage, responseMode, responseChained);
     if (!this.state.hasUsage) return null;
     return this.toContextUsage(model, lastRequest);
   }
 
-  private applyUsage(model: string, usage: ModelUsage, responseChained?: boolean): LastRequestCacheMetrics {
+  private applyUsage(
+    model: string,
+    usage: ModelUsage,
+    responseMode?: ModelResponseMode,
+    responseChained?: boolean,
+  ): LastRequestCacheMetrics {
     const inputTokens = nonNegativeInt(usage.inputTokens);
     const outputTokens = nonNegativeInt(usage.outputTokens);
     const cacheReadTokens = nonNegativeInt(usage.cacheReadInputTokens);
@@ -88,7 +103,7 @@ export class RuntimeContextUsageTracker {
     this.state.cacheHitDenominatorTokens += denominatorTokens;
     this.state.hasUsage = true;
 
-    this.state.contextTokens = this.contextAccumulator.apply(model, usage, responseChained);
+    this.state.contextTokens = this.contextAccumulator.apply(model, usage, responseMode, responseChained);
 
     return {
       cacheReadTokens,

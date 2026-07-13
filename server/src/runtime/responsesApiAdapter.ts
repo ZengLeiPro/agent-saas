@@ -22,6 +22,7 @@ import type {
   ModelToolCall,
   ModelToolDefinition,
   ModelUsage,
+  ModelResponseMode,
   RunContext,
   RuntimeConnection,
 } from './types.js';
@@ -53,6 +54,11 @@ function computePromptCacheKey(
     .update(`${model}\n${systemContent}\n${toolSignature}`)
     .digest('hex')
     .slice(0, 32);
+}
+
+function computeRequestInputPrefixHash(body: Record<string, unknown>): string {
+  const input = Array.isArray(body.input) ? body.input.slice(0, 8) : [];
+  return createHash('sha256').update(JSON.stringify(input)).digest('hex').slice(0, 32);
 }
 
 const logger = createLogger('ResponsesAdapter');
@@ -146,6 +152,10 @@ export class ResponsesApiAdapter implements ModelAdapter {
     // usePrevious 可被降级：上游报 PreviousResponseNotFound（跨模型切换残留 / 服务端已过期）
     // 时切回全量重建 body 重试，不让确定性 400 直接打死整个 run。
     let usePrevious = hasPrevious;
+    let responseMode: ModelResponseMode = hasPrevious ? 'relay' : 'full';
+    const promptCacheKey = this.providerOptions.disablePromptCacheKey
+      ? undefined
+      : computePromptCacheKey(request.model, request.messages, request.tools);
     const buildRequestBody = (): Record<string, unknown> => {
       const { instructions, input } = usePrevious
         ? { instructions: undefined, input: this.extractIncrementalInput(request.messages, sessionIdShort) }
@@ -171,9 +181,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         // prompt_cache_key（07-04）：内容指纹路由。默认传，让相同 system/instructions + tools
         // 的请求命中同一缓存分片（07-04 实测 CLIProxyAPI 会自动生成新 UUID 覆盖 → 缓存永远打散，
         // 显式传稳定 key 后 cached_tokens 命中率 76%+）。disablePromptCacheKey=true 时跳过。
-        ...(this.providerOptions.disablePromptCacheKey
-          ? {}
-          : { prompt_cache_key: computePromptCacheKey(request.model, request.messages, request.tools) }),
+        ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
         ...(this.providerOptions.extraBody ?? {}),
       };
 
@@ -187,12 +195,19 @@ export class ResponsesApiAdapter implements ModelAdapter {
       return built;
     };
     let body = buildRequestBody();
+    let requestBodyBytes = 0;
+    let requestInputPrefixHash = '';
+    let modelRequestAttemptCount = 0;
 
     const requestSignal = request.signal ?? context.signal;
     const url = responsesUrl(this.connection.baseUrl);
     // 瞬时故障重试：网络 EOF 与上游 5xx 退避重试，4xx 立即抛。重试均在读流前，无副作用。
     let response: Response | null = null;
     for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt++) {
+      modelRequestAttemptCount = attempt;
+      const serializedBody = JSON.stringify(body);
+      requestBodyBytes = Buffer.byteLength(serializedBody, 'utf8');
+      requestInputPrefixHash = computeRequestInputPrefixHash(body);
       let attemptResponse: Response;
       try {
         attemptResponse = await fetch(url, {
@@ -201,7 +216,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
             authorization: `Bearer ${this.connection.apiKey}`,
             'content-type': 'application/json',
           },
-          body: JSON.stringify(body),
+          body: serializedBody,
           signal: requestSignal,
         });
       } catch (err) {
@@ -225,6 +240,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         logger.warn(
           `Responses API previous_response_id 不被上游认可（跨模型切换或已过期），降级全量重试：${text.slice(0, 200)}`,
         );
+        responseMode = 'fallback_full';
         usePrevious = false;
         body = buildRequestBody();
         continue;
@@ -399,6 +415,15 @@ export class ResponsesApiAdapter implements ModelAdapter {
       ? toolCallsRaw.map((c) => ({ ...c, arguments: unescapeDeepseekArguments(c.arguments) }))
       : toolCallsRaw;
 
+    logger.info(
+      `Responses 请求完成 mode=${responseMode} attempts=${modelRequestAttemptCount} `
+      + `model=${request.model} session=${sessionIdShort ?? '-'} body_bytes=${requestBodyBytes} `
+      + `prompt_cache_key=${promptCacheKey?.slice(0, 12) ?? '-'} `
+      + `input_prefix_hash=${requestInputPrefixHash.slice(0, 12)} `
+      + `input=${usage?.inputTokens ?? 0} cache_read=${usage?.cacheReadInputTokens ?? 0} `
+      + `output=${usage?.outputTokens ?? 0}`,
+    );
+
     yield {
       type: 'completed',
       content,
@@ -409,6 +434,11 @@ export class ResponsesApiAdapter implements ModelAdapter {
       ...(typeof responseExpireAt === 'number' ? { responseExpireAt } : {}),
       ...(actualModel ? { actualModel } : {}),
       responseChained: usePrevious,
+      responseMode,
+      modelRequestAttemptCount,
+      ...(promptCacheKey ? { promptCacheKey } : {}),
+      requestInputPrefixHash,
+      requestBodyBytes,
     };
   }
 

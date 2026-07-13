@@ -46,13 +46,14 @@ describe('getTokenUsage — contextTokens accounting', () => {
     output_tokens: number;
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
-  }, model: string): object {
+  }, model: string, responseMode?: 'full' | 'relay' | 'fallback_full'): object {
     return {
       type: 'assistant',
       message: {
         role: 'assistant',
         content: [{ type: 'text', text: 'x' }],
         model,
+        ...(responseMode ? { response_mode: responseMode } : {}),
         usage: {
           input_tokens: usage.input_tokens,
           output_tokens: usage.output_tokens,
@@ -65,6 +66,38 @@ describe('getTokenUsage — contextTokens accounting', () => {
       timestamp: new Date(0).toISOString(),
     };
   }
+
+  it('full replay：即使每轮 cache_read>0，也始终以最后一轮重锚', async () => {
+    const path = await writeTranscript('full-replay', [
+      assistantLine({ input_tokens: 90_000, output_tokens: 1_000, cache_read_input_tokens: 80_000 }, 'gpt-5.6-sol', 'full'),
+      assistantLine({ input_tokens: 40_000, output_tokens: 500, cache_read_input_tokens: 39_000 }, 'gpt-5.6-sol', 'full'),
+    ]);
+
+    const usage = await getTokenUsage(path);
+    expect(usage?.contextTokens).toBe(40_500);
+    expect(usage?.lastRequestTokens).toBe(40_500);
+  });
+
+  it('旧 transcript 可由模型配置指定 full replay，修正历史误累加', async () => {
+    const path = await writeTranscript('legacy-full-replay', [
+      assistantLine({ input_tokens: 90_000, output_tokens: 1_000, cache_read_input_tokens: 80_000 }, 'gpt-5.6-sol'),
+      assistantLine({ input_tokens: 40_000, output_tokens: 500, cache_read_input_tokens: 10_752 }, 'gpt-5.6-sol'),
+    ]);
+
+    const usage = await getTokenUsage(path, { legacyResponseMode: 'full' });
+    expect(usage?.contextTokens).toBe(40_500);
+  });
+
+  it('fallback_full：接力失败后的全量重试是明确重锚点', async () => {
+    const path = await writeTranscript('fallback-full', [
+      assistantLine({ input_tokens: 60_000, output_tokens: 1_000 }, 'glm-5.2', 'full'),
+      assistantLine({ input_tokens: 50_000, output_tokens: 7_000, cache_read_input_tokens: 45_000 }, 'glm-5.2', 'relay'),
+      assistantLine({ input_tokens: 15_000, output_tokens: 300, cache_read_input_tokens: 14_000 }, 'glm-5.2', 'fallback_full'),
+    ]);
+
+    const usage = await getTokenUsage(path);
+    expect(usage?.contextTokens).toBe(15_300);
+  });
 
   it('Ark Responses+chain（input_includes_cache）：按 (input-cache_read)+output 累加，首 leg 无 cache 时锚定', async () => {
     // 复刻生产 session 6bb32f27 的 6 leg 序列（glm-5.2 走 input_includes_cache）：

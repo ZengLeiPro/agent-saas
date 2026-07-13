@@ -1,6 +1,6 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -150,7 +150,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
       cacheCreationInputTokens?: number;
     },
   ): Promise<void> {
-    await writeFile(transcriptPath, JSON.stringify({
+    await appendFile(transcriptPath, JSON.stringify({
       type: 'assistant',
       sessionId,
       timestamp: new Date().toISOString(),
@@ -376,8 +376,14 @@ describe('sessions routes for meta-only runtime sessions', () => {
       metaPatch: { model: 'kaiyan-llm/gpt55-high' },
     });
     await writeAssistantUsageTranscript(transcriptPath, sessionId, {
+      inputTokens: 90000,
+      outputTokens: 1000,
+      cacheReadInputTokens: 80000,
+    });
+    await writeAssistantUsageTranscript(transcriptPath, sessionId, {
       inputTokens: 12000,
       outputTokens: 300,
+      cacheReadInputTokens: 10752,
     });
 
     const { server, baseUrl } = await startServer(agentCwd, {
@@ -394,7 +400,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
       await expect(stats.json()).resolves.toMatchObject({
         tokenUsage: {
           contextTokens: 12300,
-          totalTokens: 12300,
+          totalTokens: 103300,
           contextAccounting: {
             exact: true,
             kind: 'exact_current',

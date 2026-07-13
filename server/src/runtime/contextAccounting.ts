@@ -1,5 +1,5 @@
 import { computeUsageTotalTokens, getUsageAccountingMode } from '../data/usage/pricing.js';
-import type { ModelUsage, PlatformEvent } from './types.js';
+import type { ModelResponseMode, ModelUsage, PlatformEvent } from './types.js';
 
 function nonNegativeInt(value: number | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
@@ -26,7 +26,12 @@ export class ContextTokenAccumulator {
     this.lastModel = undefined;
   }
 
-  apply(model: string, usage: ModelUsage, responseChained?: boolean): number {
+  apply(
+    model: string,
+    usage: ModelUsage,
+    responseMode?: ModelResponseMode,
+    responseChained?: boolean,
+  ): number {
     const inputTokens = nonNegativeInt(usage.inputTokens);
     const outputTokens = nonNegativeInt(usage.outputTokens);
     const cacheReadTokens = nonNegativeInt(usage.cacheReadInputTokens);
@@ -35,6 +40,8 @@ export class ContextTokenAccumulator {
 
     const modelChanged = this.sawUsage && this.lastModel !== model;
     const mode = getUsageAccountingMode(model);
+    const effectiveMode = responseMode
+      ?? (responseChained === true ? 'relay' : responseChained === false ? 'full' : undefined);
     if (mode === 'cache_tokens_separate') {
       this.currentTokens = computeUsageTotalTokens(model, {
         inputTokens,
@@ -42,9 +49,9 @@ export class ContextTokenAccumulator {
         cacheReadTokens,
         cacheCreationTokens,
       });
-    } else if (!this.sawUsage || modelChanged || responseChained === false) {
+    } else if (!this.sawUsage || modelChanged || effectiveMode === 'full' || effectiveMode === 'fallback_full') {
       this.currentTokens = inputTokens + outputTokens;
-    } else if (responseChained === true) {
+    } else if (effectiveMode === 'relay') {
       this.currentTokens += Math.max(0, inputTokens - cacheReadTokens) + outputTokens;
     } else if (cacheReadTokens === 0) {
       // 兼容 2026-07-14 之前没有 responseChained 的事件：cache miss 视为全量重锚。
@@ -82,7 +89,12 @@ export function calculateCurrentContextTokens(
     const inputTokens = nonNegativeInt(event.usage.inputTokens);
     const outputTokens = nonNegativeInt(event.usage.outputTokens);
     if (inputTokens <= 0 && outputTokens <= 0) continue;
-    accumulator.apply(event.model ?? defaultModel, event.usage, event.responseChained);
+    accumulator.apply(
+      event.model ?? defaultModel,
+      event.usage,
+      event.responseMode,
+      event.responseChained,
+    );
     hasUsage = true;
   }
   return hasUsage ? accumulator.value : null;

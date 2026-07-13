@@ -72,6 +72,9 @@ export interface ModelUsage {
   apiRequestCount?: number;
 }
 
+/** 模型请求实际采用的上下文传递方式。 */
+export type ModelResponseMode = 'full' | 'relay' | 'fallback_full';
+
 export type ModelChatMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string }
@@ -128,6 +131,16 @@ export type ModelEvent =
     actualModel?: string;
     /** 本次 Responses 请求是否实际使用 previous_response_id；降级全量重试时为 false。 */
     responseChained?: boolean;
+    /** 比 responseChained 更完整：区分主动全量、接力与接力失败后的全量降级。 */
+    responseMode?: ModelResponseMode;
+    /** 本次请求最终成功前的 HTTP 尝试次数。 */
+    modelRequestAttemptCount?: number;
+    /** 发送给 provider 的稳定 prompt cache 路由键（内容指纹，不含明文提示词）。 */
+    promptCacheKey?: string;
+    /** 最终请求前 8 个 input item 的内容哈希，用于识别历史前缀被静默改写。 */
+    requestInputPrefixHash?: string;
+    /** 最终成功请求的 UTF-8 JSON body 大小。 */
+    requestBodyBytes?: number;
   };
 
 export interface ModelAdapter {
@@ -176,6 +189,11 @@ export type PlatformEvent =
     usage?: ModelUsage;
     /** 本次模型请求是否实际使用 previous_response_id。存量事件可能缺失。 */
     responseChained?: boolean;
+    responseMode?: ModelResponseMode;
+    modelRequestAttemptCount?: number;
+    promptCacheKey?: string;
+    requestInputPrefixHash?: string;
+    requestBodyBytes?: number;
     /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
   }
@@ -216,6 +234,11 @@ export type PlatformEvent =
     usage?: ModelUsage;
     /** 本次模型请求是否实际使用 previous_response_id。存量事件可能缺失。 */
     responseChained?: boolean;
+    responseMode?: ModelResponseMode;
+    modelRequestAttemptCount?: number;
+    promptCacheKey?: string;
+    requestInputPrefixHash?: string;
+    requestBodyBytes?: number;
     /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
     toolCalls: ModelToolCall[];

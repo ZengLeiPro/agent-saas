@@ -231,6 +231,7 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
       ...(usage ? { usage } : {}),
       ...(finishReason ? { finishReason } : {}),
       responseChained: false,
+      responseMode: 'full',
     };
   }
 }

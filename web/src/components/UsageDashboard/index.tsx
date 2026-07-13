@@ -20,6 +20,8 @@ import { cn } from "@/lib/utils";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { useAuth } from "@/contexts/AuthContext";
 
+import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
+
 import { usageApi } from "./api";
 import type {
   OverviewStats,
@@ -42,6 +44,8 @@ import { EfficiencyView } from "./EfficiencyView";
 function OverviewCards({ data }: { data: OverviewStats }) {
   // "读写量" = input + output（不含缓存），用于看真实非缓存消耗
   const ioTokens = data.totalInputTokens + data.totalOutputTokens;
+  // 客户简化视图（后端已按 policy.showCost 剥离成本）：不展示 USD 成本与缓存工程指标
+  const simplified = data.costRedacted === true || data.totalCostUsd === undefined;
   const cards: { label: string; value: string; sub?: string }[] = [
     {
       label: "总 Token",
@@ -53,24 +57,37 @@ function OverviewCards({ data }: { data: OverviewStats }) {
       value: formatTokens(ioTokens),
       sub: `输入 ${formatTokens(data.totalInputTokens)} · 输出 ${formatTokens(data.totalOutputTokens)}`,
     },
-    {
-      label: "总成本",
-      value: formatUsd(data.totalCostUsd),
-      sub: data.totalCostUsd === 0 ? "无数据" : `${data.totalTurns.toLocaleString()} 次轮次`,
-    },
+    ...(simplified
+      ? [
+          {
+            label: "对话轮次",
+            value: data.totalTurns.toLocaleString(),
+          },
+        ]
+      : [
+          {
+            label: "总成本",
+            value: formatUsd(data.totalCostUsd ?? 0),
+            sub: (data.totalCostUsd ?? 0) === 0 ? "无数据" : `${data.totalTurns.toLocaleString()} 次轮次`,
+          },
+        ]),
     {
       label: "活跃用户",
       value: String(data.activeUsers),
       sub: `${data.totalTurns.toLocaleString()} 次轮次`,
     },
-    {
-      label: "缓存命中",
-      value: formatPercent(data.cacheHitRatio),
-      sub: `${formatTokens(data.totalCacheReadTokens)} / ${formatTokens(data.totalInputTokens + data.totalCacheReadTokens + data.totalCacheCreationTokens)}`,
-    },
+    ...(simplified
+      ? []
+      : [
+          {
+            label: "缓存命中",
+            value: formatPercent(data.cacheHitRatio),
+            sub: `${formatTokens(data.totalCacheReadTokens)} / ${formatTokens(data.totalInputTokens + data.totalCacheReadTokens + data.totalCacheCreationTokens)}`,
+          },
+        ]),
   ];
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <div className={cn("grid grid-cols-2 gap-3 sm:grid-cols-3", simplified ? "lg:grid-cols-4" : "lg:grid-cols-5")}>
       {cards.map((c) => (
         <Card key={c.label}>
           <CardHeader className="pb-2">
@@ -95,7 +112,7 @@ interface DateArgs {
   family?: ModelFamily;
 }
 
-function ModelBar({ user, dateArgs }: { user: string; dateArgs: DateArgs }) {
+function ModelBar({ user, dateArgs, labelFor }: { user: string; dateArgs: DateArgs; labelFor?: (modelId: string) => string }) {
   const [data, setData] = useState<ByModelResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -136,12 +153,15 @@ function ModelBar({ user, dateArgs }: { user: string; dateArgs: DateArgs }) {
   }
 
   const maxTokens = Math.max(...data.models.map((m) => m.totalTokens), 1);
+  const showCost = data.costRedacted !== true;
 
   return (
     <div className="space-y-1.5 pl-4">
       {data.models.map((m) => (
         <div key={m.model} className="flex items-center gap-3 text-xs">
-          <div className="w-48 truncate font-mono" title={m.model}>{m.model}</div>
+          <div className={cn("w-48 truncate", showCost && "font-mono")} title={labelFor ? labelFor(m.model) : m.model}>
+            {labelFor ? labelFor(m.model) : m.model}
+          </div>
           <div className="flex h-4 flex-1 overflow-hidden rounded bg-muted">
             <div className="bg-emerald-500" style={{ width: `${(m.inputTokens / maxTokens) * 100}%` }} title={`输入 ${formatTokens(m.inputTokens)}`} />
             <div className="bg-amber-500" style={{ width: `${(m.outputTokens / maxTokens) * 100}%` }} title={`输出 ${formatTokens(m.outputTokens)}`} />
@@ -149,7 +169,9 @@ function ModelBar({ user, dateArgs }: { user: string; dateArgs: DateArgs }) {
             <div className="bg-purple-400" style={{ width: `${(m.cacheCreationTokens / maxTokens) * 100}%` }} title={`缓存写 ${formatTokens(m.cacheCreationTokens)}`} />
           </div>
           <div className="w-20 text-right font-mono tabular-nums">{formatTokens(m.totalTokens)}</div>
-          <div className="w-16 text-right font-mono tabular-nums text-muted-foreground">{formatUsd(m.totalCostUsd)}</div>
+          {showCost && (
+            <div className="w-16 text-right font-mono tabular-nums text-muted-foreground">{formatUsd(m.totalCostUsd ?? 0)}</div>
+          )}
           <div className="w-12 text-right font-mono tabular-nums text-muted-foreground">{m.totalTurns}</div>
         </div>
       ))}
@@ -185,7 +207,7 @@ function getSortValue(u: UserAggregate, f: SortField): number | string | null {
     case "totalCacheReadTokens": return u.totalCacheReadTokens;
     case "totalCacheCreationTokens": return u.totalCacheCreationTokens;
     case "cacheHitRatio": return u.cacheHitRatio; // 可能 null
-    case "totalCostUsd": return u.totalCostUsd;
+    case "totalCostUsd": return u.totalCostUsd ?? null; // 组织 admin 脱敏后为 undefined
     case "totalTurns": return u.totalTurns;
     case "lastActiveDate": return u.lastActiveDate;
   }
@@ -244,10 +266,15 @@ function UserRankTable({
   users,
   dateArgs,
   onSelectUser,
+  simplified = false,
+  labelFor,
 }: {
   users: UserAggregate[];
   dateArgs: DateArgs;
   onSelectUser: (user: UserAggregate) => void;
+  /** 客户简化视图：隐藏成本与缓存工程列（后端已剥离成本字段） */
+  simplified?: boolean;
+  labelFor?: (modelId: string) => string;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [sortField, setSortField] = useState<SortField>("totalTokens");
@@ -282,10 +309,10 @@ function UserRankTable({
           <SortHeader {...headerProps} field="ioTokens" title="输入 + 输出，不含缓存">读写量</SortHeader>
           <SortHeader {...headerProps} field="totalInputTokens">输入</SortHeader>
           <SortHeader {...headerProps} field="totalOutputTokens">输出</SortHeader>
-          <SortHeader {...headerProps} field="totalCacheReadTokens">缓存读</SortHeader>
-          <SortHeader {...headerProps} field="totalCacheCreationTokens">缓存写</SortHeader>
-          <SortHeader {...headerProps} field="cacheHitRatio">命中率</SortHeader>
-          <SortHeader {...headerProps} field="totalCostUsd">成本</SortHeader>
+          {!simplified && <SortHeader {...headerProps} field="totalCacheReadTokens">缓存读</SortHeader>}
+          {!simplified && <SortHeader {...headerProps} field="totalCacheCreationTokens">缓存写</SortHeader>}
+          {!simplified && <SortHeader {...headerProps} field="cacheHitRatio">命中率</SortHeader>}
+          {!simplified && <SortHeader {...headerProps} field="totalCostUsd">成本</SortHeader>}
           <SortHeader {...headerProps} field="totalTurns">轮次</SortHeader>
           <SortHeader {...headerProps} field="lastActiveDate" align="left" width="w-[110px]">最后活跃</SortHeader>
         </TableRow>
@@ -323,17 +350,17 @@ function UserRankTable({
                 <TableCell className="text-right font-mono tabular-nums">{formatTokens(u.totalInputTokens + u.totalOutputTokens)}</TableCell>
                 <TableCell className="text-right font-mono tabular-nums text-muted-foreground">{formatTokens(u.totalInputTokens)}</TableCell>
                 <TableCell className="text-right font-mono tabular-nums text-muted-foreground">{formatTokens(u.totalOutputTokens)}</TableCell>
-                <TableCell className="text-right font-mono tabular-nums text-muted-foreground">{formatTokens(u.totalCacheReadTokens)}</TableCell>
-                <TableCell className="text-right font-mono tabular-nums text-muted-foreground">{formatTokens(u.totalCacheCreationTokens)}</TableCell>
-                <TableCell className="text-right font-mono tabular-nums">{formatPercent(u.cacheHitRatio)}</TableCell>
-                <TableCell className="text-right font-mono tabular-nums">{formatUsd(u.totalCostUsd)}</TableCell>
+                {!simplified && <TableCell className="text-right font-mono tabular-nums text-muted-foreground">{formatTokens(u.totalCacheReadTokens)}</TableCell>}
+                {!simplified && <TableCell className="text-right font-mono tabular-nums text-muted-foreground">{formatTokens(u.totalCacheCreationTokens)}</TableCell>}
+                {!simplified && <TableCell className="text-right font-mono tabular-nums">{formatPercent(u.cacheHitRatio)}</TableCell>}
+                {!simplified && <TableCell className="text-right font-mono tabular-nums">{formatUsd(u.totalCostUsd ?? 0)}</TableCell>}
                 <TableCell className="text-right font-mono tabular-nums">{u.totalTurns.toLocaleString()}</TableCell>
                 <TableCell className="text-xs text-muted-foreground tabular-nums">{u.lastActiveDate}</TableCell>
               </TableRow>
               {isOpen && (
                 <TableRow>
-                  <TableCell colSpan={11} className="bg-muted/30">
-                    <ModelBar user={u.username} dateArgs={dateArgs} />
+                  <TableCell colSpan={simplified ? 7 : 11} className="bg-muted/30">
+                    <ModelBar user={u.username} dateArgs={dateArgs} labelFor={labelFor} />
                   </TableCell>
                 </TableRow>
               )}
@@ -373,6 +400,9 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildMsg, setRebuildMsg] = useState<string | null>(null);
   const scopeLabel = scope === "tenant" ? "当前组织" : "全公司";
+  // 客户简化视图信号：后端按 policy.showCost 剥离成本时同步隐藏工程列；模型名走租户显示名映射
+  const simplified = overview?.costRedacted === true;
+  const { labelFor } = useModelDisplayMap();
 
   // 把 range / customRange / family 折算成统一的 API 参数
   const dateArgs = useMemo<DateArgs>(() => {
@@ -489,25 +519,28 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
 
   return (
     <div className={cn("w-full space-y-4", !fullWidth && "mx-auto max-w-5xl")}>
-      {/* 用量 / 效率 tab（2026-07-10 起效率对组织 admin 开放：后端锁本租户 + 成本按 policy 脱敏） */}
-      <div className="inline-flex items-center self-start rounded-md border bg-card p-0.5">
-        {([["usage", "用量"], ["efficiency", "效率"]] as const).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setViewTab(key)}
-            className={cn(
-              "rounded px-4 py-1 text-xs font-medium transition-colors",
-              viewTab === key
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {viewTab === "efficiency" ? (
+      {/* 用量 / 效率 tab。效率视图是工程排查口径（工具健康/浪费探测/真实模型 ID），
+          2026-07-14 起收回平台管理员专属；组织 admin 的健康信息由综合分析页以客户口径承载 */}
+      {isPlatformAdmin && (
+        <div className="inline-flex items-center self-start rounded-md border bg-card p-0.5">
+          {([["usage", "用量"], ["efficiency", "效率"]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setViewTab(key)}
+              className={cn(
+                "rounded px-4 py-1 text-xs font-medium transition-colors",
+                viewTab === key
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {viewTab === "efficiency" && isPlatformAdmin ? (
         <EfficiencyView tenantId={tenantId} linkEntities={isPlatformAdmin} />
       ) : (
         <>
@@ -599,7 +632,13 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
         </CardHeader>
         <CardContent>
           {byUser ? (
-            <UserRankTable users={byUser.users} dateArgs={dateArgs} onSelectUser={setSelectedUser} />
+            <UserRankTable
+              users={byUser.users}
+              dateArgs={dateArgs}
+              onSelectUser={setSelectedUser}
+              simplified={simplified}
+              labelFor={labelFor}
+            />
           ) : loading ? (
             <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中

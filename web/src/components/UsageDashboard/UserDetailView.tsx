@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
+import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
+
 import { usageApi } from "./api";
 import type {
   TrendResp,
@@ -69,6 +71,9 @@ export function UserDetailView({
   const [byChannel, setByChannel] = useState<ByChannelResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 客户简化视图：后端剥离成本字段时隐藏 USD 与缓存工程指标；模型名走显示名映射
+  const simplified = trend?.costRedacted === true;
+  const { labelFor } = useModelDisplayMap();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -103,7 +108,7 @@ export function UserDetailView({
       crTok += p.cacheReadTokens;
       ccTok += p.cacheCreationTokens;
       totalTok += p.totalTokens;
-      cost += p.costUsd;
+      cost += p.costUsd ?? 0;
       turns += p.turns;
     }
     return {
@@ -166,11 +171,11 @@ export function UserDetailView({
         <>
           {/* 5 卡片 */}
           {totals && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <div className={cn("grid grid-cols-2 gap-3 sm:grid-cols-3", simplified ? "lg:grid-cols-3" : "lg:grid-cols-5")}>
               <DetailCard label="总 Token" value={formatTokens(totals.totalTokens)} />
               <DetailCard label="读写量" value={formatTokens(totals.ioTokens)} sub="不含缓存" />
-              <DetailCard label="成本" value={formatUsd(totals.totalCostUsd)} sub={totals.totalCostUsd === 0 ? "无数据" : undefined} />
-              <DetailCard label="缓存命中" value={formatPercent(totals.cacheHitRatio)} />
+              {!simplified && <DetailCard label="成本" value={formatUsd(totals.totalCostUsd)} sub={totals.totalCostUsd === 0 ? "无数据" : undefined} />}
+              {!simplified && <DetailCard label="缓存命中" value={formatPercent(totals.cacheHitRatio)} />}
               <DetailCard label="轮次" value={totals.totalTurns.toLocaleString()} />
             </div>
           )}
@@ -195,7 +200,7 @@ export function UserDetailView({
                 {byModel && byModel.models.length > 0 ? (
                   <ProportionBars
                     rows={byModel.models.map((m) => ({
-                      label: m.model,
+                      label: labelFor(m.model),
                       tokens: m.totalTokens,
                       cost: m.totalCostUsd,
                       turns: m.totalTurns,
@@ -247,8 +252,8 @@ function DetailCard({ label, value, sub }: { label: string; value: string; sub?:
   );
 }
 
-/** 单维度横向占比柱（适用于 model / channel 等） */
-function ProportionBars({ rows }: { rows: { label: string; tokens: number; cost: number; turns: number }[] }) {
+/** 单维度横向占比柱（适用于 model / channel 等）；cost 为 undefined 时（后端脱敏）隐藏成本列 */
+function ProportionBars({ rows }: { rows: { label: string; tokens: number; cost?: number; turns: number }[] }) {
   const max = Math.max(...rows.map((r) => r.tokens), 1);
   return (
     <div className="space-y-2">
@@ -258,7 +263,7 @@ function ProportionBars({ rows }: { rows: { label: string; tokens: number; cost:
             <span className="truncate font-mono" title={r.label}>{r.label}</span>
             <div className="flex items-center gap-3 text-muted-foreground tabular-nums">
               <span className="font-mono">{formatTokens(r.tokens)}</span>
-              <span className="w-14 text-right">{formatUsd(r.cost)}</span>
+              {r.cost !== undefined && <span className="w-14 text-right">{formatUsd(r.cost)}</span>}
               <span className="w-10 text-right">{r.turns}</span>
             </div>
           </div>

@@ -52,7 +52,10 @@ interface TestRig {
   close(): Promise<void>;
 }
 
-async function makeTestRig(triggerRebuild?: () => Promise<unknown>): Promise<TestRig> {
+async function makeTestRig(
+  triggerRebuild?: () => Promise<unknown>,
+  getTenantPolicy?: (tenantId: string) => Promise<{ showCost?: boolean } | null>,
+): Promise<TestRig> {
   const dataDir = await mkdtemp(join(tmpdir(), 'usage-tenant-iso-'));
   __resetBusinessDbForTest();
   const db = getBusinessDb(dataDir);
@@ -66,6 +69,7 @@ async function makeTestRig(triggerRebuild?: () => Promise<unknown>): Promise<Tes
     tokenUsageStore: store,
     userStore: fakeUserStore(),
     triggerRebuild,
+    getTenantPolicy,
   }));
 
   const server: Server = await new Promise(resolve => {
@@ -288,6 +292,88 @@ describe('Usage 路由组织隔离', () => {
   describe('todayBJ helper sanity', () => {
     it('todayBJ 返回 YYYY-MM-DD 格式', () => {
       expect(todayBJ()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+  });
+});
+
+describe('USD 成本脱敏（2026-07-14，policy.showCost fail-closed）', () => {
+  async function withRig(
+    getTenantPolicy: ((tenantId: string) => Promise<{ showCost?: boolean } | null>) | undefined,
+    fn: (rig: TestRig) => Promise<void>,
+  ) {
+    const rig = await makeTestRig(async () => undefined, getTenantPolicy);
+    try {
+      rig.store.recordResult({
+        username: 'wain_user', tenantId: 'wain', channel: 'web',
+        modelUsage: { 'claude-opus-4-7': { inputTokens: 200, outputTokens: 100 } },
+        occurredAtMs: Date.now(),
+      });
+      await fn(rig);
+    } finally {
+      await rig.close();
+    }
+  }
+
+  it('组织 admin + 未注入 policy → fail-closed：全端点剥离 cost 字段并标记 costRedacted', async () => {
+    await withRig(undefined, async (rig) => {
+      rig.setCaller(WAIN_ADMIN);
+
+      const overview = await (await rig.request('/api/admin/usage/overview')).json();
+      expect(overview.totalCostUsd).toBeUndefined();
+      expect(overview.costRedacted).toBe(true);
+      expect(overview.totalInputTokens).toBe(200); // token 口径不受影响
+
+      const byUser = await (await rig.request('/api/admin/usage/by-user')).json();
+      expect(byUser.costRedacted).toBe(true);
+      expect(byUser.users.length).toBeGreaterThan(0);
+      for (const u of byUser.users) expect(u.totalCostUsd).toBeUndefined();
+
+      const byModel = await (await rig.request('/api/admin/usage/by-model')).json();
+      expect(byModel.costRedacted).toBe(true);
+      for (const m of byModel.models) expect(m.totalCostUsd).toBeUndefined();
+
+      const byChannel = await (await rig.request('/api/admin/usage/by-channel')).json();
+      expect(byChannel.costRedacted).toBe(true);
+      for (const c of byChannel.channels) expect(c.totalCostUsd).toBeUndefined();
+
+      const trend = await (await rig.request('/api/admin/usage/trend')).json();
+      expect(trend.costRedacted).toBe(true);
+      for (const p of trend.points) expect(p.costUsd).toBeUndefined();
+    });
+  });
+
+  it('组织 admin + showCost=false → 脱敏；policy 查询抛错 → 同样 fail-closed', async () => {
+    await withRig(async () => ({ showCost: false }), async (rig) => {
+      rig.setCaller(WAIN_ADMIN);
+      const overview = await (await rig.request('/api/admin/usage/overview')).json();
+      expect(overview.totalCostUsd).toBeUndefined();
+      expect(overview.costRedacted).toBe(true);
+    });
+    await withRig(async () => { throw new Error('policy backend down'); }, async (rig) => {
+      rig.setCaller(WAIN_ADMIN);
+      const overview = await (await rig.request('/api/admin/usage/overview')).json();
+      expect(overview.totalCostUsd).toBeUndefined();
+      expect(overview.costRedacted).toBe(true);
+    });
+  });
+
+  it('组织 admin + showCost=true → 放行 cost 字段', async () => {
+    await withRig(async () => ({ showCost: true }), async (rig) => {
+      rig.setCaller(WAIN_ADMIN);
+      const overview = await (await rig.request('/api/admin/usage/overview')).json();
+      expect(typeof overview.totalCostUsd).toBe('number');
+      expect(overview.costRedacted).toBeUndefined();
+      const trend = await (await rig.request('/api/admin/usage/trend')).json();
+      for (const p of trend.points) expect(typeof p.costUsd).toBe('number');
+    });
+  });
+
+  it('平台 admin → 永不脱敏（即使 policy showCost=false）', async () => {
+    await withRig(async () => ({ showCost: false }), async (rig) => {
+      rig.setCaller(PLATFORM_ADMIN);
+      const overview = await (await rig.request('/api/admin/usage/overview')).json();
+      expect(typeof overview.totalCostUsd).toBe('number');
+      expect(overview.costRedacted).toBeUndefined();
     });
   });
 });

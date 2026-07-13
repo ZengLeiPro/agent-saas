@@ -4,7 +4,12 @@ import { z } from 'zod';
 import { isPlatformAdmin } from '../auth/types.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import type { BillingService } from '../data/billing/service.js';
-import { CREDIT_MICRO, type LedgerType } from '../data/billing/types.js';
+import {
+  CREDIT_MICRO,
+  type BillingAuditSummary,
+  type BillingLedgerEntry,
+  type LedgerType,
+} from '../data/billing/types.js';
 import { BillingPricingConflictError } from '../data/billing/pgBillingStore.js';
 
 function decodeCursor(value?: string): { createdAt: string; id: string } | undefined {
@@ -148,6 +153,16 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
       ...rest,
       ...(cursor ? { cursor } : {}),
     });
+    // 组织 admin：实际成本/毛利是平台内部口径，按 showCost/showGrossMargin fail-closed 剥离（2026-07-14）
+    if (!access.platform) {
+      const visibility = await resolveCostVisibility(billingService, access.tenantId);
+      res.json({
+        entries: entries.map((entry) => redactLedgerEntry(entry, visibility)),
+        ...(visibility.showCost ? {} : { costRedacted: true }),
+        ...(nextCursor ? { nextCursor: encodeCursor(nextCursor) } : {}),
+      });
+      return;
+    }
     res.json({
       entries,
       ...(nextCursor ? { nextCursor: encodeCursor(nextCursor) } : {}),
@@ -177,11 +192,18 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
       }
       tenantId = req.user.tenantId;
     }
+    // 2026-07-14：日分桶对组织 admin 也开放（用于租户分析页的积分日消耗趋势），
+    // 但实际成本/毛利字段按 showCost/showGrossMargin fail-closed 剥离。
     const audit = await billingService.getAuditSummary({
       tenantId,
       days: query.data.days,
-      includeDaily: platform,
+      includeDaily: true,
     });
+    if (!platform) {
+      const visibility = await resolveCostVisibility(billingService, req.user.tenantId);
+      res.json({ audit: redactAuditSummary(audit, visibility) });
+      return;
+    }
     res.json({ audit });
   });
 
@@ -333,5 +355,59 @@ function redactPolicy<T extends { showCost: boolean; showGrossMargin: boolean; d
     organizationMultiplierBps: 0,
     showCost: false,
     showGrossMargin: false,
+  };
+}
+
+// ────────── 组织 admin 成本可见性（2026-07-14）──────────
+// 实际成本（actualCost*）与毛利（grossProfit*/grossMargin*）是平台内部经营口径。
+// 组织 admin 默认不可见；showCost=true 放行实际成本，
+// 毛利需 showCost && showGrossMargin 同时为 true（毛利+收入可反推成本，故毛利以 showCost 为前提）。
+// policy 查询异常时 fail-closed 全部隐藏。
+
+interface CostVisibility {
+  showCost: boolean;
+  showGrossMargin: boolean;
+}
+
+async function resolveCostVisibility(billingService: BillingService, tenantId: string): Promise<CostVisibility> {
+  try {
+    const policy = await billingService.store.getTenantPolicy(tenantId);
+    const showCost = policy?.showCost === true;
+    return { showCost, showGrossMargin: showCost && policy?.showGrossMargin === true };
+  } catch {
+    return { showCost: false, showGrossMargin: false };
+  }
+}
+
+function redactLedgerEntry(entry: BillingLedgerEntry, visibility: CostVisibility): Record<string, unknown> {
+  const { actualCostYuanMicro, grossProfitYuanMicro, grossMarginBps, ...rest } = entry;
+  return {
+    ...rest,
+    ...(visibility.showCost ? { actualCostYuanMicro } : {}),
+    ...(visibility.showGrossMargin ? { grossProfitYuanMicro, grossMarginBps } : {}),
+  };
+}
+
+function redactAuditSummary(audit: BillingAuditSummary, visibility: CostVisibility): Record<string, unknown> {
+  const { actualCostYuanMicro, grossProfitYuanMicro, grossMarginBps, alerts: _alerts, daily, ...rest } = audit;
+  return {
+    ...rest,
+    ...(visibility.showCost ? { actualCostYuanMicro } : {}),
+    ...(visibility.showGrossMargin ? { grossProfitYuanMicro, grossMarginBps } : {}),
+    // alerts 是平台运营告警口径（毛利异常等），不下发组织 admin
+    alerts: [],
+    ...(daily
+      ? {
+          daily: daily.map((point) => {
+            const { actualCostYuanMicro: dayCost, grossProfitYuanMicro: dayProfit, ...dayRest } = point;
+            return {
+              ...dayRest,
+              ...(visibility.showCost ? { actualCostYuanMicro: dayCost } : {}),
+              ...(visibility.showGrossMargin ? { grossProfitYuanMicro: dayProfit } : {}),
+            };
+          }),
+        }
+      : {}),
+    ...(visibility.showCost ? {} : { costRedacted: true }),
   };
 }

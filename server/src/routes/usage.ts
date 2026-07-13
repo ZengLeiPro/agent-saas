@@ -36,6 +36,36 @@ export interface UsageRouterOptions {
    * 实现应是 fire-and-forget 异步（路由立刻返回 202）。
    */
   triggerRebuild?: () => Promise<unknown>;
+  /**
+   * 成本可见性 policy（billing 的 showCost，2026-07-14）。
+   * USD 成本是内部供应商成本口径，默认不暴露给组织 admin：
+   *   - 平台 admin：永不脱敏
+   *   - 组织 admin：policy.showCost === true 才放行
+   *   - 未注入 / 查询异常：fail-closed（一律脱敏）
+   */
+  getTenantPolicy?: (tenantId: string) => Promise<{ showCost?: boolean } | null | undefined>;
+}
+
+/** 组织 admin 是否需要剥离 USD 成本字段（fail-closed，语义与 runtimeTrace.shouldRedactCost 对齐） */
+async function shouldRedactCost(
+  req: Request,
+  getTenantPolicy: UsageRouterOptions['getTenantPolicy'],
+): Promise<boolean> {
+  if (!req.user) return true;
+  if (isPlatformAdmin(req.user)) return false;
+  if (!getTenantPolicy) return true;
+  try {
+    const policy = await getTenantPolicy(req.user.tenantId);
+    return policy?.showCost !== true;
+  } catch {
+    return true;
+  }
+}
+
+/** 从对象上剥离指定 key（不可变；用于删 costUsd/totalCostUsd） */
+function omitKey<T extends Record<string, unknown>>(obj: T, key: string): Record<string, unknown> {
+  const { [key]: _removed, ...rest } = obj;
+  return rest;
 }
 
 /**
@@ -130,7 +160,7 @@ function rangeIsValid(fromDate: string, toDate: string): boolean {
 }
 
 export function createUsageRouter(opts: UsageRouterOptions): Router {
-  const { tokenUsageStore: store, userStore, triggerRebuild } = opts;
+  const { tokenUsageStore: store, userStore, triggerRebuild, getTenantPolicy } = opts;
   const router = Router();
   /** 防并发：一次只允许一个 rebuild 在跑 */
   let rebuildInFlight = false;
@@ -138,7 +168,7 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
   // PR 10 起 realName enrich 内联到各 handler（需要按 tenantId 校验，不能裸 lookup）。
   // 仍然每次实时查 userStore，避免 user 更名后缓存过期。
 
-  router.get('/overview', (req: Request, res: Response) => {
+  router.get('/overview', async (req: Request, res: Response) => {
     const parsed = querySchema.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
@@ -155,11 +185,19 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       return;
     }
     const family = parsed.data.family as ModelFamily | undefined;
+    const redactCost = await shouldRedactCost(req, getTenantPolicy);
     const stats = store.getOverview(fromDate, toDate, family, tenant.tenantId);
-    res.json({ ...stats, range, family: family ?? null, tenantId: tenant.tenantId ?? null });
+    const payload = redactCost ? omitKey(stats as unknown as Record<string, unknown>, 'totalCostUsd') : stats;
+    res.json({
+      ...payload,
+      range,
+      family: family ?? null,
+      tenantId: tenant.tenantId ?? null,
+      ...(redactCost ? { costRedacted: true } : {}),
+    });
   });
 
-  router.get('/by-user', (req: Request, res: Response) => {
+  router.get('/by-user', async (req: Request, res: Response) => {
     const parsed = querySchema.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
@@ -176,20 +214,30 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       return;
     }
     const family = parsed.data.family as ModelFamily | undefined;
+    const redactCost = await shouldRedactCost(req, getTenantPolicy);
     const rows = store.getByUser(fromDate, toDate, family, tenant.tenantId);
     // realName enrich：仅在用户存在且 tenantId 匹配时填充（防止跨组织用户名碰撞泄漏 realName）。
     // 当前 username 全局唯一，但显式校验 tenantId 增加纵深防御。
     const enriched = rows.map((r) => {
       const user = userStore?.findByUsername(r.username);
+      const base = redactCost ? omitKey(r as unknown as Record<string, unknown>, 'totalCostUsd') : r;
       return {
-        ...r,
+        ...base,
         realName: user && user.tenantId === r.tenantId ? user.realName : undefined,
       };
     });
-    res.json({ fromDate, toDate, range, family: family ?? null, tenantId: tenant.tenantId ?? null, users: enriched });
+    res.json({
+      fromDate,
+      toDate,
+      range,
+      family: family ?? null,
+      tenantId: tenant.tenantId ?? null,
+      users: enriched,
+      ...(redactCost ? { costRedacted: true } : {}),
+    });
   });
 
-  router.get('/by-model', (req: Request, res: Response) => {
+  router.get('/by-model', async (req: Request, res: Response) => {
     const parsed = querySchema.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
@@ -206,6 +254,7 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       return;
     }
     const family = parsed.data.family as ModelFamily | undefined;
+    const redactCost = await shouldRedactCost(req, getTenantPolicy);
     const rows = store.getByModel(fromDate, toDate, parsed.data.username, family, tenant.tenantId);
     res.json({
       fromDate,
@@ -214,11 +263,12 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       username: parsed.data.username ?? null,
       family: family ?? null,
       tenantId: tenant.tenantId ?? null,
-      models: rows,
+      models: redactCost ? rows.map((r) => omitKey(r as unknown as Record<string, unknown>, 'totalCostUsd')) : rows,
+      ...(redactCost ? { costRedacted: true } : {}),
     });
   });
 
-  router.get('/by-channel', (req: Request, res: Response) => {
+  router.get('/by-channel', async (req: Request, res: Response) => {
     const parsed = querySchema.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
@@ -235,6 +285,7 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       return;
     }
     const family = parsed.data.family as ModelFamily | undefined;
+    const redactCost = await shouldRedactCost(req, getTenantPolicy);
     const rows = store.getByChannel(fromDate, toDate, parsed.data.username, family, tenant.tenantId);
     res.json({
       fromDate,
@@ -243,7 +294,8 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       username: parsed.data.username ?? null,
       family: family ?? null,
       tenantId: tenant.tenantId ?? null,
-      channels: rows,
+      channels: redactCost ? rows.map((r) => omitKey(r as unknown as Record<string, unknown>, 'totalCostUsd')) : rows,
+      ...(redactCost ? { costRedacted: true } : {}),
     });
   });
 
@@ -252,7 +304,7 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
    *  - 传 username → 该用户日序列（getTrend）
    *  - 不传 username → 全公司日序列（getTrendAll，按日期合计所有用户）
    */
-  router.get('/trend', (req: Request, res: Response) => {
+  router.get('/trend', async (req: Request, res: Response) => {
     const parsed = querySchema.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
@@ -270,6 +322,7 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
     }
     const username = parsed.data.username ?? null;
     const family = parsed.data.family as ModelFamily | undefined;
+    const redactCost = await shouldRedactCost(req, getTenantPolicy);
     const rows = username
       ? store.getTrend(username, fromDate, toDate, family, tenant.tenantId)
       : store.getTrendAll(fromDate, toDate, family, tenant.tenantId);
@@ -287,7 +340,8 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       family: family ?? null,
       tenantId: tenant.tenantId ?? null,
       realName: realName ?? null,
-      points: rows,
+      points: redactCost ? rows.map((r) => omitKey(r as unknown as Record<string, unknown>, 'costUsd')) : rows,
+      ...(redactCost ? { costRedacted: true } : {}),
     });
   });
 

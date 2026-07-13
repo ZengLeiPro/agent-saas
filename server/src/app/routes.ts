@@ -331,6 +331,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
 
   // Token 用量统计（admin-only），数据由 b4187f00 引入的 business.sqlite 提供
   if (runtime.tokenUsageStore) {
+    const usageBillingStore = runtime.billingService?.store;
     app.use(
       "/api/admin/usage",
       requireAdmin,
@@ -338,6 +339,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         tokenUsageStore: runtime.tokenUsageStore,
         userStore: runtime.userStore,
         triggerRebuild: runtime.triggerTokenUsageRebuild,
+        // USD 成本对组织 admin 按 billing policy.showCost fail-closed 脱敏（2026-07-14）
+        getTenantPolicy: usageBillingStore
+          ? (tenantId) => usageBillingStore.getTenantPolicy(tenantId)
+          : undefined,
       }),
     );
   }

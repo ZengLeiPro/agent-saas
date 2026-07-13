@@ -23,10 +23,13 @@ export interface OverviewStats {
   totalCacheReadTokens: number;
   totalCacheCreationTokens: number;
   totalTokens: number;
-  totalCostUsd: number;
+  /** 组织 admin 且 policy.showCost !== true 时后端剥离（2026-07-14） */
+  totalCostUsd?: number;
   totalTurns: number;
   activeUsers: number;
   cacheHitRatio: number | null;
+  /** 后端成本脱敏标记 */
+  costRedacted?: boolean;
 }
 
 export interface UserAggregate {
@@ -37,7 +40,8 @@ export interface UserAggregate {
   totalCacheReadTokens: number;
   totalCacheCreationTokens: number;
   totalTokens: number;
-  totalCostUsd: number;
+  /** 组织 admin 且 policy.showCost !== true 时后端剥离 */
+  totalCostUsd?: number;
   totalTurns: number;
   cacheHitRatio: number | null;
   lastActiveDate: string;
@@ -48,12 +52,15 @@ export interface ByUserResp {
   toDate: string;
   range: RangePreset;
   users: UserAggregate[];
+  /** 后端成本脱敏标记 */
+  costRedacted?: boolean;
 }
 
 export interface ModelAggregate {
   model: string;
   totalTokens: number;
-  totalCostUsd: number;
+  /** 组织 admin 且 policy.showCost !== true 时后端剥离 */
+  totalCostUsd?: number;
   totalTurns: number;
   inputTokens: number;
   outputTokens: number;
@@ -64,7 +71,8 @@ export interface ModelAggregate {
 export interface ChannelAggregate {
   channel: string;
   totalTokens: number;
-  totalCostUsd: number;
+  /** 组织 admin 且 policy.showCost !== true 时后端剥离 */
+  totalCostUsd?: number;
   totalTurns: number;
   inputTokens: number;
   outputTokens: number;
@@ -78,6 +86,8 @@ export interface ByChannelResp {
   range: RangePreset;
   username: string | null;
   channels: ChannelAggregate[];
+  /** 后端成本脱敏标记 */
+  costRedacted?: boolean;
 }
 
 export interface ByModelResp {
@@ -86,6 +96,8 @@ export interface ByModelResp {
   range: RangePreset;
   username: string | null;
   models: ModelAggregate[];
+  /** 后端成本脱敏标记 */
+  costRedacted?: boolean;
 }
 
 export interface DailyTrendRow {
@@ -95,7 +107,8 @@ export interface DailyTrendRow {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   totalTokens: number;
-  costUsd: number;
+  /** 组织 admin 且 policy.showCost !== true 时后端剥离 */
+  costUsd?: number;
   turns: number;
 }
 
@@ -107,6 +120,8 @@ export interface TrendResp {
   username: string | null;
   realName: string | null;
   points: DailyTrendRow[];
+  /** 后端成本脱敏标记 */
+  costRedacted?: boolean;
 }
 
 export interface DataRangeResp {

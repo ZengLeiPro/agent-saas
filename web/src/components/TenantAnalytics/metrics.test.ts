@@ -39,4 +39,24 @@ describe("tenant analytics metrics", () => {
   it("使用覆盖率只统计当前启用成员", () => {
     expect(countActiveEnabledUsers(["zenglei", "huangyiping"], ["zenglei", "disabled-user"])).toBe(1);
   });
+
+  it("客户视角：getValue 换成轮次口径并按值降序", () => {
+    const a = { ...model("ark-agents/glm-5.2", 100), totalTurns: 3 };
+    const b = { ...model("claude-opus-4-7", 900), totalTurns: 10 };
+    const zero = { ...model("codex/gpt-5.5", 50), totalTurns: 0 };
+    const slices = buildModelSlices([a, b, zero], { getValue: m => m.totalTurns });
+
+    // 轮次为 0 的模型不出现；按轮次降序
+    expect(slices.map(slice => slice.label)).toEqual(["claude-opus-4-7", "ark-agents/glm-5.2"]);
+    expect(slices[0].value).toBe(10);
+  });
+
+  it("客户视角：getLabel 映射为租户显示名，映射不到回退原 ID", () => {
+    const names = new Map([["ark-agents/glm-5.2", "智谱 GLM"]]);
+    const slices = buildModelSlices(
+      [model("ark-agents/glm-5.2", 500), model("legacy-model", 100)],
+      { getLabel: m => names.get(m.model) ?? m.model },
+    );
+    expect(slices.map(slice => slice.label)).toEqual(["智谱 GLM", "legacy-model"]);
+  });
 });

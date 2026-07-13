@@ -10,6 +10,21 @@ import { authPreload } from "@/lib/preload";
 import { clearSessionListCache } from "@/lib/sessionListCache";
 import { clearAllMessageCache } from "@/lib/messageCache";
 import { clearUnreadAiReplyCache } from "@/lib/unreadAiReplies";
+import {
+  clearSavedAccounts,
+  forgetSavedAccount,
+  forgetSavedAccountByToken,
+  getAccountKey,
+  getSavedAccountToken,
+  readSavedAccounts,
+  rememberSavedAccount,
+  type SavedAccountSummary,
+} from "@/lib/savedAccounts";
+
+interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -24,8 +39,13 @@ interface AuthContextValue {
   isPlatformAdmin: boolean;
   /** 鉴权功能是否启用（后端未开启时为 false，此时无需登录） */
   authEnabled: boolean;
+  accounts: SavedAccountSummary[];
   login: (credentials: LoginCredentials) => Promise<void>;
   loginWithSms: (credentials: SmsLoginCredentials) => Promise<void>;
+  activateAccount: (response: AuthResponse) => void;
+  switchAccount: (accountKey: string) => void;
+  logoutCurrentAccount: (nextAccountKey?: string) => void;
+  logoutAllAccounts: () => void;
   logout: () => void;
   /** 更新当前用户头像 URL + 版本号 */
   updateAvatar: (avatar: string | undefined, avatarVersion?: number) => void;
@@ -36,23 +56,75 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function clearAccountScopedState(): void {
+  localStorage.removeItem(SESSION_STORAGE_KEY);
+  localStorage.removeItem(INPUT_DRAFT_KEY);
+  clearSessionListCache();
+  clearUnreadAiReplyCache();
+  void clearAllMessageCache();
+  void clearGroupsCache();
+}
+
+function normalizeAuthUser(user: AuthUser): AuthUser {
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    tenantId: user.tenantId,
+    realName: user.realName,
+    position: user.position,
+    phone: user.phone,
+    phoneVerifiedAt: user.phoneVerifiedAt,
+    avatar: user.avatar,
+    avatarVersion: user.avatarVersion,
+    debugMode: user.debugMode === true,
+    tenantFeatures: user.tenantFeatures,
+    preferences: user.preferences ?? {},
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(true);
+  const [accounts, setAccounts] = useState<SavedAccountSummary[]>(readSavedAccounts);
 
-  const logout = useCallback(() => {
+  const logoutAllAccounts = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(SESSION_STORAGE_KEY);
-    localStorage.removeItem(INPUT_DRAFT_KEY);
-    clearSessionListCache();
-    clearUnreadAiReplyCache();
-    void clearAllMessageCache();
-    // groups 也是账号相关：sidebar 的分组行来自这份缓存，
-    // 若不清，换号后会闪一下旧账号的分组直至下一次 API 拉取。
-    void clearGroupsCache();
+    clearSavedAccounts();
+    clearAccountScopedState();
+    setAccounts([]);
     setUser(null);
   }, []);
+
+  const logoutCurrentAccount = useCallback((nextAccountKey?: string) => {
+    const currentKey = user ? getAccountKey(user) : null;
+    const remainingAccounts = currentKey
+      ? forgetSavedAccount(currentKey)
+      : readSavedAccounts();
+    const targetAccount = nextAccountKey
+      ? remainingAccounts.find((account) => account.key === nextAccountKey)
+      : remainingAccounts[0];
+
+    setAccounts(remainingAccounts);
+    clearAccountScopedState();
+
+    if (targetAccount) {
+      const token = getSavedAccountToken(targetAccount.key);
+      if (token) {
+        localStorage.setItem(TOKEN_KEY, token);
+        window.location.replace("/");
+        return;
+      }
+    }
+
+    localStorage.removeItem(TOKEN_KEY);
+    setUser(null);
+  }, [user]);
+
+  const logout = useCallback(() => {
+    logoutCurrentAccount();
+  }, [logoutCurrentAccount]);
 
   // 注册 401 回调
   useEffect(() => {
@@ -68,22 +140,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     authPreload.then((result) => {
       if (result.status === "authenticated") {
-        setUser({ id: result.user.id, username: result.user.username, role: result.user.role, tenantId: result.user.tenantId, realName: result.user.realName, position: result.user.position, phone: result.user.phone, phoneVerifiedAt: result.user.phoneVerifiedAt, avatar: result.user.avatar, avatarVersion: result.user.avatarVersion, debugMode: result.user.debugMode === true, preferences: result.user.preferences ?? {} });
+        const nextUser = normalizeAuthUser(result.user);
+        setUser(nextUser);
+        const token = localStorage.getItem(TOKEN_KEY);
+        if (token) setAccounts(rememberSavedAccount(token, nextUser));
         setAuthEnabled(true);
       } else if (result.status === "no-auth") {
         setAuthEnabled(false);
       } else if (result.status === "unauthenticated") {
+        const invalidToken = localStorage.getItem(TOKEN_KEY);
         localStorage.removeItem(TOKEN_KEY);
+        if (invalidToken) setAccounts(forgetSavedAccountByToken(invalidToken));
       }
       // "error" 状态：保持默认即可
       setIsLoading(false);
     });
   }, []);
 
-  const applyLoginResponse = useCallback((data: { token: string; user: AuthUser }) => {
+  const activateAccount = useCallback((data: AuthResponse) => {
+    const nextUser = normalizeAuthUser(data.user);
+    const isSwitching = user !== null && getAccountKey(user) !== getAccountKey(nextUser);
     localStorage.setItem(TOKEN_KEY, data.token);
-    setUser({ id: data.user.id, username: data.user.username, role: data.user.role, tenantId: data.user.tenantId, realName: data.user.realName, position: data.user.position, phone: data.user.phone, phoneVerifiedAt: data.user.phoneVerifiedAt, avatar: data.user.avatar, avatarVersion: data.user.avatarVersion, debugMode: data.user.debugMode === true, preferences: data.user.preferences ?? {} });
-  }, []);
+    setAccounts(rememberSavedAccount(data.token, nextUser));
+    setUser(nextUser);
+    if (isSwitching) {
+      clearAccountScopedState();
+      window.location.replace("/");
+    }
+  }, [user]);
 
   const postLogin = useCallback(async (url: string, body: unknown) => {
     const res = await fetch(url, {
@@ -95,8 +179,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await res.json().catch(() => ({}));
       throw new Error((data as { error?: string }).error || "登录失败");
     }
-    applyLoginResponse(await res.json());
-  }, [applyLoginResponse]);
+    activateAccount(await res.json() as AuthResponse);
+  }, [activateAccount]);
 
   const login = useCallback(async (credentials: LoginCredentials) => {
     await postLogin("/api/auth/login", credentials);
@@ -105,6 +189,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loginWithSms = useCallback(async (credentials: SmsLoginCredentials) => {
     await postLogin("/api/auth/sms/login", credentials);
   }, [postLogin]);
+
+  const switchAccount = useCallback((accountKey: string) => {
+    if (user && getAccountKey(user) === accountKey) return;
+    const token = getSavedAccountToken(accountKey);
+    if (!token) {
+      setAccounts(readSavedAccounts());
+      return;
+    }
+    localStorage.setItem(TOKEN_KEY, token);
+    clearAccountScopedState();
+    window.location.replace("/");
+  }, [user]);
 
   const updateAvatar = useCallback((avatar: string | undefined, avatarVersion?: number) => {
     setUser((prev) => prev ? { ...prev, avatar, avatarVersion } : prev);
@@ -126,14 +222,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAdmin: user?.role === "admin",
       isPlatformAdmin: user?.role === "admin" && user?.tenantId === DEFAULT_TENANT_ID,
       authEnabled,
+      accounts,
       login,
       loginWithSms,
+      activateAccount,
+      switchAccount,
+      logoutCurrentAccount,
+      logoutAllAccounts,
       logout,
       updateAvatar,
       updatePhone,
       updatePreferences,
     }),
-    [user, isLoading, authEnabled, login, loginWithSms, logout, updateAvatar, updatePhone, updatePreferences],
+    [user, isLoading, authEnabled, accounts, login, loginWithSms, activateAccount, switchAccount, logoutCurrentAccount, logoutAllAccounts, logout, updateAvatar, updatePhone, updatePreferences],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

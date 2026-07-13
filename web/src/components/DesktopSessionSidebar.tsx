@@ -32,7 +32,6 @@ import {
   Search,
   LayoutGrid,
   Share2,
-  ArrowLeftRight,
   Coins,
 } from "lucide-react";
 import { AgentAvatar } from "@/components/AgentAvatar";
@@ -75,6 +74,9 @@ import type { OrgAgentSummary } from "@agent/shared";
 import { useResizableWidth } from "@/hooks/useResizableWidth";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTenantBillingVisibility } from "@/hooks/useTenantBillingVisibility";
+import { AddAccountDialog } from "@/components/AddAccountDialog";
+import { LogoutAccountDialog } from "@/components/LogoutAccountDialog";
+import { getAccountKey, type SavedAccountSummary } from "@/lib/savedAccounts";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
 import { baseNavItems, formatShortDate } from "@/types/sidebar";
@@ -777,7 +779,8 @@ interface SidebarUserMenuFooterProps {
   onNavigateAdminTab?: (tab: AppTab) => void;
   onOpenAdminSettings?: (target: AdminSettingsTarget) => void;
   onOpenBilling?: () => void;
-  logout: () => void;
+  accounts: SavedAccountSummary[];
+  switchAccount: (accountKey: string) => void;
 }
 
 function SidebarUserMenuFooter({
@@ -796,8 +799,19 @@ function SidebarUserMenuFooter({
   onNavigateAdminTab,
   onOpenAdminSettings,
   onOpenBilling,
-  logout,
+  accounts,
+  switchAccount,
 }: SidebarUserMenuFooterProps) {
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [showAddAccountDialog, setShowAddAccountDialog] = useState(false);
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+
+  useEffect(() => {
+    if (!showUserMenu) setShowAccountMenu(false);
+  }, [showUserMenu]);
+
+  const currentAccountKey = authUser ? getAccountKey(authUser) : null;
+
   return (
     <div className="border-t border-black/[0.06] px-1 py-1.5">
       <div className="relative" ref={userMenuRef}>
@@ -844,10 +858,69 @@ function SidebarUserMenuFooter({
           onChange={onAvatarUpload}
         />
         {showUserMenu && authEnabled && authUser && (
-          <div className="absolute bottom-full left-0 z-50 mb-2 max-h-[70vh] w-52 overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl">
-            <div className="rounded-lg bg-muted/50 px-3 py-2">
-              <div className="truncate text-sm font-semibold">{authUser.realName || authUser.username}</div>
-              <div className="mt-0.5 truncate text-xs text-muted-foreground">@{authUser.username}</div>
+          <div className="absolute bottom-full left-0 z-50 mb-2 w-52 overflow-visible rounded-xl border bg-popover p-1 shadow-xl">
+            <div
+              className="relative"
+              onMouseEnter={() => setShowAccountMenu(true)}
+              onMouseLeave={() => setShowAccountMenu(false)}
+            >
+              <button type="button" className="flex w-full items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-left transition-colors hover:bg-muted" aria-haspopup="menu" aria-expanded={showAccountMenu}>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold">{authUser.realName || authUser.username}</div>
+                  <div className="mt-0.5 truncate text-xs text-muted-foreground">@{authUser.username}</div>
+                </div>
+                <ChevronRight className="h-4 w-4 shrink-0" />
+              </button>
+
+              {showAccountMenu && (
+                <div className="absolute bottom-0 left-full z-[60] w-72 pl-2" role="menu">
+                  <div className="rounded-xl border bg-popover p-1.5 shadow-xl">
+                    {accounts.map((account) => {
+                      const active = account.key === currentAccountKey;
+                      return (
+                        <button
+                          key={account.key}
+                          type="button"
+                          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-muted"
+                          onClick={() => {
+                            setShowAccountMenu(false);
+                            setShowUserMenu(false);
+                            switchAccount(account.key);
+                          }}
+                          role="menuitem"
+                        >
+                          {account.user.avatar ? (
+                            <img src={account.user.avatar} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
+                          ) : (
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-xs font-semibold text-white">
+                              {account.user.username.charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium">{account.user.realName || account.user.username}</span>
+                            <span className="block truncate text-xs text-muted-foreground">@{account.user.username}</span>
+                          </span>
+                          {active && <Check className="h-4 w-4 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                    <div className="my-1 border-t" />
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-muted"
+                      onClick={() => {
+                        setShowAccountMenu(false);
+                        setShowUserMenu(false);
+                        setShowAddAccountDialog(true);
+                      }}
+                      role="menuitem"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center"><Plus className="h-5 w-5" /></span>
+                      添加另一个账号
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className={USER_MENU_SECTION}>
@@ -901,16 +974,7 @@ function SidebarUserMenuFooter({
             )}
 
             <div className={USER_MENU_SECTION}>
-              <button
-                type="button"
-                className={USER_MENU_ITEM}
-                onClick={() => { setShowUserMenu(false); logout(); }}
-                title="退出当前账号并返回登录页，可换其他账号登录"
-              >
-                <ArrowLeftRight className="h-3.5 w-3.5" />
-                切换账号
-              </button>
-              <button type="button" className={cn(USER_MENU_ITEM, "text-destructive hover:bg-destructive/10")} onClick={() => { setShowUserMenu(false); logout(); }}>
+              <button type="button" className={cn(USER_MENU_ITEM, "text-destructive hover:bg-destructive/10")} onClick={() => { setShowUserMenu(false); setShowLogoutDialog(true); }}>
                 <LogOut className="h-3.5 w-3.5" />
                 退出登录
               </button>
@@ -918,6 +982,8 @@ function SidebarUserMenuFooter({
           </div>
         )}
       </div>
+      <AddAccountDialog open={showAddAccountDialog} onOpenChange={setShowAddAccountDialog} />
+      <LogoutAccountDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog} />
     </div>
   );
 }
@@ -1191,7 +1257,7 @@ export function DesktopSessionSidebar({
   onStartOrgAgentSession,
   orgAgents = [],
 }: DesktopSessionSidebarProps) {
-  const { user: authUser, logout, authEnabled, updateAvatar } = useAuth();
+  const { user: authUser, accounts, switchAccount, authEnabled, updateAvatar } = useAuth();
   const showBilling = useTenantBillingVisibility(authUser?.tenantId);
   // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
   const compactList = authUser?.preferences?.showSessionListAvatar !== true;
@@ -2003,7 +2069,8 @@ export function DesktopSessionSidebar({
             (onPushTab ?? onTabChange)?.("chat");
             requestOpenBillingBadge();
           }}
-          logout={logout}
+          accounts={accounts}
+          switchAccount={switchAccount}
         />
 
         <div
@@ -2360,7 +2427,8 @@ export function DesktopSessionSidebar({
               (onPushTab ?? onTabChange)?.("chat");
               requestOpenBillingBadge();
             } : undefined}
-            logout={logout}
+            accounts={accounts}
+            switchAccount={switchAccount}
           />
 
           {/* 主栏拖动条:贴主栏右边线,控制 mainPanelWidth */}

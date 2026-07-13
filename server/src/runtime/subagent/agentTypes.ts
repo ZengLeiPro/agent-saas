@@ -16,6 +16,8 @@
  *     runner 侧的无条件剥夺清单（Agent/AskUserQuestion/CronList/CronManage/UpdateCompanyInfo）兜底。
  */
 
+import { SUBAGENT_MAX_TURNS } from './subagentLimits.js';
+
 export interface SubagentTypeDefinition {
   id: 'general' | 'explore';
   /** 给模型看的一句话定位（渲染进 Agent 工具 description 的类型清单）。 */
@@ -28,7 +30,7 @@ export interface SubagentTypeDefinition {
   toolAllowlist: ReadonlyArray<string> | null;
   /** 是否允许经 include_company_info 参数注入租户 company-info（explore 恒不注入）。 */
   allowCompanyInfo: boolean;
-  /** 子 loop 的 maxTurns（父默认 20 收窄，防失控 D6）。 */
+  /** 子 loop 的 maxTurns（统一取防失控限额的单一真相源）。 */
   maxTurns: number;
 }
 
@@ -69,7 +71,7 @@ export const SUBAGENT_TYPES: Readonly<Record<SubagentTypeDefinition['id'], Subag
     systemPrompt: GENERAL_SYSTEM_PROMPT,
     toolAllowlist: null,
     allowCompanyInfo: true,
-    maxTurns: 15,
+    maxTurns: SUBAGENT_MAX_TURNS,
   },
   explore: {
     id: 'explore',
@@ -80,7 +82,7 @@ export const SUBAGENT_TYPES: Readonly<Record<SubagentTypeDefinition['id'], Subag
     // 不给会让 explore 在 hand 冷启动窗口内陷入无解报错循环；该工具 risk:'safe' 纯只读）。
     toolAllowlist: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'MemorySearch', 'WaitForWorkspaceReady'],
     allowCompanyInfo: false,
-    maxTurns: 15,
+    maxTurns: SUBAGENT_MAX_TURNS,
   },
 };
 

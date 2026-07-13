@@ -42,7 +42,12 @@ import type { RawRuntimeRunDispatchConfig } from '../runtime/rawRuntimeRunDispat
 import { createRuntimeSessionRecord, FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { AgentToolProvider } from '../runtime/subagent/agentToolProvider.js';
 import { SUBAGENT_TYPES } from '../runtime/subagent/agentTypes.js';
-import { SubagentLimiter, SubagentLimitError } from '../runtime/subagent/subagentLimits.js';
+import {
+  SUBAGENT_HARD_TIMEOUT_MS,
+  SUBAGENT_MAX_TURNS,
+  SubagentLimiter,
+  SubagentLimitError,
+} from '../runtime/subagent/subagentLimits.js';
 import { runSubagent, type SubagentOutcome } from '../runtime/subagent/subagentRunner.js';
 import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
 import type { ModelAdapter, ModelEvent, ModelRequest, PlatformEvent, RunContext } from '../runtime/types.js';
@@ -496,8 +501,12 @@ describe('AgentToolProvider', () => {
     expect(descriptor!.approvalMode).toBe('never');
     expect(descriptor!.description).toContain('10 个子 agent');
     expect(descriptor!.description).toContain('并行 4 个');
+    expect(descriptor!.description).toContain(`${SUBAGENT_MAX_TURNS} 轮`);
+    expect(descriptor!.description).toContain(`${SUBAGENT_HARD_TIMEOUT_MS / 60_000} 分钟`);
     expect(descriptor!.description).toContain('general');
     expect(descriptor!.description).toContain('explore');
+    expect(SUBAGENT_TYPES.general.maxTurns).toBe(SUBAGENT_MAX_TURNS);
+    expect(SUBAGENT_TYPES.explore.maxTurns).toBe(SUBAGENT_MAX_TURNS);
   });
 
   it('durable 事件形态：subagent_started/finished 写父 session，字段完整', async () => {

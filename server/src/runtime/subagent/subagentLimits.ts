@@ -6,7 +6,8 @@
  *   - 单 run 并发 4：参照 Workflow min(16, cores-2) 思路收敛；drainToolCalls 的
  *     并行窗靠这个信号量排队（等待而非拒绝，Promise.all 段内 5+ 个调用会排队）。
  *   - 单 run 总数 10：硬拒绝。Claude Code 并发无上限打挂服务器（#15487）的教训。
- *   - 硬超时 10min + maxTurns 15：SaaS 无人值守必须有；超时 = terminate + status:timeout。
+ *   - 硬超时 60min + maxTurns 100：给复杂调研/执行任务充分收束空间，同时保留
+ *     无人值守任务的最终保险丝；超时 = terminate + status:timeout。
  *
  * 限额值会动态渲染进 Agent 工具 description（Hermes 教训：模型看到固定文案会按
  * 默认值自我设限或幻觉能力），改这里的常量即同步改模型可见文案。
@@ -15,8 +16,8 @@
 export const SUBAGENT_GLOBAL_MAX_CONCURRENCY = 8;
 export const SUBAGENT_PER_RUN_MAX_CONCURRENCY = 4;
 export const SUBAGENT_PER_RUN_MAX_TOTAL = 10;
-export const SUBAGENT_HARD_TIMEOUT_MS = 10 * 60 * 1000;
-export const SUBAGENT_MAX_TURNS = 15;
+export const SUBAGENT_HARD_TIMEOUT_MS = 60 * 60 * 1000;
+export const SUBAGENT_MAX_TURNS = 100;
 
 /** 结果截断保险丝（D5）：静态上限 24k chars，75% head + 25% tail 按行截断。 */
 export const SUBAGENT_RESULT_MAX_CHARS = 24_000;

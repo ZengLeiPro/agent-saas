@@ -22,6 +22,9 @@ export default defineConfig({
         // 预缓存 app shell 静态资源（排除 html）
         // HTML 不缓存：服务端已设 no-cache 头，始终从网络获取，确保版本一致
         globPatterns: ["**/*.{js,css,ico,svg,woff2}", "*.png"],
+        // PDF.js 主包与 worker 只在用户点“查看完整目录”时加载；worker 为 .mjs，
+        // 主包 chunk 需显式排除，避免 PWA 安装时提前下载到普通聊天首屏。
+        globIgnores: ["assets/PdfJsReader-*.js"],
         // 不使用 navigateFallback：服务端已处理 SPA 路由（非 API 请求返回 index.html），
         // SW 不拦截导航请求，避免 frp 慢时回退到缓存中的旧 HTML 导致版本不一致
         navigateFallbackDenylist: [/^\/preview\//],

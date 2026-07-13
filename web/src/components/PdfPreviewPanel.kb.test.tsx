@@ -1,9 +1,4 @@
-/**
- * PdfPreviewPanel kb 分支测试（计划用例 9）
- *
- * 9. kbSource：HEAD 预检 403 → error 态「文档不存在或知识库未开通」（不渲染 iframe）
- */
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { PdfPreviewPanel } from './PdfPreviewPanel';
 
@@ -17,37 +12,50 @@ vi.mock('@agent/shared', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@agent/shared')>();
   return {
     ...actual,
-    resolveKbFileSrc: vi.fn(async (path: string) => `https://example.test/api/kb/file?path=${encodeURIComponent(path)}&token=t`),
+    buildKbPreviewManifestUrl: (path: string) => `/api/kb/preview-manifest?path=${encodeURIComponent(path)}`,
+    buildKbPreviewPageUrl: (path: string, page: number, version: string) => `/api/kb/preview?path=${encodeURIComponent(path)}&page=${page}&version=${version}`,
   };
 });
 
-describe('PdfPreviewPanel kb 分支', () => {
-  it('用例9: HEAD 403 → error 态提示，不渲染 iframe', async () => {
-    authFetchMock.mockResolvedValueOnce(new Response(null, { status: 403 }));
-    render(
-      <PdfPreviewPanel filePath="catalog/无权限.pdf" kbSource page={3} onBack={() => undefined} hideHeader />,
-    );
-    await waitFor(() => {
-      expect(screen.getByText('文档不存在或知识库未开通')).toBeTruthy();
-    });
-    expect(document.querySelector('iframe')).toBeNull();
-    // HEAD 预检确实发出
-    expect(authFetchMock).toHaveBeenCalledWith(
-      `/api/kb/file?path=${encodeURIComponent('catalog/无权限.pdf')}`,
-      { method: 'HEAD' },
-    );
+const manifest = {
+  schemaVersion: 1,
+  sourcePath: 'catalog/手册.pdf',
+  sourceSha256: 'a'.repeat(64),
+  sourceSize: 38_758_136,
+  sourceMtimeMs: 1,
+  pageCount: 122,
+  width: 1600,
+  format: 'webp',
+  quality: 80,
+  generatedAt: '2026-07-13T00:00:00.000Z',
+};
+
+describe('PdfPreviewPanel KB 单页预览', () => {
+  beforeEach(() => {
+    authFetchMock.mockReset();
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:preview-page') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
   });
 
-  it('kbSource HEAD 200 → iframe 带 #page 定位', async () => {
-    authFetchMock.mockResolvedValueOnce(new Response(null, { status: 200 }));
-    render(
-      <PdfPreviewPanel filePath="catalog/手册.pdf" kbSource page={7} onBack={() => undefined} hideHeader />,
-    );
-    await waitFor(() => {
-      expect(document.querySelector('iframe')).not.toBeNull();
-    });
-    const iframe = document.querySelector('iframe')!;
-    expect(iframe.getAttribute('src')).toContain('#page=7');
-    expect(iframe.getAttribute('src')).toContain('/api/kb/file');
+  it('预览缺失时明确降级到 PDF.js 入口，不渲染原生 iframe', async () => {
+    authFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'missing' }), { status: 404 }));
+    render(<PdfPreviewPanel filePath="catalog/无权限.pdf" kbSource page={3} onBack={() => undefined} hideHeader />);
+    await waitFor(() => expect(screen.getByText('该页预览暂未生成')).toBeTruthy());
+    expect(screen.getByRole('button', { name: '使用完整目录阅读器' })).toBeTruthy();
+    expect(document.querySelector('iframe')).toBeNull();
+    expect(authFetchMock).toHaveBeenCalledWith(`/api/kb/preview-manifest?path=${encodeURIComponent('catalog/无权限.pdf')}`);
+  });
+
+  it('首屏只请求准确的 1-based 单页 WebP，不请求完整 PDF', async () => {
+    authFetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify(manifest), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(new Blob(['small-webp']), { status: 200, headers: { 'Content-Type': 'image/webp' } }));
+    render(<PdfPreviewPanel filePath="catalog/手册.pdf" kbSource page={7} onBack={() => undefined} hideHeader />);
+    await waitFor(() => expect(screen.getByAltText('手册.pdf 第 7 页')).toBeTruthy());
+    expect(authFetchMock).toHaveBeenNthCalledWith(1, `/api/kb/preview-manifest?path=${encodeURIComponent('catalog/手册.pdf')}`);
+    expect(authFetchMock).toHaveBeenNthCalledWith(2, expect.stringContaining('page=7&version='));
+    expect(authFetchMock.mock.calls.some(([url]) => String(url).includes('/api/kb/file'))).toBe(false);
+    expect(document.querySelector('iframe')).toBeNull();
+    expect(screen.getByText('/ 122 页')).toBeTruthy();
   });
 });

@@ -8,9 +8,21 @@
  */
 
 import { getPlatform } from '../platform/context';
-import { TOKEN_KEY } from './constants';
 
 export const KB_SCHEME = 'kb://';
+
+export interface KbPreviewManifest {
+  schemaVersion: 1;
+  sourcePath: string;
+  sourceSha256: string;
+  sourceSize: number;
+  sourceMtimeMs: number;
+  pageCount: number;
+  width: number;
+  format: 'webp';
+  quality: number;
+  generatedAt: string;
+}
 
 export function isKbPath(path: string): boolean {
   return path.startsWith(KB_SCHEME);
@@ -39,17 +51,24 @@ export function parseKbPath(path: string): { doc: string; page?: number } | null
   return { doc, ...(page ? { page } : {}) };
 }
 
-/**
- * 将 KB 文档路径解析为带鉴权 token 的完整 URL（iframe/img src 场景无法带
- * Authorization header）。接受裸 doc 路径或 kb:// 伪协议路径（fragment 丢弃，
- * `#page=N` 由调用侧另行拼到最终 URL 上——它属于浏览器 viewer 而非请求参数）。
- */
+function kbApiUrl(route: string, params: Record<string, string | number>): string {
+  const baseUrl = getPlatform().platformConfig.getBaseUrl();
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) search.set(key, String(value));
+  return `${baseUrl}/api/kb/${route}?${search.toString()}`;
+}
+
+/** 原始 KB 文件 URL。鉴权必须放 Authorization header，不再把长期 JWT 拼进查询参数。 */
 export async function resolveKbFileSrc(path: string): Promise<string> {
   const doc = isKbPath(path) ? (parseKbPath(path)?.doc ?? '') : path;
-  const platform = getPlatform();
-  const token = await platform.secureStorage.getItem(TOKEN_KEY);
-  const baseUrl = platform.platformConfig.getBaseUrl();
-  let url = `${baseUrl}/api/kb/file?path=${encodeURIComponent(doc)}`;
-  if (token) url += `&token=${token}`;
-  return url;
+  return kbApiUrl('file', { path: doc });
+}
+
+export function buildKbPreviewManifestUrl(doc: string): string {
+  return kbApiUrl('preview-manifest', { path: doc });
+}
+
+export function buildKbPreviewPageUrl(doc: string, page: number, version: string): string {
+  if (!Number.isInteger(page) || page < 1) throw new Error('预览页码必须是正整数');
+  return kbApiUrl('preview', { path: doc, page, version });
 }

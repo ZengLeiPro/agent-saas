@@ -5,20 +5,31 @@
  * 5. shareToken（分享页）→ 徽标禁用零副作用
  * 6. 图片 → 组件内 lightbox（不走 openPreview）
  */
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { CitationCard } from './CitationCard';
 import { FilePreviewProvider } from '@/contexts/FilePreviewContext';
+
+const authFetchMock = vi.fn();
+vi.mock('@/lib/authFetch', () => ({
+  authFetch: (...args: unknown[]) => authFetchMock(...args),
+}));
 
 vi.mock('@agent/shared', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@agent/shared')>();
   return {
     ...actual,
-    resolveKbFileSrc: vi.fn(async (path: string) => `https://example.test/api/kb/file?path=${encodeURIComponent(path)}&token=t`),
+    resolveKbFileSrc: vi.fn(async (path: string) => `https://example.test/api/kb/file?path=${encodeURIComponent(path)}`),
   };
 });
 
 describe('CitationCard', () => {
+  beforeEach(() => {
+    authFetchMock.mockReset();
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:citation') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+  });
+
   it('用例4: pdf 点击以 kb://+page 调 openPreview(mode=side)', () => {
     const openPreview = vi.fn();
     render(
@@ -31,6 +42,7 @@ describe('CitationCard', () => {
     fireEvent.click(button);
     expect(openPreview).toHaveBeenCalledTimes(1);
     expect(openPreview).toHaveBeenCalledWith('kb://catalog/接插件.pdf#page=12', undefined, { mode: 'side' });
+    expect(authFetchMock).not.toHaveBeenCalled();
   });
 
   it('用例5: shareToken 场景禁用徽标且点击零副作用', () => {
@@ -48,6 +60,7 @@ describe('CitationCard', () => {
   });
 
   it('用例6: 图片引用走组件内 lightbox，不调 openPreview', async () => {
+    authFetchMock.mockResolvedValueOnce(new Response(new Blob(['image']), { status: 200 }));
     const openPreview = vi.fn();
     render(
       <FilePreviewProvider value={{ openPreview }}>

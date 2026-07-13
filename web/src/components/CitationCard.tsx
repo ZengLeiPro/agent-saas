@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BookOpen, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useFilePreview } from '@/contexts/FilePreviewContext';
 import { buildKbPreviewPath, resolveKbFileSrc } from '@agent/shared';
+import { authFetch } from '@/lib/authFetch';
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif)$/i;
 const PDF_EXT_RE = /\.pdf$/i;
@@ -13,13 +14,17 @@ const PDF_EXT_RE = /\.pdf$/i;
  * 行为矩阵：
  * - shareToken 存在（只读分享页）或 filePreview 缺失 → 禁用徽标（tooltip 引导登录）
  * - pdf → kb:// 伪协议穿透 FilePreviewContext，右侧面板打开并定位页码
- * - 图片 → 组件内 lightbox（仿 FileDownloadCard）
- * - 其他类型 → 新标签打开带 token 的 KB 文件 URL 兜底
+ * - 图片 → authFetch 后用临时 blob URL 打开 lightbox
+ * - 其他类型 → authFetch 后用临时 blob URL 新标签打开
  */
 export function CitationCard({ doc, page, label }: { doc: string; page?: number; label: string }) {
   const filePreview = useFilePreview();
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const disabled = !filePreview || !!filePreview.shareToken;
+
+  useEffect(() => () => {
+    if (lightboxSrc) URL.revokeObjectURL(lightboxSrc);
+  }, [lightboxSrc]);
 
   const handleClick = () => {
     if (disabled) return;
@@ -29,12 +34,26 @@ export function CitationCard({ doc, page, label }: { doc: string; page?: number;
     }
     if (IMAGE_EXT_RE.test(doc)) {
       void resolveKbFileSrc(doc)
-        .then(setLightboxSrc)
+        .then((url) => authFetch(url))
+        .then((response) => {
+          if (!response.ok) throw new Error('引用图片加载失败');
+          return response.blob();
+        })
+        .then((blob) => setLightboxSrc(URL.createObjectURL(blob)))
         .catch(() => { /* 打开失败静默 */ });
       return;
     }
     void resolveKbFileSrc(doc)
-      .then((url) => window.open(url, '_blank', 'noopener,noreferrer'))
+      .then((url) => authFetch(url))
+      .then((response) => {
+        if (!response.ok) throw new Error('引用文件加载失败');
+        return response.blob();
+      })
+      .then((blob) => {
+        const objectUrl = URL.createObjectURL(blob);
+        window.open(objectUrl, '_blank', 'noopener,noreferrer');
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      })
       .catch(() => { /* 打开失败静默 */ });
   };
 

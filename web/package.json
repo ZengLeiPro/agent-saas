@@ -26,6 +26,7 @@
     "idb": "^8.0.3",
     "katex": "^0.16.45",
     "lucide-react": "^0.512.0",
+    "pdfjs-dist": "4.10.38",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-markdown": "^10.1.0",

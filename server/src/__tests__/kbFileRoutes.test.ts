@@ -7,12 +7,14 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Server } from 'node:http';
 
 import { createKbFilesRouter } from '../routes/kbFiles.js';
+import { previewContentDir, previewManifestPath, previewPagePath } from '../kb/previewGenerator.js';
 
 const PDF_BYTES = Buffer.from('%PDF-1.4 fake-pdf-content-0123456789');
 
@@ -37,6 +39,32 @@ async function startServer(kbRootDir: string, user: TestUser): Promise<{ server:
       resolve({ server: s, baseUrl: `http://127.0.0.1:${port}` });
     });
   });
+}
+
+async function seedPreview(kbRootDir: string, sourcePath = 'docs/manual.pdf', pageCount = 2): Promise<{ version: string; pageBytes: Buffer }> {
+  const tenantRoot = join(kbRootDir, 'tenant-a');
+  const source = join(tenantRoot, sourcePath);
+  const sourceStats = await stat(source);
+  const version = createHash('sha256').update(PDF_BYTES).digest('hex');
+  const contentDir = previewContentDir(tenantRoot, version);
+  await mkdir(contentDir, { recursive: true });
+  const pageBytes = Buffer.from('fake-webp-page-1');
+  await writeFile(previewPagePath(contentDir, 1), pageBytes);
+  const manifestPath = previewManifestPath(tenantRoot, sourcePath);
+  await mkdir(dirname(manifestPath), { recursive: true });
+  await writeFile(manifestPath, JSON.stringify({
+    schemaVersion: 1,
+    sourcePath,
+    sourceSha256: version,
+    sourceSize: sourceStats.size,
+    sourceMtimeMs: sourceStats.mtimeMs,
+    pageCount,
+    width: 1600,
+    format: 'webp',
+    quality: 80,
+    generatedAt: new Date().toISOString(),
+  }));
+  return { version, pageBytes };
 }
 
 function stopServer(s: Server): Promise<void> {
@@ -84,6 +112,7 @@ describe('/api/kb/file routes', () => {
     const head = await fetch(`${baseUrl}/api/kb/file?path=${encodeURIComponent('docs/manual.pdf')}`, { method: 'HEAD' });
     expect(head.status).toBe(200);
     expect(Number(head.headers.get('content-length'))).toBe(PDF_BYTES.length);
+    expect((await head.arrayBuffer()).byteLength).toBe(0);
 
     // Range 分片
     const ranged = await fetch(`${baseUrl}/api/kb/file?path=${encodeURIComponent('docs/manual.pdf')}`, {
@@ -120,13 +149,13 @@ describe('/api/kb/file routes', () => {
     expect(Buffer.from(await tail.arrayBuffer()).equals(PDF_BYTES.subarray(-10))).toBe(true);
   });
 
-  it('F4: malformed Range（bytes=abc-def）→ 忽略 Range 回 200 全量', async () => {
+  it('F4: malformed Range（bytes=abc-def）→ 416，绝不意外回退全量 200', async () => {
     ({ server, baseUrl } = await startServer(kbRoot, userA));
     const res = await fetch(`${baseUrl}/api/kb/file?path=${encodeURIComponent('docs/manual.pdf')}`, {
       headers: { Range: 'bytes=abc-def' },
     });
-    expect(res.status).toBe(200);
-    expect(Buffer.from(await res.arrayBuffer()).equals(PDF_BYTES)).toBe(true);
+    expect(res.status).toBe(416);
+    expect(res.headers.get('content-range')).toBe(`bytes */${PDF_BYTES.length}`);
   });
 
   it('F4: end 越界（bytes=0-999999999）→ 206 clamp 到 size-1', async () => {
@@ -165,5 +194,53 @@ describe('/api/kb/file routes', () => {
     // 存在性探测口径：本租户内不存在的文件 → 404
     const missing = await fetch(`${baseUrl}/api/kb/file?path=${encodeURIComponent('docs/nope.pdf')}`);
     expect(missing.status).toBe(404);
+  });
+
+  it('返回 ETag/Last-Modified/私有缓存，并正确处理两个条件请求', async () => {
+    ({ server, baseUrl } = await startServer(kbRoot, userA));
+    const url = `${baseUrl}/api/kb/file?path=${encodeURIComponent('docs/manual.pdf')}`;
+    const initial = await fetch(url);
+    const etag = initial.headers.get('etag');
+    const lastModified = initial.headers.get('last-modified');
+    expect(etag).toBeTruthy();
+    expect(lastModified).toBeTruthy();
+    expect(initial.headers.get('cache-control')).toBe('private, max-age=0, must-revalidate');
+    expect((await fetch(url, { headers: { 'If-None-Match': etag! } })).status).toBe(304);
+    expect((await fetch(url, { headers: { 'If-Modified-Since': lastModified! } })).status).toBe(304);
+  });
+
+  it('单页预览按 1-based 页码返回轻量 WebP；越界、缺页和旧版本均明确拒绝', async () => {
+    const { version, pageBytes } = await seedPreview(kbRoot);
+    ({ server, baseUrl } = await startServer(kbRoot, userA));
+    const manifestUrl = `${baseUrl}/api/kb/preview-manifest?path=${encodeURIComponent('docs/manual.pdf')}`;
+    const manifestRes = await fetch(manifestUrl);
+    expect(manifestRes.status).toBe(200);
+    expect((await manifestRes.json()).pageCount).toBe(2);
+
+    const pageUrl = `${baseUrl}/api/kb/preview?path=${encodeURIComponent('docs/manual.pdf')}&page=1&version=${version}`;
+    const pageRes = await fetch(pageUrl);
+    expect(pageRes.status).toBe(200);
+    expect(pageRes.headers.get('content-type')).toBe('image/webp');
+    expect(pageRes.headers.get('cache-control')).toBe('private, max-age=31536000, immutable');
+    expect(Buffer.from(await pageRes.arrayBuffer()).equals(pageBytes)).toBe(true);
+
+    expect((await fetch(pageUrl.replace('page=1', 'page=0'))).status).toBe(400);
+    expect((await fetch(pageUrl.replace('page=1', 'page=3'))).status).toBe(416);
+    expect((await fetch(pageUrl.replace('page=1', 'page=2'))).status).toBe(404);
+    expect((await fetch(pageUrl.replace(version, 'a'.repeat(64)))).status).toBe(409);
+  });
+
+  it('预览清单缺失时返回 404，不静默回退原始 PDF', async () => {
+    ({ server, baseUrl } = await startServer(kbRoot, userA));
+    const res = await fetch(`${baseUrl}/api/kb/preview-manifest?path=${encodeURIComponent('docs/manual.pdf')}`);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: '该文档预览暂未生成' });
+  });
+
+  it('admin 仍受 tenant scope 约束，不能读取其他租户原件或预览', async () => {
+    const adminA: TestUser = { ...userA, role: 'admin' };
+    ({ server, baseUrl } = await startServer(kbRoot, adminA));
+    expect((await fetch(`${baseUrl}/api/kb/file?path=${encodeURIComponent('../tenant-b/secret.pdf')}`)).status).toBe(403);
+    expect((await fetch(`${baseUrl}/api/kb/preview-manifest?path=${encodeURIComponent('../tenant-b/secret.pdf')}`)).status).toBe(403);
   });
 });

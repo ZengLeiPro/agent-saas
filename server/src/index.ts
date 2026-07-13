@@ -10,6 +10,7 @@ import { createBrowserRouter } from './routes/browser.js';
 import type { AppRuntime } from './app/runtime.js';
 import type { CronService } from './cron/service.js';
 import { verifyAzerothTokenMetadata } from './integrations/azeroth/tokens.js';
+import { startKbPreviewScheduler, type KbPreviewScheduler } from './kb/previewScheduler.js';
 import { serverLogger, cronLogger } from './utils/logger.js';
 
 type ProcessRole = 'all' | 'ws-only' | 'scheduler-only';
@@ -17,6 +18,7 @@ type ProcessRole = 'all' | 'ws-only' | 'scheduler-only';
 let runtime: AppRuntime | undefined;
 let cronService: CronService | null | undefined;
 let httpServer: Server | undefined;
+let kbPreviewScheduler: KbPreviewScheduler | undefined;
 
 const eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 20 });
 eventLoopDelayMonitor.enable();
@@ -192,6 +194,7 @@ async function startServer(): Promise<void> {
         serverLogger.error('ky-azeroth PAT metadata 校验异常', err);
       });
     }
+    if (processRole === 'all') kbPreviewScheduler = startKbPreviewScheduler(runtime!.processCwd);
   });
 
   setInterval(() => {
@@ -299,6 +302,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   try {
     httpServer?.close();
     cronService?.stop();
+    kbPreviewScheduler?.stop();
     await runtime?.channelManager.stopAll();
     await runtime?.memoryIndexShutdown?.();
     // MCP shutdown 必须在 pkill -TERM 之前调用，让 client.close() 走协议级

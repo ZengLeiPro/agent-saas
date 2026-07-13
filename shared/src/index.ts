@@ -400,14 +400,17 @@ export {
 } from "./lib/markers";
 export type { MarkerSegment, CitationSegment } from "./lib/markers";
 
-// Lib - 租户共享 KB 文件访问（kb:// 伪协议 + 带 token 的文件 URL）
+// Lib - 租户共享 KB 文件访问（kb:// 伪协议 + 鉴权 API URL）
 export {
   KB_SCHEME,
   isKbPath,
   buildKbPreviewPath,
   parseKbPath,
   resolveKbFileSrc,
+  buildKbPreviewManifestUrl,
+  buildKbPreviewPageUrl,
 } from "./lib/kbApi";
+export type { KbPreviewManifest } from "./lib/kbApi";
 
 // Lib - file utilities (cross-platform pure functions)
 export {

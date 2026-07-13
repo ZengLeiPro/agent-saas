@@ -595,7 +595,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">用户排行 <span className="ml-1 text-[11px] font-normal text-muted-foreground">（点用户名查看详情；点 ▶ 展开模型分布）</span></CardTitle>
+          <CardTitle className="text-sm font-medium">用户排行 <span className="ml-1 text-[11px] font-normal text-muted-foreground">（点用户名查看详情；点 <ChevronRight className="inline h-3 w-3 align-[-1.5px]" aria-hidden="true" /> 展开模型分布）</span></CardTitle>
         </CardHeader>
         <CardContent>
           {byUser ? (

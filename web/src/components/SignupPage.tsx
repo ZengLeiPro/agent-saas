@@ -266,7 +266,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
         <CardContent className="pt-8 pb-6">
           <div className="mb-6 flex flex-col items-center text-center">
             <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 shadow-[0_6px_16px_-4px_rgba(46,86,225,0.5)]">
-              <Sparkles className="h-6 w-6 text-white" strokeWidth={2.2} />
+              <Sparkles className="h-6 w-6 text-white" />
             </div>
             <h1 className="text-xl font-semibold tracking-tight text-foreground">
               注册试用 KY Agent

@@ -185,7 +185,7 @@ export function FileIconTile({ entry, size = "sm", open, className }: FileIconTi
       )}
       aria-hidden
     >
-      <RenderIcon className={cn(dims.icon, t.fg)} strokeWidth={1.75} />
+      <RenderIcon className={cn(dims.icon, t.fg)} />
     </span>
   );
 }

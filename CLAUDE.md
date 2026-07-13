@@ -33,6 +33,14 @@
 - **共享**: `ChatTabContent.tsx`、`ChatInput.tsx`、`MessageList.tsx`/`MessageItem.tsx`、`CronManager/`、`UserManager/`
 侧边栏和 header 两端独立，聊天区域共享。需某端特殊行为时在共享组件内用 `useIsMobile()` 判断。
 
+## Web 图标规范
+
+- 统一图标源：`lucide-react`，禁止用文本符号（✕ ⊘ ⚠ ▶ × 等）当 UI 图标；消息正文/数量记号（如 `×3`）等纯文本内容不受此限。
+- 尺寸三档：`h-3.5 w-3.5`（行内/紧凑）、`h-4 w-4`（常规操作）、`h-5 w-5`（区块标题/主按钮）。
+- `strokeWidth` 默认不写（lucide 默认 2）；强调场景（主操作按钮如发送、选中态勾选）用 `2.5`；`h-6` 以上大图标（空态插画等）可用 `1.5`。禁止其他取值和 `stroke-[N]` className 写法。
+- 图表/自绘 SVG（sparkline、donut、spinner、气泡尾巴等）的 `strokeWidth` 是描边参数，不受本规范约束。
+- Agent 默认头像有哨兵值逻辑，见 `web/src/components/AgentAvatar.tsx`。
+
 ## 钉钉机器人
 
 `config.json` 中 `dingtalk.robots` 配置多机器人。Webhook 地址：`POST /api/dingtalk/webhook/:robotId`。消息按 `conversationId` 路由到独立会话。

@@ -5,6 +5,7 @@
  * - PluginInstallBanner：插件安装进度（started → installed/failed → completed）
  */
 
+import { X } from "lucide-react";
 import type { NotificationData, MemoryRecallData, PluginInstallData } from "@agent/shared";
 
 const PRIORITY_STYLE: Record<NotificationData['priority'], string> = {
@@ -34,11 +35,11 @@ export function NotificationToastStack({
             <div className="whitespace-pre-wrap break-words">{n.text}</div>
             <button
               type="button"
-              className="shrink-0 text-xs opacity-60 hover:opacity-100"
+              className="shrink-0 opacity-60 hover:opacity-100"
               onClick={() => onDismiss(n.key)}
               aria-label="关闭通知"
             >
-              ✕
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -64,11 +65,11 @@ export function MemoryRecallBanner({
         </span>
         <button
           type="button"
-          className="text-xs opacity-60 hover:opacity-100"
+          className="opacity-60 hover:opacity-100"
           onClick={onDismiss}
           aria-label="隐藏记忆召回"
         >
-          ✕
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </div>
       <details>

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, memo, lazy, Suspense } from 'react';
-import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, FileText, FileCode, FileImage, FileVideo, FileSpreadsheet, FileArchive, Presentation, File, Download, X, GitFork, Paperclip, ImageIcon, Mic } from 'lucide-react';
+import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, FileText, FileCode, FileImage, FileVideo, FileSpreadsheet, FileArchive, Presentation, File, Download, X, GitFork, Paperclip, ImageIcon, Mic, Ban, TriangleAlert } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { MessageItem as MessageItemType, formatFileSize } from './types';
 import type { AskUserAnswers } from '@agent/shared';
@@ -973,9 +973,9 @@ export const MessageItem = memo(function MessageItem({
     return (
       <div className={`px-3 py-2 rounded-r text-sm ${containerCls}`} role="alert">
         <div className="flex items-start gap-2">
-          <span aria-hidden="true" className="mt-0.5 text-base leading-none">
-            {isCancelled ? '⊘' : '⚠'}
-          </span>
+          {isCancelled
+            ? <Ban aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+            : <TriangleAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />}
           <div className="flex-1 whitespace-pre-wrap break-words">{message.content}</div>
         </div>
       </div>

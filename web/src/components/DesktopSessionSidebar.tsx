@@ -141,7 +141,7 @@ function SessionLeadingIcon({ session, selected = false }: { session: ChatSessio
   if (selected) {
     return (
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white" aria-hidden="true">
-        <Check className="h-5 w-5 stroke-[3]" />
+        <Check className="h-5 w-5" strokeWidth={2.5} />
       </span>
     );
   }
@@ -162,7 +162,7 @@ function CompactSessionLeadingIcon({ selected = false }: { selected?: boolean })
   if (selected) {
     return (
       <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white" aria-hidden="true">
-        <Check className="h-3 w-3 stroke-[3]" />
+        <Check className="h-3 w-3" strokeWidth={2.5} />
       </span>
     );
   }
@@ -178,7 +178,6 @@ function CompactGroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
   return (
     <Folder
       className="h-4 w-4 shrink-0 fill-brand-100 text-brand-500/80 dark:fill-brand-900/35 dark:text-brand-300/80"
-      strokeWidth={2}
       aria-hidden="true"
     />
   );

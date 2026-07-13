@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { X } from "lucide-react";
 import {
   cronWizardSubmitSchema,
   type CronWizardResponse,
@@ -229,10 +230,11 @@ export function CronCreationWizard({
                 <button
                   key={target}
                   type="button"
-                  className="rounded-full border bg-muted/40 px-2 py-1 text-xs"
+                  className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-1 text-xs"
                   onClick={() => setMonitorTargets((prev) => prev.filter((item) => item !== target))}
                 >
-                  {target} ×
+                  {target}
+                  <X className="h-3 w-3" aria-hidden="true" />
                 </button>
               ))}
             </div>

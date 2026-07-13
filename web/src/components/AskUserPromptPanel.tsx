@@ -28,7 +28,7 @@ function ChoiceIndicator({ selected, multiSelect }: { selected: boolean; multiSe
         )}
         aria-hidden
       >
-        {selected && <Check className="h-3 w-3" strokeWidth={3} />}
+        {selected && <Check className="h-3 w-3" strokeWidth={2.5} />}
       </span>
     );
   }

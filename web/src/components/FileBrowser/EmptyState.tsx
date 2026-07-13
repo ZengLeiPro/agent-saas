@@ -38,7 +38,6 @@ export function EmptyState({ variant = "folder", className }: EmptyStateProps) {
               "absolute -right-1 -top-1 h-5 w-5 text-brand-accent drop-shadow-sm",
               "dark:text-brand-accent",
             )}
-            strokeWidth={1.75}
           />
         </div>
       </div>

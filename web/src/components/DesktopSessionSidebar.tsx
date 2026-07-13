@@ -117,7 +117,7 @@ interface DesktopSessionSidebarProps {
    * 专职 Agent 入口（2026-07 唯恩批次）：点击无既有会话时新建并挂起 orgAgentId，
    * 首条消息的 WS payload 带上。缺省时入口零渲染。
    */
-  onStartOrgAgentSession?: (agentId: string) => void;
+  onStartOrgAgentSession?: (agentId: string) => void | Promise<string | null>;
   /** App 单一数据源下发，避免侧栏重复请求及账号切换状态分叉。 */
   orgAgents?: OrgAgentSummary[];
 }
@@ -633,7 +633,7 @@ function RoleKitSidebarHint({
  * 存在绑定该 Agent 的最新会话 → 复用（onSelectSession）；否则新建会话并
  * 挂起 orgAgentId（onStartOrgAgentSession → pendingOrgAgentIdRef + onNew）。
  */
-function OrgAgentSidebarSection({
+export function OrgAgentSidebarSection({
   agents,
   sessions,
   onSelectSession,
@@ -643,44 +643,120 @@ function OrgAgentSidebarSection({
   agents: OrgAgentSummary[];
   sessions: ChatSessionIndexItem[];
   onSelectSession: (sessionId: string) => void;
-  onStartOrgAgentSession?: (agentId: string) => void;
+  onStartOrgAgentSession?: (agentId: string) => void | Promise<string | null>;
   beforeNavigate?: () => void;
 }) {
+  const [expandedAgentIds, setExpandedAgentIds] = useState<Set<string>>(() => new Set());
   if (agents.length === 0) return null;
 
-  const handleClick = (agentId: string) => {
+  const sessionsByAgent = new Map<string, ChatSessionIndexItem[]>();
+  for (const agent of agents) sessionsByAgent.set(agent.id, []);
+  for (const session of sessions) {
+    if (!session.orgAgentId || !sessionsByAgent.has(session.orgAgentId)) continue;
+    sessionsByAgent.get(session.orgAgentId)!.push(session);
+  }
+  for (const items of sessionsByAgent.values()) {
+    items.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  const handleOpenLatest = (agentId: string) => {
     beforeNavigate?.();
-    let latest: ChatSessionIndexItem | null = null;
-    for (const session of sessions) {
-      if (session.orgAgentId === agentId && (!latest || session.updatedAt > latest.updatedAt)) {
-        latest = session;
-      }
-    }
+    const latest = sessionsByAgent.get(agentId)?.[0];
     if (latest) {
       onSelectSession(latest.id);
     } else {
-      onStartOrgAgentSession?.(agentId);
+      void onStartOrgAgentSession?.(agentId);
     }
+  };
+
+  const handleStart = (agentId: string) => {
+    beforeNavigate?.();
+    void onStartOrgAgentSession?.(agentId);
+  };
+
+  const toggleHistory = (agentId: string) => {
+    setExpandedAgentIds((current) => {
+      const next = new Set(current);
+      if (next.has(agentId)) next.delete(agentId);
+      else next.add(agentId);
+      return next;
+    });
   };
 
   return (
     <div className="mx-2 mb-2 space-y-1">
-      {agents.map((agent) => (
-        <button
-          key={agent.id}
-          type="button"
-          className="flex w-full items-center gap-2 rounded-lg border bg-card px-2 py-2 text-left text-xs transition-colors hover:bg-muted/60"
-          onClick={() => handleClick(agent.id)}
-        >
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-sm dark:bg-brand-900/35" aria-hidden="true">
-            {agent.avatar || <Bot className="h-3.5 w-3.5 text-brand-600" />}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate font-medium">{agent.name}</span>
-            <span className="block truncate text-muted-foreground">公司专职 Agent</span>
-          </span>
-        </button>
-      ))}
+      {agents.map((agent) => {
+        const agentSessions = sessionsByAgent.get(agent.id) ?? [];
+        const expanded = expandedAgentIds.has(agent.id);
+        return (
+          <div key={agent.id} className="overflow-hidden rounded-lg border bg-card" data-testid={`org-agent-card-${agent.id}`}>
+            <div className="flex items-stretch">
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left text-xs transition-colors hover:bg-muted/60"
+                onClick={() => handleOpenLatest(agent.id)}
+                aria-label={`打开${agent.name}最近对话`}
+              >
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-sm dark:bg-brand-900/35" aria-hidden="true">
+                  {agent.avatar || <Bot className="h-3.5 w-3.5 text-brand-600" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{agent.name}</span>
+                  <span className="block truncate text-muted-foreground">公司专职 Agent</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="flex w-9 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-brand-50 hover:text-brand-600 dark:hover:bg-brand-900/35"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleStart(agent.id);
+                }}
+                title={`使用${agent.name}发起新对话`}
+                aria-label={`使用${agent.name}发起新对话`}
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                className="flex w-9 shrink-0 items-center justify-center border-l text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleHistory(agent.id);
+                }}
+                title={`查看${agent.name}历史对话`}
+                aria-label={`查看${agent.name}历史对话`}
+                aria-expanded={expanded}
+              >
+                <ChevronRight className={cn("h-4 w-4 transition-transform", expanded && "rotate-90")} />
+              </button>
+            </div>
+            {expanded && (
+              <div className="border-t bg-muted/20 px-1 py-1" aria-label={`${agent.name}历史对话`}>
+                {agentSessions.length === 0 ? (
+                  <div className="px-2 py-2 text-xs text-muted-foreground">暂无历史对话</div>
+                ) : agentSessions.map((history) => (
+                  <button
+                    key={history.id}
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/70"
+                    onClick={() => {
+                      beforeNavigate?.();
+                      onSelectSession(history.id);
+                    }}
+                  >
+                    <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate">{history.title || "新会话"}</span>
+                    <time className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                      {formatShortDate(history.updatedAt)}
+                    </time>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

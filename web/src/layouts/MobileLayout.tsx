@@ -63,7 +63,7 @@ export function MobileLayout(props: LayoutProps) {
     previewFilePath, previewFileOwner, openFilePreview, closeFilePreview,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
-    activeOrgAgentReadOnly,
+    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly,
   } = props;
   const { user: authUser } = useAuth();
   const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
@@ -349,6 +349,10 @@ export function MobileLayout(props: LayoutProps) {
               readOnlyInputPlaceholder={!isTrashPreview && activeOrgAgentReadOnly ? "该专职 Agent 当前不可用，请联系组织管理员" : undefined}
               agentProfile={agentProfile}
               sessionParticipants={sessionParticipants}
+              orgAgent={isTrashPreview ? null : activeOrgAgent}
+              onNewOrgAgentConversation={activeOrgAgent && !activeOrgAgentReadOnly
+                ? () => { void startOrgAgentSession(activeOrgAgent.id); }
+                : undefined}
             />
           }
         />

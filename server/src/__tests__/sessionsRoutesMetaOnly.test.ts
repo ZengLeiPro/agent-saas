@@ -237,6 +237,106 @@ describe('sessions routes for meta-only runtime sessions', () => {
     }
   });
 
+  it('creates distinct meta-only sessions bound to the requested available org Agent', async () => {
+    const orgAgentStore = new OrgAgentStore(join(agentCwd, 'data', 'org-agents.json'));
+    const agent = await orgAgentStore.create({
+      tenantId: TEST_USER.tenantId,
+      name: '产品选型助手',
+      instructions: '只回答选型问题',
+      allowedSkills: ['wain-kb'],
+      audience: { exposure: 'allow_users', usernames: [TEST_USER.username] },
+      guardrail: {
+        enabled: true,
+        scopeDescription: '连接器产品选型',
+        rejectionMessage: '超出职责范围',
+        strictness: 'lenient',
+      },
+      enabled: true,
+    }, 'admin');
+
+    const { server, baseUrl } = await startServer(agentCwd, { orgAgentStore });
+    try {
+      const create = () => fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orgAgentId: agent.id }),
+      });
+      const first = await create();
+      const second = await create();
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      const firstBody = await first.json() as { session: SessionListResponse['sessions'][number] };
+      const secondBody = await second.json() as { session: SessionListResponse['sessions'][number] };
+      cleanupPaths.add(dirname(getTranscriptPath(userCwd(), firstBody.session.sessionId, {
+        tenantId: TEST_USER.tenantId,
+        userId: TEST_USER.id,
+      })));
+      expect(firstBody.session.sessionId).not.toBe(secondBody.session.sessionId);
+      expect(firstBody.session).toMatchObject({
+        title: '新会话',
+        orgAgentId: agent.id,
+        orgAgentName: '产品选型助手',
+        orgAgentAvailable: true,
+      });
+
+      const listed = await listSessions(baseUrl, '?fresh=1');
+      const createdIds = new Set([firstBody.session.sessionId, secondBody.session.sessionId]);
+      expect(listed.sessions.filter((item) => createdIds.has(item.sessionId))).toHaveLength(2);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('rejects creating a session for a disabled or unassigned org Agent', async () => {
+    const orgAgentStore = new OrgAgentStore(join(agentCwd, 'data', 'org-agents.json'));
+    const unassigned = await orgAgentStore.create({
+      tenantId: TEST_USER.tenantId,
+      name: '未授权助手',
+      instructions: 'restricted',
+      allowedSkills: [],
+      audience: { exposure: 'allow_users', usernames: ['bob'] },
+      guardrail: {
+        enabled: false,
+        scopeDescription: '',
+        rejectionMessage: '拒绝',
+        strictness: 'strict',
+      },
+      enabled: true,
+    }, 'admin');
+    const disabled = await orgAgentStore.create({
+      tenantId: TEST_USER.tenantId,
+      name: '停用助手',
+      instructions: 'disabled',
+      allowedSkills: [],
+      audience: { exposure: 'all', usernames: [] },
+      guardrail: {
+        enabled: false,
+        scopeDescription: '',
+        rejectionMessage: '拒绝',
+        strictness: 'strict',
+      },
+      enabled: false,
+    }, 'admin');
+
+    const { server, baseUrl } = await startServer(agentCwd, { orgAgentStore });
+    try {
+      for (const orgAgentId of [unassigned.id, disabled.id]) {
+        const response = await fetch(`${baseUrl}/api/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orgAgentId }),
+        });
+        expect(response.status).toBe(403);
+      }
+      const listed = await listSessions(baseUrl, '?fresh=1');
+      expect(listed.sessions.some((item) =>
+        item.orgAgentId === unassigned.id || item.orgAgentId === disabled.id,
+      )).toBe(false);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it('marks transcript context as exact for full-history models', async () => {
     const { sessionId, transcriptPath } = await writeRuntimeSession({
       metaPatch: { model: 'kaiyan-llm/gpt55-high' },

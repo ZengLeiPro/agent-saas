@@ -84,10 +84,14 @@ export interface SessionState {
     sessionId: string;
     title?: string;
     preview?: string;
+    createdAtMs?: number;
     updatedAtMs: number;
     model?: string;
     username?: string;
     agent?: AgentProfile | null;
+    orgAgentId?: string;
+    orgAgentName?: string;
+    orgAgentAvailable?: boolean;
   }) => void;
   refreshTokenUsage: () => Promise<void>;
   setIsNewSession: (v: boolean) => void;
@@ -576,10 +580,14 @@ export function useSession(
       sessionId: string;
       title?: string;
       preview?: string;
+      createdAtMs?: number;
       updatedAtMs: number;
       model?: string;
       username?: string;
       agent?: AgentProfile | null;
+      orgAgentId?: string;
+      orgAgentName?: string;
+      orgAgentAvailable?: boolean;
     }) => {
       markRecentLocalSession(newSession.sessionId);
       setSessions((prev) => {
@@ -607,12 +615,24 @@ export function useSession(
                   ...(newSession.agent !== undefined
                     ? { agent: newSession.agent }
                     : {}),
+                  ...(newSession.orgAgentId !== undefined
+                    ? { orgAgentId: newSession.orgAgentId }
+                    : {}),
+                  ...(newSession.orgAgentName !== undefined
+                    ? { orgAgentName: newSession.orgAgentName }
+                    : {}),
+                  ...(newSession.orgAgentAvailable !== undefined
+                    ? { orgAgentAvailable: newSession.orgAgentAvailable }
+                    : {}),
                 }
               : s,
           );
         } else {
           const entry: ApiSessionListItem = {
             sessionId: newSession.sessionId,
+            ...(newSession.createdAtMs !== undefined
+              ? { createdAtMs: newSession.createdAtMs }
+              : {}),
             updatedAtMs: newSession.updatedAtMs,
             title: newSession.title,
             preview: newSession.preview,
@@ -623,6 +643,11 @@ export function useSession(
               : {}),
             ...(newSession.agent !== undefined
               ? { agent: newSession.agent }
+              : {}),
+            ...(newSession.orgAgentId ? { orgAgentId: newSession.orgAgentId } : {}),
+            ...(newSession.orgAgentName ? { orgAgentName: newSession.orgAgentName } : {}),
+            ...(newSession.orgAgentAvailable !== undefined
+              ? { orgAgentAvailable: newSession.orgAgentAvailable }
               : {}),
           };
           updated = [entry, ...prev];

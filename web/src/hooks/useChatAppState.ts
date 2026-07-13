@@ -31,6 +31,7 @@ import {
 import type { CompactionMessageItem, CompactionStatusEvent } from "@/lib/compaction";
 import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, pushSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl } from "@/lib/urlSync";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
+import { isCurrentAuthOwner } from "@/lib/orgAgentSessionRouting";
 import type { AdminSettingsState, AdminSettingsTarget, PlatformAdminSection } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
 import { useAuth } from "@/contexts/AuthContext";
@@ -102,7 +103,7 @@ export interface ChatAppState {
   newSession: () => void;
   selectSession: (id: string) => void;
   /** 专职 Agent 新会话：新建空会话并挂起 orgAgentId（首条消息 WS payload 带上） */
-  startOrgAgentSession: (agentId: string) => void;
+  startOrgAgentSession: (agentId: string) => Promise<string | null>;
   /** 挂起中的专职 Agent id（新会话空白态 banner 展示用；缺省 null） */
   pendingOrgAgentId: string | null;
   confirmDeleteSession: (id: string) => void;
@@ -987,6 +988,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // state：新会话空白态的顶部 banner 展示（会话入列表带 orgAgentId 后由列表接管）。
   const pendingOrgAgentIdRef = useRef<string | null>(null);
   const [pendingOrgAgentId, setPendingOrgAgentId] = useState<string | null>(null);
+  const authOwnerKey = user ? `${user.tenantId}:${user.id}` : "anonymous";
+  const authOwnerKeyRef = useRef(authOwnerKey);
+  authOwnerKeyRef.current = authOwnerKey;
   const clearPendingOrgAgent = useCallback(() => {
     pendingOrgAgentIdRef.current = null;
     setPendingOrgAgentId(null);
@@ -1009,13 +1013,55 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     pushUrl('chat', null);
   }, [clearPendingOrgAgent, session.newSession]);
 
-  /** 专职 Agent 新会话：新建空会话并挂起 orgAgentId，首条消息 WS payload 带上 */
-  const startOrgAgentSession = useCallback((agentId: string) => {
-    newSessionWithUrl();
-    pendingOrgAgentIdRef.current = agentId;
-    setPendingOrgAgentId(agentId);
-    if (activeTabRef.current !== 'chat') setActiveTab('chat');
-  }, [newSessionWithUrl, setActiveTab]);
+  /**
+   * 专职 Agent 新会话：服务端先写现有 session meta，点击时立即获得真实 sessionId。
+   * owner key 二次核对用于拦截账号切换期间返回的旧请求，避免跨账号串 orgAgentId。
+   */
+  const startOrgAgentSession = useCallback(async (agentId: string): Promise<string | null> => {
+    const normalizedAgentId = agentId.trim();
+    if (!normalizedAgentId || !user) return null;
+    const requestOwnerKey = `${user.tenantId}:${user.id}`;
+    try {
+      const response = await authFetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orgAgentId: normalizedAgentId }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(payload.error || `创建专职 Agent 会话失败（${response.status}）`);
+      }
+      const payload = await response.json() as { session: ApiSessionListItem };
+      const created = payload.session;
+      if (!created?.sessionId || !isCurrentAuthOwner(requestOwnerKey, authOwnerKeyRef.current)) return null;
+
+      session.upsertSession({
+        sessionId: created.sessionId,
+        title: created.title,
+        preview: created.preview,
+        createdAtMs: created.createdAtMs,
+        updatedAtMs: created.updatedAtMs,
+        model: created.model,
+        username: created.owner?.username,
+        agent: created.agent,
+        orgAgentId: created.orgAgentId,
+        orgAgentName: created.orgAgentName,
+        orgAgentAvailable: created.orgAgentAvailable,
+      });
+      selectSessionWithUrl(created.sessionId);
+      if (activeTabRef.current !== 'chat') setActiveTab('chat');
+      return created.sessionId;
+    } catch (err) {
+      if (isCurrentAuthOwner(requestOwnerKey, authOwnerKeyRef.current)) {
+        console.error('创建专职 Agent 会话失败:', err);
+      }
+      return null;
+    }
+  }, [selectSessionWithUrl, session.upsertSession, setActiveTab, user]);
+
+  useEffect(() => {
+    clearPendingOrgAgent();
+  }, [authOwnerKey, clearPendingOrgAgent]);
 
   const previewTrashSession = useCallback(async (id: string | null) => {
     if (id) {

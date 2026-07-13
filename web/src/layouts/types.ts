@@ -22,7 +22,7 @@ export interface LayoutProps {
   selectSession: (id: string) => void;
   newSession: () => void;
   /** 专职 Agent 新会话：新建空会话并挂起 orgAgentId（首条消息 WS payload 带上） */
-  startOrgAgentSession: (agentId: string) => void;
+  startOrgAgentSession: (agentId: string) => Promise<string | null>;
   /** 当前会话绑定的专职 Agent（含挂起态）；null = 个人 Agent 会话（banner 零渲染） */
   activeOrgAgent: { id: string; name: string; avatar?: string } | null;
   /** 当前专职 Agent 会话已停用、删除或取消指派，输入区应只读 */

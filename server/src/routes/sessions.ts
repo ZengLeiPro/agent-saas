@@ -7,6 +7,7 @@
  */
 import { Router } from "express";
 import type { Request, Response } from "express";
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
@@ -479,6 +480,90 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       ...(profile.avatarVersion !== undefined ? { avatarVersion: profile.avatarVersion } : {}),
     };
   }
+
+  /**
+   * POST /api/sessions
+   *
+   * 立即创建一个绑定公司专职 Agent 的空会话。只写入现有 session meta，
+   * 不新建另一套索引；会话列表原生支持 meta-only session。
+   */
+  router.post("/sessions", async (req: Request, res: Response) => {
+    try {
+      const user = req.user;
+      if (!user) {
+        res.status(401).json({ error: "Authentication required" });
+        return;
+      }
+
+      const orgAgentId = typeof req.body?.orgAgentId === "string"
+        ? req.body.orgAgentId.trim()
+        : "";
+      if (!orgAgentId || orgAgentId.length > 128) {
+        res.status(400).json({ error: "orgAgentId is required" });
+        return;
+      }
+
+      const record = options.orgAgentStore?.get(orgAgentId);
+      const adminExempt = user.role === "admin"
+        && (user.tenantId === DEFAULT_TENANT_ID || record?.tenantId === user.tenantId);
+      const assigned = !!record
+        && (adminExempt || isAssignedToOrgAgent(record, user.username));
+      if (!record || !record.enabled || record.tenantId !== user.tenantId || !assigned) {
+        res.status(403).json({ error: "该专职 Agent 当前不可用，请联系组织管理员" });
+        return;
+      }
+
+      const sessionId = randomUUID();
+      const now = new Date();
+      const createdAt = now.toISOString();
+      const cwd = resolveUserCwd(agentCwd, {
+        id: user.sub,
+        username: user.username,
+        role: user.role,
+        tenantId: user.tenantId,
+      });
+      const transcriptPath = getTranscriptPath(cwd, sessionId, {
+        tenantId: user.tenantId,
+        userId: user.sub,
+      });
+      await writeSessionMeta(transcriptPath, {
+        userId: user.sub,
+        username: user.username,
+        userRole: user.role,
+        tenantId: user.tenantId,
+        channel: "web",
+        createdAt,
+        updatedAt: createdAt,
+        cwd,
+        transcriptPath,
+        workspaceId: sessionId,
+        runtimeStatus: "idle",
+        orgAgentId,
+      });
+      sessionsListCache.clear();
+      auditLog(req, "session_opened", `created orgAgentId=${orgAgentId} sessionId=${sessionId}`);
+
+      res.status(201).json({
+        session: {
+          sessionId,
+          title: "新会话",
+          createdAtMs: now.getTime(),
+          updatedAtMs: now.getTime(),
+          source: { type: "web", label: "WEB" },
+          owner: {
+            userId: user.sub,
+            username: user.username,
+          },
+          orgAgentId,
+          orgAgentName: record.name,
+          orgAgentAvailable: true,
+        },
+      });
+    } catch (err) {
+      apiLogger.error(`[sessions] create org-agent session failed: ${err instanceof Error ? err.message : String(err)}`);
+      res.status(500).json({ error: "Failed to create session" });
+    }
+  });
 
   async function buildSessionDetailSnapshot(
     req: Request,

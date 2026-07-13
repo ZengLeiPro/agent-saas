@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useAppLifecycle } from "@/hooks/useAppLifecycle";
 import { useActivityReporter } from "@/hooks/useActivityReporter";
 
@@ -13,6 +13,8 @@ import { FilePreviewProvider } from "@/contexts/FilePreviewContext";
 import { MessageFeedbackProvider } from "@/contexts/MessageFeedbackContext";
 import { useOrgAgents } from "@/hooks/useOrgAgents";
 import { DeleteSessionDialog } from "@/components/chat/DeleteSessionDialog";
+import { OrgAgentPickerDialog } from "@/components/OrgAgentPickerDialog";
+import { resolveNewSessionTarget } from "@/lib/orgAgentSessionRouting";
 
 import { DesktopLayout } from "@/layouts/DesktopLayout";
 import { MobileLayout } from "@/layouts/MobileLayout";
@@ -47,7 +49,7 @@ function toSidebarSessions(
 }
 
 function App() {
-  const { isAdmin, isPlatformAdmin } = useAuth();
+  const { isAdmin, isPlatformAdmin, user: authUser } = useAuth();
   const isOnline = useOnlineStatus();
   const ttsPlayer = useTtsPlayer();
   const isMobile = useIsMobile();
@@ -68,7 +70,7 @@ function App() {
     deleteSessionId, deleteSessionCount, lastMessageRef, scrollContainerRef, isNearBottomRef,
     setInput, setActiveTab, pushActiveTab, setPlatformAdminRoute, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
-    newSession, selectSession,
+    newSession: newPersonalSession, selectSession,
     confirmDeleteSession, confirmDeleteSessions, cancelDeleteSession, handleDeleteSession, renameSession, autoTitleSession, compactSession,
     removeFile, handleFileSelect, handlePaste, sendMessage, sendVoiceMessage, stopping, stopGeneration, retryMessage, forkFromMessage,
     handleDragOver, handleDragLeave, handleDrop,
@@ -104,6 +106,26 @@ function App() {
   }, [currentSessionItem, pendingOrgAgentId, myOrgAgents]);
   const activeOrgAgentReadOnly = currentSessionItem?.orgAgentId !== undefined
     && currentSessionItem.orgAgentAvailable === false;
+  const [orgAgentPickerOpen, setOrgAgentPickerOpen] = useState(false);
+  const newSession = useCallback(() => {
+    const target = resolveNewSessionTarget({
+      activeOrgAgentId: activeOrgAgent?.id,
+      availableOrgAgentIds: myOrgAgents.map((agent) => agent.id),
+      personalAgentEnabled: isAdmin || authUser?.tenantFeatures?.personalAgentEnabled !== false,
+    });
+    if (target.kind === "personal") {
+      newPersonalSession();
+    } else if (target.kind === "org-agent") {
+      void startOrgAgentSession(target.agentId);
+    } else {
+      setOrgAgentPickerOpen(true);
+    }
+  }, [activeOrgAgent?.id, authUser?.tenantFeatures?.personalAgentEnabled, isAdmin, myOrgAgents, newPersonalSession, startOrgAgentSession]);
+
+  const handleOrgAgentPickerSelect = useCallback((agentId: string) => {
+    setOrgAgentPickerOpen(false);
+    void startOrgAgentSession(agentId);
+  }, [startOrgAgentSession]);
 
   // iOS PWA 生命周期：后台恢复时刷新数据，进入后台时保存状态
   const onResume = useCallback(() => {
@@ -223,6 +245,12 @@ function App() {
         }}
         isAdmin={isAdmin}
         count={deleteSessionCount}
+      />
+      <OrgAgentPickerDialog
+        open={orgAgentPickerOpen}
+        agents={myOrgAgents}
+        onOpenChange={setOrgAgentPickerOpen}
+        onSelect={handleOrgAgentPickerSelect}
       />
     </div>
   );

@@ -1,5 +1,5 @@
 import { type Ref, type MutableRefObject, useMemo } from "react";
-import { Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { TtsProps } from "@/components/MessageItem";
 import type { TtsState } from "@/hooks/useTtsPlayer";
@@ -57,6 +57,36 @@ interface ChatTabContentProps {
    * 缺省零变化；不污染 agentProfile（头像/参与者渲染不受影响）。
    */
   orgAgent?: { id: string; name: string; avatar?: string } | null;
+  /** 当前专职 Agent 会话头部的新对话入口；只读/停用会话不提供。 */
+  onNewOrgAgentConversation?: () => void;
+}
+
+export function OrgAgentConversationHeader({
+  orgAgent,
+  onNewConversation,
+}: {
+  orgAgent: { id: string; name: string; avatar?: string };
+  onNewConversation?: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1.5 border-b bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
+      <span aria-hidden="true" className="text-sm leading-none">{orgAgent.avatar || "🤖"}</span>
+      <span className="font-medium text-foreground">{orgAgent.name}</span>
+      <span>· 公司专职 Agent</span>
+      {onNewConversation && (
+        <button
+          type="button"
+          className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium text-brand-600 transition-colors hover:bg-brand-50 dark:hover:bg-brand-900/35"
+          onClick={onNewConversation}
+          title={`使用${orgAgent.name}发起新对话`}
+          aria-label={`使用${orgAgent.name}发起新对话`}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          新对话
+        </button>
+      )}
+    </div>
+  );
 }
 
 export function ChatTabContent({
@@ -99,6 +129,7 @@ export function ChatTabContent({
   sessionParticipants,
   emptySlot,
   orgAgent,
+  onNewOrgAgentConversation,
 }: ChatTabContentProps) {
   const activeAskUser = useMemo(() => {
     if (readOnly) return null;
@@ -119,11 +150,10 @@ export function ChatTabContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {orgAgent && (
-        <div className="flex shrink-0 items-center gap-1.5 border-b bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
-          <span aria-hidden="true" className="text-sm leading-none">{orgAgent.avatar || "🤖"}</span>
-          <span className="font-medium text-foreground">{orgAgent.name}</span>
-          <span>· 公司专职 Agent</span>
-        </div>
+        <OrgAgentConversationHeader
+          orgAgent={orgAgent}
+          onNewConversation={onNewOrgAgentConversation}
+        />
       )}
       <MessageList
         lastMessageRef={lastMessageRef}

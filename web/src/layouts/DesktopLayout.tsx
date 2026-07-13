@@ -399,6 +399,9 @@ export function DesktopLayout(props: LayoutProps) {
               sessionParticipants={sessionParticipants}
               emptySlot={activeOrgAgent ? undefined : chatEmptySlot}
               orgAgent={isTrashPreview ? null : activeOrgAgent}
+              onNewOrgAgentConversation={activeOrgAgent && !activeOrgAgentReadOnly
+                ? () => { void startOrgAgentSession(activeOrgAgent.id); }
+                : undefined}
             />
           </div>
           {rightPanelOpen && (

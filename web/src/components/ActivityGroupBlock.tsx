@@ -42,7 +42,7 @@ function getSummary(item: MessageItem): SummaryInfo {
         text: item.status === 'running'
           ? `子任务 ${item.agentType}...`
           : item.status === 'failed'
-            ? `子任务失败：${item.agentType}`
+            ? `子任务未完成：${item.agentType}`
             : item.status === 'timeout'
               ? `子任务超时：${item.agentType}`
               : item.status === 'cancelled'
@@ -127,22 +127,24 @@ function getActivityDurationMs(items: MessageItem[]): number | undefined {
   return hasDuration ? total : undefined;
 }
 
-function getFailureSummary(items: MessageItem[]): GroupSummaryInfo | null {
-  const failedCount = items.filter(item => (
+function hasActivityIssue(items: MessageItem[]): boolean {
+  return items.some(item => (
+    (item.type === 'tool_use' && item.executionStatus === 'failed')
+    || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
+  ));
+}
+
+function getIssueSummary(items: MessageItem[]): GroupSummaryInfo | null {
+  const issueCount = items.filter(item => (
     (item.type === 'tool_use' && item.executionStatus === 'failed')
     || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
   )).length;
-  if (failedCount > 0) {
-    const completedCount = items.filter(item =>
-      (item.type === 'thinking' && !item.streaming) ||
-      (item.type === 'tool_use' && item.executionStatus === 'completed') ||
-      (item.type === 'subagent' && item.status === 'completed')
-    ).length;
+  if (issueCount > 0) {
     return {
-      text: completedCount > 0 ? `执行异常：${failedCount} 条失败 · ${completedCount} 条完成` : `执行异常：${failedCount} 条失败`,
+      text: `执行结束 · ${issueCount} 个步骤未成功`,
       truncateStart: false,
-      tone: 'danger',
-      badge: '失败',
+      tone: 'warning',
+      badge: '有异常',
       durationMs: getActivityDurationMs(items),
       active: false,
     };
@@ -201,7 +203,7 @@ function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
     const info = getToolDisplayInfo(item.toolName, item.toolInput);
     const label = info.detail ? `${info.name}: ${info.detail}` : info.name;
     if (item.executionStatus === 'failed') {
-      return { text: `执行失败：${label}`, truncateStart: info.detailTruncate === 'start', tone: 'danger', badge: '失败', progress, active: false };
+      return { text: `未成功：${label}`, truncateStart: info.detailTruncate === 'start', tone: 'warning', badge: '有异常', progress, active: false };
     }
     if (item.executionStatus === 'cancelled') {
       return { text: `已取消：${label}`, truncateStart: info.detailTruncate === 'start', tone: 'neutral', badge: '已取消', progress, active: false };
@@ -214,7 +216,7 @@ function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
 
   if (item.type === 'subagent') {
     if (item.status === 'failed') {
-      return { text: `子任务失败：${item.agentType}`, truncateStart: false, tone: 'danger', badge: '失败', progress, active: false };
+      return { text: `子任务未完成：${item.agentType}`, truncateStart: false, tone: 'warning', badge: '有异常', progress, active: false };
     }
     if (item.status === 'timeout') {
       return { text: `子任务超时：${item.agentType}`, truncateStart: false, tone: 'warning', badge: '超时', progress, active: false };
@@ -243,8 +245,8 @@ function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
 
 function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryInfo {
   if (isActive) return getActiveGroupSummary(items);
-  const failureSummary = getFailureSummary(items);
-  if (failureSummary) return failureSummary;
+  const issueSummary = getIssueSummary(items);
+  if (issueSummary) return issueSummary;
 
   const cancelledCount = items.filter(item => (
     (item.type === 'tool_use' && item.executionStatus === 'cancelled')
@@ -312,16 +314,19 @@ interface ActivityGroupBlockProps {
   debugMode?: boolean;
 }
 
-export function ExecutionHiddenPlaceholder({ isActive, durationMs }: { isActive?: boolean; durationMs?: number }) {
+export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: { isActive?: boolean; durationMs?: number; hasIssue?: boolean }) {
   const duration = !isActive ? formatActivityDuration(durationMs) : null;
+  const tone = isActive ? 'active' : hasIssue ? 'warning' : 'success';
   return (
     <div className="my-0.5 flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
       {isActive ? (
         <Loader2 className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-spin")} />
+      ) : hasIssue ? (
+        <CircleAlert className={activityStatusIconClass("warning", "h-3.5 w-3.5 shrink-0")} />
       ) : (
         <CheckCircle2 className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
       )}
-      <span className={activityStatusTextClass(isActive ? "active" : "success")}>{isActive ? "正在执行中" : duration ? `已执行 ${duration}` : "已执行"}</span>
+      <span className={activityStatusTextClass(tone)}>{isActive ? "正在执行中" : hasIssue ? duration ? `已执行，有异常 ${duration}` : "已执行，有异常" : duration ? `已执行 ${duration}` : "已执行"}</span>
     </div>
   );
 }
@@ -330,7 +335,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (!debugMode) {
-    return <ExecutionHiddenPlaceholder isActive={isActive} durationMs={getActivityDurationMs(items)} />;
+    return <ExecutionHiddenPlaceholder isActive={isActive} durationMs={getActivityDurationMs(items)} hasIssue={hasActivityIssue(items)} />;
   }
 
   // 单项分组：直接渲染子项本身（单层展开），不套分组壳

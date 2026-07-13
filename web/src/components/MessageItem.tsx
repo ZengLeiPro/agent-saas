@@ -889,7 +889,7 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (message.type === "tool_use") {
-    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.streaming || message.executionStatus === "running" || !message.resultReady} durationMs={message.durationMs} />;
+    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.streaming || message.executionStatus === "running" || (!message.resultReady && message.executionStatus !== "failed" && message.executionStatus !== "cancelled")} durationMs={message.durationMs} hasIssue={message.executionStatus === "failed"} />;
     return (
       <ToolBlock
         toolName={message.toolName}
@@ -939,7 +939,7 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (message.type === "subagent") {
-    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.status === "running"} />;
+    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.status === "running"} hasIssue={message.status === "failed" || message.status === "timeout"} />;
     return (
       <SubagentBlock
         {...message}

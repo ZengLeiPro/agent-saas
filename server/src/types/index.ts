@@ -188,6 +188,7 @@ export interface OutboundEvent {
   toolId?: string;
   partialJson?: string;
   toolResult?: string;
+  isError?: boolean;
   invocationId?: string;
   status?: "success" | "error" | "cancelled";
   durationMs?: number;

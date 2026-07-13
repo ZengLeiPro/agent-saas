@@ -719,6 +719,7 @@ export class WebChannel implements BaseChannel {
           toolName: input.event.toolName,
           result: input.event.toolResult ?? '',
           content: input.event.toolResult ?? '',
+          ...(input.event.isError ? { isError: true } : {}),
         });
         break;
       }
@@ -3566,13 +3567,14 @@ export class WebChannel implements BaseChannel {
         }
       },
 
-      onToolResult(toolId, toolName, result) {
+      onToolResult(toolId, toolName, result, isError) {
         if (shouldSendWebToolResult(toolName, config)) {
           send({
             type: 'tool_result',
             toolId,
             toolName,
             result,
+            ...(isError ? { isError: true } : {}),
           });
         }
       },

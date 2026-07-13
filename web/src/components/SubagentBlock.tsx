@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bot, CheckCircle2, ChevronDown, CircleSlash2, ExternalLink, Loader2, TimerOff, XCircle } from 'lucide-react';
+import { Bot, CheckCircle2, ChevronDown, CircleAlert, CircleSlash2, ExternalLink, Loader2, TimerOff } from 'lucide-react';
 import type { SubagentStatus } from '@agent/shared';
 import { cn } from '@/lib/utils';
 import { activityStatusIconClass, formatActivityDuration } from './activityStatusStyles';
@@ -21,7 +21,7 @@ export interface SubagentBlockProps {
 
 function statusLabel(status: SubagentStatus): string {
   if (status === 'running') return '执行中';
-  if (status === 'failed') return '失败';
+  if (status === 'failed') return '未完成';
   if (status === 'cancelled') return '已取消';
   if (status === 'timeout') return '超时';
   return '已完成';
@@ -30,7 +30,7 @@ function statusLabel(status: SubagentStatus): string {
 function StatusIcon({ status }: { status: SubagentStatus }) {
   const base = 'h-3.5 w-3.5 shrink-0';
   if (status === 'running') return <Loader2 className={activityStatusIconClass('active', `${base} animate-spin`)} />;
-  if (status === 'failed') return <XCircle className={activityStatusIconClass('danger', base)} />;
+  if (status === 'failed') return <CircleAlert className={activityStatusIconClass('warning', base)} />;
   if (status === 'cancelled') return <CircleSlash2 className={activityStatusIconClass('neutral', base)} />;
   if (status === 'timeout') return <TimerOff className={activityStatusIconClass('warning', base)} />;
   return <CheckCircle2 className={activityStatusIconClass('success', base)} />;

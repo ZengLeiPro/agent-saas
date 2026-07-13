@@ -195,11 +195,18 @@ export function enrichTranscriptActivityDurations(
   }
 
   const metadata = buildActivityMetadataFromEvents(events, sessionId);
+  // 有些失败发生在真正进入 invocation 前（例如工具不存在或熔断），只会留下
+  // transcript tool_result.isError。直接复用已经解析的 block，避免为状态恢复再从
+  // EventStore 拉取可能很大的工具结果正文。
+  const failedToolIds = new Set(parsed.blocks.flatMap((block) => (
+    block.kind === "tool_result" && block.isError && block.toolId ? [block.toolId] : []
+  )));
   if (
     metadata.thinkingDurations.length === 0
     && metadata.toolDurationById.size === 0
     && metadata.toolStatusById.size === 0
     && metadata.subagentByToolId.size === 0
+    && failedToolIds.size === 0
   ) {
     return parsed;
   }
@@ -218,7 +225,12 @@ export function enrichTranscriptActivityDurations(
 
     if (block.kind === "tool_use" && block.toolId) {
       const durationMs = metadata.toolDurationById.get(block.toolId);
-      const executionStatus = metadata.toolStatusById.get(block.toolId);
+      const eventStatus = metadata.toolStatusById.get(block.toolId);
+      const executionStatus = eventStatus === "cancelled"
+        ? "cancelled"
+        : failedToolIds.has(block.toolId)
+          ? "failed"
+          : eventStatus;
       const subagent = metadata.subagentByToolId.get(block.toolId);
       const durationChanged = isValidDuration(durationMs) && block.durationMs !== durationMs;
       const statusChanged = executionStatus !== undefined && block.executionStatus !== executionStatus;

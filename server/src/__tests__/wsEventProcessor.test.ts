@@ -436,6 +436,91 @@ describe('wsEventProcessor runtime and tool execution status', () => {
       result: 'done',
     });
   });
+
+  it('keeps a failed tool failed when an unflagged result arrives later', () => {
+    const { messages, ctx } = createTestRig([{
+      id: 'tool-failed',
+      type: 'tool_use',
+      toolName: 'Shell',
+      toolInput: '{"cmd":"exit 1"}',
+      toolId: 'call-failed',
+      executionStatus: 'running',
+    }]);
+
+    process({
+      type: 'tool_execution',
+      phase: 'completed',
+      toolId: 'call-failed',
+      toolName: 'Shell',
+      status: 'error',
+      error: 'exit code 1',
+    }, ctx);
+    process({
+      type: 'tool_result',
+      toolId: 'call-failed',
+      toolName: 'Shell',
+      result: 'tool error: exit code 1',
+    }, ctx);
+
+    expect(messages[0]).toMatchObject({
+      type: 'tool_use',
+      executionStatus: 'failed',
+      resultReady: true,
+      result: 'tool error: exit code 1',
+      error: 'exit code 1',
+    });
+  });
+
+  it('marks a pre-invocation error result as failed', () => {
+    const { messages, ctx } = createTestRig([{
+      id: 'tool-missing',
+      type: 'tool_use',
+      toolName: 'MissingTool',
+      toolInput: '{}',
+      toolId: 'call-missing',
+      executionStatus: 'pending',
+    }]);
+
+    process({
+      type: 'tool_result',
+      toolId: 'call-missing',
+      toolName: 'MissingTool',
+      result: 'tool not found',
+      isError: true,
+    }, ctx);
+
+    expect(messages[0]).toMatchObject({
+      type: 'tool_use',
+      executionStatus: 'failed',
+      resultReady: true,
+      result: 'tool not found',
+    });
+  });
+
+  it('does not turn a cancelled tool into a failure when its result is error-shaped', () => {
+    const { messages, ctx } = createTestRig([{
+      id: 'tool-cancelled',
+      type: 'tool_use',
+      toolName: 'Shell',
+      toolInput: '{}',
+      toolId: 'call-cancelled',
+      executionStatus: 'cancelled',
+    }]);
+
+    process({
+      type: 'tool_result',
+      toolId: 'call-cancelled',
+      toolName: 'Shell',
+      result: 'tool execution cancelled',
+      isError: true,
+    }, ctx);
+
+    expect(messages[0]).toMatchObject({
+      type: 'tool_use',
+      executionStatus: 'cancelled',
+      resultReady: true,
+    });
+  });
 });
 
 describe('wsEventProcessor pending interaction replay', () => {

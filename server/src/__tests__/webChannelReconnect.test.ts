@@ -364,10 +364,15 @@ describe('WebChannel active stream reconnect', () => {
         toolId: 'call-artifact-2',
         toolName: 'CreateArtifact',
         toolResult: 'tool error: Current workspace runtime is still preparing.',
+        isError: true,
       } as any,
     });
 
-    expect(emitted.some((d: { type: string }) => d.type === 'tool_result')).toBe(true);
+    expect(emitted).toContainEqual(expect.objectContaining({
+      type: 'tool_result',
+      toolId: 'call-artifact-2',
+      isError: true,
+    }));
     expect(emitted.some((d: { type: string }) => d.type === 'artifact_created')).toBe(false);
   });
 

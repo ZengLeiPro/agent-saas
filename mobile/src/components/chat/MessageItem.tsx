@@ -799,6 +799,8 @@ function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' }
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
 
   const hasResult = message.resultReady === true;
+  const hasIssue = message.executionStatus === 'failed';
+  const isCancelled = message.executionStatus === 'cancelled';
 
   // 延迟解析结果中的图片
   const parsed = useMemo(
@@ -812,8 +814,12 @@ function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' }
     [message.toolName, message.toolInput],
   );
 
-  const icon = message.streaming
+  const icon = message.streaming || message.executionStatus === 'running'
     ? <Ionicons name="build-outline" size={16} color={colors.mutedForeground} />
+    : hasIssue
+      ? <Ionicons name="alert-circle-outline" size={16} color={colors.warning} />
+      : isCancelled
+        ? <Ionicons name="close-circle-outline" size={16} color={colors.mutedForeground} />
     : hasResult
       ? <Ionicons name="checkmark-circle-outline" size={16} color={colors.mutedForeground} />
       : <ActivityIndicator size={16} color={colors.primary} />;
@@ -843,6 +849,7 @@ function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' }
             {displayInfo.name}{message.streaming ? '...' : ''}
           </Text>
         )}
+        {hasIssue && <Text style={{ color: colors.warning, fontSize: 11 }}>有异常</Text>}
         <Ionicons
           name="chevron-forward"
           size={16}
@@ -1185,11 +1192,28 @@ function SubagentBlock({ message }: { message: MessageItem & { type: 'subagent' 
   const typo = useChatTypography();
   const styles = useMessageStyles(colors, typo);
 
+  const hasIssue = message.status === 'failed' || message.status === 'timeout';
+  const iconName = message.status === 'running'
+    ? 'time-outline'
+    : hasIssue
+      ? 'alert-circle-outline'
+      : message.status === 'cancelled'
+        ? 'close-circle-outline'
+        : 'checkmark-outline';
+  const statusText = message.status === 'running'
+    ? `子任务: ${message.agentType}`
+    : message.status === 'failed'
+      ? `子任务未完成: ${message.agentType}`
+      : message.status === 'timeout'
+        ? `子任务超时: ${message.agentType}`
+        : message.status === 'cancelled'
+          ? `子任务已取消: ${message.agentType}`
+          : `子任务: ${message.agentType}`;
+
   return (
-    <View style={styles.subagentBlock}>
-      <Text style={styles.subagentText}>
-        {message.status === 'running' ? '⏳' : '✅'} 子任务: {message.agentType}
-      </Text>
+    <View style={[styles.subagentBlock, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+      <Ionicons name={iconName} size={14} color={hasIssue ? colors.warning : colors.mutedForeground} />
+      <Text style={[styles.subagentText, hasIssue && { color: colors.warning }]}>{statusText}</Text>
     </View>
   );
 }
@@ -1373,16 +1397,24 @@ function ActivityGroupView({ group }: { group: ActivityGroup; isLast?: boolean }
 
   // Multi-item group
   const lastItem = group.items[group.items.length - 1];
-  const summary = getSummary(lastItem);
+  const issueCount = group.isActive ? 0 : group.items.filter(item => (
+    (item.type === 'tool_use' && item.executionStatus === 'failed')
+    || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
+  )).length;
+  const summary = issueCount > 0
+    ? { text: `执行结束 · ${issueCount} 个步骤未成功`, ellipsizeMode: 'tail' as const }
+    : getSummary(lastItem);
 
   return (
     <View style={styles.activityGroup}>
       <TouchableOpacity onPress={() => setExpanded(!expanded)} style={styles.activityHeaderRow} activeOpacity={0.7}>
         {group.isActive
           ? <ActivityIndicator size={16} color={colors.primary} />
-          : <Ionicons name="checkmark-circle-outline" size={16} color={colors.mutedForeground} style={{ opacity: 0.6 }} />
+          : issueCount > 0
+            ? <Ionicons name="alert-circle-outline" size={16} color={colors.warning} />
+            : <Ionicons name="checkmark-circle-outline" size={16} color={colors.mutedForeground} style={{ opacity: 0.6 }} />
         }
-        <Text style={[styles.activitySummaryText, { maxWidth: 384 }]} numberOfLines={1} ellipsizeMode={summary.ellipsizeMode}>{summary.text}</Text>
+        <Text style={[styles.activitySummaryText, { maxWidth: 384 }, issueCount > 0 && { color: colors.warning }]} numberOfLines={1} ellipsizeMode={summary.ellipsizeMode}>{summary.text}</Text>
         <Text style={styles.activityCount}>({group.items.length})</Text>
         <Ionicons
           name="chevron-forward"

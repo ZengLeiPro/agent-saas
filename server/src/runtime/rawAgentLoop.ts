@@ -1222,6 +1222,7 @@ export class RawAgentLoop implements AgentLoop {
       toolId: args.call.id,
       toolName: args.call.name,
       toolResult: args.content,
+      ...(args.isError ? { isError: true } : {}),
     };
     await this.append({
       type: 'tool_result',

@@ -56,7 +56,7 @@ export interface EventHandler {
   onToolStart?(toolId: string, toolName: string, tracker: ToolTracker): void | Promise<void>;
   onToolInputDelta?(partialJson: string, toolId: string, toolName: string): void | Promise<void>;
   onToolEnd?(toolId: string, resolvedToolName: string, toolInput: string): void | Promise<void>;
-  onToolResult?(toolId: string, toolName: string, result: string): void | Promise<void>;
+  onToolResult?(toolId: string, toolName: string, result: string, isError?: boolean): void | Promise<void>;
   // SDK 0.2.112+ 新事件透传
   onContextUsage?(usage: ContextUsageData): void | Promise<void>;
   onPluginInstall?(data: PluginInstallData): void | Promise<void>;
@@ -211,7 +211,11 @@ export class EventConsumer implements ToolTracker {
           case 'tool_result': {
             const toolId = event.toolId || '';
             const toolName = this._toolNameMap.get(toolId) || event.toolName || 'unknown';
-            await handler.onToolResult?.(toolId, toolName, event.toolResult || '');
+            if (event.isError) {
+              await handler.onToolResult?.(toolId, toolName, event.toolResult || '', true);
+            } else {
+              await handler.onToolResult?.(toolId, toolName, event.toolResult || '');
+            }
             break;
           }
 

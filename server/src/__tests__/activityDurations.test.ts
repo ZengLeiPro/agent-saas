@@ -128,6 +128,50 @@ describe("transcript activity durations", () => {
     expect(enriched.blocks[1]).toMatchObject({ executionStatus: "cancelled" });
   });
 
+  it("restores tool_result.isError failures that happened before invocation", () => {
+    const parsed: ParsedTranscript = {
+      sessionId: "session-result-error",
+      blocks: [
+        { id: "tool", kind: "tool_use", title: "工具调用", defaultOpen: false, content: "{}", toolName: "MissingTool", toolId: "call-missing" },
+        { id: "result", kind: "tool_result", title: "结果", defaultOpen: false, content: "tool not found", toolName: "MissingTool", toolId: "call-missing", isError: true },
+      ],
+      stats: { lines: 2, parsedLines: 2, parseErrors: 0 },
+    };
+    const enriched = enrichTranscriptActivityDurations(parsed, [], "session-result-error");
+
+    expect(enriched.blocks[0]).toMatchObject({
+      kind: "tool_use",
+      executionStatus: "failed",
+    });
+  });
+
+  it("keeps cancellation distinct from an error-shaped tool result", () => {
+    const parsed: ParsedTranscript = {
+      sessionId: "session-cancelled-result",
+      blocks: [
+        { id: "tool", kind: "tool_use", title: "工具调用", defaultOpen: false, content: "{}", toolName: "Shell", toolId: "call-cancelled" },
+        { id: "result", kind: "tool_result", title: "结果", defaultOpen: false, content: "cancelled", toolName: "Shell", toolId: "call-cancelled", isError: true },
+      ],
+      stats: { lines: 2, parsedLines: 2, parseErrors: 0 },
+    };
+    const events: PlatformEvent[] = [{
+      id: "cancelled",
+      timestamp: "2026-07-14T01:00:00.000Z",
+      type: "tool_invocation_completed",
+      runId: "run-cancelled-result",
+      sessionId: "session-cancelled-result",
+      invocationId: "inv-cancelled",
+      toolCallId: "call-cancelled",
+      toolName: "Shell",
+      status: "cancelled",
+      durationMs: 100,
+    }];
+
+    const enriched = enrichTranscriptActivityDurations(parsed, events, "session-cancelled-result");
+
+    expect(enriched.blocks[0]).toMatchObject({ executionStatus: "cancelled" });
+  });
+
   it("prefers assistant_thinking.durationMs and mixes with legacy delta pairing in order", () => {
     // 2026-07-03 起 delta 停写：新轮由聚合行 durationMs 供时长，旧轮（存量）仍靠
     // delta start/end 配对。混合会话按事件时间序各产出各的，不双计。

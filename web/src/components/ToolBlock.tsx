@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { formatJson } from './types';
 import { parseToolResult, getToolDisplayInfo } from '@agent/shared';
-import { Wrench, CheckCircle2, ChevronRight, X, Loader2, CircleDashed, XCircle } from "lucide-react";
+import { Wrench, CheckCircle2, ChevronRight, X, Loader2, CircleAlert, CircleDashed, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { activityStatusBadgeClass, activityStatusIconClass, formatActivityDuration, type ActivityStatusTone } from "./activityStatusStyles";
 
@@ -90,7 +90,7 @@ interface ToolBlockProps {
 function getExecutionLabel(status?: ToolBlockProps["executionStatus"], resultReady?: boolean): string {
   if (status === "running") return "执行中";
   if (status === "pending") return "待执行";
-  if (status === "failed") return "失败";
+  if (status === "failed") return "有异常";
   if (status === "cancelled") return "已取消";
   if (status === "completed" || resultReady) return "已完成";
   return "待执行";
@@ -98,7 +98,7 @@ function getExecutionLabel(status?: ToolBlockProps["executionStatus"], resultRea
 
 function getExecutionTone(status?: ToolBlockProps["executionStatus"], resultReady?: boolean, streaming?: boolean): ActivityStatusTone {
   if (status === "running" || streaming) return "active";
-  if (status === "failed") return "danger";
+  if (status === "failed") return "warning";
   if (status === "cancelled") return "neutral";
   if (status === "completed" || resultReady) return "success";
   return "pending";
@@ -116,7 +116,7 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
   const icon = executionStatus === "running"
     ? <Loader2 className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-spin")} />
     : executionStatus === "failed"
-      ? <XCircle className={activityStatusIconClass("danger", "h-3.5 w-3.5 shrink-0")} />
+      ? <CircleAlert className={activityStatusIconClass("warning", "h-3.5 w-3.5 shrink-0")} />
       : executionStatus === "cancelled"
         ? <XCircle className={activityStatusIconClass("neutral", "h-3.5 w-3.5 shrink-0")} />
       : resultReady || executionStatus === "completed"
@@ -160,8 +160,12 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
             <pre className="whitespace-pre-wrap break-words">{formatted}</pre>
             {resultReady && (
               <>
-                <div className="my-2 border-t border-border pt-2 font-mono text-xs text-muted-foreground">Result:</div>
-                <ResultContent result={result || ""} toolName={toolName} />
+                <div className={cn("my-2 border-t border-border pt-2 font-mono text-xs", executionStatus === "failed" ? "text-destructive" : "text-muted-foreground")}>
+                  {executionStatus === "failed" ? "Error:" : "Result:"}
+                </div>
+                <div className={cn(executionStatus === "failed" && "text-destructive")}>
+                  <ResultContent result={executionStatus === "failed" ? error || result || "" : result || ""} toolName={toolName} />
+                </div>
               </>
             )}
             {!resultReady && (lastProgress || error) && (
@@ -169,7 +173,7 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
                 <div className="my-2 border-t border-border pt-2 font-mono text-xs text-muted-foreground">
                   {error ? "Error:" : "Progress:"}
                 </div>
-                <pre className="whitespace-pre-wrap break-words">{error || lastProgress}</pre>
+                <pre className={cn("whitespace-pre-wrap break-words", error && "text-destructive")}>{error || lastProgress}</pre>
               </>
             )}
           </div>

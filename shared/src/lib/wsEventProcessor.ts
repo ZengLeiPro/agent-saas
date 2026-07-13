@@ -494,7 +494,13 @@ export function processWsEvent(
                 ...prev,
                 result: data.result || "",
                 resultReady: true,
-                executionStatus: data.isError ? "failed" : "completed",
+                executionStatus: prev.executionStatus === "cancelled"
+                  ? "cancelled"
+                  : data.isError
+                    ? "failed"
+                    : prev.executionStatus === "failed"
+                      ? "failed"
+                      : "completed",
               }
             : prev
         );

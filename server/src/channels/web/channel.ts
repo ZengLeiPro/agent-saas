@@ -47,7 +47,7 @@ import { speechToText, type SttConfig } from '../../integrations/stt/sttClient.j
 import { EventBufferStore } from './eventBuffer.js';
 import { clearSessionsListCache } from '../../routes/sessions.js';
 import { extractTitleContext, generateTitleWithFallback, type TitleGeneratorConfig } from '../../agent/titleGenerator.js';
-import { checkTopicScope, extractRecentDialog, type GuardrailModelConfig } from '../../agent/guardrail.js';
+import { checkTopicScope, extractRecentUserMessages, type GuardrailModelConfig } from '../../agent/guardrail.js';
 import { isCompactCommand } from '../../agent/prompt.js';
 import { isAssignedToOrgAgent, type OrgAgentStore } from '../../data/orgAgents/store.js';
 import type { OrgAgentRecord } from '../../data/orgAgents/types.js';
@@ -165,7 +165,7 @@ export interface WebChannelConfig {
   getGuardrailModelConfigs?: () => GuardrailModelConfig[];
   /** 门禁事件落库（PG backend）。缺省（file backend）时降级 log，判定照常。 */
   guardrailEventStore?: GuardrailEventStore;
-  /** 门禁调用参数（config.json guardrail 段 timeoutMs / maxRecentRounds）。 */
+  /** 门禁调用参数（maxRecentRounds 现表示最近真实用户消息数，配置键为兼容历史保留）。 */
   guardrailOptions?: { timeoutMs?: number; maxRecentRounds?: number };
   /** raw runtime 持久化 approval 的恢复入口 */
   resumeApprovalDispatch?: (request: RawApprovalResumeRequest) => AsyncGenerator<OutboundEvent>;
@@ -1989,7 +1989,7 @@ export class WebChannel implements BaseChannel {
     let validSessionId = sessionId;
     let targetCwd: string | undefined;
     let sessionOwner: ChannelContext['sessionOwner'];
-    // 专职 Agent 门禁需要的会话上下文：meta（orgAgentId 事实源）+ transcript 路径（最近对话）
+    // 专职 Agent 门禁需要的会话上下文：meta（orgAgentId 事实源）+ transcript 路径（最近用户消息）
     let gateSessionMeta: SessionMeta | null = null;
     let gateTranscriptPath: string | undefined;
     if (sessionId) {
@@ -2141,15 +2141,15 @@ export class WebChannel implements BaseChannel {
           const guardText = resolvedMessage.startsWith(VOICE_STT_TAG)
             ? resolvedMessage.slice(VOICE_STT_TAG.length)
             : resolvedMessage;
-          const recentDialog = gateTranscriptPath
-            ? await extractRecentDialog(gateTranscriptPath, this.config.guardrailOptions?.maxRecentRounds ?? 2)
+          const recentUserMessages = gateTranscriptPath
+            ? await extractRecentUserMessages(gateTranscriptPath, this.config.guardrailOptions?.maxRecentRounds ?? 2)
             : [];
           const check = await checkTopicScope(
             {
               message: guardText,
               scopeDescription: orgAgentRecord.guardrail.scopeDescription,
               strictness: orgAgentRecord.guardrail.strictness,
-              recentDialog,
+              recentUserMessages,
             },
             guardrailConfigs,
             {

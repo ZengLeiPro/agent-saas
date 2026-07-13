@@ -455,7 +455,7 @@ const guardrailConfigSchema = z.object({
   fallbackModels: z.array(z.string().min(1)).optional(),
   /** 单次门禁模型调用超时，默认 6000ms */
   timeoutMs: z.number().int().positive().optional(),
-  /** 门禁读取 transcript 最近对话轮数，默认 2 */
+  /** 门禁读取 transcript 最近真实用户消息数，默认 2（配置键为兼容历史保留 rounds 命名） */
   maxRecentRounds: z.number().int().min(0).max(10).optional(),
 });
 

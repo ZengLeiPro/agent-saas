@@ -7,9 +7,18 @@
  *   - onUsage 回调收到 usage（记账 channel='guardrail' 的数据源）
  */
 
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { checkTopicScope, type GuardrailCheckInput, type GuardrailModelConfig } from '../agent/guardrail.js';
+import {
+  checkTopicScope,
+  extractRecentUserMessages,
+  type GuardrailCheckInput,
+  type GuardrailModelConfig,
+} from '../agent/guardrail.js';
 
 type QueueEntry = { content: string | null } | { hangUntilAbort: true } | Error;
 
@@ -17,17 +26,32 @@ type QueueEntry = { content: string | null } | { hangUntilAbort: true } | Error;
 // hangUntilAbort 条目挂起到 AbortSignal 触发（模拟超时），验证 per-attempt 超时回落。
 vi.mock('openai', () => {
   const responseQueue: Map<string, QueueEntry[]> = (globalThis as any).__guardrailResponseQueue ??= new Map();
-  const createCalls: Array<{ model: string; temperature?: number; max_tokens?: number }> =
+  const createCalls: Array<{
+    model: string;
+    temperature?: number;
+    max_tokens?: number;
+    messages?: Array<{ role: string; content: string }>;
+  }> =
     (globalThis as any).__guardrailCreateCalls ??= [];
   class MockOpenAI {
     constructor(_opts: { apiKey: string }) {}
     chat = {
       completions: {
         create: async (
-          req: { model: string; temperature?: number; max_tokens?: number },
+          req: {
+            model: string;
+            temperature?: number;
+            max_tokens?: number;
+            messages?: Array<{ role: string; content: string }>;
+          },
           opts?: { signal?: AbortSignal },
         ) => {
-          createCalls.push({ model: req.model, temperature: req.temperature, max_tokens: req.max_tokens });
+          createCalls.push({
+            model: req.model,
+            temperature: req.temperature,
+            max_tokens: req.max_tokens,
+            messages: req.messages,
+          });
           const queue = responseQueue.get(req.model) ?? [];
           const next = queue.shift();
           if (next instanceof Error) throw next;
@@ -59,7 +83,12 @@ function queueResponse(model: string, entry: QueueEntry) {
   queue.get(model)!.push(entry);
 }
 
-function createCalls(): Array<{ model: string; temperature?: number; max_tokens?: number }> {
+function createCalls(): Array<{
+  model: string;
+  temperature?: number;
+  max_tokens?: number;
+  messages?: Array<{ role: string; content: string }>;
+}> {
   return (globalThis as any).__guardrailCreateCalls;
 }
 
@@ -68,7 +97,7 @@ function checkInput(overrides: Partial<GuardrailCheckInput> = {}): GuardrailChec
     message: '帮我写周报',
     scopeDescription: '唯恩电气重载连接器产品选型问答',
     strictness: 'strict',
-    recentDialog: [],
+    recentUserMessages: [],
     ...overrides,
   };
 }
@@ -90,6 +119,24 @@ describe('checkTopicScope', () => {
     }
     // 调用参数按计划锁定：temperature 0 / max_tokens 48
     expect(createCalls()[0]).toMatchObject({ temperature: 0, max_tokens: 48 });
+  });
+
+  it('门禁 prompt 只传最近用户消息，并把合理简短接续明确列为 in_scope', async () => {
+    queueResponse('guard-main', { content: '{"verdict":"in_scope"}' });
+    await checkTopicScope(checkInput({
+      message: '第二个呢',
+      recentUserMessages: ['帮我推荐两款重载连接器', '先比较一下额定电流'],
+    }), [MAIN]);
+
+    const messages = createCalls()[0].messages ?? [];
+    expect(messages.map((message) => message.role)).toEqual(['system', 'user']);
+    const prompt = messages[1].content;
+    expect(prompt).toContain('<最近用户消息>');
+    expect(prompt).toContain('用户：帮我推荐两款重载连接器');
+    expect(prompt).toContain('用户：先比较一下额定电流');
+    expect(prompt).not.toContain('助手：');
+    expect(prompt).toContain('只要结合最近用户消息与话题范围看似存在合理延续关系');
+    expect(prompt).toContain('不得因消息以「继续」等衔接词开头而忽略其后的完整范围外意图');
   });
 
   it('markdown 代码块包裹 JSON 走 fenced block 解析（F12 收紧后仍支持）', async () => {
@@ -149,5 +196,32 @@ describe('checkTopicScope', () => {
       cacheReadInputTokens: 12,
       apiRequestCount: 1,
     });
+  });
+});
+
+describe('extractRecentUserMessages', () => {
+  it('只读取最后两条真实用户消息，忽略 assistant、thinking、tool_use 和 tool_result', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'guardrail-user-messages-'));
+    const transcriptPath = join(dir, 'session.jsonl');
+    const lines = [
+      { type: 'user', message: { role: 'user', content: '[2026/07/13 周一 19:00] 第一条用户问题' } },
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'thinking', thinking: '内部思考' }, { type: 'text', text: '第一条助手回复' }] } },
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Search' }] } },
+      { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: '工具结果' }] } },
+      { type: 'user', message: { role: 'user', content: '第二条用户问题' } },
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '第二条助手回复' }] } },
+      { type: 'user', message: { role: 'user', content: '第三条用户问题' } },
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '不要把这条助手回复传给门禁' }] } },
+    ];
+
+    try {
+      await writeFile(transcriptPath, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`, 'utf-8');
+      await expect(extractRecentUserMessages(transcriptPath, 2)).resolves.toEqual([
+        '第二条用户问题',
+        '第三条用户问题',
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

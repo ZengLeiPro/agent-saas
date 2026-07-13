@@ -56,6 +56,8 @@ export interface PricingModelConfig {
   usage_accounting?: UsageAccountingMode;
   /** 模型上下文窗口（token 数）。自动压缩阈值判断用；未配置则该模型不触发自动压缩。 */
   context_window?: number;
+  /** 自动压缩触发比例（0~1）；未配置时使用平台默认值。 */
+  auto_compact_threshold?: number;
 }
 
 export interface PricingModelsConfig {
@@ -122,11 +124,16 @@ const PRICING: Record<string, ModelPrice> = {
 let configuredPricing: Record<string, ModelPrice> = {};
 let configuredUsageAccounting: Record<string, UsageAccountingMode> = {};
 let configuredContextWindows: Record<string, number> = {};
+let configuredAutoCompactThresholds: Record<string, number> = {};
+
+/** 未配置模型级触发比例时的兼容默认值。 */
+export const DEFAULT_AUTO_COMPACT_THRESHOLD_RATIO = 0.8;
 
 export function configureModelPricing(modelsConfig: PricingModelsConfig | undefined): void {
   const next: Record<string, ModelPrice> = {};
   const nextAccounting: Record<string, UsageAccountingMode> = {};
   const nextContextWindows: Record<string, number> = {};
+  const nextAutoCompactThresholds: Record<string, number> = {};
   for (const group of modelsConfig?.groups ?? []) {
     for (const model of group.models ?? []) {
       if (model.pricing) {
@@ -141,11 +148,18 @@ export function configureModelPricing(modelsConfig: PricingModelsConfig | undefi
         nextContextWindows[model.value] = model.context_window;
         if (model.alias_actual) nextContextWindows[model.alias_actual] = model.context_window;
       }
+      if (typeof model.auto_compact_threshold === 'number'
+        && model.auto_compact_threshold > 0
+        && model.auto_compact_threshold < 1) {
+        nextAutoCompactThresholds[model.value] = model.auto_compact_threshold;
+        if (model.alias_actual) nextAutoCompactThresholds[model.alias_actual] = model.auto_compact_threshold;
+      }
     }
   }
   configuredPricing = next;
   configuredUsageAccounting = nextAccounting;
   configuredContextWindows = nextContextWindows;
+  configuredAutoCompactThresholds = nextAutoCompactThresholds;
 }
 
 /**
@@ -155,6 +169,14 @@ export function configureModelPricing(modelsConfig: PricingModelsConfig | undefi
  */
 export function getModelContextWindow(model: string): number | undefined {
   return configuredContextWindows[model];
+}
+
+/**
+ * 模型自动压缩触发比例。模型未显式配置时返回平台默认值，保证旧配置行为不变。
+ * 调用方仍需先确认该模型配置了 context_window。
+ */
+export function getModelAutoCompactThreshold(model: string): number {
+  return configuredAutoCompactThresholds[model] ?? DEFAULT_AUTO_COMPACT_THRESHOLD_RATIO;
 }
 
 /**

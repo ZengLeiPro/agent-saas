@@ -42,7 +42,7 @@ export interface TenantSettings {
     debugModeAllowed: boolean;
     /**
      * 会话上下文自动压缩（post-run 超阈值触发）。默认关闭，灰度租户先开。
-     * 生效还需模型配置 context_window（见 config.json models）。
+     * 生效还需模型配置 context_window；触发比例由模型 auto_compact_threshold 决定。
      */
     autoCompactEnabled: boolean;
     /**

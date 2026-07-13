@@ -5,6 +5,8 @@ import {
   configureModelPricing,
   computeCostMicro,
   computeUsageTotalTokens,
+  getModelAutoCompactThreshold,
+  getModelContextWindow,
   listKnownModels,
   __resetPricingWarnCacheForTest,
 } from '../data/usage/pricing.js';
@@ -167,6 +169,8 @@ describe('pricing.computeCostMicro', () => {
             alias_actual: 'gpt-5.5-alias',
             pricing: { input: 1, output: 2, cacheCreation: 3, cacheRead: 4 },
             usage_accounting: 'cache_tokens_separate',
+            context_window: 372_000,
+            auto_compact_threshold: 0.65,
           }],
         }],
       });
@@ -179,6 +183,10 @@ describe('pricing.computeCostMicro', () => {
       };
       expect(computeCostMicro('gpt-5.5', tokens)).toBe(1 * 10 + 2 * 20 + 4 * 30 + 3 * 40);
       expect(computeCostMicro('gpt-5.5-alias', tokens)).toBe(290);
+      expect(getModelContextWindow('gpt-5.5')).toBe(372_000);
+      expect(getModelContextWindow('gpt-5.5-alias')).toBe(372_000);
+      expect(getModelAutoCompactThreshold('gpt-5.5')).toBe(0.65);
+      expect(getModelAutoCompactThreshold('gpt-5.5-alias')).toBe(0.65);
     });
 
     it('OpenAI-compatible total 不额外叠加 cached tokens', () => {

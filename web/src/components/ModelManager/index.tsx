@@ -35,6 +35,8 @@ type EditableModel = {
   protocol?: ModelProtocol;
   usage_accounting?: "input_includes_cache" | "cache_tokens_separate";
   alias_actual?: string;
+  context_window?: number;
+  auto_compact_threshold?: number;
   tool_choice_modes?: Array<"auto" | "required" | "none" | "specific">;
   is_pseudo_reasoning?: boolean;
 };
@@ -460,7 +462,7 @@ export function ModelManager() {
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
         title="模型管理"
-        description="这里维护平台模型成本价、模型解析配置与记忆向量化 API；客户售价、积分倍率和组织毛利不在此处配置。"
+        description="这里维护平台模型上下文、自动压缩触发线、成本价与模型解析配置；客户售价、积分倍率和组织毛利不在此处配置。"
         actions={(
           <>
             {savedAt && <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" />已保存</Badge>}
@@ -760,6 +762,59 @@ export function ModelManager() {
                     <p className="text-xs text-muted-foreground">当前生效：{resolveModelProtocol(selectedModelContext.group, selectedModelContext.model)}</p>
                   </div>
                   <div className="space-y-1.5"><Label>usage accounting</Label><select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedModelContext.model.usage_accounting ?? ""} onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, { usage_accounting: e.target.value ? e.target.value as EditableModel["usage_accounting"] : undefined })}><option value="">auto / inferred</option><option value="input_includes_cache">input includes cache</option><option value="cache_tokens_separate">cache tokens separate</option></select><p className="text-xs text-muted-foreground">auto: claude-* uses separate cache tokens; other models treat cached tokens as part of input.</p></div>
+                </div>
+
+                <div className="rounded-md border bg-muted/20 p-3">
+                  <div className="mb-3">
+                    <Label>上下文与自动压缩</Label>
+                    <p className="text-xs text-muted-foreground">
+                      租户开启自动压缩后，当前上下文达到该模型触发线时，会在本回合结束后自动压缩。未配置窗口的模型不会自动压缩。
+                    </p>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>上下文窗口（tokens）</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        step="1000"
+                        placeholder="例如 128000"
+                        value={selectedModelContext.model.context_window ?? ""}
+                        onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, {
+                          context_window: e.target.value === "" ? undefined : Number(e.target.value),
+                        })}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>自动压缩触发比例（%）</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="99"
+                        step="0.1"
+                        placeholder="80"
+                        value={selectedModelContext.model.auto_compact_threshold == null
+                          ? ""
+                          : selectedModelContext.model.auto_compact_threshold * 100}
+                        onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, {
+                          auto_compact_threshold: e.target.value === "" ? undefined : Number(e.target.value) / 100,
+                        })}
+                      />
+                      <p className="text-xs text-muted-foreground">留空使用平台默认值 80%。</p>
+                    </div>
+                  </div>
+                  {selectedModelContext.model.context_window != null && selectedModelContext.model.context_window > 0 && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      当前实际触发线：
+                      <span className="font-medium text-foreground">
+                        {Math.floor(
+                          selectedModelContext.model.context_window
+                          * (selectedModelContext.model.auto_compact_threshold ?? 0.8),
+                        ).toLocaleString()} tokens
+                      </span>
+                      （{((selectedModelContext.model.auto_compact_threshold ?? 0.8) * 100).toFixed(1)}%）
+                    </p>
+                  )}
                 </div>
 
                 <div className="rounded-md border bg-muted/20 p-3">

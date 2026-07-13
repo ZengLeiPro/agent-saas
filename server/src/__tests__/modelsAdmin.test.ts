@@ -122,7 +122,13 @@ describe('models admin router', () => {
               name: 'Main',
               apiKey: 'sk-main',
               baseUrl: 'https://llm.example.invalid/v1',
-              models: [{ id: 'gpt', name: 'GPT', value: 'gpt-5.5' }],
+              models: [{
+                id: 'gpt',
+                name: 'GPT',
+                value: 'gpt-5.5',
+                context_window: 372_000,
+                auto_compact_threshold: 0.65,
+              }],
             }],
           },
           memoryIndex: {
@@ -145,8 +151,14 @@ describe('models admin router', () => {
       expect(response.status).toBe(200);
       const body = await readJson(response);
       expect(body.models.allowCrossGroupSwitch).toBe(true);
+      expect(body.models.groups[0].models[0]).toMatchObject({
+        context_window: 372_000,
+        auto_compact_threshold: 0.65,
+      });
       expect(body.memoryIndex.embedding.model).toBe('text-embedding-v3');
       expect(runtimeConfig.models?.groups[0]?.models[0]?.value).toBe('gpt-5.5');
+      expect(runtimeConfig.models?.groups[0]?.models[0]?.context_window).toBe(372_000);
+      expect(runtimeConfig.models?.groups[0]?.models[0]?.auto_compact_threshold).toBe(0.65);
       expect(runtimeConfig.memory?.index?.embedding.apiKey).toBe('new-embedding-key');
       expect(onModelsUpdated).toHaveBeenCalledWith(runtimeConfig.models);
       expect(onMemoryIndexUpdated).toHaveBeenCalledWith(runtimeConfig.memory?.index);
@@ -155,6 +167,8 @@ describe('models admin router', () => {
       expect(written.memory.injectContext).toEqual({ enabled: true, maxLines: 120 });
       expect(written.memory.index.embedding.apiKey).toBe('new-embedding-key');
       expect(written.models.groups[0].models[0].value).toBe('gpt-5.5');
+      expect(written.models.groups[0].models[0].context_window).toBe(372_000);
+      expect(written.models.groups[0].models[0].auto_compact_threshold).toBe(0.65);
     }, { onModelsUpdated, onMemoryIndexUpdated });
   });
 
@@ -183,6 +197,21 @@ describe('models admin router', () => {
       expect(response.status).toBe(200);
       const written = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(written.memory.index.embedding.apiKey).toBe('embedding-key');
+    });
+  });
+
+  it('rejects an automatic compaction threshold outside 0~1', async () => {
+    const rawConfig = baseRawConfig();
+    (rawConfig.models.groups[0]!.models[0] as Record<string, unknown>).auto_compact_threshold = 1;
+
+    await withApp(baseRawConfig(), async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: rawConfig.models }),
+      });
+      expect(response.status).toBe(400);
+      expect((await readJson(response)).error).toContain('auto_compact_threshold');
     });
   });
 });

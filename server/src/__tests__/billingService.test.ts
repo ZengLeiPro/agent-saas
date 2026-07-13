@@ -4,6 +4,29 @@ import { BillingService } from '../data/billing/service.js';
 import { CREDIT_MICRO, type TenantBillingPolicy } from '../data/billing/types.js';
 
 describe('BillingService hard cap guard', () => {
+  it('summarizes parent and child-session debits as one current conversation', async () => {
+    const store = {
+      getTenantPolicy: vi.fn(async () => ({ showCost: true })),
+      getSessionTreeLedgerSummary: vi.fn(async () => ({
+        creditsUsedMicro: 2737.58 * CREDIT_MICRO,
+        revenueYuanMicro: 547_502_908,
+        actualCostYuanMicro: 547_502_908,
+        childSessionCount: 7,
+      })),
+    };
+    const service = new BillingService({ store: store as any });
+    vi.spyOn(service, 'ensureProjected').mockResolvedValue();
+
+    await expect(service.getSessionSummary('pantheon', 'parent-session')).resolves.toEqual({
+      sessionId: 'parent-session',
+      creditsUsed: 2737.58,
+      revenueYuan: 547.502908,
+      actualCostYuan: 547.502908,
+      childSessionCount: 7,
+    });
+    expect(store.getSessionTreeLedgerSummary).toHaveBeenCalledWith('pantheon', 'parent-session');
+  });
+
   it('allows internal billing tenants regardless of balance', async () => {
     const service = new BillingService({
       store: fakeStore({

@@ -21,6 +21,7 @@ interface SessionBillingSummary {
   sessionId: string;
   creditsUsed: number;
   revenueYuan: number;
+  childSessionCount?: number;
 }
 
 interface BillingMiniBadgeProps {
@@ -31,6 +32,11 @@ function formatCredits(value: number): string {
   if (!Number.isFinite(value)) return "0";
   if (Math.abs(value) >= 10_000) return `${(value / 10_000).toFixed(1)}万`;
   if (Math.abs(value) >= 100) return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatSessionCredits(value: number): string {
+  if (!Number.isFinite(value)) return "0";
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
@@ -160,8 +166,10 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
             </div>
             {sessionSummary && (
               <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">当前会话</span>
-                <span className="font-mono tabular-nums">{formatCredits(sessionSummary.creditsUsed)}</span>
+                <span className="text-muted-foreground">
+                  当前会话{sessionSummary.childSessionCount ? `（含 ${sessionSummary.childSessionCount} 个子 Agent）` : ''}
+                </span>
+                <span className="font-mono tabular-nums">{formatSessionCredits(sessionSummary.creditsUsed)}</span>
               </div>
             )}
           </div>

@@ -480,6 +480,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
       status: 'completed',
       totalTokens: 2500,
       toolUseCount: 1,
+      turnCount: 2,
       durationMs: 1000,
     });
 

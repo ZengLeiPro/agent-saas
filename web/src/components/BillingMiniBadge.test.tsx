@@ -31,7 +31,12 @@ describe("BillingMiniBadge", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            summary: { sessionId: "session-1", creditsUsed: 35, revenueYuan: 0.35 },
+            summary: {
+              sessionId: "session-1",
+              creditsUsed: 2737.58,
+              revenueYuan: 547.502908,
+              childSessionCount: 7,
+            },
           }),
           { status: 200 },
         ),
@@ -44,7 +49,8 @@ describe("BillingMiniBadge", () => {
     expect(screen.getByText("试用")).toBeTruthy();
     expect(screen.getByText("已预留")).toBeTruthy();
     expect(screen.getByText("本月消耗")).toBeTruthy();
-    expect(screen.getByText("当前会话")).toBeTruthy();
+    expect(screen.getByText("当前会话（含 7 个子 Agent）")).toBeTruthy();
+    expect(screen.getByText("2,737.58")).toBeTruthy();
     expect(screen.queryByText(/每日刷新|免费积分|300/)).toBeNull();
   });
 

@@ -817,6 +817,51 @@ export class PgBillingStore {
     };
   }
 
+  async getSessionTreeLedgerSummary(tenantId: string, rootSessionId: string): Promise<{
+    creditsUsedMicro: number;
+    revenueYuanMicro: number;
+    actualCostYuanMicro: number;
+    childSessionCount: number;
+  }> {
+    const sessionTreeCte = this.eventsTable
+      ? `
+        WITH RECURSIVE session_tree(session_id) AS (
+          SELECT $2::text
+          UNION
+          SELECT e.event_json->>'childSessionId'
+          FROM ${this.eventsTable} e
+          JOIN session_tree parent ON e.session_id = parent.session_id
+          WHERE e.tenant_id = $1
+            AND e.event_type IN ('subagent_started', 'subagent_finished')
+            AND COALESCE(e.event_json->>'childSessionId', '') <> ''
+        )
+      `
+      : `WITH session_tree(session_id) AS (SELECT $2::text)`;
+    const result = await this.pool.query<{
+      credits_used_micro: string;
+      revenue_yuan_micro: string;
+      actual_cost_yuan_micro: string;
+      child_session_count: string;
+    }>(`
+      ${sessionTreeCte}
+      SELECT
+        COALESCE(SUM(CASE WHEN l.type = 'debit' THEN GREATEST(-l.credits_delta_micro, 0) ELSE 0 END), 0)::text AS credits_used_micro,
+        COALESCE(SUM(CASE WHEN l.type = 'debit' THEN l.revenue_yuan_micro ELSE 0 END), 0)::text AS revenue_yuan_micro,
+        COALESCE(SUM(CASE WHEN l.type = 'debit' THEN l.actual_cost_yuan_micro ELSE 0 END), 0)::text AS actual_cost_yuan_micro,
+        (SELECT GREATEST(COUNT(*) - 1, 0)::text FROM session_tree) AS child_session_count
+      FROM ${this.creditLedgerTable} l
+      WHERE l.tenant_id = $1
+        AND l.session_id IN (SELECT session_id FROM session_tree)
+    `, [tenantId, rootSessionId]);
+    const row = result.rows[0];
+    return {
+      creditsUsedMicro: Number(row?.credits_used_micro ?? 0),
+      revenueYuanMicro: Number(row?.revenue_yuan_micro ?? 0),
+      actualCostYuanMicro: Number(row?.actual_cost_yuan_micro ?? 0),
+      childSessionCount: Number(row?.child_session_count ?? 0),
+    };
+  }
+
   async deleteTenantData(tenantId: string): Promise<{ usageEvents: number; creditLedger: number; creditAccounts: number; tenantPolicies: number }> {
     const client = await this.pool.connect();
     try {

@@ -95,19 +95,18 @@ export class BillingService {
     };
   }
 
-  async getSessionSummary(tenantId: string, sessionId: string): Promise<{ sessionId: string; creditsUsed: number; revenueYuan: number; actualCostYuan?: number }> {
+  async getSessionSummary(tenantId: string, sessionId: string): Promise<{ sessionId: string; creditsUsed: number; revenueYuan: number; actualCostYuan?: number; childSessionCount: number }> {
     await this.ensureProjected();
-    const policy = await this.options.store.getTenantPolicy(tenantId);
-    const { entries: ledger } = await this.options.store.listLedger({ tenantId, sessionId, limit: 200 });
-    const debits = ledger.filter((entry) => entry.type === 'debit');
-    const creditsUsedMicro = debits.reduce((sum, entry) => sum + Math.max(0, -entry.creditsDeltaMicro), 0);
-    const revenueYuanMicro = debits.reduce((sum, entry) => sum + entry.revenueYuanMicro, 0);
-    const actualCostYuanMicro = debits.reduce((sum, entry) => sum + entry.actualCostYuanMicro, 0);
+    const [policy, tree] = await Promise.all([
+      this.options.store.getTenantPolicy(tenantId),
+      this.options.store.getSessionTreeLedgerSummary(tenantId, sessionId),
+    ]);
     return {
       sessionId,
-      creditsUsed: creditsUsedMicro / CREDIT_MICRO,
-      revenueYuan: revenueYuanMicro / 1_000_000,
-      ...(policy.showCost ? { actualCostYuan: actualCostYuanMicro / 1_000_000 } : {}),
+      creditsUsed: tree.creditsUsedMicro / CREDIT_MICRO,
+      revenueYuan: tree.revenueYuanMicro / 1_000_000,
+      ...(policy.showCost ? { actualCostYuan: tree.actualCostYuanMicro / 1_000_000 } : {}),
+      childSessionCount: tree.childSessionCount,
     };
   }
 

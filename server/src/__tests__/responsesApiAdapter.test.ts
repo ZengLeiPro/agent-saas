@@ -40,6 +40,7 @@ const baseContext = {
 describe('ResponsesApiAdapter', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('首轮无 previousResponseId 走全量 input：system 进 instructions，user/assistant 进 input items', async () => {
@@ -69,7 +70,7 @@ describe('ResponsesApiAdapter', () => {
       model: 'doubao-seed-2.0-pro',
       messages: [
         { role: 'system', content: '你是助手' },
-        { role: 'user', content: '你好' },
+        { role: 'user', content: '[2026/07/14 周二 04:33] 你好' },
       ],
       tools: [],
     }, baseContext));
@@ -78,10 +79,9 @@ describe('ResponsesApiAdapter', () => {
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
     expect(body.model).toBe('doubao-seed-2.0-pro');
     expect(body.instructions).toBe('你是助手');
-    // user content 走 defendUserText：会自动追加 [YYYY/MM/DD 周X HH:mm] 时间戳前缀
     expect(body.input).toHaveLength(1);
     expect(body.input[0]).toMatchObject({ type: 'message', role: 'user' });
-    expect(body.input[0].content[0].text).toMatch(/^\[\d{4}\/\d{2}\/\d{2}\s+周[一二三四五六日]\s+\d{2}:\d{2}\]\s+你好$/);
+    expect(body.input[0].content[0].text).toBe('[2026/07/14 周二 04:33] 你好');
     expect(body.store).toBe(true);
     expect(body.stream).toBe(true);
     expect(body.previous_response_id).toBeUndefined();
@@ -109,6 +109,57 @@ describe('ResponsesApiAdapter', () => {
     ]);
   });
 
+  it('full replay 跨 5 分钟和分钟边界时 input 与前缀 hash 保持稳定', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_stable', model: 'gpt-5.6-sol' } }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: {
+          id: 'resp_stable',
+          model: 'gpt-5.6-sol',
+          status: 'completed',
+          usage: { input_tokens: 20, output_tokens: 1, input_tokens_details: { cached_tokens: 10 } },
+        },
+      }),
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk-test', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses', disableResponseChaining: true },
+    );
+    const request = {
+      model: 'gpt-5.6-sol',
+      messages: [
+        { role: 'system' as const, content: 'sys' },
+        { role: 'user' as const, content: '[2026/07/14 周二 04:33] 调研代码' },
+        { role: 'assistant' as const, content: '先读取文件' },
+        { role: 'user' as const, content: '[2026/07/14 周二 04:34] 继续' },
+      ],
+      tools: [],
+    };
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-13T20:37:59.000Z'));
+    const first = await collect(adapter.stream(request, baseContext));
+    vi.setSystemTime(new Date('2026-07-13T20:49:01.000Z'));
+    const second = await collect(adapter.stream(request, baseContext));
+
+    const body1 = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    const body2 = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(body2.input).toEqual(body1.input);
+    expect(body2.prompt_cache_key).toBe(body1.prompt_cache_key);
+    const firstCompleted = first.find((event) => event.type === 'completed');
+    const secondCompleted = second.find((event) => event.type === 'completed');
+    expect(firstCompleted).toMatchObject({
+      responseMode: 'full',
+      requestInputPrefixHash: expect.any(String),
+    });
+    expect(secondCompleted).toMatchObject({
+      responseMode: 'full',
+      requestInputPrefixHash:
+        firstCompleted?.type === 'completed' ? firstCompleted.requestInputPrefixHash : undefined,
+    });
+  });
+
   it('有 previousResponseId 时只发尾部 user 增量并附 previous_response_id', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
       sse('response.created', { type: 'response.created', response: { id: 'resp_xyz', model: 'glm-5.2' } }),
@@ -126,7 +177,7 @@ describe('ResponsesApiAdapter', () => {
         { role: 'system', content: 'sys' },
         { role: 'user', content: 'old' },
         { role: 'assistant', content: 'old-reply' },
-        { role: 'user', content: '继续' },
+        { role: 'user', content: '[2026/07/14 周二 04:34] 继续' },
       ],
       tools: [],
       previousResponseId: 'resp_prev',
@@ -136,7 +187,7 @@ describe('ResponsesApiAdapter', () => {
     expect(body.previous_response_id).toBe('resp_prev');
     expect(body.instructions).toBeUndefined();
     expect(body.input).toHaveLength(1);
-    expect(body.input[0].content[0].text).toMatch(/^\[\d{4}\/\d{2}\/\d{2}\s+周[一二三四五六日]\s+\d{2}:\d{2}\]\s+继续$/);
+    expect(body.input[0].content[0].text).toBe('[2026/07/14 周二 04:34] 继续');
     expect(events.find((event) => event.type === 'completed')).toMatchObject({
       responseChained: true,
       responseMode: 'relay',

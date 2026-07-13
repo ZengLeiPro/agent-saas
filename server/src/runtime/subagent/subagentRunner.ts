@@ -54,6 +54,7 @@ import { SessionContextService, SessionToolProvider } from '../sessionContext.js
 import type { TenantRemoteHandAuthTokenResolver } from '../tenantRemoteHandResolver.js';
 import type { RunContext } from '../types.js';
 import { createLogger } from '../../utils/logger.js';
+import { addTimestampPrefix } from '../../utils/timestamp.js';
 import type { SubagentTypeDefinition } from './agentTypes.js';
 import {
   sharedSubagentLimiter,
@@ -366,6 +367,9 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     // ── 消费子事件流：丢弃 delta，只聚合计数；子事件绝不 yield 进父 outbound 流 ──
     let toolUseCount = 0;
     let streamError: string | undefined;
+    // 子 Agent 绕过主 dispatch/buildPrompt，因此在它自己的入站边界固化一次时间戳。
+    // modelContent 会持久化这个值；后续 full replay 只能重放，adapter 不再按当前时钟改写。
+    const prompt = addTimestampPrefix(request.prompt, parentContext.channelContext.timezone);
     for await (const event of loop.run(
       {
         message: {
@@ -376,7 +380,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
           senderName: username,
           metadata: { subagent: true, parentRunId, parentSessionId },
         },
-        prompt: request.prompt,
+        prompt,
         instructions,
         maxTurns: agentType.maxTurns,
         connection: { apiKey, baseUrl },

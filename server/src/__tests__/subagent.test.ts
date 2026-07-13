@@ -255,13 +255,14 @@ describe('runSubagent', () => {
 
   it('completed：结果文本回传、usage 落 channel=subagent、子事件不进父 store、catalog 记 kind=subagent', async () => {
     const fixture = await makeFixture({ cleanupDirs });
+    const modelAdapter = new TextOnlyAdapter();
     const outcome = await runSubagent({
       ...runnerDeps(fixture),
       parentProviders: [createBuiltinTools()],
       agentType: SUBAGENT_TYPES.general,
       request: { description: '测试子任务', prompt: '完成测试子任务', includeCompanyInfo: false },
       limiter: new SubagentLimiter(),
-      modelAdapterFactory: () => new TextOnlyAdapter(),
+      modelAdapterFactory: () => modelAdapter,
     });
 
     expect(outcome.status).toBe('completed');
@@ -269,6 +270,10 @@ describe('runSubagent', () => {
     expect(outcome.errorMessage).toBeUndefined();
     expect(outcome.childSessionId.startsWith('sub-')).toBe(true);
     expect(outcome.totalTokens).toBe(15);
+    const firstUserMessage = modelAdapter.requests[0]?.messages.find((message) => message.role === 'user');
+    expect(firstUserMessage?.content).toMatch(
+      /^\[\d{4}\/\d{2}\/\d{2}\s+周[一二三四五六日]\s+\d{2}:\d{2}\]\s+完成测试子任务$/,
+    );
 
     // 关键不变量 1：父 session event store 零事件（runner 只写 childSessionId）
     await expect(fixture.parentEventStore.list(fixture.parentSessionId)).resolves.toEqual([]);
@@ -277,6 +282,10 @@ describe('runSubagent', () => {
     ).list(outcome.childSessionId);
     expect(childEvents.some((event) => event.type === 'run_started')).toBe(true);
     expect(childEvents.some((event) => event.type === 'run_finished' && event.subtype === 'success')).toBe(true);
+    expect(childEvents.find((event) => event.type === 'user_message')).toMatchObject({
+      content: '完成测试子任务',
+      modelContent: firstUserMessage?.content,
+    });
 
     // 关键不变量 2：usage 独立记账
     expect(fixture.usageRecords).toHaveLength(1);

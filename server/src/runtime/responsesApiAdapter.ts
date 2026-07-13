@@ -499,7 +499,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
    * 标准 agent loop 结构：[..., assistant_with_tool_calls, tool_1, tool_2] → 抽取 [tool_1, tool_2]
    *                    [..., assistant_message, user_new] → 抽取 [user_new]
    *
-   * user content 走 defendUserText（A3/B2 injection escape + B4 长英文中文 leading + G1 时间戳）。
+   * user content 走确定性 defense（A3/B2 injection escape + B4 长英文中文 leading）。
+   * 时间戳已在 runtime 入站时固化，接力 adapter 不再改写。
    */
   private extractIncrementalInput(messages: ModelChatMessage[], sessionIdShort?: string): ResponsesInputItem[] {
     const items: ResponsesInputItem[] = [];
@@ -534,8 +535,9 @@ export class ResponsesApiAdapter implements ModelAdapter {
 
   /**
    * 首轮全量 input 构造：system 走 instructions，其余按 ChatMessage → Responses input items 转换。
-   * user content 走 defendUserMessageText（A3/B2 injection escape + B4 长英文中文 leading + G1 时间戳；
-   * 平台注入上下文块只保留 escape，不加时间戳/中文 leading）。
+   * user content 走确定性 defendUserMessageText（A3/B2 injection escape + B4 长英文中文 leading；
+   * 平台注入上下文块只保留 escape）。时间戳已在 runtime 入站时固化，full replay
+   * 不得按当前时钟重写历史。
    */
   private buildFullInput(messages: ModelChatMessage[], sessionIdShort?: string): {
     instructions?: string;

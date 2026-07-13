@@ -28,6 +28,7 @@ async function collect(stream: AsyncIterable<ModelEvent>): Promise<ModelEvent[]>
 describe('ChatCompletionsModelAdapter', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('streams text, aggregates tool call deltas, and maps usage', async () => {
@@ -157,6 +158,7 @@ describe('ChatCompletionsModelAdapter', () => {
 describe('ChatCompletionsModelAdapter agent-plan defense (二轮加固)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   const baseCtx = { runId: 'r', sessionId: 's', model: 'doubao-pro', cwd: '/tmp', channelContext: { channel: 'web' as const } };
@@ -195,18 +197,18 @@ describe('ChatCompletionsModelAdapter agent-plan defense (二轮加固)', () => 
     expect(body.messages[0].content).toContain('请用简体中文回答以下问题');
   });
 
-  it('user content 走 defendUserText：自动注入时间戳 (G1)', async () => {
+  it('adapter 保留入站时已固化的时间戳，不按当前时钟改写', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
       sse({ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }),
       sse('[DONE]'),
     ]));
     await collect(adapter().stream({
       model: 'doubao-pro',
-      messages: [{ role: 'user', content: 'hi' }],
+      messages: [{ role: 'user', content: '[2026/07/14 周二 04:33] hi' }],
       tools: [],
     }, baseCtx));
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
-    expect(body.messages[0].content).toMatch(/^\[\d{4}\/\d{2}\/\d{2}\s+周[一二三四五六日]\s+\d{2}:\d{2}\]\s+hi$/);
+    expect(body.messages[0].content).toBe('[2026/07/14 周二 04:33] hi');
   });
 
   it('DSML 泄漏 throw user-friendly error (E3，preview 在日志)', async () => {
@@ -236,30 +238,28 @@ describe('ChatCompletionsModelAdapter agent-plan defense (二轮加固)', () => 
     expect(warnSpy.mock.calls.some((args) => String(args[0]).includes('Mojibake'))).toBe(true);
   });
 
-  it('cache key 用原始 messages 不受 defendUserText 影响 (O4 + 二轮加固 contract)', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+  it('full replay 跨 5 分钟与分钟边界时 cache key 和完整 messages 都稳定', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => responseStream([
       sse({ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }),
       sse('[DONE]'),
     ]));
-    // 两次调用，user content 相同但时间会变 → defended message 字节不同
+    const messages = [{ role: 'user' as const, content: '[2026/07/14 周二 04:33] stable cache test' }];
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-13T20:37:59.000Z'));
     await collect(adapter().stream({
       model: 'doubao-pro',
-      messages: [{ role: 'user', content: 'stable cache test' }],
+      messages,
       tools: [],
     }, baseCtx));
     const body1 = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
-    const key1 = body1.prompt_cache_key;
-    // 强制时钟前进 1 分钟
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(Date.now() + 60_000));
+    vi.setSystemTime(new Date('2026-07-13T20:49:01.000Z'));
     await collect(adapter().stream({
       model: 'doubao-pro',
-      messages: [{ role: 'user', content: 'stable cache test' }],
+      messages,
       tools: [],
     }, baseCtx));
     const body2 = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
-    expect(body2.prompt_cache_key).toBe(key1); // 内容指纹一致，路由稳定
-    expect(body1.messages[0].content).not.toBe(body2.messages[0].content); // 实际发的 user content 不同（时间戳变）
-    vi.useRealTimers();
+    expect(body2.prompt_cache_key).toBe(body1.prompt_cache_key);
+    expect(body2.messages).toEqual(body1.messages);
   });
 });

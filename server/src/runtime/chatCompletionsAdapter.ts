@@ -67,8 +67,9 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
         + 'Use ResponsesApiAdapter for cross-step reasoning chain (RFC v1 §3.1).',
       );
     }
-    // A3/B2/B4/G1 — user 通道防御 + 时间戳注入：对所有 user role message 走 defendUserMessageText
-    // （平台注入上下文块只保留 escape）。与 ResponsesApiAdapter 对齐，保持跨协议一致行为。
+    // A3/B2/B4 — 对所有 user role message 做确定性防御。时间戳已在 runtime 入站时固化，
+    // adapter 不得读取当前时钟改写历史，否则 full replay 的 prompt prefix 会失稳。
+    // 平台注入上下文块只保留 escape；与 ResponsesApiAdapter 对齐。
     const sessionIdShort = context.sessionId ? context.sessionId.slice(0, 8) : undefined;
     const defendedMessages: ModelChatMessage[] = request.messages.map((m) => (
       m.role === 'user'

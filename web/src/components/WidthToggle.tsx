@@ -18,6 +18,7 @@ export function WidthToggle({ isWide, onChange }: WidthToggleProps) {
         )}
         onClick={() => onChange(false)}
         title="窄版 (896px)"
+        aria-pressed={!isWide}
       >
         窄
       </button>
@@ -31,6 +32,7 @@ export function WidthToggle({ isWide, onChange }: WidthToggleProps) {
         )}
         onClick={() => onChange(true)}
         title="宽版 (1152px)"
+        aria-pressed={isWide}
       >
         宽
       </button>

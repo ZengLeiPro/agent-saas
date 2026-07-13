@@ -9,8 +9,7 @@ import { DesktopSessionSidebar } from "@/components/DesktopSessionSidebar";
 import { TrashView } from "@/components/chat/TrashView";
 import { TokenUsageDisplay } from "@/components/TokenUsageDisplay";
 import { BillingMiniBadge } from "@/components/BillingMiniBadge";
-import { FontSizeToggle } from "@/components/FontSizeToggle";
-import { WidthToggle } from "@/components/WidthToggle";
+import { DisplaySettingsMenu } from "@/components/DisplaySettingsMenu";
 import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
 import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControls";
 import { useChatFontSize } from "@/hooks/useChatFontSize";
@@ -343,9 +342,12 @@ export function DesktopLayout(props: LayoutProps) {
                 />
               )}
               <BillingMiniBadge sessionId={sessionId} />
-              <FontSizeToggle isLarge={chatFontLarge} onChange={setChatFontLarge} />
-              <div className="w-0.5" />
-              <WidthToggle isWide={chatWidthWide} onChange={setChatWidthWide} />
+              <DisplaySettingsMenu
+                isLarge={chatFontLarge}
+                isWide={chatWidthWide}
+                onFontSizeChange={setChatFontLarge}
+                onWidthChange={setChatWidthWide}
+              />
               {ttsPlayer.available && (
                 <Button
                   variant="ghost"

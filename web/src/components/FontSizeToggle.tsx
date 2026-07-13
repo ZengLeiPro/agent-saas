@@ -18,6 +18,7 @@ export function FontSizeToggle({ isLarge, onChange }: FontSizeToggleProps) {
         )}
         onClick={() => onChange(false)}
         title="小字体 (14px)"
+        aria-pressed={!isLarge}
       >
         小
       </button>
@@ -31,6 +32,7 @@ export function FontSizeToggle({ isLarge, onChange }: FontSizeToggleProps) {
         )}
         onClick={() => onChange(true)}
         title="大字体 (16px)"
+        aria-pressed={isLarge}
       >
         大
       </button>

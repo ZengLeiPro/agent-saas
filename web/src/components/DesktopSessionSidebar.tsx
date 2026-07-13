@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, useEffect, type ChangeEvent, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect, type Dispatch, type SetStateAction } from "react";
 import {
   Plus,
   MoreHorizontal,
@@ -15,9 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FolderMinus,
-  Camera,
   Check,
-  Lock,
   RefreshCw,
   Clock,
   Plug,
@@ -41,7 +39,6 @@ import { AddToGroupDialog } from "@/components/chat/AddToGroupDialog";
 import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDialog";
 import { SessionShareDialog } from "@/components/chat/SessionShareDialog";
 import { TrashView } from "@/components/chat/TrashView";
-import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
 
 import { refreshAll } from "@/lib/refreshBus";
@@ -60,7 +57,6 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
 import type { AuthUser } from "@/types/auth";
-import { TOKEN_KEY } from "@/lib/constants";
 import { useGroups } from "@/hooks/useGroups";
 import {
   applyGroupOrder,
@@ -592,12 +588,9 @@ interface SidebarUserMenuFooterProps {
   showUserMenu: boolean;
   setShowUserMenu: Dispatch<SetStateAction<boolean>>;
   userMenuRef: React.RefObject<HTMLDivElement>;
-  avatarInputRef: React.RefObject<HTMLInputElement>;
-  onAvatarUpload: (event: ChangeEvent<HTMLInputElement>) => void;
   isAdmin: boolean;
   isPlatformAdmin: boolean;
   onOpenSettings?: (section?: SettingsSectionId) => void;
-  onChangePassword: () => void;
   onNavigateAdminTab?: (tab: AppTab) => void;
   onOpenAdminSettings?: (target: AdminSettingsTarget) => void;
   onOpenBilling?: () => void;
@@ -612,12 +605,9 @@ function SidebarUserMenuFooter({
   showUserMenu,
   setShowUserMenu,
   userMenuRef,
-  avatarInputRef,
-  onAvatarUpload,
   isAdmin,
   isPlatformAdmin,
   onOpenSettings,
-  onChangePassword,
   onNavigateAdminTab,
   onOpenAdminSettings,
   onOpenBilling,
@@ -641,22 +631,22 @@ function SidebarUserMenuFooter({
           type="button"
           onClick={() => authEnabled && authUser && setShowUserMenu((v) => !v)}
           disabled={!authUser}
-          className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-muted disabled:opacity-50"
+          className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-muted disabled:opacity-50"
         >
           {authUser ? (
             authUser.avatar ? (
               <img
                 src={authUser.avatar}
                 alt=""
-                className="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-brand-100 ring-offset-1 ring-offset-background"
+                className="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-brand-100 ring-offset-1 ring-offset-background"
               />
             ) : (
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-[11px] font-semibold text-primary-foreground shadow-[0_2px_6px_rgba(46,86,225,0.32)]">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-[11px] font-semibold text-primary-foreground shadow-[0_2px_6px_rgba(46,86,225,0.32)]">
                 {authUser.username.charAt(0).toUpperCase()}
               </div>
             )
           ) : (
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
               <User className="h-3 w-3 text-muted-foreground" />
             </div>
           )}
@@ -672,13 +662,6 @@ function SidebarUserMenuFooter({
           </span>
           <ChevronsUpDown className="h-3 w-3 shrink-0 text-muted-foreground/60" />
         </button>
-        <input
-          ref={avatarInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          className="hidden"
-          onChange={onAvatarUpload}
-        />
         {showUserMenu && authEnabled && authUser && (
           <div className="absolute bottom-full left-0 z-50 mb-2 w-44 overflow-visible rounded-xl border bg-popover p-1 shadow-xl">
             <div
@@ -748,15 +731,7 @@ function SidebarUserMenuFooter({
             <div className={USER_MENU_SECTION}>
               <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenSettings?.("account"); }}>
                 <UserCog className="h-3.5 w-3.5" />
-                账户设置
-              </button>
-              <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); avatarInputRef.current?.click(); }}>
-                <Camera className="h-3.5 w-3.5" />
-                更换头像
-              </button>
-              <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onChangePassword(); }}>
-                <Lock className="h-3.5 w-3.5" />
-                修改密码
+                个人设置
               </button>
             </div>
 
@@ -899,8 +874,6 @@ interface SidebarDialogsProps {
   setAddSessionsGroupKey: (id: string | null) => void;
   addSessionsExistingSessionIds: Set<string>;
   handleAddSessionsToGroup: (sessionIds: string[]) => Promise<void>;
-  showPasswordDialog: boolean;
-  setShowPasswordDialog: (open: boolean) => void;
   compactDialogOpen: boolean;
   setCompactDialogOpen: (open: boolean) => void;
   onCompact?: () => Promise<void>;
@@ -933,8 +906,6 @@ function SidebarDialogs({
   setAddSessionsGroupKey,
   addSessionsExistingSessionIds,
   handleAddSessionsToGroup,
-  showPasswordDialog,
-  setShowPasswordDialog,
   compactDialogOpen,
   setCompactDialogOpen,
   onCompact,
@@ -1015,8 +986,6 @@ function SidebarDialogs({
         onConfirm={handleAddSessionsToGroup}
       />
 
-      <ChangePasswordDialog open={showPasswordDialog} onOpenChange={setShowPasswordDialog} />
-
       <Dialog open={compactDialogOpen} onOpenChange={setCompactDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -1078,45 +1047,14 @@ export function DesktopSessionSidebar({
   sidebarLayout = "double",
   personalAgentEnabled = true,
 }: DesktopSessionSidebarProps) {
-  const { user: authUser, accounts, switchAccount, authEnabled, updateAvatar } = useAuth();
+  const { user: authUser, accounts, switchAccount, authEnabled } = useAuth();
   const showBilling = useTenantBillingVisibility(authUser?.tenantId);
   // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
   const compactList = authUser?.preferences?.showSessionListAvatar !== true;
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
-  const avatarInputRef = useRef<HTMLInputElement>(null);
   const roleLabel = isPlatformAdmin ? "平台管理员" : isAdmin ? "组织管理员" : "用户";
-
-  const handleAvatarUpload = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      const formData = new FormData();
-      formData.append("avatar", file);
-      try {
-        const token = localStorage.getItem(TOKEN_KEY);
-        const res = await fetch("/api/auth/avatar", {
-          method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          body: formData,
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          alert((data as { error?: string }).error || "上传失败");
-          return;
-        }
-        const data = await res.json();
-        updateAvatar(data.avatar, data.avatarVersion);
-      } catch {
-        alert("上传失败");
-      }
-      // 重置 input 以允许再次选择同一文件
-      e.target.value = "";
-    },
-    [updateAvatar],
-  );
 
   // 压缩上下文确认弹窗
   const [compactDialogOpen, setCompactDialogOpen] = useState(false);
@@ -1868,12 +1806,9 @@ export function DesktopSessionSidebar({
           showUserMenu={showUserMenu}
           setShowUserMenu={setShowUserMenu}
           userMenuRef={userMenuRef}
-          avatarInputRef={avatarInputRef}
-          onAvatarUpload={handleAvatarUpload}
           isAdmin={isAdmin}
           isPlatformAdmin={isPlatformAdmin}
           onOpenSettings={onOpenSettings}
-          onChangePassword={() => setShowPasswordDialog(true)}
           onNavigateAdminTab={(tab) => (onPushTab ?? onTabChange)?.(tab)}
           onOpenAdminSettings={onOpenAdminSettings}
           onOpenBilling={() => {
@@ -1925,8 +1860,6 @@ export function DesktopSessionSidebar({
               : new Set()
           }
           handleAddSessionsToGroup={handleAddSessionsToGroup}
-          showPasswordDialog={showPasswordDialog}
-          setShowPasswordDialog={setShowPasswordDialog}
           compactDialogOpen={compactDialogOpen}
           setCompactDialogOpen={setCompactDialogOpen}
           onCompact={onCompact}
@@ -2211,12 +2144,9 @@ export function DesktopSessionSidebar({
             showUserMenu={showUserMenu}
             setShowUserMenu={setShowUserMenu}
             userMenuRef={userMenuRef}
-            avatarInputRef={avatarInputRef}
-            onAvatarUpload={handleAvatarUpload}
             isAdmin={isAdmin}
             isPlatformAdmin={isPlatformAdmin}
             onOpenSettings={onOpenSettings}
-            onChangePassword={() => setShowPasswordDialog(true)}
             onNavigateAdminTab={(tab) => {
               setSubPanelOpen(false);
               (onPushTab ?? onTabChange)?.(tab);
@@ -2437,8 +2367,6 @@ export function DesktopSessionSidebar({
             : new Set()
         }
         handleAddSessionsToGroup={handleAddSessionsToGroup}
-        showPasswordDialog={showPasswordDialog}
-        setShowPasswordDialog={setShowPasswordDialog}
         compactDialogOpen={compactDialogOpen}
         setCompactDialogOpen={setCompactDialogOpen}
         onCompact={onCompact}

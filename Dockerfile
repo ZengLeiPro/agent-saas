@@ -185,9 +185,9 @@ RUN pnpm install --frozen-lockfile \
     --filter '!web'
 
 # dws CLI（钉钉工作台 skill 依赖）— pin 版本避免 latest 漂浮
-# skills-pool/dws/SKILL.md frontmatter 要求 cli_version: ">=1.0.15"（v1.0.45 wukong-aligned baseline）
+# skills-pool/dws/SKILL.md frontmatter 要求 cli_version: ">=1.0.15"（v1.0.51 static-endpoint baseline）
 # npm 包名: dingtalk-workspace-cli（bin 名: dws）；不用 dws@... 会拉到无关的 Decarta wrapper
-RUN npm install -g dingtalk-workspace-cli@1.0.45 \
+RUN npm install -g dingtalk-workspace-cli@1.0.51 \
     && dws --version
 
 RUN pnpm -F server exec playwright install --with-deps chromium \

@@ -6,7 +6,7 @@
 |--------|------|
 | `dev app` | 应用生命周期（创建/查询/更新/删除/凭证/权限/成员/安全/网页/机器人/**建号**/版本/事件订阅） |
 | `dev connect` | **建联**：把现成机器人接到当前本地 agent（起 Stream，不建号） |
-| `dev doc` | 开放平台开发文档搜索（同 `dws devdoc`） |
+| `dev doc` | 开放平台开发文档搜索入口（当前网关未注册该工具键，`dev doc search` 会报「未找到指定工具」不可用；文档搜索一律走 `dws devdoc article search --query <关键词>`） |
 
 > ⚠️ **关键区分**：`dws chat bot search/find` 只查询已有机器人（IM 视角）；**创建/建号**机器人走 `dws dev app robot submit`；**建联**走 `dws dev connect`。"创建机器人"/"建联"一律走 `dev`，禁止走 `chat`。
 
@@ -75,8 +75,9 @@ dws dev app get --unified-app-id <unifiedAppId> --format json
 # 创建应用
 dws dev app create --name <名称> --desc <描述> --format json
 
-# 更新应用信息
-dws dev app update --unified-app-id <unifiedAppId> --name <新名称> --format json
+# 更新应用信息（写操作：先 --dry-run 预览，确认后加 --yes 执行；不加 --yes 会被拦下）
+dws dev app update --unified-app-id <unifiedAppId> --name <新名称> --dry-run --format json
+dws dev app update --unified-app-id <unifiedAppId> --name <新名称> --yes --format json
 
 # 停用/启用应用
 dws dev app disable --unified-app-id <unifiedAppId> --yes --format json
@@ -117,11 +118,8 @@ dws dev app robot disable --unified-app-id <unifiedAppId> --format json
 ## dev app credentials — 凭证
 
 ```bash
-# 查询 clientId/clientSecret
+# 查询 clientId/clientSecret（credentials 下只有 get 子命令）
 dws dev app credentials get --unified-app-id <unifiedAppId> --format json
-
-# 重置凭证（旧 secret 立即失效）
-dws dev app credentials reset --unified-app-id <unifiedAppId> --yes --format json
 ```
 
 ---
@@ -146,8 +144,8 @@ dws dev connect --channel opencode \
 dws dev connect --daemon \
   --robot-client-id <clientId> --robot-client-secret <clientSecret>
 
-# 查看/停止后台连接器
-dws dev connect status --format json
+# 查看/停止后台连接器（status/list 忽略全局 --format，出 JSON 用专属 --json）
+dws dev connect status --json
 dws dev connect stop
 ```
 
@@ -186,8 +184,8 @@ dws dev app event unsubscribe --unified-app-id <unifiedAppId> --event-codes <cod
 
 ```bash
 dws dev app permission list  --unified-app-id <unifiedAppId> --format json
-dws dev app permission add   --unified-app-id <unifiedAppId> --scope-code <scopeValue> --format json
-dws dev app permission remove --unified-app-id <unifiedAppId> --scope-code <scopeValue> --yes --format json
+dws dev app permission add   --unified-app-id <unifiedAppId> --scope-values <scopeValue> --format json
+dws dev app permission remove --unified-app-id <unifiedAppId> --scope-values <scopeValue> --yes --format json
 ```
 
 ---
@@ -207,7 +205,7 @@ dws dev app version status         --unified-app-id <unifiedAppId> --version-id 
 
 ## 注意事项
 
-- **`clientSecret` 只在 `robot result` 返回一次**，务必立即保存；遗失需走 `credentials reset` 重置
+- **`clientSecret` 只在 `robot result` 返回一次**，务必立即保存；dws 只能 `credentials get` 读取，不支持重置，遗失后到开放平台控制台重置密钥
 - 改配置后机器人不自动生效，需走 `version create → publish` 才上线
 - `hermes`/`openclaw` 渠道走官方建联，`dws dev connect` 不代建机器人，会输出指引后退出
 - 应用名在企业内唯一；`app list/get` 用 `--app-key` 过滤但不能定位单应用，定位单应用须用 `--unified-app-id`

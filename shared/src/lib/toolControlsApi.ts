@@ -1,7 +1,7 @@
 import { authFetch } from './authFetch';
 import { parseJsonResponse } from './parseJsonResponse';
 
-export type WebSearchProvider = 'brave' | 'volcengine';
+export type WebSearchProvider = 'brave' | 'volcengine' | 'tencent_wsa';
 
 export interface WebToolsSearchConfig {
   enabled?: boolean;

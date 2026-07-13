@@ -923,7 +923,7 @@ function applyApiKeyCredentialRefine(
 
 const webToolsSearchConfigSchema = z.object({
   enabled: z.boolean().optional(),
-  provider: z.enum(['brave', 'volcengine']).default('volcengine'),
+  provider: z.enum(['brave', 'volcengine', 'tencent_wsa']).default('volcengine'),
   endpoint: z.string().url().optional(),
   ...apiKeyCredentialFields,
   timeoutMs: z.number().int().positive().max(60_000).optional(),

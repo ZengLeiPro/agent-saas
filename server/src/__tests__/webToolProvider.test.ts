@@ -123,6 +123,100 @@ describe('WebToolProvider', () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
+  it('normalizes Tencent WSA SearchPro results and maps supported filters', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      expect(url).toBe('https://api.wsa.cloud.tencent.com/SearchPro');
+      expect(init?.method).toBe('POST');
+      expect(init?.headers).toMatchObject({
+        Authorization: 'Bearer tencent-wsa-secret-token',
+        'Content-Type': 'application/json; charset=utf-8',
+      });
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        Query: '腾讯云联网搜索',
+        Mode: 0,
+        Site: 'qq.com',
+      });
+      expect(body.Cnt).toBeUndefined();
+      expect(body.FromTime).toEqual(expect.any(Number));
+      expect(body.ToTime).toEqual(expect.any(Number));
+      return new Response(JSON.stringify({
+        Response: {
+          Query: '腾讯云联网搜索',
+          Version: 'standard',
+          RequestId: 'wsa-request-1',
+          Pages: [JSON.stringify({
+            title: '腾讯云联网搜索 API',
+            url: 'https://cloud.tencent.com/product/wsa',
+            passage: '来源于搜狗搜索的联网搜索服务。',
+            date: '2026-07-06 15:15:05',
+            site: '腾讯云',
+          })],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    const provider = new WebToolProvider({
+      search: { provider: 'tencent_wsa', apiKey: 'tencent-wsa-secret-token' },
+      fetch: { enabled: false },
+    }, fetchImpl);
+
+    const result = await provider.invoke(
+      {
+        toolId: 'WebSearch',
+        input: {
+          query: '腾讯云联网搜索',
+          count: 1,
+          freshness: 'day',
+          allowedDomains: ['https://qq.com/news'],
+        },
+        authorization: { approved: true, source: 'policy_auto' },
+      },
+      context(),
+    );
+
+    expect(result?.content).toContain('WEB_SEARCH_RESULTS');
+    expect(result?.content).toContain('"provider": "tencent_wsa"');
+    expect(result?.content).toContain('腾讯云联网搜索 API');
+    expect(result?.content).toContain('腾讯云');
+    expect(result?.content).not.toContain('tencent-wsa-secret-token');
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('retries Tencent WSA rate-limit responses without leaking the API key', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        Response: {
+          Error: { Code: 'RequestLimitExceeded', Message: 'request frequency exceeded' },
+          RequestId: 'wsa-rate-limited',
+        },
+      }), { status: 429, headers: { 'retry-after': '0' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        Response: {
+          Query: '限流重试',
+          Pages: [JSON.stringify({
+            title: '重试成功',
+            url: 'https://example.com/success',
+            passage: '第二次请求成功。',
+          })],
+          RequestId: 'wsa-success',
+        },
+      }), { status: 200 }));
+    const provider = new WebToolProvider({
+      search: { provider: 'tencent_wsa', apiKey: 'tencent-wsa-secret-token' },
+      fetch: { enabled: false },
+    }, fetchImpl as unknown as typeof fetch);
+
+    const result = await provider.invoke({
+      toolId: 'WebSearch',
+      input: { query: '限流重试', count: 1 },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context());
+
+    expect(result?.content).toContain('重试成功');
+    expect(result?.content).not.toContain('tencent-wsa-secret-token');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('fetches and extracts readable HTML behind an untrusted-content boundary', async () => {
     const fetchImpl = vi.fn(async () => new Response(
       '<html><head><title>Demo Page</title><script>steal()</script></head><body><main><h1>Demo Page</h1><p>Hello from the public web.</p></main></body></html>',

@@ -95,6 +95,12 @@ const SEARCH_PROVIDER_OPTIONS: Array<{
     keyRefPlaceholder: "brave-search-api-key",
     endpointPlaceholder: "https://api.search.brave.com/res/v1/web/search",
   },
+  {
+    value: "tencent_wsa",
+    label: "腾讯云联网搜索 WSA",
+    keyRefPlaceholder: "tencent-wsa-api-key",
+    endpointPlaceholder: "https://api.wsa.cloud.tencent.com/SearchPro",
+  },
 ];
 
 function splitList(value: string): string[] {

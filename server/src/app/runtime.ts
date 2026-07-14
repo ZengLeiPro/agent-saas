@@ -83,6 +83,7 @@ import type { RawRuntimeRunDispatchConfig, SkillsDispatchConfig } from '../runti
 import type { SkillEntry } from '../agent/skillToolProvider.js';
 import { McpClientManager } from '../mcp/clientManager.js';
 import { McpProxy } from '../mcp/proxy.js';
+import { McpOAuthService } from '../mcp/oauthService.js';
 import { CapabilityTokenService } from '../security/capabilityToken.js';
 import { EncryptedFileSecretVault, HttpSecretVault, InMemorySecretVault, type SecretVault } from '../security/secretVault.js';
 import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
@@ -154,6 +155,7 @@ export interface AppRuntime {
   agentStore?: AgentStore;
   skillConfigStore?: SkillConfigStore;
   mcpConfigStore?: McpConfigStore;
+  mcpOAuthService?: McpOAuthService;
   /** 自助注册动态配置（platform-admin 配置页写入，signup router 按 version 懒重建） */
   signupConfigStore?: SignupConfigStore;
   groupStore: GroupStore;
@@ -1146,6 +1148,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // MCP client manager（lazy connect per user）。failOnError=false 让连不上的
   // server 不阻塞 dispatch；δ 阶段加 connectTimeout=5s + invokeTimeout=30s 防 hung。
   const mcpConfigStore = new McpConfigStore(join(processCwd, 'data', 'mcp-config.json'));
+  const installedMcpPresets = await mcpConfigStore.installBuiltinOAuthServers();
+  if (installedMcpPresets > 0) {
+    serverLogger.info(`Installed ${installedMcpPresets} built-in OAuth MCP connector preset(s)`);
+  }
+  const mcpOAuthService = new McpOAuthService({
+    store: mcpConfigStore,
+    vault: secretVault,
+    userResolver: username => {
+      const user = userStore?.findByUsername(username);
+      return user ? { tenantId: user.tenantId, disabled: user.disabled } : undefined;
+    },
+  });
   // 自助注册动态配置：文件不存在时用 config.json 的 auth.selfSignup 作 seed（兼容旧配置方式）
   const signupConfigStore = new SignupConfigStore(
     join(processCwd, 'data', 'signup-config.json'),
@@ -1173,6 +1187,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // PR 11：让 mcp_proxy 调 vault.getSecret 时附 tenantId，使
     // tenant/global scope secret 通过 ACL（user-scope secret 行为不变）
     tenantResolver: (username) => userStore?.findByUsername(username)?.tenantId,
+    oauthProviderFactory: ({ username, tenantId, serverName }) => mcpOAuthService.runtimeProvider({
+      username,
+      tenantId,
+      serverName,
+    }),
   });
   const mcpProxy = new McpProxy({
     manager: mcpClientManager,
@@ -1884,6 +1903,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentStore,
     skillConfigStore,
     mcpConfigStore,
+    mcpOAuthService,
     signupConfigStore,
     groupStore,
     authMiddleware,

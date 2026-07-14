@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { writeFile, rename, unlink, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { McpServerConfig, McpServersFileShape } from '../mcp/clientManager.js';
+import type { McpOAuthServerConfig, McpServerConfig, McpServersFileShape } from '../mcp/clientManager.js';
 import { LEGACY_TENANT_ID } from './tenants/types.js';
 import { agentSettingsPath } from '../workspace/namespace.js';
 
@@ -63,6 +63,24 @@ export interface ManagedMcpServer {
 export interface UserMcpConfig {
   enabledServers: string[];
   secretRefs?: Record<string, Record<string, string>>;
+  oauthConnections?: Record<string, McpOAuthConnectionRecord>;
+}
+
+export type McpOAuthConnectionStatus = 'pending' | 'connected' | 'error';
+
+/** 仅保存非敏感状态；token/client secret/verifier 均在 SecretVault。 */
+export interface McpOAuthConnectionRecord {
+  serverId: string;
+  tenantId: string;
+  status: McpOAuthConnectionStatus;
+  secretRef?: string;
+  pendingState?: string;
+  pendingExpiresAt?: string;
+  redirectUrl: string;
+  returnTo: string;
+  connectedAt?: string;
+  updatedAt: string;
+  lastError?: string;
 }
 
 export interface McpConfigData {
@@ -70,6 +88,7 @@ export interface McpConfigData {
   configVersion: number;
   servers: Record<string, ManagedMcpServer>;
   users: Record<string, UserMcpConfig>;
+  builtinPresetsVersion?: number;
 }
 
 export interface McpTemplate {
@@ -88,39 +107,86 @@ export interface McpSecretStatus extends McpSecretRequirement {
 
 const SAFE_MCP_ID_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 
+const GOOGLE_OAUTH: McpOAuthServerConfig = {
+  provider: 'google-workspace',
+  beta: true,
+  clientIdEnv: 'GOOGLE_MCP_OAUTH_CLIENT_ID',
+  clientSecretEnv: 'GOOGLE_MCP_OAUTH_CLIENT_SECRET',
+};
+
+const GOOGLE_MCP_PRESETS: Array<[string, string, string, string]> = [
+  ['google_gmail', 'Google Gmail', 'https://gmailmcp.googleapis.com/mcp/v1', '读取、搜索和处理 Gmail 邮件。'],
+  ['google_drive', 'Google Drive', 'https://drivemcp.googleapis.com/mcp/v1', '搜索和读取 Google Drive 文件。'],
+  ['google_calendar', 'Google Calendar', 'https://calendarmcp.googleapis.com/mcp/v1', '查询和维护 Google 日历与日程。'],
+  ['google_chat', 'Google Chat', 'https://chatmcp.googleapis.com/mcp/v1', '访问 Google Chat 会话与消息。'],
+  ['google_people', 'Google Contacts', 'https://people.googleapis.com/mcp/v1', '查询 Google 联系人与个人资料。'],
+];
+
 export const MCP_TEMPLATES: McpTemplate[] = [
   {
     id: 'github',
-    templateVersion: 1,
+    templateVersion: 2,
     name: 'GitHub',
-    description: 'GitHub repositories/issues/pull requests via the official GitHub MCP server. Requires a user-scoped PAT or OAuth token.',
+    description: 'GitHub 官方 remote MCP。每位用户使用自己的 GitHub 账号授权。',
     riskLevel: 'credentialed_external_write',
     recommendedDefault: false,
     server: {
       id: 'github',
       name: 'GitHub',
-      description: 'GitHub repositories/issues/pull requests MCP tools. Bind a per-user token before enabling.',
+      description: '访问仓库、Issue 和 Pull Request；每位用户独立授权、独立撤销。',
       enabledByDefault: false,
       riskLevel: 'credentialed_external_write',
       createdFromTemplateId: 'github',
-      createdFromTemplateVersion: 1,
+      createdFromTemplateVersion: 2,
       tenantId: GLOBAL_TENANT_ID,
       config: {
-        type: 'stdio',
-        command: 'npx',
-        args: ['-y', '@modelcontextprotocol/server-github'],
+        type: 'streamable-http',
+        url: 'https://api.githubcopilot.com/mcp/',
+        oauth: { provider: 'github' },
       },
-      secretRequirements: [{
-        key: 'github_token',
-        label: 'GitHub token',
-        target: 'env',
-        name: 'GITHUB_PERSONAL_ACCESS_TOKEN',
-        scope: 'user',
-        required: true,
-        instructions: 'Use a fine-grained token or OAuth grant with the minimum repository scopes required.',
-      }],
+      secretRequirements: [],
     },
   },
+  {
+    id: 'notion',
+    templateVersion: 1,
+    name: 'Notion',
+    description: 'Notion 官方 remote MCP。每位用户授权自己的 Notion workspace。',
+    riskLevel: 'credentialed_external_write',
+    recommendedDefault: false,
+    server: {
+      id: 'notion',
+      name: 'Notion',
+      description: '搜索、读取和维护用户有权限访问的 Notion 页面与数据库。',
+      enabledByDefault: false,
+      riskLevel: 'credentialed_external_write',
+      createdFromTemplateId: 'notion',
+      createdFromTemplateVersion: 1,
+      tenantId: GLOBAL_TENANT_ID,
+      config: { type: 'streamable-http', url: 'https://mcp.notion.com/mcp', oauth: { provider: 'notion' } },
+      secretRequirements: [],
+    },
+  },
+  ...GOOGLE_MCP_PRESETS.map(([id, name, url, description]): McpTemplate => ({
+    id,
+    templateVersion: 1,
+    name: `${name}（Beta）`,
+    description: `${description} Google 官方 MCP 当前为 Developer Preview。`,
+    riskLevel: 'credentialed_external_write',
+    recommendedDefault: false,
+    server: {
+      id,
+      name,
+      description: `${description} 当前为 Google Developer Preview。`,
+      enabledByDefault: false,
+      riskLevel: 'credentialed_external_write',
+      createdFromTemplateId: id,
+      createdFromTemplateVersion: 1,
+      tenantId: GLOBAL_TENANT_ID,
+      config: { type: 'streamable-http', url, oauth: GOOGLE_OAUTH },
+      secretRequirements: [],
+    },
+  })),
   {
     id: 'streamable-http-bearer',
     templateVersion: 1,
@@ -216,8 +282,91 @@ export class McpConfigStore {
 
   getUserConfig(username: string): UserMcpConfig {
     const cfg = this.data.users[username];
-    if (cfg) return { enabledServers: [...cfg.enabledServers], secretRefs: clone(cfg.secretRefs ?? {}) };
-    return { enabledServers: this.defaultEnabledServerIds(), secretRefs: {} };
+    if (cfg) return {
+      enabledServers: [...cfg.enabledServers],
+      secretRefs: clone(cfg.secretRefs ?? {}),
+      oauthConnections: clone(cfg.oauthConnections ?? {}),
+    };
+    return { enabledServers: this.defaultEnabledServerIds(), secretRefs: {}, oauthConnections: {} };
+  }
+
+  /** 首次启动安装官方推荐连接器；已有同 id 配置不覆盖。 */
+  async installBuiltinOAuthServers(): Promise<number> {
+    const targetVersion = 1;
+    if ((this.data.builtinPresetsVersion ?? 0) >= targetVersion) return 0;
+    return this.serialize(async () => {
+      if ((this.data.builtinPresetsVersion ?? 0) >= targetVersion) return 0;
+      let installed = 0;
+      for (const template of MCP_TEMPLATES.filter(t => ['github', 'notion'].includes(t.id) || t.id.startsWith('google_'))) {
+        if (this.data.servers[template.server.id]) continue;
+        this.data.servers[template.server.id] = normalizeServer(template.server);
+        installed++;
+      }
+      this.data.builtinPresetsVersion = targetVersion;
+      this.bumpVersion();
+      await this.persist();
+      return installed;
+    });
+  }
+
+  getUserOAuthConnection(username: string, serverId: string): McpOAuthConnectionRecord | undefined {
+    const record = this.data.users[username]?.oauthConnections?.[serverId];
+    return record ? clone(record) : undefined;
+  }
+
+  findUserOAuthConnectionByState(state: string): { username: string; connection: McpOAuthConnectionRecord } | undefined {
+    for (const [username, config] of Object.entries(this.data.users)) {
+      const connection = Object.values(config.oauthConnections ?? {}).find(item => item.pendingState === state);
+      if (connection) return { username, connection: clone(connection) };
+    }
+    return undefined;
+  }
+
+  listUserOAuthConnections(username: string): McpOAuthConnectionRecord[] {
+    return clone(Object.values(this.data.users[username]?.oauthConnections ?? {}));
+  }
+
+  listOAuthConnectionsForServer(serverId: string): Array<{ username: string; connection: McpOAuthConnectionRecord }> {
+    const out: Array<{ username: string; connection: McpOAuthConnectionRecord }> = [];
+    for (const [username, config] of Object.entries(this.data.users)) {
+      const connection = config.oauthConnections?.[serverId];
+      if (connection) out.push({ username, connection: clone(connection) });
+    }
+    return out;
+  }
+
+  async setUserOAuthConnection(username: string, record: McpOAuthConnectionRecord): Promise<void> {
+    await this.serialize(async () => {
+      const current = this.data.users[username] ?? { enabledServers: this.defaultEnabledServerIds(), secretRefs: {}, oauthConnections: {} };
+      this.data.users[username] = {
+        ...current,
+        oauthConnections: { ...(current.oauthConnections ?? {}), [record.serverId]: clone(record) },
+      };
+      this.bumpVersion();
+      await this.persist();
+    });
+  }
+
+  async deleteUserOAuthConnection(username: string, serverId: string): Promise<void> {
+    await this.serialize(async () => {
+      const current = this.data.users[username];
+      if (!current?.oauthConnections?.[serverId]) return;
+      const oauthConnections = { ...current.oauthConnections };
+      delete oauthConnections[serverId];
+      this.data.users[username] = { ...current, oauthConnections };
+      this.bumpVersion();
+      await this.persist();
+    });
+  }
+
+  async removeUserData(username: string): Promise<boolean> {
+    return this.serialize(async () => {
+      if (!(username in this.data.users)) return false;
+      delete this.data.users[username];
+      this.bumpVersion();
+      await this.persist();
+      return true;
+    });
   }
 
   /**
@@ -266,6 +415,11 @@ export class McpConfigStore {
             if (!(serverId in this.data.servers)) delete cfg.secretRefs[serverId];
           }
         }
+        if (cfg.oauthConnections) {
+          for (const serverId of Object.keys(cfg.oauthConnections)) {
+            if (!(serverId in this.data.servers)) delete cfg.oauthConnections[serverId];
+          }
+        }
       }
       if (!existing && record.enabledByDefault === true) {
         // Keep explicit user choices explicit; users without a config inherit defaults dynamically.
@@ -282,6 +436,7 @@ export class McpConfigStore {
       for (const cfg of Object.values(this.data.users)) {
         cfg.enabledServers = cfg.enabledServers.filter(x => x !== id);
         if (cfg.secretRefs) delete cfg.secretRefs[id];
+        if (cfg.oauthConnections) delete cfg.oauthConnections[id];
       }
       this.bumpVersion();
       await this.persist();
@@ -312,6 +467,11 @@ export class McpConfigStore {
           if (cfg.secretRefs) {
             for (const serverId of removedServerIds) {
               delete cfg.secretRefs[serverId];
+            }
+          }
+          if (cfg.oauthConnections) {
+            for (const serverId of removedServerIds) {
+              delete cfg.oauthConnections[serverId];
             }
           }
         }
@@ -431,7 +591,12 @@ export class McpConfigStore {
         version: 1,
         configVersion: parsed.configVersion ?? 0,
         servers,
-        users: parsed.users ?? {},
+        users: Object.fromEntries(Object.entries(parsed.users ?? {}).map(([username, config]) => [username, {
+          enabledServers: config.enabledServers ?? [],
+          secretRefs: config.secretRefs ?? {},
+          oauthConnections: config.oauthConnections ?? {},
+        }])),
+        builtinPresetsVersion: parsed.builtinPresetsVersion,
       };
       if (migrated > 0) {
         // eslint-disable-next-line no-console

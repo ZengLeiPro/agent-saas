@@ -38,6 +38,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 
 import { rejectPlaintextSecretMap } from '../security/secretHeuristics.js';
 import type { SecretVault } from '../security/secretVault.js';
@@ -57,7 +58,17 @@ export type McpServerConfig =
       url: string;
       headers?: Record<string, string>;
       headerSecretRefs?: Record<string, string | { ref: string; prefix?: string }>;
+      oauth?: McpOAuthServerConfig;
     };
+
+export interface McpOAuthServerConfig {
+  provider: 'github' | 'notion' | 'google-workspace' | 'generic';
+  beta?: boolean;
+  scopes?: string[];
+  /** 静态 OAuth client（Google Workspace）由平台环境变量提供；不写入 catalog。 */
+  clientIdEnv?: string;
+  clientSecretEnv?: string;
+}
 
 export interface McpServersFileShape {
   mcpServers?: Record<string, McpServerConfig>;
@@ -106,6 +117,13 @@ export interface McpClientManagerOptions {
    * global 的 secret 通过 ACL（PR 11 多 scope secret）。
    */
   tenantResolver?: (username: string) => string | undefined;
+  /** 为已由当前用户授权的 remote MCP 创建 OAuth provider。 */
+  oauthProviderFactory?: (args: {
+    username: string;
+    tenantId?: string;
+    serverName: string;
+    config: Extract<McpServerConfig, { type: 'http' | 'streamable-http' }>;
+  }) => Promise<OAuthClientProvider | undefined>;
 }
 
 // 单一 stdio 子进程允许继承的 env 白名单（参考 MCP SDK 官方 DEFAULT_INHERITED_ENV_VARS）
@@ -162,7 +180,7 @@ function isPrivateIPv6(host: string): boolean {
 }
 
 /** 校验 MCP server URL，拒绝 SSRF 高风险目标。 */
-function assertSafeMcpUrl(rawUrl: string): URL {
+export function assertSafeMcpUrl(rawUrl: string): URL {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -210,12 +228,13 @@ function pickAllowedEnv(extra?: Record<string, string>): Record<string, string> 
 export class McpClientManager {
   private readonly entries = new Map<string, UserMcpEntry>();
   private readonly inflight = new Map<string, Promise<UserMcpEntry>>();
-  private readonly options: Required<Omit<McpClientManagerOptions, 'logger' | 'secretVault' | 'configProvider' | 'workspaceResolver' | 'tenantResolver'>> & {
+  private readonly options: Required<Omit<McpClientManagerOptions, 'logger' | 'secretVault' | 'configProvider' | 'workspaceResolver' | 'tenantResolver' | 'oauthProviderFactory'>> & {
     logger?: Logger;
     secretVault?: SecretVault;
     configProvider?: (username: string, workspaceRoot: string) => Promise<McpServersFileShape>;
     workspaceResolver?: (username: string) => string;
     tenantResolver?: (username: string) => string | undefined;
+    oauthProviderFactory?: McpClientManagerOptions['oauthProviderFactory'];
   };
 
   constructor(options: McpClientManagerOptions) {
@@ -230,6 +249,7 @@ export class McpClientManager {
       configProvider: options.configProvider,
       workspaceResolver: options.workspaceResolver,
       tenantResolver: options.tenantResolver,
+      oauthProviderFactory: options.oauthProviderFactory,
     };
   }
 
@@ -285,7 +305,18 @@ export class McpClientManager {
           config: serverConfig,
           vault: this.options.secretVault,
         });
-        const connected = await this._connectServerWithTimeout(serverName, resolvedConfig);
+        const oauthProvider = !isStdioConfig(resolvedConfig) && resolvedConfig.oauth
+          ? await this.options.oauthProviderFactory?.({
+              username,
+              tenantId: this.options.tenantResolver?.(username),
+              serverName,
+              config: resolvedConfig,
+            })
+          : undefined;
+        if (!isStdioConfig(resolvedConfig) && resolvedConfig.oauth && !oauthProvider) {
+          throw new Error('OAuth connection is not authorized for this user');
+        }
+        const connected = await this._connectServerWithTimeout(serverName, resolvedConfig, oauthProvider);
         entry.servers.set(serverName, connected);
         this.options.logger?.info(
           `MCP[${username}] connected server=${serverName} tools=${connected.tools.length}`,
@@ -307,12 +338,13 @@ export class McpClientManager {
   private async _connectServerWithTimeout(
     serverName: string,
     config: McpServerConfig,
+    oauthProvider?: OAuthClientProvider,
   ): Promise<ConnectedServer> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.options.connectTimeoutMs);
     try {
       return await Promise.race([
-        connectServer(serverName, config, this.options.logger),
+        connectServer(serverName, config, this.options.logger, oauthProvider),
         new Promise<ConnectedServer>((_resolve, reject) => {
           controller.signal.addEventListener('abort', () =>
             reject(new Error(`connect timeout after ${this.options.connectTimeoutMs}ms`)),
@@ -516,6 +548,7 @@ async function connectServer(
   serverName: string,
   config: McpServerConfig,
   _logger?: Logger,
+  oauthProvider?: OAuthClientProvider,
 ): Promise<ConnectedServer> {
   const client = new Client(
     { name: `agent-saas/${serverName}`, version: '0.1.0' },
@@ -539,6 +572,7 @@ async function connectServer(
     const safeUrl = assertSafeMcpUrl(config.url);
     transport = new StreamableHTTPClientTransport(safeUrl, {
       requestInit: { headers: config.headers ?? {} },
+      ...(oauthProvider ? { authProvider: oauthProvider } : {}),
     });
   }
 

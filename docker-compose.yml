@@ -45,6 +45,11 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENAI_BASE_URL: "${OPENAI_BASE_URL:-}"
 
+      # Remote MCP OAuth：Google 应用凭据平台配置一次；用户 token 进入 SecretVault。
+      GOOGLE_MCP_OAUTH_CLIENT_ID: "${GOOGLE_MCP_OAUTH_CLIENT_ID:-}"
+      GOOGLE_MCP_OAUTH_CLIENT_SECRET: "${GOOGLE_MCP_OAUTH_CLIENT_SECRET:-}"
+      MCP_OAUTH_CALLBACK_URL: "${MCP_OAUTH_CALLBACK_URL:-}"
+
       # Legacy/no-op placeholders: server 核心配置只读挂载的 config.json；
       # runtimeEventStore/serverRemote/auth.jwtSecret 必须写入 config.json。
       # 这些 env 保留给旧脚本/排障观察，不是 server 配置入口。

@@ -10,6 +10,7 @@ import type { McpClientManager, McpToolDescriptor } from '../mcp/clientManager.j
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { auditLog } from '../data/login-logs/index.js';
 import type { SecretVault } from '../security/secretVault.js';
+import type { McpOAuthService } from '../mcp/oauthService.js';
 
 export interface McpRouterDeps {
   store: McpConfigStore;
@@ -17,6 +18,7 @@ export interface McpRouterDeps {
   manager: McpClientManager;
   agentCwd: string;
   secretVault?: SecretVault;
+  oauthService?: McpOAuthService;
 }
 
 const riskSchema = z.enum(['read_only', 'workspace_write', 'external_write', 'credentialed_external_write'] satisfies [McpRiskLevel, ...McpRiskLevel[]]);
@@ -50,6 +52,13 @@ const httpSchema = z.object({
     z.string(),
     z.object({ ref: z.string().min(1), prefix: z.string().optional() }).strict(),
   ])).optional(),
+  oauth: z.object({
+    provider: z.enum(['github', 'notion', 'google-workspace', 'generic']),
+    beta: z.boolean().optional(),
+    scopes: z.array(z.string().min(1).max(300)).max(30).optional(),
+    clientIdEnv: z.literal('GOOGLE_MCP_OAUTH_CLIENT_ID').optional(),
+    clientSecretEnv: z.literal('GOOGLE_MCP_OAUTH_CLIENT_SECRET').optional(),
+  }).strict().optional(),
 }).passthrough();
 
 /**
@@ -84,6 +93,9 @@ const myServerSchema = serverSchema
         ctx.addIssue({ code: 'custom', path: ['secretRequirements', index, 'scope'], message: '个人 MCP secret 只能使用 user scope' });
       }
     }
+    if (!('command' in value.config) && value.config.oauth) {
+      ctx.addIssue({ code: 'custom', path: ['config', 'oauth'], message: '个人连接器暂不支持 OAuth 自动发现，请使用平台预设或用户私有 token' });
+    }
   });
 
 const selectionsSchema = z.object({
@@ -91,10 +103,11 @@ const selectionsSchema = z.object({
 }).strict();
 
 const secretValueSchema = z.object({ value: z.string().min(1).max(20000) }).strict();
+const oauthStartSchema = z.object({ returnTo: z.string().min(1).max(4000).optional() }).strict();
 
 export function createMcpRouter(deps: McpRouterDeps): Router {
   const router = Router();
-  const { store, userStore, manager, agentCwd, secretVault } = deps;
+  const { store, userStore, manager, agentCwd, secretVault, oauthService } = deps;
 
   function currentUsername(req: Request): string | null {
     return req.user?.username ?? null;
@@ -126,6 +139,7 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
         tenantId: s.tenantId,
         ownerUsername: s.ownerUsername,
         personal: s.ownerUsername === username,
+        oauth: oauthService?.summary(username, s),
         ...(s.ownerUsername === username ? { config: s.config } : {}),
       })),
     };
@@ -210,11 +224,101 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     res.json({ templates: store.listTemplates() });
   });
 
+  /** SEP-991 URL-based Client ID 文档；remote MCP server 会从该公开 URL 读取。 */
+  router.get('/oauth/client-metadata', (req, res) => {
+    if (!oauthService) return res.status(503).json({ error: 'MCP OAuth is not configured' });
+    const redirectUrl = oauthRedirectUrl(req);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.json(oauthService.clientMetadata(redirectUrl));
+  });
+
+  /** OAuth provider 的浏览器回调：只凭一次性 state 取回用户上下文，不依赖登录 cookie。 */
+  router.get('/oauth/callback', async (req, res) => {
+    if (!oauthService) return res.status(503).send('MCP OAuth is not configured');
+    try {
+      const state = stringQuery(req.query.state, 1000);
+      if (!state) return res.status(400).send('Missing OAuth state');
+      const result = await oauthService.finish({
+        state,
+        code: stringQuery(req.query.code, 20000),
+        error: stringQuery(req.query.error, 500),
+        errorDescription: stringQuery(req.query.error_description, 1000),
+      });
+      if (!result) return res.status(400).send('OAuth state is invalid or has already been used');
+      if (!result.ok) {
+        const enabled = store.getUserConfig(result.username).enabledServers.filter(id => id !== result.serverId);
+        const currentTenantId = userStore.findByUsername(result.username)?.tenantId ?? result.tenantId;
+        await store.setUserEnabledServers(result.username, enabled, currentTenantId);
+      } else {
+        const authorizedUser = userStore.findByUsername(result.username);
+        if (authorizedUser) {
+          req.user = {
+            sub: authorizedUser.id,
+            username: authorizedUser.username,
+            role: authorizedUser.role,
+            tenantId: authorizedUser.tenantId,
+          };
+          auditLog(req, 'mcp_oauth_connected', result.serverId);
+        }
+      }
+      await manager.invalidateUser(result.username);
+      const target = new URL(result.returnTo, new URL(result.redirectUrl).origin);
+      target.searchParams.set('mcp_oauth', result.ok ? 'connected' : 'error');
+      target.searchParams.set('server', result.serverId);
+      res.redirect(303, target.toString());
+    } catch {
+      res.status(500).send('OAuth callback failed; return to the connector settings and retry');
+    }
+  });
+
   router.get('/me', (req, res) => {
     const username = currentUsername(req);
     const tenantId = currentTenantId(req);
     if (!username || !tenantId) return res.status(401).json({ error: 'Authentication required' });
     res.json(serializeForUser(username, tenantId));
+  });
+
+  router.post('/me/servers/:serverId/oauth/start', async (req, res) => {
+    const username = currentUsername(req);
+    const tenantId = currentTenantId(req);
+    if (!username || !tenantId) return res.status(401).json({ error: 'Authentication required' });
+    if (!oauthService) return res.status(503).json({ error: 'MCP OAuth is not configured' });
+    const parsed = oauthStartSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid OAuth start request', details: parsed.error.format() });
+    const server = store.getServer(req.params.serverId);
+    if (!server || !isServerVisibleToUser(server, username, tenantId)) return res.status(404).json({ error: 'MCP server not found' });
+    try {
+      const result = await oauthService.start({
+        username,
+        tenantId,
+        server,
+        redirectUrl: oauthRedirectUrl(req),
+        returnTo: parsed.data.returnTo ?? '/',
+      });
+      const enabled = store.getUserConfig(username).enabledServers;
+      if (!enabled.includes(server.id)) {
+        await store.setUserEnabledServers(username, [...enabled, server.id], tenantId);
+      }
+      await manager.invalidateUser(username);
+      res.json(result);
+    } catch (err) {
+      res.status(409).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  router.delete('/me/servers/:serverId/oauth', async (req, res) => {
+    const username = currentUsername(req);
+    const tenantId = currentTenantId(req);
+    if (!username || !tenantId) return res.status(401).json({ error: 'Authentication required' });
+    if (!oauthService) return res.status(503).json({ error: 'MCP OAuth is not configured' });
+    const server = store.getServer(req.params.serverId);
+    if (!server || !isServerVisibleToUser(server, username, tenantId)) return res.status(404).json({ error: 'MCP server not found' });
+    await oauthService.disconnect(username, tenantId, server.id);
+    const enabled = store.getUserConfig(username).enabledServers.filter(id => id !== server.id);
+    await store.setUserEnabledServers(username, enabled, tenantId);
+    await manager.invalidateUser(username);
+    auditLog(req, 'mcp_oauth_revoked', server.id);
+    res.json({ ok: true });
   });
 
   router.put('/me/selections', async (req, res) => {
@@ -334,10 +438,16 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
       const details = parsed.error.format();
       return res.status(400).json({ error: 'Invalid MCP server', details });
     }
+    if (!('command' in parsed.data.config) && parsed.data.config.oauth && !isPlatformAdmin(req.user)) {
+      return res.status(403).json({ error: '仅平台 admin 可配置 OAuth MCP server' });
+    }
     const existing = store.getServer(id);
     const decision = resolveTenantIdForUpsert(req, existing, parsed.data.tenantId);
     if (!decision.ok) return res.status(decision.status).json({ error: decision.error });
     try {
+      if (existing && oauthIdentity(existing) !== oauthIdentity({ config: parsed.data.config, tenantId: decision.tenantId })) {
+        await oauthService?.disconnectServerUsers(id);
+      }
       const server = await store.upsertServer({ ...parsed.data, tenantId: decision.tenantId });
       await Promise.all(userStore.listAll().map(u => manager.invalidateUser(u.username)));
       auditLog(req, 'mcp_server_updated', id);
@@ -353,6 +463,7 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     if (!canWriteServerForTenant(req, existing.tenantId)) {
       return res.status(403).json({ error: '跨组织访问被拒绝' });
     }
+    await oauthService?.disconnectServerUsers(existing.id);
     await store.deleteServer(req.params.id);
     await Promise.all(userStore.listAll().map(u => manager.invalidateUser(u.username)));
     auditLog(req, 'mcp_server_deleted', req.params.id);
@@ -449,4 +560,31 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
   });
 
   return router;
+}
+
+function oauthRedirectUrl(req: Request): string {
+  const configured = process.env.MCP_OAUTH_CALLBACK_URL?.trim();
+  const requestHost = req.hostname;
+  if (!configured && requestHost !== '127.0.0.1' && requestHost !== 'localhost') {
+    throw new Error('平台管理员需先配置 MCP_OAUTH_CALLBACK_URL');
+  }
+  const raw = configured || `${req.protocol}://${req.get('host')}/api/mcp/oauth/callback`;
+  const parsed = new URL(raw);
+  if (parsed.protocol !== 'https:' && parsed.hostname !== '127.0.0.1' && parsed.hostname !== 'localhost') {
+    throw new Error('MCP OAuth callback URL must use HTTPS');
+  }
+  if (parsed.pathname !== '/api/mcp/oauth/callback' || parsed.search || parsed.hash) {
+    throw new Error('MCP OAuth callback URL path must be /api/mcp/oauth/callback');
+  }
+  return parsed.toString();
+}
+
+function stringQuery(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== 'string' || value.length === 0 || value.length > maxLength) return undefined;
+  return value;
+}
+
+function oauthIdentity(server: Pick<ManagedMcpServer, 'config' | 'tenantId'>): string {
+  if ('command' in server.config || !server.config.oauth) return '';
+  return JSON.stringify({ tenantId: server.tenantId, url: server.config.url, oauth: server.config.oauth });
 }

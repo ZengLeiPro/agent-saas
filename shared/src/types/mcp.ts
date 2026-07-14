@@ -18,6 +18,16 @@ export interface McpSecretStatus extends McpSecretRequirement {
   configured: boolean;
 }
 
+export interface McpOAuthSummary {
+  provider: 'github' | 'notion' | 'google-workspace' | 'generic';
+  beta: boolean;
+  platformConfigured: boolean;
+  status: 'disconnected' | 'pending' | 'connected' | 'error';
+  connectedAt?: string;
+  updatedAt?: string;
+  lastError?: string;
+}
+
 export interface McpServerSummary {
   id: string;
   name: string;
@@ -32,6 +42,12 @@ export interface McpServerSummary {
   ownerUsername?: string;
   personal?: boolean;
   config?: Record<string, unknown>;
+  oauth?: McpOAuthSummary;
+}
+
+export interface McpOAuthStartResponse {
+  status: 'pending' | 'connected';
+  authorizationUrl?: string;
 }
 
 export interface MyMcpResponse {

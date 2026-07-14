@@ -121,3 +121,31 @@ describe('McpClientManager plaintext secret rejection', () => {
     }
   });
 });
+
+describe('McpClientManager OAuth isolation', () => {
+  it('OAuth connector 没有当前用户 provider 时在发起网络连接前 fail closed', async () => {
+    const oauthProviderFactory = vi.fn(async () => undefined);
+    const manager = new McpClientManager({
+      agentCwd: '/tmp',
+      failOnError: true,
+      tenantResolver: () => 'kaiyan',
+      configProvider: async () => ({
+        mcpServers: {
+          github: {
+            type: 'streamable-http',
+            url: 'https://api.githubcopilot.com/mcp/',
+            oauth: { provider: 'github' },
+          },
+        },
+      }),
+      oauthProviderFactory,
+    });
+
+    await expect(manager.ensureUser('alice')).rejects.toThrow(/not authorized for this user/);
+    expect(oauthProviderFactory).toHaveBeenCalledWith(expect.objectContaining({
+      username: 'alice',
+      tenantId: 'kaiyan',
+      serverName: 'github',
+    }));
+  });
+});

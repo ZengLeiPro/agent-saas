@@ -43,6 +43,7 @@ import type { LoginEvent, LoginChannel } from "../data/login-logs/index.js";
 import { apiLogger } from "../utils/logger.js";
 import { resolveUserCwd, ensureUserWorkspace } from "../workspace/resolver.js";
 import { softDeleteUserResources } from "../data/users/cleanup.js";
+import type { McpOAuthService } from "../mcp/oauthService.js";
 
 // ---- Zod schemas ----
 
@@ -270,6 +271,8 @@ export interface AuthRouterDeps {
   onUserDisabled?: (userId: string) => void;
   /** Skill 配置 store，用于删除用户时清理孤儿条目 */
   skillConfigStore?: SkillConfigStore;
+  /** 删除用户时撤销其 MCP OAuth token，并清理用户 MCP 配置。 */
+  mcpOAuthService?: McpOAuthService;
   /** 动态注册配置 store：复用其中的 SMS provider 配置给短信验证码登录。 */
   signupConfigStore?: SignupConfigStore;
   /** SMS AccessKey Secret 的 vault；缺省回退 env AGENT_SMS_ACCESS_KEY_SECRET。 */
@@ -302,6 +305,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     sharedDir,
     tenantSkillsRootDir,
     skillConfigStore,
+    mcpOAuthService,
     signupConfigStore,
     secretVault,
     loginCodeService,
@@ -1125,6 +1129,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(403).json({ error: peerAdminError });
         return;
       }
+      await mcpOAuthService?.disconnectUser(target.username, target.tenantId);
       await userStore.delete(req.params.id);
 
       // 软删除关联资源（workspace、transcripts、avatars）

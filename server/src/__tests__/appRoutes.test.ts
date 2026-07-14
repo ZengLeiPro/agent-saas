@@ -229,6 +229,11 @@ describe('registerRoutes', () => {
       deliveryService: runtime.dingtalkDeps.deliveryService,
     });
     expect(mocked.createCronRouter).not.toHaveBeenCalled();
+    expect(mocked.createDwsRouter).toHaveBeenCalledWith({
+      connectionStore: runtime.dwsConnectionStore,
+      authFlowService: runtime.dwsAuthFlowService,
+      userStore: runtime.userStore,
+    });
 
     // Base routes: health + app-update + upload-guard + file-guard + upload + file + azeroth-proxy
     //   + preview(token+serve) + voice + tts + search + scenarios + contentops + sessions + dingtalk

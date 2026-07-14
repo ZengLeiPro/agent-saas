@@ -5,6 +5,7 @@ import {
   CircleCheck,
   Clock,
   Database,
+  ExternalLink,
   Lock,
   Loader2,
   LogOut,
@@ -86,42 +87,186 @@ interface DwsConnectionView {
   message: string;
 }
 
+interface DwsAuthSessionView {
+  sessionId: string;
+  status: "starting" | "awaiting_user" | "connected" | "failed" | "expired";
+  authorizationUrl: string | null;
+  userCode: string | null;
+  expiresAt: string;
+  message: string;
+}
+
 function DwsConnectionsSection() {
   const { user } = useAuth();
   const [connections, setConnections] = useState<DwsConnectionView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [authSession, setAuthSession] = useState<DwsAuthSessionView | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [popupBlocked, setPopupBlocked] = useState(false);
+  const authorizationPopupRef = useRef<Window | null>(null);
+  const openedAuthorizationUrlRef = useRef<string | null>(null);
+  const completedSessionRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadConnections = useCallback(async () => {
     setLoading(true);
     setError(null);
-    void authFetch("/api/dws/connections")
-      .then(async (response) => {
-        const data = await response.json().catch(() => ({})) as { connections?: DwsConnectionView[]; error?: string };
-        if (!response.ok) throw new Error(data.error || "钉钉连接状态读取失败");
-        if (!cancelled) setConnections(data.connections ?? []);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "钉钉连接状态读取失败");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [user?.id]);
+    try {
+      const response = await authFetch("/api/dws/connections");
+      const data = await response.json().catch(() => ({})) as { connections?: DwsConnectionView[]; error?: string };
+      if (!response.ok) throw new Error(data.error || "钉钉连接状态读取失败");
+      setConnections(data.connections ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "钉钉连接状态读取失败");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadAuthSession = useCallback(async () => {
+    const response = await authFetch("/api/dws/auth/session");
+    const data = await response.json().catch(() => ({})) as { session?: DwsAuthSessionView | null; error?: string };
+    if (!response.ok) throw new Error(data.error || "钉钉授权状态读取失败");
+    setAuthSession(data.session ?? null);
+    return data.session ?? null;
+  }, []);
+
+  const openAuthorizationPage = useCallback((url: string) => {
+    const existing = authorizationPopupRef.current;
+    const popup = existing && !existing.closed ? existing : window.open("", "_blank");
+    if (!popup) {
+      setPopupBlocked(true);
+      return;
+    }
+    popup.opener = null;
+    popup.location.href = url;
+    authorizationPopupRef.current = popup;
+    openedAuthorizationUrlRef.current = url;
+    setPopupBlocked(false);
+  }, []);
+
+  const startConnection = useCallback(async () => {
+    setConnecting(true);
+    setAuthError(null);
+    setPopupBlocked(false);
+    openedAuthorizationUrlRef.current = null;
+
+    const popup = window.open("", "_blank");
+    if (popup) {
+      popup.opener = null;
+      popup.document.title = "正在连接钉钉";
+      popup.document.body.textContent = "正在打开钉钉官方授权页面…";
+      authorizationPopupRef.current = popup;
+    } else {
+      authorizationPopupRef.current = null;
+      setPopupBlocked(true);
+    }
+
+    try {
+      const response = await authFetch("/api/dws/auth/session", { method: "POST" });
+      const data = await response.json().catch(() => ({})) as { session?: DwsAuthSessionView; error?: string };
+      if (!response.ok || !data.session) throw new Error(data.error || "钉钉授权启动失败，请稍后重试");
+      setAuthSession(data.session);
+      if (data.session.authorizationUrl) openAuthorizationPage(data.session.authorizationUrl);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "钉钉授权启动失败，请稍后重试";
+      setAuthError(message);
+      if (popup && !popup.closed) popup.close();
+    } finally {
+      setConnecting(false);
+    }
+  }, [openAuthorizationPage]);
+
+  useEffect(() => {
+    setAuthSession(null);
+    setAuthError(null);
+    void Promise.all([
+      loadConnections(),
+      loadAuthSession().catch((err) => setAuthError(err instanceof Error ? err.message : "钉钉授权状态读取失败")),
+    ]);
+  }, [loadAuthSession, loadConnections, user?.id]);
+
+  useEffect(() => {
+    if (authSession?.status !== "starting" && authSession?.status !== "awaiting_user") return;
+    const timer = window.setInterval(() => {
+      void loadAuthSession().catch((err) => setAuthError(err instanceof Error ? err.message : "钉钉授权状态读取失败"));
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [authSession?.status, loadAuthSession]);
+
+  useEffect(() => {
+    const url = authSession?.authorizationUrl;
+    if (authSession?.status === "awaiting_user" && url) {
+      const popup = authorizationPopupRef.current;
+      if (!popup || popup.closed) setPopupBlocked(true);
+      else if (openedAuthorizationUrlRef.current !== url) openAuthorizationPage(url);
+    }
+    if (authSession?.status === "connected" && completedSessionRef.current !== authSession.sessionId) {
+      completedSessionRef.current = authSession.sessionId;
+      void loadConnections();
+    }
+  }, [authSession, loadConnections, openAuthorizationPage]);
+
+  const authInProgress = authSession?.status === "starting" || authSession?.status === "awaiting_user";
+  const needsReconnect = connections.some((connection) => connection.status === "disconnected");
+  const connectLabel = authInProgress || connecting
+    ? "等待授权"
+    : needsReconnect
+      ? "重新连接"
+      : connections.length > 0
+        ? "连接其他组织"
+        : "连接钉钉";
 
   return (
     <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-sm">
-      <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
-          <Building2 className="h-4 w-4" />
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+            <Building2 className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="text-sm font-semibold">钉钉连接</div>
+            <div className="text-sm text-muted-foreground">连接一次后，开开会自动维持登录，无需定期重新授权。</div>
+          </div>
         </div>
-        <div>
-          <div className="text-sm font-semibold">钉钉连接</div>
-          <div className="text-sm text-muted-foreground">授权保存在你的独立工作区，平台会自动维持登录。</div>
-        </div>
+        <Button className="shrink-0" size="sm" onClick={() => void startConnection()} disabled={authInProgress || connecting}>
+          {(authInProgress || connecting) ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+          {connectLabel}
+        </Button>
       </div>
+
+      {authError ? (
+        <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{authError}</span>
+        </div>
+      ) : null}
+
+      {authSession?.status === "starting" ? (
+        <div className="flex items-center gap-2 rounded-xl bg-blue-50 px-3 py-3 text-sm text-blue-800">
+          <Loader2 className="h-4 w-4 animate-spin" />正在生成钉钉官方授权页面
+        </div>
+      ) : authSession?.status === "awaiting_user" ? (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900">
+          <div className="font-medium">请在钉钉页面选择组织并同意授权</div>
+          <div className="mt-1 text-xs text-blue-800">授权码：{authSession.userCode || "正在读取"}</div>
+          {(popupBlocked || !authorizationPopupRef.current) && authSession.authorizationUrl ? (
+            <Button className="mt-3" size="sm" variant="outline" onClick={() => openAuthorizationPage(authSession.authorizationUrl!)}>
+              <ExternalLink className="mr-1.5 h-3.5 w-3.5" />打开钉钉授权页面
+            </Button>
+          ) : null}
+        </div>
+      ) : authSession?.status === "connected" ? (
+        <div className="flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+          <CircleCheck className="h-4 w-4" />钉钉连接成功，开开现在可以直接使用钉钉能力
+        </div>
+      ) : authSession?.status === "failed" || authSession?.status === "expired" ? (
+        <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{authSession.message}</span>
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="flex items-center gap-2 rounded-xl bg-muted/50 px-3 py-3 text-sm text-muted-foreground">
@@ -135,7 +280,7 @@ function DwsConnectionsSection() {
       ) : connections.length === 0 ? (
         <div className="rounded-xl bg-muted/50 px-3 py-3 text-sm">
           <div className="font-medium">尚未连接钉钉</div>
-          <div className="mt-1 text-muted-foreground">第一次使用钉钉能力时，开开会引导你完成一次授权；之后无需定期重新登录。</div>
+          <div className="mt-1 text-muted-foreground">点击“连接钉钉”，在钉钉官方页面确认一次即可。</div>
         </div>
       ) : (
         <div className="space-y-2">

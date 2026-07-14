@@ -4,12 +4,10 @@ import {
   Building2,
   CircleCheck,
   Clock,
-  Database,
   ExternalLink,
   Lock,
   Loader2,
   LogOut,
-  Monitor,
   Palette,
   Save,
   Settings2,
@@ -17,6 +15,7 @@ import {
   User,
   X,
 } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -46,8 +45,8 @@ export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
   { id: "personalization", label: "个性化", description: "侧边栏、会话列表和界面偏好。", group: "account", icon: Palette },
   { id: "memory", label: "记忆", description: "查看和编辑 Agent 长期记忆（MEMORY.md）。", group: "features", icon: Brain },
   { id: "cron", label: "定时任务", description: "创建和管理个人自动化任务。", group: "features", icon: Clock },
-  { id: "files", label: "文件", description: "浏览个人工作区文件和预览内容。", group: "features", icon: Monitor },
-  { id: "data", label: "回收站", description: "查看已删除会话，必要时进行恢复或彻底清理。", group: "features", icon: Database },
+  { id: "files", label: "文件", description: "浏览个人工作区文件和预览内容。", group: "features", icon: EntityIcons.files },
+  { id: "data", label: "回收站", description: "查看已删除会话，必要时进行恢复或彻底清理。", group: "features", icon: EntityIcons.trash },
 ];
 
 const GROUP_LABELS: Record<SettingsSectionGroup, string> = {

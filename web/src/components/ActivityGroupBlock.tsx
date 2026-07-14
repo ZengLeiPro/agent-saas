@@ -1,5 +1,6 @@
 import { useState, memo } from 'react';
-import { Loader2, CheckCircle2, ChevronRight, CircleAlert, CircleDashed, XCircle } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
+import { StatusIcons } from '@/lib/icons';
 import { cn } from '@/lib/utils';
 import { getToolDisplayInfo } from '@agent/shared';
 import type { MessageItem } from './types';
@@ -269,18 +270,21 @@ function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryI
 function GroupStatusIcon({ summary }: { summary: GroupSummaryInfo }) {
   const className = "h-3.5 w-3.5 shrink-0";
   if (summary.active) {
-    return <Loader2 className={activityStatusIconClass("active", `${className} animate-spin`)} />;
+    return <StatusIcons.running className={activityStatusIconClass("active", `${className} animate-spin`)} />;
   }
   if (summary.tone === 'danger') {
-    return <XCircle className={activityStatusIconClass("danger", className)} />;
+    return <StatusIcons.error className={activityStatusIconClass("danger", className)} />;
   }
   if (summary.tone === 'warning') {
-    return <CircleAlert className={activityStatusIconClass("warning", className)} />;
+    return <StatusIcons.error className={activityStatusIconClass("warning", className)} />;
   }
-  if (summary.tone === 'pending' || summary.tone === 'neutral') {
-    return <CircleDashed className={activityStatusIconClass(summary.tone, className)} />;
+  if (summary.tone === 'neutral') {
+    return <StatusIcons.cancelled className={activityStatusIconClass("neutral", className)} />;
   }
-  return <CheckCircle2 className={activityStatusIconClass("success", className)} />;
+  if (summary.tone === 'pending') {
+    return <StatusIcons.pending className={activityStatusIconClass("pending", className)} />;
+  }
+  return <StatusIcons.success className={activityStatusIconClass("success", className)} />;
 }
 
 function ActivityItem({ item }: { item: MessageItem }) {
@@ -313,11 +317,11 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
   return (
     <div className="my-0.5 flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
       {isActive ? (
-        <Loader2 className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-spin")} />
+        <StatusIcons.running className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-spin")} />
       ) : hasIssue ? (
-        <CircleAlert className={activityStatusIconClass("warning", "h-3.5 w-3.5 shrink-0")} />
+        <StatusIcons.error className={activityStatusIconClass("warning", "h-3.5 w-3.5 shrink-0")} />
       ) : (
-        <CheckCircle2 className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
+        <StatusIcons.success className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
       )}
       <span className={activityStatusTextClass(tone)}>{isActive ? "正在执行中" : hasIssue ? duration ? `已执行，有异常 ${duration}` : "已执行，有异常" : duration ? `已执行 ${duration}` : "已执行"}</span>
     </div>

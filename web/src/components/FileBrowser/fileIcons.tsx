@@ -9,6 +9,7 @@ import {
   FileAudio,
   FileArchive,
   FileSpreadsheet,
+  Presentation,
   File as FileIcon,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -17,15 +18,16 @@ import { cn } from "@/lib/utils";
 /**
  * FileBrowser 文件类型图标系统（参考 Notion / Linear / Claude.ai 文件面板）：
  * 每种类型使用「浅底 + 深字」的圆角图标 tile，同色调收敛，避免五颜六色堆叠。
+ * 色相语义与 shared/src/lib/fileTypeVisual.ts（聊天下载卡）严格对齐，改色必须两处同步。
  */
 
 type ToneKey =
   | "folder"
   | "image"
   | "code"
-  | "json"
   | "text"
   | "doc"
+  | "ppt"
   | "sheet"
   | "video"
   | "audio"
@@ -50,19 +52,14 @@ const TONES: Record<ToneKey, Tone> = {
     ring: "ring-brand-200/60 dark:ring-brand-700/40",
   },
   image: {
-    bg: "bg-emerald-50 dark:bg-emerald-950/40",
-    fg: "text-emerald-600 dark:text-emerald-400",
-    ring: "ring-emerald-200/60 dark:ring-emerald-800/40",
+    bg: "bg-teal-50 dark:bg-teal-950/40",
+    fg: "text-teal-600 dark:text-teal-400",
+    ring: "ring-teal-200/60 dark:ring-teal-800/40",
   },
   code: {
     bg: "bg-violet-50 dark:bg-violet-950/40",
     fg: "text-violet-600 dark:text-violet-400",
     ring: "ring-violet-200/60 dark:ring-violet-800/40",
-  },
-  json: {
-    bg: "bg-amber-50 dark:bg-amber-950/40",
-    fg: "text-amber-600 dark:text-amber-400",
-    ring: "ring-amber-200/60 dark:ring-amber-800/40",
   },
   text: {
     bg: "bg-slate-100 dark:bg-slate-800/60",
@@ -75,10 +72,15 @@ const TONES: Record<ToneKey, Tone> = {
     fg: "text-sky-600 dark:text-sky-400",
     ring: "ring-sky-200/60 dark:ring-sky-800/40",
   },
+  ppt: {
+    bg: "bg-orange-50 dark:bg-orange-950/40",
+    fg: "text-orange-600 dark:text-orange-400",
+    ring: "ring-orange-200/60 dark:ring-orange-800/40",
+  },
   sheet: {
-    bg: "bg-lime-50 dark:bg-lime-950/40",
-    fg: "text-lime-700 dark:text-lime-400",
-    ring: "ring-lime-200/60 dark:ring-lime-800/40",
+    bg: "bg-emerald-50 dark:bg-emerald-950/40",
+    fg: "text-emerald-600 dark:text-emerald-400",
+    ring: "ring-emerald-200/60 dark:ring-emerald-800/40",
   },
   video: {
     bg: "bg-rose-50 dark:bg-rose-950/40",
@@ -91,9 +93,9 @@ const TONES: Record<ToneKey, Tone> = {
     ring: "ring-fuchsia-200/60 dark:ring-fuchsia-800/40",
   },
   archive: {
-    bg: "bg-orange-50 dark:bg-orange-950/40",
-    fg: "text-orange-600 dark:text-orange-400",
-    ring: "ring-orange-200/60 dark:ring-orange-800/40",
+    bg: "bg-amber-50 dark:bg-amber-950/40",
+    fg: "text-amber-600 dark:text-amber-400",
+    ring: "ring-amber-200/60 dark:ring-amber-800/40",
   },
   pdf: {
     bg: "bg-red-50 dark:bg-red-950/40",
@@ -125,8 +127,6 @@ const ARCHIVE_EXTS = new Set([".zip", ".tar", ".gz", ".7z", ".rar", ".bz2", ".xz
 interface FileIconMeta {
   Icon: LucideIcon;
   tone: ToneKey;
-  /** 短标签，展示在角标上以便扫读（如 PDF / IMG / TS） */
-  badge?: string;
 }
 
 export function resolveFileIcon(entry: { isDirectory: boolean; extension: string; name: string }): FileIconMeta {
@@ -135,18 +135,18 @@ export function resolveFileIcon(entry: { isDirectory: boolean; extension: string
   }
   const ext = (entry.extension || "").toLowerCase();
 
-  if (ext === ".pdf") return { Icon: FileText, tone: "pdf", badge: "PDF" };
-  if (ext === ".json") return { Icon: FileJson, tone: "json", badge: "JSON" };
-  if (IMAGE_EXTS.has(ext)) return { Icon: FileImage, tone: "image", badge: ext.slice(1).toUpperCase() };
-  if (VIDEO_EXTS.has(ext)) return { Icon: FileVideo, tone: "video", badge: ext.slice(1).toUpperCase() };
-  if (AUDIO_EXTS.has(ext)) return { Icon: FileAudio, tone: "audio", badge: ext.slice(1).toUpperCase() };
-  if (ARCHIVE_EXTS.has(ext)) return { Icon: FileArchive, tone: "archive", badge: ext.slice(1).toUpperCase() };
-  if (SHEET_EXTS.has(ext)) return { Icon: FileSpreadsheet, tone: "sheet", badge: ext.slice(1).toUpperCase() };
-  if (DOC_EXTS.has(ext)) return { Icon: FileText, tone: "doc", badge: ext.slice(1).toUpperCase() };
-  if (PPT_EXTS.has(ext)) return { Icon: FileText, tone: "doc", badge: ext.slice(1).toUpperCase() };
-  if (HTML_EXTS.has(ext)) return { Icon: FileCode, tone: "code", badge: ext.slice(1).toUpperCase() };
-  if (CODE_EXTS.has(ext)) return { Icon: FileCode, tone: "code", badge: ext.slice(1).toUpperCase() };
-  if (TEXT_EXTS.has(ext)) return { Icon: FileText, tone: "text", badge: ext ? ext.slice(1).toUpperCase() : "TXT" };
+  if (ext === ".pdf") return { Icon: FileText, tone: "pdf" };
+  if (ext === ".json") return { Icon: FileJson, tone: "code" };
+  if (IMAGE_EXTS.has(ext)) return { Icon: FileImage, tone: "image" };
+  if (VIDEO_EXTS.has(ext)) return { Icon: FileVideo, tone: "video" };
+  if (AUDIO_EXTS.has(ext)) return { Icon: FileAudio, tone: "audio" };
+  if (ARCHIVE_EXTS.has(ext)) return { Icon: FileArchive, tone: "archive" };
+  if (SHEET_EXTS.has(ext)) return { Icon: FileSpreadsheet, tone: "sheet" };
+  if (DOC_EXTS.has(ext)) return { Icon: FileText, tone: "doc" };
+  if (PPT_EXTS.has(ext)) return { Icon: Presentation, tone: "ppt" };
+  if (HTML_EXTS.has(ext)) return { Icon: FileCode, tone: "code" };
+  if (CODE_EXTS.has(ext)) return { Icon: FileCode, tone: "code" };
+  if (TEXT_EXTS.has(ext)) return { Icon: FileText, tone: "text" };
 
   return { Icon: FileIcon, tone: "default" };
 }

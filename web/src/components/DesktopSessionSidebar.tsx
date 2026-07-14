@@ -24,14 +24,12 @@ import {
   GripVertical,
   X,
   ChevronsUpDown,
-  Building2,
-  ShieldCheck,
   UserCog,
   Search,
   LayoutGrid,
   Share2,
-  Coins,
 } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
 import { DeleteGroupDialog } from "@/components/chat/DeleteGroupDialog";
@@ -184,14 +182,14 @@ function CompactGroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
 }
 
 function GroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
-  const Icon = kind === "cron" ? Clock : FolderPlus;
+  const Icon = kind === "cron" ? Clock : Folder;
 
   return (
     <span
       className={cn(
         "flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-1",
         kind === "cron"
-          ? "bg-teal-50 text-teal-600 ring-teal-100 dark:bg-teal-700/20 dark:text-teal-300 dark:ring-teal-600/30"
+          ? "bg-amber-50 text-amber-600 ring-amber-100 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-700/30"
           : "bg-brand-50 text-brand-600 ring-brand-100 dark:bg-brand-900/35 dark:text-brand-300 dark:ring-brand-800",
       )}
       aria-hidden="true"
@@ -526,7 +524,7 @@ interface SidebarNavProps {
 
 function getNavIcon(tab: AppTab) {
   if (tab === "profile") return Bot;
-  if (tab === "capabilities") return Building2;
+  if (tab === "capabilities") return EntityIcons.capabilityCenter;
   if (tab === "settings") return Settings2;
   if (tab === "cron") return Clock;
   if (tab === "mcp") return Plug;
@@ -737,7 +735,7 @@ function SidebarUserMenuFooter({
             {isAdmin && (
               <div className={USER_MENU_SECTION}>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onNavigateAdminTab?.("tenant-admin"); }}>
-                  <Building2 className="h-3.5 w-3.5" />
+                  <EntityIcons.analytics className="h-3.5 w-3.5" />
                   组织分析
                 </button>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenAdminSettings?.("tenant"); }}>
@@ -750,7 +748,7 @@ function SidebarUserMenuFooter({
             {isPlatformAdmin && (
               <div className={USER_MENU_SECTION}>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onNavigateAdminTab?.("platform-admin"); }}>
-                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <EntityIcons.analytics className="h-3.5 w-3.5" />
                   平台分析
                 </button>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenAdminSettings?.("platform"); }}>
@@ -763,7 +761,7 @@ function SidebarUserMenuFooter({
             {onOpenBilling && (
               <div className={USER_MENU_SECTION}>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenBilling(); }}>
-                  <Coins className="h-3.5 w-3.5" />
+                  <EntityIcons.credits className="h-3.5 w-3.5" />
                   我的积分
                 </button>
               </div>

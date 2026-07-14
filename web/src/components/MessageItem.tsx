@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, memo, lazy, Suspense } from 'react';
-import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, FileText, FileCode, FileImage, FileVideo, FileSpreadsheet, FileArchive, Presentation, File, Download, X, GitFork, Paperclip, ImageIcon, Mic, Ban, TriangleAlert } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, X, GitFork, Paperclip, ImageIcon, Mic, Ban, TriangleAlert } from 'lucide-react';
+import { CATEGORY_ICON } from '@/lib/fileCategoryIcons';
 import { MessageItem as MessageItemType, formatFileSize } from './types';
 import type { AskUserAnswers } from '@agent/shared';
 import { ThinkingBlock } from './ThinkingBlock';
@@ -17,7 +17,6 @@ import { useFilePreview } from '@/contexts/FilePreviewContext';
 import { authFetch } from '@/lib/authFetch';
 import { extractTextFromChildren, getCellMinWidthPx } from '@/lib/tableCellWidth';
 import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual, splitByMessageMarkers, stripPartialCiteMarker } from '@agent/shared';
-import type { FileTypeCategory } from '@agent/shared';
 import { CitationCard } from './CitationCard';
 import { MessageFeedbackButton } from './MessageFeedback';
 import type { TtsState } from '@/hooks/useTtsPlayer';
@@ -271,13 +270,6 @@ async function artifactDownload(artifactId: string, fileName: string) {
 }
 
 /** 文件下载卡片，fileSize 为 0 时通过 HEAD 请求懒加载真实大小 */
-/** 文件分类 → lucide 图标 */
-const CATEGORY_ICON: Record<FileTypeCategory, LucideIcon> = {
-  pdf: FileText, word: FileText, ppt: Presentation,
-  excel: FileSpreadsheet, code: FileCode, image: FileImage,
-  video: FileVideo, text: FileText, archive: FileArchive, default: File,
-};
-
 function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, artifactId, shareToken }: {
   fileName: string;
   filePath: string;

@@ -1,4 +1,5 @@
-import { BarChart3, FileText, Gauge, MessageSquareText } from "lucide-react";
+import { Gauge, MessageSquareText, type LucideIcon } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -7,14 +8,14 @@ import type { TenantSection } from "@/components/AdminShells";
 interface TenantAdminNavItem {
   id: Extract<TenantSection, "overview" | "usage" | "qa" | "audit">;
   label: string;
-  icon: typeof Gauge;
+  icon: LucideIcon;
 }
 
 const tenantAdminSections: TenantAdminNavItem[] = [
   { id: "overview", label: "综合分析", icon: Gauge },
-  { id: "usage", label: "用量与配额", icon: BarChart3 },
+  { id: "usage", label: "用量与配额", icon: EntityIcons.analytics },
   { id: "qa", label: "对话质检", icon: MessageSquareText },
-  { id: "audit", label: "审计", icon: FileText },
+  { id: "audit", label: "审计", icon: EntityIcons.audit },
 ];
 
 export function TenantAdminHeaderControls({

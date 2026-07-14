@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, AlertCircle, ArrowRight, CheckCircle2, Clock3, ExternalLink, Loader2, PauseCircle, RefreshCw, Save, ServerCog, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Activity, AlertCircle, ArrowRight, CheckCircle2, Clock3, ExternalLink, Loader2, Network, PauseCircle, RefreshCw, Save, ServerCog, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ActionIcons } from "@/lib/icons";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -604,7 +605,7 @@ export function RuntimeOperationsManager() {
                   ACS 维护
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => applyRoutePreset("ecs-all")} disabled={!!applyingAction}>
-                  <ArrowRight className="mr-1.5 h-3.5 w-3.5" />
+                  <ActionIcons.undo className="mr-1.5 h-3.5 w-3.5" />
                   回退 ECS
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => applyRoutePreset("remote-off")} disabled={!!applyingAction}>
@@ -808,7 +809,7 @@ export function RuntimeOperationsManager() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => { void runNetworkPolicyProbe(); }} disabled={!!applyingAction}>
-                      {applyingAction === "执行 network probe" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />}
+                      {applyingAction === "执行 network probe" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Network className="mr-1.5 h-3.5 w-3.5" />}
                       网络探测
                     </Button>
                     <div className="text-xs text-muted-foreground">

@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
 import { formatJson } from './types';
 import { parseToolResult, getToolDisplayInfo } from '@agent/shared';
-import { Wrench, CheckCircle2, ChevronRight, X, Loader2, CircleAlert, CircleDashed, XCircle } from "lucide-react";
+import { Wrench, ChevronRight, X } from "lucide-react";
+import { StatusIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { activityStatusBadgeClass, activityStatusIconClass, formatActivityDuration, type ActivityStatusTone } from "./activityStatusStyles";
 
@@ -114,16 +115,16 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
   const tone = getExecutionTone(executionStatus, resultReady, streaming);
 
   const icon = executionStatus === "running"
-    ? <Loader2 className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-spin")} />
+    ? <StatusIcons.running className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-spin")} />
     : executionStatus === "failed"
-      ? <CircleAlert className={activityStatusIconClass("warning", "h-3.5 w-3.5 shrink-0")} />
+      ? <StatusIcons.error className={activityStatusIconClass("warning", "h-3.5 w-3.5 shrink-0")} />
       : executionStatus === "cancelled"
-        ? <XCircle className={activityStatusIconClass("neutral", "h-3.5 w-3.5 shrink-0")} />
+        ? <StatusIcons.cancelled className={activityStatusIconClass("neutral", "h-3.5 w-3.5 shrink-0")} />
       : resultReady || executionStatus === "completed"
-        ? <CheckCircle2 className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
+        ? <StatusIcons.success className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
         : streaming
           ? <Wrench className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-pulse")} />
-          : <CircleDashed className={activityStatusIconClass("pending", "h-3.5 w-3.5 shrink-0")} />;
+          : <StatusIcons.pending className={activityStatusIconClass("pending", "h-3.5 w-3.5 shrink-0")} />;
 
   return (
     <div className="my-0.5">
@@ -201,7 +202,7 @@ export function ToolResultBlock({ toolName, result }: ToolResultBlockProps) {
         onClick={() => setIsExpanded(v => !v)}
         className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        <StatusIcons.success className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
         <span className="min-w-0 truncate">Result: {toolName}</span>
         <ChevronRight className={cn(
           "h-3.5 w-3.5 shrink-0 transition-transform",

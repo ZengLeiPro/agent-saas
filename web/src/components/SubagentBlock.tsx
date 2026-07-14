@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Bot, CheckCircle2, ChevronDown, CircleAlert, CircleSlash2, ExternalLink, Loader2, TimerOff } from 'lucide-react';
+import { ChevronRight, ExternalLink, TimerOff } from 'lucide-react';
+import { StatusIcons } from '@/lib/icons';
 import type { SubagentStatus } from '@agent/shared';
 import { cn } from '@/lib/utils';
 import { activityStatusIconClass, formatActivityDuration } from './activityStatusStyles';
@@ -29,11 +30,11 @@ function statusLabel(status: SubagentStatus): string {
 
 function StatusIcon({ status }: { status: SubagentStatus }) {
   const base = 'h-3.5 w-3.5 shrink-0';
-  if (status === 'running') return <Loader2 className={activityStatusIconClass('active', `${base} animate-spin`)} />;
-  if (status === 'failed') return <CircleAlert className={activityStatusIconClass('warning', base)} />;
-  if (status === 'cancelled') return <CircleSlash2 className={activityStatusIconClass('neutral', base)} />;
+  if (status === 'running') return <StatusIcons.running className={activityStatusIconClass('active', `${base} animate-spin`)} />;
+  if (status === 'failed') return <StatusIcons.error className={activityStatusIconClass('warning', base)} />;
+  if (status === 'cancelled') return <StatusIcons.cancelled className={activityStatusIconClass('neutral', base)} />;
   if (status === 'timeout') return <TimerOff className={activityStatusIconClass('warning', base)} />;
-  return <CheckCircle2 className={activityStatusIconClass('success', base)} />;
+  return <StatusIcons.success className={activityStatusIconClass('success', base)} />;
 }
 
 function formatCount(value: number): string {
@@ -69,11 +70,10 @@ export function SubagentBlock(props: SubagentBlockProps) {
           hasDetails && 'hover:text-foreground',
         )}
       >
-        <Bot className="h-3.5 w-3.5 shrink-0" />
+        <StatusIcon status={props.status} />
         <span className="min-w-0 flex-1 truncate">子任务 {props.agentType}</span>
         <span className="shrink-0 text-[11px]">{statusLabel(props.status)}</span>
-        <StatusIcon status={props.status} />
-        {hasDetails && <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', expanded && 'rotate-180')} />}
+        {hasDetails && <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 transition-transform', expanded && 'rotate-90')} />}
       </button>
 
       {expanded && hasDetails && (

@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, PenLine, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, PenLine } from "lucide-react";
+import { ActionIcons } from "@/lib/icons";
 
 import { cn } from "@/lib/utils";
 import type { AskUserAnswers } from "@agent/shared";
@@ -170,7 +171,7 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
             aria-label="全部跳过"
             title="全部跳过"
           >
-            <X className="h-5 w-5" />
+            <ActionIcons.skip className="h-5 w-5" />
           </button>
         </div>
       </div>
@@ -196,9 +197,6 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
                   <span className="mt-0.5 block text-[0.92em] leading-[1.45] text-muted-foreground">{option.description}</span>
                 )}
               </span>
-              {isSelected && !question.multiSelect && (
-                <ChevronRight className="h-5 w-5 shrink-0 text-foreground" />
-              )}
             </button>
           );
         })}

@@ -1,5 +1,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Bot, Building2, Cpu, Database, Gauge, Globe2, KeyRound, Loader2, Plug, Puzzle, RefreshCw, ServerCog, ShieldCheck, Info, UserPlus, Users, X, WalletCards } from "lucide-react";
+import { Loader2, RefreshCw, X, type LucideIcon } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,19 +36,19 @@ export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "rem
 interface ShellButton<T extends string> {
   id: T;
   label: string;
-  icon: typeof Gauge;
+  icon: LucideIcon;
   platformOnly?: boolean;
 }
 
 const tenantSettingsSections: ShellButton<TenantSection>[] = [
-  { id: "users", label: "成员", icon: Users },
-  { id: "skills", label: "技能", icon: Puzzle },
-  { id: "org-agents", label: "企业专家", icon: Bot },
-  { id: "mcp", label: "连接器", icon: Plug },
-  { id: "billing", label: "计费", icon: WalletCards },
-  { id: "files", label: "文件与数据", icon: Database },
-  { id: "company", label: "公司信息", icon: Info },
-  { id: "settings", label: "组织管理", icon: ShieldCheck },
+  { id: "users", label: "成员", icon: EntityIcons.members },
+  { id: "skills", label: "技能", icon: EntityIcons.skill },
+  { id: "org-agents", label: "企业专家", icon: EntityIcons.expert },
+  { id: "mcp", label: "连接器", icon: EntityIcons.connector },
+  { id: "billing", label: "计费", icon: EntityIcons.billing },
+  { id: "files", label: "文件与数据", icon: EntityIcons.files },
+  { id: "company", label: "公司信息", icon: EntityIcons.companyInfo },
+  { id: "settings", label: "组织管理", icon: EntityIcons.org },
 ];
 
 const SETTINGS_NAV_ITEM_SELECTED =
@@ -58,15 +59,15 @@ const SETTINGS_NAV_ITEM_UNSELECTED =
   "text-muted-foreground hover:bg-muted/60 hover:text-foreground";
 
 const platformSettingsSections: ShellButton<PlatformSection>[] = [
-  { id: "tenants", label: "组织", icon: Building2 },
-  { id: "signup", label: "注册管理", icon: UserPlus },
-  { id: "models", label: "模型", icon: Cpu },
-  { id: "billing", label: "计费", icon: WalletCards },
-  { id: "remote-hands", label: "执行环境池", icon: ServerCog },
-  { id: "tool-controls", label: "工具开关", icon: Globe2 },
-  { id: "global-mcp", label: "全局 MCP", icon: KeyRound },
-  { id: "skill-pool", label: "技能池", icon: Puzzle },
-  { id: "system", label: "系统配置", icon: Database },
+  { id: "tenants", label: "组织", icon: EntityIcons.org },
+  { id: "signup", label: "注册管理", icon: EntityIcons.signup },
+  { id: "models", label: "模型", icon: EntityIcons.model },
+  { id: "billing", label: "计费", icon: EntityIcons.billing },
+  { id: "remote-hands", label: "执行环境池", icon: EntityIcons.runtimePool },
+  { id: "tool-controls", label: "工具开关", icon: EntityIcons.toolControls },
+  { id: "global-mcp", label: "全局 MCP", icon: EntityIcons.connector },
+  { id: "skill-pool", label: "技能池", icon: EntityIcons.skill },
+  { id: "system", label: "系统配置", icon: EntityIcons.systemConfig },
 ];
 
 function AdminSettingsModal<T extends string>({
@@ -102,7 +103,7 @@ function AdminSettingsModal<T extends string>({
           <div className="mb-4 px-1">
             <div className="flex items-center gap-2">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white">
-                <ShieldCheck className="h-5 w-5" />
+                <EntityIcons.admin className="h-5 w-5" />
               </div>
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold">{title}</div>

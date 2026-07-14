@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, FolderClosed, Camera, Lock, Settings2, Users, ShieldCheck, UserCog } from "lucide-react";
+import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, FolderClosed, Camera, Lock, Settings2, UserCog } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 import { SwipeableRow } from "@/components/mobile/SwipeableRow";
 import type { SwipeAction } from "@/components/mobile/SwipeableRow";
 import { PullToRefresh } from "@/components/mobile/PullToRefresh";
@@ -692,7 +693,7 @@ export function MobileSessionList({
                         className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                         onClick={() => { setShowUserMenu(false); onClose(); (onPushTab ?? onTabChange)?.("tenant-admin"); }}
                       >
-                        <Users className="h-3.5 w-3.5" />
+                        <EntityIcons.analytics className="h-3.5 w-3.5" />
                         组织分析
                       </button>
                       <button
@@ -713,7 +714,7 @@ export function MobileSessionList({
                         className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                         onClick={() => { setShowUserMenu(false); onClose(); (onPushTab ?? onTabChange)?.("platform-admin"); }}
                       >
-                        <ShieldCheck className="h-3.5 w-3.5" />
+                        <EntityIcons.analytics className="h-3.5 w-3.5" />
                         平台分析
                       </button>
                       <button

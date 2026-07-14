@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ActionIcons } from "@/lib/icons";
 import {
   AlertCircle,
   ArrowDownToLine,
   Coins,
-  Filter,
+  Search,
   Loader2,
   Plus,
   RefreshCw,
@@ -653,7 +654,7 @@ export function PlatformBillingManager() {
             )}
             {activeTab === "pricing-versions" && pricingVersionActions}
             <Button variant="outline" onClick={() => { void projectNow(); }} disabled={projecting}>
-              {projecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {projecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ActionIcons.project className="h-4 w-4" />}
               投影 usage
             </Button>
             <Button variant="outline" onClick={() => { void load(); }} disabled={loading}>
@@ -975,7 +976,7 @@ function LedgerView({
               </SelectContent>
             </Select>
             <Button onClick={() => { void load(null); }} disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
               查询
             </Button>
           </div>
@@ -1100,7 +1101,7 @@ function UsageEventsView({
               </SelectContent>
             </Select>
             <Button onClick={() => { void load(); }} disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
               查询
             </Button>
           </div>

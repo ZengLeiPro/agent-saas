@@ -1,5 +1,7 @@
 import { UploadedFile, formatFileSize } from './types';
-import { FileText, Loader2, X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
+import { getFileTypeVisual } from "@agent/shared";
+import { CATEGORY_ICON } from "@/lib/fileCategoryIcons";
 import { cn } from "@/lib/utils";
 
 import { Button } from "@/components/ui/button";
@@ -26,7 +28,9 @@ export function FileUpload({
   return (
     <div>
       <div className="content-container flex flex-wrap gap-2 py-2">
-        {uploadedFiles.map((file, index) => (
+        {uploadedFiles.map((file, index) => {
+          const TypeIcon = CATEGORY_ICON[getFileTypeVisual(file.originalName).category];
+          return (
           <div
             key={index}
             className="flex max-w-full items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-sm"
@@ -38,7 +42,7 @@ export function FileUpload({
                 className="h-7 w-7 rounded object-cover"
               />
             ) : (
-              <FileText className="h-4 w-4 text-muted-foreground" />
+              <TypeIcon className="h-4 w-4 text-muted-foreground" />
             )}
             <span className={cn("max-w-[14rem] truncate")} title={file.originalName}>
               {file.originalName}
@@ -57,7 +61,8 @@ export function FileUpload({
               <X className="h-4 w-4" />
             </Button>
           </div>
-        ))}
+          );
+        })}
         {uploading && (
           <div
             className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-sm text-muted-foreground"

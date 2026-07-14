@@ -6,7 +6,7 @@
  * 整页面板走 lazy 加载，避免互相拖入对方的 bundle。
  */
 import { lazy, Suspense, useState } from "react";
-import { Globe, MessageSquareShare, ShieldAlert, Upload } from "lucide-react";
+import { Globe, MessageSquareShare, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,8 +26,10 @@ export function scenarioDemoSharePath(scenario: ScenarioItem): string | null {
 /** 形态徽标：recurring → 常驻；oneshot → 一次性 */
 export function ScenarioModeBadge({ mode }: { mode: ScenarioItem["mode"] }) {
   return (
-    <Badge variant="secondary" className="shrink-0 font-normal">
-      {mode === "recurring" ? "🔁 常驻" : "⚡ 一次性"}
+    <Badge variant="secondary" className="shrink-0 gap-1 font-normal">
+      {mode === "recurring"
+        ? <><Repeat className="h-3 w-3" aria-hidden="true" />常驻</>
+        : <><Zap className="h-3 w-3" aria-hidden="true" />一次性</>}
     </Badge>
   );
 }

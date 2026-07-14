@@ -1,4 +1,5 @@
-import { BarChart3, Building2, Gauge, HardDrive, ListTree, MessageSquareText, ServerCog, ShieldCheck, Users } from "lucide-react";
+import { BarChart3, Gauge, HardDrive, ListTree, MessageSquareText, ServerCog, Users, type LucideIcon } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -10,18 +11,18 @@ import { RUN_SHORT_LABEL } from "./displayText";
 interface PlatformAdminNavItem {
   id: PlatformAdminSection;
   label: string;
-  icon: typeof Gauge;
+  icon: LucideIcon;
 }
 
 export const platformAdminSections: PlatformAdminNavItem[] = [
   { id: "overview", label: "概览", icon: Gauge },
-  { id: "tenants", label: "租户", icon: Building2 },
+  { id: "tenants", label: "租户", icon: EntityIcons.org },
   { id: "users", label: "用户", icon: Users },
   { id: "sessions", label: "会话", icon: MessageSquareText },
   { id: "runs", label: RUN_SHORT_LABEL, icon: ListTree },
   { id: "sandboxes", label: "执行环境", icon: ServerCog },
   { id: "infra", label: "基础设施", icon: HardDrive },
-  { id: "audit", label: "审计", icon: ShieldCheck },
+  { id: "audit", label: "审计", icon: EntityIcons.audit },
   { id: "efficiency", label: "效率", icon: BarChart3 },
 ];
 

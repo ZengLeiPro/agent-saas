@@ -62,6 +62,8 @@ export interface RuntimeUsageEventRow {
   runUserId?: string;
   runChannel?: string;
   runModel?: string;
+  /** run.metadata.toolProfile（memory_poll 计费豁免判定，2026-07-14 批次） */
+  runToolProfile?: string;
 }
 
 export class PgBillingStore {
@@ -582,7 +584,9 @@ export class PgBillingStore {
       input.sessionId ?? null,
       input.runId ?? null,
       input.channel,
-      policy.billingEnabled && policy.billingMode !== 'internal',
+      // billable=false 的强制豁免（memory_poll 默认不扣积分，2026-07-14 批次）：
+      // usage 照记（内部成本统计可见），settleRunDebit 只结算 billable=true
+      input.billable === false ? false : (policy.billingEnabled && policy.billingMode !== 'internal'),
       input.modelValue,
       input.actualModel ?? null,
       inferProvider(input.modelValue),
@@ -737,8 +741,8 @@ export class PgBillingStore {
     if (!this.eventsTable) return [];
     const state = await this.getProjectionState('runtime_events');
     const runFields = this.runsTable
-      ? 'r.user_id AS run_user_id, r.channel AS run_channel, r.model AS run_model'
-      : 'NULL::text AS run_user_id, NULL::text AS run_channel, NULL::text AS run_model';
+      ? "r.user_id AS run_user_id, r.channel AS run_channel, r.model AS run_model, r.metadata->>'toolProfile' AS run_tool_profile"
+      : "NULL::text AS run_user_id, NULL::text AS run_channel, NULL::text AS run_model, NULL::text AS run_tool_profile";
     const runJoin = this.runsTable ? `LEFT JOIN ${this.runsTable} r ON r.run_id = e.run_id` : '';
     const result = await this.pool.query<{
       global_sequence: string;
@@ -750,6 +754,7 @@ export class PgBillingStore {
       run_user_id?: string | null;
       run_channel?: string | null;
       run_model?: string | null;
+      run_tool_profile?: string | null;
     }>(`
       SELECT e.global_sequence, e.event_id, e.event_type, e.tenant_id, e.timestamp, e.event_json,
              ${runFields}
@@ -769,6 +774,7 @@ export class PgBillingStore {
       ...(row.run_user_id ? { runUserId: row.run_user_id } : {}),
       ...(row.run_channel ? { runChannel: row.run_channel } : {}),
       ...(row.run_model ? { runModel: row.run_model } : {}),
+      ...(row.run_tool_profile ? { runToolProfile: row.run_tool_profile } : {}),
     }));
   }
 

@@ -22,6 +22,9 @@ import type {
   CronPayload,
   PayloadAgentTurn,
 } from "./types.js";
+import type { UserActivityService } from "../runtime/userActivityService.js";
+import { buildMemoryPollPrompt, MEMORY_POLL_DEFAULTS } from "./memoryPoll.js";
+import { tryAcquireMemoryMaintenance, releaseMemoryMaintenance } from "../memory/maintenanceLock.js";
 
 export interface UserStoreLike {
   findById(id: string): { id: string; username: string; role: 'admin' | 'user'; disabled?: boolean; tenantId?: string } | undefined;
@@ -58,6 +61,15 @@ export interface ExecutorOptions {
   skillConfigStore?: SkillConfigStore;
   /** 线上上传的组织自有 skill 持久化根目录 */
   tenantSkillsRootDir?: string;
+  /** 用户活动聚合服务（memory_poll 系统任务的「无活动跳过」预检；未配置时预检跳过任务） */
+  userActivityService?: UserActivityService;
+  /** memory_poll 系统任务的执行参数（config.memory.polling） */
+  memoryPoll?: {
+    lookbackHours?: number;
+    maxTurns?: number;
+    timeoutSeconds?: number;
+    model?: string;
+  };
 }
 
 export interface ExecuteResult {
@@ -74,6 +86,9 @@ export async function executeJob(
   job: CronJob,
   opts: ExecutorOptions
 ): Promise<ExecuteResult> {
+  if (job.systemKind === "memory_poll") {
+    return await executeMemoryPollJob(job, opts);
+  }
   const payload = job.payload as CronPayload;
 
   switch (payload.kind) {
@@ -86,10 +101,86 @@ export async function executeJob(
   }
 }
 
+/**
+ * memory_poll 系统任务（2026-07-14 批次）：
+ *   - 忽略 payload.message，加载服务端版本化提示语（改提示语不用批量改 job）
+ *   - 起 run 前先查最近 lookbackHours 有无用户主动消息，没有直接 skipped
+ *     （多租户下大量不活跃用户每天空跑一次 LLM 是纯烧钱）
+ *   - 套 memory_poll 受限工具白名单 + autoApprove（可写范围已被路径 guard 收窄）
+ *   - 强制 server-local：白名单无 Shell，文件工具在 server 侧 fs 执行，
+ *     不付容器/ACS 沙箱冷启动成本
+ */
+async function executeMemoryPollJob(
+  job: CronJob,
+  opts: ExecutorOptions
+): Promise<ExecuteResult> {
+  if (!job.owner || !opts.userStore) {
+    return { status: "error", error: "memory_poll job 缺少 owner 或 userStore" };
+  }
+  const owner = opts.userStore.findById(job.owner);
+  if (!owner || owner.disabled) {
+    return { status: "skipped", output: "memory_poll owner 不存在或已禁用" };
+  }
+
+  const lookbackHours = opts.memoryPoll?.lookbackHours ?? MEMORY_POLL_DEFAULTS.lookbackHours;
+
+  // 预检：无活动跳过（fail-closed——数据源不可用时不空跑模型）
+  if (!opts.userActivityService?.available) {
+    return { status: "skipped", output: "memory_poll 预检不可用（缺少 PG runtime event store），跳过本次轮询" };
+  }
+  const sinceIso = new Date(Date.now() - lookbackHours * 3_600_000).toISOString();
+  const hasActivity = await opts.userActivityService.hasActivity({
+    tenantId: owner.tenantId ?? DEFAULT_TENANT_ID,
+    userId: owner.id,
+    sinceIso,
+  });
+  if (hasActivity !== true) {
+    return {
+      status: "skipped",
+      output: `最近 ${lookbackHours} 小时无用户主动消息，跳过本次记忆轮询`,
+    };
+  }
+
+  const basePayload = job.payload.kind === "agentTurn" ? job.payload : undefined;
+  const effectivePayload: PayloadAgentTurn = {
+    kind: "agentTurn",
+    message: buildMemoryPollPrompt({ lookbackHours }),
+    maxTurns: basePayload?.maxTurns ?? opts.memoryPoll?.maxTurns ?? MEMORY_POLL_DEFAULTS.maxTurns,
+    timeoutSeconds: basePayload?.timeoutSeconds ?? opts.memoryPoll?.timeoutSeconds ?? MEMORY_POLL_DEFAULTS.timeoutSeconds,
+    ...(basePayload?.model ?? opts.memoryPoll?.model
+      ? { model: basePayload?.model ?? opts.memoryPoll?.model }
+      : {}),
+    // 记忆维护任务不带 persona 情境；MEMORY.md 让 agent 自己精读原文而不是吃注入摘要
+    context: { persona: false, memory: false },
+  };
+
+  // 用户级维护互斥：与会后记忆维护（memoryHook）共用锁，拿不到就下一轮再来
+  if (!tryAcquireMemoryMaintenance(owner.tenantId, owner.id)) {
+    return { status: "skipped", output: "该用户已有记忆维护任务在进行，跳过本次轮询" };
+  }
+  try {
+    return await executeAgentTurn(job, effectivePayload, opts, {
+      toolProfile: "memory_poll",
+      approvalPolicy: { autoApproveTools: true },
+      executionTarget: "server-local",
+    });
+  } finally {
+    releaseMemoryMaintenance(owner.tenantId, owner.id);
+  }
+}
+
+/** 系统任务（memory_poll）注入的 per-run 执行覆盖；普通 agentTurn 不传。 */
+interface AgentTurnRunOverrides {
+  toolProfile?: "memory_poll";
+  approvalPolicy?: { autoApproveTools: boolean };
+  executionTarget?: "server-local";
+}
+
 async function executeAgentTurn(
   job: CronJob,
   payload: PayloadAgentTurn,
-  opts: ExecutorOptions
+  opts: ExecutorOptions,
+  overrides?: AgentTurnRunOverrides
 ): Promise<ExecuteResult> {
   const maxTurns = payload.maxTurns ?? opts.defaultMaxTurns ?? 10;
   const timeoutSecondsRaw = payload.timeoutSeconds ?? opts.defaultTimeoutSeconds ?? 120;
@@ -256,6 +347,9 @@ async function executeAgentTurn(
         persistSession: true,
         includePartialMessages: true,
         ...skipFlags,
+        ...(overrides?.toolProfile ? { toolProfile: overrides.toolProfile } : {}),
+        ...(overrides?.approvalPolicy ? { approvalPolicy: overrides.approvalPolicy } : {}),
+        ...(overrides?.executionTarget ? { executionTarget: overrides.executionTarget } : {}),
       },
       {
         onSessionStart: (startedSessionId, startedTranscriptPath) => {
@@ -275,6 +369,7 @@ async function executeAgentTurn(
               channel: 'cron',
               createdAt: new Date().toISOString(),
               cronJobName: job.name,
+              ...(job.systemKind ? { cronSystemKind: job.systemKind } : {}),
             }).catch((err) => {
               console.warn(`[cron/meta] Failed to write session meta: sessionId=${startedSessionId} error=${err}`);
             });

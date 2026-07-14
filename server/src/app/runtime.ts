@@ -52,6 +52,8 @@ import { WebChannel } from '../channels/web/channel.js';
 import { DingtalkChannel } from '../channels/dingtalk/channel.js';
 import { createDingtalkDeps, type DingtalkDeps } from '../channels/dingtalk/factory.js';
 import { createCronRuntime, type CronRuntime } from '../cron/bootstrap.js';
+import { reconcileMemoryPollJobs, MEMORY_POLL_DEFAULTS } from '../cron/memoryPoll.js';
+import { UserActivityService } from '../runtime/userActivityService.js';
 import { createCronNotifier } from '../cron/notifier.js';
 import type { NotifyChannel } from '../cron/notifyChannel.js';
 import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
@@ -857,6 +859,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       store: pgBillingStore,
       userStore,
       logger: billingLogger,
+      // memory_poll 计费豁免（2026-07-14 曾磊拍板默认不扣）：仅当租户显式开启
+      // features.memoryPollChargesCredits 时 memory_poll run 才产生 debit
+      isMemoryPollBillable: (tenantId) => {
+        try {
+          return tenantStore?.getSettings(tenantId)?.features?.memoryPollChargesCredits === true;
+        } catch {
+          return false;
+        }
+      },
     });
     alertNotifier = new AlertNotifier({
       config,
@@ -1281,9 +1292,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }
     : undefined;
 
+  // 用户活动聚合（2026-07-14 记忆轮询批次）：PG 后端可用；file backend 下
+  // available=false，UserActivityList 工具不挂载、memory_poll 预检 fail-closed。
+  const userActivityService = new UserActivityService({
+    sessionProjection: pgSessionProjectionStore ?? null,
+    eventStore: pgEventStore ?? null,
+    logger: serverLogger.child('UserActivity'),
+  });
+
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd,
     sharedDir,
+    ...(userActivityService.available ? { userActivityService } : {}),
     memory: {
       enabled: memoryEnabled && config.memory?.injectContext?.enabled !== false,
       maxLines: config.memory?.injectContext?.maxLines,
@@ -1688,6 +1708,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tokenUsageStore,
     skillConfigStore,
     tenantSkillsRootDir,
+    userActivityService,
+    memoryPoll: {
+      ...(config.memory?.polling?.lookbackHours ? { lookbackHours: config.memory.polling.lookbackHours } : {}),
+      ...(config.memory?.polling?.maxTurns ? { maxTurns: config.memory.polling.maxTurns } : {}),
+      ...(config.memory?.polling?.timeoutSeconds ? { timeoutSeconds: config.memory.polling.timeoutSeconds } : {}),
+      ...(config.memory?.polling?.model ? { model: config.memory.polling.model } : {}),
+    },
     notify: createCronNotifier({
       resolveChannels: (notifyConfig) => {
         const channels: NotifyChannel[] = [];
@@ -1738,6 +1765,44 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // CronList/CronManage 内置工具接线：dispatch 构造早于 cronRuntime，
   // config 传的是惰性 getter（与 updateToolSettingsConfig 热改同模式）。
   rawRuntimeConfig.cronService = () => cronRuntime.service ?? undefined;
+
+  // 记忆轮询每用户任务对账（2026-07-14 批次）：启动补齐 + 每 6h 复核。
+  // 仅 processRole=all 执行（ws-only/scheduler-only 不动 cron store）；
+  // 平台开关 config.memory.polling.enabled 关闭时也跑对账——负责把存量系统任务禁用。
+  if (processRole === 'all' && cronRuntime.service && userStore) {
+    const memoryPollingConfig = config.memory?.polling;
+    const runMemoryPollReconcile = async (): Promise<void> => {
+      try {
+        const existingJobs = await cronRuntime.service!.list({ includeDisabled: true });
+        const plan = reconcileMemoryPollJobs({
+          users: userStore.listAll().map((user) => ({
+            id: user.id,
+            username: user.username,
+            role: user.role,
+            tenantId: user.tenantId,
+            disabled: user.disabled,
+          })),
+          existingJobs,
+          tenantStore,
+          enabled: memoryPollingConfig?.enabled === true && userActivityService.available,
+          hour: memoryPollingConfig?.hour ?? MEMORY_POLL_DEFAULTS.hour,
+          timezone: memoryPollingConfig?.timezone ?? config.server.timezone ?? MEMORY_POLL_DEFAULTS.timezone,
+          nowMs: Date.now(),
+        });
+        if (plan.toCreate.length > 0 || plan.toUpdate.length > 0) {
+          await cronRuntime.service!.applySystemJobs(plan);
+          serverLogger.info(
+            `Memory poll reconcile: eligible=${plan.stats.eligibleUsers} created=${plan.stats.created} enabled=${plan.stats.enabled} disabled=${plan.stats.disabled} dupDisabled=${plan.stats.duplicatesDisabled}`,
+          );
+        }
+      } catch (err) {
+        serverLogger.warn(`Memory poll reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    void runMemoryPollReconcile();
+    const memoryPollReconcileTimer = setInterval(() => { void runMemoryPollReconcile(); }, 6 * 3600_000);
+    memoryPollReconcileTimer.unref?.();
+  }
 
   // Backfill cron groups from historical run logs (one-time migration)
   await migrateCronGroups(groupStore, cronRuntime.service, cronRuntime.cronRunsDir);

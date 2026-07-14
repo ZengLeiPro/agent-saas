@@ -38,6 +38,9 @@ export interface CreateCronRuntimeOptions {
   tokenUsageStore?: TokenUsageStore;
   skillConfigStore?: SkillConfigStore;
   tenantSkillsRootDir?: string;
+  /** memory_poll 系统任务（2026-07-14 批次）：活动预检 + 执行参数 */
+  userActivityService?: ExecutorOptions['userActivityService'];
+  memoryPoll?: ExecutorOptions['memoryPoll'];
 }
 
 export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntime {
@@ -88,6 +91,8 @@ export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntim
       tokenUsageStore: options.tokenUsageStore,
       skillConfigStore: options.skillConfigStore,
       tenantSkillsRootDir: options.tenantSkillsRootDir,
+      userActivityService: options.userActivityService,
+      memoryPoll: options.memoryPoll,
     }),
     appendRunLog: (entry) => appendRunLog(entry, { runsDir: cronRunsDir }),
     notify,

@@ -179,7 +179,9 @@ export class CronToolProvider implements ToolProvider {
       return { content: JSON.stringify(jobDetail(job), null, 2) };
     }
     const jobs = (await service.list({ includeDisabled: true }))
-      .filter((job) => job.owner === identity.id);
+      // 平台系统任务（memory_poll 等）不进模型可见列表——CronManage 对它们
+      // 一律拒绝，展示只会诱导无效操作浪费轮次
+      .filter((job) => job.owner === identity.id && !job.systemKind);
     return {
       content: JSON.stringify({ count: jobs.length, jobs: jobs.map(summarizeJob) }, null, 2),
     };

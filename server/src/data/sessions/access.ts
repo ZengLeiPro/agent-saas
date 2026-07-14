@@ -23,11 +23,15 @@ export function canAccessSession(
 /**
  * 记忆/心跳轮询会话判断：与 cron.ts/groups.ts 的 isMemoryPollJob 对齐。
  * 非 admin 不应通过列表、详情或搜索感知这些内部会话。
+ * 真源是 meta.cronSystemKind（2026-07-14 systemKind 批次）；
+ * 名称后缀匹配仅作存量人工创建任务的兼容。
  */
 export function isMemoryPollSessionMeta(
   meta: SessionMeta | null | undefined,
 ): boolean {
-  const jobName = meta?.cronJobName;
+  if (!meta) return false;
+  if (meta.cronSystemKind === "memory_poll") return true;
+  const jobName = meta.cronJobName;
   if (!jobName) return false;
   return jobName.endsWith("记忆轮询") || jobName.endsWith("心跳轮询");
 }

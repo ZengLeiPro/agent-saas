@@ -109,11 +109,22 @@ export interface CronJobState {
 
 // ============ 任务定义 ============
 
+/**
+ * 平台系统任务类型（2026-07-14 记忆轮询批次）。
+ * - 'memory_poll'：每日记忆轮询。由平台自动预置（每用户一条），执行时忽略
+ *   payload.message、加载服务端版本化提示语，并套用受限工具白名单。
+ * 用户不能通过 REST API 创建/修改 systemKind 任务（routes/cron.ts 拒绝），
+ * 真源是本字段；「记忆轮询/心跳轮询」名称后缀匹配仅作存量任务兼容。
+ */
+export type CronSystemKind = "memory_poll";
+
 export interface CronJob {
   id: string; // UUID
   name: string; // 任务名称
   description?: string; // 任务描述
   enabled: boolean; // 是否启用
+  /** 平台系统任务标识（用户不可创建/修改；见 CronSystemKind 注释） */
+  systemKind?: CronSystemKind;
 
   schedule: CronSchedule; // 调度配置
   payload: CronPayload; // 任务内容

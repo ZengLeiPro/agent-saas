@@ -321,10 +321,29 @@ const memoryIndexSchema = z.object({
   }).optional(),
 });
 
+/**
+ * 每日记忆轮询（2026-07-14 批次）。平台级总开关 + 执行参数；
+ * 租户级灰度走 TenantSettings.features.memoryPollingEnabled（默认关）。
+ */
+const memoryPollingSchema = z.object({
+  enabled: z.boolean().optional(),
+  /** 触发小时（0-23，默认 4；分钟按 userId 散列 00-59） */
+  hour: z.number().int().min(0).max(23).optional(),
+  /** IANA 时区，默认 Asia/Shanghai */
+  timezone: z.string().min(1).optional(),
+  /** 用户活动回看窗口（小时，默认 48；也是「无活动跳过」的判定窗口） */
+  lookbackHours: z.number().int().min(1).max(168).optional(),
+  maxTurns: z.number().int().positive().max(100).optional(),
+  timeoutSeconds: z.number().int().positive().max(3600).optional(),
+  /** 模型覆盖（group/model）；缺省跟随各租户默认模型 */
+  model: z.string().min(1).optional(),
+});
+
 const memoryConfigSchema = z.object({
   enabled: z.boolean().optional(),
   injectContext: memoryInjectContextSchema.optional(),
   maintenance: memoryMaintenanceSchema.optional(),
+  polling: memoryPollingSchema.optional(),
   index: memoryIndexSchema.optional(),
 });
 

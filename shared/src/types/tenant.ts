@@ -46,6 +46,10 @@ export interface TenantSettings {
     debugModeAllowed: boolean;
     /** 会话上下文自动压缩（达到各模型配置的触发线后 post-run 触发）。默认关闭。 */
     autoCompactEnabled: boolean;
+    /** 每日记忆轮询（2026-07-14 批次）。默认关闭，开启后为每个有效用户自动预置系统任务。 */
+    memoryPollingEnabled?: boolean;
+    /** 记忆轮询是否扣租户积分（默认不扣：用量照记但不产生 debit）。 */
+    memoryPollChargesCredits?: boolean;
   };
   quotas: {
     maxUsers?: number;
@@ -104,6 +108,8 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     customSkillsEnabled: true,
     debugModeAllowed: false,
     autoCompactEnabled: false,
+    memoryPollingEnabled: false,
+    memoryPollChargesCredits: false,
   },
   quotas: {},
   models: {

@@ -58,6 +58,9 @@ const tenantSettingsSchema = z.object({
     // 专职 Agent 批次（2026-07）：optional 兼容旧客户端；缺省走 DEFAULT_TENANT_SETTINGS
     personalAgentEnabled: z.boolean().optional(),
     kbEnabled: z.boolean().optional(),
+    // 记忆轮询批次（2026-07-14）：默认关，kaiyan 灰度先开；计费默认不扣积分
+    memoryPollingEnabled: z.boolean().optional(),
+    memoryPollChargesCredits: z.boolean().optional(),
   }).optional(),
   quotas: z.object({
     maxUsers: optionalNumber,

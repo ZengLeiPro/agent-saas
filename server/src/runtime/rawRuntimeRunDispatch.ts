@@ -45,6 +45,9 @@ import { createBuiltinTools, type BuiltinToolsConfig } from '../agent/builtinToo
 import { WebToolProvider, type ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
 import { CronToolProvider } from '../agent/cronToolProvider.js';
 import { TenantCompanyInfoToolProvider } from '../agent/tenantCompanyInfoToolProvider.js';
+import { UserActivityToolProvider } from '../agent/userActivityToolProvider.js';
+import type { UserActivityService } from './userActivityService.js';
+import { applyToolProfile, normalizeToolProfile } from './toolProfiles.js';
 import { McpClientToolProvider } from '../mcp/clientToolProvider.js';
 import type { McpClientManager } from '../mcp/clientManager.js';
 import type { McpProxy } from '../mcp/proxy.js';
@@ -271,6 +274,11 @@ export interface RawRuntimeRunDispatchConfig {
   toolControls?: import('../app/config.js').ToolControlsConfig;
   /** Platform-managed web access tools (`WebSearch` / `WebFetch`). */
   webTools?: ResolvedWebToolsConfig;
+  /**
+   * 用户活动聚合服务（2026-07-14 记忆轮询批次）。配置后挂载 UserActivityList
+   * safe 只读工具；未配置（file backend / 测试）时工具不挂载。
+   */
+  userActivityService?: UserActivityService;
   /** Artifact service used by hand-backed CreateArtifact. */
   artifactService?: ArtifactService;
   /**
@@ -413,6 +421,8 @@ export interface RawApprovalResumeRequest {
   modelProviderOptions?: ModelProviderOptions;
   executionTarget?: ExecutionTargetKind;
   approvalPolicy?: ToolApprovalPolicyOptions;
+  /** run.metadata.toolProfile 恢复（wake 路径传入；resume 后维持受限工具集）。 */
+  toolProfile?: 'memory_poll';
   hooks?: AgentRunHooks;
   abortController?: AbortController;
   maxTurns?: number;
@@ -431,6 +441,8 @@ export interface RawInteractionResumeRequest {
   modelProviderOptions?: ModelProviderOptions;
   executionTarget?: ExecutionTargetKind;
   approvalPolicy?: ToolApprovalPolicyOptions;
+  /** run.metadata.toolProfile 恢复（wake 路径传入；resume 后维持受限工具集）。 */
+  toolProfile?: 'memory_poll';
   hooks?: AgentRunHooks;
   abortController?: AbortController;
   maxTurns?: number;
@@ -1116,6 +1128,11 @@ async function collectRuntimeTooling(
   const builtin = createBuiltinTools(config.builtinTools);
   providers.push(builtin);
 
+  // 2.5 UserActivityList（safe 只读，身份只从 context 解析；记忆轮询 + 普通会话通用）
+  if (config.userActivityService && isToolEnabled(config.toolControls, 'UserActivityList')) {
+    providers.push(new UserActivityToolProvider(config.userActivityService));
+  }
+
   // 3. Web 工具（平台托管网络出站，不走 workspace hand / shell）
   if (config.tenantStore) {
     providers.push(new TenantCompanyInfoToolProvider({
@@ -1531,6 +1548,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const executionTarget = options.executionTarget ?? resolveDefaultExecutionTargetForContext(executionConfig, context);
     const sandboxPolicy = buildRawRuntimeSandboxPolicy(config, context, cwd, executionTarget);
     const approvalPolicy = normalizeApprovalPolicy(options.approvalPolicy);
+    const toolProfile = normalizeToolProfile(options.toolProfile);
 
     if (!apiKey) {
       yield { type: 'error', error: 'Raw runtime 缺少 OPENAI_API_KEY 或模型组 apiKey' };
@@ -1678,6 +1696,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         sandboxScopeId,
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
+        ...(toolProfile ? { toolProfile } : {}),
         wakeMessage: {
           channel: message.channel,
           chatId: message.chatId,
@@ -1749,7 +1768,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       eventStore,
       approvalStore,
       transcriptProjection: projection,
-      toolRuntime: new PlatformToolRuntime({
+      toolRuntime: applyToolProfile(new PlatformToolRuntime({
         memoryIndexService: config.memoryIndexService,
         executionTransportRegistry,
         handStore: config.handStore,
@@ -1758,7 +1777,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         artifactService: config.artifactService,
         providers: [...tooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,
-      }),
+      }), toolProfile),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -1991,6 +2010,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       yield { type: 'error', error: 'Raw approval resume 缺少 OPENAI_API_KEY 或模型组 apiKey' };
       return;
     }
+    const resumeToolProfile = normalizeToolProfile(request.toolProfile);
 
     // Session-level lock：resume 路径上 sessionId 已知，必须早于 catalog upsert
     // 和 loop.resumeApproval 占用，避免两个 brain 同时 wake 同一 session。
@@ -2090,7 +2110,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       sandboxScopeId,
-      metadata: { cwd, transcriptPath, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}) },
+      metadata: { cwd, transcriptPath, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}) },
     });
     directRuntimeLease = await acquireDirectRuntimeRunLease({
       runStore: config.runStore,
@@ -2148,7 +2168,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       eventStore,
       approvalStore,
       transcriptProjection: projection,
-      toolRuntime: new PlatformToolRuntime({
+      toolRuntime: applyToolProfile(new PlatformToolRuntime({
         memoryIndexService: config.memoryIndexService,
         executionTransportRegistry,
         handStore: config.handStore,
@@ -2157,7 +2177,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         artifactService: config.artifactService,
         providers: [...resumeTooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,
-      }),
+      }), resumeToolProfile),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -2267,6 +2287,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       yield { type: 'error', error: 'Raw interaction resume 缺少 OPENAI_API_KEY 或模型组 apiKey' };
       return;
     }
+    const resumeToolProfile = normalizeToolProfile(request.toolProfile);
 
     const lockHandle = config.sessionLock ? await config.sessionLock.tryAcquire(request.sessionId) : null;
     if (config.sessionLock && !lockHandle) {
@@ -2378,7 +2399,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       sandboxScopeId,
-      metadata: { cwd, transcriptPath, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}) },
+      metadata: { cwd, transcriptPath, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}) },
     });
     directRuntimeLease = await acquireDirectRuntimeRunLease({
       runStore: config.runStore,
@@ -2436,7 +2457,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       eventStore,
       approvalStore: createApprovalStoreForSession(config, sessionRecord, eventStore),
       transcriptProjection: projection,
-      toolRuntime: new PlatformToolRuntime({
+      toolRuntime: applyToolProfile(new PlatformToolRuntime({
         memoryIndexService: config.memoryIndexService,
         executionTransportRegistry,
         handStore: config.handStore,
@@ -2445,7 +2466,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         artifactService: config.artifactService,
         providers: [...resumeTooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,
-      }),
+      }), resumeToolProfile),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -2569,6 +2590,7 @@ export async function wakeRuntimeSession(
     : false;
   const resumeInteraction = resumeInteractionCandidate && !resumeInteractionConsumed ? resumeInteractionCandidate : null;
   const approvalPolicy = normalizeApprovalPolicy(run.metadata?.approvalPolicy);
+  const wakeToolProfile = normalizeToolProfile(run.metadata?.toolProfile);
   const pendingApproval = [...events].reverse().find((event): event is Extract<PlatformEvent, { type: 'approval_requested' }> => (
     event.type === 'approval_requested'
     && event.sessionId === run.sessionId
@@ -2652,6 +2674,7 @@ export async function wakeRuntimeSession(
         model: run.model ?? session.modelRef,
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
         abortController,
         runtimeWorkerId: options.lease?.workerId,
       })) {
@@ -2703,6 +2726,7 @@ export async function wakeRuntimeSession(
         model: run.model ?? session.modelRef,
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
         abortController,
         runtimeWorkerId: options.lease?.workerId,
       })) {
@@ -2746,6 +2770,7 @@ export async function wakeRuntimeSession(
         model: run.model ?? session.modelRef,
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
         recordUserMessage: wakePrompt.recordUserMessage,
         abortController,
         runtimeWorkerId: options.lease?.workerId,

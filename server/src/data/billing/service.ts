@@ -19,6 +19,13 @@ export interface BillingServiceOptions {
     info?: (message: string, meta?: Record<string, unknown>) => void;
     warn?: (message: string, meta?: Record<string, unknown>) => void;
   };
+  /**
+   * memory_poll run 是否对该租户扣积分（2026-07-14 曾磊拍板：默认不扣）。
+   * 未配置或返回 false → memory_poll 的 usage event 记 billable=false
+   * （不产生 ledger debit，用量照记内部可见）。装配层从
+   * TenantSettings.features.memoryPollChargesCredits 读取。
+   */
+  isMemoryPollBillable?: (tenantId: string) => boolean;
 }
 
 export class BillingService {
@@ -232,9 +239,13 @@ export class BillingService {
     const runId = typeof event.runId === 'string' ? event.runId : undefined;
     const sessionId = typeof event.sessionId === 'string' ? event.sessionId : undefined;
     const user = row.runUserId ? this.options.userStore?.findById(row.runUserId) : undefined;
+    // memory_poll 计费豁免（2026-07-14）：租户未显式开启扣费时 billable=false
+    const memoryPollExempt = row.runToolProfile === 'memory_poll'
+      && this.options.isMemoryPollBillable?.(row.tenantId) !== true;
     const input: ProjectedRuntimeUsageInput = {
       idempotencyKey: `usage:event:v1:${row.eventId}`,
       tenantId: row.tenantId,
+      ...(memoryPollExempt ? { billable: false } : {}),
       ...(row.runUserId ? { userId: row.runUserId } : {}),
       username: user?.username ?? row.runUserId ?? 'unknown',
       ...(sessionId ? { sessionId } : {}),

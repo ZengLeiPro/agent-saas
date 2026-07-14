@@ -241,6 +241,19 @@
       "minTextLength": 500,
       "cooldownMinutes": 30
     },
+    // 每日记忆轮询（2026-07-14 批次）：平台总开关 + 执行参数。
+    // 开启后为「租户 features.memoryPollingEnabled=true」的每个有效用户
+    // 自动预置一条 memory_poll 系统任务（每天 hour 点、分钟按 userId 散列）。
+    // 需要 PG runtime event store（用户活动预检），file backend 下任务会跳过。
+    "polling": {
+      "enabled": false,
+      "hour": 4,
+      "timezone": "Asia/Shanghai",
+      "lookbackHours": 48,
+      "maxTurns": 30,
+      "timeoutSeconds": 900
+      // "model": "volcengine/glm-5.2"  // 可选覆盖；缺省跟随各租户默认模型
+    },
     // 记忆索引（SQLite + FTS5 + sqlite-vec 向量混合检索）
     // 启用后替代纯关键词搜索，提供语义理解能力
     "index": {

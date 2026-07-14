@@ -21,6 +21,21 @@ function canAccess(req: Request, job: CronJob): boolean {
   return job.owner === req.user.sub;
 }
 
+/**
+ * 平台系统任务（memory_poll 等，2026-07-14 批次）：
+ * 非 admin 在列表/详情中不可见（与记忆轮询会话隐藏策略一致）；
+ * 任何人（含 admin）不得经 API 修改/删除——由平台 reconcile 统一管理，
+ * 租户级开关走 TenantSettings.features。
+ */
+function isSystemJob(job: CronJob): boolean {
+  return !!job.systemKind;
+}
+
+function canSeeSystemJob(req: Request): boolean {
+  if (!req.user) return true;
+  return req.user.role === "admin";
+}
+
 /** 钉钉通知交叉字段校验（Zod 结构校验后的语义校验） */
 function validateDingtalkNotify(notify: {
   enabled: boolean;
@@ -103,7 +118,7 @@ export function createCronRouter(
     try {
       const includeDisabled = req.query.includeDisabled === "true";
       const allJobs = await cronService.list({ includeDisabled });
-      const jobs = allJobs.filter((job) => canAccess(req, job));
+      const jobs = allJobs.filter((job) => canAccess(req, job) && (!isSystemJob(job) || canSeeSystemJob(req)));
       res.json({ jobs });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -119,6 +134,10 @@ export function createCronRouter(
       }
       if (!canAccess(req, job)) {
         res.status(403).json({ error: "Access denied" });
+        return;
+      }
+      if (isSystemJob(job) && !canSeeSystemJob(req)) {
+        res.status(404).json({ error: "Job not found" });
         return;
       }
       res.json(job);
@@ -177,6 +196,10 @@ export function createCronRouter(
       }
       if (!canAccess(req, existing)) {
         res.status(403).json({ error: "Access denied" });
+        return;
+      }
+      if (isSystemJob(existing)) {
+        res.status(403).json({ error: "系统任务由平台管理，不能通过 API 修改" });
         return;
       }
 
@@ -253,6 +276,10 @@ export function createCronRouter(
       }
       if (!canAccess(req, existing)) {
         res.status(403).json({ error: "Access denied" });
+        return;
+      }
+      if (isSystemJob(existing)) {
+        res.status(403).json({ error: "系统任务由平台管理，不能通过 API 删除" });
         return;
       }
       await cronService.remove(req.params.id);

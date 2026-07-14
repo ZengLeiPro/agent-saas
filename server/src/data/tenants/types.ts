@@ -56,6 +56,17 @@ export interface TenantSettings {
      * 可能关掉个人文件能力但仍需要引用溯源。阶段 2 的 /api/kb/file 消费。
      */
     kbEnabled?: boolean;
+    /**
+     * 每日记忆轮询（2026-07-14 批次）。默认关闭，kaiyan 灰度先开；
+     * 开启后平台为该租户每个有效用户自动预置一条 memory_poll 系统任务。
+     */
+    memoryPollingEnabled?: boolean;
+    /**
+     * 记忆轮询是否扣租户积分（2026-07-14 曾磊拍板：默认不扣）。
+     * false = usage event 记 billable=false，不产生 ledger debit，
+     * 但用量照记（内部成本统计可见）。
+     */
+    memoryPollChargesCredits?: boolean;
   };
   quotas: {
     maxUsers?: number;
@@ -113,6 +124,8 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     autoCompactEnabled: false,
     personalAgentEnabled: true,
     kbEnabled: false,
+    memoryPollingEnabled: false,
+    memoryPollChargesCredits: false,
   },
   quotas: {},
   models: {

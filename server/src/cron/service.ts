@@ -189,6 +189,46 @@ export class CronService {
     return this.jobs.find((j) => j.id === id);
   }
 
+  /**
+   * 平台内部通道：注入/更新系统任务（memory_poll reconcile 用；2026-07-14 批次）。
+   * 不走用户 API 的 CronJobCreate 校验——只有平台装配层能调用，携带完整
+   * CronJob（含 systemKind）。toUpdate 只应用 enabled/updatedAtMs（reconcile
+   * 的唯一诉求是开/关），不覆盖 payload/schedule，避免误伤运行态字段。
+   */
+  async applySystemJobs(plan: { toCreate: CronJob[]; toUpdate: CronJob[] }): Promise<void> {
+    await this.ensureLoaded();
+    let changed = false;
+    const nowMs = this.deps.nowMs();
+    for (const job of plan.toCreate) {
+      if (!job.systemKind) continue; // 本通道只接受系统任务
+      if (this.jobs.some((j) => j.id === job.id)) continue;
+      const next: CronJob = { ...job, state: { ...job.state } };
+      if (next.enabled) next.state.nextRunAtMs = computeJobNextRunAtMs(next, nowMs);
+      this.jobs.push(next);
+      changed = true;
+      cronLogger.info(`System job created: ${next.name} (${next.id}) owner=${next.owner}`);
+    }
+    for (const update of plan.toUpdate) {
+      const job = this.jobs.find((j) => j.id === update.id);
+      if (!job || !job.systemKind) continue;
+      if (job.enabled === update.enabled) continue;
+      job.enabled = update.enabled;
+      job.updatedAtMs = update.updatedAtMs ?? nowMs;
+      if (job.enabled) {
+        job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
+      } else {
+        delete job.state.nextRunAtMs;
+      }
+      changed = true;
+      cronLogger.info(`System job ${job.enabled ? 'enabled' : 'disabled'}: ${job.name} (${job.id}) owner=${job.owner}`);
+    }
+    if (changed) {
+      await this.persist();
+      this.armTimer();
+      this.emit({ type: "statusChanged", status: this.getStatus() });
+    }
+  }
+
   async add(create: CronJobCreate, context?: { owner?: string; ownerName?: string }): Promise<CronJob> {
     await this.ensureLoaded();
 
@@ -237,6 +277,11 @@ export class CronService {
 
     const job = this.jobs.find((j) => j.id === id);
     if (!job) return undefined;
+    if (job.systemKind) {
+      // 平台系统任务只能经 applySystemJobs（reconcile）变更——REST API 与
+      // CronManage 工具路径都会命中本 guard。
+      throw new Error("系统任务由平台管理，不能修改");
+    }
 
     const nowMs = this.deps.nowMs();
     const wasEnabled = job.enabled;
@@ -302,6 +347,9 @@ export class CronService {
     if (index === -1) return false;
 
     const job = this.jobs[index];
+    if (job.systemKind) {
+      throw new Error("系统任务由平台管理，不能删除");
+    }
     this.jobs.splice(index, 1);
     await this.persist();
     this.armTimer();

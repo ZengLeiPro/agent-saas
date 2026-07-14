@@ -189,4 +189,10 @@ export interface ProjectedRuntimeUsageInput {
   usage: SdkResultModelUsage;
   rawUsageJson: unknown;
   occurredAt: string;
+  /**
+   * 强制豁免（2026-07-14 memory_poll 批次）：false = 该 usage event 不参与
+   * ledger debit 结算（settleRunDebit 只取 billable=true），用量照记。
+   * 缺省时按租户 policy（billingEnabled && billingMode!=='internal'）判定。
+   */
+  billable?: boolean;
 }

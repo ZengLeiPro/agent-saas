@@ -276,8 +276,13 @@ function inferKind(fileName?: string): ArtifactKind {
   return 'file';
 }
 
+// 与 data/sessions/access.ts 的 isMemoryPollSessionMeta 对齐（真源=cronSystemKind，
+// 名称后缀仅兼容存量人工任务）。此处保留独立实现是为了避免 runtime → data/sessions
+// 的反向依赖；两处修改必须同步。
 function isMemoryPollSessionMeta(meta: SessionMeta | null | undefined): boolean {
-  const jobName = meta?.cronJobName;
+  if (!meta) return false;
+  if (meta.cronSystemKind === 'memory_poll') return true;
+  const jobName = meta.cronJobName;
   return Boolean(jobName && (jobName.endsWith('记忆轮询') || jobName.endsWith('心跳轮询')));
 }
 

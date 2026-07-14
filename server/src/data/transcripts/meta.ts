@@ -43,6 +43,11 @@ export interface SessionMeta {
   /** cron 触发时的任务名称，用于前端显示 */
   cronJobName?: string;
   /**
+   * cron 系统任务标识（2026-07-14 记忆轮询批次）。'memory_poll' = 每日记忆轮询
+   * 会话：对非 admin 隐藏（与 cronJobName 名称后缀兼容判断并存，本字段是真源）。
+   */
+  cronSystemKind?: 'memory_poll';
+  /**
    * 会话种类（2026-07-06 子 agent 工具）。'subagent' = 父 run 经 Agent 工具派生的
    * hidden session：会话列表 API 过滤不展示，但 transcript / runtime events 完整
    * 保留，平台 admin Run Trace 可按 parentRunId 关联查看。

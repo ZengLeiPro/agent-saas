@@ -129,9 +129,10 @@ jobs:
             "$ECS_USER@$ECS_HOST:/tmp/agent-saas-${GITHUB_SHA}.tgz"
 
       - name: Deploy and restart
-        timeout-minutes: 16
+        timeout-minutes: 21
         run: |
-          REMOTE_DEPLOY_TIMEOUT_SECONDS=900
+          # 覆盖冷安装 + 360s drain + 420s healthz，并给 step 本身保留 60s 收尾余量。
+          REMOTE_DEPLOY_TIMEOUT_SECONDS=1200
           echo "Remote deploy timeout: ${REMOTE_DEPLOY_TIMEOUT_SECONDS}s"
           timeout "${REMOTE_DEPLOY_TIMEOUT_SECONDS}s" ssh -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
@@ -188,13 +189,19 @@ jobs:
           NODE_ENV=development pnpm install --frozen-lockfile --filter server... --filter shared...
           log "remote pnpm install done"
 
-          prune_pnpm_store() {
-            if command -v pnpm >/dev/null 2>&1; then
-              log "pnpm store prune start"
-              pnpm store prune || echo "pnpm store prune failed; continuing" >&2
-              log "pnpm store prune done"
+          # 切换前清理旧 release：即使清理失败，当前生产版本仍未改变。
+          # 保留 pnpm store 供后续发布复用，避免每次重新下载全量依赖。
+          log "release cleanup start before switch: keep last 5 releases plus current/previous"
+          KEEP_CURRENT=$(readlink "$APP_LINK" 2>/dev/null || true)
+          KEEP_PREV=$(readlink "$PREV_LINK" 2>/dev/null || true)
+          (ls -dt "$RELEASES_DIR"/*/ 2>/dev/null || true) | tail -n +6 | while read -r old; do
+            old="${old%/}"
+            if [ -n "$old" ] && [ "$old" != "$KEEP_CURRENT" ] && [ "$old" != "$KEEP_PREV" ]; then
+              log "pruning old release: $old"
+              rm -rf "$old"
             fi
-          }
+          done
+          log "release cleanup done"
 
           healthz_ok() {
             curl -fsS -m 5 "$HEALTHZ_URL" >/dev/null 2>&1
@@ -299,22 +306,8 @@ jobs:
           for _ in $(seq 1 420); do
             if healthz_ok; then
               log "healthz ok after ${HEALTH_WAITED}s"
-              prune_pnpm_store
               log "remove uploaded release archive"
               rm -f "$RELEASE_TGZ"
-              # 自动清理：保留最近 5 个 release + current/previous 指向
-              # （盘只有 40G，每个 release 约 1.5G，不清会涨满打挂服务）
-              log "release cleanup start: keep last 5 releases plus current/previous"
-              KEEP_CURRENT=$(readlink "$APP_LINK" 2>/dev/null || true)
-              KEEP_PREV=$(readlink "$PREV_LINK" 2>/dev/null || true)
-              (ls -dt "$RELEASES_DIR"/*/ 2>/dev/null || true) | tail -n +6 | while read -r old; do
-                old="${old%/}"
-                if [ -n "$old" ] && [ "$old" != "$KEEP_CURRENT" ] && [ "$old" != "$KEEP_PREV" ]; then
-                  log "pruning old release: $old"
-                  rm -rf "$old"
-                fi
-              done
-              log "release cleanup done"
               log "deploy ok: $RELEASE_ID"
               exit 0
             fi

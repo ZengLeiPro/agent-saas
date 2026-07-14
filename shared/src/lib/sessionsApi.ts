@@ -35,6 +35,20 @@ function parseAnswersFromResult(
   knownQuestions?: string[],
 ): AskUserAnswers {
   const answers: AskUserAnswers = {};
+  // Raw runtime writes AskUserQuestion results as structured JSON.
+  try {
+    const parsed = JSON.parse(resultText) as { answers?: unknown };
+    if (parsed.answers && typeof parsed.answers === 'object' && !Array.isArray(parsed.answers)) {
+      for (const [question, answer] of Object.entries(parsed.answers)) {
+        if (typeof answer === 'string'
+          || (Array.isArray(answer) && answer.every((item) => typeof item === 'string'))) {
+          answers[question] = answer;
+        }
+      }
+      return answers;
+    }
+  } catch { /* legacy SDK result text */ }
+
   // SDK result 文案前缀随版本变化，需同时兼容：
   //   - 旧（≤0.2.x）: User has answered your question(s): "q1"="a1", "q2"="a2". You can now ...
   //   - 新（0.3.156+）: Your question(s) has/have been answered: "q1"="a1", "q2"="a2". You can now ...

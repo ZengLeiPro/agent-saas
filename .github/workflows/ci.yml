@@ -342,3 +342,72 @@ jobs:
           fi
           exit 1
           REMOTE
+
+  # 前端静态托管在 OSS（bucket agent-saas-web，绑定 agent.kaiyan.net），
+  # API/WS 走独立域名 api.agent.kaiyan.net（VITE_API_BASE 构建时注入）。
+  # 与 ECS 部署同为 dispatch-only，保证前后端版本一致发布。
+  # 上传顺序：先 hash 资源（immutable，只增不删，兼容在途会话的旧 chunk 懒加载）,
+  # 后入口文件（no-cache），保证 index.html 引用的资源先就位。
+  deploy-web-oss:
+    name: Deploy Web to OSS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+
+    env:
+      OSS_ACCESS_KEY_ID: ${{ secrets.OSS_WEB_DEPLOY_AK_ID }}
+      OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_WEB_DEPLOY_AK_SECRET }}
+      OSS_REGION: cn-shenzhen
+      OSS_BUCKET: agent-saas-web
+      VITE_API_BASE: https://api.agent.kaiyan.net
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend (split-domain)
+        run: pnpm -F web build
+
+      - name: Install ossutil
+        run: |
+          curl -sL https://gosspublic.alicdn.com/ossutil/v2/2.1.2/ossutil-2.1.2-linux-amd64.zip -o /tmp/ossutil.zip
+          unzip -o -q /tmp/ossutil.zip -d /tmp
+          sudo install /tmp/ossutil-2.1.2-linux-amd64/ossutil /usr/local/bin/ossutil
+          ossutil version
+
+      - name: Upload to OSS
+        run: |
+          : "${OSS_ACCESS_KEY_ID:?Missing secret OSS_WEB_DEPLOY_AK_ID}"
+          : "${OSS_ACCESS_KEY_SECRET:?Missing secret OSS_WEB_DEPLOY_AK_SECRET}"
+          cd web/dist
+          # 1) hash 静态资源：不可变长缓存（只增量新增，不删除旧 hash 文件）
+          ossutil cp assets "oss://$OSS_BUCKET/assets" -r -f --region "$OSS_REGION" \
+            --cache-control "public, max-age=31536000, immutable"
+          # 2) 图标与预置资源：短缓存
+          for d in icons kaikai-presets; do
+            [ -d "$d" ] && ossutil cp "$d" "oss://$OSS_BUCKET/$d" -r -f --region "$OSS_REGION" \
+              --cache-control "public, max-age=86400"
+          done
+          for f in apple-touch-icon.png favicon-16x16.png favicon-32x32.png favicon.ico kaikai-avatar.png; do
+            [ -f "$f" ] && ossutil cp "$f" "oss://$OSS_BUCKET/$f" -f --region "$OSS_REGION" \
+              --cache-control "public, max-age=86400"
+          done
+          # 3) 入口文件最后覆盖：no-cache（SW 更新机制依赖 sw.js/index.html 即时生效）
+          for f in sw.js workbox-*.js manifest.webmanifest index.html; do
+            ossutil cp "$f" "oss://$OSS_BUCKET/$f" -f --region "$OSS_REGION" \
+              --cache-control "no-cache"
+          done
+          echo "web dist uploaded to oss://$OSS_BUCKET"

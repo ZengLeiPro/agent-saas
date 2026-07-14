@@ -1,21 +1,26 @@
 # ECS 直部署：agent-saas server
 
-> 当前生产测试口径：server 直接跑在新深圳 ECS systemd；不使用 Docker。
+> 当前生产口径：server 直接跑在新深圳 ECS systemd（蓝绿双实例，2026-07-15 起）；不使用 Docker。
+> 蓝绿部署机制、探针语义、drain 生命周期见 [零停机部署](zero-downtime-deployment.md)。
 
 ## 运行位置
 
-- 代码目录：`/opt/agent-saas-app/current`
-- systemd：`agent-saas-server.service`
+- release 目录：`/opt/agent-saas-app/releases/<sha>`；`current`/`previous` symlink 仅作 bookkeeping
+- 每色代码 symlink：`/opt/agent-saas-app/color/blue`、`/opt/agent-saas-app/color/green` → `releases/<sha>`（部署只改 idle 色）
+- systemd：模板实例 `agent-saas-server@blue`（127.0.0.1:3200）/ `agent-saas-server@green`（127.0.0.1:3201）；模板见 `daemon-packaging/systemd/agent-saas-server@.service.template`
+- 活动色标记：`/etc/agent-saas/active-color`（内容 `blue`|`green`，切流成功后由部署脚本改写）
+- pidfile：`/run/agent-saas-server-<色>.pid`（drain 信号 `kill -USR2 $(cat pidfile)` 的投递目标）
 - 配置：`/etc/agent-saas/config.json`
-- 环境变量：`/etc/agent-saas/server.env`
+- 环境变量：共享 `/etc/agent-saas/server.env` + 每色 `/etc/agent-saas/server-blue.env` / `server-green.env`（`PORT`、`AGENT_SAAS_PIDFILE`，手工创建一次，不随部署改写）
 - ky-azeroth PAT 映射：`/etc/agent-saas/azeroth-tokens.json`（由 `AZEROTH_TOKENS_FILE` 指向）
 - NAS 总根：`/mnt/agent-saas`
 - 持久数据：`/mnt/agent-saas/server-data`
 - 用户 workspace：`/mnt/agent-saas/workspaces/<tenantId>/<userId>`
 - 运行态/归档：`/mnt/agent-saas/runtime`
-- 公网入口：新 ECS 本机 nginx，`agent.kaiyan.net -> 47.106.14.205 -> 127.0.0.1:3200`
-- nginx 配置：`/etc/nginx/conf.d/agent-kaiyan.conf`
-- TLS 证书：`/etc/letsencrypt/live/agent.kaiyan.net/`，`certbot-renew.timer` 自动续期
+- 前端入口：`agent.kaiyan.net` CNAME → OSS bucket `agent-saas-web`（ci.yml `deploy-web-oss` job 发布，不经 ECS）
+- API/WS 公网入口：`api.agent.kaiyan.net` → ECS nginx（`/etc/nginx/conf.d/agent-api-kaiyan.conf`）→ upstream `agent_saas_backend`（`/etc/nginx/conf.d/agent-saas-upstream.conf`，蓝绿切流点，部署脚本重写）→ 127.0.0.1:3200/3201
+- 旧全站反代 `/etc/nginx/conf.d/agent-kaiyan.conf`（agent.kaiyan.net）：DNS 缓存过期后只承接零星流量，`proxy_pass` 同样指向 `agent_saas_backend` 以防切流不一致
+- TLS 证书：`/etc/letsencrypt/live/`，`certbot-renew.timer` 自动续期
 
 `server/data` 在部署后软链到 NAS 持久目录，避免每次 release 覆盖用户、租户、MCP、SecretVault 等本地态。
 
@@ -25,18 +30,23 @@
 
 ## GitHub Actions
 
-`push main` 触发 `.github/workflows/ci.yml`：
+`.github/workflows/ci.yml`。`push main` 只构建 + 测试 + 打包，**不部署生产**；
+发版走 `workflow_dispatch`（Actions 页面手动触发或 `gh workflow run ci.yml`），
+`deploy-ecs` 与 `deploy-web-oss` 两个 job 同时发布，保证前后端版本一致。
 
-1. 安装依赖。
-2. `pnpm -F server typecheck`。
-3. `pnpm test`。
-4. `pnpm -F web build`。
-5. 打包 release。
-6. SSH 上传到 ECS。
-7. 解包到 `/opt/agent-saas-app/current`。
-8. `pnpm install --filter server... --filter shared...`。
-9. `systemctl restart agent-saas-server`。
-10. 检查 `http://127.0.0.1:3200/api/healthz`。
+`deploy-ecs` 蓝绿流程概要（远端脚本 13 步详解见[零停机部署](zero-downtime-deployment.md)）：
+
+1. 构建 + 打包 release，scp 上传 ECS。
+2. 读 `/etc/agent-saas/active-color` 定位 idle 色；校验 active 实例在服务。
+3. 解包到 `releases/<sha>`，`server/data` 软链 NAS，`pnpm install --filter server... --filter shared...`。
+4. 只改 idle 色 symlink（active 色 symlink 永不动）→ `systemctl start agent-saas-server@<idle>`。
+5. 切流前门禁：`/api/healthz/ready` 200（180s 硬门禁）+ warmup done（420s 软门禁）+ 冒烟。任何失败只回收 idle 色，老色全程在服务。
+6. 切流：重写 nginx upstream（新色 primary、旧色 backup）→ `nginx -t` → reload → 验证。
+7. 更新 active-color，重新生成 `/opt/agent-saas-app/rollback.sh`。
+8. `kill -USR2` 精确 drain 旧色（活跃流清空后自退，`Restart=on-failure` 不复活）。
+
+部署期间 CI runner 每 1s 探测 `https://api.agent.kaiyan.net/api/healthz`，
+最大连续非 200 ≥ 2 即判零停机门禁失败。
 
 这条流水线只覆盖主服务和 Web UI，不覆盖 ACS orchestrator，也不构建/推送/切换 ACS Sandbox 镜像。涉及 workspace 工具执行契约的改动，必须同时检查 [ACS Sandbox 镜像发布门禁](acs-sandbox-release.md)，否则会出现主服务已更新、Sandbox 仍运行旧工具实现的版本错配。
 
@@ -69,9 +79,9 @@ GitHub Secrets：
 
 服务启动时会用 PAT 调 ky-azeroth `/users/me` 做只读校验；metadata 错配会打 error，但不阻断主服务。需要临时关闭时设置 `AZEROTH_TOKEN_METADATA_VERIFY=false`。
 
-## 公网切流
+## 公网切流（历史记录）
 
-`agent.kaiyan.net` 已完全脱离旧 ECS：
+2026-06-28 从旧 ECS 迁到新 ECS 的一次性动作，保留备查：
 
 1. 新 ECS 安装 nginx/certbot。
 2. 从旧 ECS 迁移 `agent.kaiyan.net` 现有 LE 证书与 renewal 配置。
@@ -81,11 +91,85 @@ GitHub Secrets：
 
 切流前已停止 Mac Mini `com.agent-saas.server`，避免与 ECS 同时以 `AGENT_SAAS_PROCESS_ROLE=all` 运行导致 cron 重复执行。Mac 本机 3000 端口服务未触碰。
 
+2026-07-15 前后端分域后此段口径已过时：`agent.kaiyan.net` 现 CNAME → OSS，
+API/WS 走 `api.agent.kaiyan.net`（见「运行位置」）。
+
+## 首次蓝绿迁移（一次性手工步骤）
+
+> **状态：生产已于 2026-07-15 03:19~03:29 按下述「零停机变体」完成迁移**——
+> 先起 green(3201，跑当时 current release)→nginx 切流→确认双实例均 idle 后
+> 停旧 unit，全程公网无中断；`active-color=green`，旧 unit 文件遮蔽为
+> `agent-saas-server.service.disabled-bluegreen-20260715`（原件备份
+> `/root/agent-saas-server.service.bak-bluegreen-20260715`，nginx 两个站点
+> conf 各有 `.bak-bluegreen-20260715` 备份）。以下步骤保留作灾备重建参考。
+
+从单实例 `agent-saas-server.service` 迁到蓝绿模板实例。ci.yml 部署脚本的前置
+校验要求 `/etc/agent-saas/active-color` 存在且 `agent-saas-server@<active>`
+在服务，所以这套步骤必须先手工做一次，之后日常发版全部走 CI。
+
+> 端口冲突提醒：旧单实例与 blue 同用 3200，起 blue 前必须先停旧 unit，
+> 中间有秒级窗口（nginx upstream 的 3201 backup 此时也无人监听）。若要完全
+> 零停机，可改为先起 green(3201) → 切流到 green → 再停旧 unit，此时
+> `active-color` 写 `green`。以下按 blue 为初始 active 记录。
+
+```bash
+# 0. 上传/同步仓库中的模板文件到 ECS 后执行（路径按实际 checkout 位置调整）
+REPO=/opt/agent-saas-app/current
+
+# 1. 安装模板 unit
+cp "$REPO/daemon-packaging/systemd/agent-saas-server@.service.template" \
+   /etc/systemd/system/agent-saas-server@.service
+
+# 2. 每色 env（手工创建一次，内容固定，不随部署改写；见 server-color-env.example）
+cat > /etc/agent-saas/server-blue.env <<'EOF'
+PORT=3200
+AGENT_SAAS_PIDFILE=/run/agent-saas-server-blue.pid
+EOF
+cat > /etc/agent-saas/server-green.env <<'EOF'
+PORT=3201
+AGENT_SAAS_PIDFILE=/run/agent-saas-server-green.pid
+EOF
+
+# 3. color symlink：blue 指向当前 release（解析 current 的真实目标）
+mkdir -p /opt/agent-saas-app/color
+ln -sfn "$(readlink -f /opt/agent-saas-app/current)" /opt/agent-saas-app/color/blue
+
+# 4. nginx upstream conf（blue primary、green backup；之后由部署脚本重写）
+cp "$REPO/daemon-packaging/nginx/agent-saas-upstream.conf.example" \
+   /etc/nginx/conf.d/agent-saas-upstream.conf
+
+# 5. 两个站点 conf 的 proxy_pass 从直连改为 upstream：
+#    /etc/nginx/conf.d/agent-api-kaiyan.conf 与 /etc/nginx/conf.d/agent-kaiyan.conf
+#    中所有 proxy_pass http://127.0.0.1:3200 → proxy_pass http://agent_saas_backend
+#    （两个站点都要改，避免零星旧域名流量与 API 域切流不一致）
+
+# 6. active 色标记
+echo blue > /etc/agent-saas/active-color
+
+# 7. 加载 unit 并启用两色（日常只有 active 色常驻，idle 色由部署脚本按需 start）
+systemctl daemon-reload
+systemctl enable agent-saas-server@blue agent-saas-server@green
+
+# 8. 停旧 unit → 起 blue（3200 端口交接，秒级窗口）
+systemctl stop agent-saas-server.service
+systemctl start agent-saas-server@blue
+
+# 9. 验证
+curl -sf http://127.0.0.1:3200/api/healthz/ready
+nginx -t && systemctl reload nginx
+curl -sf https://api.agent.kaiyan.net/api/healthz
+
+# 10. 禁用旧单实例 unit（保留文件备查亦可 rm）
+systemctl disable agent-saas-server.service
+```
+
 ## 验证
 
 ```bash
-curl -sf https://agent.kaiyan.net/api/healthz
-curl -sf https://agent.kaiyan.net/api/health
-ssh -i ~/.ssh/aliyun-ecs-shenzhen-2c4g.pem root@47.106.14.205 'systemctl is-active nginx agent-saas-server certbot-renew.timer'
-ssh -i ~/.ssh/aliyun-ecs-shenzhen-2c4g.pem root@47.106.14.205 'certbot renew --dry-run --cert-name agent.kaiyan.net --no-random-sleep-on-renew --agree-tos'
+curl -sf https://api.agent.kaiyan.net/api/healthz
+curl -sf https://api.agent.kaiyan.net/api/health
+ssh -i ~/.ssh/aliyun-ecs-shenzhen-2c4g.pem root@47.106.14.205 \
+  'systemctl is-active nginx "agent-saas-server@$(cat /etc/agent-saas/active-color)" certbot-renew.timer'
+ssh -i ~/.ssh/aliyun-ecs-shenzhen-2c4g.pem root@47.106.14.205 'cat /etc/agent-saas/active-color'
+ssh -i ~/.ssh/aliyun-ecs-shenzhen-2c4g.pem root@47.106.14.205 'certbot renew --dry-run --no-random-sleep-on-renew --agree-tos'
 ```

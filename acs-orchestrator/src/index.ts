@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -620,6 +620,19 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 server.listen(config.port, config.host, () => {
   logger.info(`listening on ${config.host}:${config.port}`);
   logger.info(`namespace=${config.namespace} image=${config.sandboxImage}`);
+  // 2026-07-15 零停机部署批次：把真实 node PID 写入 pidfile，部署脚本据此
+  // `kill -USR2 $(cat pidfile)` 精确投递 drain 信号。ExecStart 经 pnpm wrapper
+  // 启动时 systemd MainPID 是 wrapper 的 node 进程——它不转发 SIGUSR2 且收到
+  // 即被默认动作终止，drain 会静默失效，必须直送本进程。
+  const pidFile = process.env.ACS_ORCH_PIDFILE;
+  if (pidFile) {
+    try {
+      writeFileSync(pidFile, `${process.pid}\n`, 'utf-8');
+      logger.info(`pidfile written: ${pidFile} (pid=${process.pid})`);
+    } catch (err) {
+      logger.warn(`failed to write pidfile ${pidFile}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
   startLifecycleLoop();
 });
 

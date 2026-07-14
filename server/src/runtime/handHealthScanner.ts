@@ -35,6 +35,13 @@ export interface HandHealthScannerOptions {
   defaultServerRemoteAuthToken?: string;
   /** Enable replaying cached WorkspaceRecipe for unhealthy hands. Default true. */
   enableReprovision?: boolean;
+  /**
+   * ready→unhealthy 翻转前的二次确认间隔（毫秒），默认 5s。
+   * 2026-07-15 零停机部署批次：orchestrator drain 重启有 5-15s 连接拒绝空窗，
+   * 单次探测失败即翻 unhealthy 会触发 fail-closed，把空窗放大成最长 30s+
+   * 的工具不可用；间隔复检一次仍失败才翻转。unhealthy→ready 保持单次即翻（尽快恢复）。
+   */
+  unhealthyConfirmDelayMs?: number;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 }
 
@@ -43,12 +50,14 @@ export class HandHealthScanner {
   private readonly intervalMs: number;
   private readonly healthTimeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly unhealthyConfirmDelayMs: number;
   private inFlight = false;
 
   constructor(private readonly options: HandHealthScannerOptions) {
     this.intervalMs = options.intervalMs ?? 30_000;
     this.healthTimeoutMs = options.healthTimeoutMs ?? 5_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.unhealthyConfirmDelayMs = options.unhealthyConfirmDelayMs ?? 5_000;
   }
 
   start(): void {
@@ -83,8 +92,16 @@ export class HandHealthScanner {
       const candidates = [...ready, ...unhealthy];
       let flipped = 0;
       for (const hand of candidates) {
-        const targetStatus = await this.probe(hand);
+        let targetStatus = await this.probe(hand);
         if (!targetStatus) continue;
+        if (targetStatus === 'unhealthy' && hand.status === 'ready') {
+          // ready→unhealthy 需间隔复检二次确认（见 unhealthyConfirmDelayMs 注释）
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, this.unhealthyConfirmDelayMs);
+            timer.unref?.();
+          });
+          targetStatus = (await this.probe(hand)) ?? targetStatus;
+        }
         if (targetStatus !== hand.status) {
           await store.updateStatus(hand.handId, targetStatus, {
             lastHealthCheckAt: new Date().toISOString(),

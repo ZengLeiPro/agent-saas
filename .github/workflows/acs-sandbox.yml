@@ -526,19 +526,45 @@ jobs:
 
           # ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后自退 →
           #      systemd Restart=always 5s 后自动拉起新代码+新 env ──
-          MAIN_PID=$(systemctl show -p MainPID --value "$ACS_SERVICE_NAME" 2>/dev/null || echo 0)
-          if [ "$MAIN_PID" != "0" ] && [ -n "$MAIN_PID" ]; then
-            echo "draining orchestrator pid=$MAIN_PID (SIGUSR2)..."
-            kill -USR2 "$MAIN_PID" 2>/dev/null || true
-            for _ in $(seq 1 135); do
-              kill -0 "$MAIN_PID" 2>/dev/null || break
-              sleep 1
-            done
-            if kill -0 "$MAIN_PID" 2>/dev/null; then
-              echo "drain deadline exceeded, falling back to systemctl restart"
-              systemctl restart "$ACS_SERVICE_NAME"
-            fi
+          # 2026-07-15 修复：SIGUSR2 必须送达注册了 handler 的 node 本体。
+          # ExecStart 是 pnpm wrapper 时 MainPID 是 wrapper 的 node 进程——它不
+          # 转发 SIGUSR2 且收到即被默认动作终止（drain 静默失效、inflight 被
+          # cgroup 清场硬杀）。优先读 orchestrator 自写 pidfile（ACS_ORCH_PIDFILE），
+          # 并用 journal 断言 drain 真实生效；未确认一律 restart 兜底。
+          ORCH_PIDFILE="/run/agent-saas-acs-orchestrator.pid"
+          DRAIN_PID=""
+          RESTART_FALLBACK=0
+          if [ -f "$ORCH_PIDFILE" ] && kill -0 "$(cat "$ORCH_PIDFILE")" 2>/dev/null; then
+            DRAIN_PID=$(cat "$ORCH_PIDFILE")
+            echo "draining orchestrator pid=$DRAIN_PID (SIGUSR2 via pidfile)..."
           else
+            MAIN_PID=$(systemctl show -p MainPID --value "$ACS_SERVICE_NAME" 2>/dev/null || echo 0)
+            if [ -n "$MAIN_PID" ] && [ "$MAIN_PID" != "0" ]; then
+              DRAIN_PID="$MAIN_PID"
+              echo "WARN: pidfile missing/stale; SIGUSR2 to MainPID=$MAIN_PID (wrapper may swallow it)"
+            else
+              RESTART_FALLBACK=1
+            fi
+          fi
+          if [ "$RESTART_FALLBACK" = "0" ]; then
+            kill -USR2 "$DRAIN_PID" 2>/dev/null || true
+            sleep 3
+            if journalctl -u "$ACS_SERVICE_NAME" --since "-45 seconds" --no-pager 2>/dev/null | grep -q "entering drain mode"; then
+              echo "drain confirmed via journal"
+              for _ in $(seq 1 135); do
+                kill -0 "$DRAIN_PID" 2>/dev/null || break
+                sleep 1
+              done
+              if kill -0 "$DRAIN_PID" 2>/dev/null; then
+                echo "drain deadline exceeded, falling back to systemctl restart"
+                RESTART_FALLBACK=1
+              fi
+            else
+              echo "WARN: drain not confirmed in journal (signal may have hit a wrapper); falling back to systemctl restart"
+              RESTART_FALLBACK=1
+            fi
+          fi
+          if [ "$RESTART_FALLBACK" = "1" ]; then
             systemctl restart "$ACS_SERVICE_NAME"
           fi
 

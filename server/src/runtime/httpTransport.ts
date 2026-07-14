@@ -12,6 +12,32 @@ import type {
 
 const DEFAULT_INVOKE_TIMEOUT_MS = 60_000;
 const MAX_SSE_BUFFER_BYTES = 1024 * 1024;
+/**
+ * 连接类瞬时失败重试退避（2026-07-15 零停机部署批次）。
+ * orchestrator drain 重启存在约 5-15s 的连接拒绝空窗（自退 → systemd
+ * RestartSec=5 拉起 + 启动耗时），累计 10s 退避基本覆盖。
+ */
+const DEFAULT_CONNECT_RETRY_BACKOFF_MS = [1_000, 3_000, 6_000];
+
+/** 可被 AbortSignal 打断的 sleep；abort 时 reject AbortError（外层按既有 aborted 分支归一化）。 */
+function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    timer.unref?.();
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
 
 export interface HttpTransportOptions {
   /** hand-server base URL，例如 `http://127.0.0.1:3300`。 */
@@ -31,6 +57,11 @@ export interface HttpTransportOptions {
   internalTools?: ToolDescriptor[];
   /** 测试注入用的 fetch 实现；生产环境为全局 fetch。 */
   fetchImpl?: typeof fetch;
+  /**
+   * 连接类瞬时失败（建连网络错误 / HTTP 503）的重试退避序列（毫秒）。
+   * 默认 [1s, 3s, 6s]；传 [] 关闭重试。测试可传小值。
+   */
+  connectRetryBackoffMs?: number[];
   /**
    * 每次 invoke 前调用，按 workspace 装配一份要透传给远端 hand 的 env（wire.context.env）。
    * 只能返回 {@link HAND_ENV_ALLOWLIST} 内的 key（未上 allowlist 的会被 pickHandEnv 剥掉）；
@@ -70,6 +101,7 @@ export class HttpTransport implements ExecutionTransport {
   private readonly internalTools: ToolDescriptor[];
   private readonly fetchImpl: typeof fetch;
   private readonly envResolver?: (workspace: WorkspaceRef) => Record<string, string | undefined>;
+  private readonly connectRetryBackoffMs: number[];
 
   constructor(options: HttpTransportOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
@@ -78,6 +110,40 @@ export class HttpTransport implements ExecutionTransport {
     this.internalTools = options.internalTools ?? WORKSPACE_HAND_TOOLS;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.envResolver = options.envResolver;
+    this.connectRetryBackoffMs = options.connectRetryBackoffMs ?? DEFAULT_CONNECT_RETRY_BACKOFF_MS;
+  }
+
+  /**
+   * 连接类瞬时失败重试（2026-07-15 零停机部署批次）。
+   * 只对两类失败重试，语义安全（请求未被对端执行）：
+   * - fetch 建连抛错（ECONNREFUSED 等网络错误，请求未到达对端）
+   * - HTTP 503（orchestrator drain 期间拒新请求返回 503+retry-after，handler 未执行）
+   * 其余（超时 abort / 调用方 abort / 4xx / 其他 5xx / 流中途断开）一律不重试，
+   * 避免重复副作用。等待期间 signal abort → 抛 AbortError，走外层既有 aborted 分支。
+   */
+  private async fetchWithConnectRetry(url: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
+    const backoffs = this.connectRetryBackoffMs;
+    for (let attempt = 0; ; attempt++) {
+      let response: Response;
+      try {
+        response = await this.fetchImpl(url, init);
+      } catch (err) {
+        if (signal?.aborted || attempt >= backoffs.length) throw err;
+        await sleepAbortable(backoffs[attempt]!, signal);
+        continue;
+      }
+      if (response.status === 503 && attempt < backoffs.length && !signal?.aborted) {
+        // 释放未消费的连接，再按 retry-after（不超过本档退避）等待重试
+        void response.body?.cancel().catch(() => undefined);
+        const retryAfterSec = Number(response.headers.get('retry-after'));
+        const waitMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+          ? Math.min(retryAfterSec * 1000, backoffs[attempt]!)
+          : backoffs[attempt]!;
+        await sleepAbortable(waitMs, signal);
+        continue;
+      }
+      return response;
+    }
   }
 
   /**
@@ -128,7 +194,7 @@ export class HttpTransport implements ExecutionTransport {
     const timer = setTimeout(() => controller.abort(), this.invokeTimeoutMs);
     timer.unref?.();
     try {
-      const response = await this.fetchImpl(`${this.baseUrl}/provision`, {
+      const response = await this.fetchWithConnectRetry(`${this.baseUrl}/provision`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -136,7 +202,7 @@ export class HttpTransport implements ExecutionTransport {
         },
         body: JSON.stringify({ workspaceId: recipe.workspaceId, recipe }),
         signal: controller.signal,
-      });
+      }, controller.signal);
       const body = await response.json().catch(() => undefined) as Record<string, unknown> | undefined;
       if (!response.ok) {
         return {
@@ -180,7 +246,7 @@ export class HttpTransport implements ExecutionTransport {
     timer.unref?.();
 
     try {
-      const response = await this.fetchImpl(`${this.baseUrl}/execute`, {
+      const response = await this.fetchWithConnectRetry(`${this.baseUrl}/execute`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -188,7 +254,7 @@ export class HttpTransport implements ExecutionTransport {
         },
         body: JSON.stringify(wireRequest),
         signal: controller.signal,
-      });
+      }, controller.signal);
 
       if (response.status === 401 || response.status === 403) {
         return {
@@ -259,7 +325,9 @@ export class HttpTransport implements ExecutionTransport {
     }, streamTimeoutMs);
     timer.unref?.();
     try {
-      const response = await this.fetchImpl(`${this.baseUrl}/execute-stream`, {
+      // 重试仅发生在建连失败/503（此时必然还没收到任何 chunk）；流一旦建立，
+      // 中途断开不重试（对端可能已产生副作用）。
+      const response = await this.fetchWithConnectRetry(`${this.baseUrl}/execute-stream`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -267,7 +335,7 @@ export class HttpTransport implements ExecutionTransport {
         },
         body: JSON.stringify(wireRequest),
         signal: controller.signal,
-      });
+      }, controller.signal);
       if (!response.ok || !response.body) {
         const text = await safeText(response);
         yield { type: 'completed', response: { status: 'error', error: `hand-server stream HTTP ${response.status}: ${text || 'no body'}` } };

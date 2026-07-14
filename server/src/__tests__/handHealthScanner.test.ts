@@ -96,7 +96,7 @@ describe('HandHealthScanner (B4)', () => {
     const eventStore = new InMemoryEventStore();
     await handStore.register({ handId: 'h-1', sessionId: 's-1', workspaceId: 'w-1', type: 'server-remote', status: 'ready', endpoint: 'http://h.example' });
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
-    const scanner = new HandHealthScanner({ handStore, eventStore, fetchImpl });
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, eventStore, fetchImpl });
     const result = await scanner.scanOnce();
     expect(result.scanned).toBe(1);
     expect(result.flipped).toBe(0);
@@ -109,7 +109,7 @@ describe('HandHealthScanner (B4)', () => {
     const eventStore = new InMemoryEventStore();
     await handStore.register({ handId: 'h-2', sessionId: 's-1', workspaceId: 'w-1', type: 'server-remote', status: 'ready', endpoint: 'http://h.example' });
     const fetchImpl = vi.fn(async () => new Response('boom', { status: 503 })) as unknown as typeof fetch;
-    const scanner = new HandHealthScanner({ handStore, eventStore, fetchImpl });
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, eventStore, fetchImpl });
     const result = await scanner.scanOnce();
     expect(result.flipped).toBe(1);
     expect(handStore.hands.get('h-2')?.status).toBe('unhealthy');
@@ -127,7 +127,7 @@ describe('HandHealthScanner (B4)', () => {
     const eventStore = new InMemoryEventStore();
     await handStore.register({ handId: 'h-3', sessionId: 's-1', workspaceId: 'w-1', type: 'server-remote', status: 'unhealthy', endpoint: 'http://h.example' });
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
-    const scanner = new HandHealthScanner({ handStore, eventStore, fetchImpl });
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, eventStore, fetchImpl });
     const result = await scanner.scanOnce();
     expect(result.flipped).toBe(1);
     expect(handStore.hands.get('h-3')?.status).toBe('ready');
@@ -144,7 +144,7 @@ describe('HandHealthScanner (B4)', () => {
     const handStore = new InMemoryHandStore();
     await handStore.register({ handId: 'h-4', sessionId: 's-1', workspaceId: 'w-1', type: 'server-remote', status: 'ready', endpoint: 'http://h.example' });
     const fetchImpl = vi.fn(async () => { throw new Error('connect ECONNREFUSED'); }) as unknown as typeof fetch;
-    const scanner = new HandHealthScanner({ handStore, fetchImpl });
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
     const result = await scanner.scanOnce();
     expect(result.flipped).toBe(1);
     expect(handStore.hands.get('h-4')?.status).toBe('unhealthy');
@@ -155,6 +155,7 @@ describe('HandHealthScanner (B4)', () => {
     await handStore.register({ handId: 'h-tenant', sessionId: 's-1', workspaceId: 'w-1', type: 'server-remote', status: 'ready', endpoint: 'http://tenant.example', metadata: { tenantRemoteHandId: 'tenant-A' } });
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
     const scanner = new HandHealthScanner({
+      unhealthyConfirmDelayMs: 1,
       handStore,
       fetchImpl,
       resolveHandAuthToken: async (h) => h.handId === 'h-tenant' ? 'tenant-bearer-xyz' : undefined,
@@ -170,6 +171,7 @@ describe('HandHealthScanner (B4)', () => {
     await handStore.register({ handId: 'h-plain', sessionId: 's-1', workspaceId: 'w-1', type: 'server-remote', status: 'ready', endpoint: 'http://plain.example' });
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
     const scanner = new HandHealthScanner({
+      unhealthyConfirmDelayMs: 1,
       handStore,
       fetchImpl,
       defaultServerRemoteAuthToken: 'fallback-bearer',
@@ -183,7 +185,7 @@ describe('HandHealthScanner (B4)', () => {
     const handStore = new InMemoryHandStore();
     await handStore.register({ handId: 'h-noendpoint', sessionId: 's-1', workspaceId: 'w-1', type: 'server-remote', status: 'ready' });
     const fetchImpl = vi.fn(async () => new Response('should-not-be-called', { status: 200 })) as unknown as typeof fetch;
-    const scanner = new HandHealthScanner({ handStore, fetchImpl });
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
     const result = await scanner.scanOnce();
     expect(result.scanned).toBe(1);
     expect(result.flipped).toBe(0);
@@ -194,7 +196,7 @@ describe('HandHealthScanner (B4)', () => {
     const handStore = new InMemoryHandStore();
     await handStore.register({ handId: 'h-client', sessionId: 's-1', workspaceId: 'w-1', type: 'client', status: 'ready', endpoint: 'ws://client.example' });
     const fetchImpl = vi.fn(async () => new Response('nope', { status: 200 })) as unknown as typeof fetch;
-    const scanner = new HandHealthScanner({ handStore, fetchImpl });
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
     const result = await scanner.scanOnce();
     expect(result.scanned).toBe(0);
     expect(fetchImpl).not.toHaveBeenCalled();
@@ -220,7 +222,7 @@ describe('HandHealthScanner (B4)', () => {
       if (href.endsWith('/provision')) return new Response(JSON.stringify({ status: 'ok', metadata: { recipeHash: 'abc' } }), { status: 200, headers: { 'content-type': 'application/json' } });
       throw new Error(`unexpected url ${href}`);
     }) as unknown as typeof fetch;
-    const scanner = new HandHealthScanner({ handStore, eventStore, fetchImpl, defaultServerRemoteAuthToken: 'token-1' });
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, eventStore, fetchImpl, defaultServerRemoteAuthToken: 'token-1' });
 
     const result = await scanner.scanOnce();
 
@@ -248,7 +250,7 @@ describe('HandHealthScanner (B4)', () => {
       if (href.endsWith('/health')) return new Response('down', { status: 503 });
       return new Response(JSON.stringify({ status: 'error', error: 'hydrate failed', metadata: { retryPolicy: { maxAttempts: 2, backoffMs: [10_000] } } }), { status: 200, headers: { 'content-type': 'application/json' } });
     }) as unknown as typeof fetch;
-    const scanner = new HandHealthScanner({ handStore, fetchImpl });
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
 
     const result = await scanner.scanOnce();
 

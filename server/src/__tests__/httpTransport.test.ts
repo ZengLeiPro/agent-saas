@@ -139,10 +139,102 @@ describe('HttpTransport.invoke', () => {
 
   it('maps fetch network error to status=error', async () => {
     const fetchImpl = vi.fn(async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
-    const transport = new HttpTransport({ baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl });
+    // connectRetryBackoffMs: [] 关闭连接重试，单测持续失败路径不等退避
+    const transport = new HttpTransport({ baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl, connectRetryBackoffMs: [] });
     const response = await transport.invoke(buildRequest());
     expect(response.status).toBe('error');
     expect(response.status === 'error' ? response.error : '').toMatch(/ECONNREFUSED/);
+  });
+
+  // ── 连接类瞬时失败重试（2026-07-15 零停机部署批次）──────────────
+
+  it('retries connection errors and succeeds once orchestrator is back', async () => {
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls++;
+      if (calls <= 2) throw new Error('ECONNREFUSED');
+      return new Response(JSON.stringify({ status: 'success', content: 'ok' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl,
+      connectRetryBackoffMs: [5, 5, 5],
+    });
+    const response = await transport.invoke(buildRequest());
+    expect(response.status).toBe('success');
+    expect(calls).toBe(3);
+  });
+
+  it('retries HTTP 503 (orchestrator draining) honoring retry-after', async () => {
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls++;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ error: 'orchestrator draining, retry shortly' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json', 'retry-after': '1' },
+        });
+      }
+      return new Response(JSON.stringify({ status: 'success', content: 'ok' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl,
+      connectRetryBackoffMs: [5, 5],
+    });
+    const response = await transport.invoke(buildRequest());
+    expect(response.status).toBe('success');
+    expect(calls).toBe(2);
+  });
+
+  it('exhausts retries and surfaces the original network error', async () => {
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => { calls++; throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl,
+      connectRetryBackoffMs: [5, 5],
+    });
+    const response = await transport.invoke(buildRequest());
+    expect(response.status).toBe('error');
+    expect(response.status === 'error' ? response.error : '').toMatch(/ECONNREFUSED/);
+    expect(calls).toBe(3); // 初始 + 2 次重试
+  });
+
+  it('does not retry 4xx / non-503 5xx responses', async () => {
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => { calls++; return new Response('boom', { status: 500 }); }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl,
+      connectRetryBackoffMs: [5, 5],
+    });
+    const response = await transport.invoke(buildRequest());
+    expect(response.status).toBe('error');
+    expect(calls).toBe(1);
+  });
+
+  it('stops retrying when the caller aborts during backoff', async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls++;
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl,
+      connectRetryBackoffMs: [10_000],
+    });
+    const promise = transport.invoke(buildRequest({
+      context: { workspace: SAMPLE_WORKSPACE, signal: controller.signal },
+    }));
+    setTimeout(() => controller.abort(), 20);
+    const response = await promise;
+    expect(response.status).toBe('error');
+    expect(response.status === 'error' ? response.metadata?.aborted : undefined).toBe(true);
+    expect(calls).toBe(1);
   });
 
   it('honors upstream abort and reports aborted metadata', async () => {

@@ -322,8 +322,10 @@ jobs:
           }
 
           # ── 6. 启动 idle 色 + ready 门禁（180s）──
+          # enable --now：切流成功后本色即 active 色，必须开机自启；
+          # 两色都 enabled 也无害（重启双起时 nginx 只路由 active、cron 由 leadership 单跑）
           log "start idle unit: ${SERVICE_NAME}@${IDLE} (port $IDLE_PORT)"
-          systemctl start "${SERVICE_NAME}@${IDLE}"
+          systemctl enable --now "${SERVICE_NAME}@${IDLE}"
 
           ready_ok() {
             curl -fsS -m 5 "$READY_URL" >/dev/null 2>&1

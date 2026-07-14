@@ -3,6 +3,7 @@ import { Volume2, VolumeX, Loader2, PanelLeft, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tabs } from "@/components/ui/tabs";
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
 import { FilePreviewDialog, FilePreviewPanel } from "@/components/FilePreviewPanel";
 import { DesktopSessionSidebar } from "@/components/DesktopSessionSidebar";
@@ -47,6 +48,8 @@ import { useScenarioDeepLink } from "@/components/scenarios/useScenarioDeepLink"
 import { FirstDayGuideBar } from "@/components/onboarding/FirstDayGuideBar";
 import { CronCreationWizard } from "@/components/onboarding/CronCreationWizard";
 import { ExpertWelcome } from "@/components/experts/ExpertWelcome";
+import { CapabilityTabsList } from "@/components/CapabilityCenter/CapabilityTabsList";
+import { useCapabilityNavigation } from "@/components/CapabilityCenter/navigation";
 import type { ScenarioItem } from "@agent/shared";
 const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
 const OrgAgentManagerPanel = lazy(() => import("@/components/OrgAgentManager").then(m => ({ default: m.OrgAgentManager })));
@@ -90,6 +93,7 @@ export function DesktopLayout(props: LayoutProps) {
 
   const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
   const { isWide: chatWidthWide, setIsWide: setChatWidthWide } = useChatWidth();
+  const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation();
 
   const sidePreviewOpen = !!previewFilePath && previewMode === "side";
   const rightPanelOpen = sidePreviewOpen || fileBrowserOpen;
@@ -304,9 +308,15 @@ export function DesktopLayout(props: LayoutProps) {
             >
               <PanelLeft className="h-4 w-4" />
             </Button>
-            <div className="truncate text-base font-semibold">
-              {headerTitle}
-            </div>
+            {activeTab === "capabilities" ? (
+              <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="min-w-0">
+                <CapabilityTabsList className="w-[28rem] max-w-[min(28rem,calc(100vw-24rem))]" />
+              </Tabs>
+            ) : (
+              <div className="truncate text-base font-semibold">
+                {headerTitle}
+              </div>
+            )}
             {activeTab === "cron" && cronJobCount && (
               <span className="text-xs text-muted-foreground">
                 ({cronJobCount.enabled}/{cronJobCount.total})

@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
-import { Bot, Building2, MessageSquarePlus, Plug, Puzzle } from "lucide-react";
+import { Bot, MessageSquarePlus, Plug, Puzzle } from "lucide-react";
 import type { OrgAgentSummary } from "@agent/shared";
 import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { SkillSelector } from "@/components/SkillSelector";
 import { McpManager } from "@/components/McpManager";
+import { CapabilityTabsList } from "./CapabilityTabsList";
+import { useCapabilityNavigation } from "./navigation";
 
 function ManagedCapabilityNotice({ kind }: { kind: "技能" | "连接器" }) {
   return (
@@ -20,18 +21,6 @@ function ManagedCapabilityNotice({ kind }: { kind: "技能" | "连接器" }) {
   );
 }
 
-type CapabilityTab = "experts" | "skills" | "connectors";
-
-function capabilityTabFromPath(pathname: string): CapabilityTab {
-  if (pathname === "/capabilities/skills" || pathname === "/settings/skills") return "skills";
-  if (pathname === "/capabilities/connectors" || pathname === "/settings/mcp" || pathname === "/mcp") return "connectors";
-  return "experts";
-}
-
-function capabilityPath(tab: CapabilityTab): string {
-  return `/capabilities/${tab}`;
-}
-
 export function CapabilityCenter({
   experts,
   personalAgentEnabled,
@@ -43,36 +32,14 @@ export function CapabilityCenter({
   onStartExpert: (expertId: string) => void;
   actionsDisabled?: boolean;
 }) {
-  const [activeCapabilityTab, setActiveCapabilityTab] = useState<CapabilityTab>(() => capabilityTabFromPath(window.location.pathname));
-  const currentPathname = window.location.pathname;
-
-  useEffect(() => {
-    const syncFromLocation = () => setActiveCapabilityTab(capabilityTabFromPath(window.location.pathname));
-    window.addEventListener("popstate", syncFromLocation);
-    return () => window.removeEventListener("popstate", syncFromLocation);
-  }, []);
-
-  useEffect(() => {
-    setActiveCapabilityTab(capabilityTabFromPath(currentPathname));
-  }, [currentPathname]);
-
-  const handleTabChange = (value: string) => {
-    const next = value === "skills" || value === "connectors" ? value : "experts";
-    setActiveCapabilityTab(next);
-    const path = capabilityPath(next);
-    if (window.location.pathname !== path) window.history.pushState({}, "", path);
-  };
+  const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation();
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col p-4 sm:p-6">
-      <Tabs value={activeCapabilityTab} onValueChange={handleTabChange} className="flex min-h-0 flex-1 flex-col">
-        <TabsList className="grid h-auto w-full max-w-xl shrink-0 grid-cols-3 bg-muted/60 p-1">
-          <TabsTrigger value="experts" className="gap-1.5"><Building2 className="h-4 w-4" />专家</TabsTrigger>
-          <TabsTrigger value="skills" className="gap-1.5"><Puzzle className="h-4 w-4" />技能</TabsTrigger>
-          <TabsTrigger value="connectors" className="gap-1.5"><Plug className="h-4 w-4" />连接器</TabsTrigger>
-        </TabsList>
+      <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="flex min-h-0 flex-1 flex-col">
+        <CapabilityTabsList className="shrink-0 md:hidden" />
 
-        <div className="mt-5 min-h-0 flex-1 overflow-auto">
+        <div className="mt-5 min-h-0 flex-1 overflow-auto md:mt-0">
           <TabsContent value="experts" className="mt-0">
             <div className="mb-5">
               <h2 className="text-xl font-semibold">企业专家</h2>

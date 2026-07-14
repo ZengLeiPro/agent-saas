@@ -612,6 +612,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           agentCwd,
           secretVault: runtime.secretVault,
           oauthService: runtime.mcpOAuthService,
+          webBaseUrl: config.server?.webBaseUrl,
         }),
       );
     }

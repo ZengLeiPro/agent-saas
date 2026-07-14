@@ -63,6 +63,8 @@ const serverConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   timezone: z.string().optional(),
   corsOrigins: z.array(z.string().url()).optional(),
+  /** Web 前端基址（前后端分域部署时配置，如 https://agent.kaiyan.net）；未配置=同源部署 */
+  webBaseUrl: z.string().url().optional(),
 });
 
 const cronConfigSchema = z.object({

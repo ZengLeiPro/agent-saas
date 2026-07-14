@@ -19,6 +19,8 @@ export interface McpRouterDeps {
   agentCwd: string;
   secretVault?: SecretVault;
   oauthService?: McpOAuthService;
+  /** Web 前端基址（前后端分域部署时必配，否则 OAuth 回调后会跳回 API 域）；未配置=回调 URL 同源 */
+  webBaseUrl?: string;
 }
 
 const riskSchema = z.enum(['read_only', 'workspace_write', 'external_write', 'credentialed_external_write'] satisfies [McpRiskLevel, ...McpRiskLevel[]]);
@@ -107,7 +109,7 @@ const oauthStartSchema = z.object({ returnTo: z.string().min(1).max(4000).option
 
 export function createMcpRouter(deps: McpRouterDeps): Router {
   const router = Router();
-  const { store, userStore, manager, agentCwd, secretVault, oauthService } = deps;
+  const { store, userStore, manager, agentCwd, secretVault, oauthService, webBaseUrl } = deps;
 
   function currentUsername(req: Request): string | null {
     return req.user?.username ?? null;
@@ -262,7 +264,12 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
         }
       }
       await manager.invalidateUser(result.username);
-      const target = new URL(result.returnTo, new URL(result.redirectUrl).origin);
+      // returnTo 只接受站内相对路径（拒绝绝对 URL / 协议相对 //，防 open redirect）；
+      // 基址优先 webBaseUrl（前后端分域时回 web 域），否则退回回调 URL 同源（单域部署）
+      const safeReturnTo = result.returnTo.startsWith('/') && !result.returnTo.startsWith('//')
+        ? result.returnTo
+        : '/';
+      const target = new URL(safeReturnTo, webBaseUrl ?? new URL(result.redirectUrl).origin);
       target.searchParams.set('mcp_oauth', result.ok ? 'connected' : 'error');
       target.searchParams.set('server', result.serverId);
       res.redirect(303, target.toString());

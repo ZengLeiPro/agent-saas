@@ -30,6 +30,7 @@ import {
   createSearchRouter,
   createScenariosRouter,
   createContentOpsRouter,
+  createDwsRouter,
 } from "../routes/index.js";
 import { createAuthRouter } from "../routes/auth.js";
 import { createSignupRouters } from "../routes/signup.js";
@@ -164,6 +165,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     "/api/feedback",
     createFeedbackRouter({ messageFeedbackStore: runtime.messageFeedbackStore }),
   );
+
+  // DWS 单轨连接状态：仅暴露当前登录用户自己的非敏感元数据。
+  // access/refresh token 始终由 DWS 保存在该用户的 NAS workspace 内。
+  app.use("/api", createDwsRouter({ connectionStore: runtime.dwsConnectionStore }));
 
   // Azeroth 透明反向代理：mobile/web 通过 /api/azeroth/* 调用 azeroth API，
   // 由 server 注入对应员工的 PAT，新增 azeroth 接口零代码。

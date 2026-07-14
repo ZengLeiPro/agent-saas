@@ -302,6 +302,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   try {
     httpServer?.close();
     cronService?.stop();
+    runtime?.dwsAuthKeepaliveShutdown?.();
     kbPreviewScheduler?.stop();
     await runtime?.channelManager.stopAll();
     await runtime?.memoryIndexShutdown?.();
@@ -352,6 +353,7 @@ process.on('SIGUSR2', () => {
   httpServer?.close();
   // 停止调度新 cron 任务
   cronService?.stop();
+  runtime?.dwsAuthKeepaliveShutdown?.();
 
   // 轮询等待活跃流清空
   const drainPoll = setInterval(() => {

@@ -33,3 +33,4 @@ export {
   type ScenariosRouterOptions,
 } from "./scenarios.js";
 export { createContentOpsRouter } from "./contentOps.js";
+export { createDwsRouter, type DwsRouterOptions } from "./dws.js";

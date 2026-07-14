@@ -11,6 +11,7 @@ const mocked = vi.hoisted(() => {
   const searchRouter = { id: 'search-router' };
   const scenariosRouter = { id: 'scenarios-router' };
   const contentOpsRouter = { id: 'content-ops-router' };
+  const dwsRouter = { id: 'dws-router' };
   const userRoleRouter = { id: 'user-role-router' };
   const dingtalkRouter = { id: 'dingtalk-router' };
   const cronRouter = { id: 'cron-router' };
@@ -39,6 +40,7 @@ const mocked = vi.hoisted(() => {
     searchRouter,
     scenariosRouter,
     contentOpsRouter,
+    dwsRouter,
     userRoleRouter,
     dingtalkRouter,
     cronRouter,
@@ -65,6 +67,7 @@ const mocked = vi.hoisted(() => {
     createSearchRouter: vi.fn(() => searchRouter),
     createScenariosRouter: vi.fn(() => scenariosRouter),
     createContentOpsRouter: vi.fn(() => contentOpsRouter),
+    createDwsRouter: vi.fn(() => dwsRouter),
     createUserRoleRouter: vi.fn(() => userRoleRouter),
     createDingtalkSessionRouter: vi.fn(() => dingtalkRouter),
     createCronRouter: vi.fn(() => cronRouter),
@@ -93,6 +96,7 @@ vi.mock('../routes/index.js', () => ({
   createSearchRouter: mocked.createSearchRouter,
   createScenariosRouter: mocked.createScenariosRouter,
   createContentOpsRouter: mocked.createContentOpsRouter,
+  createDwsRouter: mocked.createDwsRouter,
   createUserRoleRouter: mocked.createUserRoleRouter,
   createCronRouter: mocked.createCronRouter,
   createGroupsRouter: mocked.createGroupsRouter,
@@ -148,6 +152,7 @@ describe('registerRoutes', () => {
     mocked.createSearchRouter.mockClear();
     mocked.createScenariosRouter.mockClear();
     mocked.createContentOpsRouter.mockClear();
+    mocked.createDwsRouter.mockClear();
     mocked.createUserRoleRouter.mockClear();
     mocked.createDingtalkSessionRouter.mockClear();
     mocked.createCronRouter.mockClear();
@@ -229,12 +234,13 @@ describe('registerRoutes', () => {
     //   + preview(token+serve) + voice + tts + search + scenarios + contentops + sessions + dingtalk
     //   + tenant-remote-hands admin + runtime-operations admin + observability admin
     //   + system admin + internal ACS alerts + tool-controls admin + groups = 23
-    //   + kb files（kbEnabled guard 与 router 同一次 use 注册）+ feedback + qa admin = 26
+    //   + kb files（kbEnabled guard 与 router 同一次 use 注册）+ feedback + DWS + qa admin = 27
     // 注：upload-guard / file-guard 是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(26);
+    expect(app.use).toHaveBeenCalledTimes(27);
     expect(app.use).toHaveBeenCalledWith('/api/kb', expect.any(Function), mocked.kbFilesRouter);
     expect(app.use).toHaveBeenCalledWith('/api/feedback', mocked.feedbackRouter);
+    expect(app.use).toHaveBeenCalledWith('/api', mocked.dwsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/qa', mocked.requireAdmin, mocked.orgQaRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.healthRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.appUpdateRouter);

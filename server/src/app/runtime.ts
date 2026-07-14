@@ -96,6 +96,8 @@ import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import type { ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
+import { PgDwsConnectionStore, type DwsConnectionStore } from '../dws/store.js';
+import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 
 // δ: skillsDispatchConfig.listForUser 的进程级 cache（configVersion 驱动失效），
 // 避免每次 dispatch / 每次 Skill.invoke 都重新 readdirSync pool 目录。
@@ -140,6 +142,10 @@ export interface AppRuntime {
   mcpClientManager?: McpClientManager;
   secretVault?: SecretVault;
   userStore?: UserStore;
+  /** DWS 连接状态只保存非敏感元数据；token 始终留在用户 workspace 的 .dws。 */
+  dwsConnectionStore?: DwsConnectionStore;
+  /** 停止 DWS 授权守活 worker（ws-only 进程不启动）。 */
+  dwsAuthKeepaliveShutdown?: () => void;
   /**
    * Tenant 元数据 store。仅 `config.auth.enabled` 时实例化（与 userStore 共生命周期）。
    * 启动期自动 ensure 平台根组织和开沿日常组织。
@@ -629,6 +635,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let systemMetricsCollector: SystemMetricsCollector | undefined;
   let alertStateStore: PgAlertStateStore | undefined;
   let alertNotifier: AlertNotifier | undefined;
+  let dwsConnectionStore: PgDwsConnectionStore | undefined;
+  let dwsAuthKeepaliveService: DwsAuthKeepaliveService | undefined;
   let artifactStore: ArtifactStore | undefined;
   let artifactService: ArtifactService | undefined;
   let sessionShareStore: SessionShareStore | undefined;
@@ -719,6 +727,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: serverLogger.child('PgEventStore'),
     });
     await pgEventStore.init();
+    try {
+      dwsConnectionStore = new PgDwsConnectionStore({
+        pool: pgEventStore.pool,
+        tablePrefix: config.runtimeEventStore.tablePrefix,
+      });
+      await dwsConnectionStore.init();
+    } catch (err) {
+      dwsConnectionStore = undefined;
+      serverLogger.warn(`PgDwsConnectionStore init failed, DWS keepalive disabled: ${err instanceof Error ? err.message : String(err)}`);
+    }
     pgRunStore = new PgRunStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
@@ -1782,6 +1800,23 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.info(`RuntimeScheduler worker disabled for processRole=${processRole}; durable enqueue remains enabled`);
   }
 
+  if (dwsConnectionStore && userStore && resolvedServerRemote) {
+    dwsAuthKeepaliveService = new DwsAuthKeepaliveService({
+      agentCwd,
+      userStore,
+      connectionStore: dwsConnectionStore,
+      runner: new DwsAuthStatusRunner({ agentCwd, serverRemote: resolvedServerRemote }),
+      logger: serverLogger.child('DwsKeepalive'),
+    });
+    if (enableSchedulerWorker) {
+      dwsAuthKeepaliveService.start();
+    } else {
+      serverLogger.info(`DWS auth keepalive worker disabled for processRole=${processRole}; status API remains available`);
+    }
+  } else if (userStore) {
+    serverLogger.warn('DWS auth keepalive unavailable: PG connection store or serverRemote is not configured');
+  }
+
   // B4: Server-remote hands 健康 scanner（仅 PG runtime）。默认开启；显式 false 关闭。
   if (pgHandStore && pgEventStore && config.runtimeHandHealthScanner?.enabled !== false) {
     handHealthScanner = new HandHealthScanner({
@@ -1843,6 +1878,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     mcpClientManager,
     secretVault,
     userStore,
+    dwsConnectionStore,
+    dwsAuthKeepaliveShutdown: dwsAuthKeepaliveService ? () => dwsAuthKeepaliveService?.stop() : undefined,
     tenantStore,
     agentStore,
     skillConfigStore,

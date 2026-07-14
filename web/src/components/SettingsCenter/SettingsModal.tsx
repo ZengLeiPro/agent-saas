@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, Suspense, type ReactNode } from "react";
 import {
   Brain,
+  Building2,
+  CircleCheck,
   Clock,
   Database,
   Lock,
@@ -10,6 +12,7 @@ import {
   Palette,
   Save,
   Settings2,
+  TriangleAlert,
   User,
   X,
 } from "lucide-react";
@@ -67,6 +70,118 @@ function canAccess(section: SettingsSectionConfig, isAdmin: boolean, isPlatformA
 
 function initials(name?: string) {
   return (name || "U").trim().slice(0, 1).toUpperCase();
+}
+
+interface DwsConnectionView {
+  profileId: string;
+  profileName: string | null;
+  corpName: string | null;
+  dingtalkUserName: string | null;
+  status: "pending" | "connected" | "error" | "disconnected";
+  authenticated: boolean | null;
+  refreshTokenValid: boolean | null;
+  refreshExpiresAt: string | null;
+  lastCheckedAt: string | null;
+  nextCheckAt: string;
+  message: string;
+}
+
+function DwsConnectionsSection() {
+  const { user } = useAuth();
+  const [connections, setConnections] = useState<DwsConnectionView[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void authFetch("/api/dws/connections")
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({})) as { connections?: DwsConnectionView[]; error?: string };
+        if (!response.ok) throw new Error(data.error || "钉钉连接状态读取失败");
+        if (!cancelled) setConnections(data.connections ?? []);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "钉钉连接状态读取失败");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
+  return (
+    <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+          <Building2 className="h-4 w-4" />
+        </div>
+        <div>
+          <div className="text-sm font-semibold">钉钉连接</div>
+          <div className="text-sm text-muted-foreground">授权保存在你的独立工作区，平台会自动维持登录。</div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 rounded-xl bg-muted/50 px-3 py-3 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />正在读取连接状态
+        </div>
+      ) : error ? (
+        <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{error}，不影响已经保存的钉钉授权。</span>
+        </div>
+      ) : connections.length === 0 ? (
+        <div className="rounded-xl bg-muted/50 px-3 py-3 text-sm">
+          <div className="font-medium">尚未连接钉钉</div>
+          <div className="mt-1 text-muted-foreground">第一次使用钉钉能力时，开开会引导你完成一次授权；之后无需定期重新登录。</div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {connections.map((connection) => {
+            const connected = connection.status === "connected";
+            const pending = connection.status === "pending";
+            return (
+              <div key={connection.profileId} className="flex items-start justify-between gap-4 rounded-xl border px-3 py-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{connection.corpName || connection.profileName || "钉钉组织"}</div>
+                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {connection.dingtalkUserName ? `${connection.dingtalkUserName} · ` : ""}{connection.message}
+                  </div>
+                  {connection.lastCheckedAt ? (
+                    <div className="mt-1 text-[11px] text-muted-foreground">最近检查：{formatDwsConnectionTime(connection.lastCheckedAt)}</div>
+                  ) : null}
+                </div>
+                <div className={cn(
+                  "flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium",
+                  connected && "bg-emerald-50 text-emerald-700",
+                  pending && "bg-blue-50 text-blue-700",
+                  connection.status === "error" && "bg-amber-50 text-amber-800",
+                  connection.status === "disconnected" && "bg-red-50 text-red-700",
+                )}>
+                  {connected ? <CircleCheck className="h-3.5 w-3.5" /> : pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TriangleAlert className="h-3.5 w-3.5" />}
+                  {connected ? "已连接" : pending ? "检测中" : connection.status === "error" ? "重试中" : "需重连"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatDwsConnectionTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "未知";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
 }
 
 
@@ -461,6 +576,7 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
             </div>
           </section>
           {showAgentSettings && <AgentAccountSection onOpenPersona={() => setPersonaEditing(true)} />}
+          <DwsConnectionsSection />
           <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between gap-4">
             <div>

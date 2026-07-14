@@ -23,7 +23,7 @@
  *  4) parseMcpToolKey 拒绝 serverName 含 '__'（infall）；ensureUser 启动时同样验。
  *  5) loadMcpServersConfig 区分 ENOENT（视为无配置）与 JSON parse / 其他 IO 错误
  *     （logger.warn 出来），且加 256KB size cap 防 settings.json 撑爆。
- *  6) invoke 加 30s timeout + 256KB 结果 cap + audit；MCP server hung 不会卡 dispatch。
+ *  6) invoke 加 10min timeout + 256KB 结果 cap + audit；MCP server hung 不会无限卡 dispatch。
  *  7) formatMcpResult 跳过 base64 image 全量内联，输出 placeholder + 处理 isError。
  *  8) listAndDescribeTools 加 MAX_TOOLS_PER_SERVER + cursor 防环 + 同 server 工具
  *     名去重。
@@ -100,7 +100,7 @@ export interface McpClientManagerOptions {
   failOnError?: boolean;
   /** stdio 子进程连接 timeout（默认 5s，超时跳过该 server）。 */
   connectTimeoutMs?: number;
-  /** invoke callTool 默认 timeout（默认 30s）。 */
+  /** invoke callTool 默认 timeout（默认 10min）。 */
   invokeTimeoutMs?: number;
   /** invoke 返回 content 最大字节数（默认 256KB），超出截断。 */
   maxResultBytes?: number;
@@ -152,7 +152,7 @@ const STDIO_ALLOWED_ENV: ReadonlySet<string> = new Set([
 const SETTINGS_JSON_MAX_BYTES = 256 * 1024;
 const MAX_TOOLS_PER_SERVER = 256;
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
-const DEFAULT_INVOKE_TIMEOUT_MS = 30_000;
+const DEFAULT_INVOKE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_RESULT_BYTES = 256 * 1024;
 
 /** 私有 / 内网 / 元数据 CIDR 黑名单（IPv4）。 */

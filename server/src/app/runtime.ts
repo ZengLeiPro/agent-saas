@@ -1180,7 +1180,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   })();
 
   // MCP client manager（lazy connect per user）。failOnError=false 让连不上的
-  // server 不阻塞 dispatch；δ 阶段加 connectTimeout=5s + invokeTimeout=30s 防 hung。
+  // server 不阻塞 dispatch；连接仍快速失败，单次 MCP 工具调用最长允许 10 分钟。
   const mcpConfigStore = new McpConfigStore(join(processCwd, 'data', 'mcp-config.json'));
   const installedMcpPresets = await mcpConfigStore.installBuiltinOAuthServers();
   if (installedMcpPresets > 0) {
@@ -1204,7 +1204,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentCwd,
     failOnError: false,
     connectTimeoutMs: 5_000,
-    invokeTimeoutMs: 30_000,
+    invokeTimeoutMs: 10 * 60_000,
     logger: serverLogger.child('McpClient'),
     secretVault,
     configProvider: (username, workspaceRoot) => mcpConfigStore.buildUserMcpServers(

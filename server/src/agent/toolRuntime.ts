@@ -34,6 +34,7 @@ import { persistShellOutputFiles } from './shellOutputFiles.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import {
   DEFAULT_SHELL_TIMEOUT_MS,
+  MAX_SHELL_TIMEOUT_MS,
   MAX_FILE_BYTES,
   MAX_LIST_ENTRIES,
   MAX_READ_LINES,
@@ -321,7 +322,7 @@ export const runShellToolDescriptor: ToolDescriptor<{ command: string; timeoutMs
   description: loadToolDescription('Shell'),
   schema: z.object({
     command: z.string(),
-    timeoutMs: z.number().int().positive().max(120_000).optional(),
+    timeoutMs: z.number().int().positive().max(MAX_SHELL_TIMEOUT_MS).optional(),
   }),
   risk: 'dangerous',
   approvalMode: 'web',

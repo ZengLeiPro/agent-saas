@@ -4,7 +4,8 @@ export const MAX_READ_LINES = 2_000;
 export const MAX_SHELL_RETURN_CHARS = 64 * 1024;
 export const MAX_SHELL_CAPTURE_BYTES = 4 * 1024 * 1024;
 export const MAX_SHELL_STREAM_BYTES = 64 * 1024;
-export const DEFAULT_SHELL_TIMEOUT_MS = 30_000;
+export const MAX_SHELL_TIMEOUT_MS = 10 * 60_000;
+export const DEFAULT_SHELL_TIMEOUT_MS = MAX_SHELL_TIMEOUT_MS;
 
 export interface ShellOutputFileRef {
   channel: 'stdout' | 'stderr';

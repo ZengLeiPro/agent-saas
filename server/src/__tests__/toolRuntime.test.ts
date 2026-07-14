@@ -10,6 +10,7 @@ import {
   LocalWorkspaceProvider,
   MAX_FILE_BYTES,
   PlatformToolRuntime,
+  runShellToolDescriptor,
   ServerLocalExecutionProvider,
   WORKSPACE_HAND_TOOLS,
   type AuthorizedToolCall,
@@ -21,6 +22,7 @@ import { DefaultExecutionTransportRegistry } from '../runtime/inProcessTransport
 import type { ToolInvocationResponse } from '../runtime/handProtocol.js';
 import type { HandRecord, HandStore, RegisterHandInput, HandStatus } from '../runtime/handStore.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { DEFAULT_SHELL_TIMEOUT_MS, MAX_SHELL_TIMEOUT_MS } from '../agent/toolOutput.js';
 
 function successResponse(content: string): ToolInvocationResponse {
   return { status: 'success', content };
@@ -70,6 +72,14 @@ function workspace(root = '/tmp/workspace'): WorkspaceRef {
 }
 
 describe('PlatformToolRuntime', () => {
+  it('allows shell execution up to ten minutes and rejects longer requests', () => {
+    expect(DEFAULT_SHELL_TIMEOUT_MS).toBe(600_000);
+    expect(runShellToolDescriptor.schema.parse({ command: 'sleep 1', timeoutMs: MAX_SHELL_TIMEOUT_MS }))
+      .toEqual({ command: 'sleep 1', timeoutMs: 600_000 });
+    expect(() => runShellToolDescriptor.schema.parse({ command: 'sleep 1', timeoutMs: MAX_SHELL_TIMEOUT_MS + 1 }))
+      .toThrow();
+  });
+
   it('resolves workspace identity from sessionOwner on scheduler wake paths', () => {
     const provider = new LocalWorkspaceProvider('server-container');
     const workspace = provider.resolve({

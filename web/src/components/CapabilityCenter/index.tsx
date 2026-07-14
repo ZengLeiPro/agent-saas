@@ -45,12 +45,14 @@ export function CapabilityCenter({
   }, [expertQuery, experts]);
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col p-4 sm:p-6">
+    <div className="flex h-full min-h-0 w-full flex-col">
       <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="flex min-h-0 flex-1 flex-col">
-        <CapabilityTabsList className="shrink-0 md:hidden" />
+        <div className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-6 md:hidden">
+          <CapabilityTabsList />
+        </div>
 
-        <div className="mt-5 min-h-0 flex-1 overflow-auto md:mt-0">
-          <TabsContent value="experts" className="mt-0">
+        <div className="mt-5 min-h-0 flex-1 overflow-y-auto md:mt-0">
+          <TabsContent value="experts" className="mt-0 px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
             <div className="mb-5 flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-xl font-semibold">我的企业专家</h2>
@@ -77,7 +79,7 @@ export function CapabilityCenter({
                 没有找到匹配的企业专家
               </div>
             ) : (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {filteredExperts.map((expert) => (
                   <Card key={expert.id} className="group overflow-hidden border-border/70 transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-lg">
                     <CardContent className="flex h-full flex-col p-5">
@@ -115,17 +117,18 @@ export function CapabilityCenter({
             )}
           </TabsContent>
 
-          <TabsContent value="skills" className="mt-0 h-full">
+          <TabsContent value="skills" className="mt-0 px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
             {personalAgentEnabled ? (
               <SkillSelector
                 headerTitle="技能"
                 headerDescription="选择通用 Agent 在新会话中可以使用的技能。企业专家的固有技能不受这里控制。"
+                embedded
               />
             ) : <ManagedCapabilityNotice kind="技能" />}
           </TabsContent>
 
-          <TabsContent value="connectors" className="mt-0 h-full">
-            {personalAgentEnabled ? <McpManager /> : <ManagedCapabilityNotice kind="连接器" />}
+          <TabsContent value="connectors" className="mt-0 px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
+            {personalAgentEnabled ? <McpManager embedded /> : <ManagedCapabilityNotice kind="连接器" />}
           </TabsContent>
         </div>
       </Tabs>

@@ -31,6 +31,8 @@ interface SkillSelectorProps {
   /** 设置弹窗内使用：把导入按钮挂到统一标题区。 */
   headerTitle?: string;
   headerDescription?: string;
+  /** 嵌入已有滚动页面时，由外层统一负责滚动。 */
+  embedded?: boolean;
 }
 
 type SkillFilter = "all" | "platform" | "organization" | "personal" | "enabled";
@@ -47,7 +49,7 @@ function sourceDescription(source: CapabilitySource): string {
   return "由平台统一维护，再由组织决定是否向成员开放。";
 }
 
-export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescription }: SkillSelectorProps) {
+export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescription, embedded = false }: SkillSelectorProps) {
   const { data, loading, error, saving, saveSelections, refresh } = useMySkills(targetUsername);
   const [localSelections, setLocalSelections] = useState<Record<string, boolean>>({});
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
@@ -231,13 +233,13 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
         actions={!headerTitle ? actionControls : undefined}
       />
 
-      <div className="min-h-0 flex-1 overflow-auto pb-2">
+      <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
         {filteredSkills.length === 0 ? (
           <div className="rounded-2xl border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
             {skills.length === 0 ? "暂无可用技能" : "没有找到匹配的技能"}
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {filteredSkills.map((skill) => {
               const source = skillSource(skill);
               const selected = localSelections[skill.id] === true;

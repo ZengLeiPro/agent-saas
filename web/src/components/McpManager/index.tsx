@@ -82,15 +82,15 @@ function connectorStatus(server: McpServerSummary): { label: string; className: 
     : { label: "可启用", className: "text-muted-foreground" };
 }
 
-export function McpManager() {
-  return <McpManagerInner mode="personal" />;
+export function McpManager({ embedded = false }: { embedded?: boolean }) {
+  return <McpManagerInner mode="personal" embedded={embedded} />;
 }
 
 export function McpAdminCatalog() {
-  return <McpManagerInner mode="admin" />;
+  return <McpManagerInner mode="admin" embedded={false} />;
 }
 
-function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
+function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embedded: boolean }) {
   const { isAdmin, isPlatformAdmin, user } = useAuth();
   // tenants 列表仅平台 admin 可见（路由用 requirePlatformAdmin，hook 内部
   // 对非平台 admin 自动跳过请求）。组织 admin 不显示 selector，后端兜底 own。
@@ -402,7 +402,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
 
   if (mode === "personal") {
     return (
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+      <div className={cn("flex min-h-0 w-full flex-col", !embedded && "mx-auto h-full max-w-6xl")}>
         <CatalogHeader
           title="连接器"
           description="连接常用账号，让 Agent 在你的权限范围内使用数据和工具。"
@@ -422,14 +422,14 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
           onFilterChange={setActiveFilter}
         />
 
-        <div className="min-h-0 flex-1 overflow-auto pb-2">
+        <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
           {error ? <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
           {filteredServers.length === 0 ? (
             <div className="rounded-2xl border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
               {connectorServers.length === 0 ? "暂无可用连接器" : "没有找到匹配的连接器"}
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {filteredServers.map((server) => {
                 const source = connectorSource(server);
                 const status = connectorStatus(server);

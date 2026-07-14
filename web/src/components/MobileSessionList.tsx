@@ -268,7 +268,7 @@ export function MobileSessionList({
   const navItems = useMemo(
     () => [
       ...baseNavItems.filter((item) => !item.adminOnly || isAdmin),
-      { tab: "capabilities" as AppTab, label: "专家与能力" },
+      { tab: "capabilities" as AppTab, label: "能力中心" },
       ...(renderTaskTemplates ? [{ tab: "scenarios" as AppTab, label: "任务模板" }] : []),
     ],
     [isAdmin, renderTaskTemplates],

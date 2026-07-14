@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Loader2, Save, Trash2, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Check, Loader2, Plus, Puzzle, Trash2, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -12,26 +12,50 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { deleteMySkill, importMySkill } from "@agent/shared";
-import { SkillToggleItem } from "./SkillToggleItem";
+import type { UserSkillInfo } from "@agent/shared";
 import { useMySkills } from "./hooks";
-import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import {
+  CatalogHeader,
+  CapabilityDetailDrawer,
+  CapabilityLogo,
+  CapabilitySourceBadge,
+  CatalogToolbar,
+  type CapabilitySource,
+} from "@/components/CapabilityCenter/CatalogUi";
 
 interface SkillSelectorProps {
   targetUsername?: string;
   /** 不传时不渲染顶部「返回」按钮，用于嵌入设置中心独立 section 的场景。 */
   onBack?: () => void;
-  /** 设置弹窗内使用：把保存/导入按钮挂到统一标题区。 */
+  /** 设置弹窗内使用：把导入按钮挂到统一标题区。 */
   headerTitle?: string;
   headerDescription?: string;
+}
+
+type SkillFilter = "all" | "platform" | "organization" | "personal" | "enabled";
+
+function skillSource(skill: UserSkillInfo): CapabilitySource {
+  if (skill.source === "tenant") return "organization";
+  if (skill.source === "custom") return "personal";
+  return "platform";
+}
+
+function sourceDescription(source: CapabilitySource): string {
+  if (source === "organization") return "由当前组织提供，并按组织规则开放给成员使用。";
+  if (source === "personal") return "由你创建，仅你本人可以管理和使用。";
+  return "由平台统一维护，再由组织决定是否向成员开放。";
 }
 
 export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescription }: SkillSelectorProps) {
   const { data, loading, error, saving, saveSelections, refresh } = useMySkills(targetUsername);
   const [localSelections, setLocalSelections] = useState<Record<string, boolean>>({});
-  const [initialSelections, setInitialSelections] = useState<Record<string, boolean>>({});
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [saveOk, setSaveOk] = useState(false);
+  const [pendingSkillId, setPendingSkillId] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState<SkillFilter>("all");
+  const [detailSkill, setDetailSkill] = useState<UserSkillInfo | null>(null);
   // 导入 Skill（仅当编辑自己的 skills 时显示入口；admin 编辑他人时隐藏）
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -40,57 +64,69 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
   const skillFileInputRef = useRef<HTMLInputElement>(null);
   const skillFolderInputRef = useRef<HTMLInputElement>(null);
   const skillZipInputRef = useRef<HTMLInputElement>(null);
-  const canImport = !targetUsername; // 仅编辑自己时显示，admin 编辑他人路径不挂导入
-  // 自建 skill 删除对话框（仅编辑自己时可用；admin 编辑他人走 SkillManager 的删除路径）
+  const canImport = !targetUsername;
   const canDeleteCustom = !targetUsername;
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
-  // tab 切换：与 SkillManager 同款样式
-  const [activeTab, setActiveTab] = useState<"system" | "custom">("system");
 
   useEffect(() => {
     if (!data) return;
     const selections: Record<string, boolean> = {};
-    for (const s of data.poolSkills) {
-      selections[s.id] = s.selected;
-    }
-    for (const s of data.tenantSkills ?? []) {
-      selections[s.id] = s.selected;
-    }
-    for (const s of data.customSkills) {
-      selections[s.id] = s.selected;
+    for (const skill of [...data.poolSkills, ...(data.tenantSkills ?? []), ...data.customSkills]) {
+      selections[skill.id] = skill.selected;
     }
     setLocalSelections(selections);
-    setInitialSelections(selections);
     setInitialized(true);
   }, [data]);
 
-  const dirty = initialized && Object.keys(localSelections).some(
-    id => localSelections[id] !== initialSelections[id],
+  const skills = useMemo(
+    () => [...(data?.poolSkills ?? []), ...(data?.tenantSkills ?? []), ...(data?.customSkills ?? [])],
+    [data],
   );
 
-  const toggle = useCallback((id: string, checked: boolean) => {
-    setLocalSelections(prev => ({ ...prev, [id]: checked }));
-  }, []);
+  const filteredSkills = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return skills.filter((skill) => {
+      const source = skillSource(skill);
+      const matchesSource = activeFilter === "all"
+        || (activeFilter === "enabled" ? localSelections[skill.id] === true : source === activeFilter);
+      const matchesQuery = !normalizedQuery
+        || skill.name.toLocaleLowerCase().includes(normalizedQuery)
+        || skill.description.toLocaleLowerCase().includes(normalizedQuery);
+      return matchesSource && matchesQuery;
+    });
+  }, [activeFilter, localSelections, query, skills]);
 
-  const handleSave = useCallback(async () => {
-    const selectedSkills = Object.entries(localSelections)
-      .filter(([, v]) => v)
-      .map(([k]) => k);
+  const enabledCount = Object.values(localSelections).filter(Boolean).length;
+  const filters = useMemo(() => [
+    { value: "all" as const, label: "全部", count: skills.length },
+    { value: "enabled" as const, label: "已启用", count: enabledCount },
+    { value: "platform" as const, label: "平台提供", count: skills.filter((skill) => skillSource(skill) === "platform").length },
+    { value: "organization" as const, label: "组织提供", count: skills.filter((skill) => skillSource(skill) === "organization").length },
+    { value: "personal" as const, label: "我创建的", count: skills.filter((skill) => skillSource(skill) === "personal").length },
+  ], [enabledCount, skills]);
+
+  const toggle = useCallback(async (id: string, checked: boolean) => {
+    if (saving) return;
+    const previous = localSelections;
+    const next = { ...localSelections, [id]: checked };
+    setLocalSelections(next);
+    setPendingSkillId(id);
+    setSaveMsg(null);
     try {
-      setSaveMsg(null);
-      setSaveOk(false);
-      await saveSelections(selectedSkills);
-      setInitialSelections({ ...localSelections });
-      setSaveMsg("已保存");
+      await saveSelections(Object.entries(next).filter(([, selected]) => selected).map(([skillId]) => skillId));
       setSaveOk(true);
-      setTimeout(() => setSaveMsg(null), 2000);
+      setSaveMsg(checked ? "技能已启用" : "技能已停用");
+      setTimeout(() => setSaveMsg(null), 1800);
     } catch (err) {
+      setLocalSelections(previous);
       setSaveOk(false);
-      setSaveMsg(`保存失败: ${err instanceof Error ? err.message : "未知错误"}`);
+      setSaveMsg(err instanceof Error ? err.message : "更新失败");
+    } finally {
+      setPendingSkillId(null);
     }
-  }, [localSelections, saveSelections]);
+  }, [localSelections, saveSelections, saving]);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return;
@@ -98,18 +134,13 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
     setDeleteErr(null);
     try {
       await deleteMySkill(deleteTarget.id);
-      // 本地 selection 状态同步清理，避免 UI 残留孤儿 id
-      setLocalSelections(prev => {
-        const next = { ...prev };
-        delete next[deleteTarget.id];
-        return next;
-      });
-      setInitialSelections(prev => {
+      setLocalSelections((prev) => {
         const next = { ...prev };
         delete next[deleteTarget.id];
         return next;
       });
       setDeleteTarget(null);
+      setDetailSkill(null);
       await refresh();
     } catch (err) {
       setDeleteErr(err instanceof Error ? err.message : "删除失败");
@@ -134,7 +165,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
       setTimeout(() => setImportMsg(null), 2200);
     } catch (err) {
       setImportOk(false);
-      setImportMsg(`导入失败: ${err instanceof Error ? err.message : "未知错误"}`);
+      setImportMsg(`导入失败：${err instanceof Error ? err.message : "未知错误"}`);
     } finally {
       setImporting(false);
     }
@@ -171,162 +202,146 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
     );
   }
 
-  const poolSkills = data?.poolSkills ?? [];
-  const tenantSkills = data?.tenantSkills ?? [];
-  const customSkills = data?.customSkills ?? [];
-  const showActions = poolSkills.length > 0 || tenantSkills.length > 0 || customSkills.length > 0 || canImport;
-  const actionControls = showActions ? (
+  const actionControls = (
     <>
-      {(poolSkills.length > 0 || customSkills.length > 0) && (
-        <Button onClick={handleSave} disabled={saving || !dirty}>
-          {saving ? (
-            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="mr-1.5 h-4 w-4" />
-          )}
-          保存
-        </Button>
-      )}
-      {canImport && (
-        <Button
-          variant="outline"
-          onClick={() => setImportDialogOpen(true)}
-          disabled={importing}
-        >
-          {importing ? (
-            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-          ) : (
-            <Upload className="mr-1.5 h-4 w-4" />
-          )}
+      {canImport ? (
+        <Button variant="outline" onClick={() => setImportDialogOpen(true)} disabled={importing}>
+          {importing ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Upload className="mr-1.5 h-4 w-4" />}
           导入技能
         </Button>
-      )}
-      {saveMsg && (
-        <span className={cn(
-          "text-sm",
-          saveOk ? "text-success" : "text-destructive"
-        )}>
-          {saveMsg}
-        </span>
-      )}
-      {importMsg && (
-        <span className={cn(
-          "text-sm",
-          importOk ? "text-success" : "text-destructive"
-        )}>
-          {importMsg}
-        </span>
-      )}
+      ) : null}
+      {saveMsg ? <span className={cn("text-sm", saveOk ? "text-success" : "text-destructive")}>{saveMsg}</span> : null}
+      {importMsg ? <span className={cn("text-sm", importOk ? "text-success" : "text-destructive")}>{importMsg}</span> : null}
     </>
-  ) : null;
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {headerTitle ? (
-        <SettingsPanelHeader
-          title={headerTitle}
-          description={headerDescription}
-          actions={actionControls}
-        />
-      ) : null}
+      {headerTitle ? <CatalogHeader title={headerTitle} description={headerDescription} actions={actionControls} /> : null}
       {backButton}
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "system" | "custom")} className="flex min-h-0 flex-1 flex-col">
-        <div className="mb-4 shrink-0 rounded-lg border bg-card p-1 shadow-sm">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-transparent p-0 text-muted-foreground">
-            <TabsTrigger value="system" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
-              系统技能
-              <span className="ml-1.5 text-xs font-normal">({poolSkills.length + tenantSkills.length})</span>
-            </TabsTrigger>
-            <TabsTrigger value="custom" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
-              自建技能
-              <span className="ml-1.5 text-xs font-normal">({customSkills.length})</span>
-            </TabsTrigger>
-          </TabsList>
-        </div>
+      <CatalogToolbar
+        query={query}
+        onQueryChange={setQuery}
+        searchPlaceholder="搜索技能名称或描述"
+        filters={filters}
+        activeFilter={activeFilter}
+        onFilterChange={setActiveFilter}
+        actions={!headerTitle ? actionControls : undefined}
+      />
 
-        <div className="min-h-0 flex-1 overflow-auto">
-          <TabsContent value="system" forceMount className="mt-0">
-            {poolSkills.length === 0 && tenantSkills.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">暂无系统技能</div>
-          ) : (
-            <div className="space-y-2">
-              {poolSkills.map(s => (
-                <SkillToggleItem
-                  key={s.id}
-                  name={s.name}
-                  description={s.description}
-                  checked={localSelections[s.id] ?? false}
-                  onCheckedChange={(checked) => toggle(s.id, checked)}
-                />
-              ))}
-              {tenantSkills.map(s => (
-                <SkillToggleItem
-                  key={s.id}
-                  name={s.name}
-                  description={s.description}
-                  checked={localSelections[s.id] ?? false}
-                  onCheckedChange={(checked) => toggle(s.id, checked)}
-                  badge="组织"
-                />
-              ))}
-            </div>
-          )}
-          </TabsContent>
-          <TabsContent value="custom" forceMount className="mt-0">
-            {customSkills.length === 0 ? (
-              <div className="py-8 text-center text-sm text-muted-foreground">暂无自建技能，点下方「导入技能」上传 SKILL.md / 文件夹 / zip</div>
-            ) : (
-              <div className="space-y-2">
-                {customSkills.map(s => (
-                  <SkillToggleItem
-                    key={s.id}
-                    name={s.name}
-                    description={s.description}
-                    checked={localSelections[s.id] ?? false}
-                    onCheckedChange={(checked) => toggle(s.id, checked)}
-                    badge="自建"
-                    leadingAction={canDeleteCustom ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2 text-muted-foreground hover:text-destructive"
-                        onClick={() => { setDeleteErr(null); setDeleteTarget({ id: s.id, name: s.name }); }}
-                        aria-label={`删除 ${s.name}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    ) : undefined}
-                  />
-                ))}
+      <div className="min-h-0 flex-1 overflow-auto pb-2">
+        {filteredSkills.length === 0 ? (
+          <div className="rounded-2xl border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
+            {skills.length === 0 ? "暂无可用技能" : "没有找到匹配的技能"}
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {filteredSkills.map((skill) => {
+              const source = skillSource(skill);
+              const selected = localSelections[skill.id] === true;
+              return (
+                <Card
+                  key={skill.id}
+                  className="group cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
+                  onClick={() => setDetailSkill(skill)}
+                  onKeyDown={(event) => {
+                    if ((event.target as HTMLElement).closest("button")) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setDetailSkill(skill);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <CardContent className="flex min-h-40 flex-col p-4">
+                    <div className="flex items-start gap-3">
+                      <CapabilityLogo label={skill.name}><Puzzle className="h-5 w-5" /></CapabilityLogo>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold">{skill.name}</div>
+                            <div className="mt-1"><CapabilitySourceBadge source={source} /></div>
+                          </div>
+                          <button
+                            type="button"
+                            className={cn(
+                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
+                              selected
+                                ? "border-brand-200 bg-brand-50 text-brand-700 dark:bg-brand-900/35 dark:text-brand-200"
+                                : "bg-muted/40 text-muted-foreground hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700",
+                            )}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void toggle(skill.id, !selected);
+                            }}
+                            disabled={saving}
+                            aria-label={`${selected ? "停用" : "启用"} ${skill.name}`}
+                          >
+                            {pendingSkillId === skill.id ? <Loader2 className="h-4 w-4 animate-spin" /> : selected ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <p className="mt-4 line-clamp-3 text-sm leading-5 text-muted-foreground">
+                      {skill.description || "暂无技能说明"}
+                    </p>
+                    <div className="mt-auto pt-3 text-xs text-muted-foreground">点击查看详情</div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <CapabilityDetailDrawer
+        open={!!detailSkill}
+        onOpenChange={(open) => { if (!open) setDetailSkill(null); }}
+        title={detailSkill?.name ?? "技能详情"}
+        description={detailSkill?.description}
+      >
+        {detailSkill ? (
+          <>
+            <div className="flex items-center gap-3">
+              <CapabilityLogo label={detailSkill.name}><Puzzle className="h-5 w-5" /></CapabilityLogo>
+              <div>
+                <CapabilitySourceBadge source={skillSource(detailSkill)} />
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {localSelections[detailSkill.id] ? "已为通用 Agent 启用" : "尚未启用"}
+                </div>
               </div>
-            )}
-          </TabsContent>
-        </div>
-      </Tabs>
+            </div>
+            <div className="rounded-xl bg-muted/40 p-4 text-sm leading-6 text-muted-foreground">
+              {sourceDescription(skillSource(detailSkill))}
+            </div>
+            <Button
+              className="w-full"
+              variant={localSelections[detailSkill.id] ? "outline" : "default"}
+              disabled={saving}
+              onClick={() => { void toggle(detailSkill.id, !localSelections[detailSkill.id]); }}
+            >
+              {pendingSkillId === detailSkill.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : localSelections[detailSkill.id] ? <Check className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
+              {localSelections[detailSkill.id] ? "停用技能" : "启用技能"}
+            </Button>
+            {canDeleteCustom && detailSkill.source === "custom" ? (
+              <Button
+                variant="ghost"
+                className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => { setDeleteErr(null); setDeleteTarget({ id: detailSkill.id, name: detailSkill.name }); }}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />删除自建技能
+              </Button>
+            ) : null}
+          </>
+        ) : null}
+      </CapabilityDetailDrawer>
 
-      {showActions && !headerTitle && (
-        <div className="mt-3 flex shrink-0 flex-wrap items-center gap-3 border-t pt-3">
-          {actionControls}
-        </div>
-      )}
-
-      {canImport && (
+      {canImport ? (
         <>
-          <input
-            ref={skillFileInputRef}
-            type="file"
-            accept=".md,text/markdown"
-            className="hidden"
-            onChange={(event) => { void handleSkillImport(event); }}
-          />
-          <input
-            ref={skillZipInputRef}
-            type="file"
-            accept=".zip,application/zip"
-            className="hidden"
-            onChange={(event) => { void handleSkillImport(event); }}
-          />
+          <input ref={skillFileInputRef} type="file" accept=".md,text/markdown" className="hidden" onChange={(event) => { void handleSkillImport(event); }} />
+          <input ref={skillZipInputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => { void handleSkillImport(event); }} />
           {/* @ts-expect-error webkitdirectory is supported by Chromium for folder uploads but missing from React types. */}
           <input ref={skillFolderInputRef} type="file" className="hidden" multiple webkitdirectory="" onChange={(event) => { void handleSkillImport(event); }} />
           <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
@@ -338,38 +353,17 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => skillFileInputRef.current?.click()}
-                  disabled={importing}
-                >
-                  上传 SKILL.md
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => skillFolderInputRef.current?.click()}
-                  disabled={importing}
-                >
-                  上传文件夹
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => skillZipInputRef.current?.click()}
-                  disabled={importing}
-                >
-                  上传 zip 压缩包
-                </Button>
+                <Button variant="outline" onClick={() => skillFileInputRef.current?.click()} disabled={importing}>上传 SKILL.md</Button>
+                <Button variant="outline" onClick={() => skillFolderInputRef.current?.click()} disabled={importing}>上传文件夹</Button>
+                <Button variant="outline" onClick={() => skillZipInputRef.current?.click()} disabled={importing}>上传 zip 压缩包</Button>
               </div>
             </DialogContent>
           </Dialog>
         </>
-      )}
+      ) : null}
 
-      {canDeleteCustom && (
-        <Dialog
-          open={!!deleteTarget}
-          onOpenChange={(open) => { if (!open && !deleting) { setDeleteTarget(null); setDeleteErr(null); } }}
-        >
+      {canDeleteCustom ? (
+        <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open && !deleting) { setDeleteTarget(null); setDeleteErr(null); } }}>
           <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-sm">
             <DialogHeader>
               <DialogTitle>删除自建技能</DialogTitle>
@@ -377,27 +371,17 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                 确定删除自建技能“{deleteTarget?.name}”？操作不可撤销，SKILL.md 及关联 references/scripts 会一并从你的 workspace 中移除。
               </DialogDescription>
             </DialogHeader>
-            {deleteErr && <div className="text-sm text-destructive">{deleteErr}</div>}
+            {deleteErr ? <div className="text-sm text-destructive">{deleteErr}</div> : null}
             <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => { setDeleteTarget(null); setDeleteErr(null); }}
-                disabled={deleting}
-              >
-                取消
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => { void handleDeleteConfirm(); }}
-                disabled={deleting}
-              >
-                {deleting && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+              <Button variant="outline" onClick={() => { setDeleteTarget(null); setDeleteErr(null); }} disabled={deleting}>取消</Button>
+              <Button variant="destructive" onClick={() => { void handleDeleteConfirm(); }} disabled={deleting}>
+                {deleting ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
                 删除
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      )}
+      ) : null}
     </div>
   );
 }

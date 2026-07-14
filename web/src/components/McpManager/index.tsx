@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink, Loader2, Link2Off, Plus, RefreshCw, Save, Stethoscope, Trash2 } from "lucide-react";
+import { Check, ExternalLink, Loader2, Link2Off, Plug, Plus, RefreshCw, Save, Stethoscope, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTenants } from "@/components/TenantManager/hooks";
 import {
@@ -24,7 +33,15 @@ import {
   upsertMyMcpServer,
   GLOBAL_TENANT_ID,
 } from "@agent/shared";
-import type { ManagedMcpServer, McpAdminServersResponse, McpDiagnosticResponse, McpSecretScope, McpSecretStatus, McpTemplatesResponse, MyMcpResponse } from "@agent/shared";
+import type { ManagedMcpServer, McpAdminServersResponse, McpDiagnosticResponse, McpSecretScope, McpSecretStatus, McpServerSummary, McpTemplatesResponse, MyMcpResponse } from "@agent/shared";
+import {
+  CatalogHeader,
+  CapabilityDetailDrawer,
+  CapabilityLogo,
+  CapabilitySourceBadge,
+  CatalogToolbar,
+  type CapabilitySource,
+} from "@/components/CapabilityCenter/CatalogUi";
 
 const SCOPE_BADGE: Record<McpSecretScope, { label: string; className: string }> = {
   user: { label: "用户私有", className: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100" },
@@ -41,6 +58,28 @@ const EMPTY_SERVER: ManagedMcpServer = {
   // tenantId 不预填，让后端按 caller 身份默认（组织 admin 强制 own）。
   // 平台 admin 想要全局 / 跨组织 server 可通过下方 selector 显式选择。
 };
+
+type ConnectorFilter = "all" | "enabled" | "platform" | "organization" | "personal";
+
+function connectorSource(server: McpServerSummary): CapabilitySource {
+  if (server.personal) return "personal";
+  if (server.tenantId === GLOBAL_TENANT_ID) return "platform";
+  return "organization";
+}
+
+function connectorStatus(server: McpServerSummary): { label: string; className: string } {
+  if (server.oauth && server.oauth.status !== "connected") {
+    return server.oauth.status === "error"
+      ? { label: "授权失败", className: "text-destructive" }
+      : { label: "未连接", className: "text-muted-foreground" };
+  }
+  if ((server.secretRequirements ?? []).some((requirement) => requirement.required !== false && !requirement.configured)) {
+    return { label: "待配置", className: "text-amber-700 dark:text-amber-300" };
+  }
+  return server.enabled
+    ? { label: "已启用", className: "text-success" }
+    : { label: "可启用", className: "text-muted-foreground" };
+}
 
 export function McpManager() {
   return <McpManagerInner mode="personal" />;
@@ -76,6 +115,11 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
   const [personalConfigText, setPersonalConfigText] = useState(JSON.stringify({ type: "streamable-http", url: "https://example.com/mcp" }, null, 2));
   const [personalSecretsText, setPersonalSecretsText] = useState("[]");
   const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
+  const [query, setQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState<ConnectorFilter>("all");
+  const [detailServerId, setDetailServerId] = useState<string | null>(null);
+  const [customDialogOpen, setCustomDialogOpen] = useState(false);
+  const [pendingServerId, setPendingServerId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -100,20 +144,26 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
 
   const dirty = useMemo(() => {
     if (!myData) return false;
-    return myData.servers.some(s => enabled[s.id] !== s.enabled);
+    return myData.servers.some((server) => enabled[server.id] !== server.enabled);
   }, [myData, enabled]);
 
-  const saveSelections = useCallback(async () => {
+  const saveSelections = useCallback(async (nextEnabled: Record<string, boolean>) => {
+    const previous = enabled;
+    setEnabled(nextEnabled);
     setSaving(true);
     try {
-      await updateMyMcpSelections(Object.entries(enabled).filter(([, v]) => v).map(([id]) => id));
-      await refresh();
+      await updateMyMcpSelections(Object.entries(nextEnabled).filter(([, value]) => value).map(([id]) => id));
+      setMyData((current) => current ? {
+        ...current,
+        servers: current.servers.map((server) => ({ ...server, enabled: nextEnabled[server.id] === true })),
+      } : current);
     } catch (err) {
+      setEnabled(previous);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
-  }, [enabled, refresh]);
+  }, [enabled]);
 
   const diagnose = useCallback(async () => {
     setDiagnostic(null);
@@ -155,6 +205,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
     setPersonalForm({ ...server, enabledByDefault: false });
     setPersonalConfigText(JSON.stringify(server.config, null, 2));
     setPersonalSecretsText(JSON.stringify((server.secretRequirements ?? []).map(req => ({ ...req, scope: "user" })), null, 2));
+    setCustomDialogOpen(true);
   }, []);
 
   const savePersonalServer = useCallback(async () => {
@@ -179,6 +230,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
       setPersonalForm(reset);
       setPersonalConfigText(JSON.stringify(reset.config, null, 2));
       setPersonalSecretsText("[]");
+      setCustomDialogOpen(false);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -286,6 +338,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
     setSaving(true);
     try {
       await deleteMyMcpServer(id);
+      setDetailServerId(null);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -294,8 +347,297 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
     }
   }, [refresh]);
 
+  const connectorServers = myData?.servers ?? [];
+  const enabledCount = connectorServers.filter((server) => server.enabled).length;
+  const filteredServers = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return connectorServers.filter((server) => {
+      const source = connectorSource(server);
+      const matchesFilter = activeFilter === "all"
+        || (activeFilter === "enabled" ? server.enabled : source === activeFilter);
+      const matchesQuery = !normalizedQuery
+        || server.name.toLocaleLowerCase().includes(normalizedQuery)
+        || (server.description ?? "").toLocaleLowerCase().includes(normalizedQuery);
+      return matchesFilter && matchesQuery;
+    });
+  }, [activeFilter, connectorServers, query]);
+  const connectorFilters = useMemo(() => [
+    { value: "all" as const, label: "全部", count: connectorServers.length },
+    { value: "enabled" as const, label: "已启用", count: enabledCount },
+    { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length },
+    { value: "organization" as const, label: "组织提供", count: connectorServers.filter((server) => connectorSource(server) === "organization").length },
+    { value: "personal" as const, label: "我创建的", count: connectorServers.filter((server) => connectorSource(server) === "personal").length },
+  ], [connectorServers, enabledCount]);
+  const detailServer = detailServerId ? connectorServers.find((server) => server.id === detailServerId) ?? null : null;
+
+  const toggleServer = useCallback(async (server: McpServerSummary, nextValue: boolean) => {
+    if (saving) return;
+    setPendingServerId(server.id);
+    try {
+      await saveSelections({ ...enabled, [server.id]: nextValue });
+    } finally {
+      setPendingServerId(null);
+    }
+  }, [enabled, saveSelections, saving]);
+
+  const openCreatePersonalServer = useCallback(() => {
+    const reset: ManagedMcpServer = {
+      ...EMPTY_SERVER,
+      id: "",
+      name: "",
+      enabledByDefault: false,
+      config: { type: "streamable-http", url: "https://example.com/mcp" },
+      secretRequirements: [],
+    };
+    setPersonalForm(reset);
+    setPersonalConfigText(JSON.stringify(reset.config, null, 2));
+    setPersonalSecretsText("[]");
+    setCustomDialogOpen(true);
+  }, []);
+
   if (loading) {
     return <div className="flex flex-1 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+  }
+
+  if (mode === "personal") {
+    return (
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+        <CatalogHeader
+          title="连接器"
+          description="连接常用账号，让 Agent 在你的权限范围内使用数据和工具。"
+          actions={
+            <Button variant="outline" onClick={openCreatePersonalServer}>
+              <Plus className="mr-1.5 h-4 w-4" />自定义连接器
+            </Button>
+          }
+        />
+
+        <CatalogToolbar
+          query={query}
+          onQueryChange={setQuery}
+          searchPlaceholder="搜索连接器名称或描述"
+          filters={connectorFilters}
+          activeFilter={activeFilter}
+          onFilterChange={setActiveFilter}
+        />
+
+        <div className="min-h-0 flex-1 overflow-auto pb-2">
+          {error ? <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
+          {filteredServers.length === 0 ? (
+            <div className="rounded-2xl border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
+              {connectorServers.length === 0 ? "暂无可用连接器" : "没有找到匹配的连接器"}
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {filteredServers.map((server) => {
+                const source = connectorSource(server);
+                const status = connectorStatus(server);
+                const oauthReady = !server.oauth || server.oauth.status === "connected";
+                const missingSecrets = (server.secretRequirements ?? []).some((requirement) => requirement.required !== false && !requirement.configured);
+                const selected = enabled[server.id] === true;
+                return (
+                  <Card
+                    key={server.id}
+                    className="group cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
+                    onClick={() => setDetailServerId(server.id)}
+                    onKeyDown={(event) => {
+                      if ((event.target as HTMLElement).closest("button")) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setDetailServerId(server.id);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <CardContent className="flex min-h-36 items-start gap-4 p-5">
+                      <CapabilityLogo label={server.name}><Plug className="h-5 w-5" /></CapabilityLogo>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate font-semibold">{server.name}</div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2">
+                              <CapabilitySourceBadge source={source} />
+                              <span className={`text-xs font-medium ${status.className}`}>{status.label}</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className={cn(
+                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
+                              selected
+                                ? "border-brand-200 bg-brand-50 text-brand-700 dark:bg-brand-900/35 dark:text-brand-200"
+                                : "bg-muted/40 text-muted-foreground hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700",
+                            )}
+                            disabled={saving || (!!server.oauth && !server.oauth.platformConfigured)}
+                            aria-label={oauthReady && !missingSecrets ? `${selected ? "停用" : "启用"} ${server.name}` : `配置 ${server.name}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (!oauthReady) {
+                                setPendingServerId(server.id);
+                                void connectOAuth(server.id).finally(() => setPendingServerId(null));
+                              } else if (missingSecrets) {
+                                setDetailServerId(server.id);
+                              } else {
+                                void toggleServer(server, !selected);
+                              }
+                            }}
+                          >
+                            {pendingServerId === server.id ? <Loader2 className="h-4 w-4 animate-spin" /> : selected ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                          </button>
+                        </div>
+                        <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{server.description || "暂无连接器说明"}</p>
+                        <div className="mt-3 text-xs text-muted-foreground">点击查看权限与账号配置</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <CapabilityDetailDrawer
+          open={!!detailServer}
+          onOpenChange={(open) => { if (!open) setDetailServerId(null); }}
+          title={detailServer?.name ?? "连接器详情"}
+          description={detailServer?.description}
+        >
+          {detailServer ? (
+            <>
+              <div className="flex items-center gap-3">
+                <CapabilityLogo label={detailServer.name}><Plug className="h-5 w-5" /></CapabilityLogo>
+                <div>
+                  <CapabilitySourceBadge source={connectorSource(detailServer)} />
+                  <div className={`mt-1 text-xs font-medium ${connectorStatus(detailServer).className}`}>{connectorStatus(detailServer).label}</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl bg-muted/40 p-3">
+                  <div className="text-xs text-muted-foreground">连接方式</div>
+                  <div className="mt-1 text-sm font-medium">{detailServer.transport === "stdio" ? "本地服务" : "远程服务"}</div>
+                </div>
+                <div className="rounded-xl bg-muted/40 p-3">
+                  <div className="text-xs text-muted-foreground">权限级别</div>
+                  <div className="mt-1 text-sm font-medium">
+                    {detailServer.riskLevel === "read_only" ? "只读" : detailServer.riskLevel ? "可执行操作" : "按连接器配置"}
+                  </div>
+                </div>
+              </div>
+
+              {detailServer.oauth ? (
+                <div className="rounded-xl border p-4">
+                  <div className="text-sm font-medium">账号授权</div>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">授权只属于当前账号，组织内其他成员无法使用你的凭据。</p>
+                  <div className="mt-3">
+                    {detailServer.oauth.status === "connected" ? (
+                      <Button variant="outline" size="sm" onClick={() => { void disconnectOAuth(detailServer.id); }} disabled={saving}>
+                        <Link2Off className="mr-1.5 h-3.5 w-3.5" />断开账号
+                      </Button>
+                    ) : (
+                      <Button size="sm" onClick={() => { void connectOAuth(detailServer.id); }} disabled={saving || !detailServer.oauth.platformConfigured}>
+                        <ExternalLink className="mr-1.5 h-3.5 w-3.5" />连接账号
+                      </Button>
+                    )}
+                  </div>
+                  {!detailServer.oauth.platformConfigured ? <div className="mt-2 text-xs text-amber-700 dark:text-amber-300">平台管理员尚未完成授权配置</div> : null}
+                  {detailServer.oauth.status === "error" && detailServer.oauth.lastError ? <div className="mt-2 text-xs text-destructive">{detailServer.oauth.lastError}</div> : null}
+                </div>
+              ) : null}
+
+              {(detailServer.secretRequirements ?? []).map((requirement) => {
+                const inputKey = `${detailServer.id}:${requirement.key}`;
+                const canBind = canBindSecret(requirement);
+                const badge = SCOPE_BADGE[requirement.scope];
+                const disabledReason = canBind ? "" : noBindReason(requirement);
+                return (
+                  <div key={requirement.key} className="rounded-xl border p-4">
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                      <span>{requirement.label}</span>
+                      {requirement.required === false ? <span className="text-xs font-normal text-muted-foreground">可选</span> : null}
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] ${badge.className}`}>{badge.label}</span>
+                      <span className={requirement.configured ? "text-success" : "text-destructive"}>{requirement.configured ? "已绑定" : "未绑定"}</span>
+                    </div>
+                    {requirement.instructions ? <div className="mt-1 text-xs leading-5 text-muted-foreground">{requirement.instructions}</div> : null}
+                    <div className="mt-3 flex gap-2">
+                      <Input
+                        type="password"
+                        autoComplete="new-password"
+                        passwordManager="ignore"
+                        placeholder={canBind ? `输入 ${requirement.label}` : disabledReason}
+                        value={secretInputs[inputKey] || ""}
+                        onChange={(event) => setSecretInputs((previous) => ({ ...previous, [inputKey]: event.target.value }))}
+                        disabled={!canBind}
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { void bindSecret(detailServer.id, requirement.key, requirement.scope); }}
+                        disabled={!canBind || saving || !secretInputs[inputKey]?.trim()}
+                      >
+                        绑定
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {(!detailServer.oauth || detailServer.oauth.status === "connected")
+                && !(detailServer.secretRequirements ?? []).some((requirement) => requirement.required !== false && !requirement.configured) ? (
+                  <Button
+                    className="w-full"
+                    variant={enabled[detailServer.id] ? "outline" : "default"}
+                    disabled={saving}
+                    onClick={() => { void toggleServer(detailServer, !enabled[detailServer.id]); }}
+                  >
+                    {pendingServerId === detailServer.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : enabled[detailServer.id] ? <Check className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
+                    {enabled[detailServer.id] ? "停用连接器" : "启用连接器"}
+                  </Button>
+                ) : null}
+
+              {detailServer.personal ? (
+                <div className="grid grid-cols-2 gap-2 border-t pt-5">
+                  <Button variant="outline" onClick={() => editPersonalServer(detailServer as ManagedMcpServer)}>编辑配置</Button>
+                  <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => { void removePersonalServer(detailServer.id); }}>
+                    <Trash2 className="mr-2 h-4 w-4" />删除
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </CapabilityDetailDrawer>
+
+        <Dialog open={customDialogOpen} onOpenChange={setCustomDialogOpen}>
+          <DialogContent className="max-h-[min(760px,calc(100vh-48px))] max-w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{personalForm.id ? "编辑自定义连接器" : "添加自定义连接器"}</DialogTitle>
+              <DialogDescription>仅你本人可见；当前支持 remote MCP 地址，账号密钥始终按用户隔离。</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input placeholder="连接器 ID，如 my_notion" value={personalForm.id} onChange={(event) => setPersonalForm((previous) => ({ ...previous, id: event.target.value }))} />
+              <Input placeholder="显示名称" value={personalForm.name} onChange={(event) => setPersonalForm((previous) => ({ ...previous, name: event.target.value }))} />
+              <Input className="md:col-span-2" placeholder="描述" value={personalForm.description || ""} onChange={(event) => setPersonalForm((previous) => ({ ...previous, description: event.target.value }))} />
+              <Input placeholder="风险等级" value={personalForm.riskLevel || "credentialed_external_write"} onChange={(event) => setPersonalForm((previous) => ({ ...previous, riskLevel: event.target.value as ManagedMcpServer["riskLevel"] }))} />
+            </div>
+            <div className="space-y-1.5">
+              <div className="text-sm font-medium">连接配置</div>
+              <Textarea className="min-h-32 font-mono text-xs" value={personalConfigText} onChange={(event) => setPersonalConfigText(event.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <div className="text-sm font-medium">密钥要求</div>
+              <Textarea className="min-h-24 font-mono text-xs" value={personalSecretsText} onChange={(event) => setPersonalSecretsText(event.target.value)} placeholder='[{"key":"token","label":"Token","target":"header","name":"Authorization","scope":"user","prefix":"Bearer "}]' />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setCustomDialogOpen(false)}>取消</Button>
+              <Button onClick={() => { void savePersonalServer(); }} disabled={saving || !personalForm.id.trim() || !personalForm.name.trim()}>
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}保存连接器
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
   }
 
   return (
@@ -306,7 +648,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
         actions={
           <>
             {dirty && (
-              <Button size="sm" onClick={() => void saveSelections()} disabled={saving}>
+              <Button size="sm" onClick={() => void saveSelections(enabled)} disabled={saving}>
                 <Save className="mr-1.5 h-3.5 w-3.5" />
                 保存启用状态
               </Button>
@@ -329,28 +671,6 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
 
       <div className="min-h-0 flex-1 space-y-6 overflow-auto">
       {error && <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
-
-      {mode === "personal" && (
-        <details className="rounded-lg border bg-card">
-          <summary className="cursor-pointer px-6 py-4 text-sm font-medium">自定义连接器（高级）</summary>
-          <div className="space-y-3 px-6 pb-5">
-            <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-              自定义连接器仅本人可见；当前只支持 remote MCP 地址，不支持在服务器上执行本地命令。账号密钥始终按用户隔离。
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <Input placeholder="server id，如 my_notion" value={personalForm.id} onChange={e => setPersonalForm(prev => ({ ...prev, id: e.target.value }))} />
-              <Input placeholder="显示名称" value={personalForm.name} onChange={e => setPersonalForm(prev => ({ ...prev, name: e.target.value }))} />
-              <Input className="md:col-span-2" placeholder="描述" value={personalForm.description || ""} onChange={e => setPersonalForm(prev => ({ ...prev, description: e.target.value }))} />
-              <Input placeholder="风险等级" value={personalForm.riskLevel || "credentialed_external_write"} onChange={e => setPersonalForm(prev => ({ ...prev, riskLevel: e.target.value as ManagedMcpServer["riskLevel"] }))} />
-            </div>
-            <Textarea className="min-h-28 font-mono text-xs" value={personalConfigText} onChange={e => setPersonalConfigText(e.target.value)} />
-            <Textarea className="min-h-20 font-mono text-xs" value={personalSecretsText} onChange={e => setPersonalSecretsText(e.target.value)} placeholder='[{"key":"token","label":"Token","target":"header","name":"Authorization","scope":"user","prefix":"Bearer "}]' />
-            <Button size="sm" onClick={() => void savePersonalServer()} disabled={saving || !personalForm.id.trim() || !personalForm.name.trim()}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />保存自定义连接器
-            </Button>
-          </div>
-        </details>
-      )}
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">我的连接器</CardTitle></CardHeader>

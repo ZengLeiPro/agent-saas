@@ -41,6 +41,8 @@ export interface McpServerSummary {
   createdFromTemplateVersion?: number;
   ownerUsername?: string;
   personal?: boolean;
+  /** '*' = 平台全局；具体 tenantId = 组织提供；个人连接器仍以 personal 为准。 */
+  tenantId?: string;
   config?: Record<string, unknown>;
   oauth?: McpOAuthSummary;
 }

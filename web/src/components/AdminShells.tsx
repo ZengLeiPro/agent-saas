@@ -490,6 +490,8 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   mcp_server_updated: "更新 MCP 服务",
   mcp_server_deleted: "删除 MCP 服务",
   mcp_admin_user_selections_updated: "管理员更新 MCP",
+  mcp_oauth_connected: "连接器账号授权",
+  mcp_oauth_revoked: "断开连接器账号",
   skill_custom_uploaded: "上传自定义技能",
   skill_tenant_uploaded: "上传组织技能",
   skill_pool_uploaded: "上传平台技能",

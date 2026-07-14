@@ -506,6 +506,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           ? (userId: string) => webChannel.disconnectUser(userId)
           : undefined,
         skillConfigStore: runtime.skillConfigStore,
+        mcpOAuthService: runtime.mcpOAuthService,
         signupConfigStore: runtime.signupConfigStore,
         secretVault: runtime.secretVault,
       }),
@@ -550,6 +551,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
               agentStore: runtime.agentStore,
               skillConfigStore: runtime.skillConfigStore,
               mcpConfigStore: runtime.mcpConfigStore,
+              mcpOAuthService: runtime.mcpOAuthService,
               groupStore: runtime.groupStore,
               cronService: runtime.cronRuntime.service,
               tokenUsageStore: runtime.tokenUsageStore,
@@ -605,6 +607,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           manager: runtime.mcpClientManager,
           agentCwd,
           secretVault: runtime.secretVault,
+          oauthService: runtime.mcpOAuthService,
         }),
       );
     }

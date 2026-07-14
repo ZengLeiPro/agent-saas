@@ -155,6 +155,8 @@ export type {
   McpSecretTarget,
   McpSecretRequirement,
   McpSecretStatus,
+  McpOAuthSummary,
+  McpOAuthStartResponse,
   MyMcpResponse,
   ManagedMcpServer,
   McpTemplate,
@@ -530,4 +532,6 @@ export {
   deleteMcpServer,
   upsertMyMcpServer,
   deleteMyMcpServer,
+  startMyMcpOAuth,
+  disconnectMyMcpOAuth,
 } from "./lib/mcpApi";

@@ -22,6 +22,7 @@ import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
 import { resolveTenantCwd } from '../../workspace/resolver.js';
 import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN, type TenantRecord } from './types.js';
 import type { TenantStore } from './store.js';
+import type { McpOAuthService } from '../../mcp/oauthService.js';
 
 export interface TenantDeletionReport {
   tenantId: string;
@@ -72,6 +73,7 @@ export interface DeleteTenantResourcesOptions {
   agentStore?: AgentStore;
   skillConfigStore?: SkillConfigStore;
   mcpConfigStore?: McpConfigStore;
+  mcpOAuthService?: McpOAuthService;
   groupStore?: GroupStore;
   cronService?: CronService | null;
   tokenUsageStore?: TokenUsageStore;
@@ -188,6 +190,11 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
   const skills = options.skillConfigStore
     ? await options.skillConfigStore.removeTenant(tenantId, usernames)
     : { usersRemoved: 0, tenantConfigRemoved: false, platformRefsRemoved: 0 };
+  if (options.mcpOAuthService) {
+    for (const username of usernames) {
+      await options.mcpOAuthService.revokeUserConnections(username, tenantId);
+    }
+  }
   const mcp = options.mcpConfigStore
     ? await options.mcpConfigStore.removeTenantData(tenantId, usernames)
     : { serversRemoved: 0, usersRemoved: 0 };

@@ -176,6 +176,8 @@ export type {
   McpSecretTarget,
   McpSecretRequirement,
   McpSecretStatus,
+  McpOAuthSummary,
+  McpOAuthStartResponse,
   McpServerSummary,
   MyMcpResponse,
   ManagedMcpServer,

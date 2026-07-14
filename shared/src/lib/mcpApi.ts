@@ -1,5 +1,5 @@
 import { authFetch } from './authFetch';
-import type { ManagedMcpServer, McpAdminServersResponse, McpDiagnosticResponse, McpTemplatesResponse, MyMcpResponse } from '../types/mcp';
+import type { ManagedMcpServer, McpAdminServersResponse, McpDiagnosticResponse, McpOAuthStartResponse, McpTemplatesResponse, MyMcpResponse } from '../types/mcp';
 
 type ApiErrorBody = { error?: string; details?: unknown };
 
@@ -106,5 +106,21 @@ export async function deleteMyMcpServer(id: string): Promise<void> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as ApiErrorBody;
     throw new Error(formatApiError(body, `Failed to delete personal MCP server: ${res.status}`));
+  }
+}
+
+export async function startMyMcpOAuth(serverId: string, returnTo: string): Promise<McpOAuthStartResponse> {
+  return jsonOrError(await authFetch(`/api/mcp/me/servers/${encodeURIComponent(serverId)}/oauth/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ returnTo }),
+  }), '连接器授权启动失败');
+}
+
+export async function disconnectMyMcpOAuth(serverId: string): Promise<void> {
+  const res = await authFetch(`/api/mcp/me/servers/${encodeURIComponent(serverId)}/oauth`, { method: 'DELETE' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as ApiErrorBody;
+    throw new Error(formatApiError(body, `断开连接器失败: ${res.status}`));
   }
 }

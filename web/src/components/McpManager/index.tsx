@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Plus, RefreshCw, Save, Stethoscope, Trash2 } from "lucide-react";
+import { ExternalLink, Loader2, Link2Off, Plus, RefreshCw, Save, Stethoscope, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,11 +13,13 @@ import {
   bindAdminMcpSecret,
   deleteMcpServer,
   deleteMyMcpServer,
+  disconnectMyMcpOAuth,
   diagnoseMyMcp,
   fetchMcpAdminServers,
   fetchMcpTemplates,
   fetchMyMcp,
   updateMyMcpSelections,
+  startMyMcpOAuth,
   upsertMcpServer,
   upsertMyMcpServer,
   GLOBAL_TENANT_ID,
@@ -236,6 +238,36 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
     setConfigText(JSON.stringify(server.config, null, 2));
   }, []);
 
+  const connectOAuth = useCallback(async (serverId: string) => {
+    setSaving(true);
+    try {
+      const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      const result = await startMyMcpOAuth(serverId, returnTo);
+      if (result.authorizationUrl) {
+        window.location.assign(result.authorizationUrl);
+        return;
+      }
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
+  const disconnectOAuth = useCallback(async (serverId: string) => {
+    if (!confirm('断开后，本平台将停止使用这份授权；如需同时撤销第三方平台的授权，请在对应账号设置中操作。确定断开？')) return;
+    setSaving(true);
+    try {
+      await disconnectMyMcpOAuth(serverId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
   const removeServer = useCallback(async (id: string) => {
     if (!confirm(`删除 MCP Server ${id}？`)) return;
     setSaving(true);
@@ -270,23 +302,13 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
         title={mode === "admin" ? "连接器管理" : "连接器"}
-        description={mode === "admin" ? "维护组织或全局 MCP Server Catalog。" : "为我的通用 Agent 添加 MCP 连接器、绑定密钥，并选择新会话要加载的工具。"}
+        description={mode === "admin" ? "维护组织或全局 MCP Server Catalog。" : "连接自己的常用账号，让 Agent 在你的权限范围内使用数据和工具。"}
         actions={
           <>
             {dirty && (
               <Button size="sm" onClick={() => void saveSelections()} disabled={saving}>
                 <Save className="mr-1.5 h-3.5 w-3.5" />
                 保存启用状态
-              </Button>
-            )}
-            {mode === "personal" && (
-              <Button
-                size="sm"
-                onClick={() => void savePersonalServer()}
-                disabled={saving || !personalForm.id.trim() || !personalForm.name.trim()}
-              >
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                保存个人 MCP
               </Button>
             )}
             {mode === "admin" && isAdmin && (
@@ -309,11 +331,11 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
       {error && <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
 
       {mode === "personal" && (
-        <Card>
-          <CardHeader className="pb-3"><CardTitle className="text-base">添加个人 MCP Server</CardTitle></CardHeader>
-          <CardContent className="space-y-3 pt-0">
+        <details className="rounded-lg border bg-card">
+          <summary className="cursor-pointer px-6 py-4 text-sm font-medium">自定义连接器（高级）</summary>
+          <div className="space-y-3 px-6 pb-5">
             <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-              个人 MCP 仅本人可见；为安全起见，当前只支持 http / streamable-http，不支持 stdio command。Secret requirement 会强制使用用户私有 scope。
+              自定义连接器仅本人可见；当前只支持 remote MCP 地址，不支持在服务器上执行本地命令。账号密钥始终按用户隔离。
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <Input placeholder="server id，如 my_notion" value={personalForm.id} onChange={e => setPersonalForm(prev => ({ ...prev, id: e.target.value }))} />
@@ -323,22 +345,52 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
             </div>
             <Textarea className="min-h-28 font-mono text-xs" value={personalConfigText} onChange={e => setPersonalConfigText(e.target.value)} />
             <Textarea className="min-h-20 font-mono text-xs" value={personalSecretsText} onChange={e => setPersonalSecretsText(e.target.value)} placeholder='[{"key":"token","label":"Token","target":"header","name":"Authorization","scope":"user","prefix":"Bearer "}]' />
-          </CardContent>
-        </Card>
+            <Button size="sm" onClick={() => void savePersonalServer()} disabled={saving || !personalForm.id.trim() || !personalForm.name.trim()}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" />保存自定义连接器
+            </Button>
+          </div>
+        </details>
       )}
 
       <Card>
-        <CardHeader className="pb-3"><CardTitle className="text-base">我的 MCP Server</CardTitle></CardHeader>
+        <CardHeader className="pb-3"><CardTitle className="text-base">我的连接器</CardTitle></CardHeader>
         <CardContent className="space-y-2 pt-0">
           {(myData?.servers.length ?? 0) === 0 ? (
-            <div className="py-6 text-center text-sm text-muted-foreground">暂无管理员配置的 MCP Server。</div>
+            <div className="py-6 text-center text-sm text-muted-foreground">暂无可用连接器。</div>
           ) : myData!.servers.map(server => (
             <div key={server.id} className="flex items-start gap-3 rounded-lg border p-3">
-              <Switch checked={!!enabled[server.id]} onCheckedChange={(v) => setEnabled(prev => ({ ...prev, [server.id]: v }))} />
+              <Switch
+                checked={!!enabled[server.id]}
+                onCheckedChange={(v) => setEnabled(prev => ({ ...prev, [server.id]: v }))}
+                disabled={!!server.oauth && server.oauth.status !== 'connected'}
+              />
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 text-sm font-medium"><span>{server.name}</span><span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{server.transport}</span></div>
-                <div className="text-xs text-muted-foreground">{server.id}{server.personal ? " · 个人" : ""}{server.enabledByDefault ? " · 默认启用" : ""}{server.riskLevel ? ` · ${server.riskLevel}` : ""}</div>
+                <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                  <span>{server.name}</span>
+                  {server.oauth?.beta && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-900 dark:text-amber-100">Beta</span>}
+                  {server.oauth && (
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] ${server.oauth.status === 'connected' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100' : 'bg-muted text-muted-foreground'}`}>
+                      {server.oauth.status === 'connected' ? '已连接' : server.oauth.status === 'pending' ? '等待授权' : server.oauth.status === 'error' ? '授权失败' : '未连接'}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-muted-foreground">{server.personal ? "个人连接器" : "由平台提供"}{server.enabledByDefault ? " · 默认启用" : ""}</div>
                 {server.description && <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{server.description}</p>}
+                {server.oauth && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {server.oauth.status === 'connected' ? (
+                      <Button size="sm" variant="outline" onClick={() => void disconnectOAuth(server.id)} disabled={saving}>
+                        <Link2Off className="mr-1.5 h-3.5 w-3.5" />断开
+                      </Button>
+                    ) : (
+                      <Button size="sm" onClick={() => void connectOAuth(server.id)} disabled={saving || !server.oauth.platformConfigured}>
+                        <ExternalLink className="mr-1.5 h-3.5 w-3.5" />连接账号
+                      </Button>
+                    )}
+                    {!server.oauth.platformConfigured && <span className="text-xs text-amber-700 dark:text-amber-300">平台管理员尚未完成 OAuth 应用配置</span>}
+                    {server.oauth.status === 'error' && server.oauth.lastError && <span className="text-xs text-destructive">{server.oauth.lastError}</span>}
+                  </div>
+                )}
                 {(server.secretRequirements ?? []).length > 0 && (
                   <div className="mt-3 space-y-2">
                     {server.secretRequirements!.map(req => {
@@ -409,7 +461,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
               <div className="rounded-lg border bg-muted/30 p-3">
                 <div className="mb-2 text-sm font-medium">从安全模板创建</div>
                 <div className="grid gap-2 md:grid-cols-3">
-                  {templates!.templates.map(t => (
+                  {templates!.templates.filter(t => isPlatformAdmin || !(t.server.config as { oauth?: unknown }).oauth).map(t => (
                     <button key={t.id} className="rounded border bg-background p-2 text-left text-xs hover:bg-accent" onClick={() => applyTemplate(t.server)}>
                       <div className="font-medium">{t.name}</div>
                       <div className="mt-1 text-muted-foreground">{t.riskLevel}{t.recommendedDefault ? " · 推荐默认启用" : " · 默认关闭"}</div>

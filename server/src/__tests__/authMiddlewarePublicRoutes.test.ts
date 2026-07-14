@@ -32,6 +32,8 @@ describe("auth middleware public routes", () => {
     app.get("/api/healthz/drain", (_req, res) => res.json({ idle: true }));
     app.get("/api/share/sessions/test-token", (_req, res) => res.json({ ok: true }));
     app.get("/api/share/sessions/test-token/file", (_req, res) => res.json({ ok: true }));
+    app.get("/api/mcp/oauth/callback", (_req, res) => res.json({ ok: true }));
+    app.get("/api/mcp/oauth/client-metadata", (_req, res) => res.json({ ok: true }));
     app.get("/api/protected", (_req, res) => res.json({ ok: true }));
 
     server = await new Promise((resolve) => {
@@ -80,6 +82,11 @@ describe("auth middleware public routes", () => {
 
   it("会话分享文件端点免登录可达", async () => {
     expect((await fetch(`${baseUrl}/api/share/sessions/test-token/file?path=assets%2Fdemo.html`)).status).toBe(200);
+  });
+
+  it("MCP OAuth 回调与 client metadata 免登录可达", async () => {
+    expect((await fetch(`${baseUrl}/api/mcp/oauth/callback?state=test`)).status).toBe(200);
+    expect((await fetch(`${baseUrl}/api/mcp/oauth/client-metadata`)).status).toBe(200);
   });
 
   it("非公开路径无 token 仍 401（放行未扩大化）", async () => {

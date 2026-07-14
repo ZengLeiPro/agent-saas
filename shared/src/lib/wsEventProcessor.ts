@@ -5,7 +5,7 @@
 
 import type { MessageItem, MessageItemInput } from '../types/message';
 import type { WsEvent } from '../types/ws';
-import { formatRuntimeFailureMessage } from './runtimeErrorMessage';
+import { formatRuntimeFailureMessage, isInsufficientCreditsFailure } from './runtimeErrorMessage';
 
 /**
  * 拥有独立卡片的工具：交互工具走 ask_user / permission_request，Agent 走
@@ -654,7 +654,26 @@ export function processWsEvent(
       }
       // 用户侧只看通俗文案;原始 error 留在 server.log + PG runtime_events 供排查。
       const userFacing = formatRuntimeFailureMessage(data.error);
-      if (idx >= 0) {
+      const isBillingBlock = isInsufficientCreditsFailure(data.error);
+      if (isBillingBlock) {
+        // 余额门禁是可预期的账户状态，消息已经成功送达，不能把用户气泡染成“发送失败”。
+        if (idx >= 0) {
+          msg.updateMessageAt(idx, (m) => {
+            if (m.type === "user" || m.type === "user-voice") {
+              const next = { ...m, status: "sent" as const };
+              delete next.failedReason;
+              return next;
+            }
+            return m;
+          });
+        }
+        // 平台无关层保留文本兜底；Web 随后会把它升级为独立的积分提示卡。
+        const last = msg.messagesRef.current[msg.messagesRef.current.length - 1];
+        if (!((last?.type === "text" || last?.type === "system-error") && last.content === userFacing)) {
+          const owner = ctx.sessionOwnerRef?.current;
+          msg.addMessage({ type: "text", content: userFacing, ...(owner ? { owner } : {}), timestamp: Date.now() });
+        }
+      } else if (idx >= 0) {
         msg.updateMessageAt(idx, (m) => {
           if (m.type === "user") {
             return { ...m, status: "failed" as const, failedReason: userFacing };

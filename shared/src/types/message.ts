@@ -105,18 +105,17 @@ export type MessageItem =
       failedReason?: string;
     }
   /**
-   * 会话级失败/取消提示。区别于 user/tool/AI 输出,这条用于明确告知用户
-   * "这次 run 异常结束"。WS done.error / session_status.failed/cancelled / 进会话
-   * 时 lastRunState.failed 都会注入这种消息,UI 用红/灰边框 + 图标突出渲染,
-   * 与普通 AI 文本明确区分。
+   * 会话级终态提示。区别于 user/tool/AI 输出，用来表达运行异常、用户取消，
+   * 以及余额不足等可预期的账户状态。WS done.error / session_status / 进会话时
+   * lastRunState 都会注入这种消息，UI 按 severity 使用不同语义样式。
    */
   | {
       id: string;
       type: "system-error";
-      /** 错误描述,通常是 model error message 或泛化提示文案 */
+      /** 面向用户的终态说明 */
       content: string;
-      /** 失败种类,UI 用来微调外观;默认 'error' */
-      severity?: 'error' | 'cancelled';
+      /** UI 语义：运行异常 / 用户取消 / 积分余额不足 */
+      severity?: 'error' | 'cancelled' | 'billing';
       timestamp?: number;
     };
 

@@ -22,6 +22,8 @@ import { MessageFeedbackButton } from './MessageFeedback';
 import type { TtsState } from '@/hooks/useTtsPlayer';
 import type { UseVoicePlayerReturn } from '@/hooks/useVoicePlayer';
 import type { Components } from 'react-markdown';
+import { EntityIcons } from '@/lib/icons';
+import { requestOpenBillingBadge } from '@/lib/billingBadgeBus';
 
 // react-markdown 懒加载：不阻塞首屏渲染，模块加载后立即可用
 const markdownPromise = import("react-markdown");
@@ -1017,8 +1019,35 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (message.type === "system-error") {
+    // 积分门禁是账户状态，不按运行异常展示：独立暖橙卡片 + 明确下一步。
+    if (message.severity === 'billing') {
+      return (
+        <div
+          className="rounded-xl border border-brand-accent/30 bg-brand-accent-soft px-4 py-3 text-brand-accent-ink shadow-sm dark:border-brand-accent/35 dark:bg-brand-accent/10 dark:text-brand-accent"
+          role="status"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/70 ring-1 ring-brand-accent/25 dark:bg-brand-accent/10 dark:ring-brand-accent/25">
+              <EntityIcons.credits aria-hidden="true" className="size-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold">积分余额不足</div>
+              <div className="mt-1 text-sm leading-relaxed opacity-85">{message.content}</div>
+              <button
+                type="button"
+                onClick={requestOpenBillingBadge}
+                className="mt-2 rounded-md bg-white/75 px-2.5 py-1 text-xs font-medium ring-1 ring-brand-accent/25 transition-colors hover:bg-white dark:bg-brand-accent/10 dark:ring-brand-accent/25 dark:hover:bg-brand-accent/15"
+              >
+                查看积分
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // 会话级失败/取消提示。明显区别于 AI 文本：左侧色边 + 图标 + 不同底色。
-    // severity='cancelled' 用灰色（中性、用户主动），其余 'error' 用红色。
+    // severity='cancelled' 用灰色（中性、用户主动），error 用红色。
     const isCancelled = message.severity === 'cancelled';
     const containerCls = isCancelled
       ? 'border-l-4 border-zinc-400 bg-zinc-50 text-zinc-700 dark:bg-zinc-800/40 dark:text-zinc-300 dark:border-zinc-500'

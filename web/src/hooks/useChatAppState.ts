@@ -42,6 +42,7 @@ import {
   finalizeStreamingMessages,
   finalizeRunningSubagents,
   formatRuntimeFailureMessage,
+  isInsufficientCreditsFailure,
   removeRuntimeStatusMessages,
   upsertRuntimeStatusMessage,
   type WsProcessingContext,
@@ -1239,9 +1240,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     finalizeRunningSubagents(msgRef.current);
 
     let alertContent: string | null = null;
-    let severity: 'error' | 'cancelled' = 'error';
+    let severity: 'error' | 'cancelled' | 'billing' = 'error';
     if (args.status === 'failed' || args.status === 'orphaned') {
       alertContent = formatRuntimeFailureMessage(args.reason);
+      if (isInsufficientCreditsFailure(args.reason)) severity = 'billing';
     } else if (args.status === 'cancelled') {
       alertContent = '会话已停止';
       severity = 'cancelled';
@@ -1907,6 +1909,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             //   web 端要升级成红边 system-error,所以扫尾 N 条找那条 text,有则就地替换、无则追加。
             // dedupe：若最末已是相同 content 的 system-error（重复 done 事件）则跳过。
             const alertContent = formatRuntimeFailureMessage(doneEvent.error);
+            const alertSeverity = isInsufficientCreditsFailure(doneEvent.error) ? 'billing' : 'error';
             const msgs = msgRef.current.messagesRef.current;
             const last = msgs[msgs.length - 1];
             if (!(last?.type === 'system-error' && last.content === alertContent)) {
@@ -1924,14 +1927,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                   id: m.id,
                   type: 'system-error',
                   content: alertContent,
-                  severity: 'error',
+                  severity: alertSeverity,
                   timestamp: Date.now(),
                 }));
               } else {
                 msgRef.current.addMessage({
                   type: 'system-error',
                   content: alertContent,
-                  severity: 'error',
+                  severity: alertSeverity,
                   timestamp: Date.now(),
                 });
               }

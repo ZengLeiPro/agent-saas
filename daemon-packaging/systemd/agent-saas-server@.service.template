@@ -42,6 +42,9 @@ Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
 TimeoutStopSec=35
+# pnpm wrapper（MainPID）收 SIGTERM 以 143 退出；这是正常 stop 语义，
+# 不应把 unit 标为 failed（node 本体在 cgroup 内正常走 gracefulShutdown）
+SuccessExitStatus=143
 NoNewPrivileges=true
 PrivateTmp=true
 

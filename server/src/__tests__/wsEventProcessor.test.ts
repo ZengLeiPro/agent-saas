@@ -270,6 +270,39 @@ describe('wsEventProcessor terminal errors', () => {
     });
   });
 
+  it('keeps the user message sent and adds a balance notice when billing hard cap rejects the run', () => {
+    const { messages, ctx } = createTestRig([
+      {
+        id: 'user-1',
+        type: 'user',
+        content: 'continue',
+        status: 'sent',
+      },
+    ]);
+    ctx.userMsgIndex = 0;
+
+    processWsEvent(
+      {
+        type: 'done',
+        error: '组织积分余额不足，当前计费策略已启用硬封顶。',
+      },
+      ctx,
+      { currentBlockIndex: -1, currentBlockType: null },
+      { value: 'session-1' },
+      'session-1',
+    );
+
+    expect(messages[0]).toMatchObject({
+      type: 'user',
+      status: 'sent',
+    });
+    expect(messages[0]).not.toHaveProperty('failedReason');
+    expect(messages[1]).toMatchObject({
+      type: 'text',
+      content: '当前组织积分余额不足，本次任务尚未开始。请补充积分或联系组织管理员调整额度后再试。',
+    });
+  });
+
   it('does not mask non-model runtime errors as model request errors', () => {
     const { messages, ctx } = createTestRig([
       {

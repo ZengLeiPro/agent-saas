@@ -5,7 +5,7 @@ import type {
   TokenUsage,
 } from "@/lib/sessionsApi";
 import type { AgentProfile, ContextUsageData } from "@agent/shared";
-import { formatRuntimeFailureMessage } from "@agent/shared";
+import { formatRuntimeFailureMessage, isInsufficientCreditsFailure } from "@agent/shared";
 import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
 import { mergeServerMessagesWithLocalTail } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
@@ -318,9 +318,10 @@ export function useSession(
           if (data.lastRunState) {
             const lrs = data.lastRunState;
             let alertContent: string | null = null;
-            let severity: 'error' | 'cancelled' = 'error';
+            let severity: 'error' | 'cancelled' | 'billing' = 'error';
             if (lrs.status === 'failed' || lrs.status === 'orphaned') {
               alertContent = formatRuntimeFailureMessage(lrs.error);
+              if (isInsufficientCreditsFailure(lrs.error)) severity = 'billing';
             } else if (lrs.status === 'cancelled') {
               alertContent = '会话已停止';
               severity = 'cancelled';

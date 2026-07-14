@@ -58,6 +58,11 @@ export class BillingService {
           const inserted = await this.projectAssistantUsageEvent(row);
           if (inserted) usageEventsInserted++;
         }
+        if (row.eventType === 'metered_tool_usage') {
+          const projected = await this.projectMeteredToolUsage(row);
+          if (projected.usageInserted) usageEventsInserted++;
+          if (projected.debitInserted) debitEntriesInserted++;
+        }
         if (row.eventType === 'run_finished' || shouldSettleOnRunState(row.eventJson)) {
           const tenantId = row.tenantId;
           const runId = typeof row.eventJson.runId === 'string' ? row.eventJson.runId : undefined;
@@ -203,6 +208,34 @@ export class BillingService {
     return { ok: false, reason: '组织积分余额不足，当前计费策略已启用硬封顶。' };
   }
 
+  /**
+   * 按次固定扣费预检（2026-07-15 GenerateImage 批次）：metered 工具在真正调
+   * 外部 API 之前调用。镜像 assertTenantCanStartRun 的豁免语义
+   * （internal / billingEnabled=false / hardCapMode='none' 放行、尊重
+   * allowNegativeBalance 信用额度），差别在于感知即将发生的固定费用 N：
+   * 要求可用余额扣除 N 后仍在允许范围内。run 级 preflight 不够——长 run
+   * 中途余额可能被烧穿，工具内必须再查一次。
+   */
+  async assertTenantCanAffordFixedFee(tenantId: string, creditsMicro: number): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const required = Math.max(0, Math.trunc(creditsMicro));
+    if (required <= 0) return { ok: true };
+    const [account, policy] = await Promise.all([
+      this.options.store.getAccount(tenantId),
+      this.options.store.getTenantPolicy(tenantId),
+    ]);
+    if (!policy.billingEnabled || policy.billingMode === 'internal' || policy.hardCapMode === 'none') return { ok: true };
+    const effectiveAvailable = account.balanceCreditsMicro - account.reservedCreditsMicro;
+    if (effectiveAvailable >= required) return { ok: true };
+    if (policy.allowNegativeBalance && required - effectiveAvailable < policy.negativeLimitCreditsMicro) return { ok: true };
+    return { ok: false, reason: '组织积分余额不足，当前计费策略已启用硬封顶。' };
+  }
+
+  /** 该租户是否实际产生积分扣费（internal / 未开计费 → false）。metered 工具用于回显扣费口径。 */
+  async isTenantBillable(tenantId: string): Promise<boolean> {
+    const policy = await this.options.store.getTenantPolicy(tenantId);
+    return policy.billingEnabled && policy.billingMode !== 'internal';
+  }
+
   wrapDispatch(dispatch: AgentRunDispatch): AgentRunDispatch {
     return async function* billingWrappedDispatch(
       this: BillingService,
@@ -261,6 +294,65 @@ export class BillingService {
     const inserted = await this.options.store.insertUsageEvent(input);
     return !!inserted;
   }
+
+  /**
+   * metered_tool_usage 投影（2026-07-15 GenerateImage 批次）：
+   *   ① usage 事实行——token 全 0、raw_usage_json 存 SKU 规格、真实成本走固定
+   *      成本旁路。**billable=false 是防双重扣费的关键**：settleRunDebit 只认
+   *      billable 标志不认识 SKU（记 true 会被 run 终态按 cost-plus 再扣一次）。
+   *   ② 同一投影批次内写独立固定 debit（source='tool:*'，幂等键锚定 eventId，
+   *      投影重跑/事件重放不重复扣）。internal / 未开计费租户在 store 内跳过。
+   */
+  private async projectMeteredToolUsage(row: RuntimeUsageEventRow): Promise<{ usageInserted: boolean; debitInserted: boolean }> {
+    const event = row.eventJson;
+    const toolId = typeof event.toolId === 'string' && event.toolId ? event.toolId : 'unknown_tool';
+    const sku = typeof event.sku === 'string' && event.sku ? event.sku : toolId;
+    const quantity = isFiniteNumber(event.quantity) ? Math.max(1, Math.floor(event.quantity)) : 1;
+    const unitCreditsMicro = isFiniteNumber(event.unitCreditsMicro) ? Math.max(0, Math.trunc(event.unitCreditsMicro)) : 0;
+    const unitCostYuanMicro = isFiniteNumber(event.unitCostYuanMicro) ? Math.max(0, Math.trunc(event.unitCostYuanMicro)) : 0;
+    const runId = typeof event.runId === 'string' && event.runId ? event.runId : undefined;
+    const sessionId = typeof event.sessionId === 'string' && event.sessionId ? event.sessionId : undefined;
+    const note = typeof event.note === 'string' && event.note ? event.note : undefined;
+    const user = row.runUserId ? this.options.userStore?.findById(row.runUserId) : undefined;
+    const totalCostYuanMicro = quantity * unitCostYuanMicro;
+    const usage = await this.options.store.insertUsageEvent({
+      idempotencyKey: `usage:event:v1:${row.eventId}`,
+      tenantId: row.tenantId,
+      billable: false,
+      ...(row.runUserId ? { userId: row.runUserId } : {}),
+      username: user?.username ?? row.runUserId ?? 'unknown',
+      ...(sessionId ? { sessionId } : {}),
+      ...(runId ? { runId } : {}),
+      channel: row.runChannel ?? 'web',
+      modelValue: sku,
+      requestIndex: row.globalSequence,
+      usage: { inputTokens: 0, outputTokens: 0, apiRequestCount: quantity },
+      rawUsageJson: { toolId, sku, quantity, unitCreditsMicro, unitCostYuanMicro, ...(note ? { note } : {}) },
+      occurredAt: row.timestamp,
+      fixedCostYuanMicro: totalCostYuanMicro,
+    });
+    const debit = await this.options.store.chargeFixedDebit({
+      tenantId: row.tenantId,
+      idempotencyKey: `debit:tool:v1:${row.eventId}`,
+      source: METERED_TOOL_LEDGER_SOURCES[toolId] ?? `tool:${toolId}`,
+      creditsMicro: quantity * unitCreditsMicro,
+      actualCostYuanMicro: totalCostYuanMicro,
+      relatedUsageEventIds: usage ? [usage.id] : [],
+      ...(sessionId ? { sessionId } : {}),
+      ...(runId ? { runId } : {}),
+      note: `${toolId} ${sku} ×${quantity}${note ? ` (${note})` : ''}`,
+    });
+    return { usageInserted: !!usage, debitInserted: !!debit };
+  }
+}
+
+/** 平台内置 metered 工具 → ledger source（账单可读性；未登记的工具回退 `tool:${toolId}`）。 */
+const METERED_TOOL_LEDGER_SOURCES: Record<string, string> = {
+  GenerateImage: 'tool:image_gen',
+};
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function isUsageObject(value: unknown): value is ProjectedRuntimeUsageInput['usage'] {

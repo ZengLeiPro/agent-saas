@@ -192,6 +192,31 @@
     }
   },
 
+  // ── 平台内建 GenerateImage 生图工具（2026-07-15） ──────────
+  // key 只在 server 侧经 secretVault 解析（apiKeyRef），绝不注入 sandbox env。
+  // gptImage2 经 CLIProxyAPI（OpenAI 兼容，baseUrl 含 /v1 前缀）；
+  // seedream 走火山方舟正规按张计费（baseUrl 缺省 ark.cn-beijing.volces.com/api/v3）。
+  // pricing 为 per-engine 定价（credits/张 + 真实成本参考），平台管理员可经
+  // /api/admin/image-gen-pricing 运行时修改（jsonc 回写 + 即时生效）。
+  // 租户侧还需开 features.imageGenEnabled（默认关）。
+  "imageGenTools": {
+    "enabled": false,
+    "gptImage2": {
+      "enabled": true,
+      "baseUrl": "https://llm.example.com/v1",
+      "apiKeyRef": "image-gen-cliproxy-api-key"
+    },
+    "seedream": {
+      "enabled": true,
+      "model": "doubao-seedream-5.0-lite",
+      "apiKeyRef": "image-gen-ark-api-key"
+    },
+    "pricing": {
+      "gpt-image-2": { "creditsPerImage": 400, "costYuanPerImage": 1.5 },
+      "seedream": { "creditsPerImage": 100, "costYuanPerImage": 0.4 }
+    }
+  },
+
   // ── 可观测性 ──────────────────────────────────────────────
   "observability": {
     "enabled": true,

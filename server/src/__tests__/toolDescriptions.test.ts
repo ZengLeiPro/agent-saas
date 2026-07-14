@@ -32,6 +32,7 @@ import {
   waitForWorkspaceReadyToolDescriptor,
   writeFileToolDescriptor,
 } from '../agent/toolRuntime.js';
+import { generateImageToolDescriptor } from '../agent/imageGenToolProvider.js';
 import { webFetchToolDescriptor, webSearchToolDescriptor } from '../agent/webToolProvider.js';
 import {
   sessionGetEventsToolDescriptor,
@@ -60,6 +61,8 @@ const ALL_TOOLS = [
   // web —— 2
   webSearchToolDescriptor,
   webFetchToolDescriptor,
+  // media —— 1
+  generateImageToolDescriptor,
   // skill / memory —— 3
   skillToolDescriptor,
   memorySearchToolDescriptor,
@@ -67,8 +70,8 @@ const ALL_TOOLS = [
 ] as const;
 
 describe('Tool descriptions', () => {
-  it('covers all 19 tools (regression: 漏 import 立即可见)', () => {
-    expect(ALL_TOOLS).toHaveLength(19);
+  it('covers all 20 tools (regression: 漏 import 立即可见)', () => {
+    expect(ALL_TOOLS).toHaveLength(20);
     const ids = ALL_TOOLS.map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length); // 无重复 id
   });

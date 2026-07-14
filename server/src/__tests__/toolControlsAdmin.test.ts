@@ -108,6 +108,7 @@ describe('tool controls admin router', () => {
         'SessionGetToolTrace',
         'WebSearch',
         'WebFetch',
+        'GenerateImage',
       ]));
       expect(body.tools.find((tool: { id: string }) => tool.id === 'Shell').enabled).toBe(false);
       expect(body.tools.find((tool: { id: string }) => tool.id === 'Read').enabled).toBe(true);

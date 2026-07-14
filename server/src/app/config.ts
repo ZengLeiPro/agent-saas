@@ -995,6 +995,53 @@ const webToolsConfigSchema = z.object({
   }
 }).optional();
 
+// ── GenerateImage 平台生图工具（2026-07-15 批次） ─────────────────────────────
+// key/URL 走 server 侧 config + secretVault（apiKeyRef），绝不进 sandbox env、
+// 绝不加进 handEnvAllowlist / tenantSharedEnv。pricing 段是持久化载体，平台管理员
+// 经 /api/admin/image-gen-pricing 运行时可改（jsonc 回写 + 注册表热更，即时生效）。
+const imageGenEngineConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  /** OpenAI 兼容 base URL（含版本前缀）。gptImage2 如 https://llm.kaiyan.net/v1；seedream 缺省 https://ark.cn-beijing.volces.com/api/v3。 */
+  baseUrl: z.string().url().optional(),
+  ...apiKeyCredentialFields,
+  model: z.string().min(1).optional(),
+  timeoutMs: z.number().int().positive().max(600_000).optional(),
+}).superRefine((value, ctx) => {
+  applyApiKeyCredentialRefine(value, ctx, { allowEmpty: true });
+});
+
+const imageGenPricingEntrySchema = z.object({
+  /** 每张图扣多少积分（面值口径，1 积分 = 0.01 元）。 */
+  creditsPerImage: z.number().positive().max(1_000_000),
+  /** 每张图真实成本参考（元），写入 ledger actual_cost 供毛利审计。 */
+  costYuanPerImage: z.number().min(0).max(10_000),
+});
+
+const imageGenToolsConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  gptImage2: imageGenEngineConfigSchema.optional(),
+  seedream: imageGenEngineConfigSchema.optional(),
+  /** per-engine 生图定价（key 为引擎 id：gpt-image-2 / seedream）。缺省用内置默认表。 */
+  pricing: z.record(z.string().min(1), imageGenPricingEntrySchema).optional(),
+}).superRefine((value, ctx) => {
+  if (value.enabled === false) return;
+  const engines: Array<['gptImage2' | 'seedream', typeof value.gptImage2]> = [
+    ['gptImage2', value.gptImage2],
+    ['seedream', value.seedream],
+  ];
+  for (const [key, engine] of engines) {
+    if (!engine || engine.enabled === false) continue;
+    applyApiKeyCredentialRefine(engine, ctx, { pathPrefix: [key] });
+    if (key === 'gptImage2' && !engine.baseUrl) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key, 'baseUrl'],
+        message: 'gptImage2.baseUrl is required when the engine is enabled',
+      });
+    }
+  }
+}).optional();
+
 const toolControlsConfigSchema = z.object({
   /** 全局总开关。false 时除底层内部恢复逻辑外，不向模型暴露任何平台工具。 */
   enabled: z.boolean().optional(),
@@ -1079,6 +1126,7 @@ export const appConfigSchema = z.object({
   clientDaemon: clientDaemonConfigSchema,
   secretVault: secretVaultConfigSchema.optional(),
   webTools: webToolsConfigSchema,
+  imageGenTools: imageGenToolsConfigSchema,
   toolControls: toolControlsConfigSchema,
 }).superRefine((value, ctx) => {
   if ((value.tenantRemoteHands?.hands.length ?? 0) > 0 && value.runtimeEventStore?.backend !== 'pg') {
@@ -1133,6 +1181,9 @@ export type RuntimeEventRetentionConfig = z.infer<typeof runtimeEventRetentionCo
 export type ClientDaemonConfig = NonNullable<z.infer<typeof clientDaemonConfigSchema>>;
 export type SecretVaultConfig = z.infer<typeof secretVaultConfigSchema>;
 export type WebToolsConfig = z.infer<typeof webToolsConfigSchema>;
+export type ImageGenEngineConfig = z.infer<typeof imageGenEngineConfigSchema>;
+export type ImageGenToolsConfig = z.infer<typeof imageGenToolsConfigSchema>;
+export type ImageGenPricingConfig = NonNullable<ImageGenToolsConfig>['pricing'];
 export type ToolControlsConfig = z.infer<typeof toolControlsConfigSchema>;
 export type AppConfig = z.infer<typeof appConfigSchema>;
 

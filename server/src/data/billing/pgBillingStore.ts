@@ -13,6 +13,7 @@ import {
   type BillingMode,
   type BillingPricingVersion,
   type BillingUsageEvent,
+  type FixedDebitInput,
   type HardCapMode,
   type LedgerType,
   type ProjectedRuntimeUsageInput,
@@ -550,13 +551,18 @@ export class PgBillingStore {
     const uncachedInputTokens = usageAccounting === 'cache_tokens_separate'
       ? usage.inputTokens
       : Math.max(0, usage.inputTokens - cachedInputTokens - cacheCreationTokens);
-    const costUsdMicro = computeCostMicro(input.modelValue, {
+    // 固定成本旁路（metered_tool_usage 批次）：非 token 计价项直接携带真实成本，
+    // 不进 computeCostMicro（token 全 0 会得 0 成本 + 未知模型告警）。
+    const hasFixedCost = typeof input.fixedCostYuanMicro === 'number' && Number.isFinite(input.fixedCostYuanMicro);
+    const costUsdMicro = hasFixedCost ? 0 : computeCostMicro(input.modelValue, {
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       cacheReadTokens: usage.cacheReadInputTokens,
       cacheCreationTokens: usage.cacheCreationInputTokens,
     }, (msg) => this.options.logger?.warn?.(msg));
-    const actualCostYuanMicro = Math.round(costUsdMicro * fxRate);
+    const actualCostYuanMicro = hasFixedCost
+      ? Math.max(0, Math.trunc(input.fixedCostYuanMicro!))
+      : Math.round(costUsdMicro * fxRate);
     const now = input.occurredAt || new Date().toISOString();
     const result = await this.pool.query<{ row_json: Record<string, unknown> }>(`
       INSERT INTO ${this.usageEventsTable}
@@ -656,6 +662,65 @@ export class PgBillingStore {
         pricingVersion: pricing.version,
         billingPolicyVersion: policy.policyVersion,
         note: `run usage debit (${pendingUsageEvents.length} usage event${pendingUsageEvents.length === 1 ? '' : 's'})`,
+        createdBy: 'system',
+      });
+    });
+  }
+
+  /**
+   * 按次固定扣费（2026-07-15 GenerateImage 批次）：billing 投影消费
+   * metered_tool_usage 事件时调用，是 settleRunDebit 之外第二个 debit 生产者。
+   *
+   * 与 settleRunDebit 的关系（防双重扣费）：
+   *   - 关联 usage 行必须 billable=false → 不进 settleRunDebit 的 cost-plus 结算；
+   *   - source（如 'tool:image_gen'）≠ 'usage_event' → listDebitedUsageEventIds
+   *     的去重集互不污染；
+   *   - internal / 未开计费租户与 settleRunDebit 同款 guard 跳过（返回 null）；
+   *   - 负余额沿用同一容忍度：照扣为负 + warn + audit 暴露，preflight 负责拦新请求。
+   */
+  async chargeFixedDebit(input: FixedDebitInput): Promise<BillingLedgerEntry | null> {
+    const policy = await this.getTenantPolicy(input.tenantId);
+    if (!policy.billingEnabled || policy.billingMode === 'internal') return null;
+    const creditsToChargeMicro = roundUpCreditsMicro(Math.max(0, Math.trunc(input.creditsMicro)));
+    if (creditsToChargeMicro <= 0) return null;
+    const pricing = await this.getActivePricingVersion();
+    return await this.withAccountLock(input.tenantId, async (client, account) => {
+      const existing = await this.getLedgerByIdempotencyKey(client, input.idempotencyKey);
+      if (existing) return existing;
+      const before = account.balanceCreditsMicro;
+      const after = before - creditsToChargeMicro;
+      if (!policy.allowNegativeBalance && after < -policy.negativeLimitCreditsMicro) {
+        // 生成已发生、外部成本已产生，不能回滚；仍落账为负数并在 audit 中暴露。
+        this.options.logger?.warn?.(
+          `billing fixed debit makes tenant negative: tenant=${input.tenantId} source=${input.source} before=${before} debit=${creditsToChargeMicro}`,
+        );
+      }
+      // 固定面值定价，不走 computeRevenueYuanMicro 的 cost-plus 公式。
+      const revenueYuanMicro = Math.trunc((creditsToChargeMicro * pricing.creditValueYuanMicro) / CREDIT_MICRO);
+      const actualCostYuanMicro = Math.max(0, Math.trunc(input.actualCostYuanMicro));
+      const grossProfitYuanMicro = revenueYuanMicro - actualCostYuanMicro;
+      return await this.insertLedgerAndUpdateAccount(client, {
+        idempotencyKey: input.idempotencyKey,
+        tenantId: input.tenantId,
+        accountId: input.tenantId,
+        type: 'debit',
+        source: input.source,
+        relatedUsageEventIds: input.relatedUsageEventIds ?? [],
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        ...(input.runId ? { runId: input.runId } : {}),
+        creditsDeltaMicro: -creditsToChargeMicro,
+        balanceBeforeMicro: before,
+        balanceAfterMicro: after,
+        creditValueYuanMicro: pricing.creditValueYuanMicro,
+        revenueYuanMicro,
+        actualCostYuanMicro,
+        grossProfitYuanMicro,
+        ...(revenueYuanMicro > 0
+          ? { grossMarginBps: Math.round((grossProfitYuanMicro / revenueYuanMicro) * 10_000) }
+          : {}),
+        pricingVersion: pricing.version,
+        billingPolicyVersion: policy.policyVersion,
+        ...(input.note ? { note: input.note } : {}),
         createdBy: 'system',
       });
     });

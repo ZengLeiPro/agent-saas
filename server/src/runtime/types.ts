@@ -242,6 +242,31 @@ export type PlatformEvent =
   | {
     id: string;
     timestamp: string;
+    /**
+     * 平台内置工具按次计费事实（2026-07-15 GenerateImage 批次）。
+     * 工具成功执行后 append；billing 投影把它转成一条 billable=false 的
+     * usage event 行 + 一条独立固定 debit ledger 行（幂等键锚定本事件 id）。
+     * 单价/成本在生成时按当时定价快照写死，事件即事实、可重放。
+     */
+    type: 'metered_tool_usage';
+    runId: string;
+    sessionId: string;
+    /** 平台内置工具 id，如 'GenerateImage'。 */
+    toolId: string;
+    /** 计费 SKU，如 'image_gen:gpt-image-2'。 */
+    sku: string;
+    /** 计量数量（生图 = 实际产出张数）。 */
+    quantity: number;
+    /** 单价（micro-credits/件，1 credit = 1e6 micro）。 */
+    unitCreditsMicro: number;
+    /** 单件真实成本参考（micro-yuan/件），供毛利审计。 */
+    unitCostYuanMicro: number;
+    /** 规格备注（尺寸/质量档位等），进 ledger note 与 raw_usage_json。 */
+    note?: string;
+  }
+  | {
+    id: string;
+    timestamp: string;
     type: 'memory_context';
     runId: string;
     sessionId: string;

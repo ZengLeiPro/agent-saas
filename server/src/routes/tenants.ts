@@ -61,6 +61,8 @@ const tenantSettingsSchema = z.object({
     // 记忆轮询批次（2026-07-14）：默认关，kaiyan 灰度先开；计费默认不扣积分
     memoryPollingEnabled: z.boolean().optional(),
     memoryPollChargesCredits: z.boolean().optional(),
+    // GenerateImage 生图批次（2026-07-15）：默认关，平台管理员按租户开放
+    imageGenEnabled: z.boolean().optional(),
   }).optional(),
   quotas: z.object({
     maxUsers: optionalNumber,

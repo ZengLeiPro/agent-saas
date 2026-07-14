@@ -54,12 +54,14 @@ import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
 import { createTenantRemoteHandsAdminRouter } from "../routes/tenantRemoteHandsAdmin.js";
 import { createRuntimeOperationsAdminRouter } from "../routes/runtimeOperationsAdmin.js";
 import { createToolControlsAdminRouter } from "../routes/toolControlsAdmin.js";
+import { createImageGenPricingAdminRouter } from "../routes/imageGenPricingAdmin.js";
 import { createAdminBillingRouter, createBillingRouter } from "../routes/billing.js";
 import { createAzerothProxyRouter } from "../routes/azeroth-proxy.js";
 import { createDingtalkSessionRouter } from "../channels/dingtalk/protocol/sessionRouter.js";
 import type { WebChannel } from "../channels/web/channel.js";
 import { initAuditLog, clearLogsByUsername } from "../data/login-logs/index.js";
 import { configureModelPricing } from "../data/usage/pricing.js";
+import { configureImageGenPricing } from "../data/usage/imageGenPricing.js";
 
 function tenantFeatureGuard(
   tenantStore: TenantStore | undefined,
@@ -321,6 +323,16 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       secretVault: runtime.secretVault,
       validateToolSettingsConfig: runtime.validateToolSettingsConfig,
       onToolSettingsUpdated: runtime.updateToolSettingsConfig,
+    }),
+  );
+  // GenerateImage per-engine 生图定价（2026-07-15）：平台管理员运行时可改，
+  // PUT 后 jsonc 回写 config.json + 注册表热更，扣费点实时读取即时生效。
+  app.use(
+    "/api/admin/image-gen-pricing",
+    createImageGenPricingAdminRouter({
+      processCwd,
+      config,
+      onPricingUpdated: (pricing) => configureImageGenPricing(pricing),
     }),
   );
 

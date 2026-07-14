@@ -43,6 +43,7 @@ import {
 } from '../agent/skillToolProvider.js';
 import { createBuiltinTools, type BuiltinToolsConfig } from '../agent/builtinTools.js';
 import { WebToolProvider, type ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
+import { ImageGenToolProvider, type ResolvedImageGenToolsConfig } from '../agent/imageGenToolProvider.js';
 import { CronToolProvider } from '../agent/cronToolProvider.js';
 import { TenantCompanyInfoToolProvider } from '../agent/tenantCompanyInfoToolProvider.js';
 import { UserActivityToolProvider } from '../agent/userActivityToolProvider.js';
@@ -274,6 +275,19 @@ export interface RawRuntimeRunDispatchConfig {
   toolControls?: import('../app/config.js').ToolControlsConfig;
   /** Platform-managed web access tools (`WebSearch` / `WebFetch`). */
   webTools?: ResolvedWebToolsConfig;
+  /**
+   * 平台托管生图工具（GenerateImage，2026-07-15）。API key 已在装配层经
+   * secretVault 解析，只存在于 server 进程内——绝不进 sandbox env、绝不上 wire。
+   */
+  imageGenTools?: ResolvedImageGenToolsConfig;
+  /**
+   * 平台计费事件直写入口（metered_tool_usage 等）。PG runtime 注入
+   * pgEventStore.append；file backend / 测试不配置时按次扣费静默跳过。
+   */
+  appendPlatformEvent?: (
+    event: import('./types.js').PlatformEventInput,
+    ctx?: import('./types.js').EventAppendContext,
+  ) => Promise<unknown>;
   /**
    * 用户活动聚合服务（2026-07-14 记忆轮询批次）。配置后挂载 UserActivityList
    * safe 只读工具；未配置（file backend / 测试）时工具不挂载。
@@ -1148,6 +1162,28 @@ async function collectRuntimeTooling(
     if (webDescriptors.length > 0) {
       providers.push(webProvider);
     }
+  }
+
+  // 4.5 GenerateImage 生图工具（brain 进程内执行，不进 WORKSPACE_HAND_TOOLS；
+  // 凭据留在 server 侧，按张扣积分）。租户 gate（features.imageGenEnabled）由
+  // provider 的 list/invoke 按 context 解析，默认 false fail-closed。
+  if (config.imageGenTools && config.imageGenTools.enabled !== false
+    && isToolEnabled(config.toolControls, 'GenerateImage')) {
+    const tenantStore = config.tenantStore;
+    providers.push(new ImageGenToolProvider({
+      config: config.imageGenTools,
+      billingService: config.billingService,
+      appendPlatformEvent: config.appendPlatformEvent,
+      isImageGenEnabledForTenant: (tenantId) => {
+        if (!tenantId || !tenantStore) return false;
+        try {
+          return tenantStore.getSettings(tenantId)?.features?.imageGenEnabled === true;
+        } catch {
+          return false;
+        }
+      },
+      logger: config.logger,
+    }));
   }
 
   // 5. 定时任务工具（CronList/CronManage；服务未启用或无用户身份时 list() 自动隐藏）

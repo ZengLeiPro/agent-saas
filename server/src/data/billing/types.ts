@@ -195,4 +195,32 @@ export interface ProjectedRuntimeUsageInput {
    * 缺省时按租户 policy（billingEnabled && billingMode!=='internal'）判定。
    */
   billable?: boolean;
+  /**
+   * 固定成本旁路（2026-07-15 metered_tool_usage 批次）：非 token 计价项
+   * （如生图按张）由事件直接携带真实成本（micro-yuan），绕过 computeCostMicro
+   * 的 token 单价表（token 全 0 会算出 0 成本 + 未知模型告警）。
+   */
+  fixedCostYuanMicro?: number;
+}
+
+/**
+ * 按次固定扣费入参（2026-07-15 GenerateImage 批次）。
+ * 与 settleRunDebit 的 cost-plus 公式不同：credits 是产品定价的固定面值，
+ * revenue = credits × credit 面值；actualCost 由调用方携带，毛利审计
+ * （<45% 告警）对固定扣费同样生效。
+ */
+export interface FixedDebitInput {
+  tenantId: string;
+  /** 建议 `debit:tool:v1:${eventId}`——锚定事件 id，投影重跑/事件重放不重复扣。 */
+  idempotencyKey: string;
+  /** ledger source，如 'tool:image_gen'。与 settleRunDebit 的 'usage_event' 隔离，互不去重。 */
+  source: string;
+  /** 应扣积分（micro-credits，正数面值；内部会取负写入 ledger）。 */
+  creditsMicro: number;
+  /** 本次真实成本（micro-yuan），供毛利审计。 */
+  actualCostYuanMicro: number;
+  relatedUsageEventIds?: string[];
+  sessionId?: string;
+  runId?: string;
+  note?: string;
 }

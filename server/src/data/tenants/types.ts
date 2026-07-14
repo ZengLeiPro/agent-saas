@@ -67,6 +67,12 @@ export interface TenantSettings {
      * 但用量照记（内部成本统计可见）。
      */
     memoryPollChargesCredits?: boolean;
+    /**
+     * GenerateImage 平台生图工具（2026-07-15 批次）。默认关闭，由平台管理员
+     * 按租户开放（可单独售卖的收费点）；关闭时模型看不到该工具、invoke 二次拦截。
+     * 扣费口径独立于本开关：internal / 未开计费租户开了也不产生 debit。
+     */
+    imageGenEnabled?: boolean;
   };
   quotas: {
     maxUsers?: number;
@@ -126,6 +132,7 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     kbEnabled: false,
     memoryPollingEnabled: false,
     memoryPollChargesCredits: false,
+    imageGenEnabled: false,
   },
   quotas: {},
   models: {

@@ -136,6 +136,8 @@ vi.mock('../routes/toolControlsAdmin.js', () => ({
 vi.mock('../auth/middleware.js', () => ({
   requireAdmin: mocked.requireAdmin,
   requireAuth: vi.fn((_req: unknown, _res: unknown, next: () => void) => next()),
+  // imageGenPricingAdmin 路由（2026-07-15 生图批次）在 registerRoutes 时挂载平台管理员守卫
+  requirePlatformAdmin: vi.fn((_req: unknown, _res: unknown, next: () => void) => next()),
 }));
 
 import { registerRoutes } from '../app/routes.js';
@@ -240,9 +242,10 @@ describe('registerRoutes', () => {
     //   + tenant-remote-hands admin + runtime-operations admin + observability admin
     //   + system admin + internal ACS alerts + tool-controls admin + groups = 23
     //   + kb files（kbEnabled guard 与 router 同一次 use 注册）+ feedback + DWS + qa admin = 27
+    //   + image-gen pricing admin（2026-07-15 生图批次）= 28
     // 注：upload-guard / file-guard 是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(27);
+    expect(app.use).toHaveBeenCalledTimes(28);
     expect(app.use).toHaveBeenCalledWith('/api/kb', expect.any(Function), mocked.kbFilesRouter);
     expect(app.use).toHaveBeenCalledWith('/api/feedback', mocked.feedbackRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.dwsRouter);
@@ -265,6 +268,7 @@ describe('registerRoutes', () => {
     expect(app.use).toHaveBeenCalledWith('/api/admin/system', mocked.requireAdmin, mocked.systemAdminRouter);
     expect(app.use).toHaveBeenCalledWith('/api/internal', mocked.internalAcsAlertsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/tool-controls', mocked.toolControlsAdminRouter);
+    expect(app.use).toHaveBeenCalledWith('/api/admin/image-gen-pricing', expect.any(Function));
   });
 
   it('registers cron route when cron service is present', () => {

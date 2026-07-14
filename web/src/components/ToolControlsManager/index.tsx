@@ -4,6 +4,7 @@ import {
   CircleCheck,
   Database,
   Globe2,
+  ImageIcon,
   ListChecks,
   Loader2,
   MessageSquare,
@@ -74,6 +75,7 @@ const TOOL_GROUPS = [
   { id: "meta", label: "协作", icon: ListChecks },
   { id: "session", label: "会话追踪", icon: MessageSquare },
   { id: "web", label: "Web", icon: Globe2 },
+  { id: "media", label: "多媒体", icon: ImageIcon },
 ] as const;
 
 const SEARCH_PROVIDER_OPTIONS: Array<{

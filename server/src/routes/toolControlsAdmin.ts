@@ -41,6 +41,7 @@ export const BUILTIN_TOOL_CATALOG = [
   { id: 'SessionGetToolTrace', name: 'SessionGetToolTrace', category: 'session', label: '查看工具调用追踪' },
   { id: 'WebSearch', name: 'WebSearch', category: 'web', label: '网络搜索' },
   { id: 'WebFetch', name: 'WebFetch', category: 'web', label: '网页访问' },
+  { id: 'GenerateImage', name: 'GenerateImage', category: 'media', label: 'AI 生图' },
 ] as const;
 
 function isObject(value: unknown): value is RawObject {

@@ -106,6 +106,7 @@ import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import type { ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
+import type { ResolvedImageGenToolsConfig } from '../agent/imageGenToolProvider.js';
 import { PgDwsConnectionStore, type DwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
@@ -122,6 +123,7 @@ import { runBusinessMigrations } from '../data/db/migrations.js';
 import { createTokenUsageStore, type TokenUsageStore } from '../data/usage/store.js';
 import { rebuildTokenUsageFromJsonl } from '../data/usage/rebuildFromJsonl.js';
 import { configureModelPricing } from '../data/usage/pricing.js';
+import { configureImageGenPricing } from '../data/usage/imageGenPricing.js';
 import { PgBillingStore } from '../data/billing/pgBillingStore.js';
 import { BillingService } from '../data/billing/service.js';
 import { clearSessionsListCache } from '../routes/sessions.js';
@@ -362,6 +364,46 @@ async function resolveWebToolsConfig(
     }
     resolved.search = {
       ...searchRest,
+      ...(resolvedApiKey ? { apiKey: resolvedApiKey } : {}),
+    };
+  }
+
+  return resolved;
+}
+
+/**
+ * GenerateImage 生图工具凭据解析（2026-07-15）：apiKeyRef 经 secretVault 解析成
+ * 明文 key 后只进 rawRuntimeConfig（server 进程内），绝不进 sandbox env、绝不加进
+ * handEnvAllowlist / tenantSharedEnv——复用 webTools 的 apiKeyRef 先例。
+ */
+async function resolveImageGenToolsConfig(
+  imageGenTools: AppConfig['imageGenTools'],
+  secretVault: SecretVault,
+): Promise<ResolvedImageGenToolsConfig | undefined> {
+  if (!imageGenTools) return undefined;
+  const resolved: ResolvedImageGenToolsConfig = {};
+  if (imageGenTools.enabled !== undefined) resolved.enabled = imageGenTools.enabled;
+
+  for (const key of ['gptImage2', 'seedream'] as const) {
+    const engine = imageGenTools[key];
+    if (!engine) continue;
+    const { apiKeyRef, apiKey, ...engineRest } = engine;
+    let resolvedApiKey = apiKey;
+    if (apiKeyRef) {
+      try {
+        resolvedApiKey = await secretVault.getSecret(apiKeyRef, {
+          actor: 'system',
+          userId: '__system__',
+          scopes: ['secret:image_gen_tools:read'],
+        });
+      } catch (err) {
+        throw new Error(
+          `imageGenTools.${key}.apiKeyRef "${apiKeyRef}" 解析失败: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    resolved[key] = {
+      ...engineRest,
       ...(resolvedApiKey ? { apiKey: resolvedApiKey } : {}),
     };
   }
@@ -1369,6 +1411,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   })();
 
   const resolvedWebTools = await resolveWebToolsConfig(config.webTools, secretVault);
+  const resolvedImageGenTools = await resolveImageGenToolsConfig(config.imageGenTools, secretVault);
+  // 生图 per-engine 定价注册表初始化；admin PUT /api/admin/image-gen-pricing 时热更。
+  configureImageGenPricing(config.imageGenTools?.pricing);
 
   // 模型解析器：如果配置了 models，绑定到 RawRuntime / WebChannel / Cron
   const modelResolver = config.models
@@ -1504,6 +1549,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...(artifactService ? { artifactService } : {}),
     ...(resolvedServerRemote ? { serverRemote: resolvedServerRemote } : {}),
     ...(resolvedWebTools ? { webTools: resolvedWebTools } : {}),
+    ...(resolvedImageGenTools ? { imageGenTools: resolvedImageGenTools } : {}),
+    // metered_tool_usage（GenerateImage 按次扣费）事件直写 runtime_events；
+    // file backend 不配置 → 工具跳过扣费事件（billingService 也不存在，语义一致）。
+    ...(pgEventStore ? {
+      appendPlatformEvent: (
+        event: import('../runtime/types.js').PlatformEventInput,
+        ctx?: import('../runtime/types.js').EventAppendContext,
+      ) => pgEventStore.append(event, ctx),
+    } : {}),
     tenantRemoteHands: () => config.tenantRemoteHands?.hands,
     secretVault,
     tenantRemoteHandResolver,

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, ExternalLink, Loader2, Link2Off, Plus, RefreshCw, Save, Stethoscope, Trash2 } from "lucide-react";
-import { EntityIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
@@ -18,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTenants } from "@/components/TenantManager/hooks";
+import { ConnectorBrandLogo } from "./ConnectorBrandLogo";
 import {
   bindMyMcpSecret,
   bindAdminMcpSecret,
@@ -38,7 +38,6 @@ import type { ManagedMcpServer, McpAdminServersResponse, McpDiagnosticResponse, 
 import {
   CatalogHeader,
   CapabilityDetailDrawer,
-  CapabilityLogo,
   CapabilitySourceBadge,
   CatalogToolbar,
   type CapabilitySource,
@@ -452,7 +451,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                     tabIndex={0}
                   >
                     <CardContent className="flex min-h-36 items-start gap-4 p-5">
-                      <CapabilityLogo label={server.name}><EntityIcons.connector className="size-5" /></CapabilityLogo>
+                      <ConnectorBrandLogo server={server} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -507,7 +506,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
           {detailServer ? (
             <>
               <div className="flex items-center gap-3">
-                <CapabilityLogo label={detailServer.name}><EntityIcons.connector className="size-5" /></CapabilityLogo>
+                <ConnectorBrandLogo server={detailServer} />
                 <div>
                   <CapabilitySourceBadge source={connectorSource(detailServer)} />
                   <div className={`mt-1 text-xs font-medium ${connectorStatus(detailServer).className}`}>{connectorStatus(detailServer).label}</div>

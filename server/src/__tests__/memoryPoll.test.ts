@@ -534,7 +534,7 @@ describe('CronService system job guard', () => {
     const service = new CronService({
       nowMs: () => 10_000,
       loadJobs: async () => initialJobs,
-      saveJobs: async (jobs) => { saved = jobs; },
+      saveJobs: async (jobs: CronJob[]) => { saved = jobs; },
       executeJob: vi.fn(async () => ({ status: 'ok' as const })),
       appendRunLog: vi.fn(),
     } as never);

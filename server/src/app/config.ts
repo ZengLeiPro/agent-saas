@@ -327,8 +327,10 @@ const memoryIndexSchema = z.object({
  */
 const memoryPollingSchema = z.object({
   enabled: z.boolean().optional(),
-  /** 触发小时（0-23，默认 4；分钟按 userId 散列 00-59） */
+  /** 触发窗口起始小时（0-23，默认 4） */
   hour: z.number().int().min(0).max(23).optional(),
+  /** 触发窗口小时跨度（1-12，默认 4；分钟按 userId 散列到 hoursSpan*60 槽） */
+  hoursSpan: z.number().int().min(1).max(12).optional(),
   /** IANA 时区，默认 Asia/Shanghai */
   timezone: z.string().min(1).optional(),
   /** 用户活动回看窗口（小时，默认 48；也是「无活动跳过」的判定窗口） */

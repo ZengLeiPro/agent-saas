@@ -17,7 +17,8 @@ import { applyToolProfile } from '../runtime/toolProfiles.js';
 import { UserActivityService } from '../runtime/userActivityService.js';
 import {
   buildMemoryPollPrompt,
-  hashMinute,
+  hashSlot,
+  buildMemoryPollSchedule,
   isMemoryPollJob,
   MEMORY_POLL_JOB_NAME,
   reconcileMemoryPollJobs,
@@ -297,7 +298,8 @@ describe('reconcileMemoryPollJobs', () => {
     name: MEMORY_POLL_JOB_NAME,
     enabled,
     systemKind: 'memory_poll',
-    schedule: { kind: 'cron', expr: '0 4 * * *', tz: 'Asia/Shanghai' },
+    // 用当前散列结果生成，避免"幂等测试"被 drift 检测误判为需要 reschedule
+    schedule: buildMemoryPollSchedule(owner, 4, 4, 'Asia/Shanghai'),
     payload: { kind: 'agentTurn', message: 'placeholder' },
     owner,
     createdAtMs,
@@ -305,7 +307,7 @@ describe('reconcileMemoryPollJobs', () => {
     state: {},
   });
 
-  it('灰度租户缺任务 → 创建（分钟按 userId 散列）', () => {
+  it('灰度租户缺任务 → 创建（默认 4h 窗口，按 userId 散列到 hour+minute）', () => {
     const plan = reconcileMemoryPollJobs({
       users: [user('u1'), user('u2', { tenantId: 'wain' })],
       existingJobs: [],
@@ -317,10 +319,54 @@ describe('reconcileMemoryPollJobs', () => {
     const job = plan.toCreate[0]!;
     expect(job.owner).toBe('u1');
     expect(job.systemKind).toBe('memory_poll');
-    expect(job.schedule).toEqual({ kind: 'cron', expr: `${hashMinute('u1')} 4 * * *`, tz: 'Asia/Shanghai' });
-    expect(hashMinute('u1')).toBeGreaterThanOrEqual(0);
-    expect(hashMinute('u1')).toBeLessThan(60);
-    expect(hashMinute('u1')).toBe(hashMinute('u1')); // 稳定散列
+    expect(job.schedule).toEqual(buildMemoryPollSchedule('u1', 4, 4, 'Asia/Shanghai'));
+    // 期望：hour ∈ [4, 8)，minute ∈ [0, 60)，散列稳定
+    const slot = hashSlot('u1', 4);
+    expect(slot.hourOffset).toBeGreaterThanOrEqual(0);
+    expect(slot.hourOffset).toBeLessThan(4);
+    expect(slot.minute).toBeGreaterThanOrEqual(0);
+    expect(slot.minute).toBeLessThan(60);
+    expect(hashSlot('u1', 4)).toEqual(hashSlot('u1', 4)); // 稳定
+  });
+
+  it('hashSlot 均匀性：不同 userId 分布到不同槽', () => {
+    const buckets = new Map<string, number>();
+    for (let i = 0; i < 100; i++) {
+      const slot = hashSlot(`user-${i}`, 4);
+      const key = `${slot.hourOffset}:${slot.minute}`;
+      buckets.set(key, (buckets.get(key) ?? 0) + 1);
+    }
+    // 100 用户散到 240 槽，大多数槽 ≤1 人；最大并发槽 ≤3（Poisson 上分位）
+    const maxPerBucket = Math.max(...buckets.values());
+    expect(maxPerBucket).toBeLessThanOrEqual(3);
+    // 覆盖率：至少 60 个不同槽
+    expect(buckets.size).toBeGreaterThan(60);
+  });
+
+  it('配置变更后 reconcile 检测 schedule drift 并重排（保留 job.id）', () => {
+    // 存量任务：旧 60 槽实现（hour=4 固定）
+    const legacy = systemJob('u1', true);
+    legacy.schedule = { kind: 'cron', expr: '7 4 * * *', tz: 'Asia/Shanghai' };
+    const plan = reconcileMemoryPollJobs({
+      users: [user('u1')],
+      existingJobs: [legacy],
+      tenantStore: tenantStore as never,
+      enabled: true,
+      hour: 4,
+      hoursSpan: 4,
+      nowMs: 5_000,
+    });
+    // 只要新散列结果不是 04:07（大概率），就应触发 reschedule
+    const expected = buildMemoryPollSchedule('u1', 4, 4, 'Asia/Shanghai');
+    if (expected.expr === '7 4 * * *') {
+      // 罕见：散列恰好命中旧槽，跳过本 case
+      return;
+    }
+    expect(plan.stats.rescheduled).toBe(1);
+    expect(plan.toUpdate).toHaveLength(1);
+    expect(plan.toUpdate[0]!.id).toBe(legacy.id); // job.id 稳定
+    expect(plan.toUpdate[0]!.schedule).toEqual(expected);
+    expect(plan.toUpdate[0]!.enabled).toBe(true);
   });
 
   it('平台开关关闭 → 存量系统任务禁用、不创建新任务', () => {

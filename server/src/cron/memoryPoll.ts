@@ -21,8 +21,15 @@ export const MEMORY_POLL_JOB_DESCRIPTION = '平台每日记忆整理任务（系
 
 /** 默认执行参数（config.memory.polling 可覆盖） */
 export const MEMORY_POLL_DEFAULTS = {
-  /** 触发小时（本地时区，Asia/Shanghai） */
+  /** 触发窗口起始小时（本地时区，Asia/Shanghai） */
   hour: 4,
+  /**
+   * 触发窗口跨度（小时）。分钟按 userId 稳定散列到 [hour, hour+hoursSpan)
+   * 每小时 60 槽，共 hoursSpan*60 槽——默认 4 小时 = 240 槽。
+   * 60 用户级：单槽期望 <1；300 用户级：单槽期望 <2；1000 用户级：单槽期望 ~5。
+   * 放量后大幅超时或撞下游 rate limit 再考虑加大。
+   */
+  hoursSpan: 4,
   timezone: 'Asia/Shanghai',
   lookbackHours: 48,
   maxTurns: 30,
@@ -107,7 +114,10 @@ export interface ReconcileMemoryPollOptions {
   tenantStore?: Pick<TenantStore, 'getSettings'>;
   /** 平台级总开关（config.memory.polling.enabled） */
   enabled: boolean;
+  /** 触发窗口起始小时（默认 MEMORY_POLL_DEFAULTS.hour=4） */
   hour?: number;
+  /** 触发窗口小时跨度（默认 MEMORY_POLL_DEFAULTS.hoursSpan=4） */
+  hoursSpan?: number;
   timezone?: string;
   nowMs: number;
 }
@@ -116,7 +126,15 @@ export interface ReconcileMemoryPollResult {
   toCreate: CronJob[];
   toUpdate: CronJob[];
   /** 每租户统计（日志用） */
-  stats: { eligibleUsers: number; created: number; enabled: number; disabled: number; duplicatesDisabled: number };
+  stats: {
+    eligibleUsers: number;
+    created: number;
+    enabled: number;
+    disabled: number;
+    duplicatesDisabled: number;
+    /** schedule/timezone drift 迁移（配置变更后的重排数） */
+    rescheduled: number;
+  };
 }
 
 /**
@@ -125,16 +143,22 @@ export interface ReconcileMemoryPollResult {
  *       → 每用户恰好一条 enabled 的 systemKind job（缺则建，禁则启）
  *   - 任一开关关 / 用户禁用 → 既有 job 置 disabled（不删除，保留 state 历史）
  *   - 同一用户多条 systemKind job（异常态）→ 保留最早创建的一条，其余禁用
+ *   - **schedule/timezone drift 检测（2026-07-14 扩窗口批次）**：已有任务的
+ *     schedule 与"按当前配置和 hashSlot 应产生的 schedule"不一致时，更新它
+ *     （job.id 不变，只改 schedule/tz/updatedAtMs——保留 owner/state 与
+ *     run log 关联）。配置从 60 槽扩到 240 槽后无需人工迁移。
  *
- * 触发时间：hour 点整之后按 userId 散列到 00-59 分，避免全员同一分钟拉起。
+ * 触发时间：从 hour 点开始，按 userId 稳定散列到 [hour, hour+hoursSpan) × 60 分钟
+ * 的稀疏槽，避免全员同一分钟拉起。
  */
 export function reconcileMemoryPollJobs(options: ReconcileMemoryPollOptions): ReconcileMemoryPollResult {
   const hour = options.hour ?? MEMORY_POLL_DEFAULTS.hour;
+  const hoursSpan = options.hoursSpan ?? MEMORY_POLL_DEFAULTS.hoursSpan;
   const timezone = options.timezone ?? MEMORY_POLL_DEFAULTS.timezone;
   const result: ReconcileMemoryPollResult = {
     toCreate: [],
     toUpdate: [],
-    stats: { eligibleUsers: 0, created: 0, enabled: 0, disabled: 0, duplicatesDisabled: 0 },
+    stats: { eligibleUsers: 0, created: 0, enabled: 0, disabled: 0, duplicatesDisabled: 0, rescheduled: 0 },
   };
 
   const systemJobsByOwner = new Map<string, CronJob[]>();
@@ -167,7 +191,7 @@ export function reconcileMemoryPollJobs(options: ReconcileMemoryPollOptions): Re
 
     if (!primary) {
       if (!eligible) continue;
-      result.toCreate.push(buildMemoryPollJob(user, hour, timezone, options.nowMs));
+      result.toCreate.push(buildMemoryPollJob(user, hour, hoursSpan, timezone, options.nowMs));
       result.stats.created++;
       continue;
     }
@@ -177,6 +201,19 @@ export function reconcileMemoryPollJobs(options: ReconcileMemoryPollOptions): Re
     } else if (!eligible && primary.enabled) {
       result.toUpdate.push({ ...primary, enabled: false, updatedAtMs: options.nowMs });
       result.stats.disabled++;
+    } else if (eligible && primary.enabled) {
+      // schedule drift：配置变更（hour/hoursSpan/timezone/散列算法）后重排
+      const expected = buildMemoryPollSchedule(user.id, hour, hoursSpan, timezone);
+      if (!scheduleEquals(primary.schedule, expected)) {
+        result.toUpdate.push({
+          ...primary,
+          schedule: expected,
+          updatedAtMs: options.nowMs,
+          // nextRunAtMs 由 applySystemJobs 用 computeJobNextRunAtMs 重算
+          state: { ...primary.state, nextRunAtMs: undefined },
+        });
+        result.stats.rescheduled++;
+      }
     }
   }
 
@@ -210,6 +247,7 @@ function isTenantMemoryPollingEnabled(
 function buildMemoryPollJob(
   user: MemoryPollUserLike,
   hour: number,
+  hoursSpan: number,
   timezone: string,
   nowMs: number,
 ): CronJob {
@@ -219,11 +257,7 @@ function buildMemoryPollJob(
     description: MEMORY_POLL_JOB_DESCRIPTION,
     enabled: true,
     systemKind: 'memory_poll',
-    schedule: {
-      kind: 'cron',
-      expr: `${hashMinute(user.id)} ${hour} * * *`,
-      tz: timezone,
-    },
+    schedule: buildMemoryPollSchedule(user.id, hour, hoursSpan, timezone),
     payload: {
       kind: 'agentTurn',
       // 占位说明：执行时 executor 按 systemKind 加载版本化提示语，本字段不被使用
@@ -240,11 +274,38 @@ function buildMemoryPollJob(
   };
 }
 
-/** 按 userId 稳定散列到 00-59 分，避免全员同一分钟拉起。 */
-export function hashMinute(userId: string): number {
+/** 期望的 memory_poll cron schedule（供 reconcile drift 检测与新建共用真源）。 */
+export function buildMemoryPollSchedule(
+  userId: string,
+  hour: number,
+  hoursSpan: number,
+  timezone: string,
+): { kind: 'cron'; expr: string; tz: string } {
+  const slot = hashSlot(userId, hoursSpan);
+  return {
+    kind: 'cron',
+    expr: `${slot.minute} ${hour + slot.hourOffset} * * *`,
+    tz: timezone,
+  };
+}
+
+function scheduleEquals(a: CronJob['schedule'], b: CronJob['schedule']): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'cron' && b.kind === 'cron') return a.expr === b.expr && (a.tz ?? '') === (b.tz ?? '');
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * 按 userId 稳定散列到 [0, hoursSpan) 小时 × [0, 60) 分钟 的稀疏槽。
+ * 用两级映射（先分小时段再定分钟）保证均匀性——直接 `hash % (60*hoursSpan)`
+ * 与 `hash % 60 / hash % hoursSpan` 都可，取前者简洁。
+ */
+export function hashSlot(userId: string, hoursSpan: number): { hourOffset: number; minute: number } {
+  const span = Math.max(1, Math.floor(hoursSpan));
   let hash = 0;
   for (let i = 0; i < userId.length; i++) {
     hash = ((hash << 5) - hash + userId.charCodeAt(i)) | 0;
   }
-  return Math.abs(hash) % 60;
+  const slot = Math.abs(hash) % (60 * span);
+  return { hourOffset: Math.floor(slot / 60), minute: slot % 60 };
 }

@@ -41,6 +41,15 @@ function toFiniteInt(n: unknown): number | undefined {
   return Math.floor(n);
 }
 
+/** CronSchedule 内容等价判断（applySystemJobs drift 检测用）。 */
+function isSameCronSchedule(a: CronJob['schedule'], b: CronJob['schedule']): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'cron' && b.kind === 'cron') return a.expr === b.expr && (a.tz ?? '') === (b.tz ?? '');
+  if (a.kind === 'every' && b.kind === 'every') return a.everyMs === b.everyMs && (a.anchorMs ?? 0) === (b.anchorMs ?? 0);
+  if (a.kind === 'at' && b.kind === 'at') return a.atMs === b.atMs;
+  return false;
+}
+
 function mergeCronPayload(current: CronPayload, patch: CronPayloadPatch): CronPayload {
   if (patch.kind === "agentTurn" && patch.message !== undefined) {
     return {
@@ -192,8 +201,11 @@ export class CronService {
   /**
    * 平台内部通道：注入/更新系统任务（memory_poll reconcile 用；2026-07-14 批次）。
    * 不走用户 API 的 CronJobCreate 校验——只有平台装配层能调用，携带完整
-   * CronJob（含 systemKind）。toUpdate 只应用 enabled/updatedAtMs（reconcile
-   * 的唯一诉求是开/关），不覆盖 payload/schedule，避免误伤运行态字段。
+   * CronJob（含 systemKind）。toUpdate 支持三类变更：
+   *   - enabled 切换（启/停）
+   *   - schedule/timezone 迁移（配置变更后的重排，07-14 扩窗口批次）
+   *   - name/description 元数据更新（本期未用；预留）
+   * 保留 job.id、owner、payload、state（除 nextRunAtMs），不覆盖运行态数据。
    */
   async applySystemJobs(plan: { toCreate: CronJob[]; toUpdate: CronJob[] }): Promise<void> {
     await this.ensureLoaded();
@@ -211,8 +223,11 @@ export class CronService {
     for (const update of plan.toUpdate) {
       const job = this.jobs.find((j) => j.id === update.id);
       if (!job || !job.systemKind) continue;
-      if (job.enabled === update.enabled) continue;
-      job.enabled = update.enabled;
+      const scheduleChanged = !isSameCronSchedule(job.schedule, update.schedule);
+      const enabledChanged = job.enabled !== update.enabled;
+      if (!scheduleChanged && !enabledChanged) continue;
+      if (scheduleChanged) job.schedule = update.schedule;
+      if (enabledChanged) job.enabled = update.enabled;
       job.updatedAtMs = update.updatedAtMs ?? nowMs;
       if (job.enabled) {
         job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
@@ -220,7 +235,12 @@ export class CronService {
         delete job.state.nextRunAtMs;
       }
       changed = true;
-      cronLogger.info(`System job ${job.enabled ? 'enabled' : 'disabled'}: ${job.name} (${job.id}) owner=${job.owner}`);
+      if (scheduleChanged) {
+        const expr = update.schedule.kind === 'cron' ? update.schedule.expr : `${update.schedule.kind}`;
+        cronLogger.info(`System job rescheduled: ${job.name} (${job.id}) owner=${job.owner} → ${expr}`);
+      } else {
+        cronLogger.info(`System job ${job.enabled ? 'enabled' : 'disabled'}: ${job.name} (${job.id}) owner=${job.owner}`);
+      }
     }
     if (changed) {
       await this.persist();

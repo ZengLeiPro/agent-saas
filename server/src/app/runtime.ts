@@ -1786,13 +1786,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           tenantStore,
           enabled: memoryPollingConfig?.enabled === true && userActivityService.available,
           hour: memoryPollingConfig?.hour ?? MEMORY_POLL_DEFAULTS.hour,
+          hoursSpan: memoryPollingConfig?.hoursSpan ?? MEMORY_POLL_DEFAULTS.hoursSpan,
           timezone: memoryPollingConfig?.timezone ?? config.server.timezone ?? MEMORY_POLL_DEFAULTS.timezone,
           nowMs: Date.now(),
         });
         if (plan.toCreate.length > 0 || plan.toUpdate.length > 0) {
           await cronRuntime.service!.applySystemJobs(plan);
           serverLogger.info(
-            `Memory poll reconcile: eligible=${plan.stats.eligibleUsers} created=${plan.stats.created} enabled=${plan.stats.enabled} disabled=${plan.stats.disabled} dupDisabled=${plan.stats.duplicatesDisabled}`,
+            `Memory poll reconcile: eligible=${plan.stats.eligibleUsers} created=${plan.stats.created} enabled=${plan.stats.enabled} disabled=${plan.stats.disabled} dupDisabled=${plan.stats.duplicatesDisabled} rescheduled=${plan.stats.rescheduled}`,
           );
         }
       } catch (err) {

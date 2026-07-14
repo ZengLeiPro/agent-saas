@@ -248,6 +248,7 @@
     "polling": {
       "enabled": false,
       "hour": 4,
+      "hoursSpan": 4,
       "timezone": "Asia/Shanghai",
       "lookbackHours": 48,
       "maxTurns": 30,

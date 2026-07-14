@@ -23,11 +23,16 @@ const MAX_PROFILES_PER_USER = 100;
 
 export interface DwsAuthStatusRunnerOptions {
   agentCwd: string;
-  serverRemote: {
+  serverRemote?: {
     baseUrl: string;
     authToken: string;
     invokeTimeoutMs?: number;
   };
+  resolveServerRemote?: (user: UserInfo) => Promise<{
+    baseUrl: string;
+    authToken: string;
+    invokeTimeoutMs?: number;
+  }>;
   /** 测试注入；生产使用全局 fetch。 */
   fetchImpl?: typeof fetch;
 }
@@ -37,18 +42,16 @@ export interface DwsAuthStatusRunnerLike {
 }
 
 export class DwsAuthStatusRunner implements DwsAuthStatusRunnerLike {
-  private readonly transport: HttpTransport;
-
-  constructor(private readonly options: DwsAuthStatusRunnerOptions) {
-    this.transport = new HttpTransport({
-      baseUrl: options.serverRemote.baseUrl,
-      authToken: options.serverRemote.authToken,
-      invokeTimeoutMs: options.serverRemote.invokeTimeoutMs,
-      fetchImpl: options.fetchImpl,
-    });
-  }
+  constructor(private readonly options: DwsAuthStatusRunnerOptions) {}
 
   async check(user: UserInfo, connection: DwsConnectionRecord, signal?: AbortSignal): Promise<DwsAuthCheckResult> {
+    const serverRemote = await resolveServerRemote(this.options, user);
+    const transport = new HttpTransport({
+      baseUrl: serverRemote.baseUrl,
+      authToken: serverRemote.authToken,
+      invokeTimeoutMs: serverRemote.invokeTimeoutMs,
+      fetchImpl: this.options.fetchImpl,
+    });
     const userCwd = resolveUserCwd(this.options.agentCwd, user);
     const mountSubPath = deriveWorkspaceMountSubPath(this.options.agentCwd, userCwd);
     if (!mountSubPath) throw new Error('无法解析 DWS 用户工作区挂载路径');
@@ -57,7 +60,7 @@ export class DwsAuthStatusRunner implements DwsAuthStatusRunnerLike {
     const sandboxScopeId = `${workspaceId}__${mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
     const command = `dws auth status --profile ${shellQuote(connection.profileId)} --format json --timeout 30`;
 
-    const response = await this.transport.invoke({
+    const response = await transport.invoke({
       toolName: 'Shell',
       input: { command, timeoutMs: DWS_STATUS_TIMEOUT_MS },
       context: {
@@ -100,6 +103,17 @@ export class DwsAuthStatusRunner implements DwsAuthStatusRunnerLike {
         : {}),
     };
   }
+}
+
+async function resolveServerRemote(
+  options: DwsAuthStatusRunnerOptions,
+  user: UserInfo,
+): Promise<{ baseUrl: string; authToken: string; invokeTimeoutMs?: number }> {
+  const resolved = options.resolveServerRemote
+    ? await options.resolveServerRemote(user)
+    : options.serverRemote;
+  if (!resolved) throw new Error('当前用户没有可用的 DWS 执行环境');
+  return resolved;
 }
 
 export interface DwsAuthKeepaliveServiceOptions {

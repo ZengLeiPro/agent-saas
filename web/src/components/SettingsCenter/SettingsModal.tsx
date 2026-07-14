@@ -103,6 +103,7 @@ function DwsConnectionsSection() {
   const [error, setError] = useState<string | null>(null);
   const [authSession, setAuthSession] = useState<DwsAuthSessionView | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authServiceAvailable, setAuthServiceAvailable] = useState<boolean | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [popupBlocked, setPopupBlocked] = useState(false);
   const authorizationPopupRef = useRef<Window | null>(null);
@@ -127,7 +128,9 @@ function DwsConnectionsSection() {
   const loadAuthSession = useCallback(async () => {
     const response = await authFetch("/api/dws/auth/session");
     const data = await response.json().catch(() => ({})) as { session?: DwsAuthSessionView | null; error?: string };
+    if (response.status === 503) setAuthServiceAvailable(false);
     if (!response.ok) throw new Error(data.error || "钉钉授权状态读取失败");
+    setAuthServiceAvailable(true);
     setAuthSession(data.session ?? null);
     return data.session ?? null;
   }, []);
@@ -147,6 +150,7 @@ function DwsConnectionsSection() {
   }, []);
 
   const startConnection = useCallback(async () => {
+    if (authServiceAvailable === false) return;
     setConnecting(true);
     setAuthError(null);
     setPopupBlocked(false);
@@ -166,7 +170,9 @@ function DwsConnectionsSection() {
     try {
       const response = await authFetch("/api/dws/auth/session", { method: "POST" });
       const data = await response.json().catch(() => ({})) as { session?: DwsAuthSessionView; error?: string };
+      if (response.status === 503) setAuthServiceAvailable(false);
       if (!response.ok || !data.session) throw new Error(data.error || "钉钉授权启动失败，请稍后重试");
+      setAuthServiceAvailable(true);
       setAuthSession(data.session);
       if (data.session.authorizationUrl) openAuthorizationPage(data.session.authorizationUrl);
     } catch (err) {
@@ -176,7 +182,7 @@ function DwsConnectionsSection() {
     } finally {
       setConnecting(false);
     }
-  }, [openAuthorizationPage]);
+  }, [authServiceAvailable, openAuthorizationPage]);
 
   useEffect(() => {
     setAuthSession(null);
@@ -209,14 +215,17 @@ function DwsConnectionsSection() {
   }, [authSession, loadConnections, openAuthorizationPage]);
 
   const authInProgress = authSession?.status === "starting" || authSession?.status === "awaiting_user";
+  const authServiceUnavailable = authServiceAvailable === false;
   const needsReconnect = connections.some((connection) => connection.status === "disconnected");
-  const connectLabel = authInProgress || connecting
-    ? "等待授权"
-    : needsReconnect
-      ? "重新连接"
-      : connections.length > 0
-        ? "连接其他组织"
-        : "连接钉钉";
+  const connectLabel = authServiceUnavailable
+    ? "服务暂不可用"
+    : authInProgress || connecting
+      ? "等待授权"
+      : needsReconnect
+        ? "重新连接"
+        : connections.length > 0
+          ? "连接其他组织"
+          : "连接钉钉";
 
   return (
     <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-sm">
@@ -230,7 +239,12 @@ function DwsConnectionsSection() {
             <div className="text-sm text-muted-foreground">连接一次后，开开会自动维持登录，无需定期重新授权。</div>
           </div>
         </div>
-        <Button className="shrink-0" size="sm" onClick={() => void startConnection()} disabled={authInProgress || connecting}>
+        <Button
+          className="shrink-0"
+          size="sm"
+          onClick={() => void startConnection()}
+          disabled={authServiceUnavailable || authInProgress || connecting}
+        >
           {(authInProgress || connecting) ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
           {connectLabel}
         </Button>

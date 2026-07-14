@@ -76,9 +76,14 @@ describe('DWS device authorization flow', () => {
         { status: 200, headers: { 'content-type': 'text/event-stream' } },
       );
     }) as typeof fetch;
+    const resolveServerRemote = vi.fn(async () => ({
+      baseUrl: 'http://acs.internal',
+      authToken: 'server-secret',
+      invokeTimeoutMs: 5_000,
+    }));
     const runner = new DwsDeviceLoginRunner({
       agentCwd: '/mnt/agent-saas/workspaces',
-      serverRemote: { baseUrl: 'http://acs.internal', authToken: 'server-secret', invokeTimeoutMs: 5_000 },
+      resolveServerRemote,
       fetchImpl,
     });
     const onAuthorization = vi.fn();
@@ -89,6 +94,7 @@ describe('DWS device authorization flow', () => {
       userCode: 'CFFJ-MVLS',
       authorizationUrl: 'https://login.dingtalk.com/oauth2/device/verify.htm?user_code=CFFJ-MVLS',
     });
+    expect(resolveServerRemote).toHaveBeenCalledWith(user());
     expect(wire?.toolName).toBe('Shell');
     expect(wire?.input).toEqual({
       command: 'dws auth login --device --format json',

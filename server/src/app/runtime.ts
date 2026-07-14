@@ -68,6 +68,7 @@ import { PgMessageFeedbackStore } from '../data/feedback/store.js';
 import { MemoryIndexService } from '../memory/index/service.js';
 import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
+import type { UserInfo } from '../data/users/types.js';
 import { TenantStore } from '../data/tenants/store.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { tenantAccessErrorMessage, wrapDispatchWithTenantAccess } from '../data/tenants/access.js';
@@ -87,7 +88,10 @@ import { McpProxy } from '../mcp/proxy.js';
 import { McpOAuthService } from '../mcp/oauthService.js';
 import { CapabilityTokenService } from '../security/capabilityToken.js';
 import { EncryptedFileSecretVault, HttpSecretVault, InMemorySecretVault, type SecretVault } from '../security/secretVault.js';
-import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
+import {
+  createTenantRemoteHandAuthTokenResolver,
+  selectTenantRemoteHandsForRegistration,
+} from '../runtime/tenantRemoteHandResolver.js';
 import { createDefaultExecutionTransportRegistry } from '../agent/toolRuntime.js';
 import { buildTenantScopedEnv } from '../agent/tenantEnv.js';
 import { ClientDaemonTransport } from '../runtime/clientDaemonTransport.js';
@@ -1860,12 +1864,35 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.info(`RuntimeScheduler worker disabled for processRole=${processRole}; durable enqueue remains enabled`);
   }
 
-  if (dwsConnectionStore && userStore && resolvedServerRemote) {
+  const dwsAcsConfigured = config.tenantRemoteHands?.hands.some((hand) => (
+    (hand.id === 'agent-saas-acs' || /acs/i.test(hand.id))
+    && hand.rollout?.mode !== 'disabled'
+    && hand.rollout?.mode !== 'drain'
+  )) ?? false;
+  const resolveDwsServerRemote = async (user: UserInfo) => {
+    if (resolvedServerRemote) return resolvedServerRemote;
+    const eligible = selectTenantRemoteHandsForRegistration(config.tenantRemoteHands?.hands, {
+      userId: user.id,
+      username: user.username,
+      userTenantId: user.tenantId,
+    });
+    const entry = eligible.find((hand) => hand.id === 'agent-saas-acs')
+      ?? eligible.find((hand) => /acs/i.test(hand.id));
+    if (!entry) throw new Error(`用户 ${user.id} 没有可用的 ACS DWS 执行环境`);
+    const resolved = await tenantRemoteHandResolver.resolveForRegister(entry);
+    return {
+      baseUrl: resolved.baseUrl,
+      authToken: resolved.authToken,
+      ...(resolved.invokeTimeoutMs ? { invokeTimeoutMs: resolved.invokeTimeoutMs } : {}),
+    };
+  };
+
+  if (dwsConnectionStore && userStore && (resolvedServerRemote || dwsAcsConfigured)) {
     dwsAuthKeepaliveService = new DwsAuthKeepaliveService({
       agentCwd,
       userStore,
       connectionStore: dwsConnectionStore,
-      runner: new DwsAuthStatusRunner({ agentCwd, serverRemote: resolvedServerRemote }),
+      runner: new DwsAuthStatusRunner({ agentCwd, resolveServerRemote: resolveDwsServerRemote }),
       logger: serverLogger.child('DwsKeepalive'),
     });
     if (enableSchedulerWorker) {
@@ -1878,13 +1905,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         agentCwd,
         authSessionStore: dwsAuthSessionStore,
         connectionStore: dwsConnectionStore,
-        runner: new DwsDeviceLoginRunner({ agentCwd, serverRemote: resolvedServerRemote }),
+        runner: new DwsDeviceLoginRunner({ agentCwd, resolveServerRemote: resolveDwsServerRemote }),
         onConnected: async () => { await dwsAuthKeepaliveService?.runOnce(); },
         logger: serverLogger.child('DwsAuthFlow'),
       });
     }
   } else if (userStore) {
-    serverLogger.warn('DWS auth keepalive unavailable: PG connection store or serverRemote is not configured');
+    serverLogger.warn('DWS auth keepalive unavailable: PG connection store or DWS execution remote is not configured');
   }
 
   // B4: Server-remote hands 健康 scanner（仅 PG runtime）。默认开启；显式 false 关闭。

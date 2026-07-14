@@ -33,31 +33,34 @@ export interface DwsDeviceLoginRunnerLike {
 
 export interface DwsDeviceLoginRunnerOptions {
   agentCwd: string;
-  serverRemote: {
+  serverRemote?: {
     baseUrl: string;
     authToken: string;
     invokeTimeoutMs?: number;
   };
+  resolveServerRemote?: (user: UserInfo) => Promise<{
+    baseUrl: string;
+    authToken: string;
+    invokeTimeoutMs?: number;
+  }>;
   fetchImpl?: typeof fetch;
 }
 
 export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
-  private readonly transport: HttpTransport;
-
-  constructor(private readonly options: DwsDeviceLoginRunnerOptions) {
-    this.transport = new HttpTransport({
-      baseUrl: options.serverRemote.baseUrl,
-      authToken: options.serverRemote.authToken,
-      invokeTimeoutMs: Math.max(options.serverRemote.invokeTimeoutMs ?? 0, DWS_DEVICE_FLOW_TIMEOUT_MS + 10_000),
-      fetchImpl: options.fetchImpl,
-    });
-  }
+  constructor(private readonly options: DwsDeviceLoginRunnerOptions) {}
 
   async login(
     user: UserInfo,
     onAuthorization: (authorization: DwsDeviceAuthorization) => void | Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
+    const serverRemote = await resolveServerRemote(this.options, user);
+    const transport = new HttpTransport({
+      baseUrl: serverRemote.baseUrl,
+      authToken: serverRemote.authToken,
+      invokeTimeoutMs: Math.max(serverRemote.invokeTimeoutMs ?? 0, DWS_DEVICE_FLOW_TIMEOUT_MS + 10_000),
+      fetchImpl: this.options.fetchImpl,
+    });
     const userCwd = resolveUserCwd(this.options.agentCwd, user);
     const mountSubPath = deriveWorkspaceMountSubPath(this.options.agentCwd, userCwd);
     if (!mountSubPath) throw new Error('无法解析 DWS 用户工作区挂载路径');
@@ -67,7 +70,7 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
     let authorizationPublished = false;
     let finalResponse: ToolInvocationResponse | undefined;
 
-    for await (const chunk of this.transport.invokeStream({
+    for await (const chunk of transport.invokeStream({
       toolName: 'Shell',
       input: {
         command: 'dws auth login --device --format json',
@@ -112,6 +115,17 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
       await onAuthorization(authorization);
     }
   }
+}
+
+async function resolveServerRemote(
+  options: DwsDeviceLoginRunnerOptions,
+  user: UserInfo,
+): Promise<{ baseUrl: string; authToken: string; invokeTimeoutMs?: number }> {
+  const resolved = options.resolveServerRemote
+    ? await options.resolveServerRemote(user)
+    : options.serverRemote;
+  if (!resolved) throw new Error('当前用户没有可用的 DWS 执行环境');
+  return resolved;
 }
 
 export interface DwsAuthFlowServiceLike {

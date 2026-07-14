@@ -101,9 +101,14 @@ describe('DWS auth keepalive', () => {
       };
       return new Response(`data: ${JSON.stringify(chunk)}\n\n`, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     }) as typeof fetch;
+    const resolveServerRemote = vi.fn(async () => ({
+      baseUrl: 'http://acs.internal',
+      authToken: 'server-token',
+      invokeTimeoutMs: 5_000,
+    }));
     const runner = new DwsAuthStatusRunner({
       agentCwd: '/mnt/agent-saas/workspaces',
-      serverRemote: { baseUrl: 'http://acs.internal', authToken: 'server-token', invokeTimeoutMs: 5_000 },
+      resolveServerRemote,
       fetchImpl,
     });
     const record = { ...connection(), profileId: "ding'corp" };
@@ -111,6 +116,7 @@ describe('DWS auth keepalive', () => {
     const result = await runner.check(user(), record);
 
     expect(result).toMatchObject({ authenticated: true, refreshTokenValid: true });
+    expect(resolveServerRemote).toHaveBeenCalledWith(user());
     expect(wire?.toolName).toBe('Shell');
     expect(wire?.input.command).toContain("--profile 'ding'\"'\"'corp'");
     expect(wire?.input.command).not.toContain('currentProfile');

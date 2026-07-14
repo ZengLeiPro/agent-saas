@@ -22,7 +22,7 @@ export default defineConfig({
         // 预缓存 app shell 静态资源（排除 html）
         // HTML 不缓存：托管侧（ECS express / OSS 对象 meta）设 no-cache 头，
         // 始终从网络获取，确保版本一致
-        globPatterns: ["**/*.{js,css,ico,svg,woff2}", "*.png"],
+        globPatterns: ["**/*.{js,css,ico,svg,png,woff2}"],
         // PDF.js 主包与 worker 只在用户点“查看完整目录”时加载；worker 为 .mjs，
         // 主包 chunk 需显式排除，避免 PWA 安装时提前下载到普通聊天首屏。
         globIgnores: ["assets/PdfJsReader-*.js"],

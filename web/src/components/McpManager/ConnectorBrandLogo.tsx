@@ -1,15 +1,22 @@
 import { EntityIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { McpServerSummary } from "@agent/shared";
+import githubIcon from "@/assets/connector-brands/github.svg";
+import gmailIcon from "@/assets/connector-brands/gmail.png";
+import googleCalendarIcon from "@/assets/connector-brands/google-calendar.png";
+import googleChatIcon from "@/assets/connector-brands/google-chat.png";
+import googleContactsIcon from "@/assets/connector-brands/google-contacts.png";
+import googleDriveIcon from "@/assets/connector-brands/google-drive.png";
+import notionIcon from "@/assets/connector-brands/notion.svg";
 
 const BRAND_ICON_BY_TEMPLATE_ID: Record<string, string> = {
-  github: "github.svg",
-  notion: "notion.svg",
-  google_gmail: "gmail.png",
-  google_drive: "google-drive.png",
-  google_calendar: "google-calendar.png",
-  google_chat: "google-chat.png",
-  google_people: "google-contacts.png",
+  github: githubIcon,
+  notion: notionIcon,
+  google_gmail: gmailIcon,
+  google_drive: googleDriveIcon,
+  google_calendar: googleCalendarIcon,
+  google_chat: googleChatIcon,
+  google_people: googleContactsIcon,
 };
 
 export function connectorBrandIcon(server: McpServerSummary): string | null {
@@ -18,13 +25,13 @@ export function connectorBrandIcon(server: McpServerSummary): string | null {
 
   const configUrl = typeof server.config?.url === "string" ? server.config.url : "";
   const identity = `${server.id} ${server.name} ${configUrl}`.toLocaleLowerCase();
-  if (identity.includes("github")) return "github.svg";
-  if (identity.includes("notion")) return "notion.svg";
-  if (identity.includes("gmail")) return "gmail.png";
-  if (identity.includes("drive.google") || identity.includes("google drive")) return "google-drive.png";
-  if (identity.includes("calendar.google") || identity.includes("google calendar")) return "google-calendar.png";
-  if (identity.includes("chat.google") || identity.includes("google chat")) return "google-chat.png";
-  if (identity.includes("people.google") || identity.includes("google contacts")) return "google-contacts.png";
+  if (identity.includes("github")) return githubIcon;
+  if (identity.includes("notion")) return notionIcon;
+  if (identity.includes("gmail")) return gmailIcon;
+  if (identity.includes("drive.google") || identity.includes("google drive")) return googleDriveIcon;
+  if (identity.includes("calendar.google") || identity.includes("google calendar")) return googleCalendarIcon;
+  if (identity.includes("chat.google") || identity.includes("google chat")) return googleChatIcon;
+  if (identity.includes("people.google") || identity.includes("google contacts")) return googleContactsIcon;
   return null;
 }
 
@@ -39,7 +46,7 @@ export function ConnectorBrandLogo({ server, className }: { server: McpServerSum
       aria-hidden="true"
     >
       {brandIcon ? (
-        <img src={`/connector-brands/${brandIcon}`} alt="" className="size-7 object-contain" />
+        <img src={brandIcon} alt="" className="size-7 object-contain" />
       ) : (
         <EntityIcons.connector className="size-5 text-brand-700" />
       )}

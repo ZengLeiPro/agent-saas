@@ -22,7 +22,13 @@ import {
   MEMORY_POLL_JOB_NAME,
   reconcileMemoryPollJobs,
 } from '../cron/memoryPoll.js';
-import { isMemoryPollSessionMeta } from '../data/sessions/access.js';
+import {
+  canExposeSessionToUser,
+  hidesMemoryPollFrom,
+  isMemoryPollSessionMeta,
+  isPlatformAdminUser,
+  type SessionAccessUser,
+} from '../data/sessions/access.js';
 import { executeJob } from '../cron/executor.js';
 import { CronService } from '../cron/service.js';
 import { createMemoryMaintenanceHook } from '../engine/memoryHook.js';
@@ -404,6 +410,65 @@ describe('isMemoryPollSessionMeta / isMemoryPollJob', () => {
     expect(isMemoryPollJob({ systemKind: 'memory_poll', name: 'x' })).toBe(true);
     expect(isMemoryPollJob({ name: '每日记忆轮询' })).toBe(true);
     expect(isMemoryPollJob({ name: '普通任务' })).toBe(false);
+  });
+});
+
+// ============================================
+// 记忆轮询会话可见性（B 方案：只 platform admin 能看，2026-07-14）
+// ============================================
+
+describe('memory poll visibility — platform admin only', () => {
+  const memoryPollMeta = {
+    userId: 'u1',
+    username: 'u1',
+    channel: 'cron',
+    createdAt: '2026-07-14T00:00:00.000Z',
+    cronSystemKind: 'memory_poll' as const,
+    cronJobName: '记忆轮询',
+  };
+  const normalMeta = {
+    userId: 'u1',
+    username: 'u1',
+    channel: 'web',
+    createdAt: '2026-07-14T00:00:00.000Z',
+  };
+
+  const platformAdmin: SessionAccessUser = { sub: 'u1', username: 'u1', role: 'admin', tenantId: 'pantheon' };
+  const orgAdmin: SessionAccessUser = { sub: 'u1', username: 'u1', role: 'admin', tenantId: 'kaiyan' };
+  const orgUser: SessionAccessUser = { sub: 'u1', username: 'u1', role: 'user', tenantId: 'kaiyan' };
+
+  it('isPlatformAdminUser：pantheon+admin 才通过', () => {
+    expect(isPlatformAdminUser(platformAdmin)).toBe(true);
+    expect(isPlatformAdminUser(orgAdmin)).toBe(false); // 组织 admin 不算
+    expect(isPlatformAdminUser(orgUser)).toBe(false);
+    expect(isPlatformAdminUser(undefined)).toBe(false);
+  });
+
+  it('hidesMemoryPollFrom：普通会话对任何人都不隐藏', () => {
+    expect(hidesMemoryPollFrom(platformAdmin, normalMeta as never)).toBe(false);
+    expect(hidesMemoryPollFrom(orgAdmin, normalMeta as never)).toBe(false);
+    expect(hidesMemoryPollFrom(orgUser, normalMeta as never)).toBe(false);
+  });
+
+  it('hidesMemoryPollFrom：记忆轮询会话只对 platform admin 不隐藏', () => {
+    expect(hidesMemoryPollFrom(platformAdmin, memoryPollMeta as never)).toBe(false);
+    expect(hidesMemoryPollFrom(orgAdmin, memoryPollMeta as never)).toBe(true);  // 关键：组织 admin 被隐藏
+    expect(hidesMemoryPollFrom(orgUser, memoryPollMeta as never)).toBe(true);
+    expect(hidesMemoryPollFrom(undefined, memoryPollMeta as never)).toBe(true);
+  });
+
+  it('canExposeSessionToUser：组织 admin 看不到自己的记忆轮询（B 方案核心）', () => {
+    expect(canExposeSessionToUser(platformAdmin, memoryPollMeta as never)).toBe(true);
+    expect(canExposeSessionToUser(orgAdmin, memoryPollMeta as never)).toBe(false);
+    expect(canExposeSessionToUser(orgUser, memoryPollMeta as never)).toBe(false);
+    // 但组织 admin 看得到自己的普通会话（其他行为不变）
+    expect(canExposeSessionToUser(orgAdmin, normalMeta as never)).toBe(true);
+  });
+
+  it('存量心跳轮询会话沿用同一收紧规则', () => {
+    const heartbeat = { ...normalMeta, cronJobName: '心跳轮询' };
+    expect(hidesMemoryPollFrom(orgAdmin, heartbeat as never)).toBe(true);
+    expect(hidesMemoryPollFrom(platformAdmin, heartbeat as never)).toBe(false);
   });
 });
 

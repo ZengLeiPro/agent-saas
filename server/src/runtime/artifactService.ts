@@ -3,7 +3,8 @@ import { readFile, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { getTranscriptPath } from '../data/transcripts/store.js';
-import { readSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
+import { readSessionMeta } from '../data/transcripts/meta.js';
+import { hidesMemoryPollFrom } from '../data/sessions/access.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type {
@@ -219,7 +220,7 @@ export class ArtifactService {
     if (!meta) {
       meta = await readSessionMeta(getTranscriptPath(userCwd, sessionId));
     }
-    if (!meta || meta.userId !== user.sub || isMemoryPollSessionMeta(meta)) {
+    if (!meta || meta.userId !== user.sub || hidesMemoryPollFrom({ role: user.role, tenantId: user.tenantId }, meta)) {
       throw new ArtifactServiceError(404, 'Artifact not found');
     }
   }
@@ -276,15 +277,8 @@ function inferKind(fileName?: string): ArtifactKind {
   return 'file';
 }
 
-// 与 data/sessions/access.ts 的 isMemoryPollSessionMeta 对齐（真源=cronSystemKind，
-// 名称后缀仅兼容存量人工任务）。此处保留独立实现是为了避免 runtime → data/sessions
-// 的反向依赖；两处修改必须同步。
-function isMemoryPollSessionMeta(meta: SessionMeta | null | undefined): boolean {
-  if (!meta) return false;
-  if (meta.cronSystemKind === 'memory_poll') return true;
-  const jobName = meta.cronJobName;
-  return Boolean(jobName && (jobName.endsWith('记忆轮询') || jobName.endsWith('心跳轮询')));
-}
+// 记忆/心跳轮询会话可见性统一走 data/sessions/access.ts 的 hidesMemoryPollFrom
+// （2026-07-14 B 方案批次移除本地重复实现）。
 
 function safeEqual(left: string, right: string): boolean {
   const a = Buffer.from(left);

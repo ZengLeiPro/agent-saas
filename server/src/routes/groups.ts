@@ -17,7 +17,7 @@ import { auditLog } from "../data/login-logs/index.js";
 import type { EventBus } from "../channels/web/eventBus.js";
 import type { AgentStore } from "../data/agents/store.js";
 import type { AgentProfileInfo } from "../data/agents/types.js";
-import { isMemoryPollSessionMeta } from "../data/sessions/access.js";
+import { isMemoryPollSessionMeta, hidesMemoryPollFrom } from "../data/sessions/access.js";
 
 type SessionAgent = Pick<
   AgentProfileInfo,
@@ -452,7 +452,7 @@ export function createGroupsRouter(options: GroupsRouterOptions): Router {
               summarizeTranscript(transcriptPath),
             ]);
             if (meta?.deletedAt) return null;
-            if (req.user?.role !== "admin" && meta && isMemoryPollSessionMeta(meta)) {
+            if (hidesMemoryPollFrom(req.user, meta)) {
               return null;
             }
 

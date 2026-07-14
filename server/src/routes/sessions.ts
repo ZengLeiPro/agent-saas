@@ -65,7 +65,7 @@ import { buildPendingInteractionsFromEvents } from "../runtime/interactionProjec
 import { auditLog } from "../data/login-logs/index.js";
 import { apiLogger } from "../utils/logger.js";
 import type { EventBus } from "../channels/web/eventBus.js";
-import { canAccessSession, isMemoryPollSessionMeta } from "../data/sessions/access.js";
+import { canAccessSession, isMemoryPollSessionMeta, hidesMemoryPollFrom } from "../data/sessions/access.js";
 import type { AgentStore } from "../data/agents/store.js";
 import type { AgentProfileInfo } from "../data/agents/types.js";
 import { isAssignedToOrgAgent, type OrgAgentStore } from "../data/orgAgents/store.js";
@@ -729,7 +729,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     if (meta?.deletedAt && !optionsForBuild.includeDeleted) {
       return { ok: false, status: 404, error: "Session not found" };
     }
-    if (req.user?.role !== "admin" && meta && isMemoryPollSessionMeta(meta)) {
+    if (hidesMemoryPollFrom(req.user, meta)) {
       return { ok: false, status: 404, error: "Session not found" };
     }
 
@@ -817,7 +817,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       return { ok: false, status: 403, error: "Access denied" };
     }
     if (meta?.deletedAt) return { ok: false, status: 404, error: "Session not found" };
-    if (req.user?.role !== "admin" && isMemoryPollSessionMeta(meta)) {
+    if (hidesMemoryPollFrom(req.user, meta)) {
       return { ok: false, status: 404, error: "Session not found" };
     }
     return { ok: true, meta };
@@ -1100,7 +1100,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           const meta = authMetaMap!.get(s.sessionId);
           if (!meta || meta.userId !== userId || meta.deletedAt) return false;
           if (meta.kind === "subagent") return false;
-          if (isMemoryPollSessionMeta(meta)) return false;
+          if (hidesMemoryPollFrom(req.user, meta)) return false;
           return true;
         });
       } else {
@@ -1751,7 +1751,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         res.status(403).json({ error: "Access denied" });
         return;
       }
-      if (req.user?.role !== "admin" && meta && isMemoryPollSessionMeta(meta)) {
+      if (hidesMemoryPollFrom(req.user, meta)) {
         res.status(404).json({ error: "Session not found" });
         return;
       }
@@ -1852,9 +1852,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
         if (
-          req.user?.role !== "admin" &&
-          meta &&
-          isMemoryPollSessionMeta(meta)
+          hidesMemoryPollFrom(req.user, meta)
         ) {
           res.status(404).json({ error: "Session not found" });
           return;
@@ -1990,9 +1988,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
         if (
-          req.user?.role !== "admin" &&
-          meta &&
-          isMemoryPollSessionMeta(meta)
+          hidesMemoryPollFrom(req.user, meta)
         ) {
           res.status(404).json({ error: "Session not found" });
           return;
@@ -2082,9 +2078,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
         if (
-          req.user?.role !== "admin" &&
-          meta &&
-          isMemoryPollSessionMeta(meta)
+          hidesMemoryPollFrom(req.user, meta)
         ) {
           res.status(404).json({ error: "Session not found" });
           return;
@@ -2171,9 +2165,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             return;
           }
           if (
-            req.user.role !== "admin" &&
-            meta &&
-            isMemoryPollSessionMeta(meta)
+            hidesMemoryPollFrom(req.user, meta)
           ) {
             res.json({ active: false });
             return;
@@ -2221,7 +2213,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           res.json([]);
           return;
         }
-        if (meta && isMemoryPollSessionMeta(meta)) {
+        if (hidesMemoryPollFrom(req.user, meta)) {
           res.json([]);
           return;
         }
@@ -2503,7 +2495,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
       // 记忆轮询会话对非 admin 视为不存在（不允许删除）
-      if (req.user?.role !== "admin" && isMemoryPollSessionMeta(meta)) {
+      if (hidesMemoryPollFrom(req.user, meta)) {
         res.status(404).json({ error: "Session not found" });
         return;
       }

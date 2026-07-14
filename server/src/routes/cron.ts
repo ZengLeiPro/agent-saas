@@ -14,6 +14,7 @@ import {
 } from "../data/transcripts/index.js";
 import type { GroupStore } from "../data/groups/index.js";
 import { auditLog } from "../data/login-logs/index.js";
+import { isPlatformAdminUser } from "../data/sessions/access.js";
 
 /** 是否可管理/查看：所有登录用户（包括 admin）仅自己的任务；auth 未启用时放行。 */
 function canAccess(req: Request, job: CronJob): boolean {
@@ -23,9 +24,11 @@ function canAccess(req: Request, job: CronJob): boolean {
 
 /**
  * 平台系统任务（memory_poll 等，2026-07-14 批次）：
- * 非 admin 在列表/详情中不可见（与记忆轮询会话隐藏策略一致）；
- * 任何人（含 admin）不得经 API 修改/删除——由平台 reconcile 统一管理，
- * 租户级开关走 TenantSettings.features。
+ * 只有平台管理员（pantheon 租户 admin）能在列表/详情中看到——
+ * 组织管理员与普通用户一律隐藏，与记忆轮询会话可见性保持同一规则
+ * （B 方案，data/sessions/access.ts hidesMemoryPollFrom 同源判断）。
+ * 任何人都不得经 API 修改/删除——由平台 reconcile 统一管理，租户级
+ * 开关走 TenantSettings.features.memoryPollingEnabled。
  */
 function isSystemJob(job: CronJob): boolean {
   return !!job.systemKind;
@@ -33,7 +36,9 @@ function isSystemJob(job: CronJob): boolean {
 
 function canSeeSystemJob(req: Request): boolean {
   if (!req.user) return true;
-  return req.user.role === "admin";
+  return isPlatformAdminUser(req.user
+    ? { role: req.user.role, tenantId: req.user.tenantId }
+    : undefined);
 }
 
 /** 钉钉通知交叉字段校验（Zod 结构校验后的语义校验） */

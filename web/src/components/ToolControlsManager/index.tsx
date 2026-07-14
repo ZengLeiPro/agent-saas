@@ -42,6 +42,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { ImageGenPricingCard } from "@/components/ToolControlsManager/ImageGenPricingCard";
 
 // 缺省视为「启用」以对齐后端语义：WebToolProvider.list() 判 `search.enabled !== false`
 // 即缺省字段视为启用。若这里写 false，config.json 里省略 `enabled` 字段时前端会误
@@ -693,6 +694,10 @@ export function ToolControlsManager() {
           </div>
         </CardContent>
       </Card>
+
+      {/* GenerateImage per-engine 生图定价：与 WebSearch/WebFetch 参数同模式，
+          per-tool 运行参数与工具开关同页维护；独立保存（端点独立，热更即时生效）。 */}
+      <ImageGenPricingCard />
       </div>
     </div>
   );

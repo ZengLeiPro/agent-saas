@@ -244,9 +244,13 @@ function mapBlock(
   switch (block.kind) {
     case "prompt": {
       const parsed = parsePromptContent(block.content);
+      // 优先结构化字段（raw runtime transcript user 行顶层 attachments）；
+      // 文本正则解析仅作旧 SDK 时代 transcript 的 fallback。
+      const attachments = block.attachments?.length ? block.attachments : parsed.attachments;
+      const text = parsed.text === AI_FALLBACK_TEXT && attachments?.length ? '' : parsed.text;
       return {
-        id, type: "user", content: parsed.text,
-        ...(parsed.attachments ? { attachments: parsed.attachments } : {}),
+        id, type: "user", content: text,
+        ...(attachments?.length ? { attachments } : {}),
         ...(parsed.isVoiceTranscript || block.isVoiceTranscript ? { isVoiceTranscript: true } : {}),
         timestamp: block.tsMs,
       };

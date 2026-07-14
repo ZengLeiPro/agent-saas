@@ -208,4 +208,6 @@ export interface ApiTranscriptBlock {
   executionStatus?: "pending" | "running" | "completed" | "failed" | "cancelled";
   subagent?: ApiSubagentActivity;
   isVoiceTranscript?: boolean;
+  /** prompt block：用户消息携带的附件元数据（transcript user 行结构化字段） */
+  attachments?: Array<{ name: string; isImage?: boolean }>;
 }

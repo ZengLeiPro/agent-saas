@@ -60,6 +60,8 @@ export interface TranscriptBlock {
   subagent?: TranscriptSubagentActivity;
   /** User prompt originated from mobile voice transcription */
   isVoiceTranscript?: boolean;
+  /** User prompt 携带的附件元数据（来自 transcript user 行顶层 attachments 字段） */
+  attachments?: Array<{ name: string; isImage?: boolean }>;
   /** compaction block：被摘要替代的历史事件数 */
   coveredEventCount?: number;
 }
@@ -81,6 +83,25 @@ function toTsMs(value: unknown): number | undefined {
     if (Number.isFinite(parsed)) return parsed;
   }
   return undefined;
+}
+
+/** 解析 transcript user 行顶层 attachments 字段（legacyTranscriptProjection userLine 写入） */
+function parseUserAttachments(
+  value: unknown,
+): Array<{ name: string; isImage?: boolean }> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: Array<{ name: string; isImage?: boolean }> = [];
+  for (const item of value) {
+    const name = typeof (item as { name?: unknown })?.name === "string"
+      ? (item as { name: string }).name
+      : undefined;
+    if (!name) continue;
+    out.push({
+      name,
+      ...((item as { isImage?: unknown })?.isImage === true ? { isImage: true } : {}),
+    });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 function formatJson(value: unknown): string {
@@ -318,6 +339,8 @@ async function parseTranscriptFileUncached(
     // User messages
     if (obj?.type === "user" && obj?.message?.content != null) {
       const content = obj.message.content;
+      const userAttachments = parseUserAttachments(obj?.attachments);
+      let attachmentsAttached = false;
       if (Array.isArray(content)) {
         let idx = 0;
         for (const block of content) {
@@ -378,6 +401,9 @@ async function parseTranscriptFileUncached(
             const strippedText = stripTaskNotification(text);
             const promptText = stripTimestampPrefix(stripMemoryContext(strippedText));
             const isVoiceTranscript = isVoiceSttTagged(promptText);
+            // 附件只附到本行第一个 prompt block，避免多 text block 重复展示
+            const attachHere = userAttachments && !attachmentsAttached;
+            if (attachHere) attachmentsAttached = true;
             blocks.push({
               id: `line-${lines}-user-${idx}`,
               tsMs,
@@ -386,6 +412,7 @@ async function parseTranscriptFileUncached(
               defaultOpen: true,
               content: stripVoiceSttTag(promptText),
               ...(isVoiceTranscript ? { isVoiceTranscript: true } : {}),
+              ...(attachHere ? { attachments: userAttachments } : {}),
             });
             continue;
           }
@@ -438,6 +465,7 @@ async function parseTranscriptFileUncached(
           defaultOpen: true,
           content: stripVoiceSttTag(promptText),
           ...(isVoiceTranscript ? { isVoiceTranscript: true } : {}),
+          ...(userAttachments ? { attachments: userAttachments } : {}),
         });
       }
       continue;

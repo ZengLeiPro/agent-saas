@@ -12,10 +12,19 @@ function jsonl(obj: unknown): string {
   return JSON.stringify(obj) + '\n';
 }
 
-function userLine(content: string, sessionId: string): string {
+function userLine(
+  content: string,
+  sessionId: string,
+  attachments?: ReadonlyArray<{ originalName: string; isImage: boolean }>,
+): string {
   return jsonl({
     type: 'user',
     message: { role: 'user', content },
+    // 刷新后前端历史回放的附件展示来源（parse.ts → prompt block.attachments）。
+    // 只存展示所需最小集；模型上下文的完整 ModelAttachmentRef 仍在 PG event store。
+    ...(attachments?.length
+      ? { attachments: attachments.map((a) => ({ name: a.originalName, isImage: a.isImage })) }
+      : {}),
     sessionId,
     timestamp: new Date().toISOString(),
   });
@@ -92,7 +101,7 @@ export class LegacyTranscriptProjection {
         // 系统命令替身（/compact 等）不进前端历史——压缩在 transcript 里由
         // compaction line（分界线）呈现，命令气泡本身不保留
         if (event.modelContent?.startsWith('[系统命令]')) return null;
-        return userLine(event.content, event.sessionId);
+        return userLine(event.content, event.sessionId, event.attachments);
       case 'compaction':
         // v2：投影为压缩分界线。前端渲染分界线组件；摘要仅 debugMode 展开查看
         return jsonl({

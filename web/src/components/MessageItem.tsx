@@ -361,9 +361,8 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
         .then(setPreviewSrc)
         .catch(() => setPreviewSrc(filePath));
     } else if (isPreviewable && filePreview) {
-      // md/PDF/text/code/video 附件卡直接 dock 到右侧面板，让用户在预览的同时
-      // 继续对话；FileBrowser、代码块内联路径等其他调用点默认仍是 dialog。
-      filePreview.openPreview(filePath, owner, { mode: "side" });
+      // 普通附件卡使用默认 dialog；用户仍可在弹窗中主动切换到右侧预览栏。
+      filePreview.openPreview(filePath, owner);
     }
   };
 

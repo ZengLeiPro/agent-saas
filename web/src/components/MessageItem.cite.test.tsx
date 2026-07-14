@@ -5,7 +5,7 @@
  * 8. FILE+CITE 同消息双卡渲染 + 纯 FILE 行为回归
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MessageItem } from './MessageItem';
 import { FilePreviewProvider } from '@/contexts/FilePreviewContext';
 import type { MessageItem as MessageItemType } from './types';
@@ -29,9 +29,9 @@ function textMessage(content: string, streaming: boolean): MessageItemType {
   return { id: 'line-1', type: 'text', content, streaming };
 }
 
-function renderMessage(message: MessageItemType) {
+function renderMessage(message: MessageItemType, openPreview = vi.fn()) {
   return render(
-    <FilePreviewProvider value={{ openPreview: vi.fn() }}>
+    <FilePreviewProvider value={{ openPreview }}>
       <MessageItem message={message} index={0} />
     </FilePreviewProvider>,
   );
@@ -66,5 +66,14 @@ describe('MessageItem CITE 渲染', () => {
     expect(screen.getByText('output.xlsx')).toBeTruthy();
     expect(screen.getByRole('button', { name: '下载 output.xlsx' })).toBeTruthy();
     expect(document.body.textContent).not.toContain('[FILE]');
+  });
+
+  it('普通文件卡点击后使用默认弹窗预览', () => {
+    const openPreview = vi.fn();
+    renderMessage(textMessage('方案 [FILE]{"filePath":"assets/方案.pdf"}[/FILE]', false), openPreview);
+
+    fireEvent.click(screen.getByText('方案.pdf'));
+
+    expect(openPreview).toHaveBeenCalledWith('assets/方案.pdf', undefined);
   });
 });

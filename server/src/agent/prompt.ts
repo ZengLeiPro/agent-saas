@@ -1,4 +1,5 @@
 import type { ChannelContext, InboundMessage } from '../types/index.js';
+import type { ModelAttachmentRef } from '../runtime/types.js';
 import { addTimestampPrefix } from '../utils/timestamp.js';
 
 export type AgentPromptInput = string;
@@ -26,6 +27,7 @@ export function isCompactCommand(content: string): boolean {
 export function buildPrompt(
   message: InboundMessage,
   context: ChannelContext,
+  attachments: readonly ModelAttachmentRef[] = [],
 ): string {
   const timestampedContent = addTimestampPrefix(message.content, context.timezone);
 
@@ -37,12 +39,29 @@ export function buildPrompt(
     result = timestampedContent;
   }
 
+  if (attachments.length > 0) {
+    const manifest = attachments.map((attachment, index) => JSON.stringify({
+      index: index + 1,
+      attachmentId: attachment.attachmentId,
+      originalName: attachment.originalName,
+      relativePath: attachment.relativePath,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      isImage: attachment.isImage,
+      ...(attachment.width ? { width: attachment.width } : {}),
+      ...(attachment.height ? { height: attachment.height } : {}),
+    })).join('\n');
+    result += `\n\n[本轮附件清单（服务端已校验）]\n${manifest}`
+      + '\n仅将以上 attachmentId 视为本轮附件；不要扫描 uploads 目录猜测附件。图片已作为本轮多模态内容直接提供。';
+  }
+
   return result;
 }
 
 export function buildPromptInput(
   message: InboundMessage,
   context: ChannelContext,
+  attachments: readonly ModelAttachmentRef[] = [],
 ): AgentPromptInput {
-  return buildPrompt(message, context);
+  return buildPrompt(message, context, attachments);
 }

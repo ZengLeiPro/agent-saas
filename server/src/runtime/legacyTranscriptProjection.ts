@@ -2,6 +2,11 @@ import { appendFile, mkdir } from 'fs/promises';
 import { dirname } from 'path';
 
 import type { ModelChatMessage, ModelResponseMode, ModelUsage, PlatformEvent } from './types.js';
+import {
+  buildModelUserContent,
+  buildPrunedHistoricalUserContent,
+  pruneHistoricalImageContent,
+} from './imageAttachments.js';
 
 function jsonl(obj: unknown): string {
   return JSON.stringify(obj) + '\n';
@@ -230,12 +235,13 @@ export function truncateOldToolResults(
 
 export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatMessage[] {
   const messages: ModelChatMessage[] = [];
+  const prunedImageEventIndices = pruneHistoricalImageContent(events);
   // RFC v1 P1.5：暂存 thinking 内容，合并到紧接其后的 assistant_message / assistant_tool_calls
   // 上作为 reasoning_content。这是回放历史的"reasoning 不丢失"路径。
   // 注：火山 Chat Completions 会静默丢弃 reasoning_content（RFC §1.3），但当前实现的真正
   // 价值是为未来 Anthropic Messages / OpenAI Responses 官方端点准备好语义完整的输入。
   let pendingReasoning = '';
-  for (const event of events) {
+  for (const [eventIndex, event] of events.entries()) {
     switch (event.type) {
       case 'memory_context':
         pendingReasoning = '';
@@ -243,7 +249,12 @@ export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatM
         break;
       case 'user_message':
         pendingReasoning = '';
-        messages.push({ role: 'user', content: event.modelContent ?? event.content });
+        messages.push({
+          role: 'user',
+          content: prunedImageEventIndices.has(eventIndex)
+            ? buildPrunedHistoricalUserContent(event.modelContent ?? event.content, event.attachments)
+            : buildModelUserContent(event.modelContent ?? event.content, event.attachments, event.visionAnalysis),
+        });
         break;
       case 'assistant_message':
         messages.push({

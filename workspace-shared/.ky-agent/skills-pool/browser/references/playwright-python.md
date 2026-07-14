@@ -7,7 +7,7 @@ The browser skill runs inside the ACS Sandbox. Use Python Playwright directly or
 ```python
 page.goto('https://example.com', wait_until='domcontentloaded')
 print(page.title())
-page.screenshot(path='assets/20260701/browser/page.png', full_page=True)
+screenshot('assets/20260701/browser/page.png', full_page=True)
 ```
 
 Run it with:
@@ -59,6 +59,6 @@ Prefer deterministic artifacts over opaque tracing archives:
 ```python
 out_dir = workspace / 'assets/20260701/browser'
 out_dir.mkdir(parents=True, exist_ok=True)
-page.screenshot(path=str(out_dir / 'debug.png'), full_page=True)
+screenshot(str(out_dir / 'debug.png'), full_page=True)
 (out_dir / 'debug.html').write_text(page.content(), encoding='utf-8')
 ```

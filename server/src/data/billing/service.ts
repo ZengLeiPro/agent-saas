@@ -43,7 +43,11 @@ export class BillingService {
       const rows = await this.options.store.listUnprojectedRuntimeEvents(limit);
       for (const row of rows) {
         lastProjectedSequence = Math.max(lastProjectedSequence, row.globalSequence);
-        if (row.eventType === 'assistant_message' || row.eventType === 'assistant_tool_calls') {
+        if (
+          row.eventType === 'assistant_message'
+          || row.eventType === 'assistant_tool_calls'
+          || row.eventType === 'image_understanding'
+        ) {
           const inserted = await this.projectAssistantUsageEvent(row);
           if (inserted) usageEventsInserted++;
         }

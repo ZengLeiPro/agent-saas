@@ -34,8 +34,9 @@ export interface WsChatMessage {
      */
     orgAgentId?: string;
     attachments?: Array<{
+        attachmentId?: string;
         originalName: string;
-        savedPath: string;
+        savedPath?: string;
         relativePath: string;
         size: number;
         mimeType: string;

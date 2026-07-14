@@ -25,6 +25,8 @@
             "id": "gpt54",
             "name": "GPT 5.4",
             "value": "gpt-5.4",
+            // 服务端只依据显式能力声明发送图片；未知能力默认走图片理解兜底模型。
+            "input_modalities": ["text", "image"],
             // 可选：Token 单价（USD / 1M tokens）。平台管理 → 模型管理可视化维护。
             // 未配置时使用服务端内置价格表；未知模型未配置则 cost=0 并告警。
             "pricing": { "input": 2.5, "output": 15, "cacheCreation": 0, "cacheRead": 0.25 },
@@ -66,7 +68,13 @@
         ]
       }
     ],
-    "default": "gpa/gpt54"
+    "default": "gpa/gpt54",
+    // 主模型未声明 image 输入时，先由该模型看图；可配置按顺序尝试的 fallback。
+    "imageUnderstanding": {
+      "model": "gpa/gpt54",
+      "fallbackModels": [],
+      "timeoutMs": 30000
+    }
   },
 
   // ── 标题生成器 ─────────────────────────────────────────────

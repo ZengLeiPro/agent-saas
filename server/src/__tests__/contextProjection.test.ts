@@ -295,8 +295,8 @@ describe('compaction 切分（/compact 真实现）', () => {
     expect(projection.messages[4]).toMatchObject({ role: 'assistant', content: 'assistant_message-5' });
     expect(projection.messages[5]).toMatchObject({ role: 'user', content: 'user_message-8' });
     // compact run 替身不出现在任何投影消息中
-    expect(projection.messages.some((m) => m.content?.includes('/compact'))).toBe(false);
-    expect(projection.messages.some((m) => m.content?.includes('[系统命令]'))).toBe(false);
+    expect(projection.messages.some((m) => typeof m.content === 'string' && m.content.includes('/compact'))).toBe(false);
+    expect(projection.messages.some((m) => typeof m.content === 'string' && m.content.includes('[系统命令]'))).toBe(false);
   });
 
   it('cutoffEventId 指向不存在的事件时退化为以 compaction 自身为切分点', () => {

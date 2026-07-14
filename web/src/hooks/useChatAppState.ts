@@ -2148,8 +2148,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       ...(autoApproveRunShellForMessage ? { approvalPolicy: { autoApproveTools: true } } : {}),
       attachments: attachments.length > 0
         ? attachments.map((file) => ({
+          ...(file.attachmentId ? { attachmentId: file.attachmentId } : {}),
           originalName: file.originalName,
-          savedPath: file.savedPath,
+          ...(file.savedPath ? { savedPath: file.savedPath } : {}),
           relativePath: file.relativePath,
           size: file.size,
           mimeType: file.mimeType,

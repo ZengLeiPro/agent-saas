@@ -34,6 +34,7 @@ import {
 import { DefaultToolPolicy } from './toolPolicy.js';
 import { standardizeToolError } from './agentPlanDefense.js';
 import { buildChatMessagesFromEvents, LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
+import { buildModelUserContent } from './imageAttachments.js';
 import { buildContextProjection, type ContextReconstructionPolicy } from './contextProjection.js';
 import { RuntimeContextUsageTracker } from './contextUsage.js';
 import {
@@ -498,7 +499,7 @@ export class RawAgentLoop implements AgentLoop {
       { role: 'system', content: input.instructions },
       ...memoryMessage,
       ...contextProjection.messages,
-      { role: 'user', content: input.prompt },
+      { role: 'user', content: buildModelUserContent(input.prompt, input.attachments, input.visionAnalysis) },
     ];
 
     if (contextProjection.summaryEvent) await this.append(contextProjection.summaryEvent);
@@ -519,6 +520,8 @@ export class RawAgentLoop implements AgentLoop {
         sessionId: context.sessionId,
         content: input.message.content,
         modelContent: input.prompt,
+        ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+        ...(input.visionAnalysis ? { visionAnalysis: input.visionAnalysis } : {}),
       });
     }
 

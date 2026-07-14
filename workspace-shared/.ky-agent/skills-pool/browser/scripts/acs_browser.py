@@ -9,6 +9,7 @@ the legacy host-side /internal/browser API and does not depend on playwright-cli
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
@@ -16,7 +17,10 @@ from pathlib import Path
 
 
 DEFAULT_TIMEOUT_MS = 30_000
+DEFAULT_FONT_WAIT_MS = 3_000
 DEFAULT_VIEWPORT = {"width": 1440, "height": 1000}
+MAX_CDP_SCREENSHOT_DIMENSION = 32_767
+PLAYWRIGHT_SKIP_FONT_WAIT_ENV = "PW_TEST_SCREENSHOT_NO_FONTS_READY"
 
 
 def workspace_root() -> Path:
@@ -57,6 +61,11 @@ def downloads_dir() -> Path:
 
 
 def load_playwright():
+    # Playwright otherwise waits on document.fonts.ready for every page and
+    # locator screenshot. A single permanently pending webfont can block the
+    # screenshot until the whole action times out. Keep a short, bounded grace
+    # period in capture_screenshot(), but never let fonts make screenshots fail.
+    os.environ[PLAYWRIGHT_SKIP_FONT_WAIT_ENV] = "1"
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:  # pragma: no cover - depends on runtime image
@@ -81,6 +90,8 @@ def open_context(args):
         viewport=DEFAULT_VIEWPORT,
         args=["--disable-dev-shm-usage"],
     )
+    context.set_default_timeout(args.timeout_ms)
+    context.set_default_navigation_timeout(args.timeout_ms)
     return playwright, context
 
 
@@ -99,6 +110,97 @@ def goto_if_needed(page, url: str | None, timeout_ms: int, wait_until: str) -> N
     if not url:
         return
     page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+
+
+def wait_for_fonts(page, timeout_ms: int) -> bool:
+    """Give webfonts a bounded grace period without making screenshots depend on them."""
+    if timeout_ms <= 0:
+        return False
+    try:
+        return bool(
+            page.evaluate(
+                """
+                async (timeoutMs) => {
+                  if (!document.fonts || document.fonts.status === "loaded") return true;
+                  return await Promise.race([
+                    document.fonts.ready.then(() => true, () => false),
+                    new Promise(resolve => setTimeout(() => resolve(false), timeoutMs)),
+                  ]);
+                }
+                """,
+                timeout_ms,
+            )
+        )
+    except Exception:
+        return False
+
+
+def _cdp_screenshot(page, out: Path, full_page: bool) -> bytes:
+    """Capture the current Chromium surface without Playwright's preparation pipeline."""
+    client = page.context.new_cdp_session(page)
+    try:
+        file_type = "jpeg" if out.suffix.lower() in {".jpg", ".jpeg"} else "png"
+        params: dict = {
+            "format": file_type,
+            "captureBeyondViewport": full_page,
+            "fromSurface": True,
+        }
+        if file_type == "jpeg":
+            params["quality"] = 90
+        if full_page:
+            metrics = client.send("Page.getLayoutMetrics")
+            content_size = metrics.get("cssContentSize") or metrics.get("contentSize") or {}
+            width = min(
+                MAX_CDP_SCREENSHOT_DIMENSION,
+                max(1, float(content_size.get("width", DEFAULT_VIEWPORT["width"]))),
+            )
+            height = min(
+                MAX_CDP_SCREENSHOT_DIMENSION,
+                max(1, float(content_size.get("height", DEFAULT_VIEWPORT["height"]))),
+            )
+            params["clip"] = {"x": 0, "y": 0, "width": width, "height": height, "scale": 1}
+        result = client.send("Page.captureScreenshot", params)
+        data = base64.b64decode(result["data"])
+        out.write_bytes(data)
+        return data
+    finally:
+        try:
+            client.detach()
+        except Exception:
+            pass
+
+
+def capture_screenshot(
+    page,
+    out: Path,
+    *,
+    full_page: bool = False,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
+    font_wait_ms: int = DEFAULT_FONT_WAIT_MS,
+) -> dict:
+    """Take a screenshot without allowing webfonts to become a hard dependency."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fonts_ready = wait_for_fonts(page, font_wait_ms)
+    try:
+        data = page.screenshot(path=str(out), full_page=full_page, timeout=timeout_ms)
+        return {
+            "method": "playwright",
+            "fontsReady": fonts_ready,
+            "sizeBytes": len(data),
+        }
+    except Exception as playwright_error:
+        try:
+            data = _cdp_screenshot(page, out, full_page)
+        except Exception as cdp_error:
+            raise RuntimeError(
+                f"截图失败：Playwright={playwright_error}; CDP fallback={cdp_error}"
+            ) from cdp_error
+        return {
+            "method": "cdp-fallback",
+            "fontsReady": fonts_ready,
+            "sizeBytes": len(data),
+            "playwrightError": str(playwright_error),
+        }
 
 
 def collect_dom_summary(page) -> dict:
@@ -183,10 +285,19 @@ def command_screenshot(args) -> None:
         goto_if_needed(page, args.url, args.timeout_ms, args.wait_until)
         out = resolve_workspace_path(args.out, "assets/browser/screenshot.png")
         assert out is not None
-        page.screenshot(path=str(out), full_page=args.full_page)
+        result = capture_screenshot(
+            page,
+            out,
+            full_page=args.full_page,
+            timeout_ms=args.timeout_ms,
+            font_wait_ms=args.font_wait_ms,
+        )
         if args.text_out:
             write_snapshot(collect_dom_summary(page), resolve_workspace_path(args.text_out))
-        print(f"screenshot saved: {out}")
+        print(
+            f"screenshot saved: {out} method={result['method']} "
+            f"fontsReady={str(result['fontsReady']).lower()} size={result['sizeBytes']}"
+        )
     finally:
         close_context(playwright, context)
 
@@ -224,6 +335,25 @@ def command_run(args) -> None:
     try:
         page = first_page(context)
         goto_if_needed(page, args.url, args.timeout_ms, args.wait_until)
+
+        def screenshot(
+            path: str,
+            *,
+            full_page: bool = False,
+            timeout_ms: int | None = None,
+            font_wait_ms: int | None = None,
+        ) -> dict:
+            out = resolve_workspace_path(path)
+            if out is None:
+                raise ValueError("截图输出路径不能为空")
+            return capture_screenshot(
+                page,
+                out,
+                full_page=full_page,
+                timeout_ms=timeout_ms if timeout_ms is not None else args.timeout_ms,
+                font_wait_ms=font_wait_ms if font_wait_ms is not None else args.font_wait_ms,
+            )
+
         namespace = {
             "__name__": "__acs_browser_task__",
             "page": page,
@@ -232,6 +362,7 @@ def command_run(args) -> None:
             "downloads": downloads_dir(),
             "Path": Path,
             "json": json,
+            "screenshot": screenshot,
         }
         exec(compile(script_path.read_text(encoding="utf-8"), str(script_path), "exec"), namespace)
     finally:
@@ -242,6 +373,12 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--session", default="default", help="持久浏览器 profile 名称，默认 default")
     parser.add_argument("--headed", action="store_true", help="有显示服务时可用；ACS 默认应使用无头模式")
     parser.add_argument("--timeout-ms", type=int, default=DEFAULT_TIMEOUT_MS)
+    parser.add_argument(
+        "--font-wait-ms",
+        type=int,
+        default=DEFAULT_FONT_WAIT_MS,
+        help="截图前等待网页字体的最长时间；超时仍会捕获当前画面，默认 3000ms",
+    )
     parser.add_argument(
         "--wait-until",
         choices=["commit", "domcontentloaded", "load", "networkidle"],

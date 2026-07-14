@@ -181,6 +181,40 @@ describe('BillingService hard cap guard', () => {
     expect(store.settleRunDebit).toHaveBeenCalledWith('tenant-1', 'run-1');
   });
 
+  it('projects independent image-understanding usage into the immutable billing ledger', async () => {
+    const store = {
+      getProjectionState: vi.fn(async () => 0),
+      listUnprojectedRuntimeEvents: vi.fn(async () => [{
+        globalSequence: 1,
+        eventId: 'event-vision',
+        eventType: 'image_understanding',
+        tenantId: 'tenant-1',
+        runModel: 'text-main',
+        runChannel: 'web',
+        timestamp: '2026-07-14T08:00:00.000Z',
+        eventJson: {
+          type: 'image_understanding',
+          id: 'event-vision',
+          runId: 'run-vision',
+          sessionId: 'session-vision',
+          model: 'vision-helper',
+          status: 'completed',
+          usage: { inputTokens: 800, outputTokens: 120 },
+        },
+      }]),
+      insertUsageEvent: vi.fn(async () => ({ id: 'usage-vision' })),
+      setProjectionState: vi.fn(async () => undefined),
+    };
+    const service = new BillingService({ store: store as any });
+
+    await expect(service.projectRuntimeEvents()).resolves.toMatchObject({ usageEventsInserted: 1 });
+    expect(store.insertUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      modelValue: 'vision-helper',
+      runId: 'run-vision',
+      usage: { inputTokens: 800, outputTokens: 120 },
+    }));
+  });
+
   it('settles billable usage when a run is cancelled without run_finished', async () => {
     const store = {
       getProjectionState: vi.fn(async () => 0),

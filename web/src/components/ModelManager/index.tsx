@@ -32,6 +32,7 @@ type EditableModel = {
   reasoning_effort?: string;
   reasoningEffort?: string;
   extraBody?: Record<string, unknown>;
+  input_modalities?: Array<"text" | "image">;
   protocol?: ModelProtocol;
   usage_accounting?: "input_includes_cache" | "cache_tokens_separate";
   alias_actual?: string;
@@ -53,6 +54,7 @@ type EditableGroup = {
   reasoning_effort?: string;
   reasoningEffort?: string;
   extraBody?: Record<string, unknown>;
+  input_modalities?: Array<"text" | "image">;
   models: EditableModel[];
 };
 
@@ -60,6 +62,11 @@ type EditableModelsConfig = {
   groups: EditableGroup[];
   default: string;
   allowCrossGroupSwitch: boolean;
+  imageUnderstanding?: {
+    model: string;
+    fallbackModels?: string[];
+    timeoutMs?: number;
+  };
 };
 
 type EditableMemoryIndexConfig = {
@@ -178,6 +185,10 @@ function resolveGroupReasoningEffort(group: EditableGroup): string | undefined {
 
 function resolveModelReasoningEffort(group: EditableGroup, model: EditableModel): string | undefined {
   return model.reasoning_effort ?? model.reasoningEffort ?? resolveGroupReasoningEffort(group);
+}
+
+function resolveModelImageInput(group: EditableGroup, model: EditableModel): boolean {
+  return (model.input_modalities ?? group.input_modalities)?.includes("image") === true;
 }
 
 function formatEffectiveValue(value: string | undefined): string {
@@ -587,6 +598,66 @@ export function ModelManager() {
                     </select>
                     <p className="text-xs text-muted-foreground">新会话与失效模型回退时使用的默认模型。</p>
                   </div>
+                  <div className="space-y-1.5">
+                    <Label>图片理解兜底模型</Label>
+                    <select
+                      className="h-9 w-full rounded-md border bg-card px-3 text-sm"
+                      value={models.imageUnderstanding?.model ?? ""}
+                      onChange={(e) => updateModels((current) => ({
+                        ...current,
+                        imageUnderstanding: e.target.value
+                          ? { ...(current.imageUnderstanding ?? { model: e.target.value }), model: e.target.value }
+                          : undefined,
+                      }))}
+                    >
+                      <option value="">未配置（text-only 模型只收到明确占位）</option>
+                      {models.groups.flatMap((group) => group.models.map((model) => (
+                        <option key={`${group.id}/${model.id}`} value={`${group.id}/${model.id}`}>{group.name}/{model.name}</option>
+                      )))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">主模型未声明 image 输入时，由该模型先看图并生成带来源标记的视觉摘要。</p>
+                  </div>
+                  {models.imageUnderstanding && (
+                    <>
+                      <div className="space-y-1.5">
+                        <Label>图片理解 fallback 模型</Label>
+                        <Input
+                          placeholder="group/model, group/backup-model"
+                          value={(models.imageUnderstanding.fallbackModels ?? []).join(", ")}
+                          onChange={(e) => updateModels((current) => ({
+                            ...current,
+                            imageUnderstanding: current.imageUnderstanding
+                              ? {
+                                  ...current.imageUnderstanding,
+                                  fallbackModels: e.target.value
+                                    .split(",")
+                                    .map((value) => value.trim())
+                                    .filter(Boolean),
+                                }
+                              : undefined,
+                          }))}
+                        />
+                        <p className="text-xs text-muted-foreground">可选；主图片理解模型失败后按顺序尝试，使用 group/model 引用并以逗号分隔。</p>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>图片理解超时（ms）</Label>
+                        <Input
+                          type="number"
+                          min="1000"
+                          max="120000"
+                          step="1000"
+                          placeholder="30000"
+                          value={models.imageUnderstanding.timeoutMs ?? ""}
+                          onChange={(e) => updateModels((current) => ({
+                            ...current,
+                            imageUnderstanding: current.imageUnderstanding
+                              ? { ...current.imageUnderstanding, timeoutMs: e.target.value ? Number(e.target.value) : undefined }
+                              : undefined,
+                          }))}
+                        />
+                      </div>
+                    </>
+                  )}
                   <label className="flex items-start gap-2 text-sm md:col-span-2">
                     <input type="checkbox" className="mt-0.5" checked={models.allowCrossGroupSwitch} onChange={(e) => updateModels((current) => ({ ...current, allowCrossGroupSwitch: e.target.checked }))} />
                     <span>允许会话中跨分组切换模型</span>
@@ -710,6 +781,7 @@ export function ModelManager() {
                 </div>
                 <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_response_chaining} onChange={(e) => updateGroup(selectedGroup.id, { disable_response_chaining: e.target.checked ? undefined : true })} /><span>启用 Responses 有状态接力（previous_response_id）<span className="block text-xs text-muted-foreground">开启后会使用 previous_response_id 连接多轮 Responses 调用。适用于原生 Responses 服务，如火山等。无状态 OpenAI 兼容代理，例如 cli-proxy，请关闭，否则工具调用后可能报 "No tool call found for function call output"。</span></span></label>
                 <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_prompt_cache_key} onChange={(e) => updateGroup(selectedGroup.id, { disable_prompt_cache_key: e.target.checked ? undefined : true })} /><span>启用 prompt_cache_key 内容指纹（Chat Completions + Responses 通用）<span className="block text-xs text-muted-foreground">开启后以 sha256(model + system/instructions + tool 名单) 前 32 hex 作为 prompt_cache_key 传给上游，让相同前缀的请求命中同一缓存分片。07-04 实测 CLIProxyAPI 会为每次请求自动填新 UUID 覆盖 → 缓存永远打散，显式传稳定 key 后 cached_tokens 命中率 76%+。主流 OpenAI 兼容端点 silent ignore 未知字段，默认开启无害；仅在极少数「兼容层会拒绝该字段」的端点上关闭。</span></span></label>
+                <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={selectedGroup.input_modalities?.includes("image") === true} onChange={(e) => updateGroup(selectedGroup.id, { input_modalities: e.target.checked ? ["text", "image"] : ["text"] })} /><span>分组模型支持图片输入<span className="block text-xs text-muted-foreground">只在已验证 provider 协议确实支持视觉时开启；模型可单独覆盖。</span></span></label>
                 <div className="space-y-1.5"><Label>Group extraBody JSON</Label><Textarea className="min-h-28 font-mono text-xs" value={advancedText[selectedGroup.id]?.groupExtraBody ?? ""} onChange={(e) => setAdvancedText((current) => ({ ...current, [selectedGroup.id]: { ...(current[selectedGroup.id] ?? { modelExtraBody: {}, modelThinking: {}, groupExtraBody: "", groupThinking: "" }), groupExtraBody: e.target.value } }))} /></div>
                 <div className="space-y-1.5"><Label>Group thinking JSON</Label><Textarea className="min-h-28 font-mono text-xs" value={advancedText[selectedGroup.id]?.groupThinking ?? ""} onChange={(e) => setAdvancedText((current) => ({ ...current, [selectedGroup.id]: { ...(current[selectedGroup.id] ?? { modelExtraBody: {}, modelThinking: {}, groupExtraBody: "", groupThinking: "" }), groupThinking: e.target.value } }))} /></div>
               </CardContent>
@@ -764,6 +836,21 @@ export function ModelManager() {
                     <p className="text-xs text-muted-foreground">当前生效：{resolveModelProtocol(selectedModelContext.group, selectedModelContext.model)}</p>
                   </div>
                   <div className="space-y-1.5"><Label>usage accounting</Label><select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedModelContext.model.usage_accounting ?? ""} onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, { usage_accounting: e.target.value ? e.target.value as EditableModel["usage_accounting"] : undefined })}><option value="">auto / inferred</option><option value="input_includes_cache">input includes cache</option><option value="cache_tokens_separate">cache tokens separate</option></select><p className="text-xs text-muted-foreground">auto: claude-* uses separate cache tokens; other models treat cached tokens as part of input.</p></div>
+                  <div className="space-y-1.5">
+                    <Label>图片输入能力</Label>
+                    <select
+                      className="h-9 w-full rounded-md border bg-card px-3 text-sm"
+                      value={selectedModelContext.model.input_modalities === undefined ? "inherit" : (selectedModelContext.model.input_modalities.includes("image") ? "image" : "text")}
+                      onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, {
+                        input_modalities: e.target.value === "inherit" ? undefined : (e.target.value === "image" ? ["text", "image"] : ["text"]),
+                      })}
+                    >
+                      <option value="inherit">继承分组</option>
+                      <option value="image">text + image</option>
+                      <option value="text">仅 text</option>
+                    </select>
+                    <p className="text-xs text-muted-foreground">当前生效：{resolveModelImageInput(selectedModelContext.group, selectedModelContext.model) ? "text + image" : "仅 text / unknown"}</p>
+                  </div>
                 </div>
 
                 <div className="rounded-md border bg-muted/20 p-3">

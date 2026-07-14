@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { basename, extname, join, relative } from 'path';
 import multer from 'multer';
 import { Router } from 'express';
@@ -42,13 +43,12 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
       cb(null, userUploadsDir);
     },
     filename: (_req, file, cb) => {
-      const timestamp = Date.now();
       const fixedName = fixFilename(file.originalname);
       const ext = extname(fixedName);
       const baseName = basename(fixedName, ext)
         .replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, '_')
         .substring(0, 100);
-      cb(null, `${timestamp}_${baseName}${ext}`);
+      cb(null, `${randomUUID()}_${baseName || 'file'}${ext}`);
     },
   });
 
@@ -78,10 +78,14 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
         repairWorkspacePath(file.path, 0o664);
         const isImage = file.mimetype.startsWith('image/');
         const supportedImageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+        const isVoiceUpload = file.mimetype.startsWith('audio/')
+          || /\.(wav|mp3|m4a|amr|ogg)$/i.test(file.originalname);
 
         return {
+          attachmentId: file.filename.slice(0, file.filename.indexOf('_')),
           originalName: fixFilename(file.originalname),
-          savedPath: file.path,
+          // 旧语音转写链仍消费绝对路径；普通附件只向 Web 客户端暴露 opaque ID + 相对路径。
+          ...(isVoiceUpload ? { savedPath: file.path } : {}),
           relativePath: relative(userCwd, file.path),
           size: file.size,
           mimeType: file.mimetype,

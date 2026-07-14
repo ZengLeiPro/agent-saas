@@ -2409,7 +2409,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     // 保留窗口原文
     expect(projection.messages[1]).toMatchObject({ role: 'user', content: '那 C 方案呢' });
     expect(projection.messages[4]).toMatchObject({ role: 'assistant', content: 'D 方案与 B 接近，仍推荐 B。' });
-    expect(projection.messages.some((m) => m.content?.includes('/compact'))).toBe(false);
+    expect(projection.messages.some((m) => typeof m.content === 'string' && m.content.includes('/compact'))).toBe(false);
   });
 
   it('Responses 接力状态存在时透传 previousResponseId（远端已存历史，input 只有增量）', async () => {

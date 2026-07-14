@@ -12,8 +12,9 @@ import { getPlatform } from '../../platform/context';
 export interface SendChatOptions {
   inputText: string;
   attachments?: Array<{
+    attachmentId?: string;
     originalName: string;
-    savedPath: string;
+    savedPath?: string;
     relativePath: string;
     size: number;
     mimeType: string;
@@ -90,8 +91,9 @@ export async function sendChatViaWs(opts: SendChatOptions): Promise<boolean> {
     ...(autoApproveRunShell ? { approvalPolicy: { autoApproveTools: true } } : {}),
     ...(attachments.length > 0 ? {
       attachments: attachments.map(f => ({
+        ...(f.attachmentId ? { attachmentId: f.attachmentId } : {}),
         originalName: f.originalName,
-        savedPath: f.savedPath,
+        ...(f.savedPath ? { savedPath: f.savedPath } : {}),
         relativePath: f.relativePath,
         size: f.size,
         mimeType: f.mimeType,

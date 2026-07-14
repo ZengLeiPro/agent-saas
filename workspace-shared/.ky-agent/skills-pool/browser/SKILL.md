@@ -14,6 +14,7 @@ Use the browser through Python Playwright inside the current ACS Sandbox. The sa
 - Browser profile data is stored under `.ky-agent/runtime/browser-profiles/<session>/`.
 - Downloads go to `$DOWNLOAD_DIR` / `$XDG_DOWNLOAD_DIR`, normally `downloads/`.
 - Outputs for the user should be saved under `assets/yyyymmdd/browser/`.
+- Screenshots never depend indefinitely on webfonts: the helper gives fonts a bounded grace period, captures the current raster, and automatically falls back to Chromium CDP if the standard Playwright path fails.
 - If Python Playwright is missing, report an ACS image/runtime dependency gap. Do not install global packages during a user task.
 
 ## Quick Commands
@@ -74,6 +75,7 @@ Inside a `run` script, these globals are available:
 - `workspace`: workspace root as `Path`
 - `downloads`: downloads directory as `Path`
 - `Path`, `json`
+- `screenshot(path, full_page=False)`: resilient screenshot helper with bounded font wait and automatic CDP fallback
 
 Example custom script:
 
@@ -83,7 +85,7 @@ page.keyboard.press('Enter')
 page.wait_for_load_state('domcontentloaded')
 out = workspace / 'assets/20260701/browser/search.png'
 out.parent.mkdir(parents=True, exist_ok=True)
-page.screenshot(path=str(out), full_page=True)
+screenshot(str(out), full_page=True)
 print(out)
 ```
 
@@ -114,3 +116,5 @@ Explain accurately: the browser profile is stored in the user's workspace sandbo
 - Browser launch fails with missing executable: ACS image did not install Chromium or `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` is broken.
 - Login state not retained: reuse the same `--session` name; profile persistence is per session name.
 - Page is blank or blocked: try a custom script with longer waits, lower concurrency, or ask the user to complete a headed/manual login path if the platform supports it.
+- Screenshot reports `fontsReady=false`: the page still had pending fonts after the bounded grace period, but the current raster was captured successfully; do not retry merely to wait for fonts.
+- Screenshot reports `method=cdp-fallback`: standard Playwright capture failed and the helper recovered automatically. Continue the task if the image is valid; report a platform issue only if both paths fail.

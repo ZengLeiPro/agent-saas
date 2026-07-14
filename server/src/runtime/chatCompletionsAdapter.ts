@@ -19,6 +19,7 @@ import {
   detectMojibake,
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
+import { modelSupportsImage, readModelImageDataUrl, toTextOnlyContent } from './imageAttachments.js';
 
 const logger = createLogger('Cache');
 const CHAT_COMPLETIONS_MAX_FETCH_ATTEMPTS = 3;
@@ -71,11 +72,34 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
     // adapter 不得读取当前时钟改写历史，否则 full replay 的 prompt prefix 会失稳。
     // 平台注入上下文块只保留 escape；与 ResponsesApiAdapter 对齐。
     const sessionIdShort = context.sessionId ? context.sessionId.slice(0, 8) : undefined;
-    const defendedMessages: ModelChatMessage[] = request.messages.map((m) => (
-      m.role === 'user'
-        ? { ...m, content: defendUserMessageText(m.content, sessionIdShort) }
-        : m
-    ));
+    const defendedMessages = await Promise.all(request.messages.map(async (message) => {
+      if (message.role !== 'user') return message;
+      if (typeof message.content === 'string') {
+        return { ...message, content: defendUserMessageText(message.content, sessionIdShort) };
+      }
+      if (!modelSupportsImage(this.providerOptions.inputModalities)) {
+        return {
+          ...message,
+          content: defendUserMessageText(toTextOnlyContent(message.content), sessionIdShort),
+        };
+      }
+      const content: Array<Record<string, unknown>> = [];
+      for (const part of message.content) {
+        if (part.type === 'vision_summary') continue;
+        if (part.type === 'text') {
+          content.push({ type: 'text', text: defendUserMessageText(part.text, sessionIdShort) });
+          continue;
+        }
+        content.push({
+          type: 'image_url',
+          image_url: {
+            url: await readModelImageDataUrl(context.cwd, part),
+            detail: part.detail === 'original' ? 'high' : part.detail,
+          },
+        });
+      }
+      return { ...message, content };
+    }));
 
     const body = {
       model: request.model,

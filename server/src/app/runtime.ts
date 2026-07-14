@@ -61,6 +61,7 @@ import { resolveModelRef } from './models.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
+import type { ImageUnderstandingModelConfig } from '../runtime/imageUnderstanding.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import { PgGuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
 import { PgMessageFeedbackStore } from '../data/feedback/store.js';
@@ -1309,6 +1310,28 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     dispatch: config.dispatch,
     executionConfig,
     modelResolver,
+    getImageUnderstandingModelConfigs: (): ImageUnderstandingModelConfig[] => {
+      const imageUnderstanding = config.models?.imageUnderstanding;
+      if (!config.models || !imageUnderstanding) return [];
+      return [imageUnderstanding.model, ...(imageUnderstanding.fallbackModels ?? [])]
+        .filter((ref) => {
+          const separator = ref.indexOf('/');
+          if (separator < 1) return false;
+          const groupId = ref.slice(0, separator);
+          const modelId = ref.slice(separator + 1);
+          return config.models!.groups.some((group) => (
+            group.id === groupId && group.models.some((model) => model.id === modelId)
+          ));
+        })
+        .map((ref) => resolveModelRef(config.models!, ref))
+        .filter((resolved): resolved is NonNullable<typeof resolved> => !!resolved)
+        .map((resolved) => ({
+          model: resolved.model,
+          connection: resolved.connection,
+          providerOptions: resolved.providerOptions,
+        }));
+    },
+    getImageUnderstandingTimeoutMs: () => config.models?.imageUnderstanding?.timeoutMs,
     toolControls: config.toolControls,
     // 子 agent 工具（2026-07-06）：两者都在本 config 构造之后才就绪
     // （billingService 赋值在上文 ~L658，tokenUsageStore 声明在下文 ~L1280），

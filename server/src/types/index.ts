@@ -14,8 +14,11 @@ import type { Express } from "express";
 export type ChannelType = "web" | "dingtalk" | "cron";
 
 export interface UploadedFileInfo {
+  /** 服务端生成的不可猜附件标识；旧客户端/钉钉存量消息可能缺失。 */
+  attachmentId?: string;
   originalName: string;
-  savedPath: string;
+  /** 仅服务端通道（如钉钉下载）可提供；Web 客户端不再接收或回传宿主机绝对路径。 */
+  savedPath?: string;
   relativePath: string;
   size: number;
   mimeType: string;
@@ -133,6 +136,8 @@ export interface ModelProviderOptions {
   thinking?: unknown;
   reasoningEffort?: string;
   extraBody?: Record<string, unknown>;
+  /** 显式输入模态能力；undefined 表示 unknown，SaaS 侧不得按模型名称自动推断。 */
+  inputModalities?: Array<'text' | 'image'>;
   // ── Responses API v1（RFC P0.5）：仅 protocol="responses" 时生效 ──
   /** 协议路由，默认 chat_completions（保持现有行为）。 */
   protocol?: "chat_completions" | "responses";

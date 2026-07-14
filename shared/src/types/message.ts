@@ -124,8 +124,9 @@ export type MessageItem =
 export type MessageItemInput = MessageItem extends infer T ? T extends MessageItem ? Omit<T, 'id'> & { id?: string } : never : never;
 
 export interface UploadedFile {
+  attachmentId?: string;
   originalName: string;
-  savedPath: string;
+  savedPath?: string;
   relativePath: string;
   size: number;
   mimeType: string;

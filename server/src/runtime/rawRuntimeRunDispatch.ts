@@ -65,6 +65,11 @@ import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { createLogger } from '../utils/logger.js';
 import { getRequestContext, requestContextStorage } from '../utils/requestContext.js';
 import { RawAgentLoop } from './rawAgentLoop.js';
+import { modelSupportsImage, resolveInboundAttachments } from './imageAttachments.js';
+import {
+  analyzeImagesWithFallback,
+  type ImageUnderstandingModelConfig,
+} from './imageUnderstanding.js';
 
 const logger = createLogger('RawRuntime');
 
@@ -96,7 +101,7 @@ import {
   type RuntimeSessionRecord,
   type SessionCatalog,
 } from './sessionCatalog.js';
-import type { ApprovalRecord, ApprovalStore, EventStore, PlatformEvent } from './types.js';
+import type { ApprovalRecord, ApprovalStore, EventStore, ModelAttachmentRef, PlatformEvent } from './types.js';
 import type { RunRecord, RunStatus, RunStore } from './runStore.js';
 import { HandManager } from './handManager.js';
 import type { HandCapability, HandRecord, HandStore, WorkspaceRecipe } from './handStore.js';
@@ -258,6 +263,10 @@ export interface RawRuntimeRunDispatchConfig {
    * tokenUsageStore 在 app/runtime.ts 中晚于 dispatch config 实例化，必须走惰性闭包。
    */
   tokenUsageStore?: () => TokenUsageStore | undefined;
+  /** 当前模型不支持 image 输入时使用的独立图片理解模型链。 */
+  getImageUnderstandingModelConfigs?: () => readonly ImageUnderstandingModelConfig[];
+  /** 图片理解模型单次尝试超时；默认 30 秒。 */
+  getImageUnderstandingTimeoutMs?: () => number | undefined;
   /** 平台级模型可见工具开关。 */
   toolControls?: import('../app/config.js').ToolControlsConfig;
   /** Platform-managed web access tools (`WebSearch` / `WebFetch`). */
@@ -1552,6 +1561,18 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     }
     const orgAgent = orgAgentResolution?.agent;
 
+    let resolvedAttachments: ModelAttachmentRef[];
+    try {
+      resolvedAttachments = await resolveInboundAttachments(message.attachments, {
+        cwd,
+        channel: message.channel,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      yield { type: 'error', error: detail };
+      return;
+    }
+
     // Session-level lock：尽早占用，失败即退让；resume 路径多 brain 抢同一
     // session 时只让一个进入 dispatch。lock 必须在 try/finally 内 release。
     let lockHandle = config.sessionLock ? await config.sessionLock.tryAcquire(sessionId) : null;
@@ -1584,7 +1605,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       const memory = await loadMemoryContext(cwd, memoryMaxLines);
       if (memory) memoryContext = memory;
     }
-    const prompt = buildPrompt(message, context);
+    const prompt = buildPrompt(message, context, resolvedAttachments);
     const memorySearchEnabled = !orgAgent
       && hasMemorySearchTool(config.memoryIndexService)
       && isToolEnabled(config.toolControls, 'MemorySearch');
@@ -1763,6 +1784,43 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         hooks,
         signal: options.abortController?.signal,
       };
+      let visionAnalysis;
+      if (
+        resolvedAttachments.some((attachment) => attachment.isImage)
+        && !modelSupportsImage(modelProviderOptions?.inputModalities)
+      ) {
+        visionAnalysis = await analyzeImagesWithFallback(
+          resolvedAttachments,
+          config.getImageUnderstandingModelConfigs?.() ?? [],
+          runContext,
+          {
+            timeoutMs: config.getImageUnderstandingTimeoutMs?.(),
+            onAttempt: async (attempt) => {
+              await eventStore.append({
+                type: 'image_understanding',
+                runId,
+                sessionId,
+                model: attempt.model,
+                attachmentIds: resolvedAttachments
+                  .filter((attachment) => attachment.isImage)
+                  .map((attachment) => attachment.attachmentId),
+                status: attempt.status,
+                ...(attempt.usage ? { usage: attempt.usage } : {}),
+                ...(attempt.error ? { error: attempt.error } : {}),
+              });
+              if (attempt.usage && identitySource?.username) {
+                config.tokenUsageStore?.()?.recordResult({
+                  username: identitySource.username,
+                  tenantId: sessionRecord.tenantId ?? DEFAULT_TENANT_ID,
+                  channel: 'vision',
+                  modelUsage: { [attempt.model]: attempt.usage },
+                  occurredAtMs: Date.now(),
+                });
+              }
+            },
+          },
+        );
+      }
       // /compact 平台命令（2026-07-03 真实现）：分流到上下文压缩，不进正常 agent run。
       // web / dingtalk / cron 任何通道发裸 "/compact" 行为一致。
       // instructions 传会话正常 system prompt——压缩请求与正常轮同构以命中 prompt cache。
@@ -1791,6 +1849,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           {
             message,
             prompt,
+            attachments: resolvedAttachments,
+            ...(visionAnalysis ? { visionAnalysis } : {}),
             recordUserMessage: options.recordUserMessage,
             ...(memoryContext ? { memoryContext } : {}),
             instructions,

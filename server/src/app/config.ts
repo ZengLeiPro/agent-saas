@@ -333,6 +333,8 @@ const modelProviderOptionsSchema = z.object({
   reasoning_effort: z.string().optional(),
   reasoningEffort: z.string().optional(),
   extraBody: z.record(z.string(), z.unknown()).optional(),
+  /** 模型可接收的输入模态；未配置按 unknown/text-only 处理，不按模型名猜。 */
+  input_modalities: z.array(z.enum(['text', 'image'])).min(1).optional(),
 });
 
 /**
@@ -444,6 +446,12 @@ const modelsConfigSchema = z.object({
   groups: z.array(modelGroupSchema).min(1),
   default: z.string().min(1),
   allowCrossGroupSwitch: z.boolean().default(false),
+  /** 主模型不支持 image 时使用的独立图片理解模型链。 */
+  imageUnderstanding: z.object({
+    model: z.string().min(1),
+    fallbackModels: z.array(z.string().min(1)).optional(),
+    timeoutMs: z.number().int().positive().max(120_000).optional(),
+  }).optional(),
 });
 
 const titleGeneratorConfigSchema = z.object({

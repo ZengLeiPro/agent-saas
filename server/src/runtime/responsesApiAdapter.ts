@@ -35,6 +35,7 @@ import {
   detectMojibake,
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
+import { modelSupportsImage, readModelImageDataUrl, toTextOnlyContent } from './imageAttachments.js';
 
 /**
  * prompt_cache_key 内容指纹：与 chatCompletionsAdapter.computePromptCacheKey 语义等价。
@@ -105,7 +106,10 @@ type ResponsesInputItem =
   | {
     type: 'message';
     role: 'user' | 'assistant' | 'system';
-    content: Array<{ type: 'input_text' | 'output_text'; text: string }>;
+    content: Array<
+      | { type: 'input_text' | 'output_text'; text: string }
+      | { type: 'input_image'; image_url: string; detail: 'high' | 'original' }
+    >;
   }
   | {
     type: 'function_call';
@@ -156,10 +160,10 @@ export class ResponsesApiAdapter implements ModelAdapter {
     const promptCacheKey = this.providerOptions.disablePromptCacheKey
       ? undefined
       : computePromptCacheKey(request.model, request.messages, request.tools);
-    const buildRequestBody = (): Record<string, unknown> => {
+    const buildRequestBody = async (): Promise<Record<string, unknown>> => {
       const { instructions, input } = usePrevious
-        ? { instructions: undefined, input: this.extractIncrementalInput(request.messages, sessionIdShort) }
-        : this.buildFullInput(request.messages, sessionIdShort);
+        ? { instructions: undefined, input: await this.extractIncrementalInput(request.messages, context.cwd, sessionIdShort) }
+        : await this.buildFullInput(request.messages, context.cwd, sessionIdShort);
 
       if (usePrevious && input.length === 0) {
         throw new Error(
@@ -194,7 +198,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       }
       return built;
     };
-    let body = buildRequestBody();
+    let body = await buildRequestBody();
     let requestBodyBytes = 0;
     let requestInputPrefixHash = '';
     let modelRequestAttemptCount = 0;
@@ -242,7 +246,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         );
         responseMode = 'fallback_full';
         usePrevious = false;
-        body = buildRequestBody();
+        body = await buildRequestBody();
         continue;
       }
       // 5xx（含上游 `Post "...": EOF` 包装成的 500）瞬时故障可重试；其余 4xx 立即抛。
@@ -502,7 +506,11 @@ export class ResponsesApiAdapter implements ModelAdapter {
    * user content 走确定性 defense（A3/B2 injection escape + B4 长英文中文 leading）。
    * 时间戳已在 runtime 入站时固化，接力 adapter 不再改写。
    */
-  private extractIncrementalInput(messages: ModelChatMessage[], sessionIdShort?: string): ResponsesInputItem[] {
+  private async extractIncrementalInput(
+    messages: ModelChatMessage[],
+    cwd: string,
+    sessionIdShort?: string,
+  ): Promise<ResponsesInputItem[]> {
     const items: ResponsesInputItem[] = [];
     // 从尾部往前找连续的 user/tool
     let i = messages.length - 1;
@@ -520,7 +528,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         items.push({
           type: 'message',
           role: 'user',
-          content: [{ type: 'input_text', text: defendUserMessageText(m.content, sessionIdShort) }],
+          content: await this.buildUserContent(m.content, cwd, sessionIdShort),
         });
       } else if (m.role === 'tool') {
         items.push({
@@ -539,10 +547,10 @@ export class ResponsesApiAdapter implements ModelAdapter {
    * 平台注入上下文块只保留 escape）。时间戳已在 runtime 入站时固化，full replay
    * 不得按当前时钟重写历史。
    */
-  private buildFullInput(messages: ModelChatMessage[], sessionIdShort?: string): {
+  private async buildFullInput(messages: ModelChatMessage[], cwd: string, sessionIdShort?: string): Promise<{
     instructions?: string;
     input: ResponsesInputItem[];
-  } {
+  }> {
     const systemTexts: string[] = [];
     const items: ResponsesInputItem[] = [];
     for (const m of messages) {
@@ -552,7 +560,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         items.push({
           type: 'message',
           role: 'user',
-          content: [{ type: 'input_text', text: defendUserMessageText(m.content, sessionIdShort) }],
+          content: await this.buildUserContent(m.content, cwd, sessionIdShort),
         });
       } else if (m.role === 'assistant') {
         if (m.tool_calls?.length) {
@@ -590,6 +598,33 @@ export class ResponsesApiAdapter implements ModelAdapter {
       ...(systemTexts.length > 0 ? { instructions: systemTexts.join('\n\n') } : {}),
       input: items,
     };
+  }
+
+  private async buildUserContent(
+    content: Extract<ModelChatMessage, { role: 'user' }>['content'],
+    cwd: string,
+    sessionIdShort?: string,
+  ): Promise<Extract<ResponsesInputItem, { type: 'message' }>['content']> {
+    if (typeof content === 'string') {
+      return [{ type: 'input_text', text: defendUserMessageText(content, sessionIdShort) }];
+    }
+    if (!modelSupportsImage(this.providerOptions.inputModalities)) {
+      return [{ type: 'input_text', text: defendUserMessageText(toTextOnlyContent(content), sessionIdShort) }];
+    }
+    const result: Extract<ResponsesInputItem, { type: 'message' }>['content'] = [];
+    for (const part of content) {
+      if (part.type === 'vision_summary') continue;
+      if (part.type === 'text') {
+        result.push({ type: 'input_text', text: defendUserMessageText(part.text, sessionIdShort) });
+      } else {
+        result.push({
+          type: 'input_image',
+          image_url: await readModelImageDataUrl(cwd, part),
+          detail: part.detail === 'original' ? 'high' : part.detail,
+        });
+      }
+    }
+    return result;
   }
 
   /**

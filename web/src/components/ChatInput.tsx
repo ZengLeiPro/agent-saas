@@ -325,7 +325,7 @@ export function ChatInput({
       />
 
       {topSlot && (
-        <div className="bg-secondary">
+        <div className="bg-background">
           <div className="content-container pt-3">
             {topSlot}
           </div>
@@ -334,12 +334,12 @@ export function ChatInput({
 
       <div
         ref={wrapperRef}
-        className="border-t border-border bg-secondary"
+        className="bg-background"
         style={{ paddingBottom: "var(--sab)" }}
       >
         <div className="content-container pt-3 pb-1">
           <div
-            className="flex flex-col rounded-lg bg-card shadow-sm"
+            className="flex flex-col rounded-xl border border-border/60 bg-card shadow-sm"
             onClick={() => !isDisabled && !voiceRecorder.isRecording && textareaRef.current?.focus()}
           >
             {/* 文本输入区 / 录音指示器 */}

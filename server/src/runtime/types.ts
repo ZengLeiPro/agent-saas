@@ -33,6 +33,10 @@ export interface RunContext {
 export interface RunInput {
   message: InboundMessage;
   prompt: string;
+  /** 服务端校验并规范化后的本轮附件；绝不直接使用客户端路径。 */
+  attachments?: ModelAttachmentRef[];
+  /** text-only 主模型使用的显式辅助视觉结果；原图引用仍保留在 attachments。 */
+  visionAnalysis?: ModelVisionAnalysis;
   /**
    * 默认 true。设为 false 时 prompt 仍发给模型，但不追加 user_message 事件、
    * 不投影到 legacy transcript / 前端；用于恢复已持久化用户消息后的隐藏 continue。
@@ -75,9 +79,60 @@ export interface ModelUsage {
 /** 模型请求实际采用的上下文传递方式。 */
 export type ModelResponseMode = 'full' | 'relay' | 'fallback_full';
 
+export type ModelImageMimeType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+
+/**
+ * EventStore / runtime 内部的稳定附件引用。只保存 workspace 相对路径和摘要元数据，
+ * 不保存 base64，也不暴露宿主机/NAS 绝对路径。
+ */
+export interface ModelAttachmentRef {
+  attachmentId: string;
+  originalName: string;
+  relativePath: string;
+  sizeBytes: number;
+  mimeType: string;
+  isImage: boolean;
+  sha256?: string;
+  width?: number;
+  height?: number;
+  /** 图片发送给模型时使用的确定性规范化衍生图。 */
+  modelRelativePath?: string;
+  modelMimeType?: ModelImageMimeType;
+  modelSizeBytes?: number;
+}
+
+export interface ModelVisionAnalysis {
+  model: string;
+  attachmentIds: string[];
+  content: string;
+}
+
+export type ModelUserContentPart =
+  | { type: 'text'; text: string }
+  | {
+    type: 'image_attachment';
+    attachmentId: string;
+    displayName: string;
+    relativePath: string;
+    mimeType: ModelImageMimeType;
+    sizeBytes: number;
+    width?: number;
+    height?: number;
+    detail: 'high' | 'original';
+  }
+  | {
+    /** 仅供 text-only adapter 使用；视觉模型 adapter 会忽略，避免原图+摘要双重暗示。 */
+    type: 'vision_summary';
+    model: string;
+    attachmentIds: string[];
+    text: string;
+  };
+
+export type ModelUserContent = string | ModelUserContentPart[];
+
 export type ModelChatMessage =
   | { role: 'system'; content: string }
-  | { role: 'user'; content: string }
+  | { role: 'user'; content: ModelUserContent }
   | {
     role: 'assistant';
     content: string | null;
@@ -169,6 +224,20 @@ export type PlatformEvent =
     sessionId: string;
     content: string;
     modelContent?: string;
+    attachments?: ModelAttachmentRef[];
+    visionAnalysis?: ModelVisionAnalysis;
+  }
+  | {
+    id: string;
+    timestamp: string;
+    type: 'image_understanding';
+    runId: string;
+    sessionId: string;
+    model: string;
+    attachmentIds: string[];
+    status: 'completed' | 'failed';
+    usage?: ModelUsage;
+    error?: string;
   }
   | {
     id: string;

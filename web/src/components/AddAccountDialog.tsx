@@ -1,3 +1,4 @@
+import { apiUrl } from "../lib/apiBase";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -69,7 +70,7 @@ export function AddAccountDialog({ open, onOpenChange }: AddAccountDialogProps) 
     setError("");
     setSendingCode(true);
     try {
-      const res = await fetch("/api/auth/sms/send-code", {
+      const res = await fetch(apiUrl("/api/auth/sms/send-code"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone }),

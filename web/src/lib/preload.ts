@@ -2,6 +2,7 @@
 // 消除 auth → sessions → detail 的串行瀑布。
 // auth 请求带重试逻辑，确保后端就绪后再继续后续预取。
 
+import { apiUrl } from "./apiBase";
 import { DEFAULT_TENANT_ID } from "@agent/shared";
 import type { UserPreferences } from "@agent/shared";
 import { TOKEN_KEY } from "./constants";
@@ -30,7 +31,7 @@ function getRetryDelay(attempt: number): number {
 async function fetchAuth(): Promise<AuthPreloadResult> {
   for (let attempt = 0; ; attempt++) {
     try {
-      const res = await fetch("/api/auth/me", { headers });
+      const res = await fetch(apiUrl("/api/auth/me"), { headers });
       if (res.ok) {
         const data = await res.json() as { id: string; username: string; role: "admin" | "user"; tenantId: string; realName?: string; position?: string; phone?: string; phoneVerifiedAt?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; preferences?: UserPreferences };
         return { status: "authenticated", user: data };
@@ -61,7 +62,7 @@ export const authPreload: Promise<AuthPreloadResult> = fetchAuth();
 
 export const sessionsPreload: Promise<{ sessions: unknown[]; hasMore: boolean } | null> = authPreload.then((result) => {
   if (result.status === "unauthenticated" || result.status === "error") return null;
-  return fetch("/api/sessions?limit=500&fresh=1", { headers, cache: "no-store" })
+  return fetch(apiUrl("/api/sessions?limit=500&fresh=1"), { headers, cache: "no-store" })
     .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
@@ -79,7 +80,7 @@ const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export const cronJobsPreload: Promise<unknown[] | null> = authPreload.then(async (result) => {
   if (result.status === "unauthenticated" || result.status === "error") return null;
   await delay(2000);
-  return fetch("/api/cron/jobs?includeDisabled=true", { headers })
+  return fetch(apiUrl("/api/cron/jobs?includeDisabled=true"), { headers })
     .then(async (r) => (r.ok ? ((await r.json()).jobs || []) : null))
     .catch(() => null);
 });
@@ -87,7 +88,7 @@ export const cronJobsPreload: Promise<unknown[] | null> = authPreload.then(async
 export const cronStatusPreload: Promise<unknown | null> = authPreload.then(async (result) => {
   if (result.status === "unauthenticated" || result.status === "error") return null;
   await delay(2000);
-  return fetch("/api/cron/status", { headers })
+  return fetch(apiUrl("/api/cron/status"), { headers })
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null);
 });
@@ -95,7 +96,7 @@ export const cronStatusPreload: Promise<unknown | null> = authPreload.then(async
 export const usersPreload: Promise<unknown[] | null> = authPreload.then(async (result) => {
   if (result.status === "authenticated" && result.user.role === "admin") {
     await delay(2000);
-    return fetch("/api/auth/users", { headers })
+    return fetch(apiUrl("/api/auth/users"), { headers })
       .then(async (r) => (r.ok ? ((await r.json()).users || []) : null))
       .catch(() => null);
   }
@@ -110,7 +111,7 @@ export const tenantsPreload: Promise<unknown[] | null> = authPreload.then(async 
     result.user.tenantId === DEFAULT_TENANT_ID
   ) {
     await delay(2000);
-    return fetch("/api/tenants", { headers })
+    return fetch(apiUrl("/api/tenants"), { headers })
       .then(async (r) => (r.ok ? ((await r.json()).tenants || []) : null))
       .catch(() => null);
   }

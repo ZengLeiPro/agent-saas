@@ -1,3 +1,4 @@
+import { apiUrl } from "../lib/apiBase";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Loader2 } from "lucide-react";
@@ -40,7 +41,7 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
 
   useEffect(() => {
     if (!onSwitchToSignup) return;
-    fetch("/api/signup/status")
+    fetch(apiUrl("/api/signup/status"))
       .then((res) => res.json())
       .then((data: { enabled?: boolean }) => setSignupEnabled(data.enabled === true))
       .catch(() => {});
@@ -70,7 +71,7 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
     setError("");
     setSendingCode(true);
     try {
-      const res = await fetch("/api/auth/sms/send-code", {
+      const res = await fetch(apiUrl("/api/auth/sms/send-code"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone }),

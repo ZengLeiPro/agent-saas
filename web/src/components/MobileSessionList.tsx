@@ -1,3 +1,4 @@
+import { apiUrl } from "../lib/apiBase";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, FolderClosed, Camera, Lock, Settings2, UserCog } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
@@ -123,7 +124,7 @@ export function MobileSessionList({
     formData.append("avatar", file);
     try {
       const token = localStorage.getItem(TOKEN_KEY);
-      const res = await fetch("/api/auth/avatar", {
+      const res = await fetch(apiUrl("/api/auth/avatar"), {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,

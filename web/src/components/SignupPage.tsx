@@ -1,3 +1,4 @@
+import { apiUrl } from "../lib/apiBase";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Loader2 } from "lucide-react";
@@ -69,7 +70,7 @@ function WaitlistForm({
     setError("");
     setSubmitting(true);
     try {
-      const res = await fetch("/api/signup/waitlist", {
+      const res = await fetch(apiUrl("/api/signup/waitlist"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone, utm }),
@@ -169,7 +170,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   const scenario = useMemo(collectScenario, []);
 
   useEffect(() => {
-    fetch("/api/signup/status")
+    fetch(apiUrl("/api/signup/status"))
       .then((res) => res.json())
       .then((data: { enabled?: boolean }) => setEnabled(data.enabled === true))
       .catch(() => setEnabled(false));
@@ -197,7 +198,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
     setError("");
     setSending(true);
     try {
-      const res = await fetch("/api/signup/send-code", {
+      const res = await fetch(apiUrl("/api/signup/send-code"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone }),
@@ -223,7 +224,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("/api/signup/register", {
+      const res = await fetch(apiUrl("/api/signup/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

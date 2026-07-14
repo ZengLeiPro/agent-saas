@@ -1,3 +1,4 @@
+import { apiUrl } from "./apiBase";
 import { authFetch } from "@/lib/authFetch";
 import type { ApiSessionDetail } from "@/lib/sessionsApi";
 
@@ -58,7 +59,7 @@ export async function revokeSessionShare(sessionId: string): Promise<SessionShar
 }
 
 export async function fetchPublicSessionShare(token: string): Promise<PublicSessionShareResponse> {
-  const res = await fetch(`/api/share/sessions/${encodeURIComponent(token)}`, {
+  const res = await fetch(apiUrl(`/api/share/sessions/${encodeURIComponent(token)}`), {
     headers: { Accept: "application/json" },
   });
   if (!res.ok) throw new Error(await readApiError(res, res.status === 410 ? "分享链接已失效" : "分享链接不存在"));

@@ -1,3 +1,4 @@
+import { apiUrl } from "../../lib/apiBase";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, Suspense, type ReactNode } from "react";
 import {
   Brain,
@@ -1103,7 +1104,7 @@ export function SettingsModal({
     setAvatarUploading(true);
     try {
       const token = localStorage.getItem(TOKEN_KEY);
-      const res = await fetch("/api/auth/avatar", {
+      const res = await fetch(apiUrl("/api/auth/avatar"), {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,

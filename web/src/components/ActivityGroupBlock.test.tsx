@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { MessageItem } from './types';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
@@ -23,24 +23,58 @@ describe('ActivityGroupBlock 局部异常语义', () => {
     expect(screen.queryByText('失败')).toBeNull();
   });
 
-  it('分组异常显示未成功步骤数，不把整组标成失败', () => {
+  it('分组折叠时按正常完成显示，展开后才显示具体异常', () => {
+    const failedToolWithDuration = { ...failedTool, durationMs: 1200 };
+    render(<ActivityGroupBlock
+      items={[
+        { id: 'thinking', type: 'thinking', content: '换一种方法', streaming: false },
+        failedToolWithDuration,
+      ]}
+      isActive={false}
+      debugMode
+    />);
+
+    const summary = screen.getByText('已完成 2 条：1 次思考 · 1 个工具');
+    expect(screen.getByText('已完成 1.2s').className).toContain('text-success');
+    expect(screen.queryByText('有异常')).toBeNull();
+
+    fireEvent.click(summary.closest('button')!);
+
+    expect(screen.getByText(/^有异常(?:\s|$)/).className).toContain('text-warning');
+  });
+
+  it('分组仍在运行时也不在折叠行暴露内部异常', () => {
+    render(<ActivityGroupBlock
+      items={[
+        { id: 'thinking', type: 'thinking', content: '换一种方法', streaming: false },
+        failedTool,
+      ]}
+      isActive
+      debugMode
+    />);
+
+    expect(screen.getByText('正在处理')).toBeTruthy();
+    expect(screen.getByText('处理中').className).toContain('text-primary');
+    expect(screen.queryByText(/异常/)).toBeNull();
+  });
+
+  it('关闭调试模式后单条异常仍保留弱提示', () => {
+    render(<ActivityGroupBlock items={[failedTool]} isActive={false} debugMode={false} />);
+
+    expect(screen.getByText('已执行，有异常').className).toContain('text-warning');
+  });
+
+  it('关闭调试模式后分组异常不污染汇总状态', () => {
     render(<ActivityGroupBlock
       items={[
         { id: 'thinking', type: 'thinking', content: '换一种方法', streaming: false },
         failedTool,
       ]}
       isActive={false}
-      debugMode
+      debugMode={false}
     />);
 
-    expect(screen.getByText('执行结束 · 1 个步骤未成功')).toBeTruthy();
-    expect(screen.getByText('有异常').className).toContain('text-warning');
-    expect(screen.queryByText(/执行异常/)).toBeNull();
-  });
-
-  it('关闭调试模式后仍保留弱异常提示', () => {
-    render(<ActivityGroupBlock items={[failedTool]} isActive={false} debugMode={false} />);
-
-    expect(screen.getByText('已执行，有异常').className).toContain('text-warning');
+    expect(screen.getByText('已执行').className).toContain('text-success');
+    expect(screen.queryByText(/异常/)).toBeNull();
   });
 });

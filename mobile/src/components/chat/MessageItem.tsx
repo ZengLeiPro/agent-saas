@@ -1433,24 +1433,16 @@ function ActivityGroupView({ group }: { group: ActivityGroup; isLast?: boolean }
 
   // Multi-item group
   const lastItem = group.items[group.items.length - 1];
-  const issueCount = group.isActive ? 0 : group.items.filter(item => (
-    (item.type === 'tool_use' && item.executionStatus === 'failed')
-    || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
-  )).length;
-  const summary = issueCount > 0
-    ? { text: `执行结束 · ${issueCount} 个步骤未成功`, ellipsizeMode: 'tail' as const }
-    : getSummary(lastItem);
+  const summary = getSummary(lastItem);
 
   return (
     <View style={styles.activityGroup}>
       <TouchableOpacity onPress={() => setExpanded(!expanded)} style={styles.activityHeaderRow} activeOpacity={0.7}>
         {group.isActive
           ? <ActivityIndicator size={16} color={colors.primary} />
-          : issueCount > 0
-            ? <CircleAlert size={16} color={colors.warning} strokeWidth={2} />
           : <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} style={{ opacity: 0.6 }} />
         }
-        <Text style={[styles.activitySummaryText, { maxWidth: 384 }, issueCount > 0 && { color: colors.warning }]} numberOfLines={1} ellipsizeMode={summary.ellipsizeMode}>{summary.text}</Text>
+        <Text style={[styles.activitySummaryText, { maxWidth: 384 }]} numberOfLines={1} ellipsizeMode={summary.ellipsizeMode}>{summary.text}</Text>
         <Text style={styles.activityCount}>({group.items.length})</Text>
         <ChevronRight
           size={16}

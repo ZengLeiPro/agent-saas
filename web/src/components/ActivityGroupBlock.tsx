@@ -134,24 +134,6 @@ function hasActivityIssue(items: MessageItem[]): boolean {
   ));
 }
 
-function getIssueSummary(items: MessageItem[]): GroupSummaryInfo | null {
-  const issueCount = items.filter(item => (
-    (item.type === 'tool_use' && item.executionStatus === 'failed')
-    || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
-  )).length;
-  if (issueCount > 0) {
-    return {
-      text: `执行结束 · ${issueCount} 个步骤未成功`,
-      truncateStart: false,
-      tone: 'warning',
-      badge: '有异常',
-      durationMs: getActivityDurationMs(items),
-      active: false,
-    };
-  }
-  return null;
-}
-
 function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
   const index = getActiveItemIndex(items);
   const item = items[index];
@@ -244,9 +226,20 @@ function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
 }
 
 function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryInfo {
-  if (isActive) return getActiveGroupSummary(items);
-  const issueSummary = getIssueSummary(items);
-  if (issueSummary) return issueSummary;
+  if (isActive) {
+    const summary = getActiveGroupSummary(items);
+    if (summary.badge === '有异常' || summary.badge === '超时') {
+      return {
+        text: '正在处理',
+        truncateStart: false,
+        tone: 'active',
+        badge: '处理中',
+        progress: summary.progress,
+        active: true,
+      };
+    }
+    return summary;
+  }
 
   const cancelledCount = items.filter(item => (
     (item.type === 'tool_use' && item.executionStatus === 'cancelled')
@@ -335,7 +328,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (!debugMode) {
-    return <ExecutionHiddenPlaceholder isActive={isActive} durationMs={getActivityDurationMs(items)} hasIssue={hasActivityIssue(items)} />;
+    return <ExecutionHiddenPlaceholder isActive={isActive} durationMs={getActivityDurationMs(items)} hasIssue={items.length === 1 && hasActivityIssue(items)} />;
   }
 
   // 单项分组：直接渲染子项本身（单层展开），不套分组壳

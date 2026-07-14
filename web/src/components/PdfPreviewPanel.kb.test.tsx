@@ -58,4 +58,20 @@ describe('PdfPreviewPanel KB 单页预览', () => {
     expect(document.querySelector('iframe')).toBeNull();
     expect(screen.getByText('/ 122 页')).toBeTruthy();
   });
+
+  it('右侧预览未关闭时点击同一 PDF 的另一页，会切换到新的引用页', async () => {
+    authFetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify(manifest), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(new Blob(['page-7']), { status: 200, headers: { 'Content-Type': 'image/webp' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(manifest), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(new Blob(['page-12']), { status: 200, headers: { 'Content-Type': 'image/webp' } }));
+
+    const view = render(<PdfPreviewPanel filePath="catalog/手册.pdf" kbSource page={7} onBack={() => undefined} hideHeader />);
+    await waitFor(() => expect(screen.getByAltText('手册.pdf 第 7 页')).toBeTruthy());
+
+    view.rerender(<PdfPreviewPanel filePath="catalog/手册.pdf" kbSource page={12} onBack={() => undefined} hideHeader />);
+
+    await waitFor(() => expect(screen.getByAltText('手册.pdf 第 12 页')).toBeTruthy());
+    expect(authFetchMock).toHaveBeenNthCalledWith(4, expect.stringContaining('page=12&version='));
+  });
 });

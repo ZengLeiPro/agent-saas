@@ -74,7 +74,8 @@ export function PdfPreviewPanel({ filePath, owner, shareToken, kbSource, page, o
       )}
 
       <div className="min-w-0 flex-1 overflow-hidden bg-muted/30">
-        {kbSource && <KbPdfPreview filePath={filePath} initialPage={page} />}
+        {/* 同一右侧面板连续打开不同引用时，按文档+页码重建预览，避免沿用上一张引用卡的内部页码 state。 */}
+        {kbSource && <KbPdfPreview key={`${filePath}#page=${page ?? 1}`} filePath={filePath} initialPage={page} />}
         {!kbSource && state.status === "loading" && (
           <div className="flex h-full items-center justify-center">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />

@@ -88,7 +88,7 @@ export function ScenariosPanel({
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center gap-2 text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin" />
         <span className="text-sm">加载任务模板...</span>
       </div>
     );
@@ -200,7 +200,7 @@ export function ScenariosPanel({
                   <ol className="space-y-2">
                     {detail.story.split("→").map((step, idx) => (
                       <li key={idx} className="flex gap-2">
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-secondary text-xs text-secondary-foreground">
+                        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-secondary text-xs text-secondary-foreground">
                           {idx + 1}
                         </span>
                         <span className="text-muted-foreground">{step.trim()}</span>

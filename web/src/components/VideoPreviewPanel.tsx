@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronLeft, Loader2, AlertCircle } from "lucide-react";
+import { ChevronLeft, Loader2, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { resolveImageSrc } from "@agent/shared";
 
@@ -36,8 +36,8 @@ export function VideoPreviewPanel({ filePath, owner, onBack, hideHeader }: Video
       {!hideHeader && (
         <header className="shrink-0 border-b bg-background" style={{ paddingTop: "var(--sat)" }}>
           <div className="flex h-12 items-center gap-2 px-2">
-            <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={onBack}>
-              <ChevronLeft className="!h-5 !w-5" />
+            <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={onBack}>
+              <ChevronLeft className="size-5" />
             </Button>
             <span className="min-w-0 truncate text-sm font-medium">{filename}</span>
             {dirPath && (
@@ -49,11 +49,11 @@ export function VideoPreviewPanel({ filePath, owner, onBack, hideHeader }: Video
 
       <div className="flex min-w-0 flex-1 items-center justify-center overflow-hidden bg-black p-2">
         {state.status === "loading" && (
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
         )}
         {state.status === "error" && (
           <div className="flex flex-col items-center gap-2 text-muted-foreground">
-            <AlertCircle className="h-6 w-6" />
+            <CircleAlert className="size-6" />
             <span className="text-sm">{state.message}</span>
           </div>
         )}

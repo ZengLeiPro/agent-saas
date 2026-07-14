@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
+import { TriangleAlert, Loader2, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -72,7 +72,7 @@ export function OverviewPage() {
   if (loading && !snapshot) {
     return (
       <div className="flex h-64 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        <Loader2 className="mr-2 size-4 animate-spin" />
         加载平台总览...
       </div>
     );
@@ -89,7 +89,7 @@ export function OverviewPage() {
         description="运行健康、容器池、成本和异常队列。"
         actions={
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
-            <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", refreshing && "animate-spin")} />
+            <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
             刷新
           </Button>
         }
@@ -161,7 +161,7 @@ export function OverviewPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
-              <AlertTriangle className="h-4 w-4" />
+              <TriangleAlert className="size-4" />
               快照
             </CardTitle>
           </CardHeader>

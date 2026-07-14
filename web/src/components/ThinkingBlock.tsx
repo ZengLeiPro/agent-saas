@@ -20,7 +20,7 @@ export function ThinkingBlock({ content, streaming, durationMs }: ThinkingBlockP
         onClick={() => setIsExpanded(v => !v)}
         className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <Brain className={activityStatusIconClass(tone, "h-3.5 w-3.5 shrink-0")} />
+        <Brain className={activityStatusIconClass(tone, "size-3.5 shrink-0")} />
         <span className="min-w-0 truncate">
           {streaming ? "思考中" : "已思考"}
           {streaming && <span className="animate-pulse">...</span>}
@@ -29,7 +29,7 @@ export function ThinkingBlock({ content, streaming, durationMs }: ThinkingBlockP
           {streaming ? "思考中" : duration ? `已完成 ${duration}` : "已完成"}
         </span>
         <ChevronRight className={cn(
-          "h-3.5 w-3.5 shrink-0 transition-transform",
+          "size-3.5 shrink-0 transition-transform",
           isExpanded && "rotate-90",
         )} />
       </button>

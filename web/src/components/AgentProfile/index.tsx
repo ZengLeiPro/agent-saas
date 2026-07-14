@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Loader2, Save, Upload, RotateCcw, ChevronRight, Puzzle, Bot, Brain } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Upload, RotateCcw, ChevronRight, Bot, Brain } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -199,7 +200,7 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
             className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setEditing(null)}
           >
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft className="size-4" />
             返回所有 Agent
           </button>
         </div>
@@ -212,7 +213,7 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
 
       {loading ? (
         <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-6 pb-4">
@@ -234,7 +235,7 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
               >
-                <Upload className="mr-1.5 h-3.5 w-3.5" />
+                <Upload className="size-3.5" />
                 上传头像
               </Button>
               {profile?.avatar && profile.avatar.startsWith("agent-avatars/") && (
@@ -243,7 +244,7 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
                   size="sm"
                   onClick={handleResetAvatar}
                 >
-                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                  <RotateCcw className="size-3.5" />
                   重置
                 </Button>
               )}
@@ -290,10 +291,10 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
               onClick={() => setSubView("skills")}
             >
               <div className="flex items-center gap-2">
-                <Puzzle className="h-4 w-4 text-muted-foreground" />
+                <EntityIcons.skill className="size-4 text-muted-foreground" />
                 <span className="text-sm font-medium">技能</span>
               </div>
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              <ChevronRight className="size-4 text-muted-foreground" />
             </button>
             <button
               type="button"
@@ -301,10 +302,10 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
               onClick={() => setSubView("persona")}
             >
               <div className="flex items-center gap-2">
-                <Bot className="h-4 w-4 text-muted-foreground" />
+                <Bot className="size-4 text-muted-foreground" />
                 <span className="text-sm font-medium">人格定义</span>
               </div>
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              <ChevronRight className="size-4 text-muted-foreground" />
             </button>
             <button
               type="button"
@@ -312,10 +313,10 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
               onClick={() => setSubView("memory")}
             >
               <div className="flex items-center gap-2">
-                <Brain className="h-4 w-4 text-muted-foreground" />
+                <Brain className="size-4 text-muted-foreground" />
                 <span className="text-sm font-medium">Agent 记忆</span>
               </div>
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              <ChevronRight className="size-4 text-muted-foreground" />
             </button>
           </div>
 
@@ -323,9 +324,9 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
           <div className="flex shrink-0 items-center gap-3">
             <Button onClick={handleSave} disabled={saving}>
               {saving ? (
-                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                <Loader2 className="size-4 animate-spin" />
               ) : (
-                <Save className="mr-1.5 h-4 w-4" />
+                <Save className="size-4" />
               )}
               保存
             </Button>

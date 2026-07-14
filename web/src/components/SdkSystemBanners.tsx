@@ -39,7 +39,7 @@ export function NotificationToastStack({
               onClick={() => onDismiss(n.key)}
               aria-label="关闭通知"
             >
-              <X className="h-3.5 w-3.5" aria-hidden="true" />
+              <X className="size-3.5" aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -69,7 +69,7 @@ export function MemoryRecallBanner({
           onClick={onDismiss}
           aria-label="隐藏记忆召回"
         >
-          <X className="h-3.5 w-3.5" aria-hidden="true" />
+          <X className="size-3.5" aria-hidden="true" />
         </button>
       </div>
       <details>

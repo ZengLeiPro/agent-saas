@@ -78,13 +78,13 @@ export function DescriptionTip({ description }: { description: ReactNode }) {
         type="button"
         onClick={() => setOpen(v => !v)}
         className={cn(
-          "inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+          "inline-flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
           open && "bg-accent text-foreground",
         )}
         aria-label="查看说明"
         aria-expanded={visible}
       >
-        <Info className="h-3.5 w-3.5" />
+        <Info className="size-3.5" />
       </button>
       {visible && (
         <div

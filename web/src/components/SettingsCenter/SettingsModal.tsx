@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, Suspense, type ReactNode } from "react";
 import {
   Brain,
-  Building2,
   CircleCheck,
   Clock,
   ExternalLink,
@@ -230,8 +229,8 @@ function DwsConnectionsSection() {
     <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-sm">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
-            <Building2 className="h-4 w-4" />
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700">
+            <EntityIcons.connector className="size-4" />
           </div>
           <div>
             <div className="text-sm font-semibold">钉钉连接</div>
@@ -244,21 +243,21 @@ function DwsConnectionsSection() {
           onClick={() => void startConnection()}
           disabled={authServiceUnavailable || authInProgress || connecting}
         >
-          {(authInProgress || connecting) ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+          {(authInProgress || connecting) ? <Loader2 className="size-3.5 animate-spin" /> : null}
           {connectLabel}
         </Button>
       </div>
 
       {authError ? (
         <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
           <span>{authError}</span>
         </div>
       ) : null}
 
       {authSession?.status === "starting" ? (
         <div className="flex items-center gap-2 rounded-xl bg-blue-50 px-3 py-3 text-sm text-blue-800">
-          <Loader2 className="h-4 w-4 animate-spin" />正在生成钉钉官方授权页面
+          <Loader2 className="size-4 animate-spin" />正在生成钉钉官方授权页面
         </div>
       ) : authSession?.status === "awaiting_user" ? (
         <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900">
@@ -266,28 +265,28 @@ function DwsConnectionsSection() {
           <div className="mt-1 text-xs text-blue-800">授权码：{authSession.userCode || "正在读取"}</div>
           {(popupBlocked || !authorizationPopupRef.current) && authSession.authorizationUrl ? (
             <Button className="mt-3" size="sm" variant="outline" onClick={() => openAuthorizationPage(authSession.authorizationUrl!)}>
-              <ExternalLink className="mr-1.5 h-3.5 w-3.5" />打开钉钉授权页面
+              <ExternalLink className="size-3.5" />打开钉钉授权页面
             </Button>
           ) : null}
         </div>
       ) : authSession?.status === "connected" ? (
         <div className="flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
-          <CircleCheck className="h-4 w-4" />钉钉连接成功，开开现在可以直接使用钉钉能力
+          <CircleCheck className="size-4" />钉钉连接成功，开开现在可以直接使用钉钉能力
         </div>
       ) : authSession?.status === "failed" || authSession?.status === "expired" ? (
         <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
           <span>{authSession.message}</span>
         </div>
       ) : null}
 
       {loading ? (
         <div className="flex items-center gap-2 rounded-xl bg-muted/50 px-3 py-3 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />正在读取连接状态
+          <Loader2 className="size-4 animate-spin" />正在读取连接状态
         </div>
       ) : error ? (
         <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
           <span>{error}，不影响已经保存的钉钉授权。</span>
         </div>
       ) : connections.length === 0 ? (
@@ -318,7 +317,7 @@ function DwsConnectionsSection() {
                   connection.status === "error" && "bg-amber-50 text-amber-800",
                   connection.status === "disconnected" && "bg-red-50 text-red-700",
                 )}>
-                  {connected ? <CircleCheck className="h-3.5 w-3.5" /> : pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TriangleAlert className="h-3.5 w-3.5" />}
+                  {connected ? <CircleCheck className="size-3.5" /> : pending ? <Loader2 className="size-3.5 animate-spin" /> : <TriangleAlert className="size-3.5" />}
                   {connected ? "已连接" : pending ? "检测中" : connection.status === "error" ? "重试中" : "需重连"}
                 </div>
               </div>
@@ -436,7 +435,7 @@ function PlaceholderSection({
 function SettingsSectionFallback() {
   return (
     <div className="flex h-full min-h-[240px] items-center justify-center text-sm text-muted-foreground">
-      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      <Loader2 className="mr-2 size-4 animate-spin" />
       加载中...
     </div>
   );
@@ -493,7 +492,7 @@ function GeneralSection() {
         <>
           {saved && <span className="text-sm text-success">已保存</span>}
           <Button onClick={() => { void handleSave(); }} disabled={saving || draftAuthorizationMode === authorizationModeEnabled}>
-            {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
+            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             保存
           </Button>
         </>
@@ -692,7 +691,7 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
               <div className="flex items-center gap-4">
                 <button
                   type="button"
-                  className="flex h-20 w-20 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-brand-600 text-2xl font-semibold text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  className="flex size-20 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-brand-600 text-2xl font-semibold text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   onClick={() => user?.avatar && setAvatarPreviewOpen(true)}
                   aria-label="预览头像大图"
                 >
@@ -741,14 +740,14 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
               <div className="text-sm font-semibold">修改密码</div>
               <div className="text-sm text-muted-foreground">定期更新密码，提升账号安全性。</div>
             </div>
-            <Button variant="outline" onClick={onChangePassword}><Lock className="mr-2 h-4 w-4" />修改</Button>
+            <Button variant="outline" onClick={onChangePassword}><Lock className="size-4" />修改</Button>
           </div>
           <div className="flex items-center justify-between gap-4 border-t pt-3">
             <div>
               <div className="text-sm font-semibold text-destructive">退出登录</div>
               <div className="text-sm text-muted-foreground">退出当前设备上的登录状态。</div>
             </div>
-            <Button variant="destructive" onClick={logout}><LogOut className="mr-2 h-4 w-4" />退出</Button>
+            <Button variant="destructive" onClick={logout}><LogOut className="size-4" />退出</Button>
           </div>
           </section>
         </div>
@@ -799,7 +798,7 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
                   disabled={sendingPhoneCode || phoneCountdown > 0 || savingPhone}
                 >
                   {sendingPhoneCode ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Loader2 className="size-4 animate-spin" />
                   ) : phoneCountdown > 0 ? (
                     `${phoneCountdown}s`
                   ) : (
@@ -813,7 +812,7 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
           <DialogFooter>
             <Button variant="outline" onClick={() => setPhoneDialogOpen(false)} disabled={savingPhone}>取消</Button>
             <Button onClick={() => { void savePhone(); }} disabled={savingPhone}>
-              {savingPhone ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+              {savingPhone ? <Loader2 className="size-4 animate-spin" /> : null}
               {draftPhone.trim() === "" ? "清除手机号" : "完成验证"}
             </Button>
           </DialogFooter>
@@ -906,7 +905,7 @@ function AgentAccountSection({ onOpenPersona }: AgentAccountSectionProps) {
   if (loading) {
     return (
       <div className="flex h-24 items-center justify-center rounded-2xl border bg-card text-muted-foreground shadow-sm">
-        <Loader2 className="h-5 w-5 animate-spin" />
+        <Loader2 className="size-5 animate-spin" />
       </div>
     );
   }
@@ -980,7 +979,7 @@ function AgentAccountSection({ onOpenPersona }: AgentAccountSectionProps) {
           <DialogFooter>
             <Button variant="outline" onClick={closeEditDialog} disabled={savingField}>取消</Button>
             <Button onClick={() => { void saveEditDialog(); }} disabled={savingField}>
-              {savingField ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+              {savingField ? <Loader2 className="size-4 animate-spin" /> : null}
               保存
             </Button>
           </DialogFooter>
@@ -1155,7 +1154,7 @@ export function SettingsModal({
             <>
               {personalizationSaved && <span className="text-sm text-success">已保存</span>}
               <Button onClick={() => { void handleSavePersonalization(); }} disabled={personalizationSaving || !personalizationDirty}>
-                {personalizationSaving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
+                {personalizationSaving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
                 保存
               </Button>
             </>
@@ -1198,7 +1197,7 @@ export function SettingsModal({
       <div className="flex h-[min(920px,calc(100vh-96px))] w-[min(1184px,calc(100vw-64px))] overflow-hidden rounded-3xl border bg-background shadow-2xl" onClick={(event) => event.stopPropagation()}>
         <aside className="flex w-40 shrink-0 flex-col border-r bg-muted/20 p-3">
           <div className="mb-4 flex items-center gap-2.5 px-1">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-600 text-sm font-semibold text-white">
+            <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-600 text-sm font-semibold text-white">
               {user?.avatar ? <img src={user.avatar} alt="" className="h-full w-full object-cover" /> : initials(user?.realName || user?.username)}
             </div>
             <div className="min-w-0">
@@ -1224,7 +1223,7 @@ export function SettingsModal({
                         )}
                         onClick={() => handleSectionChange(item.id)}
                       >
-                        <Icon className="h-4 w-4 shrink-0" />
+                        <Icon className="size-4 shrink-0" />
                         <span className="truncate">{item.label}</span>
                       </button>
                     );
@@ -1235,14 +1234,14 @@ export function SettingsModal({
           </div>
           <div className="border-t pt-3">
             <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent hover:text-foreground">
-              <Settings2 className="h-4 w-4" />
+              <Settings2 className="size-4" />
               获取帮助
             </button>
           </div>
         </aside>
         <main className="relative flex min-w-0 flex-1 flex-col">
           <button type="button" className="absolute right-5 top-5 z-30 rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClose} aria-label="关闭设置">
-            <X className="h-5 w-5" />
+            <X className="size-5" />
           </button>
           <div className="min-h-0 flex-1 overflow-hidden p-8 pb-4 pt-5">
             <SettingsPanelHeaderStickyProvider>

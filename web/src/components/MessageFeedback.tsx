@@ -70,7 +70,7 @@ export function MessageFeedbackButton({ messageId, content }: { messageId: strin
         title={submitted ? '已反馈' : '这个回答有问题'}
         aria-label={submitted ? '已反馈' : '反馈这个回答有问题'}
       >
-        <ThumbsDown className={cn('h-3.5 w-3.5', submitted && 'fill-current')} />
+        <ThumbsDown className={cn('size-3.5', submitted && 'fill-current')} />
       </button>
       {open && !submitted && (
         <div

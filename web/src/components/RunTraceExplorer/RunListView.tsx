@@ -113,7 +113,7 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
           ))}
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-          <RefreshCw className={cn("mr-1 h-3.5 w-3.5", loading && "animate-spin")} />
+          <RefreshCw className={cn("mr-1 size-3.5", loading && "animate-spin")} />
           刷新
         </Button>
         <div className="ml-auto flex items-center gap-1.5">
@@ -127,7 +127,7 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
             className="h-8 w-56 font-mono text-xs"
           />
           <Button variant="outline" size="sm" onClick={onJump} disabled={!jumpId.trim()}>
-            <ArrowRight className="h-3.5 w-3.5" />
+            <ArrowRight className="size-3.5" />
             跳转
           </Button>
         </div>
@@ -141,7 +141,7 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
         <CardContent className="p-0">
           {loading && !runs ? (
             <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载运行列表...
+              <Loader2 className="mr-2 size-4 animate-spin" /> 加载运行列表...
             </div>
           ) : !runs || runs.length === 0 ? (
             <div className="py-10 text-center text-sm text-muted-foreground">时间窗内没有匹配的运行记录</div>

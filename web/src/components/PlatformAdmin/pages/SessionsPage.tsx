@@ -69,7 +69,7 @@ function SessionList() {
         description="基于会话投影表的会话列表与详情。"
         actions={
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-            {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+            {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
             刷新
           </Button>
         }
@@ -177,7 +177,7 @@ function SessionDetail({ sessionId }: { sessionId: string }) {
               window.dispatchEvent(new PopStateEvent("popstate"));
             }}>全部{RUN_LABEL}</Button>}
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-              {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+              {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               刷新
             </Button>
           </>
@@ -186,7 +186,7 @@ function SessionDetail({ sessionId }: { sessionId: string }) {
       {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">加载失败：{error}</div>}
       {loading && !detail ? (
         <div className="flex h-40 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <Loader2 className="mr-2 size-4 animate-spin" />
           加载会话详情...
         </div>
       ) : detail && session ? (

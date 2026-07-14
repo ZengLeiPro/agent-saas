@@ -72,7 +72,7 @@ export function OrgAgentComposerChip({
 }) {
   return (
     <div className="flex min-w-0 items-center gap-2 rounded-lg border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-50 text-base dark:bg-brand-900/35" aria-hidden="true">
+      <span className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-50 text-base dark:bg-brand-900/35" aria-hidden="true">
         <OrgAgentAvatarContent agent={orgAgent} />
       </span>
       <span className="min-w-0 flex-1">
@@ -87,7 +87,7 @@ export function OrgAgentComposerChip({
           title={`使用${orgAgent.name}发起新对话`}
           aria-label={`使用${orgAgent.name}发起新对话`}
         >
-          <Plus className="h-3.5 w-3.5" />
+          <Plus className="size-3.5" />
           新对话
         </button>
       )}
@@ -225,7 +225,7 @@ export function ChatTabContent({
           />
         ) : readOnly ? (
           <div className="flex items-center justify-center gap-2 border-t bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="size-4" />
             正在预览已删除的会话（只读）
           </div>
         ) : (

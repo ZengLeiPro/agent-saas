@@ -125,7 +125,7 @@ function WaitlistForm({
       <Button type="submit" className={AUTH_SUBMIT_CLASS} disabled={submitting}>
         {submitting ? (
           <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Loader2 className="size-4 animate-spin" />
             提交中...
           </>
         ) : (
@@ -257,7 +257,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
     <AuthShell>
       {enabled === null ? (
         <div className="flex justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
         </div>
       ) : !enabled ? (
         <WaitlistForm
@@ -313,7 +313,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
                 disabled={sending || countdown > 0 || loading}
               >
                 {sending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="size-4 animate-spin" />
                 ) : countdown > 0 ? (
                   `${countdown}s 后重发`
                 ) : (
@@ -402,7 +402,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
           <Button type="submit" className={AUTH_SUBMIT_CLASS} disabled={loading}>
             {loading ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="size-4 animate-spin" />
                 开通中...
               </>
             ) : (

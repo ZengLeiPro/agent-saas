@@ -62,11 +62,11 @@ function TenantList() {
         actions={
           <>
             <Button variant="outline" size="sm" onClick={openSettings}>
-              <Settings className="mr-1.5 h-3.5 w-3.5" />
+              <Settings className="size-3.5" />
               组织配置
             </Button>
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", refreshing && "animate-spin")} />
+              <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
               刷新
             </Button>
           </>
@@ -152,7 +152,7 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
             <Button variant="outline" size="sm" onClick={() => go("runs", { tenantId })}>{RUN_LABEL}</Button>
             <Button variant="outline" size="sm" onClick={() => go("sandboxes", { tenantId })}>执行环境</Button>
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-              {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+              {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               刷新
             </Button>
           </>
@@ -167,7 +167,7 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
       </div>
       {loading && !tenant ? (
         <div className="flex h-40 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <Loader2 className="mr-2 size-4 animate-spin" />
           加载租户详情...
         </div>
       ) : (

@@ -292,7 +292,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   if (loading || tenantLoading || (tenantIdScope && usersLoading) || (!isTenantMode && tenantsLoading)) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <Loader2 className="size-6 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -312,9 +312,9 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                 disabled={syncing}
               >
                 {syncing ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  <Zap className="mr-1.5 h-3.5 w-3.5" />
+                  <Zap className="size-3.5" />
                 )}
                 强制同步
               </Button>
@@ -326,9 +326,9 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
               disabled={importing}
             >
               {importing ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="size-3.5 animate-spin" />
               ) : (
-                <Upload className="mr-1.5 h-3.5 w-3.5" />
+                <Upload className="size-3.5" />
               )}
               上传技能
             </Button>
@@ -337,7 +337,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
               size="sm"
               onClick={() => { void refreshAll(); }}
             >
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              <RefreshCw className="size-3.5" />
               刷新
             </Button>
             {importMsg && (
@@ -401,7 +401,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                             className="h-7 px-2 text-xs"
                             onClick={() => { void openEditor({ kind: "tenantOwn", username: "", skillId: skill.id, name: skill.name }); }}
                           >
-                            <Pencil className="h-3.5 w-3.5" />
+                            <Pencil className="size-3.5" />
                           </Button>
                           {isPlatformAdmin && (
                             <Button
@@ -411,7 +411,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                               title="提升到平台技能池"
                               onClick={() => { void handlePromoteOwnToPool(skill.id); }}
                             >
-                              <ArrowUpCircle className="h-3.5 w-3.5" />
+                              <ArrowUpCircle className="size-3.5" />
                             </Button>
                           )}
                           <Button
@@ -420,7 +420,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                             className="h-7 px-2 text-xs text-destructive hover:text-destructive"
                             onClick={() => setDeleteTarget({ kind: "tenantOwn", username: "", skillId: skill.id, name: skill.name })}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Trash2 className="size-3.5" />
                           </Button>
                           <Select
                             value={skill.exposure}
@@ -611,7 +611,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 className="h-7 px-2 text-xs"
                                 onClick={() => { void openEditor({ kind: "custom", username, skillId: skill.id, name: skill.name }); }}
                               >
-                                <Pencil className="mr-1 h-3.5 w-3.5" />
+                                <Pencil className="size-3.5" />
                                 接管编辑
                               </Button>
                               <Button
@@ -620,7 +620,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 className="h-7 px-2 text-xs"
                                 onClick={() => handlePromote(skill.id, username)}
                               >
-                                <ArrowUpCircle className="mr-1 h-3.5 w-3.5" />
+                                <ArrowUpCircle className="size-3.5" />
                                 {isTenantMode ? "提升到组织" : "提升到全局"}
                               </Button>
                               <Button
@@ -629,7 +629,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 className="h-7 px-2 text-xs text-destructive hover:text-destructive"
                                 onClick={() => setDeleteTarget({ kind: "custom", username, skillId: skill.id, name: skill.name })}
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                <Trash2 className="size-3.5" />
                               </Button>
                             </div>
                           </div>
@@ -658,7 +658,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           </DialogHeader>
           {editLoading ? (
             <div className="flex h-64 items-center justify-center text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
+              <Loader2 className="size-5 animate-spin" />
             </div>
           ) : (
             <textarea
@@ -672,7 +672,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditTarget(null)}>取消</Button>
             <Button onClick={() => { void saveEditor(); }} disabled={editLoading || editSaving}>
-              {editSaving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+              {editSaving && <Loader2 className="size-4 animate-spin" />}
               保存
             </Button>
           </DialogFooter>
@@ -693,7 +693,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
               取消
             </Button>
             <Button variant="destructive" onClick={confirmDelete} disabled={deleting}>
-              {deleting && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+              {deleting && <Loader2 className="size-4 animate-spin" />}
               删除
             </Button>
           </DialogFooter>

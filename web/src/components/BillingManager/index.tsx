@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ActionIcons } from "@/lib/icons";
+import { EntityIcons, ActionIcons } from "@/lib/icons";
 import {
-  AlertCircle,
+  CircleAlert,
   ArrowDownToLine,
-  Coins,
   Search,
   Loader2,
   Plus,
   RefreshCw,
   Save,
-  WalletCards,
   X,
 } from "lucide-react";
 import { authFetch } from "@/lib/authFetch";
@@ -336,7 +334,7 @@ function NoticeBar({ notice, onDismiss }: { notice: Notice; onDismiss: () => voi
   return (
     <div className={cn("mb-4 flex items-start justify-between gap-3 rounded-md px-3 py-2 text-sm", tone)}>
       <span className="flex-1">{notice.text}</span>
-      <button onClick={onDismiss} className="opacity-70 hover:opacity-100"><X className="h-4 w-4" /></button>
+      <button onClick={onDismiss} className="opacity-70 hover:opacity-100"><X className="size-4" /></button>
     </div>
   );
 }
@@ -648,17 +646,17 @@ export function PlatformBillingManager() {
             </Select>
             {activeTab === "overview" && draft && (
               <Button size="sm" onClick={() => { void savePolicy(); }} disabled={saving || loading}>
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
                 保存策略
               </Button>
             )}
             {activeTab === "pricing-versions" && pricingVersionActions}
             <Button variant="outline" onClick={() => { void projectNow(); }} disabled={projecting}>
-              {projecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ActionIcons.project className="h-4 w-4" />}
+              {projecting ? <Loader2 className="size-4 animate-spin" /> : <ActionIcons.project className="size-4" />}
               投影 usage
             </Button>
             <Button variant="outline" onClick={() => { void load(); }} disabled={loading}>
-              <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+              <RefreshCw className={cn("size-4", loading && "animate-spin")} />
               刷新
             </Button>
           </>
@@ -685,7 +683,7 @@ export function PlatformBillingManager() {
             <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <WalletCards className="h-5 w-5 text-primary" />
+                  <EntityIcons.billing className="size-5 text-primary" />
                   <h3 className="truncate text-lg font-semibold">{selectedTenant?.name || selectedTenantId || "选择组织"}</h3>
                   <StatusBadge summary={state.summary} />
                 </div>
@@ -704,7 +702,7 @@ export function PlatformBillingManager() {
 
           {state.audit?.alerts.length ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              <div className="mb-1 flex items-center gap-2 font-medium"><AlertCircle className="h-4 w-4" />计费审计提醒</div>
+              <div className="mb-1 flex items-center gap-2 font-medium"><CircleAlert className="size-4" />计费审计提醒</div>
               <ul className="space-y-1">{state.audit.alerts.map((alert) => <li key={alert}>· {alert}</li>)}</ul>
             </div>
           ) : null}
@@ -813,7 +811,7 @@ export function PlatformBillingManager() {
               </div>
               <div className="flex justify-end md:col-span-3">
                 <Button size="sm" variant="outline" onClick={() => { void adjustAccount(); }} disabled={adjusting || !adjustAmount.trim()}>
-                  {adjusting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Coins className="h-4 w-4" />}
+                  {adjusting ? <Loader2 className="size-4 animate-spin" /> : <EntityIcons.credits className="size-4" />}
                   写入流水
                 </Button>
               </div>
@@ -976,7 +974,7 @@ function LedgerView({
               </SelectContent>
             </Select>
             <Button onClick={() => { void load(null); }} disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              {loading ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
               查询
             </Button>
           </div>
@@ -987,7 +985,7 @@ function LedgerView({
         {nextCursor && (
           <div className="flex justify-center">
             <Button variant="outline" onClick={() => { void load(nextCursor); }} disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
+              {loading ? <Loader2 className="size-4 animate-spin" /> : <ArrowDownToLine className="size-4" />}
               加载更多
             </Button>
           </div>
@@ -1101,7 +1099,7 @@ function UsageEventsView({
               </SelectContent>
             </Select>
             <Button onClick={() => { void load(); }} disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              {loading ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
               查询
             </Button>
           </div>
@@ -1206,7 +1204,7 @@ function PricingVersionsView({
 
   const actions = useMemo(() => (
     <Button size="sm" onClick={() => setCreating(true)}>
-      <Plus className="h-4 w-4" />
+      <Plus className="size-4" />
       新建价格版本
     </Button>
   ), []);
@@ -1436,7 +1434,7 @@ function PricingVersionFormDialog({
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>取消</Button>
           <Button onClick={() => { void handleSubmit(); }} disabled={submitting}>
-            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {submitting ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             提交
           </Button>
         </DialogFooter>
@@ -1490,7 +1488,7 @@ function AuditView({ onJumpUnpriced }: { onJumpUnpriced: () => void }) {
               </SelectContent>
             </Select>
             <Button variant="outline" onClick={() => { void load(); }} disabled={loading}>
-              <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+              <RefreshCw className={cn("size-4", loading && "animate-spin")} />
               刷新
             </Button>
           </div>
@@ -1507,7 +1505,7 @@ function AuditView({ onJumpUnpriced }: { onJumpUnpriced: () => void }) {
 
           {audit?.alerts.length ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              <div className="mb-1 flex items-center gap-2 font-medium"><AlertCircle className="h-4 w-4" />告警</div>
+              <div className="mb-1 flex items-center gap-2 font-medium"><CircleAlert className="size-4" />告警</div>
               <ul className="space-y-1">{audit.alerts.map((alert) => <li key={alert}>· {alert}</li>)}</ul>
             </div>
           ) : null}
@@ -1630,7 +1628,7 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
       <SettingsPanelHeader
         title="计费"
         description="组织管理员只查看余额、消耗和流水；充值、策略与封顶由平台管理员统一维护。"
-        actions={<Button variant="outline" onClick={() => { void load(); }} disabled={loading}><RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />刷新</Button>}
+        actions={<Button variant="outline" onClick={() => { void load(); }} disabled={loading}><RefreshCw className={cn("size-4", loading && "animate-spin")} />刷新</Button>}
       />
       <div className="min-h-0 flex-1 space-y-5 overflow-auto">
       {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
@@ -1638,7 +1636,7 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
         <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
           <div>
             <div className="flex items-center gap-2">
-              <WalletCards className="h-5 w-5 text-primary" />
+              <EntityIcons.billing className="size-5 text-primary" />
               <h3 className="text-lg font-semibold">{tenantName || tenantId}</h3>
               <StatusBadge summary={state.summary} />
             </div>

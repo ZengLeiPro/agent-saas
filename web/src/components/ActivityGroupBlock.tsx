@@ -268,7 +268,7 @@ function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryI
 }
 
 function GroupStatusIcon({ summary }: { summary: GroupSummaryInfo }) {
-  const className = "h-3.5 w-3.5 shrink-0";
+  const className = "size-3.5 shrink-0";
   if (summary.active) {
     return <StatusIcons.running className={activityStatusIconClass("active", `${className} animate-spin`)} />;
   }
@@ -317,11 +317,11 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
   return (
     <div className="my-0.5 flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
       {isActive ? (
-        <StatusIcons.running className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-spin")} />
+        <StatusIcons.running className={activityStatusIconClass("active", "size-3.5 shrink-0 animate-spin")} />
       ) : hasIssue ? (
-        <StatusIcons.error className={activityStatusIconClass("warning", "h-3.5 w-3.5 shrink-0")} />
+        <StatusIcons.error className={activityStatusIconClass("warning", "size-3.5 shrink-0")} />
       ) : (
-        <StatusIcons.success className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
+        <StatusIcons.success className={activityStatusIconClass("success", "size-3.5 shrink-0")} />
       )}
       <span className={activityStatusTextClass(tone)}>{isActive ? "正在执行中" : hasIssue ? duration ? `已执行，有异常 ${duration}` : "已执行，有异常" : duration ? `已执行 ${duration}` : "已执行"}</span>
     </div>
@@ -357,7 +357,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
         <span className={activityStatusBadgeClass(summary.tone)}>{summaryDuration ? `${summary.badge} ${summaryDuration}` : summary.badge}</span>
         {summary.progress && <span className="shrink-0 text-muted-foreground/60">({summary.progress})</span>}
         <ChevronRight className={cn(
-          "h-3.5 w-3.5 shrink-0 transition-transform",
+          "size-3.5 shrink-0 transition-transform",
           isExpanded && "rotate-90",
         )} />
       </button>

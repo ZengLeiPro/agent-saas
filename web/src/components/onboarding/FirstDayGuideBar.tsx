@@ -1,5 +1,5 @@
 import { useEffect, useReducer } from "react";
-import { CheckCircle2, Circle, CircleDot, Timer, X } from "lucide-react";
+import { CircleCheck, Circle, CircleDot, Timer, X } from "lucide-react";
 import type { ScenarioItem } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -103,10 +103,10 @@ function ProgressDot({
   active: boolean;
   done: boolean;
 }) {
-  const Icon = done ? CheckCircle2 : active ? CircleDot : Circle;
+  const Icon = done ? CircleCheck : active ? CircleDot : Circle;
   return (
     <span className={cn("inline-flex items-center gap-1.5", active && "font-medium")}>
-      <Icon className={cn("h-4 w-4", done ? "text-emerald-300" : active ? "text-white" : "text-white/45")} />
+      <Icon className={cn("size-4", done ? "text-emerald-300" : active ? "text-white" : "text-white/45")} />
       {label}
     </span>
   );
@@ -189,7 +189,7 @@ export function FirstDayGuideBar({
     <div className="hidden border-t bg-slate-950 px-4 py-2 text-slate-50 md:flex">
       <div className="mx-auto flex min-h-10 w-full max-w-5xl items-center gap-4">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <Timer className="h-4 w-4 shrink-0 text-slate-300" />
+          <Timer className="size-4 shrink-0 text-slate-300" />
           <div className="min-w-0">
             <div className="truncate text-sm font-medium">{copy.title}</div>
             <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-300">
@@ -212,11 +212,11 @@ export function FirstDayGuideBar({
           type="button"
           size="icon"
           variant="ghost"
-          className="h-8 w-8 shrink-0 text-slate-300 hover:bg-white/10 hover:text-white"
+          className="size-8 shrink-0 text-slate-300 hover:bg-white/10 hover:text-white"
           onClick={() => dispatch({ type: "USER_CLOSE" })}
           title="关闭引导"
         >
-          <X className="h-4 w-4" />
+          <X className="size-4" />
         </Button>
       </div>
     </div>

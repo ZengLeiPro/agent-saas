@@ -123,7 +123,7 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
         className="inline-flex h-7 items-center gap-1 rounded-md border border-brand-200 bg-brand-50 px-2.5 text-xs font-semibold text-brand-700 shadow-sm tabular-nums transition-colors hover:border-brand-300 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-900/35 dark:text-brand-100 dark:hover:bg-brand-900/55"
         title="组织积分余额"
       >
-        <EntityIcons.credits className="h-3.5 w-3.5" aria-hidden="true" />
+        <EntityIcons.credits className="size-3.5" aria-hidden="true" />
         {formatCredits(summary.balanceCredits)}
       </button>
 
@@ -132,7 +132,7 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
           <div className="px-4 pb-3 pt-4">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-1.5 text-sm font-medium">
-                <EntityIcons.credits className="h-4 w-4 text-brand-600 dark:text-brand-300" aria-hidden="true" />
+                <EntityIcons.credits className="size-4 text-brand-600 dark:text-brand-300" aria-hidden="true" />
                 积分余额
               </div>
               <div className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">

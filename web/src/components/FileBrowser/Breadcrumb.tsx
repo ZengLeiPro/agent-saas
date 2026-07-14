@@ -27,7 +27,7 @@ export function Breadcrumb({ currentPath, onNavigate }: BreadcrumbProps) {
         return (
           <span key={path} className="flex shrink-0 items-center gap-0.5">
             {i > 0 && (
-              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
+              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/40" />
             )}
             {isLast ? (
               <span
@@ -35,7 +35,7 @@ export function Breadcrumb({ currentPath, onNavigate }: BreadcrumbProps) {
                   "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[13px] font-semibold text-foreground",
                 )}
               >
-                {isRoot && <Home className="h-3.5 w-3.5" />}
+                {isRoot && <Home className="size-3.5" />}
                 {isRoot ? "文件" : segment}
               </span>
             ) : (
@@ -47,7 +47,7 @@ export function Breadcrumb({ currentPath, onNavigate }: BreadcrumbProps) {
                 )}
                 onClick={() => onNavigate(path)}
               >
-                {isRoot && <Home className="h-3.5 w-3.5" />}
+                {isRoot && <Home className="size-3.5" />}
                 {isRoot ? "文件" : segment}
               </button>
             )}

@@ -109,10 +109,10 @@ export function AddSessionsToGroupDialog({
                     onClick={() => toggleSession(s.id)}
                   >
                     <div className={cn(
-                      "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+                      "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border transition-colors",
                       isSelected ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/30",
                     )}>
-                      {isSelected && <Check className="h-3 w-3" />}
+                      {isSelected && <Check className="size-3" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-medium leading-snug">

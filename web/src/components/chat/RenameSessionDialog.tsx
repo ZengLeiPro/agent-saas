@@ -91,7 +91,7 @@ export function RenameSessionDialog({
             取消
           </Button>
           <Button onClick={() => void handleConfirm()} disabled={renaming}>
-            {renaming ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {renaming ? <Loader2 className="size-4 animate-spin" /> : null}
             确认
           </Button>
         </DialogFooter>

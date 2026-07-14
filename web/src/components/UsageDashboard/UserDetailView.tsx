@@ -140,7 +140,7 @@ export function UserDetailView({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onBack}>
-            <ArrowLeft className="mr-1 h-3.5 w-3.5" />
+            <ArrowLeft className="size-3.5" />
             返回列表
           </Button>
           <h2 className="ml-2 text-lg font-semibold">{realName ?? username}</h2>
@@ -165,7 +165,7 @@ export function UserDetailView({
 
       {loading && !trend ? (
         <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中
+          <Loader2 className="mr-2 size-4 animate-spin" /> 加载中
         </div>
       ) : (
         <>

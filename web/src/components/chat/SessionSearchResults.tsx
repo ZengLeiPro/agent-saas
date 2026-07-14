@@ -48,7 +48,7 @@ export function SessionSearchResults({
   if (isSearching && hits.length === 0) {
     return (
       <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        <Loader2 className="mr-2 size-4 animate-spin" />
         搜索中...
       </div>
     );
@@ -123,7 +123,7 @@ export function SessionSearchResults({
         >
           {isLoadingMore ? (
             <>
-              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="size-3.5 animate-spin" />
               加载中...
             </>
           ) : (

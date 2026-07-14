@@ -52,14 +52,14 @@ export function DisplaySettingsMenu({
         type="button"
         variant="ghost"
         size="icon"
-        className={cn("h-8 w-8", open && "bg-accent text-accent-foreground")}
+        className={cn("size-8", open && "bg-accent text-accent-foreground")}
         onClick={() => setOpen((value) => !value)}
         title="显示设置"
         aria-label="显示设置"
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        <SlidersHorizontal className="h-5 w-5" />
+        <SlidersHorizontal className="size-5" />
       </Button>
 
       {open && (

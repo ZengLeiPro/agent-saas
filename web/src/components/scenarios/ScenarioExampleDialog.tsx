@@ -55,7 +55,7 @@ export function ScenarioExampleDialog({
 
         {/* 免责 banner：明显但不刺眼（浅警示底色 + 常规前景色） */}
         <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-foreground/80">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <Info className="mt-0.5 size-3.5 shrink-0" />
           <span>{EXAMPLE_DISCLAIMER}</span>
         </div>
 

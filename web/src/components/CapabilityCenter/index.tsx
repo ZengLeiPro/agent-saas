@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Bot, MessageSquarePlus, Plug, Puzzle } from "lucide-react";
+import { MessageSquarePlus } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 import type { OrgAgentSummary } from "@agent/shared";
 import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ import { CatalogToolbar, CapabilityLogo } from "./CatalogUi";
 function ManagedCapabilityNotice({ kind }: { kind: "技能" | "连接器" }) {
   return (
     <div className="mx-auto flex max-w-xl flex-col items-center rounded-2xl border border-dashed bg-muted/20 px-6 py-12 text-center">
-      {kind === "技能" ? <Puzzle className="h-8 w-8 text-brand-600" /> : <Plug className="h-8 w-8 text-brand-600" />}
+      {kind === "技能" ? <EntityIcons.skill className="size-8 text-brand-600" /> : <EntityIcons.connector className="size-8 text-brand-600" />}
       <h3 className="mt-4 text-base font-semibold">{kind} 由组织统一配置</h3>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">
         当前组织未开放个人通用 Agent。企业专家所需的 {kind} 已由管理员配置，成员无需重复启用。
@@ -68,7 +69,7 @@ export function CapabilityCenter({
             ) : null}
             {experts.length === 0 ? (
               <div className="flex flex-col items-center rounded-2xl border border-dashed px-6 py-12 text-center text-muted-foreground">
-                <Bot className="h-8 w-8" />
+                <EntityIcons.expert className="size-8" />
                 <div className="mt-3 text-sm">当前没有指派给你的企业专家</div>
               </div>
             ) : filteredExperts.length === 0 ? (
@@ -104,7 +105,7 @@ export function CapabilityCenter({
                           {expert.skillCount > 0 ? `${expert.skillCount} 个固有技能` : "专属职责范围"}
                         </span>
                         <Button size="sm" disabled={actionsDisabled} onClick={() => onStartExpert(expert.id)}>
-                          <MessageSquarePlus className="mr-1.5 h-3.5 w-3.5" />开始对话
+                          <MessageSquarePlus className="size-3.5" />开始对话
                         </Button>
                       </div>
                     </CardContent>

@@ -51,7 +51,7 @@ export function StatusBadge({
   const showSpinner = pulse || tone === "transient";
   return (
     <Badge className={cn(toneClass(tone), className)}>
-      {showSpinner && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+      {showSpinner && <Loader2 className="mr-1 size-3 animate-spin" />}
       {label}
     </Badge>
   );

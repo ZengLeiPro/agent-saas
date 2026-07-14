@@ -88,14 +88,14 @@ export function SubagentTranscriptDialog({ open, childSessionId, title, onClose 
             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             aria-label="关闭子任务完整过程"
           >
-            <X className="h-4 w-4" />
+            <X className="size-4" />
           </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {!detail && !error && (
             <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="size-4 animate-spin" />
               正在读取子任务记录
             </div>
           )}

@@ -29,7 +29,7 @@ function statusLabel(status: SubagentStatus): string {
 }
 
 function StatusIcon({ status }: { status: SubagentStatus }) {
-  const base = 'h-3.5 w-3.5 shrink-0';
+  const base = 'size-3.5 shrink-0';
   if (status === 'running') return <StatusIcons.running className={activityStatusIconClass('active', `${base} animate-spin`)} />;
   if (status === 'failed') return <StatusIcons.error className={activityStatusIconClass('warning', base)} />;
   if (status === 'cancelled') return <StatusIcons.cancelled className={activityStatusIconClass('neutral', base)} />;
@@ -73,7 +73,7 @@ export function SubagentBlock(props: SubagentBlockProps) {
         <StatusIcon status={props.status} />
         <span className="min-w-0 flex-1 truncate">子任务 {props.agentType}</span>
         <span className="shrink-0 text-[11px]">{statusLabel(props.status)}</span>
-        {hasDetails && <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 transition-transform', expanded && 'rotate-90')} />}
+        {hasDetails && <ChevronRight className={cn('size-3.5 shrink-0 transition-transform', expanded && 'rotate-90')} />}
       </button>
 
       {expanded && hasDetails && (
@@ -102,7 +102,7 @@ export function SubagentBlock(props: SubagentBlockProps) {
               className="inline-flex items-center gap-1 font-medium text-brand-600 transition-colors hover:text-brand-700"
             >
               查看完整过程
-              <ExternalLink className="h-3 w-3" />
+              <ExternalLink className="size-3" />
             </button>
           )}
         </div>

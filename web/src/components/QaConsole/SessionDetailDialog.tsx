@@ -92,7 +92,7 @@ export function SessionDetailDialog({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-secondary/40">
           {loading ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />加载会话记录...
+              <Loader2 className="mr-2 size-4 animate-spin" />加载会话记录...
             </div>
           ) : error ? (
             <div className="flex flex-1 items-center justify-center px-6 text-sm text-destructive">{error}</div>

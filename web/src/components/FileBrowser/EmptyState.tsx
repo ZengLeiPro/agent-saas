@@ -26,16 +26,16 @@ export function EmptyState({ variant = "folder", className }: EmptyStateProps) {
         />
         <div
           className={cn(
-            "relative flex h-20 w-20 items-center justify-center rounded-2xl",
+            "relative flex size-20 items-center justify-center rounded-2xl",
             "bg-gradient-to-br from-brand-50 to-brand-100/50",
             "ring-1 ring-inset ring-brand-200/60",
             "dark:from-brand-900/40 dark:to-brand-800/20 dark:ring-brand-700/40",
           )}
         >
-          <FolderOpen className="h-10 w-10 text-brand-500 dark:text-brand-300" strokeWidth={1.5} />
+          <FolderOpen className="size-10 text-brand-500 dark:text-brand-300" strokeWidth={1.5} />
           <Sparkles
             className={cn(
-              "absolute -right-1 -top-1 h-5 w-5 text-brand-accent drop-shadow-sm",
+              "absolute -right-1 -top-1 size-5 text-brand-accent drop-shadow-sm",
               "dark:text-brand-accent",
             )}
           />

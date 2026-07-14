@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { TriangleAlert, CircleCheck } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,7 +33,7 @@ export function AttentionQueue({ items }: { items: AttentionItem[] }) {
       <CardContent>
         {sorted.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            <CircleCheck className="size-4 text-emerald-600" />
             暂无待处理异常
           </div>
         ) : (
@@ -42,7 +42,7 @@ export function AttentionQueue({ items }: { items: AttentionItem[] }) {
               <div key={item.id} className="flex items-start justify-between gap-3 rounded-lg border p-3">
                 <div className="min-w-0">
                   <div className={cn("flex items-center gap-2 text-sm font-medium", severityClass[item.severity])}>
-                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    <TriangleAlert className="size-4 shrink-0" />
                     <span className="truncate">{item.title}</span>
                   </div>
                   {item.description && <div className="mt-1 text-xs text-muted-foreground">{item.description}</div>}

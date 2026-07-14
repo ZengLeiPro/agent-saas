@@ -35,14 +35,14 @@ export function VoiceBar({ state, onPlay, onTogglePause }: VoiceBarProps) {
       <button
         onClick={handleClick}
         disabled={isLoading}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-white hover:bg-primary/80 disabled:opacity-70"
+        className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-white hover:bg-primary/80 disabled:opacity-70"
       >
         {isLoading ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
+          <Loader2 className="size-3 animate-spin" />
         ) : isPlaying ? (
-          <Pause className="h-3 w-3" />
+          <Pause className="size-3" />
         ) : (
-          <Play className="h-3 w-3 ml-0.5" />
+          <Play className="size-3 ml-0.5" />
         )}
       </button>
 

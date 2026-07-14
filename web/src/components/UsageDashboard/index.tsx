@@ -11,7 +11,7 @@
  *   [Detail]    单用户详情（替换主区域）
  */
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw, ChevronDown, ChevronRight, AlertCircle, RotateCcw, Database, ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import { Loader2, RefreshCw, ChevronDown, ChevronRight, CircleAlert, RotateCcw, Database, ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -143,7 +143,7 @@ function ModelBar({ user, dateArgs, labelFor }: { user: string; dateArgs: DateAr
   if (loading) {
     return (
       <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> 加载模型分布...
+        <Loader2 className="size-3.5 animate-spin" /> 加载模型分布...
       </div>
     );
   }
@@ -254,9 +254,9 @@ function SortHeader({ field, current, dir, align = "right", width, onChange, chi
           active ? "text-foreground font-semibold" : "text-muted-foreground",
         )}
       >
-        {align === "right" && <Icon className={cn("h-3 w-3", !active && "opacity-40")} />}
+        {align === "right" && <Icon className={cn("size-3", !active && "opacity-40")} />}
         <span>{children}</span>
-        {align === "left" && <Icon className={cn("h-3 w-3", !active && "opacity-40")} />}
+        {align === "left" && <Icon className={cn("size-3", !active && "opacity-40")} />}
       </button>
     </TableHead>
   );
@@ -328,10 +328,10 @@ function UserRankTable({
                     <button
                       type="button"
                       onClick={() => setExpanded(isOpen ? null : u.username)}
-                      className="flex h-5 w-5 items-center justify-center rounded hover:bg-accent"
+                      className="flex size-5 items-center justify-center rounded hover:bg-accent"
                       title={isOpen ? "收起" : "展开模型分布"}
                     >
-                      {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                      {isOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
                     </button>
                     <button
                       type="button"
@@ -558,7 +558,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
             />
             <FamilyFilter value={family} onChange={setFamily} />
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-              <RefreshCw className={cn("mr-1 h-3.5 w-3.5", loading && "animate-spin")} />
+              <RefreshCw className={cn("mr-1 size-3.5", loading && "animate-spin")} />
               刷新
             </Button>
           </div>
@@ -569,7 +569,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
       <div className="space-y-2">
         {dataRange?.firstCostDate && dataRange.earliestDate && dataRange.firstCostDate !== dataRange.earliestDate && (
           <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
             <span>
               Token 数据自 <span className="font-mono">{dataRange.earliestDate}</span> 起记录；
               成本数据自 <span className="font-mono">{dataRange.firstCostDate}</span> 起完整
@@ -580,7 +580,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
         {dataRange?.rebuild && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-card px-3 py-2 text-xs">
             <div className="flex items-center gap-2 text-muted-foreground">
-              <Database className="h-3.5 w-3.5" />
+              <Database className="size-3.5" />
               <span>
                 上次回填：
                 <span className="ml-1 font-mono">{new Date(dataRange.rebuild.lastRebuildAtMs).toLocaleString()}</span>
@@ -593,7 +593,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
             </div>
             {isPlatformAdmin && (
               <Button variant="outline" size="sm" onClick={() => void onRebuild()} disabled={rebuilding}>
-                <RotateCcw className={cn("mr-1 h-3.5 w-3.5", rebuilding && "animate-spin")} />
+                <RotateCcw className={cn("mr-1 size-3.5", rebuilding && "animate-spin")} />
                 {rebuilding ? "扫描中…" : "重新扫描"}
               </Button>
             )}
@@ -618,7 +618,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
         <CardContent>
           {loading && !trend ? (
             <div className="flex h-[220px] items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中
+              <Loader2 className="mr-2 size-4 animate-spin" /> 加载中
             </div>
           ) : (
             <TrendChart data={trendData} />
@@ -628,7 +628,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">用户排行 <span className="ml-1 text-[11px] font-normal text-muted-foreground">（点用户名查看详情；点 <ChevronRight className="inline h-3 w-3 align-[-1.5px]" aria-hidden="true" /> 展开模型分布）</span></CardTitle>
+          <CardTitle className="text-sm font-medium">用户排行 <span className="ml-1 text-[11px] font-normal text-muted-foreground">（点用户名查看详情；点 <ChevronRight className="inline size-3 align-[-1.5px]" aria-hidden="true" /> 展开模型分布）</span></CardTitle>
         </CardHeader>
         <CardContent>
           {byUser ? (
@@ -641,7 +641,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
             />
           ) : loading ? (
             <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中
+              <Loader2 className="mr-2 size-4 animate-spin" /> 加载中
             </div>
           ) : null}
         </CardContent>

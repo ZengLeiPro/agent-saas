@@ -138,7 +138,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
 
   const backButton = (
     <Button variant="outline" size="sm" onClick={onBack}>
-      <ArrowLeft className="mr-1 h-3.5 w-3.5" />
+      <ArrowLeft className="size-3.5" />
       返回列表
     </Button>
   );
@@ -148,7 +148,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
       <div className="space-y-4">
         {backButton}
         <div className="flex h-40 items-center justify-center rounded-2xl border bg-card text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载运行详情...
+          <Loader2 className="mr-2 size-4 animate-spin" /> 加载运行详情...
         </div>
       </div>
     );
@@ -178,12 +178,12 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
       <div className="flex flex-wrap items-center gap-2">
         {backButton}
         <Button variant="outline" size="sm" onClick={() => void load(fullLoaded ? "full" : "default")} disabled={loading || loadingFull}>
-          <RefreshCw className={cn("mr-1 h-3.5 w-3.5", (loading || loadingFull) && "animate-spin")} />
+          <RefreshCw className={cn("mr-1 size-3.5", (loading || loadingFull) && "animate-spin")} />
           刷新
         </Button>
         {hasTruncated && !fullLoaded && (
           <Button variant="outline" size="sm" onClick={() => void load("full")} disabled={loadingFull}>
-            {loadingFull ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <FileText className="mr-1 h-3.5 w-3.5" />}
+            {loadingFull ? <Loader2 className="size-3.5 animate-spin" /> : <FileText className="size-3.5" />}
             加载全文
           </Button>
         )}

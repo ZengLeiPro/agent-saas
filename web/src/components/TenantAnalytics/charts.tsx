@@ -117,7 +117,7 @@ export function DonutChart({
       <ul className="min-w-0 flex-1 space-y-1.5 text-xs">
         {slices.map((slice) => (
           <li key={slice.label} className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: slice.color }} />
+            <span className="size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: slice.color }} />
             <span className="min-w-0 flex-1 truncate text-muted-foreground" title={slice.label}>{slice.label}</span>
             <span className="tabular-nums text-foreground">
               {total > 0 ? `${((slice.value / total) * 100).toFixed(1)}%` : "0%"}

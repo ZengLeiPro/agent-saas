@@ -165,7 +165,7 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage, allowDetails = fal
                     .map((c: ContextUsageData['categories'][number]) => (
                       <div key={c.name} className="flex items-center justify-between gap-2 text-[11px]">
                         <span className="flex items-center gap-1.5 truncate text-muted-foreground">
-                          <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: c.color }} />
+                          <span className="size-2 rounded-sm" style={{ backgroundColor: c.color }} />
                           {c.name}{c.isDeferred ? ' (deferred)' : ''}
                         </span>
                         <span className="font-mono tabular-nums">{formatTokenCount(c.tokens)}</span>

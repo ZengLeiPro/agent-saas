@@ -108,15 +108,15 @@ export function CompanyInfoSection({ tenantId, tenantName }: CompanyInfoSectionP
             {editing ? (
               <Button onClick={handleSave} disabled={loading || saving || !dirty || readOnly}>
                 {saving ? (
-                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  <Loader2 className="size-4 animate-spin" />
                 ) : (
-                  <Save className="mr-1.5 h-4 w-4" />
+                  <Save className="size-4" />
                 )}
                 保存
               </Button>
             ) : (
               <Button onClick={() => setEditing(true)} disabled={loading || readOnly}>
-                <Pencil className="mr-1.5 h-4 w-4" />
+                <Pencil className="size-4" />
                 编辑
               </Button>
             )}
@@ -126,7 +126,7 @@ export function CompanyInfoSection({ tenantId, tenantName }: CompanyInfoSectionP
 
       {loading ? (
         <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
         </div>
       ) : editing ? (
         <Textarea

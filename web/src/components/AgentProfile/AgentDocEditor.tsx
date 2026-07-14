@@ -138,22 +138,22 @@ export function AgentDocEditor({
       )}
       {onBack && headerTitle ? (
         <Button type="button" variant="outline" onClick={onBack} disabled={saving}>
-          <ArrowLeft className="mr-1.5 h-4 w-4" />
+          <ArrowLeft className="size-4" />
           返回
         </Button>
       ) : null}
       {editing ? (
         <Button onClick={handleSave} disabled={loading || saving || !dirty}>
           {saving ? (
-            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            <Loader2 className="size-4 animate-spin" />
           ) : (
-            <Save className="mr-1.5 h-4 w-4" />
+            <Save className="size-4" />
           )}
           保存
         </Button>
       ) : (
         <Button onClick={() => setEditing(true)} disabled={loading}>
-          <Pencil className="mr-1.5 h-4 w-4" />
+          <Pencil className="size-4" />
           编辑
         </Button>
       )}
@@ -176,7 +176,7 @@ export function AgentDocEditor({
           className="mb-4 flex shrink-0 items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
           onClick={onBack}
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="size-4" />
           返回
         </button>
       ) : null}
@@ -190,7 +190,7 @@ export function AgentDocEditor({
 
       {loading ? (
         <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
         </div>
       ) : editing ? (
         <Textarea

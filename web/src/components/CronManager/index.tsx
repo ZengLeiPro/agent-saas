@@ -130,11 +130,11 @@ export function CronManager({
         actions={(
           <>
             <Button size="sm" variant="outline" onClick={refreshAll}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              <RefreshCw className="size-3.5" />
               刷新
             </Button>
             <Button size="sm" onClick={openCreate}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              <Plus className="size-3.5" />
               新建
             </Button>
           </>

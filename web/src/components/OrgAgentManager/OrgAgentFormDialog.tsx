@@ -180,16 +180,16 @@ export function OrgAgentFormDialog({
               <Label>头像</Label>
               {values.avatarImageUrl ? (
                 <div className="flex items-center gap-1.5">
-                  <img src={values.avatarImageUrl} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+                  <img src={values.avatarImageUrl} alt="" className="size-9 shrink-0 rounded-full object-cover" />
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-muted-foreground"
+                    className="size-8 text-muted-foreground"
                     title="移除图片头像（保存后生效）"
                     onClick={() => patch({ avatarImageUrl: null })}
                   >
-                    <X className="h-4 w-4" />
+                    <X className="size-4" />
                   </Button>
                 </div>
               ) : (
@@ -226,7 +226,7 @@ export function OrgAgentFormDialog({
                       disabled={uploading}
                       onClick={() => fileInputRef.current?.click()}
                     >
-                      {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ImagePlus className="h-3 w-3" />}
+                      {uploading ? <Loader2 className="size-3 animate-spin" /> : <ImagePlus className="size-3" />}
                       {uploading ? '上传中...' : '上传图片'}
                     </button>
                     <button
@@ -235,7 +235,7 @@ export function OrgAgentFormDialog({
                       disabled={uploading}
                       onClick={() => setPresetsOpen((prev) => !prev)}
                     >
-                      <UserRound className="h-3 w-3" />岗位预设
+                      <UserRound className="size-3" />岗位预设
                     </button>
                   </div>
                 </>
@@ -257,7 +257,7 @@ export function OrgAgentFormDialog({
                   <img
                     src={`/kaikai-presets/${preset.key}.jpg`}
                     alt={preset.label}
-                    className="h-10 w-10 rounded-full object-cover ring-1 ring-border transition group-hover:ring-2 group-hover:ring-brand-400"
+                    className="size-10 rounded-full object-cover ring-1 ring-border transition group-hover:ring-2 group-hover:ring-brand-400"
                   />
                   <span className="w-full truncate text-center text-[10px] text-muted-foreground">{preset.label}</span>
                 </button>
@@ -306,7 +306,7 @@ export function OrgAgentFormDialog({
             <p className="text-xs text-muted-foreground">勾选后成为这位企业专家的固有能力；成员无需在个人设置中再次启用。</p>
             {skillsLoading ? (
               <div className="flex items-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />加载组织技能清单...
+                <Loader2 className="size-4 animate-spin" />加载组织技能清单...
               </div>
             ) : skills.length === 0 ? (
               <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">当前组织暂无可用技能。</div>

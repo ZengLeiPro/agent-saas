@@ -380,7 +380,7 @@ export function LoginLogDialog({
             className="h-8"
             onClick={handleSearch}
           >
-            <Search className="mr-1 h-3.5 w-3.5" />
+            <Search className="size-3.5" />
             搜索
           </Button>
         </div>
@@ -396,7 +396,7 @@ export function LoginLogDialog({
         <div className="min-h-0 flex-1 overflow-auto">
           {loading && entries.length === 0 ? (
             <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="mr-2 size-4 animate-spin" />
               加载中...
             </div>
           ) : entries.length === 0 ? (
@@ -512,7 +512,7 @@ export function LoginLogDialog({
                 className="text-xs text-muted-foreground hover:text-destructive"
                 onClick={() => setShowClearConfirm(true)}
               >
-                <Trash2 className="mr-1 h-3.5 w-3.5" />
+                <Trash2 className="size-3.5" />
                 清理日志
               </Button>
             ) : (
@@ -552,20 +552,20 @@ export function LoginLogDialog({
             <Button
               variant="outline"
               size="icon"
-              className="h-7 w-7"
+              className="size-7"
               disabled={offset === 0 || loading}
               onClick={prevPage}
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="size-4" />
             </Button>
             <Button
               variant="outline"
               size="icon"
-              className="h-7 w-7"
+              className="size-7"
               disabled={offset + limit >= total || loading}
               onClick={nextPage}
             >
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="size-4" />
             </Button>
           </div>
         </div>

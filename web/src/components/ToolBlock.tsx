@@ -20,7 +20,7 @@ function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
         onClick={onClose}
         className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
       >
-        <X className="h-5 w-5" />
+        <X className="size-5" />
       </button>
       <img
         src={src}
@@ -115,16 +115,16 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
   const tone = getExecutionTone(executionStatus, resultReady, streaming);
 
   const icon = executionStatus === "running"
-    ? <StatusIcons.running className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-spin")} />
+    ? <StatusIcons.running className={activityStatusIconClass("active", "size-3.5 shrink-0 animate-spin")} />
     : executionStatus === "failed"
-      ? <StatusIcons.error className={activityStatusIconClass("warning", "h-3.5 w-3.5 shrink-0")} />
+      ? <StatusIcons.error className={activityStatusIconClass("warning", "size-3.5 shrink-0")} />
       : executionStatus === "cancelled"
-        ? <StatusIcons.cancelled className={activityStatusIconClass("neutral", "h-3.5 w-3.5 shrink-0")} />
+        ? <StatusIcons.cancelled className={activityStatusIconClass("neutral", "size-3.5 shrink-0")} />
       : resultReady || executionStatus === "completed"
-        ? <StatusIcons.success className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
+        ? <StatusIcons.success className={activityStatusIconClass("success", "size-3.5 shrink-0")} />
         : streaming
-          ? <Wrench className={activityStatusIconClass("active", "h-3.5 w-3.5 shrink-0 animate-pulse")} />
-          : <StatusIcons.pending className={activityStatusIconClass("pending", "h-3.5 w-3.5 shrink-0")} />;
+          ? <Wrench className={activityStatusIconClass("active", "size-3.5 shrink-0 animate-pulse")} />
+          : <StatusIcons.pending className={activityStatusIconClass("pending", "size-3.5 shrink-0")} />;
 
   return (
     <div className="my-0.5">
@@ -151,7 +151,7 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
             : statusLabel}
         </span>
         <ChevronRight className={cn(
-          "h-3.5 w-3.5 shrink-0 transition-transform",
+          "size-3.5 shrink-0 transition-transform",
           isExpanded && "rotate-90",
         )} />
       </button>
@@ -202,10 +202,10 @@ export function ToolResultBlock({ toolName, result }: ToolResultBlockProps) {
         onClick={() => setIsExpanded(v => !v)}
         className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <StatusIcons.success className={activityStatusIconClass("success", "h-3.5 w-3.5 shrink-0")} />
+        <StatusIcons.success className={activityStatusIconClass("success", "size-3.5 shrink-0")} />
         <span className="min-w-0 truncate">Result: {toolName}</span>
         <ChevronRight className={cn(
-          "h-3.5 w-3.5 shrink-0 transition-transform",
+          "size-3.5 shrink-0 transition-transform",
           isExpanded && "rotate-90",
         )} />
       </button>

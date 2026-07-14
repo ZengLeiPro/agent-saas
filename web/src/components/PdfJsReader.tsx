@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, ChevronLeft, ChevronRight, Loader2, Minus, Plus } from 'lucide-react';
+import { CircleAlert, ChevronLeft, ChevronRight, Loader2, Minus, Plus } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { getPlatform, resolveKbFileSrc, TOKEN_KEY } from '@agent/shared';
@@ -110,17 +110,17 @@ export function PdfJsReader({ filePath, initialPage, onBackToPreview }: PdfJsRea
     setPageInput(String(target));
   };
 
-  if (loading) return <Centered><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></Centered>;
+  if (loading) return <Centered><Loader2 className="size-6 animate-spin text-muted-foreground" /></Centered>;
   if (!document || error) {
-    return <Centered><AlertCircle className="h-6 w-6" /><span className="text-sm">{error ?? '完整目录加载失败'}</span></Centered>;
+    return <Centered><CircleAlert className="size-6" /><span className="text-sm">{error ?? '完整目录加载失败'}</span></Centered>;
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-b bg-background px-2 py-2">
         <Button variant="ghost" size="sm" onClick={onBackToPreview}>返回引用页</Button>
-        <Button variant="ghost" size="icon" className="h-8 w-8" disabled={page <= 1} onClick={() => goToPage(page - 1)} aria-label="上一页">
-          <ChevronLeft className="h-4 w-4" />
+        <Button variant="ghost" size="icon" className="size-8" disabled={page <= 1} onClick={() => goToPage(page - 1)} aria-label="上一页">
+          <ChevronLeft className="size-4" />
         </Button>
         <input
           aria-label="完整目录页码"
@@ -133,21 +133,21 @@ export function PdfJsReader({ filePath, initialPage, onBackToPreview }: PdfJsRea
           onKeyDown={(event) => { if (event.key === 'Enter') goToPage(Number(pageInput)); }}
         />
         <span className="text-xs text-muted-foreground">/ {document.numPages} 页</span>
-        <Button variant="ghost" size="icon" className="h-8 w-8" disabled={page >= document.numPages} onClick={() => goToPage(page + 1)} aria-label="下一页">
-          <ChevronRight className="h-4 w-4" />
+        <Button variant="ghost" size="icon" className="size-8" disabled={page >= document.numPages} onClick={() => goToPage(page + 1)} aria-label="下一页">
+          <ChevronRight className="size-4" />
         </Button>
         <span className="ml-auto flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-8 w-8" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))} aria-label="缩小">
-            <Minus className="h-4 w-4" />
+          <Button variant="ghost" size="icon" className="size-8" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))} aria-label="缩小">
+            <Minus className="size-4" />
           </Button>
           <span className="w-12 text-center text-xs tabular-nums">{Math.round(zoom * 100)}%</span>
-          <Button variant="ghost" size="icon" className="h-8 w-8" disabled={zoom >= 2.5} onClick={() => setZoom((value) => Math.min(2.5, value + 0.25))} aria-label="放大">
-            <Plus className="h-4 w-4" />
+          <Button variant="ghost" size="icon" className="size-8" disabled={zoom >= 2.5} onClick={() => setZoom((value) => Math.min(2.5, value + 0.25))} aria-label="放大">
+            <Plus className="size-4" />
           </Button>
         </span>
       </div>
       <div className="relative min-h-0 flex-1 overflow-auto bg-neutral-200 p-4 dark:bg-neutral-900">
-        {rendering && <Loader2 className="absolute right-4 top-4 z-10 h-5 w-5 animate-spin text-muted-foreground" />}
+        {rendering && <Loader2 className="absolute right-4 top-4 z-10 size-5 animate-spin text-muted-foreground" />}
         <canvas ref={canvasRef} className="mx-auto block max-w-none bg-white shadow-lg" />
       </div>
     </div>

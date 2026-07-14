@@ -123,7 +123,7 @@ export function EmptyChatRecommendCards({
             onClick={() => onOpenRoleDetail(matchedRoleId)}
           >
             岗位详情
-            <ArrowRight className="h-3.5 w-3.5" />
+            <ArrowRight className="size-3.5" />
           </Button>
         )}
       </div>
@@ -142,12 +142,12 @@ export function EmptyChatRecommendCards({
             <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
               {scenario.mode === "recurring" ? (
                 <>
-                  <Clock3 className="h-3.5 w-3.5" />
+                  <Clock3 className="size-3.5" />
                   常驻监测
                 </>
               ) : (
                 <>
-                  <Layers3 className="h-3.5 w-3.5" />
+                  <Layers3 className="size-3.5" />
                   一次性任务
                 </>
               )}
@@ -176,7 +176,7 @@ export function EmptyChatRecommendCards({
           onClick={onViewAll}
         >
           查看全部模板
-          <ArrowRight className="h-3.5 w-3.5" />
+          <ArrowRight className="size-3.5" />
         </Button>
       </div>
     </div>

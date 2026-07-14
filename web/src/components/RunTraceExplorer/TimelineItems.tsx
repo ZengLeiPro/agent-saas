@@ -1,17 +1,17 @@
 /** Run 追踪详情：时间线各类事件的渲染单元 */
 import { useMemo, useState, type ReactNode } from "react";
 import {
-  AlertTriangle,
+  TriangleAlert,
   Bot,
   Brain,
   ChevronDown,
   ChevronRight,
   Database,
   Flag,
-  ShieldCheck,
   User,
   Wrench,
 } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -105,7 +105,7 @@ export function CollapsedSection({
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground hover:text-foreground"
       >
-        {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+        {open ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
         {icon}
         <span className="font-medium">{label}</span>
         {meta}
@@ -136,7 +136,7 @@ export function EventShell({
   return (
     <div className="flex gap-3">
       <div className="flex flex-col items-center">
-        <div className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-full", iconClass ?? "bg-muted text-muted-foreground")}>
+        <div className={cn("flex size-6 shrink-0 items-center justify-center rounded-full", iconClass ?? "bg-muted text-muted-foreground")}>
           {icon}
         </div>
         <div className="w-px flex-1 bg-border" />
@@ -177,7 +177,7 @@ export function DividerNode({
 export function UserMessageItem({ event }: { event: TraceEvent }) {
   return (
     <EventShell
-      icon={<User className="h-3.5 w-3.5" />}
+      icon={<User className="size-3.5" />}
       iconClass="bg-blue-500/15 text-blue-700 dark:text-blue-300"
       title="用户消息"
       timestamp={event.timestamp}
@@ -193,12 +193,12 @@ export function UserMessageItem({ event }: { event: TraceEvent }) {
 export function MemoryContextItem({ event }: { event: TraceEvent }) {
   return (
     <EventShell
-      icon={<Database className="h-3.5 w-3.5" />}
+      icon={<Database className="size-3.5" />}
       title="记忆上下文"
       timestamp={event.timestamp}
       badges={<TruncatedBadge event={event} />}
     >
-      <CollapsedSection icon={<Database className="h-3.5 w-3.5" />} label="注入的记忆内容（默认收起）">
+      <CollapsedSection icon={<Database className="size-3.5" />} label="注入的记忆内容（默认收起）">
         <CollapsibleText text={event.content ?? ""} mono />
       </CollapsedSection>
     </EventShell>
@@ -208,12 +208,12 @@ export function MemoryContextItem({ event }: { event: TraceEvent }) {
 export function ThinkingItem({ event }: { event: TraceEvent }) {
   return (
     <EventShell
-      icon={<Brain className="h-3.5 w-3.5" />}
+      icon={<Brain className="size-3.5" />}
       title="思考"
       timestamp={event.timestamp}
       badges={<TruncatedBadge event={event} />}
     >
-      <CollapsedSection icon={<Brain className="h-3.5 w-3.5" />} label="思考内容（默认收起）">
+      <CollapsedSection icon={<Brain className="size-3.5" />} label="思考内容（默认收起）">
         <CollapsibleText text={event.content ?? ""} className="text-muted-foreground" />
       </CollapsedSection>
     </EventShell>
@@ -223,7 +223,7 @@ export function ThinkingItem({ event }: { event: TraceEvent }) {
 export function AssistantMessageItem({ event }: { event: TraceEvent }) {
   return (
     <EventShell
-      icon={<Bot className="h-3.5 w-3.5" />}
+      icon={<Bot className="size-3.5" />}
       iconClass="bg-primary/10 text-primary"
       title="助手回复"
       timestamp={event.timestamp}
@@ -267,8 +267,8 @@ export function ToolCallRow({
         onClick={() => setOpen((v) => !v)}
         className="flex w-full flex-wrap items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-muted/40"
       >
-        {open ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
-        <span className={cn("h-2 w-2 shrink-0 rounded-full", dotClass)} />
+        {open ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
+        <span className={cn("size-2 shrink-0 rounded-full", dotClass)} />
         <span className="font-mono font-medium">{name}</span>
         {audit?.durationMs != null && (
           <span className="text-muted-foreground tabular-nums">{formatMs(audit.durationMs)}</span>
@@ -321,7 +321,7 @@ export function ToolCallsItem({
   const calls = event.toolCalls ?? [];
   return (
     <EventShell
-      icon={<Wrench className="h-3.5 w-3.5" />}
+      icon={<Wrench className="size-3.5" />}
       iconClass="bg-violet-500/15 text-violet-700 dark:text-violet-300"
       title={`工具调用 × ${calls.length}`}
       timestamp={event.timestamp}
@@ -358,7 +358,7 @@ export function OrphanToolEventItem({ event }: { event: TraceEvent }) {
   const failed = event.status === "error" || event.isError === true;
   return (
     <EventShell
-      icon={<Wrench className="h-3.5 w-3.5" />}
+      icon={<Wrench className="size-3.5" />}
       title={event.type === "tool_audit" ? "工具审计" : "工具结果"}
       timestamp={event.timestamp}
       badges={
@@ -393,7 +393,7 @@ export function ApprovalPairItem({ event, resolved }: { event: TraceEvent; resol
   const approved = resolved?.decision === "approve" || resolved?.decision === "approved" || resolved?.decision === "allow";
   return (
     <EventShell
-      icon={<ShieldCheck className="h-3.5 w-3.5" />}
+      icon={<EntityIcons.admin className="size-3.5" />}
       iconClass="bg-amber-500/15 text-amber-700 dark:text-amber-300"
       title="审批"
       timestamp={event.timestamp}
@@ -421,7 +421,7 @@ export function ApprovalPairItem({ event, resolved }: { event: TraceEvent; resol
       }
     >
       {event.input != null && (
-        <CollapsedSection icon={<Wrench className="h-3.5 w-3.5" />} label="审批入参（默认收起）">
+        <CollapsedSection icon={<Wrench className="size-3.5" />} label="审批入参（默认收起）">
           <CollapsibleText text={prettyJson(event.input)} mono />
         </CollapsedSection>
       )}
@@ -432,7 +432,7 @@ export function ApprovalPairItem({ event, resolved }: { event: TraceEvent; resol
 export function HandFailureItem({ event }: { event: TraceEvent }) {
   return (
     <EventShell
-      icon={<AlertTriangle className="h-3.5 w-3.5" />}
+      icon={<TriangleAlert className="size-3.5" />}
       iconClass="bg-destructive/15 text-destructive"
       title="执行环境故障"
       timestamp={event.timestamp}
@@ -469,7 +469,7 @@ export function RunStateChangedNode({ event }: { event: TraceEvent }) {
 export function RunFinishedItem({ event }: { event: TraceEvent }) {
   return (
     <EventShell
-      icon={<Flag className="h-3.5 w-3.5" />}
+      icon={<Flag className="size-3.5" />}
       iconClass={cn(
         event.subtype === "success"
           ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"

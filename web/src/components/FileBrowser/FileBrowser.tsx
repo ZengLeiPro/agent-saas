@@ -123,7 +123,7 @@ function SegmentedButton({
     <button
       type="button"
       className={cn(
-        "flex h-6 w-6 items-center justify-center rounded-md transition-all",
+        "flex size-6 items-center justify-center rounded-md transition-all",
         active
           ? "bg-card text-foreground shadow-sm ring-1 ring-inset ring-border/60"
           : "text-muted-foreground hover:text-foreground",
@@ -247,7 +247,7 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
             <Breadcrumb currentPath={currentPath} onNavigate={setCurrentPath} />
           ) : (
             <div className="flex items-center gap-1.5 text-[13px] font-semibold text-foreground">
-              <List className="h-3.5 w-3.5" />
+              <List className="size-3.5" />
               所有文件
             </div>
           )}
@@ -260,14 +260,14 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
             onClick={() => setViewMode("folder")}
             title="文件夹视图"
           >
-            <FolderTree className="h-3.5 w-3.5" />
+            <FolderTree className="size-3.5" />
           </SegmentedButton>
           <SegmentedButton
             active={viewMode === "all"}
             onClick={() => setViewMode("all")}
             title="所有文件"
           >
-            <List className="h-3.5 w-3.5" />
+            <List className="size-3.5" />
           </SegmentedButton>
         </SegmentedGroup>
 
@@ -278,44 +278,44 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
             onClick={() => updateLayoutMode("list")}
             title="列表布局"
           >
-            <Rows3 className="h-3.5 w-3.5" />
+            <Rows3 className="size-3.5" />
           </SegmentedButton>
           <SegmentedButton
             active={layoutMode === "grid"}
             onClick={() => updateLayoutMode("grid")}
             title="网格布局"
           >
-            <LayoutGrid className="h-3.5 w-3.5" />
+            <LayoutGrid className="size-3.5" />
           </SegmentedButton>
         </SegmentedGroup>
 
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+          className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
           onClick={refresh}
           title="刷新"
           disabled={loading}
         >
-          <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+          <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
         </Button>
 
         {!fullPage && onClose && (
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+            className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
             onClick={onClose}
             title="关闭"
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="size-3.5" />
           </Button>
         )}
       </div>
 
       {/* 排序栏：chip 风格 */}
       <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-3 py-1.5">
-        <ArrowUpDown className="mr-0.5 h-3 w-3 text-muted-foreground/50" />
+        <ArrowUpDown className="mr-0.5 size-3 text-muted-foreground/50" />
         {SORT_KEYS.map((key) => {
           const active = sortKey === key;
           return (
@@ -334,8 +334,8 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
               {FILE_SORT_LABELS[key]}
               {active && (
                 sortOrder === "asc"
-                  ? <ArrowUp className="h-3 w-3" />
-                  : <ArrowDown className="h-3 w-3" />
+                  ? <ArrowUp className="size-3" />
+                  : <ArrowDown className="size-3" />
               )}
             </button>
           );
@@ -349,15 +349,15 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
         </ScrollArea>
       ) : error ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10 text-destructive ring-1 ring-inset ring-destructive/20">
-            <FolderX className="h-7 w-7" strokeWidth={1.5} />
+          <div className="flex size-14 items-center justify-center rounded-2xl bg-destructive/10 text-destructive ring-1 ring-inset ring-destructive/20">
+            <FolderX className="size-7" strokeWidth={1.5} />
           </div>
           <div className="space-y-0.5">
             <p className="text-sm font-medium text-foreground">加载失败</p>
             <p className="text-xs text-muted-foreground">{error}</p>
           </div>
           <Button variant="outline" size="sm" onClick={refresh}>
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+            <RefreshCw className="size-3.5" />
             重试
           </Button>
         </div>

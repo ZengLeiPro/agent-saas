@@ -111,7 +111,7 @@ export function ChangePasswordDialog({ open, onOpenChange }: ChangePasswordDialo
             取消
           </Button>
           <Button onClick={() => void handleSubmit()} disabled={submitting}>
-            {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {submitting ? <Loader2 className="size-4 animate-spin" /> : null}
             确认修改
           </Button>
         </DialogFooter>

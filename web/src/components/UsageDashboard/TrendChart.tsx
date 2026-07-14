@@ -165,19 +165,19 @@ export function TrendChart({ data, height = DEFAULT_HEIGHT }: { data: TrendBarDa
               </span>
             </div>
             <div className="flex justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-500" />输入</span>
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-emerald-500" />输入</span>
               <span className="font-mono tabular-nums">{formatTokens(data[hover].input)}</span>
             </div>
             <div className="flex justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-amber-500" />输出</span>
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-amber-500" />输出</span>
               <span className="font-mono tabular-nums">{formatTokens(data[hover].output)}</span>
             </div>
             <div className="flex justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-blue-400" />缓存读</span>
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-blue-400" />缓存读</span>
               <span className="font-mono tabular-nums">{formatTokens(data[hover].cacheRead)}</span>
             </div>
             <div className="flex justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-purple-400" />缓存写</span>
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-purple-400" />缓存写</span>
               <span className="font-mono tabular-nums">{formatTokens(data[hover].cacheCreation)}</span>
             </div>
           </div>
@@ -186,10 +186,10 @@ export function TrendChart({ data, height = DEFAULT_HEIGHT }: { data: TrendBarDa
 
       {/* 图例 */}
       <div className="mt-1 flex flex-wrap items-center gap-3 px-2 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" />输入</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-amber-500" />输出</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-blue-400" />缓存读</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-purple-400" />缓存写</span>
+        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-emerald-500" />输入</span>
+        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-amber-500" />输出</span>
+        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-blue-400" />缓存读</span>
+        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-purple-400" />缓存写</span>
       </div>
     </div>
   );

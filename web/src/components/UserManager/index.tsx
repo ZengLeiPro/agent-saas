@@ -108,7 +108,7 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
                 setShowLoginLogs(true);
               }}
             >
-              <FileText className="mr-1 h-4 w-4" />
+              <FileText className="size-4" />
               操作日志
             </Button>
             {!isMobile && (
@@ -118,12 +118,12 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
                 onClick={refreshAll}
                 disabled={loading}
               >
-                <RefreshCw className="mr-1 h-4 w-4" />
+                <RefreshCw className="size-4" />
                 刷新
               </Button>
             )}
             <Button size="sm" onClick={openCreate}>
-              <Plus className="mr-1 h-4 w-4" />
+              <Plus className="size-4" />
               新建用户
             </Button>
           </>
@@ -146,7 +146,7 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
         <CardContent className="p-0">
           {loading && visibleUsers.length === 0 ? (
             <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="mr-2 size-4 animate-spin" />
               加载中...
             </div>
           ) : (

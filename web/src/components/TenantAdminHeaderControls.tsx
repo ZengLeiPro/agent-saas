@@ -41,7 +41,7 @@ export function TenantAdminHeaderControls({
             onClick={() => onActiveChange(item.id)}
             className="h-8 shrink-0 gap-1.5 px-2.5 text-xs"
           >
-            <Icon className="h-3.5 w-3.5" />
+            <Icon className="size-3.5" />
             {item.label}
           </Button>
         );

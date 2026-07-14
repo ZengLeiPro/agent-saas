@@ -18,11 +18,8 @@
 import { useMemo, useState } from "react";
 import {
   Activity,
-  AlertTriangle,
-  BarChart3,
-  Building2,
-  CheckCircle2,
-  Coins,
+  TriangleAlert,
+  CircleCheck,
   Loader2,
   MessageSquare,
   RefreshCw,
@@ -31,6 +28,7 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -160,7 +158,7 @@ function SectionTitle({ title, caption, loading }: { title: string; caption?: st
     <div className="flex items-center gap-2">
       <h3 className="text-sm font-semibold">{title}</h3>
       {caption && <span className="text-xs text-muted-foreground">· {caption}</span>}
-      {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+      {loading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
     </div>
   );
 }
@@ -256,7 +254,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
           <div className="flex flex-wrap items-center justify-end gap-2">
             <RangeSelector value={range} customRange={customRange} onChange={handleRangeChange} dateRangeLabel={rangeLabel} />
             <Button variant="outline" size="sm" onClick={refreshAll} disabled={usage.loading}>
-              <RefreshCw className={cn("mr-1 h-3.5 w-3.5", usage.loading && "animate-spin")} />
+              <RefreshCw className={cn("mr-1 size-3.5", usage.loading && "animate-spin")} />
               刷新
             </Button>
             {isPlatformAdmin && tenants.length > 0 && onTenantChange && (
@@ -276,7 +274,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
       <AuroraCard tone="indigo">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
-            <ToneBadge tone="indigo" icon={Building2} className="h-10 w-10" />
+            <ToneBadge tone="indigo" icon={EntityIcons.org} className="size-10" />
             <div className="min-w-0">
               <div className="text-xs uppercase tracking-wide text-muted-foreground">当前组织</div>
               <div className="mt-0.5 truncate text-xl font-semibold">{currentTenant?.name || tenantId || "当前组织"}</div>
@@ -343,7 +341,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
             {showUsageCredits && (
               <KpiCard
                 tone="indigo"
-                icon={Coins}
+                icon={EntityIcons.credits}
                 label="本月已用积分"
                 value={credits.summary ? formatCredits(credits.summary.currentMonthCreditsUsed) : "—"}
                 hint="自然月累计（北京时间）"
@@ -359,7 +357,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                       {creditTrend.loading ? "—" : formatCredits(creditTrend.periodCredits)}
                     </div>
                   </div>
-                  <ToneBadge tone="slate" icon={BarChart3} />
+                  <ToneBadge tone="slate" icon={EntityIcons.analytics} />
                 </div>
                 <div className="mt-3">
                   <Sparkline data={creditTrend.points.map(point => point.credits)} />
@@ -372,7 +370,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
               <div className="mb-2 text-xs font-medium text-muted-foreground">积分日消耗</div>
               {creditTrend.loading && creditTrend.points.length === 0 ? (
                 <div className="flex h-[160px] items-center justify-center text-sm text-muted-foreground">
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中
+                  <Loader2 className="mr-2 size-4 animate-spin" /> 加载中
                 </div>
               ) : (
                 <MiniBarTrend
@@ -401,7 +399,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <KpiCard
                   tone={report.outcome.completionRate !== null && report.outcome.completionRate < 0.85 ? "rose" : "emerald"}
-                  icon={CheckCircle2}
+                  icon={CircleCheck}
                   label="任务完成率"
                   value={formatRate(report.outcome.completionRate)}
                   hint={`成功 ${formatCount(report.outcome.success)} / 共 ${formatCount(report.outcome.totalRuns)} 个任务`}
@@ -415,7 +413,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                 />
                 <KpiCard
                   tone={report.outcome.error > 0 ? "rose" : "slate"}
-                  icon={AlertTriangle}
+                  icon={TriangleAlert}
                   label="失败任务"
                   value={formatCount(report.outcome.error)}
                   hint={[
@@ -437,7 +435,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                   <div className="mb-2 text-xs font-medium text-muted-foreground">失败原因 Top {report.outcome.errorReasons.length || ""}</div>
                   {report.outcome.errorReasons.length === 0 ? (
                     <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" /> 期间没有失败的任务，团队用得很顺
+                      <CircleCheck className="size-4 text-emerald-500" /> 期间没有失败的任务，团队用得很顺
                     </div>
                   ) : (
                     <ul className="space-y-1.5 text-xs">
@@ -483,7 +481,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
           <div className="mb-2 text-xs font-medium text-muted-foreground">对话轮次 · 日趋势</div>
           {usage.loading && turnTrendPoints.length === 0 ? (
             <div className="flex h-[160px] items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载中
+              <Loader2 className="mr-2 size-4 animate-spin" /> 加载中
             </div>
           ) : (
             <MiniBarTrend

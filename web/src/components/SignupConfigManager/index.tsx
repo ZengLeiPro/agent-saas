@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  AlertCircle,
-  AlertTriangle,
-  CheckCircle2,
+  CircleAlert,
+  TriangleAlert,
+  CircleCheck,
   Loader2,
   MessageSquare,
   RefreshCw,
   Save,
   Settings2,
-  ShieldCheck,
   UserPlus,
 } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 import {
   fetchSignupConfig,
   updateSignupConfig,
@@ -248,7 +248,7 @@ export function SignupConfigManager() {
     : "未配置，必填（aliyun 模式）";
 
   if (loading && !view && !dirty) {
-    return <div className="flex flex-1 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+    return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;
   }
 
   return (
@@ -259,13 +259,13 @@ export function SignupConfigManager() {
         actions={(
           <>
             {dirty && <Badge variant="outline">有未保存更改</Badge>}
-            {savedAt && !dirty && <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" />已保存，即时生效（无需重启）</Badge>}
+            {savedAt && !dirty && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存，即时生效（无需重启）</Badge>}
             <Button variant="outline" size="sm" onClick={() => { void refresh(); }} disabled={loading || saving}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              <RefreshCw className="size-3.5" />
               刷新
             </Button>
             <Button size="sm" onClick={() => { void save(); }} disabled={saving || !dirty}>
-              {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
               保存并生效
             </Button>
           </>
@@ -275,7 +275,7 @@ export function SignupConfigManager() {
       <div className="min-h-0 flex-1 space-y-4 overflow-auto">
         {error && (
           <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <CircleAlert className="mt-0.5 size-4 shrink-0" />
             <span>{error}</span>
           </div>
         )}
@@ -284,7 +284,7 @@ export function SignupConfigManager() {
           <CardContent className="space-y-3 p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <UserPlus className="h-4 w-4" />
+                <UserPlus className="size-4" />
                 <span className="text-sm font-medium">自助注册状态</span>
                 {view?.publicEnabled
                   ? <Badge className="border-0 bg-success/15 text-success">注册开放中</Badge>
@@ -298,7 +298,7 @@ export function SignupConfigManager() {
             </div>
             {view?.smsError && (
               <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <CircleAlert className="mt-0.5 size-4 shrink-0" />
                 <span>短信通道不可用：{view.smsError}</span>
               </div>
             )}
@@ -312,7 +312,7 @@ export function SignupConfigManager() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base"><Settings2 className="h-4 w-4" />基础设置</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-base"><Settings2 className="size-4" />基础设置</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
@@ -364,7 +364,7 @@ export function SignupConfigManager() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base"><MessageSquare className="h-4 w-4" />短信通道</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-base"><MessageSquare className="size-4" />短信通道</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 md:grid-cols-2">
@@ -442,7 +442,7 @@ export function SignupConfigManager() {
             </div>
             {draft.sms.provider === "dev" && (
               <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <TriangleAlert className="mt-0.5 size-4 shrink-0" />
                 <span>开发模式：验证码只打印到服务端日志，仅用于内测，请勿对外开放。</span>
               </div>
             )}
@@ -451,7 +451,7 @@ export function SignupConfigManager() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-4 w-4" />风控限流</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-base"><EntityIcons.admin className="size-4" />风控限流</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 md:grid-cols-2">

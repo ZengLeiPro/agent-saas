@@ -30,7 +30,7 @@ export function FilePreviewPanel({ filePath, owner, shareToken, onBack, hideHead
     }
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-        <FileQuestion className="h-6 w-6" />
+        <FileQuestion className="size-6" />
         <span className="text-sm">该引用类型不支持内嵌预览</span>
       </div>
     );
@@ -78,7 +78,7 @@ export function FilePreviewDialog({ open, filePath, owner, shareToken, onClose, 
               onClick={onDock}
               title="在右侧预览栏打开"
             >
-              <PanelRightOpen className="h-4 w-4" />
+              <PanelRightOpen className="size-4" />
               右侧打开
             </Button>
           ) : null}

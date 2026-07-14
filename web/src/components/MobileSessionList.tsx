@@ -350,7 +350,7 @@ export function MobileSessionList({
             <div className="flex min-w-0 flex-1 items-center text-sm font-medium leading-snug">
               {s.hasUnreadAiReply && (
                 <span className="mr-1 flex w-4 shrink-0 items-center justify-center" aria-hidden="true">
-                  <span className="h-2 w-2 rounded-full bg-destructive" />
+                  <span className="size-2 rounded-full bg-destructive" />
                 </span>
               )}
               <span className="truncate">{s.title || "新会话"}</span>
@@ -443,10 +443,10 @@ export function MobileSessionList({
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <FolderClosed className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <FolderClosed className="size-3.5 shrink-0 text-primary" />
               <span className="truncate text-sm font-medium leading-snug">{group.name}</span>
               {unreadByGroupId.get(group.groupKey) && (
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
+                <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
               )}
             </div>
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
@@ -610,10 +610,10 @@ export function MobileSessionList({
             {/* Left: 返回箭头 */}
             <button
               type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-full transition-opacity hover:bg-accent active:opacity-70"
+              className="flex size-8 items-center justify-center rounded-full transition-opacity hover:bg-accent active:opacity-70"
               onClick={() => setExpandedGroupKey(null)}
             >
-              <ChevronLeft className="h-5 w-5" />
+              <ChevronLeft className="size-5" />
             </button>
             {/* Center: 分组名 */}
             <div className="min-w-0 text-center">
@@ -626,10 +626,10 @@ export function MobileSessionList({
             ) : (
               <button
                 type="button"
-                className="flex h-8 w-8 items-center justify-center rounded-full transition-opacity hover:bg-accent active:opacity-70"
+                className="flex size-8 items-center justify-center rounded-full transition-opacity hover:bg-accent active:opacity-70"
                 onClick={() => setAddSessionsGroupKey(expandedGroup.groupKey)}
               >
-                <Plus className="h-5 w-5" />
+                <Plus className="size-5" />
               </button>
             )}
           </>
@@ -639,20 +639,20 @@ export function MobileSessionList({
             <div className="relative flex items-center" ref={userMenuRef}>
               <button
                 type="button"
-                className="flex h-8 w-8 items-center justify-center rounded-full transition-opacity active:opacity-70"
+                className="flex size-8 items-center justify-center rounded-full transition-opacity active:opacity-70"
                 onClick={() => authEnabled && authUser && setShowUserMenu((v) => !v)}
               >
                 {authUser ? (
                   authUser.avatar ? (
-                    <img src={authUser.avatar} alt="" className="h-8 w-8 rounded-full object-cover" />
+                    <img src={authUser.avatar} alt="" className="size-8 rounded-full object-cover" />
                   ) : (
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+                    <div className="flex size-8 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
                       {authUser.username.charAt(0).toUpperCase()}
                     </div>
                   )
                 ) : (
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
-                    <User className="h-4 w-4 text-muted-foreground" />
+                  <div className="flex size-8 items-center justify-center rounded-full bg-muted">
+                    <User className="size-4 text-muted-foreground" />
                   </div>
                 )}
               </button>
@@ -665,7 +665,7 @@ export function MobileSessionList({
                     className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                     onClick={() => { setShowUserMenu(false); onClose(); onOpenSettings?.("account"); }}
                   >
-                    <UserCog className="h-3.5 w-3.5" />
+                    <UserCog className="size-3.5" />
                     账户设置
                   </button>
                   <button
@@ -673,7 +673,7 @@ export function MobileSessionList({
                     className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                     onClick={() => { setShowUserMenu(false); avatarInputRef.current?.click(); }}
                   >
-                    <Camera className="h-3.5 w-3.5" />
+                    <Camera className="size-3.5" />
                     更换头像
                   </button>
                   <button
@@ -681,7 +681,7 @@ export function MobileSessionList({
                     className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                     onClick={() => { setShowUserMenu(false); setShowPasswordDialog(true); }}
                   >
-                    <Lock className="h-3.5 w-3.5" />
+                    <Lock className="size-3.5" />
                     修改密码
                   </button>
 
@@ -693,7 +693,7 @@ export function MobileSessionList({
                         className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                         onClick={() => { setShowUserMenu(false); onClose(); (onPushTab ?? onTabChange)?.("tenant-admin"); }}
                       >
-                        <EntityIcons.analytics className="h-3.5 w-3.5" />
+                        <EntityIcons.analytics className="size-3.5" />
                         组织分析
                       </button>
                       <button
@@ -701,7 +701,7 @@ export function MobileSessionList({
                         className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                         onClick={() => { setShowUserMenu(false); onClose(); onOpenAdminSettings?.("tenant"); }}
                       >
-                        <Settings2 className="h-3.5 w-3.5" />
+                        <Settings2 className="size-3.5" />
                         组织管理
                       </button>
                     </>
@@ -714,7 +714,7 @@ export function MobileSessionList({
                         className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                         onClick={() => { setShowUserMenu(false); onClose(); (onPushTab ?? onTabChange)?.("platform-admin"); }}
                       >
-                        <EntityIcons.analytics className="h-3.5 w-3.5" />
+                        <EntityIcons.analytics className="size-3.5" />
                         平台分析
                       </button>
                       <button
@@ -722,7 +722,7 @@ export function MobileSessionList({
                         className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                         onClick={() => { setShowUserMenu(false); onClose(); onOpenAdminSettings?.("platform"); }}
                       >
-                        <Settings2 className="h-3.5 w-3.5" />
+                        <Settings2 className="size-3.5" />
                         平台管理
                       </button>
                     </>
@@ -733,7 +733,7 @@ export function MobileSessionList({
                     className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
                     onClick={() => { setShowUserMenu(false); logout(); }}
                   >
-                    <LogOut className="h-3.5 w-3.5" />
+                    <LogOut className="size-3.5" />
                     退出登录
                   </button>
                 </div>
@@ -746,10 +746,10 @@ export function MobileSessionList({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9"
+                className="size-9"
                 onClick={onClose}
               >
-                <ChevronRight className="!h-6 !w-6" />
+                <ChevronRight className="size-6" />
               </Button>
             </div>
           </>
@@ -830,7 +830,7 @@ export function MobileSessionList({
                 <div className="px-2 py-1 pb-24">
                   {isLoading && groupedEntries.length === 0 ? (
                     <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      <Loader2 className="mr-2 size-4 animate-spin" />
                       加载中...
                     </div>
                   ) : groupedEntries.length === 0 ? (
@@ -849,7 +849,7 @@ export function MobileSessionList({
                   )}
                   {isLoadingMore && (
                     <div className="flex items-center justify-center py-3 text-sm text-muted-foreground">
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      <Loader2 className="mr-2 size-4 animate-spin" />
                     </div>
                   )}
                   {!hasMore && sessions.length > 0 && !isLoading && (
@@ -983,10 +983,10 @@ export function MobileSessionList({
           type="button"
           onClick={onNew}
           disabled={isLoading}
-          className="absolute right-4 z-10 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform active:scale-95 disabled:opacity-50"
+          className="absolute right-4 z-10 flex size-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform active:scale-95 disabled:opacity-50"
           style={{ bottom: "env(safe-area-inset-bottom, 0px)" }}
         >
-          <Plus className="h-6 w-6" />
+          <Plus className="size-6" />
         </button>
       )}
 

@@ -117,10 +117,10 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
         actions={
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => { void refresh(); }} disabled={loading}>
-              <RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} />刷新
+              <RefreshCw className={cn('mr-2 size-4', loading && 'animate-spin')} />刷新
             </Button>
             <Button onClick={() => { setEditing(null); setFormOpen(true); }}>
-              <Plus className="mr-2 h-4 w-4" />创建企业专家
+              <Plus className="size-4" />创建企业专家
             </Button>
           </div>
         }
@@ -134,11 +134,11 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
           <CardContent className="p-0">
             {loading && agents.length === 0 ? (
               <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />加载企业专家...
+                <Loader2 className="mr-2 size-4 animate-spin" />加载企业专家...
               </div>
             ) : agents.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
-                <Bot className="h-6 w-6" />
+                <Bot className="size-6" />
                 <span>还没有企业专家，点击右上角创建。</span>
               </div>
             ) : (
@@ -158,7 +158,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                     <TableRow key={agent.id}>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-base">
+                          <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-base">
                             <OrgAgentAvatarContent agent={agent} />
                           </span>
                           <div className="min-w-0">
@@ -190,20 +190,20 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8"
+                            className="size-8"
                             title="编辑"
                             onClick={() => { setEditing(agent); setFormOpen(true); }}
                           >
-                            <Pencil className="h-3.5 w-3.5" />
+                            <Pencil className="size-3.5" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            className="size-8 text-destructive hover:text-destructive"
                             title="删除"
                             onClick={() => setDeleting(agent)}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Trash2 className="size-3.5" />
                           </Button>
                         </div>
                       </TableCell>

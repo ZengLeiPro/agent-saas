@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, AlertCircle, ArrowRight, CheckCircle2, Clock3, ExternalLink, Loader2, Network, PauseCircle, RefreshCw, Save, ServerCog, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Activity, CircleAlert, ArrowRight, CircleCheck, Clock3, ExternalLink, Loader2, Network, PauseCircle, RefreshCw, Save, ServerCog, SlidersHorizontal, Trash2 } from "lucide-react";
 import { ActionIcons } from "@/lib/icons";
 
 import { Badge } from "@/components/ui/badge";
@@ -209,10 +209,10 @@ function formatDuration(ms?: number): string {
 
 function statusBadge(status?: string) {
   if (status === "ok") {
-    return <Badge className="gap-1 bg-emerald-600 text-white hover:bg-emerald-600"><CheckCircle2 className="h-3 w-3" />健康</Badge>;
+    return <Badge className="gap-1 bg-emerald-600 text-white hover:bg-emerald-600"><CircleCheck className="size-3" />健康</Badge>;
   }
   if (status === "unhealthy" || status === "error") {
-    return <Badge variant="destructive" className="gap-1"><AlertCircle className="h-3 w-3" />异常</Badge>;
+    return <Badge variant="destructive" className="gap-1"><CircleAlert className="size-3" />异常</Badge>;
   }
   if (status === "disabled") return <Badge variant="secondary">未启用</Badge>;
   return <Badge variant="outline">未知</Badge>;
@@ -528,11 +528,11 @@ export function RuntimeOperationsManager() {
               onClick={() => { void saveAcsRuntimeConfig(); }}
               disabled={!!applyingAction || !maxRunningText || !warnRunningText || !drainDeadlineText}
             >
-              {applyingAction === "保存 ACS 配置" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+              {applyingAction === "保存 ACS 配置" ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
               保存配置
             </Button>
             <Button variant="outline" size="sm" onClick={() => { void load(); }} disabled={loading || refreshing}>
-              {refreshing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+              {refreshing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               刷新
             </Button>
           </>
@@ -548,7 +548,7 @@ export function RuntimeOperationsManager() {
 
       {loading && !data ? (
         <div className="flex h-48 items-center justify-center rounded-2xl border bg-card text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+          <Loader2 className="mr-2 size-5 animate-spin" />
           加载运行态...
         </div>
       ) : (
@@ -590,31 +590,31 @@ export function RuntimeOperationsManager() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <SlidersHorizontal className="h-4 w-4" />
+                  <SlidersHorizontal className="size-4" />
                   执行面操作
                 </CardTitle>
                 <div className="text-xs text-muted-foreground">只改执行环境池的灰度发布配置；已有 run 的环境记录不会被删除。</div>
               </CardHeader>
               <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                 <Button variant="outline" size="sm" onClick={() => applyRoutePreset("acs-all")} disabled={!!applyingAction}>
-                  {applyingAction === "切到 ACS 全量" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="mr-1.5 h-3.5 w-3.5" />}
+                  {applyingAction === "切到 ACS 全量" ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowRight className="size-3.5" />}
                   ACS 全量
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => applyRoutePreset("acs-drain")} disabled={!!applyingAction}>
-                  <PauseCircle className="mr-1.5 h-3.5 w-3.5" />
+                  <PauseCircle className="size-3.5" />
                   ACS 维护
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => applyRoutePreset("ecs-all")} disabled={!!applyingAction}>
-                  <ActionIcons.undo className="mr-1.5 h-3.5 w-3.5" />
+                  <ActionIcons.undo className="size-3.5" />
                   回退 ECS
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => applyRoutePreset("remote-off")} disabled={!!applyingAction}>
-                  <PauseCircle className="mr-1.5 h-3.5 w-3.5" />
+                  <PauseCircle className="size-3.5" />
                   全部停新
                 </Button>
                 <Button asChild variant="ghost" size="sm" className="justify-start sm:col-span-2 xl:col-span-4">
                   <a href="/platform-admin/settings/remote-hands">
-                    <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                    <ExternalLink className="size-3.5" />
                     打开执行环境池详细配置
                   </a>
                 </Button>
@@ -643,7 +643,7 @@ export function RuntimeOperationsManager() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={() => { void runLifecycleCleanup(); }} disabled={!!applyingAction}>
-                    {applyingAction === "执行 cleanup" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+                    {applyingAction === "执行 cleanup" ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
                     立即 cleanup
                   </Button>
                 </div>
@@ -658,7 +658,7 @@ export function RuntimeOperationsManager() {
                   <CardTitle className="text-base">执行环境池</CardTitle>
                   <div className="mt-1 text-xs text-muted-foreground">配置、灰度发布与实时健康</div>
                 </div>
-                <ServerCog className="h-4 w-4 text-muted-foreground" />
+                <ServerCog className="size-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
                 <Table>
@@ -709,7 +709,7 @@ export function RuntimeOperationsManager() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <Activity className="h-4 w-4" />
+                  <Activity className="size-4" />
                   ACS Sandbox / 容器池
                 </CardTitle>
               </CardHeader>
@@ -775,7 +775,7 @@ export function RuntimeOperationsManager() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => { void cleanupOrphanSnat(); }} disabled={!!applyingAction || !snat?.enabled || !snat.configured}>
-                      {applyingAction === "清理 orphan SNAT" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
+                      {applyingAction === "清理 orphan SNAT" ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
                       清理孤儿 SNAT
                     </Button>
                     <div className="text-xs text-muted-foreground">
@@ -809,7 +809,7 @@ export function RuntimeOperationsManager() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button variant="outline" size="sm" onClick={() => { void runNetworkPolicyProbe(); }} disabled={!!applyingAction}>
-                      {applyingAction === "执行 network probe" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Network className="mr-1.5 h-3.5 w-3.5" />}
+                      {applyingAction === "执行 network probe" ? <Loader2 className="size-3.5 animate-spin" /> : <Network className="size-3.5" />}
                       网络探测
                     </Button>
                     <div className="text-xs text-muted-foreground">
@@ -830,7 +830,7 @@ export function RuntimeOperationsManager() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <Clock3 className="h-4 w-4" />
+                  <Clock3 className="size-4" />
                   执行队列 / 未终态执行轮次
                 </CardTitle>
                 <div className="text-xs text-muted-foreground">一次用户消息、恢复或唤醒触发的一轮执行；不代表容器状态。</div>

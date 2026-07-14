@@ -67,7 +67,7 @@ export function AddToGroupDialog({
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm transition-colors hover:bg-accent text-left"
               onClick={() => handleSelectGroup(group.groupKey)}
             >
-              <FolderClosed className="h-4 w-4 shrink-0 text-primary" />
+              <FolderClosed className="size-4 shrink-0 text-primary" />
               <span className="truncate">{group.name}</span>
               {group.kind === "cron" && (
                 <span className="shrink-0 text-xs text-muted-foreground">cron</span>
@@ -105,7 +105,7 @@ export function AddToGroupDialog({
             className="w-full"
             onClick={() => setCreating(true)}
           >
-            <Plus className="mr-2 h-4 w-4" />
+            <Plus className="size-4" />
             新建分组
           </Button>
         )}

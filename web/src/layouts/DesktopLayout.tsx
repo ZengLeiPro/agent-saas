@@ -56,7 +56,7 @@ const OrgAgentManagerPanel = lazy(() => import("@/components/OrgAgentManager").t
 
 const SuspenseFallback = (
   <div className="flex flex-1 items-center justify-center">
-    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    <Loader2 className="size-6 animate-spin text-muted-foreground" />
   </div>
 );
 
@@ -302,11 +302,11 @@ export function DesktopLayout(props: LayoutProps) {
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 shrink-0"
+              className="size-8 shrink-0"
               onClick={(e) => { e.stopPropagation(); toggleSidebar(); }}
               title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
             >
-              <PanelLeft className="h-4 w-4" />
+              <PanelLeft className="size-4" />
             </Button>
             {activeTab === "capabilities" ? (
               <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="min-w-0">
@@ -362,25 +362,25 @@ export function DesktopLayout(props: LayoutProps) {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8"
+                  className="size-8"
                   onClick={ttsPlayer.toggleAutoPlay}
                   title={ttsPlayer.autoPlay ? "Auto-play voice on" : "Auto-play voice off"}
                 >
                   {ttsPlayer.autoPlay ? (
-                    <Volume2 className="h-5 w-5 text-primary" />
+                    <Volume2 className="size-5 text-primary" />
                   ) : (
-                    <VolumeX className="h-5 w-5 text-muted-foreground" />
+                    <VolumeX className="size-5 text-muted-foreground" />
                   )}
                 </Button>
               )}
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="size-8"
                 onClick={toggleFileBrowser}
                 title="文件浏览器"
               >
-                <FolderOpen className={cn("h-5 w-5", fileBrowserOpen ? "text-primary" : "text-muted-foreground")} />
+                <FolderOpen className={cn("size-5", fileBrowserOpen ? "text-primary" : "text-muted-foreground")} />
               </Button>
             </div>
           )}
@@ -393,7 +393,7 @@ export function DesktopLayout(props: LayoutProps) {
         )}
         {connectionState === 'reconnecting' && (
           <div className="shrink-0 bg-warning/80 px-4 py-1.5 text-center text-xs font-medium text-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-3 w-3 animate-spin" />
+            <Loader2 className="size-3 animate-spin" />
             重新连接中...
           </div>
         )}

@@ -53,7 +53,7 @@ export function AdminEntityTable<T>({
             {toolbar}
             {onRefresh && (
               <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
-                <RefreshCw className={cn("mr-1 h-3.5 w-3.5", loading && "animate-spin")} />
+                <RefreshCw className={cn("mr-1 size-3.5", loading && "animate-spin")} />
                 刷新
               </Button>
             )}
@@ -63,7 +63,7 @@ export function AdminEntityTable<T>({
       <CardContent className="p-0">
         {loading && rows.length === 0 ? (
           <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Loader2 className="mr-2 size-4 animate-spin" />
             加载中...
           </div>
         ) : rows.length === 0 ? (

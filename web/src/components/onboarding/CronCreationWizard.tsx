@@ -234,7 +234,7 @@ export function CronCreationWizard({
                   onClick={() => setMonitorTargets((prev) => prev.filter((item) => item !== target))}
                 >
                   {target}
-                  <X className="h-3 w-3" aria-hidden="true" />
+                  <X className="size-3" aria-hidden="true" />
                 </button>
               ))}
             </div>
@@ -386,7 +386,7 @@ function RadioOption({
       )}
       onClick={onSelect}
     >
-      <span className={cn("h-3.5 w-3.5 rounded-full border", checked && "border-brand-600 bg-brand-600")} />
+      <span className={cn("size-3.5 rounded-full border", checked && "border-brand-600 bg-brand-600")} />
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-medium">{label}</span>
         <span className="block text-xs text-muted-foreground">{description}</span>

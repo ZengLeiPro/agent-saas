@@ -189,7 +189,7 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
                   disabled={sendingCode || countdown > 0 || loading}
                 >
                   {sendingCode ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Loader2 className="size-4 animate-spin" />
                   ) : countdown > 0 ? (
                     `${countdown}s 后重发`
                   ) : (
@@ -208,7 +208,7 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
         <Button type="submit" className={AUTH_SUBMIT_CLASS} disabled={loading}>
           {loading ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="size-4 animate-spin" />
               登录中...
             </>
           ) : (

@@ -76,7 +76,7 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
     return (
       <div className="flex h-full min-h-screen items-center justify-center bg-secondary">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Loader2 className="size-4 animate-spin" />
           加载分享会话...
         </div>
       </div>
@@ -87,8 +87,8 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
     return (
       <div className="flex h-full min-h-screen items-center justify-center bg-secondary px-4">
         <div className="w-full max-w-md rounded-lg border bg-card p-6 text-center shadow-sm">
-          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <Share2 className="h-5 w-5" />
+          <div className="mx-auto mb-3 flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <Share2 className="size-5" />
           </div>
           <div className="text-base font-semibold">分享链接不可用</div>
           <div className="mt-2 text-sm text-muted-foreground">{error || "分享链接不存在或已失效"}</div>

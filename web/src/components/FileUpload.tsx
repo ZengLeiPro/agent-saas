@@ -39,10 +39,10 @@ export function FileUpload({
               <img
                 src={file.previewUrl}
                 alt=""
-                className="h-7 w-7 rounded object-cover"
+                className="size-7 rounded object-cover"
               />
             ) : (
-              <TypeIcon className="h-4 w-4 text-muted-foreground" />
+              <TypeIcon className="size-4 text-muted-foreground" />
             )}
             <span className={cn("max-w-[14rem] truncate")} title={file.originalName}>
               {file.originalName}
@@ -53,12 +53,12 @@ export function FileUpload({
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7"
+              className="size-7"
               onClick={() => onRemoveFile(index)}
               title="Remove"
               aria-label="Remove file"
             >
-              <X className="h-4 w-4" />
+              <X className="size-4" />
             </Button>
           </div>
           );
@@ -68,7 +68,7 @@ export function FileUpload({
             className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-sm text-muted-foreground"
             aria-live="polite"
           >
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="size-4 animate-spin" />
             <span>上传中...</span>
           </div>
         )}
@@ -84,12 +84,12 @@ export function FileUpload({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-destructive hover:text-destructive"
+                className="size-7 text-destructive hover:text-destructive"
                 onClick={onDismissError}
                 title="Dismiss"
                 aria-label="Dismiss error"
               >
-                <X className="h-4 w-4" />
+                <X className="size-4" />
               </Button>
             )}
           </div>

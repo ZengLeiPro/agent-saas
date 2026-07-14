@@ -132,7 +132,7 @@ export function AddAccountDialog({ open, onOpenChange }: AddAccountDialogProps) 
           </Tabs>
           {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />登录中...</> : "继续"}
+            {loading ? <><Loader2 className="size-4 animate-spin" />登录中...</> : "继续"}
           </Button>
         </form>
       </DialogContent>
@@ -172,7 +172,7 @@ function PhoneCodeFields({
         <div className="flex gap-2">
           <Input id={`${prefix}-code`} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(event) => onCodeChange(event.target.value.replace(/\D/g, ""))} required disabled={disabled} />
           <Button type="button" variant="outline" className="w-32 shrink-0" onClick={onSendCode} disabled={sendingCode || countdown > 0 || disabled}>
-            {sendingCode ? <Loader2 className="h-4 w-4 animate-spin" /> : countdown > 0 ? `${countdown}s 后重发` : "获取验证码"}
+            {sendingCode ? <Loader2 className="size-4 animate-spin" /> : countdown > 0 ? `${countdown}s 后重发` : "获取验证码"}
           </Button>
         </div>
       </div>

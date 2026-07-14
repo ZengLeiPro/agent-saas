@@ -58,7 +58,7 @@ export function EmptySessionScenarios({ onTryScenario, onViewAll }: EmptySession
           className="inline-flex items-center gap-1 text-sm text-link hover:underline"
         >
           查看全部模板
-          <ArrowRight className="h-3.5 w-3.5" />
+          <ArrowRight className="size-3.5" />
         </button>
       </div>
     </div>

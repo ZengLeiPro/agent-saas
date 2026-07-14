@@ -10,7 +10,7 @@
  */
 
 import { useState } from 'react';
-import { Play, Pause, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Play, Pause, Loader2, CircleAlert, ChevronDown, ChevronUp } from 'lucide-react';
 import type { VoicePlayState } from '../hooks/useVoicePlayer';
 
 interface UserVoiceMessageProps {
@@ -69,15 +69,15 @@ export function UserVoiceMessage({
       >
         {/* 左侧: 播放按钮 / 状态图标 */}
         {status === 'uploading' || status === 'transcribing' ? (
-          <Loader2 className="h-5 w-5 shrink-0 animate-spin text-muted-foreground" />
+          <Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" />
         ) : status === 'failed' ? (
-          <AlertCircle className="h-5 w-5 shrink-0 text-destructive/60" />
+          <CircleAlert className="size-5 shrink-0 text-destructive/60" />
         ) : isLoading ? (
-          <Loader2 className="h-5 w-5 shrink-0 animate-spin" />
+          <Loader2 className="size-5 shrink-0 animate-spin" />
         ) : isPlaying || isPaused ? (
-          <Pause className="h-5 w-5 shrink-0" />
+          <Pause className="size-5 shrink-0" />
         ) : (
-          <Play className="h-5 w-5 shrink-0" />
+          <Play className="size-5 shrink-0" />
         )}
 
         {/* 中间: 波形条 */}
@@ -121,7 +121,7 @@ export function UserVoiceMessage({
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           onClick={() => setShowText(prev => !prev)}
         >
-          {showText ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {showText ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
           {showText ? '收起' : '转写文字'}
         </button>
       )}

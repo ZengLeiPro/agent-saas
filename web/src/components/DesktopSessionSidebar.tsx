@@ -18,7 +18,6 @@ import {
   Check,
   RefreshCw,
   Clock,
-  Plug,
   Minimize2,
   Settings2,
   GripVertical,
@@ -126,7 +125,7 @@ const USER_MENU_SECTION = "border-t border-border/60 py-1 first:border-t-0";
 function GroupUnreadDot() {
   return (
     <span
-      className="mr-1 h-1.5 w-1.5 shrink-0 rounded-full bg-destructive"
+      className="mr-1 size-1.5 shrink-0 rounded-full bg-destructive"
       aria-hidden="true"
     />
   );
@@ -138,8 +137,8 @@ function GroupUnreadDot() {
 function SessionLeadingIcon({ session, selected = false }: { session: ChatSessionIndexItem; selected?: boolean }) {
   if (selected) {
     return (
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white" aria-hidden="true">
-        <Check className="h-5 w-5" strokeWidth={2.5} />
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white" aria-hidden="true">
+        <Check className="size-5" strokeWidth={2.5} />
       </span>
     );
   }
@@ -159,23 +158,23 @@ function SessionLeadingIcon({ session, selected = false }: { session: ChatSessio
 function CompactSessionLeadingIcon({ selected = false }: { selected?: boolean }) {
   if (selected) {
     return (
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white" aria-hidden="true">
-        <Check className="h-3 w-3" strokeWidth={2.5} />
+      <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white" aria-hidden="true">
+        <Check className="size-3" strokeWidth={2.5} />
       </span>
     );
   }
-  return <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground/70" aria-hidden="true" />;
+  return <MessageSquare className="size-4 shrink-0 text-muted-foreground/70" aria-hidden="true" />;
 }
 
 /** 紧凑模式下的分组前缀小图标：普通分组用品牌蓝，定时任务用黄色填充区分。 */
 function CompactGroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
   if (kind === "cron") {
-    return <Clock className="h-4 w-4 shrink-0 fill-amber-100 text-amber-600 dark:fill-amber-900/35 dark:text-amber-300" aria-hidden="true" />;
+    return <Clock className="size-4 shrink-0 fill-amber-100 text-amber-600 dark:fill-amber-900/35 dark:text-amber-300" aria-hidden="true" />;
   }
 
   return (
     <Folder
-      className="h-4 w-4 shrink-0 fill-brand-100 text-brand-500/80 dark:fill-brand-900/35 dark:text-brand-300/80"
+      className="size-4 shrink-0 fill-brand-100 text-brand-500/80 dark:fill-brand-900/35 dark:text-brand-300/80"
       aria-hidden="true"
     />
   );
@@ -187,14 +186,14 @@ function GroupLeadingIcon({ kind }: { kind: SessionGroup["kind"] }) {
   return (
     <span
       className={cn(
-        "flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-1",
+        "flex size-10 shrink-0 items-center justify-center rounded-full ring-1",
         kind === "cron"
           ? "bg-amber-50 text-amber-600 ring-amber-100 dark:bg-amber-900/25 dark:text-amber-300 dark:ring-amber-700/30"
           : "bg-brand-50 text-brand-600 ring-brand-100 dark:bg-brand-900/35 dark:text-brand-300 dark:ring-brand-800",
       )}
       aria-hidden="true"
     >
-      <Icon className="h-5 w-5" />
+      <Icon className="size-5" />
     </span>
   );
 }
@@ -260,7 +259,7 @@ function SessionRow({
             setRenameSessionId(session.id);
           }}
         >
-          <Pencil className="h-3.5 w-3.5" />
+          <Pencil className="size-3.5" />
           重命名
         </button>
       )}
@@ -274,7 +273,7 @@ function SessionRow({
             onAutoTitle(session.id);
           }}
         >
-          <Sparkles className="h-3.5 w-3.5" />
+          <Sparkles className="size-3.5" />
           自动命名
         </button>
       )}
@@ -288,7 +287,7 @@ function SessionRow({
             onShare(session.id);
           }}
         >
-          <Share2 className="h-3.5 w-3.5" />
+          <Share2 className="size-3.5" />
           分享
         </button>
       )}
@@ -302,7 +301,7 @@ function SessionRow({
             onAddToGroup(session.id);
           }}
         >
-          <FolderPlus className="h-3.5 w-3.5" />
+          <FolderPlus className="size-3.5" />
           添加到分组
         </button>
       )}
@@ -316,7 +315,7 @@ function SessionRow({
             onRemoveFromGroup(session.id);
           }}
         >
-          <FolderMinus className="h-3.5 w-3.5" />
+          <FolderMinus className="size-3.5" />
           移出分组
         </button>
       )}
@@ -330,7 +329,7 @@ function SessionRow({
             onCompact();
           }}
         >
-          <Minimize2 className="h-3.5 w-3.5" />
+          <Minimize2 className="size-3.5" />
           压缩上下文
         </button>
       )}
@@ -344,7 +343,7 @@ function SessionRow({
             onDelete(session.id);
           }}
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 className="size-3.5" />
           删除
         </button>
       )}
@@ -365,7 +364,7 @@ function SessionRow({
       >
         <CompactSessionLeadingIcon selected={selected} />
         {session.hasUnreadAiReply && (
-          <span className="h-2 w-2 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
+          <span className="size-2 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5">
           {session.title || "新会话"}
@@ -376,7 +375,7 @@ function SessionRow({
             title={session.orgAgentName || "企业专家"}
             aria-label={`企业专家：${session.orgAgentName || ""}`}
           >
-            <Bot className="h-3 w-3" />
+            <Bot className="size-3" />
             <span className="truncate">{session.orgAgentName || "企业专家"}</span>
           </span>
         )}
@@ -401,14 +400,14 @@ function SessionRow({
               type="button"
               variant="ghost"
               size="icon"
-              className="h-6 w-6"
+              className="size-6"
               onClick={(e) => {
                 e.stopPropagation();
                 setActionMenuId(menuOpen ? null : session.id);
               }}
               disabled={isLoading}
             >
-              <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+              <MoreHorizontal className="size-3.5 text-muted-foreground" />
             </Button>
             {menuDropdown}
           </div>
@@ -437,17 +436,17 @@ function SessionRow({
                 className="mr-1 flex w-4 shrink-0 items-center justify-center"
                 aria-hidden="true"
               >
-                <span className="h-2 w-2 rounded-full bg-destructive" />
+                <span className="size-2 rounded-full bg-destructive" />
               </span>
             )}
             <span className="truncate">{session.title || "新会话"}</span>
             {session.orgAgentId && (
               <span
-                className="ml-1 flex h-4 w-4 shrink-0 items-center justify-center rounded bg-brand-50 text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
+                className="ml-1 flex size-4 shrink-0 items-center justify-center rounded bg-brand-50 text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
                 title={session.orgAgentName || "企业专家"}
                 aria-label={`企业专家：${session.orgAgentName || ""}`}
               >
-                <Bot className="h-3 w-3" />
+                <Bot className="size-3" />
               </span>
             )}
           </div>
@@ -470,14 +469,14 @@ function SessionRow({
             type="button"
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="size-7"
             onClick={(e) => {
               e.stopPropagation();
               setActionMenuId(menuOpen ? null : session.id);
             }}
             disabled={isLoading}
           >
-            <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
+            <MoreHorizontal className="size-3.5 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
           </Button>
 
           {menuDropdown}
@@ -502,11 +501,11 @@ function SidebarBrandHeader({ className }: SidebarBrandHeaderProps) {
       </div>
       <button
         type="button"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         onClick={() => void refreshAll()}
         title="刷新会话列表"
       >
-        <RefreshCw className="h-4 w-4" />
+        <RefreshCw className="size-4" />
       </button>
     </div>
   );
@@ -527,7 +526,7 @@ function getNavIcon(tab: AppTab) {
   if (tab === "capabilities") return EntityIcons.capabilityCenter;
   if (tab === "settings") return Settings2;
   if (tab === "cron") return Clock;
-  if (tab === "mcp") return Plug;
+  if (tab === "mcp") return EntityIcons.connector;
   if (tab === "scenarios") return LayoutGrid;
   return null;
 }
@@ -551,7 +550,7 @@ function SidebarNav({ navItems, activeTab, isLoading, onNew, onTabChange, before
           constrainNewButton && "max-w-[200px]",
         )}
       >
-        <Plus className="h-4 w-4" />
+        <Plus className="size-4" />
         <span>新建会话</span>
       </button>
       {navItems.map(({ tab, label }) => {
@@ -569,7 +568,7 @@ function SidebarNav({ navItems, activeTab, isLoading, onNew, onTabChange, before
               onTabChange(tab);
             }}
           >
-            {Icon && <Icon className="h-4 w-4" />}
+            {Icon && <Icon className="size-4" />}
             {label}
           </button>
         );
@@ -635,16 +634,16 @@ function SidebarUserMenuFooter({
               <img
                 src={authUser.avatar}
                 alt=""
-                className="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-brand-100 ring-offset-1 ring-offset-background"
+                className="size-8 shrink-0 rounded-full object-cover ring-1 ring-brand-100 ring-offset-1 ring-offset-background"
               />
             ) : (
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-[11px] font-semibold text-primary-foreground shadow-[0_2px_6px_rgba(46,86,225,0.32)]">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-[11px] font-semibold text-primary-foreground shadow-[0_2px_6px_rgba(46,86,225,0.32)]">
                 {authUser.username.charAt(0).toUpperCase()}
               </div>
             )
           ) : (
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
-              <User className="h-3 w-3 text-muted-foreground" />
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted">
+              <User className="size-3 text-muted-foreground" />
             </div>
           )}
           <span className="min-w-0 flex-1">
@@ -657,7 +656,7 @@ function SidebarUserMenuFooter({
               </span>
             )}
           </span>
-          <ChevronsUpDown className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+          <ChevronsUpDown className="size-3 shrink-0 text-muted-foreground/60" />
         </button>
         {showUserMenu && authEnabled && authUser && (
           <div className="absolute bottom-full left-0 z-50 mb-2 w-44 overflow-visible rounded-xl border bg-popover p-1 shadow-xl">
@@ -671,7 +670,7 @@ function SidebarUserMenuFooter({
                   <div className="truncate text-sm font-semibold">{authUser.realName || authUser.username}</div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">@{authUser.username}</div>
                 </div>
-                <ChevronRight className="h-4 w-4 shrink-0" />
+                <ChevronRight className="size-4 shrink-0" />
               </button>
 
               {showAccountMenu && (
@@ -692,9 +691,9 @@ function SidebarUserMenuFooter({
                           role="menuitem"
                         >
                           {account.user.avatar ? (
-                            <img src={account.user.avatar} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
+                            <img src={account.user.avatar} alt="" className="size-8 shrink-0 rounded-full object-cover" />
                           ) : (
-                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-xs font-semibold text-white">
+                            <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-xs font-semibold text-white">
                               {account.user.username.charAt(0).toUpperCase()}
                             </div>
                           )}
@@ -702,7 +701,7 @@ function SidebarUserMenuFooter({
                             <span className="block truncate text-sm font-medium">{account.user.realName || account.user.username}</span>
                             <span className="block truncate text-xs text-muted-foreground">@{account.user.username}</span>
                           </span>
-                          {active && <Check className="h-4 w-4 shrink-0" />}
+                          {active && <Check className="size-4 shrink-0" />}
                         </button>
                       );
                     })}
@@ -717,7 +716,7 @@ function SidebarUserMenuFooter({
                       }}
                       role="menuitem"
                     >
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center"><Plus className="h-5 w-5" /></span>
+                      <span className="flex size-8 shrink-0 items-center justify-center"><Plus className="size-5" /></span>
                       添加另一个账号
                     </button>
                   </div>
@@ -727,7 +726,7 @@ function SidebarUserMenuFooter({
 
             <div className={USER_MENU_SECTION}>
               <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenSettings?.("account"); }}>
-                <UserCog className="h-3.5 w-3.5" />
+                <UserCog className="size-3.5" />
                 个人设置
               </button>
             </div>
@@ -735,11 +734,11 @@ function SidebarUserMenuFooter({
             {isAdmin && (
               <div className={USER_MENU_SECTION}>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onNavigateAdminTab?.("tenant-admin"); }}>
-                  <EntityIcons.analytics className="h-3.5 w-3.5" />
+                  <EntityIcons.analytics className="size-3.5" />
                   组织分析
                 </button>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenAdminSettings?.("tenant"); }}>
-                  <Settings2 className="h-3.5 w-3.5" />
+                  <Settings2 className="size-3.5" />
                   组织管理
                 </button>
               </div>
@@ -748,11 +747,11 @@ function SidebarUserMenuFooter({
             {isPlatformAdmin && (
               <div className={USER_MENU_SECTION}>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onNavigateAdminTab?.("platform-admin"); }}>
-                  <EntityIcons.analytics className="h-3.5 w-3.5" />
+                  <EntityIcons.analytics className="size-3.5" />
                   平台分析
                 </button>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenAdminSettings?.("platform"); }}>
-                  <Settings2 className="h-3.5 w-3.5" />
+                  <Settings2 className="size-3.5" />
                   平台管理
                 </button>
               </div>
@@ -761,7 +760,7 @@ function SidebarUserMenuFooter({
             {onOpenBilling && (
               <div className={USER_MENU_SECTION}>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenBilling(); }}>
-                  <EntityIcons.credits className="h-3.5 w-3.5" />
+                  <EntityIcons.credits className="size-3.5" />
                   我的积分
                 </button>
               </div>
@@ -769,7 +768,7 @@ function SidebarUserMenuFooter({
 
             <div className={USER_MENU_SECTION}>
               <button type="button" className={cn(USER_MENU_ITEM, "text-destructive hover:bg-destructive/10")} onClick={() => { setShowUserMenu(false); setShowLogoutDialog(true); }}>
-                <LogOut className="h-3.5 w-3.5" />
+                <LogOut className="size-3.5" />
                 退出登录
               </button>
             </div>
@@ -812,30 +811,30 @@ function GroupHeaderActions({
     <div className="relative" ref={open ? actionMenuRef : undefined}>
       <button
         type="button"
-        className={cn("flex h-8 w-8 items-center justify-center rounded-full hover:bg-accent", buttonClassName)}
+        className={cn("flex size-8 items-center justify-center rounded-full hover:bg-accent", buttonClassName)}
         onClick={() => setActionMenuId(open ? null : menuId)}
         title="更多操作"
       >
-        <MoreHorizontal className="h-5 w-5" />
+        <MoreHorizontal className="size-5" />
       </button>
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] rounded-lg border bg-popover py-1 shadow-md">
           {onSelectSessions && (
             <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent" onClick={() => { setActionMenuId(null); onSelectSessions(); }}>
-              <Check className="h-3.5 w-3.5" />
+              <Check className="size-3.5" />
               选择会话
             </button>
           )}
           <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent" onClick={() => { setActionMenuId(null); setAddSessionsGroupKey(groupId); }}>
-            <Plus className="h-3.5 w-3.5" />
+            <Plus className="size-3.5" />
             添加会话
           </button>
           <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent" onClick={() => { setActionMenuId(null); setRenameGroupId(groupId); }}>
-            <Pencil className="h-3.5 w-3.5" />
+            <Pencil className="size-3.5" />
             重命名
           </button>
           <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive transition-colors hover:bg-accent" onClick={() => { setActionMenuId(null); setDeleteGroupId(groupId); }}>
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="size-3.5" />
             删除
           </button>
         </div>
@@ -1641,7 +1640,7 @@ export function DesktopSessionSidebar({
       )}
     >
       <div className="relative">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
         <Input
           type="search"
           name="session-search"
@@ -1658,7 +1657,7 @@ export function DesktopSessionSidebar({
             onClick={() => setSessionSearchQuery("")}
             title="清空搜索"
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="size-3.5" />
           </button>
         )}
       </div>
@@ -1720,7 +1719,7 @@ export function DesktopSessionSidebar({
                     onLoadMore={sessionSearch.loadMore}
                   />
                 ) : isLoading && singleColumnEntries.length === 0 ? (
-                  <div className="flex items-center justify-center py-6 text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />加载中...</div>
+                  <div className="flex items-center justify-center py-6 text-sm text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" />加载中...</div>
                 ) : singleColumnEntries.length === 0 ? (
                   <div className="px-2 py-6 text-center text-sm text-muted-foreground">暂无会话</div>
                 ) : singleColumnEntries.map((entry) => entry.type === "session" ? (
@@ -1734,7 +1733,7 @@ export function DesktopSessionSidebar({
                       <span className="ml-1 font-normal text-muted-foreground/60">({entry.group.count})</span>
                     </span>
                     <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground/60">{formatShortDate(entry.group.latestUpdatedAt)}</span>
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/50" />
                   </button>
                 ) : (
                   <button key={entry.group.groupKey} type="button" className="group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-muted" onClick={() => { setActionMenuId(null); setSingleExpandedGroupKey(entry.group.groupKey); void onLoadGroupSessions?.(entry.group.groupKey); }}>
@@ -1745,12 +1744,12 @@ export function DesktopSessionSidebar({
                     </span>
                     {unreadByGroupId.get(entry.group.groupKey) && <GroupUnreadDot />}
                     <span className="flex shrink-0 flex-col items-end gap-0.5">
-                      <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                      <ChevronRight className="size-4 text-muted-foreground/50" />
                       <span className="translate-y-[3px] text-xs tabular-nums text-muted-foreground/60">{formatShortDate(entry.group.latestUpdatedAt)}</span>
                     </span>
                   </button>
                 ))}
-                {!isSessionSearchActive && isLoadingMore && <div className="flex items-center justify-center py-3 text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" /></div>}
+                {!isSessionSearchActive && isLoadingMore && <div className="flex items-center justify-center py-3 text-sm text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" /></div>}
                 {!isSessionSearchActive && !hasMore && sessions.length > 0 && !isLoading && <div className="py-3 text-center text-xs text-muted-foreground/40">没有更多了</div>}
               </div>
             </ScrollArea>
@@ -1759,8 +1758,8 @@ export function DesktopSessionSidebar({
           <div className="absolute inset-0 flex flex-col bg-card" style={{ transform: singleExpandedGroup ? "translateX(0)" : "translateX(100%)", transition: "transform 233ms cubic-bezier(.25,.1,.25,1)" }}>
             <div className="relative flex h-12 items-center gap-2 border-b px-3">
               <button type="button" className="inline-flex min-w-0 items-center gap-1.5 rounded-lg pr-2 text-left transition-colors hover:bg-accent" onClick={() => { clearSingleSelection(); setSingleExpandedGroupKey(null); }} title="返回">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
-                  <ChevronLeft className="h-5 w-5" />
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-full">
+                  <ChevronLeft className="size-5" />
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold">{singleListTitle}<span className="ml-1 font-normal text-muted-foreground">({singleListCount})</span></span>
@@ -1915,14 +1914,14 @@ export function DesktopSessionSidebar({
                       title="排序方式"
                       disabled={!!groupsHook.editing}
                       className={cn(
-                        "flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors",
+                        "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors",
                         !groupsHook.editing &&
                           "hover:bg-accent hover:text-foreground",
                         groupsHook.editing && "opacity-40 cursor-not-allowed",
                       )}
                       onClick={() => setSortMenuOpen((v) => !v)}
                     >
-                      <Settings2 className="h-4 w-4" />
+                      <Settings2 className="size-4" />
                     </button>
                     {sortMenuOpen && (
                       <div className="absolute left-0 top-full z-50 mt-1 min-w-[140px] rounded-lg border bg-popover py-1 shadow-md">
@@ -1936,7 +1935,7 @@ export function DesktopSessionSidebar({
                         >
                           最新
                           {groupsHook.sorting.mode === "recent" && (
-                            <Check className="h-3.5 w-3.5" />
+                            <Check className="size-3.5" />
                           )}
                         </button>
                         <button
@@ -1953,7 +1952,7 @@ export function DesktopSessionSidebar({
                         >
                           自定义顺序
                           {groupsHook.sorting.mode === "custom" && (
-                            <Check className="h-3.5 w-3.5" />
+                            <Check className="size-3.5" />
                           )}
                         </button>
                       </div>
@@ -1966,31 +1965,31 @@ export function DesktopSessionSidebar({
                       <button
                         type="button"
                         title="取消"
-                        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         onClick={() => groupsHook.cancelEditing()}
                       >
-                        <X className="h-4 w-4" />
+                        <X className="size-4" />
                       </button>
                       <button
                         type="button"
                         title="确认"
-                        className="flex h-7 w-7 items-center justify-center rounded-md text-primary transition-colors hover:bg-primary/10"
+                        className="flex size-7 items-center justify-center rounded-md text-primary transition-colors hover:bg-primary/10"
                         onClick={() => void groupsHook.commitEditing()}
                       >
-                        <Check className="h-4 w-4" />
+                        <Check className="size-4" />
                       </button>
                     </div>
                   ) : groupsHook.sorting.mode === "custom" ? (
                     <button
                       type="button"
                       title="自定义顺序"
-                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                       onClick={() => {
                         const currentOrder = sortedGroups.map((g) => g.id);
                         groupsHook.enterEditing(currentOrder);
                       }}
                     >
-                      <GripVertical className="h-4 w-4" />
+                      <GripVertical className="size-4" />
                     </button>
                   ) : null}
                 </div>
@@ -2033,7 +2032,7 @@ export function DesktopSessionSidebar({
               {/* 真实分组列表 */}
               {groupsHook.loading && groupsHook.groups.length === 0 ? (
                 <div className="flex items-center justify-center py-3 text-sm text-muted-foreground">
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="mr-2 size-4 animate-spin" />
                 </div>
               ) : (
                 sortedGroups.map((g, idx) => {
@@ -2122,7 +2121,7 @@ export function DesktopSessionSidebar({
                           <GroupUnreadDot />
                         )}
                         {isEditing ? (
-                          <GripVertical className="ml-1 h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+                          <GripVertical className="ml-1 size-3.5 shrink-0 text-muted-foreground/60" />
                         ) : (
                           <span className="ml-1 shrink-0 text-[11px] text-muted-foreground/60 tabular-nums">
                             {g.sessionIds.length}
@@ -2197,11 +2196,11 @@ export function DesktopSessionSidebar({
                 <div className="relative flex h-12 items-center justify-between px-4 border-b">
                   <button
                     type="button"
-                    className="relative z-10 flex h-8 w-8 items-center justify-center rounded-full transition-opacity hover:bg-accent active:opacity-70"
+                    className="relative z-10 flex size-8 items-center justify-center rounded-full transition-opacity hover:bg-accent active:opacity-70"
                     onClick={() => setSubPanelOpen(false)}
                     title="收起"
                   >
-                    <ChevronLeft className="h-5 w-5" />
+                    <ChevronLeft className="size-5" />
                   </button>
                   {/* 标题绝对居中于整个 header,不受左右按钮宽度差影响 */}
                   <div className="pointer-events-none absolute left-1/2 top-1/2 max-w-[60%] -translate-x-1/2 -translate-y-1/2 text-center">
@@ -2257,7 +2256,7 @@ export function DesktopSessionSidebar({
                       />
                     ) : isLoading && currentSessions.length === 0 ? (
                       <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        <Loader2 className="mr-2 size-4 animate-spin" />
                         加载中...
                       </div>
                     ) : currentSessions.length === 0 ? (
@@ -2309,7 +2308,7 @@ export function DesktopSessionSidebar({
                     )}
                     {!isSessionSearchActive && isLoadingMore && (
                       <div className="flex items-center justify-center py-3 text-sm text-muted-foreground">
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        <Loader2 className="mr-2 size-4 animate-spin" />
                       </div>
                     )}
                     {!isSessionSearchActive && selectedView === "__all__" &&

@@ -133,7 +133,7 @@ export function TenantFormDialog({
           <Button onClick={handleSubmit} disabled={loading}>
             {loading ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="size-4 animate-spin" />
                 保存中...
               </>
             ) : (

@@ -71,7 +71,7 @@ function AuthImage({ src, alt, owner }: { src: string; alt?: string; owner?: str
             onClick={() => setLightbox(false)}
             className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
           >
-            <X className="h-5 w-5" />
+            <X className="size-5" />
           </button>
           <img
             src={resolvedSrc}
@@ -368,8 +368,8 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
           )}
           onClick={canOpenPreview ? handleClick : undefined}
         >
-          <div className="flex items-center justify-center rounded-lg w-10 h-10 shrink-0" style={{ backgroundColor: visual.color }}>
-            <TypeIcon className="h-5 w-5 text-white" />
+          <div className="flex items-center justify-center rounded-lg size-10 shrink-0" style={{ backgroundColor: visual.color }}>
+            <TypeIcon className="size-5 text-white" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium text-foreground">{fileName}</div>
@@ -391,7 +391,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
             title="下载"
             aria-label={`下载 ${fileName}`}
           >
-            <Download className="h-4 w-4" />
+            <Download className="size-4" />
           </button>
         </div>
       </div>
@@ -407,7 +407,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
             title="关闭"
             aria-label="关闭预览"
           >
-            <X className="h-5 w-5" />
+            <X className="size-5" />
           </button>
           <img
             src={previewSrc}
@@ -463,7 +463,7 @@ function UserAttachmentChip({ att, filePreview }: {
           ? (att.isImage ? "点击查看图片" : previewable ? "点击预览" : "点击下载")
           : undefined}
       >
-        <Icon className="h-3 w-3 shrink-0" />
+        <Icon className="size-3 shrink-0" />
         <span className="max-w-[200px] truncate">{att.name}</span>
       </span>
       {previewSrc && (
@@ -478,7 +478,7 @@ function UserAttachmentChip({ att, filePreview }: {
             title="关闭"
             aria-label="关闭预览"
           >
-            <X className="h-5 w-5" />
+            <X className="size-5" />
           </button>
           <img
             src={previewSrc}
@@ -521,7 +521,7 @@ function CopyButton({ text }: { text: string }) {
       className="rounded-md p-1 text-muted-foreground/50 transition-colors hover:text-muted-foreground"
       title="Copy"
     >
-      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
     </button>
   );
 }
@@ -535,7 +535,7 @@ function TtsButton({
   onPlay: () => void;
   onTogglePause: () => void;
 }) {
-  const iconClass = 'h-3.5 w-3.5';
+  const iconClass = 'size-3.5';
 
   const handleClick = () => {
     if (state === 'idle' || state === 'error') {
@@ -740,7 +740,7 @@ export const MessageItem = memo(function MessageItem({
           >
             {message.isVoiceTranscript && (
               <span className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-                <Mic className="h-3 w-3" />
+                <Mic className="size-3" />
                 <span>语音转文字</span>
               </span>
             )}
@@ -780,7 +780,7 @@ export const MessageItem = memo(function MessageItem({
                   className="rounded-md p-1 text-muted-foreground/50 transition-colors hover:text-muted-foreground"
                   title="从此编辑"
                 >
-                  <GitFork className="h-3.5 w-3.5" />
+                  <GitFork className="size-3.5" />
                 </button>
               )}
               {!isFailed && (
@@ -1027,8 +1027,8 @@ export const MessageItem = memo(function MessageItem({
       <div className={`px-3 py-2 rounded-r text-sm ${containerCls}`} role="alert">
         <div className="flex items-start gap-2">
           {isCancelled
-            ? <Ban aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
-            : <TriangleAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />}
+            ? <Ban aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+            : <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />}
           <div className="flex-1 whitespace-pre-wrap break-words">{message.content}</div>
         </div>
       </div>

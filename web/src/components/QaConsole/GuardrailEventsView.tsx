@@ -37,7 +37,7 @@ export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string
         <CardHeader className="flex-row items-center justify-between gap-3">
           <CardTitle className="text-base">筛选条件</CardTitle>
           <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
-            <RefreshCw className={cn('mr-2 h-3.5 w-3.5', loading && 'animate-spin')} />刷新
+            <RefreshCw className={cn('mr-2 size-3.5', loading && 'animate-spin')} />刷新
           </Button>
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-4">
@@ -81,7 +81,7 @@ export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string
         <CardContent className="p-0">
           {loading && events.length === 0 ? (
             <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />加载门禁记录...
+              <Loader2 className="mr-2 size-4 animate-spin" />加载门禁记录...
             </div>
           ) : events.length === 0 ? (
             <div className="py-10 text-center text-sm text-muted-foreground">暂无门禁记录</div>

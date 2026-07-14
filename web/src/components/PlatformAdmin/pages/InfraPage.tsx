@@ -120,7 +120,7 @@ export function InfraPage() {
   if (loading && !metrics && !storage) {
     return (
       <div className="flex h-64 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        <Loader2 className="mr-2 size-4 animate-spin" />
         加载基础设施数据...
       </div>
     );
@@ -134,11 +134,11 @@ export function InfraPage() {
         actions={
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => void onScan()} disabled={scanning || refreshing}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", scanning && "animate-spin")} />
+              <RefreshCw className={cn("mr-1.5 size-3.5", scanning && "animate-spin")} />
               手动扫描
             </Button>
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing || scanning}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", refreshing && "animate-spin")} />
+              <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
               刷新
             </Button>
           </div>
@@ -248,7 +248,7 @@ export function InfraPage() {
                   type="button"
                   variant="outline"
                   size="icon"
-                  className="h-8 w-8"
+                  className="size-8"
                   onClick={(event) => {
                     event.stopPropagation();
                     void onArchive(row);
@@ -256,13 +256,13 @@ export function InfraPage() {
                   disabled={archivingPath === row.path || deletingPath === row.path}
                   title="归档=移动到 runtime/archive/，不删除数据"
                 >
-                  {archivingPath === row.path ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />}
+                  {archivingPath === row.path ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   size="icon"
-                  className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  className="size-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
                   onClick={(event) => {
                     event.stopPropagation();
                     void onDelete(row);
@@ -270,7 +270,7 @@ export function InfraPage() {
                   disabled={archivingPath === row.path || deletingPath === row.path}
                   title="永久删除 workspace 目录"
                 >
-                  {deletingPath === row.path ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  {deletingPath === row.path ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
                 </Button>
               </div>
             ),

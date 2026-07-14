@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from "react";
-import { ChevronLeft, Loader2, AlertCircle, X } from "lucide-react";
+import { ChevronLeft, Loader2, CircleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/authFetch";
 import { extractTextFromChildren, getCellMinWidthPx } from "@/lib/tableCellWidth";
@@ -46,7 +46,7 @@ function PreviewImage({ src, alt, owner, referrer }: { src: string; alt?: string
             onClick={() => setLightbox(false)}
             className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
           >
-            <X className="h-5 w-5" />
+            <X className="size-5" />
           </button>
           <img
             src={resolvedSrc}
@@ -201,8 +201,8 @@ export function MarkdownPreviewPanel({ filePath, owner, shareToken, onBack, hide
       {!hideHeader && (
         <header className="shrink-0 border-b bg-background" style={{ paddingTop: "var(--sat)" }}>
           <div className="flex h-12 items-center gap-2 px-2">
-            <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={onBack}>
-              <ChevronLeft className="!h-5 !w-5" />
+            <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={onBack}>
+              <ChevronLeft className="size-5" />
             </Button>
             <span className="min-w-0 truncate text-sm font-medium">{filename}</span>
             {dirPath && (
@@ -216,12 +216,12 @@ export function MarkdownPreviewPanel({ filePath, owner, shareToken, onBack, hide
         <div className="mx-auto max-w-[72ch]">
           {state.status === "loading" && (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <Loader2 className="size-6 animate-spin text-muted-foreground" />
             </div>
           )}
           {state.status === "error" && (
             <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
-              <AlertCircle className="h-6 w-6" />
+              <CircleAlert className="size-6" />
               <span className="text-sm">{state.message}</span>
             </div>
           )}

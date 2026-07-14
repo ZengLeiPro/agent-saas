@@ -60,11 +60,11 @@ function SortIcon({
   dir: SortDir;
 }) {
   if (current !== field)
-    return <ArrowUpDown className="h-3.5 w-3.5 ml-1 opacity-40" />;
+    return <ArrowUpDown className="size-3.5 ml-1 opacity-40" />;
   return dir === "asc" ? (
-    <ArrowUp className="h-3.5 w-3.5 ml-1" />
+    <ArrowUp className="size-3.5 ml-1" />
   ) : (
-    <ArrowDown className="h-3.5 w-3.5 ml-1" />
+    <ArrowDown className="size-3.5 ml-1" />
   );
 }
 
@@ -165,10 +165,10 @@ export function UserTable({
                   <img
                     src={user.avatar}
                     alt=""
-                    className="h-6 w-6 shrink-0 rounded-full object-cover"
+                    className="size-6 shrink-0 rounded-full object-cover"
                   />
                 ) : (
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground">
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground">
                     {(user.realName || user.username).charAt(0).toUpperCase()}
                   </div>
                 )}
@@ -226,35 +226,35 @@ export function UserTable({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8"
+                  className="size-8"
                   onClick={() => onViewLogs(user)}
                   title="操作日志"
                 >
-                  <FileText className="h-4 w-4" />
+                  <FileText className="size-4" />
                 </Button>
                 {canManageUser(user) && (
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
+                    className="size-8"
                     onClick={() => onEdit(user)}
                     title="编辑"
                   >
-                    <Pencil className="h-4 w-4" />
+                    <Pencil className="size-4" />
                   </Button>
                 )}
                 {canManageUser(user) && user.id !== currentUserId && (
                   <Button
                     variant="ghost"
                     size="icon"
-                    className={`h-8 w-8 ${user.disabled ? "text-success hover:text-success/80" : "text-muted-foreground hover:text-warning"}`}
+                    className={`size-8 ${user.disabled ? "text-success hover:text-success/80" : "text-muted-foreground hover:text-warning"}`}
                     onClick={() => onToggleDisabled(user)}
                     title={user.disabled ? "启用" : "禁用"}
                   >
                     {user.disabled ? (
-                      <UserCheck className="h-4 w-4" />
+                      <UserCheck className="size-4" />
                     ) : (
-                      <UserX className="h-4 w-4" />
+                      <UserX className="size-4" />
                     )}
                   </Button>
                 )}
@@ -262,11 +262,11 @@ export function UserTable({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                    className="size-8 text-muted-foreground hover:text-destructive"
                     onClick={() => onDelete(user)}
                     title="删除"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 className="size-4" />
                   </Button>
                 )}
               </div>

@@ -46,7 +46,7 @@ const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m 
 
 const SuspenseFallback = (
   <div className="flex flex-1 items-center justify-center">
-    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    <Loader2 className="size-6 animate-spin text-muted-foreground" />
   </div>
 );
 
@@ -174,10 +174,10 @@ export function MobileLayout(props: LayoutProps) {
             <Button
               variant="ghost"
               size="icon"
-              className="h-9 w-9"
+              className="size-9"
               onClick={() => previewFilePath ? closeFilePreview() : setSheetOpen(true)}
             >
-              <ChevronLeft className="!h-6 !w-6" />
+              <ChevronLeft className="size-6" />
             </Button>
             {previewFilePath ? (
               <span className="min-w-0 truncate text-sm font-medium">
@@ -208,14 +208,14 @@ export function MobileLayout(props: LayoutProps) {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8"
+                  className="size-8"
                   onClick={ttsPlayer.toggleAutoPlay}
                   title={ttsPlayer.autoPlay ? "Auto-play voice on" : "Auto-play voice off"}
                 >
                   {ttsPlayer.autoPlay ? (
-                    <Volume2 className="h-5 w-5 text-primary" />
+                    <Volume2 className="size-5 text-primary" />
                   ) : (
-                    <VolumeX className="h-5 w-5 text-muted-foreground" />
+                    <VolumeX className="size-5 text-muted-foreground" />
                   )}
                 </Button>
               )}
@@ -231,7 +231,7 @@ export function MobileLayout(props: LayoutProps) {
       )}
       {connectionState === 'reconnecting' && (
         <div className="shrink-0 bg-warning/80 px-4 py-1.5 text-center text-xs font-medium text-foreground flex items-center justify-center gap-2">
-          <Loader2 className="h-3 w-3 animate-spin" />
+          <Loader2 className="size-3 animate-spin" />
           重新连接中...
         </div>
       )}

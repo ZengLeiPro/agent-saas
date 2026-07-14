@@ -101,7 +101,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
           ))}
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-          <RefreshCw className={cn("mr-1 h-3.5 w-3.5", loading && "animate-spin")} />
+          <RefreshCw className={cn("mr-1 size-3.5", loading && "animate-spin")} />
           刷新
         </Button>
         {data && (
@@ -117,7 +117,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
 
       {loading && !data ? (
         <div className="flex h-40 items-center justify-center rounded-2xl border bg-card text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 加载效率数据...
+          <Loader2 className="mr-2 size-4 animate-spin" /> 加载效率数据...
         </div>
       ) : data ? (
         <>

@@ -62,7 +62,7 @@ export function FileListItem({ entry, onClick, onDelete, showPath }: FileListIte
         {entry.isDirectory && (
           <ChevronRight
             className={cn(
-              "h-4 w-4 shrink-0 text-muted-foreground/40 transition-transform",
+              "size-4 shrink-0 text-muted-foreground/40 transition-transform",
               "group-hover:translate-x-0.5 group-hover:text-muted-foreground",
             )}
           />
@@ -81,7 +81,7 @@ export function FileListItem({ entry, onClick, onDelete, showPath }: FileListIte
           title="删除"
           aria-label={`删除 ${entry.name}`}
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 className="size-3.5" />
         </button>
       )}
     </div>

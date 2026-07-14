@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { AlertCircle, ChevronLeft, ChevronRight, Download, Loader2, Minus, Plus } from 'lucide-react';
+import { CircleAlert, ChevronLeft, ChevronRight, Download, Loader2, Minus, Plus } from 'lucide-react';
 import {
   buildKbPreviewManifestUrl,
   buildKbPreviewPageUrl,
@@ -103,17 +103,17 @@ export function KbPdfPreview({ filePath, initialPage = 1 }: KbPdfPreviewProps) {
 
   if (readerOpen) {
     return (
-      <Suspense fallback={<Centered><Loader2 className="h-6 w-6 animate-spin" /><span className="text-sm">正在打开完整目录…</span></Centered>}>
+      <Suspense fallback={<Centered><Loader2 className="size-6 animate-spin" /><span className="text-sm">正在打开完整目录…</span></Centered>}>
         <PdfJsReader filePath={filePath} initialPage={page} onBackToPreview={() => setReaderOpen(false)} />
       </Suspense>
     );
   }
 
-  if (manifestLoading) return <Centered><Loader2 className="h-6 w-6 animate-spin" /></Centered>;
+  if (manifestLoading) return <Centered><Loader2 className="size-6 animate-spin" /></Centered>;
   if (manifestError || !manifest) {
     return (
       <Centered>
-        <AlertCircle className="h-6 w-6" />
+        <CircleAlert className="size-6" />
         <span className="text-sm">{manifestError ?? '该页预览暂未生成'}</span>
         <Button size="sm" onClick={() => setReaderOpen(true)}>使用完整目录阅读器</Button>
       </Centered>
@@ -123,8 +123,8 @@ export function KbPdfPreview({ filePath, initialPage = 1 }: KbPdfPreviewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-1 border-b bg-background px-2 py-2">
-        <Button variant="ghost" size="icon" className="h-8 w-8" disabled={page <= 1} onClick={() => goToPage(page - 1)} aria-label="上一页">
-          <ChevronLeft className="h-4 w-4" />
+        <Button variant="ghost" size="icon" className="size-8" disabled={page <= 1} onClick={() => goToPage(page - 1)} aria-label="上一页">
+          <ChevronLeft className="size-4" />
         </Button>
         <input
           aria-label="预览页码"
@@ -137,26 +137,26 @@ export function KbPdfPreview({ filePath, initialPage = 1 }: KbPdfPreviewProps) {
           onKeyDown={(event) => { if (event.key === 'Enter') goToPage(Number(pageInput)); }}
         />
         <span className="text-xs text-muted-foreground">/ {manifest.pageCount} 页</span>
-        <Button variant="ghost" size="icon" className="h-8 w-8" disabled={page >= manifest.pageCount} onClick={() => goToPage(page + 1)} aria-label="下一页">
-          <ChevronRight className="h-4 w-4" />
+        <Button variant="ghost" size="icon" className="size-8" disabled={page >= manifest.pageCount} onClick={() => goToPage(page + 1)} aria-label="下一页">
+          <ChevronRight className="size-4" />
         </Button>
         <span className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-8 w-8" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))} aria-label="缩小">
-            <Minus className="h-4 w-4" />
+          <Button variant="ghost" size="icon" className="size-8" disabled={zoom <= 0.5} onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))} aria-label="缩小">
+            <Minus className="size-4" />
           </Button>
           <span className="w-12 text-center text-xs tabular-nums">{Math.round(zoom * 100)}%</span>
-          <Button variant="ghost" size="icon" className="h-8 w-8" disabled={zoom >= 2.5} onClick={() => setZoom((value) => Math.min(2.5, value + 0.25))} aria-label="放大">
-            <Plus className="h-4 w-4" />
+          <Button variant="ghost" size="icon" className="size-8" disabled={zoom >= 2.5} onClick={() => setZoom((value) => Math.min(2.5, value + 0.25))} aria-label="放大">
+            <Plus className="size-4" />
           </Button>
         </span>
         <Button variant="outline" size="sm" className="ml-auto" onClick={() => setReaderOpen(true)}>查看完整目录</Button>
         <Button variant="ghost" size="sm" disabled={downloading} onClick={() => void downloadOriginal()}>
-          {downloading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Download className="mr-1 h-4 w-4" />}下载原文件
+          {downloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}下载原文件
         </Button>
       </div>
       <div className="relative min-h-0 flex-1 overflow-auto bg-neutral-200 p-4 dark:bg-neutral-900">
-        {pageLoading && <Centered><Loader2 className="h-6 w-6 animate-spin" /></Centered>}
-        {pageError && <Centered><AlertCircle className="h-6 w-6" /><span className="text-sm">{pageError}</span><Button size="sm" onClick={() => setReaderOpen(true)}>使用完整目录阅读器</Button></Centered>}
+        {pageLoading && <Centered><Loader2 className="size-6 animate-spin" /></Centered>}
+        {pageError && <Centered><CircleAlert className="size-6" /><span className="text-sm">{pageError}</span><Button size="sm" onClick={() => setReaderOpen(true)}>使用完整目录阅读器</Button></Centered>}
         {!pageLoading && !pageError && pageUrl && (
           <img
             src={pageUrl}

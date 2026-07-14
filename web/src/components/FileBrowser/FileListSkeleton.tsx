@@ -16,7 +16,7 @@ export function FileListSkeleton({ rows = 8, layout = "list" }: FileListSkeleton
             className="flex flex-col items-center gap-2 rounded-xl p-3"
             style={{ animationDelay: `${i * 40}ms` }}
           >
-            <div className={cn("h-16 w-16 rounded-2xl bg-muted", "animate-pulse")} />
+            <div className={cn("size-16 rounded-2xl bg-muted", "animate-pulse")} />
             <div className="w-full space-y-1.5">
               <div className="mx-auto h-2.5 w-3/4 rounded-full bg-muted animate-pulse" />
               <div className="mx-auto h-2 w-1/2 rounded-full bg-muted/60 animate-pulse" />
@@ -35,7 +35,7 @@ export function FileListSkeleton({ rows = 8, layout = "list" }: FileListSkeleton
           className="flex items-center gap-3 rounded-xl px-2.5 py-2"
           style={{ animationDelay: `${i * 40}ms` }}
         >
-          <div className="h-9 w-9 shrink-0 rounded-lg bg-muted animate-pulse" />
+          <div className="size-9 shrink-0 rounded-lg bg-muted animate-pulse" />
           <div className="flex-1 space-y-1.5">
             <div
               className="h-3 rounded-full bg-muted animate-pulse"

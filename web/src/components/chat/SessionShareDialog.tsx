@@ -140,7 +140,7 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
                 onClick={() => void handleCopy()}
                 title="复制链接"
               >
-                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
               </Button>
               <Button
                 type="button"
@@ -150,7 +150,7 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
                 onClick={() => fullUrl && window.open(fullUrl, "_blank", "noopener,noreferrer")}
                 title="打开链接"
               >
-                <ExternalLink className="h-4 w-4" />
+                <ExternalLink className="size-4" />
               </Button>
             </div>
           </div>
@@ -162,7 +162,7 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
           <div>
             {share?.enabled && (
               <Button type="button" variant="ghost" disabled={revoking || saving} onClick={() => void handleRevoke()}>
-                {revoking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {revoking ? <Loader2 className="size-4 animate-spin" /> : null}
                 撤销分享
               </Button>
             )}
@@ -172,7 +172,7 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
               关闭
             </Button>
             <Button type="button" disabled={loading || saving || !session} onClick={() => void handleSave()}>
-              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {saving ? <Loader2 className="size-4 animate-spin" /> : null}
               {share?.enabled ? "更新快照" : "生成链接"}
             </Button>
           </div>

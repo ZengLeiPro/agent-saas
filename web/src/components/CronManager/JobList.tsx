@@ -84,9 +84,9 @@ function StatusPill({ job }: { job: CronJob }) {
   if (job.state.runningAtMs) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
-        <span className="relative flex h-1.5 w-1.5">
+        <span className="relative flex size-1.5">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-70" />
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+          <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
         </span>
         运行中
       </span>
@@ -95,7 +95,7 @@ function StatusPill({ job }: { job: CronJob }) {
   if (!job.enabled) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60" />
+        <span className="size-1.5 rounded-full bg-muted-foreground/60" />
         已禁用
       </span>
     );
@@ -104,28 +104,28 @@ function StatusPill({ job }: { job: CronJob }) {
     case "ok":
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          <span className="size-1.5 rounded-full bg-emerald-500" />
           成功
         </span>
       );
     case "error":
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-300">
-          <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+          <span className="size-1.5 rounded-full bg-red-500" />
           失败
         </span>
       );
     case "skipped":
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60" />
+          <span className="size-1.5 rounded-full bg-muted-foreground/60" />
           跳过
         </span>
       );
     default:
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
+          <span className="size-1.5 rounded-full bg-muted-foreground/40" />
           待运行
         </span>
       );
@@ -161,7 +161,7 @@ function ActionButton({
         onClick();
       }}
       className={cn(
-        "grid h-8 w-8 place-items-center rounded-[9px] border text-xs transition-colors",
+        "grid size-8 place-items-center rounded-[9px] border text-xs transition-colors",
         "disabled:cursor-not-allowed disabled:opacity-50",
         primary
           ? "border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 disabled:hover:bg-primary"
@@ -245,21 +245,21 @@ export function JobList({
             {/* 副行：调度 · 下次 · 模型 · (admin: 创建者) */}
             <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
-                <Clock className="h-3 w-3 opacity-80" />
+                <Clock className="size-3 opacity-80" />
                 {formatSchedule(job)}
               </span>
               {job.state.nextRunAtMs ? (
                 <>
-                  <span className="h-0.5 w-0.5 rounded-full bg-muted-foreground/50" />
+                  <span className="size-0.5 rounded-full bg-muted-foreground/50" />
                   <span className="inline-flex items-center gap-1.5">
-                    <ArrowRight className="h-3 w-3 opacity-80" />
+                    <ArrowRight className="size-3 opacity-80" />
                     {formatNextRun(job.state.nextRunAtMs)}
                   </span>
                 </>
               ) : null}
               {modelLabel ? (
                 <>
-                  <span className="h-0.5 w-0.5 rounded-full bg-muted-foreground/50" />
+                  <span className="size-0.5 rounded-full bg-muted-foreground/50" />
                   <span>{modelLabel}</span>
                 </>
               ) : null}
@@ -290,21 +290,21 @@ export function JobList({
                   disabled={isRunning || submitting || !job.enabled}
                   onClick={() => onRun(job)}
                 >
-                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <Play className="size-3.5 fill-current" />
                 </ActionButton>
                 <ActionButton
                   label="编辑"
                   disabled={isRunning}
                   onClick={() => onEdit(job)}
                 >
-                  <Pencil className="h-3.5 w-3.5" />
+                  <Pencil className="size-3.5" />
                 </ActionButton>
                 <ActionButton
                   label={job.enabled ? "禁用" : "启用"}
                   disabled={isRunning}
                   onClick={() => onToggle(job)}
                 >
-                  <Power className="h-3.5 w-3.5" />
+                  <Power className="size-3.5" />
                 </ActionButton>
                 <ActionButton
                   label="删除"
@@ -314,7 +314,7 @@ export function JobList({
                     if (confirm(`确认删除任务 "${job.name}"?`)) onDelete(job);
                   }}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="size-3.5" />
                 </ActionButton>
               </div>
             )}

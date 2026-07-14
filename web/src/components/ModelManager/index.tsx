@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, Database, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { CircleAlert, CircleCheck, Database, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { authFetch } from "@/lib/authFetch";
 import { refreshAll } from "@/lib/refreshBus";
 import { Badge } from "@/components/ui/badge";
@@ -466,7 +466,7 @@ export function ModelManager() {
   }, [buildPayload, hydrateAdvancedText]);
 
   if (loading && !models) {
-    return <div className="flex flex-1 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+    return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;
   }
 
   return (
@@ -476,15 +476,15 @@ export function ModelManager() {
         description="这里维护平台模型上下文、自动压缩触发线、成本价与模型解析配置；客户售价、积分倍率和组织毛利不在此处配置。"
         actions={(
           <>
-            {savedAt && <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" />已保存</Badge>}
-            <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading || saving}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />刷新</Button>
-            <Button size="sm" onClick={save} disabled={saving || !models}>{saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}保存并生效</Button>
+            {savedAt && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
+            <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading || saving}><RefreshCw className="size-3.5" />刷新</Button>
+            <Button size="sm" onClick={save} disabled={saving || !models}>{saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存并生效</Button>
           </>
         )}
       />
 
       <div className="min-h-0 flex-1 space-y-4 overflow-auto">
-      {error && <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
+      {error && <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"><CircleAlert className="mt-0.5 size-4 shrink-0" />{error}</div>}
 
       {models && (
         <SettingsTwoColumn
@@ -509,7 +509,7 @@ export function ModelManager() {
               <Card className="h-fit">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 pb-3 pt-4">
                   <CardTitle className="text-base">模型分组</CardTitle>
-                  <Button variant="ghost" size="sm" className="h-7 px-2" onClick={addGroup} aria-label="新增模型分组"><Plus className="h-3.5 w-3.5" /></Button>
+                  <Button variant="ghost" size="sm" className="h-7 px-2" onClick={addGroup} aria-label="新增模型分组"><Plus className="size-3.5" /></Button>
                 </CardHeader>
                 <CardContent className="space-y-3 px-3 pb-4 pt-0">
                   {models.groups.map((group, groupIndex) => {
@@ -548,7 +548,7 @@ export function ModelManager() {
                             onClick={() => addModel(group.id)}
                             className="flex h-8 w-full items-center gap-2 rounded-md border border-primary/30 px-2.5 text-left text-xs font-medium text-primary transition-colors hover:border-primary/50 hover:bg-primary/10"
                           >
-                            <Plus className="h-3.5 w-3.5" />
+                            <Plus className="size-3.5" />
                             新增模型
                           </button>
                           <div className="mt-1.5 space-y-1">
@@ -668,7 +668,7 @@ export function ModelManager() {
               <Card className="h-fit">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-1.5 text-base">
-                    <Database className="h-4 w-4 text-muted-foreground" />
+                    <Database className="size-4 text-muted-foreground" />
                     向量化模型 API
                     <DescriptionTip description="用于 memory.index 的 OpenAI-compatible /v1/embeddings 调用。" />
                   </CardTitle>
@@ -678,7 +678,7 @@ export function ModelManager() {
                     <div className="rounded-md border border-dashed bg-muted/20 p-4">
                       <p className="text-sm text-muted-foreground">当前 config.json 未配置 memory.index。</p>
                       <Button className="mt-3" variant="outline" size="sm" onClick={() => { setMemoryIndex(defaultMemoryIndex()); setSavedAt(null); }}>
-                        <Plus className="h-3.5 w-3.5" />
+                        <Plus className="size-3.5" />
                         新增向量化 API 配置
                       </Button>
                     </div>
@@ -744,7 +744,7 @@ export function ModelManager() {
                   <CardTitle className="text-base">分组配置</CardTitle>
                   <p className="mt-1 truncate text-xs text-muted-foreground">{selectedGroup.id || "未填写 id"} · {selectedGroup.models.length} 个模型</p>
                 </div>
-                <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" onClick={() => removeGroup(selectedGroup.id)} disabled={models.groups.length <= 1}><Trash2 className="mr-1 h-3.5 w-3.5" />删除分组</Button>
+                <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" onClick={() => removeGroup(selectedGroup.id)} disabled={models.groups.length <= 1}><Trash2 className="size-3.5" />删除分组</Button>
               </CardHeader>
               <CardContent className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1.5"><Label>ID</Label><Input value={selectedGroup.id} onChange={(e) => updateGroupId(selectedGroup.id, e.target.value)} /></div>
@@ -797,7 +797,7 @@ export function ModelManager() {
                     {selectedModelContext.group.name || selectedModelContext.group.id || "未命名分组"} / {selectedModelContext.model.id || "未填写 id"}
                   </p>
                 </div>
-                <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" onClick={() => removeModel(selectedModelContext.group.id, selectedModelContext.model.id)} disabled={selectedModelContext.group.models.length <= 1}><Trash2 className="mr-1 h-3.5 w-3.5" />删除模型</Button>
+                <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" onClick={() => removeModel(selectedModelContext.group.id, selectedModelContext.model.id)} disabled={selectedModelContext.group.models.length <= 1}><Trash2 className="size-3.5" />删除模型</Button>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-3 md:grid-cols-3">

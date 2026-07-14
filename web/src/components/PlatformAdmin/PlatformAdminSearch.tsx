@@ -73,7 +73,7 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
     <div className={cn("relative w-full max-w-xl", className)}>
       <div className="flex items-center gap-1.5">
         <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             ref={inputRef}
             value={q}
@@ -91,7 +91,7 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
           <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">/</span>
         </div>
         <Button variant="outline" size="sm" onClick={() => void runSearch()} disabled={loading || !q.trim()}>
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
+          {loading ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowRight className="size-3.5" />}
         </Button>
       </div>
       {open && (

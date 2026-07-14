@@ -93,9 +93,9 @@ export function TrashView({ onClose, onPreviewSession, activePreviewId, showHead
             onClick={onClose}
             className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="size-4" />
           </button>
-          <Trash2 className="h-4 w-4 text-muted-foreground" />
+          <Trash2 className="size-4 text-muted-foreground" />
           <span className="text-sm font-semibold">回收站</span>
           <span className="text-xs text-muted-foreground">({sessions.length})</span>
         </div>
@@ -106,7 +106,7 @@ export function TrashView({ onClose, onPreviewSession, activePreviewId, showHead
         <div className="px-2 pb-4 pt-1">
           {loading ? (
             <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="mr-2 size-4 animate-spin" />
               加载中...
             </div>
           ) : sessions.length === 0 ? (
@@ -142,7 +142,7 @@ export function TrashView({ onClose, onPreviewSession, activePreviewId, showHead
                       onClick={(e) => { e.stopPropagation(); void handleRestore(s.sessionId); }}
                       className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-background hover:text-foreground disabled:opacity-50"
                     >
-                      <RotateCcw className="h-3.5 w-3.5" />
+                      <RotateCcw className="size-3.5" />
                     </button>
                     <button
                       type="button"
@@ -151,7 +151,7 @@ export function TrashView({ onClose, onPreviewSession, activePreviewId, showHead
                       onClick={(e) => { e.stopPropagation(); setPermanentDeleteId(s.sessionId); }}
                       className="rounded-md p-1.5 text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="size-3.5" />
                     </button>
                   </div>
                 </div>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ExternalLink, Loader2, Link2Off, Plug, Plus, RefreshCw, Save, Stethoscope, Trash2 } from "lucide-react";
+import { Check, ExternalLink, Loader2, Link2Off, Plus, RefreshCw, Save, Stethoscope, Trash2 } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
@@ -396,7 +397,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
   }, []);
 
   if (loading) {
-    return <div className="flex flex-1 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+    return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;
   }
 
   if (mode === "personal") {
@@ -407,7 +408,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
           description="连接常用账号，让 Agent 在你的权限范围内使用数据和工具。"
           actions={
             <Button variant="outline" onClick={openCreatePersonalServer}>
-              <Plus className="mr-1.5 h-4 w-4" />自定义连接器
+              <Plus className="size-4" />自定义连接器
             </Button>
           }
         />
@@ -451,7 +452,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
                     tabIndex={0}
                   >
                     <CardContent className="flex min-h-36 items-start gap-4 p-5">
-                      <CapabilityLogo label={server.name}><Plug className="h-5 w-5" /></CapabilityLogo>
+                      <CapabilityLogo label={server.name}><EntityIcons.connector className="size-5" /></CapabilityLogo>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -464,7 +465,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
                           <button
                             type="button"
                             className={cn(
-                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
+                              "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
                               selected
                                 ? "border-brand-200 bg-brand-50 text-brand-700 dark:bg-brand-900/35 dark:text-brand-200"
                                 : "bg-muted/40 text-muted-foreground hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700",
@@ -483,7 +484,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
                               }
                             }}
                           >
-                            {pendingServerId === server.id ? <Loader2 className="h-4 w-4 animate-spin" /> : selected ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                            {pendingServerId === server.id ? <Loader2 className="size-4 animate-spin" /> : selected ? <Check className="size-4" /> : <Plus className="size-4" />}
                           </button>
                         </div>
                         <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{server.description || "暂无连接器说明"}</p>
@@ -506,7 +507,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
           {detailServer ? (
             <>
               <div className="flex items-center gap-3">
-                <CapabilityLogo label={detailServer.name}><Plug className="h-5 w-5" /></CapabilityLogo>
+                <CapabilityLogo label={detailServer.name}><EntityIcons.connector className="size-5" /></CapabilityLogo>
                 <div>
                   <CapabilitySourceBadge source={connectorSource(detailServer)} />
                   <div className={`mt-1 text-xs font-medium ${connectorStatus(detailServer).className}`}>{connectorStatus(detailServer).label}</div>
@@ -533,11 +534,11 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
                   <div className="mt-3">
                     {detailServer.oauth.status === "connected" ? (
                       <Button variant="outline" size="sm" onClick={() => { void disconnectOAuth(detailServer.id); }} disabled={saving}>
-                        <Link2Off className="mr-1.5 h-3.5 w-3.5" />断开账号
+                        <Link2Off className="size-3.5" />断开账号
                       </Button>
                     ) : (
                       <Button size="sm" onClick={() => { void connectOAuth(detailServer.id); }} disabled={saving || !detailServer.oauth.platformConfigured}>
-                        <ExternalLink className="mr-1.5 h-3.5 w-3.5" />连接账号
+                        <ExternalLink className="size-3.5" />连接账号
                       </Button>
                     )}
                   </div>
@@ -591,7 +592,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
                     disabled={saving}
                     onClick={() => { void toggleServer(detailServer, !enabled[detailServer.id]); }}
                   >
-                    {pendingServerId === detailServer.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : enabled[detailServer.id] ? <Check className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
+                    {pendingServerId === detailServer.id ? <Loader2 className="size-4 animate-spin" /> : enabled[detailServer.id] ? <Check className="size-4" /> : <Plus className="size-4" />}
                     {enabled[detailServer.id] ? "停用连接器" : "启用连接器"}
                   </Button>
                 ) : null}
@@ -600,7 +601,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
                 <div className="grid grid-cols-2 gap-2 border-t pt-5">
                   <Button variant="outline" onClick={() => editPersonalServer(detailServer as ManagedMcpServer)}>编辑配置</Button>
                   <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => { void removePersonalServer(detailServer.id); }}>
-                    <Trash2 className="mr-2 h-4 w-4" />删除
+                    <Trash2 className="size-4" />删除
                   </Button>
                 </div>
               ) : null}
@@ -631,7 +632,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
             <DialogFooter>
               <Button variant="outline" onClick={() => setCustomDialogOpen(false)}>取消</Button>
               <Button onClick={() => { void savePersonalServer(); }} disabled={saving || !personalForm.id.trim() || !personalForm.name.trim()}>
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}保存连接器
+                {saving ? <Loader2 className="size-4 animate-spin" /> : null}保存连接器
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -649,21 +650,21 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
           <>
             {dirty && (
               <Button size="sm" onClick={() => void saveSelections(enabled)} disabled={saving}>
-                <Save className="mr-1.5 h-3.5 w-3.5" />
+                <Save className="size-3.5" />
                 保存启用状态
               </Button>
             )}
             {mode === "admin" && isAdmin && (
               <Button size="sm" onClick={() => void saveServer()} disabled={saving || !form.id.trim() || !form.name.trim()}>
-                <Save className="mr-1.5 h-3.5 w-3.5" />
+                <Save className="size-3.5" />
                 保存 Server
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={() => void diagnose()} disabled={saving}>
-              <Stethoscope className="mr-1.5 h-3.5 w-3.5" />诊断
+              <Stethoscope className="size-3.5" />诊断
             </Button>
             <Button variant="outline" size="sm" onClick={() => void refresh()}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />刷新
+              <RefreshCw className="size-3.5" />刷新
             </Button>
           </>
         }
@@ -700,11 +701,11 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {server.oauth.status === 'connected' ? (
                       <Button size="sm" variant="outline" onClick={() => void disconnectOAuth(server.id)} disabled={saving}>
-                        <Link2Off className="mr-1.5 h-3.5 w-3.5" />断开
+                        <Link2Off className="size-3.5" />断开
                       </Button>
                     ) : (
                       <Button size="sm" onClick={() => void connectOAuth(server.id)} disabled={saving || !server.oauth.platformConfigured}>
-                        <ExternalLink className="mr-1.5 h-3.5 w-3.5" />连接账号
+                        <ExternalLink className="size-3.5" />连接账号
                       </Button>
                     )}
                     {!server.oauth.platformConfigured && <span className="text-xs text-amber-700 dark:text-amber-300">平台管理员尚未完成 OAuth 应用配置</span>}
@@ -755,7 +756,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
               {server.personal && (
                 <div className="flex gap-1">
                   <Button variant="ghost" size="sm" onClick={() => editPersonalServer(server as ManagedMcpServer)}>编辑</Button>
-                  <Button variant="ghost" size="icon" onClick={() => void removePersonalServer(server.id)}><Trash2 className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="icon" onClick={() => void removePersonalServer(server.id)}><Trash2 className="size-4" /></Button>
                 </div>
               )}
             </div>
@@ -836,7 +837,7 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
                       </div>
                       <div className="truncate text-xs text-muted-foreground">{server.description || JSON.stringify(server.config)}</div>
                     </button>
-                    <Button variant="ghost" size="icon" onClick={() => void removeServer(server.id)}><Trash2 className="h-4 w-4" /></Button>
+                    <Button variant="ghost" size="icon" onClick={() => void removeServer(server.id)}><Trash2 className="size-4" /></Button>
                   </div>
                 );
               })}

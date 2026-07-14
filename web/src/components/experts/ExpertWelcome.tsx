@@ -15,7 +15,7 @@ export function ExpertWelcome({
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col items-center px-4 py-10 text-center">
-      <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-brand-50 text-3xl shadow-sm dark:bg-brand-900/35" aria-hidden="true">
+      <div className="flex size-16 items-center justify-center overflow-hidden rounded-2xl bg-brand-50 text-3xl shadow-sm dark:bg-brand-900/35" aria-hidden="true">
         <OrgAgentAvatarContent agent={expert} />
       </div>
       <h2 className="mt-4 text-xl font-semibold text-foreground">{expert.name}</h2>
@@ -31,7 +31,7 @@ export function ExpertWelcome({
             className="flex items-start gap-2 rounded-xl border bg-card px-3 py-3 text-left text-sm transition-colors hover:border-brand-200 hover:bg-brand-50/50 dark:hover:bg-brand-900/20"
             onClick={() => onPrefill(prompt)}
           >
-            <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" />
+            <MessageSquareText className="mt-0.5 size-4 shrink-0 text-brand-600" />
             <span>{prompt}</span>
           </button>
         ))}

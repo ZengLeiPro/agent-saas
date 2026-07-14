@@ -21,7 +21,7 @@ export function CompactionDivider({ item, debugMode }: CompactionDividerProps) {
   if (item.status === 'running') {
     return (
       <div className="my-1 flex items-center justify-center gap-1.5 py-0.5 text-sm text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground/70" />
+        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground/70" />
         <span>正在压缩上下文</span>
         <span className="animate-pulse">...</span>
       </div>
@@ -47,7 +47,7 @@ export function CompactionDivider({ item, debugMode }: CompactionDividerProps) {
             >
               查看摘要
               <ChevronRight
-                className={cn('h-3 w-3 shrink-0 transition-transform', expanded && 'rotate-90')}
+                className={cn('size-3 shrink-0 transition-transform', expanded && 'rotate-90')}
               />
             </button>
           )}

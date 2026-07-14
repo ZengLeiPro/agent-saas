@@ -28,8 +28,8 @@ export function ScenarioModeBadge({ mode }: { mode: ScenarioItem["mode"] }) {
   return (
     <Badge variant="secondary" className="shrink-0 gap-1 font-normal">
       {mode === "recurring"
-        ? <><Repeat className="h-3 w-3" aria-hidden="true" />常驻</>
-        : <><Zap className="h-3 w-3" aria-hidden="true" />一次性</>}
+        ? <><Repeat className="size-3" aria-hidden="true" />常驻</>
+        : <><Zap className="size-3" aria-hidden="true" />一次性</>}
     </Badge>
   );
 }
@@ -61,7 +61,7 @@ export function ScenarioRequireBadges({
               key={req}
               className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-xs text-foreground/80"
             >
-              <ShieldAlert className="h-3 w-3" />
+              <ShieldAlert className="size-3" />
               需管理员配置系统对接
             </span>
           );
@@ -74,7 +74,7 @@ export function ScenarioRequireBadges({
             key={req}
             className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-muted-foreground"
           >
-            <Icon className="h-3 w-3" />
+            <Icon className="size-3" />
             {label}
           </span>
         );

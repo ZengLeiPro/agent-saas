@@ -53,7 +53,7 @@ export function SystemSettingsPanel() {
         description="平台运行参数、集成、备份、存储和健康检查。"
         actions={
           <Button variant="outline" size="sm" onClick={() => void sendTest()} disabled={sending || !status?.webhookConfigured}>
-            {sending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Send className="mr-1.5 h-3.5 w-3.5" />}
+            {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
             发送测试告警
           </Button>
         }

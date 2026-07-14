@@ -220,11 +220,11 @@ export function ChatInput({
         <button
           type="button"
           disabled
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted-foreground/10 text-muted-foreground cursor-not-allowed"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted-foreground/10 text-muted-foreground cursor-not-allowed"
           title={disabledPlaceholder}
           aria-label={disabledPlaceholder}
         >
-          <ArrowUp className="h-5 w-5" strokeWidth={2.5} />
+          <ArrowUp className="size-5" strokeWidth={2.5} />
         </button>
       );
     }
@@ -233,10 +233,10 @@ export function ChatInput({
         <button
           type="button"
           disabled
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted-foreground/10 text-muted-foreground cursor-not-allowed"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted-foreground/10 text-muted-foreground cursor-not-allowed"
           title="正在停止..."
         >
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Loader2 className="size-3.5 animate-spin" />
         </button>
       );
     }
@@ -246,10 +246,10 @@ export function ChatInput({
           type="button"
           onTouchEnd={(e) => { e.preventDefault(); onStop!(); }}
           onClick={() => onStop!()}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted-foreground/20 text-foreground transition-opacity hover:opacity-80 active:opacity-70"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted-foreground/20 text-foreground transition-opacity hover:opacity-80 active:opacity-70"
           title="停止生成"
         >
-          <Square className="h-3.5 w-3.5" fill="currentColor" />
+          <Square className="size-3.5" fill="currentColor" />
         </button>
       );
     }
@@ -258,10 +258,10 @@ export function ChatInput({
         <button
           type="button"
           onClick={voiceRecorder.stopAndSend}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity hover:opacity-80 active:opacity-70"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity hover:opacity-80 active:opacity-70"
           title="停止录音并发送"
         >
-          <StopCircle className="h-5 w-5" />
+          <StopCircle className="size-5" />
         </button>
       );
     }
@@ -273,12 +273,12 @@ export function ChatInput({
           onClick={onSend}
           disabled={uploading}
           className={cn(
-            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity",
+            "flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity",
             "hover:opacity-80 active:opacity-70",
             "disabled:pointer-events-none disabled:opacity-40",
           )}
         >
-          <ArrowUp className="h-5 w-5" strokeWidth={2.5} />
+          <ArrowUp className="size-5" strokeWidth={2.5} />
         </button>
       );
     }
@@ -288,10 +288,10 @@ export function ChatInput({
         <button
           type="button"
           onClick={handleMicClick}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-muted-foreground/20 active:bg-muted-foreground/30"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-muted-foreground/20 active:bg-muted-foreground/30"
           title="语音输入"
         >
-          <Mic className="h-5 w-5" />
+          <Mic className="size-5" />
         </button>
       );
     }
@@ -302,12 +302,12 @@ export function ChatInput({
         onClick={onSend}
         disabled={uploading}
         className={cn(
-          "flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity",
+          "flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity",
           "hover:opacity-80 active:opacity-70",
           "disabled:pointer-events-none disabled:opacity-40",
         )}
       >
-        <ArrowUp className="h-5 w-5" strokeWidth={2.5} />
+        <ArrowUp className="size-5" strokeWidth={2.5} />
       </button>
     );
   };
@@ -346,9 +346,9 @@ export function ChatInput({
             {voiceRecorder.isRecording ? (
               <div className="flex items-center gap-3 px-4 py-3">
                 {/* 录音红点脉冲 */}
-                <span className="relative flex h-2.5 w-2.5">
+                <span className="relative flex size-2.5">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75" />
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-destructive" />
+                  <span className="relative inline-flex size-2.5 rounded-full bg-destructive" />
                 </span>
                 {/* 时长 */}
                 <span className="text-sm font-mono tabular-nums text-foreground flex-1">
@@ -399,13 +399,13 @@ export function ChatInput({
                   onClick={() => fileInputRef.current?.click()}
                   disabled={disableAttach || voiceRecorder.isRecording}
                   className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors",
+                    "flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors",
                     "hover:bg-muted-foreground/10 active:bg-muted-foreground/20",
                     "disabled:pointer-events-none disabled:opacity-40",
                   )}
                   title="添加附件"
                 >
-                  <Plus className="h-5 w-5" />
+                  <Plus className="size-5" />
                 </button>
               </div>
 

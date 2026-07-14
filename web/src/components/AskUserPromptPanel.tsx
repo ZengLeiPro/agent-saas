@@ -22,14 +22,14 @@ function ChoiceIndicator({ selected, multiSelect }: { selected: boolean; multiSe
     return (
       <span
         className={cn(
-          "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+          "flex size-4 shrink-0 items-center justify-center rounded border transition-colors",
           selected
             ? "border-success bg-success text-success-foreground"
             : "border-muted-foreground/45 bg-background",
         )}
         aria-hidden
       >
-        {selected && <Check className="h-3 w-3" strokeWidth={2.5} />}
+        {selected && <Check className="size-3" strokeWidth={2.5} />}
       </span>
     );
   }
@@ -37,12 +37,12 @@ function ChoiceIndicator({ selected, multiSelect }: { selected: boolean; multiSe
   return (
     <span
       className={cn(
-        "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors",
+        "flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors",
         selected ? "border-success" : "border-muted-foreground/45 bg-background",
       )}
       aria-hidden
     >
-      {selected && <span className="h-2 w-2 rounded-full bg-success" />}
+      {selected && <span className="size-2 rounded-full bg-success" />}
     </span>
   );
 }
@@ -145,33 +145,33 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
         <div className="flex shrink-0 items-center gap-2 text-[0.92em] text-muted-foreground">
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-muted"
+            className="flex size-8 items-center justify-center rounded-full transition-colors hover:bg-muted"
             disabled={activeIndex === 0}
             onClick={() => setActiveIndex((idx) => Math.max(idx - 1, 0))}
             aria-label="上一题"
           >
-            <ChevronLeft className="h-5 w-5" />
+            <ChevronLeft className="size-5" />
           </button>
           <span className="min-w-10 text-center tabular-nums text-foreground/80">
             {activeIndex + 1}/{total}
           </span>
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-muted"
+            className="flex size-8 items-center justify-center rounded-full transition-colors hover:bg-muted"
             disabled={activeIndex === total - 1}
             onClick={() => setActiveIndex((idx) => Math.min(idx + 1, total - 1))}
             aria-label="下一题"
           >
-            <ChevronRight className="h-5 w-5" />
+            <ChevronRight className="size-5" />
           </button>
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-full text-foreground transition-colors hover:bg-muted"
+            className="flex size-8 items-center justify-center rounded-full text-foreground transition-colors hover:bg-muted"
             onClick={() => submitAnswers(buildAnswers(false))}
             aria-label="全部跳过"
             title="全部跳过"
           >
-            <ActionIcons.skip className="h-5 w-5" />
+            <ActionIcons.skip className="size-5" />
           </button>
         </div>
       </div>
@@ -210,8 +210,8 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
             )}
             onClick={handleCustomClick}
           >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-background text-foreground shadow-sm">
-              <PenLine className="h-4 w-4" />
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-background text-foreground shadow-sm">
+              <PenLine className="size-4" />
             </span>
             <span className="text-[inherit] text-muted-foreground">其他补充...</span>
           </button>

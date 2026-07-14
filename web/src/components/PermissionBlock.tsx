@@ -81,7 +81,7 @@ export function PermissionBlock({ toolName, toolInput, status, onAllow, onDeny }
     <Card className="border-border bg-accent/50">
       <div className="flex items-center justify-between gap-2 px-4 py-2">
         <div className="flex min-w-0 items-center gap-2">
-          <Shield className="h-4 w-4 text-primary" />
+          <Shield className="size-4 text-primary" />
           <span className="text-sm font-medium">Permission: {toolName}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -91,7 +91,7 @@ export function PermissionBlock({ toolName, toolInput, status, onAllow, onDeny }
               onClick={() => setExpanded(!expanded)}
               title={expanded ? "收起" : "展开"}
             >
-              {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
             </button>
           )}
           {status === "allowed" && (
@@ -107,11 +107,11 @@ export function PermissionBlock({ toolName, toolInput, status, onAllow, onDeny }
         {status === "pending" && (
           <div className="flex gap-2">
             <Button size="sm" variant="outline" className="text-primary border-primary/30 hover:bg-primary/5" onClick={onAllow}>
-              <Check className="mr-1 h-3.5 w-3.5" />
+              <Check className="size-3.5" />
               Allow
             </Button>
             <Button size="sm" variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/5" onClick={onDeny}>
-              <X className="mr-1 h-3.5 w-3.5" />
+              <X className="size-3.5" />
               Deny
             </Button>
           </div>

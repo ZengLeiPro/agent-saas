@@ -1,4 +1,4 @@
-import { BarChart3, Gauge, HardDrive, ListTree, MessageSquareText, ServerCog, Users, type LucideIcon } from "lucide-react";
+import { Gauge, HardDrive, ListTree, MessageSquareText, ServerCog, Users, type LucideIcon } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,7 @@ export const platformAdminSections: PlatformAdminNavItem[] = [
   { id: "sandboxes", label: "执行环境", icon: ServerCog },
   { id: "infra", label: "基础设施", icon: HardDrive },
   { id: "audit", label: "审计", icon: EntityIcons.audit },
-  { id: "efficiency", label: "效率", icon: BarChart3 },
+  { id: "efficiency", label: "效率", icon: EntityIcons.analytics },
 ];
 
 export function PlatformAdminHeaderControls({
@@ -52,7 +52,7 @@ export function PlatformAdminHeaderControls({
               onClick={() => onActiveChange(item.id)}
               className="h-8 shrink-0 gap-1.5 px-2.5 text-xs"
             >
-              <Icon className="h-3.5 w-3.5" />
+              <Icon className="size-3.5" />
               {item.label}
             </Button>
           );

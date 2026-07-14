@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, KeyRound, Loader2, Plus, RefreshCw, Save, ServerCog, Trash2 } from "lucide-react";
+import { CircleAlert, CircleCheck, KeyRound, Loader2, Plus, RefreshCw, Save, ServerCog, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -255,7 +255,7 @@ function buildPayload(hands: EditableTenantRemoteHand[]): TenantRemoteHandUpdate
 
 function healthBadge(health?: HealthState) {
   if (!health || health.status === "idle") return <Badge variant="secondary">未检查</Badge>;
-  if (health.status === "checking") return <Badge variant="outline" className="gap-1"><Loader2 className="h-3 w-3 animate-spin" />检查中</Badge>;
+  if (health.status === "checking") return <Badge variant="outline" className="gap-1"><Loader2 className="size-3 animate-spin" />检查中</Badge>;
   if (health.status === "ok") return <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">健康</Badge>;
   return <Badge variant="destructive">异常</Badge>;
 }
@@ -407,7 +407,7 @@ export function TenantRemoteHandsManager() {
   }, [tenantSearch, tenants]);
 
   if (loading && !config) {
-    return <div className="flex flex-1 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+    return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;
   }
 
   return (
@@ -418,9 +418,9 @@ export function TenantRemoteHandsManager() {
         actions={(
           <>
             {dirty && <Badge variant="outline">有未保存更改</Badge>}
-            {savedAt && !dirty && <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" />已保存并热生效</Badge>}
-            <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading || saving}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />刷新</Button>
-            <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}保存并生效</Button>
+            {savedAt && !dirty && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存并热生效</Badge>}
+            <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading || saving}><RefreshCw className="size-3.5" />刷新</Button>
+            <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存并生效</Button>
           </>
         )}
       />
@@ -428,7 +428,7 @@ export function TenantRemoteHandsManager() {
       <div className="min-h-0 flex-1 space-y-4 overflow-auto">
       {(error || localError) && (
         <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <CircleAlert className="mt-0.5 size-4 shrink-0" />
           <span>{localError || error}</span>
         </div>
       )}
@@ -438,7 +438,7 @@ export function TenantRemoteHandsManager() {
           <Card className="h-fit">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 pb-3 pt-4">
               <CardTitle className="text-base">池列表</CardTitle>
-              <Button variant="ghost" size="sm" className="h-7 px-2" onClick={addHand}><Plus className="h-3.5 w-3.5" /></Button>
+              <Button variant="ghost" size="sm" className="h-7 px-2" onClick={addHand}><Plus className="size-3.5" /></Button>
             </CardHeader>
             <CardContent className="space-y-2 px-4 pb-4 pt-0">
               {draftHands.length === 0 && (
@@ -481,7 +481,7 @@ export function TenantRemoteHandsManager() {
         {!selectedHand ? (
           <Card className="h-fit">
             <CardContent className="flex min-h-64 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-              <ServerCog className="h-8 w-8" />
+              <ServerCog className="size-8" />
               选择或新建一个执行环境池。
             </CardContent>
           </Card>
@@ -494,7 +494,7 @@ export function TenantRemoteHandsManager() {
                   <p className="mt-1 text-sm text-muted-foreground">ID 是凭据保留的锚点，保存后不建议修改。</p>
                 </div>
                 <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={removeSelected}>
-                  <Trash2 className="mr-1 h-3.5 w-3.5" />删除
+                  <Trash2 className="size-3.5" />删除
                 </Button>
               </CardHeader>
               <CardContent className="grid gap-3 md:grid-cols-2">
@@ -644,7 +644,7 @@ export function TenantRemoteHandsManager() {
                             <div className="text-sm font-medium">用户白名单</div>
                             <div className="text-xs text-muted-foreground">优先保存 userIds；手动 usernames 用于兼容旧账号名。</div>
                           </div>
-                          {usersLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                          {usersLoading && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
                         </div>
                         <Input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="搜索姓名、username、user id、组织" />
                         <div className="max-h-64 space-y-2 overflow-auto rounded-md border p-2">
@@ -686,7 +686,7 @@ export function TenantRemoteHandsManager() {
                             <div className="text-sm font-medium">组织范围</div>
                             <div className="text-xs text-muted-foreground">选中组织下的用户会在新会话接入这个执行环境池。</div>
                           </div>
-                          {tenantsLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                          {tenantsLoading && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
                         </div>
                         <Input value={tenantSearch} onChange={(event) => setTenantSearch(event.target.value)} placeholder="搜索组织名或 tenantId" />
                         <div className="max-h-64 space-y-2 overflow-auto rounded-md border p-2">
@@ -746,7 +746,7 @@ export function TenantRemoteHandsManager() {
                     </Select>
                   </div>
                   <div className="flex items-end gap-2 text-sm text-muted-foreground">
-                    <KeyRound className="mb-2 h-4 w-4" />
+                    <KeyRound className="mb-2 size-4" />
                     {credentialLabel(selectedHand)}
                   </div>
                 </div>
@@ -777,7 +777,7 @@ export function TenantRemoteHandsManager() {
                   <p className="mt-1 text-sm text-muted-foreground">检查服务端已保存配置，不包含未保存改动。</p>
                 </div>
                 <Button variant="outline" size="sm" onClick={handleHealth} disabled={selectedHand.isNew || healthById[selectedHand.id]?.status === "checking"}>
-                  {healthById[selectedHand.id]?.status === "checking" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+                  {healthById[selectedHand.id]?.status === "checking" ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
                   检查已保存配置
                 </Button>
               </CardHeader>

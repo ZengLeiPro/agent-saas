@@ -1,20 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertCircle,
-  CheckCircle2,
+  CircleAlert,
+  CircleCheck,
   Database,
   Globe2,
   ListChecks,
   Loader2,
   MessageSquare,
-  Puzzle,
   RefreshCw,
   Save,
   Search,
-  ShieldCheck,
   Terminal,
   Wrench,
 } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 import {
   fetchToolControlsConfig,
   updateToolControlsConfig,
@@ -71,7 +70,7 @@ const DEFAULT_WEB_TOOLS: WebToolsConfig = {
 const TOOL_GROUPS = [
   { id: "workspace", label: "工作区", icon: Terminal },
   { id: "memory", label: "记忆", icon: Database },
-  { id: "skill", label: "技能", icon: Puzzle },
+  { id: "skill", label: "技能", icon: EntityIcons.skill },
   { id: "meta", label: "协作", icon: ListChecks },
   { id: "session", label: "会话追踪", icon: MessageSquare },
   { id: "web", label: "Web", icon: Globe2 },
@@ -405,7 +404,7 @@ export function ToolControlsManager() {
   const egress = webToolsDraft.egress ?? {};
 
   if (loading && tools.length === 0 && !dirty) {
-    return <div className="flex flex-1 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+    return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;
   }
 
   return (
@@ -417,13 +416,13 @@ export function ToolControlsManager() {
           <>
             {!configured && <Badge variant="outline" title="config.json 里未显式写入 toolControls / webTools，运行时按缺省视为启用">运行时缺省·未落 config</Badge>}
             {dirty && <Badge variant="outline">有未保存更改</Badge>}
-            {savedAt && !dirty && <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" />已保存并热生效</Badge>}
+            {savedAt && !dirty && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存并热生效</Badge>}
             <Button variant="outline" size="sm" onClick={() => { void refresh(); }} disabled={loading || saving}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              <RefreshCw className="size-3.5" />
               刷新
             </Button>
             <Button size="sm" onClick={() => { void save(); }} disabled={saving || !dirty}>
-              {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
               保存并生效
             </Button>
           </>
@@ -433,14 +432,14 @@ export function ToolControlsManager() {
       <div className="min-h-0 flex-1 space-y-4 overflow-auto">
       {error && (
         <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <CircleAlert className="mt-0.5 size-4 shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base"><Wrench className="h-4 w-4" />全局工具开关</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base"><Wrench className="size-4" />全局工具开关</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
@@ -484,7 +483,7 @@ export function ToolControlsManager() {
           return (
             <Card key={group.id}>
               <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base"><Icon className="h-4 w-4" />{group.label}</CardTitle>
+                <CardTitle className="flex items-center gap-2 text-base"><Icon className="size-4" />{group.label}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 {groupTools.map((tool) => {
@@ -521,7 +520,7 @@ export function ToolControlsManager() {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base"><Globe2 className="h-4 w-4" />Web provider 配置</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base"><Globe2 className="size-4" />Web provider 配置</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
@@ -536,7 +535,7 @@ export function ToolControlsManager() {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base"><Search className="h-4 w-4" />WebSearch 参数</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base"><Search className="size-4" />WebSearch 参数</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 md:grid-cols-2">
@@ -615,7 +614,7 @@ export function ToolControlsManager() {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base"><Globe2 className="h-4 w-4" />WebFetch 参数</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base"><Globe2 className="size-4" />WebFetch 参数</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 md:grid-cols-2">
@@ -655,7 +654,7 @@ export function ToolControlsManager() {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-4 w-4" />出站策略</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base"><EntityIcons.admin className="size-4" />出站策略</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">

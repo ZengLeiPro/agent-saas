@@ -84,11 +84,11 @@ export function EntityLink({
         type="button"
         variant="ghost"
         size="icon"
-        className="h-5 w-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+        className="size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
         onClick={onCopy}
         aria-label={`复制 ${id}`}
       >
-        {copied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+        {copied ? <Check className="size-3 text-emerald-600" /> : <Copy className="size-3" />}
       </Button>
     </span>
   );

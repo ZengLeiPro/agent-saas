@@ -60,7 +60,7 @@ function UserList() {
         description="跨租户用户定位、会话与运行入口。"
         actions={
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-            {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+            {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
             刷新
           </Button>
         }
@@ -74,7 +74,7 @@ function UserList() {
         toolbar={
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
-              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={q}
                 onChange={(event) => adminQuery.patch({ q: event.target.value, cursor: null })}
@@ -168,7 +168,7 @@ function UserDetail({ userId }: { userId: string }) {
               window.dispatchEvent(new PopStateEvent("popstate"));
             }}>{RUN_LABEL}</Button>}
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-              {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+              {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               刷新
             </Button>
           </>
@@ -177,7 +177,7 @@ function UserDetail({ userId }: { userId: string }) {
       {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">加载失败：{error}</div>}
       {loading && !summary ? (
         <div className="flex h-40 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <Loader2 className="mr-2 size-4 animate-spin" />
           加载用户详情...
         </div>
       ) : summary && user ? (

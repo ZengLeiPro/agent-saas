@@ -102,8 +102,8 @@ function AdminSettingsModal<T extends string>({
         <aside className="flex w-40 shrink-0 flex-col border-r bg-muted/20 p-3">
           <div className="mb-4 px-1">
             <div className="flex items-center gap-2">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white">
-                <EntityIcons.admin className="h-5 w-5" />
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white">
+                <EntityIcons.admin className="size-5" />
               </div>
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold">{title}</div>
@@ -129,7 +129,7 @@ function AdminSettingsModal<T extends string>({
                     )}
                     onClick={() => onActiveChange(item.id)}
                   >
-                    <Icon className="h-4 w-4 shrink-0" />
+                    <Icon className="size-4 shrink-0" />
                     <span className="truncate">{item.label}</span>
                   </button>
                 );
@@ -139,7 +139,7 @@ function AdminSettingsModal<T extends string>({
         </aside>
         <main className="relative flex min-w-0 flex-1 flex-col">
           <button type="button" className="absolute right-5 top-5 z-30 rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClose} aria-label={`关闭${title}`}>
-            <X className="h-5 w-5" />
+            <X className="size-5" />
           </button>
           <div className="min-h-0 flex-1 overflow-hidden p-8 pt-5">
             <SettingsPanelHeaderStickyProvider>
@@ -155,7 +155,7 @@ function AdminSettingsModal<T extends string>({
 function SettingsSectionFallback() {
   return (
     <div className="flex h-full min-h-[240px] items-center justify-center text-sm text-muted-foreground">
-      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      <Loader2 className="mr-2 size-4 animate-spin" />
       加载中...
     </div>
   );
@@ -610,7 +610,7 @@ function AuditEventsPanel({
         description={scope === "tenant"
           ? `查看 ${tenantName || tenantId || "当前组织"} 的登录、成员、文件、工具和配置变更记录。`
           : "查看跨组织登录、用户、组织、工具、技能、文件和运行时相关操作记录。"}
-        actions={<Button variant="outline" onClick={() => { void refresh(); }} disabled={loading}><RefreshCw className={cn("mr-2 h-4 w-4", loading && "animate-spin")} />刷新</Button>}
+        actions={<Button variant="outline" onClick={() => { void refresh(); }} disabled={loading}><RefreshCw className={cn("mr-2 size-4", loading && "animate-spin")} />刷新</Button>}
       />
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -675,7 +675,7 @@ function AuditEventsPanel({
         <CardContent className="p-0">
           {loading ? (
             <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />加载审计事件...
+              <Loader2 className="mr-2 size-4 animate-spin" />加载审计事件...
             </div>
           ) : entries.length === 0 ? (
             <div className="py-10 text-center text-sm text-muted-foreground">暂无审计事件</div>

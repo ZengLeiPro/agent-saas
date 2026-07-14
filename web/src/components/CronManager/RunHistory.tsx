@@ -242,7 +242,7 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
         <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <FileText className="h-4 w-4" />
+              <FileText className="size-4" />
               运行详情
             </DialogTitle>
             <DialogDescription>
@@ -386,7 +386,7 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
                         </div>
                         <ChevronDown
                           className={cn(
-                            "h-4 w-4 transition-transform",
+                            "size-4 transition-transform",
                             openBlocks.has(b.id) && "rotate-180"
                           )}
                         />

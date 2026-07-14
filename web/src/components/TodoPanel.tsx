@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ChevronDown, CircleDashed, Loader2 } from "lucide-react";
+import { CircleCheck, ChevronDown, CircleDashed, Loader2 } from "lucide-react";
 import { extractLatestTodos } from "@agent/shared";
 import type { MessageItem, TodoItem, TodoStatus } from "@agent/shared";
 
@@ -28,10 +28,10 @@ function TodoStatusIcon({
   runActive?: boolean;
   className?: string;
 }) {
-  const baseClass = cn("h-4 w-4 shrink-0", className);
+  const baseClass = cn("size-4 shrink-0", className);
 
   if (status === "completed") {
-    return <CheckCircle2 className={activityStatusIconClass("success", baseClass)} />;
+    return <CircleCheck className={activityStatusIconClass("success", baseClass)} />;
   }
 
   if (status === "in_progress" && runActive) {
@@ -141,7 +141,7 @@ export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelP
           </span>
           <ChevronDown
             className={cn(
-              "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+              "size-4 shrink-0 text-muted-foreground transition-transform",
               expanded && "rotate-180",
             )}
           />
@@ -163,7 +163,7 @@ export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelP
                 const tone = getStatusTone(todo.status, runActive);
                 return (
                   <li key={`${todo.status}-${index}-${todo.content}`} className="flex min-h-7 items-start gap-2">
-                    <TodoStatusIcon status={todo.status} runActive={runActive} className="mt-0.5 h-3.5 w-3.5" />
+                    <TodoStatusIcon status={todo.status} runActive={runActive} className="mt-0.5 size-3.5" />
                     <span
                       className={cn(
                         "min-w-0 flex-1 break-words leading-6",

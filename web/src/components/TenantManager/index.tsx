@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, Building2, CheckCircle2, Cpu, Loader2, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2 } from "lucide-react";
+import { TriangleAlert, CircleCheck, Loader2, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2, type LucideIcon } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -154,9 +155,9 @@ function TenantModelPolicyPanel({
 
   const actions = useMemo(() => (
     <>
-      {saved && <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" />已保存</Badge>}
+      {saved && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
       <Button size="sm" onClick={() => { void save(); }} disabled={loading || saving}>
-        {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+        {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
         保存策略
       </Button>
     </>
@@ -301,9 +302,9 @@ function optionalPositiveInteger(value: string): number | undefined {
 
 type TenantDetailTab = "config" | "models" | "capabilities";
 
-const tenantDetailTabs: Array<{ id: TenantDetailTab; label: string; icon: typeof Building2 }> = [
-  { id: "config", label: "组织配置", icon: Building2 },
-  { id: "models", label: "模型策略", icon: Cpu },
+const tenantDetailTabs: Array<{ id: TenantDetailTab; label: string; icon: LucideIcon }> = [
+  { id: "config", label: "组织配置", icon: EntityIcons.org },
+  { id: "models", label: "模型策略", icon: EntityIcons.model },
   { id: "capabilities", label: "能力与配额", icon: SlidersHorizontal },
 ];
 
@@ -417,9 +418,9 @@ function TenantCapabilitiesPanel({
 
   const actions = useMemo(() => (
     <>
-      {saved && <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" />已保存</Badge>}
+      {saved && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
       <Button size="sm" onClick={() => { void save(); }} disabled={!dirty || saving}>
-        {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+        {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
         保存能力与配额
       </Button>
     </>
@@ -633,9 +634,9 @@ export function TenantManager() {
             </Select>
             {activeDetailTab === "config" && selectedTenant && (
               <>
-                {nameSaved && <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" />已保存</Badge>}
+                {nameSaved && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
                 <Button size="sm" onClick={() => { void saveTenantName(); }} disabled={!nameChanged || nameSaving}>
-                  {nameSaving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+                  {nameSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
                   保存名称
                 </Button>
               </>
@@ -643,12 +644,12 @@ export function TenantManager() {
             {activeDetailTab === "models" && modelPolicyActions}
             {activeDetailTab === "capabilities" ? capabilitiesActions : (
               <Button variant="outline" size="sm" onClick={refreshAll} disabled={loading}>
-                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                <RefreshCw className="size-3.5" />
                 刷新
               </Button>
             )}
             <Button size="sm" onClick={openCreate}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              <Plus className="size-3.5" />
               新建组织
             </Button>
           </>
@@ -686,7 +687,7 @@ export function TenantManager() {
                       value={tab.id}
                       className="h-9 gap-2 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none"
                     >
-                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <Icon className="size-3.5 shrink-0" />
                       <span className="truncate">{tab.label}</span>
                     </TabsTrigger>
                   );
@@ -731,7 +732,7 @@ export function TenantManager() {
                       size="sm"
                       onClick={() => requestToggleTenantDisabled(selectedTenant)}
                     >
-                      {selectedTenant.disabled ? <Power className="mr-1.5 h-3.5 w-3.5" /> : <PowerOff className="mr-1.5 h-3.5 w-3.5" />}
+                      {selectedTenant.disabled ? <Power className="size-3.5" /> : <PowerOff className="size-3.5" />}
                       {selectedTenant.disabled ? "启用组织" : "禁用组织"}
                     </Button>
                     <Button
@@ -740,7 +741,7 @@ export function TenantManager() {
                       onClick={() => requestDeleteTenant(selectedTenant)}
                       disabled={selectedTenant.id === DEFAULT_TENANT_ID}
                     >
-                      <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                      <Trash2 className="size-3.5" />
                       删除组织
                     </Button>
                   </div>
@@ -836,7 +837,7 @@ export function TenantManager() {
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-destructive" />
+              <TriangleAlert className="size-4 text-destructive" />
               删除组织
             </DialogTitle>
             <DialogDescription>
@@ -891,7 +892,7 @@ export function TenantManager() {
                 }
               }}
             >
-              {deleting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
+              {deleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
               删除并清空
             </Button>
           </div>

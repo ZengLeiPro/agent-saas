@@ -165,7 +165,7 @@ export function AskUserBlock({ questions, status, answers, onSubmit }: AskUserBl
   return (
     <div className="border-b border-border/60 pb-2 mb-1">
       <div className="flex items-center gap-2 mb-2">
-        <MessageCircleQuestion className="h-4 w-4 text-primary" />
+        <MessageCircleQuestion className="size-4 text-primary" />
         <span className="text-sm font-medium">Agent Question</span>
         {status === "answered" && (
           <Badge className="bg-success/10 text-success">Answered</Badge>
@@ -202,7 +202,7 @@ export function AskUserBlock({ questions, status, answers, onSubmit }: AskUserBl
             onClick={handleSubmit}
             disabled={!hasAnySelection}
           >
-            <Send className="mr-1 h-3.5 w-3.5" />
+            <Send className="size-3.5" />
             Submit
           </Button>
         )}

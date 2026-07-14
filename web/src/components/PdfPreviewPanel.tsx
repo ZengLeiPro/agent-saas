@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronLeft, Loader2, AlertCircle, ExternalLink, FileText } from "lucide-react";
+import { ChevronLeft, Loader2, CircleAlert, ExternalLink, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { resolveImageSrc } from "@agent/shared";
 import { KbPdfPreview } from "@/components/KbPdfPreview";
@@ -55,17 +55,17 @@ export function PdfPreviewPanel({ filePath, owner, shareToken, kbSource, page, o
       {!hideHeader && (
         <header className="shrink-0 border-b bg-background" style={{ paddingTop: "var(--sat)" }}>
           <div className="flex h-12 items-center gap-2 px-2">
-            <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={onBack}>
-              <ChevronLeft className="!h-5 !w-5" />
+            <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={onBack}>
+              <ChevronLeft className="size-5" />
             </Button>
             <span className="min-w-0 truncate text-sm font-medium">{filename}</span>
             {dirPath && (
               <span className="min-w-0 shrink truncate text-xs text-muted-foreground">{dirPath}</span>
             )}
             {url && (
-              <Button variant="ghost" size="icon" className="ml-auto h-9 w-9 shrink-0" title="在新标签页打开" asChild>
+              <Button variant="ghost" size="icon" className="ml-auto size-9 shrink-0" title="在新标签页打开" asChild>
                 <a href={url} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="!h-4 !w-4" />
+                  <ExternalLink className="size-4" />
                 </a>
               </Button>
             )}
@@ -78,23 +78,23 @@ export function PdfPreviewPanel({ filePath, owner, shareToken, kbSource, page, o
         {kbSource && <KbPdfPreview key={`${filePath}#page=${page ?? 1}`} filePath={filePath} initialPage={page} />}
         {!kbSource && state.status === "loading" && (
           <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
           </div>
         )}
         {!kbSource && state.status === "error" && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-            <AlertCircle className="h-6 w-6" />
+            <CircleAlert className="size-6" />
             <span className="text-sm">{state.message}</span>
           </div>
         )}
         {!kbSource && state.status === "success" &&
           (IS_IOS ? (
             <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
-              <FileText className="h-10 w-10 text-muted-foreground" />
+              <FileText className="size-10 text-muted-foreground" strokeWidth={1.5} />
               <span className="text-sm text-muted-foreground">当前设备无法内嵌预览 PDF</span>
               <Button asChild>
                 <a href={state.url} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="mr-2 h-4 w-4" /> 在新标签页打开
+                  <ExternalLink className="size-4" /> 在新标签页打开
                 </a>
               </Button>
             </div>

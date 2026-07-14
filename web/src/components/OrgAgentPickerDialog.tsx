@@ -43,7 +43,7 @@ export function OrgAgentPickerDialog({
               className="flex w-full items-center gap-3 rounded-lg border bg-card px-3 py-3 text-left transition-colors hover:bg-muted/60"
               onClick={() => onSelect(agent.id)}
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-50 text-base dark:bg-brand-900/35" aria-hidden="true">
+              <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-50 text-base dark:bg-brand-900/35" aria-hidden="true">
                 <OrgAgentAvatarContent agent={agent} />
               </span>
               <span className="min-w-0 flex-1">

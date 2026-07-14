@@ -161,9 +161,9 @@ interface FileIconTileProps {
 }
 
 const SIZE_MAP: Record<NonNullable<FileIconTileProps["size"]>, { box: string; icon: string; radius: string }> = {
-  sm: { box: "h-9 w-9", icon: "h-4 w-4", radius: "rounded-lg" },
-  md: { box: "h-11 w-11", icon: "h-5 w-5", radius: "rounded-xl" },
-  lg: { box: "h-16 w-16", icon: "h-8 w-8", radius: "rounded-2xl" },
+  sm: { box: "size-9", icon: "size-4", radius: "rounded-lg" },
+  md: { box: "size-11", icon: "size-5", radius: "rounded-xl" },
+  lg: { box: "size-16", icon: "size-8", radius: "rounded-2xl" },
 };
 
 /** 统一的图标 tile：一层浅底 + 图标 + hover 的 ring 强调 */

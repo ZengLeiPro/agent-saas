@@ -48,7 +48,7 @@ export function CapabilityLogo({
   return (
     <span
       className={cn(
-        "flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-brand-50 text-base font-semibold text-brand-700 ring-1 ring-inset ring-brand-100 dark:bg-brand-900/35 dark:text-brand-200 dark:ring-brand-800",
+        "flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-brand-50 text-base font-semibold text-brand-700 ring-1 ring-inset ring-brand-100 dark:bg-brand-900/35 dark:text-brand-200 dark:ring-brand-800",
         className,
       )}
       aria-hidden="true"
@@ -105,7 +105,7 @@ export function CatalogToolbar<T extends string>({
     <div className="mb-5 space-y-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative min-w-0 flex-1 sm:max-w-md">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}

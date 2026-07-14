@@ -44,7 +44,7 @@ function getRuntimeStatusTone(status: RuntimeStatus): ActivityStatusTone {
 export function RuntimeStatusBlock({ status, content }: { status: RuntimeStatus; content?: string }) {
   const meta = getRuntimeStatusMeta(status);
   const tone = status === "running" ? "neutral" : getRuntimeStatusTone(status);
-  const iconClass = "h-3.5 w-3.5 shrink-0";
+  const iconClass = "size-3.5 shrink-0";
   const icon = meta.icon === "clock"
     ? <Clock className={activityStatusIconClass(tone, iconClass)} />
     : meta.icon === "server"

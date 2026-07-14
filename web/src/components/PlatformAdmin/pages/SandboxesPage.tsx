@@ -141,12 +141,12 @@ function SandboxList() {
           <>
             <Button variant="outline" size="sm" onClick={cleanupLifecycle} disabled={!!action}>生命周期清理</Button>
             <Button variant="outline" size="sm" onClick={probeNetwork} disabled={!!action}>
-              <Network className="mr-1.5 h-3.5 w-3.5" />
+              <Network className="size-3.5" />
               网络探测
             </Button>
             <Button variant="outline" size="sm" onClick={cleanupSnat} disabled={!!action}>清理 SNAT 孤儿项</Button>
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", refreshing && "animate-spin")} />
+              <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
               刷新
             </Button>
           </>
@@ -203,7 +203,7 @@ function SandboxList() {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7"
+                  className="size-7"
                   title="暂停"
                   disabled={!!action || row.phase === "Paused"}
                   onClick={(event) => {
@@ -211,13 +211,13 @@ function SandboxList() {
                     pauseSandbox(row);
                   }}
                 >
-                  {action === `pause:${row.name}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PauseCircle className="h-3.5 w-3.5" />}
+                  {action === `pause:${row.name}` ? <Loader2 className="size-3.5 animate-spin" /> : <PauseCircle className="size-3.5" />}
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7"
+                  className="size-7"
                   title="启动"
                   disabled={!!action || row.phase !== "Paused"}
                   onClick={(event) => {
@@ -225,13 +225,13 @@ function SandboxList() {
                     startSandbox(row);
                   }}
                 >
-                  {action === `resume:${row.name}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5" />}
+                  {action === `resume:${row.name}` ? <Loader2 className="size-3.5 animate-spin" /> : <PlayCircle className="size-3.5" />}
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  className="size-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
                   title="删除执行环境"
                   disabled={!!action}
                   onClick={(event) => {
@@ -239,7 +239,7 @@ function SandboxList() {
                     deleteSandbox(row);
                   }}
                 >
-                  {action === `delete:${row.name}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  {action === `delete:${row.name}` ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
                 </Button>
               </div>
             ),
@@ -341,19 +341,19 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
         actions={
           <>
             <Button variant="outline" size="sm" onClick={pause} disabled={actionDisabled}>
-              <PauseCircle className="mr-1.5 h-3.5 w-3.5" />
+              <PauseCircle className="size-3.5" />
               暂停
             </Button>
             <Button variant="outline" size="sm" onClick={resume} disabled={actionDisabled}>
-              <PlayCircle className="mr-1.5 h-3.5 w-3.5" />
+              <PlayCircle className="size-3.5" />
               启动
             </Button>
             <Button variant="destructive" size="sm" onClick={remove} disabled={actionDisabled}>
-              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              <Trash2 className="size-3.5" />
               删除
             </Button>
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-              {loading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+              {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               刷新
             </Button>
           </>
@@ -366,7 +366,7 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
       )}
       {loading && !sandbox ? (
         <div className="flex h-40 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <Loader2 className="mr-2 size-4 animate-spin" />
           加载执行环境详情...
         </div>
       ) : missing ? (

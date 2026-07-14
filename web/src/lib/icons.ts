@@ -68,7 +68,7 @@ export const EntityIcons = {
   audit: ScrollText,
   /** 用量 / 分析（组织分析、平台分析统一图表系） */
   analytics: ChartColumn,
-  /** 管理员身份 / 权限（ShieldCheck 的唯一合法场景） */
+  /** 管理员身份 / 权限 / 安全治理（审批、风控、出站策略等，ShieldCheck 的唯一合法域） */
   admin: ShieldCheck,
   /** 系统 / 通用配置 */
   systemConfig: Settings2,

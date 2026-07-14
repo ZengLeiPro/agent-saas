@@ -129,7 +129,7 @@ export function RangeSelector({ value, customRange, onChange, dateRangeLabel }: 
           )}
           title="自定义时间范围"
         >
-          <CalendarIcon className="h-3 w-3" />
+          <CalendarIcon className="size-3" />
           <span className="tabular-nums">{customLabel}</span>
         </button>
       </div>

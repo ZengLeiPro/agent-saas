@@ -97,7 +97,7 @@ function Section({
         onClick={() => expandable && setOpen((value) => !value)}
         aria-expanded={open}
       >
-        {expandable && <Icon className="h-4 w-4 text-muted-foreground" />}
+        {expandable && <Icon className="size-4 text-muted-foreground" />}
         <span>{title}</span>
       </button>
       {open && <div className="mt-3">{children}</div>}
@@ -137,7 +137,7 @@ function MiniScenarioCard({
           className="mt-auto h-8 self-start"
           onClick={() => onTry(scenario)}
         >
-          <PlayCircle className="mr-1.5 h-3.5 w-3.5" />
+          <PlayCircle className="size-3.5" />
           试一试
         </Button>
       </CardContent>
@@ -187,7 +187,7 @@ export function RoleKitDetailPage({
         <div className="min-w-0">
           {onBack && (
             <Button type="button" variant="ghost" size="sm" className="-ml-2 mb-2 h-8" onClick={onBack}>
-              <ArrowLeft className="mr-1.5 h-4 w-4" />
+              <ArrowLeft className="size-4" />
               返回
             </Button>
           )}

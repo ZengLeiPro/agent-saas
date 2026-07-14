@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronLeft, Loader2, AlertCircle } from "lucide-react";
+import { ChevronLeft, Loader2, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/authFetch";
 
@@ -90,8 +90,8 @@ export function HtmlPreviewPanel({ filePath, owner, shareToken, onBack, hideHead
       {!hideHeader && (
         <header className="shrink-0 border-b bg-background" style={{ paddingTop: "var(--sat)" }}>
           <div className="flex h-12 items-center gap-2 px-2">
-            <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={onBack}>
-              <ChevronLeft className="!h-5 !w-5" />
+            <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={onBack}>
+              <ChevronLeft className="size-5" />
             </Button>
             <span className="min-w-0 truncate text-sm font-medium">{filename}</span>
             {dirPath && (
@@ -104,12 +104,12 @@ export function HtmlPreviewPanel({ filePath, owner, shareToken, onBack, hideHead
       <div className="min-w-0 flex-1 overflow-hidden">
         {state.status === "loading" && (
           <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
           </div>
         )}
         {state.status === "error" && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-            <AlertCircle className="h-6 w-6" />
+            <CircleAlert className="size-6" />
             <span className="text-sm">{state.message}</span>
           </div>
         )}

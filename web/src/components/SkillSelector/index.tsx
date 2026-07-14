@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, Loader2, Plus, Puzzle, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Plus, Trash2, Upload } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -177,7 +178,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
       className="mb-4 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
       onClick={onBack}
     >
-      <ArrowLeft className="h-4 w-4" />
+      <ArrowLeft className="size-4" />
       返回
     </button>
   ) : null;
@@ -187,7 +188,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
       <div className="flex flex-1 flex-col">
         {backButton}
         <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
         </div>
       </div>
     );
@@ -206,7 +207,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
     <>
       {canImport ? (
         <Button variant="outline" onClick={() => setImportDialogOpen(true)} disabled={importing}>
-          {importing ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Upload className="mr-1.5 h-4 w-4" />}
+          {importing ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
           导入技能
         </Button>
       ) : null}
@@ -257,7 +258,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                 >
                   <CardContent className="flex min-h-40 flex-col p-4">
                     <div className="flex items-start gap-3">
-                      <CapabilityLogo label={skill.name}><Puzzle className="h-5 w-5" /></CapabilityLogo>
+                      <CapabilityLogo label={skill.name}><EntityIcons.skill className="size-5" /></CapabilityLogo>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
@@ -267,7 +268,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                           <button
                             type="button"
                             className={cn(
-                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
+                              "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
                               selected
                                 ? "border-brand-200 bg-brand-50 text-brand-700 dark:bg-brand-900/35 dark:text-brand-200"
                                 : "bg-muted/40 text-muted-foreground hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700",
@@ -279,7 +280,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                             disabled={saving}
                             aria-label={`${selected ? "停用" : "启用"} ${skill.name}`}
                           >
-                            {pendingSkillId === skill.id ? <Loader2 className="h-4 w-4 animate-spin" /> : selected ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                            {pendingSkillId === skill.id ? <Loader2 className="size-4 animate-spin" /> : selected ? <Check className="size-4" /> : <Plus className="size-4" />}
                           </button>
                         </div>
                       </div>
@@ -305,7 +306,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
         {detailSkill ? (
           <>
             <div className="flex items-center gap-3">
-              <CapabilityLogo label={detailSkill.name}><Puzzle className="h-5 w-5" /></CapabilityLogo>
+              <CapabilityLogo label={detailSkill.name}><EntityIcons.skill className="size-5" /></CapabilityLogo>
               <div>
                 <CapabilitySourceBadge source={skillSource(detailSkill)} />
                 <div className="mt-1 text-xs text-muted-foreground">
@@ -322,7 +323,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
               disabled={saving}
               onClick={() => { void toggle(detailSkill.id, !localSelections[detailSkill.id]); }}
             >
-              {pendingSkillId === detailSkill.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : localSelections[detailSkill.id] ? <Check className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
+              {pendingSkillId === detailSkill.id ? <Loader2 className="size-4 animate-spin" /> : localSelections[detailSkill.id] ? <Check className="size-4" /> : <Plus className="size-4" />}
               {localSelections[detailSkill.id] ? "停用技能" : "启用技能"}
             </Button>
             {canDeleteCustom && detailSkill.source === "custom" ? (
@@ -331,7 +332,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                 className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
                 onClick={() => { setDeleteErr(null); setDeleteTarget({ id: detailSkill.id, name: detailSkill.name }); }}
               >
-                <Trash2 className="mr-2 h-4 w-4" />删除自建技能
+                <Trash2 className="size-4" />删除自建技能
               </Button>
             ) : null}
           </>
@@ -375,7 +376,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
             <DialogFooter>
               <Button variant="outline" onClick={() => { setDeleteTarget(null); setDeleteErr(null); }} disabled={deleting}>取消</Button>
               <Button variant="destructive" onClick={() => { void handleDeleteConfirm(); }} disabled={deleting}>
-                {deleting ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+                {deleting ? <Loader2 className="size-4 animate-spin" /> : null}
                 删除
               </Button>
             </DialogFooter>

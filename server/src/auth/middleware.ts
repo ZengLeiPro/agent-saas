@@ -20,6 +20,10 @@ const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   { path: "/health" },
   { path: "/healthz" },
   { path: "/healthz/drain" },
+  // 蓝绿部署探针（2026-07-15）：live=进程存活，ready=可接流量（部署门禁在
+  // 新色端口上等它 200 再切流）。与 /healthz 同口径公开，只暴露 warmup 进度。
+  { path: "/healthz/live" },
+  { path: "/healthz/ready" },
   { path: "/config" },
   { method: "POST", path: "/internal/acs-alerts" },
   { method: "GET", path: "/app/version" },

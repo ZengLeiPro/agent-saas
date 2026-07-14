@@ -91,4 +91,64 @@ describe('health router', () => {
       error: 'pg unavailable',
     });
   });
+
+  // ── liveness / readiness 分离（2026-07-15 零停机部署批次）──────────
+
+  it('keeps /healthz/live 200 even while draining', async () => {
+    const server = await startHealthServer({ getIsDraining: () => true });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/live');
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('ok');
+  });
+
+  it('reports readiness with warmup progress payload', async () => {
+    const server = await startHealthServer({
+      getIsDraining: () => false,
+      getSkillsWarmupStatus: () => ({
+        state: 'running',
+        totalUsers: 16,
+        processedUsers: 4,
+        syncedUsers: 2,
+      }),
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    const body = await response.json() as any;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      status: 'ok',
+      draining: false,
+      warmup: { state: 'running', totalUsers: 16, processedUsers: 4, syncedUsers: 2 },
+    });
+  });
+
+  it('reports 503 not-ready while draining', async () => {
+    const server = await startHealthServer({
+      getIsDraining: () => true,
+      getSkillsWarmupStatus: () => ({ state: 'done' }),
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    const body = await response.json() as any;
+
+    expect(response.status).toBe(503);
+    expect(body).toMatchObject({ status: 'draining', draining: true });
+  });
+
+  it('defaults warmup to done when no status provider is wired', async () => {
+    const server = await startHealthServer({});
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    const body = await response.json() as any;
+
+    expect(response.status).toBe(200);
+    expect(body.warmup).toEqual({ state: 'done' });
+  });
 });

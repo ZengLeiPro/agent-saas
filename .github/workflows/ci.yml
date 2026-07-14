@@ -1,5 +1,5 @@
 # ============================================================================
-# CI/CD Pipeline: install → typecheck → test → build → deploy ECS
+# CI/CD Pipeline: install → typecheck → test → build → deploy ECS（蓝绿零停机）
 # ============================================================================
 # 触发:
 #   - push to main: 只构建 + 测试 + 打包 artifact（不部署生产）
@@ -7,8 +7,15 @@
 #     或 `gh workflow run ci.yml`）
 # 部署与发布解耦: 多 agent 共享仓库高频 push，push ≠ 上生产；
 # 想发版时手动触发一次 dispatch。
-# 部署脚本: 等空闲窗口(activeStreams=0) → 切 symlink → restart →
-#   healthz 门禁失败自动回滚 previous。
+# 蓝绿部署脚本: 读 /etc/agent-saas/active-color 定位 idle 色 → 解包新 release →
+#   只改 idle 色 symlink（active 色 symlink 永不动）→ start idle 实例 →
+#   ready(180s) 门禁 + warmup(420s 软门禁) + 冒烟 → 重写 nginx upstream +
+#   reload 切流 → 更新 active-color → 生成蓝绿 rollback.sh →
+#   SIGUSR2 精确 drain 旧色（活跃流清空后自退，Restart=on-failure 不复活）。
+#   切流前任何失败只回收 idle 色并还原 current/previous symlink，
+#   老色全程在服务，用户零影响。
+# 零停机门禁(P2): 部署期间 runner 每 1s 探测公网 healthz，
+#   最大连续非 200 ≥ 2 即判失败（容忍单次公网抖动）。
 # ============================================================================
 
 name: App CI / Deploy
@@ -60,7 +67,8 @@ jobs:
   deploy-ecs:
     name: Deploy to ECS
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 覆盖构建打包(~8min) + 远端蓝绿部署最坏路径(~34min)
+    timeout-minutes: 45
     needs: build
     # 生产部署只走手动触发（workflow_dispatch），push main 不再自动上生产
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
@@ -70,6 +78,7 @@ jobs:
       ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
       DEPLOY_ROOT: /opt/agent-saas-app
+      # systemd 模板单元前缀：实际实例为 agent-saas-server@blue / agent-saas-server@green
       SERVICE_NAME: agent-saas-server
 
     steps:
@@ -128,17 +137,39 @@ jobs:
             agent-saas-release.tgz \
             "$ECS_USER@$ECS_HOST:/tmp/agent-saas-${GITHUB_SHA}.tgz"
 
-      - name: Deploy and restart
-        timeout-minutes: 21
+      - name: Start zero-downtime probe
         run: |
-          # 覆盖冷安装 + 360s drain + 420s healthz，并给 step 本身保留 60s 收尾余量。
-          REMOTE_DEPLOY_TIMEOUT_SECONDS=1200
+          # 部署期零停机探测（P2 门禁）：每 1s 打一次生产公网 healthz，
+          # 每行记录 "epoch http_code" 到 probe.log；
+          # Deploy 结束后由 Assert zero downtime 步骤统计并守门。
+          # 注意：前端域 agent.kaiyan.net 已 CNAME 到 OSS（2026-07-15 分域），
+          # API/WS 生产入口是 api.agent.kaiyan.net → ECS nginx，探测必须打 API 域。
+          : > "$RUNNER_TEMP/probe.log"
+          (
+            while true; do
+              code=$(curl -s -o /dev/null -m 4 -w '%{http_code}' https://api.agent.kaiyan.net/api/healthz || true)
+              [ -n "$code" ] || code=000
+              echo "$(date +%s) $code"
+              sleep 1
+            done
+          ) >> "$RUNNER_TEMP/probe.log" 2>/dev/null &
+          echo $! > "$RUNNER_TEMP/probe.pid"
+          echo "probe started pid=$(cat "$RUNNER_TEMP/probe.pid") log=$RUNNER_TEMP/probe.log"
+
+      - name: Deploy and restart
+        id: deploy
+        timeout-minutes: 36
+        run: |
+          # 覆盖冷安装(~10min) + 残留 idle drain 等待(600s) + ready(180s)
+          # + warmup(420s) + 旧色 drain 观察(60s)，并给 step 本身保留收尾余量。
+          REMOTE_DEPLOY_TIMEOUT_SECONDS=2000
           echo "Remote deploy timeout: ${REMOTE_DEPLOY_TIMEOUT_SECONDS}s"
           timeout "${REMOTE_DEPLOY_TIMEOUT_SECONDS}s" ssh -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$ECS_USER@$ECS_HOST" \
             "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_SHA}.tgz' RELEASE_ID='${GITHUB_SHA}' bash -s" <<'REMOTE'
-          set -euo pipefail
+          # -E: 函数内失败也触发 ERR trap，保证任何失败都有 on_error 日志
+          set -Eeuo pipefail
 
           : "${DEPLOY_ROOT:?missing DEPLOY_ROOT}"
           : "${SERVICE_NAME:?missing SERVICE_NAME}"
@@ -149,9 +180,10 @@ jobs:
           PREV_LINK="$DEPLOY_ROOT/previous"
           RELEASES_DIR="$DEPLOY_ROOT/releases"
           RELEASE_DIR="$RELEASES_DIR/$RELEASE_ID"
+          COLOR_DIR="$DEPLOY_ROOT/color"
           DATA_DIR="/mnt/agent-saas/server-data"
-          HEALTHZ_URL="http://127.0.0.1:3200/api/healthz"
-          DRAINZ_URL="http://127.0.0.1:3200/api/healthz/drain"
+          ACTIVE_COLOR_FILE="/etc/agent-saas/active-color"
+          UPSTREAM_CONF="/etc/nginx/conf.d/agent-saas-upstream.conf"
 
           START_EPOCH=$(date +%s)
           elapsed_seconds() {
@@ -168,8 +200,34 @@ jobs:
           trap 'on_error $LINENO' ERR
 
           log "deploy start release=$RELEASE_ID root=$DEPLOY_ROOT service=$SERVICE_NAME"
+
+          # ── 1. 前置校验：蓝绿标记与 active 实例必须就绪 ──
+          if [ ! -f "$ACTIVE_COLOR_FILE" ]; then
+            log "ERROR: $ACTIVE_COLOR_FILE missing; finish the one-time manual blue-green migration first"
+            exit 1
+          fi
+          ACTIVE=$(tr -d '[:space:]' < "$ACTIVE_COLOR_FILE")
+          case "$ACTIVE" in
+            blue)  IDLE="green"; IDLE_PORT=3201; ACTIVE_PORT=3200 ;;
+            green) IDLE="blue";  IDLE_PORT=3200; ACTIVE_PORT=3201 ;;
+            *)
+              log "ERROR: invalid active color '$ACTIVE' in $ACTIVE_COLOR_FILE (expect blue|green); finish the manual blue-green migration first"
+              exit 1
+              ;;
+          esac
+          if ! systemctl is-active --quiet "${SERVICE_NAME}@${ACTIVE}"; then
+            log "ERROR: ${SERVICE_NAME}@${ACTIVE} is not active; finish the one-time manual blue-green migration first"
+            exit 1
+          fi
+          log "colors resolved: active=$ACTIVE:$ACTIVE_PORT idle=$IDLE:$IDLE_PORT"
+
+          READY_URL="http://127.0.0.1:$IDLE_PORT/api/healthz/ready"
+          HEALTHZ_URL="http://127.0.0.1:$IDLE_PORT/api/healthz"
+          DRAINZ_URL="http://127.0.0.1:$IDLE_PORT/api/healthz/drain"
+
+          # ── 2. 解包 release + 安装依赖 ──
           log "prepare release dir: $RELEASE_DIR"
-          mkdir -p "$RELEASES_DIR" "$DATA_DIR"
+          mkdir -p "$RELEASES_DIR" "$DATA_DIR" "$COLOR_DIR"
           if [ -e "$RELEASE_DIR" ]; then
             log "existing release dir found; moving aside"
             mv "$RELEASE_DIR" "$RELEASE_DIR.replaced.$(date +%Y%m%d%H%M%S)"
@@ -189,24 +247,150 @@ jobs:
           NODE_ENV=development pnpm install --frozen-lockfile --filter server... --filter shared...
           log "remote pnpm install done"
 
-          # 切换前清理旧 release：即使清理失败，当前生产版本仍未改变。
+          # ── 3. 切换前清理旧 release：即使清理失败，当前生产版本仍未改变 ──
+          # KEEP 除 current/previous 外，还必须保住两个 color symlink 的 target：
+          # active 色 crash-restart 仍要加载自己的代码，idle 色可能还在 drain 旧代码。
           # 保留 pnpm store 供后续发布复用，避免每次重新下载全量依赖。
-          log "release cleanup start before switch: keep last 5 releases plus current/previous"
+          log "release cleanup start before switch: keep last 5 releases plus current/previous/color targets"
           KEEP_CURRENT=$(readlink "$APP_LINK" 2>/dev/null || true)
           KEEP_PREV=$(readlink "$PREV_LINK" 2>/dev/null || true)
+          KEEP_BLUE=$(readlink "$COLOR_DIR/blue" 2>/dev/null || true)
+          KEEP_GREEN=$(readlink "$COLOR_DIR/green" 2>/dev/null || true)
           (ls -dt "$RELEASES_DIR"/*/ 2>/dev/null || true) | tail -n +6 | while read -r old; do
             old="${old%/}"
-            if [ -n "$old" ] && [ "$old" != "$KEEP_CURRENT" ] && [ "$old" != "$KEEP_PREV" ]; then
+            if [ -n "$old" ] && [ "$old" != "$KEEP_CURRENT" ] && [ "$old" != "$KEEP_PREV" ] \
+              && [ "$old" != "$KEEP_BLUE" ] && [ "$old" != "$KEEP_GREEN" ]; then
               log "pruning old release: $old"
               rm -rf "$old"
             fi
           done
           log "release cleanup done"
 
-          healthz_ok() {
-            curl -fsS -m 5 "$HEALTHZ_URL" >/dev/null 2>&1
+          # ── 4. idle 色残留处理：上次部署的旧色可能仍在 drain 未退 ──
+          if systemctl is-active --quiet "${SERVICE_NAME}@${IDLE}"; then
+            log "idle unit ${SERVICE_NAME}@${IDLE} still active (previous drain not finished); waiting up to 600s"
+            IDLE_DRAIN_WAITED=0
+            while systemctl is-active --quiet "${SERVICE_NAME}@${IDLE}"; do
+              if [ "$IDLE_DRAIN_WAITED" -ge 600 ]; then
+                log "WARN: idle unit still active after 600s; forcing systemctl stop (leftover streams may be interrupted)"
+                systemctl stop "${SERVICE_NAME}@${IDLE}"
+                break
+              fi
+              if [ $((IDLE_DRAIN_WAITED % 30)) -eq 0 ]; then
+                log "idle unit still draining waited=${IDLE_DRAIN_WAITED}s"
+              fi
+              sleep 5
+              IDLE_DRAIN_WAITED=$((IDLE_DRAIN_WAITED + 5))
+            done
+            log "idle unit ${SERVICE_NAME}@${IDLE} is now inactive"
+          fi
+
+          # ── 5. 更新 symlink：只动 idle 色；current/previous 仅作 bookkeeping ──
+          PREV_CURRENT=$(readlink "$APP_LINK" 2>/dev/null || true)
+          PREV_PREVIOUS=$(readlink "$PREV_LINK" 2>/dev/null || true)
+          PREVIOUS_UPDATED=0
+          log "switch color/$IDLE: $(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || echo '<none>') -> $RELEASE_DIR"
+          ln -sfn "$RELEASE_DIR" "$COLOR_DIR/$IDLE"
+          log "switch current: ${PREV_CURRENT:-<none>} -> $RELEASE_DIR"
+          ln -sfn "$RELEASE_DIR" "$APP_LINK"
+          if [ -n "$PREV_CURRENT" ] && [ "$PREV_CURRENT" != "$RELEASE_DIR" ]; then
+            ln -sfn "$PREV_CURRENT" "$PREV_LINK"
+            PREVIOUS_UPDATED=1
+          fi
+
+          # 切流前失败的统一回退：stop idle 色 + 还原 current/previous symlink。
+          # nginx/active-color 全程未动，老色一直在服务，用户零影响。
+          # color/$IDLE 留在新 release 无碍：idle unit 已 stop，无「运行代码与 symlink
+          # 不一致」问题，下次部署或 rollback.sh 慢路径都会重新指向。
+          rollback_idle_and_exit() {
+            log "deploy FAILED before traffic switch; old color $ACTIVE untouched and still serving"
+            journalctl -u "${SERVICE_NAME}@${IDLE}" -n 120 --no-pager || true
+            log "stop idle unit ${SERVICE_NAME}@${IDLE}"
+            systemctl stop "${SERVICE_NAME}@${IDLE}" || true
+            if [ -n "$PREV_CURRENT" ]; then
+              ln -sfn "$PREV_CURRENT" "$APP_LINK"
+            fi
+            if [ "$PREVIOUS_UPDATED" -eq 1 ]; then
+              if [ -n "$PREV_PREVIOUS" ]; then
+                ln -sfn "$PREV_PREVIOUS" "$PREV_LINK"
+              else
+                rm -f "$PREV_LINK"
+              fi
+            fi
+            log "current/previous symlinks restored: current=${PREV_CURRENT:-<unchanged>}"
+            exit 1
           }
 
+          # ── 6. 启动 idle 色 + ready 门禁（180s）──
+          log "start idle unit: ${SERVICE_NAME}@${IDLE} (port $IDLE_PORT)"
+          systemctl start "${SERVICE_NAME}@${IDLE}"
+
+          ready_ok() {
+            curl -fsS -m 5 "$READY_URL" >/dev/null 2>&1
+          }
+
+          READY_WAITED=0
+          READY_OK=0
+          log "waiting ready: $READY_URL timeout=180s"
+          for _ in $(seq 1 180); do
+            if ready_ok; then
+              READY_OK=1
+              log "ready ok after ${READY_WAITED}s"
+              break
+            fi
+            if [ $((READY_WAITED % 10)) -eq 0 ]; then
+              log "waiting ready waited=${READY_WAITED}s"
+            fi
+            sleep 1
+            READY_WAITED=$((READY_WAITED + 1))
+          done
+          if [ "$READY_OK" -ne 1 ]; then
+            log "ready FAILED after 180s"
+            rollback_idle_and_exit
+          fi
+
+          # ── 7. warmup 等待（软门禁：failed/超时降级为警告，dispatch 时增量同步兜底）──
+          read_warmup_state() {
+            local body
+            body=$(curl -sS -m 5 "$READY_URL" 2>/dev/null || true)
+            if [ -z "$body" ]; then
+              return 1
+            fi
+            node -e '
+              const body = process.argv[1];
+              let data;
+              try {
+                data = JSON.parse(body);
+              } catch {
+                process.exit(2);
+              }
+              console.log(String(data.warmup?.state ?? "unknown"));
+            ' "$body"
+          }
+
+          log "waiting warmup.state=done timeout=420s"
+          WARMUP_WAITED=0
+          while [ "$WARMUP_WAITED" -lt 420 ]; do
+            WARMUP_STATE=$(read_warmup_state || true)
+            if [ "$WARMUP_STATE" = "done" ]; then
+              log "warmup done after ${WARMUP_WAITED}s"
+              break
+            fi
+            if [ "$WARMUP_STATE" = "failed" ]; then
+              log "WARN: warmup failed; continue anyway (dispatch-time incremental sync covers)"
+              break
+            fi
+            if [ $((WARMUP_WAITED % 30)) -eq 0 ]; then
+              log "warmup state=${WARMUP_STATE:-unknown} waited=${WARMUP_WAITED}s"
+            fi
+            sleep 5
+            WARMUP_WAITED=$((WARMUP_WAITED + 5))
+          done
+          if [ "$WARMUP_WAITED" -ge 420 ]; then
+            log "WARN: warmup wait timeout after 420s; continue anyway (dispatch-time incremental sync covers)"
+          fi
+
+          # ── 8. 冒烟：idle 端口 healthz 200 且 drain 状态返回合法 JSON ──
           read_drain_status() {
             local body
             body=$(curl -sS -m 5 "$DRAINZ_URL" 2>/dev/null || true)
@@ -229,119 +413,204 @@ jobs:
             ' "$body"
           }
 
-          # ── 等待空闲窗口：Web stream + durable active run 清零后再切换（等待期间旧版本照常服务）──
-          # 首次发布该修复时，旧生产没有 /healthz/drain，走 bootstrap fallback；之后发布严格按 JSON 守门。
-          log "waiting for idle window: activeStreams=0 activeRuns.blocking=0 timeout=360s"
-          IDLE_WAITED=0
-          while [ "$IDLE_WAITED" -lt 360 ]; do
-            DRAIN_STATUS=$(read_drain_status || true)
-            if [ -z "$DRAIN_STATUS" ]; then
-              log "drain status endpoint unavailable; bootstrap fallback to healthz"
-              healthz_ok || true
+          log "smoke check on idle port $IDLE_PORT"
+          if ! curl -fsS -m 5 "$HEALTHZ_URL" >/dev/null 2>&1; then
+            log "smoke FAILED: $HEALTHZ_URL not 200"
+            rollback_idle_and_exit
+          fi
+          SMOKE_DRAIN_STATUS=$(read_drain_status || true)
+          if [ -z "$SMOKE_DRAIN_STATUS" ]; then
+            log "smoke FAILED: $DRAINZ_URL did not return valid JSON"
+            rollback_idle_and_exit
+          fi
+          log "smoke ok: healthz 200, drain status: $SMOKE_DRAIN_STATUS"
+
+          # ── 9. 切流：重写 nginx upstream（新色 primary、旧色 backup）→ nginx -t → reload ──
+          UPSTREAM_BAK="/tmp/agent-saas-upstream.conf.bak.$$"
+          if [ -f "$UPSTREAM_CONF" ]; then
+            cp "$UPSTREAM_CONF" "$UPSTREAM_BAK"
+          fi
+          log "rewrite nginx upstream: primary=127.0.0.1:$IDLE_PORT ($IDLE) backup=127.0.0.1:$ACTIVE_PORT ($ACTIVE)"
+          cat > "$UPSTREAM_CONF" <<EOF
+          # active=$IDLE
+          # 由 ci.yml 部署脚本重写，手工修改会在下次部署被覆盖
+          upstream agent_saas_backend {
+              server 127.0.0.1:$IDLE_PORT;
+              server 127.0.0.1:$ACTIVE_PORT backup;
+          }
+          EOF
+          if ! nginx -t; then
+            log "nginx -t FAILED; restoring previous upstream conf (running nginx config unchanged)"
+            if [ -f "$UPSTREAM_BAK" ]; then
+              cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
+            else
+              rm -f "$UPSTREAM_CONF"
+            fi
+            nginx -t || log "WARN: nginx -t still failing after restore; manual attention needed"
+            rollback_idle_and_exit
+          fi
+          systemctl reload nginx
+          log "nginx reloaded; verifying via https://127.0.0.1 (Host: api.agent.kaiyan.net)"
+          SWITCH_VERIFIED=0
+          for _ in $(seq 1 10); do
+            if curl -kfsS -m 5 -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz >/dev/null 2>&1; then
+              SWITCH_VERIFIED=1
               break
             fi
-            set -- $DRAIN_STATUS
-            IDLE_STATE="$1"
-            ACTIVE_STREAMS="$2"
-            BLOCKING_RUNS="$3"
-            TOTAL_ACTIVE_RUNS="$4"
-            DRAIN_STATUS_TEXT="$5"
-            if [ "$IDLE_STATE" = "idle" ]; then
-              log "idle window acquired after ${IDLE_WAITED}s status=$DRAIN_STATUS_TEXT activeStreams=$ACTIVE_STREAMS activeRuns.blocking=$BLOCKING_RUNS activeRuns.total=$TOTAL_ACTIVE_RUNS"
-              break
-            fi
-            if [ $((IDLE_WAITED % 30)) -eq 0 ]; then
-              log "still busy: status=$DRAIN_STATUS_TEXT activeStreams=$ACTIVE_STREAMS activeRuns.blocking=$BLOCKING_RUNS activeRuns.total=$TOTAL_ACTIVE_RUNS waited=${IDLE_WAITED}s"
-            fi
-            sleep 5
-            IDLE_WAITED=$((IDLE_WAITED + 5))
+            sleep 1
           done
-          if [ "$IDLE_WAITED" -ge 360 ]; then
-            log "idle window timeout after 360s; proceeding anyway (active run may be interrupted)"
+          if [ "$SWITCH_VERIFIED" -ne 1 ]; then
+            log "post-reload verification FAILED; flipping nginx back to $ACTIVE and rolling back"
+            if [ -f "$UPSTREAM_BAK" ]; then
+              cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
+              { nginx -t && systemctl reload nginx; } || log "WARN: failed to flip nginx back; manual attention needed"
+            fi
+            rollback_idle_and_exit
           fi
+          log "traffic switched to $IDLE"
 
-          # ── 记录回滚目标 & 切换 ──
-          PREV_TARGET=""
-          if [ -L "$APP_LINK" ]; then
-            PREV_TARGET=$(readlink "$APP_LINK")
-          elif [ -d "$APP_LINK" ]; then
-            log "legacy current dir found; moving aside"
-            mv "$APP_LINK" "$DEPLOY_ROOT/legacy-current-$(date +%Y%m%d%H%M%S)"
-          fi
-          log "switch current: prev=${PREV_TARGET:-<none>} next=$RELEASE_DIR"
-          ln -sfn "$RELEASE_DIR" "$APP_LINK"
-          if [ -n "$PREV_TARGET" ] && [ "$PREV_TARGET" != "$RELEASE_DIR" ]; then
-            ln -sfn "$PREV_TARGET" "$PREV_LINK"
-          fi
+          # ── 10. 更新活动色标记 ──
+          echo "$IDLE" > "$ACTIVE_COLOR_FILE"
+          log "active color updated: $ACTIVE -> $IDLE"
 
-          # 手动回滚入口（幂等覆盖）：ssh 上来执行 bash /opt/agent-saas-app/rollback.sh
+          # ── 11. 生成蓝绿 rollback.sh（幂等覆盖）：ssh 上来执行 bash /opt/agent-saas-app/rollback.sh ──
+          # 快路径：上一色还在 drain 未退（进程仍跑旧代码）→ 直接把 nginx 翻回去；
+          # 慢路径：上一色已退出 → color symlink 指向 previous release、start、等 ready、翻 nginx。
           cat > "$DEPLOY_ROOT/rollback.sh" <<'ROLLBACK'
           #!/usr/bin/env bash
-          # 一键回滚：current ↔ previous 互换后重启。由 ci.yml 部署时生成。
-          set -euo pipefail
+          # 蓝绿一键回滚。由 ci.yml 部署时生成，手工修改会在下次部署被覆盖。
+          # -E: 函数内失败也触发 ERR trap，保证任何失败都有日志且退出 1
+          set -Eeuo pipefail
           ROOT="/opt/agent-saas-app"
-          CUR=$(readlink "$ROOT/current"); PREV=$(readlink "$ROOT/previous")
-          [ -d "$PREV" ] || { echo "previous release missing: $PREV"; exit 1; }
-          echo "rollback: $CUR -> $PREV"
-          ln -sfn "$PREV" "$ROOT/current"; ln -sfn "$CUR" "$ROOT/previous"
-          systemctl restart agent-saas-server
-          # 启动含全量 skills sync（随用户数增长，2026-07-07 实测 16 用户约 165s），窗口须给足
-          for _ in $(seq 1 420); do
-            if curl -fsS -m 5 http://127.0.0.1:3200/api/healthz >/dev/null 2>&1; then
-              echo "rollback ok"; exit 0
-            fi
-            sleep 1
-          done
-          echo "rollback healthz FAILED"; exit 1
-          ROLLBACK
-          chmod +x "$DEPLOY_ROOT/rollback.sh"
+          SERVICE="agent-saas-server"
+          ACTIVE_COLOR_FILE="/etc/agent-saas/active-color"
+          UPSTREAM_CONF="/etc/nginx/conf.d/agent-saas-upstream.conf"
 
-          log "restart service: $SERVICE_NAME"
-          systemctl restart "$SERVICE_NAME"
+          log() { printf '[rollback %s] %s\n' "$(date -Is)" "$*"; }
+          trap 'log "rollback FAILED at line $LINENO"; exit 1' ERR
 
-          # ── healthz 门禁：420s 内不过 → 自动回滚到上一 release ──
-          # 窗口依据：启动含全量 skills sync（每用户约 8s，随用户数增长），
-          # 2026-07-07 kaiyan 建 12 账号后实测启动 165s，120s 窗口误判失败+误判回滚失败。
-          HEALTH_WAITED=0
-          for _ in $(seq 1 420); do
-            if healthz_ok; then
-              log "healthz ok after ${HEALTH_WAITED}s"
-              log "remove uploaded release archive"
-              rm -f "$RELEASE_TGZ"
-              log "deploy ok: $RELEASE_ID"
+          CUR=$(tr -d '[:space:]' < "$ACTIVE_COLOR_FILE")
+          case "$CUR" in
+            blue)  OTHER="green"; OTHER_PORT=3201; CUR_PORT=3200 ;;
+            green) OTHER="blue";  OTHER_PORT=3200; CUR_PORT=3201 ;;
+            *) log "invalid active color: '$CUR'"; exit 1 ;;
+          esac
+          log "rollback: active=$CUR -> target=$OTHER"
+
+          switch_traffic_back() {
+            cat > "$UPSTREAM_CONF" <<EOF
+          # active=$OTHER
+          # 由 ci.yml 部署脚本重写，手工修改会在下次部署被覆盖
+          upstream agent_saas_backend {
+              server 127.0.0.1:$OTHER_PORT;
+              server 127.0.0.1:$CUR_PORT backup;
+          }
+          EOF
+            nginx -t
+            systemctl reload nginx
+            echo "$OTHER" > "$ACTIVE_COLOR_FILE"
+            log "traffic switched back: active=$OTHER"
+          }
+
+          if systemctl is-active --quiet "$SERVICE@$OTHER"; then
+            log "$SERVICE@$OTHER still running (draining or never exited); fast path: flip nginx only"
+            switch_traffic_back
+            log "rollback ok (fast path)"
+            exit 0
+          fi
+
+          PREV=$(readlink "$ROOT/previous" 2>/dev/null || true)
+          if [ -z "$PREV" ] || [ ! -d "$PREV" ]; then
+            log "previous release missing: '${PREV:-<none>}'"
+            exit 1
+          fi
+          log "slow path: color/$OTHER -> $PREV, start $SERVICE@$OTHER"
+          ln -sfn "$PREV" "$ROOT/color/$OTHER"
+          systemctl start "$SERVICE@$OTHER"
+          for _ in $(seq 1 180); do
+            if curl -fsS -m 5 "http://127.0.0.1:$OTHER_PORT/api/healthz/ready" >/dev/null 2>&1; then
+              switch_traffic_back
+              log "rollback ok"
               exit 0
             fi
-            if [ $((HEALTH_WAITED % 10)) -eq 0 ]; then
-              log "waiting healthz waited=${HEALTH_WAITED}s"
-            fi
             sleep 1
-            HEALTH_WAITED=$((HEALTH_WAITED + 1))
           done
-
-          log "healthz failed after 420s; rolling back to ${PREV_TARGET:-<none>}"
-          journalctl -u "$SERVICE_NAME" -n 120 --no-pager || true
-          if [ -n "$PREV_TARGET" ] && [ -d "$PREV_TARGET" ]; then
-            log "rollback switch current=$PREV_TARGET previous=$RELEASE_DIR"
-            ln -sfn "$PREV_TARGET" "$APP_LINK"
-            ln -sfn "$RELEASE_DIR" "$PREV_LINK"
-            log "restart service for rollback"
-            systemctl restart "$SERVICE_NAME"
-            ROLLBACK_WAITED=0
-            for _ in $(seq 1 420); do
-              if healthz_ok; then
-                log "rollback ok after ${ROLLBACK_WAITED}s; production restored on previous release ($PREV_TARGET)"
-                exit 1
-              fi
-              if [ $((ROLLBACK_WAITED % 10)) -eq 0 ]; then
-                log "waiting rollback healthz waited=${ROLLBACK_WAITED}s"
-              fi
-              sleep 1
-              ROLLBACK_WAITED=$((ROLLBACK_WAITED + 1))
-            done
-            log "rollback also failed; manual intervention required"
-          fi
+          log "rollback FAILED: $SERVICE@$OTHER not ready after 180s"
           exit 1
+          ROLLBACK
+          chmod +x "$DEPLOY_ROOT/rollback.sh"
+          log "rollback.sh regenerated (blue-green semantics)"
+
+          # ── 12. drain 旧色：SIGUSR2 精确送 node 主进程（拒新流量→停 cron→活跃流清空→自行 exit 0）──
+          # 绝不能用 systemctl kill：默认 cgroup 广播，SIGUSR2 会终止无 handler 的 SDK 子进程。
+          OLD_PIDFILE="/run/${SERVICE_NAME}-${ACTIVE}.pid"
+          if [ -f "$OLD_PIDFILE" ] && kill -USR2 "$(cat "$OLD_PIDFILE")" 2>/dev/null; then
+            log "drain signal SIGUSR2 sent to old color $ACTIVE (pid $(cat "$OLD_PIDFILE" 2>/dev/null || echo '?'))"
+          else
+            log "WARN: pidfile $OLD_PIDFILE missing or kill failed; fallback to systemctl stop (SIGTERM graceful shutdown, active streams may be interrupted)"
+            systemctl stop "${SERVICE_NAME}@${ACTIVE}" || true
+          fi
+          OLD_WAITED=0
+          OLD_DRAINED=0
+          while [ "$OLD_WAITED" -lt 60 ]; do
+            if ! systemctl is-active --quiet "${SERVICE_NAME}@${ACTIVE}"; then
+              OLD_DRAINED=1
+              break
+            fi
+            sleep 5
+            OLD_WAITED=$((OLD_WAITED + 5))
+          done
+          if [ "$OLD_DRAINED" -eq 1 ]; then
+            log "old color drained: $ACTIVE unit inactive after ${OLD_WAITED}s"
+          else
+            log "old color draining in background: $ACTIVE still active after 60s (not a failure; next deploy waits up to 600s)"
+          fi
+
+          # ── 13. 收尾：pnpm store 清理 + 删除上传包 ──
+          if command -v pnpm >/dev/null 2>&1; then
+            log "pnpm store prune"
+            pnpm store prune || log "WARN: pnpm store prune failed (non-fatal)"
+          fi
+          log "remove uploaded release archive"
+          rm -f "$RELEASE_TGZ" "$UPSTREAM_BAK"
+          log "deploy ok: $RELEASE_ID active=$IDLE (old color $ACTIVE drain issued)"
+          exit 0
           REMOTE
+
+      - name: Assert zero downtime
+        # deploy 失败时也要跑（打印探测报告），probe 未启动时在脚本内跳过
+        if: always()
+        env:
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+        run: |
+          if [ ! -f "$RUNNER_TEMP/probe.pid" ]; then
+            echo "probe.pid not found (probe step did not run); skipping"
+            exit 0
+          fi
+          kill "$(cat "$RUNNER_TEMP/probe.pid")" 2>/dev/null || true
+          if [ ! -f "$RUNNER_TEMP/probe.log" ]; then
+            echo "probe.log missing; nothing to assert"
+            exit 0
+          fi
+          TOTAL=$(wc -l < "$RUNNER_TEMP/probe.log" | tr -d '[:space:]')
+          NON200=$(awk '$2 != "200" { n++ } END { print n + 0 }' "$RUNNER_TEMP/probe.log")
+          MAX_STREAK=$(awk '$2 != "200" { s++; if (s > m) m = s; next } { s = 0 } END { print m + 0 }' "$RUNNER_TEMP/probe.log")
+          echo "probe summary: total=$TOTAL non200=$NON200 max_consecutive_non200=$MAX_STREAK"
+          if [ "${NON200:-0}" -gt 0 ]; then
+            echo "--- non-200 probe lines (epoch http_code) ---"
+            awk '$2 != "200"' "$RUNNER_TEMP/probe.log"
+          fi
+          # deploy 失败时旧色未动，探测应全绿；此处只报告不守门，不改变 job 结论
+          if [ "$DEPLOY_OUTCOME" != "success" ]; then
+            echo "deploy outcome=$DEPLOY_OUTCOME; report only, zero-downtime gate skipped"
+            exit 0
+          fi
+          # 容忍单次公网抖动：连续非 200 达到 2 次才判停机
+          if [ "${MAX_STREAK:-0}" -ge 2 ]; then
+            echo "ZERO-DOWNTIME GATE FAILED: max consecutive non-200 = $MAX_STREAK (must be < 2)"
+            exit 1
+          fi
+          echo "zero-downtime gate passed"
 
   # 前端静态托管在 OSS（bucket agent-saas-web，绑定 agent.kaiyan.net），
   # API/WS 走独立域名 api.agent.kaiyan.net（VITE_API_BASE 构建时注入）。

@@ -1,0 +1,13 @@
+# ============================================================================
+# 蓝绿实例每色环境变量示例（由 agent-saas-server@.service.template 加载）
+# 生产放置（手工创建一次，内容固定，不随部署改写）：
+#   /etc/agent-saas/server-blue.env
+#   /etc/agent-saas/server-green.env
+# 在共享 /etc/agent-saas/server.env 之后加载，同名变量以本文件为准。
+# ============================================================================
+
+# blue 实例（green 用 3201 与对应文件名：
+#   PORT=3201
+#   AGENT_SAAS_PIDFILE=/run/agent-saas-server-green.pid）
+PORT=3200
+AGENT_SAAS_PIDFILE=/run/agent-saas-server-blue.pid

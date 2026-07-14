@@ -3,6 +3,12 @@ export interface SkillsConfigData {
   version: 1;
   /** 单调递增计数器，每次 mutation +1，驱动 workspace 同步 */
   configVersion: number;
+  /**
+   * skills 内容指纹（pool 内容 sha256 + 租户目录 stat 摘要）。
+   * 启动时比对：变化 → bump configVersion，由版本驱动同步物化内容变更。
+   * 见 contentFingerprint.ts（2026-07-15 零停机部署批次）。
+   */
+  poolContentHash?: string;
   /** 旧字段：pool 中每个 skill 的全局启用状态。新配置使用 platform；保留用于兼容旧数据。 */
   poolVisibility: Record<string, boolean>;
   /** 平台级 skill 配置：平台是否启用，以及开放给哪些租户 */

@@ -1,0 +1,49 @@
+# ============================================================================
+# Agent SaaS Server 蓝绿模板实例（systemd template unit）
+# 安装为 /etc/systemd/system/agent-saas-server@.service
+#
+# 蓝绿用法：
+#   - 启用两个实例（首次迁移时手工做一次）：
+#       systemctl enable agent-saas-server@blue agent-saas-server@green
+#     日常只有 active 色常驻服务，idle 色由 ci.yml 部署脚本按需 start。
+#   - 每色端口/pidfile 由 /etc/agent-saas/server-%i.env 提供
+#     （见 server-color-env.example；手工创建一次，内容固定，不随部署改写）：
+#       blue  → PORT=3200, /run/agent-saas-server-blue.pid
+#       green → PORT=3201, /run/agent-saas-server-green.pid
+#   - 每色代码走固定 symlink /opt/agent-saas-app/color/%i → releases/<sha>。
+#     部署只改 idle 色的 symlink，active 色的 symlink 永不动，
+#     保证 active 色 crash-restart 时仍加载自己的代码版本。
+#   - 活动色标记：/etc/agent-saas/active-color（内容 blue|green），
+#     由部署脚本在切流成功后改写。
+#   - drain（优雅下线）：kill -USR2 $(cat pidfile) 精确送 node 主进程；
+#     绝不能用 systemctl kill —— 默认 cgroup 广播会把 SIGUSR2 发给
+#     无 handler 的 SDK 子进程并将其终止。
+#   - Restart=on-failure：drain 完成后进程自行 exit(0) 不会被拉起，
+#     崩溃（非零退出/信号）仍自动重启。
+# ============================================================================
+[Unit]
+Description=Agent SaaS Server (%i)
+After=network-online.target remote-fs.target agent-saas-acs-orchestrator.service
+Wants=network-online.target
+RequiresMountsFor=/mnt/agent-workspaces
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-saas-app/color/%i/server
+Environment=NODE_ENV=production
+Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas/config.json
+Environment=AZEROTH_TOKENS_FILE=/etc/agent-saas/azeroth-tokens.json
+EnvironmentFile=/etc/agent-saas/server.env
+# 每色覆盖项（PORT、AGENT_SAAS_PIDFILE），放在共享 server.env 之后以便覆盖
+EnvironmentFile=/etc/agent-saas/server-%i.env
+ExecStart=/usr/local/bin/pnpm start
+# on-failure：drain 自退（exit 0）不复活，崩溃仍自动拉起
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=35
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -46,6 +46,21 @@ export class SkillConfigStore {
     return this.data.configVersion;
   }
 
+  getPoolContentHash(): string | undefined {
+    return this.data.poolContentHash;
+  }
+
+  /**
+   * 启动期专用：skills 内容指纹变化时落盘新指纹并 bump configVersion，
+   * 驱动版本化同步物化内容变更（syncWithPool/prune 同风格的同步持久化）。
+   */
+  setPoolContentHashSync(hash: string): void {
+    if (this.data.poolContentHash === hash) return;
+    this.data.poolContentHash = hash;
+    this.bumpVersion();
+    this.persistSync();
+  }
+
   getPoolVisibility(): Record<string, boolean> {
     const result: Record<string, boolean> = {};
     for (const id of new Set([
@@ -450,6 +465,7 @@ export class SkillConfigStore {
       this.data = {
         version: 1,
         configVersion: parsed.configVersion ?? 0,
+        ...(parsed.poolContentHash ? { poolContentHash: parsed.poolContentHash } : {}),
         poolVisibility: parsed.poolVisibility ?? {},
         platform: parsed.platform ?? {},
         tenants: parsed.tenants ?? {},

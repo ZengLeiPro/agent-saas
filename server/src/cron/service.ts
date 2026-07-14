@@ -155,6 +155,9 @@ export class CronService {
   }
 
   async start(): Promise<void> {
+    // stop→start 可循环（cron leadership 失而复得时重启调度）：
+    // stop() 置 enabled=false，armTimer 据此短路，必须先复位
+    this.enabled = true;
     await this.ensureLoaded();
     this.armTimer();
     this.startWatchdog();

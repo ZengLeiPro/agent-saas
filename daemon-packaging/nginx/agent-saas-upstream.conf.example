@@ -1,0 +1,10 @@
+# 由 ci.yml 部署脚本重写，手工修改会在下次部署被覆盖
+# active=blue
+upstream agent_saas_backend {
+    server 127.0.0.1:3200;
+    server 127.0.0.1:3201 backup;
+}
+# 放置于 /etc/nginx/conf.d/agent-saas-upstream.conf。
+# 迁移时手工做一次：主站 conf 里 server 块的 proxy_pass 需从直连
+# http://127.0.0.1:3200 改为 http://agent_saas_backend，
+# 之后流量去向由本文件的 primary/backup 顺序决定（部署脚本切流时重写）。

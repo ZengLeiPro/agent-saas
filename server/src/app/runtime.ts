@@ -83,6 +83,8 @@ import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds, sca
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import { syncSkills, resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, agentPath, resolveAgentPath } from '../workspace/namespace.js';
+import { CronLeadership } from '../runtime/cronLeadership.js';
+import { computeSkillsContentFingerprint } from '../data/skills/contentFingerprint.js';
 import type { RawRuntimeRunDispatchConfig, SkillsDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
 import type { SkillEntry } from '../agent/skillToolProvider.js';
 import { McpClientManager } from '../mcp/clientManager.js';
@@ -127,6 +129,17 @@ import { setSessionMetaProjectionSink } from '../data/transcripts/meta.js';
 import { createAuthMiddleware } from '../auth/middleware.js';
 import { sanitizeUserOverrides } from '../security/extraDirs.js';
 
+
+/** skills 后台物化进度（/api/healthz/ready 载荷；蓝绿部署门禁等待 state=done 再切流） */
+export interface SkillsWarmupStatus {
+  state: 'pending' | 'running' | 'done' | 'failed';
+  totalUsers?: number;
+  processedUsers?: number;
+  syncedUsers?: number;
+  startedAtMs?: number;
+  finishedAtMs?: number;
+  error?: string;
+}
 
 export interface AppRuntime {
   config: AppConfig;
@@ -252,6 +265,25 @@ export interface AppRuntime {
    * - file backend：`new FileEventStore(getRuntimeEventLogPath(transcriptPath))`
    */
   runtimeEventStoreFor: (transcriptPath: string) => EventStore;
+  /**
+   * 零停机部署（2026-07-15）：listen 后执行的后台启动任务（skills warmup 等）。
+   * index.ts 在 app.listen 回调里调用；scheduler-only 进程在 createRuntime 后调用。
+   */
+  runDeferredStartupTasks: () => Promise<void>;
+  /** skills 后台物化状态（/api/healthz/ready 载荷；部署门禁等待 done 再切流） */
+  getSkillsWarmupStatus: () => SkillsWarmupStatus;
+  /**
+   * 启动 cron leader 协调器（PG advisory lock 单例守护，防蓝绿并存期双跑）。
+   * 仅 processRole=all 且 cron 启用时有实际效果；替代旧的 cronService.start() 直调。
+   */
+  startCronCoordinator: () => void;
+  /**
+   * SIGUSR2 drain 序列（顺序敏感）：停 reconcile 定时器 → 停 cron 触发 →
+   * 等 in-flight cron job 结清 → 释放 cron leadership（此后新实例可接管）→
+   * 停 scheduler（不再 claim 新 run 并等 in-flight run 结清）。
+   * WS 活跃流不在此处等待，由 index.ts 的 drain 轮询负责。
+   */
+  beginRuntimeDrain: () => Promise<void>;
 }
 
 export interface CreateRuntimeOptions {
@@ -547,6 +579,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.info(`Org agent store loaded: ${orgAgentStore.listAll().length} agent(s)`);
   }
 
+  // ── 零停机部署（2026-07-15）：listen 后执行的后台启动任务 ──────────
+  // 重 IO 的启动工作（skills 全量物化）从 createRuntime 关键路径移出，
+  // index.ts 在 app.listen 之后调用 runDeferredStartupTasks() 执行。
+  // 启动关键路径只保留轻量配置级操作 → healthz-ready 秒级。
+  const deferredStartupTasks: Array<{ name: string; run: () => Promise<void> }> = [];
+  const skillsWarmup: SkillsWarmupStatus = { state: 'pending' };
+
   // Skills config store
   let skillConfigStore: SkillConfigStore | undefined;
   if (userStore) {
@@ -563,8 +602,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       skillConfigStore = new SkillConfigStore(skillsConfigPath);
       serverLogger.info('Skills config store loaded');
     }
-    // 启动时：发现新 skill → 全量同步 → 清理幽灵条目
-    // 顺序关键：syncWithPool 补全配置 → syncSkills 依赖完整配置清理/复制 → prune 清理已删除条目
+    // 启动时：发现新 skill → 内容指纹比对 → 后台版本化物化 → 清理幽灵条目
+    // 2026-07-15 零停机部署批次：旧「启动无条件全量 syncSkills」（16 用户实测
+    // 约 165s，阻塞 listen）拆为两段——
+    //   同步段（快，配置级）：syncWithPool 补全配置 + 内容指纹比对（指纹变化
+    //     → bump configVersion，驱动版本化同步）；
+    //   后台段（listen 后 deferredStartupTasks 执行）：逐用户版本检查物化 +
+    //     prune 幽灵条目 + 写版本标记。用户在后台段完成前发起会话时，由
+    //     dispatch 路径的 refreshUserWorkspace 版本检查兜底，正确性不依赖后台段。
     const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
     // δ: scanPoolSkills 已经在文件顶部静态 import 为 scanPoolSkillsForDispatch；
     //     不需要再 dynamic import。syncSkills 同理用静态 import。
@@ -573,8 +618,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // 安全检查：pool 为空（目录不存在或内容被清空）或配置损坏时跳过全量同步
     if (currentPoolIds.size === 0) {
       serverLogger.warn('Skills pool is empty or missing, skipping startup sync');
+      skillsWarmup.state = 'done';
     } else if (skillConfigStore.loadFailed) {
       serverLogger.warn('Skills config was corrupted, skipping startup sync to prevent data loss');
+      skillsWarmup.state = 'failed';
+      skillsWarmup.error = 'skills config corrupted';
     } else {
 
     // 1. 将 pool 文件系统新增的 skill 写入 poolVisibility（补全缺失条目）
@@ -583,53 +631,100 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       serverLogger.info(`Skills config: discovered ${discovered} new pool skills`);
     }
 
-    // 2. 全量同步（此时 poolVisibility 完整：包含新增 + 历史，syncSkills 能正确识别所有系统 skill）
-    // PR 5 修 P0-7：PR 4 后 workspace 路径变为 <cwd>/<tenant>/<user>/，必须用
-    // resolveUserCwd 才能命中正确路径；之前 join(agentCwd, u.username) 全部 ENOENT。
-    const allUsers = userStore.listAll();
-    let synced = 0;
-    for (const u of allUsers) {
-      const workspaceUser = { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId };
-      const userCwd = resolveUserCwd(agentCwd, workspaceUser);
-      if (existsSync(agentDir(userCwd))) {
-        syncSkills(userCwd, sharedDir, workspaceUser, skillConfigStore, tenantSkillsRootDir);
-        synced++;
+    // 2. 内容指纹：skill 文件内容变化（通常随新 release 携带）→ bump
+    //    configVersion，让版本驱动同步（后台 warmup + dispatch refresh）物化。
+    //    指纹基于文件内容而非 mtime → no-op 部署/重启不触发全用户复制。
+    try {
+      const fingerprint = computeSkillsContentFingerprint(poolDir, tenantSkillsRootDir);
+      if (fingerprint !== skillConfigStore.getPoolContentHash()) {
+        skillConfigStore.setPoolContentHashSync(fingerprint);
+        serverLogger.info('Skills content fingerprint changed; configVersion bumped for versioned sync');
       }
-    }
-    if (synced > 0) {
-      serverLogger.info(`Skills: synced ${synced} user workspaces on startup`);
+    } catch (err) {
+      serverLogger.warn(`Skills content fingerprint failed (versioned sync falls back to config-only changes): ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // 3. 清理配置中的幽灵条目（sync 完成后再清理，避免 sync 时读不到历史记录）
-    // 租户自有 skill 目录现状一并传入：保留 selectedSkills 中的租户 skill、清理 ownSkills 幽灵规则
-    const tenantOwnIdsByTenant: Record<string, Set<string>> = {};
-    const tenantsRoot = tenantSkillsRootDir;
-    if (existsSync(tenantsRoot)) {
-      for (const entry of readdirSync(tenantsRoot)) {
+    // 3. 逐用户物化 + prune + 版本标记 → 后台任务（listen 后执行）
+    const store = skillConfigStore;
+    const warmupUserStore = userStore;
+    deferredStartupTasks.push({
+      name: 'skills-warmup',
+      run: async () => {
+        skillsWarmup.state = 'running';
+        skillsWarmup.startedAtMs = Date.now();
         try {
-          if (!statSync(join(tenantsRoot, entry)).isDirectory()) continue;
-          tenantOwnIdsByTenant[entry] = scanTenantOwnSkillIds(resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, entry), currentPoolIds);
-        } catch {
-          // 非法目录名或读取失败，跳过
-        }
-      }
-    }
-    const pruned = skillConfigStore.pruneStaleSkills(currentPoolIds, tenantOwnIdsByTenant);
-    if (pruned > 0) {
-      serverLogger.info(`Skills config: pruned ${pruned} stale entries`);
-    }
+          // 3a. 逐用户版本检查物化。
+          // PR 5 修 P0-7：PR 4 后 workspace 路径变为 <cwd>/<tenant>/<user>/，必须用
+          // resolveUserCwd 才能命中正确路径；之前 join(agentCwd, u.username) 全部 ENOENT。
+          const allUsers = warmupUserStore.listAll();
+          skillsWarmup.totalUsers = allUsers.length;
+          skillsWarmup.processedUsers = 0;
+          let synced = 0;
+          for (const u of allUsers) {
+            const workspaceUser = { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId };
+            const userCwd = resolveUserCwd(agentCwd, workspaceUser);
+            if (existsSync(agentDir(userCwd))) {
+              let localVersion = 0;
+              try {
+                localVersion = parseInt(readFileSync(agentPath(userCwd, '.skills-version'), 'utf-8').trim(), 10) || 0;
+              } catch { /* 标记缺失 → 视为 0，触发同步 */ }
+              if (localVersion < store.getConfigVersion()) {
+                // syncSkills 是同步 fs 重操作（共享盘上逐用户秒级）；本任务在
+                // listen 后运行，逐用户 yield 一次事件循环，避免长时间饿死在线请求。
+                syncSkills(userCwd, sharedDir, workspaceUser, store, tenantSkillsRootDir);
+                synced++;
+              }
+            }
+            skillsWarmup.processedUsers++;
+            await new Promise<void>((r) => setImmediate(r));
+          }
+          skillsWarmup.syncedUsers = synced;
 
-    // 4. 更新版本标记（写入 prune 后的最新 configVersion，避免 dispatch 时冗余同步）
-    for (const u of allUsers) {
-      const workspaceUser = { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId };
-      const userCwd = resolveUserCwd(agentCwd, workspaceUser);
-      const versionFile = agentPath(userCwd, '.skills-version');
-      if (existsSync(agentDir(userCwd))) {
-        writeFileSync(versionFile, String(skillConfigStore.getConfigVersion()), 'utf-8');
-      }
-    }
+          // 3b. 清理配置中的幽灵条目（全部用户 sync 完成后再清理，避免 syncSkills
+          //     清理用户残留副本时读不到 poolVisibility 历史记录）
+          const tenantOwnIdsByTenant: Record<string, Set<string>> = {};
+          const tenantsRoot = tenantSkillsRootDir;
+          if (existsSync(tenantsRoot)) {
+            for (const entry of readdirSync(tenantsRoot)) {
+              try {
+                if (!statSync(join(tenantsRoot, entry)).isDirectory()) continue;
+                tenantOwnIdsByTenant[entry] = scanTenantOwnSkillIds(resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, entry), currentPoolIds);
+              } catch {
+                // 非法目录名或读取失败，跳过
+              }
+            }
+          }
+          const pruned = store.pruneStaleSkills(currentPoolIds, tenantOwnIdsByTenant);
+          if (pruned > 0) {
+            serverLogger.info(`Skills config: pruned ${pruned} stale entries`);
+          }
+
+          // 3c. 更新版本标记（写入 prune 后的最新 configVersion，避免 dispatch 时冗余同步）
+          for (const u of allUsers) {
+            const workspaceUser = { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId };
+            const userCwd = resolveUserCwd(agentCwd, workspaceUser);
+            const versionFile = agentPath(userCwd, '.skills-version');
+            if (existsSync(agentDir(userCwd))) {
+              writeFileSync(versionFile, String(store.getConfigVersion()), 'utf-8');
+            }
+          }
+
+          skillsWarmup.state = 'done';
+          skillsWarmup.finishedAtMs = Date.now();
+          serverLogger.info(`Skills warmup done: synced=${synced}/${allUsers.length} users in ${skillsWarmup.finishedAtMs - (skillsWarmup.startedAtMs ?? skillsWarmup.finishedAtMs)}ms`);
+        } catch (err) {
+          skillsWarmup.state = 'failed';
+          skillsWarmup.finishedAtMs = Date.now();
+          skillsWarmup.error = err instanceof Error ? err.message : String(err);
+          serverLogger.error('Skills warmup failed (dispatch-time versioned sync still covers correctness):', err);
+        }
+      },
+    });
 
     } // end of safety-checked startup sync block
+  } else {
+    // 无 userStore（auth 关闭的开发形态）：没有多用户物化需求
+    skillsWarmup.state = 'done';
   }
 
   const memoryEnabled = config.memory?.enabled !== false;
@@ -1766,44 +1861,113 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // config 传的是惰性 getter（与 updateToolSettingsConfig 热改同模式）。
   rawRuntimeConfig.cronService = () => cronRuntime.service ?? undefined;
 
-  // 记忆轮询每用户任务对账（2026-07-14 批次）：启动补齐 + 每 6h 复核。
+  // ── Cron leader 协调器（2026-07-15 零停机部署批次）─────────────────
+  // 蓝绿部署下新旧实例短暂并存：cron 调度（含 memory_poll reconcile）必须
+  // 单实例运行，否则同一任务双触发（双 run / 双扣费 / 双通知）。
+  // PG advisory lock 选主；旧实例 drain 退出 / 崩溃 → session 断开自动释放
+  // 锁 → 新实例 ≤15s 接管。file backend（单实例开发形态）无连接串 → 立即成为
+  // leader，行为与历史一致。
+  //
+  // 记忆轮询每用户任务对账（2026-07-14 批次）：leader 上任时补齐 + 每 6h 复核。
   // 仅 processRole=all 执行（ws-only/scheduler-only 不动 cron store）；
   // 平台开关 config.memory.polling.enabled 关闭时也跑对账——负责把存量系统任务禁用。
-  if (processRole === 'all' && cronRuntime.service && userStore) {
-    const memoryPollingConfig = config.memory?.polling;
-    const runMemoryPollReconcile = async (): Promise<void> => {
-      try {
-        const existingJobs = await cronRuntime.service!.list({ includeDisabled: true });
-        const plan = reconcileMemoryPollJobs({
-          users: userStore.listAll().map((user) => ({
-            id: user.id,
-            username: user.username,
-            role: user.role,
-            tenantId: user.tenantId,
-            disabled: user.disabled,
-          })),
-          existingJobs,
-          tenantStore,
-          enabled: memoryPollingConfig?.enabled === true && userActivityService.available,
-          hour: memoryPollingConfig?.hour ?? MEMORY_POLL_DEFAULTS.hour,
-          hoursSpan: memoryPollingConfig?.hoursSpan ?? MEMORY_POLL_DEFAULTS.hoursSpan,
-          timezone: memoryPollingConfig?.timezone ?? config.server.timezone ?? MEMORY_POLL_DEFAULTS.timezone,
-          nowMs: Date.now(),
-        });
-        if (plan.toCreate.length > 0 || plan.toUpdate.length > 0) {
-          await cronRuntime.service!.applySystemJobs(plan);
-          serverLogger.info(
-            `Memory poll reconcile: eligible=${plan.stats.eligibleUsers} created=${plan.stats.created} enabled=${plan.stats.enabled} disabled=${plan.stats.disabled} dupDisabled=${plan.stats.duplicatesDisabled} rescheduled=${plan.stats.rescheduled}`,
-          );
+  let cronLeadership: CronLeadership | undefined;
+  let memoryPollReconcileTimer: ReturnType<typeof setInterval> | undefined;
+  if (processRole === 'all' && cronRuntime.service) {
+    const cronService = cronRuntime.service;
+    let runMemoryPollReconcile: (() => Promise<void>) | undefined;
+    if (userStore) {
+      const memoryPollingConfig = config.memory?.polling;
+      runMemoryPollReconcile = async (): Promise<void> => {
+        try {
+          const existingJobs = await cronService.list({ includeDisabled: true });
+          const plan = reconcileMemoryPollJobs({
+            users: userStore.listAll().map((user) => ({
+              id: user.id,
+              username: user.username,
+              role: user.role,
+              tenantId: user.tenantId,
+              disabled: user.disabled,
+            })),
+            existingJobs,
+            tenantStore,
+            enabled: memoryPollingConfig?.enabled === true && userActivityService.available,
+            hour: memoryPollingConfig?.hour ?? MEMORY_POLL_DEFAULTS.hour,
+            hoursSpan: memoryPollingConfig?.hoursSpan ?? MEMORY_POLL_DEFAULTS.hoursSpan,
+            timezone: memoryPollingConfig?.timezone ?? config.server.timezone ?? MEMORY_POLL_DEFAULTS.timezone,
+            nowMs: Date.now(),
+          });
+          if (plan.toCreate.length > 0 || plan.toUpdate.length > 0) {
+            await cronService.applySystemJobs(plan);
+            serverLogger.info(
+              `Memory poll reconcile: eligible=${plan.stats.eligibleUsers} created=${plan.stats.created} enabled=${plan.stats.enabled} disabled=${plan.stats.disabled} dupDisabled=${plan.stats.duplicatesDisabled} rescheduled=${plan.stats.rescheduled}`,
+            );
+          }
+        } catch (err) {
+          serverLogger.warn(`Memory poll reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
         }
-      } catch (err) {
-        serverLogger.warn(`Memory poll reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    };
-    void runMemoryPollReconcile();
-    const memoryPollReconcileTimer = setInterval(() => { void runMemoryPollReconcile(); }, 6 * 3600_000);
-    memoryPollReconcileTimer.unref?.();
+      };
+    }
+    cronLeadership = new CronLeadership({
+      connectionString: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.connectionString : undefined,
+      // tablePrefix 参与锁名：共库多环境（CI/dev 指同一 PG）不互相抢锁
+      lockName: `${config.runtimeEventStore?.backend === 'pg' ? (config.runtimeEventStore.tablePrefix ?? 'agent_saas') : 'agent_saas'}:cron-leader`,
+      onAcquired: async () => {
+        await cronService.start();
+        if (runMemoryPollReconcile) {
+          void runMemoryPollReconcile();
+          if (!memoryPollReconcileTimer) {
+            memoryPollReconcileTimer = setInterval(() => { void runMemoryPollReconcile!(); }, 6 * 3600_000);
+            memoryPollReconcileTimer.unref?.();
+          }
+        }
+      },
+      onLost: (reason) => {
+        serverLogger.warn(`Cron leadership lost (${reason}); stopping local cron scheduling`);
+        cronService.stop();
+        if (memoryPollReconcileTimer) {
+          clearInterval(memoryPollReconcileTimer);
+          memoryPollReconcileTimer = undefined;
+        }
+      },
+    });
   }
+
+  // SIGUSR2 drain 序列（见 AppRuntime.beginRuntimeDrain 注释；index.ts 调用）
+  let runtimeDrainStarted = false;
+  const beginRuntimeDrain = async (): Promise<void> => {
+    if (runtimeDrainStarted) return;
+    runtimeDrainStarted = true;
+    // 1. 停 reconcile 定时器
+    if (memoryPollReconcileTimer) {
+      clearInterval(memoryPollReconcileTimer);
+      memoryPollReconcileTimer = undefined;
+    }
+    // 2. 停 cron 触发（不打断执行中的 cron job）
+    cronRuntime.service?.stop();
+    // 3. 等 in-flight cron job 结清后再释放 leadership：新 leader 从 jobs.json
+    //    加载状态，旧实例执行完的 saveJobs（lastRun 等）必须先落盘，否则任务
+    //    状态回退可能导致新 leader 重复触发。
+    if (cronRuntime.service) {
+      const quiesceDeadline = Date.now() + 10 * 60_000;
+      for (;;) {
+        const status = cronRuntime.service.getStatus();
+        const runningCount = status.runningJobIds?.length ?? 0;
+        if (runningCount === 0) break;
+        if (Date.now() > quiesceDeadline) {
+          serverLogger.warn(`Drain: ${runningCount} cron job(s) still running at quiesce deadline; releasing leadership anyway`);
+          break;
+        }
+        serverLogger.info(`Drain: waiting for ${runningCount} in-flight cron job(s)`);
+        await new Promise<void>((r) => setTimeout(r, 2000));
+      }
+    }
+    // 4. 释放 leadership → 新实例在一个重试周期（≤15s）内接管 cron
+    await cronLeadership?.stop();
+    // 5. 停 scheduler：不再 claim 新 run，并等 in-flight run 结清
+    //    （scheduler.stop 幂等；后续 runtimeEventStoreShutdown 再调用是 no-op）
+    await runtimeScheduler?.stop();
+  };
 
   // Backfill cron groups from historical run logs (one-time migration)
   await migrateCronGroups(groupStore, cronRuntime.service, cronRuntime.cronRunsDir);
@@ -2084,6 +2248,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     artifactShutdown,
     clientDaemonGateway,
     runtimeEventStoreFor,
+    runDeferredStartupTasks: async () => {
+      for (const task of deferredStartupTasks) {
+        try {
+          await task.run();
+        } catch (err) {
+          serverLogger.error(`Deferred startup task "${task.name}" failed:`, err);
+        }
+      }
+    },
+    getSkillsWarmupStatus: () => ({ ...skillsWarmup }),
+    startCronCoordinator: () => {
+      cronLeadership?.start();
+    },
+    beginRuntimeDrain,
     triggerTokenUsageRebuild: businessDbHandle
       ? () =>
           rebuildTokenUsageFromJsonl(businessDbHandle!, {

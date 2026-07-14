@@ -29,12 +29,37 @@ function resolveProcessRole(): ProcessRole {
   throw new Error(`Invalid process role "${raw}". Expected one of: all, ws-only, scheduler-only`);
 }
 
+// 蓝绿部署（2026-07-15）：AGENT_SAAS_PIDFILE 由 systemd 每色 env 文件指定
+// （如 /run/agent-saas-server-blue.pid），部署脚本据此精确投递 SIGUSR2。
+function writePidFile(): void {
+  const pidFile = process.env.AGENT_SAAS_PIDFILE;
+  if (!pidFile) return;
+  try {
+    fs.writeFileSync(pidFile, `${process.pid}\n`, 'utf-8');
+  } catch (err) {
+    serverLogger.warn(`Failed to write pidfile ${pidFile}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function removePidFile(): void {
+  const pidFile = process.env.AGENT_SAAS_PIDFILE;
+  if (!pidFile) return;
+  try {
+    fs.unlinkSync(pidFile);
+  } catch { /* 不存在或不可删，忽略 */ }
+}
+
 async function startServer(): Promise<void> {
   const processRole = resolveProcessRole();
+  // 蓝绿部署（2026-07-15）：把真实 node PID 写入 pidfile，部署脚本用
+  // `kill -USR2 $(cat pidfile)` 精确送 drain 信号。不能用 systemctl kill
+  // 的 cgroup 广播——SIGUSR2 对无 handler 的 SDK 子进程默认动作是终止。
+  writePidFile();
   runtime = await createRuntime({ processCwd: process.cwd(), processRole });
   serverLogger.info(`Process role: ${processRole}`);
   if (processRole === 'scheduler-only') {
     serverLogger.info('Scheduler-only process started; HTTP/WebSocket listeners are disabled');
+    void runtime.runDeferredStartupTasks();
     return;
   }
   const { config, agentCwd, uploadsDir, channelManager, cronRuntime } = runtime;
@@ -106,7 +131,13 @@ async function startServer(): Promise<void> {
     // 旧 release assets fallback：SW update-on-navigation 策略下，未刷新的旧页面
     // 会继续懒加载旧 hash chunk；当前 release 的 dist 没有时，回扫历史 release 目录。
     // 部署结构 releases/<sha>/web/dist（ci.yml），本地开发无此结构时自动禁用。
-    const releasesRoot = path.resolve(webDistDir, '../../..');
+    // 蓝绿部署下进程经 /opt/agent-saas-app/color/<色> symlink 启动，必须先
+    // realpath 解析回真实 releases/<sha> 路径再上溯，否则 basename 判定失效。
+    let webDistRealDir = webDistDir;
+    try {
+      webDistRealDir = fs.realpathSync(webDistDir);
+    } catch { /* 保底用原路径 */ }
+    const releasesRoot = path.resolve(webDistRealDir, '../../..');
     if (path.basename(releasesRoot) === 'releases' && fs.existsSync(releasesRoot)) {
       const MAX_FALLBACK_RELEASES = 10;
       app.use('/assets', (req, res, next) => {
@@ -166,9 +197,9 @@ async function startServer(): Promise<void> {
   }
 
   if (processRole === 'all' && cronService) {
-    cronService.start().catch((err) => {
-      cronLogger.error('Failed to start:', err);
-    });
+    // 经 cron leadership 协调器启动（PG advisory lock 选主，防蓝绿并存双跑）；
+    // 非 leader 实例挂起等待，旧实例 drain 释放锁后 ≤15s 接管。
+    runtime.startCronCoordinator();
   } else if (processRole === 'ws-only' && cronService) {
     cronLogger.info('未启动：processRole=ws-only');
   }
@@ -195,6 +226,9 @@ async function startServer(): Promise<void> {
       });
     }
     if (processRole === 'all') kbPreviewScheduler = startKbPreviewScheduler(runtime!.processCwd);
+    // 后台启动任务（skills warmup 等）：listen 之后执行，不阻塞 ready。
+    // 进度经 /api/healthz/ready 的 warmup 字段暴露，部署门禁等 done 再切流。
+    void runtime!.runDeferredStartupTasks();
   });
 
   setInterval(() => {
@@ -291,14 +325,18 @@ startServer().catch((err) => {
   process.exit(1);
 });
 
-async function gracefulShutdown(signal: string): Promise<void> {
-  serverLogger.info(`${signal} received, shutting down...`);
-  const forceTimer = setTimeout(() => {
-    serverLogger.error('Graceful shutdown timed out, forcing exit');
-    process.exit(1);
-  }, 30_000);
-  forceTimer.unref();
+// ── 关停与 drain（2026-07-15 零停机部署批次重构）───────────────────
+// 两条退出路径共用 shutdownCleanup：
+// - gracefulShutdown（SIGTERM/SIGINT）：≤30s 尽力清理后退出；systemd
+//   TimeoutStopSec=35 兜底 SIGKILL。
+// - SIGUSR2 drain（蓝绿部署旧色排空）：拒新流量 → runtime 侧按序 quiesce
+//   （cron 结清 → 释放 leadership → scheduler 结清）→ 等 WS 活跃流清空 →
+//   清理退出。所有 drain 出口 exit(0)：unit Restart=on-failure 不得复活已
+//   排空的旧色；被打断的 in-flight run 由新实例经 lease 过期 autoWake 续跑。
 
+let shuttingDown = false;
+
+async function shutdownCleanup(): Promise<void> {
   try {
     httpServer?.close();
     cronService?.stop();
@@ -326,54 +364,89 @@ async function gracefulShutdown(signal: string): Promise<void> {
     // 无子进程或 pkill 不可用，忽略
   }
 
+  removePidFile();
+
   // 等待 stdout/stderr flush，避免日志丢失
   await new Promise<void>((resolve) => {
     if (process.stdout.writableEnded) { resolve(); return; }
     process.stdout.write('', () => resolve());
     setTimeout(resolve, 500); // 兜底
   });
+}
 
+async function gracefulShutdown(signal: string): Promise<void> {
+  // drain 进行中收到 SIGTERM（部署脚本的 systemctl stop 兜底）：跳过继续等待，
+  // 直接进入清理退出；已在收尾的重复信号忽略。
+  if (shuttingDown) return;
+  shuttingDown = true;
+  serverLogger.info(`${signal} received, shutting down...`);
+  const forceTimer = setTimeout(() => {
+    serverLogger.error('Graceful shutdown timed out, forcing exit');
+    // drain 中的强杀也走 0：避免 Restart=on-failure 复活已排空实例；
+    // systemctl stop/restart 语义不受退出码影响
+    process.exit(isDraining ? 0 : 1);
+  }, 30_000);
+  forceTimer.unref();
+  await shutdownCleanup();
   process.exit(0);
 }
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// ── SIGUSR2: Drain 模式（部署时排空活跃流后退出）──────────────────
+// ── SIGUSR2: Drain 模式（蓝绿部署旧色排空后自退）──────────────────
 let isDraining = false;
 
 process.on('SIGUSR2', () => {
-  if (isDraining) return;
+  if (isDraining || shuttingDown) return;
   isDraining = true;
   serverLogger.info('SIGUSR2 received — entering drain mode');
 
   if (runtime) runtime.channelManager.draining = true;
 
-  // 停止接受新 HTTP 连接
+  // 停止接受新 HTTP 连接（已建立的 WS/流不受影响，继续跑完）
   httpServer?.close();
-  // 停止调度新 cron 任务
-  cronService?.stop();
   runtime?.dwsAuthKeepaliveShutdown?.();
+  kbPreviewScheduler?.stop();
 
-  // 轮询等待活跃流清空
+  // runtime 侧按序 quiesce：停 cron 触发 → 等 in-flight cron 结清 →
+  // 释放 cron leadership（新实例接管）→ 停 scheduler 并等 in-flight run 结清
+  let runtimeQuiesced = false;
+  const runtimeDrain = runtime?.beginRuntimeDrain().catch((err) => {
+    serverLogger.error('Drain: beginRuntimeDrain failed:', err);
+  }) ?? Promise.resolve();
+  void runtimeDrain.then(() => { runtimeQuiesced = true; });
+
+  const finishDrain = (why: string): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    serverLogger.info(`Drain ${why}; cleaning up and exiting`);
+    const forceTimer = setTimeout(() => process.exit(0), 30_000);
+    forceTimer.unref();
+    void shutdownCleanup().finally(() => process.exit(0));
+  };
+
+  // 轮询等待活跃流清空 + runtime quiesce 完成
   const drainPoll = setInterval(() => {
     const active = runtime?.channelManager.getActiveStreamCount() ?? 0;
-    serverLogger.info(`Drain: ${active} active stream(s) remaining`);
-    if (active === 0) {
+    serverLogger.info(`Drain: ${active} active stream(s) remaining, runtimeQuiesced=${runtimeQuiesced}`);
+    if (active === 0 && runtimeQuiesced) {
       clearInterval(drainPoll);
-      serverLogger.info('Drain complete, exiting');
-      process.exit(0);
+      clearTimeout(drainDeadline);
+      finishDrain('complete');
     }
   }, 2000);
   drainPoll.unref();
 
-  // 硬性截止：100 秒（deploy.sh DRAIN_TIMEOUT=120s 减去 20s 安全余量，
-  // 确保进程在 deploy 脚本超时前自行退出）
+  // 硬性截止（默认 15min，AGENT_SAAS_DRAIN_DEADLINE_MS 可调）：蓝绿模式下
+  // 旧色在后台排空、不阻塞部署，可以给长 run 充足余量；到点仍未清空则
+  // 放弃等待——被打断的 run 由新实例 lease 恢复续跑。
+  const deadlineMs = parseInt(process.env.AGENT_SAAS_DRAIN_DEADLINE_MS || '', 10) || 900_000;
   const drainDeadline = setTimeout(() => {
     clearInterval(drainPoll);
     const remaining = runtime?.channelManager.getActiveStreamCount() ?? 0;
-    serverLogger.warn(`Drain timeout: ${remaining} stream(s) still active, forcing exit`);
-    process.exit(1);
-  }, 100_000);
+    serverLogger.warn(`Drain deadline after ${deadlineMs}ms: ${remaining} stream(s) still active, forcing exit (interrupted runs recover via lease on the new instance)`);
+    finishDrain('deadline reached');
+  }, deadlineMs);
   drainDeadline.unref();
 });

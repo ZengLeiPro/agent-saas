@@ -8,6 +8,16 @@ export interface HealthRouteOptions {
   getActiveStreamCount?: () => number;
   getActiveRunCounts?: () => Promise<ActiveRunCounts>;
   getIsDraining?: () => boolean;
+  /** skills 后台物化进度（结构类型，避免反向依赖 app/runtime）；ready 载荷用 */
+  getSkillsWarmupStatus?: () => {
+    state: 'pending' | 'running' | 'done' | 'failed';
+    totalUsers?: number;
+    processedUsers?: number;
+    syncedUsers?: number;
+    startedAtMs?: number;
+    finishedAtMs?: number;
+    error?: string;
+  };
 }
 
 const ZERO_ACTIVE_RUN_COUNTS: ActiveRunCounts = {
@@ -61,6 +71,26 @@ export function createHealthRouter(
     } else {
       res.status(200).send('ok');
     }
+  });
+
+  // ── liveness / readiness 分离（2026-07-15 零停机部署批次）──────────
+  // live：进程在即 200。systemd/监控判「要不要拉起/告警」用，不反映可服务状态。
+  router.get('/healthz/live', (_req, res) => {
+    res.status(200).send('ok');
+  });
+
+  // ready：可以接流量才 200（draining → 503）。蓝绿部署门禁在新色端口上等
+  // 它变 200 再切流。warmup 进度随载荷暴露但不 gate ready——skills 物化未
+  // 完成时 dispatch 路径的版本化同步兜底正确性，部署脚本自行决定是否等
+  // warmup.state=done 再切流。
+  router.get('/healthz/ready', (_req, res) => {
+    const draining = options.getIsDraining?.() ?? false;
+    const warmup = options.getSkillsWarmupStatus?.() ?? { state: 'done' as const };
+    res.status(draining ? 503 : 200).json({
+      status: draining ? 'draining' : 'ok',
+      draining,
+      warmup,
+    });
   });
 
   // 部署 drain 探针：给发布脚本判断是否可以切 release。

@@ -15,15 +15,22 @@ function jsonl(obj: unknown): string {
 function userLine(
   content: string,
   sessionId: string,
-  attachments?: ReadonlyArray<{ originalName: string; isImage: boolean }>,
+  attachments?: ReadonlyArray<{ originalName: string; isImage: boolean; relativePath: string }>,
 ): string {
   return jsonl({
     type: 'user',
     message: { role: 'user', content },
     // 刷新后前端历史回放的附件展示来源（parse.ts → prompt block.attachments）。
-    // 只存展示所需最小集；模型上下文的完整 ModelAttachmentRef 仍在 PG event store。
+    // relativePath 供前端点击预览/下载（走 /api/file 端点，workspace 内路径校验）；
+    // 完整 ModelAttachmentRef 仍在 PG event store。
     ...(attachments?.length
-      ? { attachments: attachments.map((a) => ({ name: a.originalName, isImage: a.isImage })) }
+      ? {
+        attachments: attachments.map((a) => ({
+          name: a.originalName,
+          isImage: a.isImage,
+          relativePath: a.relativePath,
+        })),
+      }
       : {}),
     sessionId,
     timestamp: new Date().toISOString(),

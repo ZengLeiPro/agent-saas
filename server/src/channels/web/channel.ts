@@ -2073,7 +2073,12 @@ export class WebChannel implements BaseChannel {
       ? ''
       : resolvedMessage;
     const attachmentMeta = attachments?.length
-      ? attachments.map((a: UploadedFileInfo) => ({ name: a.originalName, isImage: a.isImage }))
+      ? attachments.map((a: UploadedFileInfo) => ({
+        name: a.originalName,
+        isImage: a.isImage,
+        // 前端点击预览/下载用（走 /api/file 端点，workspace 内路径校验）
+        relativePath: a.relativePath,
+      }))
       : undefined;
 
     const context: ChannelContext = {
@@ -2907,7 +2912,7 @@ export class WebChannel implements BaseChannel {
     executionTarget: ExecutionTargetKind;
     resolvedMessage: string;
     userDisplayContent: string;
-    attachmentMeta?: Array<{ name: string; isImage?: boolean }>;
+    attachmentMeta?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
     guardrailModel?: string;
     guardrailLatencyMs?: number;
   }): Promise<void> {
@@ -3268,7 +3273,7 @@ export class WebChannel implements BaseChannel {
     titleCtx?: {
       userMessage: string;
       userDisplayContent?: string;
-      attachmentMeta?: Array<{ name: string; isImage?: boolean }>;
+      attachmentMeta?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
       clientMsgId?: string;
       isNewSession: boolean;
       getSessionId: () => string | undefined;

@@ -2088,7 +2088,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       wsUserMsgIndexRef.current = msgRef.current.addMessage({
         type: "user",
         content: inputText,
-        ...(attachments.length > 0 ? { attachments: attachments.map(f => ({ name: f.originalName, isImage: f.isImage })) } : {}),
+        ...(attachments.length > 0 ? { attachments: attachments.map(f => ({ name: f.originalName, isImage: f.isImage, relativePath: f.relativePath })) } : {}),
         status: 'pending',
         timestamp: Date.now(),
         clientMsgId,
@@ -2232,7 +2232,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       msgRef.current.addMessage({
         type: "user",
         content: capturedInput,
-        ...(capturedAttachments.length > 0 ? { attachments: capturedAttachments.map(f => ({ name: f.originalName, isImage: f.isImage })) } : {}),
+        ...(capturedAttachments.length > 0 ? { attachments: capturedAttachments.map(f => ({ name: f.originalName, isImage: f.isImage, relativePath: f.relativePath })) } : {}),
         status: 'pending',
         timestamp: Date.now(),
         clientMsgId: queuedClientMsgId,

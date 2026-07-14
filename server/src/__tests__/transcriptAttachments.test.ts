@@ -61,7 +61,7 @@ describe('transcript attachments round-trip', () => {
     await projection.project(userMessageEvent({
       attachments: [
         attachment(),
-        attachment({ attachmentId: 'att-2', originalName: 'photo.png', mimeType: 'image/png', isImage: true }),
+        attachment({ attachmentId: 'att-2', originalName: 'photo.png', relativePath: 'uploads/att-2/photo.png', mimeType: 'image/png', isImage: true }),
       ],
     }));
 
@@ -69,8 +69,8 @@ describe('transcript attachments round-trip', () => {
     expect(line.type).toBe('user');
     expect(line.message.content).toBe('看下这份报价');
     expect(line.attachments).toEqual([
-      { name: '报价单.pdf', isImage: false },
-      { name: 'photo.png', isImage: true },
+      { name: '报价单.pdf', isImage: false, relativePath: 'uploads/att-1/报价单.pdf' },
+      { name: 'photo.png', isImage: true, relativePath: 'uploads/att-2/photo.png' },
     ]);
   });
 
@@ -85,14 +85,14 @@ describe('transcript attachments round-trip', () => {
   it('parses transcript attachments back onto the prompt block', async () => {
     const projection = new LegacyTranscriptProjection(transcriptPath);
     await projection.project(userMessageEvent({
-      attachments: [attachment({ originalName: 'photo.png', mimeType: 'image/png', isImage: true })],
+      attachments: [attachment({ originalName: 'photo.png', relativePath: 'uploads/att-1/photo.png', mimeType: 'image/png', isImage: true })],
     }));
 
     const parsed = await parseTranscriptFile(transcriptPath);
     const prompt = parsed.blocks.find((block) => block.kind === 'prompt');
     expect(prompt).toBeDefined();
     expect(prompt?.content).toBe('看下这份报价');
-    expect(prompt?.attachments).toEqual([{ name: 'photo.png', isImage: true }]);
+    expect(prompt?.attachments).toEqual([{ name: 'photo.png', isImage: true, relativePath: 'uploads/att-1/photo.png' }]);
   });
 
   it('keeps prompt blocks without attachments unchanged', async () => {

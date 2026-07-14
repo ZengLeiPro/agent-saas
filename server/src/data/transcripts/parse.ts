@@ -61,7 +61,7 @@ export interface TranscriptBlock {
   /** User prompt originated from mobile voice transcription */
   isVoiceTranscript?: boolean;
   /** User prompt 携带的附件元数据（来自 transcript user 行顶层 attachments 字段） */
-  attachments?: Array<{ name: string; isImage?: boolean }>;
+  attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
   /** compaction block：被摘要替代的历史事件数 */
   coveredEventCount?: number;
 }
@@ -88,17 +88,21 @@ function toTsMs(value: unknown): number | undefined {
 /** 解析 transcript user 行顶层 attachments 字段（legacyTranscriptProjection userLine 写入） */
 function parseUserAttachments(
   value: unknown,
-): Array<{ name: string; isImage?: boolean }> | undefined {
+): Array<{ name: string; isImage?: boolean; relativePath?: string }> | undefined {
   if (!Array.isArray(value)) return undefined;
-  const out: Array<{ name: string; isImage?: boolean }> = [];
+  const out: Array<{ name: string; isImage?: boolean; relativePath?: string }> = [];
   for (const item of value) {
     const name = typeof (item as { name?: unknown })?.name === "string"
       ? (item as { name: string }).name
       : undefined;
     if (!name) continue;
+    const relativePath = typeof (item as { relativePath?: unknown })?.relativePath === "string"
+      ? (item as { relativePath: string }).relativePath
+      : undefined;
     out.push({
       name,
       ...((item as { isImage?: unknown })?.isImage === true ? { isImage: true } : {}),
+      ...(relativePath ? { relativePath } : {}),
     });
   }
   return out.length > 0 ? out : undefined;

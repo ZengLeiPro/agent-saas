@@ -429,6 +429,77 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   );
 }
 
+/**
+ * 用户消息气泡内的附件 chip。
+ * 有 relativePath（2026-07-14 起 transcript/WS meta 携带）时可点击：
+ * 图片走 lightbox，可预览文件走 FilePreviewDialog（默认弹窗），其余类型直接下载。
+ * 存量消息无 relativePath，保持静态展示。
+ */
+function UserAttachmentChip({ att, filePreview }: {
+  att: { name: string; isImage?: boolean; relativePath?: string };
+  filePreview: ReturnType<typeof useFilePreview> | null;
+}) {
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  const Icon = att.isImage ? ImageIcon : Paperclip;
+  const path = att.relativePath;
+  const previewable = !att.isImage && !!getPreviewFileType(att.name) && !!filePreview;
+  const clickable = !!path;
+
+  const handleClick = () => {
+    if (!path) return;
+    if (att.isImage) {
+      void resolveImageSrc(path, filePreview?.owner)
+        .then(setPreviewSrc)
+        .catch(() => setPreviewSrc(path));
+    } else if (previewable && filePreview) {
+      filePreview.openPreview(path, filePreview.owner);
+    } else {
+      void authFetchDownload(path, att.name, filePreview?.owner);
+    }
+  };
+
+  return (
+    <>
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-xs text-muted-foreground",
+          clickable && "cursor-pointer transition-colors hover:bg-foreground/[0.12] hover:text-foreground",
+        )}
+        onClick={clickable ? handleClick : undefined}
+        role={clickable ? "button" : undefined}
+        title={clickable
+          ? (att.isImage ? "点击查看图片" : previewable ? "点击预览" : "点击下载")
+          : undefined}
+      >
+        <Icon className="h-3 w-3 shrink-0" />
+        <span className="max-w-[200px] truncate">{att.name}</span>
+      </span>
+      {previewSrc && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setPreviewSrc(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setPreviewSrc(null)}
+            className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
+            title="关闭"
+            aria-label="关闭预览"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          <img
+            src={previewSrc}
+            alt={att.name}
+            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -685,16 +756,7 @@ export const MessageItem = memo(function MessageItem({
             {message.attachments && message.attachments.length > 0 && (
               <div className={cn("flex flex-wrap gap-1", (message.displayContent ?? message.content) && "mt-1.5")}>
                 {message.attachments.map((att, i) => (
-                  <span
-                    key={i}
-                    className="inline-flex items-center gap-1 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-xs text-muted-foreground"
-                  >
-                    {att.isImage
-                      ? <ImageIcon className="h-3 w-3 shrink-0" />
-                      : <Paperclip className="h-3 w-3 shrink-0" />
-                    }
-                    <span className="max-w-[200px] truncate">{att.name}</span>
-                  </span>
+                  <UserAttachmentChip key={i} att={att} filePreview={filePreview} />
                 ))}
               </div>
             )}

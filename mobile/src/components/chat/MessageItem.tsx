@@ -22,10 +22,11 @@ import {
   CircleAlert,
   CircleCheck,
   CircleDot,
-  CircleX,
+  CircleSlash2,
   Clock,
   Download,
   File,
+  FileAudio,
   FileCode,
   FileText,
   Image as ImageIcon,
@@ -62,7 +63,7 @@ import { hapticLight } from '../../lib/haptics';
 const CATEGORY_ICON: Record<FileTypeCategory, LucideIcon> = {
   pdf: BookOpen, word: FileText, ppt: Presentation,
   excel: Table, code: FileCode, image: ImageIcon,
-  video: Video, text: FileText, archive: Archive,
+  video: Video, audio: FileAudio, text: FileText, archive: Archive,
   default: File,
 };
 
@@ -850,7 +851,7 @@ function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' }
     : hasIssue
       ? <CircleAlert size={16} color={colors.warning} strokeWidth={2} />
       : isCancelled
-        ? <CircleX size={16} color={colors.mutedForeground} strokeWidth={2} />
+        ? <CircleSlash2 size={16} color={colors.mutedForeground} strokeWidth={2} />
     : hasResult
       ? <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} />
       : <ActivityIndicator size={16} color={colors.primary} />;

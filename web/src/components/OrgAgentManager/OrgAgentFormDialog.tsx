@@ -268,6 +268,7 @@ export function OrgAgentFormDialog({
           <div className="space-y-1.5">
             <Label>公开说明</Label>
             <textarea
+              autoComplete="off"
               className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm"
               value={values.description}
               maxLength={500}
@@ -280,6 +281,7 @@ export function OrgAgentFormDialog({
             <Label>示例问题</Label>
             <p className="text-xs text-muted-foreground">每行一条，最多 6 条；成员点击后只会预填输入框。</p>
             <textarea
+              autoComplete="off"
               className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm"
               value={values.starterPromptsText}
               onChange={(e) => patch({ starterPromptsText: e.target.value })}
@@ -290,6 +292,7 @@ export function OrgAgentFormDialog({
           <div className="space-y-1.5">
             <Label>内部提示语</Label>
             <textarea
+              autoComplete="off"
               className="min-h-28 w-full rounded-md border bg-background px-3 py-2 text-sm"
               value={values.instructions}
               maxLength={8000}
@@ -382,6 +385,7 @@ export function OrgAgentFormDialog({
                 <div className="space-y-1.5">
                   <Label>话题范围描述</Label>
                   <textarea
+                    autoComplete="off"
                     className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm"
                     value={values.guardrailScopeDescription}
                     maxLength={2000}

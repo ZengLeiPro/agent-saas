@@ -221,6 +221,7 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
             <div className="px-3 pb-3">
               <textarea
                 autoFocus
+                autoComplete="off"
                 value={customInputs[activeIndex] ?? ""}
                 onChange={(event) => setCustomInputs((prev) => ({ ...prev, [activeIndex]: event.target.value }))}
                 placeholder="补充你的回答..."

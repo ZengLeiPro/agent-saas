@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { Loader2, Sparkles } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -12,6 +11,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { AuthShell } from "@/components/AuthShell";
+import {
+  AUTH_CODE_BTN_CLASS,
+  AUTH_INPUT_CLASS,
+  AUTH_SUBMIT_CLASS,
+} from "@/components/LoginPage";
 import { TOKEN_KEY } from "@/lib/constants";
 import { ROLE_POSITION_OPTIONS } from "@/lib/roleOptions";
 
@@ -86,7 +91,7 @@ function WaitlistForm({
         <p className="text-sm text-muted-foreground">
           开通专员会尽快联系您，为您开通试用账号。
         </p>
-        <Button variant="outline" className="w-full" onClick={onSwitchToLogin}>
+        <Button variant="outline" className="h-11 w-full rounded-[10px]" onClick={onSwitchToLogin}>
           返回登录
         </Button>
       </div>
@@ -104,6 +109,8 @@ function WaitlistForm({
           inputMode="numeric"
           autoComplete="tel"
           maxLength={11}
+          placeholder="请输入 11 位手机号"
+          className={AUTH_INPUT_CLASS}
           value={phone}
           onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
           required
@@ -115,7 +122,7 @@ function WaitlistForm({
           {error}
         </div>
       )}
-      <Button type="submit" className="w-full" disabled={submitting}>
+      <Button type="submit" className={AUTH_SUBMIT_CLASS} disabled={submitting}>
         {submitting ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -129,7 +136,7 @@ function WaitlistForm({
         已有账号？
         <button
           type="button"
-          className="ml-1 text-brand-600 hover:underline"
+          className="ml-1 font-medium text-brand-600 hover:underline"
           onClick={onSwitchToLogin}
         >
           去登录
@@ -247,195 +254,173 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   };
 
   return (
-    <div
-      className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-8"
-      style={{ paddingTop: "var(--sat)" }}
-    >
-      {/* 与 LoginPage 一致的品牌氛围背景 */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-90"
-        style={{
-          background:
-            "radial-gradient(60% 50% at 15% 10%, rgba(189, 204, 255, 0.55), transparent 70%), radial-gradient(50% 45% at 85% 90%, rgba(221, 229, 255, 0.6), transparent 70%)",
-        }}
-      />
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-600 to-transparent" />
-
-      <Card className="relative w-full max-w-sm border-brand-100 shadow-brand backdrop-blur-sm">
-        <CardContent className="pt-8 pb-6">
-          <div className="mb-6 flex flex-col items-center text-center">
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 shadow-[0_6px_16px_-4px_rgba(46,86,225,0.5)]">
-              <Sparkles className="h-6 w-6 text-white" />
-            </div>
-            <h1 className="text-xl font-semibold tracking-tight text-foreground">
-              注册试用 KY Agent
-            </h1>
-            <p className="mt-1 text-xs text-muted-foreground">
-              开沿科技 · 每个岗位，一个 AI 同事
-            </p>
+    <AuthShell>
+      {enabled === null ? (
+        <div className="flex justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : !enabled ? (
+        <WaitlistForm
+          description="首批试用名额邀请制开放中。留下手机号，开通专员会联系您开通试用账号。"
+          utm={utm}
+          onSwitchToLogin={onSwitchToLogin}
+        />
+      ) : showWaitlist ? (
+        <WaitlistForm
+          description="收不到验证码？留下手机号，开通专员会联系您人工开通试用账号。"
+          utm={utm}
+          onSwitchToLogin={onSwitchToLogin}
+        />
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-3.5">
+          <div className="space-y-2">
+            <Label htmlFor="signup-phone">手机号</Label>
+            <Input
+              id="signup-phone"
+              type="tel"
+              inputMode="numeric"
+              autoComplete="tel"
+              maxLength={11}
+              placeholder="请输入 11 位手机号"
+              className={AUTH_INPUT_CLASS}
+              value={phone}
+              onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
+              required
+              disabled={loading}
+            />
           </div>
-
-          {enabled === null ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : !enabled ? (
-            <WaitlistForm
-              description="首批试用名额邀请制开放中。留下手机号，开通专员会联系您开通试用账号。"
-              utm={utm}
-              onSwitchToLogin={onSwitchToLogin}
-            />
-          ) : showWaitlist ? (
-            <WaitlistForm
-              description="收不到验证码？留下手机号，开通专员会联系您人工开通试用账号。"
-              utm={utm}
-              onSwitchToLogin={onSwitchToLogin}
-            />
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="signup-phone">手机号</Label>
-                <Input
-                  id="signup-phone"
-                  type="tel"
-                  inputMode="numeric"
-                  autoComplete="tel"
-                  maxLength={11}
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
-                  required
-                  disabled={loading}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="signup-code">验证码</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="signup-code"
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={code}
-                    onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                    required
-                    disabled={loading}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-32 shrink-0"
-                    onClick={handleSendCode}
-                    disabled={sending || countdown > 0 || loading}
-                  >
-                    {sending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : countdown > 0 ? (
-                      `${countdown}s 后重发`
-                    ) : (
-                      "获取验证码"
-                    )}
-                  </Button>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="signup-password">设置密码</Label>
-                <Input
-                  id="signup-password"
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder="至少 6 位，后续用手机号+密码登录"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  disabled={loading}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="signup-name">怎么称呼您</Label>
-                <Input
-                  id="signup-name"
-                  type="text"
-                  maxLength={20}
-                  placeholder="如：张总、李经理"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                  disabled={loading}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>您的岗位</Label>
-                <Select value={position} onValueChange={setPosition} disabled={loading}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="选择岗位，AI 同事按岗位为您准备场景" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ROLE_POSITION_OPTIONS.map((p) => (
-                      <SelectItem key={p} value={p}>
-                        {p}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="signup-company">
-                  公司名称
-                  <span className="ml-1 text-xs text-muted-foreground">（选填）</span>
-                </Label>
-                <Input
-                  id="signup-company"
-                  type="text"
-                  maxLength={50}
-                  autoComplete="organization"
-                  value={company}
-                  onChange={(e) => setCompany(e.target.value)}
-                  disabled={loading}
-                />
-              </div>
-              {error && (
-                <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {error}
-                </div>
-              )}
-              {(sendFailed || (sentOnce && countdown === 0)) && (
-                <p className="text-xs text-muted-foreground">
-                  收不到验证码？（部分运营商短信通道升级中）
-                  <button
-                    type="button"
-                    className="ml-1 text-brand-600 hover:underline"
-                    onClick={() => setShowWaitlist(true)}
-                  >
-                    留下手机号，由专员人工开通 →
-                  </button>
-                </p>
-              )}
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    开通中...
-                  </>
+          <div className="space-y-2">
+            <Label htmlFor="signup-code">验证码</Label>
+            <div className="flex gap-2.5">
+              <Input
+                id="signup-code"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                placeholder="6 位验证码"
+                className={AUTH_INPUT_CLASS}
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                required
+                disabled={loading}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className={AUTH_CODE_BTN_CLASS}
+                onClick={handleSendCode}
+                disabled={sending || countdown > 0 || loading}
+              >
+                {sending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : countdown > 0 ? (
+                  `${countdown}s 后重发`
                 ) : (
-                  "注册并开始试用"
+                  "获取验证码"
                 )}
               </Button>
-              <p className="text-center text-xs text-muted-foreground">
-                已有账号？
-                <button
-                  type="button"
-                  className="ml-1 text-brand-600 hover:underline"
-                  onClick={onSwitchToLogin}
-                >
-                  去登录
-                </button>
-              </p>
-            </form>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="signup-password">设置密码</Label>
+            <Input
+              id="signup-password"
+              type="password"
+              autoComplete="new-password"
+              placeholder="至少 6 位，后续用手机号+密码登录"
+              className={AUTH_INPUT_CLASS}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+              disabled={loading}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="signup-name">怎么称呼您</Label>
+            <Input
+              id="signup-name"
+              type="text"
+              maxLength={20}
+              placeholder="如：张总、李经理"
+              className={AUTH_INPUT_CLASS}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              disabled={loading}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>您的岗位</Label>
+            <Select value={position} onValueChange={setPosition} disabled={loading}>
+              <SelectTrigger className="h-11 rounded-[10px]">
+                <SelectValue placeholder="选择岗位，AI 同事按岗位为您准备场景" />
+              </SelectTrigger>
+              <SelectContent>
+                {ROLE_POSITION_OPTIONS.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="signup-company">
+              公司名称
+              <span className="ml-1 text-xs text-muted-foreground">（选填）</span>
+            </Label>
+            <Input
+              id="signup-company"
+              type="text"
+              maxLength={50}
+              autoComplete="organization"
+              className={AUTH_INPUT_CLASS}
+              value={company}
+              onChange={(e) => setCompany(e.target.value)}
+              disabled={loading}
+            />
+          </div>
+          {error && (
+            <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
           )}
-        </CardContent>
-      </Card>
-    </div>
+          {(sendFailed || (sentOnce && countdown === 0)) && (
+            <p className="text-xs text-muted-foreground">
+              收不到验证码？（部分运营商短信通道升级中）
+              <button
+                type="button"
+                className="ml-1 text-brand-600 hover:underline"
+                onClick={() => setShowWaitlist(true)}
+              >
+                留下手机号，由专员人工开通 →
+              </button>
+            </p>
+          )}
+          <Button type="submit" className={AUTH_SUBMIT_CLASS} disabled={loading}>
+            {loading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                开通中...
+              </>
+            ) : (
+              "注册并开始试用"
+            )}
+          </Button>
+          <p className="text-center text-xs text-muted-foreground">
+            已有账号？
+            <button
+              type="button"
+              className="ml-1 font-medium text-brand-600 hover:underline"
+              onClick={onSwitchToLogin}
+            >
+              去登录
+            </button>
+          </p>
+        </form>
+      )}
+    </AuthShell>
   );
 }

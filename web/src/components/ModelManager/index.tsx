@@ -634,6 +634,8 @@ export function ModelManager() {
                         <Label>API Key</Label>
                         <Input
                           type="password"
+                          autoComplete="new-password"
+                          passwordManager="ignore"
                           value={memoryIndex.embedding.apiKey}
                           onChange={(e) => updateMemoryEmbedding({ apiKey: e.target.value })}
                           placeholder="sk-..."
@@ -676,7 +678,7 @@ export function ModelManager() {
               <CardContent className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1.5"><Label>ID</Label><Input value={selectedGroup.id} onChange={(e) => updateGroupId(selectedGroup.id, e.target.value)} /></div>
                 <div className="space-y-1.5"><Label>显示名称</Label><Input value={selectedGroup.name} onChange={(e) => updateGroup(selectedGroup.id, { name: e.target.value })} /></div>
-                <div className="space-y-1.5"><Label>API Key</Label><Input type="password" value={selectedGroup.apiKey ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { apiKey: e.target.value })} placeholder="同组模型共用，可留空" /></div>
+                <div className="space-y-1.5"><Label>API Key</Label><Input type="password" autoComplete="new-password" passwordManager="ignore" value={selectedGroup.apiKey ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { apiKey: e.target.value })} placeholder="同组模型共用，可留空" /></div>
                 <div className="space-y-1.5"><Label>Base URL</Label><Input value={selectedGroup.baseUrl ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { baseUrl: e.target.value })} placeholder="例如 http://127.0.0.1:8317" /></div>
                 <div className="space-y-1.5">
                   <Label>协议类型 protocol</Label>

@@ -409,7 +409,7 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
             <SettingSwitch label="允许全局 MCP" description="允许组织用户使用平台全局 MCP 服务。" checked={settings.mcp.allowGlobalServers} onCheckedChange={checked => patch(d => { d.mcp.allowGlobalServers = checked; })} />
             <div className="space-y-1.5">
               <Label>默认启用 MCP 服务 ID</Label>
-              <textarea className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm" value={defaultMcpText} onChange={event => { setDefaultMcpText(event.target.value); setSaved(false); }} placeholder="每行一个服务 ID" />
+              <textarea autoComplete="off" className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm" value={defaultMcpText} onChange={event => { setDefaultMcpText(event.target.value); setSaved(false); }} placeholder="每行一个服务 ID" />
             </div>
           </CardContent>
         </Card>

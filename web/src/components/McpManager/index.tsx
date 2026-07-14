@@ -357,6 +357,8 @@ function McpManagerInner({ mode }: { mode: "personal" | "admin" }) {
                           <div className="flex gap-2">
                             <Input
                               type="password"
+                              autoComplete="new-password"
+                              passwordManager="ignore"
                               placeholder={canBind ? `输入 ${req.label}` : disabledReason}
                               value={secretInputs[inputKey] || ""}
                               onChange={e => setSecretInputs(prev => ({ ...prev, [inputKey]: e.target.value }))}

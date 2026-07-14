@@ -125,12 +125,26 @@ export default {
           "75%": { height: "20px" },
           "100%": { height: "4px" },
         },
+        // 登录/注册门面（AuthShell）：卡片入场 + 背景光晕漂移
+        "login-rise": {
+          from: { opacity: "0", transform: "translateY(16px)" },
+          to: { opacity: "1", transform: "none" },
+        },
+        "glow-drift-a": {
+          to: { transform: "translate(70px, 50px) scale(1.08)" },
+        },
+        "glow-drift-b": {
+          to: { transform: "translate(-60px, -40px) scale(1.05)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         soundbar: "soundbar 0.6s ease-in-out infinite",
         "voice-wave": "voice-wave 1.2s ease-in-out infinite",
+        "login-rise": "login-rise 0.55s cubic-bezier(0.2, 0.7, 0.3, 1) both",
+        "glow-drift-a": "glow-drift-a 22s ease-in-out infinite alternate",
+        "glow-drift-b": "glow-drift-b 26s ease-in-out infinite alternate",
       },
     },
   },

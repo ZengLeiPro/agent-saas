@@ -1,14 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { Loader2, Sparkles } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AuthShell } from "@/components/AuthShell";
 import { useAuth } from "@/contexts/AuthContext";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
+
+/** 门面统一样式（与 AuthShell/SignupPage 对齐，设计稿 B1「浅色光晕」） */
+export const AUTH_INPUT_CLASS = "h-11 rounded-[10px]";
+export const AUTH_SUBMIT_CLASS =
+  "h-[46px] w-full rounded-[11px] bg-gradient-to-b from-brand-500 to-brand-600 text-[15px] font-semibold tracking-[0.14em] text-primary-foreground shadow-[0_8px_18px_-4px_rgba(46,86,225,0.45)] hover:brightness-105 hover:shadow-[0_10px_22px_-4px_rgba(46,86,225,0.55)] active:translate-y-px";
+export const AUTH_CODE_BTN_CLASS =
+  "h-11 w-28 shrink-0 rounded-[10px] border-brand-200 bg-brand-50 text-[13px] font-medium text-brand-700 hover:bg-brand-100 hover:text-brand-700";
+export const AUTH_TAB_CLASS =
+  "rounded-[9px] data-[state=active]:font-semibold data-[state=active]:text-brand-700 data-[state=active]:shadow-[0_2px_8px_rgba(46,86,225,0.14)]";
 
 interface LoginPageProps {
   /** 切到注册页（AuthGate 提供；注册入口仅在后端开放自助注册时显示） */
@@ -98,145 +107,127 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
   };
 
   return (
-    <div
-      className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4"
-      style={{ paddingTop: "var(--sat)" }}
-    >
-      {/* 品牌色径向光晕背景：左上 brand-200 + 右下 brand-100，让登录页有"被品牌包裹"的氛围 */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-90"
-        style={{
-          background:
-            "radial-gradient(60% 50% at 15% 10%, rgba(189, 204, 255, 0.55), transparent 70%), radial-gradient(50% 45% at 85% 90%, rgba(221, 229, 255, 0.6), transparent 70%)",
-        }}
-      />
-      {/* 顶部品牌渐变 hairline */}
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-600 to-transparent" />
-
-      <Card className="relative w-full max-w-sm border-brand-100 shadow-brand backdrop-blur-sm">
-        <CardContent className="pt-8 pb-6">
-          {/* 品牌区：徽标 + 主标题 + 副标题，登录页第一印象 */}
-          <div className="mb-6 flex flex-col items-center text-center">
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 shadow-[0_6px_16px_-4px_rgba(46,86,225,0.5)]">
-              <Sparkles className="h-6 w-6 text-white" />
+    <AuthShell>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Tabs value={loginMode} onValueChange={(value) => { setLoginMode(value as "password" | "sms"); setError(""); }}>
+          <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-brand-50 p-1">
+            <TabsTrigger value="password" className={AUTH_TAB_CLASS}>
+              密码登录
+            </TabsTrigger>
+            <TabsTrigger value="sms" className={AUTH_TAB_CLASS}>
+              验证码登录
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="password" className="mt-5 space-y-[18px]">
+            <div className="space-y-2">
+              <Label htmlFor="username">用户名</Label>
+              <Input
+                id="username"
+                type="text"
+                autoComplete="username"
+                placeholder="请输入用户名"
+                className={AUTH_INPUT_CLASS}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required={loginMode === "password"}
+                disabled={loading}
+              />
             </div>
-            <h1 className="text-xl font-semibold tracking-tight text-foreground">
-              KY Agent
-            </h1>
-            <p className="mt-1 text-xs text-muted-foreground">
-              开沿科技 · AI 工作助手
-            </p>
-          </div>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <Tabs value={loginMode} onValueChange={(value) => { setLoginMode(value as "password" | "sms"); setError(""); }}>
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="password">密码登录</TabsTrigger>
-                <TabsTrigger value="sms">验证码登录</TabsTrigger>
-              </TabsList>
-              <TabsContent value="password" className="mt-4 space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="username">用户名</Label>
-                  <Input
-                    id="username"
-                    type="text"
-                    autoComplete="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    required={loginMode === "password"}
-                    disabled={loading}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="password">密码</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required={loginMode === "password"}
-                    disabled={loading}
-                  />
-                </div>
-              </TabsContent>
-              <TabsContent value="sms" className="mt-4 space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="sms-phone">手机号</Label>
-                  <Input
-                    id="sms-phone"
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="tel"
-                    maxLength={11}
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
-                    required={loginMode === "sms"}
-                    disabled={loading}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sms-code">验证码</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="sms-code"
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={6}
-                      value={code}
-                      onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                      required={loginMode === "sms"}
-                      disabled={loading}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-32 shrink-0"
-                      onClick={handleSendSmsCode}
-                      disabled={sendingCode || countdown > 0 || loading}
-                    >
-                      {sendingCode ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : countdown > 0 ? (
-                        `${countdown}s 后重发`
-                      ) : (
-                        "获取验证码"
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              </TabsContent>
-            </Tabs>
-            {error && (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </div>
-            )}
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  登录中...
-                </>
-              ) : (
-                loginMode === "password" ? "登录" : "验证码登录"
-              )}
-            </Button>
-            {signupEnabled && onSwitchToSignup && (
-              <p className="text-center text-xs text-muted-foreground">
-                还没有账号？
-                <button
+            <div className="space-y-2">
+              <Label htmlFor="password">密码</Label>
+              <Input
+                id="password"
+                type="password"
+                autoComplete="current-password"
+                placeholder="请输入密码"
+                className={AUTH_INPUT_CLASS}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required={loginMode === "password"}
+                disabled={loading}
+              />
+            </div>
+          </TabsContent>
+          <TabsContent value="sms" className="mt-5 space-y-[18px]">
+            <div className="space-y-2">
+              <Label htmlFor="sms-phone">手机号</Label>
+              <Input
+                id="sms-phone"
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel"
+                maxLength={11}
+                placeholder="请输入 11 位手机号"
+                className={AUTH_INPUT_CLASS}
+                value={phone}
+                onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
+                required={loginMode === "sms"}
+                disabled={loading}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sms-code">验证码</Label>
+              <div className="flex gap-2.5">
+                <Input
+                  id="sms-code"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  placeholder="6 位验证码"
+                  className={AUTH_INPUT_CLASS}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                  required={loginMode === "sms"}
+                  disabled={loading}
+                />
+                <Button
                   type="button"
-                  className="ml-1 text-brand-600 hover:underline"
-                  onClick={onSwitchToSignup}
+                  variant="outline"
+                  className={AUTH_CODE_BTN_CLASS}
+                  onClick={handleSendSmsCode}
+                  disabled={sendingCode || countdown > 0 || loading}
                 >
-                  注册试用
-                </button>
-              </p>
-            )}
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+                  {sendingCode ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : countdown > 0 ? (
+                    `${countdown}s 后重发`
+                  ) : (
+                    "获取验证码"
+                  )}
+                </Button>
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
+        {error && (
+          <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+        <Button type="submit" className={AUTH_SUBMIT_CLASS} disabled={loading}>
+          {loading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              登录中...
+            </>
+          ) : (
+            loginMode === "password" ? "登录" : "验证码登录"
+          )}
+        </Button>
+        {signupEnabled && onSwitchToSignup && (
+          <p className="text-center text-xs text-muted-foreground">
+            还没有账号？
+            <button
+              type="button"
+              className="ml-1 font-medium text-brand-600 hover:underline"
+              onClick={onSwitchToSignup}
+            >
+              注册试用
+            </button>
+          </p>
+        )}
+      </form>
+    </AuthShell>
   );
 }

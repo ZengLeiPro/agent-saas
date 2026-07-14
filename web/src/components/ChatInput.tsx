@@ -366,6 +366,7 @@ export function ChatInput({
             ) : (
               <textarea
                 ref={textareaRef}
+                autoComplete="off"
                 value={input}
                 onChange={(e) => {
                   if (!isDisabled) onInputChange(e.target.value);

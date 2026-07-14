@@ -170,7 +170,7 @@ function PhoneCodeFields({
       <div className="space-y-2">
         <Label htmlFor={`${prefix}-code`}>验证码</Label>
         <div className="flex gap-2">
-          <Input id={`${prefix}-code`} inputMode="numeric" maxLength={6} value={code} onChange={(event) => onCodeChange(event.target.value.replace(/\D/g, ""))} required disabled={disabled} />
+          <Input id={`${prefix}-code`} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(event) => onCodeChange(event.target.value.replace(/\D/g, ""))} required disabled={disabled} />
           <Button type="button" variant="outline" className="w-32 shrink-0" onClick={onSendCode} disabled={sendingCode || countdown > 0 || disabled}>
             {sendingCode ? <Loader2 className="h-4 w-4 animate-spin" /> : countdown > 0 ? `${countdown}s 后重发` : "获取验证码"}
           </Button>

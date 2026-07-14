@@ -571,6 +571,8 @@ export function ToolControlsManager() {
               <Input
                 id="web-search-api-key"
                 type="password"
+                autoComplete="new-password"
+                passwordManager="ignore"
                 value={searchApiKeyText}
                 onChange={(event) => { setSearchApiKeyText(event.target.value); markDirty(); }}
                 placeholder="留空则使用 API Key Ref 或保留已有明文 key"

@@ -415,6 +415,8 @@ export function SignupConfigManager() {
                   <Input
                     id="signup-sms-secret"
                     type="password"
+                    autoComplete="new-password"
+                    passwordManager="ignore"
                     value={secretText}
                     disabled={clearSecret}
                     onChange={(event) => { setSecretText(event.target.value); markDirty(); }}

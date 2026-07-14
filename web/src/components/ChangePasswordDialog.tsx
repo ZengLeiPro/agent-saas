@@ -74,21 +74,30 @@ export function ChangePasswordDialog({ open, onOpenChange }: ChangePasswordDialo
         </DialogHeader>
         <div className="flex flex-col gap-3">
           <Input
+            id="change-current-password"
+            name="current-password"
             type="password"
+            autoComplete="current-password"
             placeholder="当前密码"
             value={oldPassword}
             onChange={(e) => setOldPassword(e.target.value)}
             disabled={submitting}
           />
           <Input
+            id="change-new-password"
+            name="new-password"
             type="password"
+            autoComplete="new-password"
             placeholder="新密码（至少 6 位）"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             disabled={submitting}
           />
           <Input
+            id="change-confirm-password"
+            name="confirm-new-password"
             type="password"
+            autoComplete="new-password"
             placeholder="确认新密码"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}

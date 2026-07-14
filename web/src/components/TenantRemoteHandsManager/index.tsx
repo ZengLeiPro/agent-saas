@@ -764,7 +764,7 @@ export function TenantRemoteHandsManager() {
                 {selectedHand.credentialMode === "inline" && (
                   <div className="space-y-1.5">
                     <Label>明文 token</Label>
-                    <Input type="password" value={selectedHand.authTokenInput} onChange={(event) => updateSelected((hand) => ({ ...hand, authTokenInput: event.target.value }))} placeholder="保存成功后会清空" />
+                    <Input type="password" autoComplete="new-password" passwordManager="ignore" value={selectedHand.authTokenInput} onChange={(event) => updateSelected((hand) => ({ ...hand, authTokenInput: event.target.value }))} placeholder="保存成功后会清空" />
                   </div>
                 )}
               </CardContent>

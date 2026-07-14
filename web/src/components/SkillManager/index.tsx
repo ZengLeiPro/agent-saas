@@ -662,6 +662,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
             </div>
           ) : (
             <textarea
+              autoComplete="off"
               className="min-h-96 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm"
               value={editContent}
               onChange={(event) => setEditContent(event.target.value)}

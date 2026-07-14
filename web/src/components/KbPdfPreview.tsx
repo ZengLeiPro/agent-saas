@@ -128,6 +128,7 @@ export function KbPdfPreview({ filePath, initialPage = 1 }: KbPdfPreviewProps) {
         </Button>
         <input
           aria-label="预览页码"
+          autoComplete="off"
           className="h-8 w-14 rounded-md border bg-background px-1 text-center text-sm tabular-nums"
           inputMode="numeric"
           value={pageInput}

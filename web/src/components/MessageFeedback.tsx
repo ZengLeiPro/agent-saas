@@ -79,6 +79,7 @@ export function MessageFeedbackButton({ messageId, content }: { messageId: strin
         >
           <div className="mb-1.5 text-xs font-medium text-foreground">反馈这个回答的问题</div>
           <textarea
+            autoComplete="off"
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             maxLength={500}

@@ -124,6 +124,7 @@ export function PdfJsReader({ filePath, initialPage, onBackToPreview }: PdfJsRea
         </Button>
         <input
           aria-label="完整目录页码"
+          autoComplete="off"
           className="h-8 w-14 rounded-md border bg-background px-1 text-center text-sm tabular-nums"
           inputMode="numeric"
           value={pageInput}

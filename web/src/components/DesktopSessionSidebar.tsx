@@ -1734,7 +1734,6 @@ export function DesktopSessionSidebar({
                       <span className="ml-1 font-normal text-muted-foreground/60">({entry.group.count})</span>
                     </span>
                     <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground/60">{formatShortDate(entry.group.latestUpdatedAt)}</span>
-                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/50" />
                   </button>
                 ) : (
                   <button key={entry.group.groupKey} type="button" className="group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-muted" onClick={() => { setActionMenuId(null); setSingleExpandedGroupKey(entry.group.groupKey); void onLoadGroupSessions?.(entry.group.groupKey); }}>

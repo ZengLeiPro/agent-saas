@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import type { PlatformAdminSection } from "@/lib/urlSync";
 
 import { PlatformAdminSearch } from "./PlatformAdminSearch";
-import { RUN_SHORT_LABEL } from "./displayText";
+import { RUN_SHORT_LABEL, SESSION_LABEL, TENANT_LABEL } from "./displayText";
 
 interface PlatformAdminNavItem {
   id: PlatformAdminSection;
@@ -16,14 +16,14 @@ interface PlatformAdminNavItem {
 
 export const platformAdminSections: PlatformAdminNavItem[] = [
   { id: "overview", label: "概览", icon: Gauge },
-  { id: "tenants", label: "租户", icon: EntityIcons.org },
+  { id: "tenants", label: TENANT_LABEL, icon: EntityIcons.org },
   { id: "users", label: "用户", icon: Users },
-  { id: "sessions", label: "会话", icon: MessageSquareText },
+  { id: "sessions", label: SESSION_LABEL, icon: MessageSquareText },
   { id: "runs", label: RUN_SHORT_LABEL, icon: ListTree },
   { id: "sandboxes", label: "执行环境", icon: ServerCog },
-  { id: "infra", label: "基础设施", icon: HardDrive },
-  { id: "audit", label: "审计", icon: EntityIcons.audit },
-  { id: "efficiency", label: "效率", icon: EntityIcons.analytics },
+  { id: "infra", label: "系统资源", icon: HardDrive },
+  { id: "audit", label: "操作记录", icon: EntityIcons.audit },
+  { id: "efficiency", label: "执行效率", icon: EntityIcons.analytics },
 ];
 
 export function PlatformAdminHeaderControls({

@@ -6,14 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { AdminEntityTable, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
+import { AdminEntityTable, AdminErrorAlert, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
 import { useTenants } from "@/components/TenantManager/hooks";
 import type { UserInfo } from "@/components/UserManager/types";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { pushPlatformAdminUrl } from "@/lib/urlSync";
 
 import { platformAdminApi } from "../api";
-import { RUN_LABEL, formatRole, formatRunStatus } from "../displayText";
+import { RUN_LABEL, SESSION_LABEL, TENANT_LABEL, formatRole, formatRunStatus } from "../displayText";
 import { formatNumber, formatTime, formatYuan } from "../format";
 import type { PlatformRunRecord, PlatformSessionRecord, UserSummaryResponse } from "../types";
 
@@ -24,6 +24,7 @@ export function UsersPage({ userId }: { userId: string | null }) {
 
 function UserList() {
   const adminQuery = useAdminUrlQuery();
+  const patchQuery = adminQuery.patch;
   const { tenants } = useTenants();
   const [rows, setRows] = useState<UserInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,8 +33,19 @@ function UserList() {
   const [cursorStack, setCursorStack] = useState<string[]>([]);
 
   const q = adminQuery.get("q") ?? "";
+  const [qInput, setQInput] = useState(q);
   const tenantId = adminQuery.get("tenantId") ?? "";
   const cursor = adminQuery.get("cursor") ?? "";
+
+  useEffect(() => {
+    setQInput(q);
+  }, [q]);
+
+  useEffect(() => {
+    if (qInput === q) return;
+    const timer = window.setTimeout(() => patchQuery({ q: qInput, cursor: null }), 300);
+    return () => window.clearTimeout(timer);
+  }, [patchQuery, q, qInput]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,7 +69,7 @@ function UserList() {
     <div className="w-full space-y-5">
       <SettingsPanelHeader
         title="用户"
-        description="跨租户用户定位、会话与运行入口。"
+        description="按姓名、用户名或组织找到用户，并继续查看该用户的对话、执行记录与成本。"
         actions={
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
@@ -65,7 +77,7 @@ function UserList() {
           </Button>
         }
       />
-      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">加载失败：{error}</div>}
+      {error && <AdminErrorAlert error={error} />}
       <AdminEntityTable
         title="用户列表"
         rows={rows}
@@ -76,8 +88,8 @@ function UserList() {
             <div className="relative">
               <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
-                value={q}
-                onChange={(event) => adminQuery.patch({ q: event.target.value, cursor: null })}
+                value={qInput}
+                onChange={(event) => setQInput(event.target.value)}
                 placeholder="用户名 / 姓名 / 用户 ID"
                 className="h-8 w-56 pl-7 text-xs"
               />
@@ -87,7 +99,7 @@ function UserList() {
               value={tenantId}
               onChange={(event) => adminQuery.patch({ tenantId: event.target.value, cursor: null })}
             >
-              <option value="">全部租户</option>
+              <option value="">全部组织</option>
               {tenants.map(tenant => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}
             </select>
           </div>
@@ -111,7 +123,7 @@ function UserList() {
         }}
         columns={[
           { key: "user", header: "用户", cell: row => <div><div className="font-medium">{row.realName || row.username}</div><EntityLink kind="user" id={row.id} /></div> },
-          { key: "tenant", header: "租户", cell: row => <EntityLink kind="tenant" id={row.tenantId} label={tenantName.get(row.tenantId) ?? row.tenantId} /> },
+          { key: "tenant", header: TENANT_LABEL, cell: row => <EntityLink kind="tenant" id={row.tenantId} label={tenantName.get(row.tenantId) ?? row.tenantId} /> },
           { key: "role", header: "角色", cell: row => <Badge variant={row.role === "admin" ? "default" : "secondary"}>{formatRole(row.role)}</Badge> },
           { key: "position", header: "岗位", cell: row => row.position || "—" },
           { key: "status", header: "状态", cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },
@@ -162,7 +174,7 @@ function UserDetail({ userId }: { userId: string }) {
             {user && <Button variant="outline" size="sm" onClick={() => {
               pushPlatformAdminUrl({ section: "sessions", search: { tenantId: user.tenantId, userId: user.id } });
               window.dispatchEvent(new PopStateEvent("popstate"));
-            }}>会话</Button>}
+            }}>{SESSION_LABEL}</Button>}
             {user && <Button variant="outline" size="sm" onClick={() => {
               pushPlatformAdminUrl({ section: "runs", search: { tenantId: user.tenantId, userId: user.id } });
               window.dispatchEvent(new PopStateEvent("popstate"));
@@ -174,7 +186,7 @@ function UserDetail({ userId }: { userId: string }) {
           </>
         }
       />
-      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">加载失败：{error}</div>}
+      {error && <AdminErrorAlert error={error} />}
       {loading && !summary ? (
         <div className="flex h-40 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
           <Loader2 className="mr-2 size-4 animate-spin" />
@@ -184,9 +196,9 @@ function UserDetail({ userId }: { userId: string }) {
         <>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <MetricCard title="角色" value={formatRole(user.role)} description={<EntityLink kind="tenant" id={user.tenantId} />} />
-            <MetricCard title="30d 会话" value={formatNumber(summary.sessions30d)} description={`最后活跃 ${formatTime(summary.lastActiveAt)}`} />
-            <MetricCard title="30d 运行" value={formatNumber(summary.runs30d.total)} description={Object.entries(summary.runs30d.byStatus).map(([k, v]) => `${formatRunStatus(k)}:${v}`).join(" · ") || "—"} />
-            <MetricCard title="成本" value={formatYuan(summary.costYuan30d)} description={`累计 ${formatYuan(summary.costYuanTotal)}`} />
+            <MetricCard title="近 30 天对话" value={formatNumber(summary.sessions30d)} description={`最后活跃 ${formatTime(summary.lastActiveAt)}`} />
+            <MetricCard title="近 30 天执行" value={formatNumber(summary.runs30d.total)} description={Object.entries(summary.runs30d.byStatus).map(([k, v]) => `${formatRunStatus(k)}：${v}`).join(" · ") || "—"} />
+            <MetricCard title="近 30 天成本" value={formatYuan(summary.costYuan30d)} description={`累计 ${formatYuan(summary.costYuanTotal)}`} />
           </div>
           <div className="grid gap-4 xl:grid-cols-3">
             <Card>
@@ -202,7 +214,7 @@ function UserDetail({ userId }: { userId: string }) {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-base">最近会话</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-base">最近对话</CardTitle></CardHeader>
               <CardContent className="space-y-2">
                 {sessions.map(session => (
                   <div key={session.sessionId} className="rounded-md border p-2 text-sm">
@@ -213,11 +225,11 @@ function UserDetail({ userId }: { userId: string }) {
                     </div>
                   </div>
                 ))}
-                {sessions.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无会话</div>}
+                {sessions.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无对话</div>}
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-base">最近运行</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-base">最近执行</CardTitle></CardHeader>
               <CardContent className="space-y-2">
                 {runs.map(run => (
                   <div key={run.runId} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
@@ -225,7 +237,7 @@ function UserDetail({ userId }: { userId: string }) {
                     <StatusBadge kind="run" status={run.status} />
                   </div>
                 ))}
-                {runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无运行记录</div>}
+                {runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无执行记录</div>}
               </CardContent>
             </Card>
           </div>

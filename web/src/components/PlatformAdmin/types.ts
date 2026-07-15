@@ -77,6 +77,53 @@ export interface PlatformRunRecord {
   cumulativeInputTokens: number;
 }
 
+export type ToolInvocationStatus = "running" | "completed" | "failed" | "cancelled";
+
+export interface ToolInvocationRecord {
+  invocationId: string;
+  runId: string;
+  sessionId: string;
+  tenantId: string;
+  userId: string | null;
+  username: string | null;
+  realName: string | null;
+  toolName: string;
+  skillName: string | null;
+  executionTarget: string;
+  status: ToolInvocationStatus;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  error: string | null;
+}
+
+export interface ToolInvocationAnalysisResponse {
+  items: ToolInvocationRecord[];
+  summary: {
+    total: number;
+    failed: number;
+    affectedTenants: number;
+    affectedUsers: number;
+    skillCalls: number;
+    skillCallsTracked: number;
+  };
+  byTool: Array<{
+    toolName: string;
+    count: number;
+    failed: number;
+    avgDurationMs: number | null;
+    lastCalledAt: string;
+  }>;
+  bySkill: Array<{
+    skillName: string;
+    count: number;
+    failed: number;
+    affectedTenants: number;
+    affectedUsers: number;
+    lastCalledAt: string;
+  }>;
+}
+
 export interface SandboxOwner {
   kind: "user" | "system";
   tenantId: string | null;
@@ -127,7 +174,7 @@ export interface OverviewSnapshot {
     sandboxes: { total: number; running: number; paused: number; broken: number };
     todayCostYuan: number;
     todayRuns: number;
-    completionRate24h: number | null;
+    completionRateToday: number | null;
     toolRouting24h: {
       total: number;
       acsCount: number;
@@ -146,6 +193,38 @@ export interface OverviewSnapshot {
     storage: StorageHealth | null;
   };
   attention: OverviewAttentionItem[];
+}
+
+export interface PlatformTrendResponse {
+  available: boolean;
+  missingSources: string[];
+  days: number;
+  timezone: "Asia/Shanghai";
+  daily: Array<{
+    date: string;
+    activeUsers: number;
+    sessions: number;
+    runs: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+    completionRate: number | null;
+  }>;
+}
+
+export interface BillingDailyPoint {
+  date: string;
+  actualCostYuanMicro: number;
+  revenueYuanMicro: number;
+  creditsChargedMicro: number;
+  grossProfitYuanMicro: number;
+}
+
+export interface BillingAuditTrendResponse {
+  audit: {
+    days: number;
+    daily?: BillingDailyPoint[];
+  };
 }
 
 export interface StorageHealth {

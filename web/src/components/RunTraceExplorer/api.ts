@@ -12,7 +12,7 @@ async function getJson<T>(path: string): Promise<T> {
     } catch {
       // ignore
     }
-    if (res.status === 404) throw new Error("运行记录不存在或已过期");
+    if (res.status === 404) throw new Error("执行记录不存在或已过期");
     throw new Error(`${path} → ${res.status} ${detail.slice(0, 200)}`);
   }
   return (await res.json()) as T;

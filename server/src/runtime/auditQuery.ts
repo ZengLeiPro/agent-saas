@@ -39,6 +39,7 @@ export interface RuntimeAuditEntry {
   toolCallId: string;
   toolId: string;
   toolName: string;
+  skillName?: string;
   risk: ToolAuditEvent['risk'];
   approvalId?: string;
   authorization: ToolAuditEvent['authorization'];
@@ -113,6 +114,7 @@ export function toRuntimeAuditEntry(event: ToolAuditEvent): RuntimeAuditEntry {
     toolCallId: event.toolCallId,
     toolId: event.toolId,
     toolName: event.toolName,
+    ...(event.skillName ? { skillName: event.skillName } : {}),
     risk: event.risk,
     ...(event.approvalId ? { approvalId: event.approvalId } : {}),
     authorization: event.authorization,
@@ -478,6 +480,7 @@ const SELECT_COLUMNS = `
   tool_call_id,
   tool_id,
   tool_name,
+  skill_name,
   risk,
   approval_id,
   authorization_source,
@@ -555,6 +558,9 @@ function rowToRuntimeAuditEntry(row: Record<string, unknown>): RuntimeAuditEntry
   };
   if (row.approval_id != null && row.approval_id !== '') {
     entry.approvalId = String(row.approval_id);
+  }
+  if (row.skill_name != null && row.skill_name !== '') {
+    entry.skillName = String(row.skill_name);
   }
   if (executionInvocations && executionInvocations.length > 0) {
     entry.executionInvocations = executionInvocations;

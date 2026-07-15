@@ -8,7 +8,7 @@ import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "./api";
-import { formatEntityKind } from "./displayText";
+import { formatEntityKind, formatRole, formatRunStatus } from "./displayText";
 import type { PlatformSearchMatch, SearchMatchKind } from "./types";
 
 const KIND_LABEL: Record<SearchMatchKind, string> = {
@@ -25,10 +25,31 @@ function navigateTo(href: string) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+function resultTitle(match: PlatformSearchMatch): string {
+  if (match.kind === "run") return `执行记录 ${match.id}`;
+  return match.title;
+}
+
+function resultSubtitle(match: PlatformSearchMatch): string | undefined {
+  if (!match.subtitle) return undefined;
+  return match.subtitle
+    .split(" · ")
+    .map((part) => {
+      if (["pending", "running", "waiting_approval", "waiting_user", "waiting_hand", "completed", "failed", "cancelled", "orphaned"].includes(part)) {
+        return formatRunStatus(part);
+      }
+      if (part === "deleted") return "已删除";
+      if (part === "disabled") return "已禁用";
+      if (part === "admin" || part === "user") return formatRole(part);
+      return part;
+    })
+    .join(" · ");
+}
+
 export function PlatformAdminSearch({ className }: { className?: string } = {}) {
   const adminQuery = useAdminUrlQuery();
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [q, setQ] = useState(adminQuery.get("q") ?? "");
+  const [q, setQ] = useState(adminQuery.get("lookup") ?? "");
   const [matches, setMatches] = useState<PlatformSearchMatch[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -50,10 +71,10 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
     if (!value) return;
     setLoading(true);
     setError(null);
-    adminQuery.set("q", value);
+    adminQuery.set("lookup", value);
     try {
       const data = await platformAdminApi.search(value);
-      if (data.matches.length === 1) {
+      if (data.matches.length === 1 && data.matches[0].id === value) {
         navigateTo(data.matches[0].href);
         setOpen(false);
       } else {
@@ -85,7 +106,7 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
               if (event.key === "Enter") void runSearch();
               if (event.key === "Escape") setOpen(false);
             }}
-            placeholder="搜索运行 / 会话 / 用户 / 租户 / 执行环境"
+            placeholder="搜索组织、用户、对话或完整记录 ID"
             className="h-9 pl-7 pr-16 text-xs"
           />
           <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">/</span>
@@ -99,7 +120,10 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
           {error ? (
             <div className="px-3 py-2 text-sm text-destructive">{error}</div>
           ) : matches.length === 0 ? (
-            <div className="px-3 py-6 text-center text-sm text-muted-foreground">没有匹配结果</div>
+            <div className="px-3 py-5 text-center text-sm text-muted-foreground">
+              <div>没有匹配结果</div>
+              <div className="mt-1 text-xs">支持搜索：组织名、用户名、姓名、手机号、对话标题或完整记录 ID</div>
+            </div>
           ) : (
             <div className="max-h-80 overflow-auto py-1">
               {matches.map(match => (
@@ -114,8 +138,8 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
                 >
                   <Badge variant="secondary" className="mt-0.5 shrink-0">{KIND_LABEL[match.kind]}</Badge>
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{match.title}</span>
-                    {match.subtitle && <span className="block truncate text-xs text-muted-foreground">{match.subtitle}</span>}
+                    <span className="block truncate text-sm font-medium">{resultTitle(match)}</span>
+                    {match.subtitle && <span className="block truncate text-xs text-muted-foreground">{resultSubtitle(match)}</span>}
                   </span>
                 </button>
               ))}

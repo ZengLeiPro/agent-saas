@@ -19,8 +19,8 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_TENANT_SETTINGS, type TenantSettings } from "@/components/TenantManager/types";
 import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
-import type { PlatformAdminSection } from "@/lib/urlSync";
-import { EntityLink } from "@/components/PlatformAdmin/common";
+import { pushPlatformAdminUrl, type PlatformAdminSection } from "@/lib/urlSync";
+import { AdminErrorAlert, EntityLink } from "@/components/PlatformAdmin/common";
 import { formatChannel } from "@/components/PlatformAdmin/displayText";
 import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
 import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControls";
@@ -330,7 +330,7 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
             <SettingSwitch label="文件能力" description="允许组织用户访问文件浏览、上传和预览。" checked={settings.features.filesEnabled} onCheckedChange={checked => patch(d => { d.features.filesEnabled = checked; })} />
             <SettingSwitch label="定时任务" description="允许创建和运行 Cron 自动化任务。" checked={settings.features.cronEnabled} onCheckedChange={checked => patch(d => { d.features.cronEnabled = checked; })} />
             <SettingSwitch label="MCP 工具" description="允许组织使用 MCP 服务与工具密钥。" checked={settings.features.mcpEnabled} onCheckedChange={checked => patch(d => { d.features.mcpEnabled = checked; })} />
-            <SettingSwitch label="自定义技能" description="允许用户维护自定义 Agent 技能。" checked={settings.features.customSkillsEnabled} onCheckedChange={checked => patch(d => { d.features.customSkillsEnabled = checked; })} />
+            <SettingSwitch label="自定义技能" description="允许用户维护自己的技能。" checked={settings.features.customSkillsEnabled} onCheckedChange={checked => patch(d => { d.features.customSkillsEnabled = checked; })} />
             <SettingSwitch label="调试模式" description="允许开启思考、工具和执行细节展示。" checked={settings.features.debugModeAllowed} onCheckedChange={checked => patch(d => { d.features.debugModeAllowed = checked; })} />
             <SettingSwitch label="自动压缩上下文" description="会话上下文达到各模型配置的触发线时，回合结束后自动压缩（还需模型配置上下文窗口）。" checked={settings.features.autoCompactEnabled} onCheckedChange={checked => patch(d => { d.features.autoCompactEnabled = checked; })} />
             <SettingSwitch
@@ -463,19 +463,19 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   app_background: "进入后台",
   page_viewed: "浏览页面",
   chat_message_sent: "发送消息",
-  session_opened: "查看会话",
+  session_opened: "查看对话",
   session_soft_deleted: "移入回收站",
-  session_restored: "恢复会话",
+  session_restored: "恢复对话",
   session_permanently_deleted: "永久删除",
-  session_renamed: "重命名会话",
-  session_forked: "复刻会话",
-  session_share_updated: "更新会话分享",
-  session_share_revoked: "撤销会话分享",
+  session_renamed: "重命名对话",
+  session_forked: "复刻对话",
+  session_share_updated: "更新对话分享",
+  session_share_revoked: "撤销对话分享",
   group_created: "创建分组",
   group_updated: "更新分组",
   group_deleted: "删除分组",
-  group_sessions_added: "分组添加会话",
-  group_sessions_removed: "分组移除会话",
+  group_sessions_added: "分组添加对话",
+  group_sessions_removed: "分组移除对话",
   cron_job_created: "创建任务",
   cron_job_updated: "编辑任务",
   cron_job_deleted: "删除任务",
@@ -533,14 +533,14 @@ const auditCategories = [
   { value: "", label: "全部事件" },
   { value: "login", label: "登录" },
   { value: "activity", label: "活动" },
-  { value: "session", label: "会话" },
+  { value: "session", label: "对话" },
   { value: "group", label: "分组" },
   { value: "cron", label: "定时任务" },
   { value: "user", label: "用户管理" },
   { value: "file", label: "文件" },
-  { value: "agent", label: "Agent" },
+  { value: "agent", label: "AI 助手" },
   { value: "skill", label: "技能" },
-  { value: "mcp", label: "MCP" },
+  { value: "mcp", label: "连接器" },
   { value: "tenant", label: "组织" },
 ];
 
@@ -566,8 +566,14 @@ function formatAuditTime(iso: string): string {
   }
 }
 
+function shanghaiDateBoundary(date: string, endOfDay = false): string | undefined {
+  if (!date) return undefined;
+  const localTime = endOfDay ? "23:59:59.999" : "00:00:00.000";
+  return new Date(`${date}T${localTime}+08:00`).toISOString();
+}
+
 function auditEventLabel(event: string): string {
-  return AUDIT_EVENT_LABELS[event] || event;
+  return AUDIT_EVENT_LABELS[event] || "其他操作";
 }
 
 function auditEventBadgeClass(event: string): string {
@@ -592,6 +598,7 @@ function AuditEventsPanel({
   tenantName?: string;
 }) {
   const { users } = useUsers();
+  const { tenants } = useTenants();
   const [category, setCategory] = useState("");
   const [channel, setChannel] = useState("");
   const [usernameFilter, setUsernameFilter] = useState("");
@@ -609,8 +616,8 @@ function AuditEventsPanel({
     tenantId: scope === "tenant" ? tenantId : tenantIdFilter.trim() || undefined,
     category: category || undefined,
     channel: channel || undefined,
-    startTime: startDate ? new Date(startDate).toISOString() : undefined,
-    endTime: endDate ? new Date(`${endDate}T23:59:59.999Z`).toISOString() : undefined,
+    startTime: shanghaiDateBoundary(startDate),
+    endTime: shanghaiDateBoundary(endDate, true),
   }), [category, channel, endDate, scope, startDate, tenantId, tenantIdFilter, tenantUsernames, usernameFilter]);
 
   const { entries, total, loading, error, offset, limit, refresh, nextPage, prevPage } = useLoginLogs(filters);
@@ -626,10 +633,10 @@ function AuditEventsPanel({
   return (
     <div className="w-full space-y-5">
       <SettingsPanelHeader
-        title={scope === "tenant" ? "组织审计" : "平台审计"}
+        title={scope === "tenant" ? "组织操作记录" : "平台操作记录"}
         description={scope === "tenant"
           ? `查看 ${tenantName || tenantId || "当前组织"} 的登录、成员、文件、工具和配置变更记录。`
-          : "查看跨组织登录、用户、组织、工具、技能、文件和运行时相关操作记录。"}
+          : "查看跨组织的登录、用户、工具、技能、文件和执行环境变更。"}
         actions={<Button variant="outline" onClick={() => { void refresh(); }} disabled={loading}><RefreshCw className={cn("mr-2 size-4", loading && "animate-spin")} />刷新</Button>}
       />
 
@@ -662,13 +669,16 @@ function AuditEventsPanel({
             <Input value={usernameFilter} onChange={event => setUsernameFilter(event.target.value)} placeholder="用户名" />
           </div>
           <div className="space-y-1.5">
-            <Label>租户 ID</Label>
-            <Input
+            <Label>组织</Label>
+            <select
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
               value={scope === "tenant" ? tenantId || "" : tenantIdFilter}
               onChange={event => setTenantIdFilter(event.target.value)}
-              placeholder="租户 ID"
               disabled={scope === "tenant"}
-            />
+            >
+              <option value="">全部组织</option>
+              {tenants.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
           </div>
           <div className="space-y-1.5">
             <Label>开始日期</Label>
@@ -684,7 +694,7 @@ function AuditEventsPanel({
         </CardContent>
       </Card>
 
-      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+      {error && <AdminErrorAlert error={error} />}
       {emptyTenant && <div className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">当前组织暂无成员，审计列表为空。</div>}
 
       <Card>
@@ -695,10 +705,10 @@ function AuditEventsPanel({
         <CardContent className="p-0">
           {loading ? (
             <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
-              <Loader2 className="mr-2 size-4 animate-spin" />加载审计事件...
+              <Loader2 className="mr-2 size-4 animate-spin" />正在加载操作记录…
             </div>
           ) : entries.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">暂无审计事件</div>
+            <div className="py-10 text-center text-sm text-muted-foreground">暂无操作记录</div>
           ) : (
             <Table>
               <TableHeader>
@@ -718,7 +728,7 @@ function AuditEventsPanel({
                   return (
                     <TableRow key={`${entry.timestamp}-${entry.username}-${entry.event}-${index}`}>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatAuditTime(entry.timestamp)}</TableCell>
-                      <TableCell><Badge className={auditEventBadgeClass(entry.event)}>{auditEventLabel(entry.event)}</Badge></TableCell>
+                      <TableCell><Badge className={auditEventBadgeClass(entry.event)} title={entry.event}>{auditEventLabel(entry.event)}</Badge></TableCell>
                       <TableCell>
                         <div className="font-medium">
                           {actor ? (
@@ -990,7 +1000,10 @@ export function PlatformAdminShell({
     if (activeSection === "users") return <UsersPage userId={entityId} />;
     if (activeSection === "sessions") return <SessionsPage sessionId={entityId} />;
     if (activeSection === "runs") {
-      return <RunTraceExplorer runId={entityId} onRunIdChange={(next) => onSectionChange("runs", next)} />;
+      return <RunTraceExplorer runId={entityId} onRunIdChange={(next) => {
+        pushPlatformAdminUrl({ section: "runs", entityId: next, search: window.location.search });
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      }} />;
     }
     if (activeSection === "sandboxes") return <SandboxesPage sandboxName={entityId} />;
     if (activeSection === "infra") return <InfraPage />;

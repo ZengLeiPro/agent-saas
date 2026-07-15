@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
+import { formatChannel } from "@/components/PlatformAdmin/displayText";
 
 import { usageApi } from "./api";
 import type {
@@ -220,7 +221,7 @@ export function UserDetailView({
                 {byChannel && byChannel.channels.length > 0 ? (
                   <ProportionBars
                     rows={byChannel.channels.map((c) => ({
-                      label: c.channel,
+                      label: formatChannel(c.channel),
                       tokens: c.totalTokens,
                       cost: c.totalCostUsd,
                       turns: c.totalTurns,

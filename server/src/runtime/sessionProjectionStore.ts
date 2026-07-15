@@ -56,8 +56,11 @@ export interface RuntimeSessionBackfillResult extends RuntimeSessionBackfillPlan
 export interface RuntimeSessionListQuery {
   tenantId?: string;
   userId?: string;
+  titleContains?: string;
   status?: string;
   kind?: 'user' | 'subagent';
+  model?: string;
+  channel?: string;
   /** 按公司级专职 Agent 过滤（meta_json->>'orgAgentId'；2026-07 唯恩批次质检台） */
   orgAgentId?: string;
   /** true = 只要绑定了任意专职 Agent 的会话（orgAgentId 未指定时的"全部专职会话"视图） */
@@ -234,6 +237,10 @@ export class PgSessionProjectionStore {
       params.push(query.userId);
       clauses.push(`user_id = $${params.length}`);
     }
+    if (query.titleContains) {
+      params.push(query.titleContains);
+      clauses.push(`title IS NOT NULL AND position(lower($${params.length}) in lower(title)) > 0`);
+    }
     if (query.status) {
       params.push(query.status);
       clauses.push(`runtime_status = $${params.length}`);
@@ -241,6 +248,14 @@ export class PgSessionProjectionStore {
     if (query.kind) {
       params.push(query.kind);
       clauses.push(`kind = $${params.length}`);
+    }
+    if (query.model) {
+      params.push(query.model);
+      clauses.push(`model = $${params.length}`);
+    }
+    if (query.channel) {
+      params.push(query.channel);
+      clauses.push(`channel = $${params.length}`);
     }
     if (query.orgAgentId) {
       params.push(query.orgAgentId);

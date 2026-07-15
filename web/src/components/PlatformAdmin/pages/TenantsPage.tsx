@@ -5,12 +5,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { AdminEntityTable, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
+import { AdminEntityTable, AdminErrorAlert, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
 import { pushAdminSettingsUrl, pushPlatformAdminUrl } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
-import { RUN_LABEL, formatRole } from "../displayText";
+import { RUN_LABEL, SESSION_LABEL, TENANT_LABEL, formatRole } from "../displayText";
 import { formatCredits, formatNumber, formatTime, formatYuan } from "../format";
 import type { PlatformRunRecord, PlatformSessionRecord, SandboxRecord, TenantOverviewItem } from "../types";
 
@@ -57,8 +57,8 @@ function TenantList() {
   return (
     <div className="w-full space-y-5">
       <SettingsPanelHeader
-        title="租户"
-        description="跨组织运行状态、用户、会话和成本入口。"
+        title={TENANT_LABEL}
+        description="查看各组织的用户规模、近期使用、成本与异常，点击一行可继续排查。"
         actions={
           <>
             <Button variant="outline" size="sm" onClick={openSettings}>
@@ -72,15 +72,15 @@ function TenantList() {
           </>
         }
       />
-      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">加载失败：{error}</div>}
+      {error && <AdminErrorAlert error={error} />}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard title="租户总数" value={formatNumber(items.length)} description="含已禁用组织" />
+        <MetricCard title="组织总数" value={formatNumber(items.length)} description="含已禁用组织" />
         <MetricCard title="启用中" value={formatNumber(activeCount)} description="可登录与执行" tone="good" />
-        <MetricCard title="活跃运行" value={formatNumber(items.reduce((sum, item) => sum + item.activeRuns, 0))} description="按租户聚合" />
-        <MetricCard title="30d 成本" value={formatYuan(items.reduce((sum, item) => sum + item.costYuan30d, 0))} description="模型实际成本" />
+        <MetricCard title="正在执行" value={formatNumber(items.reduce((sum, item) => sum + item.activeRuns, 0))} description="按组织汇总" />
+        <MetricCard title="近 30 天成本" value={formatYuan(items.reduce((sum, item) => sum + item.costYuan30d, 0))} description="模型实际成本" />
       </div>
       <AdminEntityTable
-        title="租户列表"
+        title="组织列表"
         rows={items}
         rowKey={(row) => row.id}
         loading={loading}
@@ -93,9 +93,9 @@ function TenantList() {
           { key: "status", header: "状态", cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },
           { key: "name", header: "名称", cell: row => <div><div className="font-medium">{row.name}</div><EntityLink kind="tenant" id={row.id} /></div> },
           { key: "users", header: "用户", cell: row => <span className="tabular-nums">{row.userCount} / 管理员 {row.adminCount}</span> },
-          { key: "activeRuns", header: "活跃运行", cell: row => <span className="tabular-nums">{row.activeRuns}</span> },
-          { key: "sessions", header: "7d 会话", cell: row => <span className="tabular-nums">{row.sessions7d}</span> },
-          { key: "cost", header: "30d 成本", cell: row => <span className="tabular-nums">{formatYuan(row.costYuan30d)}</span> },
+          { key: "activeRuns", header: "正在执行", cell: row => <span className="tabular-nums">{row.activeRuns}</span> },
+          { key: "sessions", header: "近 7 天对话", cell: row => <span className="tabular-nums">{row.sessions7d}</span> },
+          { key: "cost", header: "近 30 天成本", cell: row => <span className="tabular-nums">{formatYuan(row.costYuan30d)}</span> },
           { key: "balance", header: "余额", cell: row => <span className="tabular-nums">{formatCredits(row.balanceCredits)}</span> },
           { key: "last", header: "最后活跃", cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.lastActiveAt)}</span> },
         ]}
@@ -144,11 +144,11 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
     <div className="w-full space-y-5">
       <SettingsPanelHeader
         title={tenant?.name ?? tenantId}
-        description={`租户详情 · ${tenantId}`}
+        description={`组织详情 · ${tenantId}`}
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => go("users", { tenantId })}>用户</Button>
-            <Button variant="outline" size="sm" onClick={() => go("sessions", { tenantId })}>会话</Button>
+            <Button variant="outline" size="sm" onClick={() => go("sessions", { tenantId })}>{SESSION_LABEL}</Button>
             <Button variant="outline" size="sm" onClick={() => go("runs", { tenantId })}>{RUN_LABEL}</Button>
             <Button variant="outline" size="sm" onClick={() => go("sandboxes", { tenantId })}>执行环境</Button>
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
@@ -158,17 +158,17 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
           </>
         }
       />
-      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">加载失败：{error}</div>}
+      {error && <AdminErrorAlert error={error} />}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="状态" value={tenant?.disabled ? "已禁用" : "启用中"} description={tenantId} tone={tenant?.disabled ? "bad" : "good"} />
         <MetricCard title="用户" value={formatNumber(tenant?.userCount)} description={`管理员 ${formatNumber(tenant?.adminCount)}`} />
-        <MetricCard title="30d 成本" value={formatYuan(tenant?.costYuan30d)} description={formatCredits(tenant?.balanceCredits)} />
-        <MetricCard title="活跃运行" value={formatNumber(tenant?.activeRuns ?? activeRuns)} description={`最后活跃 ${formatTime(tenant?.lastActiveAt)}`} />
+        <MetricCard title="近 30 天成本" value={formatYuan(tenant?.costYuan30d)} description={formatCredits(tenant?.balanceCredits)} />
+        <MetricCard title="正在执行" value={formatNumber(tenant?.activeRuns ?? activeRuns)} description={`最后活跃 ${formatTime(tenant?.lastActiveAt)}`} />
       </div>
       {loading && !tenant ? (
         <div className="flex h-40 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
           <Loader2 className="mr-2 size-4 animate-spin" />
-          加载租户详情...
+          正在加载组织详情…
         </div>
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
@@ -188,7 +188,7 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle className="text-base">最近会话</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">最近对话</CardTitle></CardHeader>
             <CardContent className="space-y-2">
               {sessions.map(session => (
                 <div key={session.sessionId} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
@@ -199,11 +199,11 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
                   <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(session.updatedAt)}</span>
                 </div>
               ))}
-              {sessions.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无会话</div>}
+              {sessions.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无对话</div>}
             </CardContent>
           </Card>
           <Card>
-	            <CardHeader><CardTitle className="text-base">最近运行</CardTitle></CardHeader>
+	            <CardHeader><CardTitle className="text-base">最近执行</CardTitle></CardHeader>
             <CardContent className="space-y-2">
               {runs.map(run => (
                 <div key={run.runId} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
@@ -214,7 +214,7 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
                   <StatusBadge kind="run" status={run.status} />
                 </div>
               ))}
-	              {runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无运行记录</div>}
+	              {runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无执行记录</div>}
             </CardContent>
           </Card>
           <Card>

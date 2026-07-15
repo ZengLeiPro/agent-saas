@@ -124,6 +124,7 @@ export interface TraceEvent {
   // tool_result / tool_audit / approval_requested
   toolCallId?: string;
   toolName?: string;
+  skillName?: string;
   isError?: boolean;
   // tool_audit
   status?: string;

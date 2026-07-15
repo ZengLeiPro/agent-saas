@@ -16,8 +16,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { EntityLink } from "@/components/PlatformAdmin/common";
-import { RUN_LABEL } from "@/components/PlatformAdmin/displayText";
+import { AdminErrorAlert, EntityLink } from "@/components/PlatformAdmin/common";
+import { RUN_LABEL, formatToolName } from "@/components/PlatformAdmin/displayText";
+import { classifyFailureReason } from "@/components/PlatformAdmin/errorText";
+import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
+import { ToolAnalysisPanel } from "@/components/PlatformAdmin/ToolAnalysisPanel";
 
 import { runTraceApi } from "@/components/RunTraceExplorer/api";
 import { formatCount, formatMs, formatRate, formatYuan } from "@/components/RunTraceExplorer/format";
@@ -56,6 +59,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
   /** false = 租户上下文：EntityLink 纯文本、组织列隐藏 */
   linkEntities?: boolean;
 }) {
+  const { labelFor } = useModelDisplayMap();
   const [days, setDays] = useState<number>(7);
   const [data, setData] = useState<EfficiencyReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -111,9 +115,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
         )}
       </div>
 
-      {error && (
-        <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">加载失败：{error}</div>
-      )}
+      {error && <AdminErrorAlert error={error} />}
 
       {loading && !data ? (
         <div className="flex h-40 items-center justify-center rounded-2xl border bg-card text-sm text-muted-foreground">
@@ -123,8 +125,8 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
         <>
           {/* 1. 结果卡行 */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <StatCard label="运行完成率" value={formatRate(data.outcome.completionRate)} sub={`成功 ${formatCount(data.outcome.success)}`} />
-            <StatCard label="总运行数" value={formatCount(data.outcome.totalRuns)} />
+            <StatCard label="执行完成率" value={formatRate(data.outcome.completionRate)} sub={`成功 ${formatCount(data.outcome.success)}`} />
+            <StatCard label="执行总数" value={formatCount(data.outcome.totalRuns)} />
             <StatCard
               label="失败数"
               value={formatCount(data.outcome.error)}
@@ -142,6 +144,8 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
             />
           </div>
 
+          <ToolAnalysisPanel tenantId={tenantId} linkEntities={linkEntities} />
+
           {/* 2. 失败原因 TopN */}
           <Card>
             <CardHeader className="pb-2">
@@ -149,7 +153,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
             </CardHeader>
             <CardContent className="p-0">
               {data.outcome.errorReasons.length === 0 ? (
-                <div className="py-6 text-center text-xs text-muted-foreground">区间内无失败运行记录</div>
+                <div className="py-6 text-center text-xs text-muted-foreground">这段时间没有失败的执行记录</div>
               ) : (
                 <Table>
                   <TableHeader>
@@ -160,13 +164,16 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.outcome.errorReasons.map((r) => (
+                    {data.outcome.errorReasons.map((r) => {
+                      const friendly = classifyFailureReason(r.reason);
+                      return (
                       <TableRow key={r.reason}>
-                        <TableCell className="max-w-md truncate text-xs" title={r.reason}>{r.reason}</TableCell>
+                        <TableCell className="max-w-md truncate text-xs" title={r.reason}>{friendly.summary}</TableCell>
                         <TableCell className="text-right font-mono text-xs tabular-nums">{r.count}</TableCell>
                         <TableCell><EntityLink kind="run" id={r.sampleRunId} plain={plain} /></TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                   </TableBody>
                 </Table>
               )}
@@ -185,11 +192,11 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
                 ) : (
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                     <StatCard label="总成本" value={formatYuan(data.cost.totalCostYuan ?? 0, 2)} />
-                    <StatCard label="单次运行成本 P50" value={formatYuan(data.cost.perRun?.p50 ?? null)} />
-                    <StatCard label="单次运行成本 P90" value={formatYuan(data.cost.perRun?.p90 ?? null)} />
-                    <StatCard label="单次运行成本 P99" value={formatYuan(data.cost.perRun?.p99 ?? null)} />
+                    <StatCard label="典型单次成本（中位）" value={formatYuan(data.cost.perRun?.p50 ?? null)} />
+                    <StatCard label="偏高单次成本（90 分位）" value={formatYuan(data.cost.perRun?.p90 ?? null)} />
+                    <StatCard label="极端单次成本（99 分位）" value={formatYuan(data.cost.perRun?.p99 ?? null)} />
                     <StatCard
-                      label="失败运行沉没成本"
+                      label="失败执行消耗的成本"
                       value={formatYuan(data.cost.failedRunsCostYuan ?? 0, 2)}
                       tone={(data.cost.failedRunsCostYuan ?? 0) > 0 ? "warn" : "default"}
                     />
@@ -220,7 +227,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
                         <TableBody>
                           {data.cost.byModel.map((m) => (
                             <TableRow key={m.model}>
-                              <TableCell className="max-w-56 truncate font-mono text-xs" title={m.model}>{m.model}</TableCell>
+                              <TableCell className="max-w-56 truncate text-xs" title={m.model}>{labelFor(m.model)}</TableCell>
                               {!costRedacted && (
                                 <TableCell className="text-right font-mono text-xs tabular-nums">{formatYuan(m.costYuan ?? 0, 2)}</TableCell>
                               )}
@@ -244,7 +251,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">
-                工具健康 <span className="text-xs font-normal text-muted-foreground">· 错误率 &gt; 5% 红色高亮</span>
+                工具调用情况 <span className="text-xs font-normal text-muted-foreground">· 失败率超过 5% 会标红</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
@@ -267,7 +274,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
                       const alert = t.errorRate != null && t.errorRate > ERROR_RATE_ALERT;
                       return (
                         <TableRow key={t.toolName} className={cn(alert && "bg-destructive/5")}>
-                          <TableCell className="max-w-56 truncate font-mono text-xs" title={t.toolName}>{t.toolName}</TableCell>
+                          <TableCell className="max-w-56 truncate text-xs" title={t.toolName}>{formatToolName(t.toolName)}</TableCell>
                           <TableCell className="text-right font-mono text-xs tabular-nums">{formatCount(t.calls)}</TableCell>
                           <TableCell className={cn("text-right font-mono text-xs tabular-nums", t.errors > 0 && "text-destructive")}>
                             {formatCount(t.errors)}
@@ -290,7 +297,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">最慢运行记录</CardTitle>
+                <CardTitle className="text-sm font-medium">耗时最长的执行</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 {data.longTail.slowestRuns.length === 0 ? (
@@ -321,7 +328,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
                             </div>
                           </TableCell>
                           <TableCell><RunStatusBadge status={r.status} /></TableCell>
-                          <TableCell className="max-w-32 truncate font-mono text-xs" title={r.model ?? undefined}>{r.model ?? "—"}</TableCell>
+                          <TableCell className="max-w-32 truncate text-xs" title={r.model ?? undefined}>{r.model ? labelFor(r.model) : "—"}</TableCell>
                           <TableCell className="text-right font-mono text-xs tabular-nums">{formatMs(r.durationMs)}</TableCell>
                         </TableRow>
                       ))}
@@ -332,7 +339,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">最多轮次运行记录</CardTitle>
+                <CardTitle className="text-sm font-medium">交互轮次最多的执行</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 {data.longTail.mostTurns.length === 0 ? (
@@ -364,7 +371,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
           {/* 6. 审批摩擦 */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">审批摩擦</CardTitle>
+              <CardTitle className="text-sm font-medium">审批等待</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -377,11 +384,11 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
                   <div className="mt-0.5 text-lg font-semibold tabular-nums">{formatCount(data.approvals.resolvedCount)}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] text-muted-foreground">等待 P50</div>
+                  <div className="text-[11px] text-muted-foreground">典型等待时间（中位）</div>
                   <div className="mt-0.5 text-lg font-semibold tabular-nums">{formatMs(data.approvals.waitP50Ms)}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] text-muted-foreground">等待 P90</div>
+                  <div className="text-[11px] text-muted-foreground">偏高等待时间（90 分位）</div>
                   <div className="mt-0.5 text-lg font-semibold tabular-nums">{formatMs(data.approvals.waitP90Ms)}</div>
                 </div>
               </div>
@@ -389,7 +396,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
                 <div className="mt-3 space-y-1 border-t pt-3">
                   {data.approvals.byTool.map((t) => (
                     <div key={t.toolName} className="flex items-center justify-between text-xs">
-                      <span className="truncate font-mono" title={t.toolName}>{t.toolName}</span>
+                      <span className="truncate" title={t.toolName}>{formatToolName(t.toolName)}</span>
                       <span className="shrink-0 text-muted-foreground tabular-nums">
                         {t.count} 次 · 平均等待 {formatMs(t.avgWaitMs)}
                       </span>
@@ -408,7 +415,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
               </CardHeader>
               <CardContent className="space-y-2 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">涉及运行记录</span>
+                  <span className="text-muted-foreground">涉及执行记录</span>
                   <span className="font-mono tabular-nums">{formatCount(data.waste.duplicateToolCalls.affectedRuns)}</span>
                 </div>
                 <div className="flex items-center justify-between">
@@ -419,7 +426,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
                   <div className="space-y-1 border-t pt-2">
                     {data.waste.duplicateToolCalls.topOffenders.map((o) => (
                       <div key={o.toolName} className="flex items-center justify-between">
-                        <span className="truncate font-mono" title={o.toolName}>{o.toolName}</span>
+                        <span className="truncate" title={o.toolName}>{formatToolName(o.toolName)}</span>
                         <span className="shrink-0 text-muted-foreground tabular-nums">{o.duplicates}</span>
                       </div>
                     ))}
@@ -433,7 +440,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
               </CardHeader>
               <CardContent className="space-y-2 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">涉及运行记录</span>
+                  <span className="text-muted-foreground">涉及执行记录</span>
                   <span className="font-mono tabular-nums">{formatCount(data.waste.repeatedFileReads.affectedRuns)}</span>
                 </div>
                 {data.waste.repeatedFileReads.topFiles.length > 0 && (
@@ -464,7 +471,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
                   <div className="space-y-1 border-t pt-2">
                     {data.waste.unmodifiedRetries.byTool.map((t) => (
                       <div key={t.toolName} className="flex items-center justify-between">
-                        <span className="truncate font-mono" title={t.toolName}>{t.toolName}</span>
+                        <span className="truncate" title={t.toolName}>{formatToolName(t.toolName)}</span>
                         <span className="shrink-0 text-muted-foreground tabular-nums">{t.count}</span>
                       </div>
                     ))}

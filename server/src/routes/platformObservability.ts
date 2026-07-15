@@ -58,8 +58,13 @@ const listUsersQuerySchema = queryTenantSchema.extend({
 
 const listSessionsQuerySchema = queryTenantSchema.extend({
   userId: z.string().max(128).optional(),
+  q: z.string().trim().max(100).optional(),
   status: z.string().max(80).optional(),
   kind: z.enum(['user', 'subagent']).optional(),
+  model: z.string().max(200).optional(),
+  channel: z.string().max(80).optional(),
+  updatedFrom: z.string().datetime({ offset: true }).optional(),
+  updatedTo: z.string().datetime({ offset: true }).optional(),
   includeDeleted: z.coerce.boolean().optional(),
   cursor: z.string().max(1000).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -69,9 +74,25 @@ const listRunsQuerySchema = queryTenantSchema.extend({
   userId: z.string().max(128).optional(),
   sessionId: z.string().max(128).optional(),
   status: z.string().max(300).optional(),
+  reasonContains: z.string().trim().max(200).optional(),
   hours: z.coerce.number().int().min(1).max(720).optional(),
   cursor: z.string().max(1000).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+const listToolInvocationsQuerySchema = queryTenantSchema.extend({
+  userId: z.string().max(128).optional(),
+  toolName: z.string().trim().max(120).optional(),
+  skillName: z.string().trim().max(200).optional(),
+  status: z.enum(['running', 'completed', 'failed', 'cancelled']).optional(),
+  reasonContains: z.string().trim().max(200).optional(),
+  hours: z.coerce.number().int().min(1).max(720).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).max(10_000).optional(),
+});
+
+const overviewTrendsQuerySchema = z.object({
+  days: z.coerce.number().int().min(7).max(30).optional(),
 });
 
 export interface PlatformObservabilityRouterOptions {
@@ -131,6 +152,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
       await Promise.all([
         maybePushRunMatch(matches, options, q, access.tenantId),
         maybePushSessionMatch(matches, options, q, access.tenantId),
+        maybePushSessionTitleMatches(matches, options, q, access.tenantId),
         maybePushUserMatch(matches, options, q, access.tenantId),
         maybePushWorkspaceMatches(matches, options, q, access.tenantId),
         maybePushSandboxMatch(matches, options, q, access.tenantId),
@@ -202,7 +224,8 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
       .filter((user) => !access.tenantId || user.tenantId === access.tenantId)
       .filter((user) => !q || user.id.toLowerCase().includes(q)
         || user.username.toLowerCase().includes(q)
-        || (user.realName ?? '').toLowerCase().includes(q));
+        || (user.realName ?? '').toLowerCase().includes(q)
+        || (user.phone ?? '').includes(q));
     users = users.sort((a, b) => compareDesc(a.updatedAt, a.id, b.updatedAt, b.id));
     if (cursor) {
       users = users.filter((user) => compareDesc(user.updatedAt, user.id, cursor.updatedAt, cursor.id) > 0);
@@ -255,8 +278,13 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
       const result = await options.sessionProjectionStore.list({
         tenantId: access.tenantId,
         userId: parsed.data.userId,
+        titleContains: parsed.data.q,
         status: parsed.data.status,
         kind: parsed.data.kind ?? 'user',
+        model: parsed.data.model,
+        channel: parsed.data.channel,
+        updatedFrom: parsed.data.updatedFrom,
+        updatedTo: parsed.data.updatedTo,
         includeDeleted: parsed.data.includeDeleted ?? false,
         cursor: cursor ? { updatedAt: cursor.updatedAt, sessionId: cursor.id } : undefined,
         limit: parsed.data.limit ?? 50,
@@ -306,6 +334,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
         userId: parsed.data.userId,
         sessionId: parsed.data.sessionId,
         statuses: statuses.statuses,
+        reasonContains: parsed.data.reasonContains,
         hours: parsed.data.hours ?? 24,
         cursor: decodeCursor(parsed.data.cursor),
         limit: parsed.data.limit ?? 50,
@@ -313,6 +342,38 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: `Run list query failed: ${errorMessage(err)}` });
+    }
+  });
+
+  router.get('/tool-invocations', async (req, res) => {
+    const parsed = listToolInvocationsQuerySchema.safeParse(req.query);
+    if (!parsed.success) return invalidQuery(res, parsed.error);
+    const access = resolveTenant(req, parsed.data.tenantId);
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    if (!options.toolInvocationStore) {
+      return res.status(503).json({ error: 'Tool invocation store is not configured' });
+    }
+    try {
+      const result = await options.toolInvocationStore.listForAdmin({
+        tenantId: access.tenantId,
+        userId: parsed.data.userId,
+        toolName: parsed.data.toolName,
+        skillName: parsed.data.skillName,
+        status: parsed.data.status,
+        reasonContains: parsed.data.reasonContains,
+        hours: parsed.data.hours ?? 168,
+        limit: parsed.data.limit ?? 50,
+        offset: parsed.data.offset ?? 0,
+      });
+      res.json({
+        ...result,
+        items: result.items.map((item) => {
+          const user = item.userId ? options.userStore?.findById(item.userId) : undefined;
+          return { ...item, realName: user?.realName ?? null };
+        }),
+      });
+    } catch (err) {
+      res.status(500).json({ error: `Tool invocation query failed: ${errorMessage(err)}` });
     }
   });
 
@@ -347,7 +408,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
           sandboxes: summarizeSandboxes(sandboxes),
           todayCostYuan,
           todayRuns: runHealth.todayRuns,
-          completionRate24h: runHealth.completionRate24h,
+          completionRateToday: runHealth.completionRateToday,
           toolRouting24h,
           dispatch: options.getDispatchMetrics?.() ?? null,
           sessionMetaProjection: getSessionMetaProjectionStats(),
@@ -358,6 +419,20 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
       });
     } catch (err) {
       res.status(500).json({ error: `Overview snapshot query failed: ${errorMessage(err)}` });
+    }
+  });
+
+  router.get('/overview/trends', async (req, res) => {
+    if (!isPlatformAdmin(req.user)) {
+      res.status(403).json({ error: 'Platform admin access required' });
+      return;
+    }
+    const parsed = overviewTrendsQuerySchema.safeParse(req.query);
+    if (!parsed.success) return invalidQuery(res, parsed.error);
+    try {
+      res.json(await queryPlatformTrends(options, parsed.data.days ?? 14));
+    } catch (err) {
+      res.status(500).json({ error: `Platform trend query failed: ${errorMessage(err)}` });
     }
   });
 
@@ -390,6 +465,89 @@ function resolveTenantForSearch(
 
 function canAccessTenant(user: JwtPayload, tenantId: string | undefined): boolean {
   return isPlatformAdmin(user) || (!!tenantId && user.tenantId === tenantId);
+}
+
+interface PlatformRunTrendRow {
+  day: string;
+  runs: number;
+  active_users: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+}
+
+interface PlatformSessionTrendRow {
+  day: string;
+  sessions: number;
+}
+
+async function queryPlatformTrends(options: PlatformObservabilityRouterOptions, days: number) {
+  const missingSources: string[] = [];
+  if (!options.runStore) missingSources.push('执行记录');
+  if (!options.sessionProjectionStore) missingSources.push('对话');
+  const [runResult, sessionResult] = await Promise.all([
+    options.runStore?.pool.query<PlatformRunTrendRow>(`
+      SELECT to_char((requested_at AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY-MM-DD') AS day,
+             count(*)::int AS runs,
+             count(DISTINCT user_id) FILTER (WHERE user_id IS NOT NULL)::int AS active_users,
+             count(*) FILTER (WHERE status = 'completed')::int AS completed,
+             count(*) FILTER (WHERE status IN ('failed', 'orphaned'))::int AS failed,
+             count(*) FILTER (WHERE status = 'cancelled')::int AS cancelled
+      FROM ${options.runStore.runsTable}
+      WHERE requested_at >= (
+        ((now() AT TIME ZONE 'Asia/Shanghai')::date - ($1::int - 1))::timestamp
+        AT TIME ZONE 'Asia/Shanghai'
+      )
+      GROUP BY 1
+      ORDER BY 1
+    `, [days]) ?? Promise.resolve({ rows: [] as PlatformRunTrendRow[] }),
+    options.sessionProjectionStore?.pool.query<PlatformSessionTrendRow>(`
+      SELECT to_char((created_at AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY-MM-DD') AS day,
+             count(*)::int AS sessions
+      FROM ${options.sessionProjectionStore.sessionsTable}
+      WHERE kind = 'user' AND deleted_at IS NULL AND created_at >= (
+        ((now() AT TIME ZONE 'Asia/Shanghai')::date - ($1::int - 1))::timestamp
+        AT TIME ZONE 'Asia/Shanghai'
+      )
+      GROUP BY 1
+      ORDER BY 1
+    `, [days]) ?? Promise.resolve({ rows: [] as PlatformSessionTrendRow[] }),
+  ]);
+  const runsByDay = new Map(runResult.rows.map((row) => [row.day, row]));
+  const sessionsByDay = new Map(sessionResult.rows.map((row) => [row.day, row]));
+  return {
+    available: missingSources.length === 0,
+    missingSources,
+    days,
+    timezone: 'Asia/Shanghai',
+    daily: shanghaiDateKeys(days).map((date) => {
+      const run = runsByDay.get(date);
+      const session = sessionsByDay.get(date);
+      const terminal = (run?.completed ?? 0) + (run?.failed ?? 0) + (run?.cancelled ?? 0);
+      return {
+        date,
+        activeUsers: run?.active_users ?? 0,
+        sessions: session?.sessions ?? 0,
+        runs: run?.runs ?? 0,
+        completed: run?.completed ?? 0,
+        failed: run?.failed ?? 0,
+        cancelled: run?.cancelled ?? 0,
+        completionRate: terminal > 0 ? (run?.completed ?? 0) / terminal : null,
+      };
+    }),
+  };
+}
+
+function shanghaiDateKeys(days: number): string[] {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value);
+  const anchor = Date.UTC(value('year'), value('month') - 1, value('day'));
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date(anchor - (days - 1 - index) * 86_400_000);
+    return date.toISOString().slice(0, 10);
+  });
 }
 
 async function maybePushRunMatch(
@@ -439,6 +597,44 @@ async function maybePushSessionMatch(
     subtitle: `${session.tenantId}${session.userId ? ` · ${session.userId}` : ''}${session.deletedAt ? ' · deleted' : ''}`,
     href: `/platform-admin/sessions/${encodeURIComponent(session.sessionId)}`,
   });
+}
+
+async function maybePushSessionTitleMatches(
+  matches: SearchMatch[],
+  options: PlatformObservabilityRouterOptions,
+  q: string,
+  tenantId?: string,
+): Promise<void> {
+  const store = options.sessionProjectionStore;
+  if (!store || q.length < 2 || UUID_RE.test(q) || SUB_SESSION_ID_RE.test(q)) return;
+  const params: unknown[] = [q];
+  const clauses = [`title IS NOT NULL`, `position(lower($1) in lower(title)) > 0`, `deleted_at IS NULL`];
+  if (tenantId) {
+    params.push(tenantId);
+    clauses.push(`tenant_id = $${params.length}`);
+  }
+  const result = await store.pool.query<{
+    session_id: string;
+    tenant_id: string;
+    user_id: string | null;
+    title: string;
+  }>(
+    `SELECT session_id, tenant_id, user_id, title
+     FROM ${store.sessionsTable}
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY updated_at DESC
+     LIMIT 10`,
+    params,
+  );
+  for (const row of result.rows) {
+    matches.push({
+      kind: 'session',
+      id: row.session_id,
+      title: row.title,
+      subtitle: `${row.tenant_id}${row.user_id ? ` · ${row.user_id}` : ''}`,
+      href: `/platform-admin/sessions/${encodeURIComponent(row.session_id)}`,
+    });
+  }
 }
 
 async function maybePushUserMatch(
@@ -514,6 +710,7 @@ async function maybePushFallbackMatches(
       user.id.toLowerCase().includes(needle)
       || user.username.toLowerCase().includes(needle)
       || (user.realName ?? '').toLowerCase().includes(needle)
+      || (user.phone ?? '').includes(needle)
     ) {
       matches.push(userMatch(user));
       userCount++;
@@ -729,6 +926,7 @@ async function queryRunsPage(
     userId?: string;
     sessionId?: string;
     statuses?: RunStatus[];
+    reasonContains?: string;
     hours: number;
     cursor?: CursorValue | null;
     limit: number;
@@ -741,6 +939,7 @@ async function queryRunsPage(
   if (query.userId) clauses.push(`user_id = $${pushParam(params, query.userId)}`);
   if (query.sessionId) clauses.push(`session_id = $${pushParam(params, query.sessionId)}`);
   if (query.statuses?.length) clauses.push(`status = ANY($${pushParam(params, query.statuses)}::text[])`);
+  if (query.reasonContains) clauses.push(`COALESCE(status_reason, '') ILIKE '%' || $${pushParam(params, query.reasonContains)} || '%'`);
   if (query.cursor) {
     const updatedAtParam = pushParam(params, query.cursor.updatedAt);
     const idParam = pushParam(params, query.cursor.id);
@@ -769,9 +968,9 @@ async function queryRunsPage(
 async function queryRunHealth(options: PlatformObservabilityRouterOptions): Promise<{
   activeRuns: { total: number; byStatus: Record<string, number> };
   todayRuns: number;
-  completionRate24h: number | null;
+  completionRateToday: number | null;
 }> {
-  if (!options.runStore) return { activeRuns: { total: 0, byStatus: {} }, todayRuns: 0, completionRate24h: null };
+  if (!options.runStore) return { activeRuns: { total: 0, byStatus: {} }, todayRuns: 0, completionRateToday: null };
   const [active, today, terminal24h] = await Promise.all([
     options.runStore.pool.query<{ status: string; count: string }>(
       `SELECT status, count(*)::text AS count
@@ -783,12 +982,12 @@ async function queryRunHealth(options: PlatformObservabilityRouterOptions): Prom
     options.runStore.pool.query<{ count: string }>(
       `SELECT count(*)::text AS count
        FROM ${options.runStore.runsTable}
-       WHERE requested_at >= date_trunc('day', now())`,
+       WHERE requested_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')`,
     ),
     options.runStore.pool.query<{ status: string; count: string }>(
       `SELECT status, count(*)::text AS count
        FROM ${options.runStore.runsTable}
-       WHERE updated_at >= now() - interval '24 hours'
+       WHERE updated_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')
          AND status IN ('completed','failed','cancelled')
        GROUP BY status`,
     ),
@@ -800,7 +999,7 @@ async function queryRunHealth(options: PlatformObservabilityRouterOptions): Prom
   return {
     activeRuns: { total: Object.values(byStatus).reduce((sum, value) => sum + value, 0), byStatus },
     todayRuns: Number(today.rows[0]?.count ?? 0),
-    completionRate24h: terminalTotal > 0 ? completed / terminalTotal : null,
+    completionRateToday: terminalTotal > 0 ? completed / terminalTotal : null,
   };
 }
 
@@ -810,7 +1009,7 @@ async function queryTodayCostYuan(options: PlatformObservabilityRouterOptions): 
   const result = await store.pool.query<{ cost: string }>(
     `SELECT COALESCE(sum(actual_cost_yuan_micro),0)::text AS cost
      FROM ${store.usageEventsTable}
-     WHERE created_at >= date_trunc('day', now())`,
+     WHERE created_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')`,
   );
   return microToYuan(Number(result.rows[0]?.cost ?? 0));
 }

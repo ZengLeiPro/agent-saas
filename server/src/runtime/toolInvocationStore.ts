@@ -44,6 +44,62 @@ export interface ToolInvocationStore {
   listCancelRequested(sessionId?: string): Promise<ToolInvocationRecord[]>;
 }
 
+export interface AdminToolInvocationQuery {
+  tenantId?: string;
+  userId?: string;
+  toolName?: string;
+  skillName?: string;
+  status?: ToolInvocationStatus;
+  reasonContains?: string;
+  hours?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AdminToolInvocationEntry {
+  invocationId: string;
+  runId: string;
+  sessionId: string;
+  tenantId: string;
+  userId: string | null;
+  username: string | null;
+  toolName: string;
+  skillName: string | null;
+  executionTarget: ExecutionTargetKind;
+  status: ToolInvocationStatus;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  error: string | null;
+}
+
+export interface AdminToolInvocationResult {
+  items: AdminToolInvocationEntry[];
+  summary: {
+    total: number;
+    failed: number;
+    affectedTenants: number;
+    affectedUsers: number;
+    skillCalls: number;
+    skillCallsTracked: number;
+  };
+  byTool: Array<{
+    toolName: string;
+    count: number;
+    failed: number;
+    avgDurationMs: number | null;
+    lastCalledAt: string;
+  }>;
+  bySkill: Array<{
+    skillName: string;
+    count: number;
+    failed: number;
+    affectedTenants: number;
+    affectedUsers: number;
+    lastCalledAt: string;
+  }>;
+}
+
 export class InMemoryToolInvocationStore implements ToolInvocationStore {
   private readonly invocations = new Map<string, ToolInvocationRecord>();
 
@@ -143,9 +199,12 @@ export interface PgToolInvocationStoreOptions {
 
 export class PgToolInvocationStore implements ToolInvocationStore {
   readonly toolInvocationsTable: string;
+  readonly sessionsTable: string;
 
   constructor(private readonly options: PgToolInvocationStoreOptions) {
-    this.toolInvocationsTable = `${sanitizeIdentifier(options.tablePrefix ?? 'runtime')}_tool_invocations`;
+    const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
+    this.toolInvocationsTable = `${prefix}_tool_invocations`;
+    this.sessionsTable = `${prefix}_sessions`;
   }
 
   async init(): Promise<void> {
@@ -178,6 +237,7 @@ export class PgToolInvocationStore implements ToolInvocationStore {
     await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.toolInvocationsTable}_run_idx ON ${this.toolInvocationsTable} (run_id)`);
     await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.toolInvocationsTable}_status_idx ON ${this.toolInvocationsTable} (status)`);
     await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.toolInvocationsTable}_tenant_idx ON ${this.toolInvocationsTable} (tenant_id, started_at DESC)`);
+    await this.options.pool.query(`CREATE INDEX IF NOT EXISTS ${this.toolInvocationsTable}_tool_name_idx ON ${this.toolInvocationsTable} (tool_name, started_at DESC)`);
   }
 
   async start(input: StartToolInvocationInput): Promise<ToolInvocationRecord> {
@@ -278,6 +338,155 @@ export class PgToolInvocationStore implements ToolInvocationStore {
     const result = await this.options.pool.query(`DELETE FROM ${this.toolInvocationsTable} WHERE tenant_id = $1`, [tenantId]);
     return result.rowCount ?? 0;
   }
+
+  async listForAdmin(query: AdminToolInvocationQuery = {}): Promise<AdminToolInvocationResult> {
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+    const add = (clause: string, value: unknown) => {
+      params.push(value);
+      clauses.push(clause.replace('?', `$${params.length}`));
+    };
+    add('t.started_at >= now() - make_interval(hours => ?::int)', query.hours ?? 168);
+    if (query.tenantId) add('t.tenant_id = ?', query.tenantId);
+    if (query.userId) add('s.user_id = ?', query.userId);
+    if (query.toolName) add('lower(t.tool_name) = lower(?)', query.toolName);
+    if (query.skillName) add("lower(NULLIF(t.metadata->>'skillName', '')) = lower(?)", query.skillName);
+    if (query.status) add('t.status = ?', query.status);
+    if (query.reasonContains) add("COALESCE(t.error, '') ILIKE '%' || ? || '%'", query.reasonContains);
+    const where = clauses.join(' AND ');
+    const limit = Math.min(Math.max(query.limit ?? 50, 1), 100);
+    const offset = Math.max(query.offset ?? 0, 0);
+    const pageParams = [...params, limit, offset];
+
+    const [itemsResult, summaryResult, byToolResult, bySkillResult] = await Promise.all([
+      this.options.pool.query<AdminToolInvocationRow>(`
+        SELECT t.invocation_id, t.run_id, t.session_id, t.tenant_id,
+               s.user_id, s.username, t.tool_name,
+               NULLIF(t.metadata->>'skillName', '') AS skill_name,
+               t.execution_target, t.status, t.started_at, t.completed_at,
+               CASE WHEN t.completed_at IS NULL THEN NULL
+                    ELSE GREATEST(0, EXTRACT(EPOCH FROM (t.completed_at - t.started_at)) * 1000)
+               END AS duration_ms,
+               t.error
+        FROM ${this.toolInvocationsTable} t
+        LEFT JOIN ${this.sessionsTable} s ON s.session_id = t.session_id
+        WHERE ${where}
+        ORDER BY t.started_at DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+      `, pageParams),
+      this.options.pool.query<AdminToolInvocationSummaryRow>(`
+        SELECT count(*)::int AS total,
+               count(*) FILTER (WHERE t.status IN ('failed', 'cancelled'))::int AS failed,
+               count(DISTINCT t.tenant_id)::int AS affected_tenants,
+               count(DISTINCT s.user_id) FILTER (WHERE s.user_id IS NOT NULL)::int AS affected_users,
+               count(*) FILTER (WHERE lower(t.tool_name) = 'skill')::int AS skill_calls,
+               count(*) FILTER (
+                 WHERE lower(t.tool_name) = 'skill' AND NULLIF(t.metadata->>'skillName', '') IS NOT NULL
+               )::int AS skill_calls_tracked
+        FROM ${this.toolInvocationsTable} t
+        LEFT JOIN ${this.sessionsTable} s ON s.session_id = t.session_id
+        WHERE ${where}
+      `, params),
+      this.options.pool.query<AdminToolInvocationByToolRow>(`
+        SELECT t.tool_name,
+               count(*)::int AS count,
+               count(*) FILTER (WHERE t.status IN ('failed', 'cancelled'))::int AS failed,
+               avg(EXTRACT(EPOCH FROM (t.completed_at - t.started_at)) * 1000)
+                 FILTER (WHERE t.completed_at IS NOT NULL) AS avg_duration_ms,
+               max(t.started_at) AS last_called_at
+        FROM ${this.toolInvocationsTable} t
+        LEFT JOIN ${this.sessionsTable} s ON s.session_id = t.session_id
+        WHERE ${where}
+        GROUP BY t.tool_name
+        ORDER BY count DESC, t.tool_name ASC
+        LIMIT 100
+      `, params),
+      this.options.pool.query<AdminToolInvocationBySkillRow>(`
+        SELECT NULLIF(t.metadata->>'skillName', '') AS skill_name,
+               count(*)::int AS count,
+               count(*) FILTER (WHERE t.status IN ('failed', 'cancelled'))::int AS failed,
+               count(DISTINCT t.tenant_id)::int AS affected_tenants,
+               count(DISTINCT s.user_id) FILTER (WHERE s.user_id IS NOT NULL)::int AS affected_users,
+               max(t.started_at) AS last_called_at
+        FROM ${this.toolInvocationsTable} t
+        LEFT JOIN ${this.sessionsTable} s ON s.session_id = t.session_id
+        WHERE ${where} AND NULLIF(t.metadata->>'skillName', '') IS NOT NULL
+        GROUP BY skill_name
+        ORDER BY count DESC, skill_name ASC
+        LIMIT 100
+      `, params),
+    ]);
+    const summary = summaryResult.rows[0];
+    return {
+      items: itemsResult.rows.map(rowToAdminEntry),
+      summary: {
+        total: summary?.total ?? 0,
+        failed: summary?.failed ?? 0,
+        affectedTenants: summary?.affected_tenants ?? 0,
+        affectedUsers: summary?.affected_users ?? 0,
+        skillCalls: summary?.skill_calls ?? 0,
+        skillCallsTracked: summary?.skill_calls_tracked ?? 0,
+      },
+      byTool: byToolResult.rows.map((row) => ({
+        toolName: row.tool_name,
+        count: row.count,
+        failed: row.failed,
+        avgDurationMs: nullableNumber(row.avg_duration_ms),
+        lastCalledAt: toIso(row.last_called_at),
+      })),
+      bySkill: bySkillResult.rows.map((row) => ({
+        skillName: row.skill_name,
+        count: row.count,
+        failed: row.failed,
+        affectedTenants: row.affected_tenants,
+        affectedUsers: row.affected_users,
+        lastCalledAt: toIso(row.last_called_at),
+      })),
+    };
+  }
+}
+
+interface AdminToolInvocationRow {
+  invocation_id: string;
+  run_id: string;
+  session_id: string;
+  tenant_id: string;
+  user_id: string | null;
+  username: string | null;
+  tool_name: string;
+  skill_name: string | null;
+  execution_target: ExecutionTargetKind;
+  status: ToolInvocationStatus;
+  started_at: Date | string;
+  completed_at: Date | string | null;
+  duration_ms: string | number | null;
+  error: string | null;
+}
+
+interface AdminToolInvocationSummaryRow {
+  total: number;
+  failed: number;
+  affected_tenants: number;
+  affected_users: number;
+  skill_calls: number;
+  skill_calls_tracked: number;
+}
+
+interface AdminToolInvocationByToolRow {
+  tool_name: string;
+  count: number;
+  failed: number;
+  avg_duration_ms: string | number | null;
+  last_called_at: Date | string;
+}
+
+interface AdminToolInvocationBySkillRow {
+  skill_name: string;
+  count: number;
+  failed: number;
+  affected_tenants: number;
+  affected_users: number;
+  last_called_at: Date | string;
 }
 
 interface ToolInvocationRow {
@@ -318,6 +527,31 @@ function rowToRecord(row: ToolInvocationRow): ToolInvocationRecord {
     ...(row.error ? { error: row.error } : {}),
     metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) as Record<string, unknown> : row.metadata,
   };
+}
+
+function rowToAdminEntry(row: AdminToolInvocationRow): AdminToolInvocationEntry {
+  return {
+    invocationId: row.invocation_id,
+    runId: row.run_id,
+    sessionId: row.session_id,
+    tenantId: row.tenant_id,
+    userId: row.user_id,
+    username: row.username,
+    toolName: row.tool_name,
+    skillName: row.skill_name,
+    executionTarget: row.execution_target,
+    status: row.status,
+    startedAt: toIso(row.started_at),
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
+    durationMs: nullableNumber(row.duration_ms),
+    error: row.error,
+  };
+}
+
+function nullableNumber(value: string | number | null): number | null {
+  if (value === null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function toIso(value: Date | string): string {

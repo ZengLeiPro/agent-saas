@@ -4,11 +4,11 @@ import { Archive, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { AdminEntityTable, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
+import { AdminEntityTable, AdminErrorAlert, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
-import { formatWorkspaceStatus } from "../displayText";
+import { TENANT_LABEL, formatWorkspaceStatus } from "../displayText";
 import { formatBytes, formatNumber, formatTime } from "../format";
 import type { SystemMetricsResponse, SystemStorageResponse, WorkspaceUsageRecord, WorkspaceUsageStatus } from "../types";
 
@@ -121,7 +121,7 @@ export function InfraPage() {
     return (
       <div className="flex h-64 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
-        加载基础设施数据...
+        正在加载系统资源…
       </div>
     );
   }
@@ -129,8 +129,8 @@ export function InfraPage() {
   return (
     <div className="w-full space-y-5">
       <SettingsPanelHeader
-        title="基础设施"
-        description="磁盘、事件库、证书和工作区存储水位。"
+        title="系统资源"
+        description="查看服务器磁盘、用户文件、平台数据和 HTTPS 证书是否需要处理。"
         actions={
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => void onScan()} disabled={scanning || refreshing}>
@@ -145,37 +145,33 @@ export function InfraPage() {
         }
       />
 
-      {error && (
-        <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          加载失败：{error}
-        </div>
-      )}
+      {error && <AdminErrorAlert error={error} />}
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard
-          title="根盘用量"
+          title="服务器磁盘"
           value={rootDisk ? `${rootDisk.valueNum.toFixed(1)}%` : "—"}
           description={`${formatBytes(rootDetail?.usedBytes)} / ${formatBytes(rootDetail?.totalBytes)}`}
           tone={(rootDisk?.valueNum ?? 0) >= 90 ? "bad" : (rootDisk?.valueNum ?? 0) >= 80 ? "warn" : "good"}
         />
         <MetricCard
-          title="NAS 已用"
+          title="用户文件存储"
           value={formatBytes(nasUsed)}
-          description="容量型 NAS 不展示百分比"
+          description="NAS 容量型存储"
         />
         <MetricCard
-          title="事件库最大表"
+          title="平台数据最大表"
           value={pgTopTables[0] ? formatBytes(pgTopTables[0].valueNum) : "—"}
-          description={pgTopTables[0]?.label ?? "runtime_*"}
+          description={pgTopTables[0]?.label ?? "暂无平台数据"}
         />
         <MetricCard
-          title="Workspace 总量"
+          title="用户文件目录"
           value={formatBytes(storage?.summary.totalBytes)}
-          description={`孤儿 ${formatNumber(storage?.summary.orphanCount)} 个 / ${formatBytes(storage?.summary.orphanBytes)}`}
+          description={`无主目录 ${formatNumber(storage?.summary.orphanCount)} 个 / ${formatBytes(storage?.summary.orphanBytes)}`}
           tone={(storage?.summary.orphanCount ?? 0) > 20 || (storage?.summary.orphanBytes ?? 0) > 10 * 1024 ** 3 ? "warn" : "default"}
         />
         <MetricCard
-          title="TLS 证书"
+          title="HTTPS 证书"
           value={tlsDaysLeft == null ? "—" : `${tlsDaysLeft.toFixed(1)} 天`}
           description="最短剩余有效期"
           tone={tlsDaysLeft == null ? "default" : tlsDaysLeft < 7 ? "bad" : tlsDaysLeft < 14 ? "warn" : "good"}
@@ -183,12 +179,12 @@ export function InfraPage() {
       </div>
 
       <AdminEntityTable
-        title="租户存储"
+        title="各组织文件用量"
         rows={storage?.summary.byTenant ?? []}
         rowKey={row => row.tenantId}
         columns={[
-          { key: "tenant", header: "租户", cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
-          { key: "count", header: "Workspace", className: "text-right", cell: row => formatNumber(row.workspaceCount) },
+          { key: "tenant", header: TENANT_LABEL, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
+          { key: "count", header: "文件目录", className: "text-right", cell: row => formatNumber(row.workspaceCount) },
           { key: "bytes", header: "总量", className: "text-right", cell: row => formatBytes(row.bytes) },
           {
             key: "ratio",
@@ -200,11 +196,11 @@ export function InfraPage() {
             },
           },
         ]}
-        emptyText="暂无租户存储快照"
+        emptyText="暂无组织文件用量数据"
       />
 
       <AdminEntityTable
-        title="Workspace 明细"
+        title="文件目录明细"
         rows={workspaceRows}
         rowKey={row => row.path}
         toolbar={
@@ -224,7 +220,7 @@ export function InfraPage() {
         }
         columns={[
           { key: "path", header: "路径", className: "max-w-[320px]", cell: row => <span className="font-mono text-xs">{row.path}</span> },
-          { key: "tenant", header: "租户", cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
+          { key: "tenant", header: TENANT_LABEL, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
           { key: "username", header: "用户名", cell: row => row.username ? <span className="font-mono text-xs">{row.username}</span> : "—" },
           { key: "realName", header: "姓名", cell: row => row.realName ?? "—" },
           { key: "status", header: "状态", cell: row => <WorkspaceStatusBadge status={row.status} /> },
@@ -276,7 +272,7 @@ export function InfraPage() {
             ),
           },
         ]}
-        emptyText="暂无 workspace 快照"
+        emptyText="暂无文件目录数据"
       />
     </div>
   );

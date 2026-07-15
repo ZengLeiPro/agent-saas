@@ -208,7 +208,7 @@ export async function buildCostAttention(options: Pick<AttentionBuildOptions, 'b
   const result = await store.pool.query<{ cost: string }>(
     `SELECT COALESCE(sum(actual_cost_yuan_micro),0)::text AS cost
      FROM ${store.usageEventsTable}
-     WHERE created_at >= date_trunc('day', now())`,
+     WHERE created_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')`,
   );
   const todayCostYuan = Number(result.rows[0]?.cost ?? 0) / 1_000_000;
   if (todayCostYuan <= threshold) return [];

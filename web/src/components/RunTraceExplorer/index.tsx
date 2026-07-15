@@ -13,7 +13,7 @@ import { useCallback, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { RUN_LABEL, RUN_TRACE_LABEL } from "@/components/PlatformAdmin/displayText";
+import { RUN_TRACE_LABEL } from "@/components/PlatformAdmin/displayText";
 
 import { RunDetailView } from "./RunDetailView";
 import { RunListView } from "./RunListView";
@@ -36,7 +36,7 @@ export function RunTraceExplorer({
     <div className="flex h-full min-h-0 w-full flex-col">
       <SettingsPanelHeader
         title={RUN_TRACE_LABEL}
-        description={`逐条${RUN_LABEL}复盘 Agent 执行过程：事件时间线、工具调用、审批与成本明细。`}
+        description="排查失败时，先按组织、用户或对话筛选，再打开某次执行查看失败原因和工具调用。"
       />
       <div className="min-h-0 flex-1 overflow-auto">
         {/* 列表保持挂载（隐藏）以保留筛选与滚动状态；详情按需挂载 */}

@@ -388,6 +388,8 @@ export type PlatformEvent =
     toolCallId: string;
     toolId: string;
     toolName: string;
+    /** Skill 工具实际加载的技能名；其它工具为空。 */
+    skillName?: string;
     risk: ToolRisk;
     approvalId?: string;
     authorization: ToolAuthorization;

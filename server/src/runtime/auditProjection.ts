@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS tool_audit (
   tool_call_id  VARCHAR   NOT NULL,
   tool_id       VARCHAR   NOT NULL,
   tool_name     VARCHAR   NOT NULL,
+  skill_name    VARCHAR,
   risk          VARCHAR   NOT NULL,
   approval_id   VARCHAR,
   authorization_source       VARCHAR NOT NULL,
@@ -96,6 +97,10 @@ const ALTER_TOOL_AUDIT_TENANT = `
 ALTER TABLE tool_audit ADD COLUMN IF NOT EXISTS tenant_id VARCHAR NOT NULL DEFAULT '${LEGACY_TENANT_ID}';
 `;
 
+const ALTER_TOOL_AUDIT_SKILL = `
+ALTER TABLE tool_audit ADD COLUMN IF NOT EXISTS skill_name VARCHAR;
+`;
+
 const SCHEMA_WATERMARK = `
 CREATE TABLE IF NOT EXISTS projection_watermark (
   file_path   VARCHAR PRIMARY KEY,
@@ -108,6 +113,8 @@ const SCHEMA_INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_session     ON tool_audit(session_id);`,
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_run         ON tool_audit(run_id);`,
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_ts          ON tool_audit(timestamp);`,
+  `CREATE INDEX IF NOT EXISTS idx_tool_audit_tool        ON tool_audit(tool_name, timestamp);`,
+  `CREATE INDEX IF NOT EXISTS idx_tool_audit_skill       ON tool_audit(skill_name, timestamp);`,
   // PR 10：(tenant, *) 复合索引为 admin 跨 session / 跨 runId 加 tenantId where 提速
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_tenant_run  ON tool_audit(tenant_id, run_id);`,
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_tenant_sess ON tool_audit(tenant_id, session_id);`,
@@ -131,6 +138,13 @@ export class AuditProjection {
     } catch (err) {
       // ALTER 失败（不太可能）记录但不阻塞——SCHEMA_TOOL_AUDIT 已保证新建表有该列
       this.logger.warn?.('[audit projection] ALTER tool_audit ADD tenant_id failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    try {
+      await this.db.run(ALTER_TOOL_AUDIT_SKILL);
+    } catch (err) {
+      this.logger.warn?.('[audit projection] ALTER tool_audit ADD skill_name failed', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -308,15 +322,15 @@ export class AuditProjection {
       try {
         await this.db.run(
           `INSERT INTO tool_audit (
-             id, timestamp, session_id, run_id, tenant_id, tool_call_id, tool_id, tool_name,
+             id, timestamp, session_id, run_id, tenant_id, tool_call_id, tool_id, tool_name, skill_name,
              risk, approval_id, authorization_source, authorization_json,
              execution_target, status, duration_ms,
              execution_invocations_json, error
            ) VALUES (
              $1, CAST($2 AS TIMESTAMP), $3, $4, $5, $6, $7, $8,
-             $9, $10, $11, $12,
-             $13, $14, $15,
-             $16, $17
+             $9, $10, $11, $12, $13,
+             $14, $15, $16,
+             $17, $18
            ) ON CONFLICT (id) DO NOTHING;`,
           [
             e.id,
@@ -328,6 +342,7 @@ export class AuditProjection {
             e.toolCallId,
             e.toolId,
             e.toolName,
+            e.skillName ?? null,
             e.risk,
             e.approvalId ?? null,
             e.authorization.source,

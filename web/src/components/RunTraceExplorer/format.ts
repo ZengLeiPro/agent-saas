@@ -3,6 +3,7 @@
 /** 人民币成本：默认保留 4 位（成本只展示累计口径） */
 export function formatYuan(n: number | null | undefined, digits = 4): string {
   if (n == null || !Number.isFinite(n)) return "—";
+  if (n > 0 && n < 0.01) return "不足 ¥0.01";
   return `¥${n.toFixed(digits)}`;
 }
 
@@ -12,13 +13,13 @@ export function formatYuan(n: number | null | undefined, digits = 4): string {
  */
 export function formatMs(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 1000) return `${Math.round(ms)} 毫秒`;
   const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
+  if (s < 60) return `${s.toFixed(1)} 秒`;
   const m = s / 60;
-  if (m < 60) return `${Math.floor(m)}min ${Math.round(s % 60)}s`;
+  if (m < 60) return `${Math.floor(m)} 分 ${Math.round(s % 60)} 秒`;
   const h = m / 60;
-  return `${Math.floor(h)}h ${Math.round(m % 60)}min`;
+  return `${Math.floor(h)} 小时 ${Math.round(m % 60)} 分`;
 }
 
 /** ISO 时间 → zh-CN "MM-dd HH:mm:ss"；空值显示 "—" */

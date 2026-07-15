@@ -124,6 +124,56 @@ describe('platform observability router', () => {
     }));
   });
 
+  it('sessions list forwards business filters to the projection store', async () => {
+    const list = vi.fn(async () => ({ items: [] }));
+    const sessionProjectionStore = { list } as any;
+    const updatedFrom = '2026-07-01T00:00:00.000Z';
+
+    await withApp(PLATFORM_ADMIN, { sessionProjectionStore }, async (baseUrl) => {
+      const params = new URLSearchParams({
+        tenantId: 'wain',
+        userId: 'u-1',
+        q: '采购',
+        channel: 'dingtalk',
+        model: 'glm-5.2',
+        updatedFrom,
+      });
+      const res = await fetch(`${baseUrl}/api/admin/sessions?${params.toString()}`);
+      expect(res.status).toBe(200);
+    });
+
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'wain',
+      userId: 'u-1',
+      titleContains: '采购',
+      channel: 'dingtalk',
+      model: 'glm-5.2',
+      updatedFrom,
+    }));
+  });
+
+  it('global search finds conversations by partial title', async () => {
+    const query = vi.fn(async () => ({
+      rows: [{ session_id: SESSION_ID, tenant_id: 'wain', user_id: 'u-1', title: '采购合同复核' }],
+    }));
+    const sessionProjectionStore = { pool: { query }, sessionsTable: 'runtime_sessions' } as any;
+
+    await withApp(PLATFORM_ADMIN, { sessionProjectionStore }, async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/admin/search?q=${encodeURIComponent('采购')}`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      expect(body.matches).toContainEqual(expect.objectContaining({
+        kind: 'session',
+        id: SESSION_ID,
+        title: '采购合同复核',
+      }));
+    });
+
+    const [sql, params] = query.mock.calls[0]! as unknown as [unknown, unknown[]];
+    expect(String(sql)).toContain('position(lower($1) in lower(title))');
+    expect(params).toEqual(['采购']);
+  });
+
   it('runs list pushes tenant slicing into SQL WHERE', async () => {
     const query = vi.fn(async () => ({
       rows: [{
@@ -142,7 +192,7 @@ describe('platform observability router', () => {
     const runStore = { pool: { query }, runsTable: 'runtime_runs' } as any;
 
     await withApp(WAIN_ADMIN, { runStore, userStore }, async (baseUrl) => {
-      const res = await fetch(`${baseUrl}/api/admin/runs?status=active`);
+      const res = await fetch(`${baseUrl}/api/admin/runs?status=active&reasonContains=${encodeURIComponent('quota exceeded')}`);
       expect(res.status).toBe(200);
       const body = await res.json() as any;
       expect(body.items[0]).toMatchObject({
@@ -155,7 +205,60 @@ describe('platform observability router', () => {
 
     const [sql, params] = query.mock.calls[0]! as unknown as [unknown, unknown[]];
     expect(String(sql)).toContain('tenant_id');
+    expect(String(sql)).toContain('status_reason');
     expect(params).toContain('wain');
+    expect(params).toContain('quota exceeded');
+  });
+
+  it('tool invocation analysis forwards business filters and enforces caller tenant', async () => {
+    const listForAdmin = vi.fn(async () => ({
+      items: [{
+        invocationId: 'inv-1',
+        runId: RUN_ID,
+        sessionId: SESSION_ID,
+        tenantId: 'wain',
+        userId: 'u-1',
+        username: 'alice',
+        toolName: 'Skill',
+        skillName: 'ky-data-query',
+        executionTarget: 'server-remote',
+        status: 'failed',
+        startedAt: '2026-07-06T10:00:00.000Z',
+        completedAt: '2026-07-06T10:00:01.000Z',
+        durationMs: 1000,
+        error: 'quota exceeded',
+      }],
+      summary: { total: 1, failed: 1, affectedTenants: 1, affectedUsers: 1, skillCalls: 1, skillCallsTracked: 1 },
+      byTool: [],
+      bySkill: [],
+    }));
+    const toolInvocationStore = { listForAdmin } as any;
+
+    await withApp(WAIN_ADMIN, { toolInvocationStore, userStore }, async (baseUrl) => {
+      const params = new URLSearchParams({
+        tenantId: 'wain',
+        userId: 'u-1',
+        toolName: 'Skill',
+        skillName: 'ky-data-query',
+        status: 'failed',
+        reasonContains: 'quota',
+        hours: '72',
+      });
+      const res = await fetch(`${baseUrl}/api/admin/tool-invocations?${params.toString()}`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      expect(body.items[0]).toMatchObject({ realName: 'Alice Chen', skillName: 'ky-data-query' });
+    });
+
+    expect(listForAdmin).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'wain',
+      userId: 'u-1',
+      toolName: 'Skill',
+      skillName: 'ky-data-query',
+      status: 'failed',
+      reasonContains: 'quota',
+      hours: 72,
+    }));
   });
 
   it('overview snapshot exposes session meta projection health counters', async () => {
@@ -177,6 +280,35 @@ describe('platform observability router', () => {
       });
       expect(body.health).toHaveProperty('dispatch');
     });
+  });
+
+  it('overview trends returns Beijing-day series and distinguishes missing sources', async () => {
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    const runQuery = vi.fn(async () => ({ rows: [{
+      day: today, runs: 4, active_users: 2, completed: 3, failed: 1, cancelled: 0,
+    }] }));
+    const sessionQuery = vi.fn(async () => ({ rows: [{ day: today, sessions: 2 }] }));
+
+    await withApp(PLATFORM_ADMIN, {
+      runStore: { pool: { query: runQuery }, runsTable: 'runtime_runs' } as any,
+      sessionProjectionStore: { pool: { query: sessionQuery }, sessionsTable: 'runtime_sessions' } as any,
+    }, async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/admin/overview/trends?days=7`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      expect(body).toMatchObject({ available: true, days: 7, timezone: 'Asia/Shanghai' });
+      expect(body.daily).toHaveLength(7);
+      expect(body.daily.at(-1)).toMatchObject({
+        date: today, activeUsers: 2, sessions: 2, runs: 4, completionRate: 0.75,
+      });
+    });
+
+    const [runSql] = runQuery.mock.calls[0]! as unknown as [unknown, unknown[]];
+    const [sessionSql] = sessionQuery.mock.calls[0]! as unknown as [unknown, unknown[]];
+    expect(String(runSql)).toContain("AT TIME ZONE 'Asia/Shanghai'");
+    expect(String(sessionSql)).toContain("AT TIME ZONE 'Asia/Shanghai'");
   });
 });
 

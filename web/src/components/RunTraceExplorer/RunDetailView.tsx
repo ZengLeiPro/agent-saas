@@ -8,8 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/components/UsageDashboard/format";
-import { EntityLink } from "@/components/PlatformAdmin/common";
-import { RUN_LABEL, WORKSPACE_LABEL, formatChannel, formatExecutionTarget } from "@/components/PlatformAdmin/displayText";
+import { AdminErrorAlert, EntityLink } from "@/components/PlatformAdmin/common";
+import { RUN_LABEL, SESSION_LABEL, WORKSPACE_LABEL, formatChannel, formatExecutionTarget, formatToolName } from "@/components/PlatformAdmin/displayText";
+import { classifyFailureReason } from "@/components/PlatformAdmin/errorText";
+import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
 
 import { runTraceApi } from "./api";
 import { formatMs, formatTime, formatYuan, runDurationMs } from "./format";
@@ -63,6 +65,7 @@ function StatItem({ label, children }: { label: string; children: React.ReactNod
 }
 
 export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void }) {
+  const { labelFor } = useModelDisplayMap();
   const [data, setData] = useState<RunEventsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -158,9 +161,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
     return (
       <div className="space-y-4">
         {backButton}
-        <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          加载失败：{error}
-        </div>
+        <AdminErrorAlert error={error} />
       </div>
     );
   }
@@ -170,6 +171,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
   const { run, billing } = data;
   const duration = runDurationMs(run);
   const failureReason = run.statusReason ?? runFinished?.error ?? null;
+  const friendlyFailure = failureReason ? classifyFailureReason(failureReason) : null;
   const maxToolDuration = Math.max(...toolAgg.map((t) => t.totalDurationMs), 1);
 
   return (
@@ -200,7 +202,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
             <RunStatusBadge status={run.status} />
             <span className="text-xs text-muted-foreground">{RUN_LABEL}</span>
             <EntityLink kind="run" id={data.runId} short={12} />
-            <span className="text-xs text-muted-foreground">会话</span>
+            <span className="text-xs text-muted-foreground">{SESSION_LABEL}</span>
             <EntityLink kind="session" id={data.sessionId} short={12} />
             <span className="ml-auto text-xs text-muted-foreground tabular-nums">
               {formatTime(run.startedAt ?? run.requestedAt)} → {formatTime(run.completedAt ?? run.failedAt ?? run.cancelledAt)}
@@ -210,8 +212,8 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
             <StatItem label="耗时">{formatMs(duration)}</StatItem>
             <StatItem label="轮次">{runFinished?.numTurns != null ? runFinished.numTurns : "—"}</StatItem>
             <StatItem label="模型">
-              <span className="font-mono text-xs" title={billing.models.join(", ") || (run.model ?? "")}>
-                {billing.models.length > 0 ? billing.models.join(", ") : run.model ?? "—"}
+              <span className="text-xs" title={billing.models.join(", ") || (run.model ?? "")}>
+                {billing.models.length > 0 ? billing.models.map(labelFor).join("、") : run.model ? labelFor(run.model) : "—"}
               </span>
             </StatItem>
             <StatItem label="本次运行成本">
@@ -233,9 +235,18 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
             </StatItem>
             <StatItem label="累计输入 Token">{formatTokens(run.cumulativeInputTokens)}</StatItem>
           </div>
-          {failureReason && (
+          {friendlyFailure && (
             <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              失败原因：{failureReason}
+              <div className="font-medium">失败原因：{friendlyFailure.summary}</div>
+              {friendlyFailure.suggestion && <div className="mt-1 text-destructive/80">{friendlyFailure.suggestion}</div>}
+              {friendlyFailure.technicalDetail && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer select-none">技术详情</summary>
+                  <div className="mt-1 whitespace-pre-wrap break-all rounded bg-background/70 p-2 font-mono text-foreground">
+                    {friendlyFailure.technicalDetail}
+                  </div>
+                </details>
+              )}
             </div>
           )}
         </CardContent>
@@ -319,7 +330,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
                   {toolAgg.map((t) => (
                     <div key={t.toolName} className="text-xs">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="truncate font-mono" title={t.toolName}>{t.toolName}</span>
+                        <span className="truncate" title={t.toolName}>{formatToolName(t.toolName)}</span>
                         <span className="shrink-0 text-muted-foreground tabular-nums">
                           {t.calls} 次 · {formatMs(t.totalDurationMs)}
                           {t.errors > 0 && <span className="ml-1 text-destructive">{t.errors} 失败</span>}
@@ -361,8 +372,8 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
                     {billing.requests.map((req) => (
                       <TableRow key={`${req.requestIndex}-${req.createdAt}`}>
                         <TableCell className="text-xs tabular-nums">{req.requestIndex}</TableCell>
-                        <TableCell className="max-w-32 truncate font-mono text-xs" title={req.actualModel}>
-                          {req.actualModel}
+                        <TableCell className="max-w-32 truncate text-xs" title={req.actualModel}>
+                          {labelFor(req.actualModel)}
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-right font-mono text-xs tabular-nums">
                           {formatTokens(req.inputTokens)}/{formatTokens(req.cachedInputTokens)}/{formatTokens(req.outputTokens)}

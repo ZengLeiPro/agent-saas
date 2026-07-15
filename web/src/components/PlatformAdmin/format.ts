@@ -5,6 +5,7 @@ export function formatNumber(value: number | null | undefined): string {
 
 export function formatYuan(value: number | null | undefined, digits = 2): string {
   if (value == null || !Number.isFinite(value)) return "—";
+  if (value > 0 && value < 0.01) return "不足 ¥0.01";
   return `¥${value.toFixed(digits)}`;
 }
 
@@ -23,7 +24,7 @@ export function formatBytes(value: number | null | undefined): string {
 
 export function formatUsd(value: number | null | undefined, digits = 4): string {
   if (value == null || !Number.isFinite(value)) return "—";
-  return `$${value.toFixed(digits)}`;
+  return `US$${value.toFixed(digits)}`;
 }
 
 export function formatCredits(value: number | null | undefined): string {

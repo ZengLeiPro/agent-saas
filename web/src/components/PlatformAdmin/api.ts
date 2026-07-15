@@ -5,13 +5,17 @@ import type {
   PlatformRunRecord,
   PlatformSearchMatch,
   PlatformSessionRecord,
+  PlatformTrendResponse,
   RuntimeOperationsResponse,
   SandboxRecord,
   SessionDetailResponse,
   AlertingStatus,
+  BillingAuditTrendResponse,
   SystemMetricsResponse,
   SystemStorageResponse,
   TenantOverviewResponse,
+  ToolInvocationAnalysisResponse,
+  ToolInvocationStatus,
   UserSummaryResponse,
 } from "./types";
 import type { UserInfo } from "@/components/UserManager/types";
@@ -69,6 +73,12 @@ export const platformAdminApi = {
   overviewSnapshot(): Promise<OverviewSnapshot> {
     return getJson(buildAdminApiPath("/overview/snapshot"));
   },
+  overviewTrends(days = 14): Promise<PlatformTrendResponse> {
+    return getJson(buildAdminApiPath("/overview/trends", { days }));
+  },
+  billingTrend(days = 14): Promise<BillingAuditTrendResponse> {
+    return getJson(buildAdminApiPath("/billing/audit", { days }));
+  },
   tenantOverview(tenantId?: string): Promise<TenantOverviewResponse> {
     return getJson(buildAdminApiPath("/tenants/overview", { tenantId }));
   },
@@ -81,8 +91,13 @@ export const platformAdminApi = {
   sessions(query: {
     tenantId?: string;
     userId?: string;
+    q?: string;
     status?: string;
     kind?: "user" | "subagent";
+    model?: string;
+    channel?: string;
+    updatedFrom?: string;
+    updatedTo?: string;
     includeDeleted?: boolean;
     cursor?: string;
     limit?: number;
@@ -97,11 +112,25 @@ export const platformAdminApi = {
     userId?: string;
     sessionId?: string;
     status?: string;
+    reasonContains?: string;
     hours?: number;
     cursor?: string;
     limit?: number;
   } = {}): Promise<PagedResponse<PlatformRunRecord>> {
     return getJson(buildAdminApiPath("/runs", query));
+  },
+  toolInvocations(query: {
+    tenantId?: string;
+    userId?: string;
+    toolName?: string;
+    skillName?: string;
+    status?: ToolInvocationStatus;
+    reasonContains?: string;
+    hours?: number;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<ToolInvocationAnalysisResponse> {
+    return getJson(buildAdminApiPath("/tool-invocations", query));
   },
   runtimeOperations(): Promise<RuntimeOperationsResponse> {
     return getJson("/api/admin/runtime-operations");

@@ -1,6 +1,8 @@
-export const RUN_LABEL = "运行记录";
-export const RUN_SHORT_LABEL = "运行";
-export const RUN_TRACE_LABEL = "运行追踪";
+export const TENANT_LABEL = "组织";
+export const SESSION_LABEL = "对话";
+export const RUN_LABEL = "执行记录";
+export const RUN_SHORT_LABEL = "执行记录";
+export const RUN_TRACE_LABEL = "执行记录排查";
 export const SANDBOX_LABEL = "执行环境";
 export const WORKSPACE_LABEL = "工作区";
 
@@ -15,7 +17,7 @@ export const RUN_STATUS_LABELS: Record<string, string> = {
   completed: "已完成",
   failed: "失败",
   cancelled: "已取消",
-  orphaned: "孤儿态",
+  orphaned: "意外中断",
 };
 
 export const SANDBOX_PHASE_LABELS: Record<string, string> = {
@@ -29,9 +31,9 @@ export const SANDBOX_PHASE_LABELS: Record<string, string> = {
 
 export const ENTITY_KIND_LABELS: Record<string, string> = {
   run: RUN_SHORT_LABEL,
-  session: "会话",
+  session: SESSION_LABEL,
   user: "用户",
-  tenant: "租户",
+  tenant: TENANT_LABEL,
   sandbox: SANDBOX_LABEL,
   workspace: WORKSPACE_LABEL,
 };
@@ -42,8 +44,8 @@ export const ROLE_LABELS: Record<string, string> = {
 };
 
 export const SESSION_KIND_LABELS: Record<string, string> = {
-  user: "用户会话",
-  subagent: "子 Agent",
+  user: "用户对话",
+  subagent: "子任务",
 };
 
 export const CHANNEL_LABELS: Record<string, string> = {
@@ -52,7 +54,7 @@ export const CHANNEL_LABELS: Record<string, string> = {
   dingtalk: "钉钉",
   cron: "定时任务",
   api: "API",
-  subagent: "子 Agent",
+  subagent: "子任务",
   title: "标题生成",
   embedding: "向量化",
   both: "钉钉 + Web 端",
@@ -68,27 +70,27 @@ export const HEALTH_STATUS_LABELS: Record<string, string> = {
 };
 
 export const ATTENTION_KIND_LABELS: Record<string, string> = {
-  failed_run: "运行失败",
-  stale_run: "运行卡住",
+  failed_run: "执行失败",
+  stale_run: "执行卡住",
   broken_sandbox: "执行环境异常",
   transient_sandbox: "执行环境卡住",
   hand_failure: "执行环境故障",
-  disk_root_high: "根盘水位高",
-  workspace_scan_stale: "工作区扫描过期",
-  orphan_workspace: "孤儿工作区",
+  disk_root_high: "服务器磁盘空间不足",
+  workspace_scan_stale: "文件目录统计长时间未更新",
+  orphan_workspace: "无主文件目录",
   tls_cert_expiring: "证书即将过期",
   cost_daily_high: "单日成本过高",
 };
 
 export const WORKSPACE_STATUS_LABELS: Record<string, string> = {
   active: "活跃",
-  soft_deleted: "软删残留",
-  orphan_tenant: "孤儿组织",
-  orphan_user: "孤儿用户",
+  soft_deleted: "待清理",
+  orphan_tenant: "所属组织已不存在",
+  orphan_user: "所属用户已不存在",
 };
 
 export const EXECUTION_TARGET_LABELS: Record<string, string> = {
-  "server-local": "服务端本机",
+  "server-local": "平台服务器",
   "server-container": "隔离执行环境",
   "server-remote": "远端执行环境",
   client: "客户端执行环境",
@@ -103,6 +105,29 @@ export const TOOL_RISK_LABELS: Record<string, string> = {
   credentialed_external_write: "带凭据外部写入",
 };
 
+export const TOOL_INVOCATION_STATUS_LABELS: Record<string, string> = {
+  running: "正在调用",
+  completed: "成功",
+  failed: "失败",
+  cancelled: "已取消",
+};
+
+export const TOOL_NAME_LABELS: Record<string, string> = {
+  Skill: "技能",
+  Shell: "命令执行",
+  Bash: "命令执行",
+  Read: "读取文件",
+  Write: "写入文件",
+  Edit: "编辑文件",
+  Glob: "查找文件",
+  Grep: "搜索内容",
+  WebSearch: "网页搜索",
+  WebFetch: "读取网页",
+  AskUserQuestion: "向用户提问",
+  Agent: "子任务",
+  GenerateImage: "生成图片",
+};
+
 export const FAILURE_CLASS_LABELS: Record<string, string> = {
   auth: "认证异常",
   timeout: "超时",
@@ -111,9 +136,9 @@ export const FAILURE_CLASS_LABELS: Record<string, string> = {
   unknown: "未分类",
 };
 
-export function displayText(map: Record<string, string>, value: string | null | undefined, fallback = "未知"): string {
+export function displayText(map: Record<string, string>, value: string | null | undefined, fallback = "其他状态"): string {
   if (!value) return fallback;
-  return map[value] ?? value;
+  return map[value] ?? fallback;
 }
 
 export function formatRunStatus(status: string | null | undefined): string {
@@ -160,7 +185,7 @@ export function formatBusyState(busy: boolean | null | undefined): string {
 
 export function formatImageFreshness(stale: boolean | null | undefined): string {
   if (stale == null) return "未知";
-  return stale ? "镜像过期" : "当前版本";
+  return stale ? "运行程序版本过旧" : "当前版本";
 }
 
 export function formatLifecycleState(enabled: boolean | null | undefined): string {
@@ -175,6 +200,15 @@ export function formatManagedState(managed: boolean | null | undefined): string 
 
 export function formatAttentionKind(kind: string | null | undefined): string {
   return displayText(ATTENTION_KIND_LABELS, kind, "异常");
+}
+
+export function formatToolInvocationStatus(status: string | null | undefined): string {
+  return displayText(TOOL_INVOCATION_STATUS_LABELS, status, "未知状态");
+}
+
+export function formatToolName(name: string | null | undefined): string {
+  if (!name) return "未知工具";
+  return TOOL_NAME_LABELS[name] ?? name;
 }
 
 export function formatExecutionTarget(target: string | null | undefined): string {
@@ -194,11 +228,11 @@ export function formatAttentionTitle(item: { kind?: string; title?: string }): s
   switch (item.kind) {
     case "failed_run":
       return title.startsWith("Run failed: ")
-        ? `运行失败：${title.slice("Run failed: ".length)}`
-        : title || "运行失败";
+        ? `执行失败：${title.slice("Run failed: ".length)}`
+        : title || "执行失败";
     case "stale_run": {
       const match = /^Stale (.+) run$/.exec(title);
-      return match ? `${formatRunStatus(match[1])}的运行记录长期未变化` : title || "运行卡住";
+      return match ? `${formatRunStatus(match[1])}的执行长时间没有进展` : title || "执行卡住";
     }
     case "transient_sandbox": {
       const match = /^Sandbox stuck in (.+)$/.exec(title);

@@ -15,7 +15,7 @@ import { EntityIcons } from "@/lib/icons";
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { RUN_SHORT_LABEL, formatExecutionTarget, formatFailureClass, formatToolRisk } from "@/components/PlatformAdmin/displayText";
+import { RUN_SHORT_LABEL, formatExecutionTarget, formatFailureClass, formatToolName, formatToolRisk } from "@/components/PlatformAdmin/displayText";
 
 import { formatMs, formatTime } from "./format";
 import { RUN_STATUS_LABELS, finishSubtypeClass, finishSubtypeLabel } from "./StatusBadge";
@@ -269,7 +269,9 @@ export function ToolCallRow({
       >
         {open ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
         <span className={cn("size-2 shrink-0 rounded-full", dotClass)} />
-        <span className="font-mono font-medium">{name}</span>
+        <span className="font-medium">{formatToolName(name)}</span>
+        {formatToolName(name) !== name && <span className="font-mono text-[10px] text-muted-foreground">{name}</span>}
+        {audit?.skillName && <Badge variant="outline" className="font-mono text-[10px]">技能：{audit.skillName}</Badge>}
         {audit?.durationMs != null && (
           <span className="text-muted-foreground tabular-nums">{formatMs(audit.durationMs)}</span>
         )}
@@ -363,7 +365,8 @@ export function OrphanToolEventItem({ event }: { event: TraceEvent }) {
       timestamp={event.timestamp}
       badges={
         <>
-          <span className="font-mono">{event.toolName ?? "（未知）"}</span>
+          <span>{formatToolName(event.toolName)}</span>
+          {event.skillName && <Badge variant="outline" className="font-mono text-[10px]">技能：{event.skillName}</Badge>}
           {event.durationMs != null && <span className="text-muted-foreground tabular-nums">{formatMs(event.durationMs)}</span>}
           {failed && <Badge className="border-0 bg-destructive/15 text-[10px] text-destructive">失败</Badge>}
           <TruncatedBadge event={event} />
@@ -399,7 +402,7 @@ export function ApprovalPairItem({ event, resolved }: { event: TraceEvent; resol
       timestamp={event.timestamp}
       badges={
         <>
-          <span className="font-mono">{event.toolName ?? ""}</span>
+          <span>{event.toolName ? formatToolName(event.toolName) : ""}</span>
           {resolved ? (
             <Badge
               className={cn(
@@ -439,7 +442,7 @@ export function HandFailureItem({ event }: { event: TraceEvent }) {
       badges={
         <>
           {event.classifiedAs && <Badge className="border-0 bg-destructive/15 text-[10px] text-destructive">{formatFailureClass(event.classifiedAs)}</Badge>}
-          {event.toolName && <span className="font-mono">{event.toolName}</span>}
+          {event.toolName && <span>{formatToolName(event.toolName)}</span>}
         </>
       }
     >

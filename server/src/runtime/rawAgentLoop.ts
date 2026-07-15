@@ -77,6 +77,12 @@ function resolveRunTenantId(context: RunContext): string {
     ?? DEFAULT_TENANT_ID;
 }
 
+function resolveInvokedSkillName(toolId: string, input: unknown): string | undefined {
+  if (toolId !== 'Skill' || !input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const skill = (input as Record<string, unknown>).skill;
+  return typeof skill === 'string' && skill.trim() ? skill.trim() : undefined;
+}
+
 export interface RawAgentLoopOptions {
   modelAdapter: ModelAdapter;
   eventStore: EventStore;
@@ -1789,6 +1795,7 @@ export class RawAgentLoop implements AgentLoop {
     // 让 cancel delivery / 审计可见。
     const autoHandId = await this.autoSelectTenantHandId(args.context.sessionId);
     const effectiveHandId = autoHandId;
+    const skillName = resolveInvokedSkillName(args.descriptor.id, args.input);
     await this.toolInvocationStore?.start({
       invocationId,
       runId: args.context.runId,
@@ -1798,6 +1805,7 @@ export class RawAgentLoop implements AgentLoop {
       executionTarget: args.baseToolContext.workspace.executionTarget,
       tenantId: resolveRunTenantId(args.context),
       metadata: {
+        ...(skillName ? { skillName } : {}),
         ...(effectiveHandId ? { handId: effectiveHandId } : {}),
         ...(autoHandId ? { autoRoutedHandId: autoHandId } : {}),
         executionTarget: args.baseToolContext.workspace.executionTarget,
@@ -1851,6 +1859,7 @@ export class RawAgentLoop implements AgentLoop {
         toolCallId: args.call.id,
         toolId: args.descriptor.id,
         toolName: args.descriptor.name,
+        ...(skillName ? { skillName } : {}),
         risk: args.descriptor.risk,
         ...(args.authorization.approvalId ? { approvalId: args.authorization.approvalId } : {}),
         authorization: args.authorization,
@@ -1896,6 +1905,7 @@ export class RawAgentLoop implements AgentLoop {
         toolCallId: args.call.id,
         toolId: args.descriptor.id,
         toolName: args.descriptor.name,
+        ...(skillName ? { skillName } : {}),
         risk: args.descriptor.risk,
         ...(args.authorization.approvalId ? { approvalId: args.authorization.approvalId } : {}),
         authorization: args.authorization,

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { AdminEntityTable, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
+import { AdminEntityTable, AdminErrorAlert, EntityLink, MetricCard, ScopeFilters, StatusBadge } from "@/components/PlatformAdmin/common";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { pushPlatformAdminUrl } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
@@ -103,17 +103,17 @@ function SandboxList() {
   }, [load]);
 
   const cleanupLifecycle = () => {
-    if (!window.confirm("立即触发 ACS 生命周期清理？这会按现有空闲/存活期策略暂停或删除执行环境资源（Sandbox CR）。")) return;
+    if (!window.confirm("立即清理长期空闲的执行环境？平台会按现有规则暂停或删除环境，用户文件不会被删除。")) return;
     void runAction("cleanup", () => platformAdminApi.cleanupLifecycle());
   };
 
   const probeNetwork = () => {
-    if (!window.confirm("执行网络探测？会创建临时执行环境验证网络策略，完成后删除执行环境资源（Sandbox CR）。")) return;
+    if (!window.confirm("执行网络自检？平台会创建一个临时执行环境，检查完成后自动删除。")) return;
     void runAction("network-probe", () => platformAdminApi.probeNetworkPolicy());
   };
 
   const cleanupSnat = () => {
-    if (!window.confirm("清理孤儿 SNAT 条目？仅处理受管前缀且无对应活跃 Pod 的条目。")) return;
+    if (!window.confirm("清理已经失效的网络出口规则？只处理平台托管且没有对应执行环境的规则。")) return;
     void runAction("snat-cleanup", () => platformAdminApi.cleanupOrphanSnat());
   };
 
@@ -128,7 +128,7 @@ function SandboxList() {
   };
 
   const deleteSandbox = (row: SandboxRecord) => {
-    if (!window.confirm(`删除执行环境资源（Sandbox CR）${row.name}？这不会删除 NAS 工作区。`)) return;
+    if (!window.confirm(`删除执行环境 ${row.name}？用户文件不会被删除。`)) return;
     void runAction(`delete:${row.name}`, () => platformAdminApi.deleteSandbox(row.name));
   };
 
@@ -136,15 +136,15 @@ function SandboxList() {
     <div className="w-full space-y-5">
       <SettingsPanelHeader
         title={SANDBOX_LABEL}
-        description="ACS 执行环境池、属主、生命周期和网络状态。"
+        description="查看每个用户的执行环境是否正常、是否被占用，以及需要暂停、启动或删除的环境。"
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={cleanupLifecycle} disabled={!!action}>生命周期清理</Button>
+            <Button variant="outline" size="sm" onClick={cleanupLifecycle} disabled={!!action}>清理空闲环境</Button>
             <Button variant="outline" size="sm" onClick={probeNetwork} disabled={!!action}>
               <Network className="size-3.5" />
-              网络探测
+              网络自检
             </Button>
-            <Button variant="outline" size="sm" onClick={cleanupSnat} disabled={!!action}>清理 SNAT 孤儿项</Button>
+            <Button variant="outline" size="sm" onClick={cleanupSnat} disabled={!!action}>清理失效出口规则</Button>
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
               <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
               刷新
@@ -152,12 +152,12 @@ function SandboxList() {
           </>
         }
       />
-      {(error || actionError) && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">操作失败：{error || actionError}</div>}
+      {(error || actionError) && <AdminErrorAlert error={error || actionError} title="操作失败" />}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="总数" value={formatNumber(sandboxes.length)} description={`健康 ${formatHealthStatus(acsHealth?.status)}`} tone={acsHealth?.status === "ok" ? "good" : "warn"} />
         <MetricCard title="运行 / 暂停" value={`${formatNumber(sandboxes.filter(item => item.phase === "Running").length)} / ${formatNumber(sandboxes.filter(item => item.phase === "Paused").length)}`} description={`${formatNumber(sandboxes.filter(item => item.brokenReason).length)} 个异常`} />
-        <MetricCard title="生命周期" value={formatLifecycleState(acsMeta?.lifecycle?.enabled)} description={`空闲 ${formatDuration(acsMeta?.lifecycle?.idlePauseMs)} · 存活期 ${formatDuration(acsMeta?.lifecycle?.ttlMs)}`} />
-        <MetricCard title="SNAT" value={snat?.mode ?? "未知"} description={`托管 ${formatNumber(snat?.managedCount)} · 孤儿项 ${formatNumber(snat?.orphanCount)}`} tone={(snat?.orphanCount ?? 0) > 0 ? "warn" : "default"} />
+        <MetricCard title="自动清理" value={formatLifecycleState(acsMeta?.lifecycle?.enabled)} description={`空闲 ${formatDuration(acsMeta?.lifecycle?.idlePauseMs)} · 最长保留 ${formatDuration(acsMeta?.lifecycle?.ttlMs)}`} />
+        <MetricCard title="网络出口" value={snat?.mode ?? "未知"} description={`平台托管 ${formatNumber(snat?.managedCount)} · 失效 ${formatNumber(snat?.orphanCount)}`} tone={(snat?.orphanCount ?? 0) > 0 ? "warn" : "default"} />
       </div>
       <AdminEntityTable
         title="执行环境列表"
@@ -166,9 +166,9 @@ function SandboxList() {
         loading={loading}
         toolbar={
           <div className="flex flex-wrap items-center gap-2">
-            <Input value={q} onChange={(event) => adminQuery.patch({ q: event.target.value })} placeholder="执行环境 / 工作区 / 用户名 / 姓名" className="h-8 w-64 font-mono text-xs" />
-            <Input value={tenantId} onChange={(event) => adminQuery.patch({ tenantId: event.target.value })} placeholder="租户 ID" className="h-8 w-32 font-mono text-xs" />
-            <Input value={workspaceId} onChange={(event) => adminQuery.patch({ workspaceId: event.target.value })} placeholder="工作区 ID" className="h-8 w-52 font-mono text-xs" />
+            <Input value={q} onChange={(event) => adminQuery.patch({ q: event.target.value })} placeholder="搜索用户、姓名或环境名称" className="h-8 w-56 text-xs" />
+            <ScopeFilters tenantId={tenantId} onChange={(values) => adminQuery.patch(values)} />
+            <Input value={workspaceId} onChange={(event) => adminQuery.patch({ workspaceId: event.target.value })} placeholder="文件目录 ID（可选）" className="h-8 w-52 font-mono text-xs" />
             <select className="h-8 rounded-md border bg-background px-2 text-xs" value={phase} onChange={(event) => adminQuery.patch({ phase: event.target.value })}>
               <option value="">全部状态</option>
               <option value="Running">{formatSandboxPhase("Running")}</option>
@@ -185,11 +185,11 @@ function SandboxList() {
         columns={[
           { key: "phase", header: "状态", cell: row => <div className="space-y-1"><StatusBadge kind="sandbox" status={row.phase ?? "Unknown"} /><div className="max-w-44 truncate text-[11px] text-destructive">{row.brokenReason}</div></div> },
           { key: "name", header: "名称", cell: row => <EntityLink kind="sandbox" id={row.name} /> },
-          { key: "owner", header: "属主", cell: row => row.owner?.kind === "user" ? <div><EntityLink kind="tenant" id={row.owner.tenantId} /><div><EntityLink kind="user" id={row.owner.userId} /></div></div> : <span className="text-muted-foreground">{formatSystemOwner(row.owner?.kind)}</span> },
+          { key: "owner", header: "组织 / 用户", cell: row => row.owner?.kind === "user" ? <div><EntityLink kind="tenant" id={row.owner.tenantId} /><div><EntityLink kind="user" id={row.owner.userId} /></div></div> : <span className="text-muted-foreground">{formatSystemOwner(row.owner?.kind)}</span> },
           { key: "username", header: "用户名", cell: row => row.owner?.username ? <span className="font-mono text-xs">{row.owner.username}</span> : "—" },
           { key: "realName", header: "姓名", cell: row => row.owner?.realName ?? "—" },
           { key: "busy", header: "占用", cell: row => <Badge variant={row.busy ? "default" : "secondary"}>{formatBusyState(row.busy)}</Badge> },
-          { key: "image", header: "镜像", cell: row => <div className="max-w-48 truncate font-mono text-xs" title={row.image}>{row.image || "—"}{row.imageStale && <Badge variant="destructive" className="ml-1">过期</Badge>}</div> },
+          { key: "image", header: "运行版本", cell: row => <Badge variant={row.imageStale ? "destructive" : "secondary"} title={row.image}>{formatImageFreshness(row.imageStale)}</Badge> },
           { key: "idle", header: "空闲", cell: row => <span className="text-xs tabular-nums">{formatDuration(row.idleMs)}</span> },
           { key: "ttl", header: "剩余时间", cell: row => <span className="text-xs tabular-nums">{formatDuration(row.ttlRemainingMs)}</span> },
           { key: "created", header: "创建", cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.createdAt)}</span> },
@@ -248,7 +248,7 @@ function SandboxList() {
       />
       {snat?.entries && snat.entries.length > 0 && (
         <Card>
-          <CardHeader><CardTitle className="text-base">SNAT 条目</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">网络出口技术详情</CardTitle></CardHeader>
           <CardContent className="grid gap-2 md:grid-cols-2">
             {snat.entries.slice(0, 12).map(entry => (
               <div key={entry.id} className="rounded-md border p-2 text-xs">
@@ -324,7 +324,7 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
     void runAction("resume", () => platformAdminApi.resumeSandbox(sandboxName));
   };
   const remove = () => {
-    if (!window.confirm(`删除执行环境资源（Sandbox CR）${sandboxName}？这不会删除 NAS 工作区。`)) return;
+    if (!window.confirm(`删除执行环境“${sandboxName}”？用户文件不会被删除。`)) return;
     void runAction("delete", () => platformAdminApi.deleteSandbox(sandboxName), {
       reload: false,
       onSuccess: goBackToList,
@@ -359,11 +359,9 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
           </>
         }
       />
-      {error && (
-        <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {missing ? "执行环境不存在或已删除。" : `加载失败：${error}`}
-        </div>
-      )}
+      {error && (missing
+        ? <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">执行环境不存在或已删除。</div>
+        : <AdminErrorAlert error={error} />)}
       {loading && !sandbox ? (
         <div className="flex h-40 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
           <Loader2 className="mr-2 size-4 animate-spin" />
@@ -371,23 +369,23 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
         </div>
       ) : missing ? (
         <div className="flex h-40 flex-col items-center justify-center gap-3 rounded-lg border bg-card text-sm text-muted-foreground">
-          <div>当前执行环境不在 ACS 列表中。</div>
+          <div>平台没有找到这个执行环境，它可能已经被自动清理。</div>
           <Button variant="outline" size="sm" onClick={goBackToList}>返回列表</Button>
         </div>
       ) : sandbox ? (
         <>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <MetricCard title="状态" value={<StatusBadge kind="sandbox" status={sandbox.phase ?? "Unknown"} />} description={sandbox.brokenReason || "—"} tone={sandbox.brokenReason ? "bad" : "default"} />
-            <MetricCard title="属主" value={sandboxOwnerText(sandbox.owner)} description={sandbox.workspaceId || "—"} />
+            <MetricCard title="归属" value={sandboxOwnerText(sandbox.owner)} description={sandbox.workspaceId || "—"} />
             <MetricCard title="空闲 / 剩余时间" value={`${formatDuration(sandbox.idleMs)} / ${formatDuration(sandbox.ttlRemainingMs)}`} description={`占用状态：${formatBusyState(sandbox.busy)}`} />
-            <MetricCard title="镜像" value={formatImageFreshness(sandbox.imageStale)} description={sandbox.image || "—"} tone={sandbox.imageStale ? "warn" : "good"} />
+            <MetricCard title="运行版本" value={formatImageFreshness(sandbox.imageStale)} description={sandbox.image || "—"} tone={sandbox.imageStale ? "warn" : "good"} />
           </div>
           <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
             <Card>
               <CardHeader><CardTitle className="text-base">关联</CardTitle></CardHeader>
               <CardContent className="space-y-3 text-sm">
                 <div>
-                  <div className="text-xs text-muted-foreground">租户</div>
+                  <div className="text-xs text-muted-foreground">组织</div>
                   <EntityLink kind="tenant" id={sandbox.owner?.tenantId} />
                 </div>
                 <div>
@@ -395,7 +393,7 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
                   <EntityLink kind="user" id={sandbox.owner?.userId} />
                 </div>
                 <div>
-                  <div className="text-xs text-muted-foreground">最近会话</div>
+                  <div className="text-xs text-muted-foreground">最近对话</div>
                   <EntityLink kind="session" id={sandbox.sessionId} />
                 </div>
                 <div>
@@ -405,12 +403,14 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-base">原始数据</CardTitle></CardHeader>
-              <CardContent>
-                <pre className="max-h-[520px] overflow-auto rounded-md bg-muted p-3 text-xs text-muted-foreground">
-                  {JSON.stringify(sandbox.raw ?? sandbox, null, 2)}
-                </pre>
-              </CardContent>
+              <details>
+                <summary className="cursor-pointer list-none px-5 py-4 text-base font-medium">技术详情</summary>
+                <CardContent className="border-t pt-4">
+                  <pre className="max-h-[520px] overflow-auto rounded-md bg-muted p-3 text-xs text-muted-foreground">
+                    {JSON.stringify(sandbox.raw ?? sandbox, null, 2)}
+                  </pre>
+                </CardContent>
+              </details>
             </Card>
           </div>
         </>

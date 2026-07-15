@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CircleAlert, CircleCheck, Database, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { CircleAlert, CircleCheck, Database, GripVertical, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { authFetch } from "@/lib/authFetch";
 import { refreshAll } from "@/lib/refreshBus";
 import { Badge } from "@/components/ui/badge";
@@ -108,6 +108,21 @@ type SelectedPanel =
   | { type: "group"; groupId: string }
   | { type: "model"; groupId: string; modelId: string };
 
+type DraggingItem =
+  | { type: "group"; groupId: string }
+  | { type: "model"; groupId: string; modelId: string }
+  | null;
+
+function moveItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= items.length || toIndex >= items.length) {
+    return items;
+  }
+  const next = [...items];
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, moved!);
+  return next;
+}
+
 const emptyModel = (): EditableModel => ({ id: "", name: "", value: "" });
 const emptyGroup = (): EditableGroup => ({ id: "", name: "", protocol: DEFAULT_PROTOCOL, models: [emptyModel()] });
 
@@ -203,6 +218,8 @@ export function ModelManager() {
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [selectedPanel, setSelectedPanel] = useState<SelectedPanel>({ type: "general" });
+  const [draggingItem, setDraggingItem] = useState<DraggingItem>(null);
+  const [dragOverItem, setDragOverItem] = useState<DraggingItem>(null);
   const [advancedText, setAdvancedText] = useState<Record<string, { groupExtraBody: string; groupThinking: string; modelExtraBody: Record<string, string>; modelThinking: Record<string, string> }>>({});
 
   const selectedGroup = useMemo(
@@ -283,6 +300,25 @@ export function ModelManager() {
     }));
   }, [updateModels]);
 
+  const reorderGroup = useCallback((groupId: string, targetGroupId: string) => {
+    if (groupId === targetGroupId) return;
+    updateModels((current) => ({
+      ...current,
+      groups: moveItem(
+        current.groups,
+        current.groups.findIndex((group) => group.id === groupId),
+        current.groups.findIndex((group) => group.id === targetGroupId),
+      ),
+    }));
+  }, [updateModels]);
+
+  const moveGroupByOffset = useCallback((groupId: string, offset: number) => {
+    updateModels((current) => {
+      const fromIndex = current.groups.findIndex((group) => group.id === groupId);
+      return { ...current, groups: moveItem(current.groups, fromIndex, fromIndex + offset) };
+    });
+  }, [updateModels]);
+
   const updateGroupId = useCallback((groupId: string, nextGroupId: string) => {
     updateModels((current) => ({
       ...current,
@@ -309,6 +345,34 @@ export function ModelManager() {
       groups: current.groups.map((group) => group.id === groupId
         ? { ...group, models: group.models.map((model) => model.id === modelId ? { ...model, ...patch } : model) }
         : group),
+    }));
+  }, [updateModels]);
+
+  const reorderModel = useCallback((groupId: string, modelId: string, targetModelId: string) => {
+    if (modelId === targetModelId) return;
+    updateModels((current) => ({
+      ...current,
+      groups: current.groups.map((group) => group.id === groupId
+        ? {
+            ...group,
+            models: moveItem(
+              group.models,
+              group.models.findIndex((model) => model.id === modelId),
+              group.models.findIndex((model) => model.id === targetModelId),
+            ),
+          }
+        : group),
+    }));
+  }, [updateModels]);
+
+  const moveModelByOffset = useCallback((groupId: string, modelId: string, offset: number) => {
+    updateModels((current) => ({
+      ...current,
+      groups: current.groups.map((group) => {
+        if (group.id !== groupId) return group;
+        const fromIndex = group.models.findIndex((model) => model.id === modelId);
+        return { ...group, models: moveItem(group.models, fromIndex, fromIndex + offset) };
+      }),
     }));
   }, [updateModels]);
 
@@ -506,41 +570,82 @@ export function ModelManager() {
                 </CardContent>
               </Card>
 
-              <Card className="h-fit">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 pb-3 pt-4">
-                  <CardTitle className="text-base">模型分组</CardTitle>
-                  <Button variant="ghost" size="sm" className="h-7 px-2" onClick={addGroup} aria-label="新增模型分组"><Plus className="size-3.5" /></Button>
-                </CardHeader>
+                <Card className="h-fit">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 pb-3 pt-4">
+                    <div>
+                      <CardTitle className="text-base">模型分组</CardTitle>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">从上到下即全平台模型顺序；拖动手柄排序，聚焦手柄后也可用 ↑ ↓ 调整。</p>
+                    </div>
+                    <Button variant="ghost" size="sm" className="h-7 px-2" onClick={addGroup} aria-label="新增模型分组"><Plus className="size-3.5" /></Button>
+                  </CardHeader>
                 <CardContent className="space-y-3 px-3 pb-4 pt-0">
                   {models.groups.map((group, groupIndex) => {
                     const groupSelected = selectedPanel.type === "group" && selectedPanel.groupId === group.id;
                     const groupActive = groupSelected || (selectedPanel.type === "model" && selectedPanel.groupId === group.id);
                     return (
-                      <div
-                        key={`${group.id || "group"}-${groupIndex}`}
-                        className={cn(
-                          "rounded-xl border p-2 transition-colors",
-                          groupActive ? "border-primary/40 bg-primary/[0.03]" : "bg-card",
-                        )}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setSelectedPanel({ type: "group", groupId: group.id })}
+                        <div
+                          key={`${group.id || "group"}-${groupIndex}`}
+                          onDragOver={(event) => {
+                            if (draggingItem?.type !== "group") return;
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                            setDragOverItem({ type: "group", groupId: group.id });
+                          }}
+                          onDrop={(event) => {
+                            if (draggingItem?.type !== "group") return;
+                            event.preventDefault();
+                            reorderGroup(draggingItem.groupId, group.id);
+                            setDraggingItem(null);
+                            setDragOverItem(null);
+                          }}
                           className={cn(
-                            "w-full rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
-                            groupSelected ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted/70",
+                            "rounded-xl border p-2 transition-colors",
+                            groupActive ? "border-primary/40 bg-primary/[0.03]" : "bg-card",
+                            draggingItem?.type === "group" && draggingItem.groupId === group.id && "opacity-45",
+                            dragOverItem?.type === "group" && dragOverItem.groupId === group.id && draggingItem?.type === "group" && draggingItem.groupId !== group.id && "ring-2 ring-primary/30",
                           )}
                         >
-                          <span className="block min-w-0">
-                            <span className="block truncate font-medium">{group.name || group.id || "未命名分组"}</span>
-                            <span className={cn(
-                              "mt-0.5 block truncate text-xs",
-                              groupSelected ? "text-primary-foreground/75" : "text-muted-foreground",
-                            )}>
-                              {group.id || "未填写 id"} · {group.models.length} 个模型
-                            </span>
-                          </span>
-                        </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              draggable
+                              onDragStart={(event) => {
+                                event.stopPropagation();
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/plain", `group:${group.id}`);
+                                setDraggingItem({ type: "group", groupId: group.id });
+                              }}
+                              onDragEnd={() => { setDraggingItem(null); setDragOverItem(null); }}
+                              onKeyDown={(event) => {
+                                if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                                event.preventDefault();
+                                moveGroupByOffset(group.id, event.key === "ArrowUp" ? -1 : 1);
+                              }}
+                              className="flex size-8 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing"
+                              aria-label={`调整分组 ${group.name || group.id || "未命名分组"} 的顺序`}
+                              title="拖动排序；聚焦后可用 ↑ ↓ 调整"
+                            >
+                              <GripVertical className="size-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedPanel({ type: "group", groupId: group.id })}
+                              className={cn(
+                                "min-w-0 flex-1 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
+                                groupSelected ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted/70",
+                              )}
+                            >
+                              <span className="block min-w-0">
+                                <span className="block truncate font-medium">{group.name || group.id || "未命名分组"}</span>
+                                <span className={cn(
+                                  "mt-0.5 block truncate text-xs",
+                                  groupSelected ? "text-primary-foreground/75" : "text-muted-foreground",
+                                )}>
+                                  {group.id || "未填写 id"} · {group.models.length} 个模型
+                                </span>
+                              </span>
+                            </button>
+                          </div>
 
                         <div className="ml-3 mt-2 border-l border-border/80 pl-3">
                           <button
@@ -553,23 +658,65 @@ export function ModelManager() {
                           </button>
                           <div className="mt-1.5 space-y-1">
                             {group.models.map((model, modelIndex) => {
-                              const selected = selectedPanel.type === "model" && selectedPanel.groupId === group.id && selectedPanel.modelId === model.id;
-                              return (
-                                <button
-                                  key={`${model.id || "model"}-${modelIndex}`}
-                                  type="button"
-                                  onClick={() => setSelectedPanel({ type: "model", groupId: group.id, modelId: model.id })}
-                                  className={cn(
-                                    "w-full rounded-md px-2.5 py-2 text-left text-xs transition-colors",
-                                    selected ? "bg-primary/10 text-primary ring-1 ring-primary/20" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                                  )}
-                                >
-                                  <span className="block min-w-0">
-                                    <span className={cn("block truncate", selected && "font-medium")}>{model.name || model.id || "未命名模型"}</span>
-                                    <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">{model.value || model.id || "未填写 value"}</span>
-                                  </span>
-                                </button>
-                              );
+                                const selected = selectedPanel.type === "model" && selectedPanel.groupId === group.id && selectedPanel.modelId === model.id;
+                                return (
+                                  <div
+                                    key={`${model.id || "model"}-${modelIndex}`}
+                                    onDragOver={(event) => {
+                                      if (draggingItem?.type !== "model" || draggingItem.groupId !== group.id) return;
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      event.dataTransfer.dropEffect = "move";
+                                      setDragOverItem({ type: "model", groupId: group.id, modelId: model.id });
+                                    }}
+                                    onDrop={(event) => {
+                                      if (draggingItem?.type !== "model" || draggingItem.groupId !== group.id) return;
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      reorderModel(group.id, draggingItem.modelId, model.id);
+                                      setDraggingItem(null);
+                                      setDragOverItem(null);
+                                    }}
+                                    className={cn(
+                                      "flex items-center gap-1 rounded-md transition-colors",
+                                      selected ? "bg-primary/10 text-primary ring-1 ring-primary/20" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                                      draggingItem?.type === "model" && draggingItem.groupId === group.id && draggingItem.modelId === model.id && "opacity-45",
+                                      dragOverItem?.type === "model" && dragOverItem.groupId === group.id && dragOverItem.modelId === model.id && draggingItem?.type === "model" && draggingItem.modelId !== model.id && "ring-2 ring-primary/30",
+                                    )}
+                                  >
+                                    <button
+                                      type="button"
+                                      draggable
+                                      onDragStart={(event) => {
+                                        event.stopPropagation();
+                                        event.dataTransfer.effectAllowed = "move";
+                                        event.dataTransfer.setData("text/plain", `model:${group.id}/${model.id}`);
+                                        setDraggingItem({ type: "model", groupId: group.id, modelId: model.id });
+                                      }}
+                                      onDragEnd={() => { setDraggingItem(null); setDragOverItem(null); }}
+                                      onKeyDown={(event) => {
+                                        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                                        event.preventDefault();
+                                        moveModelByOffset(group.id, model.id, event.key === "ArrowUp" ? -1 : 1);
+                                      }}
+                                      className="flex size-7 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/70 hover:bg-muted hover:text-foreground active:cursor-grabbing"
+                                      aria-label={`调整模型 ${model.name || model.id || "未命名模型"} 的顺序`}
+                                      title="拖动排序；聚焦后可用 ↑ ↓ 调整"
+                                    >
+                                      <GripVertical className="size-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedPanel({ type: "model", groupId: group.id, modelId: model.id })}
+                                      className="min-w-0 flex-1 px-1.5 py-2 text-left text-xs"
+                                    >
+                                      <span className="block min-w-0">
+                                        <span className={cn("block truncate", selected && "font-medium")}>{model.name || model.id || "未命名模型"}</span>
+                                        <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">{model.value || model.id || "未填写 value"}</span>
+                                      </span>
+                                    </button>
+                                  </div>
+                                );
                             })}
                           </div>
                         </div>

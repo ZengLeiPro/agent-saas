@@ -58,6 +58,20 @@ describe('OpenAI-only model resolver', () => {
     });
   });
 
+  it('preserves configured group and model order in the global public list', () => {
+    const reordered: ModelsConfig = {
+      ...modelsConfig,
+      groups: [
+        { id: 'backup', name: 'Backup', models: [{ id: 'glm', name: 'GLM', value: 'glm' }] },
+        { ...modelsConfig.groups[0]!, models: [...modelsConfig.groups[0]!.models].reverse() },
+      ],
+    };
+
+    const publicList = getPublicModelList(reordered);
+    expect(publicList.groups.map((group) => group.id)).toEqual(['backup', 'openai-agents']);
+    expect(publicList.groups[1]?.models.map((model) => model.id)).toEqual(['kimi', 'doubao']);
+  });
+
   it('resolves configured model refs into raw runtime model options', () => {
     const resolved = resolveModelRef(modelsConfig, 'openai-agents/kimi');
 

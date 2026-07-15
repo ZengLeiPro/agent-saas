@@ -122,13 +122,16 @@ describe('models admin router', () => {
               name: 'Main',
               apiKey: 'sk-main',
               baseUrl: 'https://llm.example.invalid/v1',
-              models: [{
-                id: 'gpt',
-                name: 'GPT',
-                value: 'gpt-5.5',
-                context_window: 372_000,
-                auto_compact_threshold: 0.65,
-              }],
+                models: [
+                  { id: 'mini', name: 'Mini', value: 'gpt-5-mini' },
+                  {
+                    id: 'gpt',
+                    name: 'GPT',
+                    value: 'gpt-5.5',
+                    context_window: 372_000,
+                    auto_compact_threshold: 0.65,
+                  },
+                ],
             }],
           },
           memoryIndex: {
@@ -151,14 +154,17 @@ describe('models admin router', () => {
       expect(response.status).toBe(200);
       const body = await readJson(response);
       expect(body.models.allowCrossGroupSwitch).toBe(true);
-      expect(body.models.groups[0].models[0]).toMatchObject({
-        context_window: 372_000,
-        auto_compact_threshold: 0.65,
-      });
-      expect(body.memoryIndex.embedding.model).toBe('text-embedding-v3');
-      expect(runtimeConfig.models?.groups[0]?.models[0]?.value).toBe('gpt-5.5');
-      expect(runtimeConfig.models?.groups[0]?.models[0]?.context_window).toBe(372_000);
-      expect(runtimeConfig.models?.groups[0]?.models[0]?.auto_compact_threshold).toBe(0.65);
+        expect(body.models.groups[0].models.map((model: { id: string }) => model.id)).toEqual(['mini', 'gpt']);
+        expect(body.publicModelList.groups[0].models.map((model: { id: string }) => model.id)).toEqual(['mini', 'gpt']);
+        expect(body.models.groups[0].models[1]).toMatchObject({
+          context_window: 372_000,
+          auto_compact_threshold: 0.65,
+        });
+        expect(body.memoryIndex.embedding.model).toBe('text-embedding-v3');
+        expect(runtimeConfig.models?.groups[0]?.models.map((model) => model.id)).toEqual(['mini', 'gpt']);
+        expect(runtimeConfig.models?.groups[0]?.models[1]?.value).toBe('gpt-5.5');
+        expect(runtimeConfig.models?.groups[0]?.models[1]?.context_window).toBe(372_000);
+        expect(runtimeConfig.models?.groups[0]?.models[1]?.auto_compact_threshold).toBe(0.65);
       expect(runtimeConfig.memory?.index?.embedding.apiKey).toBe('new-embedding-key');
       expect(onModelsUpdated).toHaveBeenCalledWith(runtimeConfig.models);
       expect(onMemoryIndexUpdated).toHaveBeenCalledWith(runtimeConfig.memory?.index);
@@ -166,9 +172,10 @@ describe('models admin router', () => {
       const written = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(written.memory.injectContext).toEqual({ enabled: true, maxLines: 120 });
       expect(written.memory.index.embedding.apiKey).toBe('new-embedding-key');
-      expect(written.models.groups[0].models[0].value).toBe('gpt-5.5');
-      expect(written.models.groups[0].models[0].context_window).toBe(372_000);
-      expect(written.models.groups[0].models[0].auto_compact_threshold).toBe(0.65);
+        expect(written.models.groups[0].models.map((model: { id: string }) => model.id)).toEqual(['mini', 'gpt']);
+        expect(written.models.groups[0].models[1].value).toBe('gpt-5.5');
+        expect(written.models.groups[0].models[1].context_window).toBe(372_000);
+        expect(written.models.groups[0].models[1].auto_compact_threshold).toBe(0.65);
     }, { onModelsUpdated, onMemoryIndexUpdated });
   });
 

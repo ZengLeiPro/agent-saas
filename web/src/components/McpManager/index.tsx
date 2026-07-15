@@ -466,8 +466,8 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                             className={cn(
                               "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
                               selected
-                                ? "border-brand-200 bg-brand-50 text-brand-700 dark:bg-brand-900/35 dark:text-brand-200"
-                                : "bg-muted/40 text-muted-foreground hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700",
+                                ? "border-transparent bg-success text-success-foreground shadow-sm hover:bg-success/85"
+                                : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
                             )}
                             disabled={saving || (!!server.oauth && !server.oauth.platformConfigured)}
                             aria-label={oauthReady && !missingSecrets ? `${selected ? "停用" : "启用"} ${server.name}` : `配置 ${server.name}`}
@@ -483,7 +483,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                               }
                             }}
                           >
-                            {pendingServerId === server.id ? <Loader2 className="size-4 animate-spin" /> : selected ? <Check className="size-4" /> : <Plus className="size-4" />}
+                            {pendingServerId === server.id ? <Loader2 className="size-4 animate-spin" /> : selected ? <Check className="size-4" strokeWidth={2.5} /> : <Plus className="size-4" />}
                           </button>
                         </div>
                         <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{server.description || "暂无连接器说明"}</p>

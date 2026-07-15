@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Check, Loader2, Plus, Trash2, Upload } from "lucide-react";
-import { EntityIcons } from "@/lib/icons";
+import { skillIcon } from "@/lib/skillIcons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -205,6 +205,8 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
     );
   }
 
+  const DetailSkillGlyph = detailSkill ? skillIcon(detailSkill.id) : null;
+
   const actionControls = (
     <>
       {canImport ? (
@@ -243,6 +245,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
             {filteredSkills.map((skill) => {
               const source = skillSource(skill);
               const selected = localSelections[skill.id] === true;
+              const SkillGlyph = skillIcon(skill.id);
               return (
                 <Card
                   key={skill.id}
@@ -260,7 +263,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                 >
                   <CardContent className="flex min-h-40 flex-col p-4">
                     <div className="flex items-start gap-3">
-                      <CapabilityLogo label={skill.name}><EntityIcons.skill className="size-5" /></CapabilityLogo>
+                      <CapabilityLogo label={skill.name}><SkillGlyph className="size-5" /></CapabilityLogo>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
@@ -272,8 +275,8 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                             className={cn(
                               "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
                               selected
-                                ? "border-brand-200 bg-brand-50 text-brand-700 dark:bg-brand-900/35 dark:text-brand-200"
-                                : "bg-muted/40 text-muted-foreground hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700",
+                                ? "border-transparent bg-success text-success-foreground shadow-sm hover:bg-success/85"
+                                : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
                             )}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -282,7 +285,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                             disabled={saving}
                             aria-label={`${selected ? "停用" : "启用"} ${skill.name}`}
                           >
-                            {pendingSkillId === skill.id ? <Loader2 className="size-4 animate-spin" /> : selected ? <Check className="size-4" /> : <Plus className="size-4" />}
+                            {pendingSkillId === skill.id ? <Loader2 className="size-4 animate-spin" /> : selected ? <Check className="size-4" strokeWidth={2.5} /> : <Plus className="size-4" />}
                           </button>
                         </div>
                       </div>
@@ -308,12 +311,19 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
         {detailSkill ? (
           <>
             <div className="flex items-center gap-3">
-              <CapabilityLogo label={detailSkill.name}><EntityIcons.skill className="size-5" /></CapabilityLogo>
+              <CapabilityLogo label={detailSkill.name}>
+                {DetailSkillGlyph ? <DetailSkillGlyph className="size-5" /> : null}
+              </CapabilityLogo>
               <div>
                 <CapabilitySourceBadge source={skillSource(detailSkill)} />
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {localSelections[detailSkill.id] ? "已为通用 Agent 启用" : "尚未启用"}
-                </div>
+                {localSelections[detailSkill.id] ? (
+                  <div className="mt-1 flex items-center gap-1.5 text-xs font-medium text-success">
+                    <span className="size-1.5 rounded-full bg-success" />
+                    已为通用 Agent 启用
+                  </div>
+                ) : (
+                  <div className="mt-1 text-xs text-muted-foreground">尚未启用</div>
+                )}
               </div>
             </div>
             <div className="rounded-xl bg-muted/40 p-4 text-sm leading-6 text-muted-foreground">

@@ -25,6 +25,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 手动生产发布整条链（build → ECS → Web OSS）互斥；普通 push CI 使用 run_id
+# 隔离，不互相排队。cancel-in-progress=false 保证正在发布的批次不会被新批次打断。
+concurrency:
+  group: agent-saas-${{ github.event_name == 'workflow_dispatch' && 'production-deploy' || github.run_id }}
+  cancel-in-progress: false
+
 env:
   NODE_VERSION: "22"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -135,7 +141,7 @@ jobs:
           scp -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             agent-saas-release.tgz \
-            "$ECS_USER@$ECS_HOST:/tmp/agent-saas-${GITHUB_SHA}.tgz"
+            "$ECS_USER@$ECS_HOST:/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz"
 
       - name: Start zero-downtime probe
         run: |
@@ -208,7 +214,7 @@ jobs:
           timeout "${REMOTE_DEPLOY_TIMEOUT_SECONDS}s" ssh -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$ECS_USER@$ECS_HOST" \
-            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_SHA}.tgz' RELEASE_ID='${GITHUB_SHA}' bash -s" <<'REMOTE'
+            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz' RELEASE_ID='${GITHUB_SHA}' bash -s" <<'REMOTE'
           # -E: 函数内失败也触发 ERR trap，保证任何失败都有 on_error 日志
           set -Eeuo pipefail
 
@@ -225,6 +231,9 @@ jobs:
           DATA_DIR="/mnt/agent-saas/server-data"
           ACTIVE_COLOR_FILE="/etc/agent-saas/active-color"
           UPSTREAM_CONF="/etc/nginx/conf.d/agent-saas-upstream.conf"
+          DEPLOY_LOCK_FILE="/run/lock/agent-saas-deploy.lock"
+          MAINTENANCE_SERVICE="agent-saas-deploy-maintenance.service"
+          MAINTENANCE_TIMER="agent-saas-deploy-maintenance.timer"
 
           START_EPOCH=$(date +%s)
           elapsed_seconds() {
@@ -258,6 +267,55 @@ jobs:
           trap 'on_error $LINENO' ERR
 
           log "deploy start release=$RELEASE_ID root=$DEPLOY_ROOT service=$SERVICE_NAME"
+
+          # GitHub concurrency 管整条 workflow；ECS flock 是第二道锁，覆盖手工 SSH
+          # 或其他入口。fd 9 随远端脚本退出自动释放，不依赖清理回调。
+          if ! command -v flock >/dev/null 2>&1; then
+            log "ERROR: flock is required for production deploy serialization"
+            rm -f -- "$RELEASE_TGZ"
+            exit 1
+          fi
+          mkdir -p "$(dirname "$DEPLOY_LOCK_FILE")"
+          exec 9>"$DEPLOY_LOCK_FILE"
+          if ! flock -n 9; then
+            log "ERROR: another production deploy holds $DEPLOY_LOCK_FILE"
+            rm -f -- "$RELEASE_TGZ"
+            exit 1
+          fi
+          log "deploy lock acquired: $DEPLOY_LOCK_FILE"
+
+          # 每小时清理被 SIGKILL、断网等硬中断遗留的超龄上传包。正常成功、
+          # 可捕获失败仍由本次部署即时删除；timer 只处理超过 24h 的精确命名文件。
+          cat > "/etc/systemd/system/$MAINTENANCE_SERVICE" <<'MAINTENANCE_SERVICE_UNIT'
+          [Unit]
+          Description=Clean stale agent-saas deploy archives
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/bin/find /tmp -maxdepth 1 -type f -name agent-saas-*.tgz -mmin +1440 -print -delete
+          Nice=10
+          IOSchedulingClass=idle
+          MAINTENANCE_SERVICE_UNIT
+          cat > "/etc/systemd/system/$MAINTENANCE_TIMER" <<'MAINTENANCE_TIMER_UNIT'
+          [Unit]
+          Description=Run agent-saas deploy archive cleanup hourly
+
+          [Timer]
+          OnBootSec=5min
+          OnUnitActiveSec=1h
+          RandomizedDelaySec=5min
+          Persistent=true
+          Unit=agent-saas-deploy-maintenance.service
+
+          [Install]
+          WantedBy=timers.target
+          MAINTENANCE_TIMER_UNIT
+          systemctl daemon-reload
+          systemctl enable --now "$MAINTENANCE_TIMER"
+          systemctl start "$MAINTENANCE_SERVICE"
+          systemctl is-enabled --quiet "$MAINTENANCE_TIMER"
+          systemctl is-active --quiet "$MAINTENANCE_TIMER"
+          log "stale archive cleanup timer active: age>24h interval=1h"
 
           # ── 1. 前置校验：蓝绿标记与 active 实例必须就绪 ──
           if [ ! -f "$ACTIVE_COLOR_FILE" ]; then

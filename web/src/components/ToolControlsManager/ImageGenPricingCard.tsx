@@ -138,7 +138,12 @@ export function ImageGenPricingCard() {
     }
   }, [hydrate]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    const onConfigUpdated = () => { void refresh(); };
+    window.addEventListener("image-gen-config-updated", onConfigUpdated);
+    return () => window.removeEventListener("image-gen-config-updated", onConfigUpdated);
+  }, [refresh]);
 
   const updateDraft = useCallback((engine: string, patch: Partial<EngineDraft>) => {
     setDrafts((current) => ({

@@ -218,14 +218,14 @@ describe('ImageGenToolProvider', () => {
       expect(String(url)).toBe('https://ark.cn-beijing.volces.com/api/v3/images/generations');
       const body = JSON.parse(String(init?.body));
       expect(body).toMatchObject({
-        model: 'doubao-seedream-5.0-lite',
+        model: 'doubao-seedream-5-0-lite-260128',
         prompt: '一只猫',
         size: '2560x1440',
-        n: 2,
         response_format: 'b64_json',
         watermark: false,
       });
-      return okImageResponse(2);
+      expect(body).not.toHaveProperty('n');
+      return okImageResponse(1);
     }) as unknown as typeof fetch;
     const { provider, appendPlatformEvent } = makeProvider({ fetchImpl });
 
@@ -236,11 +236,32 @@ describe('ImageGenToolProvider', () => {
     const payload = JSON.parse(result!.content);
     expect(payload.engine).toBe('seedream');
     expect(payload.images).toHaveLength(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(payload.creditsCharged).toBe(200); // 100 积分/张 × 2
     expect(appendPlatformEvent).toHaveBeenCalledWith(
       expect.objectContaining({ sku: 'image_gen:seedream', quantity: 2, unitCreditsMicro: 100_000_000 }),
       { tenantId: 'wain-test' },
     );
+  });
+
+  it('sends Seedream reference images through the Ark image field as data URLs', async () => {
+    mkdirSync(join(workspaceRoot, 'uploads'), { recursive: true });
+    writeFileSync(join(workspaceRoot, 'uploads', 'ref.png'), Buffer.from('ref-bytes'));
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.image).toEqual([
+        `data:image/png;base64,${Buffer.from('ref-bytes').toString('base64')}`,
+      ]);
+      expect(body).not.toHaveProperty('reference_images');
+      return okImageResponse();
+    }) as unknown as typeof fetch;
+    const { provider } = makeProvider({ fetchImpl });
+
+    await provider.invoke(
+      invokeInput({ prompt: '参考图改造', model: 'seedream', refImages: ['uploads/ref.png'] }),
+      makeContext(workspaceRoot),
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('uses runtime-configured pricing immediately (admin hot update)', async () => {

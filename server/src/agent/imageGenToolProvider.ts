@@ -74,7 +74,7 @@ const DEFAULT_ENGINE: ImageGenEngineId = 'gpt-image-2';
 const DEFAULT_REQUEST_TIMEOUT_MS = 180_000;
 const DEFAULT_RETRY_DELAYS_MS = [15_000, 30_000, 60_000] as const;
 const DEFAULT_SEEDREAM_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
-const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5.0-lite';
+const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-lite-260128';
 const MAX_REF_IMAGE_BYTES_GPT = 20 * 1024 * 1024;
 const MAX_REF_IMAGE_BYTES_SEEDREAM = 5 * 1024 * 1024;
 
@@ -233,7 +233,17 @@ const IMAGE_GEN_ENGINES: Record<ImageGenEngineId, ImageGenEngineDefinition> = {
     },
     mapSize: (aspectRatio) => SEEDREAM_SIZE_BY_ASPECT[aspectRatio],
     maxRefImageBytes: MAX_REF_IMAGE_BYTES_SEEDREAM,
-    generate: (deps, request) => seedreamGenerate(deps, request),
+    // Ark 生图接口一次请求返回一张；count > 1 时逐张调用，计费数量与成功图片数一致。
+    generate: async (deps, request) => {
+      const images: Buffer[] = [];
+      let revisedPrompt: string | undefined;
+      for (let i = 0; i < request.count; i++) {
+        const single = await seedreamGenerate(deps, request);
+        images.push(...single.images);
+        revisedPrompt = single.revisedPrompt ?? revisedPrompt;
+      }
+      return { images, ...(revisedPrompt ? { revisedPrompt } : {}) };
+    },
   },
 };
 
@@ -324,14 +334,13 @@ async function seedreamGenerate(
     model: deps.connection.model ?? DEFAULT_SEEDREAM_MODEL,
     prompt: request.prompt,
     size: request.size,
-    n: request.count,
     response_format: 'b64_json',
     watermark: false,
   };
   if (request.refImages.length > 0) {
-    body.reference_images = request.refImages.map((ref) => ({
-      url: `data:${ref.mime};base64,${ref.data.toString('base64')}`,
-    }));
+    body.image = request.refImages.map(
+      (ref) => `data:${ref.mime};base64,${ref.data.toString('base64')}`,
+    );
   }
   const response = await fetchWithTimeout(deps, `${baseUrl}/images/generations`, {
     method: 'POST',

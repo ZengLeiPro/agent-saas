@@ -42,6 +42,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { ImageGenSettingsCard } from "@/components/ToolControlsManager/ImageGenSettingsCard";
 import { ImageGenPricingCard } from "@/components/ToolControlsManager/ImageGenPricingCard";
 
 // 缺省视为「启用」以对齐后端语义：WebToolProvider.list() 判 `search.enabled !== false`
@@ -695,8 +696,8 @@ export function ToolControlsManager() {
         </CardContent>
       </Card>
 
-      {/* GenerateImage per-engine 生图定价：与 WebSearch/WebFetch 参数同模式，
-          per-tool 运行参数与工具开关同页维护；独立保存（端点独立，热更即时生效）。 */}
+      {/* GenerateImage 引擎与定价各自独立保存，避免一个端点半成功；两者均热更。 */}
+      <ImageGenSettingsCard />
       <ImageGenPricingCard />
       </div>
     </div>

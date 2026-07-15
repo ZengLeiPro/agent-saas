@@ -12,6 +12,7 @@ import {
   getImageGenEnginePricing,
 } from '../data/usage/imageGenPricing.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { InMemorySecretVault } from '../security/secretVault.js';
 
 const servers: Array<{ close: () => void }> = [];
 
@@ -48,11 +49,17 @@ async function withApp<T>(
     configPath: string;
     runtimeConfig: ReturnType<typeof parseAppConfig>;
     onPricingUpdated: ReturnType<typeof vi.fn>;
+    secretVault: InMemorySecretVault;
+    validateImageGenToolsConfig: ReturnType<typeof vi.fn>;
+    onImageGenToolsUpdated: ReturnType<typeof vi.fn>;
   }) => Promise<T>,
 ): Promise<T> {
   const { processCwd, configPath } = makeWorkspace(rawConfig);
   const runtimeConfig = parseAppConfig(rawConfig);
   const onPricingUpdated = vi.fn((pricing) => configureImageGenPricing(pricing));
+  const secretVault = new InMemorySecretVault();
+  const validateImageGenToolsConfig = vi.fn(async () => undefined);
+  const onImageGenToolsUpdated = vi.fn(async () => undefined);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -62,13 +69,24 @@ async function withApp<T>(
   app.use('/api/admin/image-gen-pricing', createImageGenPricingAdminRouter({
     processCwd,
     config: runtimeConfig,
+    secretVault,
     onPricingUpdated,
+    validateImageGenToolsConfig,
+    onImageGenToolsUpdated,
   }));
   const server = app.listen(0);
   servers.push(server);
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('failed to bind test server');
-  return fn({ baseUrl: `http://127.0.0.1:${address.port}`, configPath, runtimeConfig, onPricingUpdated });
+  return fn({
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    configPath,
+    runtimeConfig,
+    onPricingUpdated,
+    secretVault,
+    validateImageGenToolsConfig,
+    onImageGenToolsUpdated,
+  });
 }
 
 async function readJson(response: Response) {
@@ -100,6 +118,73 @@ describe('image gen pricing admin router', () => {
         toolEnabled: true,
         configuredEngines: ['gpt-image-2'],
       });
+      expect(body.config.gptImage2).toEqual(expect.objectContaining({
+        baseUrl: 'https://proxy.example/v1',
+        apiKeyConfigured: true,
+      }));
+      expect(body.config.gptImage2).not.toHaveProperty('apiKeyRef');
+      expect(body.config.gptImage2).not.toHaveProperty('apiKey');
+    });
+  });
+
+  it('stores engine API keys in SecretVault and hot-updates the runtime without exposing plaintext', async () => {
+    const rawConfig = baseRawConfig();
+    delete (rawConfig.imageGenTools.gptImage2 as { apiKeyRef?: string }).apiKeyRef;
+    (rawConfig.imageGenTools.gptImage2 as { enabled?: boolean }).enabled = false;
+    await withApp(rawConfig, async ({
+      baseUrl,
+      configPath,
+      runtimeConfig,
+      secretVault,
+      validateImageGenToolsConfig,
+      onImageGenToolsUpdated,
+    }) => {
+      const response = await fetch(`${baseUrl}/api/admin/image-gen-pricing/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          config: {
+            enabled: true,
+            gptImage2: {
+              enabled: true,
+              baseUrl: 'https://llm.kaiyan.net/v1',
+              model: 'gpt-image-2',
+              timeoutMs: 180000,
+              apiKey: 'gpt-secret-value',
+            },
+            seedream: {
+              enabled: false,
+              baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+              model: 'doubao-seedream-5-0-lite-260128',
+              timeoutMs: 180000,
+            },
+          },
+        }),
+      });
+      expect(response.status).toBe(200);
+      const body = await readJson(response);
+      expect(body.config.gptImage2.apiKeyConfigured).toBe(true);
+      expect(JSON.stringify(body)).not.toContain('gpt-secret-value');
+      expect(body.config.gptImage2).not.toHaveProperty('apiKey');
+      expect(body.config.gptImage2).not.toHaveProperty('apiKeyRef');
+
+      const onDisk = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(onDisk.imageGenTools.gptImage2).not.toHaveProperty('apiKey');
+      expect(onDisk.imageGenTools.gptImage2.apiKeyRef).toMatch(/^[0-9a-f-]{36}$/);
+      await expect(secretVault.getSecret(onDisk.imageGenTools.gptImage2.apiKeyRef, { actor: 'admin' }))
+        .resolves.toBe('gpt-secret-value');
+      expect(runtimeConfig.imageGenTools?.gptImage2?.apiKeyRef).toBe(onDisk.imageGenTools.gptImage2.apiKeyRef);
+      expect(validateImageGenToolsConfig).toHaveBeenCalledTimes(1);
+      expect(onImageGenToolsUpdated).toHaveBeenCalledTimes(1);
+
+      const preserveResponse = await fetch(`${baseUrl}/api/admin/image-gen-pricing/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: body.config }),
+      });
+      expect(preserveResponse.status).toBe(200);
+      const preserved = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(preserved.imageGenTools.gptImage2.apiKeyRef).toBe(onDisk.imageGenTools.gptImage2.apiKeyRef);
     });
   });
 

@@ -326,14 +326,17 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       onToolSettingsUpdated: runtime.updateToolSettingsConfig,
     }),
   );
-  // GenerateImage per-engine 生图定价（2026-07-15）：平台管理员运行时可改，
-  // PUT 后 jsonc 回写 config.json + 注册表热更，扣费点实时读取即时生效。
+  // GenerateImage 引擎配置与 per-engine 定价（2026-07-15）：平台管理员运行时可改，
+  // PUT 后 jsonc 回写 config.json + SecretVault 凭据托管 + runtime 热更，无需重启。
   app.use(
     "/api/admin/image-gen-pricing",
     createImageGenPricingAdminRouter({
       processCwd,
       config,
+      secretVault: runtime.secretVault,
       onPricingUpdated: (pricing) => configureImageGenPricing(pricing),
+      validateImageGenToolsConfig: runtime.validateImageGenToolsConfig,
+      onImageGenToolsUpdated: runtime.updateImageGenToolsConfig,
     }),
   );
   app.use(

@@ -249,6 +249,10 @@ export interface AppRuntime {
   validateToolSettingsConfig?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void>;
   /** 更新平台工具配置并热写入后续 raw runtime dispatch。 */
   updateToolSettingsConfig?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void>;
+  /** 校验 GenerateImage 引擎配置，包括 SecretVault ref 解析。 */
+  validateImageGenToolsConfig?: (imageGenTools: AppConfig['imageGenTools']) => Promise<void>;
+  /** 更新 GenerateImage 引擎配置并热写入后续 raw runtime dispatch。 */
+  updateImageGenToolsConfig?: (imageGenTools: AppConfig['imageGenTools']) => Promise<void>;
   /** 更新 memory.index 配置并热写入后续 raw runtime dispatch。 */
   updateMemoryIndexConfig?: (memoryIndex: NonNullable<NonNullable<AppConfig['memory']>['index']> | undefined) => Promise<void>;
   /** 更新 memory.polling 配置：热更后续执行参数并立即重排系统任务。 */
@@ -1612,6 +1616,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     if (resolved) rawRuntimeConfig.webTools = resolved;
     else delete rawRuntimeConfig.webTools;
   };
+  const validateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => {
+    await resolveImageGenToolsConfig(imageGenTools, secretVault);
+  };
+  const updateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => {
+    config.imageGenTools = imageGenTools;
+    const resolved = await resolveImageGenToolsConfig(imageGenTools, secretVault);
+    if (resolved) rawRuntimeConfig.imageGenTools = resolved;
+    else delete rawRuntimeConfig.imageGenTools;
+  };
   const updateMemoryIndexConfig = async (
     memoryIndex: NonNullable<NonNullable<AppConfig['memory']>['index']> | undefined,
   ): Promise<void> => {
@@ -2325,6 +2338,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runtimePgEventStore: pgEventStore,
     validateToolSettingsConfig,
     updateToolSettingsConfig,
+    validateImageGenToolsConfig,
+    updateImageGenToolsConfig,
     updateMemoryIndexConfig,
     updateMemoryPollingConfig,
     artifactService,

@@ -208,7 +208,8 @@
     },
     "seedream": {
       "enabled": true,
-      "model": "doubao-seedream-5.0-lite",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "model": "doubao-seedream-5-0-lite-260128",
       "apiKeyRef": "image-gen-ark-api-key"
     },
     "pricing": {

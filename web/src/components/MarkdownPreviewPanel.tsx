@@ -1,4 +1,4 @@
-import { apiUrl } from "../lib/apiBase";
+import { publicSessionShareFileUrl } from "@/lib/sessionShareApi";
 import { useState, useEffect, useMemo, lazy, Suspense } from "react";
 import { ChevronLeft, Loader2, CircleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -160,7 +160,7 @@ export function MarkdownPreviewPanel({ filePath, owner, shareToken, onBack, hide
     // 分享页无登录态，直接 fetch 公开 share file 接口拿原始文本；主站点走
     // /api/file/read（JSON 响应带 filename 兜底文件名解析）+ 鉴权 token。
     const request = shareToken
-      ? fetch(apiUrl(`/api/share/sessions/${encodeURIComponent(shareToken)}/file?path=${encodeURIComponent(filePath)}`))
+      ? fetch(publicSessionShareFileUrl(shareToken, filePath))
         .then(async (res) => {
           if (!res.ok) {
             const bodyText = await res.text().catch(() => '');

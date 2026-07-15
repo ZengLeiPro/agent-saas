@@ -31,6 +31,16 @@ export interface PublicSessionShareResponse {
   detail: ApiSessionDetail;
 }
 
+/**
+ * 公开会话分享文件地址。必须经过 apiUrl()，否则 OSS/API 分域部署时
+ * img/iframe/a/window.open 等浏览器原生请求会误打前端 OSS 域。
+ */
+export function publicSessionShareFileUrl(token: string, filePath: string): string {
+  return apiUrl(
+    `/api/share/sessions/${encodeURIComponent(token)}/file?path=${encodeURIComponent(filePath)}`,
+  );
+}
+
 export async function getSessionShare(sessionId: string): Promise<SessionShareSummary> {
   const res = await authFetch(`/api/sessions/${encodeURIComponent(sessionId)}/share`);
   if (!res.ok) throw new Error(await readApiError(res, "读取分享设置失败"));

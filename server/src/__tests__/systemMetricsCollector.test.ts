@@ -14,9 +14,20 @@ import {
   SystemMetricsCollector,
   classifyWorkspacePath,
   parseSoftDeletedSegment,
+  resolveTlsCheckHosts,
   runDu,
 } from '../runtime/systemMetricsCollector.js';
 import type { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
+
+describe('TLS monitor hosts', () => {
+  it('always includes both Web and API production domains', () => {
+    expect(resolveTlsCheckHosts(['custom.example.com', 'agent.kaiyan.net'])).toEqual([
+      'agent.kaiyan.net',
+      'api.agent.kaiyan.net',
+      'custom.example.com',
+    ]);
+  });
+});
 
 describe('workspace usage classification', () => {
   const tenants = new Set(['kaiyan']);

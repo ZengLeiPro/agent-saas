@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:oss": "node scripts/validate-oss-build-env.mjs && tsc && vite build && node scripts/check-oss-dist.mjs && node --test scripts/check-live-oss.test.mjs",
+    "check:api-boundary": "node scripts/check-api-boundary.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "NODE_ENV=test vitest run --passWithNoTests"
@@ -51,6 +53,7 @@
     "vite": "^5.4.0",
     "vitest": "^4.0.18",
     "vite-plugin-pwa": "^1.2.0",
+    "ws": "^8.19.0",
     "workbox-core": "^7.4.0",
     "workbox-precaching": "^7.4.0",
     "workbox-routing": "^7.4.0",

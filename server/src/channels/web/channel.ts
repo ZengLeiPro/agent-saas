@@ -161,6 +161,8 @@ export interface WebChannelConfig {
   tokenUsageStore?: TokenUsageStore;
   /** Tenant store for disabled-tenant hard-stop checks. */
   tenantStore?: TenantStore;
+  /** Browser WebSocket Origin allowlist，复用 HTTP CORS origins。 */
+  allowedOrigins?: string[];
   /** 公司级专职 Agent store（orgAgentId 解析/audience 校验/门禁配置来源）。 */
   orgAgentStore?: OrgAgentStore;
   /**
@@ -512,6 +514,7 @@ export class WebChannel implements BaseChannel {
       jwtSecret: this.config.jwtSecret,
       userStore: this.userStore,
       tenantStore: this.config.tenantStore,
+      allowedOrigins: this.config.allowedOrigins,
     });
 
     // 创建 EventBus（所有 WS 下行事件的唯一出口）

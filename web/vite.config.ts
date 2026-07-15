@@ -26,61 +26,12 @@ export default defineConfig({
         // PDF.js 主包与 worker 只在用户点“查看完整目录”时加载；worker 为 .mjs，
         // 主包 chunk 需显式排除，避免 PWA 安装时提前下载到普通聊天首屏。
         globIgnores: ["assets/PdfJsReader-*.js"],
-        // 不使用 navigateFallback：SPA 路由由托管侧处理（ECS express `app.get('*')` /
-        // OSS 静态托管错误文档=index.html），SW 不拦截导航请求，
-        // 避免 frp 慢时回退到缓存中的旧 HTML 导致版本不一致
-        navigateFallbackDenylist: [/^\/preview\//],
-        // 运行时缓存策略（具体规则在前，兜底在后）。
-        // 分域部署下 API 请求是绝对 URL（VITE_API_BASE），下列 pathname/正则匹配
-        // 对跨域 URL 同样命中；跨域响应为 cors 模式（非 opaque），可正常缓存
-        runtimeCaching: [
-          // 会话列表：先展示缓存，后台静默刷新
-          {
-            urlPattern: ({ url }: { url: URL }) =>
-              url.pathname === "/api/sessions" && !url.searchParams.has("fresh"),
-            handler: "StaleWhileRevalidate",
-            options: {
-              cacheName: "api-sessions-list",
-              expiration: { maxEntries: 1, maxAgeSeconds: 300 },
-            },
-          },
-          // 会话详情：优先网络，超时用缓存兜底
-          {
-            urlPattern: /\/api\/sessions\/[^/?]+$/,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "api-session-detail",
-              expiration: { maxEntries: 20, maxAgeSeconds: 600 },
-              networkTimeoutSeconds: 5,
-            },
-          },
-          // Cron 状态 & 任务列表
-          // 锚定 jobs/status 结尾，避免误匹配 /jobs/:id、/jobs/:id/runs 等子路径
-          // （子路径含动态 id 缓存价值低；含错误响应被缓回去更难调试）
-          {
-            urlPattern: /\/api\/cron\/(jobs|status)(\?.*)?$/,
-            method: "GET",
-            handler: "StaleWhileRevalidate",
-            options: {
-              cacheName: "api-cron",
-              expiration: { maxEntries: 2, maxAgeSeconds: 300 },
-            },
-          },
-          // 模型列表 & 健康检查（变化极少）
-          {
-            urlPattern: /\/api\/(models|health)$/,
-            handler: "StaleWhileRevalidate",
-            options: {
-              cacheName: "api-static",
-              expiration: { maxEntries: 2, maxAgeSeconds: 3600 },
-            },
-          },
-          // 其余 API（SSE 流、认证、TTS 等写操作）不缓存
-          {
-            urlPattern: /\/api\//,
-            handler: "NetworkOnly",
-          },
-        ],
+        // SPA 路由由托管侧处理，SW 明确不缓存也不拦截 HTML 导航。
+        // null 必须显式设置；仅配置 denylist 仍会生成 index.html navigation route。
+        navigateFallback: null,
+        // 不缓存任何 API：CacheStorage 按 origin 共享，不带 tenant/user 身份维度。
+        // hash 静态资源由 precache 负责，鉴权数据始终交给网络和应用层状态管理。
+        runtimeCaching: [],
         // 不自动 skipWaiting：等待页面发 SKIP_WAITING 消息（swUpdate.ts applyUpdate）。
         // 保留 clientsClaim：激活后接管所有 tab，各 tab 通过 controllerchange 感知
         // 「新版本已就绪」，但只标记不 reload（见 swUpdate.ts 多 tab 说明）。

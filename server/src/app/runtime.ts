@@ -2106,6 +2106,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     getIsDraining: () => channelManager.draining,
     tokenUsageStore,
     tenantStore,
+    allowedOrigins: config.server.corsOrigins,
     // 专职 Agent + LLM 话题门禁（2026-07 唯恩批次）。getGuardrailModelConfigs
     // 必须是 getter：热更后 channel 每次调用都取到最新链（title 的 stale 数组
     // 引用坑勿复刻）。guardrailEventStore 仅 PG backend 存在，file backend 降级 log。

@@ -8,6 +8,14 @@ vi.mock("@/lib/authFetch", () => ({
   authFetch: vi.fn(),
 }));
 
+vi.mock("@/platform/webConfig", () => ({
+  webConfig: {
+    platform: "web",
+    getBaseUrl: () => "https://api.example.com",
+    getWsUrl: () => "",
+  },
+}));
+
 describe("HtmlPreviewPanel", () => {
   beforeEach(() => {
     vi.mocked(authFetch).mockReset();
@@ -48,7 +56,7 @@ describe("HtmlPreviewPanel", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/share/sessions/share%201/file?path=assets%2F%E6%BC%94%E7%A4%BA.html",
+        "https://api.example.com/api/share/sessions/share%201/file?path=assets%2F%E6%BC%94%E7%A4%BA.html",
       );
     });
 

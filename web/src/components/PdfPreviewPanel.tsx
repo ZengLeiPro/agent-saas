@@ -3,6 +3,7 @@ import { ChevronLeft, Loader2, CircleAlert, ExternalLink, FileText } from "lucid
 import { Button } from "@/components/ui/button";
 import { resolveImageSrc } from "@agent/shared";
 import { KbPdfPreview } from "@/components/KbPdfPreview";
+import { publicSessionShareFileUrl } from "@/lib/sessionShareApi";
 
 interface PdfPreviewPanelProps {
   filePath: string;
@@ -34,7 +35,7 @@ export function PdfPreviewPanel({ filePath, owner, shareToken, kbSource, page, o
     if (kbSource) return () => { cancelled = true; };
     if (shareToken) {
       // 分享页公开接口本身按 path 直读快照文件，浏览器可直接 iframe 渲染 PDF。
-      const url = `/api/share/sessions/${encodeURIComponent(shareToken)}/file?path=${encodeURIComponent(filePath)}`;
+      const url = publicSessionShareFileUrl(shareToken, filePath);
       setState({ status: "success", url });
       return () => { cancelled = true; };
     }

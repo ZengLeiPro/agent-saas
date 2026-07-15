@@ -14,6 +14,14 @@ import { MessageItem } from './MessageItem';
 import { FilePreviewProvider } from '@/contexts/FilePreviewContext';
 import type { MessageItem as MessageItemType } from './types';
 
+vi.mock('@/platform/webConfig', () => ({
+  webConfig: {
+    platform: 'web',
+    getBaseUrl: () => 'https://api.example.com',
+    getWsUrl: () => '',
+  },
+}));
+
 beforeAll(() => {
   Range.prototype.getClientRects = () => ({
     length: 0,
@@ -23,7 +31,7 @@ beforeAll(() => {
   // resolveImageSrc（下载/图片 URL 构造）依赖 platform context
   initPlatform({
     secureStorage: { getItem: async () => null, setItem: async () => {}, removeItem: async () => {} },
-    platformConfig: { getBaseUrl: () => '' },
+    platformConfig: { getBaseUrl: () => 'https://api.example.com' },
   } as unknown as PlatformDeps);
 });
 
@@ -39,9 +47,9 @@ function userMessage(
   return { id: 'line-1', type: 'user', content: '看下附件', attachments };
 }
 
-function renderMessage(message: MessageItemType, openPreview = vi.fn(), owner?: string) {
+function renderMessage(message: MessageItemType, openPreview = vi.fn(), owner?: string, shareToken?: string) {
   return render(
-    <FilePreviewProvider value={{ openPreview, ...(owner ? { owner } : {}) }}>
+    <FilePreviewProvider value={{ openPreview, ...(owner ? { owner } : {}), ...(shareToken ? { shareToken } : {}) }}>
       <MessageItem message={message} index={0} />
     </FilePreviewProvider>,
   );
@@ -102,5 +110,46 @@ describe('用户消息附件 chip', () => {
     } finally {
       clickSpy.mockRestore();
     }
+  });
+
+  it('分享页附件下载使用独立 API 域', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(null, { status: 200, headers: { 'Content-Length': '3' } }),
+    ));
+    const clicked: Array<{ href: string; download: string }> = [];
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        clicked.push({ href: this.href, download: this.download });
+      });
+    try {
+      renderMessage(
+        userMessage([{ name: 'archive.zip', relativePath: 'uploads/att-3/archive.zip' }]),
+        vi.fn(),
+        undefined,
+        'share 1',
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'archive.zip' }));
+      expect(clicked).toEqual([{
+        href: 'https://api.example.com/api/share/sessions/share%201/file?path=uploads%2Fatt-3%2Farchive.zip',
+        download: 'archive.zip',
+      }]);
+    } finally {
+      clickSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('分享页图片附件预览使用独立 API 域', async () => {
+    renderMessage(
+      userMessage([{ name: '现场图.png', isImage: true, relativePath: 'uploads/现场图.png' }]),
+      vi.fn(),
+      undefined,
+      'share 1',
+    );
+    fireEvent.click(screen.getByRole('button', { name: '现场图.png' }));
+    expect((await screen.findByAltText('现场图.png')).getAttribute('src')).toBe(
+      'https://api.example.com/api/share/sessions/share%201/file?path=uploads%2F%E7%8E%B0%E5%9C%BA%E5%9B%BE.png',
+    );
   });
 });

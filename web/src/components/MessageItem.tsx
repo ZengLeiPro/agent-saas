@@ -24,6 +24,7 @@ import type { UseVoicePlayerReturn } from '@/hooks/useVoicePlayer';
 import type { Components } from 'react-markdown';
 import { EntityIcons } from '@/lib/icons';
 import { requestOpenBillingBadge } from '@/lib/billingBadgeBus';
+import { publicSessionShareFileUrl } from '@/lib/sessionShareApi';
 
 // react-markdown 懒加载：不阻塞首屏渲染，模块加载后立即可用
 const markdownPromise = import("react-markdown");
@@ -231,13 +232,9 @@ async function authFetchDownload(filePath: string, fileName: string, owner?: str
   }
 }
 
-function shareFileUrl(shareToken: string, filePath: string): string {
-  return `/api/share/sessions/${encodeURIComponent(shareToken)}/file?path=${encodeURIComponent(filePath)}`;
-}
-
 async function shareFileDownload(shareToken: string, filePath: string, fileName: string) {
   const a = document.createElement('a');
-  a.href = shareFileUrl(shareToken, filePath);
+  a.href = publicSessionShareFileUrl(shareToken, filePath);
   a.download = fileName;
   document.body.appendChild(a);
   a.click();
@@ -294,7 +291,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
     if (artifactId) return;
     if (shareToken) {
       let cancelled = false;
-      fetch(shareFileUrl(shareToken, filePath), { method: 'HEAD' })
+      fetch(publicSessionShareFileUrl(shareToken, filePath), { method: 'HEAD' })
         .then(res => {
           if (cancelled) return;
           const cl = res.headers.get('content-length');
@@ -340,7 +337,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
       return;
     }
     if (shareToken) {
-      const url = shareFileUrl(shareToken, filePath);
+      const url = publicSessionShareFileUrl(shareToken, filePath);
       if (isImage) {
         setPreviewSrc(url);
       } else if (isShareable && filePreview) {
@@ -442,13 +439,21 @@ function UserAttachmentChip({ att, filePreview }: {
   const handleClick = () => {
     if (!path) return;
     if (att.isImage) {
+      if (filePreview?.shareToken) {
+        setPreviewSrc(publicSessionShareFileUrl(filePreview.shareToken, path));
+        return;
+      }
       void resolveImageSrc(path, filePreview?.owner)
         .then(setPreviewSrc)
         .catch(() => setPreviewSrc(path));
     } else if (previewable && filePreview) {
       filePreview.openPreview(path, filePreview.owner);
     } else {
-      void authFetchDownload(path, att.name, filePreview?.owner);
+      if (filePreview?.shareToken) {
+        void shareFileDownload(filePreview.shareToken, path, att.name);
+      } else {
+        void authFetchDownload(path, att.name, filePreview?.owner);
+      }
     }
   };
 

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { ChevronLeft, Loader2, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/authFetch";
+import { publicSessionShareFileUrl } from "@/lib/sessionShareApi";
 
 const HTML_SANDBOX_CSP = [
   "default-src 'none'",
@@ -29,10 +30,6 @@ function htmlDownloadUrl(filePath: string, owner?: string) {
   return `/api/file/download?path=${encodeURIComponent(filePath)}${ownerParam}`;
 }
 
-function shareHtmlDownloadUrl(shareToken: string, filePath: string) {
-  return `/api/share/sessions/${encodeURIComponent(shareToken)}/file?path=${encodeURIComponent(filePath)}`;
-}
-
 function injectSandboxCsp(html: string) {
   const meta = `<meta http-equiv="Content-Security-Policy" content="${HTML_SANDBOX_CSP}">`;
   const headMatch = html.match(/<head(\s[^>]*)?>/i);
@@ -54,7 +51,7 @@ export function HtmlPreviewPanel({ filePath, owner, shareToken, onBack, hideHead
     setState({ status: "loading" });
 
     const request = shareToken
-      ? fetch(shareHtmlDownloadUrl(shareToken, filePath))
+      ? fetch(publicSessionShareFileUrl(shareToken, filePath))
       : authFetch(htmlDownloadUrl(filePath, owner));
 
     request

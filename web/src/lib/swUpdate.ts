@@ -29,6 +29,7 @@ type Hook = () => void;
 const COLD_START_WINDOW_MS = 30_000;
 const SW_ACTIVATE_TIMEOUT_MS = 2_000;
 const UPDATE_POLL_INTERVAL_MS = 60_000;
+const LEGACY_API_CACHE_PREFIX = "api-";
 
 const guards = new Set<Guard>();
 const beforeReloadHooks = new Set<Hook>();
@@ -39,6 +40,17 @@ let applying = false;
 let hasInteracted = false;
 let swRegistration: ServiceWorkerRegistration | null = null;
 const startedAt = Date.now();
+
+/** 清理旧版 SW 创建的未按用户/租户隔离的鉴权 API 缓存。 */
+export async function clearLegacyApiCaches(): Promise<void> {
+  if (!("caches" in globalThis)) return;
+  const names = await globalThis.caches.keys();
+  await Promise.all(
+    names
+      .filter((name) => name.startsWith(LEGACY_API_CACHE_PREFIX))
+      .map((name) => globalThis.caches.delete(name)),
+  );
+}
 
 /** 注册守门条件；返回注销函数。guard 返回 true 表示当前不宜强制刷新。 */
 export function registerUpdateGuard(guard: Guard): () => void {
@@ -164,6 +176,7 @@ export function applyUpdateNow(): void {
 
 /** main.tsx 启动时调用一次 */
 export function initSWUpdate(): void {
+  void clearLegacyApiCaches().catch(() => {});
   if (!("serviceWorker" in navigator)) return;
 
   const markInteracted = () => {

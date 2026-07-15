@@ -73,8 +73,8 @@ async function startServer(): Promise<void> {
   app.set('trust proxy', 1);
   const corsOrigins = config.server?.corsOrigins;
   app.use(cors(corsOrigins?.length
-    ? { origin: corsOrigins, exposedHeaders: ['X-Refresh-Token'] }
-    : { exposedHeaders: ['X-Refresh-Token'] },
+    ? { origin: corsOrigins, exposedHeaders: ['X-Refresh-Token'], maxAge: 600 }
+    : { exposedHeaders: ['X-Refresh-Token'], maxAge: 600 },
   ));
   // 全局 JSON parser，但跳过 /api/azeroth/* —— 透明反向代理路由需要原始 body stream
   // 才能 fetch 透传给 azeroth，提前解析会消费 stream 导致透传失败。

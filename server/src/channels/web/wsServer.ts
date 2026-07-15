@@ -47,6 +47,13 @@ export interface WsServerConfig {
     userStore?: UserStore;
     /** TenantStore for disabled-tenant hard-stop checks */
     tenantStore?: TenantStore;
+    /** Browser Origin allowlist. Missing Origin remains allowed for non-browser clients/probes. */
+    allowedOrigins?: string[];
+}
+
+export function isWebSocketOriginAllowed(origin: string | undefined, allowedOrigins?: string[]): boolean {
+    if (!origin || !allowedOrigins?.length) return true;
+    return allowedOrigins.includes(origin);
 }
 
 export class WsServer {
@@ -84,6 +91,13 @@ export class WsServer {
             const pathname = this.parsePathname(request);
             if (pathname !== '/ws') {
                 return; // Let other upgrade handlers (e.g. Vite HMR) handle it
+            }
+
+            const origin = typeof request.headers.origin === 'string' ? request.headers.origin : undefined;
+            if (!isWebSocketOriginAllowed(origin, this.config.allowedOrigins)) {
+                socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+                socket.destroy();
+                return;
             }
 
             // The deployment gate performs a real WebSocket upgrade without

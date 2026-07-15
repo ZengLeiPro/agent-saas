@@ -239,7 +239,7 @@
     "fastIntervalMs": 600000,
     "workspaceScanIntervalMs": 21600000,
     "duConcurrency": 2,
-    "tlsCheckHosts": ["agent.kaiyan.net"]
+    "tlsCheckHosts": ["agent.kaiyan.net", "api.agent.kaiyan.net"]
   },
 
   // ── 平台告警推送（钉钉群机器人，关键词建议设为「告警」）────

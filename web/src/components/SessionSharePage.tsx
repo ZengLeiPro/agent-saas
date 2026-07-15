@@ -7,7 +7,11 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { FilePreviewProvider } from "@/contexts/FilePreviewContext";
 import { FilePreviewDialog } from "@/components/FilePreviewPanel";
-import { fetchPublicSessionShare, type PublicSessionShareResponse } from "@/lib/sessionShareApi";
+import {
+  fetchPublicSessionShare,
+  publicSessionShareFileUrl,
+  type PublicSessionShareResponse,
+} from "@/lib/sessionShareApi";
 import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
 import { getPreviewFileType } from "@agent/shared";
 
@@ -66,7 +70,7 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
       return;
     }
     window.open(
-      `/api/share/sessions/${encodeURIComponent(token)}/file?path=${encodeURIComponent(filePath)}`,
+      publicSessionShareFileUrl(token, filePath),
       "_blank",
       "noopener,noreferrer",
     );

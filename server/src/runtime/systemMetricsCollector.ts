@@ -34,6 +34,12 @@ export interface WorkspaceScanResult {
   durationMs: number;
 }
 
+export const REQUIRED_TLS_CHECK_HOSTS = ['agent.kaiyan.net', 'api.agent.kaiyan.net'] as const;
+
+export function resolveTlsCheckHosts(configured?: string[]): string[] {
+  return [...new Set([...REQUIRED_TLS_CHECK_HOSTS, ...(configured ?? [])])];
+}
+
 export class WorkspaceScanAlreadyRunningError extends Error {
   constructor() {
     super('Workspace scan is already running');
@@ -57,7 +63,7 @@ export class SystemMetricsCollector {
     this.fastIntervalMs = options.fastIntervalMs ?? 600_000;
     this.workspaceScanIntervalMs = options.workspaceScanIntervalMs ?? 21_600_000;
     this.duConcurrency = Math.max(1, Math.min(8, options.duConcurrency ?? 2));
-    this.tlsCheckHosts = options.tlsCheckHosts?.length ? options.tlsCheckHosts : ['agent.kaiyan.net'];
+    this.tlsCheckHosts = resolveTlsCheckHosts(options.tlsCheckHosts);
     this.duExecutor = options.duExecutor ?? runDu;
     this.tlsChecker = options.tlsChecker ?? getTlsCertSecondsLeft;
   }

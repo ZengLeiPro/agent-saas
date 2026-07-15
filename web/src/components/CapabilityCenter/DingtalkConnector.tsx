@@ -17,6 +17,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
 import { CapabilityDetailDrawer, CapabilitySourceBadge, CatalogHeader } from "./CatalogUi";
+import { writeDingtalkAuthorizingPopup } from "./dingtalkAuthorizingPopup";
 import dingtalkIcon from "@/assets/connector-brands/dingtalk.svg";
 
 export interface DwsConnectionView {
@@ -123,11 +124,13 @@ export function useDwsConnections(enabled = true): DwsConnectionsState {
     setPopupBlocked(false);
     openedAuthorizationUrlRef.current = null;
 
+    // 弹窗必须在用户手势的同步栈里 open，才能穿过 popup blocker。
+    // 此时 device flow 尚未返回 authorizationUrl，先写一个品牌化的等待页
+    // 覆盖 about:blank——sandbox 冷启动到申请到授权码可能耗时 1-3 分钟。
     const popup = window.open("", "_blank");
     if (popup) {
       popup.opener = null;
-      popup.document.title = "正在连接钉钉";
-      popup.document.body.textContent = "正在打开钉钉官方授权页面…";
+      writeDingtalkAuthorizingPopup(popup);
       authorizationPopupRef.current = popup;
     } else {
       authorizationPopupRef.current = null;

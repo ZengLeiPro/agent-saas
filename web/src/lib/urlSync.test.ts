@@ -4,7 +4,7 @@ vi.mock("@/lib/swUpdate", () => ({
   maybeNavigateWithUpdate: () => false,
 }));
 
-import { buildPlatformAdminUrl, buildUrl, parseUrl } from "@/lib/urlSync";
+import { buildAdminSettingsUrl, buildPlatformAdminUrl, buildUrl, parseUrl } from "@/lib/urlSync";
 
 describe("platform admin url sync", () => {
   it("parses platform admin deep links without falling back to chat", () => {
@@ -37,6 +37,15 @@ describe("platform admin url sync", () => {
       adminSettings: { target: "platform", section: "signup" },
       canonicalPath: null,
     });
+
+    expect(parseUrl("/platform-admin/settings/memory-polling")).toMatchObject({
+      tab: "platform-admin",
+      adminSection: null,
+      adminSettings: { target: "platform", section: "memory-polling" },
+      canonicalPath: null,
+    });
+    expect(buildAdminSettingsUrl("platform", "memory-polling"))
+      .toBe("/platform-admin/settings/memory-polling");
   });
 
   it("canonicalizes legacy runtime settings sections into entity sections", () => {

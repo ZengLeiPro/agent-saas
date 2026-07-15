@@ -15,6 +15,7 @@
 import {
   Blocks,
   Bot,
+  BrainCircuit,
   Building2,
   Calculator,
   ChartColumn,
@@ -88,6 +89,8 @@ export const EntityIcons = {
   companyInfo: Info,
   /** 定时任务 */
   cron: Clock,
+  /** 平台每日记忆轮询 */
+  memoryPolling: BrainCircuit,
 } as const;
 
 /** 运行状态四件套（+ pending）—— 全站唯一，禁止另起图标 */

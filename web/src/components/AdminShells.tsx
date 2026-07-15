@@ -31,7 +31,7 @@ import { OverviewSection as TenantOverviewSection } from "@/components/TenantAna
 import { QaConsole } from "@/components/QaConsole";
 
 export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company";
-export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "global-mcp" | "skill-pool" | "system";
+export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "memory-polling" | "global-mcp" | "skill-pool" | "system";
 
 interface ShellButton<T extends string> {
   id: T;
@@ -65,6 +65,7 @@ const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "billing", label: "计费", icon: EntityIcons.billing },
   { id: "remote-hands", label: "执行环境池", icon: EntityIcons.runtimePool },
   { id: "tool-controls", label: "工具开关", icon: EntityIcons.toolControls },
+  { id: "memory-polling", label: "记忆轮询", icon: EntityIcons.memoryPolling },
   { id: "global-mcp", label: "全局 MCP", icon: EntityIcons.connector },
   { id: "skill-pool", label: "技能池", icon: EntityIcons.skill },
   { id: "system", label: "系统配置", icon: EntityIcons.systemConfig },
@@ -891,6 +892,7 @@ export function PlatformAdminShell({
   renderModels,
   renderRemoteHands,
   renderToolControls,
+  renderMemoryPolling,
   renderMcp,
   renderSkills,
   renderEfficiency,
@@ -909,6 +911,7 @@ export function PlatformAdminShell({
   renderModels: () => ReactNode;
   renderRemoteHands: () => ReactNode;
   renderToolControls: () => ReactNode;
+  renderMemoryPolling: () => ReactNode;
   renderMcp: () => ReactNode;
   renderSkills: () => ReactNode;
   renderEfficiency: () => ReactNode;
@@ -939,6 +942,7 @@ export function PlatformAdminShell({
     { id: "billing", node: <PlatformBillingManager /> },
     { id: "remote-hands", node: renderRemoteHands() },
     { id: "tool-controls", node: renderToolControls() },
+    { id: "memory-polling", node: renderMemoryPolling() },
     { id: "global-mcp", node: renderMcp() },
     { id: "skill-pool", node: renderSkills() },
     { id: "system", node: <SystemSettingsPanel /> },

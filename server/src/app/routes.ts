@@ -55,6 +55,7 @@ import { createTenantRemoteHandsAdminRouter } from "../routes/tenantRemoteHandsA
 import { createRuntimeOperationsAdminRouter } from "../routes/runtimeOperationsAdmin.js";
 import { createToolControlsAdminRouter } from "../routes/toolControlsAdmin.js";
 import { createImageGenPricingAdminRouter } from "../routes/imageGenPricingAdmin.js";
+import { createMemoryPollingAdminRouter } from "../routes/memoryPollingAdmin.js";
 import { createAdminBillingRouter, createBillingRouter } from "../routes/billing.js";
 import { createAzerothProxyRouter } from "../routes/azeroth-proxy.js";
 import { createDingtalkSessionRouter } from "../channels/dingtalk/protocol/sessionRouter.js";
@@ -333,6 +334,14 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       processCwd,
       config,
       onPricingUpdated: (pricing) => configureImageGenPricing(pricing),
+    }),
+  );
+  app.use(
+    "/api/admin/memory-polling",
+    createMemoryPollingAdminRouter({
+      processCwd,
+      config,
+      onPollingUpdated: runtime.updateMemoryPollingConfig,
     }),
   );
 

@@ -251,6 +251,8 @@ export interface AppRuntime {
   updateToolSettingsConfig?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void>;
   /** 更新 memory.index 配置并热写入后续 raw runtime dispatch。 */
   updateMemoryIndexConfig?: (memoryIndex: NonNullable<NonNullable<AppConfig['memory']>['index']> | undefined) => Promise<void>;
+  /** 更新 memory.polling 配置：热更后续执行参数并立即重排系统任务。 */
+  updateMemoryPollingConfig?: (polling: NonNullable<NonNullable<AppConfig['memory']>['polling']>) => Promise<void>;
   /** Artifact metadata/blob service for runtime-produced artifacts. */
   artifactService?: ArtifactService;
   /** 会话只读分享存储。 */
@@ -1838,6 +1840,24 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const channelManager = new ChannelManager();
   const dingtalkDeps = createDingtalkDeps(sessionBasePath);
 
+  // 保持同一对象引用：平台管理热更新时原地同步，CronService 后续执行即可读到
+  // 最新的回看窗口、轮数、超时和模型，不需要重启进程。
+  const memoryPollRuntimeConfig: {
+    lookbackHours?: number;
+    maxTurns?: number;
+    timeoutSeconds?: number;
+    model?: string;
+  } = {};
+  const syncMemoryPollRuntimeConfig = (): void => {
+    const polling = config.memory?.polling;
+    memoryPollRuntimeConfig.lookbackHours = polling?.lookbackHours;
+    memoryPollRuntimeConfig.maxTurns = polling?.maxTurns;
+    memoryPollRuntimeConfig.timeoutSeconds = polling?.timeoutSeconds;
+    if (polling?.model) memoryPollRuntimeConfig.model = polling.model;
+    else delete memoryPollRuntimeConfig.model;
+  };
+  syncMemoryPollRuntimeConfig();
+
   const cronRuntime = createCronRuntime({
     config: {
       cron: config.cron,
@@ -1859,12 +1879,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     skillConfigStore,
     tenantSkillsRootDir,
     userActivityService,
-    memoryPoll: {
-      ...(config.memory?.polling?.lookbackHours ? { lookbackHours: config.memory.polling.lookbackHours } : {}),
-      ...(config.memory?.polling?.maxTurns ? { maxTurns: config.memory.polling.maxTurns } : {}),
-      ...(config.memory?.polling?.timeoutSeconds ? { timeoutSeconds: config.memory.polling.timeoutSeconds } : {}),
-      ...(config.memory?.polling?.model ? { model: config.memory.polling.model } : {}),
-    },
+    memoryPoll: memoryPollRuntimeConfig,
     notify: createCronNotifier({
       resolveChannels: (notifyConfig) => {
         const channels: NotifyChannel[] = [];
@@ -1928,13 +1943,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 平台开关 config.memory.polling.enabled 关闭时也跑对账——负责把存量系统任务禁用。
   let cronLeadership: CronLeadership | undefined;
   let memoryPollReconcileTimer: ReturnType<typeof setInterval> | undefined;
+  let runMemoryPollReconcile: (() => Promise<void>) | undefined;
   if (processRole === 'all' && cronRuntime.service) {
     const cronService = cronRuntime.service;
-    let runMemoryPollReconcile: (() => Promise<void>) | undefined;
     if (userStore) {
-      const memoryPollingConfig = config.memory?.polling;
       runMemoryPollReconcile = async (): Promise<void> => {
         try {
+          const memoryPollingConfig = config.memory?.polling;
           const existingJobs = await cronService.list({ includeDisabled: true });
           const plan = reconcileMemoryPollJobs({
             users: userStore.listAll().map((user) => ({
@@ -1987,6 +2002,19 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
     });
   }
+
+  const updateMemoryPollingConfig = async (
+    polling: NonNullable<NonNullable<AppConfig['memory']>['polling']>,
+  ): Promise<void> => {
+    config.memory = {
+      ...(config.memory ?? {}),
+      polling,
+    };
+    syncMemoryPollRuntimeConfig();
+    if (cronLeadership?.isLeader()) {
+      await runMemoryPollReconcile?.();
+    }
+  };
 
   // SIGUSR2 drain 序列（见 AppRuntime.beginRuntimeDrain 注释；index.ts 调用）
   let runtimeDrainStarted = false;
@@ -2298,6 +2326,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     validateToolSettingsConfig,
     updateToolSettingsConfig,
     updateMemoryIndexConfig,
+    updateMemoryPollingConfig,
     artifactService,
     sessionShareStore,
     artifactShutdown,

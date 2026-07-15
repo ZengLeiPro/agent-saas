@@ -35,6 +35,7 @@ const ModelManagerPanel = lazy(() => import("@/components/ModelManager").then(m 
 const TenantRemoteHandsManagerPanel = lazy(() => import("@/components/TenantRemoteHandsManager").then(m => ({ default: m.TenantRemoteHandsManager })));
 const ToolControlsManagerPanel = lazy(() => import("@/components/ToolControlsManager").then(m => ({ default: m.ToolControlsManager })));
 const SignupConfigManagerPanel = lazy(() => import("@/components/SignupConfigManager").then(m => ({ default: m.SignupConfigManager })));
+const MemoryPollingManagerPanel = lazy(() => import("@/components/MemoryPollingManager").then(m => ({ default: m.MemoryPollingManager })));
 const SettingsModal = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsModal })));
 const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
 const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.PlatformAdminShell })));
@@ -583,6 +584,7 @@ export function DesktopLayout(props: LayoutProps) {
                 renderModels={() => <ModelManagerPanel />}
                 renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
                 renderToolControls={() => <ToolControlsManagerPanel />}
+                renderMemoryPolling={() => <MemoryPollingManagerPanel />}
                 renderMcp={() => <McpAdminCatalogPanel />}
                 renderSkills={() => <SkillManagerPanel mode="platform" />}
                 renderEfficiency={() => <EfficiencyViewPanel />}
@@ -627,6 +629,7 @@ export function DesktopLayout(props: LayoutProps) {
               renderModels={() => <ModelManagerPanel />}
               renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
               renderToolControls={() => <ToolControlsManagerPanel />}
+              renderMemoryPolling={() => <MemoryPollingManagerPanel />}
               renderMcp={() => <McpAdminCatalogPanel />}
               renderSkills={() => <SkillManagerPanel mode="platform" />}
               renderEfficiency={() => <EfficiencyViewPanel />}

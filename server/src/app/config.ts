@@ -1163,6 +1163,7 @@ export type SystemMonitorConfig = z.infer<typeof systemMonitorConfigSchema>;
 export type AlertingConfig = z.infer<typeof alertingConfigSchema>;
 export type MemoryInjectContextConfig = z.infer<typeof memoryInjectContextSchema>;
 export type MemoryMaintenanceConfig = z.infer<typeof memoryMaintenanceSchema>;
+export type MemoryPollingConfig = z.infer<typeof memoryPollingSchema>;
 export type MemoryConfig = z.infer<typeof memoryConfigSchema>;
 export type MemoryIndexAppConfig = z.infer<typeof memoryIndexSchema>;
 export type AuthConfig = z.infer<typeof authConfigSchema>;

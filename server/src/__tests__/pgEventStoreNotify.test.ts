@@ -254,6 +254,20 @@ describe('PgEventStore notify coalescing', () => {
     });
   });
 
+  it('escapes NUL bytes before writing event_json to PostgreSQL jsonb', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+
+    await store.appendBatch?.([
+      input('before\u0000after'),
+      input('literal\\u0000text'),
+    ]);
+
+    expect(pool.connection.insertedEvents[0]).toMatchObject({ content: 'before\\u0000after' });
+    expect(pool.connection.insertedEvents[1]).toMatchObject({ content: 'literal\\u0000text' });
+    expect(String((pool.connection.insertedEvents[0] as { content: string }).content)).not.toContain('\u0000');
+  });
+
   it('init does not recreate dead runtime_events indexes', async () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;

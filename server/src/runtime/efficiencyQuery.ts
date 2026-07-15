@@ -731,7 +731,7 @@ export function buildRepeatedFileReadsSection(
     if (!runId) continue;
     const filePath = parseReadToolFilePath(typeof row.sample_arguments === 'string' ? row.sample_arguments : undefined);
     if (!filePath) continue;
-    const key = `${runId} ${filePath}`;
+    const key = `${runId}\u001f${filePath}`;
     const existing = byRunAndFile.get(key);
     if (existing) existing.repeats += toNum(row.repeats);
     else byRunAndFile.set(key, { runId, filePath, repeats: toNum(row.repeats) });

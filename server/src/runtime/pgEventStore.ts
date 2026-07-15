@@ -8,6 +8,18 @@ const { Client, Pool } = pg;
 const NOTIFY_RANGE_PAGE_LIMIT = 250;
 const DEFAULT_POOL_MAX = 6;
 
+// PostgreSQL jsonb 不支持 U+0000；工具仍可能从普通文本文件或命令输出读到 NUL。
+// 只在持久化边界把它保存为可见转义文本，避免单条 tool_result 终止整个 run。
+function serializeEventForJsonb(event: PlatformEvent): string {
+  const serialized = JSON.stringify(event, (_key, value) => (
+    typeof value === 'string' && value.includes('\u0000')
+      ? value.replaceAll('\u0000', '\\u0000')
+      : value
+  ));
+  if (serialized === undefined) throw new Error('runtime event 无法序列化为 JSON');
+  return serialized;
+}
+
 export interface PgEventStoreOptions {
   connectionString: string;
   tablePrefix?: string;
@@ -184,7 +196,7 @@ export class PgEventStore implements EventStore {
             'runId' in event ? event.runId : null,
             tenantId,
             event.timestamp,
-            JSON.stringify(event),
+            serializeEventForJsonb(event),
           ],
         );
       }

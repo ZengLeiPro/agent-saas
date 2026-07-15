@@ -897,6 +897,8 @@ const runtimeEventStoreConfigSchema = z.discriminatedUnion('backend', [
     backend: z.literal('pg'),
     connectionString: z.string().min(1),
     tablePrefix: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/).optional(),
+    /** 共享查询池上限；默认 6，为蓝绿双实例及 LISTEN/leadership 专用连接预留余量。 */
+    poolMax: z.number().int().min(1).max(50).optional(),
   }),
 ]);
 

@@ -12,7 +12,7 @@
 #   ready(180s) 门禁 + warmup(420s 软门禁) + 冒烟 → 重写 nginx upstream +
 #   reload 切流 → 更新 active-color → 生成蓝绿 rollback.sh →
 #   SIGUSR2 精确 drain 旧色（活跃流清空后自退，Restart=on-failure 不复活）。
-#   切流前任何失败只回收 idle 色并还原 current/previous symlink，
+#   切流前任何失败只回收 idle 色并还原 current/previous/idle 色 symlink，
 #   老色全程在服务，用户零影响。
 # 零停机门禁(P2): 部署期间 runner 每 1s 探测公网 healthz，
 #   最大连续非 200 ≥ 2 即判失败（容忍单次公网抖动）。

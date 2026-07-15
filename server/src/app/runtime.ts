@@ -876,6 +876,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     pgEventStore = new PgEventStore({
       connectionString: config.runtimeEventStore.connectionString,
       tablePrefix: config.runtimeEventStore.tablePrefix,
+      poolMax: config.runtimeEventStore.poolMax,
       logger: serverLogger.child('PgEventStore'),
     });
     await pgEventStore.init();

@@ -6,10 +6,12 @@ import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 
 const { Client, Pool } = pg;
 const NOTIFY_RANGE_PAGE_LIMIT = 250;
+const DEFAULT_POOL_MAX = 6;
 
 export interface PgEventStoreOptions {
   connectionString: string;
   tablePrefix?: string;
+  poolMax?: number;
   logger?: {
     warn?: (message: string, meta?: Record<string, unknown>) => void;
   };
@@ -53,7 +55,10 @@ export class PgEventStore implements EventStore {
     this.eventsTable = `${prefix}_events`;
     this.cursorsTable = `${prefix}_event_cursors`;
     this.notifyChannel = `${prefix}_events_notify`;
-    this.pool = new Pool({ connectionString: options.connectionString });
+    this.pool = new Pool({
+      connectionString: options.connectionString,
+      max: options.poolMax ?? DEFAULT_POOL_MAX,
+    });
     this.pool.on('error', (err) => {
       this.options.logger?.warn?.('PgEventStore idle client error', {
         error: err instanceof Error ? err.message : String(err),

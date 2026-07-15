@@ -31,6 +31,27 @@ describe('getAppConfigPath', () => {
 });
 
 describe('parseAppConfig', () => {
+  it('accepts a bounded runtime PG pool size', () => {
+    const config = parseAppConfig({
+      ...baseConfig,
+      runtimeEventStore: {
+        backend: 'pg',
+        connectionString: 'postgresql://user:pass@localhost:5432/runtime',
+        poolMax: 4,
+      },
+    });
+
+    expect(config.runtimeEventStore).toMatchObject({ poolMax: 4 });
+    expect(() => parseAppConfig({
+      ...baseConfig,
+      runtimeEventStore: {
+        backend: 'pg',
+        connectionString: 'postgresql://user:pass@localhost:5432/runtime',
+        poolMax: 0,
+      },
+    })).toThrow();
+  });
+
   it('accepts platform tool controls', () => {
     const config = parseAppConfig({
       ...baseConfig,

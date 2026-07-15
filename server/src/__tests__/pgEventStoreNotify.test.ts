@@ -33,6 +33,7 @@ const pgMock = vi.hoisted(() => {
   class MockPool {
     static instances: MockPool[] = [];
 
+    readonly options: { connectionString?: string; max?: number };
     readonly connection = new MockConnection();
     readonly queries: QueryCall[] = [];
     readonly notifyCalls: QueryCall[] = [];
@@ -40,7 +41,8 @@ const pgMock = vi.hoisted(() => {
     listRows: RangeRow[] = [];
     rangeRows: RangeRow[] = [];
 
-    constructor() {
+    constructor(options: { connectionString?: string; max?: number } = {}) {
+      this.options = options;
       MockPool.instances.push(this);
     }
 
@@ -202,6 +204,14 @@ const FAST_SUBSCRIBE = { reconnectDelayMs: 5, safetyPollIntervalMs: 0 } as const
 describe('PgEventStore notify coalescing', () => {
   beforeEach(() => {
     pgMock.reset();
+  });
+
+  it('caps the shared pool for blue-green overlap and allows an explicit override', () => {
+    new PgEventStore({ connectionString: 'postgresql://unit-test' });
+    new PgEventStore({ connectionString: 'postgresql://unit-test', poolMax: 4 });
+
+    expect(pgMock.MockPool.instances[0]?.options.max).toBe(6);
+    expect(pgMock.MockPool.instances[1]?.options.max).toBe(4);
   });
 
   it('encodes batch ranges and keeps legacy event-id payload compatibility', () => {

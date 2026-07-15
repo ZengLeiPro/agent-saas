@@ -65,7 +65,7 @@ import { buildPendingInteractionsFromEvents } from "../runtime/interactionProjec
 import { auditLog } from "../data/login-logs/index.js";
 import { apiLogger } from "../utils/logger.js";
 import type { EventBus } from "../channels/web/eventBus.js";
-import { canAccessSession, isMemoryPollSessionMeta, hidesMemoryPollFrom } from "../data/sessions/access.js";
+import { canAccessSession, hidesMemoryPollFrom } from "../data/sessions/access.js";
 import type { AgentStore } from "../data/agents/store.js";
 import type { AgentProfileInfo } from "../data/agents/types.js";
 import { isAssignedToOrgAgent, type OrgAgentStore } from "../data/orgAgents/store.js";
@@ -1120,6 +1120,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           if (meta?.deletedAt) return false;
           // 子 agent hidden session 对 admin 列表同样隐藏（Run Trace 按 parentRunId 可查）
           if (meta?.kind === "subagent") return false;
+          // role=admin 同时包含组织管理员；记忆轮询只允许 pantheon 平台管理员看到。
+          if (hidesMemoryPollFrom(req.user, meta)) return false;
           return true;
         });
       }

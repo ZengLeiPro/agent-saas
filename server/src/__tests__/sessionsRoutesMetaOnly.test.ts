@@ -40,6 +40,7 @@ function stopServer(server: Server): Promise<void> {
 async function startServer(
   agentCwd: string,
   options: {
+    user?: WorkspaceUser;
     resolveContextAccounting?: (modelRef?: string) => {
       exact: boolean;
       kind: 'exact_current' | 'stateful_response_exact' | 'unknown';
@@ -53,7 +54,13 @@ async function startServer(
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    req.user = { sub: TEST_USER.id, username: TEST_USER.username, role: TEST_USER.role, tenantId: TEST_USER.tenantId };
+    const user = options.user ?? TEST_USER;
+    req.user = {
+      sub: user.id,
+      username: user.username,
+      role: user.role,
+      tenantId: user.tenantId ?? TEST_USER.tenantId,
+    };
     next();
   });
   app.use('/api', createSessionsRouter({
@@ -639,6 +646,28 @@ describe('sessions routes for meta-only runtime sessions', () => {
     });
 
     const { server, baseUrl } = await startServer(agentCwd);
+    try {
+      const json = await listSessions(baseUrl, '?fresh=1');
+      expect(json.sessions.some((session) => session.sessionId === memory.sessionId)).toBe(false);
+      expect(json.sessions.some((session) => session.sessionId === heartbeat.sessionId)).toBe(false);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('hides memory and heartbeat polling meta-only sessions for organization admins', async () => {
+    const memory = await writeRuntimeSession({
+      content: 'memory poll',
+      metaPatch: { channel: 'cron', cronSystemKind: 'memory_poll', cronJobName: '每日记忆轮询' },
+    });
+    const heartbeat = await writeRuntimeSession({
+      content: 'heartbeat poll',
+      metaPatch: { channel: 'cron', cronJobName: '服务心跳轮询' },
+    });
+
+    const { server, baseUrl } = await startServer(agentCwd, {
+      user: { ...TEST_USER, role: 'admin' },
+    });
     try {
       const json = await listSessions(baseUrl, '?fresh=1');
       expect(json.sessions.some((session) => session.sessionId === memory.sessionId)).toBe(false);

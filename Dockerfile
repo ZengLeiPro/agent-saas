@@ -106,6 +106,8 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https:
       file \
       findutils \
       fontconfig \
+      fonts-crosextra-caladea \
+      fonts-crosextra-carlito \
       fonts-dejavu-core \
       fonts-liberation \
       fonts-noto-cjk \
@@ -128,6 +130,7 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https:
       netcat-openbsd \
       openssh-client \
       openssl \
+      pandoc \
       poppler-utils \
       postgresql-client \
       procps \
@@ -189,6 +192,15 @@ RUN pnpm install --frozen-lockfile \
 # npm 包名: dingtalk-workspace-cli（bin 名: dws）；不用 dws@... 会拉到无关的 Decarta wrapper
 RUN npm install -g dingtalk-workspace-cli@1.0.51 \
     && dws --version
+
+# Office skills（pptx/docx）Node 依赖 — 预装到独立前缀（2026-07-16 生产反馈修复）
+# skills-pool 的 pptx skill「从零制作」主路径 require('pptxgenjs')、docx skill 新建文档 require('docx')；
+# agent cwd 在 /workspace，解析不到 /app/node_modules，靠 acs-sandbox stage 的 NODE_PATH 兜底解析。
+# pin 版本避免漂浮；构建期自检 require 可解析，fail-fast。
+RUN mkdir -p /opt/ky-agent/node \
+    && npm install --prefix /opt/ky-agent/node pptxgenjs@4.0.1 docx@9.7.1 \
+    && NODE_PATH=/opt/ky-agent/node/node_modules node -e "require('pptxgenjs'); require('docx'); console.log('office node deps ok')" \
+    && chmod -R a+rX /opt/ky-agent/node
 
 RUN pnpm -F server exec playwright install --with-deps chromium \
     && apt-get purge -y --auto-remove \
@@ -336,6 +348,9 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV NPM_CONFIG_PREFIX=/home/agent/.npm-global
 ENV PATH=/home/agent/.npm-global/bin:$PATH
+# Office skills Node 依赖（pptxgenjs/docx）的 fallback 解析路径；
+# 项目本地 node_modules 仍优先（NODE_PATH 是 require 解析的最后一级）
+ENV NODE_PATH=/opt/ky-agent/node/node_modules
 # dws warm sandbox 隔离约定（agent 无需 source .dws/env.sh）：
 # 强制 token/config 写工作区 /workspace/.dws/、禁用系统凭据管理器。
 # 用绝对路径而非 $PWD/.dws/…：agent 走到子目录（如 assets/YYYYMMDD/）时 token 归属不漂移。

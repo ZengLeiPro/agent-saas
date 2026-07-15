@@ -26,7 +26,7 @@ import type {
  * server 侧（绝不进 sandbox env、绝不上 wire）。
  *
  * risk:'safe' + approvalMode:'never' 的前提：落盘路径由 server 生成
- * （assets/generated/<YYYYMMDD>/img-<uuid8>.png），不接受模型传任意 path，
+ * （assets/generated/<YYYYMMDD>/img-<uuid8>.<真实格式>），不接受模型传任意 path，
  * 且 'wx' flag 不覆盖已有文件。
  *
  * 计费三段式（防双重扣费见 billing/service.ts projectMeteredToolUsage）：
@@ -450,6 +450,25 @@ function guessImageMime(path: string): string {
   return IMAGE_MIME_BY_EXT[extname(path).toLowerCase()] ?? 'application/octet-stream';
 }
 
+function detectImageExtension(data: Buffer): string {
+  if (data.length >= 8
+    && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return '.png';
+  }
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return '.jpg';
+  if (data.length >= 6) {
+    const signature = data.subarray(0, 6).toString('ascii');
+    if (signature === 'GIF87a' || signature === 'GIF89a') return '.gif';
+  }
+  if (data.length >= 12
+    && data.subarray(0, 4).toString('ascii') === 'RIFF'
+    && data.subarray(8, 12).toString('ascii') === 'WEBP') {
+    return '.webp';
+  }
+  if (data.length >= 2 && data[0] === 0x42 && data[1] === 0x4d) return '.bmp';
+  throw new Error('生图 API 返回了无法识别的图片格式，已拒绝落盘和扣费。');
+}
+
 function resolveTenantId(context?: ToolCallContext): string | undefined {
   return context?.channelContext?.user?.tenantId
     ?? context?.channelContext?.sessionOwner?.tenantId
@@ -625,7 +644,7 @@ export class ImageGenToolProvider implements ToolProvider {
     await mkdir(absDir, { recursive: true });
     const relPaths: string[] = [];
     for (const image of images) {
-      const fileName = `img-${randomUUID().slice(0, 8)}.png`;
+      const fileName = `img-${randomUUID().slice(0, 8)}${detectImageExtension(image)}`;
       // 'wx'：文件已存在直接失败，绝不覆盖 workspace 既有文件。
       await writeFile(join(absDir, fileName), image, { flag: 'wx' });
       relPaths.push(posix.join(relDir, fileName));

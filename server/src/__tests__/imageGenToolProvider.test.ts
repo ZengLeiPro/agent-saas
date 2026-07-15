@@ -12,7 +12,14 @@ import {
 import { configureImageGenPricing } from '../data/usage/imageGenPricing.js';
 import type { ToolCallContext } from '../agent/toolRuntime.js';
 
-const PNG_BASE64 = Buffer.from('fake-png-bytes').toString('base64');
+const PNG_BASE64 = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from('fake-png-bytes'),
+]).toString('base64');
+const JPEG_BASE64 = Buffer.concat([
+  Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+  Buffer.from('fake-jpeg-bytes'),
+]).toString('base64');
 
 function baseConfig(): ResolvedImageGenToolsConfig {
   return {
@@ -262,6 +269,20 @@ describe('ImageGenToolProvider', () => {
       makeContext(workspaceRoot),
     );
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the generated image magic bytes for the output extension', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ b64_json: JPEG_BASE64 }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as unknown as typeof fetch;
+    const { provider } = makeProvider({ fetchImpl });
+
+    const result = await provider.invoke(
+      invokeInput({ prompt: 'JPEG output', model: 'seedream' }),
+      makeContext(workspaceRoot),
+    );
+    const payload = JSON.parse(result!.content);
+    expect(payload.images[0]).toMatch(/^assets\/generated\/\d{8}\/img-[0-9a-f]{8}\.jpg$/);
   });
 
   it('uses runtime-configured pricing immediately (admin hot update)', async () => {

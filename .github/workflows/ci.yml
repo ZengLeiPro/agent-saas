@@ -192,9 +192,26 @@ jobs:
           log() {
             printf '[remote %s +%ss] %s\n' "$(date -Is)" "$(elapsed_seconds)" "$*"
           }
+          INSTALL_CLEANUP_ARMED=0
+          TRAFFIC_SWITCHED=0
           on_error() {
             local status=$?
+            trap - ERR
             log "ERROR status=$status line=$1 release=$RELEASE_ID"
+            if [ "$TRAFFIC_SWITCHED" -eq 0 ]; then
+              if [ "$INSTALL_CLEANUP_ARMED" -eq 1 ]; then
+                case "$RELEASE_DIR" in
+                  "$RELEASES_DIR"/*)
+                    log "remove failed release: $RELEASE_DIR"
+                    rm -rf -- "$RELEASE_DIR" || log "WARN: failed release cleanup failed"
+                    ;;
+                  *)
+                    log "WARN: refuse failed release cleanup outside $RELEASES_DIR: $RELEASE_DIR"
+                    ;;
+                esac
+              fi
+              rm -f -- "$RELEASE_TGZ" || log "WARN: failed upload cleanup failed"
+            fi
             exit "$status"
           }
           trap 'on_error $LINENO' ERR
@@ -225,13 +242,72 @@ jobs:
           HEALTHZ_URL="http://127.0.0.1:$IDLE_PORT/api/healthz"
           DRAINZ_URL="http://127.0.0.1:$IDLE_PORT/api/healthz/drain"
 
-          # ── 2. 解包 release + 安装依赖 ──
-          log "prepare release dir: $RELEASE_DIR"
+          # ── 2. 发布前清理与容量门禁：先腾空间，再开始不可复用的安装工作 ──
           mkdir -p "$RELEASES_DIR" "$DATA_DIR" "$COLOR_DIR"
+          KEEP_CURRENT=$(readlink "$APP_LINK" 2>/dev/null || true)
+          KEEP_PREV=$(readlink "$PREV_LINK" 2>/dev/null || true)
+          KEEP_BLUE=$(readlink "$COLOR_DIR/blue" 2>/dev/null || true)
+          KEEP_GREEN=$(readlink "$COLOR_DIR/green" 2>/dev/null || true)
+
+          is_protected_release() {
+            local candidate="$1"
+            [ "$candidate" = "$KEEP_CURRENT" ] || [ "$candidate" = "$KEEP_PREV" ] \
+              || [ "$candidate" = "$KEEP_BLUE" ] || [ "$candidate" = "$KEEP_GREEN" ]
+          }
+
+          log "release cleanup start before install: keep newest 4 existing releases plus current/previous/color targets"
+          (ls -dt "$RELEASES_DIR"/*/ 2>/dev/null || true) | tail -n +5 | while read -r old; do
+            old="${old%/}"
+            if [ -n "$old" ] && ! is_protected_release "$old"; then
+              case "$old" in
+                "$RELEASES_DIR"/*)
+                  if [ -L "$old" ]; then
+                    log "ERROR: refuse to prune release symlink: $old"
+                    exit 1
+                  fi
+                  log "pruning old release: $old"
+                  rm -rf -- "$old"
+                  ;;
+                *)
+                  log "ERROR: refuse to prune path outside $RELEASES_DIR: $old"
+                  exit 1
+                  ;;
+              esac
+            fi
+          done
+          log "release cleanup done"
+
           if [ -e "$RELEASE_DIR" ]; then
-            log "existing release dir found; moving aside"
-            mv "$RELEASE_DIR" "$RELEASE_DIR.replaced.$(date +%Y%m%d%H%M%S)"
+            if [ "$RELEASE_DIR" = "$KEEP_CURRENT" ] && [ "$RELEASE_DIR" = "$(readlink "$COLOR_DIR/$ACTIVE" 2>/dev/null || true)" ]; then
+              log "release is already active; remove duplicate upload and finish as idempotent no-op"
+              rm -f -- "$RELEASE_TGZ"
+              exit 0
+            fi
+            if is_protected_release "$RELEASE_DIR"; then
+              log "ERROR: existing release is protected by previous/color target; use rollback instead of overwriting it: $RELEASE_DIR"
+              rm -f -- "$RELEASE_TGZ"
+              exit 1
+            fi
+            log "remove stale partial release: $RELEASE_DIR"
+            rm -rf -- "$RELEASE_DIR"
           fi
+
+          FREE_BYTES=$(df -B1 --output=avail "$RELEASES_DIR" | tail -n 1 | tr -d '[:space:]')
+          FREE_INODES=$(df -i --output=iavail "$RELEASES_DIR" | tail -n 1 | tr -d '[:space:]')
+          MIN_FREE_BYTES=$((8 * 1024 * 1024 * 1024))
+          MIN_FREE_INODES=250000
+          log "capacity preflight: free_bytes=$FREE_BYTES minimum=$MIN_FREE_BYTES free_inodes=$FREE_INODES minimum=$MIN_FREE_INODES"
+          df -h "$RELEASES_DIR"
+          df -i "$RELEASES_DIR"
+          if [ "$FREE_BYTES" -lt "$MIN_FREE_BYTES" ] || [ "$FREE_INODES" -lt "$MIN_FREE_INODES" ]; then
+            log "ERROR: insufficient disk capacity for isolated dependency install"
+            rm -f -- "$RELEASE_TGZ"
+            exit 1
+          fi
+
+          # ── 3. 解包 release + isolated 安装 server/shared 依赖 ──
+          log "prepare release dir: $RELEASE_DIR"
+          INSTALL_CLEANUP_ARMED=1
           mkdir -p "$RELEASE_DIR"
           log "extract release archive: $RELEASE_TGZ"
           tar -xzf "$RELEASE_TGZ" -C "$RELEASE_DIR"
@@ -243,28 +319,10 @@ jobs:
             corepack enable
             corepack prepare pnpm@10.18.3 --activate
           fi
-          log "remote pnpm install start"
-          NODE_ENV=development pnpm install --frozen-lockfile --filter server... --filter shared...
+          log "remote pnpm isolated install start"
+          NODE_ENV=development pnpm --config.node-linker=isolated --config.allow-unused-patches=true install --frozen-lockfile --filter server... --filter shared...
           log "remote pnpm install done"
-
-          # ── 3. 切换前清理旧 release：即使清理失败，当前生产版本仍未改变 ──
-          # KEEP 除 current/previous 外，还必须保住两个 color symlink 的 target：
-          # active 色 crash-restart 仍要加载自己的代码，idle 色可能还在 drain 旧代码。
-          # 保留 pnpm store 供后续发布复用，避免每次重新下载全量依赖。
-          log "release cleanup start before switch: keep last 5 releases plus current/previous/color targets"
-          KEEP_CURRENT=$(readlink "$APP_LINK" 2>/dev/null || true)
-          KEEP_PREV=$(readlink "$PREV_LINK" 2>/dev/null || true)
-          KEEP_BLUE=$(readlink "$COLOR_DIR/blue" 2>/dev/null || true)
-          KEEP_GREEN=$(readlink "$COLOR_DIR/green" 2>/dev/null || true)
-          (ls -dt "$RELEASES_DIR"/*/ 2>/dev/null || true) | tail -n +6 | while read -r old; do
-            old="${old%/}"
-            if [ -n "$old" ] && [ "$old" != "$KEEP_CURRENT" ] && [ "$old" != "$KEEP_PREV" ] \
-              && [ "$old" != "$KEEP_BLUE" ] && [ "$old" != "$KEEP_GREEN" ]; then
-              log "pruning old release: $old"
-              rm -rf "$old"
-            fi
-          done
-          log "release cleanup done"
+          INSTALL_CLEANUP_ARMED=0
 
           # ── 4. idle 色残留处理：上次部署的旧色可能仍在 drain 未退 ──
           if systemctl is-active --quiet "${SERVICE_NAME}@${IDLE}"; then
@@ -288,6 +346,7 @@ jobs:
           # ── 5. 更新 symlink：只动 idle 色；current/previous 仅作 bookkeeping ──
           PREV_CURRENT=$(readlink "$APP_LINK" 2>/dev/null || true)
           PREV_PREVIOUS=$(readlink "$PREV_LINK" 2>/dev/null || true)
+          PREV_IDLE_TARGET=$(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || true)
           PREVIOUS_UPDATED=0
           log "switch color/$IDLE: $(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || echo '<none>') -> $RELEASE_DIR"
           ln -sfn "$RELEASE_DIR" "$COLOR_DIR/$IDLE"
@@ -298,10 +357,8 @@ jobs:
             PREVIOUS_UPDATED=1
           fi
 
-          # 切流前失败的统一回退：stop idle 色 + 还原 current/previous symlink。
+          # 切流前失败的统一回退：stop idle 色 + 还原全部 symlink + 删除失败 release。
           # nginx/active-color 全程未动，老色一直在服务，用户零影响。
-          # color/$IDLE 留在新 release 无碍：idle unit 已 stop，无「运行代码与 symlink
-          # 不一致」问题，下次部署或 rollback.sh 慢路径都会重新指向。
           rollback_idle_and_exit() {
             log "deploy FAILED before traffic switch; old color $ACTIVE untouched and still serving"
             journalctl -u "${SERVICE_NAME}@${IDLE}" -n 120 --no-pager || true
@@ -317,7 +374,19 @@ jobs:
                 rm -f "$PREV_LINK"
               fi
             fi
-            log "current/previous symlinks restored: current=${PREV_CURRENT:-<unchanged>}"
+            if [ -n "$PREV_IDLE_TARGET" ]; then
+              ln -sfn "$PREV_IDLE_TARGET" "$COLOR_DIR/$IDLE"
+            else
+              rm -f "$COLOR_DIR/$IDLE"
+            fi
+            log "symlinks restored: current=${PREV_CURRENT:-<unchanged>} color/$IDLE=${PREV_IDLE_TARGET:-<none>}"
+            case "$RELEASE_DIR" in
+              "$RELEASES_DIR"/*)
+                log "remove failed release: $RELEASE_DIR"
+                rm -rf -- "$RELEASE_DIR" || log "WARN: failed release cleanup failed"
+                ;;
+            esac
+            rm -f -- "$RELEASE_TGZ" || log "WARN: failed upload cleanup failed"
             exit 1
           }
 
@@ -469,6 +538,7 @@ jobs:
             fi
             rollback_idle_and_exit
           fi
+          TRAFFIC_SWITCHED=1
           log "traffic switched to $IDLE"
 
           # ── 10. 更新活动色标记 ──

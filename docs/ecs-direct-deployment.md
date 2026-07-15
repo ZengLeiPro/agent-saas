@@ -38,9 +38,9 @@
 
 1. 构建 + 打包 release，scp 上传 ECS。
 2. 读 `/etc/agent-saas/active-color` 定位 idle 色；校验 active 实例在服务。
-3. 解包到 `releases/<sha>`，`server/data` 软链 NAS，`pnpm install --filter server... --filter shared...`。
+3. 安装前清理未受保护的历史 release，并校验至少 8 GiB 可用空间、25 万可用 inode；随后解包到 `releases/<sha>`，`server/data` 软链 NAS，以 isolated linker 安装 server/shared 依赖。
 4. 只改 idle 色 symlink（active 色 symlink 永不动）→ `systemctl start agent-saas-server@<idle>`。
-5. 切流前门禁：`/api/healthz/ready` 200（180s 硬门禁）+ warmup done（420s 软门禁）+ 冒烟。任何失败只回收 idle 色，老色全程在服务。
+5. 切流前门禁：`/api/healthz/ready` 200（180s 硬门禁）+ warmup done（420s 软门禁）+ 冒烟。任何失败会还原 idle 色 symlink 并回收当次 release/上传包，老色全程在服务。
 6. 切流：重写 nginx upstream（新色 primary、旧色 backup）→ `nginx -t` → reload → 验证。
 7. 更新 active-color，重新生成 `/opt/agent-saas-app/rollback.sh`。
 8. `kill -USR2` 精确 drain 旧色（活跃流清空后自退，`Restart=on-failure` 不复活）。

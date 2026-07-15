@@ -1,3 +1,4 @@
+import { getAgentAvatarUrl } from '@agent/shared';
 import { webConfig } from '../platform/webConfig';
 
 /**
@@ -10,4 +11,25 @@ import { webConfig } from '../platform/webConfig';
  */
 export function apiUrl(path: string): string {
   return webConfig.getBaseUrl() + path;
+}
+
+/**
+ * server 返回的相对 API 资源路径（如用户头像 `/api/auth/avatar/:id`、企业专家
+ * 头像上传响应）转为可跨域加载的绝对 URL。分域部署下 `<img src>` 不走 fetch
+ * 收口，相对路径会打到前端 OSS 域被错误文档（index.html）吞掉。
+ * blob:/data:/绝对 URL 等非 `/api/` 前缀值原样返回。
+ */
+export function resolveApiAssetUrl(url: string): string;
+export function resolveApiAssetUrl(url: string | undefined): string | undefined;
+export function resolveApiAssetUrl(url: string | undefined): string | undefined {
+  if (!url) return url;
+  return url.startsWith('/api/') ? webConfig.getBaseUrl() + url : url;
+}
+
+/**
+ * web 端 Agent/企业专家头像 URL：包装 shared 的 getAgentAvatarUrl，
+ * 自动注入分域 base（shared 版 serverUrl 缺省为空串=相对路径，仅同源可用）。
+ */
+export function agentAvatarUrl(username: string, avatar?: string, version?: number): string | null {
+  return getAgentAvatarUrl(username, avatar, webConfig.getBaseUrl(), version);
 }

@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import {
   fetchAllAgentProfiles,
   isEmojiAvatar,
-  getAgentAvatarUrl,
   reportActivity,
 } from "@agent/shared";
+import { agentAvatarUrl } from "@/lib/apiBase";
 import type { AgentProfile as AgentProfileType } from "@agent/shared";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
@@ -79,7 +79,7 @@ export function AllAgentsList() {
           onClick={() => setListAvatarPreview(null)}
         >
           <img
-            src={getAgentAvatarUrl(listAvatarPreview.username, listAvatarPreview.avatar, undefined, listAvatarPreview.avatarVersion)!}
+            src={agentAvatarUrl(listAvatarPreview.username, listAvatarPreview.avatar, listAvatarPreview.avatarVersion)!}
             alt="Avatar"
             className="max-h-[80vh] max-w-[80vw] rounded-lg object-contain shadow-2xl"
             onClick={(e) => e.stopPropagation()}

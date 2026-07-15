@@ -1,4 +1,4 @@
-import { apiUrl } from "../../lib/apiBase";
+import { apiUrl, resolveApiAssetUrl } from "../../lib/apiBase";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, Suspense, type ReactNode } from "react";
 import {
   Brain,
@@ -696,7 +696,7 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
                   onClick={() => user?.avatar && setAvatarPreviewOpen(true)}
                   aria-label="预览头像大图"
                 >
-                  {user?.avatar ? <img src={user.avatar} alt="用户头像" className="h-full w-full object-cover" /> : initials(displayName)}
+                  {user?.avatar ? <img src={resolveApiAssetUrl(user.avatar)} alt="用户头像" className="h-full w-full object-cover" /> : initials(displayName)}
                 </button>
                 <div className="min-w-0">
                   <div className="truncate text-base font-semibold">{displayName}</div>
@@ -756,7 +756,7 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
       <Dialog open={avatarPreviewOpen} onOpenChange={setAvatarPreviewOpen}>
         <DialogContent className="max-w-[calc(100vw-2rem)] border-none bg-transparent p-0 shadow-none sm:max-w-xl">
           <DialogTitle className="sr-only">头像大图预览</DialogTitle>
-          {user?.avatar ? <img src={user.avatar} alt="用户头像大图" className="max-h-[80vh] w-full rounded-2xl object-contain shadow-2xl" /> : null}
+          {user?.avatar ? <img src={resolveApiAssetUrl(user.avatar)} alt="用户头像大图" className="max-h-[80vh] w-full rounded-2xl object-contain shadow-2xl" /> : null}
         </DialogContent>
       </Dialog>
       <Dialog open={phoneDialogOpen} onOpenChange={(open) => { if (!open && !savingPhone) setPhoneDialogOpen(false); }}>
@@ -1199,7 +1199,7 @@ export function SettingsModal({
         <aside className="flex w-40 shrink-0 flex-col border-r bg-muted/20 p-3">
           <div className="mb-4 flex items-center gap-2.5 px-1">
             <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-600 text-sm font-semibold text-white">
-              {user?.avatar ? <img src={user.avatar} alt="" className="h-full w-full object-cover" /> : initials(user?.realName || user?.username)}
+              {user?.avatar ? <img src={resolveApiAssetUrl(user.avatar)} alt="" className="h-full w-full object-cover" /> : initials(user?.realName || user?.username)}
             </div>
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold">{user?.realName || user?.username || "未登录"}</div>

@@ -1,6 +1,7 @@
 import { Check, LogOut } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAccountKey } from "@/lib/savedAccounts";
+import { resolveApiAssetUrl } from "@/lib/apiBase";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -50,7 +51,7 @@ export function LogoutAccountDialog({ open, onOpenChange }: LogoutAccountDialogP
                   onClick={() => closeThen(() => logoutCurrentAccount(account.key))}
                 >
                   {account.user.avatar ? (
-                    <img src={account.user.avatar} alt="" className="size-9 shrink-0 rounded-full object-cover" />
+                    <img src={resolveApiAssetUrl(account.user.avatar)} alt="" className="size-9 shrink-0 rounded-full object-cover" />
                   ) : (
                     <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-xs font-semibold text-white">
                       {account.user.username.charAt(0).toUpperCase()}

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { resolveApiAssetUrl } from "@/lib/apiBase";
 import {
   ArrowDown,
   ArrowUp,
@@ -163,7 +164,7 @@ export function UserTable({
               <div className="flex items-center gap-1.5">
                 {user.avatar ? (
                   <img
-                    src={user.avatar}
+                    src={resolveApiAssetUrl(user.avatar)}
                     alt=""
                     className="size-6 shrink-0 rounded-full object-cover"
                   />

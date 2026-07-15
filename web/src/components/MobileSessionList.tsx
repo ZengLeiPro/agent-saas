@@ -1,4 +1,4 @@
-import { apiUrl } from "../lib/apiBase";
+import { apiUrl, resolveApiAssetUrl } from "../lib/apiBase";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, FolderClosed, Camera, Lock, Settings2, UserCog } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
@@ -645,7 +645,7 @@ export function MobileSessionList({
               >
                 {authUser ? (
                   authUser.avatar ? (
-                    <img src={authUser.avatar} alt="" className="size-8 rounded-full object-cover" />
+                    <img src={resolveApiAssetUrl(authUser.avatar)} alt="" className="size-8 rounded-full object-cover" />
                   ) : (
                     <div className="flex size-8 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
                       {authUser.username.charAt(0).toUpperCase()}

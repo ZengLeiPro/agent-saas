@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImagePlus, Loader2, UserRound, X } from 'lucide-react';
-import { getAgentAvatarUrl } from '@agent/shared';
+import { agentAvatarUrl, resolveApiAssetUrl } from '@/lib/apiBase';
 
 /** 开开 8 岗位预设头像（web/public/kaikai-presets/，与场景库 8 岗位对齐） */
 const AVATAR_PRESETS = [
@@ -70,7 +70,7 @@ export function OrgAgentFormDialog({
       const blob = await res.blob();
       const file = new File([blob], `${key}.jpg`, { type: 'image/jpeg' });
       const data = await onUploadAvatar(editing.id, file);
-      setValues((prev) => ({ ...prev, avatarImageUrl: data.avatar, avatar: '' }));
+      setValues((prev) => ({ ...prev, avatarImageUrl: resolveApiAssetUrl(data.avatar), avatar: '' }));
       setPresetsOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -95,7 +95,7 @@ export function OrgAgentFormDialog({
         name: editing.name,
         avatar: isImageAvatar ? '' : editing.avatar ?? '',
         avatarImageUrl: isImageAvatar
-          ? getAgentAvatarUrl(`org-agent:${editing.id}`, editing.avatar, undefined, editing.avatarVersion)
+          ? agentAvatarUrl(`org-agent:${editing.id}`, editing.avatar, editing.avatarVersion)
           : null,
         description: editing.description,
         starterPromptsText: editing.starterPrompts.join('\n'),
@@ -214,7 +214,7 @@ export function OrgAgentFormDialog({
                       setUploading(true);
                       setError(null);
                       onUploadAvatar(editing.id, file)
-                        .then((data) => patch({ avatarImageUrl: data.avatar, avatar: '' }))
+                        .then((data) => patch({ avatarImageUrl: resolveApiAssetUrl(data.avatar), avatar: '' }))
                         .catch((err) => setError(err instanceof Error ? err.message : String(err)))
                         .finally(() => setUploading(false));
                     }}

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { isEmojiAvatar, getAgentAvatarUrl } from "@agent/shared";
+import { isEmojiAvatar } from "@agent/shared";
 import { User } from "lucide-react";
+import { agentAvatarUrl, apiUrl } from "@/lib/apiBase";
 
 const SIZE_MAP = { sm: 24, md: 40, lg: 64 } as const;
 
@@ -43,7 +44,7 @@ export function AgentAvatar({ avatar, username, size = "md", className, version 
     );
   }
 
-  const url = getAgentAvatarUrl(username || "", avatar, undefined, version);
+  const url = agentAvatarUrl(username || "", avatar, version);
   return (
     <img
       src={url!}
@@ -74,7 +75,7 @@ export function UserAvatar({ userId, avatar, size = "md", className, version }: 
   const [errored, setErrored] = useState(false);
 
   const url = (avatar && userId)
-    ? `/api/auth/avatar/${userId}${version ? `?v=${version}` : ''}`
+    ? apiUrl(`/api/auth/avatar/${userId}${version ? `?v=${version}` : ''}`)
     : null;
 
   if (!url || errored) {

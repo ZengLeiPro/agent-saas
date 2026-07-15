@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { getAgentAvatarUrl } from "@agent/shared";
+import { agentAvatarUrl } from "@/lib/apiBase";
 
 /**
  * 企业专家头像内容（三态）：
@@ -19,7 +19,7 @@ export function OrgAgentAvatarContent({
 }) {
   const { id, avatar, avatarVersion } = agent;
   if (avatar && avatar.startsWith("org-agent-avatars/")) {
-    const url = getAgentAvatarUrl(`org-agent:${id}`, avatar, undefined, avatarVersion);
+    const url = agentAvatarUrl(`org-agent:${id}`, avatar, avatarVersion);
     return <img src={url!} alt="" className={cn("h-full w-full object-cover", className)} />;
   }
   if (avatar && avatar !== "🤖") {

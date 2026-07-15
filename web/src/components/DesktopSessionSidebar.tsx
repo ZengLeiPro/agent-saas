@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState, useEffect, type Dispatch, type SetStateAction } from "react";
+import { resolveApiAssetUrl } from "@/lib/apiBase";
 import {
   Plus,
   MoreHorizontal,
@@ -632,7 +633,7 @@ function SidebarUserMenuFooter({
           {authUser ? (
             authUser.avatar ? (
               <img
-                src={authUser.avatar}
+                src={resolveApiAssetUrl(authUser.avatar)}
                 alt=""
                 className="size-8 shrink-0 rounded-full object-cover ring-1 ring-brand-100 ring-offset-1 ring-offset-background"
               />
@@ -691,7 +692,7 @@ function SidebarUserMenuFooter({
                           role="menuitem"
                         >
                           {account.user.avatar ? (
-                            <img src={account.user.avatar} alt="" className="size-8 shrink-0 rounded-full object-cover" />
+                            <img src={resolveApiAssetUrl(account.user.avatar)} alt="" className="size-8 shrink-0 rounded-full object-cover" />
                           ) : (
                             <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-xs font-semibold text-white">
                               {account.user.username.charAt(0).toUpperCase()}

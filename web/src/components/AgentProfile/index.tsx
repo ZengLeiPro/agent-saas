@@ -11,9 +11,9 @@ import {
   updateAgentProfile,
   uploadAgentAvatar,
   isEmojiAvatar,
-  getAgentAvatarUrl,
   reportActivity,
 } from "@agent/shared";
+import { agentAvatarUrl } from "@/lib/apiBase";
 import type { AgentProfileDetail } from "@agent/shared";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { SkillSelector } from "@/components/SkillSelector";
@@ -348,7 +348,7 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
           onClick={() => setAvatarPreview(false)}
         >
           <img
-            src={getAgentAvatarUrl(targetUsername || "", profile?.avatar, undefined, profile?.avatarVersion)!}
+            src={agentAvatarUrl(targetUsername || "", profile?.avatar, profile?.avatarVersion)!}
             alt="Avatar"
             className="max-h-[80vh] max-w-[80vw] rounded-lg object-contain shadow-2xl"
             onClick={(e) => e.stopPropagation()}

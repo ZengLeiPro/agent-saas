@@ -139,17 +139,58 @@ jobs:
 
       - name: Start zero-downtime probe
         run: |
-          # 部署期零停机探测（P2 门禁）：每 1s 打一次生产公网 healthz，
-          # 每行记录 "epoch http_code" 到 probe.log；
+          # 部署期零停机探测（P2 门禁）：每轮同时探测 healthz、只读业务 API、WS 建连，
+          # 每行记录 "epoch health_code api_status ws_status" 到 probe.log；
           # Deploy 结束后由 Assert zero downtime 步骤统计并守门。
           # 注意：前端域 agent.kaiyan.net 已 CNAME 到 OSS（2026-07-15 分域），
           # API/WS 生产入口是 api.agent.kaiyan.net → ECS nginx，探测必须打 API 域。
+          HEALTH_URL=https://api.agent.kaiyan.net/api/healthz
+          BUSINESS_API_URL=https://api.agent.kaiyan.net/api/signup/status
+          WS_URL='wss://api.agent.kaiyan.net/ws?probe=1'
+          WS_PROBE_SCRIPT=server/scripts/zero-downtime-ws-probe.mjs
+
+          # 首次发布探针端点时，旧版本会返回 401。bootstrap 模式只在本次发布允许
+          # 切流前的 legacy-auth，且切流后必须至少观察到一次新版本 WS 探针成功。
+          # 一旦生产已有探针，后续发布自动进入 strict，legacy-auth 也算失败。
+          set +e
+          ws_preflight=$(node "$WS_PROBE_SCRIPT" "$WS_URL" 4000 2>&1)
+          ws_preflight_rc=$?
+          set -e
+          case "$ws_preflight_rc" in
+            0) WS_MODE=strict ;;
+            2) WS_MODE=bootstrap ;;
+            *)
+              echo "WS probe preflight failed: $ws_preflight"
+              exit 1
+              ;;
+          esac
+          echo "$WS_MODE" > "$RUNNER_TEMP/probe.ws-mode"
+          echo "WS probe mode=$WS_MODE preflight=$ws_preflight"
+
           : > "$RUNNER_TEMP/probe.log"
           (
+            set +e
             while true; do
-              code=$(curl -s -o /dev/null -m 4 -w '%{http_code}' https://api.agent.kaiyan.net/api/healthz || true)
-              [ -n "$code" ] || code=000
-              echo "$(date +%s) $code"
+              health_code=$(curl -s -o /dev/null -m 4 -w '%{http_code}' "$HEALTH_URL")
+              [ -n "$health_code" ] || health_code=000
+
+              api_body="$RUNNER_TEMP/probe-api-body.json"
+              api_code=$(curl -s -o "$api_body" -m 4 -w '%{http_code}' "$BUSINESS_API_URL")
+              if [ "$api_code" = "200" ] && grep -Eq '"enabled"[[:space:]]*:[[:space:]]*(true|false)' "$api_body"; then
+                api_status=ok
+              else
+                api_status=failed
+              fi
+
+              ws_output=$(node "$WS_PROBE_SCRIPT" "$WS_URL" 4000 2>&1)
+              ws_rc=$?
+              case "$ws_rc" in
+                0) ws_status=ok ;;
+                2) ws_status=legacy-auth ;;
+                *) ws_status=failed ;;
+              esac
+
+              echo "$(date +%s) $health_code $api_status $ws_status"
               sleep 1
             done
           ) >> "$RUNNER_TEMP/probe.log" 2>/dev/null &
@@ -656,30 +697,64 @@ jobs:
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
         run: |
           if [ ! -f "$RUNNER_TEMP/probe.pid" ]; then
-            echo "probe.pid not found (probe step did not run); skipping"
+            echo "probe.pid not found (probe step did not run)"
+            if [ "$DEPLOY_OUTCOME" = "success" ]; then
+              echo "ZERO-DOWNTIME GATE FAILED: successful deploy has no running probe"
+              exit 1
+            fi
+            echo "deploy outcome=$DEPLOY_OUTCOME; report only"
             exit 0
           fi
           kill "$(cat "$RUNNER_TEMP/probe.pid")" 2>/dev/null || true
+          wait "$(cat "$RUNNER_TEMP/probe.pid")" 2>/dev/null || true
           if [ ! -f "$RUNNER_TEMP/probe.log" ]; then
-            echo "probe.log missing; nothing to assert"
+            echo "probe.log missing"
+            if [ "$DEPLOY_OUTCOME" = "success" ]; then
+              echo "ZERO-DOWNTIME GATE FAILED: successful deploy has no probe log"
+              exit 1
+            fi
+            echo "deploy outcome=$DEPLOY_OUTCOME; report only"
             exit 0
           fi
+          WS_MODE=$(cat "$RUNNER_TEMP/probe.ws-mode" 2>/dev/null || true)
+          if [ "$WS_MODE" != "strict" ] && [ "$WS_MODE" != "bootstrap" ]; then
+            echo "invalid or missing WS probe mode: ${WS_MODE:-missing}"
+            if [ "$DEPLOY_OUTCOME" = "success" ]; then
+              echo "ZERO-DOWNTIME GATE FAILED: successful deploy has no valid WS probe mode"
+              exit 1
+            fi
+          fi
           TOTAL=$(wc -l < "$RUNNER_TEMP/probe.log" | tr -d '[:space:]')
-          NON200=$(awk '$2 != "200" { n++ } END { print n + 0 }' "$RUNNER_TEMP/probe.log")
-          MAX_STREAK=$(awk '$2 != "200" { s++; if (s > m) m = s; next } { s = 0 } END { print m + 0 }' "$RUNNER_TEMP/probe.log")
-          echo "probe summary: total=$TOTAL non200=$NON200 max_consecutive_non200=$MAX_STREAK"
-          if [ "${NON200:-0}" -gt 0 ]; then
-            echo "--- non-200 probe lines (epoch http_code) ---"
-            awk '$2 != "200"' "$RUNNER_TEMP/probe.log"
+          HEALTH_FAILURES=$(awk '$2 != "200" { n++ } END { print n + 0 }' "$RUNNER_TEMP/probe.log")
+          API_FAILURES=$(awk '$3 != "ok" { n++ } END { print n + 0 }' "$RUNNER_TEMP/probe.log")
+          WS_SUCCESSES=$(awk '$4 == "ok" { n++ } END { print n + 0 }' "$RUNNER_TEMP/probe.log")
+          if [ "$WS_MODE" = "bootstrap" ]; then
+            WS_FAILURES=$(awk '$4 != "ok" && $4 != "legacy-auth" { n++ } END { print n + 0 }' "$RUNNER_TEMP/probe.log")
+          else
+            WS_FAILURES=$(awk '$4 != "ok" { n++ } END { print n + 0 }' "$RUNNER_TEMP/probe.log")
+          fi
+          echo "probe summary: mode=$WS_MODE total=$TOTAL health_failures=$HEALTH_FAILURES api_failures=$API_FAILURES ws_failures=$WS_FAILURES ws_successes=$WS_SUCCESSES"
+          echo "--- failed probe lines (epoch health_code api_status ws_status) ---"
+          if [ "$WS_MODE" = "bootstrap" ]; then
+            awk '$2 != "200" || $3 != "ok" || ($4 != "ok" && $4 != "legacy-auth")' "$RUNNER_TEMP/probe.log"
+          else
+            awk '$2 != "200" || $3 != "ok" || $4 != "ok"' "$RUNNER_TEMP/probe.log"
           fi
           # deploy 失败时旧色未动，探测应全绿；此处只报告不守门，不改变 job 结论
           if [ "$DEPLOY_OUTCOME" != "success" ]; then
             echo "deploy outcome=$DEPLOY_OUTCOME; report only, zero-downtime gate skipped"
             exit 0
           fi
-          # 容忍单次公网抖动：连续非 200 达到 2 次才判停机
-          if [ "${MAX_STREAK:-0}" -ge 2 ]; then
-            echo "ZERO-DOWNTIME GATE FAILED: max consecutive non-200 = $MAX_STREAK (must be < 2)"
+          if [ "${TOTAL:-0}" -eq 0 ]; then
+            echo "ZERO-DOWNTIME GATE FAILED: no probe samples"
+            exit 1
+          fi
+          if [ "${HEALTH_FAILURES:-0}" -gt 0 ] || [ "${API_FAILURES:-0}" -gt 0 ] || [ "${WS_FAILURES:-0}" -gt 0 ]; then
+            echo "ZERO-DOWNTIME GATE FAILED: every health/API/WS sample must succeed"
+            exit 1
+          fi
+          if [ "$WS_MODE" = "bootstrap" ] && [ "${WS_SUCCESSES:-0}" -eq 0 ]; then
+            echo "ZERO-DOWNTIME GATE FAILED: new WS probe was never observed after cutover"
             exit 1
           fi
           echo "zero-downtime gate passed"

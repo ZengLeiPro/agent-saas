@@ -86,6 +86,21 @@ export class WsServer {
                 return; // Let other upgrade handlers (e.g. Vite HMR) handle it
             }
 
+            // The deployment gate performs a real WebSocket upgrade without
+            // registering a user connection or touching session state.
+            if (this.isDeploymentProbe(request)) {
+                this.wss.handleUpgrade(request, socket, head, (ws) => {
+                    ws.send(JSON.stringify({ data: { type: 'pong', probe: true } }), (err) => {
+                        if (err) {
+                            ws.terminate();
+                            return;
+                        }
+                        ws.close(1000, 'probe complete');
+                    });
+                });
+                return;
+            }
+
             // Authenticate
             const user = this.authenticate(request);
             // If auth is configured but failed, reject
@@ -299,6 +314,15 @@ export class WsServer {
             return url.pathname;
         } catch {
             return '';
+        }
+    }
+
+    private isDeploymentProbe(request: IncomingMessage): boolean {
+        try {
+            const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+            return url.pathname === '/ws' && url.searchParams.get('probe') === '1';
+        } catch {
+            return false;
         }
     }
 

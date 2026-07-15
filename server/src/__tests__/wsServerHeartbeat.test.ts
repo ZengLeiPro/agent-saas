@@ -12,6 +12,19 @@ function waitOpen(ws: WebSocket): Promise<void> {
   });
 }
 
+function waitMessage(ws: WebSocket): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    ws.once('message', (data) => {
+      try {
+        resolve(JSON.parse(data.toString()));
+      } catch (err) {
+        reject(err);
+      }
+    });
+    ws.once('error', reject);
+  });
+}
+
 async function waitUntil(predicate: () => boolean, { timeoutMs = 2_000, intervalMs = 10 } = {}): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -37,6 +50,19 @@ async function withWsServer<T>(fn: (args: { url: string; wsServer: WsServer }) =
 }
 
 describe('WsServer heartbeat', () => {
+  it('accepts an unauthenticated deployment probe without registering a user client', async () => {
+    await withWsServer(async ({ url, wsServer }) => {
+      const probeUrl = new URL(url);
+      probeUrl.search = '?probe=1';
+      const ws = new WebSocket(probeUrl);
+      const messagePromise = waitMessage(ws);
+
+      await waitOpen(ws);
+      await expect(messagePromise).resolves.toEqual({ data: { type: 'pong', probe: true } });
+      expect(wsServer.clientCount).toBe(0);
+    });
+  });
+
   it('sends lightweight pong before metadata sync replay', async () => {
     await withWsServer(async ({ url, wsServer }) => {
       wsServer.userEventLog.push('user-1', { type: 'session_updated', sessionId: 'session-1' });

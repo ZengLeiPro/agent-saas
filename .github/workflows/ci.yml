@@ -293,7 +293,7 @@ jobs:
           fi
 
           FREE_BYTES=$(df -B1 --output=avail "$RELEASES_DIR" | tail -n 1 | tr -d '[:space:]')
-          FREE_INODES=$(df -i --output=iavail "$RELEASES_DIR" | tail -n 1 | tr -d '[:space:]')
+          FREE_INODES=$(df --output=iavail "$RELEASES_DIR" | tail -n 1 | tr -d '[:space:]')
           MIN_FREE_BYTES=$((8 * 1024 * 1024 * 1024))
           MIN_FREE_INODES=250000
           log "capacity preflight: free_bytes=$FREE_BYTES minimum=$MIN_FREE_BYTES free_inodes=$FREE_INODES minimum=$MIN_FREE_INODES"

@@ -1,9 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { updateSelections, fetchMyMcp } = vi.hoisted(() => ({
+const { updateSelections, fetchMyMcp, dwsAuthFetch } = vi.hoisted(() => ({
   updateSelections: vi.fn(),
   fetchMyMcp: vi.fn(),
+  dwsAuthFetch: vi.fn(),
+}));
+
+// DingtalkConnector（钉钉内置连接卡片）经 @/lib/authFetch 请求 /api/dws/*。
+vi.mock("@/lib/authFetch", () => ({
+  authFetch: dwsAuthFetch,
+  setOnUnauthorized: vi.fn(),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -39,6 +46,11 @@ import { McpManager } from "./index";
 
 describe("McpManager 连接器目录", () => {
   beforeEach(() => {
+    dwsAuthFetch.mockReset().mockImplementation(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => (url.includes("/api/dws/connections") ? { connections: [] } : { session: null }),
+    }));
     updateSelections.mockReset().mockResolvedValue(undefined);
     fetchMyMcp.mockReset().mockResolvedValue({
       configVersion: 1,
@@ -82,5 +94,18 @@ describe("McpManager 连接器目录", () => {
     expect(await screen.findByRole("dialog")).toBeTruthy();
     expect(screen.getByText("连接方式")).toBeTruthy();
     expect(screen.getByRole("button", { name: "启用连接器" })).toBeTruthy();
+  });
+
+  it("钉钉内置连接以卡片形式与 MCP 连接器同 grid 展示", async () => {
+    render(<McpManager />);
+
+    expect(await screen.findByText("钉钉")).toBeTruthy();
+    expect(screen.getByText("未连接")).toBeTruthy();
+    expect(dwsAuthFetch).toHaveBeenCalledWith("/api/dws/connections");
+
+    fireEvent.click(screen.getByText("钉钉"));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect(screen.getByText("尚未连接钉钉")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "连接钉钉" })).toBeTruthy();
   });
 });

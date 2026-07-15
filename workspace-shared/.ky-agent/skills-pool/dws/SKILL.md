@@ -13,14 +13,14 @@ metadata:
 >
 > 1. **Token/config 隔离到 workspace**：`DWS_DISABLE_KEYCHAIN=1` + `DWS_CONFIG_DIR=/workspace/.dws/config` + `DWS_KEYCHAIN_DIR=/workspace/.dws/keys`。**ACS sandbox 镜像 Dockerfile `ENV` 层已默认注入这三个变量**，agent 直接跑 `dws <cmd>` 即可；本地开发（非 ACS 容器）需 `. .dws/env.sh` 或 `dws_runtime.dws_env()` 显式带 env。
 > 2. **官方脚本依赖 env 继承**：`scripts/` 下 38 个官方 Python 脚本调用 `dws` 时**没有**内置 env 注入逻辑，依赖 shell/`subprocess` 环境继承——ACS 容器里天然生效（因 §1 的 `ENV` 层），本地开发若忘 source `.dws/env.sh`，token 会落到默认 HOME 位置。`scripts/dws_runtime.py` 仅是给**自写脚本**的 workspace 规范 helper（`workspace_root()` / `dws_env()` / `assets_dir()` 等），**不 patch subprocess**。
-> 3. **SaaS 首次授权只走设置页**：用户在「设置 → 账户 → 钉钉连接」点击「连接钉钉」，平台负责启动 device flow 并打开钉钉官方授权页。Agent 遇到未登录时只引导用户去设置页，**不要自行用 Shell 启动 `dws auth login`**。详见 §2。
+> 3. **SaaS 首次授权只走连接器页**：用户在「能力中心 → 连接器 → 钉钉」点击「连接钉钉」，平台负责启动 device flow 并打开钉钉官方授权页。Agent 遇到未登录时只引导用户去能力中心的连接器页，**不要自行用 Shell 启动 `dws auth login`**。详见 §2。
 > 4. **每 workspace 绑定独立钉钉账号**：dws 涉及个人数据（日历/邮件/听记/考勤/日志），禁止复用少量权限的无人小号。机器人/自动化场景改用 `--client-id --client-secret` 自定义应用模式。
 > 5. **ACS 里可直接跑 `dws`**：容器 ENV 已注入，token 会落 `/workspace/.dws/keys/`；本地开发或裸机跑 dws 之前必须先 `. .dws/env.sh` 或显式内联 env，否则 token 会污染默认 HOME 配置目录。
 > 6. **职责边界**：实时钉钉产品操作走本 skill；批量历史聚合（员工/部门/工时）若当前会话启用了 `ky-data-query` 则优先走它；TTS/语音消息/长时间异步回复不属于 dws，仅当明确启用对应专用 skill 时才路由过去。
 >
 > **PAT 行为授权是预期机制，不是 bug**——撞到 `PAT_*_RISK_NO_PERMISSION` 错误时**不要重试、不要改命令**，把错误 JSON 里的 `authorizationUrl` **原样**转给用户，说明风险等级和授权时长选项（一次性 / 本次会话 / 永久），让用户在自己设备打开完成同意。完整机制见 [platform-runtime-context.md](./references/platform-runtime-context.md) §7（含 4 个风险等级 / vs OAuth 对比 / `PAT_SCOPE_AUTH_REQUIRED` 与 `AGENT_CODE_NOT_EXISTS` 两个特殊错误码）。
 >
-> **平台默认部署**：本 skill 不携带任何用户 token/config；每个用户通过设置页独立完成 dws device flow 授权，token 只写到其 `/workspace/.dws/keys/` 持久化目录。平台镜像已预装 `dingtalk-workspace-cli@1.0.51` npm 包 + 在 `acs-sandbox` stage `ENV` 层默认注入 warm sandbox 三变量；本地开发需自行 source `.dws/env.sh`。
+> **平台默认部署**：本 skill 不携带任何用户 token/config；每个用户通过能力中心的连接器页独立完成 dws device flow 授权，token 只写到其 `/workspace/.dws/keys/` 持久化目录。平台镜像已预装 `dingtalk-workspace-cli@1.0.51` npm 包 + 在 `acs-sandbox` stage `ENV` 层默认注入 warm sandbox 三变量；本地开发需自行 source `.dws/env.sh`。
 >
 > **如果有任何调用失败**，先按这 6 条对照排查；仍不通时读完整 [references/platform-runtime-context.md](./references/platform-runtime-context.md) §6 故障特征表 + §7 PAT 章节。
 

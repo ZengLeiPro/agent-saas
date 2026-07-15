@@ -85,14 +85,14 @@ result = subprocess.run(
 
 每个工作区第一次使用 dws 前需要让用户授权一次。SaaS 产品内的标准流程：
 
-1. 用户打开「设置 → 账户 → 钉钉连接」，点击「连接钉钉」。
+1. 用户打开「能力中心 → 连接器」，在「钉钉」卡片上点击「连接钉钉」。
 2. 平台在该用户的 ACS warm sandbox 内启动固定的 `dws auth login --device --format json`，前端不接触任何 token。
 3. 平台从 DWS 输出提取一次性 user_code，并自动打开 `https://login.dingtalk.com/oauth2/device/verify.htm?user_code=<CODE>`。
 4. 用户在钉钉官方页面完成「登录钉钉 → 选择组织/企业 → 同意」。
 5. DWS polling 拿到 token 后，只写入该用户持久化 workspace 的 `/workspace/.dws/keys/`；平台同步非敏感的组织与连接状态到状态账本。
 6. 平台随后执行状态验证，并按不超过 21 天的周期自动保活。正常情况下用户不再定期登录。
 
-Agent 调用业务命令遇到 `not authenticated` 时，只需告诉用户：**请到「设置 → 账户 → 钉钉连接」点击「连接钉钉」**。不要在对话内自行启动 `dws auth login`，避免制造第二套授权入口和失去前端状态闭环。
+Agent 调用业务命令遇到 `not authenticated` 时，只需告诉用户：**请到「能力中心 → 连接器」在「钉钉」卡片上点击「连接钉钉」**。不要在对话内自行启动 `dws auth login`，避免制造第二套授权入口和失去前端状态闭环。
 
 仅在平台外的本地开发环境调试时，开发者才可先按 §1.2 source `.dws/env.sh`，再在前台运行 `dws auth login --device --format json`；不要用 `nohup` 或普通 shell `&`。
 
@@ -145,14 +145,14 @@ dws aitable record delete --base-id xxx --table-id yyy --record-id zzz --yes
 | 现象 | 可能原因 | 处理 |
 |---|---|---|
 | `keychain access denied` 或 token 写不进去 | 没注入 `DWS_DISABLE_KEYCHAIN=1` | source env.sh |
-| `auth status` 显示 "not authenticated" | 当前 workspace 尚未完成授权 | 引导用户到「设置 → 账户 → 钉钉连接」点击「连接钉钉」；Agent 不自行启动 device flow |
+| `auth status` 显示 "not authenticated" | 当前 workspace 尚未完成授权 | 引导用户到「能力中心 → 连接器 → 钉钉」点击「连接钉钉」；Agent 不自行启动 device flow |
 | 不同 workspace 互相影响 token | env 注入路径写错了，token 落到默认 HOME 配置目录 | 不要自动删除共享配置；先确认路径和影响范围，再重新 source env.sh、重授权 |
 | `command not found: dws` | ACS 镜像或 workspace PATH 缺 dws 二进制 | 报告镜像/依赖缺口；不要在用户任务中全局安装 |
 | 升级到新版本 | 镜像或工具链版本落后 | 通过镜像/依赖发布流程升级；skill 文件同步独立处理，不依赖 `dws upgrade` |
-| **用户已确认但 auth status 仍未登录** | 平台授权任务已退出或授权码过期 | 查看设置页授权状态；失效则点击「重新连接」获取新 code |
+| **用户已确认但 auth status 仍未登录** | 平台授权任务已退出或授权码过期 | 在连接器页「钉钉」卡片查看授权状态；失效则点击「重新连接」获取新 code |
 | **新会话第一次接管时 token 已存在但 access_token 过期** | 正常现象，refresh_token 还有效，下次调用 dws 会自动刷新 | 直接调用即可，dws 内部会自动 `lockedRefresh` |
 | **`auth status` 显示 `refresh_token_valid: false`** | refresh_token 也过期了（连续 30 天没用 dws） | 重走完整 device flow 授权一次 |
-| **设置页长期停在等待授权** | 用户未在 15 分钟内确认，或 ACS 授权任务异常退出 | 等设置页显示过期/失败后点击「重新连接」；平台管理员再查服务端授权任务日志 |
+| **连接器页长期停在等待授权** | 用户未在 15 分钟内确认，或 ACS 授权任务异常退出 | 等连接器页显示过期/失败后点击「重新连接」；平台管理员再查服务端授权任务日志 |
 | **API 报 `code: 300000` 类业务错误** | 不是认证问题，是参数错误 | 用对应层级的 `dws <command-path> --help` 查必填参数，补齐重试；helper-only 命令再用 `dws schema` |
 | **`token` 拿到了但调 API 返回 `permission_denied`** | 当前账号对该资源无权限，或 dws 内置应用 scope 不够 | 换登录账号、或考虑迁到自定义应用模式 |
 | **API 返回 `PAT_NO_PERMISSION` / `PAT_LOW_RISK_NO_PERMISSION` / `PAT_MEDIUM_RISK_NO_PERMISSION` / `PAT_HIGH_RISK_NO_PERMISSION`** | **预期机制**，不是 bug。钉钉对涉及个人敏感数据的 API 要求用户单独按 scope 同意一次行为 | 详见下方「PAT 行为授权机制」段；把 `authorizationUrl` 原样转给用户，说明风险等级和授权时长选项，让用户自行选择 |
@@ -178,7 +178,7 @@ dws 是 **sliding window** 设计——`internal/auth/oauth_helpers.go:252,294` 
 
 平台管理员在对应 ACS sandbox 内确认进程活着时，应该看到 Node.js wrapper 与 Go 二进制两个进程。普通用户和 Agent 不需要检查 PID。
 
-如果进程已经退出：当前 code 作废，让用户在设置页点击「重新连接」。
+如果进程已经退出：当前 code 作废，让用户在连接器页「钉钉」卡片点击「重新连接」。
 
 如果看到 2 个进程但日志一直在 `[N] polling ... Waiting for user authorization`：正常，等用户扫码。15 分钟 user_code 超时则进程会自然退出并报 `expired_token`。
 

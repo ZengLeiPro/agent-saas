@@ -169,7 +169,7 @@ export interface AppRuntime {
   userStore?: UserStore;
   /** DWS 连接状态只保存非敏感元数据；token 始终留在用户 workspace 的 .dws。 */
   dwsConnectionStore?: DwsConnectionStore;
-  /** DWS 首次绑定：设置页启动 device flow，短期授权码落 PG，token 仍只进用户 workspace。 */
+  /** DWS 首次绑定：能力中心连接器页启动 device flow，短期授权码落 PG，token 仍只进用户 workspace。 */
   dwsAuthFlowService?: DwsAuthFlowServiceLike;
   /** 停止 DWS 授权守活 worker（ws-only 进程不启动）。 */
   dwsAuthKeepaliveShutdown?: () => void;

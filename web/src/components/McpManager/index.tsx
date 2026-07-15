@@ -42,6 +42,12 @@ import {
   CatalogToolbar,
   type CapabilitySource,
 } from "@/components/CapabilityCenter/CatalogUi";
+import {
+  DingtalkConnectorCard,
+  DingtalkConnectorDrawer,
+  dingtalkMatchesCatalog,
+  useDwsConnections,
+} from "@/components/CapabilityCenter/DingtalkConnector";
 
 const SCOPE_BADGE: Record<McpSecretScope, { label: string; className: string }> = {
   user: { label: "用户私有", className: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100" },
@@ -120,6 +126,9 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const [detailServerId, setDetailServerId] = useState<string | null>(null);
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [pendingServerId, setPendingServerId] = useState<string | null>(null);
+  // 钉钉是平台内置连接（DWS device flow），与 MCP 连接器同 grid 展示但数据流独立。
+  const dws = useDwsConnections(mode === "personal");
+  const [dingtalkDetailOpen, setDingtalkDetailOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -361,13 +370,15 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
       return matchesFilter && matchesQuery;
     });
   }, [activeFilter, connectorServers, query]);
+  // 钉钉内置连接计入「全部 / 已启用（有已连接组织）/ 平台提供」的计数。
   const connectorFilters = useMemo(() => [
-    { value: "all" as const, label: "全部", count: connectorServers.length },
-    { value: "enabled" as const, label: "已启用", count: enabledCount },
-    { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length },
+    { value: "all" as const, label: "全部", count: connectorServers.length + 1 },
+    { value: "enabled" as const, label: "已启用", count: enabledCount + (dws.hasConnected ? 1 : 0) },
+    { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length + 1 },
     { value: "organization" as const, label: "组织提供", count: connectorServers.filter((server) => connectorSource(server) === "organization").length },
     { value: "personal" as const, label: "我创建的", count: connectorServers.filter((server) => connectorSource(server) === "personal").length },
-  ], [connectorServers, enabledCount]);
+  ], [connectorServers, dws.hasConnected, enabledCount]);
+  const showDingtalkCard = dingtalkMatchesCatalog(query, activeFilter, dws);
   const detailServer = detailServerId ? connectorServers.find((server) => server.id === detailServerId) ?? null : null;
 
   const toggleServer = useCallback(async (server: McpServerSummary, nextValue: boolean) => {
@@ -423,12 +434,15 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
 
         <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
           {error ? <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
-          {filteredServers.length === 0 ? (
+          {filteredServers.length === 0 && !showDingtalkCard ? (
             <div className="rounded-2xl border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
-              {connectorServers.length === 0 ? "暂无可用连接器" : "没有找到匹配的连接器"}
+              没有找到匹配的连接器
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {showDingtalkCard ? (
+                <DingtalkConnectorCard dws={dws} onOpenDetail={() => setDingtalkDetailOpen(true)} />
+              ) : null}
               {filteredServers.map((server) => {
                 const source = connectorSource(server);
                 const status = connectorStatus(server);
@@ -607,6 +621,8 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
             </>
           ) : null}
         </CapabilityDetailDrawer>
+
+        <DingtalkConnectorDrawer open={dingtalkDetailOpen} onOpenChange={setDingtalkDetailOpen} dws={dws} />
 
         <Dialog open={customDialogOpen} onOpenChange={setCustomDialogOpen}>
           <DialogContent className="max-h-[min(760px,calc(100vh-48px))] max-w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-2xl">

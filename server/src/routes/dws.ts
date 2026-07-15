@@ -93,7 +93,7 @@ function publicStatusMessage(row: DwsConnectionRecord): string {
   if (row.connectionStatus === 'connected') return '登录状态由平台自动维护，无需定期重新授权';
   if (row.connectionStatus === 'pending') return '已发现钉钉授权，平台正在完成首次检测';
   if (row.connectionStatus === 'error') return '自动检测暂时失败，平台会继续重试';
-  return '钉钉授权已失效，请在设置中重新连接';
+  return '钉钉授权已失效，请在能力中心的「连接器」页重新连接';
 }
 
 function toPublicAuthSession(row: DwsAuthSessionRecord): Record<string, unknown> {

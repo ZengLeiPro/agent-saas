@@ -75,7 +75,7 @@ describe('prompt smoke', () => {
     // 2026-07-03 <current-runtime> 段已删（status 快照恒 provisioning 恒错），
     // 防幽灵标签回归：static.md 不得再预授信任何平台从不拼装的标签名
     expect(s).not.toContain('<current-runtime>');
-    expect(s).toContain('当前 workspace 运行态');
+    expect(s).toContain('当前workspace运行态');
     expect(s).toContain('WaitForWorkspaceReady');
   });
 });

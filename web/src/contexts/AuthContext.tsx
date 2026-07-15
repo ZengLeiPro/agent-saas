@@ -11,6 +11,11 @@ import { clearSessionListCache } from "@/lib/sessionListCache";
 import { clearAllMessageCache } from "@/lib/messageCache";
 import { clearUnreadAiReplyCache } from "@/lib/unreadAiReplies";
 import {
+  loginWithPassword,
+  loginWithSmsCode,
+  type AuthResponse,
+} from "@/lib/authApi";
+import {
   clearSavedAccounts,
   forgetSavedAccount,
   forgetSavedAccountByToken,
@@ -20,11 +25,6 @@ import {
   rememberSavedAccount,
   type SavedAccountSummary,
 } from "@/lib/savedAccounts";
-
-interface AuthResponse {
-  token: string;
-  user: AuthUser;
-}
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -169,26 +169,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [user]);
 
-  const postLogin = useCallback(async (url: string, body: unknown) => {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error((data as { error?: string }).error || "登录失败");
-    }
-    activateAccount(await res.json() as AuthResponse);
+  const login = useCallback(async (credentials: LoginCredentials) => {
+    activateAccount(await loginWithPassword(credentials));
   }, [activateAccount]);
 
-  const login = useCallback(async (credentials: LoginCredentials) => {
-    await postLogin("/api/auth/login", credentials);
-  }, [postLogin]);
-
   const loginWithSms = useCallback(async (credentials: SmsLoginCredentials) => {
-    await postLogin("/api/auth/sms/login", credentials);
-  }, [postLogin]);
+    activateAccount(await loginWithSmsCode(credentials));
+  }, [activateAccount]);
 
   const switchAccount = useCallback((accountKey: string) => {
     if (user && getAccountKey(user) === accountKey) return;

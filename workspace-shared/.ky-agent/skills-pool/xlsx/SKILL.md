@@ -74,7 +74,7 @@ A user may ask you to create, edit, or analyze the contents of an .xlsx file. Yo
 - Resolve bundled scripts relative to the current `xlsx` skill directory; do not assume cwd or `.claude/skills/xlsx/`.
 - User uploads normally come from `uploads/`.
 - New or modified spreadsheet deliverables should be saved under `assets/yyyymmdd/`. Do not overwrite uploaded originals unless the user explicitly requests it.
-- Use the workspace `.venv` or ACS image provided Python dependencies (`pandas`, `openpyxl`, etc.). Do not use Homebrew, `sudo pip`, `pip install --user`, `--break-system-packages`, or create a new venv.
+- Use the workspace `.venv` or ACS image provided Python dependencies (`pandas`, `openpyxl`, `defusedxml`, `lxml`, etc. — all in the workspace runtime venv via `acs-orchestrator/requirements/base.txt`). Do not use Homebrew, `sudo pip`, `pip install --user`, `--break-system-packages`, or create a new venv. Quick self-check before starting: `python -c "import pandas, openpyxl, defusedxml, lxml; print('deps ok')"` — if it fails, report the regression instead of improvising.
 - LibreOffice recalculation uses an invocation-scoped profile and workspace-cached shim; do not force shared `~/.config/libreoffice` or fixed `/tmp` profiles.
 
 ## Important Requirements

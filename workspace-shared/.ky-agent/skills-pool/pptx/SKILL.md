@@ -6,7 +6,9 @@ license: See pptx-binary/LICENSE.txt (Anthropic) and html-deck/LICENSE (MIT, op7
 
 # Presentation Skill (Two Branches)
 
-> **Brand colors (Kaiyan)**: primary blue `#2E56E1`, accent orange `#E8843A`, orange text `#A0500E` (not `#B65E16`); Chinese font stack in ACS should prefer `Noto Sans SC`, `Microsoft YaHei UI`, `PingFang SC`, `sans-serif`. See `brand-guidelines` skill for the full spec. For pptx-binary use `RGBColor(0x2E, 0x56, 0xE1)`.
+> **Brand colors (Kaiyan)**: primary blue `#2E56E1`, accent orange `#E8843A`, orange text `#A0500E` (not `#B65E16`). See `brand-guidelines` skill for the full spec. For pptx-binary use `RGBColor(0x2E, 0x56, 0xE1)`.
+>
+> **Chinese fonts**: the ACS image ships `fonts-noto-cjk`, whose actual family name is **`Noto Sans CJK SC`** (NOT `Noto Sans SC` — that is a different Google Fonts family and is absent). HTML decks (Branch B) should use the stack `'Noto Sans CJK SC', 'Microsoft YaHei', 'PingFang SC', sans-serif`. Editable `.pptx` files (Branch A) that clients open in PowerPoint should set Chinese text to `Microsoft YaHei` — see Branch A's CJK Typography section for the render-fidelity caveat.
 
 ## ACS Sandbox Rules
 

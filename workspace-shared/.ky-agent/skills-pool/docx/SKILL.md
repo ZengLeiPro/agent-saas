@@ -590,11 +590,27 @@ After running `comment.py` (see Step 2), add markers to document.xml. For replie
 
 ---
 
+## Environment Self-Check (run FIRST)
+
+Verify dependencies before starting any work:
+
+```bash
+python -c "import defusedxml, lxml, docx; print('python deps ok')" \
+  && node -e "require('docx'); console.log('docx-js ok')" \
+  && command -v pandoc soffice pdftoppm >/dev/null && echo "office toolchain ok"
+```
+
+If anything is missing, report it and choose a fallback (e.g. `python-docx` for creation, `markitdown` for extraction) **before** writing content.
+
 ## Dependencies
 
-- **pandoc**: Text extraction
-- **docx**: project-local or ACS image provided `docx` package (new documents); no global npm install during a task
-- **LibreOffice**: PDF conversion (auto-configured for sandboxed environments via `scripts/office/soffice.py`)
+How each dependency is provided **in the ACS sandbox** (source of truth: `acs-orchestrator/requirements/base.txt` + the acs-sandbox image):
+
+- **pandoc**: text extraction; installed in the sandbox image
+- **docx** (docx-js): new documents; preinstalled in the sandbox image at `/opt/ky-agent/node/node_modules`, resolved via `NODE_PATH` so `require('docx')` works from any cwd. Outside ACS, install project-locally; no global npm install during a task
+- **LibreOffice**: PDF conversion (auto-configured via `scripts/office/soffice.py`). The `javaldx` stderr warning is harmless (no JRE in image)
 - **Poppler**: `pdftoppm` for images
-- **Python packages**: `defusedxml`, `lxml` for bundled XML/Office helpers, provided by ACS image or workspace `.venv`
-- **gcc**: only needed if LibreOffice AF_UNIX shim must be compiled at runtime
+- **Python packages**: `defusedxml`, `lxml` for bundled XML/Office helpers; workspace runtime venv (base.txt)
+- **gcc**: **not** in the ACS image and not needed there (AF_UNIX works, the shim never triggers); only relevant in other sandboxes that block AF_UNIX
+
+If the self-check fails on any of these in ACS, that is an image/venv regression — report it, don't work around it silently.

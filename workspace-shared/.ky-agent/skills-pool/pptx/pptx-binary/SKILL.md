@@ -16,6 +16,20 @@ license: Proprietary. LICENSE.txt has complete terms
 
 ---
 
+## Environment Self-Check (run FIRST)
+
+Verify dependencies before starting any work — do not discover a missing package halfway through:
+
+```bash
+python -c "import defusedxml, markitdown, pptx, PIL; print('python deps ok')" \
+  && node -e "require('pptxgenjs'); console.log('pptxgenjs ok')" \
+  && command -v soffice pdftoppm >/dev/null && echo "office toolchain ok"
+```
+
+If anything is missing, report it explicitly and pick a workable fallback (e.g. `python-pptx` instead of `pptxgenjs` for creation) **before** writing content. Do not silently improvise mid-task.
+
+---
+
 ## Reading Content
 
 ```bash
@@ -144,6 +158,37 @@ Choose colors that match your topic — don't default to generic blue. Use these
 
 Your first render is almost never correct. Approach QA as a bug hunt, not a confirmation step. If you found zero issues on first inspection, you weren't looking hard enough.
 
+QA is **three explicit stages** — run all that your environment supports, and honestly report which stages you could NOT run:
+
+1. **Structural QA** — file integrity and geometry (no rendering needed)
+2. **Content QA** — extracted and rendered text
+3. **Visual QA** — pixel-level inspection of rendered slides (requires a vision-capable model)
+
+### Structural QA
+
+```bash
+# OOXML schema validation
+python scripts/office/validate.py output.pptx
+
+# Geometry check: elements outside slide bounds / overlapping
+python - <<'PY'
+from pptx import Presentation
+from pptx.util import Emu
+prs = Presentation('output.pptx')
+W, H = prs.slide_width, prs.slide_height
+for i, slide in enumerate(prs.slides, 1):
+    for sh in slide.shapes:
+        if sh.left is None or sh.top is None:
+            continue
+        r, b = sh.left + (sh.width or 0), sh.top + (sh.height or 0)
+        if sh.left < 0 or sh.top < 0 or r > W or b > H:
+            print(f"slide {i}: '{sh.name}' out of bounds "
+                  f"({Emu(sh.left).inches:.2f},{Emu(sh.top).inches:.2f})"
+                  f"→({Emu(r).inches:.2f},{Emu(b).inches:.2f})")
+print('geometry check done')
+PY
+```
+
 ### Content QA
 
 ```bash
@@ -160,9 +205,13 @@ python -m markitdown output.pptx | grep -iE "xxxx|lorem|ipsum|this.*(page|slide)
 
 If grep returns results, fix them before declaring success.
 
+**Rendered-text check (CJK line breaks)**: after converting to PDF (see below), run `pdftotext output.pdf -` and compare against the source text. For Chinese content, look specifically for bad breaks — a 1–2 character orphan wrapped to the next line (e.g. 「持续更/新」「企业记/忆」). Fix by widening the text box or shortening the line; leave ≥10% width headroom because font substitution shifts line breaks between environments (see CJK Typography below).
+
 ### Visual QA
 
-**⚠️ USE SUBAGENTS** — even for 2-3 slides. You've been staring at the code and will see what you expect, not what's there. Subagents have fresh eyes.
+**Reality check first**: this stage requires a model that can actually see images. If `Read` on a PNG returns a file path or binary garbage instead of visual content, your environment has **no vision path** — subagents in the same environment are equally blind. In that case: complete Structural + Content QA, skip this stage, and **state explicitly in your final report that pixel-level visual QA was not performed**. Never claim visual inspection you could not do.
+
+**⚠️ USE SUBAGENTS** (when vision is available) — even for 2-3 slides. You've been staring at the code and will see what you expect, not what's there. Subagents have fresh eyes.
 
 Convert slides to images (see [Converting to Images](#converting-to-images)), then use this prompt:
 
@@ -215,6 +264,8 @@ pdftoppm -jpeg -r 150 output.pdf slide
 
 This creates `slide-01.jpg`, `slide-02.jpg`, etc.
 
+> `Warning: failed to launch javaldx` on stderr is **harmless** (the ACS image ships LibreOffice without a JRE; Impress→PDF does not need Java). Ignore it — do not spend time "fixing" it.
+
 To re-render specific slides after fixes:
 
 ```bash
@@ -223,11 +274,25 @@ pdftoppm -jpeg -r 150 -f N -l N output.pdf slide-fixed
 
 ---
 
+## CJK Typography (Chinese decks)
+
+- **Font choice**: for decks the client will open in PowerPoint on Windows, set Chinese text to `Microsoft YaHei`（微软雅黑）— guaranteed on client machines. The ACS sandbox does not have it; LibreOffice silently substitutes **Noto Sans CJK SC** when rendering, so metrics differ slightly between your QA render and the client's screen.
+- **Consequence**: a line that wraps cleanly in your PDF render may break differently on the client machine. Leave **≥10% width headroom** in every CJK text box; treat any 1–2 character orphan line as a bug even if it "just fits".
+- **Latin fonts**: the image has Liberation (metric-compatible with Arial/Times/Courier) and Carlito/Caladea (metric-compatible with Calibri/Cambria). Fonts like Georgia, Impact, Palatino, Trebuchet MS are **not** in the image — if you use them, your QA render substitutes them and is not what the client sees. Prefer Arial/Calibri/Cambria families when render fidelity matters.
+- Do not mix CJK and Latin in one run with a Latin-only font — set the font per language run, or use Microsoft YaHei for mixed runs.
+
+---
+
 ## Dependencies
 
-- `markitdown[pptx]` - text extraction, provided by ACS image or workspace `.venv`
-- `Pillow` - thumbnail grids, provided by ACS image or workspace `.venv`
-- `pptxgenjs` - creating from scratch, provided by project-local Node dependencies or ACS image; do not use global npm installs during a task
-- `gcc` - only needed if LibreOffice AF_UNIX shim must be compiled at runtime
-- LibreOffice (`soffice`) - PDF conversion (auto-configured for sandboxed environments via `scripts/office/soffice.py`)
-- Poppler (`pdftoppm`) - PDF to images
+How each dependency is provided **in the ACS sandbox** (source of truth: `acs-orchestrator/requirements/base.txt` + the acs-sandbox image):
+
+- `markitdown[pptx]` — text extraction & content QA; workspace runtime venv (base.txt)
+- `defusedxml` — required by **every** script under `scripts/` (unpack/pack/clean/validate/thumbnail/add_slide); workspace runtime venv (base.txt)
+- `Pillow`, `python-pptx` — thumbnail grids, geometry QA, fallback creation path; workspace runtime venv (base.txt)
+- `pptxgenjs` — creating from scratch; preinstalled in the sandbox image at `/opt/ky-agent/node/node_modules`, resolved via `NODE_PATH` so `require('pptxgenjs')` works from any cwd. Outside ACS, install project-locally (`npm install pptxgenjs`); never global npm installs during a task
+- LibreOffice (`soffice`) — PDF conversion (auto-configured via `scripts/office/soffice.py`). The `javaldx` stderr warning is harmless (no JRE in image)
+- Poppler (`pdftoppm`, `pdftotext`) — PDF to images / rendered-text QA
+- `gcc` — **not** in the ACS image and not needed there (AF_UNIX sockets work; the LD_PRELOAD shim in `soffice.py` never triggers). Only relevant in other sandboxes that block AF_UNIX
+
+If the self-check at the top fails on any of these in ACS, that is an image/venv regression — report it, don't work around it silently.

@@ -61,6 +61,21 @@ echo "Synced to commit $LATEST_COMMIT"
 
 After sync: re-read `pptx-binary/SKILL.md` and `pptx-binary/editing.md` for any new workflow changes that might affect the top-level router (`SKILL.md`). If the upstream renames a sub-file or adds a new entry point, update the router's Branch A section accordingly.
 
+### Local patches that MUST be re-applied after every sync (pptx-binary)
+
+Added 2026-07-16 (生产 agent 反馈修复批次). All in `pptx-binary/SKILL.md`:
+
+1. **"Environment Self-Check (run FIRST)" section** after Quick Reference — one-shot dependency check (defusedxml/markitdown/pptx/PIL/pptxgenjs/soffice/pdftoppm) before any work.
+2. **QA section header** — three explicit stages (Structural / Content / Visual) + honest reporting requirement.
+3. **"Structural QA" subsection** — validate.py + python-pptx geometry out-of-bounds check snippet.
+4. **Content QA addition** — "Rendered-text check (CJK line breaks)" paragraph (pdftotext-based, 1–2 char orphan detection).
+5. **Visual QA "Reality check first" paragraph** — no-vision environments must skip and report, not fake it.
+6. **Converting to Images** — javaldx-warning-is-harmless note.
+7. **"CJK Typography (Chinese decks)" section** — Microsoft YaHei guidance, Noto Sans CJK SC substitution caveat, ≥10% width headroom rule, Latin metric-compatible font list.
+8. **Dependencies section rewritten** — states the actual ACS provisioning source (base.txt venv / image `/opt/ky-agent/node/node_modules` + NODE_PATH / no gcc) instead of upstream's generic wording.
+
+Re-apply by diffing against git history of this repo (`git log -p -- workspace-shared/.ky-agent/skills-pool/pptx/pptx-binary/SKILL.md`) after any upstream rsync.
+
 ---
 
 ## Branch B · `html-deck/` (op7418 / 歸藏)
@@ -123,6 +138,8 @@ After re-applying patches, verify with:
 grep -r "guohao" "$SKILL_DIR/html-deck/"
 # Must return no matches.
 ```
+
+6. `html-deck/SKILL.md` — section "#### AI 配图生成(可选)" (added 2026-07-16): upstream's Codex-only image-generation flow is rewritten as environment-aware — KY Agent / agent-saas production uses the platform `GenerateImage` tool (gpt-image-2 / seedream); Codex keeps GPT-M 2.0; no-vision environments fall back to placeholder blocks. Upstream section title was "#### Codex 配图生成(可选)".
 
 Then update the "Last synced commit" + "Last synced at" rows in this file.
 

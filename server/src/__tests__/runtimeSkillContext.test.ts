@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildRuntimeSkillFilter, resolveSkillContextUsername } from '../runtime/rawRuntimeRunDispatch.js';
+import {
+  buildImageGenSkillFilter,
+  buildRuntimeSkillFilter,
+  resolveSkillContextUsername,
+} from '../runtime/rawRuntimeRunDispatch.js';
+import type { RawRuntimeRunDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
 import type { HandRecord } from '../runtime/handStore.js';
 import type { ChannelContext } from '../types/index.js';
 
@@ -118,6 +123,48 @@ describe('buildRuntimeSkillFilter', () => {
     } satisfies HandRecord]);
 
     expect(filter(browserSkill)).toBe(false);
+    expect(filter(docSkill)).toBe(true);
+  });
+});
+
+describe('buildImageGenSkillFilter', () => {
+  const imageGenSkill = { id: 'image-gen', name: 'image-gen', description: 'AI image generation' };
+  const docSkill = { id: 'docx', name: 'docx', description: 'Word documents' };
+
+  function gateConfig(options: {
+    tenantEnabled?: boolean;
+    engineConfigured?: boolean;
+    toolEnabled?: boolean;
+  }): Pick<RawRuntimeRunDispatchConfig, 'imageGenTools' | 'toolControls' | 'tenantStore'> {
+    return {
+      imageGenTools: options.engineConfigured === false ? undefined : {
+        gptImage2: {
+          baseUrl: 'https://image.example/v1',
+          apiKey: 'resolved-key',
+        },
+      },
+      toolControls: options.toolEnabled === false
+        ? { tools: { GenerateImage: { enabled: false } } }
+        : undefined,
+      tenantStore: {
+        getSettings: () => ({ features: { imageGenEnabled: options.tenantEnabled === true } }),
+      } as unknown as RawRuntimeRunDispatchConfig['tenantStore'],
+    };
+  }
+
+  it('keeps image-gen only when engine, global tool and tenant grant are all enabled', () => {
+    const enabled = buildImageGenSkillFilter(gateConfig({ tenantEnabled: true }), 'kaiyan');
+    expect(enabled(imageGenSkill)).toBe(true);
+    expect(enabled(docSkill)).toBe(true);
+  });
+
+  it.each([
+    ['tenant grant is off', { tenantEnabled: false }],
+    ['engine is missing', { tenantEnabled: true, engineConfigured: false }],
+    ['global tool is off', { tenantEnabled: true, toolEnabled: false }],
+  ])('hides image-gen when %s without affecting other skills', (_label, options) => {
+    const filter = buildImageGenSkillFilter(gateConfig(options), 'kaiyan');
+    expect(filter(imageGenSkill)).toBe(false);
     expect(filter(docSkill)).toBe(true);
   });
 });

@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
 import { requirePlatformAdmin } from '../auth/middleware.js';
+import { isToolEnabled } from '../agent/toolRuntime.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
 import type { AppConfig, ImageGenPricingConfig } from '../app/config.js';
 import {
@@ -46,12 +47,30 @@ function validatePricingUpdate(currentRaw: unknown, pricingBody: unknown): AppCo
 }
 
 function pricingView(config: AppConfig) {
+  const imageGenTools = config.imageGenTools;
+  const configuredEngines: string[] = [];
+  const gptImage2 = imageGenTools?.gptImage2;
+  if (gptImage2 && gptImage2.enabled !== false && gptImage2.baseUrl && (gptImage2.apiKey || gptImage2.apiKeyRef)) {
+    configuredEngines.push('gpt-image-2');
+  }
+  const seedream = imageGenTools?.seedream;
+  if (seedream && seedream.enabled !== false && (seedream.apiKey || seedream.apiKeyRef)) {
+    configuredEngines.push('seedream');
+  }
+  const platformEnabled = !!imageGenTools && imageGenTools.enabled !== false;
+  const toolEnabled = isToolEnabled(config.toolControls, 'GenerateImage');
   return {
     // 生效视图：配置覆盖合并到内置默认（扣费实际使用的表）
     pricing: listEffectiveImageGenPricing(),
     // 管理员显式配置（null = 全部走内置默认）
     configured: config.imageGenTools?.pricing ?? null,
     defaults: DEFAULT_IMAGE_GEN_PRICING,
+    status: {
+      available: platformEnabled && toolEnabled && configuredEngines.length > 0,
+      platformEnabled,
+      toolEnabled,
+      configuredEngines,
+    },
   };
 }
 

@@ -94,6 +94,28 @@ describe('image gen pricing admin router', () => {
       expect(body.configured).toEqual({ 'gpt-image-2': { creditsPerImage: 400, costYuanPerImage: 1.5 } });
       // seedream 未显式配置 → 生效视图回退内置默认
       expect(body.pricing.seedream).toEqual(DEFAULT_IMAGE_GEN_PRICING.seedream);
+      expect(body.status).toEqual({
+        available: true,
+        platformEnabled: true,
+        toolEnabled: true,
+        configuredEngines: ['gpt-image-2'],
+      });
+    });
+  });
+
+  it('reports fail-closed platform status without exposing credentials', async () => {
+    await withApp({ agent: { cwd: '/tmp/agent' }, server: { port: 3200 } }, async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/api/admin/image-gen-pricing`);
+      expect(response.status).toBe(200);
+      const body = await readJson(response);
+      expect(body.status).toEqual({
+        available: false,
+        platformEnabled: false,
+        toolEnabled: true,
+        configuredEngines: [],
+      });
+      expect(JSON.stringify(body)).not.toContain('apiKey');
+      expect(JSON.stringify(body)).not.toContain('apiKeyRef');
     });
   });
 

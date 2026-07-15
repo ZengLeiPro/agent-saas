@@ -81,4 +81,30 @@ describe('tenant context token detail policy', () => {
     await expect(rejected.json()).resolves.toEqual({ error: '上下文 Token 明细仅平台管理员可配置' });
     expect(tenantStore.getSettings('wain')?.models.allowContextTokenDetails).toBe(true);
   });
+
+  it('allows only platform admins to grant AI image generation', async () => {
+    const settings = tenantStore.getSettings('wain')!;
+    settings.features.imageGenEnabled = true;
+
+    const enabled = await fetch(`${baseUrl}/api/tenants/wain/settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings }),
+    });
+    expect(enabled.status).toBe(200);
+    expect(tenantStore.getSettings('wain')?.features.imageGenEnabled).toBe(true);
+
+    caller = TENANT_ADMIN;
+    const tenantSettings = tenantStore.getSettings('wain')!;
+    tenantSettings.features.imageGenEnabled = false;
+    const rejected = await fetch(`${baseUrl}/api/tenants/wain/settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: tenantSettings }),
+    });
+
+    expect(rejected.status).toBe(403);
+    await expect(rejected.json()).resolves.toEqual({ error: 'AI 生图能力仅平台管理员可配置' });
+    expect(tenantStore.getSettings('wain')?.features.imageGenEnabled).toBe(true);
+  });
 });

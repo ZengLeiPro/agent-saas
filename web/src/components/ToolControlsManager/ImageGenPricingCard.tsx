@@ -28,6 +28,13 @@ export interface ImageGenEnginePricing {
 
 export type ImageGenPricingTable = Record<string, ImageGenEnginePricing>;
 
+export interface ImageGenPlatformStatus {
+  available: boolean;
+  platformEnabled: boolean;
+  toolEnabled: boolean;
+  configuredEngines: string[];
+}
+
 export interface ImageGenPricingAdminResponse {
   /** 生效视图：管理员覆盖合并到内置默认（扣费实际使用的表）。 */
   pricing: ImageGenPricingTable;
@@ -35,6 +42,8 @@ export interface ImageGenPricingAdminResponse {
   configured: ImageGenPricingTable | null;
   /** 内置默认表。 */
   defaults: ImageGenPricingTable;
+  /** 平台运行态摘要，不含任何凭据。 */
+  status?: ImageGenPlatformStatus;
 }
 
 /** 已知引擎的展示名；其余引擎 key 原样展示（不硬编码只认两个）。 */
@@ -206,6 +215,19 @@ export function ImageGenPricingCard() {
           按引擎配置每张图扣多少积分（面值口径，1 积分 = 0.01 元）；真实成本参考仅用于平台毛利审计，不参与客户应收。
           本卡片独立保存：保存后立即对新的生图调用生效，无需重启。未勾选「自定义定价」的引擎使用内置默认值。
         </p>
+
+        {data?.status && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border p-3 text-xs text-muted-foreground">
+            <Badge variant={data.status.available ? "secondary" : "outline"}>
+              {data.status.available ? "平台生图可用" : "平台生图未就绪"}
+            </Badge>
+            {!data.status.platformEnabled && <Badge variant="outline">引擎配置未启用</Badge>}
+            {!data.status.toolEnabled && <Badge variant="outline">全局工具已关闭</Badge>}
+            <span>
+              已配置引擎：{data.status.configuredEngines.length > 0 ? data.status.configuredEngines.join("、") : "无"}
+            </span>
+          </div>
+        )}
 
         {error && (
           <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">

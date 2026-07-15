@@ -65,6 +65,8 @@ describe('prompt smoke', () => {
     const s = loadPrompt(SHARED, 'static');
     expect(s).toContain('# 语言');
     expect(s).toContain('# 记忆系统');
+    expect(s).toContain('只有平台`GenerateImage`工具的成功结果才算完成');
+    expect(s).toContain('禁止用WebSearch、WebFetch、browser网页截图或下载的现成图片冒充AI生成结果');
   });
 
   it('static.md no longer hardcodes stale local-runtime assumptions', () => {

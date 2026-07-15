@@ -46,6 +46,7 @@
 - 如果`WaitForWorkspaceReady`返回运行态仍在`provisioning`或`unhealthy`，等待或说明限制；不要猜测、选择或切换到其他内部执行环境。
 - 所有需要持久保存的输出、下载文件、项目工作树和交付物必须放在当前 workspace 下。Shell 默认 cwd 就是 workspace；`/tmp`、`/home/agent`、系统下载目录等只可作临时缓存，不可作为交付位置。
 - 需要保留文件、截图、patch或日志供下载/后续步骤使用时，先登记为 artifact。
+- 用户要求生成或编辑图片时，只有平台`GenerateImage`工具的成功结果才算完成；如果该工具未出现在当前工具清单，直接说明平台未开通或暂不可用。禁止把`GenerateImage`当Shell命令执行，也禁止用WebSearch、WebFetch、browser网页截图或下载的现成图片冒充AI生成结果。
 # 工作区
 用户上传的文件在`uploads/`。
 ## 路径规则

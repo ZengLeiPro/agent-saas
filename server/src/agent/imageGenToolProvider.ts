@@ -237,6 +237,14 @@ const IMAGE_GEN_ENGINES: Record<ImageGenEngineId, ImageGenEngineDefinition> = {
   },
 };
 
+export function listAvailableImageGenEngineIds(
+  config: ResolvedImageGenToolsConfig | undefined,
+): ImageGenEngineId[] {
+  if (!config || config.enabled === false) return [];
+  return (Object.keys(IMAGE_GEN_ENGINES) as ImageGenEngineId[])
+    .filter((id) => IMAGE_GEN_ENGINES[id].resolveConnection(config) !== undefined);
+}
+
 async function gptImage2RequestWithRetries(
   deps: ImageGenEngineDeps,
   request: ImageGenEngineRequest,
@@ -450,7 +458,7 @@ export class ImageGenToolProvider implements ToolProvider {
 
   list(context?: ToolCallContext): ToolDescriptor[] {
     if (this.options.config.enabled === false) return [];
-    if (this.availableEngineIds().length === 0) return [];
+    if (listAvailableImageGenEngineIds(this.options.config).length === 0) return [];
     // 租户 gate（features.imageGenEnabled，默认 false）：未开通的组织模型根本看不到工具。
     if (this.options.isImageGenEnabledForTenant?.(resolveTenantId(context)) !== true) return [];
     return [generateImageToolDescriptor];
@@ -473,7 +481,7 @@ export class ImageGenToolProvider implements ToolProvider {
     const engine = IMAGE_GEN_ENGINES[engineId];
     const connection = engine.resolveConnection(this.options.config);
     if (!connection) {
-      const alternatives = this.availableEngineIds().filter((id) => id !== engineId);
+      const alternatives = listAvailableImageGenEngineIds(this.options.config).filter((id) => id !== engineId);
       throw new Error(
         `生图引擎 ${engineId} 未在平台配置或未启用${alternatives.length > 0 ? `，可改用 model:"${alternatives[0]}"` : ''}。`,
       );
@@ -562,11 +570,6 @@ export class ImageGenToolProvider implements ToolProvider {
         `在给用户的最终回复中用 markdown 图片语法内联展示图片，例如：![图片描述](${relPaths[0]})。路径必须原样使用返回的相对路径。`,
     };
     return { content: JSON.stringify(payload, null, 2) };
-  }
-
-  private availableEngineIds(): ImageGenEngineId[] {
-    return (Object.keys(IMAGE_GEN_ENGINES) as ImageGenEngineId[])
-      .filter((id) => IMAGE_GEN_ENGINES[id].resolveConnection(this.options.config) !== undefined);
   }
 
   /** refImages 只收 workspace 相对路径；resolveAuthorizedPath + realpath 双重校验，拒 symlink 逃逸。 */

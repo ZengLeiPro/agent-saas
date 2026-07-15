@@ -238,6 +238,17 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
         res.status(404).json({ error: '组织不存在' });
         return;
       }
+      const requestedImageGenEnabled = parsed.data.features?.imageGenEnabled;
+      const currentImageGenEnabled = current.features.imageGenEnabled === true;
+      if (requestedImageGenEnabled !== undefined && requestedImageGenEnabled !== currentImageGenEnabled) {
+        res.status(403).json({ error: 'AI 生图能力仅平台管理员可配置' });
+        return;
+      }
+      parsed.data.features = {
+        ...current.features,
+        ...(parsed.data.features ?? {}),
+        imageGenEnabled: currentImageGenEnabled,
+      };
       const requested = parsed.data.models?.allowContextTokenDetails;
       const currentValue = current.models.allowContextTokenDetails === true;
       if (requested !== undefined && requested !== currentValue) {

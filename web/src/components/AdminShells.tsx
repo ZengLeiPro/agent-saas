@@ -197,14 +197,26 @@ function numericValue(value: string): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function SettingSwitch({ label, description, checked, onCheckedChange }: { label: string; description: string; checked: boolean; onCheckedChange: (checked: boolean) => void }) {
+function SettingSwitch({
+  label,
+  description,
+  checked,
+  onCheckedChange,
+  disabled = false,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
-    <div className="flex items-start justify-between gap-4 rounded-xl border p-3">
+    <div className={`flex items-start justify-between gap-4 rounded-xl border p-3 ${disabled ? "opacity-70" : ""}`}>
       <div>
         <div className="text-sm font-medium">{label}</div>
         <div className="text-xs leading-5 text-muted-foreground">{description}</div>
       </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
     </div>
   );
 }
@@ -321,6 +333,13 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
             <SettingSwitch label="自定义技能" description="允许用户维护自定义 Agent 技能。" checked={settings.features.customSkillsEnabled} onCheckedChange={checked => patch(d => { d.features.customSkillsEnabled = checked; })} />
             <SettingSwitch label="调试模式" description="允许开启思考、工具和执行细节展示。" checked={settings.features.debugModeAllowed} onCheckedChange={checked => patch(d => { d.features.debugModeAllowed = checked; })} />
             <SettingSwitch label="自动压缩上下文" description="会话上下文达到各模型配置的触发线时，回合结束后自动压缩（还需模型配置上下文窗口）。" checked={settings.features.autoCompactEnabled} onCheckedChange={checked => patch(d => { d.features.autoCompactEnabled = checked; })} />
+            <SettingSwitch
+              label="AI 生图"
+              description="平台托管的付费能力，仅平台管理员可为组织开通；此处只读展示当前授权状态。"
+              checked={settings.features.imageGenEnabled === true}
+              onCheckedChange={() => undefined}
+              disabled
+            />
           </CardContent>
         </Card>
         <Card>

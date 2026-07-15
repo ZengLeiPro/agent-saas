@@ -25,6 +25,7 @@ import type { UserInfo } from "@/components/UserManager/types";
 import { useTenants } from "./hooks";
 import { TenantFormDialog } from "./TenantFormDialog";
 import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type Tenant, type TenantSettings } from "./types";
+import type { ImageGenPlatformStatus } from "@/components/ToolControlsManager/ImageGenPricingCard";
 
 function cloneTenantSettings(settings: TenantSettings): TenantSettings {
   return {
@@ -326,6 +327,7 @@ const capabilityFeatureFields: Array<{ key: keyof TenantSettings["features"]; la
   { key: "autoCompactEnabled", label: "自动压缩", description: "会话上下文达到各模型配置的触发线时，回合结束后自动压缩。" },
   { key: "memoryPollingEnabled", label: "每日记忆轮询", description: "为每个有效用户自动预置每日记忆整理任务（对用户隐藏；48 小时无活动自动跳过）。" },
   { key: "memoryPollChargesCredits", label: "记忆轮询扣积分", description: "开启后记忆轮询的模型消耗计入租户积分；默认不扣（用量照记，仅平台内部可见）。" },
+  { key: "imageGenEnabled", label: "AI 生图", description: "授予该组织使用平台托管 AI 生图的权限；默认关闭，按平台当前引擎定价扣积分。" },
 ];
 
 const quotaFields: Array<{ key: keyof TenantSettings["quotas"]; label: string; unit?: string }> = [
@@ -361,7 +363,30 @@ function TenantCapabilitiesPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [imageGenStatus, setImageGenStatus] = useState<ImageGenPlatformStatus | null>(null);
+  const [imageGenStatusError, setImageGenStatusError] = useState(false);
   const dirty = capabilitySnapshot(settings) !== capabilitySnapshot(baseline);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await authFetch("/api/admin/image-gen-pricing");
+        const body = await response.json().catch(() => ({})) as { status?: ImageGenPlatformStatus };
+        if (!response.ok || !body.status) throw new Error(`HTTP ${response.status}`);
+        if (!cancelled) {
+          setImageGenStatus(body.status);
+          setImageGenStatusError(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setImageGenStatus(null);
+          setImageGenStatusError(true);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tenant.id]);
 
   useEffect(() => {
     const next = cloneTenantSettings(tenant.settings ?? DEFAULT_TENANT_SETTINGS);
@@ -449,18 +474,39 @@ function TenantCapabilitiesPanel({
           <CardTitle className="text-base">功能开关</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
-          {capabilityFeatureFields.map(field => (
-            <div key={field.key} className="flex items-start justify-between gap-4 rounded-xl border p-3">
-              <div>
-                <div className="text-sm font-medium">{field.label}</div>
-                <div className="text-xs leading-5 text-muted-foreground">{field.description}</div>
+          {capabilityFeatureFields.map(field => {
+            const isImageGen = field.key === "imageGenEnabled";
+            const tenantAuthorized = settings.features.imageGenEnabled === true;
+            return (
+              <div key={field.key} className="flex items-start justify-between gap-4 rounded-xl border p-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                    {field.label}
+                    {isImageGen && imageGenStatus && (
+                      <Badge variant={tenantAuthorized && imageGenStatus.available ? "secondary" : "outline"}>
+                        {tenantAuthorized
+                          ? imageGenStatus.available ? "已授权 · 当前可用" : "已授权 · 平台未就绪"
+                          : "未授权"}
+                      </Badge>
+                    )}
+                    {isImageGen && imageGenStatusError && <Badge variant="outline">平台状态读取失败</Badge>}
+                  </div>
+                  <div className="text-xs leading-5 text-muted-foreground">{field.description}</div>
+                  {isImageGen && imageGenStatus && (
+                    <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                      平台引擎：{imageGenStatus.configuredEngines.length > 0 ? imageGenStatus.configuredEngines.join("、") : "未配置"}
+                      {!imageGenStatus.toolEnabled ? "；全局工具已关闭" : ""}
+                    </div>
+                  )}
+                </div>
+                <Switch
+                  checked={settings.features[field.key] === true}
+                  onCheckedChange={checked => patch(draft => { draft.features[field.key] = checked; })}
+                  aria-label={`启用 ${field.label}`}
+                />
               </div>
-              <Switch
-                checked={settings.features[field.key]}
-                onCheckedChange={checked => patch(draft => { draft.features[field.key] = checked; })}
-              />
-            </div>
-          ))}
+            );
+          })}
           {securityToggles.map(field => (
             <div key={field.key} className="flex items-start justify-between gap-4 rounded-xl border p-3">
               <div>

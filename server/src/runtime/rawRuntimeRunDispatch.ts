@@ -43,7 +43,11 @@ import {
 } from '../agent/skillToolProvider.js';
 import { createBuiltinTools, type BuiltinToolsConfig } from '../agent/builtinTools.js';
 import { WebToolProvider, type ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
-import { ImageGenToolProvider, type ResolvedImageGenToolsConfig } from '../agent/imageGenToolProvider.js';
+import {
+  ImageGenToolProvider,
+  listAvailableImageGenEngineIds,
+  type ResolvedImageGenToolsConfig,
+} from '../agent/imageGenToolProvider.js';
 import { CronToolProvider } from '../agent/cronToolProvider.js';
 import { TenantCompanyInfoToolProvider } from '../agent/tenantCompanyInfoToolProvider.js';
 import { UserActivityToolProvider } from '../agent/userActivityToolProvider.js';
@@ -1312,6 +1316,29 @@ export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSk
   return (skill) => skill.id !== 'browser' && skill.name !== 'browser';
 }
 
+/**
+ * `image-gen` 是 GenerateImage 的方法论层，不是独立执行能力。平台工具、引擎或
+ * 租户授权任一缺失时从 Skill 清单同步隐藏，避免模型把工具名当 Shell 命令，或
+ * 用 WebSearch/browser 截图冒充生成结果。
+ */
+export function buildImageGenSkillFilter(
+  config: Pick<RawRuntimeRunDispatchConfig, 'imageGenTools' | 'toolControls' | 'tenantStore'>,
+  tenantId: string | undefined,
+): RuntimeSkillFilter {
+  let tenantEnabled = false;
+  if (tenantId && config.tenantStore) {
+    try {
+      tenantEnabled = config.tenantStore.getSettings(tenantId)?.features?.imageGenEnabled === true;
+    } catch {
+      tenantEnabled = false;
+    }
+  }
+  const toolAvailable = isToolEnabled(config.toolControls, 'GenerateImage')
+    && listAvailableImageGenEngineIds(config.imageGenTools).length > 0;
+  if (tenantEnabled && toolAvailable) return allowAllRuntimeSkills;
+  return (skill) => skill.id !== 'image-gen';
+}
+
 export function resolveSkillContextUsername(context: ChannelContext | undefined): string | undefined {
   return context?.sessionOwner?.username ?? context?.user?.username;
 }
@@ -1773,7 +1800,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(sessionId) : [];
-    const baseSkillFilter = buildRuntimeSkillFilter(availableHands);
+    const baseSkillFilter = composeSkillFilters(
+      buildRuntimeSkillFilter(availableHands),
+      buildImageGenSkillFilter(config, sessionRecord.tenantId),
+    );
     const tooling = await collectRuntimeTooling(
       config,
       identitySource?.username,
@@ -2176,7 +2206,10 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
-    const resumeBaseSkillFilter = buildRuntimeSkillFilter(availableHands);
+    const resumeBaseSkillFilter = composeSkillFilters(
+      buildRuntimeSkillFilter(availableHands),
+      buildImageGenSkillFilter(config, sessionRecord.tenantId),
+    );
     const resumeTooling = await collectRuntimeTooling(
       config,
       resumeUsername,
@@ -2465,7 +2498,10 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       logger: config.logger,
     });
     const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
-    const resumeBaseSkillFilter = buildRuntimeSkillFilter(availableHands);
+    const resumeBaseSkillFilter = composeSkillFilters(
+      buildRuntimeSkillFilter(availableHands),
+      buildImageGenSkillFilter(config, sessionRecord.tenantId),
+    );
     const resumeTooling = await collectRuntimeTooling(
       config,
       resumeUsername,

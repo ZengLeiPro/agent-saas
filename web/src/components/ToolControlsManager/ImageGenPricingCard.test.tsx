@@ -39,6 +39,12 @@ describe("ImageGenPricingCard", () => {
         "nano-banana": { creditsPerImage: 50, costYuanPerImage: 0.1 },
       },
       defaults: { ...DEFAULTS },
+      status: {
+        available: true,
+        platformEnabled: true,
+        toolEnabled: true,
+        configuredEngines: ["gpt-image-2", "seedream"],
+      },
     }));
 
     render(<ImageGenPricingCard />);
@@ -54,6 +60,8 @@ describe("ImageGenPricingCard", () => {
     expect(screen.getByText(/当前生效：200 积分\/张 · 成本参考 ¥0\.5\/张/)).toBeTruthy();
     // 无内置默认的引擎给出提示
     expect(screen.getByText(/无内置默认/)).toBeTruthy();
+    expect(screen.getByText("平台生图可用")).toBeTruthy();
+    expect(screen.getByText(/已配置引擎：gpt-image-2、seedream/)).toBeTruthy();
   });
 
   it("勾选自定义并修改后保存，PUT 只提交覆盖引擎，成功后展示服务端生效值", async () => {

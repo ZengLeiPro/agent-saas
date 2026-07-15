@@ -50,6 +50,8 @@ export interface TenantSettings {
     memoryPollingEnabled?: boolean;
     /** 记忆轮询是否扣租户积分（默认不扣：用量照记但不产生 debit）。 */
     memoryPollChargesCredits?: boolean;
+    /** 平台托管 AI 生图租户授权。默认关闭，仅平台管理员可配置。 */
+    imageGenEnabled?: boolean;
   };
   quotas: {
     maxUsers?: number;
@@ -110,6 +112,7 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     autoCompactEnabled: false,
     memoryPollingEnabled: false,
     memoryPollChargesCredits: false,
+    imageGenEnabled: false,
   },
   quotas: {},
   models: {

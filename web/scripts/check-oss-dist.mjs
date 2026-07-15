@@ -3,7 +3,16 @@ import { join } from "node:path";
 
 const dist = new URL("../dist/", import.meta.url);
 const expectedApiOrigin = new URL(process.env.VITE_API_BASE).origin;
+const index = await readFile(new URL("index.html", dist), "utf8");
 const sw = await readFile(new URL("sw.js", dist), "utf8");
+
+if (
+  !index.includes('window.location.protocol === "http:"') ||
+  !index.includes('window.location.hostname === "agent.kaiyan.net"') ||
+  !index.includes("https://agent.kaiyan.net")
+) {
+  throw new Error("index.html 缺少 agent.kaiyan.net 的 HTTP→HTTPS 客户端跳转");
+}
 
 const forbiddenSwMarkers = [
   "api-sessions-list",

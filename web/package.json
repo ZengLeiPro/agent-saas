@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:oss": "node scripts/validate-oss-build-env.mjs && tsc && vite build && node scripts/check-oss-dist.mjs && node --test scripts/check-live-oss.test.mjs",
+    "build:oss": "node scripts/validate-oss-build-env.mjs && tsc && vite build && node scripts/check-oss-dist.mjs && node --test scripts/check-http-upgrade.test.mjs scripts/check-live-oss.test.mjs",
     "check:api-boundary": "node scripts/check-api-boundary.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

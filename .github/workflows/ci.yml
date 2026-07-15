@@ -693,7 +693,8 @@ jobs:
     name: Deploy Web to OSS
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: build
+    # 串行于 ECS 部署之后：Server 上线成功才发布 Web，避免 ECS 失败时产生 Web 新/Server 旧版本错位
+    needs: deploy-ecs
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
 
     env:

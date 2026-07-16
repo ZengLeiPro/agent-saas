@@ -45,10 +45,13 @@ export class FileEventStore implements EventStore {
     limit?: number;
     runId?: string;
     type?: PlatformEvent['type'];
+    excludeTypes?: PlatformEvent['type'][];
   } = {}) {
+    const excluded = new Set(options.excludeTypes ?? []);
     const all = (await this.readAll()).filter((event) => {
       if (options.runId && (!('runId' in event) || event.runId !== options.runId)) return false;
       if (options.type && event.type !== options.type) return false;
+      if (excluded.has(event.type)) return false;
       return true;
     });
     const offset = parseFileCursor(options.afterCursor);

@@ -83,9 +83,11 @@ const pgMock = vi.hoisted(() => {
         const sessionId = String(params?.[0]);
         const after = Number(params?.[1]);
         const limit = Number(params?.[2]);
+        const excludeTypes = Array.isArray(params?.[5]) ? new Set(params?.[5] as string[]) : null;
         return {
           rows: this.rangeRows
             .filter((row) => row.session_id === sessionId && Number(row.session_sequence) > after)
+            .filter((row) => !excludeTypes?.has(row.event_json.type))
             .sort((a, b) => Number(a.session_sequence) - Number(b.session_sequence))
             .slice(0, limit)
             .map((row) => ({ event_json: row.event_json, session_sequence: row.session_sequence })),
@@ -313,6 +315,54 @@ describe('PgEventStore notify coalescing', () => {
     const lastQuery = pool.queries.at(-1);
     expect(lastQuery?.text).toContain('event_type <> ALL($2::text[])');
     expect(lastQuery?.params).toEqual(['session-1', ['tool_output_delta']]);
+  });
+
+  it('listPage 在 SQL 查询阶段排除内部事件', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    pool.rangeRows = [
+      rangeRow({
+        id: 'event-diagnostic',
+        timestamp: new Date(0).toISOString(),
+        sequence: 1,
+        type: 'model_request_started',
+        runId: 'run-1',
+        sessionId: 'session-1',
+        diagnostic: {
+          type: 'started',
+          modelRequestId: 'model-request-1',
+          attemptId: 'attempt-1',
+          attempt: 1,
+          clientRequestId: 'client-1',
+          model: 'gpt-5.6-sol',
+          protocol: 'responses',
+          responseMode: 'full',
+          maxOutputTokens: 4096,
+          requestBodyBytes: 100,
+          toolsCount: 0,
+          hasPreviousResponseId: false,
+        },
+      } as PlatformEvent & { sequence: number }),
+      rangeRow({
+        id: 'event-visible',
+        timestamp: new Date(0).toISOString(),
+        sequence: 2,
+        type: 'assistant_message',
+        runId: 'run-1',
+        sessionId: 'session-1',
+        content: 'done',
+      } as PlatformEvent & { sequence: number }),
+    ];
+
+    const page = await store.listPage?.('session-1', {
+      limit: 10,
+      excludeTypes: ['model_request_started'],
+    });
+
+    expect(page?.events.map((item) => item.id)).toEqual(['event-visible']);
+    const lastQuery = pool.queries.at(-1);
+    expect(lastQuery?.text).toContain('event_type <> ALL($6::text[])');
+    expect(lastQuery?.params?.[5]).toEqual(['model_request_started']);
   });
 
   it('drains range payloads from the durable watermark and still accepts legacy ids', async () => {

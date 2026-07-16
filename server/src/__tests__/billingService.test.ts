@@ -216,6 +216,121 @@ describe('BillingService hard cap guard', () => {
     }));
   });
 
+  it('projects failed Responses attempt usage before settling the failed run', async () => {
+    const store = {
+      getProjectionState: vi.fn(async () => 0),
+      listUnprojectedRuntimeEvents: vi.fn(async () => [
+        {
+          globalSequence: 1,
+          eventId: 'event-model-failed',
+          eventType: 'model_request_finished',
+          tenantId: 'tenant-1',
+          runModel: 'gpt-5.6-sol',
+          runChannel: 'web',
+          timestamp: '2026-07-16T10:00:00.000Z',
+          eventJson: {
+            type: 'model_request_finished',
+            runId: 'run-failed',
+            sessionId: 'session-failed',
+            diagnostic: {
+              type: 'finished',
+              modelRequestId: 'model-request-1',
+              attemptId: 'attempt-1',
+              attempt: 1,
+              outcome: 'response_incomplete',
+              durationMs: 200_000,
+              terminalStatus: 'incomplete',
+              errorCode: 'MODEL_RESPONSE_INCOMPLETE',
+              usage: { inputTokens: 100, outputTokens: 4096, cacheReadInputTokens: 20 },
+            },
+          },
+        },
+        {
+          globalSequence: 2,
+          eventId: 'event-run-failed',
+          eventType: 'run_finished',
+          tenantId: 'tenant-1',
+          timestamp: '2026-07-16T10:00:01.000Z',
+          eventJson: { type: 'run_finished', runId: 'run-failed', sessionId: 'session-failed', subtype: 'error' },
+        },
+      ]),
+      insertUsageEvent: vi.fn(async () => ({ id: 'usage-failed-attempt' })),
+      settleRunDebit: vi.fn(async () => ({ id: 'ledger-failed-attempt' })),
+      setProjectionState: vi.fn(async () => undefined),
+    };
+    const service = new BillingService({ store: store as any });
+
+    await expect(service.projectRuntimeEvents()).resolves.toMatchObject({
+      usageEventsInserted: 1,
+      debitEntriesInserted: 1,
+      lastProjectedSequence: 2,
+    });
+    expect(store.insertUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: 'usage:model-attempt:v1:attempt-1',
+      tenantId: 'tenant-1',
+      runId: 'run-failed',
+      sessionId: 'session-failed',
+      modelValue: 'gpt-5.6-sol',
+      usage: { inputTokens: 100, outputTokens: 4096, cacheReadInputTokens: 20 },
+      rawUsageJson: expect.objectContaining({
+        attemptId: 'attempt-1',
+        outcome: 'response_incomplete',
+      }),
+    }));
+    expect(store.settleRunDebit).toHaveBeenCalledWith('tenant-1', 'run-failed');
+  });
+
+  it('does not double-project completed model diagnostics alongside assistant usage', async () => {
+    const store = {
+      getProjectionState: vi.fn(async () => 0),
+      listUnprojectedRuntimeEvents: vi.fn(async () => [
+        {
+          globalSequence: 1,
+          eventId: 'event-model-completed',
+          eventType: 'model_request_finished',
+          tenantId: 'tenant-1',
+          runModel: 'glm-5.2',
+          timestamp: '2026-07-16T10:00:00.000Z',
+          eventJson: {
+            type: 'model_request_finished',
+            runId: 'run-1',
+            sessionId: 'session-1',
+            diagnostic: {
+              type: 'finished',
+              attemptId: 'attempt-completed',
+              outcome: 'completed',
+              usage: { inputTokens: 10, outputTokens: 2 },
+            },
+          },
+        },
+        {
+          globalSequence: 2,
+          eventId: 'event-assistant',
+          eventType: 'assistant_message',
+          tenantId: 'tenant-1',
+          runModel: 'glm-5.2',
+          timestamp: '2026-07-16T10:00:01.000Z',
+          eventJson: {
+            type: 'assistant_message',
+            runId: 'run-1',
+            sessionId: 'session-1',
+            model: 'glm-5.2',
+            usage: { inputTokens: 10, outputTokens: 2 },
+          },
+        },
+      ]),
+      insertUsageEvent: vi.fn(async () => ({ id: 'usage-success' })),
+      setProjectionState: vi.fn(async () => undefined),
+    };
+    const service = new BillingService({ store: store as any });
+
+    await expect(service.projectRuntimeEvents()).resolves.toMatchObject({ usageEventsInserted: 1 });
+    expect(store.insertUsageEvent).toHaveBeenCalledTimes(1);
+    expect(store.insertUsageEvent).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: 'usage:event:v1:event-assistant',
+    }));
+  });
+
   it('projects metered tool usage into a non-billable usage row plus an independent fixed debit', async () => {
     // 防双重扣费（最高优先级）：usage 行必须 billable=false（settleRunDebit 只认
     // billable 标志不认识 SKU），固定扣费由独立 source='tool:image_gen' debit 承载。

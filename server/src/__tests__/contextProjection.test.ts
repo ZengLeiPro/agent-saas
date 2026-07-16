@@ -16,6 +16,34 @@ function event(index: number, type: 'user_message' | 'assistant_message' = 'user
 }
 
 describe('context projection', () => {
+  it('模型请求诊断事件不进入 replay 或 retrieval_augmented 上下文', () => {
+    const diagnostic = {
+      id: 'diagnostic-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      type: 'model_request_finished',
+      runId: 'run-x',
+      sessionId: 'session-1',
+      diagnostic: {
+        type: 'finished',
+        modelRequestId: 'private-model-request-id',
+        attemptId: 'attempt-1',
+        attempt: 1,
+        outcome: 'eof_without_terminal',
+        durationMs: 10,
+      },
+    } as PlatformEvent;
+    const events = [event(1), diagnostic, event(2, 'assistant_message')];
+
+    const full = buildContextProjection(events, { sessionId: 'session-1', runId: 'run-y' });
+    expect(full.selectedEvents.map((item) => item.id)).toEqual(['event-1', 'event-2']);
+    const retrieved = buildContextProjection(events, {
+      sessionId: 'session-1',
+      runId: 'run-y',
+      policy: { type: 'retrieval_augmented', query: 'private-model-request-id', recentEvents: 0 },
+    });
+    expect(JSON.stringify(retrieved.messages)).not.toContain('private-model-request-id');
+  });
+
   it('replays fixed memory context before the first user message', () => {
     const memory = {
       id: 'memory-1',

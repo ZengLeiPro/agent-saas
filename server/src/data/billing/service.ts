@@ -58,6 +58,10 @@ export class BillingService {
           const inserted = await this.projectAssistantUsageEvent(row);
           if (inserted) usageEventsInserted++;
         }
+        if (row.eventType === 'model_request_finished') {
+          const inserted = await this.projectFailedModelUsageEvent(row);
+          if (inserted) usageEventsInserted++;
+        }
         if (row.eventType === 'metered_tool_usage') {
           const projected = await this.projectMeteredToolUsage(row);
           if (projected.usageInserted) usageEventsInserted++;
@@ -269,6 +273,54 @@ export class BillingService {
       || row.runModel
       || (typeof event.actualModel === 'string' ? event.actualModel : undefined)
       || 'unknown';
+    return await this.insertRuntimeUsageEvent(row, {
+      idempotencyKey: `usage:event:v1:${row.eventId}`,
+      modelValue,
+      ...(typeof event.actualModel === 'string' ? { actualModel: event.actualModel } : {}),
+      usage,
+      rawUsageJson: usage,
+    });
+  }
+
+  /**
+   * Responses 失败终态不会产生 assistant_message/tool_calls，但 provider 仍可能返回
+   * 应计费 usage。以 attemptId 为幂等键投影，随后由同 run 的 run_finished/state 结算。
+   * completed attempt 继续只认 assistant 事件，避免成功轮次重复计费。
+   */
+  private async projectFailedModelUsageEvent(row: RuntimeUsageEventRow): Promise<boolean> {
+    const diagnostic = asRecord(row.eventJson.diagnostic);
+    if (diagnostic?.type !== 'finished' || diagnostic.outcome === 'completed') return false;
+    const usage = isUsageObject(diagnostic.usage) ? diagnostic.usage : undefined;
+    if (!usage) return false;
+    const attemptId = typeof diagnostic.attemptId === 'string' && diagnostic.attemptId
+      ? diagnostic.attemptId
+      : row.eventId;
+    return await this.insertRuntimeUsageEvent(row, {
+      idempotencyKey: `usage:model-attempt:v1:${attemptId}`,
+      modelValue: row.runModel ?? 'unknown',
+      usage,
+      rawUsageJson: {
+        usage,
+        ...(typeof diagnostic.modelRequestId === 'string' ? { modelRequestId: diagnostic.modelRequestId } : {}),
+        ...(typeof diagnostic.attemptId === 'string' ? { attemptId: diagnostic.attemptId } : {}),
+        ...(typeof diagnostic.attempt === 'number' ? { attempt: diagnostic.attempt } : {}),
+        ...(typeof diagnostic.outcome === 'string' ? { outcome: diagnostic.outcome } : {}),
+        ...(typeof diagnostic.errorCode === 'string' ? { errorCode: diagnostic.errorCode } : {}),
+      },
+    });
+  }
+
+  private async insertRuntimeUsageEvent(
+    row: RuntimeUsageEventRow,
+    inputFields: {
+      idempotencyKey: string;
+      modelValue: string;
+      actualModel?: string;
+      usage: ProjectedRuntimeUsageInput['usage'];
+      rawUsageJson: unknown;
+    },
+  ): Promise<boolean> {
+    const event = row.eventJson;
     const runId = typeof event.runId === 'string' ? event.runId : undefined;
     const sessionId = typeof event.sessionId === 'string' ? event.sessionId : undefined;
     const user = row.runUserId ? this.options.userStore?.findById(row.runUserId) : undefined;
@@ -276,7 +328,7 @@ export class BillingService {
     const memoryPollExempt = row.runToolProfile === 'memory_poll'
       && this.options.isMemoryPollBillable?.(row.tenantId) !== true;
     const input: ProjectedRuntimeUsageInput = {
-      idempotencyKey: `usage:event:v1:${row.eventId}`,
+      idempotencyKey: inputFields.idempotencyKey,
       tenantId: row.tenantId,
       ...(memoryPollExempt ? { billable: false } : {}),
       ...(row.runUserId ? { userId: row.runUserId } : {}),
@@ -284,11 +336,11 @@ export class BillingService {
       ...(sessionId ? { sessionId } : {}),
       ...(runId ? { runId } : {}),
       channel: row.runChannel ?? 'web',
-      modelValue,
-      ...(typeof event.actualModel === 'string' ? { actualModel: event.actualModel } : {}),
+      modelValue: inputFields.modelValue,
+      ...(inputFields.actualModel ? { actualModel: inputFields.actualModel } : {}),
       requestIndex: row.globalSequence,
-      usage,
-      rawUsageJson: usage,
+      usage: inputFields.usage,
+      rawUsageJson: inputFields.rawUsageJson,
       occurredAt: row.timestamp,
     };
     const inserted = await this.options.store.insertUsageEvent(input);
@@ -361,6 +413,12 @@ function isUsageObject(value: unknown): value is ProjectedRuntimeUsageInput['usa
       typeof (value as { inputTokens?: unknown }).inputTokens === 'number'
       || typeof (value as { outputTokens?: unknown }).outputTokens === 'number'
     );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function shouldSettleOnRunState(event: Record<string, unknown>): boolean {

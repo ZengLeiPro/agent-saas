@@ -28,6 +28,11 @@ export interface RunContext {
   approvalPolicy?: ToolApprovalPolicyOptions;
   hooks?: AgentRunHooks;
   signal?: AbortSignal;
+  /**
+   * 模型 HTTP attempt 的内部诊断旁路。由 RawAgentLoop 注入，adapter 只记录不消费；
+   * 写入失败不得反向打断模型请求。
+   */
+  recordModelRequestDiagnostic?: (event: ModelRequestDiagnostic) => Promise<boolean | void>;
 }
 
 export interface RunInput {
@@ -75,6 +80,76 @@ export interface ModelUsage {
   reasoningTokens?: number;
   apiRequestCount?: number;
 }
+
+export type ModelTerminalStatus = 'completed' | 'incomplete' | 'failed' | 'cancelled';
+
+export type ModelRequestDiagnostic =
+  | {
+    type: 'started';
+    modelRequestId: string;
+    attemptId: string;
+    attempt: number;
+    clientRequestId: string;
+    model: string;
+    protocol: 'responses';
+    responseMode: ModelResponseMode;
+    maxOutputTokens: number;
+    requestBodyBytes: number;
+    toolsCount: number;
+    hasPreviousResponseId: boolean;
+  }
+  | {
+    type: 'checkpoint';
+    modelRequestId: string;
+    attemptId: string;
+    attempt: number;
+    stage: 'response_created' | 'terminal_received';
+    elapsedMs: number;
+    responseIdHash?: string;
+    actualModel?: string;
+    terminalEventType?: string;
+    terminalStatus?: ModelTerminalStatus;
+    incompleteReason?: string;
+    errorCode?: string;
+  }
+  | {
+    type: 'finished';
+    modelRequestId: string;
+    attemptId: string;
+    attempt: number;
+    outcome:
+      | 'completed'
+      | 'http_error'
+      | 'network_error'
+      | 'aborted'
+      | 'response_incomplete'
+      | 'response_failed'
+      | 'provider_error'
+      | 'eof_without_terminal'
+      | 'unterminated_tail'
+      | 'parse_error'
+      | 'stream_error';
+    durationMs: number;
+    httpStatus?: number;
+    contentType?: string;
+    upstreamRequestId?: string;
+    responseIdHash?: string;
+    responseBytes?: number;
+    frameCount?: number;
+    eventTypeCounts?: Record<string, number>;
+    unknownEventTypes?: string[];
+    receivedDone?: boolean;
+    lastSequenceNumber?: number;
+    terminalEventType?: string;
+    terminalStatus?: ModelTerminalStatus;
+    incompleteReason?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    tailBytes?: number;
+    tailHash?: string;
+    usage?: ModelUsage;
+    willRetry?: boolean;
+  };
 
 /** 模型请求实际采用的上下文传递方式。 */
 export type ModelResponseMode = 'full' | 'relay' | 'fallback_full';
@@ -178,6 +253,10 @@ export type ModelEvent =
     toolCalls: ModelToolCall[];
     usage?: ModelUsage;
     finishReason?: string;
+    /** 仅明确 completed 的终态才允许 RawAgentLoop 接受输出、执行工具或保存接力状态。 */
+    terminalStatus?: ModelTerminalStatus;
+    incompleteReason?: string;
+    errorCode?: string;
     /** Responses API 返回的 response.id（store=true 时存在），用于下一轮接力。 */
     responseId?: string;
     /** Responses API 返回的 response.expire_at（Unix epoch 秒）。 */
@@ -238,6 +317,30 @@ export type PlatformEvent =
     status: 'completed' | 'failed';
     usage?: ModelUsage;
     error?: string;
+  }
+  | {
+    id: string;
+    timestamp: string;
+    type: 'model_request_started';
+    runId: string;
+    sessionId: string;
+    diagnostic: Extract<ModelRequestDiagnostic, { type: 'started' }>;
+  }
+  | {
+    id: string;
+    timestamp: string;
+    type: 'model_request_checkpoint';
+    runId: string;
+    sessionId: string;
+    diagnostic: Extract<ModelRequestDiagnostic, { type: 'checkpoint' }>;
+  }
+  | {
+    id: string;
+    timestamp: string;
+    type: 'model_request_finished';
+    runId: string;
+    sessionId: string;
+    diagnostic: Extract<ModelRequestDiagnostic, { type: 'finished' }>;
   }
   | {
     id: string;
@@ -707,6 +810,16 @@ export type PlatformEventInput = PlatformEvent extends infer Event
     : never
   : never;
 
+export const INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES = [
+  'model_request_started',
+  'model_request_checkpoint',
+  'model_request_finished',
+] as const satisfies readonly PlatformEvent['type'][];
+
+export function isInternalModelDiagnosticEvent(event: PlatformEvent): boolean {
+  return (INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES as readonly string[]).includes(event.type);
+}
+
 export interface EventListPage {
   events: PlatformEvent[];
   /**
@@ -747,6 +860,7 @@ export interface EventStore {
     limit?: number;
     runId?: string;
     type?: PlatformEvent['type'];
+    excludeTypes?: PlatformEvent['type'][];
   }): Promise<EventListPage>;
   listAround?(sessionId: string, eventId: string, options?: { before?: number; after?: number }): Promise<PlatformEvent[]>;
   listByRun?(sessionId: string, runId: string): Promise<PlatformEvent[]>;
@@ -755,6 +869,7 @@ export interface EventStore {
     limit?: number;
     runId?: string;
     type?: PlatformEvent['type'];
+    excludeTypes?: PlatformEvent['type'][];
   }): Promise<PlatformEvent[]>;
   getById?(eventId: string): Promise<PlatformEvent | null>;
 }

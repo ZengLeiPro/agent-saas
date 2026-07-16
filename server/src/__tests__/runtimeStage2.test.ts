@@ -12,10 +12,12 @@ import {
   createRawApprovalResumeDispatch,
   createRawRuntimeRunDispatch,
   loadRawRuntimeWakeState,
+  RunStateTrackingEventStore,
   type SessionLockAcquirer,
   type SessionLockHandle,
 } from '../runtime/rawRuntimeRunDispatch.js';
 import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCatalog.js';
+import type { EventStore } from '../runtime/types.js';
 import type { OutboundEvent } from '../types/index.js';
 
 class MemorySessionCatalog implements SessionCatalog {
@@ -133,6 +135,25 @@ describe('runtime stage 2 primitives', () => {
       'run_started',
       'assistant_message',
     ]);
+  });
+
+  it('RunStateTrackingEventStore 透传 list/listPage 查询参数', async () => {
+    const list = vi.fn(async () => []);
+    const listPage = vi.fn(async () => ({ events: [], hasMore: false }));
+    const inner = {
+      append: vi.fn(),
+      list,
+      listPage,
+    } as unknown as EventStore;
+    const store = new RunStateTrackingEventStore(inner, undefined);
+    const listOptions = { excludeTypes: ['model_request_started' as const] };
+    const pageOptions = { afterCursor: 'cursor-1', limit: 20, runId: 'run-1', type: 'model_request_finished' as const };
+
+    await store.list('session-1', listOptions);
+    await store.listPage?.('session-1', pageOptions);
+
+    expect(list).toHaveBeenCalledWith('session-1', listOptions);
+    expect(listPage).toHaveBeenCalledWith('session-1', pageOptions);
   });
 
   it('EventBackedApprovalStore persists approval state inside runtime events', async () => {

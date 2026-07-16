@@ -66,6 +66,32 @@ describe('SessionContextService', () => {
     ]);
   });
 
+  it('内部模型请求诊断不会暴露给 Session 工具读取或搜索', async () => {
+    const { cwd, store } = await seedStore();
+    cleanupDirs.add(cwd);
+    await store.append({
+      type: 'model_request_finished',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      diagnostic: {
+        type: 'finished',
+        modelRequestId: 'internal-diagnostic-id',
+        attemptId: 'attempt-internal',
+        attempt: 1,
+        outcome: 'eof_without_terminal',
+        durationMs: 100,
+        errorCode: 'MODEL_SSE_EOF_WITHOUT_TERMINAL',
+      },
+    });
+    const service = new SessionContextService(store);
+
+    expect((await service.getRunEvents('session-1', 'run-1')).map((event) => event.type))
+      .not.toContain('model_request_finished');
+    expect(await service.searchEvents('session-1', 'internal-diagnostic-id')).toEqual([]);
+    expect(await service.getEvents('session-1', { type: 'model_request_finished' }))
+      .toEqual({ events: [], hasMore: false });
+  });
+
   it('delegates filtered reads to EventStore query methods when available', async () => {
     const calls: string[] = [];
     const store = {
@@ -87,8 +113,8 @@ describe('SessionContextService', () => {
         calls.push('listByToolCall');
         return [];
       },
-      search: async () => {
-        calls.push('search');
+      search: async (_sessionId: string, _query: string, opts: unknown) => {
+        calls.push(`search:${JSON.stringify(opts)}`);
         return [];
       },
     } as unknown as import('../runtime/types.js').EventStore;
@@ -101,11 +127,11 @@ describe('SessionContextService', () => {
     await service.searchEvents('session-1', 'package');
 
     expect(calls).toEqual([
-      'listPage:{"limit":5,"runId":"run-1","type":"tool_result"}',
+      'listPage:{"limit":5,"runId":"run-1","type":"tool_result","excludeTypes":["model_request_started","model_request_checkpoint","model_request_finished"]}',
       'listAround',
       'listByRun',
       'listByToolCall',
-      'search',
+      'search:{"limit":50,"excludeTypes":["model_request_started","model_request_checkpoint","model_request_finished"]}',
     ]);
   });
 

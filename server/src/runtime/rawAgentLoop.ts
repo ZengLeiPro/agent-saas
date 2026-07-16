@@ -2,22 +2,24 @@ import type {
   InteractionEvent,
   InteractionResponse,
 } from '../agent/types.js';
-import type {
-  AgentLoop,
-  ApprovalStore,
-  ApprovalRecord,
-  EventStore,
-  ModelAdapter,
-  ModelChatMessage,
-  ModelEvent,
-  ModelToolCall,
-  ModelUsage,
-  RunContext,
-  RunInput,
-  ToolExecutionOutcome,
-  ToolPolicy,
-  PlatformEvent,
-  PlatformEventInput,
+import {
+  INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES,
+  type ModelRequestDiagnostic,
+  type AgentLoop,
+  type ApprovalStore,
+  type ApprovalRecord,
+  type EventStore,
+  type ModelAdapter,
+  type ModelChatMessage,
+  type ModelEvent,
+  type ModelToolCall,
+  type ModelUsage,
+  type RunContext,
+  type RunInput,
+  type ToolExecutionOutcome,
+  type ToolPolicy,
+  type PlatformEvent,
+  type PlatformEventInput,
 } from './types.js';
 import type { InboundMessage, OutboundEvent } from '../types/index.js';
 import {
@@ -63,6 +65,7 @@ const RUN_START_REPLAY_EXCLUDED_EVENT_TYPES = [
   'tool_output_delta',
   'tool_progress',
   'assistant_stream_event',
+  ...INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES,
 ] satisfies PlatformEvent['type'][];
 const WEB_FETCH_SYNTHESIS_PROMPT = [
   '[平台收束指令]',
@@ -366,6 +369,45 @@ export class RawAgentLoop implements AgentLoop {
     this.zombieToolCallTimeoutMs = resolveZombieToolCallTimeoutMs(options.zombieToolCallTimeoutMs);
   }
 
+  private withModelRequestDiagnostics(context: RunContext): RunContext {
+    return {
+      ...context,
+      recordModelRequestDiagnostic: async (diagnostic: ModelRequestDiagnostic) => {
+        try {
+          if (diagnostic.type === 'started') {
+            await this.append({
+              type: 'model_request_started',
+              runId: context.runId,
+              sessionId: context.sessionId,
+              diagnostic,
+            });
+          } else if (diagnostic.type === 'checkpoint') {
+            await this.append({
+              type: 'model_request_checkpoint',
+              runId: context.runId,
+              sessionId: context.sessionId,
+              diagnostic,
+            });
+          } else {
+            await this.append({
+              type: 'model_request_finished',
+              runId: context.runId,
+              sessionId: context.sessionId,
+              diagnostic,
+            });
+          }
+          return true;
+        } catch (err) {
+          logger.warn(
+            `model request diagnostic append failed session=${context.sessionId} run=${context.runId}: `
+            + `${err instanceof Error ? err.message : String(err)}`,
+          );
+          return false;
+        }
+      },
+    };
+  }
+
   /**
    * B2: 自动选择 session 内"唯一" ready 的 tenant-remote hand 写入 invocation
    * metadata。HandStore 缺失 / 无 sessionId / list 异常时静默返回 undefined
@@ -564,7 +606,7 @@ export class RawAgentLoop implements AgentLoop {
           signal: context.signal,
           ...(forceSynthesis ? { toolChoice: 'none' as const } : {}),
           ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
-        }, context)) {
+        }, this.withModelRequestDiagnostics(context))) {
           if (event.type === 'thinking_delta') {
             if (!thinkingStarted) {
               thinkingStarted = true;
@@ -605,6 +647,9 @@ export class RawAgentLoop implements AgentLoop {
         if (!completed) throw new Error('model stream completed without completion event');
         if (completed.usage) {
           totalUsage = mergeUsage(totalUsage, completed.usage);
+        }
+        assertSuccessfulModelTerminal(completed);
+        if (completed.usage) {
           turnContextUsage = contextUsageTracker.record(
             context.model,
             completed.usage,
@@ -631,11 +676,6 @@ export class RawAgentLoop implements AgentLoop {
         }
 
         if (completed.toolCalls.length === 0) {
-          if (completed.finishReason === 'length' || completed.finishReason === 'content_filter') {
-            throw new Error(
-              `model output truncated: finish_reason=${completed.finishReason} (可能丢失了 tool_call,不应作为正常结束)`,
-            );
-          }
           if (completed.content && completed.content !== turnText) {
             if (!textStarted) {
               textStarted = true;
@@ -904,14 +944,16 @@ export class RawAgentLoop implements AgentLoop {
         toolChoice: 'none',
         signal: context.signal,
         ...(previousResponseId ? { previousResponseId } : {}),
-      }, context)) {
+      }, this.withModelRequestDiagnostics(context))) {
         if (event.type === 'text_delta') {
           summaryText += event.content;
         } else if (event.type !== 'thinking_delta') {
           completed = event;
         }
       }
-      if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
+      if (!completed) throw new Error('model stream completed without completion event');
+      if (completed.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
+      assertSuccessfulModelTerminal(completed);
       if (!summaryText && completed?.content) {
         summaryText = completed.content;
       }
@@ -1987,7 +2029,7 @@ export class RawAgentLoop implements AgentLoop {
           signal: args.context.signal,
           ...(forceSynthesis ? { toolChoice: 'none' as const } : {}),
           ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
-        }, args.context)) {
+        }, this.withModelRequestDiagnostics(args.context))) {
           if (event.type === 'thinking_delta') {
             if (!thinkingStarted) {
               thinkingStarted = true;
@@ -2028,6 +2070,9 @@ export class RawAgentLoop implements AgentLoop {
         if (!completed) throw new Error('model stream completed without completion event');
         if (completed.usage) {
           totalUsage = mergeUsage(totalUsage, completed.usage);
+        }
+        assertSuccessfulModelTerminal(completed);
+        if (completed.usage) {
           turnContextUsage = contextUsageTracker.record(
             args.context.model,
             completed.usage,
@@ -2053,11 +2098,6 @@ export class RawAgentLoop implements AgentLoop {
         }
 
         if (completed.toolCalls.length === 0) {
-          if (completed.finishReason === 'length' || completed.finishReason === 'content_filter') {
-            throw new Error(
-              `model output truncated: finish_reason=${completed.finishReason} (可能丢失了 tool_call,不应作为正常结束)`,
-            );
-          }
           if (completed.content && completed.content !== turnText) {
             if (!textStarted) {
               textStarted = true;
@@ -2231,6 +2271,21 @@ export class RawAgentLoop implements AgentLoop {
   private async append(event: Parameters<EventStore['append']>[0]): Promise<void> {
     const stored = await this.eventStore.append(event);
     await this.transcriptProjection.project(stored);
+  }
+}
+
+function assertSuccessfulModelTerminal(completed: Extract<ModelEvent, { type: 'completed' }>): void {
+  if (completed.terminalStatus && completed.terminalStatus !== 'completed') {
+    throw new Error(
+      `model terminal rejected: status=${completed.terminalStatus}`
+      + `${completed.incompleteReason ? ` reason=${completed.incompleteReason}` : ''}`
+      + `${completed.errorCode ? ` code=${completed.errorCode}` : ''}`,
+    );
+  }
+  if (completed.finishReason === 'length' || completed.finishReason === 'content_filter') {
+    throw new Error(
+      `model output truncated: finish_reason=${completed.finishReason} (可能丢失了 tool_call,不应作为正常结束)`,
+    );
   }
 }
 

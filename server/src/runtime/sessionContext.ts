@@ -2,7 +2,13 @@ import { z } from 'zod';
 
 import { loadToolDescription } from '../agent/tools/descriptionLoader.js';
 import type { AuthorizedToolCall, ToolCallContext, ToolDescriptor, ToolProvider, ToolResult } from '../agent/toolRuntime.js';
-import type { EventListPage, EventStore, PlatformEvent } from './types.js';
+import {
+  INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES,
+  isInternalModelDiagnosticEvent,
+  type EventListPage,
+  type EventStore,
+  type PlatformEvent,
+} from './types.js';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -31,36 +37,45 @@ export class SessionContextService {
   constructor(private readonly eventStore: EventStore) {}
 
   async getEvents(sessionId: string, opts: EventQuery = {}): Promise<EventListPage> {
+    if (isInternalDiagnosticType(opts.type)) return { events: [], hasMore: false };
     const limit = clampLimit(opts.limit, DEFAULT_LIMIT, MAX_LIMIT);
     if (this.eventStore.listPage) {
-      return this.eventStore.listPage(sessionId, {
+      const page = await this.eventStore.listPage(sessionId, {
         afterCursor: opts.afterCursor,
         limit,
         ...(opts.runId ? { runId: opts.runId } : {}),
         ...(opts.type ? { type: opts.type } : {}),
+        excludeTypes: [...INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES],
       });
+      return { ...page, events: page.events.filter((event) => !isInternalModelDiagnosticEvent(event)) };
     }
 
     const all = await this.eventStore.list(sessionId);
-    const filtered = filterEvents(all, opts);
+    const filtered = filterEvents(all, opts).filter((event) => !isInternalModelDiagnosticEvent(event));
     return fallbackPage(filtered, opts.afterCursor, limit);
   }
 
   async getEventsAround(sessionId: string, eventId: string, before: number, after: number): Promise<PlatformEvent[]> {
     if (this.eventStore.listAround) {
-      return this.eventStore.listAround(sessionId, eventId, { before, after });
+      return (await this.eventStore.listAround(sessionId, eventId, { before, after }))
+        .filter((event) => !isInternalModelDiagnosticEvent(event));
     }
     const events = await this.eventStore.list(sessionId);
     const index = events.findIndex((event) => event.id === eventId);
     if (index < 0) return [];
     const start = Math.max(0, index - Math.max(0, before));
     const end = Math.min(events.length, index + Math.max(0, after) + 1);
-    return events.slice(start, end);
+    return events.slice(start, end).filter((event) => !isInternalModelDiagnosticEvent(event));
   }
 
   async getRunEvents(sessionId: string, runId: string): Promise<PlatformEvent[]> {
-    if (this.eventStore.listByRun) return this.eventStore.listByRun(sessionId, runId);
-    return (await this.eventStore.list(sessionId)).filter((event) => 'runId' in event && event.runId === runId);
+    if (this.eventStore.listByRun) {
+      return (await this.eventStore.listByRun(sessionId, runId))
+        .filter((event) => !isInternalModelDiagnosticEvent(event));
+    }
+    return (await this.eventStore.list(sessionId)).filter((event) => (
+      !isInternalModelDiagnosticEvent(event) && 'runId' in event && event.runId === runId
+    ));
   }
 
   async getToolTrace(sessionId: string, toolCallId: string): Promise<PlatformEvent[]> {
@@ -73,17 +88,26 @@ export class SessionContextService {
     if (!needle) return [];
     const limit = clampLimit(opts.limit, DEFAULT_LIMIT, MAX_SEARCH_RESULTS);
     if (this.eventStore.search) {
-      return this.eventStore.search(sessionId, query, {
+      return (await this.eventStore.search(sessionId, query, {
         limit,
         ...(opts.runId ? { runId: opts.runId } : {}),
         ...(opts.type ? { type: opts.type } : {}),
-      });
+        excludeTypes: [...INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES],
+      })).filter((event) => !isInternalModelDiagnosticEvent(event));
     }
     const filtered = filterEvents(await this.eventStore.list(sessionId), opts);
     return filtered
+      .filter((event) => !isInternalModelDiagnosticEvent(event))
       .filter((event) => JSON.stringify(event).toLowerCase().includes(needle))
       .slice(0, limit);
   }
+}
+
+function isInternalDiagnosticType(type: PlatformEvent['type'] | undefined): boolean {
+  if (!type) return false;
+  return type === 'model_request_started'
+    || type === 'model_request_checkpoint'
+    || type === 'model_request_finished';
 }
 
 type SessionGetEventsInput = {

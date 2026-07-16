@@ -241,10 +241,17 @@ export class PgEventStore implements EventStore {
 
   async listPage(
     sessionId: string,
-    options: { afterCursor?: string; limit?: number; runId?: string; type?: PlatformEvent['type'] } = {},
+    options: {
+      afterCursor?: string;
+      limit?: number;
+      runId?: string;
+      type?: PlatformEvent['type'];
+      excludeTypes?: PlatformEvent['type'][];
+    } = {},
   ): Promise<EventListPage> {
     const afterSequence = parsePgCursor(options.afterCursor);
     const limit = options.limit && options.limit > 0 ? options.limit : 100;
+    const excludeTypes = [...new Set(options.excludeTypes ?? [])];
     const result = await this.pool.query<{ event_json: PlatformEvent; session_sequence: string }>(
       `SELECT event_json, session_sequence
        FROM ${this.eventsTable}
@@ -252,9 +259,10 @@ export class PgEventStore implements EventStore {
          AND session_sequence > $2
          AND ($4::text IS NULL OR run_id = $4::text)
          AND ($5::text IS NULL OR event_type = $5::text)
+         AND event_type <> ALL($6::text[])
        ORDER BY session_sequence ASC
        LIMIT $3`,
-      [sessionId, afterSequence, limit + 1, options.runId ?? null, options.type ?? null],
+      [sessionId, afterSequence, limit + 1, options.runId ?? null, options.type ?? null, excludeTypes],
     );
     const rows = result.rows.slice(0, limit);
     const last = rows.at(-1);
@@ -324,21 +332,28 @@ export class PgEventStore implements EventStore {
   async search(
     sessionId: string,
     query: string,
-    options: { limit?: number; runId?: string; type?: PlatformEvent['type'] } = {},
+    options: {
+      limit?: number;
+      runId?: string;
+      type?: PlatformEvent['type'];
+      excludeTypes?: PlatformEvent['type'][];
+    } = {},
   ): Promise<PlatformEvent[]> {
     const needle = query.trim();
     if (!needle) return [];
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 50);
+    const excludeTypes = [...new Set(options.excludeTypes ?? [])];
     const result = await this.pool.query<{ event_json: PlatformEvent }>(
       `SELECT event_json
        FROM ${this.eventsTable}
        WHERE session_id = $1
          AND ($3::text IS NULL OR run_id = $3::text)
          AND ($4::text IS NULL OR event_type = $4::text)
+         AND event_type <> ALL($6::text[])
          AND event_json::text ILIKE '%' || $2 || '%'
        ORDER BY session_sequence ASC
        LIMIT $5`,
-      [sessionId, needle, options.runId ?? null, options.type ?? null, limit],
+      [sessionId, needle, options.runId ?? null, options.type ?? null, limit, excludeTypes],
     );
     return result.rows.map((row) => normalizeEventJson(row.event_json));
   }

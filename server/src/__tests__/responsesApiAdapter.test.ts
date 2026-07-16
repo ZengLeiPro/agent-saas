@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ResponsesApiAdapter, RESPONSE_TTL_MS, MAX_OUTPUT_TOKENS_FLOOR } from '../runtime/responsesApiAdapter.js';
 import { ChatCompletionsModelAdapter } from '../runtime/chatCompletionsAdapter.js';
-import type { ModelEvent } from '../runtime/types.js';
+import type { ModelEvent, ModelRequestDiagnostic } from '../runtime/types.js';
 
 /** 构造一行 Responses API SSE 帧（含 event: + data:）。 */
 function sse(eventName: string, payload: unknown): string {
@@ -247,6 +247,7 @@ describe('ResponsesApiAdapter', () => {
       { apiKey: 'sk-test', baseUrl: 'https://ark.example/api/v3' },
       { protocol: 'responses' },
     );
+    const diagnostics: ModelRequestDiagnostic[] = [];
 
     const events = await collect(adapter.stream({
       model: 'glm-5.2',
@@ -258,7 +259,10 @@ describe('ResponsesApiAdapter', () => {
       ],
       tools: [],
       previousResponseId: 'resp_prev',
-    }, baseContext));
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     // 第一次：接力请求（带 previous_response_id + 增量 input）
@@ -279,6 +283,15 @@ describe('ResponsesApiAdapter', () => {
       responseMode: 'fallback_full',
       modelRequestAttemptCount: 2,
     });
+    const started = diagnostics.filter((event) => event.type === 'started');
+    const finished = diagnostics.filter((event) => event.type === 'finished');
+    expect(started).toHaveLength(2);
+    expect(new Set(started.map((event) => event.modelRequestId)).size).toBe(1);
+    expect(new Set(started.map((event) => event.attemptId)).size).toBe(2);
+    expect(finished).toMatchObject([
+      { type: 'finished', attempt: 1, outcome: 'http_error', willRetry: true },
+      { type: 'finished', attempt: 2, outcome: 'completed' },
+    ]);
   });
 
   it('不带 previous_response_id 时 400 不触发降级重试，立即抛', async () => {
@@ -661,6 +674,398 @@ describe('ResponsesApiAdapter', () => {
     }, baseContext));
 
     expect(warnSpy.mock.calls.find((args) => String(args[0]).includes('DSML'))).toBeUndefined();
+  });
+
+  it('HTTP 200 但 SSE 无终态时明确失败，并落 started/checkpoint/finished 证据链', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_no_terminal', model: 'gpt-5.6-sol' } }),
+    ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.6-sol',
+      messages: [{ role: 'user', content: '复杂任务' }],
+      tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }))).rejects.toThrow('MODEL_SSE_EOF_WITHOUT_TERMINAL');
+
+    expect(diagnostics.map((event) => event.type)).toEqual(['started', 'checkpoint', 'finished']);
+    expect(diagnostics.at(-1)).toMatchObject({
+      type: 'finished',
+      outcome: 'eof_without_terminal',
+      errorCode: 'MODEL_SSE_EOF_WITHOUT_TERMINAL',
+      eventTypeCounts: { 'response.created': 1 },
+    });
+    expect(JSON.stringify(diagnostics)).not.toContain('复杂任务');
+    expect(JSON.stringify(diagnostics)).not.toContain('sk');
+  });
+
+  it('response.incomplete 返回带 usage 的失败终态，并丢弃 function_call', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_incomplete' } }),
+      sse('response.incomplete', {
+        type: 'response.incomplete',
+        response: {
+          id: 'resp_incomplete',
+          status: 'incomplete',
+          incomplete_details: { reason: 'max_output_tokens' },
+          output: [{ type: 'function_call', call_id: 'dangerous', name: 'Write', arguments: '{"path":"x"}' }],
+          usage: { input_tokens: 100, output_tokens: 4096 },
+        },
+      }),
+    ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      terminalStatus: 'incomplete',
+      incompleteReason: 'max_output_tokens',
+      errorCode: 'MODEL_RESPONSE_INCOMPLETE',
+      toolCalls: [],
+      usage: { inputTokens: 100, outputTokens: 4096 },
+    });
+    expect(diagnostics.map((event) => event.type)).toEqual([
+      'started',
+      'checkpoint',
+      'checkpoint',
+      'finished',
+    ]);
+    expect(diagnostics.at(-2)).toMatchObject({
+      type: 'checkpoint',
+      stage: 'terminal_received',
+      terminalStatus: 'incomplete',
+      incompleteReason: 'max_output_tokens',
+    });
+    expect(diagnostics.at(-1)).toMatchObject({
+      type: 'finished',
+      outcome: 'response_incomplete',
+      terminalStatus: 'incomplete',
+      incompleteReason: 'max_output_tokens',
+      usage: { inputTokens: 100, outputTokens: 4096 },
+    });
+  });
+
+  it('识别官方 error 事件名，不再误报 empty turn', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('error', { type: 'error', code: 'server_error', message: 'upstream failed', sequence_number: 3 }),
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext));
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      terminalStatus: 'failed',
+      errorCode: 'server_error',
+      toolCalls: [],
+    });
+  });
+
+  it('终态后立即封口，后续帧不能注入工具调用', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_sealed' } }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: { id: 'resp_sealed', status: 'completed', output: [], usage: { input_tokens: 2, output_tokens: 1 } },
+      }),
+      sse('response.output_item.done', {
+        type: 'response.output_item.done',
+        output_index: 0,
+        item: { type: 'function_call', call_id: 'call_injected', name: 'Write', arguments: '{"path":"x"}' },
+      }),
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext));
+
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      terminalStatus: 'completed',
+      toolCalls: [],
+    });
+  });
+
+  it('显式空 canonical output 与已流出的工具调用冲突时失败', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_conflict' } }),
+      sse('response.output_item.done', {
+        type: 'response.output_item.done',
+        output_index: 0,
+        item: { type: 'function_call', call_id: 'call_streamed', name: 'Write', arguments: '{"path":"x"}' },
+      }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: { id: 'resp_conflict', status: 'completed', output: [] },
+      }),
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext))).rejects.toThrow('MODEL_TOOL_CALL_RECONCILIATION_FAILED');
+  });
+
+  it.each([null, { unexpected: true }])(
+    '显式但非数组的 canonical output 必须判为协议错误：%j',
+    async (invalidOutput) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_invalid_output' } }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: { id: 'resp_invalid_output', status: 'completed', output: invalidOutput },
+        }),
+      ]));
+      const adapter = new ResponsesApiAdapter(
+        { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+        { protocol: 'responses' },
+      );
+
+      await expect(collect(adapter.stream({
+        model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+      }, baseContext))).rejects.toThrow('MODEL_CANONICAL_OUTPUT_INVALID');
+    },
+  );
+
+  it('消费者提前关闭流时补写 finished 诊断', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_consumer_closed' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '部分内容' }),
+    ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+    const iterator = adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    })[Symbol.asyncIterator]();
+
+    expect(await iterator.next()).toEqual({ done: false, value: { type: 'text_delta', content: '部分内容' } });
+    await iterator.return?.();
+
+    expect(diagnostics.at(-1)).toMatchObject({
+      type: 'finished',
+      outcome: 'aborted',
+      errorCode: 'MODEL_STREAM_CONSUMER_CLOSED',
+    });
+  });
+
+  it('终态到达后不等待上游关闭连接', async () => {
+    const encoder = new TextEncoder();
+    const cancel = vi.fn();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          sse('response.created', { type: 'response.created', response: { id: 'resp_open' } }),
+          sse('response.completed', {
+            type: 'response.completed',
+            response: { id: 'resp_open', status: 'completed', usage: { input_tokens: 1, output_tokens: 1 } },
+          }),
+        ].join('')));
+      },
+      cancel,
+    })));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext));
+
+    expect(events.at(-1)).toMatchObject({ type: 'completed', terminalStatus: 'completed' });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('诊断落库失败不反向打断模型请求', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_diagnostic_failure' } }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: { id: 'resp_diagnostic_failure', status: 'completed', usage: { input_tokens: 1, output_tokens: 1 } },
+      }),
+    ]));
+    const record = vi.fn(async () => false);
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, { ...baseContext, recordModelRequestDiagnostic: record }));
+
+    expect(events.at(-1)).toMatchObject({ type: 'completed', terminalStatus: 'completed' });
+    expect(record).toHaveBeenCalled();
+  });
+
+  it('未知事件类型的诊断基数有上限', async () => {
+    const unknownFrames = Array.from({ length: 80 }, (_, index) => (
+      sse(`provider.custom.${index}`, { sequence_number: index })
+    ));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_bounded' } }),
+      ...unknownFrames,
+      sse('response.completed', {
+        type: 'response.completed',
+        response: { id: 'resp_bounded', status: 'completed', usage: { input_tokens: 1, output_tokens: 1 } },
+      }),
+    ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+
+    const finished = diagnostics.find((event) => event.type === 'finished');
+    expect(finished?.unknownEventTypes).toHaveLength(20);
+    expect(Object.keys(finished?.eventTypeCounts ?? {})).toHaveLength(64);
+    expect(finished?.eventTypeCounts?.['(other)']).toBeGreaterThan(0);
+  });
+
+  it('terminal canonical output 可补回未发送 delta 的正文和 tool call', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_snapshot' } }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: {
+          id: 'resp_snapshot',
+          status: 'completed',
+          output: [
+            { type: 'message', content: [{ type: 'output_text', text: '先查一下。' }] },
+            { type: 'function_call', call_id: 'call_snapshot', name: 'Read', arguments: '{"path":"a.txt"}' },
+          ],
+          usage: { input_tokens: 2, output_tokens: 3 },
+        },
+      }),
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext));
+    expect(events[0]).toEqual({ type: 'text_delta', content: '先查一下。' });
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      terminalStatus: 'completed',
+      content: '先查一下。',
+      finishReason: 'tool_calls',
+      toolCalls: [{ id: 'call_snapshot', name: 'Read', arguments: '{"path":"a.txt"}' }],
+    });
+  });
+
+  it('支持 CRLF SSE 帧边界', async () => {
+    const wire = [
+      sse('response.created', { type: 'response.created', response: { id: 'resp_crlf' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '正常' }),
+      sse('response.completed', { type: 'response.completed', response: { id: 'resp_crlf', status: 'completed' } }),
+    ].join('').replace(/\n/g, '\r\n');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      wire.slice(0, 31), wire.slice(31, 87), wire.slice(87),
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext));
+    expect(events.at(-1)).toMatchObject({ type: 'completed', content: '正常', terminalStatus: 'completed' });
+  });
+
+  it('EOF 残帧不当作完整终态', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_tail' } }),
+      'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_tail","status":"completed"}}',
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext))).rejects.toThrow('MODEL_SSE_UNTERMINATED_TAIL');
+  });
+
+  it('带完整分隔符的超大 SSE 帧也会被上限拦截', async () => {
+    const oversized = `data: ${'x'.repeat(2 * 1024 * 1024)}\n\n`;
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([oversized]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext))).rejects.toThrow('MODEL_SSE_FRAME_TOO_LARGE');
+  });
+
+  it('HTTP 5xx 与网络歧义错误不自动二次 POST', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"error":{"message":"upstream EOF"}}', { status: 500 }),
+    );
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext))).rejects.toThrow('HTTP 500');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('extraBody 禁止覆盖 Responses 协议保留字段', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses', extraBody: { stream: false } },
+    );
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext))).rejects.toThrow('cannot override reserved fields: stream');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

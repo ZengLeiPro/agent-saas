@@ -1,4 +1,9 @@
-import type { ModelChatMessage, PlatformEvent, PlatformEventInput } from './types.js';
+import {
+  isInternalModelDiagnosticEvent,
+  type ModelChatMessage,
+  type PlatformEvent,
+  type PlatformEventInput,
+} from './types.js';
 import {
   buildChatMessagesFromEvents,
   truncateOldToolResults,
@@ -190,7 +195,8 @@ function formatCompactionContext(summary: string, trail: TrailItem[]): string {
 export function buildContextProjection(allEvents: PlatformEvent[], options: ContextProjectionOptions): ContextProjection {
   const policy = options.policy ?? { type: 'full_replay' };
   const truncate = (msgs: ModelChatMessage[]) => truncateOldToolResults(msgs, options.toolResultTruncation);
-  const { effectiveEvents: events, summaryMessages } = applyCompaction(allEvents);
+  const contextEvents = allEvents.filter((event) => !isInternalModelDiagnosticEvent(event));
+  const { effectiveEvents: events, summaryMessages } = applyCompaction(contextEvents);
   switch (policy.type) {
     case 'full_replay':
       return {

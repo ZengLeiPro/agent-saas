@@ -23,11 +23,13 @@ import type {
   ModelToolDefinition,
   ModelUsage,
   ModelResponseMode,
+  ModelRequestDiagnostic,
+  ModelTerminalStatus,
   RunContext,
   RuntimeConnection,
 } from './types.js';
 import type { ModelProviderOptions } from '../types/index.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createLogger } from '../utils/logger.js';
 import {
   defendUserMessageText,
@@ -73,13 +75,28 @@ const CUMULATIVE_INPUT_WARN_THRESHOLD = 100_000;
 /** previous_response_id 服务端 TTL：72 小时（实测火山所有公开模型）。 */
 const RESPONSE_TTL_MS = 72 * 3600 * 1000;
 
-/**
- * 上游瞬时故障（5xx / 网络 EOF）重试。仅在「开始读流之前」重试，无重复内容风险；
- * 4xx 立即抛（请求本身的问题，重试无意义）。典型场景：cli-proxy 转发到 ChatGPT
- * codex 后端时偶发 `Post "https://chatgpt.com/...": EOF` 包装成的 HTTP 500。
- */
-const MAX_REQUEST_ATTEMPTS = 3;
-const RETRY_BASE_DELAY_MS = 500;
+/** 单帧未闭合缓冲上限。诊断只存长度+哈希，不保存原始 SSE。 */
+const MAX_SSE_BUFFER_BYTES = 2 * 1024 * 1024;
+
+/** usage 兜底查询不能拖住已经完成的模型轮次。 */
+const USAGE_FETCH_TIMEOUT_MS = 2_000;
+
+/** 诊断字段是 provider 输入，限制基数和长度，避免异常流放大 PG 事件。 */
+const MAX_DIAGNOSTIC_EVENT_TYPES = 64;
+const MAX_UNKNOWN_EVENT_TYPES = 20;
+
+const RESERVED_EXTRA_BODY_KEYS = new Set([
+  'model',
+  'input',
+  'previous_response_id',
+  'instructions',
+  'tools',
+  'tool_choice',
+  'max_output_tokens',
+  'store',
+  'stream',
+  'prompt_cache_key',
+]);
 
 /**
  * 上游拒绝 previous_response_id 的判定。
@@ -90,15 +107,6 @@ const RETRY_BASE_DELAY_MS = 500;
 export function isPreviousResponseNotFound(status: number, bodyText: string): boolean {
   if (status !== 400 && status !== 404) return false;
   return /previous[_\s]?response/i.test(bodyText);
-}
-
-/** setTimeout 版 delay，监听 abort signal 提前结束（由调用方在循环里再判 aborted 跳出）。 */
-function delay(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) { resolve(); return; }
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
-  });
 }
 
 /** 单个 input item，对齐 OpenAI Responses input items 协议。 */
@@ -143,6 +151,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
 
     // P1.4：tool_choice 与 model 兼容性校验（详 RFC §2.3：glm 拒 required/specific）
     const toolChoice = this.validateAndNormalizeToolChoice(request.toolChoice ?? 'auto', request.model);
+    assertReservedExtraBodyKeys(this.providerOptions.extraBody);
 
     // 决定走接力还是全量。
     // disableResponseChaining=true 时强制全量：无状态代理（cli-proxy 等）不持久化上一轮
@@ -205,13 +214,28 @@ export class ResponsesApiAdapter implements ModelAdapter {
 
     const requestSignal = request.signal ?? context.signal;
     const url = responsesUrl(this.connection.baseUrl);
-    // 瞬时故障重试：网络 EOF 与上游 5xx 退避重试，4xx 立即抛。重试均在读流前，无副作用。
+    const modelRequestId = randomUUID();
     let response: Response | null = null;
-    for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt++) {
+    let activeAttempt: ResponsesAttemptDiagnostics | null = null;
+    // 网络错误/5xx 不能证明上游未接单、未计费，禁止隐式重试。唯一自动二次 POST 是
+    // previous_response_id 被明确 400/404 拒绝后的全量降级（确定性未进入模型执行）。
+    const maxAttempts = hasPrevious ? 2 : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       modelRequestAttemptCount = attempt;
       const serializedBody = JSON.stringify(body);
       requestBodyBytes = Buffer.byteLength(serializedBody, 'utf8');
       requestInputPrefixHash = computeRequestInputPrefixHash(body);
+      const attemptDiagnostics = new ResponsesAttemptDiagnostics(context, {
+        modelRequestId,
+        attempt,
+        model: request.model,
+        responseMode,
+        maxOutputTokens,
+        requestBodyBytes,
+        toolsCount: request.tools.length,
+        hasPreviousResponseId: usePrevious,
+      });
+      await attemptDiagnostics.started();
       let attemptResponse: Response;
       try {
         attemptResponse = await fetch(url, {
@@ -219,49 +243,73 @@ export class ResponsesApiAdapter implements ModelAdapter {
           headers: {
             authorization: `Bearer ${this.connection.apiKey}`,
             'content-type': 'application/json',
+            'x-client-request-id': attemptDiagnostics.clientRequestId,
           },
           body: serializedBody,
           signal: requestSignal,
         });
       } catch (err) {
-        // 网络层失败（连接 EOF / ECONNRESET / 上游主动断连）。abort 不重试，原样抛。
-        if (requestSignal?.aborted || attempt >= MAX_REQUEST_ATTEMPTS) throw err;
-        const message = err instanceof Error ? err.message : String(err);
-        logger.warn(`Responses API 网络错误（attempt ${attempt}/${MAX_REQUEST_ATTEMPTS}），退避重试：${message}`);
-        await delay(RETRY_BASE_DELAY_MS * 3 ** (attempt - 1), requestSignal);
-        continue;
+        const aborted = requestSignal?.aborted === true;
+        await attemptDiagnostics.finished(aborted ? 'aborted' : 'network_error', {
+          errorCode: aborted ? 'MODEL_REQUEST_ABORTED' : 'MODEL_NETWORK_ERROR',
+          errorMessage: compactDiagnosticMessage(err),
+        });
+        throw err;
       }
-      if (attemptResponse.ok) { response = attemptResponse; break; }
+      attemptDiagnostics.observeHttpResponse(attemptResponse);
+      if (attemptResponse.ok) {
+        response = attemptResponse;
+        activeAttempt = attemptDiagnostics;
+        break;
+      }
       const text = await attemptResponse.text().catch(() => '');
       // previous_response_id 不被上游认可（跨模型切换后残留 / 服务端 TTL 过期）：
       // 确定性 4xx，重发同 body 无意义 → 降级全量重建后立即重试（不退避，不占额外网络成本）。
       if (
         usePrevious
-        && attempt < MAX_REQUEST_ATTEMPTS
+        && attempt < maxAttempts
         && !requestSignal?.aborted
         && isPreviousResponseNotFound(attemptResponse.status, text)
       ) {
+        await attemptDiagnostics.finished('http_error', {
+          errorCode: 'PREVIOUS_RESPONSE_NOT_FOUND',
+          errorMessage: `Responses API HTTP ${attemptResponse.status}: previous_response_id not found`,
+          willRetry: true,
+        });
         logger.warn(
-          `Responses API previous_response_id 不被上游认可（跨模型切换或已过期），降级全量重试：${text.slice(0, 200)}`,
+          `Responses API previous_response_id 不被上游认可（跨模型切换或已过期），降级全量重试：${compactDiagnosticMessage(text)}`,
         );
         responseMode = 'fallback_full';
         usePrevious = false;
         body = await buildRequestBody();
         continue;
       }
-      // 5xx（含上游 `Post "...": EOF` 包装成的 500）瞬时故障可重试；其余 4xx 立即抛。
-      if (attemptResponse.status >= 500 && attempt < MAX_REQUEST_ATTEMPTS && !requestSignal?.aborted) {
-        logger.warn(`Responses API HTTP ${attemptResponse.status}（attempt ${attempt}/${MAX_REQUEST_ATTEMPTS}），退避重试：${text.slice(0, 200)}`);
-        await delay(RETRY_BASE_DELAY_MS * 3 ** (attempt - 1), requestSignal);
-        continue;
-      }
-      throw new Error(`Responses API HTTP ${attemptResponse.status}: ${text.slice(0, 1000)}`);
+      const providerError = extractProviderError(text);
+      await attemptDiagnostics.finished('http_error', {
+        errorCode: providerError.code ?? `HTTP_${attemptResponse.status}`,
+        errorMessage: providerError.message ?? `Responses API HTTP ${attemptResponse.status}`,
+      });
+      throw new Error(
+        `Responses API HTTP ${attemptResponse.status}: ${providerError.message ?? 'upstream request failed'}`,
+      );
     }
-    if (!response) {
-      throw new Error('Responses API 请求在多次重试后仍失败。');
+    if (!response || !activeAttempt) {
+      throw new Error('Responses API request did not produce a response.');
     }
     if (!response.body) {
+      await activeAttempt.finished('stream_error', {
+        errorCode: 'MODEL_RESPONSE_BODY_MISSING',
+        errorMessage: 'Responses API response body is empty',
+      });
       throw new Error('Responses API response body is empty.');
+    }
+    const responseContentType = response.headers.get('content-type');
+    if (responseContentType && !/\btext\/event-stream\b/i.test(responseContentType)) {
+      await activeAttempt.finished('stream_error', {
+        errorCode: 'MODEL_RESPONSE_CONTENT_TYPE_INVALID',
+        errorMessage: `Expected text/event-stream, got ${compactHeader(responseContentType) ?? 'unknown'}`,
+      });
+      throw new Error(`Responses API expected text/event-stream, got ${responseContentType}`);
     }
 
     let content = '';
@@ -270,36 +318,66 @@ export class ResponsesApiAdapter implements ModelAdapter {
     let responseId: string | undefined;
     let responseExpireAt: number | undefined;
     let actualModel: string | undefined;
+    let terminalEventType: string | undefined;
+    let terminalStatus: ModelTerminalStatus | undefined;
+    let incompleteReason: string | undefined;
+    let providerErrorCode: string | undefined;
+    let providerErrorMessage: string | undefined;
+    let refusal = '';
 
     // function_call 在 stream 里按 output_index 累积；item 整体在 output_item.done 出现
     const toolCallsByIndex = new Map<number, ModelToolCall>();
     const functionCallArgsBuffer = new Map<number, { call_id: string; name: string; arguments: string }>();
 
     const decoder = new TextDecoder();
-    const reader = response.body.getReader();
-    let buffer = '';
+    let reader: ReadableStreamDefaultReader<Uint8Array>;
+    try {
+      reader = response.body.getReader();
+    } catch (err) {
+      await activeAttempt.finished('stream_error', {
+        errorCode: 'MODEL_STREAM_READER_ACQUIRE_ERROR',
+        errorMessage: compactDiagnosticMessage(err),
+      });
+      throw err;
+    }
+    const frames = new SseFrameBuffer(MAX_SSE_BUFFER_BYTES);
+    let streamReadSettled = false;
+    let canonicalTextSuffix = '';
 
     try {
-      while (true) {
+      readLoop: while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let boundary = buffer.indexOf('\n\n');
-        while (boundary >= 0) {
-          const block = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          for (const data of parseSseData(block)) {
-            if (data === '[DONE]') continue;
-            const event = JSON.parse(data) as Record<string, any>;
-            const eventType: string = event.type ?? '';
+        if (value) activeAttempt.observeBytes(value.byteLength);
+        const decoded = done ? decoder.decode() : decoder.decode(value, { stream: true });
+        for (const block of frames.push(decoded)) {
+          for (const frame of parseSseFrames(block)) {
+            const { data } = frame;
+            activeAttempt.observeFrame();
+            if (data === '[DONE]') {
+              activeAttempt.observeDone();
+              continue;
+            }
+            let event: Record<string, any>;
+            try {
+              event = JSON.parse(data) as Record<string, any>;
+            } catch (err) {
+              throw new ResponsesStreamError(
+                'parse_error',
+                'MODEL_SSE_JSON_INVALID',
+                `Responses SSE JSON parse failed: ${compactDiagnosticMessage(err)}`,
+              );
+            }
+            const eventType = typeof event.type === 'string' ? event.type : frame.eventName ?? '';
+            activeAttempt.observeEvent(eventType, event.sequence_number);
 
             if (eventType === 'response.created') {
               responseId = event.response?.id;
-              actualModel = event.response?.model;
+              actualModel = compactDiagnosticToken(event.response?.model, 200);
               if (typeof event.response?.expire_at === 'number') {
                 // Responses API expire_at 单位为 Unix epoch 秒
                 responseExpireAt = event.response.expire_at;
               }
+              await activeAttempt.checkpoint('response_created', { responseId, actualModel });
             } else if (eventType === 'response.output_text.delta') {
               const delta = typeof event.delta === 'string' ? event.delta : '';
               if (delta) {
@@ -311,6 +389,17 @@ export class ResponsesApiAdapter implements ModelAdapter {
               // 隐藏派（doubao/minimax）此事件不出现但 reasoning_tokens 仍计费
               const delta = typeof event.delta === 'string' ? event.delta : '';
               if (delta) yield { type: 'thinking_delta', content: delta };
+            } else if (eventType === 'response.output_text.done') {
+              const doneText = typeof event.text === 'string' ? event.text : '';
+              const suffix = reconcileTextSnapshot(content, doneText);
+              if (suffix) {
+                content += suffix;
+                yield { type: 'text_delta', content: suffix };
+              }
+            } else if (eventType === 'response.refusal.delta') {
+              if (typeof event.delta === 'string') refusal += event.delta;
+            } else if (eventType === 'response.refusal.done') {
+              if (typeof event.refusal === 'string') refusal = event.refusal;
             } else if (eventType === 'response.function_call_arguments.delta') {
               const outputIndex: number = typeof event.output_index === 'number' ? event.output_index : 0;
               const delta = typeof event.delta === 'string' ? event.delta : '';
@@ -341,25 +430,205 @@ export class ResponsesApiAdapter implements ModelAdapter {
               }
             } else if (eventType === 'response.completed') {
               const respObj = event.response;
+              assertSingleTerminal(terminalEventType, eventType);
+              terminalEventType = eventType;
+              terminalStatus = normalizeTerminalStatus(respObj?.status, 'completed');
+              if (terminalStatus !== 'completed') {
+                throw new ResponsesStreamError(
+                  'provider_error',
+                  'MODEL_TERMINAL_STATUS_MISMATCH',
+                  `response.completed carried status=${terminalStatus}`,
+                );
+              }
+              if (typeof respObj?.id === 'string') responseId = respObj.id;
               if (respObj?.usage) usage = normalizeResponsesUsage(respObj.usage);
               if (typeof respObj?.expire_at === 'number') responseExpireAt = respObj.expire_at;
-              if (typeof respObj?.model === 'string') actualModel = respObj.model;
-              if (typeof respObj?.status === 'string') finishReason = mapResponsesStatusToFinish(respObj.status, toolCallsByIndex.size > 0);
-            } else if (eventType === 'response.failed' || eventType === 'response.error') {
-              const errMsg = event.response?.error?.message ?? event.error?.message ?? eventType;
-              throw new Error(`Responses API stream error: ${errMsg}`);
+              actualModel = compactDiagnosticToken(respObj?.model, 200) ?? actualModel;
+              activeAttempt.observeTerminal(eventType, terminalStatus, responseId);
+              const canonicalOutputPresent = !!respObj
+                && typeof respObj === 'object'
+                && Object.hasOwn(respObj, 'output');
+              const snapshot = parseCanonicalOutput(respObj?.output, canonicalOutputPresent);
+              canonicalTextSuffix = reconcileTextSnapshot(content, snapshot.text, snapshot.present);
+              if (snapshot.refusal) refusal = snapshot.refusal;
+              reconcileToolCallSnapshot(toolCallsByIndex, snapshot.toolCalls, snapshot.present);
+              finishReason = mapResponsesStatusToFinish('completed', toolCallsByIndex.size > 0);
+              await activeAttempt.checkpoint('terminal_received', {
+                responseId,
+                actualModel,
+                terminalEventType: eventType,
+                terminalStatus,
+              });
+            } else if (eventType === 'response.incomplete') {
+              const respObj = event.response;
+              assertSingleTerminal(terminalEventType, eventType);
+              terminalEventType = eventType;
+              terminalStatus = 'incomplete';
+              if (typeof respObj?.id === 'string') responseId = respObj.id;
+              actualModel = compactDiagnosticToken(respObj?.model, 200) ?? actualModel;
+              if (respObj?.usage) usage = normalizeResponsesUsage(respObj.usage);
+              incompleteReason = compactDiagnosticToken(respObj?.incomplete_details?.reason, 200) ?? 'unknown';
+              finishReason = incompleteReason === 'content_filter' ? 'content_filter' : 'length';
+              activeAttempt.observeTerminal(eventType, terminalStatus, responseId, incompleteReason);
+              await activeAttempt.checkpoint('terminal_received', {
+                responseId,
+                actualModel,
+                terminalEventType: eventType,
+                terminalStatus,
+                incompleteReason,
+                errorCode: 'MODEL_RESPONSE_INCOMPLETE',
+              });
+            } else if (eventType === 'response.failed') {
+              const respObj = event.response;
+              assertSingleTerminal(terminalEventType, eventType);
+              terminalEventType = eventType;
+              terminalStatus = 'failed';
+              if (typeof respObj?.id === 'string') responseId = respObj.id;
+              actualModel = compactDiagnosticToken(respObj?.model, 200) ?? actualModel;
+              if (respObj?.usage) usage = normalizeResponsesUsage(respObj.usage);
+              providerErrorCode = compactDiagnosticToken(respObj?.error?.code, 200) ?? 'MODEL_RESPONSE_FAILED';
+              providerErrorMessage = compactDiagnosticMessage(respObj?.error?.message ?? 'Responses API response failed');
+              activeAttempt.observeTerminal(eventType, terminalStatus, responseId);
+              await activeAttempt.checkpoint('terminal_received', {
+                responseId,
+                actualModel,
+                terminalEventType: eventType,
+                terminalStatus,
+                errorCode: providerErrorCode,
+              });
+            } else if (eventType === 'response.cancelled') {
+              const respObj = event.response;
+              assertSingleTerminal(terminalEventType, eventType);
+              terminalEventType = eventType;
+              terminalStatus = 'cancelled';
+              if (typeof respObj?.id === 'string') responseId = respObj.id;
+              actualModel = compactDiagnosticToken(respObj?.model, 200) ?? actualModel;
+              if (respObj?.usage) usage = normalizeResponsesUsage(respObj.usage);
+              providerErrorCode = 'MODEL_RESPONSE_CANCELLED';
+              providerErrorMessage = 'Responses API response was cancelled';
+              activeAttempt.observeTerminal(eventType, terminalStatus, responseId);
+              await activeAttempt.checkpoint('terminal_received', {
+                responseId,
+                actualModel,
+                terminalEventType: eventType,
+                terminalStatus,
+                errorCode: providerErrorCode,
+              });
+            } else if (eventType === 'error' || eventType === 'response.error') {
+              assertSingleTerminal(terminalEventType, eventType);
+              terminalEventType = eventType;
+              terminalStatus = 'failed';
+              providerErrorCode = compactDiagnosticToken(event.code ?? event.error?.code, 200)
+                ?? 'MODEL_PROVIDER_ERROR';
+              providerErrorMessage = compactDiagnosticMessage(
+                event.message ?? event.error?.message ?? 'Responses API stream error',
+              );
+              activeAttempt.observeTerminal(eventType, terminalStatus);
+              await activeAttempt.checkpoint('terminal_received', {
+                terminalEventType: eventType,
+                terminalStatus,
+                errorCode: providerErrorCode,
+              });
+            } else {
+              activeAttempt.observeUnknownEvent(eventType);
             }
+            // 收到任一官方终态后立即封口。终态之后的帧不再有权修改文本或 tool_calls，
+            // 同时不依赖 provider 主动关闭 HTTP 连接。
+            if (terminalEventType) break readLoop;
           }
-          boundary = buffer.indexOf('\n\n');
         }
+        if (done) break;
       }
+
+      if (!terminalEventType || !terminalStatus) {
+        const tail = frames.finish();
+        if (tail.trim()) {
+          activeAttempt.observeTail(tail);
+          throw new ResponsesStreamError(
+            'unterminated_tail',
+            'MODEL_SSE_UNTERMINATED_TAIL',
+            `Responses SSE ended with an unterminated frame (${Buffer.byteLength(tail, 'utf8')} bytes)`,
+          );
+        }
+        throw new ResponsesStreamError(
+          'eof_without_terminal',
+          'MODEL_SSE_EOF_WITHOUT_TERMINAL',
+          'Responses SSE ended before a terminal event',
+        );
+      }
+      // 不再等 EOF：终态就是协议边界，主动取消剩余 body，避免成功轮次被悬挂连接拖死。
+      await reader.cancel().catch(() => undefined);
+      if (canonicalTextSuffix) {
+        content += canonicalTextSuffix;
+        yield { type: 'text_delta', content: canonicalTextSuffix };
+      }
+      streamReadSettled = true;
+    } catch (err) {
+      const classified = classifyStreamError(err, requestSignal);
+      await reader.cancel().catch(() => undefined);
+      await activeAttempt.finished(classified.outcome, {
+        errorCode: classified.code,
+        errorMessage: classified.message,
+        usage,
+      });
+      streamReadSettled = true;
+      throw err;
     } finally {
+      // async generator 的消费者可能在任一 delta 后 return()；该路径不会进入 catch。
+      // 补齐 attempt 终态，避免 PG 永久只剩 started/checkpoint。
+      if (!streamReadSettled && !activeAttempt.isFinished()) {
+        await reader.cancel().catch(() => undefined);
+        await activeAttempt.finished('aborted', {
+          errorCode: 'MODEL_STREAM_CONSUMER_CLOSED',
+          errorMessage: 'Model stream consumer closed before adapter completion',
+          usage,
+        });
+      }
       reader.releaseLock();
+    }
+
+    if (terminalStatus !== 'completed' || refusal) {
+      const failureStatus: ModelTerminalStatus = terminalStatus === 'completed' ? 'failed' : terminalStatus;
+      const outcome: FinishedOutcome = refusal
+        ? 'provider_error'
+        : terminalStatus === 'incomplete'
+          ? 'response_incomplete'
+          : terminalEventType === 'response.failed'
+            ? 'response_failed'
+            : 'provider_error';
+      const errorCode = refusal
+        ? 'MODEL_RESPONSE_REFUSAL'
+        : terminalStatus === 'incomplete'
+          ? 'MODEL_RESPONSE_INCOMPLETE'
+          : providerErrorCode ?? 'MODEL_RESPONSE_FAILED';
+      const errorMessage = refusal
+        ? 'Responses API returned a refusal'
+        : terminalStatus === 'incomplete'
+          ? `Responses API response incomplete: reason=${incompleteReason ?? 'unknown'}`
+          : providerErrorMessage ?? 'Responses API response failed';
+      await activeAttempt.finished(outcome, { errorCode, errorMessage, usage });
+      yield {
+        type: 'completed',
+        content,
+        toolCalls: [],
+        ...(usage ? { usage } : {}),
+        ...(finishReason ? { finishReason } : {}),
+        terminalStatus: failureStatus,
+        ...(incompleteReason ? { incompleteReason } : {}),
+        errorCode,
+        responseChained: usePrevious,
+        responseMode,
+        modelRequestAttemptCount,
+        ...(promptCacheKey ? { promptCacheKey } : {}),
+        requestInputPrefixHash,
+        requestBodyBytes,
+      };
+      return;
     }
 
     // P1.1：stream 末尾 chunk usage 永远 null（RFC §2.4），用 GET /responses/{id} 兜底
     if (!usage && responseId) {
-      const fetched = await this.fetchUsageById(responseId).catch((err) => {
+      const fetched = await this.fetchUsageById(responseId, requestSignal).catch((err) => {
         logger.warn(`fetchUsageById 失败 responseId=${responseId.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);
         return undefined;
       });
@@ -395,6 +664,11 @@ export class ResponsesApiAdapter implements ModelAdapter {
       logger.warn(
         `DSML 泄漏到 output_text — model=${request.model} session=${sessionLabel} preview="${preview}"`,
       );
+      await activeAttempt.finished('provider_error', {
+        errorCode: 'MODEL_OUTPUT_DSML_LEAK',
+        errorMessage: 'Model output contained an unparsed DSML template',
+        usage,
+      });
       throw new Error('模型输出格式异常（DSML 模板未被服务端解析），已中断本轮。');
     }
 
@@ -419,6 +693,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
       ? toolCallsRaw.map((c) => ({ ...c, arguments: unescapeDeepseekArguments(c.arguments) }))
       : toolCallsRaw;
 
+    await activeAttempt.finished('completed', { usage });
+
     logger.info(
       `Responses 请求完成 mode=${responseMode} attempts=${modelRequestAttemptCount} `
       + `model=${request.model} session=${sessionIdShort ?? '-'} body_bytes=${requestBodyBytes} `
@@ -434,6 +710,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       toolCalls,
       ...(usage ? { usage } : {}),
       ...(finishReason ? { finishReason } : {}),
+      terminalStatus: 'completed',
       ...(responseId ? { responseId } : {}),
       ...(typeof responseExpireAt === 'number' ? { responseExpireAt } : {}),
       ...(actualModel ? { actualModel } : {}),
@@ -488,14 +765,28 @@ export class ResponsesApiAdapter implements ModelAdapter {
   /**
    * P1.1 stream 末尾 usage 兜底：fetch 完整响应取 usage。
    */
-  private async fetchUsageById(responseId: string): Promise<ModelUsage | undefined> {
-    const response = await fetch(responsesByIdUrl(this.connection.baseUrl, responseId), {
-      method: 'GET',
-      headers: { authorization: `Bearer ${this.connection.apiKey}` },
-    });
-    if (!response.ok) return undefined;
-    const data = await response.json() as Record<string, any>;
-    return data.usage ? normalizeResponsesUsage(data.usage) : undefined;
+  private async fetchUsageById(
+    responseId: string,
+    parentSignal?: AbortSignal,
+  ): Promise<ModelUsage | undefined> {
+    if (parentSignal?.aborted) return undefined;
+    const controller = new AbortController();
+    const abortFromParent = () => controller.abort(parentSignal?.reason);
+    parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+    const timeout = setTimeout(() => controller.abort(new Error('usage fetch timeout')), USAGE_FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(responsesByIdUrl(this.connection.baseUrl, responseId), {
+        method: 'GET',
+        headers: { authorization: `Bearer ${this.connection.apiKey}` },
+        signal: controller.signal,
+      });
+      if (!response.ok) return undefined;
+      const data = await response.json() as Record<string, any>;
+      return data.usage ? normalizeResponsesUsage(data.usage) : undefined;
+    } finally {
+      clearTimeout(timeout);
+      parentSignal?.removeEventListener('abort', abortFromParent);
+    }
   }
 
   /**
@@ -674,6 +965,415 @@ export class ResponsesApiAdapter implements ModelAdapter {
 // helpers
 // ─────────────────────────────────────────────────────────────
 
+type FinishedDiagnostic = Extract<ModelRequestDiagnostic, { type: 'finished' }>;
+type FinishedOutcome = FinishedDiagnostic['outcome'];
+type FinishedPatch = Partial<Omit<FinishedDiagnostic,
+  'type' | 'modelRequestId' | 'attemptId' | 'attempt' | 'outcome' | 'durationMs'>>;
+
+class ResponsesAttemptDiagnostics {
+  readonly attemptId = randomUUID();
+  readonly clientRequestId = randomUUID();
+  private readonly startedAt = Date.now();
+  private finishedOnce = false;
+  private readonly checkpointsWritten = new Set<'response_created' | 'terminal_received'>();
+  private httpStatus: number | undefined;
+  private contentType: string | undefined;
+  private upstreamRequestId: string | undefined;
+  private responseBytes = 0;
+  private frameCount = 0;
+  private readonly eventTypeCounts: Record<string, number> = {};
+  private readonly unknownEventTypes = new Set<string>();
+  private receivedDone = false;
+  private lastSequenceNumber: number | undefined;
+  private terminalEventType: string | undefined;
+  private terminalStatus: ModelTerminalStatus | undefined;
+  private responseIdHash: string | undefined;
+  private incompleteReason: string | undefined;
+  private tailBytes: number | undefined;
+  private tailHash: string | undefined;
+
+  constructor(
+    private readonly context: RunContext,
+    private readonly init: {
+      modelRequestId: string;
+      attempt: number;
+      model: string;
+      responseMode: ModelResponseMode;
+      maxOutputTokens: number;
+      requestBodyBytes: number;
+      toolsCount: number;
+      hasPreviousResponseId: boolean;
+    },
+  ) {}
+
+  async started(): Promise<void> {
+    await this.record({
+      type: 'started',
+      modelRequestId: this.init.modelRequestId,
+      attemptId: this.attemptId,
+      attempt: this.init.attempt,
+      clientRequestId: this.clientRequestId,
+      model: this.init.model,
+      protocol: 'responses',
+      responseMode: this.init.responseMode,
+      maxOutputTokens: this.init.maxOutputTokens,
+      requestBodyBytes: this.init.requestBodyBytes,
+      toolsCount: this.init.toolsCount,
+      hasPreviousResponseId: this.init.hasPreviousResponseId,
+    });
+  }
+
+  observeHttpResponse(response: Response): void {
+    this.httpStatus = response.status;
+    this.contentType = compactHeader(response.headers.get('content-type'));
+    this.upstreamRequestId = compactHeader(
+      response.headers.get('x-request-id')
+      ?? response.headers.get('request-id')
+      ?? response.headers.get('openai-request-id'),
+    );
+  }
+
+  observeBytes(bytes: number): void {
+    this.responseBytes += Math.max(0, bytes);
+  }
+
+  observeFrame(): void {
+    this.frameCount += 1;
+  }
+
+  observeDone(): void {
+    this.receivedDone = true;
+  }
+
+  observeEvent(eventType: string, sequenceNumber: unknown): void {
+    const normalized = compactDiagnosticToken(eventType, 120) || '(missing)';
+    const key = Object.hasOwn(this.eventTypeCounts, normalized)
+      || Object.keys(this.eventTypeCounts).length < MAX_DIAGNOSTIC_EVENT_TYPES - 1
+      ? normalized
+      : '(other)';
+    this.eventTypeCounts[key] = (this.eventTypeCounts[key] ?? 0) + 1;
+    if (typeof sequenceNumber === 'number' && Number.isFinite(sequenceNumber)) {
+      this.lastSequenceNumber = sequenceNumber;
+    }
+  }
+
+  observeUnknownEvent(eventType: string): void {
+    const normalized = compactDiagnosticToken(eventType, 120);
+    if (normalized && this.unknownEventTypes.size < MAX_UNKNOWN_EVENT_TYPES) {
+      this.unknownEventTypes.add(normalized);
+    }
+  }
+
+  observeTerminal(
+    eventType: string,
+    status: ModelTerminalStatus,
+    responseId?: string,
+    incompleteReason?: string,
+  ): void {
+    this.terminalEventType = compactDiagnosticToken(eventType, 120);
+    this.terminalStatus = status;
+    this.responseIdHash = responseId ? hashOpaqueId(responseId) : undefined;
+    this.incompleteReason = compactDiagnosticToken(incompleteReason, 200);
+  }
+
+  observeTail(tail: string): void {
+    this.tailBytes = Buffer.byteLength(tail, 'utf8');
+    this.tailHash = createHash('sha256').update(tail).digest('hex').slice(0, 32);
+  }
+
+  async checkpoint(
+    stage: 'response_created' | 'terminal_received',
+    patch: {
+      responseId?: string;
+      actualModel?: string;
+      terminalEventType?: string;
+      terminalStatus?: ModelTerminalStatus;
+      incompleteReason?: string;
+      errorCode?: string;
+    } = {},
+  ): Promise<void> {
+    if (this.checkpointsWritten.has(stage)) return;
+    const { responseId, actualModel, terminalEventType, terminalStatus, incompleteReason, errorCode } = patch;
+    if (responseId) this.responseIdHash = hashOpaqueId(responseId);
+    const recorded = await this.record({
+      type: 'checkpoint',
+      modelRequestId: this.init.modelRequestId,
+      attemptId: this.attemptId,
+      attempt: this.init.attempt,
+      stage,
+      elapsedMs: Date.now() - this.startedAt,
+      ...(this.responseIdHash ? { responseIdHash: this.responseIdHash } : {}),
+      ...(actualModel ? { actualModel: compactDiagnosticToken(actualModel, 200) } : {}),
+      ...(terminalEventType ? { terminalEventType: compactDiagnosticToken(terminalEventType, 120) } : {}),
+      ...(terminalStatus ? { terminalStatus } : {}),
+      ...(incompleteReason ? { incompleteReason: compactDiagnosticToken(incompleteReason, 200) } : {}),
+      ...(errorCode ? { errorCode: compactDiagnosticToken(errorCode, 200) } : {}),
+    });
+    if (recorded) this.checkpointsWritten.add(stage);
+  }
+
+  async finished(outcome: FinishedOutcome, patch: FinishedPatch = {}): Promise<void> {
+    if (this.finishedOnce) return;
+    const recorded = await this.record({
+      type: 'finished',
+      modelRequestId: this.init.modelRequestId,
+      attemptId: this.attemptId,
+      attempt: this.init.attempt,
+      outcome,
+      durationMs: Date.now() - this.startedAt,
+      ...(this.httpStatus !== undefined ? { httpStatus: this.httpStatus } : {}),
+      ...(this.contentType ? { contentType: this.contentType } : {}),
+      ...(this.upstreamRequestId ? { upstreamRequestId: this.upstreamRequestId } : {}),
+      ...(this.responseIdHash ? { responseIdHash: this.responseIdHash } : {}),
+      ...(this.responseBytes > 0 ? { responseBytes: this.responseBytes } : {}),
+      ...(this.frameCount > 0 ? { frameCount: this.frameCount } : {}),
+      ...(Object.keys(this.eventTypeCounts).length > 0 ? { eventTypeCounts: { ...this.eventTypeCounts } } : {}),
+      ...(this.unknownEventTypes.size > 0 ? { unknownEventTypes: [...this.unknownEventTypes] } : {}),
+      ...(this.receivedDone ? { receivedDone: true } : {}),
+      ...(this.lastSequenceNumber !== undefined ? { lastSequenceNumber: this.lastSequenceNumber } : {}),
+      ...(this.terminalEventType ? { terminalEventType: this.terminalEventType } : {}),
+      ...(this.terminalStatus ? { terminalStatus: this.terminalStatus } : {}),
+      ...(this.incompleteReason ? { incompleteReason: this.incompleteReason } : {}),
+      ...(this.tailBytes !== undefined ? { tailBytes: this.tailBytes } : {}),
+      ...(this.tailHash ? { tailHash: this.tailHash } : {}),
+      ...sanitizeFinishedPatch(patch),
+    });
+    if (recorded) this.finishedOnce = true;
+  }
+
+  isFinished(): boolean {
+    return this.finishedOnce;
+  }
+
+  private async record(event: ModelRequestDiagnostic): Promise<boolean> {
+    if (!this.context.recordModelRequestDiagnostic) return true;
+    try {
+      return await this.context.recordModelRequestDiagnostic(event) !== false;
+    } catch (err) {
+      logger.warn(`model request diagnostic recorder failed: ${compactDiagnosticMessage(err)}`);
+      return false;
+    }
+  }
+}
+
+class ResponsesStreamError extends Error {
+  constructor(
+    readonly outcome: FinishedOutcome,
+    readonly code: string,
+    message: string,
+  ) {
+    super(`[${code}] ${message}`);
+    this.name = 'ResponsesStreamError';
+  }
+}
+
+class SseFrameBuffer {
+  private buffer = '';
+
+  constructor(private readonly maxBytes: number) {}
+
+  push(chunk: string): string[] {
+    this.buffer += chunk;
+    const blocks: string[] = [];
+    while (true) {
+      const boundary = /(?:\r\n|\r|\n)(?:\r\n|\r|\n)/.exec(this.buffer);
+      if (!boundary || boundary.index === undefined) break;
+      const block = this.buffer.slice(0, boundary.index);
+      if (Buffer.byteLength(block, 'utf8') > this.maxBytes) {
+        throw new ResponsesStreamError(
+          'parse_error',
+          'MODEL_SSE_FRAME_TOO_LARGE',
+          `Responses SSE frame exceeded ${this.maxBytes} bytes`,
+        );
+      }
+      blocks.push(block);
+      this.buffer = this.buffer.slice(boundary.index + boundary[0].length);
+    }
+    if (Buffer.byteLength(this.buffer, 'utf8') > this.maxBytes) {
+      throw new ResponsesStreamError(
+        'parse_error',
+        'MODEL_SSE_FRAME_TOO_LARGE',
+        `Responses SSE frame exceeded ${this.maxBytes} bytes`,
+      );
+    }
+    return blocks;
+  }
+
+  finish(): string {
+    const tail = this.buffer;
+    this.buffer = '';
+    return tail;
+  }
+}
+
+function assertReservedExtraBodyKeys(extraBody: Record<string, unknown> | undefined): void {
+  if (!extraBody) return;
+  const conflicts = Object.keys(extraBody).filter((key) => RESERVED_EXTRA_BODY_KEYS.has(key));
+  if (conflicts.length > 0) {
+    throw new Error(`ResponsesApiAdapter extraBody cannot override reserved fields: ${conflicts.join(', ')}`);
+  }
+}
+
+function assertSingleTerminal(previous: string | undefined, next: string): void {
+  if (!previous) return;
+  throw new ResponsesStreamError(
+    'provider_error',
+    'MODEL_SSE_MULTIPLE_TERMINALS',
+    `Responses SSE emitted multiple terminal events: ${previous}, ${next}`,
+  );
+}
+
+function normalizeTerminalStatus(value: unknown, fallback: ModelTerminalStatus): ModelTerminalStatus {
+  return value === 'completed' || value === 'incomplete' || value === 'failed' || value === 'cancelled'
+    ? value
+    : fallback;
+}
+
+function reconcileTextSnapshot(current: string, snapshot: string, canonicalPresent = true): string {
+  if (!canonicalPresent) return '';
+  if (snapshot === current) return '';
+  if (snapshot.startsWith(current)) return snapshot.slice(current.length);
+  throw new ResponsesStreamError(
+    'provider_error',
+    'MODEL_STREAM_RECONCILIATION_FAILED',
+    `Responses terminal text did not match streamed prefix (stream=${current.length}, snapshot=${snapshot.length})`,
+  );
+}
+
+function parseCanonicalOutput(raw: unknown, present: boolean): {
+  present: boolean;
+  text: string;
+  refusal: string;
+  toolCalls: Map<number, ModelToolCall>;
+} {
+  const result = {
+    present,
+    text: '',
+    refusal: '',
+    toolCalls: new Map<number, ModelToolCall>(),
+  };
+  if (!present) return result;
+  if (!Array.isArray(raw)) {
+    throw new ResponsesStreamError(
+      'provider_error',
+      'MODEL_CANONICAL_OUTPUT_INVALID',
+      'Responses terminal output must be an array when present',
+    );
+  }
+  raw.forEach((item, outputIndex) => {
+    if (!item || typeof item !== 'object') return;
+    const obj = item as Record<string, any>;
+    if (obj.type === 'message' && Array.isArray(obj.content)) {
+      for (const part of obj.content) {
+        if (part?.type === 'output_text' && typeof part.text === 'string') result.text += part.text;
+        if (part?.type === 'refusal' && typeof part.refusal === 'string') result.refusal += part.refusal;
+      }
+    } else if (obj.type === 'function_call') {
+      const id = typeof obj.call_id === 'string' ? obj.call_id : '';
+      const name = typeof obj.name === 'string' ? obj.name : '';
+      const args = typeof obj.arguments === 'string' ? obj.arguments : '';
+      if (id && name) result.toolCalls.set(outputIndex, { id, name, arguments: args });
+    }
+  });
+  return result;
+}
+
+function reconcileToolCallSnapshot(
+  streamed: Map<number, ModelToolCall>,
+  snapshot: Map<number, ModelToolCall>,
+  canonicalPresent = true,
+): void {
+  if (!canonicalPresent) return;
+  if (snapshot.size === 0 && streamed.size > 0) {
+    throw new ResponsesStreamError(
+      'provider_error',
+      'MODEL_TOOL_CALL_RECONCILIATION_FAILED',
+      `Responses terminal output was empty after ${streamed.size} streamed tool call(s)`,
+    );
+  }
+  for (const [index, call] of streamed) {
+    const canonical = snapshot.get(index);
+    if (!canonical
+      || canonical.id !== call.id
+      || canonical.name !== call.name
+      || canonical.arguments !== call.arguments) {
+      throw new ResponsesStreamError(
+        'provider_error',
+        'MODEL_TOOL_CALL_RECONCILIATION_FAILED',
+        `Responses terminal tool call did not match streamed item at output_index=${index}`,
+      );
+    }
+  }
+  streamed.clear();
+  for (const [index, call] of snapshot) streamed.set(index, call);
+}
+
+function classifyStreamError(
+  err: unknown,
+  signal: AbortSignal | undefined,
+): { outcome: FinishedOutcome; code: string; message: string } {
+  if (signal?.aborted) {
+    return { outcome: 'aborted', code: 'MODEL_REQUEST_ABORTED', message: 'Model request was aborted' };
+  }
+  if (err instanceof ResponsesStreamError) {
+    return { outcome: err.outcome, code: err.code, message: compactDiagnosticMessage(err.message) };
+  }
+  return {
+    outcome: 'stream_error',
+    code: 'MODEL_STREAM_READ_ERROR',
+    message: compactDiagnosticMessage(err),
+  };
+}
+
+function extractProviderError(text: string): { code?: string; message?: string } {
+  try {
+    const parsed = JSON.parse(text) as Record<string, any>;
+    const error = parsed.error ?? parsed;
+    return {
+      ...(typeof error?.code === 'string' ? { code: compactDiagnosticMessage(error.code) } : {}),
+      ...(typeof error?.message === 'string' ? { message: compactDiagnosticMessage(error.message) } : {}),
+    };
+  } catch {
+    const message = compactDiagnosticMessage(text);
+    return message ? { message } : {};
+  }
+}
+
+function compactDiagnosticMessage(value: unknown): string {
+  const raw = value instanceof Error ? value.message : String(value ?? '');
+  return raw
+    .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, 'sk-[REDACTED]')
+    .replace(/(api[_-]?key\s*[=:]\s*)\S+/gi, '$1[REDACTED]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+}
+
+function compactHeader(value: string | null): string | undefined {
+  if (!value) return undefined;
+  const compact = value.trim().slice(0, 200);
+  return compact || undefined;
+}
+
+function compactDiagnosticToken(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const compact = value.replace(/[\r\n\t]+/g, ' ').trim().slice(0, maxLength);
+  return compact || undefined;
+}
+
+function sanitizeFinishedPatch(patch: FinishedPatch): FinishedPatch {
+  return {
+    ...patch,
+    ...(patch.errorCode ? { errorCode: compactDiagnosticToken(patch.errorCode, 200) } : {}),
+    ...(patch.errorMessage ? { errorMessage: compactDiagnosticMessage(patch.errorMessage) } : {}),
+  };
+}
+
+function hashOpaqueId(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 32);
+}
+
 function responsesUrl(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, '');
   if (trimmed.endsWith('/responses')) return trimmed;
@@ -686,13 +1386,17 @@ function responsesByIdUrl(baseUrl: string, responseId: string): string {
   return `${base}/${encodeURIComponent(responseId)}`;
 }
 
-function parseSseData(block: string): string[] {
+function parseSseFrames(block: string): Array<{ eventName?: string; data: string }> {
   const dataLines: string[] = [];
-  for (const line of block.split(/\r?\n/)) {
-    if (!line.startsWith('data:')) continue;
-    dataLines.push(line.slice('data:'.length).trimStart());
+  let eventName: string | undefined;
+  for (const line of block.split(/\r\n|\r|\n/)) {
+    if (line.startsWith('event:')) {
+      eventName = compactDiagnosticToken(line.slice('event:'.length).trimStart(), 120);
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice('data:'.length).trimStart());
+    }
   }
-  return dataLines.length > 0 ? [dataLines.join('\n').trim()] : [];
+  return dataLines.length > 0 ? [{ ...(eventName ? { eventName } : {}), data: dataLines.join('\n').trim() }] : [];
 }
 
 function normalizeResponsesUsage(raw: Record<string, any>): ModelUsage {

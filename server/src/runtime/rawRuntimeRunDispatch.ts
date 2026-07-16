@@ -1062,8 +1062,10 @@ export class RunStateTrackingEventStore implements EventStore {
     return stored;
   }
 
-  list(sessionId: string) { return this.inner.list(sessionId); }
-  listPage(sessionId: string, options?: { afterCursor?: string; limit?: number }) {
+  list(sessionId: string, options?: Parameters<EventStore['list']>[1]) {
+    return this.inner.list(sessionId, options);
+  }
+  listPage(sessionId: string, options?: Parameters<NonNullable<EventStore['listPage']>>[1]) {
     return this.inner.listPage?.(sessionId, options) ?? Promise.resolve({ events: [], hasMore: false });
   }
 

@@ -271,6 +271,66 @@ class EmptyUsageAdapter implements ModelAdapter {
   }
 }
 
+class IncompleteToolCallAdapter implements ModelAdapter {
+  async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    yield {
+      type: 'completed',
+      content: '',
+      toolCalls: [{
+        id: 'call_incomplete_write',
+        name: 'Write',
+        arguments: JSON.stringify({ path: 'must-not-exist.txt', content: 'unsafe' }),
+      }],
+      terminalStatus: 'incomplete',
+      incompleteReason: 'max_output_tokens',
+      finishReason: 'length',
+      responseId: 'resp_incomplete_must_not_persist',
+      usage: { inputTokens: 100, outputTokens: 4096 },
+    };
+  }
+}
+
+class DiagnosticTextAdapter implements ModelAdapter {
+  async *stream(_request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent> {
+    const modelRequestId = 'model-request-persisted';
+    const attemptId = 'attempt-persisted';
+    await context.recordModelRequestDiagnostic?.({
+      type: 'started',
+      modelRequestId,
+      attemptId,
+      attempt: 1,
+      clientRequestId: 'client-request-persisted',
+      model: context.model,
+      protocol: 'responses',
+      responseMode: 'full',
+      maxOutputTokens: 4096,
+      requestBodyBytes: 123,
+      toolsCount: 0,
+      hasPreviousResponseId: false,
+    });
+    await context.recordModelRequestDiagnostic?.({
+      type: 'checkpoint',
+      modelRequestId,
+      attemptId,
+      attempt: 1,
+      stage: 'response_created',
+      elapsedMs: 5,
+      responseIdHash: 'hashed-response-id',
+    });
+    await context.recordModelRequestDiagnostic?.({
+      type: 'finished',
+      modelRequestId,
+      attemptId,
+      attempt: 1,
+      outcome: 'completed',
+      durationMs: 10,
+      terminalStatus: 'completed',
+    });
+    yield { type: 'text_delta', content: '完成' };
+    yield { type: 'completed', content: '完成', toolCalls: [], terminalStatus: 'completed' };
+  }
+}
+
 class ThinkingTextAdapter implements ModelAdapter {
   async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
     yield { type: 'thinking_delta', content: '先判断需求。' };
@@ -900,6 +960,109 @@ describe('RawAgentLoop', () => {
         },
       },
     });
+  });
+
+  it('incomplete 终态即使带 tool call 也不保存 responseId、不落工具调用、不执行工具', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-incomplete-tool-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const patches: ResponseSessionStatePatch[] = [];
+    const runStore = {
+      findLatestResponseSessionStateBySession: async () => null,
+      updateResponseSessionState: async (_runId: string, patch: ResponseSessionStatePatch) => {
+        patches.push(patch);
+        return null;
+      },
+    } as unknown as RunStore;
+    const loop = new RawAgentLoop({
+      modelAdapter: new IncompleteToolCallAdapter(),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-incomplete-tool'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore,
+    });
+
+    const outbound = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '执行' },
+        prompt: '执行',
+        instructions: '执行。',
+        maxTurns: 1,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-incomplete-tool',
+        sessionId: 'session-incomplete-tool',
+        model: 'gpt-5.6-sol',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+      },
+    ));
+
+    expect(outbound.at(-1)).toMatchObject({ type: 'error' });
+    expect(outbound.at(-1)?.error).toContain('status=incomplete');
+    expect(patches).toEqual([]);
+    const runtimeEvents = await eventStore.list('session-incomplete-tool');
+    expect(runtimeEvents.some((event) => event.type === 'assistant_tool_calls')).toBe(false);
+    expect(runtimeEvents.some((event) => event.type === 'approval_requested')).toBe(false);
+    expect(runtimeEvents.find((event) => event.type === 'run_finished')).toMatchObject({
+      subtype: 'error',
+      modelUsage: {
+        'gpt-5.6-sol': {
+          inputTokens: 100,
+          outputTokens: 4096,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          apiRequestCount: 1,
+        },
+      },
+    });
+    expect(existsSync(join(cwd, 'must-not-exist.txt'))).toBe(false);
+  });
+
+  it('模型 attempt 诊断经独立旁路持久化，但不投影到对话 transcript', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-model-diagnostic-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const transcriptPath = join(cwd, 'session.jsonl');
+    const loop = new RawAgentLoop({
+      modelAdapter: new DiagnosticTextAdapter(),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-model-diagnostic'),
+      transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
+      toolRuntime: new PlatformToolRuntime(),
+    });
+
+    await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '执行' },
+        prompt: '执行',
+        instructions: '执行。',
+        maxTurns: 1,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-model-diagnostic',
+        sessionId: 'session-model-diagnostic',
+        model: 'gpt-5.6-sol',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+      },
+    ));
+
+    const runtimeEvents = await eventStore.list('session-model-diagnostic');
+    expect(runtimeEvents.filter((event) => event.type.startsWith('model_request_')).map((event) => event.type))
+      .toEqual(['model_request_started', 'model_request_checkpoint', 'model_request_finished']);
+    const transcript = await readFile(transcriptPath, 'utf-8');
+    expect(transcript).not.toContain('model-request-persisted');
+    expect(transcript).not.toContain('model_request_');
   });
 
   it('can send a hidden continuation prompt without recording a user_message', async () => {

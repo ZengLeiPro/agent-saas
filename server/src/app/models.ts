@@ -286,6 +286,8 @@ type ConfigProviderOptions = {
   reasoningEffort?: string;
   extraBody?: Record<string, unknown>;
   input_modalities?: Array<'text' | 'image'>;
+  /** 单轮最大输出 token 正式配置通道（替代 extraBody.max_output_tokens 覆盖）。 */
+  max_output_tokens?: number;
   // ── Responses API v1（RFC P0.5）配置层字段（snake_case 与 config.json 对齐） ──
   protocol?: 'chat_completions' | 'responses';
   alias_actual?: string;
@@ -312,6 +314,7 @@ function resolveProviderOptions(
     ?? group.reasoningEffort;
   const thinking = model.thinking !== undefined ? model.thinking : group.thinking;
   const inputModalities = model.input_modalities ?? group.input_modalities;
+  const maxOutputTokens = model.max_output_tokens ?? group.max_output_tokens;
   // Responses 字段：model 级覆盖 group 级
   const protocol = model.protocol ?? group.protocol;
   const aliasActual = model.alias_actual ?? group.alias_actual;
@@ -327,6 +330,7 @@ function resolveProviderOptions(
   if (reasoningEffort !== undefined) options.reasoningEffort = reasoningEffort;
   if (thinking !== undefined) options.thinking = thinking;
   if (inputModalities !== undefined) options.inputModalities = inputModalities;
+  if (maxOutputTokens !== undefined) options.maxOutputTokens = maxOutputTokens;
   if (protocol !== undefined) options.protocol = protocol;
   if (aliasActual !== undefined) options.aliasActual = aliasActual;
   if (supportsReasoningOutput !== undefined) options.supportsReasoningOutput = supportsReasoningOutput;

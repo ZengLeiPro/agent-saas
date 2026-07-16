@@ -109,6 +109,31 @@ describe('OpenAI-only model resolver', () => {
     });
   });
 
+  it('maps max_output_tokens config (model overrides group) to providerOptions.maxOutputTokens', () => {
+    const withMaxOutput: ModelsConfig = {
+      default: 'ark/glm',
+      allowCrossGroupSwitch: false,
+      groups: [
+        {
+          id: 'ark',
+          name: 'Ark',
+          apiKey: 'sk-test',
+          baseUrl: 'https://example.invalid/v3',
+          max_output_tokens: 32768,
+          models: [
+            { id: 'glm', name: 'GLM', value: 'glm-5.2' },
+            { id: 'doubao', name: 'Doubao', value: 'doubao-pro', max_output_tokens: 49152 },
+          ],
+        },
+      ],
+    };
+
+    // group 级兜底
+    expect(resolveModelRef(withMaxOutput, 'ark/glm')?.providerOptions?.maxOutputTokens).toBe(32768);
+    // model 级覆盖 group 级
+    expect(resolveModelRef(withMaxOutput, 'ark/doubao')?.providerOptions?.maxOutputTokens).toBe(49152);
+  });
+
   it('falls back to default when a model ref is stale', () => {
     expect(resolveModelRef(modelsConfig, 'openai-agents/removed')).toEqual({
       model: 'doubao-pro',

@@ -358,6 +358,13 @@ const modelProviderOptionsSchema = z.object({
   extraBody: z.record(z.string(), z.unknown()).optional(),
   /** 模型可接收的输入模态；未配置按 unknown/text-only 处理，不按模型名猜。 */
   input_modalities: z.array(z.enum(['text', 'image'])).min(1).optional(),
+  /**
+   * 单轮回答最大输出 token 的正式配置通道（Responses 协议 max_output_tokens）。
+   * 历史上靠 extraBody.max_output_tokens 覆盖实现；extraBody 禁止携带 reserved
+   * 字段后改用本字段。model 级覆盖 group 级；缺省时 adapter 默认 4096。
+   * 下限 64 与 adapter 的火山 500 防护下限（MAX_OUTPUT_TOKENS_FLOOR）对齐。
+   */
+  max_output_tokens: z.number().int().min(64).max(1_000_000).optional(),
 });
 
 /**

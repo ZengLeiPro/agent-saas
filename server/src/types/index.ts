@@ -138,6 +138,11 @@ export interface ModelProviderOptions {
   extraBody?: Record<string, unknown>;
   /** 显式输入模态能力；undefined 表示 unknown，SaaS 侧不得按模型名称自动推断。 */
   inputModalities?: Array<'text' | 'image'>;
+  /**
+   * 单轮回答最大输出 token（配置层 max_output_tokens 的运行时映射）。
+   * 优先级：ModelRequest.maxOutputTokens（调用方显式）> 本字段 > adapter 默认 4096。
+   */
+  maxOutputTokens?: number;
   // ── Responses API v1（RFC P0.5）：仅 protocol="responses" 时生效 ──
   /** 协议路由，默认 chat_completions（保持现有行为）。 */
   protocol?: "chat_completions" | "responses";

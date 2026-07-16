@@ -393,6 +393,49 @@ describe('ResponsesApiAdapter', () => {
     expect(body.max_output_tokens).toBe(MAX_OUTPUT_TOKENS_FLOOR);
   });
 
+  it('providerOptions.maxOutputTokens 作为配置层上限进入请求体', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'r', model: 'glm-5.2' } }),
+      sse('response.completed', { type: 'response.completed', response: { id: 'r', model: 'glm-5.2', status: 'completed' } }),
+    ]));
+
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'k', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses', maxOutputTokens: 49152 },
+    );
+
+    await collect(adapter.stream({
+      model: 'glm-5.2',
+      messages: [{ role: 'user', content: 'q' }],
+      tools: [],
+    }, baseContext));
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.max_output_tokens).toBe(49152);
+  });
+
+  it('request.maxOutputTokens 显式值优先于 providerOptions.maxOutputTokens', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'r', model: 'glm-5.2' } }),
+      sse('response.completed', { type: 'response.completed', response: { id: 'r', model: 'glm-5.2', status: 'completed' } }),
+    ]));
+
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'k', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses', maxOutputTokens: 49152 },
+    );
+
+    await collect(adapter.stream({
+      model: 'glm-5.2',
+      messages: [{ role: 'user', content: 'q' }],
+      tools: [],
+      maxOutputTokens: 8192,
+    }, baseContext));
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.max_output_tokens).toBe(8192);
+  });
+
   it('tool_choice 与 modelConfig.toolChoiceModes 冲突时抛错', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([]));
     const adapter = new ResponsesApiAdapter(

@@ -139,9 +139,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
 
   async *stream(request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent> {
     // P0.6：max_output_tokens 强制下限 ≥64
+    // 取值优先级：调用方显式 request > 模型配置 max_output_tokens > 默认 4096。
     const requestedMax = typeof request.maxOutputTokens === 'number'
       ? request.maxOutputTokens
-      : 4096;
+      : typeof this.providerOptions.maxOutputTokens === 'number'
+        ? this.providerOptions.maxOutputTokens
+        : 4096;
     const maxOutputTokens = Math.max(requestedMax, MAX_OUTPUT_TOKENS_FLOOR);
     if (requestedMax < MAX_OUTPUT_TOKENS_FLOOR) {
       logger.warn(

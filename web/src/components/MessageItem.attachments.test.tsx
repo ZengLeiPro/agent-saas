@@ -7,7 +7,7 @@
  * 4. 不可预览类型点击走下载（authFetch 到 /api/file/download）
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { initPlatform } from '@agent/shared';
 import type { PlatformDeps } from '@agent/shared';
 import { MessageItem } from './MessageItem';
@@ -151,5 +151,63 @@ describe('用户消息附件 chip', () => {
     expect((await screen.findByAltText('现场图.png')).getAttribute('src')).toBe(
       'https://api.example.com/api/share/sessions/share%201/file?path=uploads%2F%E7%8E%B0%E5%9C%BA%E5%9B%BE.png',
     );
+  });
+});
+
+describe('会话媒体加载', () => {
+  it('图片使用浏览器懒加载，屏外视频接近视口后才挂载 src', async () => {
+    let intersectionCallback: IntersectionObserverCallback | undefined;
+    class FakeIntersectionObserver implements IntersectionObserver {
+      readonly root = null;
+      readonly rootMargin = '400px 0px';
+      readonly thresholds = [0];
+      constructor(callback: IntersectionObserverCallback) {
+        intersectionCallback = callback;
+      }
+      disconnect() {}
+      observe() {}
+      takeRecords(): IntersectionObserverEntry[] { return []; }
+      unobserve() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);
+
+    try {
+      const { container } = renderMessage({
+        id: 'line-media',
+        type: 'text',
+        content: [
+          '![演示视频](assets/generated/20260716/demo.mp4)',
+          '',
+          '![效果图](assets/generated/20260716/img-1234abcd.png)',
+        ].join('\n'),
+      });
+
+      const image = await screen.findByAltText('效果图');
+      expect(image.getAttribute('loading')).toBe('lazy');
+      expect(image.getAttribute('decoding')).toBe('async');
+
+      let video: HTMLVideoElement | null = null;
+      await waitFor(() => {
+        video = container.querySelector('video');
+        expect(video).toBeTruthy();
+      });
+      expect(video!.getAttribute('src')).toBeNull();
+      expect(video!.getAttribute('preload')).toBe('none');
+
+      act(() => {
+        intersectionCallback?.(
+          [{ isIntersecting: true, intersectionRatio: 1 } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+      });
+      await waitFor(() => {
+        expect(video!.getAttribute('src')).toContain(
+          '/api/file/download?path=assets%2Fgenerated%2F20260716%2Fdemo.mp4',
+        );
+        expect(video!.getAttribute('preload')).toBe('metadata');
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

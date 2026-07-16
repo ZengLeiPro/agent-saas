@@ -40,6 +40,40 @@ function isExternalSrc(src: string): boolean {
 
 const VIDEO_EXT_RE = /\.(mp4|mov|webm|m4v|avi)$/i;
 
+/** 视频只在接近视口后挂载 src，避免切换长会话时为屏外视频重复拉 metadata。 */
+function LazyVideo({ src, className }: { src: string; className: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [shouldLoad, setShouldLoad] = useState(() => typeof IntersectionObserver === 'undefined');
+
+  useEffect(() => {
+    if (shouldLoad) return;
+    const element = ref.current;
+    if (!element || typeof IntersectionObserver === 'undefined') {
+      setShouldLoad(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0)) {
+        setShouldLoad(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: '400px 0px' });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [shouldLoad]);
+
+  return (
+    <video
+      ref={ref}
+      src={shouldLoad ? src : undefined}
+      controls
+      playsInline
+      preload={shouldLoad ? 'metadata' : 'none'}
+      className={className}
+    />
+  );
+}
+
 /** 工作区图片：异步解析路径，支持 lightbox 大图 */
 function AuthImage({ src, alt, owner }: { src: string; alt?: string; owner?: string }) {
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(null);
@@ -62,6 +96,8 @@ function AuthImage({ src, alt, owner }: { src: string; alt?: string; owner?: str
       <img
         src={resolvedSrc}
         alt={alt}
+        loading="lazy"
+        decoding="async"
         className="max-h-80 max-w-full cursor-pointer rounded-lg border border-border shadow-sm transition-shadow hover:shadow-md"
         onClick={() => setLightbox(true)}
       />
@@ -79,6 +115,7 @@ function AuthImage({ src, alt, owner }: { src: string; alt?: string; owner?: str
           <img
             src={resolvedSrc}
             alt={alt}
+            decoding="async"
             className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
             onClick={(e) => e.stopPropagation()}
           />
@@ -104,15 +141,7 @@ function AuthVideo({ src, owner }: { src: string; owner?: string }) {
     return <span className="inline-block h-40 w-60 animate-pulse rounded-lg bg-muted" />;
   }
 
-  return (
-    <video
-      src={resolvedSrc}
-      controls
-      playsInline
-      preload="metadata"
-      className="max-h-80 max-w-full rounded-lg border border-border shadow-sm"
-    />
-  );
+  return <LazyVideo src={resolvedSrc} className="max-h-80 max-w-full rounded-lg border border-border shadow-sm" />;
 }
 
 const LazyMarkdown = lazy(async () => {
@@ -179,9 +208,9 @@ const LazyMarkdown = lazy(async () => {
       img: ({ src, alt, ...props }) => {
         if (!src || isExternalSrc(src)) {
           if (src && VIDEO_EXT_RE.test(src)) {
-            return <video src={src} controls playsInline preload="metadata" className="max-h-80 max-w-full rounded-lg border border-border shadow-sm" />;
+            return <LazyVideo src={src} className="max-h-80 max-w-full rounded-lg border border-border shadow-sm" />;
           }
-          return <img src={src} alt={alt} {...props} />;
+          return <img src={src} alt={alt} {...props} loading="lazy" decoding="async" />;
         }
         if (VIDEO_EXT_RE.test(src)) {
           return <AuthVideo src={src} owner={filePreview?.owner} />;

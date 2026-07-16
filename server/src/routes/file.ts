@@ -1,7 +1,7 @@
 import { readFile, readdir, lstat, unlink, rm } from "fs/promises";
-import { createReadStream } from "fs";
-import { resolve, extname, basename, dirname, join } from "path";
-import { Router } from "express";
+import { createReadStream, type Stats } from "fs";
+import { resolve, extname, basename, dirname, join, relative, sep } from "path";
+import { Router, type Request } from "express";
 import { resolveUserCwd } from "../workspace/resolver.js";
 import { serverLogger } from "../utils/logger.js";
 import { auditLog } from "../data/login-logs/index.js";
@@ -58,6 +58,82 @@ const PREVIEW_READ_EXTS = new Set([
 
 /** 预览读取的体积上限：超过则拒绝并引导走下载（避免大文件爆内存/卡死前端） */
 const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
+
+type ParsedByteRange =
+  | { kind: "range"; start: number; end: number }
+  | { kind: "unsatisfiable" }
+  | null;
+
+function fileEtag(stats: Pick<Stats, "size" | "mtimeMs">): string {
+  return `"${stats.size.toString(16)}-${Math.trunc(stats.mtimeMs).toString(16)}"`;
+}
+
+function singleHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value.join(",") : value;
+}
+
+function etagMatches(header: string | undefined, etag: string): boolean {
+  if (!header) return false;
+  const normalize = (value: string) => value.trim().replace(/^W\//, "");
+  return header
+    .split(",")
+    .some((candidate) => candidate.trim() === "*" || normalize(candidate) === normalize(etag));
+}
+
+function isNotModified(req: Request, etag: string, mtime: Date): boolean {
+  const ifNoneMatch = singleHeader(req.headers["if-none-match"]);
+  if (ifNoneMatch) return etagMatches(ifNoneMatch, etag);
+  const ifModifiedSince = singleHeader(req.headers["if-modified-since"]);
+  if (!ifModifiedSince) return false;
+  const timestamp = Date.parse(ifModifiedSince);
+  return Number.isFinite(timestamp) && Math.floor(mtime.getTime() / 1_000) <= Math.floor(timestamp / 1_000);
+}
+
+function rangeAllowedByIfRange(req: Request, etag: string, mtime: Date): boolean {
+  const ifRange = singleHeader(req.headers["if-range"]);
+  if (!ifRange) return true;
+  const trimmed = ifRange.trim();
+  if (trimmed.startsWith("W/")) return false;
+  if (trimmed.startsWith('"')) return trimmed === etag;
+  const timestamp = Date.parse(trimmed);
+  return Number.isFinite(timestamp) && Math.floor(mtime.getTime() / 1_000) <= Math.floor(timestamp / 1_000);
+}
+
+function parseByteRange(header: string, size: number): ParsedByteRange {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match || (!match[1] && !match[2]) || size <= 0) return { kind: "unsatisfiable" };
+  if (!match[1]) {
+    const suffix = Number(match[2]);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return { kind: "unsatisfiable" };
+    return { kind: "range", start: Math.max(0, size - suffix), end: size - 1 };
+  }
+  const start = Number(match[1]);
+  const requestedEnd = match[2] ? Number(match[2]) : size - 1;
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(requestedEnd) ||
+    start < 0 ||
+    requestedEnd < start ||
+    start >= size
+  ) {
+    return { kind: "unsatisfiable" };
+  }
+  return { kind: "range", start, end: Math.min(requestedEnd, size - 1) };
+}
+
+function fileCacheControl(absolutePath: string, userCwd: string, contentType: string): string {
+  const isMedia =
+    contentType.startsWith("image/") ||
+    contentType.startsWith("video/") ||
+    contentType.startsWith("audio/");
+  if (!isMedia) return "private, no-cache";
+
+  const workspacePath = relative(userCwd, absolutePath).split(sep).join("/");
+  if (/^assets\/generated\/\d{8}\/img-[0-9a-f]{8}\.[a-z0-9]+$/i.test(workspacePath)) {
+    return "private, max-age=31536000, immutable";
+  }
+  return "private, max-age=300, must-revalidate";
+}
 
 interface FileEntry {
   name: string;
@@ -196,7 +272,7 @@ export function createFileRouter(options: FileRouterOptions): Router {
       if (rejectCrossUserParams(req as any, res)) return;
 
       let absolutePath: string;
-      let userCwd: string | undefined;
+      let userCwd: string;
       const effectiveUsername = user?.username;
       userCwd = resolveUserCwd(
         agentCwd,
@@ -301,56 +377,63 @@ export function createFileRouter(options: FileRouterOptions): Router {
           ? "inline"
           : "attachment";
 
-      // 审计：仅记录用户主动操作（Authorization header = authFetch），跳过自动加载（?token= = img/video src）和 HEAD 请求
-      if (req.method !== "HEAD" && req.headers.authorization) {
-        auditLog(req as any, "file_downloaded", `${filename} (${ext})`);
-      }
-
+      const etag = fileEtag(stats);
       res.setHeader("Referrer-Policy", "no-referrer");
       res.setHeader("Accept-Ranges", "bytes");
-
-      // Range 请求支持（视频 seek 等）
-      const range = req.headers.range;
-      if (range) {
-        const parts = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
-
-        if (start >= stats.size || end >= stats.size || start > end) {
-          res
-            .status(416)
-            .setHeader("Content-Range", `bytes */${stats.size}`)
-            .end();
-          return;
-        }
-
-        res.writeHead(206, {
-          "Content-Range": `bytes ${start}-${end}/${stats.size}`,
-          "Content-Length": end - start + 1,
-          "Content-Type": contentType,
-          "Content-Disposition": `${disposition}; filename="${encodeURIComponent(filename)}"`,
-        });
-        const stream = createReadStream(absolutePath, { start, end });
-        stream.pipe(res);
-        stream.on("error", () => {
-          if (!res.headersSent) res.status(500).end();
-        });
-        return;
-      }
-
       res.setHeader("Content-Type", contentType);
       res.setHeader(
         "Content-Disposition",
         `${disposition}; filename="${encodeURIComponent(filename)}"`,
       );
+      res.setHeader("Cache-Control", fileCacheControl(absolutePath, userCwd, contentType));
+      res.setHeader("ETag", etag);
+      res.setHeader("Last-Modified", stats.mtime.toUTCString());
+
+      if (isNotModified(req, etag, stats.mtime)) {
+        res.status(304).end();
+        return;
+      }
+
+      // 审计：仅记录用户主动操作（Authorization header = authFetch），跳过自动加载（?token= = img/video src）和 HEAD 请求
+      if (req.method !== "HEAD" && req.headers.authorization) {
+        auditLog(req as any, "file_downloaded", `${filename} (${ext})`);
+      }
+
+      // Range 请求支持（视频 seek 等）
+      const range = req.method === "GET" ? singleHeader(req.headers.range) : undefined;
+      const parsedRange = range && rangeAllowedByIfRange(req, etag, stats.mtime)
+        ? parseByteRange(range, stats.size)
+        : null;
+      if (parsedRange?.kind === "unsatisfiable") {
+        res.status(416).setHeader("Content-Range", `bytes */${stats.size}`).end();
+        return;
+      }
+      if (parsedRange?.kind === "range") {
+        const { start, end } = parsedRange;
+        res.status(206);
+        res.setHeader("Content-Range", `bytes ${start}-${end}/${stats.size}`);
+        res.setHeader("Content-Length", end - start + 1);
+        const stream = createReadStream(absolutePath, { start, end });
+        stream.pipe(res);
+        stream.on("error", () => {
+          if (!res.headersSent) res.status(500).end();
+          else res.destroy();
+        });
+        return;
+      }
+
       res.setHeader("Content-Length", stats.size);
+      if (req.method === "HEAD") {
+        res.end();
+        return;
+      }
 
       const stream = createReadStream(absolutePath);
       stream.pipe(res);
       stream.on("error", () => {
         if (!res.headersSent) {
           res.status(500).json({ error: "Failed to read file" });
-        }
+        } else res.destroy();
       });
     } catch (error: any) {
       if (error.code === "ENOENT") {

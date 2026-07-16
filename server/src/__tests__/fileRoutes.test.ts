@@ -74,6 +74,11 @@ beforeEach(async () => {
   writeFileSync(join(userCwd, "assets", "20260510", "note.md"), "# note\n");
   writeFileSync(join(userCwd, "note.md"), "# root note\n");
   writeFileSync(join(userCwd, "root-image.jpg"), "ROOT_IMAGE");
+  mkdirSync(join(userCwd, "assets", "generated", "20260716"), { recursive: true });
+  writeFileSync(
+    join(userCwd, "assets", "generated", "20260716", "img-1234abcd.png"),
+    "GENERATED_IMAGE",
+  );
 });
 
 afterEach(async () => {
@@ -98,6 +103,71 @@ describe("/api/file/download referrer fallback", () => {
     );
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("IMAGE_BYTES");
+  });
+
+  it("普通媒体使用私有短缓存并支持 ETag/Last-Modified 条件请求", async () => {
+    ({ server, baseUrl } = await startServer({
+      sub: "u1",
+      username: "zengky",
+      role: "user",
+    }));
+    const url = `${baseUrl}/api/file/download?path=${encodeURIComponent("assets/20260510/posture-images/test.jpg")}`;
+    const first = await fetch(url);
+    expect(first.status).toBe(200);
+    expect(first.headers.get("cache-control")).toBe("private, max-age=300, must-revalidate");
+    expect(first.headers.get("accept-ranges")).toBe("bytes");
+    expect(first.headers.get("etag")).toMatch(/^"[0-9a-f]+-[0-9a-f]+"$/);
+    expect(first.headers.get("last-modified")).toBeTruthy();
+    await first.arrayBuffer();
+
+    const byEtag = await fetch(url, { headers: { "If-None-Match": first.headers.get("etag")! } });
+    expect(byEtag.status).toBe(304);
+    expect((await byEtag.arrayBuffer()).byteLength).toBe(0);
+
+    const byDate = await fetch(url, { headers: { "If-Modified-Since": first.headers.get("last-modified")! } });
+    expect(byDate.status).toBe(304);
+  });
+
+  it("平台 GenerateImage 唯一文件名使用一年私有 immutable 缓存", async () => {
+    ({ server, baseUrl } = await startServer({
+      sub: "u1",
+      username: "zengky",
+      role: "user",
+    }));
+    const res = await fetch(
+      `${baseUrl}/api/file/download?path=${encodeURIComponent("assets/generated/20260716/img-1234abcd.png")}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+  });
+
+  it("Range 支持分片、后缀范围和 If-Range 版本校验", async () => {
+    ({ server, baseUrl } = await startServer({
+      sub: "u1",
+      username: "zengky",
+      role: "user",
+    }));
+    const url = `${baseUrl}/api/file/download?path=${encodeURIComponent("assets/20260510/posture-images/test.jpg")}`;
+    const first = await fetch(url);
+    const etag = first.headers.get("etag")!;
+    await first.arrayBuffer();
+
+    const ranged = await fetch(url, { headers: { Range: "bytes=0-4", "If-Range": etag } });
+    expect(ranged.status).toBe(206);
+    expect(ranged.headers.get("content-range")).toBe("bytes 0-4/11");
+    expect(await ranged.text()).toBe("IMAGE");
+
+    const suffix = await fetch(url, { headers: { Range: "bytes=-5" } });
+    expect(suffix.status).toBe(206);
+    expect(await suffix.text()).toBe("BYTES");
+
+    const stale = await fetch(url, { headers: { Range: "bytes=0-4", "If-Range": '"stale"' } });
+    expect(stale.status).toBe(200);
+    expect(await stale.text()).toBe("IMAGE_BYTES");
+
+    const invalid = await fetch(url, { headers: { Range: "bytes=99-100" } });
+    expect(invalid.status).toBe(416);
+    expect(invalid.headers.get("content-range")).toBe("bytes */11");
   });
 
   it("新功能：相对 md 文件路径 + referrer → 200", async () => {

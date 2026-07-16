@@ -3,7 +3,7 @@ import {
   RefreshCw, X, FolderTree, List, ArrowUpDown, ArrowUp, ArrowDown,
   LayoutGrid, Rows3, FolderX,
 } from "lucide-react";
-import { getPreviewFileType, FILE_SORT_LABELS } from "@agent/shared";
+import { getFileTypeVisual, getPreviewFileType, resolveImageSrc, FILE_SORT_LABELS } from "@agent/shared";
 import type { FileEntry, FileSortKey, FileSortOrder } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
@@ -167,6 +167,7 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
 
   const [deleteTarget, setDeleteTarget] = useState<FileEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [imagePreview, setImagePreview] = useState<{ src: string; name: string } | null>(null);
 
   const listPath = viewMode === "all" ? "assets" : currentPath;
   const { entries: rawEntries, loading, error, refresh } = useFileList(listPath, effectiveOwner, viewMode === "all");
@@ -215,21 +216,23 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
     if (entry.isDirectory) {
       setViewMode("folder");
       setCurrentPath(entry.path);
+    } else if (getFileTypeVisual(entry.name).category === "image") {
+      void resolveImageSrc(entry.path, effectiveOwner)
+        .then((src) => setImagePreview({ src, name: entry.name }))
+        .catch((error) => console.error("Image preview failed:", error));
     } else if (getPreviewFileType(entry.name)) {
       onPreviewFile(entry.path, effectiveOwner);
     } else {
-      const params = new URLSearchParams({ path: entry.path });
-      if (effectiveOwner) params.set("owner", effectiveOwner);
-      const url = `/api/file/download?${params}`;
-      void authFetch(url).then(res => {
-        if (res.ok) {
+      void resolveImageSrc(entry.path, effectiveOwner)
+        .then((url) => {
           const a = document.createElement("a");
-          a.href = res.url;
+          a.href = url;
           a.download = entry.name;
-          a.target = "_blank";
+          document.body.appendChild(a);
           a.click();
-        }
-      });
+          document.body.removeChild(a);
+        })
+        .catch((error) => console.error("File download failed:", error));
     }
   }, [onPreviewFile, effectiveOwner]);
 
@@ -435,6 +438,29 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {imagePreview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setImagePreview(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setImagePreview(null)}
+            className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
+            title="关闭"
+            aria-label="关闭预览"
+          >
+            <X className="size-5" />
+          </button>
+          <img
+            src={imagePreview.src}
+            alt={imagePreview.name}
+            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

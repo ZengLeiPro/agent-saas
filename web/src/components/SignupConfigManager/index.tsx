@@ -36,6 +36,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { useAuth } from "@/contexts/AuthContext";
 
 /** GET 回来 config.sms 可能为 undefined，hydrate 时按后端缺省值补齐 */
 const DEFAULT_SMS: SignupSmsConfig = {
@@ -147,6 +148,8 @@ function formatTime(iso: string): string {
 }
 
 export function SignupConfigManager() {
+  // 只读平台 admin：保存并生效 / 清除 SMS Secret disabled
+  const { platformReadOnly } = useAuth();
   const [view, setView] = useState<SignupConfigAdminView | null>(null);
   const [draft, setDraft] = useState<SignupDraft>(() => draftFromConfig(null));
   const [allowedModelsText, setAllowedModelsText] = useState("");
@@ -264,7 +267,7 @@ export function SignupConfigManager() {
               <RefreshCw className="size-3.5" />
               刷新
             </Button>
-            <Button size="sm" onClick={() => { void save(); }} disabled={saving || !dirty}>
+            <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || saving || !dirty}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
               保存并生效
             </Button>
@@ -426,7 +429,7 @@ export function SignupConfigManager() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={clearSecret || !view?.smsSecretConfigured}
+                    disabled={platformReadOnly || clearSecret || !view?.smsSecretConfigured}
                     onClick={() => { setClearSecret(true); setSecretText(""); markDirty(); }}
                   >
                     清除

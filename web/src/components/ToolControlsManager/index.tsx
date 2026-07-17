@@ -44,6 +44,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { ImageGenSettingsCard } from "@/components/ToolControlsManager/ImageGenSettingsCard";
 import { ImageGenPricingCard } from "@/components/ToolControlsManager/ImageGenPricingCard";
+import { useAuth } from "@/contexts/AuthContext";
 
 // 缺省视为「启用」以对齐后端语义：WebToolProvider.list() 判 `search.enabled !== false`
 // 即缺省字段视为启用。若这里写 false，config.json 里省略 `enabled` 字段时前端会误
@@ -280,6 +281,8 @@ function buildWebToolsPayload(
 }
 
 export function ToolControlsManager() {
+  // 只读平台 admin：保存并生效（唯一提交点）disabled
+  const { platformReadOnly } = useAuth();
   const [toolControlsDraft, setToolControlsDraft] = useState<ToolControlsConfig>(() => normalizeToolControls(null));
   const [webToolsDraft, setWebToolsDraft] = useState<WebToolsConfig>(() => normalizeWebTools(null));
   const [tools, setTools] = useState<ToolCatalogItem[]>([]);
@@ -425,7 +428,7 @@ export function ToolControlsManager() {
               <RefreshCw className="size-3.5" />
               刷新
             </Button>
-            <Button size="sm" onClick={() => { void save(); }} disabled={saving || !dirty}>
+            <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || saving || !dirty}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
               保存并生效
             </Button>

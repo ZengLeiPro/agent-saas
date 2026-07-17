@@ -96,7 +96,8 @@ export function McpAdminCatalog() {
 }
 
 function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embedded: boolean }) {
-  const { isAdmin, isPlatformAdmin, user } = useAuth();
+  // platformReadOnly：只读平台 admin，admin 态（全局 MCP 管理）写入口 disabled；个人态连接器不受影响
+  const { isAdmin, isPlatformAdmin, user, platformReadOnly } = useAuth();
   // tenants 列表仅平台 admin 可见（路由用 requirePlatformAdmin，hook 内部
   // 对非平台 admin 自动跳过请求）。组织 admin 不显示 selector，后端兜底 own。
   const { tenants } = useTenants();
@@ -285,8 +286,9 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const canBindSecret = useCallback((req: McpSecretStatus): boolean => {
     if (req.scope === 'user') return true;
     if (req.scope === 'tenant') return isAdmin;
-    return isPlatformAdmin; // global
-  }, [isAdmin, isPlatformAdmin]);
+    // global：仅超级管理员（只读平台 admin 会被服务端 403，前端直接禁入口）
+    return isPlatformAdmin && !platformReadOnly;
+  }, [isAdmin, isPlatformAdmin, platformReadOnly]);
 
   const noBindReason = useCallback((req: McpSecretStatus): string => {
     if (req.scope === 'tenant') return '组织共享 secret 需管理员配置';
@@ -664,13 +666,13 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
         actions={
           <>
             {dirty && (
-              <Button size="sm" onClick={() => void saveSelections(enabled)} disabled={saving}>
+              <Button size="sm" onClick={() => void saveSelections(enabled)} disabled={platformReadOnly || saving}>
                 <Save className="size-3.5" />
                 保存启用状态
               </Button>
             )}
             {mode === "admin" && isAdmin && (
-              <Button size="sm" onClick={() => void saveServer()} disabled={saving || !form.id.trim() || !form.name.trim()}>
+              <Button size="sm" onClick={() => void saveServer()} disabled={platformReadOnly || saving || !form.id.trim() || !form.name.trim()}>
                 <Save className="size-3.5" />
                 保存 Server
               </Button>
@@ -715,11 +717,11 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                 {server.oauth && (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {server.oauth.status === 'connected' ? (
-                      <Button size="sm" variant="outline" onClick={() => void disconnectOAuth(server.id)} disabled={saving}>
+                      <Button size="sm" variant="outline" onClick={() => void disconnectOAuth(server.id)} disabled={platformReadOnly || saving}>
                         <Link2Off className="size-3.5" />断开
                       </Button>
                     ) : (
-                      <Button size="sm" onClick={() => void connectOAuth(server.id)} disabled={saving || !server.oauth.platformConfigured}>
+                      <Button size="sm" onClick={() => void connectOAuth(server.id)} disabled={platformReadOnly || saving || !server.oauth.platformConfigured}>
                         <ExternalLink className="size-3.5" />连接账号
                       </Button>
                     )}
@@ -756,7 +758,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                               size="sm"
                               variant="outline"
                               onClick={() => void bindSecret(server.id, req.key, req.scope)}
-                              disabled={!canBind || saving || !secretInputs[inputKey]?.trim()}
+                              disabled={platformReadOnly || !canBind || saving || !secretInputs[inputKey]?.trim()}
                               title={disabledReason || undefined}
                             >
                               绑定
@@ -852,7 +854,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                       </div>
                       <div className="truncate text-xs text-muted-foreground">{server.description || JSON.stringify(server.config)}</div>
                     </button>
-                    <Button variant="ghost" size="icon" onClick={() => void removeServer(server.id)}><Trash2 className="size-4" /></Button>
+                    <Button variant="ghost" size="icon" onClick={() => void removeServer(server.id)} disabled={platformReadOnly}><Trash2 className="size-4" /></Button>
                   </div>
                 );
               })}

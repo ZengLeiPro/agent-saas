@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { ModelList } from "@/types/models";
 import { DescriptionTip, SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { SettingsTwoColumn } from "@/components/SettingsCenter/SettingsTwoColumn";
+import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
 type ModelProtocol = "chat_completions" | "responses";
@@ -45,7 +46,10 @@ type EditableModel = {
 type EditableGroup = {
   id: string;
   name: string;
+  /** 本地 draft：GET 不再回显明文，留空/缺失时服务端保留现有 Key */
   apiKey?: string;
+  /** 服务端脱敏标记：该分组是否已配置 API Key（GET 无明文 apiKey） */
+  hasApiKey?: boolean;
   baseUrl?: string | null;
   disable_response_chaining?: boolean;
   disable_prompt_cache_key?: boolean;
@@ -74,7 +78,10 @@ type EditableMemoryIndexConfig = {
   dbDir?: string;
   embedding: {
     baseUrl: string;
-    apiKey: string;
+    /** 本地 draft：GET 不再回显明文，留空/缺失时服务端保留现有 Key */
+    apiKey?: string;
+    /** 服务端脱敏标记：embedding 是否已配置 API Key */
+    hasApiKey?: boolean;
     model: string;
     dimensions: number;
   };
@@ -211,6 +218,8 @@ function formatEffectiveValue(value: string | undefined): string {
 }
 
 export function ModelManager() {
+  // 只读平台 admin：保存并生效与分组/模型的增删等 draft 写操作全部 disabled
+  const { platformReadOnly } = useAuth();
   const [models, setModels] = useState<EditableModelsConfig | null>(null);
   const [memoryIndex, setMemoryIndex] = useState<EditableMemoryIndexConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -496,7 +505,8 @@ export function ModelManager() {
           ...memoryIndex,
           embedding: {
             baseUrl: memoryIndex.embedding.baseUrl.trim(),
-            apiKey: memoryIndex.embedding.apiKey.trim(),
+            // GET 已脱敏无明文；留空提交时服务端保留现有 Key
+            apiKey: (memoryIndex.embedding.apiKey ?? "").trim(),
             model: memoryIndex.embedding.model.trim(),
             dimensions: Number(memoryIndex.embedding.dimensions) || 0,
           },
@@ -542,7 +552,7 @@ export function ModelManager() {
           <>
             {savedAt && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
             <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading || saving}><RefreshCw className="size-3.5" />刷新</Button>
-            <Button size="sm" onClick={save} disabled={saving || !models}>{saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存并生效</Button>
+            <Button size="sm" onClick={save} disabled={platformReadOnly || saving || !models}>{saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存并生效</Button>
           </>
         )}
       />
@@ -576,7 +586,7 @@ export function ModelManager() {
                       <CardTitle className="text-base">模型分组</CardTitle>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">从上到下即全平台模型顺序；拖动手柄排序，聚焦手柄后也可用 ↑ ↓ 调整。</p>
                     </div>
-                    <Button variant="ghost" size="sm" className="h-7 px-2" onClick={addGroup} aria-label="新增模型分组"><Plus className="size-3.5" /></Button>
+                    <Button variant="ghost" size="sm" className="h-7 px-2" onClick={addGroup} disabled={platformReadOnly} aria-label="新增模型分组"><Plus className="size-3.5" /></Button>
                   </CardHeader>
                 <CardContent className="space-y-3 px-3 pb-4 pt-0">
                   {models.groups.map((group, groupIndex) => {
@@ -651,7 +661,8 @@ export function ModelManager() {
                           <button
                             type="button"
                             onClick={() => addModel(group.id)}
-                            className="flex h-8 w-full items-center gap-2 rounded-md border border-primary/30 px-2.5 text-left text-xs font-medium text-primary transition-colors hover:border-primary/50 hover:bg-primary/10"
+                            disabled={platformReadOnly}
+                            className="flex h-8 w-full items-center gap-2 rounded-md border border-primary/30 px-2.5 text-left text-xs font-medium text-primary transition-colors hover:border-primary/50 hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <Plus className="size-3.5" />
                             新增模型
@@ -824,7 +835,7 @@ export function ModelManager() {
                   {!memoryIndex ? (
                     <div className="rounded-md border border-dashed bg-muted/20 p-4">
                       <p className="text-sm text-muted-foreground">当前 config.json 未配置 memory.index。</p>
-                      <Button className="mt-3" variant="outline" size="sm" onClick={() => { setMemoryIndex(defaultMemoryIndex()); setSavedAt(null); }}>
+                      <Button className="mt-3" variant="outline" size="sm" disabled={platformReadOnly} onClick={() => { setMemoryIndex(defaultMemoryIndex()); setSavedAt(null); }}>
                         <Plus className="size-3.5" />
                         新增向量化 API 配置
                       </Button>
@@ -836,6 +847,7 @@ export function ModelManager() {
                           type="checkbox"
                           className="mt-0.5"
                           checked={memoryIndex.enabled === true}
+                          disabled={platformReadOnly}
                           onChange={(e) => updateMemoryIndex((current) => ({ ...current, enabled: e.target.checked }))}
                         />
                         <span>启用记忆向量索引</span>
@@ -854,9 +866,9 @@ export function ModelManager() {
                           type="password"
                           autoComplete="new-password"
                           passwordManager="ignore"
-                          value={memoryIndex.embedding.apiKey}
+                          value={memoryIndex.embedding.apiKey ?? ""}
                           onChange={(e) => updateMemoryEmbedding({ apiKey: e.target.value })}
-                          placeholder="sk-..."
+                          placeholder={memoryIndex.embedding.hasApiKey ? "已配置，留空则保留现有 Key" : "未配置"}
                         />
                       </div>
                       <div className="space-y-1.5">
@@ -891,12 +903,12 @@ export function ModelManager() {
                   <CardTitle className="text-base">分组配置</CardTitle>
                   <p className="mt-1 truncate text-xs text-muted-foreground">{selectedGroup.id || "未填写 id"} · {selectedGroup.models.length} 个模型</p>
                 </div>
-                <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" onClick={() => removeGroup(selectedGroup.id)} disabled={models.groups.length <= 1}><Trash2 className="size-3.5" />删除分组</Button>
+                <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" onClick={() => removeGroup(selectedGroup.id)} disabled={platformReadOnly || models.groups.length <= 1}><Trash2 className="size-3.5" />删除分组</Button>
               </CardHeader>
               <CardContent className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1.5"><Label>ID</Label><Input value={selectedGroup.id} onChange={(e) => updateGroupId(selectedGroup.id, e.target.value)} /></div>
                 <div className="space-y-1.5"><Label>显示名称</Label><Input value={selectedGroup.name} onChange={(e) => updateGroup(selectedGroup.id, { name: e.target.value })} /></div>
-                <div className="space-y-1.5"><Label>API Key</Label><Input type="password" autoComplete="new-password" passwordManager="ignore" value={selectedGroup.apiKey ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { apiKey: e.target.value })} placeholder="同组模型共用，可留空" /></div>
+                <div className="space-y-1.5"><Label>API Key</Label><Input type="password" autoComplete="new-password" passwordManager="ignore" value={selectedGroup.apiKey ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { apiKey: e.target.value })} placeholder={selectedGroup.hasApiKey ? "已配置，留空则保留现有 Key" : "未配置"} /></div>
                 <div className="space-y-1.5"><Label>Base URL</Label><Input value={selectedGroup.baseUrl ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { baseUrl: e.target.value })} placeholder="例如 http://127.0.0.1:8317" /></div>
                 <div className="space-y-1.5">
                   <Label>协议类型 protocol</Label>
@@ -944,7 +956,7 @@ export function ModelManager() {
                     {selectedModelContext.group.name || selectedModelContext.group.id || "未命名分组"} / {selectedModelContext.model.id || "未填写 id"}
                   </p>
                 </div>
-                <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" onClick={() => removeModel(selectedModelContext.group.id, selectedModelContext.model.id)} disabled={selectedModelContext.group.models.length <= 1}><Trash2 className="size-3.5" />删除模型</Button>
+                <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" onClick={() => removeModel(selectedModelContext.group.id, selectedModelContext.model.id)} disabled={platformReadOnly || selectedModelContext.group.models.length <= 1}><Trash2 className="size-3.5" />删除模型</Button>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-3 md:grid-cols-3">

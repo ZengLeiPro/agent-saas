@@ -381,7 +381,8 @@ interface UsageDashboardProps {
 }
 
 export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platform", fullWidth = false }: UsageDashboardProps = {}) {
-  const { isPlatformAdmin } = useAuth();
+  // platformReadOnly：只读平台 admin，重扫 usage 数据 disabled
+  const { isPlatformAdmin, platformReadOnly } = useAuth();
   /** 顶部 tab：用量（现有内容）/ 效率（仅平台 admin 可见） */
   const [viewTab, setViewTab] = useState<"usage" | "efficiency">("usage");
   const [range, setRange] = useState<RangeValue>("30d");
@@ -592,7 +593,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
               {rebuildMsg && <span className="ml-2 text-foreground">{rebuildMsg}</span>}
             </div>
             {isPlatformAdmin && (
-              <Button variant="outline" size="sm" onClick={() => void onRebuild()} disabled={rebuilding}>
+              <Button variant="outline" size="sm" onClick={() => void onRebuild()} disabled={platformReadOnly || rebuilding}>
                 <RotateCcw className={cn("mr-1 size-3.5", rebuilding && "animate-spin")} />
                 {rebuilding ? "扫描中…" : "重新扫描"}
               </Button>

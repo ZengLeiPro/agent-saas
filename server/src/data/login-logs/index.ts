@@ -46,6 +46,8 @@ const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
   'tenant_created', 'tenant_updated', 'tenant_disabled', 'tenant_enabled', 'tenant_deleted',
   'workspace_archived', 'workspace_deleted',
   'file_deleted',
+  // 平台管理员分层治理（2026-07-18）：拒绝与敏感检索必须留痕（主体都是 admin 角色）
+  'platform_readonly_denied', 'platform_user_search',
   'session_soft_deleted', 'session_restored', 'session_permanently_deleted',
   'session_renamed', 'session_forked', 'session_share_updated', 'session_share_revoked',
 ]);

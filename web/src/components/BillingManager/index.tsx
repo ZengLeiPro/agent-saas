@@ -30,6 +30,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { useTenants } from "@/components/TenantManager/hooks";
+import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
 const CREDIT_MICRO = 1_000_000;
@@ -473,6 +474,8 @@ async function fetchBillingState(tenantId: string, includeAudit = true): Promise
 // ============================================================
 
 export function PlatformBillingManager() {
+  // 只读平台 admin：保存策略/投影/账户调整等平台态写操作 disabled（组织侧 TenantBillingPanel 不受影响）
+  const { platformReadOnly } = useAuth();
   const { tenants, loading: tenantsLoading } = useTenants();
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const [pricingVersions, setPricingVersions] = useState<PricingVersion[]>([]);
@@ -645,13 +648,13 @@ export function PlatformBillingManager() {
               </SelectContent>
             </Select>
             {activeTab === "overview" && draft && (
-              <Button size="sm" onClick={() => { void savePolicy(); }} disabled={saving || loading}>
+              <Button size="sm" onClick={() => { void savePolicy(); }} disabled={platformReadOnly || saving || loading}>
                 {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
                 保存策略
               </Button>
             )}
             {activeTab === "pricing-versions" && pricingVersionActions}
-            <Button variant="outline" onClick={() => { void projectNow(); }} disabled={projecting}>
+            <Button variant="outline" onClick={() => { void projectNow(); }} disabled={platformReadOnly || projecting}>
               {projecting ? <Loader2 className="size-4 animate-spin" /> : <ActionIcons.project className="size-4" />}
               投影 usage
             </Button>
@@ -810,7 +813,7 @@ export function PlatformBillingManager() {
                 <Input value={adjustNote} onChange={(e) => setAdjustNote(e.target.value)} placeholder="例如：首月试用赠送" />
               </div>
               <div className="flex justify-end md:col-span-3">
-                <Button size="sm" variant="outline" onClick={() => { void adjustAccount(); }} disabled={adjusting || !adjustAmount.trim()}>
+                <Button size="sm" variant="outline" onClick={() => { void adjustAccount(); }} disabled={platformReadOnly || adjusting || !adjustAmount.trim()}>
                   {adjusting ? <Loader2 className="size-4 animate-spin" /> : <EntityIcons.credits className="size-4" />}
                   写入流水
                 </Button>
@@ -1179,6 +1182,8 @@ function PricingVersionsView({
   onNotice: (notice: Notice) => void;
   onActionsChange?: (actions: ReactNode | null) => void;
 }) {
+  // 只读平台 admin：新建/激活/编辑价格版本 disabled（该视图仅平台态使用）
+  const { platformReadOnly } = useAuth();
   const [editing, setEditing] = useState<PricingVersion | null>(null);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1203,11 +1208,11 @@ function PricingVersionsView({
   }, [onChanged, onNotice]);
 
   const actions = useMemo(() => (
-    <Button size="sm" onClick={() => setCreating(true)}>
+    <Button size="sm" onClick={() => setCreating(true)} disabled={platformReadOnly}>
       <Plus className="size-4" />
       新建价格版本
     </Button>
-  ), []);
+  ), [platformReadOnly]);
 
   useEffect(() => {
     onActionsChange?.(actions);
@@ -1253,7 +1258,7 @@ function PricingVersionsView({
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={busy === v.version || v.status === "retired"}
+                        disabled={platformReadOnly || busy === v.version || v.status === "retired"}
                         onClick={() => {
                           if (!window.confirm(`激活 ${v.version}？\n\n旧的 active 版本会被自动改为 retired；历史 ledger 不会被重算。`)) return;
                           void callPatch(v.version, { status: "active" }, "激活");
@@ -1268,7 +1273,7 @@ function PricingVersionsView({
                         title="当前 active 版本不能直接退役，请先激活另一个版本"
                       >退役</Button>
                     )}
-                    <Button size="sm" variant="outline" onClick={() => setEditing(v)} disabled={busy === v.version || v.status === "retired"}>
+                    <Button size="sm" variant="outline" onClick={() => setEditing(v)} disabled={platformReadOnly || busy === v.version || v.status === "retired"}>
                       编辑
                     </Button>
                   </TableCell>

@@ -96,12 +96,68 @@ describe('models admin router', () => {
       const body = await readJson(response);
 
       expect(body.models.default).toBe('main/gpt');
+      // 2026-07-18 凭据脱敏：GET 不再返回明文 apiKey，只返回 hasApiKey
       expect(body.memoryIndex.embedding).toEqual({
         baseUrl: 'https://old-embedding.example.invalid',
-        apiKey: 'old-embedding-key',
         model: 'old-embedding-model',
         dimensions: 1024,
+        hasApiKey: true,
       });
+      expect(body.models.groups[0].apiKey).toBeUndefined();
+      expect(body.models.groups[0].hasApiKey).toBe(true);
+    });
+  });
+
+  it('keeps existing secrets when PUT omits or blanks apiKey fields', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          models: {
+            default: 'main/gpt',
+            allowCrossGroupSwitch: false,
+            groups: [{
+              id: 'main',
+              name: 'Main',
+              // apiKey 留空 → 应保留 sk-main；hasApiKey 是 GET 回显字段应被剥离
+              apiKey: '',
+              hasApiKey: true,
+              baseUrl: 'https://llm.example.invalid/v1',
+              models: [{ id: 'gpt', name: 'GPT', value: 'gpt-5' }],
+            }],
+          },
+          memoryIndex: {
+            enabled: false,
+            dbDir: 'data/memory-index',
+            // embedding.apiKey 缺失 → 应保留 old-embedding-key
+            embedding: {
+              baseUrl: 'https://old-embedding.example.invalid',
+              model: 'old-embedding-model',
+              dimensions: 1024,
+              hasApiKey: true,
+            },
+            chunking: { tokens: 200, overlap: 40 },
+            search: { vectorWeight: 0.7, textWeight: 0.3, maxResults: 10, minScore: 0.3 },
+            temporalDecay: { enabled: false, halfLifeDays: 30 },
+            sync: { debounceMs: 1500 },
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await readJson(response);
+      // 响应也保持脱敏口径
+      expect(body.models.groups[0].apiKey).toBeUndefined();
+      expect(body.models.groups[0].hasApiKey).toBe(true);
+      expect(body.memoryIndex.embedding.apiKey).toBeUndefined();
+
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.models.groups[0].apiKey).toBe('sk-main');
+      expect(written.models.groups[0].hasApiKey).toBeUndefined();
+      expect(written.memory.index.embedding.apiKey).toBe('old-embedding-key');
+      expect(runtimeConfig.models?.groups[0]?.apiKey).toBe('sk-main');
+      expect(runtimeConfig.memory?.index?.embedding.apiKey).toBe('old-embedding-key');
     });
   });
 

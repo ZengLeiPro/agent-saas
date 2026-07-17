@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { authFetch } from "@/lib/authFetch";
+import { useAuth } from "@/contexts/AuthContext";
 import type { ModelList } from "@/types/models";
 
 interface MemoryPollingDraft {
@@ -86,6 +87,8 @@ function Field({
 }
 
 export function MemoryPollingManager() {
+  // 只读平台 admin：保存配置与总开关 disabled
+  const { platformReadOnly } = useAuth();
   const [view, setView] = useState<MemoryPollingAdminView | null>(null);
   const [draft, setDraft] = useState<MemoryPollingDraft>(EMPTY_DRAFT);
   const [modelList, setModelList] = useState<ModelList | null>(null);
@@ -175,7 +178,7 @@ export function MemoryPollingManager() {
               <RefreshCw className={loading ? "size-3.5 animate-spin" : "size-3.5"} />
               刷新
             </Button>
-            <Button size="sm" onClick={() => void save()} disabled={loading || saving || !dirty}>
+            <Button size="sm" onClick={() => void save()} disabled={platformReadOnly || loading || saving || !dirty}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
               保存配置
             </Button>
@@ -205,7 +208,7 @@ export function MemoryPollingManager() {
                 <Switch
                   checked={draft.enabled}
                   onCheckedChange={(enabled) => updateDraft({ enabled })}
-                  disabled={loading}
+                  disabled={platformReadOnly || loading}
                   aria-label="平台记忆轮询总开关"
                 />
               </div>

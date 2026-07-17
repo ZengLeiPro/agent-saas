@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { useAuth } from "@/contexts/AuthContext";
 
 type EngineKey = "gptImage2" | "seedream";
 
@@ -112,6 +113,8 @@ function buildEnginePayload(key: EngineKey, draft: EngineDraft, platformEnabled:
 }
 
 export function ImageGenSettingsCard() {
+  // 只读平台 admin：保存引擎配置与引擎开关 disabled
+  const { platformReadOnly } = useAuth();
   const [draft, setDraft] = useState<ImageGenDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -194,7 +197,7 @@ export function ImageGenSettingsCard() {
           <Button variant="outline" size="sm" onClick={() => { void refresh(); }} disabled={loading || saving}>
             <RefreshCw className="size-3.5" />刷新
           </Button>
-          <Button size="sm" onClick={() => { void save(); }} disabled={saving || !dirty || !draft}>
+          <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || saving || !dirty || !draft}>
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存引擎配置
           </Button>
         </div>
@@ -221,6 +224,7 @@ export function ImageGenSettingsCard() {
               </div>
               <Switch
                 checked={draft.enabled}
+                disabled={platformReadOnly}
                 onCheckedChange={(checked) => { setDraft((current) => current ? { ...current, enabled: checked } : current); markDirty(); }}
                 aria-label="启用平台生图能力"
               />
@@ -244,7 +248,7 @@ export function ImageGenSettingsCard() {
                       </div>
                       <Switch
                         checked={engine.enabled}
-                        disabled={!draft.enabled}
+                        disabled={platformReadOnly || !draft.enabled}
                         onCheckedChange={(checked) => updateEngine(key, { enabled: checked })}
                         aria-label={`启用 ${labels.title}`}
                       />

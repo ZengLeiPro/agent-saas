@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { AdminEntityTable, AdminErrorAlert, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
+import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
@@ -15,6 +16,8 @@ import type { SystemMetricsResponse, SystemStorageResponse, WorkspaceUsageRecord
 const WORKSPACE_FILTERS: Array<WorkspaceUsageStatus | "all"> = ["all", "active", "soft_deleted", "orphan_tenant", "orphan_user"];
 
 export function InfraPage() {
+  // 只读平台 admin：扫描存储/归档目录/永久删除目录 disabled
+  const { platformReadOnly } = useAuth();
   const [metrics, setMetrics] = useState<SystemMetricsResponse | null>(null);
   const [storage, setStorage] = useState<SystemStorageResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -133,7 +136,7 @@ export function InfraPage() {
         description="查看服务器磁盘、用户文件、平台数据和 HTTPS 证书是否需要处理。"
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => void onScan()} disabled={scanning || refreshing}>
+            <Button variant="outline" size="sm" onClick={() => void onScan()} disabled={platformReadOnly || scanning || refreshing} title={platformReadOnly ? "只读模式：写操作需 @admin 执行" : undefined}>
               <RefreshCw className={cn("mr-1.5 size-3.5", scanning && "animate-spin")} />
               手动扫描
             </Button>
@@ -249,7 +252,7 @@ export function InfraPage() {
                     event.stopPropagation();
                     void onArchive(row);
                   }}
-                  disabled={archivingPath === row.path || deletingPath === row.path}
+                  disabled={platformReadOnly || archivingPath === row.path || deletingPath === row.path}
                   title="归档=移动到 runtime/archive/，不删除数据"
                 >
                   {archivingPath === row.path ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
@@ -263,7 +266,7 @@ export function InfraPage() {
                     event.stopPropagation();
                     void onDelete(row);
                   }}
-                  disabled={archivingPath === row.path || deletingPath === row.path}
+                  disabled={platformReadOnly || archivingPath === row.path || deletingPath === row.path}
                   title="永久删除 workspace 目录"
                 >
                   {deletingPath === row.path ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}

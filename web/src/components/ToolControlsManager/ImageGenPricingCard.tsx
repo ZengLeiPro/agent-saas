@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAuth } from "@/contexts/AuthContext";
 
 /**
  * GenerateImage per-engine 生图定价卡片（2026-07-15 批次）。
@@ -108,6 +109,8 @@ function formatPricing(entry: ImageGenEnginePricing | undefined): string {
 }
 
 export function ImageGenPricingCard() {
+  // 只读平台 admin：保存定价 disabled
+  const { platformReadOnly } = useAuth();
   const [data, setData] = useState<ImageGenPricingAdminResponse | null>(null);
   const [drafts, setDrafts] = useState<DraftTable>({});
   const [loading, setLoading] = useState(true);
@@ -209,7 +212,7 @@ export function ImageGenPricingCard() {
             <RefreshCw className="size-3.5" />
             刷新
           </Button>
-          <Button size="sm" onClick={() => { void save(); }} disabled={saving || !dirty}>
+          <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || saving || !dirty}>
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
             保存定价
           </Button>

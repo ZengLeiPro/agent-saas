@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { MetricCard } from "@/components/PlatformAdmin/common";
+import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "./api";
@@ -12,6 +13,8 @@ import { formatNumber, formatTime } from "./format";
 import type { AlertingStatus } from "./types";
 
 export function SystemSettingsPanel() {
+  // 只读平台 admin：发送测试告警 disabled
+  const { platformReadOnly } = useAuth();
   const [status, setStatus] = useState<AlertingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -52,7 +55,7 @@ export function SystemSettingsPanel() {
         title="系统配置"
         description="平台运行参数、集成、备份、存储和健康检查。"
         actions={
-          <Button variant="outline" size="sm" onClick={() => void sendTest()} disabled={sending || !status?.webhookConfigured}>
+          <Button variant="outline" size="sm" onClick={() => void sendTest()} disabled={platformReadOnly || sending || !status?.webhookConfigured}>
             {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
             发送测试告警
           </Button>

@@ -60,7 +60,8 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const { users, loading: usersLoading } = useUsers();
   const { tenants, loading: tenantsLoading } = useTenants();
 
-  const { isPlatformAdmin } = useAuth();
+  // platformReadOnly：只读平台 admin，platform 态的上传/同步/启停/可见性/发布/删除全部 disabled（组织 admin 恒为 false，tenant 态不受影响）
+  const { isPlatformAdmin, platformReadOnly } = useAuth();
   const [syncing, setSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState<"global" | "user">("global");
   const [deleteTarget, setDeleteTarget] = useState<{ kind: "custom" | "tenantOwn"; username: string; skillId: string; name: string } | null>(null);
@@ -309,7 +310,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                 variant="outline"
                 size="sm"
                 onClick={handleSync}
-                disabled={syncing}
+                disabled={platformReadOnly || syncing}
               >
                 {syncing ? (
                   <Loader2 className="size-3.5 animate-spin" />
@@ -323,7 +324,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
               variant="outline"
               size="sm"
               onClick={() => setImportDialogOpen(true)}
-              disabled={importing}
+              disabled={platformReadOnly || importing}
             >
               {importing ? (
                 <Loader2 className="size-3.5 animate-spin" />
@@ -409,6 +410,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                               size="sm"
                               className="h-7 px-2 text-xs"
                               title="提升到平台技能池"
+                              disabled={platformReadOnly}
                               onClick={() => { void handlePromoteOwnToPool(skill.id); }}
                             >
                               <ArrowUpCircle className="size-3.5" />
@@ -537,6 +539,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                     <div className="flex shrink-0 items-center gap-2">
                       <Select
                         value={skill.exposure}
+                        disabled={platformReadOnly}
                         onValueChange={(value) => {
                           void handleUpdatePlatformSkill(skill, { exposure: value as PoolSkillInfo["exposure"] });
                         }}
@@ -550,8 +553,10 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                           <SelectItem value="deny_tenants">指定租户禁用</SelectItem>
                         </SelectContent>
                       </Select>
+                      {/* 平台技能启停是即时写，必须 disabled 而非仅忽略回调 */}
                       <Switch
                         checked={skill.enabled}
+                        disabled={platformReadOnly}
                         onCheckedChange={(checked) => { void handleUpdatePlatformSkill(skill, { enabled: checked }); }}
                         className="shrink-0"
                       />
@@ -563,6 +568,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                         <label key={tenant.id} className="flex min-w-0 items-center gap-2 text-xs">
                           <Checkbox
                             checked={skill.tenantIds.includes(tenant.id)}
+                            disabled={platformReadOnly}
                             onCheckedChange={(checked) => {
                               const tenantIds = checked === true
                                 ? Array.from(new Set([...skill.tenantIds, tenant.id]))
@@ -618,6 +624,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs"
+                                disabled={platformReadOnly}
                                 onClick={() => handlePromote(skill.id, username)}
                               >
                                 <ArrowUpCircle className="size-3.5" />
@@ -627,6 +634,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                                disabled={platformReadOnly}
                                 onClick={() => setDeleteTarget({ kind: "custom", username, skillId: skill.id, name: skill.name })}
                               >
                                 <Trash2 className="size-3.5" />
@@ -671,7 +679,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditTarget(null)}>取消</Button>
-            <Button onClick={() => { void saveEditor(); }} disabled={editLoading || editSaving}>
+            <Button onClick={() => { void saveEditor(); }} disabled={platformReadOnly || editLoading || editSaving}>
               {editSaving && <Loader2 className="size-4 animate-spin" />}
               保存
             </Button>
@@ -692,7 +700,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
             <Button variant="outline" onClick={() => setDeleteTarget(null)}>
               取消
             </Button>
-            <Button variant="destructive" onClick={confirmDelete} disabled={deleting}>
+            <Button variant="destructive" onClick={confirmDelete} disabled={platformReadOnly || deleting}>
               {deleting && <Loader2 className="size-4 animate-spin" />}
               删除
             </Button>

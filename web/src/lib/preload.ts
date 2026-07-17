@@ -33,7 +33,7 @@ async function fetchAuth(): Promise<AuthPreloadResult> {
     try {
       const res = await fetch(apiUrl("/api/auth/me"), { headers });
       if (res.ok) {
-        const data = await res.json() as { id: string; username: string; role: "admin" | "user"; tenantId: string; realName?: string; position?: string; phone?: string; phoneVerifiedAt?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; preferences?: UserPreferences };
+        const data = await res.json() as { id: string; username: string; role: "admin" | "user"; tenantId: string; isSuperAdmin?: boolean; realName?: string; position?: string; phone?: string; phoneVerifiedAt?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; preferences?: UserPreferences };
         return { status: "authenticated", user: data };
       }
       if (res.status === 404) {

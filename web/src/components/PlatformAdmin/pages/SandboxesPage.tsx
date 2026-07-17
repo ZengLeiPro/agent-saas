@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { useAuth } from "@/contexts/AuthContext";
 import { AdminEntityTable, AdminErrorAlert, EntityLink, MetricCard, ScopeFilters, StatusBadge } from "@/components/PlatformAdmin/common";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { pushPlatformAdminUrl } from "@/lib/urlSync";
@@ -62,6 +63,8 @@ function useSandboxData() {
 
 function SandboxList() {
   const adminQuery = useAdminUrlQuery();
+  // 只读平台 admin：清理/暂停/启动/删除等写操作 disabled；「网络自检」是服务端白名单放行的只读探测，保留可用
+  const { platformReadOnly } = useAuth();
   const { operations, sandboxes, loading, refreshing, error, load } = useSandboxData();
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -139,12 +142,12 @@ function SandboxList() {
         description="查看每个用户的执行环境是否正常、是否被占用，以及需要暂停、启动或删除的环境。"
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={cleanupLifecycle} disabled={!!action}>清理空闲环境</Button>
+            <Button variant="outline" size="sm" onClick={cleanupLifecycle} disabled={platformReadOnly || !!action} title={platformReadOnly ? "只读模式：写操作需 @admin 执行" : undefined}>清理空闲环境</Button>
             <Button variant="outline" size="sm" onClick={probeNetwork} disabled={!!action}>
               <Network className="size-3.5" />
               网络自检
             </Button>
-            <Button variant="outline" size="sm" onClick={cleanupSnat} disabled={!!action}>清理失效出口规则</Button>
+            <Button variant="outline" size="sm" onClick={cleanupSnat} disabled={platformReadOnly || !!action} title={platformReadOnly ? "只读模式：写操作需 @admin 执行" : undefined}>清理失效出口规则</Button>
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
               <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
               刷新
@@ -205,7 +208,7 @@ function SandboxList() {
                   size="icon"
                   className="size-7"
                   title="暂停"
-                  disabled={!!action || row.phase === "Paused"}
+                  disabled={platformReadOnly || !!action || row.phase === "Paused"}
                   onClick={(event) => {
                     event.stopPropagation();
                     pauseSandbox(row);
@@ -219,7 +222,7 @@ function SandboxList() {
                   size="icon"
                   className="size-7"
                   title="启动"
-                  disabled={!!action || row.phase !== "Paused"}
+                  disabled={platformReadOnly || !!action || row.phase !== "Paused"}
                   onClick={(event) => {
                     event.stopPropagation();
                     startSandbox(row);
@@ -233,7 +236,7 @@ function SandboxList() {
                   size="icon"
                   className="size-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
                   title="删除执行环境"
-                  disabled={!!action}
+                  disabled={platformReadOnly || !!action}
                   onClick={(event) => {
                     event.stopPropagation();
                     deleteSandbox(row);
@@ -264,6 +267,8 @@ function SandboxList() {
 }
 
 function SandboxDetail({ sandboxName }: { sandboxName: string }) {
+  // 只读平台 admin：详情页暂停/启动/删除 disabled
+  const { platformReadOnly } = useAuth();
   const [sandbox, setSandbox] = useState<SandboxRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState<string | null>(null);
@@ -331,7 +336,7 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
     });
   };
   const missing = !loading && !sandbox && /not found/i.test(error ?? "");
-  const actionDisabled = !!action || (!sandbox && (loading || !!error));
+  const actionDisabled = platformReadOnly || !!action || (!sandbox && (loading || !!error));
 
   return (
     <div className="w-full space-y-5">

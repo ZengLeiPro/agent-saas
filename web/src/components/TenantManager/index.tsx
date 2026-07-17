@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { refreshAll } from "@/lib/refreshBus";
 import { authFetch } from "@/lib/authFetch";
+import { useAuth } from "@/contexts/AuthContext";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import type { ModelList } from "@/types/models";
 import { useUsers } from "@/components/UserManager/hooks";
@@ -53,6 +54,8 @@ function TenantModelPolicyPanel({
   tenant: Tenant;
   onActionsChange?: (actions: ReactNode | null) => void;
 }) {
+  // 只读平台 admin：保存模型策略 disabled
+  const { platformReadOnly } = useAuth();
   const [settings, setSettings] = useState<TenantSettings>(() => cloneTenantSettings(tenant.settings ?? DEFAULT_TENANT_SETTINGS));
   const [modelList, setModelList] = useState<ModelList | null>(null);
   const [loading, setLoading] = useState(false);
@@ -157,12 +160,12 @@ function TenantModelPolicyPanel({
   const actions = useMemo(() => (
     <>
       {saved && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
-      <Button size="sm" onClick={() => { void save(); }} disabled={loading || saving}>
+      <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || loading || saving}>
         {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
         保存策略
       </Button>
     </>
-  ), [loading, save, saved, saving]);
+  ), [loading, platformReadOnly, save, saved, saving]);
 
   useEffect(() => {
     onActionsChange?.(actions);
@@ -357,6 +360,8 @@ function TenantCapabilitiesPanel({
   onActionsChange?: (actions: ReactNode | null) => void;
   onSaved?: () => Promise<void> | void;
 }) {
+  // 只读平台 admin：保存能力与配额 disabled
+  const { platformReadOnly } = useAuth();
   const initialSettings = tenant.settings ?? DEFAULT_TENANT_SETTINGS;
   const [settings, setSettings] = useState<TenantSettings>(() => cloneTenantSettings(initialSettings));
   const [baseline, setBaseline] = useState<TenantSettings>(() => cloneTenantSettings(initialSettings));
@@ -444,12 +449,12 @@ function TenantCapabilitiesPanel({
   const actions = useMemo(() => (
     <>
       {saved && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
-      <Button size="sm" onClick={() => { void save(); }} disabled={!dirty || saving}>
+      <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || !dirty || saving}>
         {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
         保存能力与配额
       </Button>
     </>
-  ), [dirty, save, saved, saving]);
+  ), [dirty, platformReadOnly, save, saved, saving]);
 
   useEffect(() => {
     onActionsChange?.(actions);
@@ -559,6 +564,8 @@ function TenantCapabilitiesPanel({
 }
 
 export function TenantManager() {
+  // 只读平台 admin：仅保留「新建组织」，其余写操作（保存名称/禁用/删除）disabled
+  const { platformReadOnly } = useAuth();
   const {
     tenants,
     loading,
@@ -681,7 +688,7 @@ export function TenantManager() {
             {activeDetailTab === "config" && selectedTenant && (
               <>
                 {nameSaved && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
-                <Button size="sm" onClick={() => { void saveTenantName(); }} disabled={!nameChanged || nameSaving}>
+                <Button size="sm" onClick={() => { void saveTenantName(); }} disabled={platformReadOnly || !nameChanged || nameSaving}>
                   {nameSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
                   保存名称
                 </Button>
@@ -777,6 +784,7 @@ export function TenantManager() {
                       variant={selectedTenant.disabled ? "outline" : "destructive"}
                       size="sm"
                       onClick={() => requestToggleTenantDisabled(selectedTenant)}
+                      disabled={platformReadOnly}
                     >
                       {selectedTenant.disabled ? <Power className="size-3.5" /> : <PowerOff className="size-3.5" />}
                       {selectedTenant.disabled ? "启用组织" : "禁用组织"}
@@ -785,7 +793,7 @@ export function TenantManager() {
                       variant="destructive"
                       size="sm"
                       onClick={() => requestDeleteTenant(selectedTenant)}
-                      disabled={selectedTenant.id === DEFAULT_TENANT_ID}
+                      disabled={platformReadOnly || selectedTenant.id === DEFAULT_TENANT_ID}
                     >
                       <Trash2 className="size-3.5" />
                       删除组织
@@ -851,6 +859,7 @@ export function TenantManager() {
             </Button>
             <Button
               variant="destructive"
+              disabled={platformReadOnly}
               onClick={async () => {
                 if (!disableTarget) return;
                 try {
@@ -921,7 +930,7 @@ export function TenantManager() {
             </Button>
             <Button
               variant="destructive"
-              disabled={!deleteTarget || deleteConfirm !== deleteTarget.id || deleting}
+              disabled={platformReadOnly || !deleteTarget || deleteConfirm !== deleteTarget.id || deleting}
               onClick={async () => {
                 if (!deleteTarget) return;
                 setDeleting(true);

@@ -23,7 +23,9 @@ export type LoginEvent =
   | 'mcp_server_updated' | 'mcp_server_deleted' | 'mcp_user_selections_updated' | 'mcp_admin_user_selections_updated'
   | 'mcp_secret_bound' | 'mcp_secret_rotated' | 'mcp_secret_deleted' | 'mcp_oauth_connected' | 'mcp_oauth_revoked'
   | 'tenant_created' | 'tenant_updated' | 'tenant_disabled' | 'tenant_enabled' | 'tenant_deleted'
-  | 'workspace_archived' | 'workspace_deleted';
+  | 'workspace_archived' | 'workspace_deleted'
+  // 平台管理员分层治理（2026-07-18）：只读平台 admin 被拦截的操作 + 敏感检索留痕
+  | 'platform_readonly_denied' | 'platform_user_search';
 
 export interface LoginLogEntry {
   timestamp: string;

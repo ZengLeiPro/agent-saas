@@ -955,6 +955,8 @@ export function PlatformAdminShell({
   settingsOnly?: boolean;
   headerControlsPlacement?: "inline" | "none";
 }) {
+  // 只读平台 admin（万神殿非 @admin）：写操作被服务端 403 拦截，前端顶部提示 + 各分区写入口 disabled
+  const { platformReadOnly } = useAuth();
   // mount-once-visited（与 TenantAdminShell 同模式）
   const [visitedPlatformSections, setVisitedPlatformSections] = useState<Set<PlatformSection>>(() =>
     settingsOpen ? new Set([settingsSection]) : new Set(),
@@ -978,19 +980,27 @@ export function PlatformAdminShell({
   ];
 
   const settingsContent = (
-    <>
-      {platformSectionsToRender.map(({ id, node }) => {
-        if (!visitedPlatformSections.has(id)) return null;
-        const isActive = id === settingsSection;
-        return (
-          <div key={id} className={cn("h-full min-h-0", !isActive && "hidden")} aria-hidden={!isActive}>
-            <Suspense fallback={<SettingsSectionFallback />}>
-              {node}
-            </Suspense>
-          </div>
-        );
-      })}
-    </>
+    <div className="flex h-full min-h-0 flex-col">
+      {/* 只读模式提示条：样式复用现有浅色提示条（rounded-md border bg-muted）风格 */}
+      {platformReadOnly && (
+        <div className="mb-3 shrink-0 rounded-md border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+          只读模式：平台配置仅可查看，写操作需 @admin 执行；你仍可创建组织。
+        </div>
+      )}
+      <div className="min-h-0 flex-1">
+        {platformSectionsToRender.map(({ id, node }) => {
+          if (!visitedPlatformSections.has(id)) return null;
+          const isActive = id === settingsSection;
+          return (
+            <div key={id} className={cn("h-full min-h-0", !isActive && "hidden")} aria-hidden={!isActive}>
+              <Suspense fallback={<SettingsSectionFallback />}>
+                {node}
+              </Suspense>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 
   const content = (() => {

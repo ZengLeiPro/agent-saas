@@ -37,6 +37,13 @@ interface AuthContextValue {
    * 后端 `requirePlatformAdmin` 是权威判定；前端只做入口可见性 gate。
    */
   isPlatformAdmin: boolean;
+  /** 平台超级管理员（默认仅 @admin，来自 /api/auth/me）；权威判定在服务端。 */
+  isSuperAdmin: boolean;
+  /**
+   * 只读平台 admin（万神殿员工账号）= isPlatformAdmin && !isSuperAdmin。
+   * 平台管理界面可见但只读；创建组织是唯一保留的写入口（2026-07-18 分层治理）。
+   */
+  platformReadOnly: boolean;
   /** 鉴权功能是否启用（后端未开启时为 false，此时无需登录） */
   authEnabled: boolean;
   accounts: SavedAccountSummary[];
@@ -208,6 +215,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: user !== null,
       isAdmin: user?.role === "admin",
       isPlatformAdmin: user?.role === "admin" && user?.tenantId === DEFAULT_TENANT_ID,
+      isSuperAdmin: user?.isSuperAdmin === true,
+      platformReadOnly:
+        user?.role === "admin" &&
+        user?.tenantId === DEFAULT_TENANT_ID &&
+        user?.isSuperAdmin !== true,
       authEnabled,
       accounts,
       login,

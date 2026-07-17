@@ -9,6 +9,7 @@ import {
   requirePlatformAdmin,
   isPlatformAdmin,
 } from "../auth/middleware.js";
+import { isSuperAdmin, requireSuperAdmin } from "../auth/platformGovernance.js";
 import type { JwtPayload } from "../auth/types.js";
 import type { UserStore } from "../data/users/store.js";
 import type { UserRecord } from "../data/users/types.js";
@@ -345,6 +346,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         username: user.username,
         role: user.role,
         tenantId,
+        // 与 /me 同口径：登录响应即带 super 标记，避免前端在下一次 me 刷新前误判只读
+        isSuperAdmin: isSuperAdmin({ sub: user.id, username: user.username, role: user.role, tenantId }),
         realName: user.realName,
         position: user.position,
         phone: user.phone,
@@ -847,6 +850,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       // /me handler 原先漏返。前端依赖此字段判断"当前组织"标签 / 是否平台 admin。
       // JWT payload 里有，所以直接透传 req.user.tenantId 即可。
       tenantId: req.user.tenantId,
+      // 平台管理员分层治理（2026-07-18）：前端据此渲染平台管理只读模式；权威判定
+      // 始终在服务端 enforcePlatformWritePolicy。
+      isSuperAdmin: isSuperAdmin(req.user),
       avatar: avatarUrl(req.user.sub, record?.avatar, record?.avatarVersion),
       avatarVersion: record?.avatarVersion,
       debugMode: record?.debugMode === true,
@@ -1639,8 +1645,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     }
   });
 
-  // DELETE /api/auth/login-logs (admin only)
-  router.delete("/login-logs", requireAdmin, async (req, res) => {
+  // DELETE /api/auth/login-logs
+  // 2026-07-18 收紧：清空审计日志属超敏感操作，@admin 独占（此前仅 requireAdmin
+  // 且无租户过滤，任何组织 admin 可清全局日志，属跨租户写漏洞）。
+  router.delete("/login-logs", requireSuperAdmin, async (req, res) => {
     try {
       const beforeDate = req.query.before as string | undefined;
       const excludeUsername = req.query.excludeUsername as string | undefined;

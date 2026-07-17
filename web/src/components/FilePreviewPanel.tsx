@@ -61,14 +61,6 @@ export function FilePreviewDialog({ open, filePath, owner, shareToken, onClose, 
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <DialogContent className="flex h-[min(900px,calc(100vh-64px))] w-[min(1180px,calc(100vw-48px))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:rounded-xl">
         <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4 pr-16">
-          {filePath ? (
-            <FilePreviewActions
-              filePath={filePath}
-              owner={owner}
-              shareToken={shareToken}
-              showLabels
-            />
-          ) : null}
           <div className="min-w-0 flex-1">
             <DialogTitle className="truncate text-sm font-medium leading-5">
               {filename}
@@ -79,6 +71,13 @@ export function FilePreviewDialog({ open, filePath, owner, shareToken, onClose, 
               </div>
             ) : null}
           </div>
+          {filePath ? (
+            <FilePreviewActions
+              filePath={filePath}
+              owner={owner}
+              shareToken={shareToken}
+            />
+          ) : null}
           {onDock ? (
             <Button
               variant="outline"

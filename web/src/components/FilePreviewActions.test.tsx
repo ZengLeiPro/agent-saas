@@ -67,8 +67,14 @@ describe("FilePreviewActions", () => {
 
   it("视频预览只显示下载，不显示打印", () => {
     render(<FilePreviewActions filePath="assets/demo.mp4" />);
-    expect(screen.getByRole("button", { name: "下载文件" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "下载文件" }).textContent).toBe("");
     expect(screen.queryByRole("button", { name: "打印文件" })).toBeNull();
+  });
+
+  it("下载和打印按钮只显示图标，不渲染文字", () => {
+    render(<FilePreviewActions filePath="assets/demo.md" />);
+    expect(screen.getByRole("button", { name: "下载文件" }).textContent).toBe("");
+    expect(screen.getByRole("button", { name: "打印文件" }).textContent).toBe("");
   });
 });
 

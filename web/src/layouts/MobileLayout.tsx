@@ -182,9 +182,6 @@ export function MobileLayout(props: LayoutProps) {
               <ChevronLeft className="size-6" />
             </Button>
             {previewFilePath ? (
-              <FilePreviewActions filePath={previewFilePath} owner={previewFileOwner} />
-            ) : null}
-            {previewFilePath ? (
               <span className="min-w-0 truncate text-sm font-medium">
                 {previewFilePath.split("/").pop() || previewFilePath}
               </span>
@@ -199,7 +196,9 @@ export function MobileLayout(props: LayoutProps) {
               </>
             )}
           </div>
-          {!previewFilePath ? (
+          {previewFilePath ? (
+            <FilePreviewActions filePath={previewFilePath} owner={previewFileOwner} />
+          ) : (
             <div className="flex items-center gap-2">
               {modelList?.showContextTokens !== false && (
                 <TokenUsageDisplay
@@ -225,7 +224,7 @@ export function MobileLayout(props: LayoutProps) {
                 </Button>
               )}
             </div>
-          ) : null}
+          )}
         </div>
       </header>
 

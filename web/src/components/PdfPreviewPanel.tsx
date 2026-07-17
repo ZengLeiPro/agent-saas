@@ -60,15 +60,15 @@ export function PdfPreviewPanel({ filePath, owner, shareToken, kbSource, page, o
             <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={onBack}>
               <ChevronLeft className="size-5" />
             </Button>
-            {!kbSource && (
-              <FilePreviewActions filePath={filePath} owner={owner} shareToken={shareToken} />
-            )}
             <span className="min-w-0 truncate text-sm font-medium">{filename}</span>
             {dirPath && (
               <span className="min-w-0 shrink truncate text-xs text-muted-foreground">{dirPath}</span>
             )}
+            {!kbSource && (
+              <FilePreviewActions filePath={filePath} owner={owner} shareToken={shareToken} className="ml-auto" />
+            )}
             {url && (
-              <Button variant="ghost" size="icon" className="ml-auto size-9 shrink-0" title="在新标签页打开" asChild>
+              <Button variant="ghost" size="icon" className={kbSource ? "ml-auto size-9 shrink-0" : "size-9 shrink-0"} title="在新标签页打开" asChild>
                 <a href={url} target="_blank" rel="noopener noreferrer">
                   <ExternalLink className="size-4" />
                 </a>

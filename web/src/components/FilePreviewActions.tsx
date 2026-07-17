@@ -19,7 +19,6 @@ interface FilePreviewActionsProps {
   owner?: string;
   shareToken?: string;
   className?: string;
-  showLabels?: boolean;
 }
 
 function triggerBrowserDownload(url: string, fileName: string): void {
@@ -77,7 +76,6 @@ export function FilePreviewActions({
   owner,
   shareToken,
   className,
-  showLabels = false,
 }: FilePreviewActionsProps) {
   const [downloading, setDownloading] = useState(false);
   const [openingPrintView, setOpeningPrintView] = useState(false);
@@ -131,28 +129,26 @@ export function FilePreviewActions({
     <div className={cn("flex shrink-0 items-center gap-1", className)}>
       <Button
         variant="ghost"
-        size={showLabels ? "sm" : "icon"}
-        className={cn(!showLabels && "size-8")}
+        size="icon"
+        className="size-8"
         onClick={() => void handleDownload()}
         disabled={downloading}
         title="下载文件"
         aria-label="下载文件"
       >
         {downloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-        {showLabels ? "下载" : null}
       </Button>
       {printable ? (
         <Button
           variant="ghost"
-          size={showLabels ? "sm" : "icon"}
-          className={cn(!showLabels && "size-8")}
+          size="icon"
+          className="size-8"
           onClick={handlePrint}
           disabled={openingPrintView}
           title={previewType === "pdf" ? "打开 PDF 打印视图" : "打印文件"}
           aria-label="打印文件"
         >
           {openingPrintView ? <Loader2 className="size-4 animate-spin" /> : <Printer className="size-4" />}
-          {showLabels ? "打印" : null}
         </Button>
       ) : null}
     </div>

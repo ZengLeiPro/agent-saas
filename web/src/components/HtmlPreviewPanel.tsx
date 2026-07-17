@@ -136,11 +136,11 @@ export function HtmlPreviewPanel({ filePath, owner, shareToken, onBack, hideHead
             <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={onBack}>
               <ChevronLeft className="size-5" />
             </Button>
-            <FilePreviewActions filePath={filePath} owner={owner} shareToken={shareToken} />
             <span className="min-w-0 truncate text-sm font-medium">{filename}</span>
             {dirPath && (
               <span className="min-w-0 shrink truncate text-xs text-muted-foreground">{dirPath}</span>
             )}
+            <FilePreviewActions filePath={filePath} owner={owner} shareToken={shareToken} className="ml-auto" />
           </div>
         </header>
       )}

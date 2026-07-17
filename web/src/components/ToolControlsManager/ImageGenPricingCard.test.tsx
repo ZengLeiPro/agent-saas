@@ -5,6 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ImageGenPricingCard } from "./ImageGenPricingCard";
 import { authFetch } from "@/lib/authFetch";
 
+// 平台管理员分层治理（2026-07-18）：组件依赖 useAuth().platformReadOnly，测试无 AuthProvider，mock 为可写态
+vi.mock("@/contexts/AuthContext", () => ({
+  useAuth: () => ({ platformReadOnly: false, isSuperAdmin: true, isPlatformAdmin: true }),
+}));
 vi.mock("@/lib/authFetch", () => ({
   authFetch: vi.fn(),
 }));

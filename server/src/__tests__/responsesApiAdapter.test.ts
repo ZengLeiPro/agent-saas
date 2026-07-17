@@ -1085,7 +1085,7 @@ describe('ResponsesApiAdapter', () => {
     }, baseContext))).rejects.toThrow('MODEL_SSE_FRAME_TOO_LARGE');
   });
 
-  it('HTTP 5xx 与网络歧义错误不自动二次 POST', async () => {
+  it('未配置退避时 HTTP 5xx 与网络歧义错误不自动二次 POST', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('{"error":{"message":"upstream EOF"}}', { status: 500 }),
     );
@@ -1096,6 +1096,82 @@ describe('ResponsesApiAdapter', () => {
     await expect(collect(adapter.stream({
       model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
     }, baseContext))).rejects.toThrow('HTTP 500');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('显式配置后对发流前 EOF 快三次、慢两次，共重试五次', async () => {
+    vi.useFakeTimers();
+    let requestCount = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      requestCount += 1;
+      if (requestCount <= 5) {
+        return new Response(JSON.stringify({
+          error: {
+            code: 'internal_server_error',
+            message: 'Post "https://chatgpt.com/backend-api/codex/responses": EOF',
+          },
+        }), { status: 500 });
+      }
+      return responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_retry', model: 'gpt-5.6-sol' } }),
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: 'ok' }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: {
+            id: 'resp_retry',
+            model: 'gpt-5.6-sol',
+            status: 'completed',
+            usage: { input_tokens: 8, output_tokens: 1, input_tokens_details: {}, output_tokens_details: {} },
+          },
+        }),
+      ]);
+    });
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      {
+        protocol: 'responses',
+        preStreamRetryDelaysMs: [500, 1_000, 2_000, 5_000, 10_000],
+      },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(events.find((event) => event.type === 'completed')).toMatchObject({
+      type: 'completed',
+      content: 'ok',
+      modelRequestAttemptCount: 6,
+    });
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, outcome: 'http_error', willRetry: true },
+      { attempt: 2, outcome: 'http_error', willRetry: true },
+      { attempt: 3, outcome: 'http_error', willRetry: true },
+      { attempt: 4, outcome: 'http_error', willRetry: true },
+      { attempt: 5, outcome: 'http_error', willRetry: true },
+      { attempt: 6, outcome: 'completed' },
+    ]);
+  });
+
+  it('配置退避也不重试普通 HTTP 500', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"error":{"message":"invalid provider configuration"}}', { status: 500 }),
+    );
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500, 1_000] },
+    );
+
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext))).rejects.toThrow('invalid provider configuration');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

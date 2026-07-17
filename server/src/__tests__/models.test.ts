@@ -134,6 +134,31 @@ describe('OpenAI-only model resolver', () => {
     expect(resolveModelRef(withMaxOutput, 'ark/doubao')?.providerOptions?.maxOutputTokens).toBe(49152);
   });
 
+  it('maps pre_stream_retry_delays_ms config with model override', () => {
+    const withRetries: ModelsConfig = {
+      default: 'proxy/sol',
+      allowCrossGroupSwitch: false,
+      groups: [
+        {
+          id: 'proxy',
+          name: 'CLIProxyAPI',
+          apiKey: 'sk-test',
+          baseUrl: 'https://llm.example/v1',
+          pre_stream_retry_delays_ms: [500, 1_000, 2_000, 5_000, 10_000],
+          models: [
+            { id: 'sol', name: 'Sol', value: 'gpt-5.6-sol' },
+            { id: 'single', name: 'Single', value: 'gpt-5.6-sol', pre_stream_retry_delays_ms: [] },
+          ],
+        },
+      ],
+    };
+
+    expect(resolveModelRef(withRetries, 'proxy/sol')?.providerOptions?.preStreamRetryDelaysMs)
+      .toEqual([500, 1_000, 2_000, 5_000, 10_000]);
+    expect(resolveModelRef(withRetries, 'proxy/single')?.providerOptions?.preStreamRetryDelaysMs)
+      .toEqual([]);
+  });
+
   it('falls back to default when a model ref is stale', () => {
     expect(resolveModelRef(modelsConfig, 'openai-agents/removed')).toEqual({
       model: 'doubao-pro',

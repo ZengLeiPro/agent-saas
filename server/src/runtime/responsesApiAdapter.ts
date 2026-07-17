@@ -220,9 +220,13 @@ export class ResponsesApiAdapter implements ModelAdapter {
     const modelRequestId = randomUUID();
     let response: Response | null = null;
     let activeAttempt: ResponsesAttemptDiagnostics | null = null;
-    // 网络错误/5xx 不能证明上游未接单、未计费，禁止隐式重试。唯一自动二次 POST 是
-    // previous_response_id 被明确 400/404 拒绝后的全量降级（确定性未进入模型执行）。
-    const maxAttempts = hasPrevious ? 2 : 1;
+    // 默认仍不重试：网络错误/5xx 不能证明上游未接单、未计费。只有模型组显式配置
+    // pre_stream_retry_delays_ms 时，才对发流前瞬时故障执行有限重试；已开始读 SSE 后
+    // 的错误绝不回到这里，因此不会重复执行模型已返回的工具调用。
+    const retryDelaysMs = this.providerOptions.preStreamRetryDelaysMs ?? [];
+    let transientRetryIndex = 0;
+    // previous_response_id 400/404 的全量降级不占瞬时故障重试次数。
+    const maxAttempts = 1 + retryDelaysMs.length + (hasPrevious ? 1 : 0);
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       modelRequestAttemptCount = attempt;
       const serializedBody = JSON.stringify(body);
@@ -253,11 +257,21 @@ export class ResponsesApiAdapter implements ModelAdapter {
         });
       } catch (err) {
         const aborted = requestSignal?.aborted === true;
+        const retryDelayMs = aborted ? undefined : retryDelaysMs[transientRetryIndex];
+        const willRetry = retryDelayMs !== undefined;
         await attemptDiagnostics.finished(aborted ? 'aborted' : 'network_error', {
           errorCode: aborted ? 'MODEL_REQUEST_ABORTED' : 'MODEL_NETWORK_ERROR',
           errorMessage: compactDiagnosticMessage(err),
+          ...(willRetry ? { willRetry: true } : {}),
         });
-        throw err;
+        if (!willRetry) throw err;
+        transientRetryIndex += 1;
+        logger.warn(
+          `Responses API 发流前网络错误，${retryDelayMs}ms 后重试 `
+          + `(${transientRetryIndex}/${retryDelaysMs.length})：${compactDiagnosticMessage(err)}`,
+        );
+        await waitForRetry(retryDelayMs, requestSignal);
+        continue;
       }
       attemptDiagnostics.observeHttpResponse(attemptResponse);
       if (attemptResponse.ok) {
@@ -288,10 +302,28 @@ export class ResponsesApiAdapter implements ModelAdapter {
         continue;
       }
       const providerError = extractProviderError(text);
+      const retryDelayMs = isRetryablePreStreamHttpError(
+        attemptResponse.status,
+        providerError.message ?? text,
+      )
+        ? retryDelaysMs[transientRetryIndex]
+        : undefined;
+      const willRetry = retryDelayMs !== undefined && !requestSignal?.aborted;
       await attemptDiagnostics.finished('http_error', {
         errorCode: providerError.code ?? `HTTP_${attemptResponse.status}`,
         errorMessage: providerError.message ?? `Responses API HTTP ${attemptResponse.status}`,
+        ...(willRetry ? { willRetry: true } : {}),
       });
+      if (willRetry) {
+        transientRetryIndex += 1;
+        logger.warn(
+          `Responses API HTTP ${attemptResponse.status} 发流前瞬时故障，${retryDelayMs}ms 后重试 `
+          + `(${transientRetryIndex}/${retryDelaysMs.length})：`
+          + `${providerError.message ?? compactDiagnosticMessage(text)}`,
+        );
+        await waitForRetry(retryDelayMs, requestSignal);
+        continue;
+      }
       throw new Error(
         `Responses API HTTP ${attemptResponse.status}: ${providerError.message ?? 'upstream request failed'}`,
       );
@@ -1340,6 +1372,32 @@ function extractProviderError(text: string): { code?: string; message?: string }
     const message = compactDiagnosticMessage(text);
     return message ? { message } : {};
   }
+}
+
+function isRetryablePreStreamHttpError(status: number, message: string): boolean {
+  if (status === 502 || status === 503 || status === 504) return true;
+  if (status !== 500) return false;
+  return /\b(?:EOF|ECONNRESET|EPIPE|ETIMEDOUT)\b|socket hang up|connection (?:reset|closed)|unexpected end of file/i.test(message);
+}
+
+async function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw abortReason(signal);
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      reject(signal ? abortReason(signal) : new Error('Model request aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error('Model request aborted');
 }
 
 function compactDiagnosticMessage(value: unknown): string {

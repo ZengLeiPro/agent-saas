@@ -365,6 +365,11 @@ const modelProviderOptionsSchema = z.object({
    * 下限 64 与 adapter 的火山 500 防护下限（MAX_OUTPUT_TOKENS_FLOOR）对齐。
    */
   max_output_tokens: z.number().int().min(64).max(1_000_000).optional(),
+  /**
+   * Responses 发流前瞬时故障重试间隔；一项代表一次额外 POST。
+   * 默认空（不重试），由需要容忍代理抖动的模型组显式开启。
+   */
+  pre_stream_retry_delays_ms: z.array(z.number().int().min(100).max(120_000)).max(10).optional(),
 });
 
 /**

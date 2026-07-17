@@ -143,6 +143,11 @@ export interface ModelProviderOptions {
    * 优先级：ModelRequest.maxOutputTokens（调用方显式）> 本字段 > adapter 默认 4096。
    */
   maxOutputTokens?: number;
+  /**
+   * Responses 发流前瞬时故障的退避间隔。数组每一项代表一次额外重试；未配置时不重试。
+   * 仅覆盖 fetch 网络错误、502/503/504，以及错误信息明确包含 EOF/连接断开的 HTTP 500。
+   */
+  preStreamRetryDelaysMs?: number[];
   // ── Responses API v1（RFC P0.5）：仅 protocol="responses" 时生效 ──
   /** 协议路由，默认 chat_completions（保持现有行为）。 */
   protocol?: "chat_completions" | "responses";

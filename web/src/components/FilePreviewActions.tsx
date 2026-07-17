@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Loader2, Printer } from "lucide-react";
 import { getPreviewFileType, resolveImageSrc } from "@agent/shared";
 
@@ -48,14 +48,17 @@ function dispatchPrint(filePath: string): void {
 
 /** 让具体预览器处理打印：HTML 交给 sandbox iframe，文本类只打印内容区。 */
 export function useFilePreviewPrint(filePath: string, print: () => void): void {
+  const printRef = useRef(print);
+  printRef.current = print;
+
   useEffect(() => {
     const listener = (event: Event) => {
       const detail = (event as CustomEvent<FilePreviewPrintDetail>).detail;
-      if (detail?.filePath === filePath) print();
+      if (detail?.filePath === filePath) printRef.current();
     };
     window.addEventListener(FILE_PREVIEW_PRINT_EVENT, listener);
     return () => window.removeEventListener(FILE_PREVIEW_PRINT_EVENT, listener);
-  }, [filePath, print]);
+  }, [filePath]);
 }
 
 /** 通过打印媒体样式只保留当前 Markdown/文本/代码内容区。 */

@@ -111,15 +111,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build frontend
-        run: pnpm -F web build
-
       - name: Pack ECS release
         run: |
           tar \
             --exclude='./.git' \
             --exclude='./node_modules' \
             --exclude='./*/node_modules' \
+            --exclude='./web' \
             --exclude='./server/data' \
             --exclude='./logs' \
             --exclude='./config.json' \
@@ -129,6 +127,10 @@ jobs:
             --exclude='./mobile/ios' \
             --exclude='./mobile/android' \
             -czf "$RUNNER_TEMP/agent-saas-release.tgz" .
+          if tar -tzf "$RUNNER_TEMP/agent-saas-release.tgz" | grep -Eq '^\./web(/|$)'; then
+            echo "ECS release boundary violated: web/ must not be packaged"
+            exit 1
+          fi
           mv "$RUNNER_TEMP/agent-saas-release.tgz" agent-saas-release.tgz
 
       - name: Configure SSH
@@ -825,6 +827,8 @@ jobs:
 
   # 前端静态托管在 OSS（bucket agent-saas-web，绑定 agent.kaiyan.net），
   # API/WS 走独立域名 api.agent.kaiyan.net（VITE_API_BASE 构建时注入）。
+  # ECS 冷灾备使用同一份分域构建，但发布到独立 recovery-web 目录，
+  # 不进入 Server release，也不由 Express 托管。
   # 与 ECS 部署同为 dispatch-only，保证前后端版本一致发布。
   # 上传顺序：先 hash 资源（immutable，只增不删，兼容在途会话的旧 chunk 懒加载）,
   # 后入口文件（no-cache），保证 index.html 引用的资源先就位。
@@ -843,6 +847,10 @@ jobs:
       OSS_BUCKET: agent-saas-web
       VITE_API_BASE: https://api.agent.kaiyan.net
       VITE_WEB_ORIGIN: https://agent.kaiyan.net
+      ECS_HOST: ${{ secrets.ECS_HOST }}
+      ECS_USER: ${{ secrets.ECS_USER }}
+      ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      RECOVERY_WEB_ROOT: /opt/agent-saas-web-recovery
 
     steps:
       - name: Checkout code
@@ -913,6 +921,50 @@ jobs:
       - name: Verify live Web/API split-domain contract
         run: node web/scripts/check-live-oss.mjs
 
+      - name: Package recovery Web release
+        run: |
+          tar -C web/dist -czf "$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz" .
+
+      - name: Configure recovery SSH
+        run: |
+          : "${ECS_HOST:?Missing secret ECS_HOST}"
+          : "${ECS_USER:?Missing secret ECS_USER}"
+          : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_recovery_key
+          chmod 600 ~/.ssh/ecs_recovery_key
+          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload recovery Web release
+        run: |
+          scp -i ~/.ssh/ecs_recovery_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz" \
+            "$ECS_USER@$ECS_HOST:/tmp/agent-saas-recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz"
+
+      - name: Activate recovery Web release
+        run: |
+          ssh -i ~/.ssh/ecs_recovery_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "$ECS_USER@$ECS_HOST" \
+            "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' RELEASE_ID='$GITHUB_SHA' RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' ARCHIVE='/tmp/agent-saas-recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz' bash -s" \
+            < scripts/deploy-recovery-web.sh
+          touch "$RUNNER_TEMP/recovery-web-activated"
+
+      - name: Verify recovery Web endpoint
+        run: |
+          ECS_IP=$(getent ahostsv4 "$ECS_HOST" | awk 'NR == 1 { print $1 }')
+          : "${ECS_IP:?Cannot resolve ECS_HOST to IPv4}"
+          curl -fsS \
+            --resolve "agent.kaiyan.net:443:$ECS_IP" \
+            -D "$RUNNER_TEMP/recovery-web.headers" \
+            -o "$RUNNER_TEMP/recovery-web.index.html" \
+            "https://agent.kaiyan.net/?recovery_probe=${GITHUB_SHA}"
+          grep -Eqi '^x-agent-saas-recovery:[[:space:]]*true' "$RUNNER_TEMP/recovery-web.headers"
+          cmp web/dist/index.html "$RUNNER_TEMP/recovery-web.index.html"
+          echo "recovery Web endpoint matches current OSS build"
+
       - name: Snapshot successful Web release
         run: |
           for f in manifest.webmanifest index.html sw.js; do
@@ -920,6 +972,19 @@ jobs:
               "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/current/$f" -f \
               --region "$OSS_REGION" --copy-props default
           done
+
+      - name: Restore previous recovery Web on failure
+        if: failure()
+        run: |
+          if [ ! -f "$RUNNER_TEMP/recovery-web-activated" ]; then
+            echo "recovery Web was not activated; nothing to restore"
+            exit 0
+          fi
+          ssh -i ~/.ssh/ecs_recovery_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "$ECS_USER@$ECS_HOST" \
+            "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' bash -s" \
+            < scripts/rollback-recovery-web.sh
 
       - name: Restore previous Web entry files on failure
         if: failure()

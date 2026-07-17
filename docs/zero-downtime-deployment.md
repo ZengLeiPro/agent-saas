@@ -30,7 +30,8 @@
 
 ## 2. 架构总览
 
-前端已剥离到 OSS，API/WS 走独立域名，蓝绿只发生在 API 侧：
+前端主链路已剥离到 OSS，API/WS 走独立域名，蓝绿只发生在 API 侧；ECS
+保留由 Web 发布链独立维护的静态冷灾备，不进入 Server release：
 
 ```
                         用户浏览器 / 客户端
@@ -45,7 +46,13 @@
         │ agent-saas-web    │              ▼
         │ (ci.yml           │   upstream agent_saas_backend      ←── 蓝绿切流点
         │  deploy-web-oss)  │   (/etc/nginx/conf.d/agent-saas-upstream.conf，
-        └───────────────────┘    部署脚本重写：新色 primary、旧色 backup)
+        └─────────┬─────────┘    部署脚本重写：新色 primary、旧色 backup)
+                  │ 同一份分域构建               │
+                  ▼                              │
+      ECS recovery-web（冷灾备）                 │
+      /opt/agent-saas-web-recovery/current       │
+      shared-root 跨版本保留 hash/Workbox 资源    │
+      nginx 直接静态读取，不经过 Server           │
                                   │ primary              │ backup
                                   ▼                      ▼
                      agent-saas-server@blue   agent-saas-server@green
@@ -75,15 +82,18 @@
 - PG 角色 `agent_runtime_app` 的连接上限为 20。共享查询 Pool 默认 `poolMax=6`
   （可由 `runtimeEventStore.poolMax` 调整），加上每实例各 1 条 LISTEN 与 cron
   leadership 专用连接，蓝绿并存时最多占 16 条，保留 4 条运维余量；
-- 旧站点 `/etc/nginx/conf.d/agent-kaiyan.conf`（agent.kaiyan.net 全站反代）在
-  DNS 缓存过期后只承接零星流量，其 `proxy_pass` 同样指向
-  `agent_saas_backend`，避免与 API 域切流不一致。
+- `/etc/nginx/conf.d/agent-kaiyan.conf` 是 `agent.kaiyan.net` 冷灾备静态站点，
+  直接读取 `/opt/agent-saas-web-recovery/current`，不再引用 `agent_saas_backend`；
+  正常生产 DNS 指向 OSS，只有 OSS 故障回切 DNS 后才承载用户流量。
+- recovery vhost 使用 `/etc/nginx/ssl/agent-kaiyan-recovery` 中与 OSS 同步的 CAS
+  证书；每次 OSS 续证必须同步 ECS，并以 `curl --resolve` 直连门禁确认。
 
 ## 3. 部署流程
 
 触发方式（ci.yml 头注释）：`push main` 只构建 + 测试 + 打包，**不部署生产**；
 发版走 `workflow_dispatch`（Actions 页面手动触发或 `gh workflow run ci.yml`）。
-`deploy-ecs` 与 `deploy-web-oss` 同为 dispatch-only，保证前后端版本一致发布。
+`deploy-ecs` 与 `deploy-web-oss` 同为 dispatch-only；后端成功后才发布 OSS 和
+独立 recovery-web，保证版本一致且 Server release 不含前端文件。
 
 整条手动发布 workflow 使用固定 concurrency group，`cancel-in-progress=false`：同一时间
 只允许一个批次从 build 走到 Web OSS 发布结束；普通 push CI 使用独立 `run_id`，不受

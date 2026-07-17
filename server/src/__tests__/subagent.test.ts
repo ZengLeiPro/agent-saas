@@ -371,6 +371,8 @@ describe('runSubagent', () => {
     const fixture = await makeFixture({ cleanupDirs });
     const abortController = new AbortController();
     fixture.parentContext.signal = abortController.signal;
+    let childRunCreated!: () => void;
+    const childRunReady = new Promise<void>((resolve) => { childRunCreated = resolve; });
     const pending = runSubagent({
       ...runnerDeps(fixture),
       parentProviders: [],
@@ -378,8 +380,10 @@ describe('runSubagent', () => {
       request: { description: 't', prompt: 'p', includeCompanyInfo: false },
       limiter: new SubagentLimiter(),
       modelAdapterFactory: () => new HangingAdapter(),
+      onChildRunCreated: childRunCreated,
     });
-    setTimeout(() => abortController.abort(), 30);
+    await childRunReady;
+    abortController.abort();
     const outcome = await pending;
     expect(outcome.status).toBe('cancelled');
     expect(outcome.errorMessage).toMatch(/取消/);

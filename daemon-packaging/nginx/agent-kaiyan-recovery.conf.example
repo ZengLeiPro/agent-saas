@@ -1,0 +1,92 @@
+# Cold-standby Web endpoint for agent.kaiyan.net.
+# Production DNS points to OSS. If DNS is switched back to this ECS, nginx
+# serves the independently published recovery Web release directly; it never
+# proxies frontend traffic to the agent-saas Server process.
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    "" close;
+}
+
+limit_conn_zone $binary_remote_addr zone=agent_conn_limit:10m;
+limit_req_zone $binary_remote_addr zone=agent_req_limit:10m rate=100r/s;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name agent.kaiyan.net;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name agent.kaiyan.net;
+
+    ssl_certificate /etc/nginx/ssl/agent-kaiyan-recovery/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/agent-kaiyan-recovery/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    root /opt/agent-saas-web-recovery/current;
+    index index.html;
+
+    limit_conn agent_conn_limit 300;
+    limit_conn_status 444;
+    limit_conn_log_level warn;
+
+    limit_req zone=agent_req_limit burst=200 nodelay;
+    limit_req_status 444;
+
+    location ~* \.(php|asp|aspx|jsp|cgi|env|git|svn|bak|sql|log|ini|conf|htaccess|htpasswd|DS_Store)$ {
+        access_log off;
+        return 444;
+    }
+
+    location ~* ^/(wp-|wordpress|phpmyadmin|mysql|cgi-bin|boaform|vendor|telescope|_ignition|debug|actuator|solr|jenkins|\.git|\.env|\.aws|\.ssh) {
+        access_log off;
+        return 444;
+    }
+
+    location /assets/ {
+        root /opt/agent-saas-web-recovery/shared-root;
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    location = /sw.js {
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    location ~ ^/workbox-.*\.js$ {
+        root /opt/agent-saas-web-recovery/shared-root;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    location = /manifest.webmanifest {
+        try_files $uri =404;
+        default_type application/manifest+json;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    location = /index.html {
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Agent-Saas-Recovery "true" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Agent-Saas-Recovery "true" always;
+    }
+}

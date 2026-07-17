@@ -84,9 +84,11 @@ agent-saas/
 6. 挂载鉴权 middleware。
 7. 调用 `registerRoutes()` 注册控制面 API。
 8. 启动所有 Channel。
-9. 生产模式下托管 `web/dist`。
-10. 启动 Cron。
-11. 监听 HTTP 端口并把 WebSocket server attach 到同一个 HTTP server。
+9. 启动 Cron。
+10. 监听 HTTP 端口并把 WebSocket server attach 到同一个 HTTP server。
+
+Server 只提供 API、WebSocket 和内部运行时，不构建也不托管 Web 静态文件。生产 Web
+由 OSS 承载；ECS 冷灾备由 nginx 直接读取独立的 `recovery-web` 目录。
 
 ### 4.2 AppRuntime 依赖容器
 
@@ -412,12 +414,12 @@ Cron payload 支持：
 - 网络代理：`docs/tailscale-nginx-setup.md`、`docs/wireguard-nginx-setup.md`。
 - Azeroth PG：`docs/azeroth-pg-setup.md`。
 
-生产模式通常为：
+生产模式为：
 
-1. `pnpm build` 构建 Web。
-2. `pnpm start` 启动 server。
-3. server 托管 `web/dist`，同时提供 REST API 和 WebSocket。
-4. 外层通过 nginx / tailscale / wireguard / frp 等方式暴露服务。
+1. `deploy-ecs` 打包不含 `web/` 的 Server release，蓝绿发布 REST API 和 WebSocket。
+2. `deploy-web-oss` 用 `VITE_API_BASE=https://api.agent.kaiyan.net` 构建 Web 并发布 OSS。
+3. 同一份分域 Web 产物独立发布到 ECS `recovery-web` 目录，供 OSS 故障时 DNS 回切。
+4. `agent.kaiyan.net` 主链路指向 OSS；`api.agent.kaiyan.net` 指向 ECS nginx/API。
 
 ## 17. 关键请求链路
 

@@ -17,10 +17,12 @@
 - 持久数据：`/mnt/agent-saas/server-data`
 - 用户 workspace：`/mnt/agent-saas/workspaces/<tenantId>/<userId>`
 - 运行态/归档：`/mnt/agent-saas/runtime`
-- 前端入口：`agent.kaiyan.net` CNAME → OSS bucket `agent-saas-web`（ci.yml `deploy-web-oss` job 发布，不经 ECS）
+- 前端主入口：`agent.kaiyan.net` CNAME → OSS bucket `agent-saas-web`
+- 前端冷灾备：`/opt/agent-saas-web-recovery/releases/<sha>`，`current`/`previous` symlink；由 `deploy-web-oss` 使用同一份分域构建独立发布，不进入 Server release
+- 灾备不可变资源池：`/opt/agent-saas-web-recovery/shared-root`，跨 release 只增不删，兼容在途旧页面的 hash chunk 与旧 Workbox runtime
 - API/WS 公网入口：`api.agent.kaiyan.net` → ECS nginx（`/etc/nginx/conf.d/agent-api-kaiyan.conf`）→ upstream `agent_saas_backend`（`/etc/nginx/conf.d/agent-saas-upstream.conf`，蓝绿切流点，部署脚本重写）→ 127.0.0.1:3200/3201
-- 旧全站反代 `/etc/nginx/conf.d/agent-kaiyan.conf`（agent.kaiyan.net）：DNS 缓存过期后只承接零星流量，`proxy_pass` 同样指向 `agent_saas_backend` 以防切流不一致
-- TLS 证书：`/etc/letsencrypt/live/`，`certbot-renew.timer` 自动续期
+- 冷灾备 nginx：`/etc/nginx/conf.d/agent-kaiyan.conf` 直接读取 `agent-saas-web-recovery/current`，不反代 Server；模板见 `daemon-packaging/nginx/agent-kaiyan-recovery.conf.example`
+- TLS 证书：API 域证书在 `/etc/letsencrypt/live/` 自动续期；`agent.kaiyan.net` 冷灾备使用与 OSS 同一张 CAS 证书，安装到 `/etc/nginx/ssl/agent-kaiyan-recovery`，OSS 续证时必须同步更新 ECS，Web 发布门禁会直连验证证书与 recovery 内容
 
 `server/data` 在部署后软链到 NAS 持久目录，避免每次 release 覆盖用户、租户、MCP、SecretVault 等本地态。
 
@@ -32,11 +34,11 @@
 
 `.github/workflows/ci.yml`。`push main` 只构建 + 测试 + 打包，**不部署生产**；
 发版走 `workflow_dispatch`（Actions 页面手动触发或 `gh workflow run ci.yml`），
-`deploy-ecs` 与 `deploy-web-oss` 两个 job 同时发布，保证前后端版本一致。
+`deploy-ecs` 先发布后端，成功后 `deploy-web-oss` 发布 OSS 与 ECS 冷灾备，保证前后端版本一致。
 
 `deploy-ecs` 蓝绿流程概要（远端脚本 13 步详解见[零停机部署](zero-downtime-deployment.md)）：
 
-1. 构建 + 打包 release，scp 上传 ECS。
+1. 打包不含 `web/` 的 Server release，scp 上传 ECS。
 2. 读 `/etc/agent-saas/active-color` 定位 idle 色；校验 active 实例在服务。
 3. 安装前清理未受保护的历史 release，并校验至少 8 GiB 可用空间、25 万可用 inode；随后解包到 `releases/<sha>`，`server/data` 软链 NAS，以 isolated linker 安装 server/shared 依赖。
 4. 只改 idle 色 symlink（active 色 symlink 永不动）→ `systemctl start agent-saas-server@<idle>`。
@@ -44,6 +46,21 @@
 6. 切流：重写 nginx upstream（新色 primary、旧色 backup）→ `nginx -t` → reload → 验证。
 7. 更新 active-color，重新生成 `/opt/agent-saas-app/rollback.sh`。
 8. `kill -USR2` 精确 drain 旧色（活跃流清空后自退，`Restart=on-failure` 不复活）。
+
+`deploy-web-oss` 在 OSS 线上门禁通过后，将同一份 `web/dist` 打包上传到
+`/opt/agent-saas-web-recovery/releases/<sha>`，校验 `index.html`/`sw.js` 后原子切换
+`current`，并保留原 `current` 为 `previous`。随后 CI 用 `--resolve` 绕过公网 DNS，
+直连 ECS 的 `agent.kaiyan.net` vhost，验证 TLS、`X-Agent-Saas-Recovery` 和完整
+`index.html`。`assets/` 与 `workbox-*` 同步到只增不删的 `shared-root`，上传包保留在
+`agent-saas-web-recovery/artifacts`，均不自动清理；任一步失败都会把 recovery
+`current` 与 OSS 入口文件恢复到上一版。
+
+灾备回滚只切 symlink，不删除历史 release：
+
+```bash
+ln -sfn "$(readlink -f /opt/agent-saas-web-recovery/previous)" \
+  /opt/agent-saas-web-recovery/current
+```
 
 部署期间 CI runner 每 1s 探测 `https://api.agent.kaiyan.net/api/healthz`，
 最大连续非 200 ≥ 2 即判零停机门禁失败。
@@ -55,6 +72,8 @@ GitHub Secrets：
 - `ECS_HOST`
 - `ECS_USER`
 - `ECS_SSH_KEY`
+- `OSS_WEB_DEPLOY_AK_ID`
+- `OSS_WEB_DEPLOY_AK_SECRET`
 
 ## ky-azeroth PAT 注入
 

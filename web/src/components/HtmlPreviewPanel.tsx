@@ -1,8 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ChevronLeft, Loader2, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/authFetch";
 import { publicSessionShareFileUrl } from "@/lib/sessionShareApi";
+import {
+  FILE_PREVIEW_PRINT_MESSAGE,
+  FILE_PREVIEW_PRINT_DONE_MESSAGE,
+  FilePreviewActions,
+  useFilePreviewPrint,
+} from "@/components/FilePreviewActions";
 
 const HTML_SANDBOX_CSP = [
   "default-src 'none'",
@@ -32,11 +38,12 @@ function htmlDownloadUrl(filePath: string, owner?: string) {
 
 function injectSandboxCsp(html: string) {
   const meta = `<meta http-equiv="Content-Security-Policy" content="${HTML_SANDBOX_CSP}">`;
+  const printBridge = `<script>window.addEventListener("message",function(event){if(event.source===window.parent&&event.data&&event.data.type===${JSON.stringify(FILE_PREVIEW_PRINT_MESSAGE)}){window.addEventListener("afterprint",function(){window.parent.postMessage({type:${JSON.stringify(FILE_PREVIEW_PRINT_DONE_MESSAGE)}},"*");},{once:true});window.print();}});</script>`;
   const headMatch = html.match(/<head(\s[^>]*)?>/i);
-  if (!headMatch) return `${meta}${html}`;
+  if (!headMatch) return `${meta}${printBridge}${html}`;
 
   const index = html.indexOf(headMatch[0]) + headMatch[0].length;
-  return `${html.slice(0, index)}${meta}${html.slice(index)}`;
+  return `${html.slice(0, index)}${meta}${printBridge}${html.slice(index)}`;
 }
 
 export function HtmlPreviewPanel({ filePath, owner, shareToken, onBack, hideHeader }: HtmlPreviewPanelProps) {
@@ -45,6 +52,45 @@ export function HtmlPreviewPanel({ filePath, owner, shareToken, onBack, hideHead
     | { status: "error"; message: string }
     | { status: "success"; html: string; filename: string }
   >({ status: "loading" });
+  const printPreview = useCallback(() => {
+    if (state.status !== "success") return;
+
+    // 常规预览继续只给 allow-scripts。用户主动打印时才创建短命 iframe 并临时
+    // 开 allow-modals，避免生成 HTML 在普通预览中滥用 alert/confirm。
+    const printFrame = document.createElement("iframe");
+    printFrame.setAttribute("sandbox", "allow-scripts allow-modals");
+    printFrame.setAttribute("aria-hidden", "true");
+    printFrame.style.position = "fixed";
+    printFrame.style.left = "-100000px";
+    printFrame.style.top = "0";
+    printFrame.style.width = `${window.innerWidth}px`;
+    printFrame.style.height = `${window.innerHeight}px`;
+    printFrame.style.border = "0";
+
+    let cleaned = false;
+    let cleanupTimer: number | undefined;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (cleanupTimer !== undefined) window.clearTimeout(cleanupTimer);
+      window.removeEventListener("message", handlePrintDone);
+      printFrame.remove();
+    };
+    const handlePrintDone = (event: MessageEvent) => {
+      if (
+        event.source === printFrame.contentWindow &&
+        event.data?.type === FILE_PREVIEW_PRINT_DONE_MESSAGE
+      ) cleanup();
+    };
+    window.addEventListener("message", handlePrintDone);
+    printFrame.addEventListener("load", () => {
+      printFrame.contentWindow?.postMessage({ type: FILE_PREVIEW_PRINT_MESSAGE }, "*");
+    }, { once: true });
+    printFrame.srcdoc = state.html;
+    document.body.appendChild(printFrame);
+    cleanupTimer = window.setTimeout(cleanup, 60_000);
+  }, [state]);
+  useFilePreviewPrint(filePath, printPreview);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +136,7 @@ export function HtmlPreviewPanel({ filePath, owner, shareToken, onBack, hideHead
             <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={onBack}>
               <ChevronLeft className="size-5" />
             </Button>
+            <FilePreviewActions filePath={filePath} owner={owner} shareToken={shareToken} />
             <span className="min-w-0 truncate text-sm font-medium">{filename}</span>
             {dirPath && (
               <span className="min-w-0 shrink truncate text-xs text-muted-foreground">{dirPath}</span>

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { resolveImageSrc } from "@agent/shared";
 import { KbPdfPreview } from "@/components/KbPdfPreview";
 import { publicSessionShareFileUrl } from "@/lib/sessionShareApi";
+import { FilePreviewActions } from "@/components/FilePreviewActions";
 
 interface PdfPreviewPanelProps {
   filePath: string;
@@ -59,6 +60,9 @@ export function PdfPreviewPanel({ filePath, owner, shareToken, kbSource, page, o
             <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={onBack}>
               <ChevronLeft className="size-5" />
             </Button>
+            {!kbSource && (
+              <FilePreviewActions filePath={filePath} owner={owner} shareToken={shareToken} />
+            )}
             <span className="min-w-0 truncate text-sm font-medium">{filename}</span>
             {dirPath && (
               <span className="min-w-0 shrink truncate text-xs text-muted-foreground">{dirPath}</span>

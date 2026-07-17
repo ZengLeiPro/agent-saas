@@ -245,3 +245,34 @@
     background-color: hsl(var(--code-block-bg));
   }
 }
+
+/* Markdown/文本/代码预览打印时，只保留当前文件内容区。 */
+@media print {
+  body.file-preview-printing,
+  body.file-preview-printing #root {
+    position: static !important;
+    inset: auto !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  body.file-preview-printing * {
+    visibility: hidden !important;
+  }
+
+  body.file-preview-printing [data-file-preview-print-root="true"],
+  body.file-preview-printing [data-file-preview-print-root="true"] * {
+    visibility: visible !important;
+  }
+
+  body.file-preview-printing [data-file-preview-print-root="true"] {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 16mm !important;
+    background: white !important;
+    color: black !important;
+  }
+}

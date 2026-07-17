@@ -250,8 +250,10 @@ describe('session share routes', () => {
     const { sessionId } = await writeSharedSession();
     const userCwd = deps.resolveUserCwd(agentCwd, TEST_USER);
     const relPath = 'assets/20260708/demo.html';
+    const pdfRelPath = 'assets/20260708/demo.pdf';
     await mkdir(join(userCwd, 'assets/20260708'), { recursive: true });
     await writeFile(join(userCwd, relPath), '<h1>Demo artifact</h1>');
+    await writeFile(join(userCwd, pdfRelPath), 'PDF_BYTES');
 
     const { server, baseUrl } = await startServer(agentCwd);
     try {
@@ -272,6 +274,15 @@ describe('session share routes', () => {
       expect(file.status).toBe(200);
       expect(file.headers.get('content-type')).toContain('text/html');
       expect(await file.text()).toBe('<h1>Demo artifact</h1>');
+
+      const pdfUrl = `${baseUrl}/api/share/sessions/${token}/file?path=${encodeURIComponent(pdfRelPath)}`;
+      const inlinePdf = await fetch(pdfUrl, { method: 'HEAD' });
+      expect(inlinePdf.status).toBe(200);
+      expect(inlinePdf.headers.get('content-disposition')).toMatch(/^inline;/);
+
+      const forcedDownload = await fetch(`${pdfUrl}&download=1`, { method: 'HEAD' });
+      expect(forcedDownload.status).toBe(200);
+      expect(forcedDownload.headers.get('content-disposition')).toMatch(/^attachment;/);
 
       const blocked = await fetch(`${baseUrl}/api/share/sessions/${token}/file?path=${encodeURIComponent('../secret.txt')}`);
       expect(blocked.status).toBe(403);

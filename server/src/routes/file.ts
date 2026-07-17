@@ -369,11 +369,13 @@ export function createFileRouter(options: FileRouterOptions): Router {
       };
       const contentType = mimeMap[ext] || "application/octet-stream";
 
-      // image/video/pdf 用 inline，便于浏览器内嵌预览（<img>/<video>/iframe）；其余走 attachment 下载
-      const disposition =
-        contentType.startsWith("image/") ||
-        contentType.startsWith("video/") ||
-        contentType === "application/pdf"
+      // image/video/pdf 默认 inline 供预览；用户点击下载时显式强制 attachment。
+      const forceDownload = req.query.download === "1" || req.query.download === "true";
+      const disposition = forceDownload
+        ? "attachment"
+        : contentType.startsWith("image/") ||
+            contentType.startsWith("video/") ||
+            contentType === "application/pdf"
           ? "inline"
           : "attachment";
 

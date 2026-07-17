@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { ChevronLeft, Loader2, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { resolveImageSrc } from "@agent/shared";
+import { FilePreviewActions } from "@/components/FilePreviewActions";
 
 interface VideoPreviewPanelProps {
   filePath: string;
@@ -39,6 +40,7 @@ export function VideoPreviewPanel({ filePath, owner, onBack, hideHeader }: Video
             <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={onBack}>
               <ChevronLeft className="size-5" />
             </Button>
+            <FilePreviewActions filePath={filePath} owner={owner} />
             <span className="min-w-0 truncate text-sm font-medium">{filename}</span>
             {dirPath && (
               <span className="min-w-0 shrink truncate text-xs text-muted-foreground">{dirPath}</span>

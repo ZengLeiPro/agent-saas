@@ -938,10 +938,12 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
 
       const fileName = path.basename(absolutePath);
       const contentType = shareFileContentType(fileName);
-      const disposition =
-        contentType.startsWith("image/") ||
-        contentType.startsWith("video/") ||
-        contentType === "application/pdf"
+      const forceDownload = req.query.download === "1" || req.query.download === "true";
+      const disposition = forceDownload
+        ? "attachment"
+        : contentType.startsWith("image/") ||
+            contentType.startsWith("video/") ||
+            contentType === "application/pdf"
           ? "inline"
           : "attachment";
 

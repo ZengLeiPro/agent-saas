@@ -141,6 +141,23 @@ describe("/api/file/download referrer fallback", () => {
     expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
   });
 
+  it("媒体默认内嵌预览，download=1 时强制浏览器下载", async () => {
+    ({ server, baseUrl } = await startServer({
+      sub: "u1",
+      username: "zengky",
+      role: "user",
+    }));
+    const base = `${baseUrl}/api/file/download?path=${encodeURIComponent("root-image.jpg")}`;
+
+    const preview = await fetch(base, { method: "HEAD" });
+    expect(preview.status).toBe(200);
+    expect(preview.headers.get("content-disposition")).toMatch(/^inline;/);
+
+    const download = await fetch(`${base}&download=1`, { method: "HEAD" });
+    expect(download.status).toBe(200);
+    expect(download.headers.get("content-disposition")).toMatch(/^attachment;/);
+  });
+
   it("Range 支持分片、后缀范围和 If-Range 版本校验", async () => {
     ({ server, baseUrl } = await startServer({
       sub: "u1",

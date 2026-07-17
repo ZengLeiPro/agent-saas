@@ -1,10 +1,11 @@
 import { publicSessionShareFileUrl } from "@/lib/sessionShareApi";
-import { useState, useEffect, useMemo, lazy, Suspense } from "react";
+import { useState, useEffect, useMemo, lazy, Suspense, useCallback, useRef } from "react";
 import { ChevronLeft, Loader2, CircleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/authFetch";
 import { extractTextFromChildren, getCellMinWidthPx } from "@/lib/tableCellWidth";
 import { resolveImageSrc } from "@agent/shared";
+import { FilePreviewActions, printFilePreviewElement, useFilePreviewPrint } from "@/components/FilePreviewActions";
 
 /** 判断是否为外部 URL 或 data URI */
 function isExternalSrc(src: string): boolean {
@@ -149,9 +150,12 @@ interface MarkdownPreviewPanelProps {
 }
 
 export function MarkdownPreviewPanel({ filePath, owner, shareToken, onBack, hideHeader }: MarkdownPreviewPanelProps) {
+  const printRootRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<
     { status: "loading" } | { status: "error"; message: string } | { status: "success"; content: string; filename: string }
   >({ status: "loading" });
+  const printPreview = useCallback(() => printFilePreviewElement(printRootRef.current), []);
+  useFilePreviewPrint(filePath, printPreview);
 
   useEffect(() => {
     let cancelled = false;
@@ -205,6 +209,7 @@ export function MarkdownPreviewPanel({ filePath, owner, shareToken, onBack, hide
             <Button variant="ghost" size="icon" className="size-9 shrink-0" onClick={onBack}>
               <ChevronLeft className="size-5" />
             </Button>
+            <FilePreviewActions filePath={filePath} owner={owner} shareToken={shareToken} />
             <span className="min-w-0 truncate text-sm font-medium">{filename}</span>
             {dirPath && (
               <span className="min-w-0 shrink truncate text-xs text-muted-foreground">{dirPath}</span>
@@ -213,7 +218,7 @@ export function MarkdownPreviewPanel({ filePath, owner, shareToken, onBack, hide
         </header>
       )}
 
-      <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-card px-6 py-6 lg:px-10">
+      <div ref={printRootRef} className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-card px-6 py-6 lg:px-10">
         <div className="mx-auto max-w-[72ch]">
           {state.status === "loading" && (
             <div className="flex items-center justify-center py-12">

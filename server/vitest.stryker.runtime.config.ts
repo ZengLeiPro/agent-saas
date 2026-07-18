@@ -21,7 +21,14 @@ export default defineConfig({
       'src/__tests__/appRuntime.test.ts',
       'src/__tests__/appRuntimeCoverage.test.ts',
     ],
-    exclude: ['node_modules', 'dist'],
+    exclude: [
+      'node_modules',
+      'dist',
+      // 这两个测试硬编码 resolve(cwd, '../workspace-shared')，在 stryker sandbox
+      // 目录下相对路径对不上——排除。runtime 主体变异覆盖不依赖它们。
+      '**/runtimeStage2.test.ts',
+      '**/rawRuntimeOrgAgentDispatch.test.ts',
+    ],
     environment: 'node',
     globals: true,
     testTimeout: 15000,

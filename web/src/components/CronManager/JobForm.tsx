@@ -666,7 +666,7 @@ export function JobForm({
                   <Input
                     value={dingtalkUserId}
                     onChange={(e) => setDingtalkUserId(e.target.value)}
-                    placeholder="例如：***REMOVED-PUBLIC-HISTORY-6***"
+                    placeholder="例如：user123456"
                   />
                   <p className="text-xs text-muted-foreground">
                     主动私聊发送不依赖 sessionWebhook；userId 通常可从会话列表的 senderId 获得。

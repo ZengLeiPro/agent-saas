@@ -137,7 +137,7 @@
     "mode": "stream",
     "messageBufferMs": 43200000,
     "robots": {
-      "***REMOVED-PUBLIC-HISTORY-5***": {
+      "ding-example-robot": {
         "name": "机器人名称",
         "enabled": true,
         "appKey": "dingXXXXXXXX",

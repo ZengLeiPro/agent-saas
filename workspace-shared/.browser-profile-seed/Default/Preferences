@@ -1,0 +1,27 @@
+{
+  "browser": {
+    "has_seen_welcome_page": true,
+    "window_placement": {
+      "bottom": 900,
+      "left": 0,
+      "maximized": false,
+      "right": 1440,
+      "top": 0,
+      "work_area_bottom": 900,
+      "work_area_left": 0,
+      "work_area_right": 1440,
+      "work_area_top": 0
+    }
+  },
+  "intl": {
+    "selected_languages": "zh-CN,zh,en-US,en"
+  },
+  "profile": {
+    "exit_type": "Normal",
+    "name": ""
+  },
+  "signin": {
+    "accounts_metadata_dict": {},
+    "allowed": false
+  }
+}

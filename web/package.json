@@ -55,7 +55,7 @@
     "vitest": "^4.0.18",
     "@vitest/coverage-v8": "^4.0.18",
     "vite-plugin-pwa": "^1.2.0",
-    "ws": "^8.19.0",
+    "ws": "^8.21.1",
     "workbox-core": "^7.4.0",
     "workbox-precaching": "^7.4.0",
     "workbox-routing": "^7.4.0",

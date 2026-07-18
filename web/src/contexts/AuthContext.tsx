@@ -78,6 +78,9 @@ function normalizeAuthUser(user: AuthUser): AuthUser {
     username: user.username,
     role: user.role,
     tenantId: user.tenantId,
+    // 2026-07-18 平台管理员分层治理：后端 /auth/me 与登录响应下发 isSuperAdmin，
+    // 前端 platformReadOnly 判定必须依赖此字段——漏掉会导致 @admin 也被误判为只读。
+    isSuperAdmin: user.isSuperAdmin === true,
     realName: user.realName,
     position: user.position,
     phone: user.phone,

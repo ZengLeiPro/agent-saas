@@ -13,7 +13,7 @@ const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
 // --- Auth 预取（带重试，等待后端就绪） ---
 
 export type AuthPreloadResult =
-  | { status: "authenticated"; user: { id: string; username: string; role: "admin" | "user"; tenantId: string; realName?: string; position?: string; phone?: string; phoneVerifiedAt?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; preferences?: UserPreferences } }
+  | { status: "authenticated"; user: { id: string; username: string; role: "admin" | "user"; tenantId: string; isSuperAdmin?: boolean; realName?: string; position?: string; phone?: string; phoneVerifiedAt?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; preferences?: UserPreferences } }
   | { status: "no-auth" }
   | { status: "unauthenticated" }
   | { status: "error" };

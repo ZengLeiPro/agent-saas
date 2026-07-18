@@ -86,7 +86,7 @@ describe("RoleKitDetailPage", () => {
     expect(onTryScenario).toHaveBeenCalledWith(expect.objectContaining({ id: "boss-1" }));
   });
 
-  it("expands later sections with friendly labels and hides banned backup actions", () => {
+  it("expands customer-facing sections without rendering internal promise guards", () => {
     render(<RoleKitDetailPage role={role} scenarios={[scenario]} onTryScenario={vi.fn()} />);
 
     fireEvent.click(screen.getByText("需要接入的数据源"));
@@ -98,8 +98,7 @@ describe("RoleKitDetailPage", () => {
     fireEvent.click(screen.getByText("陪跑路径：4 小时到 7 天"));
     expect(screen.getByText("每天早上发经营简报")).toBeTruthy();
     expect(screen.queryByText("客户成功不主动推销")).toBeNull();
-
-    fireEvent.click(screen.getByText("我们不承诺什么"));
-    expect(screen.getByText("不承诺替代人工决策")).toBeTruthy();
+    expect(screen.queryByText("我们不承诺什么")).toBeNull();
+    expect(screen.queryByText("不承诺替代人工决策")).toBeNull();
   });
 });

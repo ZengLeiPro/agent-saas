@@ -176,10 +176,6 @@ export function RoleKitDetailPage({
   }, [roleScenarios, safe.defaultRecurringId]);
   const first5 = roleScenarios.slice(0, 5);
   const skillCandidates = useMemo(() => aggregateSkillCandidates(roleScenarios), [roleScenarios]);
-  const cannotPromise = useMemo(
-    () => uniqueStrings(roleScenarios.flatMap((scenario) => scenario.cannotPromise ?? [])),
-    [roleScenarios],
-  );
   const day1Steps = useMemo(
     () => roleScenarios.flatMap((scenario) => scenario.day1PathSteps ?? []).slice(0, 6),
     [roleScenarios],
@@ -335,20 +331,6 @@ export function RoleKitDetailPage({
               <EmptyHint>该岗位暂无陪跑路径。</EmptyHint>
             )}
           </div>
-        </Section>
-
-        <Section title="我们不承诺什么" defaultOpen={false} expandable>
-          {cannotPromise.length ? (
-            <ul className="space-y-2 text-sm text-muted-foreground">
-              {cannotPromise.map((item) => (
-                <li key={item} className="rounded-md bg-muted/30 px-3 py-2">
-                  {item}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <EmptyHint>该岗位暂无额外限制说明。</EmptyHint>
-          )}
         </Section>
       </div>
 

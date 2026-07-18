@@ -1160,6 +1160,55 @@ describe('ResponsesApiAdapter', () => {
     ]);
   });
 
+  it('显式配置后重试发流前的 Go HTTP/2 peer PROTOCOL_ERROR', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          code: 'internal_server_error',
+          message: 'Post "https://chatgpt.com/backend-api/codex/responses": stream error: stream ID 1; PROTOCOL_ERROR; received from peer',
+        },
+      }), { status: 500 }))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_protocol_retry', model: 'gpt-5.6-sol' } }),
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: 'ok' }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: {
+            id: 'resp_protocol_retry',
+            model: 'gpt-5.6-sol',
+            status: 'completed',
+            usage: { input_tokens: 8, output_tokens: 1, input_tokens_details: {}, output_tokens_details: {} },
+          },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events.find((event) => event.type === 'completed')).toMatchObject({
+      type: 'completed',
+      content: 'ok',
+      modelRequestAttemptCount: 2,
+    });
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, outcome: 'http_error', willRetry: true },
+      { attempt: 2, outcome: 'completed' },
+    ]);
+  });
+
   it('配置退避也不重试普通 HTTP 500', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('{"error":{"message":"invalid provider configuration"}}', { status: 500 }),

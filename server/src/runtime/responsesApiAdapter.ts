@@ -1377,7 +1377,8 @@ function extractProviderError(text: string): { code?: string; message?: string }
 function isRetryablePreStreamHttpError(status: number, message: string): boolean {
   if (status === 502 || status === 503 || status === 504) return true;
   if (status !== 500) return false;
-  return /\b(?:EOF|ECONNRESET|EPIPE|ETIMEDOUT)\b|socket hang up|connection (?:reset|closed)|unexpected end of file/i.test(message);
+  return /\b(?:EOF|ECONNRESET|EPIPE|ETIMEDOUT)\b|socket hang up|connection (?:reset|closed)|unexpected end of file/i.test(message)
+    || /stream error:\s*stream ID \d+;\s*PROTOCOL_ERROR;\s*received from peer/i.test(message);
 }
 
 async function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {

@@ -131,6 +131,16 @@ type ResponsesInputItem =
     output: string;
   };
 
+interface ResponsesRetryState {
+  modelRequestId: string;
+  lastAttempt: number;
+  transientRetryIndex: number;
+  maxAttempts: number;
+  body: Record<string, unknown>;
+  usePrevious: boolean;
+  responseMode: ModelResponseMode;
+}
+
 export class ResponsesApiAdapter implements ModelAdapter {
   constructor(
     private readonly connection: Required<RuntimeConnection>,
@@ -138,6 +148,14 @@ export class ResponsesApiAdapter implements ModelAdapter {
   ) {}
 
   async *stream(request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent> {
+    yield* this.streamWithRetry(request, context);
+  }
+
+  private async *streamWithRetry(
+    request: ModelRequest,
+    context: RunContext,
+    retryState?: ResponsesRetryState,
+  ): AsyncIterable<ModelEvent> {
     // P0.6：max_output_tokens 强制下限 ≥64
     // 取值优先级：调用方显式 request > 模型配置 max_output_tokens > 默认 4096。
     const requestedMax = typeof request.maxOutputTokens === 'number'
@@ -167,8 +185,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
     const sessionIdShort = context.sessionId ? context.sessionId.slice(0, 8) : undefined;
     // usePrevious 可被降级：上游报 PreviousResponseNotFound（跨模型切换残留 / 服务端已过期）
     // 时切回全量重建 body 重试，不让确定性 400 直接打死整个 run。
-    let usePrevious = hasPrevious;
-    let responseMode: ModelResponseMode = hasPrevious ? 'relay' : 'full';
+    let usePrevious = retryState?.usePrevious ?? hasPrevious;
+    let responseMode: ModelResponseMode = retryState?.responseMode ?? (hasPrevious ? 'relay' : 'full');
     const promptCacheKey = this.providerOptions.disablePromptCacheKey
       ? undefined
       : computePromptCacheKey(request.model, request.messages, request.tools);
@@ -210,24 +228,27 @@ export class ResponsesApiAdapter implements ModelAdapter {
       }
       return built;
     };
-    let body = await buildRequestBody();
+    let body = retryState?.body ?? await buildRequestBody();
     let requestBodyBytes = 0;
     let requestInputPrefixHash = '';
     let modelRequestAttemptCount = 0;
 
     const requestSignal = request.signal ?? context.signal;
     const url = responsesUrl(this.connection.baseUrl);
-    const modelRequestId = randomUUID();
+    const modelRequestId = retryState?.modelRequestId ?? randomUUID();
+    // 默认仍不重试：网络错误/5xx 不能证明上游未接单、未计费。只有模型组显式配置
+    // pre_stream_retry_delays_ms 时才启用有限重试。流内只额外覆盖 provider 官方
+    // internal_server_error 终态且本 attempt 尚未向上层交付任何正文/思考；两类故障
+    // 共用同一份次数与退避预算，避免重复工具副作用和重试乘法膨胀。
+    const retryDelaysMs = this.providerOptions.preStreamRetryDelaysMs ?? [];
+    let transientRetryIndex = retryState?.transientRetryIndex ?? 0;
+    // previous_response_id 400/404 的全量降级不占瞬时故障重试次数。
+    const maxAttempts = retryState?.maxAttempts
+      ?? 1 + retryDelaysMs.length + (hasPrevious ? 1 : 0);
     let response: Response | null = null;
     let activeAttempt: ResponsesAttemptDiagnostics | null = null;
-    // 默认仍不重试：网络错误/5xx 不能证明上游未接单、未计费。只有模型组显式配置
-    // pre_stream_retry_delays_ms 时，才对发流前瞬时故障执行有限重试；已开始读 SSE 后
-    // 的错误绝不回到这里，因此不会重复执行模型已返回的工具调用。
-    const retryDelaysMs = this.providerOptions.preStreamRetryDelaysMs ?? [];
-    let transientRetryIndex = 0;
-    // previous_response_id 400/404 的全量降级不占瞬时故障重试次数。
-    const maxAttempts = 1 + retryDelaysMs.length + (hasPrevious ? 1 : 0);
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const firstAttempt = (retryState?.lastAttempt ?? 0) + 1;
+    for (let attempt = firstAttempt; attempt <= maxAttempts; attempt++) {
       modelRequestAttemptCount = attempt;
       const serializedBody = JSON.stringify(body);
       requestBodyBytes = Buffer.byteLength(serializedBody, 'utf8');
@@ -359,6 +380,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     let providerErrorCode: string | undefined;
     let providerErrorMessage: string | undefined;
     let refusal = '';
+    let hasEmittedOutput = false;
 
     // function_call 在 stream 里按 output_index 累积；item 整体在 output_item.done 出现
     const toolCallsByIndex = new Map<number, ModelToolCall>();
@@ -417,18 +439,23 @@ export class ResponsesApiAdapter implements ModelAdapter {
               const delta = typeof event.delta === 'string' ? event.delta : '';
               if (delta) {
                 content += delta;
+                hasEmittedOutput = true;
                 yield { type: 'text_delta', content: delta };
               }
             } else if (eventType === 'response.reasoning_summary_text.delta') {
               // 公开派模型（glm 在带 tools 复杂 agent loop 时激活）发 reasoning summary；
               // 隐藏派（doubao/minimax）此事件不出现但 reasoning_tokens 仍计费
               const delta = typeof event.delta === 'string' ? event.delta : '';
-              if (delta) yield { type: 'thinking_delta', content: delta };
+              if (delta) {
+                hasEmittedOutput = true;
+                yield { type: 'thinking_delta', content: delta };
+              }
             } else if (eventType === 'response.output_text.done') {
               const doneText = typeof event.text === 'string' ? event.text : '';
               const suffix = reconcileTextSnapshot(content, doneText);
               if (suffix) {
                 content += suffix;
+                hasEmittedOutput = true;
                 yield { type: 'text_delta', content: suffix };
               }
             } else if (eventType === 'response.refusal.delta') {
@@ -595,6 +622,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       await reader.cancel().catch(() => undefined);
       if (canonicalTextSuffix) {
         content += canonicalTextSuffix;
+        hasEmittedOutput = true;
         yield { type: 'text_delta', content: canonicalTextSuffix };
       }
       streamReadSettled = true;
@@ -641,6 +669,38 @@ export class ResponsesApiAdapter implements ModelAdapter {
         : terminalStatus === 'incomplete'
           ? `Responses API response incomplete: reason=${incompleteReason ?? 'unknown'}`
           : providerErrorMessage ?? 'Responses API response failed';
+      const retryDelayMs = isRetryableZeroOutputStreamTerminalError(
+        terminalEventType,
+        terminalStatus,
+        errorCode,
+        hasEmittedOutput,
+      ) && !requestSignal?.aborted
+        ? retryDelaysMs[transientRetryIndex]
+        : undefined;
+      if (retryDelayMs !== undefined) {
+        await activeAttempt.finished(outcome, {
+          errorCode,
+          errorMessage,
+          usage,
+          willRetry: true,
+        });
+        transientRetryIndex += 1;
+        logger.warn(
+          `Responses API 流内 ${terminalEventType} ${errorCode} 且零输出，${retryDelayMs}ms 后重试 `
+          + `(${transientRetryIndex}/${retryDelaysMs.length})：${errorMessage}`,
+        );
+        await waitForRetry(retryDelayMs, requestSignal);
+        yield* this.streamWithRetry(request, context, {
+          modelRequestId,
+          lastAttempt: modelRequestAttemptCount,
+          transientRetryIndex,
+          maxAttempts,
+          body,
+          usePrevious,
+          responseMode,
+        });
+        return;
+      }
       await activeAttempt.finished(outcome, { errorCode, errorMessage, usage });
       yield {
         type: 'completed',
@@ -756,6 +816,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       requestInputPrefixHash,
       requestBodyBytes,
     };
+    return;
   }
 
   /**
@@ -1379,6 +1440,17 @@ function isRetryablePreStreamHttpError(status: number, message: string): boolean
   if (status !== 500) return false;
   return /\b(?:EOF|ECONNRESET|EPIPE|ETIMEDOUT)\b|socket hang up|connection (?:reset|closed)|unexpected end of file/i.test(message)
     || /stream error:\s*stream ID \d+;\s*PROTOCOL_ERROR;\s*received from peer/i.test(message);
+}
+
+function isRetryableZeroOutputStreamTerminalError(
+  terminalEventType: string | undefined,
+  terminalStatus: ModelTerminalStatus | undefined,
+  errorCode: string,
+  hasEmittedOutput: boolean,
+): boolean {
+  if (hasEmittedOutput || terminalStatus !== 'failed') return false;
+  if (!['error', 'response.error', 'response.failed'].includes(terminalEventType ?? '')) return false;
+  return errorCode.toLowerCase() === 'internal_server_error';
 }
 
 async function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {

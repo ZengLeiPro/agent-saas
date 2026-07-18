@@ -824,6 +824,188 @@ describe('ResponsesApiAdapter', () => {
     });
   });
 
+  it.each([
+    [
+      'error',
+      sse('error', {
+        type: 'error',
+        code: 'internal_server_error',
+        message: 'unexpected EOF',
+      }),
+    ],
+    [
+      'response.failed',
+      sse('response.failed', {
+        type: 'response.failed',
+        response: {
+          id: 'resp_failed',
+          status: 'failed',
+          error: { code: 'internal_server_error', message: 'unexpected EOF' },
+        },
+      }),
+    ],
+    [
+      'response.error',
+      sse('response.error', {
+        type: 'response.error',
+        error: { code: 'internal_server_error', message: 'unexpected EOF' },
+      }),
+    ],
+  ])('零输出时重试流内 %s internal_server_error', async (_eventType, terminalFrame) => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_failed' } }),
+        sse('response.output_item.added', {
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: { id: 'reasoning_1', type: 'reasoning' },
+        }),
+        terminalFrame,
+      ]))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_recovered' } }),
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '恢复成功' }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: {
+            id: 'resp_recovered',
+            status: 'completed',
+            usage: { input_tokens: 8, output_tokens: 2 },
+          },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([
+      { type: 'text_delta', content: '恢复成功' },
+      expect.objectContaining({
+        type: 'completed',
+        content: '恢复成功',
+        terminalStatus: 'completed',
+        modelRequestAttemptCount: 2,
+      }),
+    ]);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, errorCode: 'internal_server_error', willRetry: true },
+      { attempt: 2, outcome: 'completed' },
+    ]);
+  });
+
+  it('发流前 EOF 后的零输出流内错误继续消耗下一段退避', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { code: 'internal_server_error', message: 'Post "https://chatgpt.com/backend-api/codex/responses": EOF' },
+      }), { status: 500 }))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_failed' } }),
+        sse('error', { type: 'error', code: 'internal_server_error', message: 'unexpected EOF' }),
+      ]))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_recovered' } }),
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '最终成功' }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: { id: 'resp_recovered', status: 'completed', usage: { input_tokens: 8, output_tokens: 2 } },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500, 1_000] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      content: '最终成功',
+      terminalStatus: 'completed',
+      modelRequestAttemptCount: 3,
+    });
+    const started = diagnostics.filter((event) => event.type === 'started');
+    expect(new Set(started.map((event) => event.modelRequestId)).size).toBe(1);
+    expect(new Set(started.map((event) => event.attemptId)).size).toBe(3);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, outcome: 'http_error', willRetry: true },
+      { attempt: 2, outcome: 'provider_error', errorCode: 'internal_server_error', willRetry: true },
+      { attempt: 3, outcome: 'completed' },
+    ]);
+  });
+
+  it.each([
+    [
+      '正文',
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '已经展示' }),
+      { type: 'text_delta', content: '已经展示' },
+    ],
+    [
+      '思考',
+      sse('response.reasoning_summary_text.delta', {
+        type: 'response.reasoning_summary_text.delta',
+        delta: '已经展示思考',
+      }),
+      { type: 'thinking_delta', content: '已经展示思考' },
+    ],
+  ])('已经输出%s后不重试流内 internal_server_error', async (_kind, outputFrame, expectedOutput) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_partial' } }),
+      outputFrame,
+      sse('error', {
+        type: 'error',
+        code: 'internal_server_error',
+        message: 'unexpected EOF',
+      }),
+    ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(events[0]).toEqual(expectedOutput);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      terminalStatus: 'failed',
+      errorCode: 'internal_server_error',
+    });
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, outcome: 'provider_error', errorCode: 'internal_server_error' },
+    ]);
+    expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
+  });
+
   it('终态后立即封口，后续帧不能注入工具调用', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
       sse('response.created', { type: 'response.created', response: { id: 'resp_sealed' } }),

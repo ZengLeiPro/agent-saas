@@ -1,2 +1,2 @@
-Read the shared company profile for the current tenant. This is organization-level context, not personal memory.
-Platform admins may pass `tenantId`; tenant users can only read their own tenant.
+读取当前租户的共享公司档案。这是组织级上下文，不是个人记忆。
+平台管理员可传 `tenantId`；租户用户只能读取自己所在租户的档案。

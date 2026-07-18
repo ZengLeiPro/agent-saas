@@ -1,1 +1,1 @@
-Read a cursor-paginated slice of the durable session event log. Optional filters: runId and event type.
+按游标分页读取持久化会话事件日志的一段切片。可选过滤条件：runId 和事件类型。

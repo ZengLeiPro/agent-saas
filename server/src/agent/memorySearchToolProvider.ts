@@ -29,8 +29,8 @@ export const memorySearchToolDescriptor: ToolDescriptor<MemorySearchInput> = {
   displayName: 'Memory Search',
   description: loadToolDescription('MemorySearch'),
   schema: z.object({
-    query: z.string().min(1).describe('Natural language search query.'),
-    keywords: z.string().optional().describe('Optional exact keywords for FTS matching; defaults to query.'),
+    query: z.string().min(1).describe('自然语言查询。'),
+    keywords: z.string().optional().describe('可选，用于 FTS 精确匹配的关键词；默认取 query。'),
     maxResults: z.number().int().positive().max(MAX_MEMORY_RESULTS).optional(),
   }),
   risk: 'safe',
@@ -46,7 +46,7 @@ export const memoryListToolDescriptor: ToolDescriptor<MemoryListInput> = {
   displayName: 'Memory List',
   description: loadToolDescription('MemoryList'),
   schema: z.object({
-    subdir: z.string().optional().describe('Optional subdirectory under memory/ (e.g. "topics").'),
+    subdir: z.string().optional().describe('可选，memory/ 下的子目录（如 "topics"）。'),
   }),
   risk: 'safe',
   approvalMode: 'never',

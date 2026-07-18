@@ -58,19 +58,19 @@ export class WebFetchCircuitOpenError extends Error {
 }
 
 const webSearchSchema = z.object({
-  query: z.string().min(1).describe('Search query.'),
-  count: z.number().int().min(1).max(10).optional().describe('Number of results to return. Default 5, max 10.'),
-  freshness: z.enum(['day', 'week', 'month', 'year']).optional().describe('Optional recency filter.'),
-  allowedDomains: z.array(z.string().min(1)).optional().describe('Only include results from these domains.'),
-  blockedDomains: z.array(z.string().min(1)).optional().describe('Exclude results from these domains.'),
+  query: z.string().min(1).describe('搜索关键词。'),
+  count: z.number().int().min(1).max(10).optional().describe('返回结果数。默认 5，最大 10。'),
+  freshness: z.enum(['day', 'week', 'month', 'year']).optional().describe('可选，时效过滤。'),
+  allowedDomains: z.array(z.string().min(1)).optional().describe('只保留这些域名的结果。'),
+  blockedDomains: z.array(z.string().min(1)).optional().describe('排除这些域名的结果。'),
 });
 
 type WebSearchInput = z.infer<typeof webSearchSchema>;
 
 const webFetchSchema = z.object({
-  url: z.string().url().describe('HTTP(S) URL to fetch.'),
-  extractMode: z.enum(['markdown', 'text']).optional().describe('Extract readable content as markdown or plain text. Default markdown.'),
-  maxChars: z.number().int().min(100).max(FETCH_MAX_CHARS_CAP).optional().describe('Maximum returned characters. Default 20000, cap 50000.'),
+  url: z.string().url().describe('要抓取的 HTTP(S) URL。'),
+  extractMode: z.enum(['markdown', 'text']).optional().describe('以 markdown 或纯文本提取可读内容。默认 markdown。'),
+  maxChars: z.number().int().min(100).max(FETCH_MAX_CHARS_CAP).optional().describe('最多返回的字符数。默认 20000，上限 50000。'),
 });
 
 type WebFetchInput = z.infer<typeof webFetchSchema>;

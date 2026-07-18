@@ -1,1 +1,1 @@
-Read a UTF-8 text file inside the current workspace. Small files are returned exactly. Files larger than 131072 bytes return the first 131072 bytes with a continuation hint. For large files, pass `offset` (1-based line number) and `limit` (max 2000 lines) to read a specific line range.
+读取当前工作区内的 UTF-8 文本文件。小文件原样完整返回。大于 131072 字节的文件返回前 131072 字节并附续读提示。读大文件时可传 `offset`（1-based 行号）和 `limit`（最多 2000 行）读取指定行区间。

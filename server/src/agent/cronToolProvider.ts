@@ -49,18 +49,18 @@ type CronManageInput = {
 };
 
 const cronListSchema = z.object({
-  id: z.string().optional().describe('Job id. Omit to list all jobs owned by the current user; provide to get full detail of one job.'),
+  id: z.string().optional().describe('任务 id。省略则列出当前用户的全部任务；提供则返回单个任务的完整详情。'),
 });
 
 const cronManageSchema = z.object({
-  action: z.enum(['create', 'update', 'delete', 'run']).describe('create = new job; update = patch fields of an existing job; delete = remove job; run = trigger the job immediately.'),
-  id: z.string().optional().describe('Job id. Required for update/delete/run.'),
-  name: z.string().min(1).optional().describe('Job name. Required for create.'),
+  action: z.enum(['create', 'update', 'delete', 'run']).describe('create = 新建任务；update = 修改已有任务的部分字段；delete = 删除任务；run = 立即触发一次。'),
+  id: z.string().optional().describe('任务 id。update/delete/run 必填。'),
+  name: z.string().min(1).optional().describe('任务名称。create 必填。'),
   description: z.string().optional(),
-  enabled: z.boolean().optional().describe('Whether the job is active. Defaults to true on create.'),
-  schedule: cronScheduleSchema.optional().describe('Required for create. kind=cron: {expr: "0 9 * * *", tz: "Asia/Shanghai"}; kind=every: {everyMs}; kind=at: {atMs epoch ms}.'),
-  payload: z.union([cronPayloadSchema, cronPayloadPatchSchema]).optional().describe('Required for create. kind=agentTurn: {message} runs an agent turn as the job owner in a fresh session; kind=systemEvent: {text} simple notification.'),
-  notify: notifyConfigSchema.optional().describe('Push notification on job completion, e.g. {"enabled":true,"channel":"web"}. dingtalk channel requires mode + conversationId/userId/chatId provided by the user.'),
+  enabled: z.boolean().optional().describe('任务是否启用。create 时默认 true。'),
+  schedule: cronScheduleSchema.optional().describe('create 必填。kind=cron：{expr: "0 9 * * *", tz: "Asia/Shanghai"}；kind=every：{everyMs}；kind=at：{atMs: epoch 毫秒}。'),
+  payload: z.union([cronPayloadSchema, cronPayloadPatchSchema]).optional().describe('create 必填。kind=agentTurn：{message} 以任务所有者身份在全新会话中执行一轮 agent；kind=systemEvent：{text} 纯通知文本。'),
+  notify: notifyConfigSchema.optional().describe('任务完成后的结果推送，如 {"enabled":true,"channel":"web"}。dingtalk 渠道需要用户提供 mode 及 conversationId/userId/chatId。'),
 });
 
 export const cronListToolDescriptor: ToolDescriptor<CronListInput> = {

@@ -122,8 +122,8 @@ describe('tool controls admin router', () => {
       const read = body.tools.find((tool: { id: string }) => tool.id === 'Read');
       expect(read).toMatchObject({
         displayName: expect.any(String),
-        description: expect.stringContaining('workspace'),
-        effectiveDescription: expect.stringContaining('workspace'),
+        description: expect.stringContaining('工作区'),
+        effectiveDescription: expect.stringContaining('工作区'),
         risk: 'safe',
         approvalMode: 'never',
         auditCategory: 'filesystem.read',

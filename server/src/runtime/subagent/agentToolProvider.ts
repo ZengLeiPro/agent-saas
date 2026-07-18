@@ -55,15 +55,15 @@ const SUBAGENT_RESULT_PREVIEW_CHARS = 2_000;
 
 const agentToolSchema = z.object({
   description: z.string().min(1).max(120)
-    .describe('A short (3-5 word) task summary, shown in the UI while the subagent runs.'),
+    .describe('简短任务摘要（3-5 个词），子 agent 运行期间显示在 UI 上。'),
   prompt: z.string().min(1)
-    .describe('The full self-contained task for the subagent. It cannot see this conversation; include all context, constraints and the expected report format.'),
+    .describe('交给子 agent 的完整自包含任务。它看不到本对话；必须写入全部背景、约束与期望的报告格式。'),
   agent_type: z.enum(['general', 'explore']).optional().default('general')
-    .describe('general = full toolset executor; explore = read-only scout (Read/Glob/Grep/WebSearch/WebFetch/MemorySearch).'),
+    .describe('general = 全量工具执行者；explore = 只读侦察（Read/Glob/Grep/WebSearch/WebFetch/MemorySearch）。'),
   model: z.string().optional()
-    .describe('Optional model ref override (must be allowed for this tenant). Omit to inherit the parent model.'),
+    .describe('可选，覆盖模型 ref（必须是本租户允许的模型）。省略则继承父模型。'),
   include_company_info: z.boolean().optional().default(false)
-    .describe('general only: inject tenant company info into the subagent system prompt.'),
+    .describe('仅 general 有效：把租户公司信息注入子 agent 的系统提示词。'),
 });
 
 export type AgentToolInput = z.infer<typeof agentToolSchema>;

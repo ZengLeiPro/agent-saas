@@ -1,1 +1,1 @@
-Search the durable session event log by text. Returns raw matching PlatformEvents without modifying the log.
+按文本搜索持久化会话事件日志。返回原始匹配的 PlatformEvents，不会修改日志。

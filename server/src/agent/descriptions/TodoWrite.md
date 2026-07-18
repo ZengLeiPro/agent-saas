@@ -1,11 +1,11 @@
-Maintain the visible TODO list for the current session.
-Use it for non-trivial multi-step work (usually 3+ real steps), multiple user requests, explicit todo/checklist requests, or when new required steps are discovered during execution.
-Do not use it for single-step, trivial, or purely informational requests, and do not update it after every tool call.
-Each call sends the complete list and replaces the previous list; send `todos: []` to clear the visible list when the work is fully done and reported.
-Each item: `content` (short imperative label), `status` (pending/in_progress/completed), and optional `activeForm` (present-continuous UI label shown while in_progress).
-While active work remains, keep exactly one item `in_progress`.
-Mark a task `completed` immediately after it is fully done, then move the next task to `in_progress`.
-Do not mark completed if tests fail, implementation is partial, dependencies/files are missing, or blockers/errors remain.
-Remove items that are no longer relevant.
-Returns the persisted list.
-Stored per-session in memory (LRU 1024 sessions); survives within the same server lifetime.
+维护当前会话对用户可见的 TODO 列表。
+用于非平凡的多步骤工作（通常 3 步以上真实步骤）、多个用户请求、用户明确要求 todo/checklist，或执行中发现新的必要步骤时。
+不要用于单步、琐碎或纯信息性请求，也不要在每次工具调用后都更新。
+每次调用发送完整列表并整体替换上一版；工作全部完成并汇报后，发送 `todos: []` 清空可见列表。
+每项包含：`content`（简短祈使式标签）、`status`（pending/in_progress/completed）、可选 `activeForm`（in_progress 时 UI 显示的进行时标签）。
+仍有进行中的工作时，保持恰好一项 `in_progress`。
+任务完全做完后立即标记 `completed`，再把下一项置为 `in_progress`。
+测试失败、实现不完整、依赖/文件缺失或仍有阻塞/报错时，不得标记 completed。
+移除不再相关的条目。
+返回持久化后的列表。
+按会话存于内存（LRU 1024 个会话）；同一 server 生命周期内保留。

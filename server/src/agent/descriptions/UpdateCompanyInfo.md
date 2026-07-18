@@ -1,2 +1,2 @@
-Replace the shared company profile (`company.md`) for a tenant. Use this only when an organization administrator asks you to update organization-level background context.
-This writes shared tenant context, not personal memory. Always read the current content first, prepare a careful full replacement, and wait for explicit approval.
+整体替换某租户的共享公司档案（`company.md`）。仅当组织管理员要求更新组织级背景上下文时使用。
+写入的是租户共享上下文，不是个人记忆。务必先读取当前内容，谨慎准备完整的替换稿，并等待明确批准后再执行。

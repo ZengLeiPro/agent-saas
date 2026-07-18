@@ -1,4 +1,4 @@
-Launch a subagent to autonomously complete a self-contained task and return a concise report.
+派生一个子 agent 自主完成一个自包含任务，并返回精炼报告。
 何时用：需要 fan-out 调研多个独立方向、隔离高噪音探索（大量文件搜索/网页抓取不污染主上下文）、
 或多个互不依赖的子任务可以并行推进时。同一轮消息里发出的多个 Agent 调用会并行执行。
 何时不用（先自问：这个收益能否用一次普通工具调用或第二次模型调用拿到？）：

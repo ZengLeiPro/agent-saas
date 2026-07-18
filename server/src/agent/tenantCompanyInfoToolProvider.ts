@@ -26,12 +26,12 @@ type UpdateCompanyInfoInput = {
 };
 
 const readCompanyInfoSchema = z.object({
-  tenantId: z.string().optional().describe('Tenant id to read. Platform admins may specify any tenant; tenant admins/users may only read their own tenant.'),
+  tenantId: z.string().optional().describe('要读取的租户 id。平台管理员可指定任意租户；租户管理员/用户只能读自己所在租户。'),
 });
 
 const updateCompanyInfoSchema = z.object({
-  tenantId: z.string().optional().describe('Tenant id to update. Platform admins may specify any tenant; tenant admins may only update their own tenant.'),
-  content: z.string().max(MAX_COMPANY_INFO_CHARS).describe('Full replacement content for the tenant company.md file.'),
+  tenantId: z.string().optional().describe('要更新的租户 id。平台管理员可指定任意租户；租户管理员只能更新自己所在租户。'),
+  content: z.string().max(MAX_COMPANY_INFO_CHARS).describe('租户 company.md 的完整替换内容。'),
 });
 
 export const readCompanyInfoToolDescriptor: ToolDescriptor<ReadCompanyInfoInput> = {

@@ -1,1 +1,1 @@
-Write a UTF-8 text file inside the current workspace, creating parent directories if needed.
+在当前工作区内写入 UTF-8 文本文件，必要时自动创建父级目录。

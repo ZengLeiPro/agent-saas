@@ -112,12 +112,11 @@ describe('Tool descriptions', () => {
   });
 
   it('Shell description follows pooled execution defaults (drift guard)', () => {
-    expect(runShellToolDescriptor.description).toContain('current workspace runtime');
-    expect(runShellToolDescriptor.description).toContain('including platform admins');
-    expect(runShellToolDescriptor.description).not.toContain('Platform admins use server-local by default');
+    expect(runShellToolDescriptor.description).toContain('当前工作区运行时');
+    expect(runShellToolDescriptor.description).toContain('包括平台管理员');
   });
 
   it('AskUserQuestion description matches multiSelect schema default (drift guard)', () => {
-    expect(askUserQuestionToolDescriptor.description).toContain('runtime defaults it to false');
+    expect(askUserQuestionToolDescriptor.description).toContain('运行时默认为 false');
   });
 });

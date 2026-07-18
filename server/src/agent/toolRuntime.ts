@@ -301,9 +301,9 @@ export const readFileToolDescriptor: ToolDescriptor<{ path: string; offset?: num
   displayName: 'Read File',
   description: loadToolDescription('Read'),
   schema: z.object({
-    path: z.string().describe('Workspace-relative or absolute path inside the workspace.'),
-    offset: z.number().int().positive().optional().describe('Optional 1-based line number to start reading from.'),
-    limit: z.number().int().positive().max(MAX_READ_LINES).optional().describe(`Optional number of lines to return, max ${MAX_READ_LINES}.`),
+    path: z.string().describe('工作区相对路径，或工作区内的绝对路径。'),
+    offset: z.number().int().positive().optional().describe('可选，起始行号（1-based）。'),
+    limit: z.number().int().positive().max(MAX_READ_LINES).optional().describe(`可选，返回的行数，最多 ${MAX_READ_LINES} 行。`),
   }),
   risk: 'safe',
   approvalMode: 'never',
@@ -318,7 +318,7 @@ export const writeFileToolDescriptor: ToolDescriptor<{ path: string; content: st
   displayName: 'Write File',
   description: loadToolDescription('Write'),
   schema: z.object({
-    path: z.string().describe('Workspace-relative or absolute path inside the workspace.'),
+    path: z.string().describe('工作区相对路径，或工作区内的绝对路径。'),
     content: z.string(),
   }),
   risk: 'workspace_write',
@@ -334,7 +334,7 @@ export const listFilesToolDescriptor: ToolDescriptor<{ path: string; recursive: 
   displayName: 'List Files',
   description: loadToolDescription('List'),
   schema: z.object({
-    path: z.string().default('.').describe('Directory inside workspace.'),
+    path: z.string().default('.').describe('工作区内的目录。'),
     recursive: z.boolean().default(false),
   }),
   risk: 'safe',

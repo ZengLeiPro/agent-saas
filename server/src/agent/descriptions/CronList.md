@@ -1,1 +1,1 @@
-List or inspect the current user's scheduled cron jobs. Call without id to list every job owned by the current user (including disabled ones) with schedule, next run time and last run status. Call with id to get the full detail of one job including its payload and notify config. Jobs owned by other users are never visible or accessible.
+列出或查看当前用户的定时任务（cron job）。不传 id 时，列出当前用户拥有的全部任务（含已禁用的），附 schedule、下次运行时间和上次运行状态。传 id 时，返回单个任务的完整详情，含 payload 和 notify 配置。其他用户的任务永远不可见、不可访问。

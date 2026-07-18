@@ -1,3 +1,3 @@
-Search file contents inside the workspace using a JavaScript regex.
-Pattern is capped at 256 chars; each file ≤5MB is read fully; total wall-clock ≤5s.
-Binary files and symlinks are skipped. Returns matching `path:line:text`.
+用 JavaScript 正则搜索工作区内的文件内容。
+正则模式上限 256 字符；≤5MB 的文件会被完整读取；总耗时上限 5 秒。
+跳过二进制文件与符号链接。返回匹配的 `path:line:text`。

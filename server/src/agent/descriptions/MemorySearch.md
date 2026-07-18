@@ -1,3 +1,3 @@
-Search indexed MEMORY.md and memory/*.md content for prior facts, decisions, preferences, and todos. Read-only.
-Pass `query` (自然语言查询) and optionally `keywords` (精确关键词，用于 FTS 命中).
-For complex queries, supply BOTH to combine semantic and exact-keyword matching.
+搜索已索引的 MEMORY.md 和 memory/*.md 内容，查找既往事实、决策、偏好与待办。只读。
+传 `query`（自然语言查询），可选 `keywords`（精确关键词，用于 FTS 命中）。
+复杂查询应同时传入两者，结合语义与精确关键词匹配。

@@ -31,11 +31,11 @@ export const userActivityListToolDescriptor: ToolDescriptor<UserActivityListInpu
   description: loadToolDescription('UserActivityList'),
   schema: z.object({
     hours: z.number().int().positive().max(MAX_LOOKBACK_HOURS).optional()
-      .describe(`Lookback window in hours (default ${DEFAULT_LOOKBACK_HOURS}, max ${MAX_LOOKBACK_HOURS}).`),
+      .describe(`回溯窗口，单位小时（默认 ${DEFAULT_LOOKBACK_HOURS}，最大 ${MAX_LOOKBACK_HOURS}）。`),
     maxSessions: z.number().int().positive().max(100).optional()
-      .describe('Max sessions to scan (default 30).'),
+      .describe('最多扫描的会话数（默认 30）。'),
     maxMessagesPerSession: z.number().int().positive().max(200).optional()
-      .describe('Max messages kept per session (default 50).'),
+      .describe('每个会话最多保留的消息数（默认 50）。'),
   }),
   risk: 'safe',
   approvalMode: 'never',

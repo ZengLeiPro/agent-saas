@@ -93,7 +93,7 @@ export const askUserQuestionToolDescriptor: ToolDescriptor<AskUserQuestionInput>
       .array(
         z.object({
           question: z.string().min(1),
-          header: z.string().min(1).max(12).describe('Short chip label, max 12 chars.'),
+          header: z.string().min(1).max(12).describe('显示为小标签（chip）的简短文字，最多 12 字符。'),
           options: z
             .array(z.object({ label: z.string().min(1), description: z.string() }))
             .min(2)

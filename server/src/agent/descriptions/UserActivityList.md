@@ -1,4 +1,4 @@
-List the current user's own recent activity: messages the user actively sent (web / DingTalk) across all of their sessions within a time window.
-Returns timestamped user messages grouped by session, most recent sessions first. Automated cron prompts and subagent sessions are excluded.
-Identity is always the current session's owner — there is no way to query another user. Use `hours` to adjust the lookback window (default 48, max 168).
-Typical use: daily memory maintenance, answering "what have I been working on recently".
+列出当前用户自己的近期活动：时间窗口内该用户在其所有会话中主动发送的消息（web / 钉钉）。
+返回按会话分组、带时间戳的用户消息，最近的会话在前。自动化 cron 触发的 prompt 和子 agent 会话不包含在内。
+身份始终是当前会话的所有者——无法查询其他用户。用 `hours` 调整回溯窗口（默认 48，最大 168）。
+典型用途：每日记忆维护、回答「我最近在忙什么」。

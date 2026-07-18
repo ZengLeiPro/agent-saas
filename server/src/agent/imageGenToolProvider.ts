@@ -119,16 +119,16 @@ const ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'] as con
 type AspectRatio = (typeof ASPECT_RATIOS)[number];
 
 const generateImageSchema = z.object({
-  prompt: z.string().min(1).max(8_000).describe('Image description prompt. Chinese or English.'),
+  prompt: z.string().min(1).max(8_000).describe('图片描述 prompt，中英文均可。'),
   model: z.enum(['gpt-image-2', 'seedream']).optional()
-    .describe('Image engine. Default "gpt-image-2" (flagship). "seedream" (Volcengine Ark) is the alternative. Credits per image differ by engine; no automatic fallback between engines.'),
-  aspectRatio: z.enum(ASPECT_RATIOS).optional().describe('Aspect ratio. Default "1:1".'),
+    .describe('生图引擎。默认 "gpt-image-2"（旗舰画质）；"seedream"（火山方舟 Ark）为备选。每张图的积分单价因引擎而异；引擎之间不会自动回退。'),
+  aspectRatio: z.enum(ASPECT_RATIOS).optional().describe('宽高比。默认 "1:1"。'),
   quality: z.enum(['low', 'medium', 'high', 'auto']).optional()
-    .describe('Quality tier, only effective for gpt-image-2. Default "auto".'),
+    .describe('画质档位，仅对 gpt-image-2 生效。默认 "auto"。'),
   refImages: z.array(z.string().min(1)).max(4).optional()
-    .describe('Reference images for image-to-image: workspace-relative paths (e.g. "uploads/a.jpg"), max 4.'),
+    .describe('图生图参考图：工作区相对路径（如 "uploads/a.jpg"），最多 4 张。'),
   count: z.number().int().min(1).max(4).optional()
-    .describe('Number of images, default 1, max 4. Each image is charged separately.'),
+    .describe('生成张数，默认 1，最多 4。每张单独计费。'),
 });
 
 export type GenerateImageInput = z.infer<typeof generateImageSchema>;

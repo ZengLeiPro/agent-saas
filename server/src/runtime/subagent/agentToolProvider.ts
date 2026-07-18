@@ -98,6 +98,8 @@ export class AgentToolProvider implements ToolProvider {
       risk: 'safe',
       approvalMode: 'never',
       auditCategory: 'agent.subagent',
+      category: 'core',
+      label: '子 Agent 调度',
     };
   }
 

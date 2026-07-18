@@ -142,6 +142,8 @@ export const sessionGetEventsToolDescriptor: ToolDescriptor<SessionGetEventsInpu
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'session.context',
+  category: 'session',
+  label: '读取会话事件',
 };
 
 export const sessionSearchEventsToolDescriptor: ToolDescriptor<SessionSearchEventsInput> = {
@@ -158,6 +160,8 @@ export const sessionSearchEventsToolDescriptor: ToolDescriptor<SessionSearchEven
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'session.context.search',
+  category: 'session',
+  label: '搜索会话事件',
 };
 
 export const sessionGetToolTraceToolDescriptor: ToolDescriptor<SessionGetToolTraceInput> = {
@@ -171,6 +175,8 @@ export const sessionGetToolTraceToolDescriptor: ToolDescriptor<SessionGetToolTra
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'session.context.tool_trace',
+  category: 'session',
+  label: '查看工具调用追踪',
 };
 
 export class SessionToolProvider implements ToolProvider {

@@ -4,8 +4,19 @@ import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
-import type { AppConfig, ToolControlsConfig, WebToolsConfig } from '../app/config.js';
-import { isToolEnabled } from '../agent/toolRuntime.js';
+import type {
+  AppConfig,
+  ToolControlsConfig,
+  ToolDescriptionOverride,
+  WebToolsConfig,
+} from '../app/config.js';
+import { applyToolDescriptionOverride, isToolEnabled } from '../agent/toolRuntime.js';
+import type { ToolDescriptor } from '../agent/toolRuntime.js';
+import {
+  PLATFORM_TOOL_CATALOG,
+  PLATFORM_TOOL_CATALOG_BY_ID,
+  PLATFORM_TOOL_SOURCE_MODULE,
+} from '../agent/toolCatalog.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
 
 export interface CreateToolControlsAdminRouterOptions {
@@ -17,32 +28,6 @@ export interface CreateToolControlsAdminRouterOptions {
 }
 
 type RawObject = Record<string, unknown>;
-
-export const BUILTIN_TOOL_CATALOG = [
-  { id: 'WaitForWorkspaceReady', name: 'WaitForWorkspaceReady', category: 'workspace', label: '等待工作区就绪' },
-  { id: 'Read', name: 'Read', category: 'workspace', label: '读取文件' },
-  { id: 'Write', name: 'Write', category: 'workspace', label: '写入文件' },
-  { id: 'List', name: 'List', category: 'workspace', label: '列出文件' },
-  { id: 'Edit', name: 'Edit', category: 'workspace', label: '精确编辑文件' },
-  { id: 'Glob', name: 'Glob', category: 'workspace', label: 'Glob 查找文件' },
-  { id: 'Grep', name: 'Grep', category: 'workspace', label: '正则搜索文件' },
-  { id: 'CreateArtifact', name: 'CreateArtifact', category: 'workspace', label: '创建 Artifact' },
-  { id: 'Shell', name: 'Shell', category: 'workspace', label: '执行 Shell' },
-  { id: 'MemorySearch', name: 'MemorySearch', category: 'memory', label: '搜索记忆' },
-  { id: 'MemoryList', name: 'MemoryList', category: 'memory', label: '列出记忆文件' },
-  { id: 'UserActivityList', name: 'UserActivityList', category: 'memory', label: '查看用户近期活动' },
-  { id: 'ReadCompanyInfo', name: 'ReadCompanyInfo', category: 'memory', label: '读取组织资料' },
-  { id: 'UpdateCompanyInfo', name: 'UpdateCompanyInfo', category: 'memory', label: '更新组织资料' },
-  { id: 'Skill', name: 'Skill', category: 'skill', label: '调用技能' },
-  { id: 'TodoWrite', name: 'TodoWrite', category: 'meta', label: '管理 TODO' },
-  { id: 'AskUserQuestion', name: 'AskUserQuestion', category: 'meta', label: '向用户提问' },
-  { id: 'SessionGetEvents', name: 'SessionGetEvents', category: 'session', label: '读取会话事件' },
-  { id: 'SessionSearchEvents', name: 'SessionSearchEvents', category: 'session', label: '搜索会话事件' },
-  { id: 'SessionGetToolTrace', name: 'SessionGetToolTrace', category: 'session', label: '查看工具调用追踪' },
-  { id: 'WebSearch', name: 'WebSearch', category: 'web', label: '网络搜索' },
-  { id: 'WebFetch', name: 'WebFetch', category: 'web', label: '网页访问' },
-  { id: 'GenerateImage', name: 'GenerateImage', category: 'media', label: 'AI 生图' },
-] as const;
 
 function isObject(value: unknown): value is RawObject {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -143,11 +128,40 @@ async function persistSearchCredential(
   };
 }
 
+/**
+ * 从 descriptor 序列化 JSON Schema。优先使用 parametersJsonSchema（MCP 透传），
+ * fallback 到 zod 自动转换。clone 后删除 $schema 字段以匹配 toModelToolDefinition
+ * 里发给 LLM 的形态——admin UI 展示的应该和模型实际看到的一致。
+ */
+function descriptorInputSchema(descriptor: ToolDescriptor): Record<string, unknown> {
+  const schema = descriptor.parametersJsonSchema
+    ? { ...descriptor.parametersJsonSchema }
+    : (descriptor.schema.toJSONSchema() as Record<string, unknown>);
+  delete schema.$schema;
+  return schema;
+}
+
 function toolCatalogWithState(toolControls: ToolControlsConfig) {
-  return BUILTIN_TOOL_CATALOG.map((tool) => ({
-    ...tool,
-    enabled: isToolEnabled(toolControls, tool),
-  }));
+  return PLATFORM_TOOL_CATALOG.map((tool) => {
+    const controlEntry = toolControls?.tools?.[tool.id] ?? toolControls?.tools?.[tool.name];
+    const effective = applyToolDescriptionOverride(tool, toolControls);
+    return {
+      id: tool.id,
+      name: tool.name,
+      displayName: tool.displayName,
+      category: tool.category ?? 'core',
+      label: tool.label ?? tool.displayName,
+      enabled: isToolEnabled(toolControls, tool),
+      description: tool.description,
+      effectiveDescription: effective.description,
+      inputSchema: descriptorInputSchema(tool),
+      risk: tool.risk,
+      approvalMode: tool.approvalMode,
+      auditCategory: tool.auditCategory,
+      ...(controlEntry?.descriptionOverride ? { descriptionOverride: controlEntry.descriptionOverride } : {}),
+      ...(PLATFORM_TOOL_SOURCE_MODULE[tool.id] ? { sourceModule: PLATFORM_TOOL_SOURCE_MODULE[tool.id] } : {}),
+    };
+  });
 }
 
 function validateToolSettingsUpdate(
@@ -168,27 +182,116 @@ function validateToolSettingsUpdate(
   };
 }
 
+/**
+ * 合并单工具 patch 到当前 toolControls。生成给 parseAppConfig 校验用的下一版
+ * toolControls 对象；null 语义在这层展开：
+ *   - patch.enabled === undefined → 保留原 enabled
+ *   - patch.descriptionOverride === undefined → 保留原 override
+ *   - patch.descriptionOverride === null → 移除 override
+ *   - patch.descriptionOverride === {mode,text} → 覆盖
+ * 当合并后条目所有字段都是"默认"（enabled≠false 且无 override），直接把该 key
+ * 从 tools 里删掉，避免 config.json 里留空条目。
+ */
+function mergeSingleToolPatch(
+  current: ToolControlsConfig | undefined,
+  toolId: string,
+  patch: { enabled?: unknown; descriptionOverride?: unknown },
+): ToolControlsConfig {
+  const currentTools = current?.tools ?? {};
+  const existing = currentTools[toolId] ?? {};
+
+  const nextEntry: { enabled?: boolean; descriptionOverride?: ToolDescriptionOverride } = { ...existing };
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'enabled')) {
+    if (typeof patch.enabled !== 'boolean') {
+      throw new Error('enabled 必须是布尔');
+    }
+    if (patch.enabled) delete nextEntry.enabled;
+    else nextEntry.enabled = false;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'descriptionOverride')) {
+    if (patch.descriptionOverride === null) {
+      delete nextEntry.descriptionOverride;
+    } else if (isObject(patch.descriptionOverride)) {
+      // 交给 parseAppConfig 里的 zod schema 做严格校验，这里只放通。
+      nextEntry.descriptionOverride = patch.descriptionOverride as ToolDescriptionOverride;
+    } else {
+      throw new Error('descriptionOverride 必须是 {mode, text} 或 null');
+    }
+  }
+
+  const nextTools: Record<string, { enabled?: boolean; descriptionOverride?: ToolDescriptionOverride }> = { ...currentTools };
+  if (Object.keys(nextEntry).length === 0) {
+    delete nextTools[toolId];
+  } else {
+    nextTools[toolId] = nextEntry;
+  }
+
+  const merged: ToolControlsConfig = { ...(current ?? {}) };
+  if (Object.keys(nextTools).length === 0) {
+    delete (merged as { tools?: unknown }).tools;
+  } else {
+    merged.tools = nextTools;
+  }
+  // 保留 enabled 全局字段（可能是 undefined 或 false，parseAppConfig 会归一）
+  if (Object.keys(merged).length === 0) return {};
+  return merged;
+}
+
+/**
+ * 单工具 PUT 端点的落盘 helper：验证 → 写 config.json → 热更 → 返回完整 catalog 视图。
+ * 与整包 PUT 共用最终的 writeFileSync/热更逻辑，避免写不同分支导致行为漂移。
+ */
+async function persistUpdatedSettings(
+  options: CreateToolControlsAdminRouterOptions,
+  nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>,
+): Promise<Pick<AppConfig, 'toolControls' | 'webTools'>> {
+  const configPath = getAppConfigPath(options.processCwd);
+  const configText = readFileSync(configPath, 'utf-8');
+
+  const webToolsEdits = modify(configText, ['webTools'], nextSettings.webTools, {
+    formattingOptions: { insertSpaces: true, tabSize: 2 },
+  });
+  const withWebTools = applyEdits(configText, webToolsEdits);
+  const toolControlsEdits = modify(withWebTools, ['toolControls'], nextSettings.toolControls, {
+    formattingOptions: { insertSpaces: true, tabSize: 2 },
+  });
+  const updatedText = applyEdits(withWebTools, toolControlsEdits);
+  writeFileSync(configPath, updatedText, 'utf-8');
+  options.config.toolControls = nextSettings.toolControls;
+  options.config.webTools = nextSettings.webTools;
+  await options.onToolSettingsUpdated?.(nextSettings);
+  return nextSettings;
+}
+
+function catalogResponse(settings: Pick<AppConfig, 'toolControls' | 'webTools'>) {
+  return {
+    toolControls: sanitizeToolControlsConfig(settings.toolControls),
+    tools: toolCatalogWithState(settings.toolControls),
+    webTools: sanitizeWebToolsConfig(settings.webTools),
+    effectiveWebTools: listConfiguredWebToolNames(settings.webTools, settings.toolControls),
+  };
+}
+
 export function createToolControlsAdminRouter(options: CreateToolControlsAdminRouterOptions): Router {
   const router = Router();
 
   router.use(requirePlatformAdmin);
 
   router.get('/', (_req, res) => {
-    res.json({
-      toolControls: sanitizeToolControlsConfig(options.config.toolControls),
-      tools: toolCatalogWithState(options.config.toolControls),
-      webTools: sanitizeWebToolsConfig(options.config.webTools),
-      effectiveWebTools: listConfiguredWebToolNames(options.config.webTools, options.config.toolControls),
-    });
+    res.json(catalogResponse({
+      toolControls: options.config.toolControls,
+      webTools: options.config.webTools,
+    }));
   });
 
   router.put('/', async (req, res) => {
     const configPath = getAppConfigPath(options.processCwd);
-    let configText: string;
     let nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>;
 
     try {
-      configText = readFileSync(configPath, 'utf-8');
+      const configText = readFileSync(configPath, 'utf-8');
       const rawConfig = parseJsonc(configText);
       nextSettings = validateToolSettingsUpdate(rawConfig, req.body?.toolControls, req.body?.webTools);
       await options.validateToolSettingsConfig?.(nextSettings);
@@ -199,24 +302,49 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
     }
 
     try {
-      const webToolsEdits = modify(configText, ['webTools'], nextSettings.webTools, {
-        formattingOptions: { insertSpaces: true, tabSize: 2 },
-      });
-      const withWebTools = applyEdits(configText, webToolsEdits);
-      const toolControlsEdits = modify(withWebTools, ['toolControls'], nextSettings.toolControls, {
-        formattingOptions: { insertSpaces: true, tabSize: 2 },
-      });
-      const updatedText = applyEdits(withWebTools, toolControlsEdits);
-      writeFileSync(configPath, updatedText, 'utf-8');
-      options.config.toolControls = nextSettings.toolControls;
-      options.config.webTools = nextSettings.webTools;
-      await options.onToolSettingsUpdated?.(nextSettings);
-      res.json({
-        toolControls: sanitizeToolControlsConfig(nextSettings.toolControls),
-        tools: toolCatalogWithState(nextSettings.toolControls),
-        webTools: sanitizeWebToolsConfig(nextSettings.webTools),
-        effectiveWebTools: listConfiguredWebToolNames(nextSettings.webTools, nextSettings.toolControls),
-      });
+      const persisted = await persistUpdatedSettings(options, nextSettings);
+      res.json(catalogResponse(persisted));
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  /**
+   * 单工具粒度 PUT：只改指定工具的 enabled / descriptionOverride，其他工具与
+   * webTools 保持不变。用于详情页保存，避免整包提交导致 admin 之间互相覆盖。
+   */
+  router.put('/:toolId', async (req, res) => {
+    const { toolId } = req.params;
+    if (!PLATFORM_TOOL_CATALOG_BY_ID.has(toolId)) {
+      res.status(404).json({ error: `未知工具 ${toolId}` });
+      return;
+    }
+
+    const configPath = getAppConfigPath(options.processCwd);
+    let nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>;
+
+    try {
+      const configText = readFileSync(configPath, 'utf-8');
+      const rawConfig = parseJsonc(configText);
+      const mergedToolControls = mergeSingleToolPatch(
+        options.config.toolControls,
+        toolId,
+        req.body ?? {},
+      );
+      nextSettings = validateToolSettingsUpdate(
+        rawConfig,
+        mergedToolControls,
+        options.config.webTools ?? undefined,
+      );
+      await options.validateToolSettingsConfig?.(nextSettings);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+
+    try {
+      const persisted = await persistUpdatedSettings(options, nextSettings);
+      res.json(catalogResponse(persisted));
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }

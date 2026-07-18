@@ -36,6 +36,8 @@ export const memorySearchToolDescriptor: ToolDescriptor<MemorySearchInput> = {
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'memory.search',
+  category: 'memory',
+  label: '搜索记忆',
 };
 
 export const memoryListToolDescriptor: ToolDescriptor<MemoryListInput> = {
@@ -49,6 +51,8 @@ export const memoryListToolDescriptor: ToolDescriptor<MemoryListInput> = {
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'memory.list',
+  category: 'memory',
+  label: '列出记忆文件',
 };
 
 export class MemorySearchToolProvider implements ToolProvider {

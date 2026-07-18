@@ -100,6 +100,9 @@ describe('tool controls admin router', () => {
         'Shell',
         'MemorySearch',
         'MemoryList',
+        'UserActivityList',
+        'ReadCompanyInfo',
+        'UpdateCompanyInfo',
         'Skill',
         'TodoWrite',
         'AskUserQuestion',
@@ -109,9 +112,31 @@ describe('tool controls admin router', () => {
         'WebSearch',
         'WebFetch',
         'GenerateImage',
+        'CronList',
+        'CronManage',
       ]));
       expect(body.tools.find((tool: { id: string }) => tool.id === 'Shell').enabled).toBe(false);
       expect(body.tools.find((tool: { id: string }) => tool.id === 'Read').enabled).toBe(true);
+      // 新增字段：description / effectiveDescription / inputSchema / risk / approvalMode /
+      // auditCategory / category / label / sourceModule 都要出现在 catalog 视图里。
+      const read = body.tools.find((tool: { id: string }) => tool.id === 'Read');
+      expect(read).toMatchObject({
+        displayName: expect.any(String),
+        description: expect.stringContaining('workspace'),
+        effectiveDescription: expect.stringContaining('workspace'),
+        risk: 'safe',
+        approvalMode: 'never',
+        auditCategory: 'filesystem.read',
+        category: 'workspace',
+        label: expect.any(String),
+        sourceModule: expect.stringContaining('toolRuntime.ts'),
+      });
+      expect(read.inputSchema).toBeDefined();
+      expect(read.inputSchema.type).toBe('object');
+      expect(read.inputSchema.properties).toBeDefined();
+      // Shell 是 dangerous 且 approvalMode='web'，UI 靠这两个字段渲染警示。
+      const shell = body.tools.find((tool: { id: string }) => tool.id === 'Shell');
+      expect(shell).toMatchObject({ risk: 'dangerous', approvalMode: 'web' });
       expect(body.effectiveWebTools).toEqual(['WebSearch', 'WebFetch']);
       expect(body.webTools.search).toMatchObject({
         provider: 'brave',
@@ -289,6 +314,120 @@ describe('tool controls admin router', () => {
       expect(written.webTools.search.hasApiKey).toBeUndefined();
       expect(runtimeConfig.webTools?.search?.apiKey).toBe('brave-secret-123');
       expect(runtimeConfig.webTools?.fetch?.enabled).toBe(false);
+    });
+  });
+
+  it('persists descriptionOverride via bulk PUT and reflects it in effectiveDescription', async () => {
+    await withApp({
+      agent: { cwd: '/tmp/agent' },
+      server: { port: 3200 },
+    }, async ({ baseUrl, configPath, runtimeConfig }) => {
+      const response = await fetch(`${baseUrl}/api/admin/tool-controls`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          toolControls: {
+            tools: {
+              Shell: {
+                descriptionOverride: {
+                  mode: 'append',
+                  text: '本平台补充说明：任何 rm 前必须先给完整清单等待用户点头。',
+                },
+              },
+            },
+          },
+          webTools: null,
+        }),
+      });
+      expect(response.status).toBe(200);
+      const body = await readJson(response);
+      const shell = body.tools.find((tool: { id: string }) => tool.id === 'Shell');
+      expect(shell.descriptionOverride).toEqual({
+        mode: 'append',
+        text: '本平台补充说明：任何 rm 前必须先给完整清单等待用户点头。',
+      });
+      expect(shell.description).not.toContain('rm 前必须先给完整清单');
+      expect(shell.effectiveDescription).toContain('rm 前必须先给完整清单');
+      expect(shell.effectiveDescription.startsWith(shell.description)).toBe(true);
+
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.toolControls.tools.Shell.descriptionOverride).toEqual({
+        mode: 'append',
+        text: '本平台补充说明：任何 rm 前必须先给完整清单等待用户点头。',
+      });
+      expect(runtimeConfig.toolControls?.tools?.Shell?.descriptionOverride?.mode).toBe('append');
+    });
+  });
+
+  it('single-tool PUT can set / clear descriptionOverride without touching other tools', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+      // 1) 设置 override
+      const setRes = await fetch(`${baseUrl}/api/admin/tool-controls/Write`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          descriptionOverride: { mode: 'replace', text: '仅用于生成客户交付文档。' },
+        }),
+      });
+      expect(setRes.status).toBe(200);
+      const setBody = await readJson(setRes);
+      const write = setBody.tools.find((tool: { id: string }) => tool.id === 'Write');
+      expect(write.descriptionOverride).toEqual({ mode: 'replace', text: '仅用于生成客户交付文档。' });
+      // replace 模式：effective == override text
+      expect(write.effectiveDescription).toBe('仅用于生成客户交付文档。');
+      // Shell 原本 enabled=false 保持不变，未被单工具 PUT 波及
+      const shellAfterSet = setBody.tools.find((tool: { id: string }) => tool.id === 'Shell');
+      expect(shellAfterSet.enabled).toBe(false);
+
+      // 2) 清除 override
+      const clearRes = await fetch(`${baseUrl}/api/admin/tool-controls/Write`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ descriptionOverride: null }),
+      });
+      expect(clearRes.status).toBe(200);
+      const clearBody = await readJson(clearRes);
+      const writeAfterClear = clearBody.tools.find((tool: { id: string }) => tool.id === 'Write');
+      expect(writeAfterClear.descriptionOverride).toBeUndefined();
+      expect(writeAfterClear.effectiveDescription).toBe(writeAfterClear.description);
+      // config.json 里 Write 的 tools 条目应该被完全删除（无 enabled + 无 override）
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.toolControls.tools?.Write).toBeUndefined();
+      expect(written.toolControls.tools?.Shell?.enabled).toBe(false);
+      expect(runtimeConfig.toolControls?.tools?.Write?.descriptionOverride).toBeUndefined();
+    });
+  });
+
+  it('single-tool PUT can flip enabled without editing webTools payload', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+      const res = await fetch(`${baseUrl}/api/admin/tool-controls/Grep`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(res.status).toBe(200);
+      const body = await readJson(res);
+      expect(body.tools.find((tool: { id: string }) => tool.id === 'Grep').enabled).toBe(false);
+      // webTools 保持原状
+      expect(body.webTools.search).toMatchObject({ provider: 'brave', hasApiKey: true });
+      expect(runtimeConfig.toolControls?.tools?.Grep?.enabled).toBe(false);
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.toolControls.tools.Grep.enabled).toBe(false);
+      // 原有的 Shell 关闭仍在
+      expect(written.toolControls.tools.Shell.enabled).toBe(false);
+    });
+  });
+
+  it('single-tool PUT 404s on unknown toolId without touching config.json', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      const res = await fetch(`${baseUrl}/api/admin/tool-controls/NotARealTool`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(res.status).toBe(404);
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
     });
   });
 

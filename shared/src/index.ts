@@ -338,6 +338,7 @@ export {
 // Lib - platform tool controls API
 export {
   fetchToolControlsConfig,
+  updateSingleTool,
   updateToolControlsConfig,
 } from "./lib/toolControlsApi";
 export type {
@@ -345,6 +346,9 @@ export type {
   ToolControlConfig,
   ToolControlsAdminResponse,
   ToolControlsConfig,
+  ToolDescriptionOverride,
+  ToolDescriptionOverrideMode,
+  UpdateSingleToolRequest,
   UpdateToolControlsRequest,
   WebSearchProvider,
   WebToolsConfig,

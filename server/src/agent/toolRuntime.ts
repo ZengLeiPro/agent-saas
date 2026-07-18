@@ -136,6 +136,21 @@ export interface ToolCallContext {
   executionAudit?: ExecutionAuditRecorder;
 }
 
+/**
+ * 平台内建工具的分组。仅用于 admin UI 归类展示，不影响运行时行为。
+ * 未列出的 category（如 MCP 工具）默认走 admin 面板的兜底分组。
+ */
+export type ToolCategory =
+  | 'workspace'
+  | 'memory'
+  | 'skill'
+  | 'meta'
+  | 'session'
+  | 'web'
+  | 'media'
+  | 'cron'
+  | 'core';
+
 export interface ToolDescriptor<TInput = unknown> {
   id: string;
   name: string;
@@ -152,6 +167,14 @@ export interface ToolDescriptor<TInput = unknown> {
   risk: ToolRisk;
   approvalMode: ToolApprovalMode;
   auditCategory: string;
+  /**
+   * 内建工具的 admin UI 分组。缺省视为 MCP / 动态工具，admin 面板归入兜底分组。
+   */
+  category?: ToolCategory;
+  /**
+   * admin UI 展示用的中文短标签。缺省时前端 fallback 到 displayName。
+   */
+  label?: string;
 }
 
 export interface ToolResult {
@@ -285,6 +308,8 @@ export const readFileToolDescriptor: ToolDescriptor<{ path: string; offset?: num
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'filesystem.read',
+  category: 'workspace',
+  label: '读取文件',
 };
 
 export const writeFileToolDescriptor: ToolDescriptor<{ path: string; content: string }> = {
@@ -299,6 +324,8 @@ export const writeFileToolDescriptor: ToolDescriptor<{ path: string; content: st
   risk: 'workspace_write',
   approvalMode: 'web',
   auditCategory: 'filesystem.write',
+  category: 'workspace',
+  label: '写入文件',
 };
 
 export const listFilesToolDescriptor: ToolDescriptor<{ path: string; recursive: boolean }> = {
@@ -313,6 +340,8 @@ export const listFilesToolDescriptor: ToolDescriptor<{ path: string; recursive: 
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'filesystem.list',
+  category: 'workspace',
+  label: '列出文件',
 };
 
 export const runShellToolDescriptor: ToolDescriptor<{ command: string; timeoutMs?: number }> = {
@@ -327,6 +356,8 @@ export const runShellToolDescriptor: ToolDescriptor<{ command: string; timeoutMs
   risk: 'dangerous',
   approvalMode: 'web',
   auditCategory: 'process.shell',
+  category: 'workspace',
+  label: '执行 Shell',
 };
 
 export const waitForWorkspaceReadyToolDescriptor: ToolDescriptor<{ timeoutMs?: number }> = {
@@ -340,6 +371,8 @@ export const waitForWorkspaceReadyToolDescriptor: ToolDescriptor<{ timeoutMs?: n
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'workspace.status',
+  category: 'workspace',
+  label: '等待工作区就绪',
 };
 
 /**
@@ -1339,7 +1372,8 @@ export class PlatformToolRuntime implements ToolRuntime {
   list(context?: ToolCallContext): ToolDescriptor[] {
     return this.providers
       .flatMap((provider) => provider.list(context))
-      .filter((descriptor) => isToolEnabled(this.toolControls, descriptor));
+      .filter((descriptor) => isToolEnabled(this.toolControls, descriptor))
+      .map((descriptor) => applyToolDescriptionOverride(descriptor, this.toolControls));
   }
 
   async invoke<TInput>(call: AuthorizedToolCall<TInput>, context: ToolCallContext): Promise<ToolResult> {
@@ -1364,6 +1398,35 @@ export function isToolEnabled(
   const byId = controls?.tools?.[id]?.enabled;
   const byName = name !== id ? controls?.tools?.[name]?.enabled : undefined;
   return byId !== false && byName !== false;
+}
+
+/**
+ * 把 toolControls 里的 descriptionOverride 打进 descriptor.description。
+ *
+ * append 模式：md 原描述 + " " + 归一化 override，供给 LLM 时是单行连续文本。
+ * replace 模式：完全用 override 覆盖（危险，UI 已弹二次确认）。
+ *
+ * 归一化沿用 descriptionLoader 的规则：split('\n') → trim → filter 空 → join(' ')。
+ * 保证 md 里的多行段落和 override 里的多行输入行为一致，模型看到的 description
+ * 永远是单行连续字符串。
+ */
+export function applyToolDescriptionOverride(
+  descriptor: ToolDescriptor,
+  controls: ToolControlsConfig | undefined,
+): ToolDescriptor {
+  const override = controls?.tools?.[descriptor.id]?.descriptionOverride
+    ?? controls?.tools?.[descriptor.name]?.descriptionOverride;
+  if (!override || !override.text || !override.text.trim()) return descriptor;
+  const normalized = override.text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' ');
+  if (!normalized) return descriptor;
+  const nextDescription = override.mode === 'replace'
+    ? normalized
+    : `${descriptor.description} ${normalized}`;
+  return { ...descriptor, description: nextDescription };
 }
 
 function parseToolInput<TInput>(descriptor: ToolDescriptor<TInput>, input: unknown): TInput {

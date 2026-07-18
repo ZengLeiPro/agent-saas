@@ -72,6 +72,8 @@ export const cronListToolDescriptor: ToolDescriptor<CronListInput> = {
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'cron.read',
+  category: 'cron',
+  label: '列出定时任务',
 };
 
 export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
@@ -83,6 +85,8 @@ export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
   risk: 'dangerous',
   approvalMode: 'web',
   auditCategory: 'cron.manage',
+  category: 'cron',
+  label: '管理定时任务',
 };
 
 interface CronIdentity {

@@ -114,6 +114,8 @@ export const generateImageToolDescriptor: ToolDescriptor<GenerateImageInput> = {
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'media.imageGenerate',
+  category: 'media',
+  label: 'AI 生图',
 };
 
 // ─── gpt-image-2 订阅池进程内全局单飞队列 ────────────────────────────────────

@@ -112,6 +112,8 @@ export const editToolDescriptor: ToolDescriptor<EditInput> = {
   risk: 'workspace_write',
   approvalMode: 'web',
   auditCategory: 'filesystem.edit',
+  category: 'workspace',
+  label: '精确编辑文件',
 };
 
 export const globToolDescriptor: ToolDescriptor<GlobInput> = {
@@ -126,6 +128,8 @@ export const globToolDescriptor: ToolDescriptor<GlobInput> = {
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'filesystem.glob',
+  category: 'workspace',
+  label: 'Glob 查找文件',
 };
 
 export const grepToolDescriptor: ToolDescriptor<GrepInput> = {
@@ -143,6 +147,8 @@ export const grepToolDescriptor: ToolDescriptor<GrepInput> = {
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'filesystem.grep',
+  category: 'workspace',
+  label: '正则搜索文件',
 };
 
 export const artifactCreateToolDescriptor: ToolDescriptor<CreateArtifactInput> = {
@@ -159,6 +165,8 @@ export const artifactCreateToolDescriptor: ToolDescriptor<CreateArtifactInput> =
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'artifact.create',
+  category: 'workspace',
+  label: '创建 Artifact',
 };
 
 export async function runWorkspaceEdit(

@@ -84,6 +84,8 @@ export const webSearchToolDescriptor: ToolDescriptor<WebSearchInput> = {
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'network.webSearch',
+  category: 'web',
+  label: '网络搜索',
 };
 
 export const webFetchToolDescriptor: ToolDescriptor<WebFetchInput> = {
@@ -95,6 +97,8 @@ export const webFetchToolDescriptor: ToolDescriptor<WebFetchInput> = {
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'network.webFetch',
+  category: 'web',
+  label: '网页访问',
 };
 
 export class WebToolProvider implements ToolProvider {

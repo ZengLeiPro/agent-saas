@@ -7,9 +7,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import type { ChannelContext } from '../types/index.js';
 import {
+  applyToolDescriptionOverride,
   LocalWorkspaceProvider,
   MAX_FILE_BYTES,
   PlatformToolRuntime,
+  readFileToolDescriptor,
   runShellToolDescriptor,
   ServerLocalExecutionProvider,
   WORKSPACE_HAND_TOOLS,
@@ -1107,3 +1109,57 @@ describe('PlatformToolRuntime', () => {
     });
   });
 });
+
+describe('applyToolDescriptionOverride', () => {
+  it('returns descriptor untouched when no override configured', () => {
+    const patched = applyToolDescriptionOverride(readFileToolDescriptor, undefined);
+    expect(patched).toBe(readFileToolDescriptor);
+    expect(patched.description).toBe(readFileToolDescriptor.description);
+  });
+
+  it('append mode preserves original description and concatenates normalized override text', () => {
+    const patched = applyToolDescriptionOverride(readFileToolDescriptor, {
+      tools: {
+        Read: {
+          descriptionOverride: {
+            mode: 'append',
+            // 多行输入应被 split/trim/filter/join 归一化成单行
+            text: '本平台请优先读取\n    assets/YYYYMMDD/ 下的文件。\n\n路径中允许使用相对路径。',
+          },
+        },
+      },
+    });
+    expect(patched).not.toBe(readFileToolDescriptor);
+    expect(patched.description.startsWith(readFileToolDescriptor.description)).toBe(true);
+    expect(patched.description).toContain('assets/YYYYMMDD/');
+    expect(patched.description).not.toContain('\n');
+    expect(patched.description).not.toContain('    '); // 缩进被 trim 掉
+  });
+
+  it('replace mode returns override text as the entire description', () => {
+    const patched = applyToolDescriptionOverride(readFileToolDescriptor, {
+      tools: {
+        Read: { descriptionOverride: { mode: 'replace', text: '仅用于读取合同模板。' } },
+      },
+    });
+    expect(patched.description).toBe('仅用于读取合同模板。');
+    expect(patched.description).not.toContain(readFileToolDescriptor.description);
+  });
+
+  it('empty / whitespace-only override text is a no-op', () => {
+    const patched = applyToolDescriptionOverride(readFileToolDescriptor, {
+      tools: { Read: { descriptionOverride: { mode: 'append', text: '   \n  \n' } } },
+    });
+    expect(patched.description).toBe(readFileToolDescriptor.description);
+  });
+
+  it('falls back to descriptor.name key when tools lookup by id misses', () => {
+    // 制造 id 与 name 不一致的场景：MCP 工具走 id=`mcp:xxx.tool`、name='tool'
+    const descriptor = { ...readFileToolDescriptor, id: 'mcp:kb.read', name: 'Read' };
+    const patched = applyToolDescriptionOverride(descriptor, {
+      tools: { Read: { descriptionOverride: { mode: 'append', text: '仅限企业文档。' } } },
+    });
+    expect(patched.description.endsWith('仅限企业文档。')).toBe(true);
+  });
+});
+

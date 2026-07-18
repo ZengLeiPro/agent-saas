@@ -43,6 +43,8 @@ export const readCompanyInfoToolDescriptor: ToolDescriptor<ReadCompanyInfoInput>
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'tenant.companyInfo.read',
+  category: 'memory',
+  label: '读取组织资料',
 };
 
 export const updateCompanyInfoToolDescriptor: ToolDescriptor<UpdateCompanyInfoInput> = {
@@ -54,6 +56,8 @@ export const updateCompanyInfoToolDescriptor: ToolDescriptor<UpdateCompanyInfoIn
   risk: 'workspace_write',
   approvalMode: 'web',
   auditCategory: 'tenant.companyInfo.write',
+  category: 'memory',
+  label: '更新组织资料',
 };
 
 export interface TenantCompanyInfoToolProviderOptions {

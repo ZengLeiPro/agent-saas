@@ -1056,14 +1056,36 @@ const imageGenToolsConfigSchema = z.object({
   }
 }).optional();
 
+/**
+ * 单工具的 description 覆盖。
+ *
+ * append：把 text 追加在 md 原描述之后（默认，最安全，用来给平台加特定语义提示）。
+ * replace：完全用 text 替换 md 原描述（危险，改坏后模型可能停止调用该工具，UI 需二次确认）。
+ *
+ * text 归一化和 descriptionLoader 一致：split('\n') → trim → filter 空 → join(' ')。
+ * 归一化实施在 toModelToolDefinition 消费点，此处只落存 raw text。
+ */
+const toolDescriptionOverrideSchema = z.object({
+  mode: z.enum(['append', 'replace']),
+  text: z.string().min(1).max(4000),
+});
+
 const toolControlsConfigSchema = z.object({
   /** 全局总开关。false 时除底层内部恢复逻辑外，不向模型暴露任何平台工具。 */
   enabled: z.boolean().optional(),
   /** 按 ToolDescriptor.name/id 控制模型可见工具。未列出的工具默认启用。 */
   tools: z.record(z.string().min(1), z.object({
     enabled: z.boolean().optional(),
+    /**
+     * 覆盖工具的 description（LLM prompt 层）。仅对平台内建工具生效；MCP 工具走
+     * McpClientToolProvider 自身透传。改动是 prompt 变更、可能影响模型调用行为，
+     * admin UI 需二次确认。缺省视为不覆盖，直接使用 md 原描述。
+     */
+    descriptionOverride: toolDescriptionOverrideSchema.optional(),
   })).optional(),
 }).optional();
+
+export type ToolDescriptionOverride = z.infer<typeof toolDescriptionOverrideSchema>;
 
 const runtimeSchedulerConfigSchema = z.object({
   /** 默认 true：PG Web chat 默认 enqueue-only，并由 scheduler 调用 wakeRuntimeSession 执行。 */

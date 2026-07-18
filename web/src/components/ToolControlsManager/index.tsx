@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ChevronRight,
   CircleAlert,
   CircleCheck,
+  Clock,
   Database,
   Globe2,
   ImageIcon,
@@ -10,40 +12,29 @@ import {
   MessageSquare,
   RefreshCw,
   Save,
-  Search,
   Terminal,
   Wrench,
 } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import {
   fetchToolControlsConfig,
+  updateSingleTool,
   updateToolControlsConfig,
   type ToolCatalogItem,
   type ToolControlsAdminResponse,
   type ToolControlsConfig,
+  type ToolDescriptionOverride,
   type WebToolsConfig,
   type WebToolsFetchConfig,
-  type WebSearchProvider,
   type WebToolsSearchConfig,
 } from "@agent/shared";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { ImageGenSettingsCard } from "@/components/ToolControlsManager/ImageGenSettingsCard";
-import { ImageGenPricingCard } from "@/components/ToolControlsManager/ImageGenPricingCard";
+import { ToolDetailPanel } from "@/components/ToolControlsManager/ToolDetailPanel";
 import { useAuth } from "@/contexts/AuthContext";
 
 // 缺省视为「启用」以对齐后端语义：WebToolProvider.list() 判 `search.enabled !== false`
@@ -79,33 +70,8 @@ const TOOL_GROUPS = [
   { id: "session", label: "会话追踪", icon: MessageSquare },
   { id: "web", label: "Web", icon: Globe2 },
   { id: "media", label: "多媒体", icon: ImageIcon },
+  { id: "cron", label: "定时任务", icon: Clock },
 ] as const;
-
-const SEARCH_PROVIDER_OPTIONS: Array<{
-  value: WebSearchProvider;
-  label: string;
-  keyRefPlaceholder: string;
-  endpointPlaceholder: string;
-}> = [
-  {
-    value: "volcengine",
-    label: "火山豆包搜索 Custom版",
-    keyRefPlaceholder: "volcengine-web-search-api-key",
-    endpointPlaceholder: "https://open.feedcoopapi.com/search_api/web_search",
-  },
-  {
-    value: "brave",
-    label: "Brave Search",
-    keyRefPlaceholder: "brave-search-api-key",
-    endpointPlaceholder: "https://api.search.brave.com/res/v1/web/search",
-  },
-  {
-    value: "tencent_wsa",
-    label: "腾讯云联网搜索 WSA",
-    keyRefPlaceholder: "tencent-wsa-api-key",
-    endpointPlaceholder: "https://api.wsa.cloud.tencent.com/SearchPro",
-  },
-];
 
 function splitList(value: string): string[] {
   const seen = new Set<string>();
@@ -135,7 +101,6 @@ function normalizeWebTools(webTools: WebToolsConfig | null): WebToolsConfig {
   if (!webTools) {
     // config.webTools 未定义时后端 resolveWebToolsConfig 返回 undefined，
     // WebToolProvider 不会启动 —— 两个 web 工具都不会暴露给 agent。
-    // UI 相应显示全部关闭，与运行时状态一致。
     return {
       ...DEFAULT_WEB_TOOLS,
       enabled: false,
@@ -143,16 +108,11 @@ function normalizeWebTools(webTools: WebToolsConfig | null): WebToolsConfig {
       fetch: { ...DEFAULT_FETCH, enabled: false },
     };
   }
-  // config.webTools 已定义。缺失字段视为「启用」，与后端 WebToolProvider.list()
-  // 对 `search.enabled !== false` / `fetch?.enabled !== false` 的判定一致。
   return {
     enabled: webTools.enabled ?? DEFAULT_WEB_TOOLS.enabled,
-    // webTools.search 不存在 → 后端不加 WebSearch → UI 显示关闭。
     search: webTools.search
       ? { ...DEFAULT_SEARCH, ...webTools.search }
       : { ...DEFAULT_SEARCH, enabled: false },
-    // webTools.fetch 不存在但 webTools 存在 → 后端 `fetch?.enabled !== false`
-    // 判定为 true，仍会暴露 WebFetch → UI 沿用 DEFAULT_FETCH.enabled=true。
     fetch: webTools.fetch
       ? { ...DEFAULT_FETCH, ...webTools.fetch }
       : { ...DEFAULT_FETCH },
@@ -197,19 +157,14 @@ function listDraftVisibleTools(tools: ToolCatalogItem[], toolControls: ToolContr
 
 function buildToolControlsPayload(toolControls: ToolControlsConfig): ToolControlsConfig | null {
   if (toolControls.enabled === false) return { enabled: false };
-  const disabledTools = Object.fromEntries(
-    Object.entries(toolControls.tools ?? {})
-      .filter(([, value]) => value.enabled === false)
-      .map(([key]) => [key, { enabled: false }]),
-  );
-  if (Object.keys(disabledTools).length === 0) return null;
-  return { tools: disabledTools };
-}
-
-function numberOrUndefined(value: string): number | undefined {
-  if (value === "") return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  const toolsEntries = Object.entries(toolControls.tools ?? {}).flatMap(([key, value]) => {
+    const entry: { enabled?: boolean; descriptionOverride?: ToolDescriptionOverride } = {};
+    if (value.enabled === false) entry.enabled = false;
+    if (value.descriptionOverride) entry.descriptionOverride = value.descriptionOverride;
+    return Object.keys(entry).length > 0 ? [[key, entry] as const] : [];
+  });
+  if (toolsEntries.length === 0) return null;
+  return { tools: Object.fromEntries(toolsEntries) };
 }
 
 function assertIntegerRange(label: string, value: number | undefined, min: number, max: number): void {
@@ -280,8 +235,7 @@ function buildWebToolsPayload(
   return webToolsPayload;
 }
 
-export function ToolControlsManager() {
-  // 只读平台 admin：保存并生效（唯一提交点）disabled
+export function ToolControlsManager(): JSX.Element {
   const { platformReadOnly } = useAuth();
   const [toolControlsDraft, setToolControlsDraft] = useState<ToolControlsConfig>(() => normalizeToolControls(null));
   const [webToolsDraft, setWebToolsDraft] = useState<WebToolsConfig>(() => normalizeWebTools(null));
@@ -297,6 +251,7 @@ export function ToolControlsManager() {
   const [dirty, setDirty] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
 
   const markDirty = useCallback(() => {
     setDirty(true);
@@ -306,6 +261,16 @@ export function ToolControlsManager() {
 
   const hydrate = useCallback((response: ToolControlsAdminResponse) => {
     const nextToolControls = normalizeToolControls(response.toolControls);
+    // 把 catalog 里带回来的 descriptionOverride 合并回 draft，保证详情页看到最新 override
+    for (const tool of response.tools) {
+      if (tool.descriptionOverride) {
+        nextToolControls.tools = nextToolControls.tools ?? {};
+        nextToolControls.tools[tool.id] = {
+          ...(nextToolControls.tools[tool.id] ?? {}),
+          descriptionOverride: tool.descriptionOverride,
+        };
+      }
+    }
     const nextWebTools = normalizeWebTools(response.webTools);
     setToolControlsDraft(nextToolControls);
     setWebToolsDraft(nextWebTools);
@@ -399,26 +364,57 @@ export function ToolControlsManager() {
     }
   }, [allowedContentTypesText, allowedHostsText, blockedHostsText, hydrate, searchApiKeyText, toolControlsDraft, webToolsDraft]);
 
+  const saveSingleTool = useCallback(async (
+    toolId: string,
+    payload: { enabled?: boolean; descriptionOverride?: ToolDescriptionOverride | null },
+  ) => {
+    // 单工具 PUT 不受 dirty 状态影响：description override / 快捷开关自己有独立保存生命周期。
+    const response = await updateSingleTool(toolId, payload);
+    hydrate(response);
+  }, [hydrate]);
+
   const draftVisibleTools = useMemo(
     () => listDraftVisibleTools(tools, toolControlsDraft, webToolsDraft),
     [tools, toolControlsDraft, webToolsDraft],
   );
   const savedDisabledTools = useMemo(() => tools.filter((tool) => !tool.enabled).map((tool) => tool.name), [tools]);
-  const search = webToolsDraft.search ?? DEFAULT_SEARCH;
-  const searchProvider = search.provider ?? DEFAULT_SEARCH.provider ?? "volcengine";
-  const searchProviderOption = SEARCH_PROVIDER_OPTIONS.find((option) => option.value === searchProvider) ?? SEARCH_PROVIDER_OPTIONS[0];
-  const fetch = webToolsDraft.fetch ?? DEFAULT_FETCH;
-  const egress = webToolsDraft.egress ?? {};
 
   if (loading && tools.length === 0 && !dirty) {
     return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;
+  }
+
+  const selectedTool = selectedToolId ? tools.find((tool) => tool.id === selectedToolId) : null;
+
+  if (selectedTool) {
+    return (
+      <ToolDetailPanel
+        tool={selectedTool}
+        toolControls={toolControlsDraft}
+        webToolsDraft={webToolsDraft}
+        onToggleEnabled={(enabled) => updateTool(selectedTool.id, enabled)}
+        updateSearch={updateSearch}
+        updateFetch={updateFetch}
+        updateWebTools={updateWebTools}
+        allowedContentTypesText={allowedContentTypesText}
+        setAllowedContentTypesText={(v) => setAllowedContentTypesText(v)}
+        allowedHostsText={allowedHostsText}
+        setAllowedHostsText={(v) => setAllowedHostsText(v)}
+        blockedHostsText={blockedHostsText}
+        setBlockedHostsText={(v) => setBlockedHostsText(v)}
+        searchApiKeyText={searchApiKeyText}
+        setSearchApiKeyText={(v) => setSearchApiKeyText(v)}
+        markDirty={markDirty}
+        onBack={() => setSelectedToolId(null)}
+        saveSingleTool={saveSingleTool}
+      />
+    );
   }
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
         title="工具开关"
-        description="统一管理平台内建工具是否向模型暴露，WebSearch / WebFetch 的 provider 参数在同页维护。"
+        description="统一管理平台内建工具是否向模型暴露。点击任意工具进入详情页可查看契约、覆盖 description、配置运行时参数。"
         actions={(
           <>
             {!configured && <Badge variant="outline" title="config.json 里未显式写入 toolControls / webTools，运行时按缺省视为启用">运行时缺省·未落 config</Badge>}
@@ -437,271 +433,106 @@ export function ToolControlsManager() {
       />
 
       <div className="min-h-0 flex-1 space-y-4 overflow-auto">
-      {error && (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-          <CircleAlert className="mt-0.5 size-4 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base"><Wrench className="size-4" />全局工具开关</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
-            <div>
-              <Label className="text-sm font-medium">向模型暴露平台工具</Label>
-              <p className="mt-1 text-xs text-muted-foreground">关闭后本页所有内建工具都不会进入后续会话的工具列表。</p>
-            </div>
-            <Switch
-              checked={toolControlsDraft.enabled !== false}
-              onCheckedChange={(checked) => updateToolControls((current) => ({ ...current, enabled: checked }))}
-            />
+        {error && (
+          <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            <CircleAlert className="mt-0.5 size-4 shrink-0" />
+            <span>{error}</span>
           </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-lg border p-3">
-              <div className="text-xs font-medium text-muted-foreground">已保存关闭</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {savedDisabledTools.length > 0 ? savedDisabledTools.map((tool) => <Badge key={tool} variant="outline">{tool}</Badge>) : <Badge variant="secondary">无</Badge>}
-              </div>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="text-xs font-medium text-muted-foreground">草稿可见工具</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Badge variant="secondary">{draftVisibleTools.length} / {tools.length}</Badge>
-              </div>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="text-xs font-medium text-muted-foreground">已保存 Web 工具</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {effectiveWebTools.length > 0 ? effectiveWebTools.map((tool) => <Badge key={tool} variant="secondary">{tool}</Badge>) : <Badge variant="outline">无</Badge>}
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+        )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {TOOL_GROUPS.map((group) => {
-          const groupTools = tools.filter((tool) => tool.category === group.id);
-          if (groupTools.length === 0) return null;
-          const Icon = group.icon;
-          return (
-            <Card key={group.id}>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base"><Icon className="size-4" />{group.label}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {groupTools.map((tool) => {
-                  const individuallyEnabled = isToolIndividuallyEnabled(toolControlsDraft, tool);
-                  const switchChecked = tool.category === "web"
-                    ? individuallyEnabled && webProviderEnabled(webToolsDraft, tool.id)
-                    : individuallyEnabled;
-                  const draftEnabled = tool.category === "web"
-                    ? isWebToolEnabledInDraft(toolControlsDraft, webToolsDraft, tool.id)
-                    : isToolEnabledInDraft(toolControlsDraft, tool);
-                  return (
-                    <div key={tool.id} className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="break-all font-mono text-sm font-medium">{tool.name}</span>
-                          <Badge variant={draftEnabled ? "secondary" : "outline"}>{draftEnabled ? "开启" : "关闭"}</Badge>
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base"><Wrench className="size-4" />全局工具开关</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
+              <div>
+                <span className="text-sm font-medium">向模型暴露平台工具</span>
+                <p className="mt-1 text-xs text-muted-foreground">关闭后本页所有内建工具都不会进入后续会话的工具列表。</p>
+              </div>
+              <Switch
+                checked={toolControlsDraft.enabled !== false}
+                onCheckedChange={(checked) => updateToolControls((current) => ({ ...current, enabled: checked }))}
+              />
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-lg border p-3">
+                <div className="text-xs font-medium text-muted-foreground">已保存关闭</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {savedDisabledTools.length > 0 ? savedDisabledTools.map((tool) => <Badge key={tool} variant="outline">{tool}</Badge>) : <Badge variant="secondary">无</Badge>}
+                </div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs font-medium text-muted-foreground">草稿可见工具</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Badge variant="secondary">{draftVisibleTools.length} / {tools.length}</Badge>
+                </div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs font-medium text-muted-foreground">已保存 Web 工具</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {effectiveWebTools.length > 0 ? effectiveWebTools.map((tool) => <Badge key={tool} variant="secondary">{tool}</Badge>) : <Badge variant="outline">无</Badge>}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          {TOOL_GROUPS.map((group) => {
+            const groupTools = tools.filter((tool) => tool.category === group.id);
+            if (groupTools.length === 0) return null;
+            const Icon = group.icon;
+            return (
+              <Card key={group.id}>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base"><Icon className="size-4" />{group.label}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {groupTools.map((tool) => {
+                    const individuallyEnabled = isToolIndividuallyEnabled(toolControlsDraft, tool);
+                    const switchChecked = tool.category === "web"
+                      ? individuallyEnabled && webProviderEnabled(webToolsDraft, tool.id)
+                      : individuallyEnabled;
+                    const draftEnabled = tool.category === "web"
+                      ? isWebToolEnabledInDraft(toolControlsDraft, webToolsDraft, tool.id)
+                      : isToolEnabledInDraft(toolControlsDraft, tool);
+                    const overridden = !!toolControlsDraft.tools?.[tool.id]?.descriptionOverride;
+                    return (
+                      <button
+                        type="button"
+                        key={tool.id}
+                        onClick={() => setSelectedToolId(tool.id)}
+                        className="flex w-full items-center justify-between gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="break-all font-mono text-sm font-medium">{tool.name}</span>
+                            <Badge variant={draftEnabled ? "secondary" : "outline"}>{draftEnabled ? "开启" : "关闭"}</Badge>
+                            {tool.risk === "dangerous" && <Badge variant="destructive">dangerous</Badge>}
+                            {tool.risk === "workspace_write" && <Badge variant="outline">写工作区</Badge>}
+                            {overridden && <Badge variant="outline">已覆盖描述</Badge>}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">{tool.label}</div>
                         </div>
-                        <div className="mt-1 text-xs text-muted-foreground">{tool.label}</div>
-                      </div>
-                      <Switch
-                        checked={switchChecked}
-                        disabled={toolControlsDraft.enabled === false}
-                        onCheckedChange={(checked) => updateTool(tool.id, checked)}
-                        aria-label={`启用 ${tool.name}`}
-                      />
-                    </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base"><Globe2 className="size-4" />Web provider 配置</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
-            <div>
-              <Label className="text-sm font-medium">启用 Web provider</Label>
-              <p className="mt-1 text-xs text-muted-foreground">WebSearch / WebFetch 仍分别受上方工具开关控制。</p>
-            </div>
-            <Switch checked={webToolsDraft.enabled !== false} onCheckedChange={(checked) => updateWebTools((current) => ({ ...current, enabled: checked }))} />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base"><Search className="size-4" />WebSearch 参数</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="web-search-provider">Provider</Label>
-              <Select
-                value={searchProvider}
-                onValueChange={(value) => updateSearch({ provider: value as WebSearchProvider, endpoint: undefined })}
-              >
-                <SelectTrigger id="web-search-provider">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SEARCH_PROVIDER_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="web-search-api-key-ref">API Key Ref</Label>
-              <Input
-                id="web-search-api-key-ref"
-                value={search.apiKeyRef ?? ""}
-                onChange={(event) => updateSearch({ apiKeyRef: event.target.value, hasApiKey: search.hasApiKey })}
-                placeholder={searchProviderOption.keyRefPlaceholder}
-              />
-              {search.hasApiKey && !search.apiKeyRef && !searchApiKeyText && <p className="text-xs text-muted-foreground">已有明文 apiKey，保存时由后端保留。</p>}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="web-search-api-key">API Key</Label>
-              <Input
-                id="web-search-api-key"
-                type="password"
-                autoComplete="new-password"
-                passwordManager="ignore"
-                value={searchApiKeyText}
-                onChange={(event) => { setSearchApiKeyText(event.target.value); markDirty(); }}
-                placeholder="留空则使用 API Key Ref 或保留已有明文 key"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="web-search-endpoint">Endpoint</Label>
-              <Input
-                id="web-search-endpoint"
-                value={search.endpoint ?? ""}
-                onChange={(event) => updateSearch({ endpoint: event.target.value })}
-                placeholder={searchProviderOption.endpointPlaceholder}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="web-search-timeout">Timeout ms</Label>
-              <Input
-                id="web-search-timeout"
-                type="number"
-                min={1}
-                max={60_000}
-                value={search.timeoutMs ?? ""}
-                onChange={(event) => updateSearch({ timeoutMs: numberOrUndefined(event.target.value) })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="web-search-max-results">Max results</Label>
-              <Input
-                id="web-search-max-results"
-                type="number"
-                min={1}
-                max={10}
-                value={search.maxResults ?? ""}
-                onChange={(event) => updateSearch({ maxResults: numberOrUndefined(event.target.value) })}
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base"><Globe2 className="size-4" />WebFetch 参数</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="web-fetch-timeout">Timeout ms</Label>
-              <Input id="web-fetch-timeout" type="number" min={1} max={60_000} value={fetch.timeoutMs ?? ""} onChange={(event) => updateFetch({ timeoutMs: numberOrUndefined(event.target.value) })} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="web-fetch-max-redirects">Max redirects</Label>
-              <Input id="web-fetch-max-redirects" type="number" min={0} max={10} value={fetch.maxRedirects ?? ""} onChange={(event) => updateFetch({ maxRedirects: numberOrUndefined(event.target.value) })} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="web-fetch-max-bytes">Max bytes</Label>
-              <Input id="web-fetch-max-bytes" type="number" min={1} max={10 * 1024 * 1024} value={fetch.maxBytes ?? ""} onChange={(event) => updateFetch({ maxBytes: numberOrUndefined(event.target.value) })} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="web-fetch-max-chars">Max chars</Label>
-              <Input id="web-fetch-max-chars" type="number" min={100} max={50_000} value={fetch.maxChars ?? ""} onChange={(event) => updateFetch({ maxChars: numberOrUndefined(event.target.value) })} />
-            </div>
-            <div className="space-y-1.5 md:col-span-2">
-              <Label htmlFor="web-fetch-content-types">Allowed content types</Label>
-              <Textarea
-                id="web-fetch-content-types"
-                className="min-h-20 font-mono text-xs"
-                value={allowedContentTypesText}
-                onChange={(event) => { setAllowedContentTypesText(event.target.value); markDirty(); }}
-                placeholder={"text/html\napplication/json\ntext/plain"}
-              />
-            </div>
-            <div className="space-y-1.5 md:col-span-2">
-              <Label htmlFor="web-fetch-user-agent">User agent</Label>
-              <Input id="web-fetch-user-agent" value={fetch.userAgent ?? ""} onChange={(event) => updateFetch({ userAgent: event.target.value })} placeholder="留空使用内置默认 UA" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base"><EntityIcons.admin className="size-4" />出站策略</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
-            <div>
-              <Label className="text-sm font-medium">允许访问私网 / localhost</Label>
-              <p className="mt-1 text-xs text-muted-foreground">默认关闭；除非明确要访问内网服务，否则保持关闭。</p>
-            </div>
-            <Switch
-              checked={egress.allowPrivateNetworks === true}
-              onCheckedChange={(checked) => updateWebTools((current) => ({ ...current, egress: { ...(current.egress ?? {}), allowPrivateNetworks: checked } }))}
-            />
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="web-egress-allowed-hosts">Allowed hosts</Label>
-              <Textarea
-                id="web-egress-allowed-hosts"
-                className="min-h-24 font-mono text-xs"
-                value={allowedHostsText}
-                onChange={(event) => { setAllowedHostsText(event.target.value); markDirty(); }}
-                placeholder={"example.com\n*.trusted.com"}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="web-egress-blocked-hosts">Blocked hosts</Label>
-              <Textarea
-                id="web-egress-blocked-hosts"
-                className="min-h-24 font-mono text-xs"
-                value={blockedHostsText}
-                onChange={(event) => { setBlockedHostsText(event.target.value); markDirty(); }}
-                placeholder={"localhost\n169.254.169.254"}
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* GenerateImage 引擎与定价各自独立保存，避免一个端点半成功；两者均热更。 */}
-      <ImageGenSettingsCard />
-      <ImageGenPricingCard />
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={switchChecked}
+                            disabled={toolControlsDraft.enabled === false}
+                            onCheckedChange={(checked) => updateTool(tool.id, checked)}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`启用 ${tool.name}`}
+                          />
+                          <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

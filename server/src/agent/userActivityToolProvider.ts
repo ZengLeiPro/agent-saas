@@ -40,6 +40,8 @@ export const userActivityListToolDescriptor: ToolDescriptor<UserActivityListInpu
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'memory.activity',
+  category: 'memory',
+  label: '查看用户近期活动',
 };
 
 export class UserActivityToolProvider implements ToolProvider {

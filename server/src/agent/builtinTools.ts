@@ -79,6 +79,8 @@ export const todoWriteToolDescriptor: ToolDescriptor<TodoWriteInput> = {
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'meta.todo',
+  category: 'meta',
+  label: '管理 TODO',
 };
 
 export const askUserQuestionToolDescriptor: ToolDescriptor<AskUserQuestionInput> = {
@@ -105,6 +107,8 @@ export const askUserQuestionToolDescriptor: ToolDescriptor<AskUserQuestionInput>
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'meta.ask_user',
+  category: 'meta',
+  label: '向用户提问',
 };
 
 export interface SessionTodoStore {

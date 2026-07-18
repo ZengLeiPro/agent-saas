@@ -8,7 +8,7 @@
  * setMessages 的真实语义（addMessage 返回下标、updateMessageAt 就地替换），
  * 这样断言的就是真实的 messages 终态，而非 mock 调用次数。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { MessageItem, MessageItemInput } from '../types/message';
 import type { WsEvent } from '../types/ws';
@@ -60,18 +60,29 @@ function makeController(initial: MessageItem[] = []): FakeController {
 
 // ── 构造一个最小可用的 WsProcessingContext ──────────────────────────────
 interface CtxHooks {
-  onChatAck: ReturnType<typeof vi.fn>;
-  onChatRejected: ReturnType<typeof vi.fn>;
-  onChatDone: ReturnType<typeof vi.fn>;
-  onModelPersist: ReturnType<typeof vi.fn>;
-  setIsNewSession: ReturnType<typeof vi.fn>;
-  setSessionId: ReturnType<typeof vi.fn>;
-  loadSessions: ReturnType<typeof vi.fn>;
-  updateSessionTitle: ReturnType<typeof vi.fn>;
-  updateSessionMeta: ReturnType<typeof vi.fn>;
-  removeSession: ReturnType<typeof vi.fn>;
-  upsertSession: ReturnType<typeof vi.fn>;
-  voiceCallback: ReturnType<typeof vi.fn>;
+  onChatAck: Mock<(clientMsgId: string) => void>;
+  onChatRejected: Mock<(clientMsgId: string, reasonCode: string, reason: string) => void>;
+  onChatDone: Mock<(clientMsgId: string | undefined, error: string | undefined) => void>;
+  onModelPersist: Mock<(sessionId: string, model: string) => void>;
+  setIsNewSession: Mock<(v: boolean) => void>;
+  setSessionId: Mock<(id: string | null) => void>;
+  loadSessions: Mock<() => Promise<void>>;
+  updateSessionTitle: Mock<(sessionId: string, title: string) => void>;
+  updateSessionMeta: Mock<
+    (sessionId: string, patch: { preview?: string; updatedAtMs?: number; title?: string }) => void
+  >;
+  removeSession: Mock<(sessionId: string) => void>;
+  upsertSession: Mock<
+    (session: {
+      sessionId: string;
+      title?: string;
+      preview?: string;
+      updatedAtMs: number;
+      model?: string;
+      username?: string;
+    }) => void
+  >;
+  voiceCallback: Mock<(key: string, text: string, voice?: string, speed?: number) => void>;
 }
 
 function makeCtx(
@@ -79,18 +90,29 @@ function makeCtx(
   overrides: Partial<WsProcessingContext> = {},
 ): { ctx: WsProcessingContext; hooks: CtxHooks } {
   const hooks: CtxHooks = {
-    onChatAck: vi.fn(),
-    onChatRejected: vi.fn(),
-    onChatDone: vi.fn(),
-    onModelPersist: vi.fn(),
-    setIsNewSession: vi.fn(),
-    setSessionId: vi.fn(),
-    loadSessions: vi.fn().mockResolvedValue(undefined),
-    updateSessionTitle: vi.fn(),
-    updateSessionMeta: vi.fn(),
-    removeSession: vi.fn(),
-    upsertSession: vi.fn(),
-    voiceCallback: vi.fn(),
+    onChatAck: vi.fn<(clientMsgId: string) => void>(),
+    onChatRejected: vi.fn<(clientMsgId: string, reasonCode: string, reason: string) => void>(),
+    onChatDone: vi.fn<(clientMsgId: string | undefined, error: string | undefined) => void>(),
+    onModelPersist: vi.fn<(sessionId: string, model: string) => void>(),
+    setIsNewSession: vi.fn<(v: boolean) => void>(),
+    setSessionId: vi.fn<(id: string | null) => void>(),
+    loadSessions: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    updateSessionTitle: vi.fn<(sessionId: string, title: string) => void>(),
+    updateSessionMeta: vi.fn<
+      (sessionId: string, patch: { preview?: string; updatedAtMs?: number; title?: string }) => void
+    >(),
+    removeSession: vi.fn<(sessionId: string) => void>(),
+    upsertSession: vi.fn<
+      (session: {
+        sessionId: string;
+        title?: string;
+        preview?: string;
+        updatedAtMs: number;
+        model?: string;
+        username?: string;
+      }) => void
+    >(),
+    voiceCallback: vi.fn<(key: string, text: string, voice?: string, speed?: number) => void>(),
   };
   const ctx: WsProcessingContext = {
     msg: ctrl,

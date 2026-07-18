@@ -10,7 +10,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 const wsSend = vi.fn();
-const wsOnMessage = vi.fn(() => () => {});
+const wsOnMessage = vi.fn((..._a: unknown[]) => () => {});
 vi.mock('../../lib/wsClient', () => ({
   wsClient: {
     send: (...a: unknown[]) => wsSend(...a),
@@ -30,7 +30,7 @@ vi.mock('../../lib/wsEventProcessor', () => ({
   finalizeRunningSubagents: (...a: unknown[]) => finalizeSubagents(...a),
 }));
 
-const loadSessionsMock = vi.fn(async () => {});
+const loadSessionsMock = vi.fn(async (..._a: unknown[]) => {});
 const refreshCurrentMock = vi.fn();
 vi.mock('./sessionLoader', () => ({
   loadSessions: (...a: unknown[]) => loadSessionsMock(...a),

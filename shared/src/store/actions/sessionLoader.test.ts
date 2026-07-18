@@ -5,7 +5,7 @@
  * 测状态机流转：isLoadingSessions loading→loaded、分页 append、
  * 详情 cache 命中、404/403 清空、token usage 拉取。
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 
 const authFetchMock = vi.fn();
 vi.mock('../../lib/authFetch', () => ({
@@ -24,10 +24,10 @@ import type { PlatformDeps } from '../../platform/types';
 import type { ApiSessionListItem } from '../../types/session';
 
 let cacheStore: Record<string, unknown>;
-let cacheSaveSpy: ReturnType<typeof vi.fn>;
+let cacheSaveSpy: Mock<(...a: unknown[]) => void>;
 
 function makePlatform(): PlatformDeps {
-  cacheSaveSpy = vi.fn();
+  cacheSaveSpy = vi.fn<(...a: unknown[]) => void>();
   return {
     storage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
     secureStorage: { getItem: async () => null, setItem: async () => {}, removeItem: async () => {} },
@@ -193,7 +193,6 @@ describe('loadSessionDetail', () => {
 
   it('网络异常：吞错，不抛出', async () => {
     authFetchMock.mockRejectedValue(new Error('net'));
-    const store = getChatStore();
     await expect(loadSessionDetail('s5')).resolves.toBeUndefined();
   });
 });

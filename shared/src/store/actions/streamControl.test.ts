@@ -8,8 +8,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 const wsSend = vi.fn();
-const wsEnsureSend = vi.fn(async () => true);
-const wsOnMessage = vi.fn(() => () => {});
+const wsEnsureSend = vi.fn(async (..._a: unknown[]) => true);
+const wsOnMessage = vi.fn((..._a: unknown[]) => () => {});
 vi.mock('../../lib/wsClient', () => ({
   wsClient: {
     send: (...a: unknown[]) => wsSend(...a),

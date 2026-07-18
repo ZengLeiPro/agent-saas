@@ -11,7 +11,7 @@
  *
  * store 用真实单例，验证真实状态流转（seq 追踪、乐观订阅、done 收尾、排队重发等）。
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 
 // ── wsClient：捕获注册的 handler ──
 let captured: ((env: unknown) => void) | null = null;
@@ -34,16 +34,16 @@ vi.mock('../../lib/wsEventProcessor', () => ({
 }));
 
 // ── sessionLoader / sendChat ──
-const loadSessionsMock = vi.fn(async () => {});
+const loadSessionsMock = vi.fn(async (..._a: unknown[]) => {});
 const refreshCurrentMock = vi.fn();
-const fetchTokenUsageMock = vi.fn(async () => {});
+const fetchTokenUsageMock = vi.fn(async (..._a: unknown[]) => {});
 vi.mock('./sessionLoader', () => ({
   loadSessions: (...a: unknown[]) => loadSessionsMock(...a),
   refreshCurrentSession: (...a: unknown[]) => refreshCurrentMock(...a),
   fetchTokenUsage: (...a: unknown[]) => fetchTokenUsageMock(...a),
 }));
 
-const sendChatMock = vi.fn(async () => true);
+const sendChatMock = vi.fn(async (..._a: unknown[]) => true);
 vi.mock('./sendChat', () => ({
   sendChatViaWs: (...a: unknown[]) => sendChatMock(...a),
 }));
@@ -53,12 +53,12 @@ import { getChatStore, resetChatStore } from '../index';
 import { initPlatform } from '../../platform/context';
 import type { PlatformDeps } from '../../platform/types';
 
-let cacheSaveSpy: ReturnType<typeof vi.fn>;
-let storageSetSpy: ReturnType<typeof vi.fn>;
+let cacheSaveSpy: Mock<(...a: unknown[]) => void>;
+let storageSetSpy: Mock<(...a: unknown[]) => void>;
 
 function makePlatform(): PlatformDeps {
-  cacheSaveSpy = vi.fn();
-  storageSetSpy = vi.fn();
+  cacheSaveSpy = vi.fn((..._a: unknown[]) => {});
+  storageSetSpy = vi.fn((..._a: unknown[]) => {});
   return {
     storage: { getItem: () => null, setItem: (...a) => { storageSetSpy(...a); }, removeItem: () => {} },
     secureStorage: { getItem: async () => null, setItem: async () => {}, removeItem: async () => {} },

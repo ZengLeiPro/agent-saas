@@ -15,11 +15,11 @@ function jsonResponse(body: unknown, init?: { status?: number }): Response {
   return new Response(JSON.stringify(body), {
     status: init?.status ?? 200,
     headers: { 'content-type': 'application/json' },
-  });
+  }) as unknown as Response;
 }
 
 function htmlResponse(body: string, status = 200): Response {
-  return new Response(body, { status, headers: { 'content-type': 'text/html' } });
+  return new Response(body, { status, headers: { 'content-type': 'text/html' } }) as unknown as Response;
 }
 
 describe('parseJsonResponse', () => {

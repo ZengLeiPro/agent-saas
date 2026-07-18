@@ -5,9 +5,9 @@
  * 覆盖：初始化 WS refs、气泡添加、loading/connection 置位、成功 true、失败标记消息 failed、
  * 无气泡（排队重试）复用 pending 消息 index。
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 
-const wsEnsureSend = vi.fn(async () => true);
+const wsEnsureSend = vi.fn(async (..._a: unknown[]) => true);
 vi.mock('../../lib/wsClient', () => ({
   wsClient: { ensureConnectedSend: (...a: unknown[]) => wsEnsureSend(...a) },
 }));
@@ -17,10 +17,10 @@ import { getChatStore, resetChatStore } from '../index';
 import { initPlatform } from '../../platform/context';
 import type { PlatformDeps } from '../../platform/types';
 
-let storageSetSpy: ReturnType<typeof vi.fn>;
+let storageSetSpy: Mock<(...a: unknown[]) => void>;
 
 function makePlatform(): PlatformDeps {
-  storageSetSpy = vi.fn();
+  storageSetSpy = vi.fn<(...a: unknown[]) => void>();
   return {
     storage: { getItem: () => null, setItem: (...a) => { storageSetSpy(...a); }, removeItem: () => {} },
     secureStorage: { getItem: async () => null, setItem: async () => {}, removeItem: async () => {} },

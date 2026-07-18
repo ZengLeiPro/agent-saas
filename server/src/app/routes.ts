@@ -41,6 +41,7 @@ import { createOrgAgentsRouter } from "../routes/orgAgents.js";
 import { createKbFilesRouter } from "../routes/kbFiles.js";
 import { createOrgQaRouter } from "../routes/orgQa.js";
 import { createFeedbackRouter } from "../routes/feedback.js";
+import { createAppealsRouter, createTenantAppealsRouter } from "../routes/appeals.js";
 import { createRuntimeAuditRouter } from "../routes/runtimeAudit.js";
 import { createRuntimeTraceRouter } from "../routes/runtimeTrace.js";
 import { createPlatformObservabilityRouter } from "../routes/platformObservability.js";
@@ -173,6 +174,16 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   app.use(
     "/api/feedback",
     createFeedbackRouter({ messageFeedbackStore: runtime.messageFeedbackStore }),
+  );
+
+  // 员工申诉（门禁拒答后 owner-only 申诉 + 管理员处理队列；PG 未装配时路由内 503）
+  app.use(
+    "/api/appeals",
+    createAppealsRouter({ appealStore: runtime.appealStore }),
+  );
+  app.use(
+    "/api/tenant/appeals",
+    createTenantAppealsRouter({ appealStore: runtime.appealStore }),
   );
 
   // DWS 单轨连接状态：仅暴露当前登录用户自己的非敏感元数据。

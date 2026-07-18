@@ -244,11 +244,14 @@ describe('registerRoutes', () => {
     //   + kb files（kbEnabled guard 与 router 同一次 use 注册）+ feedback + DWS + qa admin = 27
     //   + image-gen pricing admin + memory-polling admin = 29
     //   + 平台管理员分层治理 enforcePlatformWritePolicy（2026-07-18）= 30
+    //   + 员工申诉 /api/appeals + /api/tenant/appeals（2026-07-19 装配）= 32
     // 注：upload-guard / file-guard 是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(30);
+    expect(app.use).toHaveBeenCalledTimes(32);
     expect(app.use).toHaveBeenCalledWith('/api/kb', expect.any(Function), mocked.kbFilesRouter);
     expect(app.use).toHaveBeenCalledWith('/api/feedback', mocked.feedbackRouter);
+    expect(app.use).toHaveBeenCalledWith('/api/appeals', expect.any(Function));
+    expect(app.use).toHaveBeenCalledWith('/api/tenant/appeals', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api', mocked.dwsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/qa', mocked.requireAdmin, mocked.orgQaRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.healthRouter);

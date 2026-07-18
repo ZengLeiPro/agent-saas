@@ -67,6 +67,8 @@ import type { ImageUnderstandingModelConfig } from '../runtime/imageUnderstandin
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import { PgGuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
 import { PgMessageFeedbackStore } from '../data/feedback/store.js';
+import { PgAppealStore } from '../data/appeals/index.js';
+import type { AppealStore } from '../data/appeals/index.js';
 import { MemoryIndexService } from '../memory/index/service.js';
 import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
@@ -206,6 +208,11 @@ export interface AppRuntime {
    * /api/feedback 与质检台 /api/admin/qa/feedback 路由 503 → 前端隐藏入口）。
    */
   messageFeedbackStore?: PgMessageFeedbackStore;
+  /**
+   * 员工申诉落库（仅 runtimeEventStore.backend='pg'；file backend 为 undefined，
+   * /api/appeals 与 /api/tenant/appeals 路由 503 → 前端隐藏入口）。
+   */
+  appealStore?: AppealStore;
   /**
    * 门禁模型配置链 getter（主 + fallback）。空数组 = 门禁模块未激活。
    * WebChannel 持有同一 getter——热更后取到的永远是最新链。
@@ -786,6 +793,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let pgClientDaemonRegistry: PgClientDaemonRegistry | undefined;
   let guardrailEventStore: PgGuardrailEventStore | undefined;
   let messageFeedbackStore: PgMessageFeedbackStore | undefined;
+  let appealStore: PgAppealStore | undefined;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -960,6 +968,19 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       messageFeedbackStore = store;
     } catch (err) {
       serverLogger.warn(`PgMessageFeedbackStore init failed, feedback routes degrade to 503: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // 员工申诉落库（企业专家目录批次；按 guardrail event 反查 owner 做越权守卫）。
+    // init 失败降级 undefined → /api/appeals 路由 503，前端隐藏申诉入口——
+    // 申诉是体验增强，不阻塞启动。
+    try {
+      const store = new PgAppealStore({
+        pool: pgEventStore.pool,
+        tablePrefix: config.runtimeEventStore.tablePrefix,
+      });
+      await store.init();
+      appealStore = store;
+    } catch (err) {
+      serverLogger.warn(`PgAppealStore init failed, appeal routes degrade to 503: ${err instanceof Error ? err.message : String(err)}`);
     }
     pgArtifactStore = new PgArtifactStore({
       pool: pgEventStore.pool,
@@ -2322,6 +2343,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     orgAgentStore,
     guardrailEventStore,
     messageFeedbackStore,
+    appealStore,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig,

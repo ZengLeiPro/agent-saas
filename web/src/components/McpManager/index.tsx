@@ -134,9 +134,13 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const mine = await fetchMyMcp();
-      setMyData(mine);
-      setEnabled(Object.fromEntries(mine.servers.map(s => [s.id, s.enabled])));
+      // admin 态（全局 MCP 管理）只管 Catalog，不拉个人域数据——
+      // 个人账号连接/启用统一走能力中心 → 连接器，避免在平台管理页混入个人绑定。
+      if (mode === "personal") {
+        const mine = await fetchMyMcp();
+        setMyData(mine);
+        setEnabled(Object.fromEntries(mine.servers.map(s => [s.id, s.enabled])));
+      }
       if (mode === "admin" && isAdmin) {
         const [adminServers, templateData] = await Promise.all([fetchMcpAdminServers(), fetchMcpTemplates()]);
         setAdminData(adminServers);
@@ -151,11 +155,6 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   }, [isAdmin, mode]);
 
   useEffect(() => { void refresh(); }, [refresh]);
-
-  const dirty = useMemo(() => {
-    if (!myData) return false;
-    return myData.servers.some((server) => enabled[server.id] !== server.enabled);
-  }, [myData, enabled]);
 
   const saveSelections = useCallback(async (nextEnabled: Record<string, boolean>) => {
     const previous = enabled;
@@ -665,12 +664,6 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
         description={mode === "admin" ? "维护组织或全局 MCP Server Catalog。" : "连接自己的常用账号，让 Agent 在你的权限范围内使用数据和工具。"}
         actions={
           <>
-            {dirty && (
-              <Button size="sm" onClick={() => void saveSelections(enabled)} disabled={platformReadOnly || saving}>
-                <Save className="size-3.5" />
-                保存启用状态
-              </Button>
-            )}
             {mode === "admin" && isAdmin && (
               <Button size="sm" onClick={() => void saveServer()} disabled={platformReadOnly || saving || !form.id.trim() || !form.name.trim()}>
                 <Save className="size-3.5" />
@@ -690,97 +683,8 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
       <div className="min-h-0 flex-1 space-y-6 overflow-auto">
       {error && <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
 
-      <Card>
-        <CardHeader className="pb-3"><CardTitle className="text-base">我的连接器</CardTitle></CardHeader>
-        <CardContent className="space-y-2 pt-0">
-          {(myData?.servers.length ?? 0) === 0 ? (
-            <div className="py-6 text-center text-sm text-muted-foreground">暂无可用连接器。</div>
-          ) : myData!.servers.map(server => (
-            <div key={server.id} className="flex items-start gap-3 rounded-lg border p-3">
-              <Switch
-                checked={!!enabled[server.id]}
-                onCheckedChange={(v) => setEnabled(prev => ({ ...prev, [server.id]: v }))}
-                disabled={!!server.oauth && server.oauth.status !== 'connected'}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                  <span>{server.name}</span>
-                  {server.oauth?.beta && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-900 dark:text-amber-100">Beta</span>}
-                  {server.oauth && (
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] ${server.oauth.status === 'connected' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100' : 'bg-muted text-muted-foreground'}`}>
-                      {server.oauth.status === 'connected' ? '已连接' : server.oauth.status === 'pending' ? '等待授权' : server.oauth.status === 'error' ? '授权失败' : '未连接'}
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs text-muted-foreground">{server.personal ? "个人连接器" : "由平台提供"}{server.enabledByDefault ? " · 默认启用" : ""}</div>
-                {server.description && <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{server.description}</p>}
-                {server.oauth && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    {server.oauth.status === 'connected' ? (
-                      <Button size="sm" variant="outline" onClick={() => void disconnectOAuth(server.id)} disabled={platformReadOnly || saving}>
-                        <Link2Off className="size-3.5" />断开
-                      </Button>
-                    ) : (
-                      <Button size="sm" onClick={() => void connectOAuth(server.id)} disabled={platformReadOnly || saving || !server.oauth.platformConfigured}>
-                        <ExternalLink className="size-3.5" />连接账号
-                      </Button>
-                    )}
-                    {!server.oauth.platformConfigured && <span className="text-xs text-amber-700 dark:text-amber-300">平台管理员尚未完成 OAuth 应用配置</span>}
-                    {server.oauth.status === 'error' && server.oauth.lastError && <span className="text-xs text-destructive">{server.oauth.lastError}</span>}
-                  </div>
-                )}
-                {(server.secretRequirements ?? []).length > 0 && (
-                  <div className="mt-3 space-y-2">
-                    {server.secretRequirements!.map(req => {
-                      const inputKey = `${server.id}:${req.key}`;
-                      const canBind = canBindSecret(req);
-                      const badge = SCOPE_BADGE[req.scope];
-                      const disabledReason = canBind ? '' : noBindReason(req);
-                      return (
-                        <div key={req.key} className="rounded-md border bg-muted/30 p-2">
-                          <div className="mb-1 flex items-center gap-2 text-xs font-medium">
-                            <span>{req.label}</span>
-                            <span className={`rounded px-1.5 py-0.5 text-[10px] ${badge.className}`}>{badge.label}</span>
-                            <span className={req.configured ? "text-green-600" : "text-destructive"}>{req.configured ? "已绑定" : "未绑定"}</span>
-                          </div>
-                          {req.instructions && <div className="mb-2 text-xs text-muted-foreground">{req.instructions}</div>}
-                          <div className="flex gap-2">
-                            <Input
-                              type="password"
-                              autoComplete="new-password"
-                              passwordManager="ignore"
-                              placeholder={canBind ? `输入 ${req.label}` : disabledReason}
-                              value={secretInputs[inputKey] || ""}
-                              onChange={e => setSecretInputs(prev => ({ ...prev, [inputKey]: e.target.value }))}
-                              disabled={!canBind}
-                            />
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => void bindSecret(server.id, req.key, req.scope)}
-                              disabled={platformReadOnly || !canBind || saving || !secretInputs[inputKey]?.trim()}
-                              title={disabledReason || undefined}
-                            >
-                              绑定
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              {server.personal && (
-                <div className="flex gap-1">
-                  <Button variant="ghost" size="sm" onClick={() => editPersonalServer(server as ManagedMcpServer)}>编辑</Button>
-                  <Button variant="ghost" size="icon" onClick={() => void removePersonalServer(server.id)}><Trash2 className="size-4" /></Button>
-                </div>
-              )}
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
+      {/* admin 态不渲染「我的连接器」：个人账号连接（OAuth）/启用/个人 secret 绑定
+          统一走能力中心 → 连接器，平台管理页只维护 Server Catalog 本身。 */}
       {diagnostic && (
         <Card>
           <CardHeader className="pb-3"><CardTitle className="text-base">诊断结果</CardTitle></CardHeader>

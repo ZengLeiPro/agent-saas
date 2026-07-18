@@ -2292,7 +2292,7 @@ export class WebChannel implements BaseChannel {
       // 不新增列；GuardrailEventsView 可用 SUBSTRING(message_text, 1, 8) = '[shadow]' 过滤）
       // 详见蓝图 v2 § 4.3.1"UI 侧看板过滤器"。
       const prefix = pendingGuardrailEvent.mode === 'shadow' ? '[shadow] ' : '';
-      this.insertGuardrailEvent({
+      void this.insertGuardrailEvent({
         orgAgent: orgAgentRecord,
         user,
         sessionId: resolvedGuardrailSessionId,
@@ -3053,15 +3053,10 @@ export class WebChannel implements BaseChannel {
       }
     }
 
-    // (b) legacy transcript 追加 user + assistant 两行（刷新后气泡仍在）
-    try {
-      await this.appendGuardrailTranscript(transcriptPath, sessionId, args.resolvedMessage, rejectionMessage);
-    } catch (err) {
-      chatLogger.warn(`[guardrail] transcript append failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    // (c) guardrail_events 落库（需求雷达；fire-and-forget 内部吞错）
-    this.insertGuardrailEvent({
+    // (b) guardrail_events 先落库拿 event id（员工申诉按 id 关联；2026-07-19 F2 收尾）。
+    // await 一次 PG insert（拒答链路本就不启动主 Agent，几十 ms 可接受）；
+    // 失败/无 store → undefined，气泡与 transcript 照发，仅申诉入口不渲染。
+    const guardrailEventId = await this.insertGuardrailEvent({
       orgAgent,
       user,
       sessionId,
@@ -3073,6 +3068,14 @@ export class WebChannel implements BaseChannel {
       model: args.guardrailModel,
       latencyMs: args.guardrailLatencyMs,
     });
+
+    // (c) legacy transcript 追加 user + assistant 两行（刷新后气泡仍在；
+    // assistant 行顶层带 guardrailEventId → 历史重建后申诉入口仍可用）
+    try {
+      await this.appendGuardrailTranscript(transcriptPath, sessionId, args.resolvedMessage, rejectionMessage, guardrailEventId);
+    } catch (err) {
+      chatLogger.warn(`[guardrail] transcript append failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     // (d) 幂等置 done（同 client_msg_id 重发不再触发）
     this.idempotencySet(user?.sub, args.clientMsgId, 'done', streamId, { sessionId });
@@ -3101,7 +3104,11 @@ export class WebChannel implements BaseChannel {
       else this.wsSend(ws, data);
     };
     emitSession({ type: 'block_start', blockType: 'text' });
-    emitSession({ type: 'text', content: rejectionMessage });
+    emitSession({
+      type: 'text',
+      content: rejectionMessage,
+      ...(guardrailEventId ? { guardrailEventId } : {}),
+    });
     emitSession({ type: 'block_end', blockType: 'text' });
     emitSession({ type: 'done', client_msg_id: args.clientMsgId });
     this.eventBufferStore.complete(sessionId);
@@ -3123,12 +3130,17 @@ export class WebChannel implements BaseChannel {
     chatLogger.info(`[guardrail] off_topic rejected via synthetic bubble: session=${sessionId} orgAgent=${orgAgent.id} client_msg_id=${args.clientMsgId}`);
   }
 
-  /** 门禁拒绝的 legacy transcript 两行（格式照 legacyTranscriptProjection line builder）。 */
+  /**
+   * 门禁拒绝的 legacy transcript 两行（格式照 legacyTranscriptProjection line builder）。
+   * assistant 行顶层可带 guardrailEventId：parse.ts 透传到 text block →
+   * 前端历史重建后申诉按钮仍拿得到真实 event id。
+   */
   private async appendGuardrailTranscript(
     transcriptPath: string,
     sessionId: string,
     userContent: string,
     assistantContent: string,
+    guardrailEventId?: string,
   ): Promise<void> {
     const lines = JSON.stringify({
       type: 'user',
@@ -3139,14 +3151,19 @@ export class WebChannel implements BaseChannel {
       type: 'assistant',
       message: { role: 'assistant', content: [{ type: 'text', text: assistantContent }] },
       sessionId,
+      ...(guardrailEventId ? { guardrailEventId } : {}),
       timestamp: new Date().toISOString(),
     }) + '\n';
     await mkdir(dirname(transcriptPath), { recursive: true });
     await appendFile(transcriptPath, lines, 'utf-8');
   }
 
-  /** guardrail_events 落库（PG 不可用/未配置时降级 log，绝不阻塞聊天链路）。 */
-  private insertGuardrailEvent(args: {
+  /**
+   * guardrail_events 落库（PG 不可用/未配置时降级 log，绝不阻塞聊天链路）。
+   * 返回生成的 event id（员工申诉据此关联）；无 store / insert 失败返回 undefined。
+   * fire-and-forget 调用点用 `void this.insertGuardrailEvent(...)` 即可，行为不变。
+   */
+  private async insertGuardrailEvent(args: {
     orgAgent: OrgAgentRecord;
     user: WsClient['user'];
     sessionId?: string;
@@ -3155,26 +3172,29 @@ export class WebChannel implements BaseChannel {
     messageText: string;
     model?: string;
     latencyMs?: number;
-  }): void {
+  }): Promise<string | undefined> {
     const store = this.config.guardrailEventStore;
     if (!store) {
       chatLogger.info(`[guardrail] event not persisted (no PG store): verdict=${args.verdict} orgAgent=${args.orgAgent.id} session=${args.sessionId ?? 'n/a'}`);
-      return;
+      return undefined;
     }
-    void store.insert({
-      tenantId: args.orgAgent.tenantId,
-      orgAgentId: args.orgAgent.id,
-      ...(args.user?.sub ? { userId: args.user.sub } : {}),
-      ...(args.user?.username ? { username: args.user.username } : {}),
-      ...(args.sessionId ? { sessionId: args.sessionId } : {}),
-      ...(args.clientMsgId ? { clientMsgId: args.clientMsgId } : {}),
-      verdict: args.verdict,
-      messageText: args.messageText.slice(0, 2000),
-      ...(args.model ? { model: args.model } : {}),
-      ...(args.latencyMs !== undefined ? { latencyMs: args.latencyMs } : {}),
-    }).catch((err) => {
+    try {
+      return await store.insert({
+        tenantId: args.orgAgent.tenantId,
+        orgAgentId: args.orgAgent.id,
+        ...(args.user?.sub ? { userId: args.user.sub } : {}),
+        ...(args.user?.username ? { username: args.user.username } : {}),
+        ...(args.sessionId ? { sessionId: args.sessionId } : {}),
+        ...(args.clientMsgId ? { clientMsgId: args.clientMsgId } : {}),
+        verdict: args.verdict,
+        messageText: args.messageText.slice(0, 2000),
+        ...(args.model ? { model: args.model } : {}),
+        ...(args.latencyMs !== undefined ? { latencyMs: args.latencyMs } : {}),
+      });
+    } catch (err) {
       chatLogger.warn(`[guardrail] event insert failed: ${err instanceof Error ? err.message : String(err)}`);
-    });
+      return undefined;
+    }
   }
 
   async stop(): Promise<void> {

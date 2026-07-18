@@ -640,8 +640,8 @@ function ActionButtons({
   onTtsTogglePause: () => void;
   /** AI 文本消息传入（type==='text' && !streaming）；MessageFeedbackProvider 未挂载时按钮零渲染 */
   feedback?: { messageId: string; content: string };
-  /** AI 文本消息传入（同 feedback 条件）；用于「这个应该在范围内」申诉入口 */
-  appeal?: { messageId: string; content: string };
+  /** 仅门禁拒答气泡传入（message.guardrailEventId 存在时）；「这个应该在范围内」申诉入口 */
+  appeal?: { guardrailEventId: string; content: string };
 }) {
   return (
     <>
@@ -653,7 +653,7 @@ function ActionButtons({
         <MessageFeedbackButton messageId={feedback.messageId} content={feedback.content} />
       )}
       {appeal && (
-        <GuardrailAppealButton messageId={appeal.messageId} content={appeal.content} />
+        <GuardrailAppealButton guardrailEventId={appeal.guardrailEventId} content={appeal.content} />
       )}
     </>
   );
@@ -922,7 +922,9 @@ export const MessageItem = memo(function MessageItem({
                   onTtsPlay={() => tts?.play(msgKey, cleanContent)}
                   onTtsTogglePause={() => tts?.togglePause(msgKey)}
                   feedback={{ messageId: message.id, content: message.content }}
-                  appeal={{ messageId: message.id, content: message.content }}
+                  {...(message.guardrailEventId
+                    ? { appeal: { guardrailEventId: message.guardrailEventId, content: message.content } }
+                    : {})}
                 />
               </div>
             </div>

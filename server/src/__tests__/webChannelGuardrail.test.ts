@@ -116,7 +116,7 @@ function fakeGuardrailEventStore(): { store: GuardrailEventStore; events: Guardr
   return {
     events,
     store: {
-      insert: async (event) => { events.push(event); },
+      insert: async (event) => { events.push(event); return `ev-fake-${events.length}`; },
       list: async () => ({ events: [], total: 0 }),
     },
   };
@@ -251,6 +251,8 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect([...indexes].sort((a, b) => a - b)).toEqual(indexes);
     const textEvent = rig.ws.sent.find((m) => m.data?.type === 'text');
     expect(textEvent?.data?.content).toBe('这个问题超出了我的职责范围，请咨询选型相关问题。');
+    // 拒答气泡携带真实 guardrail event id（员工申诉入口数据源；2026-07-19 F2 收尾）
+    expect(textEvent?.data?.guardrailEventId).toBe('ev-fake-1');
     // 会话完成态广播（前端 loading 结束 + 列表刷新）
     expect(rig.userEvents.find((e) => e.type === 'session_status')?.status).toBe('completed');
     expect(rig.userEvents.some((e) => e.type === 'session_updated')).toBe(true);
@@ -267,6 +269,8 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(JSON.parse(lines[1])).toMatchObject({
       type: 'assistant',
       message: { content: [{ type: 'text', text: '这个问题超出了我的职责范围，请咨询选型相关问题。' }] },
+      // assistant 行顶层持久化 event id → 刷新后历史重建仍能渲染申诉入口
+      guardrailEventId: 'ev-fake-1',
     });
 
     // guardrail_events 落库

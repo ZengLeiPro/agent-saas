@@ -383,7 +383,14 @@ export function processWsEvent(
   if (data.type === "text") {
     if (block.currentBlockType === "text" && block.currentBlockIndex >= 0) {
       msg.updateMessageAt(block.currentBlockIndex, (message) =>
-        message.type === "text" ? { ...message, content: message.content + (data.content || "") } : message
+        message.type === "text"
+          ? {
+              ...message,
+              content: message.content + (data.content || ""),
+              // 门禁拒答合成气泡携带的 event id（员工申诉入口用）
+              ...(data.guardrailEventId ? { guardrailEventId: data.guardrailEventId } : {}),
+            }
+          : message
       );
     }
     return;

@@ -110,7 +110,7 @@ function memorySessionReader(records: RuntimeSessionProjectionRecord[]): UsageSt
 function memoryGuardrailEventStore(events: GuardrailEventRecord[]): GuardrailEventStore & { lastFilter: GuardrailEventListFilter | null } {
   const state = {
     lastFilter: null as GuardrailEventListFilter | null,
-    async insert() { /* not used in tests */ },
+    async insert() { return 'ev-unused'; /* not used in tests */ },
     async list(filter: GuardrailEventListFilter) {
       state.lastFilter = filter;
       const matches = events.filter((e) => {

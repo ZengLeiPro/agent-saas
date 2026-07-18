@@ -210,4 +210,6 @@ export interface ApiTranscriptBlock {
   isVoiceTranscript?: boolean;
   /** prompt block：用户消息携带的附件元数据（transcript user 行结构化字段） */
   attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+  /** text block：门禁拒答气泡关联的 guardrail event id（员工申诉入口用） */
+  guardrailEventId?: string;
 }

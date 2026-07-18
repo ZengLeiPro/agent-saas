@@ -64,6 +64,8 @@ export interface TranscriptBlock {
   attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
   /** compaction block：被摘要替代的历史事件数 */
   coveredEventCount?: number;
+  /** 门禁拒答合成 assistant 行关联的 guardrail event id（员工申诉入口用） */
+  guardrailEventId?: string;
 }
 
 export interface ParsedTranscript {
@@ -251,6 +253,10 @@ async function parseTranscriptFileUncached(
     // Assistant messages
     if (obj?.type === "assistant" && obj?.message?.content) {
       const content = obj.message.content;
+      // 门禁拒答合成行的顶层标记（web channel appendGuardrailTranscript 写入）；
+      // 透传到 text block → 前端历史重建后申诉按钮拿真实 event id
+      const guardrailEventId =
+        typeof obj?.guardrailEventId === "string" ? obj.guardrailEventId : undefined;
       if (Array.isArray(content)) {
         let idx = 0;
         for (const block of content) {
@@ -264,6 +270,7 @@ async function parseTranscriptFileUncached(
               title: "输出",
               defaultOpen: true,
               content: typeof block.text === "string" ? block.text : formatJson(block),
+              ...(guardrailEventId ? { guardrailEventId } : {}),
             });
             continue;
           }

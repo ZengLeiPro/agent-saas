@@ -4,7 +4,7 @@
  * 覆盖：
  *  A. Provider 缺省（个人 Agent 会话）→ 按钮零渲染（同 MessageFeedback 红线）
  *  B. 点击 → 弹层 → 可选理由 → POST /api/appeals → 「已申诉」态
- *  C. 幂等：同一 messageId 二次渲染仍为已申诉态；服务端 409 视为已申诉成功
+ *  C. 幂等：同一 guardrailEventId 二次渲染仍为已申诉态；服务端 409 视为已申诉成功
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -36,7 +36,7 @@ describe('GuardrailAppealButton', () => {
 
   it('A: 缺省 Provider（个人 Agent 会话）→ 按钮零渲染', () => {
     const { container } = render(
-      <GuardrailAppealButton messageId="line-3" content="拒答话术" />,
+      <GuardrailAppealButton guardrailEventId="line-3" content="拒答话术" />,
     );
     expect(container.innerHTML).toBe('');
     expect(authFetchMock).not.toHaveBeenCalled();
@@ -48,7 +48,7 @@ describe('GuardrailAppealButton', () => {
 
     render(
       <MessageFeedbackProvider sessionId="22222222-2222-4222-8222-222222222222">
-        <GuardrailAppealButton messageId="line-42" content="抱歉，我是报价审核助手，只处理报价单审核相关问题。" />
+        <GuardrailAppealButton guardrailEventId="line-42" content="抱歉，我是报价审核助手，只处理报价单审核相关问题。" />
       </MessageFeedbackProvider>,
     );
 
@@ -85,7 +85,7 @@ describe('GuardrailAppealButton', () => {
 
     render(
       <MessageFeedbackProvider sessionId="33333333-3333-4333-8333-333333333333">
-        <GuardrailAppealButton messageId="ev-abc" content="拒答话术" />
+        <GuardrailAppealButton guardrailEventId="ev-abc" content="拒答话术" />
       </MessageFeedbackProvider>,
     );
 
@@ -106,7 +106,7 @@ describe('GuardrailAppealButton', () => {
 
     render(
       <MessageFeedbackProvider sessionId="44444444-4444-4444-8444-444444444444">
-        <GuardrailAppealButton messageId="ev-err" content="拒答" />
+        <GuardrailAppealButton guardrailEventId="ev-err" content="拒答" />
       </MessageFeedbackProvider>,
     );
 

@@ -270,7 +270,12 @@ function mapBlock(
       };
     }
     case "text":
-      return { id, type: "text", content: block.content, streaming: false, ...(owner ? { owner } : {}), timestamp: block.tsMs };
+      return {
+        id, type: "text", content: block.content, streaming: false,
+        ...(owner ? { owner } : {}),
+        ...(block.guardrailEventId ? { guardrailEventId: block.guardrailEventId } : {}),
+        timestamp: block.tsMs,
+      };
     case "thinking":
       return {
         id,

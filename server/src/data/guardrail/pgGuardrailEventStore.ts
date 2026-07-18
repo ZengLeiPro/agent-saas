@@ -49,7 +49,8 @@ export interface GuardrailEventListFilter {
 }
 
 export interface GuardrailEventStore {
-  insert(event: GuardrailEventInsert): Promise<void>;
+  /** 落库一条门禁事件，返回生成的 event id（员工申诉按 id 关联）。 */
+  insert(event: GuardrailEventInsert): Promise<string>;
   list(filter: GuardrailEventListFilter): Promise<{ events: GuardrailEventRecord[]; total: number }>;
 }
 
@@ -96,13 +97,14 @@ export class PgGuardrailEventStore implements GuardrailEventStore {
     }
   }
 
-  async insert(event: GuardrailEventInsert): Promise<void> {
+  async insert(event: GuardrailEventInsert): Promise<string> {
+    const id = randomUUID();
     await this.pool.query(
       `INSERT INTO ${this.eventsTable}
         (id, tenant_id, org_agent_id, user_id, username, session_id, client_msg_id, verdict, message_text, model, latency_ms)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
-        randomUUID(),
+        id,
         event.tenantId,
         event.orgAgentId,
         event.userId ?? null,
@@ -115,6 +117,7 @@ export class PgGuardrailEventStore implements GuardrailEventStore {
         event.latencyMs ?? null,
       ],
     );
+    return id;
   }
 
   async list(filter: GuardrailEventListFilter): Promise<{ events: GuardrailEventRecord[]; total: number }> {

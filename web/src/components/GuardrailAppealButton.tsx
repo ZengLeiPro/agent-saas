@@ -1,10 +1,12 @@
 /**
  * 门禁拒答申诉按钮（企业专家会话，2026-07 蓝图 v2 §4.4.2 员工申诉入口）
  *
- * - 员工在专家 bubble 下点「这个应该在范围内」，弹小窗填可选理由，
+ * - 员工在门禁拒答 bubble 下点「这个应该在范围内」，弹小窗填可选理由，
  *   提交后 POST /api/appeals，成功后 bubble 显示「✓ 已申诉」提示。
- * - 幂等：同一 guardrailEventId 只允许申诉 1 次（用 messageId 作为幂等键；
- *   服务端 B4 已按 guardrail_event_id 唯一约束落库）。
+ * - guardrailEventId 是服务端拒答链路落库的真实 event id（WS text 事件 /
+ *   transcript assistant 行透传；2026-07-19 F2 收尾，替代早期 messageId 凑数）。
+ * - 幂等：同一 guardrailEventId 只允许申诉 1 次（服务端按
+ *   guardrail_event_id + user_id 唯一约束落库，重复提交 409 → UI 恢复已申诉态）。
  * - context 缺省（个人 Agent 会话 / 数据面不可用）→ 零渲染，与
  *   MessageFeedbackContext 同一条兼容性红线。
  * - 已申诉集合在本 tab 会话生命周期内驻留（模块级 Set）；刷新页面重置
@@ -43,19 +45,19 @@ export function __resetSubmittedAppealsForTest(): void {
 }
 
 export interface GuardrailAppealButtonProps {
-  /** 拒答 bubble 对应的消息 id；作为 guardrailEventId 幂等键传给后端 */
-  messageId: string;
+  /** 拒答链路落库的真实 guardrail event id（runtime_guardrail_events.id） */
+  guardrailEventId: string;
   /** 拒答话术原文，服务端会与门禁事件一起归档以便管理员定位 */
   content: string;
 }
 
-export function GuardrailAppealButton({ messageId }: GuardrailAppealButtonProps) {
+export function GuardrailAppealButton({ guardrailEventId }: GuardrailAppealButtonProps) {
   // 复用 MessageFeedbackContext 的 sessionId 语义：feedback context 非 null ⇔
   // 当前会话绑定 orgAgentId（App.tsx L210 已保证）。缺省时零渲染。
   // 注：content 目前未透传（服务端 /api/appeals 只按 guardrailEventId 归档，
   // 拒答原文由 event 侧关联查得）；保留 props 契约方便后续扩展 messagePreview。
   const feedback = useMessageFeedback();
-  const submitted = useSubmittedAppeal(messageId);
+  const submitted = useSubmittedAppeal(guardrailEventId);
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -96,13 +98,13 @@ export function GuardrailAppealButton({ messageId }: GuardrailAppealButtonProps)
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          guardrailEventId: messageId,
+          guardrailEventId,
           ...(reason.trim() ? { appealReason: reason.trim() } : {}),
         }),
       });
       // 409 表示同 guardrailEventId 已申诉（幂等）：视为成功状态。
       if (res.ok || res.status === 409) {
-        markSubmitted(messageId);
+        markSubmitted(guardrailEventId);
         setOpen(false);
         setReason('');
         return;

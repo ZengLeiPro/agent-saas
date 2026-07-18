@@ -145,7 +145,7 @@ jobs:
         # PR 评论，artifact 只是补充。只传小体积 lcov + json-summary，
         # html 报告本地 pnpm test:coverage 随时可再生成，不占配额。
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

@@ -50,6 +50,7 @@ export interface SubscribeAppendedOptions {
 }
 
 type PgPool = InstanceType<typeof Pool>;
+type PgPoolClient = pg.PoolClient;
 
 export class PgEventStore implements EventStore {
   /**
@@ -202,7 +203,10 @@ export class PgEventStore implements EventStore {
       }
 
       await client.query('COMMIT');
-      await this.notifyAppended(fullEvents).catch((err) => {
+      // 复用当前已 COMMIT 的 client，禁止在归还它之前再次向同一 pool 取连接。
+      // 否则 active session locks 占满部分 pool 后，多条并发 append 会各自拿着
+      // transaction client 等 pg_notify 的第二条连接，形成确定性 pool deadlock。
+      await this.notifyAppended(client, fullEvents).catch((err) => {
         this.options.logger?.warn?.('PgEventStore notify failed after durable append', {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -402,8 +406,8 @@ export class PgEventStore implements EventStore {
     }
   }
 
-  private async notifyAppended(events: Array<PlatformEvent & { sequence: number }>): Promise<void> {
-    await this.pool.query('SELECT pg_notify($1, $2)', [
+  private async notifyAppended(client: PgPoolClient, events: Array<PlatformEvent & { sequence: number }>): Promise<void> {
+    await client.query('SELECT pg_notify($1, $2)', [
       this.notifyChannel,
       encodePgEventNotifyPayload(events),
     ]);

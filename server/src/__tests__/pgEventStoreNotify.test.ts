@@ -40,6 +40,7 @@ const pgMock = vi.hoisted(() => {
     readonly byId = new Map<string, PlatformEvent>();
     listRows: RangeRow[] = [];
     rangeRows: RangeRow[] = [];
+    blockNotifyQueries = false;
 
     constructor(options: { connectionString?: string; max?: number } = {}) {
       this.options = options;
@@ -55,6 +56,9 @@ const pgMock = vi.hoisted(() => {
     async query(text: string, params?: unknown[]): Promise<QueryResult> {
       this.queries.push({ text, params });
       if (text.includes('pg_notify')) {
+        if (this.blockNotifyQueries) {
+          return await new Promise<QueryResult>(() => undefined);
+        }
         this.notifyCalls.push({ text, params });
         return { rows: [] };
       }
@@ -245,8 +249,9 @@ describe('PgEventStore notify coalescing', () => {
     await store.appendBatch?.([input('a'), input('b'), input('c')]);
 
     expect(pool.connection.insertedEvents).toHaveLength(3);
-    expect(pool.notifyCalls).toHaveLength(1);
-    expect(decodePgEventNotifyPayload(String(pool.notifyCalls[0]?.params?.[1]))).toMatchObject({
+    const notifyCalls = pool.connection.queries.filter((call) => call.text.includes('pg_notify'));
+    expect(notifyCalls).toHaveLength(1);
+    expect(decodePgEventNotifyPayload(String(notifyCalls[0]?.params?.[1]))).toMatchObject({
       kind: 'range',
       sessionId: 'session-1',
       afterCursor: '9',
@@ -254,6 +259,24 @@ describe('PgEventStore notify coalescing', () => {
       toCursor: '12',
       count: 3,
     });
+  });
+
+  it('does not acquire a second pool client for notify when the shared pool has no free slot', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test', poolMax: 6 });
+    const pool = pgMock.MockPool.instances[0]!;
+    // 复刻生产事故：3 条 session lock + 3 条并发 append 已占满 pool=6。
+    // 旧实现 COMMIT 后走 pool.query(pg_notify)，这里会永久等待第二条连接。
+    pool.blockNotifyQueries = true;
+
+    const outcome = await Promise.race([
+      store.appendBatch?.([input('no-nested-pool-acquire')]).then(() => 'completed'),
+      new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 100)),
+    ]);
+
+    expect(outcome).toBe('completed');
+    expect(pool.queries.some((call) => call.text.includes('pg_notify'))).toBe(false);
+    expect(pool.connection.queries.some((call) => call.text.includes('pg_notify'))).toBe(true);
+    expect(pool.connection.released).toBe(true);
   });
 
   it('escapes NUL bytes before writing event_json to PostgreSQL jsonb', async () => {

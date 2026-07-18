@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ImagePlus, Loader2, UserRound, X } from 'lucide-react';
+import { ImagePlus, Loader2, PlayCircle, Plus, UserRound, X } from 'lucide-react';
 import { agentAvatarUrl, resolveApiAssetUrl } from '@/lib/apiBase';
+import { authFetch } from '@/lib/authFetch';
 
 /** 开开 8 岗位预设头像（web/public/kaikai-presets/，与场景库 8 岗位对齐） */
 const AVATAR_PRESETS = [
@@ -13,6 +14,7 @@ const AVATAR_PRESETS = [
   { key: 'cs', label: '跟单/客服' },
   { key: 'production', label: '项目/生产/交付' },
 ] as const;
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -27,18 +29,43 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useUsers } from '@/components/UserManager/hooks';
 import { useTenantSkillOptions } from './hooks';
-import { emptyFormValues, type OrgAgentFormValues, type OrgAgentRecord } from './types';
+import {
+  assembleScopeDescription,
+  emptyFormValues,
+  parseGateSlots,
+  type OrgAgentFormValues,
+  type OrgAgentGuardrailMode,
+  type OrgAgentRecord,
+} from './types';
+
+/** 门禁三档语义说明（radio label 旁的副标题） */
+const GATE_MODE_META: Array<{ value: OrgAgentGuardrailMode; label: string; hint: string }> = [
+  { value: 'off', label: '关闭', hint: '不跑门禁；所有问题都进入主对话。' },
+  { value: 'shadow', label: '影子模式', hint: '跑门禁并落库审计，但判定不生效——用于上线前 3-7 天调 scope。' },
+  { value: 'enforce', label: '生效', hint: '门禁生效，超范围问题直接返回拒绝话术，不进入主对话。' },
+];
+
+interface GateTestResult {
+  verdict?: 'in_scope' | 'off_topic' | 'uncertain';
+  wouldReject?: boolean;
+  latencyMs?: number;
+  reason?: string;
+  source?: string;
+  model?: string;
+  error?: string;
+}
 
 /**
- * 企业专家创建/编辑表单（组织管理 modal，仿 UserFormDialog 结构）
+ * 企业专家创建/编辑表单
  *
- * 字段：名称 / emoji 头像 / 限定提示语 / skill 白名单多选（租户可用清单）/
- * 指派（全员 或 成员多选）/ 门禁（开关+范围描述+拒绝话术+严格度两档）/ 启用。
+ * 门禁段：填空题式（允许问 / 拒绝问 chips + 三档 mode radio + strictness radio + 试测按钮）
+ * 保存时把三段填空拼装成 scopeDescription 供后端消费；加载时解析回填。
  */
 export function OrgAgentFormDialog({
   open,
   tenantId,
   editing,
+  initialValues,
   onClose,
   onSubmit,
   onUploadAvatar,
@@ -47,6 +74,8 @@ export function OrgAgentFormDialog({
   tenantId?: string;
   /** 编辑目标；null = 创建 */
   editing: OrgAgentRecord | null;
+  /** 从模板创建时传入的预填值；优先级低于 editing */
+  initialValues?: OrgAgentFormValues | null;
   onClose: () => void;
   onSubmit: (values: OrgAgentFormValues) => Promise<void>;
   /** 上传图片头像（仅编辑态可用；上传即时生效） */
@@ -57,6 +86,12 @@ export function OrgAgentFormDialog({
   const [uploading, setUploading] = useState(false);
   const [presetsOpen, setPresetsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [newAllowExample, setNewAllowExample] = useState('');
+  const [newRejectExample, setNewRejectExample] = useState('');
+  const [gateTestOpen, setGateTestOpen] = useState(false);
+  const [gateTestMessage, setGateTestMessage] = useState('');
+  const [gateTestRunning, setGateTestRunning] = useState(false);
+  const [gateTestResult, setGateTestResult] = useState<GateTestResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /** 选预设 = 拉取静态图转 File 走上传链路（复用图片头像存储，零额外后端逻辑） */
@@ -89,8 +124,17 @@ export function OrgAgentFormDialog({
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setNewAllowExample('');
+    setNewRejectExample('');
+    setGateTestOpen(false);
+    setGateTestResult(null);
+    setGateTestMessage('');
     if (editing) {
       const isImageAvatar = !!editing.avatar?.startsWith('org-agent-avatars/');
+      // 解析 scopeDescription 里的结构化标记（若无标记则视为遗留 raw prompt 兜底）
+      const parsed = parseGateSlots(editing.guardrail.scopeDescription || '');
+      const derivedMode: OrgAgentGuardrailMode = parsed.slots?.mode
+        ?? (editing.guardrail.enabled ? 'enforce' : 'off');
       setValues({
         name: editing.name,
         avatar: isImageAvatar ? '' : editing.avatar ?? '',
@@ -103,21 +147,117 @@ export function OrgAgentFormDialog({
         allowedSkills: [...editing.allowedSkills],
         audienceExposure: editing.audience.exposure === 'allow_users' ? 'allow_users' : 'all',
         audienceUsernames: [...editing.audience.usernames],
-        guardrailEnabled: editing.guardrail.enabled,
-        guardrailScopeDescription: editing.guardrail.scopeDescription,
+        guardrailMode: derivedMode,
+        guardrailAllowExamples: parsed.slots?.allowExamples ?? [],
+        guardrailRejectExamples: parsed.slots?.rejectExamples ?? [],
+        guardrailScopeDescription: parsed.rawScope,
         guardrailRejectionMessage: editing.guardrail.rejectionMessage,
         guardrailStrictness: editing.guardrail.strictness,
         enabled: editing.enabled,
       });
+    } else if (initialValues) {
+      setValues({ ...initialValues });
     } else {
       setValues(emptyFormValues());
     }
-  }, [open, editing]);
+  }, [open, editing, initialValues]);
 
   const patch = (recipe: Partial<OrgAgentFormValues>) => setValues((prev) => ({ ...prev, ...recipe }));
 
   const toggleInList = (list: string[], value: string, checked: boolean): string[] =>
     checked ? Array.from(new Set([...list, value])) : list.filter((item) => item !== value);
+
+  const addAllowExample = () => {
+    const trimmed = newAllowExample.trim();
+    if (!trimmed) return;
+    if (values.guardrailAllowExamples.includes(trimmed)) {
+      setNewAllowExample('');
+      return;
+    }
+    if (values.guardrailAllowExamples.length >= 10) {
+      setError('允许问示例最多 10 条');
+      return;
+    }
+    patch({ guardrailAllowExamples: [...values.guardrailAllowExamples, trimmed] });
+    setNewAllowExample('');
+  };
+
+  const removeAllowExample = (item: string) => {
+    patch({ guardrailAllowExamples: values.guardrailAllowExamples.filter((e) => e !== item) });
+  };
+
+  const addRejectExample = () => {
+    const trimmed = newRejectExample.trim();
+    if (!trimmed) return;
+    if (values.guardrailRejectExamples.includes(trimmed)) {
+      setNewRejectExample('');
+      return;
+    }
+    if (values.guardrailRejectExamples.length >= 10) {
+      setError('拒绝问示例最多 10 条');
+      return;
+    }
+    patch({ guardrailRejectExamples: [...values.guardrailRejectExamples, trimmed] });
+    setNewRejectExample('');
+  };
+
+  const removeRejectExample = (item: string) => {
+    patch({ guardrailRejectExamples: values.guardrailRejectExamples.filter((e) => e !== item) });
+  };
+
+  const buildAssembledScope = (): string =>
+    assembleScopeDescription({
+      mode: values.guardrailMode,
+      description: values.description,
+      allowExamples: values.guardrailAllowExamples,
+      rejectExamples: values.guardrailRejectExamples,
+      strictness: values.guardrailStrictness,
+      rawScope: values.guardrailScopeDescription,
+    });
+
+  const runGateTest = async () => {
+    const message = gateTestMessage.trim();
+    if (!message) {
+      setGateTestResult({ error: '请输入测试问题' });
+      return;
+    }
+    setGateTestRunning(true);
+    setGateTestResult(null);
+    try {
+      // 编辑模式走 /:id/gate-preview（B2 已实现）；新建模式无 id，用 dry-run 端点。
+      // 端点未上线时 fallback：本地判断 keyword 命中给 verdict，标记 source=local。
+      const path = editing
+        ? `/api/org-agents/${encodeURIComponent(editing.id)}/gate-preview`
+        : '/api/org-agents/gate-preview';
+      const res = await authFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          overrideScopeDescription: buildAssembledScope(),
+          overrideStrictness: values.guardrailStrictness,
+        }),
+      });
+      if (!res.ok) {
+        // 后端还没接线时给出本地占位提示（不是硬失败）
+        if (res.status === 404) {
+          setGateTestResult({
+            error: '后端 gate-preview 端点尚未部署（B2 计划内），本地无法预判。',
+          });
+        } else {
+          const data = await res.json().catch(() => ({}));
+          setGateTestResult({ error: (data as { error?: string }).error || `请求失败：${res.status}` });
+        }
+        return;
+      }
+      const data = (await res.json()) as GateTestResult;
+      setGateTestResult(data);
+    } catch (err) {
+      setGateTestResult({ error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setGateTestRunning(false);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!values.name.trim()) {
@@ -138,7 +278,7 @@ export function OrgAgentFormDialog({
       setError('示例问题不能重复');
       return;
     }
-    if (values.guardrailEnabled && !values.guardrailRejectionMessage.trim()) {
+    if (values.guardrailMode !== 'off' && !values.guardrailRejectionMessage.trim()) {
       setError('开启门禁时拒绝话术不能为空');
       return;
     }
@@ -372,27 +512,162 @@ export function OrgAgentFormDialog({
             )}
           </div>
 
+          {/* ---------------- 门禁配置：填空题式（allow/reject chips + mode + strictness + 试测） ---------------- */}
           <div className="space-y-3 rounded-xl border p-3">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-sm font-medium">话题门禁</div>
-                <div className="text-xs leading-5 text-muted-foreground">提问先经小模型判断是否在职责范围内；范围外直接返回预设话术，不启动对话。</div>
+            <div className="space-y-1">
+              <div className="text-sm font-medium">话题门禁</div>
+              <div className="text-xs leading-5 text-muted-foreground">
+                不用写 prompt，只需告诉门禁"允许问什么 / 拒绝问什么"——保存时前端自动拼装成结构化 prompt 交给后端。
               </div>
-              <Switch checked={values.guardrailEnabled} onCheckedChange={(checked) => patch({ guardrailEnabled: checked })} />
             </div>
-            {values.guardrailEnabled && (
+
+            <div className="space-y-1.5">
+              <Label>门禁模式</Label>
+              <div role="radiogroup" aria-label="门禁模式" className="space-y-1">
+                {GATE_MODE_META.map((mode) => (
+                  <label
+                    key={mode.value}
+                    className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40"
+                  >
+                    <input
+                      type="radio"
+                      className="mt-1"
+                      name="guardrail-mode"
+                      value={mode.value}
+                      checked={values.guardrailMode === mode.value}
+                      onChange={() => patch({ guardrailMode: mode.value })}
+                    />
+                    <span className="min-w-0">
+                      <span className="block font-medium">{mode.label}</span>
+                      <span className="block text-xs text-muted-foreground">{mode.hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {values.guardrailMode !== 'off' && (
               <>
                 <div className="space-y-1.5">
-                  <Label>话题范围描述</Label>
-                  <textarea
-                    autoComplete="off"
-                    className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm"
-                    value={values.guardrailScopeDescription}
-                    maxLength={2000}
-                    onChange={(e) => patch({ guardrailScopeDescription: e.target.value })}
-                    placeholder="描述允许讨论的话题范围（喂给门禁小模型）"
-                  />
+                  <Label>允许问的问题类型</Label>
+                  <p className="text-xs text-muted-foreground">举 3-5 个例子，越具体越好。回车或点"添加"入列表。</p>
+                  {values.guardrailAllowExamples.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {values.guardrailAllowExamples.map((item) => (
+                        <Badge
+                          key={item}
+                          className="max-w-full items-center gap-1 border-0 bg-success/15 text-success"
+                        >
+                          <span className="truncate">{item}</span>
+                          <button
+                            type="button"
+                            aria-label={`删除允许项 ${item}`}
+                            className="inline-flex size-4 items-center justify-center rounded-full hover:bg-success/25"
+                            onClick={() => removeAllowExample(item)}
+                          >
+                            <X className="size-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      value={newAllowExample}
+                      onChange={(e) => setNewAllowExample(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addAllowExample();
+                        }
+                      }}
+                      placeholder="如：帮我审这份报价单"
+                      maxLength={200}
+                      aria-label="新增允许问示例"
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={addAllowExample}>
+                      <Plus className="mr-1 size-3" />添加
+                    </Button>
+                  </div>
                 </div>
+
+                <div className="space-y-1.5">
+                  <Label>拒绝问的问题类型</Label>
+                  <p className="text-xs text-muted-foreground">举 3-5 个例子，帮助门禁识别越界问题。</p>
+                  {values.guardrailRejectExamples.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {values.guardrailRejectExamples.map((item) => (
+                        <Badge
+                          key={item}
+                          className="max-w-full items-center gap-1 border-0 bg-destructive/15 text-destructive"
+                        >
+                          <span className="truncate">{item}</span>
+                          <button
+                            type="button"
+                            aria-label={`删除拒绝项 ${item}`}
+                            className="inline-flex size-4 items-center justify-center rounded-full hover:bg-destructive/25"
+                            onClick={() => removeRejectExample(item)}
+                          >
+                            <X className="size-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      value={newRejectExample}
+                      onChange={(e) => setNewRejectExample(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addRejectExample();
+                        }
+                      }}
+                      placeholder="如：帮我写周报"
+                      maxLength={200}
+                      aria-label="新增拒绝问示例"
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={addRejectExample}>
+                      <Plus className="mr-1 size-3" />添加
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>拿不准时倾向</Label>
+                  <div role="radiogroup" aria-label="拿不准时倾向" className="space-y-1">
+                    <label className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40">
+                      <input
+                        type="radio"
+                        className="mt-1"
+                        name="guardrail-strictness"
+                        value="strict"
+                        checked={values.guardrailStrictness === 'strict'}
+                        onChange={() => patch({ guardrailStrictness: 'strict' })}
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-medium">严格（拿不准 → 拒绝）</span>
+                        <span className="block text-xs text-muted-foreground">推荐用于报价、合同、法务等严肃业务。</span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40">
+                      <input
+                        type="radio"
+                        className="mt-1"
+                        name="guardrail-strictness"
+                        value="lenient"
+                        checked={values.guardrailStrictness === 'lenient'}
+                        onChange={() => patch({ guardrailStrictness: 'lenient' })}
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-medium">宽松（拿不准 → 放行并打标）</span>
+                        <span className="block text-xs text-muted-foreground">推荐用于查询、情报类边界模糊场景。</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
                 <div className="space-y-1.5">
                   <Label>拒绝话术</Label>
                   <Input
@@ -401,17 +676,71 @@ export function OrgAgentFormDialog({
                     onChange={(e) => patch({ guardrailRejectionMessage: e.target.value })}
                   />
                 </div>
+
                 <div className="space-y-1.5">
-                  <Label>严格度</Label>
-                  <select
-                    className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                    value={values.guardrailStrictness}
-                    onChange={(e) => patch({ guardrailStrictness: e.target.value === 'lenient' ? 'lenient' : 'strict' })}
-                  >
-                    <option value="strict">严格（拿不准 → 拒绝）</option>
-                    <option value="lenient">宽松（拿不准 → 放行并打标）</option>
-                  </select>
+                  <Label>补充说明（可选）</Label>
+                  <textarea
+                    autoComplete="off"
+                    className="min-h-16 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    value={values.guardrailScopeDescription}
+                    maxLength={2000}
+                    onChange={(e) => patch({ guardrailScopeDescription: e.target.value })}
+                    placeholder="想额外交代门禁的话（不必填）；填空题已覆盖大部分场景。"
+                  />
                 </div>
+
+                <div className="flex items-center justify-between rounded-md border border-dashed bg-muted/30 px-3 py-2">
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="text-xs font-medium">试测门禁</div>
+                    <div className="text-xs text-muted-foreground">
+                      输入 1 条测试问题，立即看门禁怎么判（判定 / 置信度 / 延迟）。
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setGateTestOpen((prev) => !prev);
+                      setGateTestResult(null);
+                    }}
+                  >
+                    <PlayCircle className="mr-1 size-3.5" />
+                    {gateTestOpen ? '收起' : '试测门禁'}
+                  </Button>
+                </div>
+
+                {gateTestOpen && (
+                  <div className="space-y-2 rounded-md border bg-background p-3">
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        value={gateTestMessage}
+                        onChange={(e) => setGateTestMessage(e.target.value)}
+                        placeholder="如：帮我审这份报价单"
+                        maxLength={2000}
+                        aria-label="试测问题"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            void runGateTest();
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => { void runGateTest(); }}
+                        disabled={gateTestRunning || !gateTestMessage.trim()}
+                      >
+                        {gateTestRunning ? <Loader2 className="mr-1 size-3 animate-spin" /> : null}
+                        {gateTestRunning ? '试测中...' : '试测'}
+                      </Button>
+                    </div>
+                    {gateTestResult && (
+                      <GateTestResultView result={gateTestResult} />
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -433,5 +762,38 @@ export function OrgAgentFormDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function GateTestResultView({ result }: { result: GateTestResult }) {
+  if (result.error) {
+    return <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{result.error}</div>;
+  }
+  const verdict = result.verdict;
+  const label =
+    verdict === 'in_scope' ? '通过（in_scope）'
+    : verdict === 'off_topic' ? '拒答（off_topic）'
+    : verdict === 'uncertain' ? '边界（uncertain）'
+    : '未知';
+  const color =
+    verdict === 'in_scope' ? 'text-success'
+    : verdict === 'off_topic' ? 'text-destructive'
+    : 'text-amber-600';
+  return (
+    <div className="space-y-1 text-xs">
+      <div className={`font-medium ${color}`}>{label}</div>
+      {typeof result.wouldReject === 'boolean' && (
+        <div className="text-muted-foreground">
+          实际动作：{result.wouldReject ? '返回拒绝话术' : '进入主对话'}
+        </div>
+      )}
+      {typeof result.latencyMs === 'number' && (
+        <div className="text-muted-foreground">延迟：{result.latencyMs} ms</div>
+      )}
+      {result.model && <div className="text-muted-foreground">模型：{result.model}</div>}
+      {result.reason && (
+        <div className="rounded bg-muted/40 px-2 py-1 text-muted-foreground">{result.reason}</div>
+      )}
+    </div>
   );
 }

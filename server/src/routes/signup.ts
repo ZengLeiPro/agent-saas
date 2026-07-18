@@ -33,6 +33,8 @@ import type { TenantStore } from "../data/tenants/store.js";
 import { DEFAULT_TENANT_SETTINGS } from "../data/tenants/types.js";
 import type { SkillConfigStore } from "../data/skills/store.js";
 import type { BillingService } from "../data/billing/service.js";
+import type { OrgAgentStore } from "../data/orgAgents/store.js";
+import { seedOrgAgentTemplatesForTenant } from "../data/orgAgentTemplates.js";
 import {
   selfSignupConfigSchema,
   type ModelsConfig,
@@ -154,6 +156,12 @@ export interface SignupRouterDeps {
   tenantSkillsRootDir?: string;
   loginLogFilePath: string;
   skillConfigStore?: SkillConfigStore;
+  /**
+   * ★ 新增（2026-07-18 企业专家目录 MVP）：orgAgentStore
+   * 用于新试用租户开通时自动 seed 3 个种子专家模板（disabled）。
+   * 缺省时跳过 seed（保持向后兼容，不阻断注册）。
+   */
+  orgAgentStore?: OrgAgentStore;
   /** 测试注入：覆盖内部按配置构建的验证码服务（capture sender 拿真码） */
   codeService?: VerificationCodeService;
 }
@@ -193,6 +201,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
     tenantSkillsRootDir,
     loginLogFilePath,
     skillConfigStore,
+    orgAgentStore,
   } = deps;
 
   async function resolveSmsSecret(): Promise<string | undefined> {
@@ -458,6 +467,25 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
         // roleKit.firstDayGuideBar.enabled 配置打开（生产 config.json）
         personalization: { firstDayGuideBarEnabled: true },
       });
+
+      // 2.5 ★ 新增（2026-07-18 企业专家目录 MVP）：为新试用租户 seed 3 个种子专家（disabled）
+      //     seed 失败只 warn 不阻断注册——注册链路对企业专家目录不构成硬依赖，
+      //     管理员随时可在目录页手动新建。
+      if (orgAgentStore) {
+        try {
+          const seedResult = await seedOrgAgentTemplatesForTenant(orgAgentStore, tenantId, SIGNUP_ACTOR);
+          if (seedResult.seeded.length > 0) {
+            apiLogger.info(
+              `[signup] org-agent-templates seeded tenant=${tenantId} `
+                + `count=${seedResult.seeded.length} errors=${seedResult.errors.length}`,
+            );
+          }
+        } catch (err) {
+          apiLogger.warn(
+            `[signup] org-agent-templates seed 异常 tenant=${tenantId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
 
       // 3. 用户（username = 手机号；role=user）
       const user = await userStore.create({

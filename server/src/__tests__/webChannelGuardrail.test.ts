@@ -538,4 +538,115 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(rig.enqueued).toHaveLength(0);
     expect(modelCalls()).toHaveLength(0);
   });
+
+  // ── 蓝图 v2 § 4.3.1 三档 mode 行为差异（2026-07-18 加）──
+  //   mode='off'     → 不跑门禁模型、直通主 Agent、不落库
+  //   mode='shadow'  → 跑门禁 + 落库审计（打 [shadow] 前缀）、**不拦截**主 Agent（新专家观察期）
+  //   mode='enforce' → 跑门禁 + 落库 + off_topic 拦截主 Agent（现有行为）
+  // 兼容旧数据：`enabled: true` 视为 mode='enforce'（seedOrgAgent 缺省即此路径，
+  // 上面 off_topic/uncertain 用例已完整覆盖 enforce 分支）。
+
+  it('mode="off"（含旧 enabled=false 兼容）→ 完全跳过门禁模型 + 直通主 Agent + 不落库', async () => {
+    const rig = await makeRig();
+    // 用旧 API 形态：enabled=false（不显式传 mode）→ normalize 后应等价 mode='off'
+    const agent = await seedOrgAgent(rig, {
+      guardrail: {
+        enabled: false,
+        scopeDescription: '唯恩重载连接器选型',
+        rejectionMessage: '超范围。',
+        strictness: 'strict',
+      },
+    });
+    queueVerdict('off_topic'); // 排队进去也不会被消费——因为 mode=off 门禁根本不跑
+
+    await rig.send(WAIN_USER, { message: '帮我写一首诗', orgAgentId: agent.id });
+
+    // 门禁模型未被调用（决策 0 短路）
+    expect(modelCalls()).toHaveLength(0);
+    // 主 Agent 正常 enqueue、metadata 无 guardrail 标记
+    expect(rig.enqueued).toHaveLength(1);
+    expect(rig.enqueued[0].metadata?.guardrail).toBeUndefined();
+    // 无审计事件（"off_topic 拒答 = 需求雷达"数据不能被误污染）
+    expect(rig.guardrailEvents).toHaveLength(0);
+    // 会话仍绑定 org agent
+    const session = await rig.sessionCatalog.get(rig.enqueued[0].sessionId);
+    expect(session?.orgAgentId).toBe(agent.id);
+  });
+
+  it('mode="shadow" + off_topic → 落库 [shadow] 前缀 + **不拦截**主 Agent（观察期语义）', async () => {
+    const rig = await makeRig();
+    // 显式设 mode='shadow'（前端 UI 支持后的新形态）
+    const agent = await seedOrgAgent(rig, {
+      guardrail: {
+        mode: 'shadow',
+        enabled: true, // 归一化前后 store 都能读；channel 权威依赖 mode
+        scopeDescription: '唯恩重载连接器选型',
+        rejectionMessage: '这个问题超出了我的职责范围（enforce 才会显示这句）。',
+        strictness: 'strict',
+      },
+    });
+    queueVerdict('off_topic');
+
+    await rig.send(WAIN_USER, {
+      message: '帮我写一首诗', // 明显超范围
+      orgAgentId: agent.id,
+    });
+
+    // 门禁被调用（观察期照跑）
+    expect(modelCalls()).toEqual(['guard-main']);
+
+    // 关键：**主 Agent 仍启动**，不合成拒答气泡（shadow 语义）
+    expect(rig.enqueued).toHaveLength(1);
+    // metadata 打 shadow_off_topic 标记，供 run 侧关联/告警面板过滤
+    expect(rig.enqueued[0].metadata?.guardrail).toBe('shadow_off_topic');
+    // 未下发合成气泡（enforce 才会发 block_start/text/block_end）
+    const types = rig.ws.sent.map((m) => m.data?.type);
+    expect(types).not.toContain('block_start');
+    expect(types).not.toContain('block_end');
+
+    // 落库审计事件：verdict=off_topic + [shadow] 前缀便于看板过滤
+    expect(rig.guardrailEvents).toHaveLength(1);
+    expect(rig.guardrailEvents[0]).toMatchObject({
+      tenantId: 'wain',
+      orgAgentId: agent.id,
+      verdict: 'off_topic',
+      username: 'wain_user',
+      sessionId: rig.enqueued[0].sessionId,
+    });
+    // 前缀 [shadow] 让 GuardrailEventsView "仅看 shadow / enforce" 三档过滤器能区分
+    expect(rig.guardrailEvents[0].messageText.startsWith('[shadow] ')).toBe(true);
+    expect(rig.guardrailEvents[0].messageText).toContain('帮我写一首诗');
+  });
+
+  it('mode="enforce" + off_topic → 现有行为不变：合成气泡拦截 + 落库无 [shadow] 前缀', async () => {
+    const rig = await makeRig();
+    // 显式设 mode='enforce'（等价于旧 enabled=true 归一化后的行为）
+    const agent = await seedOrgAgent(rig, {
+      guardrail: {
+        mode: 'enforce',
+        enabled: true,
+        scopeDescription: '唯恩重载连接器选型',
+        rejectionMessage: '这个问题超出了我的职责范围，请咨询选型相关问题。',
+        strictness: 'strict',
+      },
+    });
+    queueVerdict('off_topic');
+
+    await rig.send(WAIN_USER, { message: '帮我写一首诗', orgAgentId: agent.id });
+
+    // 关键：**不 enqueue 主 Agent**（enforce 拦截）
+    expect(rig.enqueued).toHaveLength(0);
+    // 合成气泡序列到位
+    const textEvent = rig.ws.sent.find((m) => m.data?.type === 'text');
+    expect(textEvent?.data?.content).toBe('这个问题超出了我的职责范围，请咨询选型相关问题。');
+    // 落库审计：verdict=off_topic，**无** [shadow] 前缀（enforce 分支不加前缀）
+    expect(rig.guardrailEvents).toHaveLength(1);
+    expect(rig.guardrailEvents[0]).toMatchObject({
+      tenantId: 'wain',
+      orgAgentId: agent.id,
+      verdict: 'off_topic',
+      messageText: '帮我写一首诗',
+    });
+    expect(rig.guardrailEvents[0].messageText.startsWith('[shadow]')).toBe(false);
+  });
 });

@@ -50,7 +50,8 @@ import { extractTitleContext, generateTitleWithFallback, type TitleGeneratorConf
 import { checkTopicScope, extractRecentUserMessages, type GuardrailModelConfig } from '../../agent/guardrail.js';
 import { isCompactCommand } from '../../agent/prompt.js';
 import { isAssignedToOrgAgent, type OrgAgentStore } from '../../data/orgAgents/store.js';
-import type { OrgAgentRecord } from '../../data/orgAgents/types.js';
+import type { OrgAgentGuardrailMode, OrgAgentRecord } from '../../data/orgAgents/types.js';
+import { normalizeGuardrailConfig } from '../../data/orgAgents/types.js';
 import type { GuardrailEventStore, GuardrailEventVerdict } from '../../data/guardrail/pgGuardrailEventStore.js';
 import { WsServer, type WsClient } from './wsServer.js';
 import { EventBus, type SessionContext } from './eventBus.js';
@@ -2121,17 +2122,29 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    // ── 公司级专职 Agent 解析与门禁（2026-07 唯恩批次）──────────────────
+    // ── 公司级专职 Agent 解析与门禁（2026-07 唯恩批次，2026-07-18 蓝图 v2 § 4.3.1 加 shadow/enforce 三档）──
     // 0) /compact 等平台命令只跳过 LLM 话题门禁，企业专家授权校验仍必须执行
     // 1) 解析 orgAgentId：带 sessionId 以会话 meta 为准（忽略客户端值防伪造）；新会话取 msg.orgAgentId
     // 2) org agent 校验：存在 + enabled + 同租户 + 被指派（admin 豁免 audience）→ 否则 org_agent_unavailable
     // 3) personalAgent gate：无 orgAgentId 且租户关闭个人 Agent 时普通用户被拒
-    // 4) LLM 话题门禁：off_topic → 合成气泡不启动 run；uncertain → 放行 + pass_flagged 打标落库
+    // 4) LLM 话题门禁三档（mode = off | shadow | enforce）：
+    //    - off:     不跑门禁模型，直通主 Agent
+    //    - shadow:  跑门禁 + 落库审计（打 mode='shadow' 供看板过滤），但**不拦截**主 Agent（新专家 3-7 天观察期）
+    //    - enforce: 跑门禁 + 落库审计 + off_topic 时用 rejectionMessage 拦截主 Agent（现有行为）
+    //    Fail-open 保留（曾磊 07-10 决策：门禁是体验壁垒非安全边界）——门禁 LLM 失败/超时默认放行。
     let orgAgentId: string | undefined;
     let orgAgentRecord: OrgAgentRecord | undefined;
-    let guardrailMark: 'pass_flagged' | 'fail_open' | undefined;
-    /** uncertain/纯附件的落库负载：延迟到 sessionId 确定后 flush（新会话 id 在 enqueue 时才生成） */
-    let pendingGuardrailEvent: { messageText: string; model?: string; latencyMs?: number } | undefined;
+    let guardrailMark: 'pass_flagged' | 'fail_open' | 'shadow_off_topic' | undefined;
+    /** uncertain/纯附件/shadow 拒答的落库负载：延迟到 sessionId 确定后 flush */
+    let pendingGuardrailEvent: {
+      messageText: string;
+      model?: string;
+      latencyMs?: number;
+      /** shadow 分支的 flush 用（enforce 直接走 handleGuardrailRejection 落 off_topic） */
+      verdict?: GuardrailEventVerdict;
+      /** 落库时打入 event 用于看板过滤（'shadow' 表示未拦截；enforce/未标记默认 'enforce'） */
+      mode?: OrgAgentGuardrailMode;
+    } | undefined;
     if (validSessionId) {
       orgAgentId = gateSessionMeta?.orgAgentId;
       if (msg.orgAgentId && msg.orgAgentId !== orgAgentId) {
@@ -2165,15 +2178,24 @@ export class WebChannel implements BaseChannel {
         return;
       }
     }
-    if (orgAgentRecord?.guardrail.enabled && !isPlatformCommand) {
+    // 门禁三档决策（2026-07-18 蓝图 v2 § 4.3.1）：先归一化配置，从 enabled/mode 二选一取权威档位。
+    // 旧记录只有 `enabled: boolean` → mode 派生（true=enforce / false=off）；新记录直接读 mode。
+    const guardrailConfig = orgAgentRecord
+      ? normalizeGuardrailConfig(orgAgentRecord.guardrail)
+      : undefined;
+    const guardrailMode: OrgAgentGuardrailMode = guardrailConfig?.mode ?? 'off';
+    if (orgAgentRecord && guardrailMode !== 'off' && !isPlatformCommand) {
       const guardrailConfigs = this.config.getGuardrailModelConfigs?.() ?? [];
       if (guardrailConfigs.length > 0) {
         const isPureAttachment = resolvedMessage === AI_FALLBACK_TEXT && !!attachments?.length;
         if (isPureAttachment) {
           // 决策 5：纯附件消息跳过门禁模型调用，按 uncertain 放行 + 打标（message_text 记附件名清单）
+          // shadow 与 enforce 在纯附件上语义相同（都不拦截、都落库 pass_flagged），mode 用于看板过滤。
           guardrailMark = 'pass_flagged';
           pendingGuardrailEvent = {
             messageText: `[附件] ${attachments!.map((a: UploadedFileInfo) => a.originalName).join(', ')}`,
+            verdict: 'pass_flagged',
+            mode: guardrailMode,
           };
         } else {
           // 决策 6：语音只看 STT 后文本（剥 VOICE_STT_TAG）
@@ -2186,8 +2208,8 @@ export class WebChannel implements BaseChannel {
           const check = await checkTopicScope(
             {
               message: guardText,
-              scopeDescription: orgAgentRecord.guardrail.scopeDescription,
-              strictness: orgAgentRecord.guardrail.strictness,
+              scopeDescription: guardrailConfig!.scopeDescription,
+              strictness: guardrailConfig!.strictness,
               recentUserMessages,
             },
             guardrailConfigs,
@@ -2212,34 +2234,53 @@ export class WebChannel implements BaseChannel {
             },
           );
           if (check.verdict === 'off_topic') {
-            await this.handleGuardrailRejection({
-              ws,
-              user,
-              userIdentity,
-              sessionOwner,
-              targetCwd,
-              validSessionId,
-              clientMsgId,
-              orgAgent: orgAgentRecord,
-              model,
-              executionTarget: resolvedExecutionTarget,
-              resolvedMessage,
-              userDisplayContent,
-              attachmentMeta,
-              guardrailModel: check.model,
-              guardrailLatencyMs: check.latencyMs,
-            });
-            return;
-          }
-          if (check.verdict === 'uncertain') {
+            if (guardrailMode === 'enforce') {
+              // enforce：现有行为——合成拒答气泡、不启动主 Agent
+              await this.handleGuardrailRejection({
+                ws,
+                user,
+                userIdentity,
+                sessionOwner,
+                targetCwd,
+                validSessionId,
+                clientMsgId,
+                orgAgent: orgAgentRecord,
+                model,
+                executionTarget: resolvedExecutionTarget,
+                resolvedMessage,
+                userDisplayContent,
+                attachmentMeta,
+                guardrailModel: check.model,
+                guardrailLatencyMs: check.latencyMs,
+              });
+              return;
+            }
+            // shadow：落库审计（verdict=off_topic + mode=shadow 便于看板区分），但**不拦截**主 Agent
+            // 决策依据：新专家上线前观察 3-7 天，管理员看 shadow off_topic 数据判定 scopeDescription
+            // 是否写歪，再决定切 enforce。metadata 打 'shadow_off_topic' 便于 run 侧关联。
+            guardrailMark = 'shadow_off_topic';
+            pendingGuardrailEvent = {
+              messageText: guardText,
+              ...(check.model ? { model: check.model } : {}),
+              latencyMs: check.latencyMs,
+              verdict: 'off_topic',
+              mode: 'shadow',
+            };
+            chatLogger.info(
+              `[guardrail] shadow off_topic (not blocking): orgAgent=${orgAgentRecord.id} model=${check.model ?? 'n/a'}`,
+            );
+          } else if (check.verdict === 'uncertain') {
             guardrailMark = 'pass_flagged';
             pendingGuardrailEvent = {
               messageText: guardText,
               ...(check.model ? { model: check.model } : {}),
               latencyMs: check.latencyMs,
+              verdict: 'pass_flagged',
+              mode: guardrailMode,
             };
           } else if (check.source === 'fail_open') {
             // fail_open 打 metadata 不落库（与 pass_flagged 区分，避免污染需求雷达数据）
+            // fail-open 语义在 shadow / enforce 下一致：门禁 LLM 失败时默认放行
             guardrailMark = 'fail_open';
           }
         }
@@ -2247,13 +2288,17 @@ export class WebChannel implements BaseChannel {
     }
     const flushPendingGuardrailEvent = (resolvedGuardrailSessionId: string | undefined): void => {
       if (!pendingGuardrailEvent || !orgAgentRecord) return;
+      // shadow vs enforce 区分打在 messageText 前缀 [shadow] 里（PG 表 schema 未变，
+      // 不新增列；GuardrailEventsView 可用 SUBSTRING(message_text, 1, 8) = '[shadow]' 过滤）
+      // 详见蓝图 v2 § 4.3.1"UI 侧看板过滤器"。
+      const prefix = pendingGuardrailEvent.mode === 'shadow' ? '[shadow] ' : '';
       this.insertGuardrailEvent({
         orgAgent: orgAgentRecord,
         user,
         sessionId: resolvedGuardrailSessionId,
         clientMsgId,
-        verdict: 'pass_flagged',
-        messageText: pendingGuardrailEvent.messageText,
+        verdict: pendingGuardrailEvent.verdict ?? 'pass_flagged',
+        messageText: `${prefix}${pendingGuardrailEvent.messageText}`,
         model: pendingGuardrailEvent.model,
         latencyMs: pendingGuardrailEvent.latencyMs,
       });

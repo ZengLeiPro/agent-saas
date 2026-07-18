@@ -12,6 +12,8 @@ export interface CreateOrgAgentInput {
   starterPrompts?: string[];
   instructions: string;
   allowedSkills: string[];
+  /** ★ 新增（2026-07-18）：挂载租户知识库 id 列表，optional 向后兼容 */
+  allowedKnowledge?: string[];
   audience: OrgAgentAudience;
   guardrail: OrgAgentRecord['guardrail'];
   enabled: boolean;
@@ -29,6 +31,30 @@ export function isAssignedToOrgAgent(record: Pick<OrgAgentRecord, 'audience'>, u
   if (!username) return false;
   if (audience.exposure === 'allow_users') return audience.usernames.includes(username);
   return !audience.usernames.includes(username); // deny_users
+}
+
+/**
+ * 规范化 audience：合法化必填字段，同时防御性保留 optional 部门/角色白名单
+ * （2026-07-18 企业专家目录 MVP 新增字段，蓝图 v2 § 4.1.1）
+ */
+function normalizeAudience(audience: unknown): OrgAgentAudience {
+  const raw = (audience ?? {}) as Partial<OrgAgentAudience>;
+  const usernames = Array.isArray(raw.usernames)
+    ? raw.usernames.filter((item): item is string => typeof item === 'string')
+    : [];
+  const result: OrgAgentAudience = {
+    exposure: raw.exposure === 'allow_users' || raw.exposure === 'deny_users' ? raw.exposure : 'all',
+    usernames,
+  };
+  if (Array.isArray(raw.departmentIds)) {
+    const departmentIds = raw.departmentIds.filter((item): item is string => typeof item === 'string');
+    if (departmentIds.length > 0) result.departmentIds = departmentIds;
+  }
+  if (Array.isArray(raw.roles)) {
+    const roles = raw.roles.filter((item): item is string => typeof item === 'string');
+    if (roles.length > 0) result.roles = roles;
+  }
+  return result;
 }
 
 export class OrgAgentStore {
@@ -65,6 +91,16 @@ export class OrgAgentStore {
             starterPrompts: Array.isArray(agent.starterPrompts)
               ? agent.starterPrompts.filter((item): item is string => typeof item === 'string')
               : [],
+            // ★ 新增 optional 字段默认值（2026-07-18 企业专家目录 MVP）
+            // 旧记录缺字段时 undefined，保持"未设置"语义（避免 [] 与"未启用"歧义）
+            ...(Array.isArray(agent.allowedKnowledge)
+              ? {
+                  allowedKnowledge: agent.allowedKnowledge.filter(
+                    (item): item is string => typeof item === 'string',
+                  ),
+                }
+              : {}),
+            audience: normalizeAudience(agent.audience),
           }))
         : [];
     } catch {
@@ -124,7 +160,21 @@ export class OrgAgentStore {
         starterPrompts: [...(input.starterPrompts ?? [])],
         instructions: input.instructions,
         allowedSkills: [...input.allowedSkills],
-        audience: { exposure: input.audience.exposure, usernames: [...input.audience.usernames] },
+        // ★ 新增（2026-07-18）：allowedKnowledge 仅在输入非空数组时写入，
+        // 保持"未设置"与"空数组"语义一致（optional，向后兼容旧记录）
+        ...(input.allowedKnowledge && input.allowedKnowledge.length > 0
+          ? { allowedKnowledge: [...input.allowedKnowledge] }
+          : {}),
+        audience: {
+          exposure: input.audience.exposure,
+          usernames: [...input.audience.usernames],
+          ...(input.audience.departmentIds && input.audience.departmentIds.length > 0
+            ? { departmentIds: [...input.audience.departmentIds] }
+            : {}),
+          ...(input.audience.roles && input.audience.roles.length > 0
+            ? { roles: [...input.audience.roles] }
+            : {}),
+        },
         guardrail: { ...input.guardrail },
         enabled: input.enabled,
         createdAt: now,
@@ -163,8 +213,26 @@ export class OrgAgentStore {
       if (patch.starterPrompts !== undefined) record.starterPrompts = [...patch.starterPrompts];
       if (patch.instructions !== undefined) record.instructions = patch.instructions;
       if (patch.allowedSkills !== undefined) record.allowedSkills = [...patch.allowedSkills];
+      // ★ 新增（2026-07-18）：allowedKnowledge 可清空（传空数组 → 删除字段保持一致语义）
+      if (patch.allowedKnowledge !== undefined) {
+        if (patch.allowedKnowledge.length > 0) {
+          record.allowedKnowledge = [...patch.allowedKnowledge];
+        } else {
+          delete record.allowedKnowledge;
+        }
+      }
       if (patch.audience !== undefined) {
-        record.audience = { exposure: patch.audience.exposure, usernames: [...patch.audience.usernames] };
+        const nextAudience: OrgAgentAudience = {
+          exposure: patch.audience.exposure,
+          usernames: [...patch.audience.usernames],
+        };
+        if (patch.audience.departmentIds && patch.audience.departmentIds.length > 0) {
+          nextAudience.departmentIds = [...patch.audience.departmentIds];
+        }
+        if (patch.audience.roles && patch.audience.roles.length > 0) {
+          nextAudience.roles = [...patch.audience.roles];
+        }
+        record.audience = nextAudience;
       }
       if (patch.guardrail !== undefined) record.guardrail = { ...patch.guardrail };
       if (patch.enabled !== undefined) record.enabled = patch.enabled;

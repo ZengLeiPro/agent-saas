@@ -180,7 +180,7 @@ export function ScenariosPanel({
               className={cn(
                 "shrink-0 rounded-full border px-3 py-1 text-xs transition-colors",
                 selected
-                  ? "border-transparent bg-brand-600 text-white"
+                  ? "border-brand-200 bg-brand-50 text-brand-700"
                   : "bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
               )}
             >

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Bot, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Bot, Loader2, Pencil, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -18,7 +18,12 @@ import { OrgAgentAvatarContent } from '@/components/OrgAgentAvatar';
 import { cn } from '@/lib/utils';
 import { OrgAgentFormDialog } from './OrgAgentFormDialog';
 import { useOrgAgentAdmin } from './hooks';
-import type { OrgAgentFormValues, OrgAgentRecord } from './types';
+import {
+  assembleScopeDescription,
+  type OrgAgentFormValues,
+  type OrgAgentRecord,
+} from './types';
+import { fetchOrgAgentTemplates, FALLBACK_TEMPLATES, type OrgAgentTemplate } from './templates';
 
 function formValuesToPayload(values: OrgAgentFormValues, editing: OrgAgentRecord | null) {
   // avatar 三态：有图片头像 → 不发字段（路径值仅上传接口写入，PATCH 发路径会被 schema 拒）；
@@ -32,6 +37,19 @@ function formValuesToPayload(values: OrgAgentFormValues, editing: OrgAgentRecord
       : hadImage
         ? { avatar: '' }
         : {};
+  // 门禁 mode 序列化：off → enabled:false；shadow/enforce → enabled:true
+  // scopeDescription 通过 assembleScopeDescription 拼装（含 gate-slots 标记，供后端识别 shadow vs enforce）
+  const guardrailEnabled = values.guardrailMode !== 'off';
+  const assembledScope = guardrailEnabled
+    ? assembleScopeDescription({
+        mode: values.guardrailMode,
+        description: values.description,
+        allowExamples: values.guardrailAllowExamples,
+        rejectExamples: values.guardrailRejectExamples,
+        strictness: values.guardrailStrictness,
+        rawScope: values.guardrailScopeDescription,
+      })
+    : '';
   return {
     name: values.name.trim(),
     ...avatarPatch,
@@ -48,8 +66,8 @@ function formValuesToPayload(values: OrgAgentFormValues, editing: OrgAgentRecord
       usernames: values.audienceExposure === 'allow_users' ? values.audienceUsernames : [],
     },
     guardrail: {
-      enabled: values.guardrailEnabled,
-      scopeDescription: values.guardrailScopeDescription,
+      enabled: guardrailEnabled,
+      scopeDescription: assembledScope,
       rejectionMessage: values.guardrailRejectionMessage.trim(),
       strictness: values.guardrailStrictness,
     },
@@ -64,18 +82,30 @@ function audienceText(agent: OrgAgentRecord): string {
 }
 
 /**
- * 组织管理 modal「企业专家」section（仿 UserManager 结构）
+ * 组织管理 modal「企业专家」section
  *
- * 列表（名称/头像/指派/门禁/启用开关/编辑/删除）+ 创建/编辑表单弹窗。
- * DELETE 为硬删（危险操作二次确认）；日常下线引导用启用开关。
+ * 顶部：3 张种子模板卡（报价审核 / 客户情报 / 合同风险），可折叠。
+ * 主体：列表（名称/头像/指派/门禁/启用开关/编辑/删除）+ 创建/编辑表单弹窗。
+ * 表单：门禁配置改为填空题式（allow/reject 示例 + mode 三档 + strictness + 试测按钮）。
  */
 export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; tenantName?: string }) {
   const { agents, loading, error, refresh, create, update, remove, uploadAvatar } = useOrgAgentAdmin(tenantId);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<OrgAgentRecord | null>(null);
+  const [initialValues, setInitialValues] = useState<OrgAgentFormValues | null>(null);
   const [deleting, setDeleting] = useState<OrgAgentRecord | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<OrgAgentTemplate[]>(FALLBACK_TEMPLATES);
+  const [templatesCollapsed, setTemplatesCollapsed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchOrgAgentTemplates().then((list) => {
+      if (!cancelled) setTemplates(list);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const handleSubmit = async (values: OrgAgentFormValues) => {
     const payload = formValuesToPayload(values, editing);
@@ -109,6 +139,24 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
     }
   };
 
+  const openBlankForm = () => {
+    setEditing(null);
+    setInitialValues(null);
+    setFormOpen(true);
+  };
+
+  const openTemplateForm = (template: OrgAgentTemplate) => {
+    setEditing(null);
+    setInitialValues(template.values);
+    setFormOpen(true);
+  };
+
+  const openEditForm = (agent: OrgAgentRecord) => {
+    setEditing(agent);
+    setInitialValues(null);
+    setFormOpen(true);
+  };
+
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
@@ -119,7 +167,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
             <Button variant="outline" onClick={() => { void refresh(); }} disabled={loading}>
               <RefreshCw className={cn('mr-2 size-4', loading && 'animate-spin')} />刷新
             </Button>
-            <Button onClick={() => { setEditing(null); setFormOpen(true); }}>
+            <Button onClick={openBlankForm}>
               <Plus className="size-4" />创建企业专家
             </Button>
           </div>
@@ -130,6 +178,40 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
         {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
         {actionError && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{actionError}</div>}
 
+        {/* ---------------- 3 张种子模板卡 ---------------- */}
+        {templates.length > 0 && (
+          <section aria-label="从模板创建" className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Sparkles className="size-4 text-brand-500" />
+                从模板创建
+                <span className="text-xs font-normal text-muted-foreground">
+                  一键预填名称/职责/门禁配置，管理员确认后创建。
+                </span>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setTemplatesCollapsed((prev) => !prev)}
+              >
+                {templatesCollapsed ? '展开' : '收起'}
+              </Button>
+            </div>
+            {!templatesCollapsed && (
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {templates.map((template) => (
+                  <TemplateCard
+                    key={template.key}
+                    template={template}
+                    onUse={() => openTemplateForm(template)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
         <Card>
           <CardContent className="p-0">
             {loading && agents.length === 0 ? (
@@ -139,7 +221,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
             ) : agents.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
                 <Bot className="size-6" />
-                <span>还没有企业专家，点击右上角创建。</span>
+                <span>还没有企业专家，可从上方模板一键创建，或点击右上角新建。</span>
               </div>
             ) : (
               <Table>
@@ -192,7 +274,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                             size="icon"
                             className="size-8"
                             title="编辑"
-                            onClick={() => { setEditing(agent); setFormOpen(true); }}
+                            onClick={() => openEditForm(agent)}
                           >
                             <Pencil className="size-3.5" />
                           </Button>
@@ -220,7 +302,8 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
         open={formOpen}
         tenantId={tenantId}
         editing={editing}
-        onClose={() => { setFormOpen(false); setEditing(null); }}
+        initialValues={initialValues}
+        onClose={() => { setFormOpen(false); setEditing(null); setInitialValues(null); }}
         onSubmit={handleSubmit}
         onUploadAvatar={uploadAvatar}
       />
@@ -241,6 +324,31 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function TemplateCard({
+  template,
+  onUse,
+}: {
+  template: OrgAgentTemplate;
+  onUse: () => void;
+}) {
+  return (
+    <div className="flex flex-col justify-between gap-2 rounded-lg border bg-card p-3 shadow-sm transition hover:border-brand-300">
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <span className="text-lg leading-none" aria-hidden>{template.icon || template.avatar}</span>
+          <span className="text-sm font-medium">{template.name}</span>
+        </div>
+        <p className="line-clamp-2 text-xs text-muted-foreground">{template.description}</p>
+      </div>
+      <div className="flex justify-end">
+        <Button type="button" size="sm" variant="outline" onClick={onUse}>
+          使用此模板
+        </Button>
+      </div>
     </div>
   );
 }

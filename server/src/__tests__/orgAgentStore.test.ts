@@ -174,6 +174,61 @@ describe('OrgAgentStore persist-reload 往返', () => {
       }],
     }));
     const store = new OrgAgentStore(filePath);
-    expect(store.get('oa-legacy')).toMatchObject({ description: '', starterPrompts: [] });
+    const record = store.get('oa-legacy');
+    expect(record).toMatchObject({ description: '', starterPrompts: [] });
+    // 新增 optional 字段：旧记录读入后 undefined（未设置）
+    expect(record?.allowedKnowledge).toBeUndefined();
+    expect(record?.audience.departmentIds).toBeUndefined();
+    expect(record?.audience.roles).toBeUndefined();
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // 2026-07-18 企业专家目录 MVP：3 个 optional 字段扩展（蓝图 v2 § 4.1.1）
+  // ────────────────────────────────────────────────────────────────────
+  it('allowedKnowledge / audience.departmentIds / audience.roles：create 落库 + reload 保真', async () => {
+    const filePath = await tmpStorePath();
+    const store = new OrgAgentStore(filePath);
+    const created = await store.create(
+      createInput({
+        allowedKnowledge: ['kb-quote-rules', 'kb-customer-history'],
+        audience: {
+          exposure: 'allow_users' as const,
+          usernames: ['alice'],
+          departmentIds: ['dept-sales', 'dept-finance'],
+          roles: ['sales-lead', 'ops'],
+        },
+      }),
+      'wain_admin',
+    );
+    expect(created.allowedKnowledge).toEqual(['kb-quote-rules', 'kb-customer-history']);
+    expect(created.audience.departmentIds).toEqual(['dept-sales', 'dept-finance']);
+    expect(created.audience.roles).toEqual(['sales-lead', 'ops']);
+
+    const reloaded = new OrgAgentStore(filePath);
+    const roundTripped = reloaded.get(created.id);
+    expect(roundTripped?.allowedKnowledge).toEqual(['kb-quote-rules', 'kb-customer-history']);
+    expect(roundTripped?.audience.departmentIds).toEqual(['dept-sales', 'dept-finance']);
+    expect(roundTripped?.audience.roles).toEqual(['sales-lead', 'ops']);
+  });
+
+  it('update：allowedKnowledge 传空数组 → 字段被清空（"未设置"语义）', async () => {
+    const filePath = await tmpStorePath();
+    const store = new OrgAgentStore(filePath);
+    const created = await store.create(
+      createInput({ allowedKnowledge: ['kb-a'] }),
+      'wain_admin',
+    );
+    expect(created.allowedKnowledge).toEqual(['kb-a']);
+    const updated = await store.update(created.id, { allowedKnowledge: [] }, 'wain_admin');
+    expect(updated?.allowedKnowledge).toBeUndefined();
+  });
+
+  it('create 不传新字段时向后兼容：字段全部 undefined（不写入磁盘噪声）', async () => {
+    const filePath = await tmpStorePath();
+    const store = new OrgAgentStore(filePath);
+    const created = await store.create(createInput(), 'wain_admin');
+    expect(created.allowedKnowledge).toBeUndefined();
+    expect(created.audience.departmentIds).toBeUndefined();
+    expect(created.audience.roles).toBeUndefined();
   });
 });

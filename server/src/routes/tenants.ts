@@ -20,6 +20,8 @@ import {
   readTenantCompanyInfo,
   writeTenantCompanyInfo,
 } from '../data/tenants/companyInfo.js';
+import type { OrgAgentStore } from '../data/orgAgents/store.js';
+import { seedOrgAgentTemplatesForTenant } from '../data/orgAgentTemplates.js';
 
 const createTenantSchema = z.object({
   id: z.string().regex(
@@ -115,6 +117,12 @@ export interface CreateTenantsRouterOptions {
   onTenantDisabled?: (tenantId: string) => void;
   /** 组织删除时的全量清理实现，由 app runtime 注入完整依赖。 */
   deleteTenantResources?: (tenantId: string) => Promise<TenantDeletionReport>;
+  /**
+   * ★ 新增（2026-07-18 企业专家目录 MVP）：orgAgentStore
+   * 用于新租户开通时自动 seed 3 个种子专家模板（enabled=false，管理员启用）。
+   * 缺省时静默跳过 seed（保持向后兼容，不阻断租户创建）。
+   */
+  orgAgentStore?: OrgAgentStore;
 }
 
 // company.md 体量上限：留 200k，与 MEMORY 对齐
@@ -294,6 +302,32 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
         await writeTenantCompanyInfo(sharedDir, tenant.id, buildInitialCompanyInfo(tenant.name));
       } catch (err) {
         apiLogger.warn(`初始化 company.md 失败（tenant=${tenant.id}）: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      // ★ 新增（2026-07-18 企业专家目录 MVP）：新租户 seed 3 个种子专家（disabled）
+      // seed 幂等（老租户/已 seed 过的自动跳过），失败只 warn 不阻断租户创建
+      if (opts.orgAgentStore) {
+        try {
+          const seedResult = await seedOrgAgentTemplatesForTenant(
+            opts.orgAgentStore,
+            tenant.id,
+            'system',
+          );
+          if (seedResult.seeded.length > 0) {
+            apiLogger.info(
+              `[org-agent-templates] seed 完成 tenant=${tenant.id} `
+                + `seeded=[${seedResult.seeded.join(',')}] `
+                + `skipped=[${seedResult.skipped.join(',')}] `
+                + `errors=${seedResult.errors.length}`,
+            );
+          }
+          if (seedResult.errors.length > 0) {
+            for (const e of seedResult.errors) {
+              apiLogger.warn(`[org-agent-templates] seed 失败 tenant=${tenant.id} template=${e.templateId}: ${e.error}`);
+            }
+          }
+        } catch (err) {
+          apiLogger.warn(`[org-agent-templates] seed 异常 tenant=${tenant.id}: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
       auditLog(req, 'tenant_created', `${tenant.id} (${tenant.name})`);
       res.status(201).json(tenant);

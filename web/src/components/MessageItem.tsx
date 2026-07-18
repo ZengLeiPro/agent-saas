@@ -19,6 +19,7 @@ import { extractTextFromChildren, getCellMinWidthPx } from '@/lib/tableCellWidth
 import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual, splitByMessageMarkers, stripPartialCiteMarker } from '@agent/shared';
 import { CitationCard } from './CitationCard';
 import { MessageFeedbackButton } from './MessageFeedback';
+import { GuardrailAppealButton } from './GuardrailAppealButton';
 import type { TtsState } from '@/hooks/useTtsPlayer';
 import type { UseVoicePlayerReturn } from '@/hooks/useVoicePlayer';
 import type { Components } from 'react-markdown';
@@ -622,7 +623,7 @@ function TtsButton({
   );
 }
 
-/** 操作按钮组：TTS + 复制（+ 专职 Agent 会话的反馈按钮，context 缺省零渲染） */
+/** 操作按钮组：TTS + 复制（+ 专职 Agent 会话的反馈按钮 + 门禁拒答申诉按钮，context 缺省零渲染） */
 function ActionButtons({
   text,
   ttsState,
@@ -630,6 +631,7 @@ function ActionButtons({
   onTtsPlay,
   onTtsTogglePause,
   feedback,
+  appeal,
 }: {
   text: string;
   ttsState: TtsState;
@@ -638,6 +640,8 @@ function ActionButtons({
   onTtsTogglePause: () => void;
   /** AI 文本消息传入（type==='text' && !streaming）；MessageFeedbackProvider 未挂载时按钮零渲染 */
   feedback?: { messageId: string; content: string };
+  /** AI 文本消息传入（同 feedback 条件）；用于「这个应该在范围内」申诉入口 */
+  appeal?: { messageId: string; content: string };
 }) {
   return (
     <>
@@ -647,6 +651,9 @@ function ActionButtons({
       <CopyButton text={text} />
       {feedback && (
         <MessageFeedbackButton messageId={feedback.messageId} content={feedback.content} />
+      )}
+      {appeal && (
+        <GuardrailAppealButton messageId={appeal.messageId} content={appeal.content} />
       )}
     </>
   );
@@ -915,6 +922,7 @@ export const MessageItem = memo(function MessageItem({
                   onTtsPlay={() => tts?.play(msgKey, cleanContent)}
                   onTtsTogglePause={() => tts?.togglePause(msgKey)}
                   feedback={{ messageId: message.id, content: message.content }}
+                  appeal={{ messageId: message.id, content: message.content }}
                 />
               </div>
             </div>

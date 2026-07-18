@@ -563,6 +563,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         tenantSkillsRootDir,
         loginLogFilePath,
         skillConfigStore: runtime.skillConfigStore,
+        // ★ 2026-07-18 企业专家目录 MVP：注册开通试用租户时 seed 3 个种子专家
+        orgAgentStore: runtime.orgAgentStore,
       });
       app.use("/api/signup", signupRouters.publicRouter);
       app.use("/api/admin/signup-config", signupRouters.adminRouter);
@@ -574,6 +576,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         createTenantsRouter({
           tenantStore: runtime.tenantStore,
           sharedDir,
+          // ★ 2026-07-18 企业专家目录 MVP：新租户开通时 seed 3 个种子专家（disabled）
+          orgAgentStore: runtime.orgAgentStore,
           onTenantDisabled: webChannel
             ? (tenantId: string) => webChannel.disconnectTenant(tenantId)
             : undefined,

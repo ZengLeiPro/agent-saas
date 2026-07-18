@@ -35,11 +35,13 @@ describe("FilePreviewDialog", () => {
     const download = screen.getByRole("button", { name: "下载文件" });
     const print = screen.getByRole("button", { name: "打印文件" });
     const dock = screen.getByRole("button", { name: /右侧打开/ });
+    const close = screen.getByRole("button", { name: "Close" });
 
     expect(title.compareDocumentPosition(download) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(download.compareDocumentPosition(dock) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(print.compareDocumentPosition(dock) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(download.textContent).toBe("");
     expect(print.textContent).toBe("");
+    expect(close.parentElement?.className).toContain("[&>button[aria-label='Close']]:top-1.5");
   });
 });

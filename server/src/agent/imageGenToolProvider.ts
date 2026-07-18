@@ -62,7 +62,11 @@ export interface ImageGenToolProviderOptions {
   /** 租户开关 features.imageGenEnabled（默认 false，fail-closed）。 */
   isImageGenEnabledForTenant?: (tenantId: string | undefined) => boolean;
   fetchImpl?: typeof fetch;
-  /** 测试注入：gpt-image-2 订阅池退避重试延迟表。默认 15/30/60s（沿用原 skill 脚本策略）。 */
+  /**
+   * 测试注入：gpt-image-2 outer retry 退避表。默认对齐主会话 Responses adapter
+   * 的 0.5/1/2/10/30 + 5×60s（07-17 拍板），让 CLIProxyAPI 唯一 Codex OAuth
+   * 冷却期能在退避表内等到恢复；原 [15,30,60] 仅 3 步共 105s 会撞冷却尾段。
+   */
   retryDelaysMs?: readonly number[];
   logger?: {
     info?: (message: string) => void;
@@ -71,21 +75,45 @@ export interface ImageGenToolProviderOptions {
 }
 
 const DEFAULT_ENGINE: ImageGenEngineId = 'gpt-image-2';
-const DEFAULT_REQUEST_TIMEOUT_MS = 180_000;
-const DEFAULT_RETRY_DELAYS_MS = [15_000, 30_000, 60_000] as const;
+/**
+ * gpt-image-2 单次 fetch 超时。上游正常出图耗时 30s ~ 3+ 分钟（含 CLIProxyAPI 订阅池
+ * request-retry:3 + cooldown:10s 兜底），180s 会踩在成功窗口以下：2026-07-18 生产
+ * 15:50:01 的 200 出图耗时 2m52s，agent-saas 侧已在 15:49:17 断连，白花订阅池配额。
+ * 放宽到 6 分钟，对齐上游实际耗时上界（CLIProxyAPI 内部 upstream 超时约 3 分钟一次，
+ * 加最多一轮 outer retry 也在 6 分钟内），避免客户端超时早于上游返图。
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 360_000;
+/**
+ * gpt-image-2 outer retry 退避表，对齐主会话 Responses adapter（07-17 拍板）。
+ * 尾段 5×60s 用来等 CLIProxyAPI 唯一 Codex OAuth 冷却结束；原 [15,30,60] 仅 3 步共
+ * 105s，遇到 auth 池连续冷却（今日实测常态）就落死。
+ */
+const DEFAULT_RETRY_DELAYS_MS = [
+  500, 1_000, 2_000, 10_000, 30_000,
+  60_000, 60_000, 60_000, 60_000, 60_000,
+] as const;
 const DEFAULT_SEEDREAM_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
 const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-lite-260128';
 const MAX_REF_IMAGE_BYTES_GPT = 20 * 1024 * 1024;
 const MAX_REF_IMAGE_BYTES_SEEDREAM = 5 * 1024 * 1024;
 
-/** 沿用原 skill 脚本的临时错误判定（RETRYABLE_HTTP_CODES + markers）。 */
-const RETRYABLE_HTTP_STATUS = new Set([429, 500, 502, 503, 504]);
+/**
+ * CLIProxyAPI 订阅池的临时不可用信号；body 含这些 marker 时无差别 retry（网关级
+ * auth 冷却、流被上游中断等）。沿用原 skill 脚本策略。
+ */
 const RETRYABLE_ERROR_MARKERS = [
   'auth_unavailable',
   'no auth available',
   'stream disconnected before completion',
   'stream closed before response.completed',
 ];
+
+/**
+ * 主会话 Responses adapter 对 500 判定同款：只有 body 含网络级瞬时故障特征词时才
+ * 视 500 为 retryable；纯业务 500 直接 fail-fast，让 agent 早点走出提示或换引擎。
+ */
+const NETWORK_LEVEL_500_MARKERS
+  = /\b(?:EOF|ECONNRESET|EPIPE|ETIMEDOUT)\b|socket hang up|connection (?:reset|closed)|unexpected end of file/i;
 
 const ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'] as const;
 type AspectRatio = (typeof ASPECT_RATIOS)[number];
@@ -265,19 +293,28 @@ async function gptImage2RequestWithRetries(
     try {
       return await gptImage2RequestOnce(deps, request);
     } catch (err) {
+      // 外部 signal 取消（用户点停止 / run abort）→ 立即抛出，不 retry。
       if (request.signal?.aborted) throw err;
-      const retryable = err instanceof ImageGenApiError && err.retryable;
+      // 本地 fetchWithTimeout AbortController 触发的 AbortError（外部 signal 未 abort）
+      // 视为网络级瞬时故障、可 retry。原实现因 AbortError 不是 ImageGenApiError 而
+      // retryable=false 直接 fail，把"本地超时"错当成"用户取消"，2026-07-18 生产 4 次
+      // 生图调用全部踩到此坑（PG tool_audit 全部 "This operation was aborted"）。
+      const isLocalTimeout = err instanceof Error && err.name === 'AbortError';
+      const retryable = isLocalTimeout || (err instanceof ImageGenApiError && err.retryable);
       if (retryable && attempt < deps.retryDelaysMs.length) {
         const delay = deps.retryDelaysMs[attempt]!;
+        const reason = isLocalTimeout
+          ? `本地 fetch 超时（${deps.connection.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS}ms）`
+          : '疑似订阅池暂不可用';
         deps.logger?.warn?.(
-          `[GenerateImage] gpt-image-2 疑似订阅池暂不可用，${delay}ms 后重试（${attempt + 1}/${deps.retryDelaysMs.length}）：${err instanceof Error ? err.message : String(err)}`,
+          `[GenerateImage] gpt-image-2 ${reason}，${delay}ms 后重试（${attempt + 1}/${deps.retryDelaysMs.length}）：${err instanceof Error ? err.message : String(err)}`,
         );
         await abortableSleep(delay, request.signal);
         continue;
       }
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `gpt-image-2 生成失败${retryable ? `（已按 15/30/60s 策略退避重试 ${attempt} 次仍失败）` : ''}：${message}`
+        `gpt-image-2 生成失败${retryable ? `（已按 ${deps.retryDelaysMs.length} 次退避策略重试后仍失败）` : ''}：${message}`
         + ' 如需继续生成，可显式改用 model:"seedream" 引擎重试；两个引擎按不同单价扣积分，平台不会自动切换。',
       );
     }
@@ -398,7 +435,8 @@ async function fetchWithTimeout(
   init: RequestInit,
   signal?: AbortSignal,
 ): Promise<Response> {
-  // 生成型 API 慢（10-60s+），超时独立于全局 fetch 默认；context.signal 取消透传。
+  // 生成型 API 慢；gpt-image-2 上游正常出图 30s ~ 3+ 分钟，默认 360s 兜底
+  // （见 DEFAULT_REQUEST_TIMEOUT_MS 注释）；context.signal（外部 cancel）透传。
   const timeoutMs = deps.connection.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -411,9 +449,15 @@ async function fetchWithTimeout(
 }
 
 function isRetryableHttpFailure(status: number, body: string): boolean {
-  if (RETRYABLE_HTTP_STATUS.has(status)) return true;
+  // 429（限流）/ 502 / 503 / 504（网关暂时不可用）：无条件 retry。
+  if (status === 429 || status === 502 || status === 503 || status === 504) return true;
   const lower = body.toLowerCase();
-  return RETRYABLE_ERROR_MARKERS.some((marker) => lower.includes(marker));
+  // 网关级订阅池临时不可用信号（CLIProxyAPI 特有 marker），任意 status 均 retry。
+  if (RETRYABLE_ERROR_MARKERS.some((marker) => lower.includes(marker))) return true;
+  // 500：只有网络级瞬时故障特征（EOF/ECONNRESET/socket hang up 等）才 retry；
+  // 纯业务 500 fail-fast，避免撞完整条退避表后仍失败、白花订阅池配额。
+  if (status === 500) return NETWORK_LEVEL_500_MARKERS.test(body);
+  return false;
 }
 
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {

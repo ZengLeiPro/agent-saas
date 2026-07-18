@@ -208,6 +208,60 @@ describe('ImageGenToolProvider', () => {
     expect(calls).toBe(2);
   });
 
+  it('retries when fetchWithTimeout AbortController fires locally (external signal not aborted)', async () => {
+    // 2026-07-18 生产 4 次生图失败根因：fetchWithTimeout 180s AbortController 触发
+    // 抛 AbortError，但外部 request.signal 未 abort；原实现把它当成用户取消直接 fail，
+    // 修复后应视为网络级瞬时故障并 retry。
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls++;
+      if (calls === 1) {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        throw err;
+      }
+      return okImageResponse();
+    }) as unknown as typeof fetch;
+    const { provider } = makeProvider({ fetchImpl });
+
+    const result = await provider.invoke(invokeInput({ prompt: 'a cat' }), makeContext(workspaceRoot));
+    expect(JSON.parse(result!.content).status).toBe('ok');
+    expect(calls).toBe(2);
+  });
+
+  it('fails fast on plain business 500 without network-level markers (does not exhaust retries)', async () => {
+    // 500 但 body 无 EOF/ECONNRESET 等网络特征 → fail-fast，让 agent 早点决策换引擎，
+    // 不再撞满整条退避表白花订阅池配额。对齐主会话 Responses adapter 的 500 判定。
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls++;
+      return new Response(JSON.stringify({ error: { message: 'model unavailable' } }), { status: 500 });
+    }) as unknown as typeof fetch;
+    const { provider, appendPlatformEvent } = makeProvider({ fetchImpl });
+
+    await expect(
+      provider.invoke(invokeInput({ prompt: 'a cat' }), makeContext(workspaceRoot)),
+    ).rejects.toThrow(/model:"seedream"/);
+    expect(calls).toBe(1);
+    expect(appendPlatformEvent).not.toHaveBeenCalled();
+  });
+
+  it('retries on 500 that carries a network-level failure marker (e.g. unexpected EOF)', async () => {
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls++;
+      if (calls === 1) {
+        return new Response('upstream returned unexpected EOF', { status: 500 });
+      }
+      return okImageResponse();
+    }) as unknown as typeof fetch;
+    const { provider } = makeProvider({ fetchImpl });
+
+    const result = await provider.invoke(invokeInput({ prompt: 'a cat' }), makeContext(workspaceRoot));
+    expect(JSON.parse(result!.content).status).toBe('ok');
+    expect(calls).toBe(2);
+  });
+
   it('surfaces a seedream hint after gpt-image-2 exhausts retries, without charging', async () => {
     const fetchImpl = vi.fn(async () => new Response('auth_unavailable', { status: 503 })) as unknown as typeof fetch;
     const { provider, appendPlatformEvent } = makeProvider({ fetchImpl, retryDelaysMs: [1, 1] });

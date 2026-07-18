@@ -124,27 +124,40 @@ const GOOGLE_MCP_PRESETS: Array<[string, string, string, string]> = [
 
 export const MCP_TEMPLATES: McpTemplate[] = [
   {
+    // v3：GitHub 的授权服务器不支持 OAuth 动态客户端注册（DCR），OAuth 流程
+    // 对第三方 MCP 客户端不可用（VS Code/Claude Code/OpenCode 同样受影响），
+    // 改为每位用户绑定自己的 Personal Access Token（Bearer header）。
     id: 'github',
-    templateVersion: 2,
+    templateVersion: 3,
     name: 'GitHub',
-    description: 'GitHub 官方 remote MCP。每位用户使用自己的 GitHub 账号授权。',
+    description: 'GitHub 官方 remote MCP。每位用户绑定自己的 GitHub Personal Access Token。',
     riskLevel: 'credentialed_external_write',
     recommendedDefault: false,
     server: {
       id: 'github',
       name: 'GitHub',
-      description: '访问仓库、Issue 和 Pull Request；每位用户独立授权、独立撤销。',
+      description: '访问仓库、Issue 和 Pull Request；每位用户绑定自己的 Token，独立撤销。',
       enabledByDefault: false,
       riskLevel: 'credentialed_external_write',
       createdFromTemplateId: 'github',
-      createdFromTemplateVersion: 2,
+      createdFromTemplateVersion: 3,
       tenantId: GLOBAL_TENANT_ID,
       config: {
         type: 'streamable-http',
         url: 'https://api.githubcopilot.com/mcp/',
-        oauth: { provider: 'github' },
       },
-      secretRequirements: [],
+      secretRequirements: [
+        {
+          key: 'token',
+          label: 'GitHub Personal Access Token',
+          target: 'header',
+          name: 'Authorization',
+          prefix: 'Bearer ',
+          scope: 'user',
+          required: true,
+          instructions: '打开 GitHub「Settings → Developer settings → Personal access tokens → Tokens (classic)」创建 Token（建议勾选 repo、read:org 权限），生成后复制粘贴到这里。Token 只保存在你的个人加密存储中，可随时在 GitHub 撤销。创建地址：https://github.com/settings/tokens/new',
+        },
+      ],
     },
   },
   {
@@ -290,9 +303,9 @@ export class McpConfigStore {
     return { enabledServers: this.defaultEnabledServerIds(), secretRefs: {}, oauthConnections: {} };
   }
 
-  /** 首次启动安装官方推荐连接器；已有同 id 配置不覆盖。 */
+  /** 首次启动安装官方推荐连接器；已有同 id 配置不覆盖（模板升级除外，见 v2 步骤）。 */
   async installBuiltinOAuthServers(): Promise<number> {
-    const targetVersion = 1;
+    const targetVersion = 2;
     if ((this.data.builtinPresetsVersion ?? 0) >= targetVersion) return 0;
     return this.serialize(async () => {
       if ((this.data.builtinPresetsVersion ?? 0) >= targetVersion) return 0;
@@ -300,6 +313,24 @@ export class McpConfigStore {
       for (const template of MCP_TEMPLATES.filter(t => ['github', 'notion'].includes(t.id) || t.id.startsWith('google_'))) {
         if (this.data.servers[template.server.id]) continue;
         this.data.servers[template.server.id] = normalizeServer(template.server);
+        installed++;
+      }
+      // v2：github 模板 v3 从 OAuth（GitHub 不支持 DCR，流程走不通）切到用户级 PAT。
+      // 仅升级仍保持内置形态的实例（来自模板且未被管理员改过关键配置），保留 tenantId。
+      const existingGithub = this.data.servers['github'];
+      if (
+        existingGithub
+        && existingGithub.createdFromTemplateId === 'github'
+        && (existingGithub.createdFromTemplateVersion ?? 0) < 3
+        && !('command' in existingGithub.config)
+        && existingGithub.config.oauth?.provider === 'github'
+      ) {
+        const template = MCP_TEMPLATES.find(t => t.id === 'github')!;
+        this.data.servers['github'] = normalizeServer({
+          ...template.server,
+          tenantId: existingGithub.tenantId,
+          enabledByDefault: existingGithub.enabledByDefault,
+        });
         installed++;
       }
       this.data.builtinPresetsVersion = targetVersion;

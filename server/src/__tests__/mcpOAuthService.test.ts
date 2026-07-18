@@ -32,7 +32,7 @@ describe('McpOAuthService', () => {
         await provider.saveClientInformation?.({ client_id: 'dynamic-client' });
         await provider.saveCodeVerifier('pkce-verifier');
         const state = await provider.state?.();
-        await provider.redirectToAuthorization(new URL(`https://github.com/login/oauth/authorize?state=${state}`));
+        await provider.redirectToAuthorization(new URL(`https://mcp.notion.com/authorize?state=${state}`));
         return 'REDIRECT' as const;
       }
       expect(options.authorizationCode).toBe('authorization-code');
@@ -41,7 +41,7 @@ describe('McpOAuthService', () => {
       return 'AUTHORIZED' as const;
     });
     const service = new McpOAuthService({ store, vault, authFn });
-    const server = store.getServer('github')!;
+    const server = store.getServer('notion')!;
 
     const started = await service.start({
       username: 'alice',
@@ -51,21 +51,21 @@ describe('McpOAuthService', () => {
       returnTo: '/?tab=capabilities',
     });
     expect(started.status).toBe('pending');
-    expect(started.authorizationUrl).toContain('github.com/login/oauth/authorize');
-    const pending = store.getUserOAuthConnection('alice', 'github')!;
+    expect(started.authorizationUrl).toContain('mcp.notion.com/authorize');
+    const pending = store.getUserOAuthConnection('alice', 'notion')!;
     expect(pending.secretRef).toBeTruthy();
     expect(pending.pendingState).toBeTruthy();
     expect(await readFile(configPath, 'utf-8')).not.toContain('user-access-token');
 
     const finished = await service.finish({ state: pending.pendingState!, code: 'authorization-code' });
     expect(finished?.ok).toBe(true);
-    expect(store.getUserOAuthConnection('alice', 'github')?.status).toBe('connected');
+    expect(store.getUserOAuthConnection('alice', 'notion')?.status).toBe('connected');
     expect(await readFile(configPath, 'utf-8')).not.toContain('user-access-token');
     await expect(service.finish({ state: pending.pendingState!, code: 'replay' })).resolves.toBeUndefined();
 
-    const runtimeProvider = await service.runtimeProvider({ username: 'alice', tenantId: 'kaiyan', serverName: 'github' });
+    const runtimeProvider = await service.runtimeProvider({ username: 'alice', tenantId: 'kaiyan', serverName: 'notion' });
     await expect(runtimeProvider?.tokens()).resolves.toMatchObject({ access_token: 'user-access-token' });
-    await expect(service.runtimeProvider({ username: 'alice', tenantId: 'wain', serverName: 'github' })).resolves.toBeUndefined();
+    await expect(service.runtimeProvider({ username: 'alice', tenantId: 'wain', serverName: 'notion' })).resolves.toBeUndefined();
   });
 
   it('断开连接后撤销 vault secret，不影响其他用户', async () => {
@@ -132,13 +132,13 @@ describe('McpOAuthService', () => {
       authFn,
       userResolver: () => ({ tenantId: 'wain' }),
     });
-    const server = store.getServer('github')!;
+    const server = store.getServer('notion')!;
     await service.start({ username: 'alice', tenantId: 'kaiyan', server, redirectUrl: 'https://agent.example.com/api/mcp/oauth/callback', returnTo: '/' });
-    const state = store.getUserOAuthConnection('alice', 'github')!.pendingState!;
+    const state = store.getUserOAuthConnection('alice', 'notion')!.pendingState!;
 
     const result = await service.finish({ state, code: 'code' });
     expect(result).toMatchObject({ ok: false, tenantId: 'kaiyan' });
-    expect(store.getUserOAuthConnection('alice', 'github')?.status).toBe('error');
+    expect(store.getUserOAuthConnection('alice', 'notion')?.status).toBe('error');
     expect(authFn).toHaveBeenCalledTimes(1);
   });
 
@@ -158,5 +158,34 @@ describe('McpOAuthService', () => {
       config: { url: 'https://existing.example.com/mcp' },
     });
     await expect(store.installBuiltinOAuthServers()).resolves.toBe(0);
+  });
+
+  it('presets v2：存量内置 github OAuth 实例就地升级为 v3 PAT 模式，保留 tenantId', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mcp-preset-v2-'));
+    roots.push(root);
+    const store = new McpConfigStore(join(root, 'mcp-config.json'));
+    await store.installBuiltinOAuthServers();
+    // 手工降级 github 到 v2 OAuth 旧形态，并把版本标记退回 1，模拟旧生产数据 + 新代码首启
+    await store.upsertServer({
+      id: 'github',
+      name: 'GitHub',
+      tenantId: '*',
+      createdFromTemplateId: 'github',
+      createdFromTemplateVersion: 2,
+      config: { type: 'streamable-http', url: 'https://api.githubcopilot.com/mcp/', oauth: { provider: 'github' } },
+      secretRequirements: [],
+    });
+    const raw = JSON.parse(await readFile(join(root, 'mcp-config.json'), 'utf-8')) as Record<string, unknown>;
+    raw.builtinPresetsVersion = 1;
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(join(root, 'mcp-config.json'), JSON.stringify(raw));
+
+    const store2 = new McpConfigStore(join(root, 'mcp-config.json'));
+    await store2.installBuiltinOAuthServers();
+    const upgraded = store2.getServer('github')!;
+    expect(upgraded.createdFromTemplateVersion).toBe(3);
+    expect(upgraded.tenantId).toBe('*');
+    expect('oauth' in upgraded.config && upgraded.config.oauth).toBeFalsy();
+    expect(upgraded.secretRequirements?.[0]).toMatchObject({ key: 'token', target: 'header', name: 'Authorization', scope: 'user' });
   });
 });

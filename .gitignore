@@ -64,6 +64,10 @@ server/coverage/
 web/coverage/
 shared/coverage/
 
+# Stryker 变异测试本地产物（sandbox 可能复制 runtime 数据，报告可重新生成）
+server/.stryker-tmp/
+server/reports/
+
 # Runtime data
 server/data/
 

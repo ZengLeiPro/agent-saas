@@ -560,4 +560,53 @@ describe('WebChannel active stream reconnect', () => {
     });
     expect((channel as any).eventBufferStore.isActive('session-live')).toBe(true);
   });
+
+  it('serializes concurrent resume on the same ws so only one buffer listener survives', async () => {
+    // 前端重连时两个 onStateChange 监听器会在同一 tick 各对当前会话发一次 resume。
+    // 若 handleResumeAsync 并发在 await 处交错，会残留两个 EventBuffer listener，
+    // 每个流式事件被投递两次（前端逐字符重复）。串行化后同一 ws 只保留一个 listener。
+    const getActiveBySession = vi.fn().mockResolvedValue({
+      runId: 'run-race',
+      sessionId: 'session-race',
+      status: 'running',
+      metadata: { streamId: 'stream-race' },
+    });
+    const channel = new WebChannel({
+      agentCwd: '/tmp/workspace',
+      enqueueRuntime: { runStore: { getActiveBySession } } as any,
+    }, noopDispatch);
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    (channel as any).activeStreams.set('stream-race', {
+      controller: new AbortController(),
+      userId: 'admin-1',
+      ws: new FakeWebSocket(),
+      sessionId: 'session-race',
+      runId: 'run-race',
+    });
+    (channel as any).eventBufferStore.create('session-race', 'admin-1');
+
+    const client = {
+      ws,
+      user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+      alive: true,
+      lastActivityAt: Date.now(),
+    };
+    // 同一 tick 连发两条 resume（模拟重连双监听器）
+    (channel as any).handleResume(client, { action: 'resume', sessionId: 'session-race', lastEventId: 0, skipReplay: true });
+    (channel as any).handleResume(client, { action: 'resume', sessionId: 'session-race', lastEventId: 0, skipReplay: true });
+
+    // 等 per-ws resume 串行链跑完
+    await (channel as any).resumeChains.get(ws);
+
+    // 一条 live 事件应只被投递一次（若泄漏了第二个 listener 会投递两次）
+    ws.sent.length = 0;
+    (channel as any).eventBufferStore.push('session-race', JSON.stringify({ type: 'text', content: 'live-token' }));
+
+    const deliveries = ws.sent.filter(
+      (m: any) => m?.data?.type === 'text' && m.data?.content === 'live-token',
+    );
+    expect(deliveries).toHaveLength(1);
+  });
 });

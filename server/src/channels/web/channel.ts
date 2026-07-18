@@ -436,6 +436,14 @@ export class WebChannel implements BaseChannel {
 
   private resumeSubscriptions = new WeakMap<WebSocket, () => void>();
   /**
+   * 按 ws 串行化 resume 处理链。handleResumeAsync 内部有 await（runStore.getActiveBySession），
+   * 两条并发 resume（如前端重连时多个监听器各发一次）会在 await 处交错：都读到空的 prevUnsub，
+   * 都 eventBufferStore.subscribe，第二个 resumeSubscriptions.set 覆盖第一个的退订句柄，第一个
+   * EventBuffer listener 泄漏且无法退订 → 每个流式事件被投递两次（前端表现为逐字符重复）。
+   * 串行化保证后一条 resume 一定读到前一条已注册的订阅并先退订，同一 ws 只保留一个 listener。
+   */
+  private resumeChains = new WeakMap<WebSocket, Promise<void>>();
+  /**
    * 追踪每个 WS 连接当前绑定的 streamId。
    * 用于防止用户切换会话后，旧会话的 handleEvents 继续向同一 WS 直接推送事件。
    * 事件仍会写入 EventBuffer，用户切回时通过 resume + replay 获取。
@@ -1569,7 +1577,17 @@ export class WebChannel implements BaseChannel {
 
   /** 处理 resume 消息（替代 GET /api/chat/stream/:sessionId） */
   private handleResume(client: WsClient, msg: WsResumeMessage): void {
-    void this.handleResumeAsync(client, msg);
+    // 串行化同一 ws 上的 resume，避免并发 handleResumeAsync 在 await 处交错导致
+    // 双 EventBuffer listener 泄漏、每个流式事件被投递两次（详见 resumeChains 注释）。
+    const ws = client.ws;
+    const run = () => this.handleResumeAsync(client, msg);
+    const pending = this.resumeChains.get(ws);
+    // 无在途 resume → 同步启动，保持单条 resume 的同步语义（回放/订阅在本 tick 生效）；
+    // 有在途 resume → 串到其后执行，后一条一定能读到前一条已注册的订阅并先退订。
+    const next = pending ? pending.then(run, run) : run();
+    this.resumeChains.set(ws, next);
+    // handleResumeAsync 内部已容错；此处仅防 unhandled rejection 断链。
+    void next.catch(() => { /* noop */ });
   }
 
   private async handleResumeAsync(client: WsClient, msg: WsResumeMessage): Promise<void> {

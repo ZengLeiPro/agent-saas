@@ -116,6 +116,10 @@ rows.push({
 const lines = [
   '## 测试覆盖率 (Test Coverage)',
   '',
+  '> 口径：**逻辑层覆盖率**——只考核框架无关的可单测代码（server 业务逻辑、',
+  '> shared 共享逻辑、web/lib 纯工具）。React 组件/hooks、入口、脚本、DB 迁移、',
+  '> 纯类型不纳入本指标（靠 RTL 集成测试与 E2E/手测保障）。',
+  '',
   '| 包 | Statements | Branches | Functions | Lines |',
   '|---|---|---|---|---|',
 ];

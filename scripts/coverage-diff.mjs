@@ -135,13 +135,27 @@ function inWhitelist(file) {
   return INCLUDE_EXT.some(ext => file.endsWith(ext));
 }
 
-/** 用 pnpm-workspace 语义判断是否走 vitest 覆盖: 只保留 server/web/shared 下的源码。 */
+/**
+ * 判断某改动文件是否属于「逻辑层覆盖率」口径的可覆盖源码。
+ * 必须与三包 vitest.config 的 coverage.exclude 保持一致：
+ * - 排除测试/mock/类型/.d.ts
+ * - server：入口 index.ts / 一次性脚本 scripts/ / DB 迁移 data/migrations/
+ * - web：React 渲染/绑定层（*.tsx / components / layouts / hooks）
+ */
 function isCoverablePath(file) {
-  return /^(server|web|shared)\/src\//.test(file)
-    && !/\.(test|spec)\.(ts|tsx)$/.test(file)
-    && !/\/__tests__\//.test(file)
-    && !/\/__mocks__\//.test(file)
-    && !/\/test\//.test(file);
+  if (!/^(server|web|shared)\/src\//.test(file)) return false;
+  if (/\.(test|spec)\.(ts|tsx)$/.test(file)) return false;
+  if (/\/__tests__\//.test(file)) return false;
+  if (/\/__mocks__\//.test(file)) return false;
+  if (/\/test\//.test(file)) return false;
+  if (/\.d\.ts$/.test(file)) return false;
+  if (/\/types\//.test(file)) return false;
+  if (/^server\/src\/(index\.ts$|scripts\/|data\/migrations\/)/.test(file)) return false;
+  if (/^web\/src\//.test(file)) {
+    if (/\.tsx$/.test(file)) return false;
+    if (/^web\/src\/(components|layouts|hooks)\//.test(file)) return false;
+  }
+  return true;
 }
 
 /** 折叠连续行号为 "a-b, c, d-e" 风格。 */

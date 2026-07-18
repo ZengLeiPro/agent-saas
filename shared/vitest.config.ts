@@ -15,6 +15,8 @@ export default defineConfig({
         'src/**/*.d.ts',
         'src/**/*.{test,spec}.ts',
         'src/**/__mocks__/**',
+        // 逻辑层口径：纯类型定义无运行时代码，不纳入覆盖率
+        'src/types/**',
       ],
     },
   },

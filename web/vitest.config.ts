@@ -39,6 +39,14 @@ export default defineConfig({
         "src/test/**",
         // 仅测试或 mock 用途，不算业务代码
         "src/**/__mocks__/**",
+        // 逻辑层口径：React 渲染/绑定层（组件 / 布局 / hooks / 任何 JSX）靠
+        // RTL 集成测试与 E2E/手测保障，不纳入单测覆盖率主指标；主指标只考核
+        // 框架无关的 lib 纯工具逻辑。
+        "src/**/*.tsx",
+        "src/components/**",
+        "src/layouts/**",
+        "src/hooks/**",
+        "src/types/**",
       ],
       // 观测期不设阈值，两周基线出来再谈
     },

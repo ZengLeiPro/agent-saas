@@ -7,7 +7,7 @@ import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
 import type { WsEvent } from "@/types/ws";
-import type { WsEnvelope } from "@/lib/wsClient";
+import type { WsEnvelope, WsResumeMessage } from "@/lib/wsClient";
 import { wsClient } from "@/lib/wsClient";
 import { authFetch } from "@/lib/authFetch";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
@@ -48,6 +48,29 @@ import {
   type WsProcessingContext,
   type WsBlockState,
 } from '@agent/shared';
+
+/**
+ * resume 去重闸门：重连时本 hook 有两个 onStateChange('connected') 监听器会各对当前会话
+ * 发一次 resume（#1 连接管理、#2 subscribeToActiveStream）。重复 resume 会让服务端二次回放
+ * 缓冲事件 → 整段重复。这里按 sessionId 做短时窗去重，保证一次重连只真正发一条 resume
+ * （服务端 handleResume 串行化是另一层兜底）。手法同 shared/wsHandler 的 sync 防抖。
+ * 去重 key 仅用 sessionId：中途切到别的 session 会重置 key，切回时不会被误挡。
+ */
+const RESUME_DEDUP_MS = 2000;
+let _lastResumeSessionId = '';
+let _lastResumeAt = 0;
+
+function sendResumeDeduped(payload: WsResumeMessage): Promise<boolean> {
+  const now = Date.now();
+  if (_lastResumeSessionId === payload.sessionId && now - _lastResumeAt < RESUME_DEDUP_MS) {
+    // 2s 内已对同一 session 发过 resume（多监听器重复触发）→ 跳过，视为成功
+    // （已有等效 resume 在途，服务端会回同一个 active_stream，无需再发）。
+    return Promise.resolve(true);
+  }
+  _lastResumeSessionId = payload.sessionId;
+  _lastResumeAt = now;
+  return wsClient.ensureConnectedSend(payload);
+}
 
 const RUN_SHELL_APPROVAL_STORAGE_PREFIX = 'agentChat.autoApproveRunShell.';
 const runShellApprovalStorageKey = (sessionId: string) => `${RUN_SHELL_APPROVAL_STORAGE_PREFIX}${sessionId}`;
@@ -1373,7 +1396,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               }
             };
             const unsubReconnect = wsClient.onMessage(handleReconnectStream);
-            wsClient.ensureConnectedSend({
+            sendResumeDeduped({
               action: 'resume',
               sessionId: targetSid,
               lastEventId: lastEventIdRef.current ?? 0,
@@ -2312,7 +2335,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     //   - 让服务端清理旧订阅,绑定新 ws → 当前 stream
     //   - 服务端通过 active_stream 给前端权威信号（全局 reducer 接管）
     //   - 即使 HTTP buffer 误报 inactive,runStore 仍 active 时 active_stream{active:true} 兜底
-    const ok = await wsClient.ensureConnectedSend({
+    const ok = await sendResumeDeduped({
       action: 'resume',
       sessionId: targetSessionId,
       lastEventId: lastEventIdRef.current ?? 0,

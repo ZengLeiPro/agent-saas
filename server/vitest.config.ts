@@ -23,6 +23,12 @@ export default defineConfig({
         'src/**/*.spec.ts',
         'src/__tests__/**',
         'src/**/__mocks__/**',
+        // 逻辑层口径：入口装配 / 一次性 CLI 脚本 / DB 迁移(DDL) / 纯类型定义
+        // 不纳入单测覆盖率主指标
+        'src/index.ts',
+        'src/scripts/**',
+        'src/data/migrations/**',
+        'src/types/**',
       ],
     },
     // 测试超时时间

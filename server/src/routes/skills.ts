@@ -1,5 +1,5 @@
 import { basename, dirname, join } from 'node:path';
-import { existsSync, cpSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, cpSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -213,6 +213,23 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     return normalized;
   }
 
+  /**
+   * 递归探测目录内是否存在符号链接条目。
+   * safeRelativePath 只校验 zip 条目名，无法拦截 zip 内的符号链接条目
+   * （unix mode 0o120xxx，链接目标写在文件内容里）——unzip 会如实创建活链接，
+   * 随后被 moveSkillIntoPlace 原样搬入 agent 可读的 skills 目录，造成沙箱外文件读取。
+   * 用 lstat（不跟随链接）逐项检查，命中任何 symlink 即判定不安全。
+   */
+  function containsSymlink(dir: string): boolean {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      const st = lstatSync(full);
+      if (st.isSymbolicLink()) return true;
+      if (st.isDirectory() && containsSymlink(full)) return true;
+    }
+    return false;
+  }
+
   function findSkillRoot(dir: string): string | null {
     const direct = join(dir, 'SKILL.md');
     if (existsSync(direct) && statSync(direct).isFile()) return dir;
@@ -334,6 +351,10 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
         const extractDir = join(tempRoot, 'extracted');
         mkdirSync(extractDir, { recursive: true });
         execFileSync('unzip', ['-q', zipPath, '-d', extractDir], { stdio: 'ignore' });
+        // 解压后二次防线：拒绝符号链接条目（条目名过滤挡不住 mode 0o120xxx 的 symlink）
+        if (containsSymlink(extractDir)) {
+          return res.status(400).json({ error: 'zip 内包含不安全路径' });
+        }
         return await installUploadedSkill(req, res, extractDir, target);
       }
 

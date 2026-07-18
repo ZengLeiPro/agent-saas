@@ -609,7 +609,9 @@ export class PgBillingStore {
       inputSegment(usage.inputTokens),
       usageAccounting,
       pricing.version || PRICING_VERSION,
-      DEFAULT_FX_RATE_TO_CNY,
+      // 审计一致性：落库汇率必须与本次成本折算实际使用的 fxRate 一致，
+      // 定价版本自带非默认汇率时不得恒写 DEFAULT（2026-07-19 修复）
+      fxRate,
       actualCostYuanMicro,
       JSON.stringify(input.rawUsageJson ?? input.usage),
       now,

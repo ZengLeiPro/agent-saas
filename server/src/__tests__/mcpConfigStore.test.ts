@@ -140,6 +140,40 @@ describe('McpConfigStore OAuth connections', () => {
   });
 });
 
+describe('用户记录首次播种默认启用列表按 tenant 过滤（2026-07-19 修复回归）', () => {
+  // 历史缺陷：setUserSecretRef/setUserOAuthConnection 首次创建用户记录时
+  // 用不带 tenantId 的 defaultEnabledServerIds() 播种，其他租户 enabledByDefault
+  // server 的 id 会被冻结进该用户的显式启用列表（跨租户 id 泄漏 + stale 引用）。
+  it('setUserSecretRef 传 tenantId：播种只含本租户 + 全局默认 server，不含其他租户', async () => {
+    const store = new McpConfigStore(filePath);
+    await store.upsertServer(makeServer('wain_default', { tenantId: 'wain', enabledByDefault: true, secretRequirements: [userTokenReq()] }));
+    await store.upsertServer(makeServer('kaiyan_default', { tenantId: 'kaiyan', enabledByDefault: true }));
+    await store.upsertServer(makeServer('global_default', { tenantId: GLOBAL_TENANT_ID, enabledByDefault: true }));
+
+    // alice（wain 租户）首次通过 setUserSecretRef 创建用户记录
+    await store.setUserSecretRef('alice', 'wain_default', 'token', 'ref-a', 'wain');
+
+    const cfg = store.getUserConfig('alice');
+    expect([...cfg.enabledServers].sort()).toEqual(['global_default', 'wain_default']);
+    expect(cfg.enabledServers).not.toContain('kaiyan_default');
+    expect(cfg.secretRefs).toEqual({ wain_default: { token: 'ref-a' } });
+  });
+
+  it('setUserOAuthConnection 按 record.tenantId 播种，跨租户默认 server 不进列表', async () => {
+    const store = new McpConfigStore(filePath);
+    await store.upsertServer(makeServer('wain_default', { tenantId: 'wain', enabledByDefault: true }));
+    await store.upsertServer(makeServer('kaiyan_default', { tenantId: 'kaiyan', enabledByDefault: true }));
+    await store.upsertServer(makeServer('global_default', { tenantId: GLOBAL_TENANT_ID, enabledByDefault: true }));
+
+    // bob 首次通过 OAuth 连接创建用户记录，record.tenantId='wain'（makeOAuthRecord 默认）
+    await store.setUserOAuthConnection('bob', makeOAuthRecord('wain_default'));
+
+    const cfg = store.getUserConfig('bob');
+    expect([...cfg.enabledServers].sort()).toEqual(['global_default', 'wain_default']);
+    expect(cfg.enabledServers).not.toContain('kaiyan_default');
+  });
+});
+
 describe('McpConfigStore removeUserData', () => {
   it('删除已有用户返回 true 且数据从盘上消失；重复删/删不存在返回 false 且不写盘', async () => {
     const store = new McpConfigStore(filePath);

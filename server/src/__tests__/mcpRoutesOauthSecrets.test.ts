@@ -7,7 +7,8 @@
  * 本文件只补剩余未覆盖分支（同款 rig：fake oauthService/manager/vault +
  * 真 McpConfigStore + 真 express listen(0) + fetch）：
  *   - GET /oauth/callback：state 缺失/超长/无效 400、service 抛错 500、
- *     open-redirect 防御（https://evil.com、//evil.com、裸串等攻击向量强制回 /）、
+ *     open-redirect 防御（https://evil.com、//evil.com、/\evil.com 反斜杠、
+ *     裸串等攻击向量强制回 /）、
  *     失败分支回滚 enabledServers、303 Location 携带 mcp_oauth/server 参数、
  *     webBaseUrl 与 redirectUrl-origin 两种基址
  *   - POST /me/servers/:id/oauth/start：401/400/404/409/成功（自动启用 + 幂等）
@@ -272,7 +273,7 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
       const { manager, invalidated } = recordingManager();
       const r = await rig({ oauth, manager, webBaseUrl: 'https://web.example.com', user: null });
 
-      const attackVectors = ['https://evil.com', '//evil.com', '//evil.com/phish', 'evil.com', 'javascript:alert(1)', '\\evil.com'];
+      const attackVectors = ['https://evil.com', '//evil.com', '//evil.com/phish', 'evil.com', 'javascript:alert(1)', '\\evil.com', '/\\evil.com', '/\\\\evil.com'];
       for (const returnTo of attackVectors) {
         oauth.finishImpl = async () => finishResult({ returnTo });
         const res = await r.request('/api/mcp/oauth/callback?state=s&code=c', { redirect: 'manual' });
@@ -283,17 +284,19 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
       expect(invalidated).toContain('alice');
     });
 
-    it('已知缺陷记录：反斜杠向量 /\\evil.com 绕过路由层检查（上游 sanitizeReturnTo 兜底）', async () => {
-      // routes/mcp.ts L269 只检查 startsWith('/') && !startsWith('//')，
+    it('回归：反斜杠向量 /\\evil.com 被路由层拦截，钉回 webBaseUrl 根路径（2026-07-19 修复）', async () => {
+      // 历史缺陷：路由层只检查 startsWith('/') && !startsWith('//')，
       // 而 WHATWG URL 把 '/\\evil.com' 的反斜杠归一化为 '//evil.com' → https://evil.com/。
-      // 生产链路上 oauthService.start 已用 sanitizeReturnTo（origin 比对）拦截该向量，
-      // 但路由层独立防御存在缺口。本用例固化当前行为，修复后应改为断言回 '/'。
+      // 修复后 returnTo 含 '\\' 一律强制回 '/'（routes/mcp.ts 反斜杠检查），
+      // 与上游 oauthService.start 的 sanitizeReturnTo 构成双层独立防御。
       const oauth = fakeOAuthService();
       const r = await rig({ oauth, webBaseUrl: 'https://web.example.com', user: null });
       oauth.finishImpl = async () => finishResult({ returnTo: '/\\evil.com' });
       const res = await r.request('/api/mcp/oauth/callback?state=s&code=c', { redirect: 'manual' });
       expect(res.status).toBe(303);
-      expect(new URL(res.headers.get('location') ?? '').hostname).toBe('evil.com');
+      const location = new URL(res.headers.get('location') ?? '');
+      expect(location.hostname).toBe('web.example.com');
+      expect(location.pathname).toBe('/');
     });
 
     it('合法站内 returnTo 保留 path+query，303 Location 追加 mcp_oauth/server 参数', async () => {

@@ -265,8 +265,10 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
       }
       await manager.invalidateUser(result.username);
       // returnTo 只接受站内相对路径（拒绝绝对 URL / 协议相对 //，防 open redirect）；
+      // 反斜杠必须一并拒绝：WHATWG URL 会把 '\' 归一化为 '/'，'/\evil.com' 解析即协议相对跳出站外
       // 基址优先 webBaseUrl（前后端分域时回 web 域），否则退回回调 URL 同源（单域部署）
       const safeReturnTo = result.returnTo.startsWith('/') && !result.returnTo.startsWith('//')
+        && !result.returnTo.includes('\\')
         ? result.returnTo
         : '/';
       const target = new URL(safeReturnTo, webBaseUrl ?? new URL(result.redirectUrl).origin);
@@ -375,7 +377,7 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
       scope: requirement.scope,
       username,
     });
-    await store.setUserSecretRef(username, serverId, key, ref.id);
+    await store.setUserSecretRef(username, serverId, key, ref.id, tenantId);
     await manager.invalidateUser(username);
     auditLog(req, 'mcp_secret_bound', `${serverId}/${key}`);
     res.json({ ok: true, ref: { id: ref.id, updatedAt: ref.updatedAt, revokedAt: ref.revokedAt } });

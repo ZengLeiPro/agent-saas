@@ -37,6 +37,7 @@ const P = {
   reasoningTokens: 20,
   apiRequestCount: 21,
   inputSegment: 22,
+  fxRateToCny: 25,
 } as const;
 
 function storePolicy(): TenantBillingPolicy {
@@ -61,7 +62,10 @@ function storePolicy(): TenantBillingPolicy {
   };
 }
 
-async function captureInsertParams(overrides: Partial<ProjectedRuntimeUsageInput> = {}): Promise<unknown[]> {
+async function captureInsertParams(
+  overrides: Partial<ProjectedRuntimeUsageInput> = {},
+  pricingOverrides: Record<string, unknown> = {},
+): Promise<unknown[]> {
   const query = vi.fn(async (..._args: unknown[]) => ({ rows: [] }));
   const store = new PgBillingStore({ pool: { query } as any });
   vi.spyOn(store, 'getTenantPolicy').mockResolvedValue(storePolicy());
@@ -70,6 +74,7 @@ async function captureInsertParams(overrides: Partial<ProjectedRuntimeUsageInput
     creditValueYuanMicro: 10_000,
     defaultTargetMarginBps: 6000,
     fxRateToCny: 7.2,
+    ...pricingOverrides,
   } as any);
   await store.insertUsageEvent({
     idempotencyKey: 'ue:1',
@@ -88,6 +93,20 @@ async function captureInsertParams(overrides: Partial<ProjectedRuntimeUsageInput
   expect(query).toHaveBeenCalledTimes(1);
   return query.mock.calls[0]![1] as unknown[];
 }
+
+describe('fx_rate_to_cny 落库审计一致性（2026-07-19 修复回归）', () => {
+  // 历史缺陷：insertUsageEvent 成本折算用 pricing.fxRateToCny，落库却恒写
+  // DEFAULT_FX_RATE_TO_CNY——定价版本携带非默认汇率时审计字段与实际折算不一致。
+  it('定价版本汇率 6.8 时，落库 fx_rate_to_cny=6.8 而非默认 7.2', async () => {
+    const params = await captureInsertParams({}, { fxRateToCny: 6.8 });
+    expect(params[P.fxRateToCny]).toBe(6.8);
+  });
+
+  it('默认汇率场景不回归：落库 7.2', async () => {
+    const params = await captureInsertParams();
+    expect(params[P.fxRateToCny]).toBe(7.2);
+  });
+});
 
 describe('inputSegment 三分界（经 insertUsageEvent 落库参数）', () => {
   it.each([

@@ -337,7 +337,8 @@ export class McpConfigStore {
 
   async setUserOAuthConnection(username: string, record: McpOAuthConnectionRecord): Promise<void> {
     await this.serialize(async () => {
-      const current = this.data.users[username] ?? { enabledServers: this.defaultEnabledServerIds(), secretRefs: {}, oauthConnections: {} };
+      // 播种默认启用列表按 record.tenantId 过滤（同 setUserSecretRef，2026-07-19 修复）
+      const current = this.data.users[username] ?? { enabledServers: this.defaultEnabledServerIds(record.tenantId), secretRefs: {}, oauthConnections: {} };
       this.data.users[username] = {
         ...current,
         oauthConnections: { ...(current.oauthConnections ?? {}), [record.serverId]: clone(record) },
@@ -507,12 +508,14 @@ export class McpConfigStore {
     });
   }
 
-  async setUserSecretRef(username: string, serverId: string, key: string, refId: string): Promise<void> {
+  async setUserSecretRef(username: string, serverId: string, key: string, refId: string, tenantId?: string): Promise<void> {
     await this.serialize(async () => {
       const server = this.data.servers[serverId];
       if (!server) throw new Error('MCP server not found');
       if (!(server.secretRequirements ?? []).some(req => req.key === key)) throw new Error('MCP secret requirement not found');
-      const current = this.data.users[username] ?? { enabledServers: this.defaultEnabledServerIds(), secretRefs: {} };
+      // 播种默认启用列表必须按 tenant 过滤，否则其他租户 enabledByDefault server 的
+      // id 会被冻结进该用户的显式启用列表（2026-07-19 修复）
+      const current = this.data.users[username] ?? { enabledServers: this.defaultEnabledServerIds(tenantId), secretRefs: {} };
       const secretRefs = clone(current.secretRefs ?? {});
       secretRefs[serverId] = { ...(secretRefs[serverId] ?? {}), [key]: refId };
       this.data.users[username] = { ...current, secretRefs };

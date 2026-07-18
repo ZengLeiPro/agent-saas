@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { ApiSessionDetail, ApiTranscriptBlock } from "@agent/shared";
 import { mapSessionDetailToMessages } from "./sessionsApi";
 
-// 用真实 shared mapBlock 契约构造 detail：prompt→user、text→text，消息 id 与 block.id 同源
-function block(partial: Partial<ApiTranscriptBlock> & { id: string; kind: string }): ApiTranscriptBlock {
+// 用真实 shared mapBlock 契约构造 detail：prompt→user、text→text，消息 id 与 block.id 同源。
+// kind 用宽 string（源码对 'compaction' 等 shared union 外的 kind 走 `as string` 分支），
+// 并允许 coveredEventCount 等 compaction 专属额外字段。
+function block(partial: { id: string; kind: string; [key: string]: unknown }): ApiTranscriptBlock {
   return partial as unknown as ApiTranscriptBlock;
 }
 
@@ -19,7 +21,7 @@ describe("mapSessionDetailToMessages（web 端 compaction 分界线插入）", (
     ]);
     const result = mapSessionDetailToMessages(d);
     expect(result.map((m) => m.id)).toEqual(["b1", "b2"]);
-    expect(result.every((m) => m.type !== "compaction")).toBe(true);
+    expect(result.every((m) => (m.type as string) !== "compaction")).toBe(true);
   });
 
   it("compaction block 插到其后第一个可渲染 block 之前", () => {

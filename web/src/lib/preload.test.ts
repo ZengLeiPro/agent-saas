@@ -21,7 +21,7 @@ vi.mock("../platform/webConfig", () => ({
 const authUser = { id: "u1", username: "alice", role: "user", tenantId: "t1" };
 
 function stubFetchByPath(handler: (path: string) => { status: number; body?: unknown }) {
-  const fetchMock = vi.fn((url: string) => {
+  const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
     const path = url.replace(BASE, "");
     const { status, body } = handler(path);
     return Promise.resolve({

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Share2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Loader2, Share2 } from "lucide-react";
 
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
 import { Badge } from "@/components/ui/badge";
@@ -61,6 +61,35 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
   const useSamePath = scenarioId
     ? `${isAuthenticated ? "/" : "/signup"}?scenario=${encodeURIComponent(scenarioId)}`
     : "";
+
+  // 场景「看示例结果」通过 window.location.assign 跳转到本页，历史栈里有上一页可回；
+  // 若在新标签打开则直接回主入口。
+  const handleBack = useCallback(() => {
+    if (window.history.length > 1) {
+      window.history.back();
+    } else {
+      window.location.assign("/");
+    }
+  }, []);
+
+  // 首屏加载完消息后把滚动锁到底部（最新一条），而不是默认停在最顶。
+  // 依赖 messages 触发；两次 rAF 让 MessageList 完成布局后再滚。
+  useEffect(() => {
+    if (loading) return;
+    if (messages.length === 0) return;
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const el = scrollContainerRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    });
+    return () => {
+      if (raf1) cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, [loading, messages]);
   const openSharedPreview = (filePath: string) => {
     // 分享页只有 html/md/PDF 三种面板已改造支持公开 shareToken 读取快照，
     // 其它类型仍走新标签下载（后端 /api/share/sessions/:token/file 直接返回原文/二进制）。
@@ -110,6 +139,17 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
       <div className="flex h-full min-h-screen flex-col bg-secondary">
         <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b bg-background px-4">
           <div className="flex min-w-0 items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="-ml-2 size-8 shrink-0"
+              onClick={handleBack}
+              title="返回"
+              aria-label="返回"
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
             <div className="truncate text-base font-semibold">{title}</div>
             <Badge variant="secondary" className="shrink-0">
               只读分享

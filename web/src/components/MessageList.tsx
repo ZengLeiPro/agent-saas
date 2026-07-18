@@ -1,5 +1,5 @@
-import { memo, useMemo, useCallback, type Ref, type MutableRefObject } from 'react';
-import { Loader2 } from 'lucide-react';
+import { memo, useMemo, useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref, type MutableRefObject } from 'react';
+import { ArrowDown, Loader2 } from 'lucide-react';
 import { MessageItem as MessageItemType, type RenderItem } from './types';
 import { MessageItem, type TtsProps } from './MessageItem';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
@@ -238,12 +238,37 @@ export const MessageList = memo(function MessageList({
   emptySlot,
 }: MessageListProps) {
   const NEAR_BOTTOM_THRESHOLD = 150;
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    if (!isNearBottomRef) return;
-    const el = e.currentTarget;
-    isNearBottomRef.current =
-      el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD;
+  // 本地捕获滚动容器 DOM，供「回到最新消息」浮动按钮判定距离与主动滚动。
+  // 通过 setContainerRef 合并到外部传入的 scrollContainerRef，不破坏原有引用契约。
+  const internalContainerRef = useRef<HTMLDivElement | null>(null);
+  const setContainerRef = useCallback((node: HTMLDivElement | null) => {
+    internalContainerRef.current = node;
+    if (typeof scrollContainerRef === 'function') {
+      scrollContainerRef(node);
+    } else if (scrollContainerRef) {
+      (scrollContainerRef as MutableRefObject<HTMLDivElement | null>).current = node;
+    }
+  }, [scrollContainerRef]);
+
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  const syncNearBottomState = useCallback(() => {
+    const el = internalContainerRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const isNear = distance < NEAR_BOTTOM_THRESHOLD;
+    if (isNearBottomRef) isNearBottomRef.current = isNear;
+    setShowJumpToBottom((prev) => (prev === !isNear ? prev : !isNear));
   }, [isNearBottomRef]);
+
+  const handleScroll = useCallback(() => {
+    syncNearBottomState();
+  }, [syncNearBottomState]);
+
+  const handleJumpToBottom = useCallback(() => {
+    const el = internalContainerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }, []);
 
   const voicePlayer = useVoicePlayer();
   const groupedMessages = useGroupedMessages(messages, loading);
@@ -305,6 +330,23 @@ export const MessageList = memo(function MessageList({
     return ids;
   }, [bubbleItems]);
 
+  // 消息列表或加载态变化后重算「距底距离」，让浮动按钮及时出/隐（新消息将底部推远时也能触发）。
+  useLayoutEffect(() => {
+    syncNearBottomState();
+  }, [syncNearBottomState, bubbleItems, showAgentLoading, showSyncLoading]);
+
+  // ResizeObserver：内容异步撑高（图片/PDF 首次布局）时同样重算。
+  useEffect(() => {
+    const el = internalContainerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => syncNearBottomState());
+    ro.observe(el);
+    // 观察内部内容区，捕获内容高度变化
+    const inner = el.firstElementChild;
+    if (inner instanceof Element) ro.observe(inner);
+    return () => ro.disconnect();
+  }, [syncNearBottomState]);
+
   const { user } = useAuth();
   const debugMode = debugModeOverride ?? user?.debugMode === true;
   const displayUser = useMemo(() => {
@@ -317,7 +359,8 @@ export const MessageList = memo(function MessageList({
   const displayAgent = sessionParticipants?.agent ?? agentProfile;
 
   return (
-    <div ref={scrollContainerRef} onScroll={showCenterLoading ? undefined : handleScroll} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain">
+    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div ref={setContainerRef} onScroll={showCenterLoading ? undefined : handleScroll} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain">
       <div className="content-container flex flex-col gap-3 pt-4 pb-4 px-5 md:px-3">
         {showCenterLoading ? (
           <div className="flex min-h-[50vh] items-center justify-center">
@@ -551,6 +594,19 @@ export const MessageList = memo(function MessageList({
           </div>
         )}
       </div>
+    </div>
+    {showJumpToBottom && (
+      // 滚动条距最新消息超过 NEAR_BOTTOM_THRESHOLD 时展示，位于 ChatInput 上方正中间。
+      <button
+        type="button"
+        onClick={handleJumpToBottom}
+        className="pointer-events-auto absolute bottom-3 left-1/2 z-10 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-border/60 bg-background/95 text-muted-foreground shadow-md backdrop-blur transition-colors hover:bg-muted hover:text-foreground"
+        title="回到最新消息"
+        aria-label="回到最新消息"
+      >
+        <ArrowDown className="size-4" />
+      </button>
+    )}
     </div>
   );
 });

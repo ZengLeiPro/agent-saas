@@ -409,8 +409,8 @@ Cron payload 支持：
 
 仓库包含多套运维文档：
 
-- Mac mini：`docs/mac-mini-setup.md`、`docs/mac-mini-ops.md`。
-- ECS：`docs/ecs-deployment.md`、`docs/ecs-ssh-setup.md`。
+- Mac mini：`docs/mac-mini-ops.md`。
+- ECS：`docs/ecs-deployment.md`。
 - 网络代理：`docs/tailscale-nginx-setup.md`、`docs/wireguard-nginx-setup.md`。
 - Azeroth PG：`docs/azeroth-pg-setup.md`。
 

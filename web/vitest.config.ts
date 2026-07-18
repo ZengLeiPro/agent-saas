@@ -27,5 +27,20 @@ export default defineConfig({
     globals: true,
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     setupFiles: ["src/test/setup.ts"],
+    coverage: {
+      provider: "v8",
+      // lcov 供 diff coverage 脚本使用；json-summary 供 CI 汇总；text/html 便于本地看
+      reporter: ["text", "lcov", "json-summary", "html"],
+      reportsDirectory: "./coverage",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/**/*.d.ts",
+        "src/**/*.{test,spec}.{ts,tsx}",
+        "src/test/**",
+        // 仅测试或 mock 用途，不算业务代码
+        "src/**/__mocks__/**",
+      ],
+      // 观测期不设阈值，两周基线出来再谈
+    },
   },
 });

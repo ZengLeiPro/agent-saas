@@ -58,7 +58,11 @@ vite.config.ts.timestamp-*
 
 # TypeScript
 *.tsbuildinfo
+
+# Test coverage（vitest --coverage 本地产物；CI 走 artifact 上传）
 server/coverage/
+web/coverage/
+shared/coverage/
 
 # Runtime data
 server/data/

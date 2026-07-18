@@ -23,10 +23,13 @@ name: App CI / Deploy
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # 手动生产发布整条链（build → ECS → Web OSS）互斥；普通 push CI 使用 run_id
 # 隔离，不互相排队。cancel-in-progress=false 保证正在发布的批次不会被新批次打断。
+# pull_request 也用 run_id 隔离，避免多 PR 同时跑时互相排队。
 concurrency:
   group: agent-saas-${{ github.event_name == 'workflow_dispatch' && 'production-deploy' || github.run_id }}
   cancel-in-progress: false
@@ -39,11 +42,21 @@ jobs:
   build:
     name: Build & Check
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+
+    # 评论 PR diff coverage 需要 pull-requests: write；
+    # push/dispatch 事件下该权限未使用不产生副作用。
+    permissions:
+      contents: read
+      pull-requests: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          # coverage-diff.mjs 需要对比 base branch。fetch-depth=0 稳妥拿全历史；
+          # 若担心 clone 时长，可改成 fetch-depth: 50 + 脚本内 fetch base。
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -60,8 +73,11 @@ jobs:
       - name: Typecheck server
         run: pnpm -F server typecheck
 
-      - name: Run tests
-        run: pnpm test
+      # 用 test:coverage 替代 test：@vitest/coverage-v8 产 lcov + json-summary，
+      # 供后续 Report/Upload/Diff 步骤消费。observed 期不设阈值门禁，
+      # 覆盖率数据本轮跑失败=测试跑失败，退化为原 Run tests 行为。
+      - name: Run tests with coverage
+        run: pnpm test:coverage
 
       - name: Check Web API domain boundary
         run: pnpm -F web check:api-boundary
@@ -75,6 +91,65 @@ jobs:
           VITE_API_BASE: https://api.agent.kaiyan.net
           VITE_WEB_ORIGIN: https://agent.kaiyan.net
         run: pnpm -F web build:oss
+
+      # 覆盖率报告不作为门禁，测试失败也应打印/上传能拿到的部分数据。
+      - name: Report coverage summary
+        if: always()
+        run: pnpm coverage:summary
+
+      - name: Compute PR diff coverage
+        # 只在 PR 事件跑；push main / dispatch 不做 diff 评论（曾磊 07-18 起
+        # 生产 deploy 已收敛到 dispatch，push 事件价值有限）。
+        if: always() && github.event_name == 'pull_request'
+        env:
+          COVERAGE_BASE_REF: origin/${{ github.base_ref }}
+        run: pnpm coverage:diff -- --write="$RUNNER_TEMP/coverage-diff.md"
+
+      - name: Comment PR diff coverage
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = process.env.RUNNER_TEMP + '/coverage-diff.md';
+            if (!fs.existsSync(path)) {
+              core.info('coverage-diff.md missing; skip comment');
+              return;
+            }
+            const body = fs.readFileSync(path, 'utf8');
+            const marker = '<!-- agent-saas-diff-coverage -->';
+            const finalBody = marker + '\n' + body;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            if (!issue_number) {
+              core.info('no PR number in context; skip comment');
+              return;
+            }
+            const existing = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const prev = existing.find(c => (c.body || '').includes(marker));
+            if (prev) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body: finalBody });
+              core.info(`updated existing comment ${prev.id}`);
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body: finalBody });
+              core.info('created new coverage comment');
+            }
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          # 三包 coverage 目录整体上传；vitest --coverage 若跳过某包不会产该目录，
+          # if-no-files-found=warn 允许部分缺失（本地看 summary 就能定位）。
+          path: |
+            server/coverage/**
+            web/coverage/**
+            shared/coverage/**
+          if-no-files-found: warn
+          retention-days: 14
 
   deploy-ecs:
     name: Deploy to ECS

@@ -28,6 +28,8 @@ export interface GuardrailEventInsert {
   messageText: string;
   model?: string;
   latencyMs?: number;
+  /** 门禁模型自报确信度 0-1（2026-07-19 B2 收尾）；旧事件/模型未输出为空 */
+  confidence?: number;
 }
 
 export interface GuardrailEventRecord extends GuardrailEventInsert {
@@ -52,6 +54,16 @@ export interface GuardrailEventStore {
   /** 落库一条门禁事件，返回生成的 event id（员工申诉按 id 关联）。 */
   insert(event: GuardrailEventInsert): Promise<string>;
   list(filter: GuardrailEventListFilter): Promise<{ events: GuardrailEventRecord[]; total: number }>;
+  /**
+   * 窗口内 confidence P50/P90（PERCENTILE_CONT；只统计 confidence 非空事件）。
+   * 窗口内无带 confidence 的事件返回 null（usage-stats 前端据此隐藏）。
+   */
+  confidencePercentiles(filter: {
+    tenantId: string;
+    orgAgentId?: string;
+    from?: string;
+    to?: string;
+  }): Promise<{ p50: number; p90: number } | null>;
 }
 
 export interface PgGuardrailEventStoreOptions {
@@ -86,9 +98,12 @@ export class PgGuardrailEventStore implements GuardrailEventStore {
           message_text TEXT NOT NULL,
           model TEXT,
           latency_ms INTEGER,
+          confidence DOUBLE PRECISION,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `);
+      // 存量表兼容（表在 confidence 列引入前已建；expand-only，N/N+1 双版本安全）
+      await client.query(`ALTER TABLE ${this.eventsTable} ADD COLUMN IF NOT EXISTS confidence DOUBLE PRECISION`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.eventsTable}_tenant_idx ON ${this.eventsTable} (tenant_id, created_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.eventsTable}_org_agent_idx ON ${this.eventsTable} (org_agent_id, created_at DESC)`);
     } finally {
@@ -101,8 +116,8 @@ export class PgGuardrailEventStore implements GuardrailEventStore {
     const id = randomUUID();
     await this.pool.query(
       `INSERT INTO ${this.eventsTable}
-        (id, tenant_id, org_agent_id, user_id, username, session_id, client_msg_id, verdict, message_text, model, latency_ms)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        (id, tenant_id, org_agent_id, user_id, username, session_id, client_msg_id, verdict, message_text, model, latency_ms, confidence)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         id,
         event.tenantId,
@@ -115,6 +130,7 @@ export class PgGuardrailEventStore implements GuardrailEventStore {
         event.messageText,
         event.model ?? null,
         event.latencyMs ?? null,
+        event.confidence ?? null,
       ],
     );
     return id;
@@ -156,7 +172,7 @@ export class PgGuardrailEventStore implements GuardrailEventStore {
     params.push(limit, offset);
     const rowsResult = await this.pool.query(
       `SELECT id, tenant_id, org_agent_id, user_id, username, session_id, client_msg_id,
-              verdict, message_text, model, latency_ms, created_at
+              verdict, message_text, model, latency_ms, confidence, created_at
          FROM ${this.eventsTable}
         WHERE ${where}
         ORDER BY created_at DESC
@@ -175,9 +191,44 @@ export class PgGuardrailEventStore implements GuardrailEventStore {
       messageText: row.message_text,
       ...(row.model ? { model: row.model } : {}),
       ...(row.latency_ms !== null && row.latency_ms !== undefined ? { latencyMs: Number(row.latency_ms) } : {}),
+      ...(row.confidence !== null && row.confidence !== undefined ? { confidence: Number(row.confidence) } : {}),
       createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
     }));
     return { events, total };
+  }
+
+  async confidencePercentiles(filter: {
+    tenantId: string;
+    orgAgentId?: string;
+    from?: string;
+    to?: string;
+  }): Promise<{ p50: number; p90: number } | null> {
+    const conditions: string[] = ['tenant_id = $1', 'confidence IS NOT NULL'];
+    const params: unknown[] = [filter.tenantId];
+    if (filter.orgAgentId) {
+      params.push(filter.orgAgentId);
+      conditions.push(`org_agent_id = $${params.length}`);
+    }
+    if (filter.from) {
+      params.push(filter.from);
+      conditions.push(`created_at >= $${params.length}`);
+    }
+    if (filter.to) {
+      params.push(filter.to);
+      conditions.push(`created_at <= $${params.length}`);
+    }
+    const result = await this.pool.query<{ p50: number | null; p90: number | null }>(
+      `SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY confidence) AS p50,
+              PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY confidence) AS p90
+         FROM ${this.eventsTable}
+        WHERE ${conditions.join(' AND ')}`,
+      params,
+    );
+    const row = result.rows[0];
+    if (!row || row.p50 === null || row.p50 === undefined || row.p90 === null || row.p90 === undefined) {
+      return null;
+    }
+    return { p50: Number(row.p50), p90: Number(row.p90) };
   }
 }
 

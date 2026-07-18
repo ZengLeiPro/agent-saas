@@ -111,6 +111,25 @@ function memoryGuardrailEventStore(events: GuardrailEventRecord[]): GuardrailEve
   const state = {
     lastFilter: null as GuardrailEventListFilter | null,
     async insert() { return 'ev-unused'; /* not used in tests */ },
+    // 对齐 PgGuardrailEventStore：只统计 confidence 非空事件，PERCENTILE_CONT 线性插值，空集 null
+    async confidencePercentiles(filter: { tenantId: string; orgAgentId?: string; from?: string; to?: string }) {
+      const values = events
+        .filter((e) => e.tenantId === filter.tenantId
+          && (!filter.orgAgentId || e.orgAgentId === filter.orgAgentId)
+          && (!filter.from || e.createdAt >= filter.from)
+          && (!filter.to || e.createdAt <= filter.to)
+          && typeof e.confidence === 'number')
+        .map((e) => e.confidence as number)
+        .sort((a, b) => a - b);
+      if (values.length === 0) return null;
+      const cont = (p: number): number => {
+        const rank = p * (values.length - 1);
+        const lo = Math.floor(rank);
+        const hi = Math.ceil(rank);
+        return values[lo] + (rank - lo) * (values[hi] - values[lo]);
+      };
+      return { p50: cont(0.5), p90: cont(0.9) };
+    },
     async list(filter: GuardrailEventListFilter) {
       state.lastFilter = filter;
       const matches = events.filter((e) => {
@@ -273,10 +292,10 @@ describe('org-agents usage-stats & gate-preview', () => {
       sessionRecord('s-5', 'kaiyan', '__PLACEHOLDER__', 'u-d', '2026-07-15T00:00:00.000Z'), // 跨租户，不应统计
     ];
     const events: GuardrailEventRecord[] = [
-      { id: 'e1', tenantId: 'wain', orgAgentId: '__PLACEHOLDER__', verdict: 'off_topic', messageText: 'x', createdAt: '2026-07-16T00:00:00.000Z' },
-      { id: 'e2', tenantId: 'wain', orgAgentId: '__PLACEHOLDER__', verdict: 'off_topic', messageText: 'y', createdAt: '2026-07-01T00:00:00.000Z' },
-      { id: 'e3', tenantId: 'wain', orgAgentId: '__PLACEHOLDER__', verdict: 'pass_flagged', messageText: 'z', createdAt: '2026-07-16T00:00:00.000Z' }, // 非 off_topic 不计
-      { id: 'e4', tenantId: 'wain', orgAgentId: '__PLACEHOLDER__', verdict: 'off_topic', messageText: 'w', createdAt: '2026-05-01T00:00:00.000Z' }, // 窗口外
+      { id: 'e1', tenantId: 'wain', orgAgentId: '__PLACEHOLDER__', verdict: 'off_topic', messageText: 'x', confidence: 0.9, createdAt: '2026-07-16T00:00:00.000Z' },
+      { id: 'e2', tenantId: 'wain', orgAgentId: '__PLACEHOLDER__', verdict: 'off_topic', messageText: 'y', createdAt: '2026-07-01T00:00:00.000Z' }, // 旧事件无 confidence，不进百分位
+      { id: 'e3', tenantId: 'wain', orgAgentId: '__PLACEHOLDER__', verdict: 'pass_flagged', messageText: 'z', confidence: 0.7, createdAt: '2026-07-16T00:00:00.000Z' }, // 非 off_topic 不计 rejections，但计 confidence
+      { id: 'e4', tenantId: 'wain', orgAgentId: '__PLACEHOLDER__', verdict: 'off_topic', messageText: 'w', confidence: 0.1, createdAt: '2026-05-01T00:00:00.000Z' }, // 窗口外，不计
     ];
     const sessionStore = memorySessionReader(sessions);
     const guardStore = memoryGuardrailEventStore(events);
@@ -311,10 +330,12 @@ describe('org-agents usage-stats & gate-preview', () => {
       expect(stats.mentionsCount).toBe(3);
       expect(stats.activeUsersCount).toBe(2);
       expect(stats.gateRejectionsCount).toBe(2);
-      // 未接入的字段留 null（当前 MVP 无消息级投影 / 门禁 confidence 未存）
+      // avgSessionLength 未接入（无消息级投影）仍 null
       expect(stats.avgSessionLength).toBeNull();
-      expect(stats.guardrailConfidenceP50).toBeNull();
-      expect(stats.guardrailConfidenceP90).toBeNull();
+      // confidence P50/P90：窗口内带 confidence 的事件 [0.7, 0.9]（e2 无值、e4 窗口外均排除）
+      // PERCENTILE_CONT 线性插值：p50=0.8，p90=0.7+0.9*(0.9-0.7)=0.88
+      expect(stats.guardrailConfidenceP50).toBeCloseTo(0.8, 10);
+      expect(stats.guardrailConfidenceP90).toBeCloseTo(0.88, 10);
       // store 收到正确 tenantId + orgAgentId + 时间窗
       expect(sessionStore.lastQuery?.tenantId).toBe('wain');
       expect(sessionStore.lastQuery?.orgAgentId).toBe(wainAgent.id);

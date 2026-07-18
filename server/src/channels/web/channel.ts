@@ -2144,6 +2144,8 @@ export class WebChannel implements BaseChannel {
       verdict?: GuardrailEventVerdict;
       /** 落库时打入 event 用于看板过滤（'shadow' 表示未拦截；enforce/未标记默认 'enforce'） */
       mode?: OrgAgentGuardrailMode;
+      /** 门禁模型自报确信度 0-1（usage-stats P50/P90 数据源） */
+      confidence?: number;
     } | undefined;
     if (validSessionId) {
       orgAgentId = gateSessionMeta?.orgAgentId;
@@ -2252,6 +2254,7 @@ export class WebChannel implements BaseChannel {
                 attachmentMeta,
                 guardrailModel: check.model,
                 guardrailLatencyMs: check.latencyMs,
+                guardrailConfidence: check.confidence,
               });
               return;
             }
@@ -2265,6 +2268,7 @@ export class WebChannel implements BaseChannel {
               latencyMs: check.latencyMs,
               verdict: 'off_topic',
               mode: 'shadow',
+              ...(check.confidence !== undefined ? { confidence: check.confidence } : {}),
             };
             chatLogger.info(
               `[guardrail] shadow off_topic (not blocking): orgAgent=${orgAgentRecord.id} model=${check.model ?? 'n/a'}`,
@@ -2277,6 +2281,7 @@ export class WebChannel implements BaseChannel {
               latencyMs: check.latencyMs,
               verdict: 'pass_flagged',
               mode: guardrailMode,
+              ...(check.confidence !== undefined ? { confidence: check.confidence } : {}),
             };
           } else if (check.source === 'fail_open') {
             // fail_open 打 metadata 不落库（与 pass_flagged 区分，避免污染需求雷达数据）
@@ -2301,6 +2306,7 @@ export class WebChannel implements BaseChannel {
         messageText: `${prefix}${pendingGuardrailEvent.messageText}`,
         model: pendingGuardrailEvent.model,
         latencyMs: pendingGuardrailEvent.latencyMs,
+        confidence: pendingGuardrailEvent.confidence,
       });
       pendingGuardrailEvent = undefined;
     };
@@ -2981,6 +2987,7 @@ export class WebChannel implements BaseChannel {
     attachmentMeta?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
     guardrailModel?: string;
     guardrailLatencyMs?: number;
+    guardrailConfidence?: number;
   }): Promise<void> {
     const { ws, user, orgAgent } = args;
     const sessionId = args.validSessionId ?? randomUUID();
@@ -3067,6 +3074,7 @@ export class WebChannel implements BaseChannel {
         : args.resolvedMessage,
       model: args.guardrailModel,
       latencyMs: args.guardrailLatencyMs,
+      confidence: args.guardrailConfidence,
     });
 
     // (c) legacy transcript 追加 user + assistant 两行（刷新后气泡仍在；
@@ -3172,6 +3180,7 @@ export class WebChannel implements BaseChannel {
     messageText: string;
     model?: string;
     latencyMs?: number;
+    confidence?: number;
   }): Promise<string | undefined> {
     const store = this.config.guardrailEventStore;
     if (!store) {
@@ -3190,6 +3199,7 @@ export class WebChannel implements BaseChannel {
         messageText: args.messageText.slice(0, 2000),
         ...(args.model ? { model: args.model } : {}),
         ...(args.latencyMs !== undefined ? { latencyMs: args.latencyMs } : {}),
+        ...(args.confidence !== undefined ? { confidence: args.confidence } : {}),
       });
     } catch (err) {
       chatLogger.warn(`[guardrail] event insert failed: ${err instanceof Error ? err.message : String(err)}`);

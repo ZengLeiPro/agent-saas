@@ -118,6 +118,7 @@ function fakeGuardrailEventStore(): { store: GuardrailEventStore; events: Guardr
     store: {
       insert: async (event) => { events.push(event); return `ev-fake-${events.length}`; },
       list: async () => ({ events: [], total: 0 }),
+      confidencePercentiles: async () => null,
     },
   };
 }

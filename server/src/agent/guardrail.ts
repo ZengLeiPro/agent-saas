@@ -39,6 +39,8 @@ export interface GuardrailCheckResult {
   source: 'model' | 'fail_open';
   model?: string;
   latencyMs: number;
+  /** 模型自报的判定确信度 0-1（2026-07-19 B2 收尾）；模型未输出/解析失败为 undefined */
+  confidence?: number;
 }
 
 export interface GuardrailCheckOptions {
@@ -49,11 +51,12 @@ export interface GuardrailCheckOptions {
 
 const DEFAULT_TIMEOUT_MS = 6000;
 const VERDICT_FALLBACK_RE = /"verdict"\s*:\s*"(in_scope|off_topic|uncertain)"/;
+const CONFIDENCE_FALLBACK_RE = /"confidence"\s*:\s*(0(?:\.\d+)?|1(?:\.0+)?)/;
 const FENCED_BLOCK_RE = /```(?:json)?\s*([\s\S]*?)```/;
 /** 正则兜底仅对短响应启用（2026-07 审查 F12：防长解释文本/prompt 回显中夹带 verdict 字样误匹配） */
 const VERDICT_FALLBACK_MAX_LEN = 200;
 
-const GUARDRAIL_SYSTEM_PROMPT = '你是一个话题范围审查器。你的唯一任务：判断「用户最新提问」是否属于给定的话题范围。禁止回答提问本身，禁止输出判定 JSON 以外的任何内容。只输出一行严格 JSON（无代码块标记、无解释）：{"verdict":"in_scope"} 或 {"verdict":"off_topic"} 或 {"verdict":"uncertain"}';
+const GUARDRAIL_SYSTEM_PROMPT = '你是一个话题范围审查器。你的唯一任务：判断「用户最新提问」是否属于给定的话题范围。禁止回答提问本身，禁止输出判定 JSON 以外的任何内容。只输出一行严格 JSON（无代码块标记、无解释），必须同时包含 verdict 与 confidence 两个字段，confidence 是 0 到 1 的数字表示你对该判定的确信程度，如：{"verdict":"in_scope","confidence":0.95} 或 {"verdict":"off_topic","confidence":0.9} 或 {"verdict":"uncertain","confidence":0.4}';
 
 /**
  * 从 transcript 尾部读最近 N 条真实用户消息（时间正序返回）。
@@ -159,12 +162,18 @@ function buildGuardrailUserPrompt(input: GuardrailCheckInput): string {
   ].join('\n');
 }
 
+/** 单模型判定结果：verdict 必有；confidence 为模型自报，可缺省 */
+interface ParsedGuardrailVerdict {
+  verdict: GuardrailVerdict;
+  confidence?: number;
+}
+
 async function checkTopicScopeOnce(
   input: GuardrailCheckInput,
   config: GuardrailModelConfig,
   timeoutMs: number,
   options: GuardrailCheckOptions,
-): Promise<GuardrailVerdict | null> {
+): Promise<ParsedGuardrailVerdict | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const apiKey = config.connection?.apiKey || process.env.OPENAI_API_KEY;
@@ -189,7 +198,8 @@ async function checkTopicScopeOnce(
         { role: 'user', content: buildGuardrailUserPrompt(input) },
       ],
       temperature: 0,
-      max_tokens: 48,
+      // confidence 字段加长输出（~15 tokens），64 留足余量
+      max_tokens: 64,
       n: 1,
     }, { signal: controller.signal });
     if (result.usage) {
@@ -221,11 +231,20 @@ async function checkTopicScopeOnce(
   }
 }
 
-function tryParseJsonVerdict(text: string): GuardrailVerdict | null {
+/** 0-1 之外/非数字的 confidence 一律丢弃（模型幻觉值不入库） */
+function normalizeConfidence(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
+    ? value
+    : undefined;
+}
+
+function tryParseJsonVerdict(text: string): ParsedGuardrailVerdict | null {
   try {
-    const verdict = JSON.parse(text)?.verdict;
+    const obj = JSON.parse(text);
+    const verdict = obj?.verdict;
     if (verdict === 'in_scope' || verdict === 'off_topic' || verdict === 'uncertain') {
-      return verdict;
+      const confidence = normalizeConfidence(obj?.confidence);
+      return { verdict, ...(confidence !== undefined ? { confidence } : {}) };
     }
   } catch {
     // 交由调用方按解析顺序继续尝试
@@ -240,7 +259,7 @@ function tryParseJsonVerdict(text: string): GuardrailVerdict | null {
  *   ③ 正则兜底仅当响应 ≤200 字符时启用（长解释文本/回显夹带 verdict 字样不作数）
  * 三者皆失败 → null（该模型失败，进入回落链）
  */
-function parseVerdict(raw: string, model: string): GuardrailVerdict | null {
+function parseVerdict(raw: string, model: string): ParsedGuardrailVerdict | null {
   const trimmed = raw.trim();
   const direct = tryParseJsonVerdict(trimmed);
   if (direct) return direct;
@@ -251,7 +270,14 @@ function parseVerdict(raw: string, model: string): GuardrailVerdict | null {
   }
   if (trimmed.length <= VERDICT_FALLBACK_MAX_LEN) {
     const match = VERDICT_FALLBACK_RE.exec(trimmed);
-    if (match) return match[1] as GuardrailVerdict;
+    if (match) {
+      const confMatch = CONFIDENCE_FALLBACK_RE.exec(trimmed);
+      const confidence = confMatch ? normalizeConfidence(Number(confMatch[1])) : undefined;
+      return {
+        verdict: match[1] as GuardrailVerdict,
+        ...(confidence !== undefined ? { confidence } : {}),
+      };
+    }
   }
   guardrailLogger.warn(
     `Guardrail verdict unparsable (model=${model}) raw=${JSON.stringify(trimmed.slice(0, 120))}`,
@@ -278,14 +304,20 @@ export async function checkTopicScope(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   for (let i = 0; i < configs.length; i++) {
     const cfg = configs[i];
-    const verdict = await checkTopicScopeOnce(input, cfg, timeoutMs, options);
-    if (verdict) {
+    const parsed = await checkTopicScopeOnce(input, cfg, timeoutMs, options);
+    if (parsed) {
       if (i > 0) {
         guardrailLogger.info(
           `Guardrail verdict via fallback model "${cfg.model}" (attempt ${i + 1}/${configs.length})`,
         );
       }
-      return { verdict, source: 'model', model: cfg.model, latencyMs: Date.now() - startedAt };
+      return {
+        verdict: parsed.verdict,
+        source: 'model',
+        model: cfg.model,
+        latencyMs: Date.now() - startedAt,
+        ...(parsed.confidence !== undefined ? { confidence: parsed.confidence } : {}),
+      };
     }
     if (i < configs.length - 1) {
       guardrailLogger.warn(

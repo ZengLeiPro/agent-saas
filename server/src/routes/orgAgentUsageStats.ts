@@ -5,10 +5,10 @@
  * 与 runtime_guardrail_events（org_agent_id, created_at DESC）两张已有表派生 30 天 KPI。
  * 全部依赖 optional：PG 未装配时全部字段返回 null（前端 unavailable 隐藏卡片），不抛错。
  *
- * 注意（confidence 字段）：现有 runtime_guardrail_events 表**未存**门禁 confidence
- * 分数（`GuardrailCheckResult` 也没有该字段，门禁只输出三态 verdict）。所以 P50/P90
- * 目前只能返回 null。若未来产品要精确置信度分布，需先在 pgGuardrailEventStore 加
- * confidence 列 + 门禁 prompt 让模型回吐一个 0-1 分。本 MVP 不做，直接留 null。
+ * confidence P50/P90（2026-07-19 B2 收尾）：runtime_guardrail_events 已有
+ * confidence 列（门禁 prompt 让模型自报 0-1 分），store.confidencePercentiles
+ * 用 PERCENTILE_CONT 精确计算。窗口内无带 confidence 的事件（旧数据/模型未输出）
+ * 返回 null，前端据此隐藏。
  */
 
 import type { GuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
@@ -39,7 +39,7 @@ export interface OrgAgentUsageStatsResponse {
   activeUsersCount: number;
   /** 平均对话轮次（当前无消息级投影，返回 null；未来接入 messages 表后补齐） */
   avgSessionLength: number | null;
-  /** 门禁 confidence P50 / P90（当前门禁只输出三态 verdict，未存 confidence，返回 null） */
+  /** 门禁 confidence P50 / P90（窗口内无带 confidence 的事件时为 null） */
   guardrailConfidenceP50: number | null;
   guardrailConfidenceP90: number | null;
 }
@@ -65,9 +65,10 @@ export async function computeOrgAgentUsageStats(
   const fromIso = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000).toISOString();
   const toIso = now.toISOString();
 
-  const [sessionStats, gateRejectionsCount] = await Promise.all([
+  const [sessionStats, gateRejectionsCount, confidencePercentiles] = await Promise.all([
     computeSessionStats(deps.sessionProjectionStore, params, fromIso, toIso),
     computeGateRejections(deps.guardrailEventStore, params, fromIso, toIso),
+    computeConfidencePercentiles(deps.guardrailEventStore, params, fromIso, toIso),
   ]);
 
   return {
@@ -78,8 +79,8 @@ export async function computeOrgAgentUsageStats(
     gateRejectionsCount,
     activeUsersCount: sessionStats.activeUsersCount,
     avgSessionLength: null,
-    guardrailConfidenceP50: null,
-    guardrailConfidenceP90: null,
+    guardrailConfidenceP50: confidencePercentiles?.p50 ?? null,
+    guardrailConfidenceP90: confidencePercentiles?.p90 ?? null,
   };
 }
 
@@ -118,6 +119,25 @@ async function computeSessionStats(
     return { mentionsCount: collected.length, activeUsersCount: userIds.size };
   } catch {
     return { mentionsCount: 0, activeUsersCount: 0 };
+  }
+}
+
+async function computeConfidencePercentiles(
+  store: GuardrailEventStore | undefined,
+  params: { orgAgentId: string; tenantId: string },
+  fromIso: string,
+  toIso: string,
+): Promise<{ p50: number; p90: number } | null> {
+  if (!store) return null;
+  try {
+    return await store.confidencePercentiles({
+      tenantId: params.tenantId,
+      orgAgentId: params.orgAgentId,
+      from: fromIso,
+      to: toIso,
+    });
+  } catch {
+    return null;
   }
 }
 

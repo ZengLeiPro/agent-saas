@@ -117,8 +117,32 @@ describe('checkTopicScope', () => {
       const result = await checkTopicScope(checkInput(), [MAIN]);
       expect(result).toMatchObject({ verdict, source: 'model', model: 'guard-main' });
     }
-    // 调用参数按计划锁定：temperature 0 / max_tokens 48
-    expect(createCalls()[0]).toMatchObject({ temperature: 0, max_tokens: 48 });
+    // 调用参数按计划锁定：temperature 0 / max_tokens 64（confidence 字段加长输出）
+    expect(createCalls()[0]).toMatchObject({ temperature: 0, max_tokens: 64 });
+  });
+
+  it('confidence 解析（2026-07-19 B2 收尾）：合法值透传、缺失/非法丢弃、正则兜底也可带出', async () => {
+    // 合法 confidence 透传
+    queueResponse('guard-main', { content: '{"verdict":"off_topic","confidence":0.92}' });
+    const withConf = await checkTopicScope(checkInput(), [MAIN]);
+    expect(withConf).toMatchObject({ verdict: 'off_topic', confidence: 0.92 });
+
+    // 模型未输出 confidence → undefined（verdict 正常）
+    queueResponse('guard-main', { content: '{"verdict":"in_scope"}' });
+    const noConf = await checkTopicScope(checkInput(), [MAIN]);
+    expect(noConf.verdict).toBe('in_scope');
+    expect(noConf.confidence).toBeUndefined();
+
+    // 0-1 之外的幻觉值丢弃（verdict 不受影响）
+    queueResponse('guard-main', { content: '{"verdict":"uncertain","confidence":7}' });
+    const badConf = await checkTopicScope(checkInput(), [MAIN]);
+    expect(badConf.verdict).toBe('uncertain');
+    expect(badConf.confidence).toBeUndefined();
+
+    // 短响应正则兜底路径也能带出 confidence
+    queueResponse('guard-main', { content: '判定：{"verdict":"off_topic","confidence":0.8} 完毕' });
+    const fallbackConf = await checkTopicScope(checkInput(), [MAIN]);
+    expect(fallbackConf).toMatchObject({ verdict: 'off_topic', confidence: 0.8 });
   });
 
   it('门禁 prompt 只传最近用户消息，并把合理简短接续明确列为 in_scope', async () => {

@@ -9,7 +9,7 @@
  *   - GET /oauth/callback：state 缺失/超长/无效 400、service 抛错 500、
  *     open-redirect 防御（https://evil.com、//evil.com、/\evil.com 反斜杠、
  *     裸串等攻击向量强制回 /）、
- *     失败分支回滚 enabledServers、303 Location 携带 mcp_oauth/server 参数、
+ *     失败分支回滚 enabledServers、200 HTML fallback URL 携带 mcp_oauth/server 参数（弹窗 postMessage + 整页跳转双模）、
  *     webBaseUrl 与 redirectUrl-origin 两种基址
  *   - POST /me/servers/:id/oauth/start：401/400/404/409/成功（自动启用 + 幂等）
  *   - DELETE /me/servers/:id/oauth：503/404/成功（disconnect + 移出 enabledServers）
@@ -224,6 +224,16 @@ function rawGetStatus(port: number, path: string, hostHeader: string): Promise<n
 
 const ENV_KEY = 'MCP_OAUTH_CALLBACK_URL';
 
+
+/** 新回调返回 200 自包含 HTML（弹窗 postMessage + 整页 fallback 双模）；从中提取 fallback 跳转 URL。 */
+async function callbackFallbackUrl(res: { status: number; text(): Promise<string> }): Promise<string> {
+  expect(res.status).toBe(200);
+  const html = await res.text();
+  const match = html.match(/var fallback=("(?:[^"\\]|\\.)*");/);
+  expect(match).toBeTruthy();
+  return JSON.parse(match![1]) as string;
+}
+
 describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRedirectUrl', () => {
   let rigs: Rig[] = [];
   let savedCallbackEnv: string | undefined;
@@ -277,9 +287,8 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
       for (const returnTo of attackVectors) {
         oauth.finishImpl = async () => finishResult({ returnTo });
         const res = await r.request('/api/mcp/oauth/callback?state=s&code=c', { redirect: 'manual' });
-        expect(res.status).toBe(303);
         // 全部被钉回 webBaseUrl 根路径，绝不落到 evil.com
-        expect(res.headers.get('location')).toBe('https://web.example.com/?mcp_oauth=connected&server=srv1');
+        expect(await callbackFallbackUrl(res)).toBe('https://web.example.com/?mcp_oauth=connected&server=srv1');
       }
       expect(invalidated).toContain('alice');
     });
@@ -293,19 +302,22 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
       const r = await rig({ oauth, webBaseUrl: 'https://web.example.com', user: null });
       oauth.finishImpl = async () => finishResult({ returnTo: '/\\evil.com' });
       const res = await r.request('/api/mcp/oauth/callback?state=s&code=c', { redirect: 'manual' });
-      expect(res.status).toBe(303);
-      const location = new URL(res.headers.get('location') ?? '');
+      const location = new URL(await callbackFallbackUrl(res));
       expect(location.hostname).toBe('web.example.com');
       expect(location.pathname).toBe('/');
     });
 
-    it('合法站内 returnTo 保留 path+query，303 Location 追加 mcp_oauth/server 参数', async () => {
+    it('合法站内 returnTo 保留 path+query，fallback URL 追加 mcp_oauth/server 参数，弹窗 postMessage 指向 web 域', async () => {
       const oauth = fakeOAuthService();
       const r = await rig({ oauth, webBaseUrl: 'https://web.example.com', user: null });
       oauth.finishImpl = async () => finishResult({ returnTo: '/settings/connectors?tab=mcp' });
       const res = await r.request('/api/mcp/oauth/callback?state=s&code=c', { redirect: 'manual' });
-      expect(res.status).toBe(303);
-      expect(res.headers.get('location'))
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain('window.opener.postMessage');
+      expect(html).toContain('var targetOrigin="https://web.example.com"');
+      const match = html.match(/var fallback=("(?:[^"\\]|\\.)*");/);
+      expect(JSON.parse(match![1]))
         .toBe('https://web.example.com/settings/connectors?tab=mcp&mcp_oauth=connected&server=srv1');
     });
 
@@ -319,8 +331,7 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
 
       oauth.finishImpl = async () => finishResult({ ok: false, error: 'access_denied' });
       const res = await r.request('/api/mcp/oauth/callback?state=s&error=access_denied', { redirect: 'manual' });
-      expect(res.status).toBe(303);
-      expect(res.headers.get('location')).toBe('https://web.example.com/?mcp_oauth=error&server=srv1');
+      expect(await callbackFallbackUrl(res)).toBe('https://web.example.com/?mcp_oauth=error&server=srv1');
       expect(r.store.getUserConfig('alice').enabledServers).toEqual(['srv2']);
       expect(invalidated).toContain('alice');
     });
@@ -330,8 +341,7 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
       const r = await rig({ oauth, webBaseUrl: 'https://web.example.com', user: null });
       oauth.finishImpl = async () => finishResult({ ok: false, username: 'ghost', tenantId: 'kaiyan' });
       const res = await r.request('/api/mcp/oauth/callback?state=s', { redirect: 'manual' });
-      expect(res.status).toBe(303);
-      expect(res.headers.get('location')).toBe('https://web.example.com/?mcp_oauth=error&server=srv1');
+      expect(await callbackFallbackUrl(res)).toBe('https://web.example.com/?mcp_oauth=error&server=srv1');
     });
 
     it('未配置 webBaseUrl：基址回退 result.redirectUrl 同源（单域部署）', async () => {
@@ -339,8 +349,7 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
       const r = await rig({ oauth, user: null });
       oauth.finishImpl = async () => finishResult({ returnTo: 'https://evil.com' });
       const res = await r.request('/api/mcp/oauth/callback?state=s&code=c', { redirect: 'manual' });
-      expect(res.status).toBe(303);
-      expect(res.headers.get('location')).toBe('https://api.example.com/?mcp_oauth=connected&server=srv1');
+      expect(await callbackFallbackUrl(res)).toBe('https://api.example.com/?mcp_oauth=connected&server=srv1');
     });
   });
 

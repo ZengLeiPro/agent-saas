@@ -271,10 +271,31 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
         && !result.returnTo.includes('\\')
         ? result.returnTo
         : '/';
-      const target = new URL(safeReturnTo, webBaseUrl ?? new URL(result.redirectUrl).origin);
+      const webOrigin = webBaseUrl ?? new URL(result.redirectUrl).origin;
+      const target = new URL(safeReturnTo, webOrigin);
       target.searchParams.set('mcp_oauth', result.ok ? 'connected' : 'error');
       target.searchParams.set('server', result.serverId);
-      res.redirect(303, target.toString());
+      // 弹窗授权模式：本页在 popup 中加载时 postMessage 通知 opener（web 域）后自关；
+      // 非弹窗（或 window.close 被浏览器阻止）退回整页跳转，与旧 303 行为等价。
+      // 注入值全部经 JSON.stringify + escapeInlineScript，防 HTML/脚本注入。
+      const payload = { type: 'mcp_oauth_result', server: result.serverId, status: result.ok ? 'connected' : 'error' };
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>授权完成</title></head><body>
+<p style="font-family:system-ui;color:#666;text-align:center;margin-top:15vh">${result.ok ? '授权完成，正在返回…' : '授权未完成，正在返回…'}</p>
+<script>(function(){
+  var payload=${escapeInlineScript(JSON.stringify(payload))};
+  var targetOrigin=${escapeInlineScript(JSON.stringify(new URL(webOrigin).origin))};
+  var fallback=${escapeInlineScript(JSON.stringify(target.toString()))};
+  try{
+    if(window.opener&&!window.opener.closed){
+      window.opener.postMessage(payload,targetOrigin);
+      window.close();
+      setTimeout(function(){location.replace(fallback);},600);
+      return;
+    }
+  }catch(e){}
+  location.replace(fallback);
+})();</script></body></html>`;
+      res.status(200).type('html').send(html);
     } catch {
       res.status(500).send('OAuth callback failed; return to the connector settings and retry');
     }
@@ -569,6 +590,14 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
   });
 
   return router;
+}
+
+/** 防止 JSON 字符串值中的 `</script>`、行分隔符破坏内联脚本上下文。 */
+function escapeInlineScript(json: string): string {
+  return json
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 function oauthRedirectUrl(req: Request): string {

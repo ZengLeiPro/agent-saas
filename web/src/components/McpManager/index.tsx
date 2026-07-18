@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Check, ExternalLink, Loader2, Link2Off, Plus, RefreshCw, Save, Stethoscope, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { ConnectorBrandLogo } from "./ConnectorBrandLogo";
 import {
+  getPlatform,
   bindMyMcpSecret,
   bindAdminMcpSecret,
   deleteMcpServer,
@@ -66,6 +67,15 @@ const EMPTY_SERVER: ManagedMcpServer = {
 };
 
 type ConnectorFilter = "all" | "enabled" | "platform" | "organization" | "personal";
+
+/** 把说明文字里的 URL 渲染成可点击链接（新窗口打开），其余保持纯文本。 */
+function renderInstructions(text: string): ReactNode[] {
+  return text.split(/(https?:\/\/[^\s，。；）」]+)/g).map((part, index) =>
+    /^https?:\/\//.test(part)
+      ? <a key={index} href={part} target="_blank" rel="noopener noreferrer" className="text-brand-600 underline underline-offset-2 hover:text-brand-700">{part}</a>
+      : part,
+  );
+}
 
 function connectorSource(server: McpServerSummary): CapabilitySource {
   if (server.personal) return "personal";
@@ -268,13 +278,27 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
         await bindAdminMcpSecret(serverId, key, value);
       }
       setSecretInputs(prev => ({ ...prev, [inputKey]: "" }));
-      await refresh();
+      // 绑定后重取个人视图；若该连接器所有必填凭据已就绪且尚未启用，则自动启用，
+      // 免去「绑定完还要再点一次启用」的额外步骤。
+      const mine = await fetchMyMcp();
+      setMyData(mine);
+      const nextEnabled = Object.fromEntries(mine.servers.map(s => [s.id, s.enabled]));
+      const target = mine.servers.find(s => s.id === serverId);
+      const readyToEnable = target && !target.enabled
+        && (!target.oauth || target.oauth.status === 'connected')
+        && !(target.secretRequirements ?? []).some(r => r.required !== false && !r.configured);
+      if (readyToEnable) {
+        setSaving(false);
+        await saveSelections({ ...nextEnabled, [serverId]: true });
+        return;
+      }
+      setEnabled(nextEnabled);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
-  }, [refresh, secretInputs]);
+  }, [saveSelections, secretInputs]);
 
   /**
    * 角色 → 可绑 scope 的判定：
@@ -302,19 +326,48 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
 
   const connectOAuth = useCallback(async (serverId: string) => {
     setSaving(true);
+    // 在用户手势上下文中同步开弹窗（异步后再 open 会被拦截），拿到授权 URL 后再导航；
+    // 弹窗被浏览器拦截时退回整页跳转。
+    const popup = window.open('', `mcp-oauth-${serverId}`, 'popup,width=600,height=720');
     try {
       const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
       const result = await startMyMcpOAuth(serverId, returnTo);
       if (result.authorizationUrl) {
+        if (popup && !popup.closed) {
+          popup.location.href = result.authorizationUrl;
+          return;
+        }
         window.location.assign(result.authorizationUrl);
         return;
       }
+      popup?.close();
       await refresh();
     } catch (err) {
+      popup?.close();
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
+  }, [refresh]);
+
+  // 弹窗授权完成后，callback 页从 API 域 postMessage 通知本页刷新连接状态。
+  useEffect(() => {
+    const apiOrigin = (() => {
+      try {
+        const base = getPlatform().platformConfig.getBaseUrl();
+        return base ? new URL(base).origin : window.location.origin;
+      } catch {
+        return window.location.origin;
+      }
+    })();
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== apiOrigin) return;
+      const data = event.data as { type?: string } | null;
+      if (!data || data.type !== 'mcp_oauth_result') return;
+      void refresh();
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
   }, [refresh]);
 
   const disconnectOAuth = useCallback(async (serverId: string) => {
@@ -485,6 +538,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                                 : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
                             )}
                             disabled={saving || (!!server.oauth && !server.oauth.platformConfigured)}
+                            title={server.oauth && !server.oauth.platformConfigured ? "平台管理员尚未完成授权配置，暂不可连接" : undefined}
                             aria-label={oauthReady && !missingSecrets ? `${selected ? "停用" : "启用"} ${server.name}` : `配置 ${server.name}`}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -574,7 +628,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                       <span className={`rounded px-1.5 py-0.5 text-[10px] ${badge.className}`}>{badge.label}</span>
                       <span className={requirement.configured ? "text-success" : "text-destructive"}>{requirement.configured ? "已绑定" : "未绑定"}</span>
                     </div>
-                    {requirement.instructions ? <div className="mt-1 text-xs leading-5 text-muted-foreground">{requirement.instructions}</div> : null}
+                    {requirement.instructions ? <div className="mt-1 break-words text-xs leading-5 text-muted-foreground">{renderInstructions(requirement.instructions)}</div> : null}
                     <div className="mt-3 flex gap-2">
                       <Input
                         type="password"

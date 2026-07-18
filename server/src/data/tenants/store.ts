@@ -46,13 +46,19 @@ function cloneSettings(settings: TenantSettings): TenantSettings {
 
 type TenantSettingsPatch = { [K in keyof TenantSettings]?: Partial<TenantSettings[K]> };
 
-function mergeSettings(input?: TenantSettingsPatch): TenantSettings {
+/**
+ * 以 base 为基底逐 section 合并 patch。
+ * base 缺省为 DEFAULT_TENANT_SETTINGS——「存储稀疏值补全默认」的读路径语义；
+ * updateSettings 写路径必须传入租户现值作 base，否则 patch 缺省的 section
+ * （quotas/mcp/branding/security）会被静默重置为平台默认（2026-07-19 修复的 P1）。
+ */
+function mergeSettings(input?: TenantSettingsPatch, base: TenantSettings = DEFAULT_TENANT_SETTINGS): TenantSettings {
   const models = {
-    ...DEFAULT_TENANT_SETTINGS.models,
+    ...base.models,
     ...(input?.models ?? {}),
-    allowedModels: [...(input?.models?.allowedModels ?? DEFAULT_TENANT_SETTINGS.models.allowedModels)],
+    allowedModels: [...(input?.models?.allowedModels ?? base.models.allowedModels)],
     displayOverrides: {
-      ...(DEFAULT_TENANT_SETTINGS.models.displayOverrides ?? {}),
+      ...(base.models.displayOverrides ?? {}),
       ...(input?.models?.displayOverrides ?? {}),
     },
   };
@@ -61,17 +67,17 @@ function mergeSettings(input?: TenantSettingsPatch): TenantSettings {
   }
 
   return {
-    features: { ...DEFAULT_TENANT_SETTINGS.features, ...(input?.features ?? {}) },
-    quotas: { ...DEFAULT_TENANT_SETTINGS.quotas, ...(input?.quotas ?? {}) },
+    features: { ...base.features, ...(input?.features ?? {}) },
+    quotas: { ...base.quotas, ...(input?.quotas ?? {}) },
     models,
     mcp: {
-      ...DEFAULT_TENANT_SETTINGS.mcp,
+      ...base.mcp,
       ...(input?.mcp ?? {}),
-      defaultEnabledServerIds: [...(input?.mcp?.defaultEnabledServerIds ?? DEFAULT_TENANT_SETTINGS.mcp.defaultEnabledServerIds)],
+      defaultEnabledServerIds: [...(input?.mcp?.defaultEnabledServerIds ?? base.mcp.defaultEnabledServerIds)],
     },
-    branding: { ...DEFAULT_TENANT_SETTINGS.branding, ...(input?.branding ?? {}) },
-    personalization: { ...DEFAULT_TENANT_SETTINGS.personalization, ...(input?.personalization ?? {}) },
-    security: { ...DEFAULT_TENANT_SETTINGS.security, ...(input?.security ?? {}) },
+    branding: { ...base.branding, ...(input?.branding ?? {}) },
+    personalization: { ...base.personalization, ...(input?.personalization ?? {}) },
+    security: { ...base.security, ...(input?.security ?? {}) },
   };
 }
 
@@ -152,7 +158,8 @@ export class TenantStore {
   async updateSettings(id: string, input: TenantSettingsPatch): Promise<TenantSettings> {
     const tenant = this.tenants.find(t => t.id === id);
     if (!tenant) throw new Error('Tenant not found');
-    tenant.settings = mergeSettings(input);
+    // 基底=租户现值（先补全默认），patch 缺省的 section 保留现值而非重置为平台默认
+    tenant.settings = mergeSettings(input, mergeSettings(tenant.settings));
     tenant.updatedAt = new Date().toISOString();
     await this.persist();
     return cloneSettings(tenant.settings);

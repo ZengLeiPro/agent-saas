@@ -268,6 +268,18 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
         ...(parsed.data.models ?? {}),
         allowContextTokenDetails: currentValue,
       };
+      // 配额=平台商务约束（maxUsers/monthlyTokenLimit 等），组织 admin 不得自助改动：
+      // 任一字段与现值不同 → 403；同值/缺省则强制保留现值（2026-07-19 治理修复）
+      if (parsed.data.quotas !== undefined) {
+        const requestedQuotas = parsed.data.quotas;
+        const changed = (Object.keys(requestedQuotas) as Array<keyof typeof requestedQuotas>)
+          .some(key => requestedQuotas[key] !== undefined && requestedQuotas[key] !== current.quotas[key]);
+        if (changed) {
+          res.status(403).json({ error: '组织配额仅平台管理员可配置' });
+          return;
+        }
+      }
+      parsed.data.quotas = { ...current.quotas };
     }
     try {
       const settings = await tenantStore.updateSettings(req.params.id, parsed.data);

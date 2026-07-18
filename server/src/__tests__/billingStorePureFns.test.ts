@@ -131,8 +131,9 @@ describe('inferModelTier 映射表', () => {
     ['gpt-5.2', 'premium'],
     ['glm-5.2', 'standard'],
     ['kimi-k3', 'standard'],
-    // 现状固化：'minimax' 含子串 'mini' → 被归为 economy（疑似档位误判，见测试报告）
-    ['MiniMax-M2.1', 'economy'],
+    // 2026-07-19 修复回归：'minimax' 含子串 'mini'，曾被误归 economy；现短路为 standard
+    ['MiniMax-M2.1', 'standard'],
+    ['minimax-m3', 'standard'],
   ])('%s → %s', async (modelValue, tier) => {
     const params = await captureInsertParams({ modelValue });
     expect(params[P.modelTier]).toBe(tier);

@@ -230,6 +230,64 @@ describe('tenants 路由治理（settings 越权守卫 + CRUD 权限矩阵）', 
       expect(after.features.imageGenEnabled).toBe(true);
       expect(after.models.allowContextTokenDetails).toBe(true);
     });
+
+    it('组织 admin 改 quotas.monthlyTokenLimit → 403 且未落库（不得自助提额，2026-07-19 治理修复）', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      await patchSettings(h, 'wain', { quotas: { monthlyTokenLimit: 1_000_000 } });
+
+      h.setCaller(WAIN_ADMIN);
+      const res = await patchSettings(h, 'wain', { quotas: { monthlyTokenLimit: 9_999_999 } });
+      expect(res.status).toBe(403);
+      await expect(res.json()).resolves.toMatchObject({ error: '组织配额仅平台管理员可配置' });
+      expect(h.tenantStore.getSettings('wain')!.quotas.monthlyTokenLimit).toBe(1_000_000);
+    });
+
+    it('组织 admin 提交与现值相同的 quotas → 放行且配额保持', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      await patchSettings(h, 'wain', { quotas: { maxUsers: 50 } });
+
+      h.setCaller(WAIN_ADMIN);
+      const res = await patchSettings(h, 'wain', {
+        features: { ...BASE_FEATURES },
+        quotas: { maxUsers: 50 },
+      });
+      expect(res.status).toBe(200);
+      expect(h.tenantStore.getSettings('wain')!.quotas.maxUsers).toBe(50);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // settings merge 基底回归（2026-07-19 修复）：patch 缺省的 section 保留租户现值，
+  // 而非被静默重置为平台默认（修复前 updateSettings 以 DEFAULT_TENANT_SETTINGS 为基底，
+  // 一次普通 PATCH 即可清掉平台设置的 monthlyTokenLimit/maxUsers 等配额）
+  // -------------------------------------------------------------------------
+  describe('settings merge 基底：缺省 section 保留现值', () => {
+    it('平台 admin 设 quotas 后，仅 PATCH features 不清掉配额', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      await patchSettings(h, 'wain', { quotas: { monthlyTokenLimit: 5_000_000, maxUsers: 30 } });
+
+      const res = await patchSettings(h, 'wain', { features: { ...BASE_FEATURES } });
+      expect(res.status).toBe(200);
+      const after = h.tenantStore.getSettings('wain')!;
+      expect(after.quotas.monthlyTokenLimit).toBe(5_000_000);
+      expect(after.quotas.maxUsers).toBe(30);
+    });
+
+    it('组织 admin 仅 PATCH features 时，平台设的 quotas/branding 保留现值', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      await patchSettings(h, 'wain', {
+        quotas: { monthlyTokenLimit: 5_000_000 },
+        branding: { displayName: '唯恩电气股份' },
+      });
+
+      h.setCaller(WAIN_ADMIN);
+      const res = await patchSettings(h, 'wain', { features: { ...BASE_FEATURES, filesEnabled: false } });
+      expect(res.status).toBe(200);
+      const after = h.tenantStore.getSettings('wain')!;
+      expect(after.features.filesEnabled).toBe(false);
+      expect(after.quotas.monthlyTokenLimit).toBe(5_000_000); // 修复前被重置为默认
+      expect(after.branding.displayName).toBe('唯恩电气股份'); // 修复前被重置为默认
+    });
   });
 
   // -------------------------------------------------------------------------

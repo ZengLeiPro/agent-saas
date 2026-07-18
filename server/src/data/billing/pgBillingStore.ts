@@ -1214,6 +1214,8 @@ function inferProvider(model: string): string {
 
 function inferModelTier(model: string): string {
   const lower = model.toLowerCase();
+  // 'minimax' 含子串 'mini'，必须先于 economy 判定短路，否则 MiniMax 全系被错归 economy 档
+  if (lower.includes('minimax')) return 'standard';
   if (lower.includes('mini') || lower.includes('lite') || lower.includes('haiku')) return 'economy';
   if (lower.includes('opus') || lower.includes('claude') || lower.includes('gpt')) return 'premium';
   return 'standard';

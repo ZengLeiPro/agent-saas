@@ -14,6 +14,7 @@ import {
   pickRecommendedScenarios,
   useScenarioLibrary,
 } from "./useScenarioLibrary";
+import { matchIndustry, useIndustryFilter } from "./useIndustryFilter";
 import { friendlyDataDependency } from "./friendlyMappings";
 
 interface EmptyChatRecommendCardsProps {
@@ -89,18 +90,25 @@ export function EmptyChatRecommendCards({
 }: EmptyChatRecommendCardsProps) {
   const { library, loading, error } = useScenarioLibrary();
   const { user } = useAuth();
+  const { activeIndustry } = useIndustryFilter();
   const recommendationCount = useRecommendationCount();
 
   if (loading || error || !library || library.scenarios.length === 0) return null;
+
+  const industryFiltered = library.scenarios.filter((s) =>
+    matchIndustry(s.industryFocus, activeIndustry),
+  );
+  // 兜底：如果行业过滤后为空（客户选了冷门行业），fallback 回全量避免推荐位消失
+  const pool = industryFiltered.length > 0 ? industryFiltered : library.scenarios;
 
   const matchedRoleId =
     user?.preferences?.activeRoleId && library.roles.some((role) => role.id === user.preferences?.activeRoleId)
       ? user.preferences.activeRoleId
       : matchRoleIdByPosition(library.roles, user?.position);
-  const roleTopScenarios = pickRoleTop3(library.scenarios, matchedRoleId, recommendationCount);
+  const roleTopScenarios = pickRoleTop3(pool, matchedRoleId, recommendationCount);
   const recommended = roleTopScenarios.length > 0
     ? roleTopScenarios
-    : pickRecommendedScenarios(library.scenarios, recommendationCount, matchedRoleId);
+    : pickRecommendedScenarios(pool, recommendationCount, matchedRoleId);
   const cards = recommended.map(safeScenario);
 
   return (

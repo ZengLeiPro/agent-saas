@@ -2,6 +2,7 @@ import type {
   DataDependencyLevel,
   DataSourceDifficulty,
   HumanAuditPolicy,
+  IndustryType,
   PushChannel,
   PushTarget,
   SkillLevel,
@@ -44,4 +45,13 @@ export const friendlyPushTarget: Record<PushTarget, string> = {
   self: "发给我",
   manager: "发给主管确认",
   group: "发到团队群",
+};
+
+export const friendlyIndustry: Record<IndustryType, string> = {
+  manufacturing: "制造",
+  trade: "贸易",
+  retail: "零售",
+  service: "服务",
+  export: "出口",
+  ecommerce: "电商",
 };

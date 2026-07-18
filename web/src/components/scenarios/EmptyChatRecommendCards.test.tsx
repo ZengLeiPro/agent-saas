@@ -28,6 +28,12 @@ vi.mock("@/contexts/AuthContext", () => ({
   useAuth: () => ({ user: mocked.user }),
 }));
 
+vi.mock("./useIndustryFilter", () => ({
+  useIndustryFilter: () => ({ activeIndustry: "all", setActiveIndustry: vi.fn() }),
+  matchIndustry: () => true,
+  INDUSTRY_ALL: "all",
+}));
+
 const bossScenario: ScenarioItem = {
   id: "boss-1",
   title: "Claude 竞品晨报",

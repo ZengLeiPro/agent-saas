@@ -29,6 +29,27 @@ import {
 } from "./ScenarioCard";
 import { matchRoleIdByPosition, useScenarioLibrary } from "./useScenarioLibrary";
 import { RoleKitDetailPage } from "./RoleKitDetailPage";
+import {
+  INDUSTRY_ALL,
+  matchIndustry,
+  useIndustryFilter,
+  type IndustryFilterValue,
+} from "./useIndustryFilter";
+import { friendlyIndustry } from "./friendlyMappings";
+import type { IndustryType } from "@agent/shared";
+
+const INDUSTRY_ORDER: IndustryType[] = [
+  "manufacturing",
+  "trade",
+  "retail",
+  "service",
+  "export",
+  "ecommerce",
+];
+const INDUSTRY_CHIPS = INDUSTRY_ORDER.map((id) => ({
+  id,
+  name: friendlyIndustry[id],
+}));
 
 interface ScenariosPanelProps {
   /** 点「试一试」：入参为已用槽位示例值填充完毕的起手 prompt 与场景本体 */
@@ -46,6 +67,7 @@ export function ScenariosPanel({
 }: ScenariosPanelProps) {
   const { library, loading, error, reload } = useScenarioLibrary();
   const { user } = useAuth();
+  const { activeIndustry, setActiveIndustry } = useIndustryFilter();
   // 当前选中的岗位 tab；"all" 表示全部
   const [activeRole, setActiveRole] = useState<string>("all");
   const [detail, setDetail] = useState<ScenarioItem | null>(null);
@@ -68,8 +90,12 @@ export function ScenariosPanel({
   const roles = library?.roles ?? [];
   const scenarios = useMemo(() => {
     const all = library?.scenarios ?? [];
-    return activeRole === "all" ? all : all.filter((s) => s.role === activeRole);
-  }, [library, activeRole]);
+    return all.filter((s) => {
+      if (!matchIndustry(s.industryFocus, activeIndustry)) return false;
+      if (activeRole !== "all" && s.role !== activeRole) return false;
+      return true;
+    });
+  }, [library, activeRole, activeIndustry]);
 
   const roleNameById = useMemo(
     () => new Map(roles.map((r) => [r.id, r.name])),
@@ -136,6 +162,34 @@ export function ScenariosPanel({
         </div>
       </div>
 
+      {/* 行业 chip：移动端横滑，桌面端折行 */}
+      <div
+        role="tablist"
+        aria-label="按行业筛选"
+        className="mb-3 flex gap-1.5 overflow-x-auto pb-1 md:flex-wrap md:overflow-visible [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {[{ id: INDUSTRY_ALL, name: "全部行业" }, ...INDUSTRY_CHIPS].map((chip) => {
+          const selected = activeIndustry === chip.id;
+          return (
+            <button
+              key={chip.id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => setActiveIndustry(chip.id as IndustryFilterValue)}
+              className={cn(
+                "shrink-0 rounded-full border px-3 py-1 text-xs transition-colors",
+                selected
+                  ? "border-transparent bg-brand-600 text-white"
+                  : "bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+              )}
+            >
+              {chip.name}
+            </button>
+          );
+        })}
+      </div>
+
       {/* 岗位 tab：横向可滚动 */}
       <div className="mb-5 flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {[{ id: "all", name: "全部" }, ...roles].map((role) => (
@@ -161,7 +215,9 @@ export function ScenariosPanel({
       {/* 卡片流网格 */}
       {scenarios.length === 0 ? (
         <div className="py-16 text-center text-sm text-muted-foreground">
-          该岗位暂无任务模板
+          {activeIndustry !== INDUSTRY_ALL
+            ? `${friendlyIndustry[activeIndustry as IndustryType]}行业暂无匹配任务模板，试试切换到「全部行业」`
+            : "该岗位暂无任务模板"}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">

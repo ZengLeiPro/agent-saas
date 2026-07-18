@@ -4,6 +4,12 @@ import type { ScenarioItem, ScenarioRole } from "@agent/shared";
 
 import { RoleKitDetailPage } from "./RoleKitDetailPage";
 
+vi.mock("./useIndustryFilter", () => ({
+  useIndustryFilter: () => ({ activeIndustry: "all", setActiveIndustry: vi.fn() }),
+  matchIndustry: () => true,
+  INDUSTRY_ALL: "all",
+}));
+
 const role: ScenarioRole = {
   id: "boss",
   name: "老板/总经理",

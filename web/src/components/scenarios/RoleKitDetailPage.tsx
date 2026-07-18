@@ -20,6 +20,7 @@ import {
   friendlySkillLevel,
 } from "./friendlyMappings";
 import { pickRoleTop3 } from "./EmptyChatRecommendCards";
+import { matchIndustry, useIndustryFilter } from "./useIndustryFilter";
 
 export interface RoleKitDetailPageProps {
   role: ScenarioRole;
@@ -153,9 +154,16 @@ export function RoleKitDetailPage({
   onBack,
 }: RoleKitDetailPageProps) {
   const safe = useMemo(() => safeRole(role), [role]);
+  const { activeIndustry } = useIndustryFilter();
   const roleScenarios = useMemo(
-    () => scenarios.filter((scenario) => scenario.role === role.id).map(safeScenario),
-    [role.id, scenarios],
+    () =>
+      scenarios
+        .filter(
+          (scenario) =>
+            scenario.role === role.id && matchIndustry(scenario.industryFocus, activeIndustry),
+        )
+        .map(safeScenario),
+    [role.id, scenarios, activeIndustry],
   );
   const top3 = useMemo(() => pickRoleTop3(roleScenarios, role.id), [role.id, roleScenarios]);
   const defaultRecurring = useMemo(() => {

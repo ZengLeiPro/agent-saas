@@ -211,6 +211,24 @@ describe('UserActivityService', () => {
     expect(contents).toEqual(['来自 web', '来自钉钉']);
   });
 
+  it('后台任务完成通知不计为用户主动活动', async () => {
+    const service = makeService([sessionRecord()], {
+      s1: [
+        makeEvent({ type: 'run_started', runId: 'r-bg', sessionId: 's1', model: 'm', channel: 'web' }),
+        makeEvent({
+          type: 'user_message',
+          runId: 'r-bg',
+          sessionId: 's1',
+          content: '<task-notification>\n<task-id>bg-1</task-id>\n<status>completed</status>\n<summary>完成</summary>\n</task-notification>',
+        }),
+      ],
+    });
+    const result = await service.listActivity({
+      tenantId: 'kaiyan', userId: 'u1', sinceIso: '2026-07-13T00:00:00.000Z',
+    });
+    expect(result.sessions).toEqual([]);
+  });
+
   it('排除记忆轮询会话（cronSystemKind 真源）', async () => {
     const service = makeService(
       [

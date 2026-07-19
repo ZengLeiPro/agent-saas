@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { RuntimeScheduler } from '../runtime/scheduler.js';
 import type { RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
@@ -495,6 +495,114 @@ describe('RuntimeScheduler', () => {
     expect(wakeCalled).toBe(false);
     await expect(runStore.get('run-1')).resolves.toMatchObject({ status: 'pending' });
     expect(eventStore.events).toHaveLength(0);
+  });
+
+  it('freezes an expired running background task and never calls wake to replay it', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    const record = await runStore.upsertPending({
+      runId: 'bg-crashed',
+      sessionId: 'sub-bg-crashed',
+      metadata: { backgroundTask: true, wakeState: 'none' },
+    });
+    runStore.records.set(record.runId, {
+      ...record,
+      status: 'running',
+      workerId: 'dead-worker',
+      leaseExpiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const wake = vi.fn();
+    const failInterrupted = vi.fn(async (candidate: RunRecord) => {
+      await runStore.markStatus(candidate.runId, 'failed', 'background_task_interrupted_no_replay', {
+        wakeState: 'pending',
+      });
+    });
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-new',
+      autoWake: true,
+      wake,
+      failInterruptedBackgroundTask: failInterrupted,
+    });
+
+    await scheduler.tick();
+    await scheduler.stop();
+
+    expect(failInterrupted).toHaveBeenCalledOnce();
+    expect(wake).not.toHaveBeenCalled();
+    await expect(runStore.get('bg-crashed')).resolves.toMatchObject({
+      status: 'failed',
+      statusReason: 'background_task_interrupted_no_replay',
+      metadata: { wakeState: 'pending' },
+    });
+  });
+
+  it('freezes a pending background task when a pre-wake tenant/billing gate rejects it', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    await runStore.upsertPending({
+      runId: 'bg-blocked',
+      sessionId: 'sub-bg-blocked',
+      metadata: { backgroundTask: true, wakeState: 'none' },
+    });
+    const failBackground = vi.fn(async (candidate: RunRecord, message: string) => {
+      await runStore.markStatus(candidate.runId, 'failed', 'background_task_start_failed', {
+        wakeState: 'pending',
+        backgroundResult: { status: 'failed', text: '', errorMessage: message },
+      });
+    });
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      autoWake: true,
+      wake: async () => { throw new Error('组织积分余额不足'); },
+      failBackgroundTask: failBackground,
+    });
+
+    await scheduler.tick();
+    await scheduler.stop();
+
+    expect(failBackground).toHaveBeenCalledWith(expect.objectContaining({ runId: 'bg-blocked' }), '组织积分余额不足');
+    await expect(runStore.get('bg-blocked')).resolves.toMatchObject({
+      status: 'failed',
+      metadata: { wakeState: 'pending' },
+    });
+  });
+
+  it('prioritizes normal runs and limits background execution to reserved slots', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    await runStore.upsertPending({ runId: 'bg-1', sessionId: 'sub-1', metadata: { backgroundTask: true } });
+    await runStore.upsertPending({ runId: 'bg-2', sessionId: 'sub-2', metadata: { backgroundTask: true } });
+    await runStore.upsertPending({ runId: 'bg-3', sessionId: 'sub-3', metadata: { backgroundTask: true } });
+    await runStore.upsertPending({ runId: 'normal-1', sessionId: 'session-1' });
+    await runStore.upsertPending({ runId: 'normal-2', sessionId: 'session-2' });
+    const gate = deferred();
+    const started: string[] = [];
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      autoWake: true,
+      maxConcurrentRuns: 4,
+      maxConcurrentBackgroundRuns: 2,
+      wake: async (candidate, lease) => {
+        started.push(candidate.runId);
+        await gate.promise;
+        await lease.release('completed');
+      },
+    });
+
+    await scheduler.tick();
+    await flushSchedulerMicrotasks();
+    expect(started).toHaveLength(4);
+    expect(started).toEqual(expect.arrayContaining(['normal-1', 'normal-2']));
+    expect(started.filter((runId) => runId.startsWith('bg-'))).toHaveLength(2);
+
+    gate.resolve();
+    await scheduler.stop();
   });
 
   // P0-1 回归：pgRunStore.acquireLease 原子 CAS 互斥（核实-runtime-cron并发.md 闭合层 1）。

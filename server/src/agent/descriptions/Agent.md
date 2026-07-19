@@ -1,6 +1,9 @@
 派生一个子 agent 自主完成一个自包含任务，并返回精炼报告。
 何时用：需要 fan-out 调研多个独立方向、隔离高噪音探索（大量文件搜索/网页抓取不污染主上下文）、
 或多个互不依赖的子任务可以并行推进时。同一轮消息里发出的多个 Agent 调用会并行执行。
+mode 默认 foreground：当前轮等待子 agent 完成，最终报告直接作为工具结果返回。
+mode=background：任务持久化入队后立即返回 taskId，适合耗时长且主对话无需等待的独立任务；
+任务完成、失败或取消后会自动唤醒当前会话继续处理，通常不要轮询。
 何时不用（先自问：这个收益能否用一次普通工具调用或第二次模型调用拿到？）：
 单点查询、读一个已知文件、快改一行代码、需要中途向用户提问或申请审批的任务——这些直接自己做。
 Never delegate understanding：不要把「理解问题本身」外包给子 agent；你必须自己消化它的报告并对最终结论负责。
@@ -12,4 +15,5 @@ prompt 必须完全自包含：子 agent 看不到本对话的任何历史，所
 agent_type 可选 {{AGENT_TYPES}}。
 限额：单次运行最多派生 {{PER_RUN_TOTAL}} 个子 agent、同时并行 {{PER_RUN_CONCURRENCY}} 个；
 每个子 agent 最多 {{MAX_TURNS}} 轮、硬超时 {{TIMEOUT_MINUTES}} 分钟，超限自动终止并返回 status。
-子 agent 与你共享同一工作目录；其内部过程不进入本对话，只有最终报告作为工具结果返回。
+子 agent 与你共享同一工作目录；其内部过程不进入本对话。前台模式把最终报告作为工具结果返回，后台模式在终态后注入完成通知。
+后台模式下可用 BackgroundTaskList / BackgroundTaskStatus 核对状态，用 BackgroundTaskCancel 取消任务。

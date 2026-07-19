@@ -1094,6 +1094,8 @@ const runtimeSchedulerConfigSchema = z.object({
   leaseMs: z.number().int().positive().optional(),
   renewIntervalMs: z.number().int().positive().optional(),
   maxConcurrentRuns: z.number().int().positive().optional(),
+  /** 后台 Agent 并发槽；默认 2，保留普通交互容量。 */
+  maxConcurrentBackgroundRuns: z.number().int().positive().optional(),
   /** waiting_approval 超过该时间自动 rejected + cancelled。默认 24h；设 0 关闭。 */
   approvalTimeoutMs: z.number().int().nonnegative().optional(),
 });

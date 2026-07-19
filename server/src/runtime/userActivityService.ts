@@ -17,6 +17,7 @@
  */
 
 import { isMemoryPollSessionMeta } from '../data/sessions/access.js';
+import { isPureTaskNotification } from '../data/transcripts/parse.js';
 import type {
   RuntimeSessionListQuery,
   RuntimeSessionListResult,
@@ -185,6 +186,7 @@ export class UserActivityService {
         if (Number.isFinite(untilMs) && Number.isFinite(eventMs) && eventMs > untilMs) continue;
         const content = (event.content ?? '').trim();
         if (!content) continue;
+        if (isPureTaskNotification(content)) continue;
         const clipped = content.length > maxCharsPerMessage
           ? `${content.slice(0, maxCharsPerMessage)}...[截断]`
           : content;

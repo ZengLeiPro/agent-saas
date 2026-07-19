@@ -64,6 +64,8 @@ const agentToolSchema = z.object({
     .describe('可选，覆盖模型 ref（必须是本租户允许的模型）。省略则继承父模型。'),
   include_company_info: z.boolean().optional().default(false)
     .describe('仅 general 有效：把租户公司信息注入子 agent 的系统提示词。'),
+  mode: z.enum(['foreground', 'background']).optional().default('foreground')
+    .describe('foreground = 等待子 Agent 完成并返回结果；background = 持久化后台执行，立即返回 taskId，完成后自动唤醒当前会话。'),
 });
 
 export type AgentToolInput = z.infer<typeof agentToolSchema>;
@@ -115,6 +117,31 @@ export class AgentToolProvider implements ToolProvider {
       throw new Error(`未知的 agent_type: ${input.agent_type}（可用：${Object.keys(SUBAGENT_TYPES).join(' / ')}）`);
     }
     const toolCallId = context.toolCallId ?? `agent-${randomUUID()}`;
+
+    if (input.mode === 'background') {
+      if (!this.options.config.backgroundTasks) {
+        throw new Error('当前运行后端未启用 durable background Agent。');
+      }
+      const started = await this.options.config.backgroundTasks.enqueue(
+        { ...context, toolCallId },
+        {
+          description: input.description,
+          prompt: input.prompt,
+          agentType: agentType.id,
+          ...(input.model ? { model: input.model } : {}),
+          includeCompanyInfo: input.include_company_info === true,
+        },
+      );
+      return {
+        content: JSON.stringify({
+          taskId: started.taskId,
+          status: started.status,
+          description: started.description,
+          model: started.model,
+          message: '后台 Agent 已持久化入队；无需轮询，完成后会自动唤醒当前会话。',
+        }),
+      };
+    }
 
     // 父 session event store：durable subagent_started/finished 的落点。
     // 解析失败（file backend 测试 fixture 等）不阻断执行，只丢观测事件。

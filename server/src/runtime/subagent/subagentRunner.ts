@@ -79,6 +79,9 @@ export const SUBAGENT_DENIED_TOOL_NAMES: ReadonlySet<string> = new Set([
   'CronList',
   'CronManage',
   'UpdateCompanyInfo',
+  'BackgroundTaskList',
+  'BackgroundTaskStatus',
+  'BackgroundTaskCancel',
 ]);
 
 export type SubagentStatus = 'completed' | 'failed' | 'cancelled' | 'timeout';

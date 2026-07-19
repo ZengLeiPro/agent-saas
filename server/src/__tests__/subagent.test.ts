@@ -405,11 +405,19 @@ describe('runSubagent', () => {
     expect(outcome.text).toBe('');
   });
 
-  it('工具剥夺清单：general 拿全量减 Agent/AskUserQuestion/Cron*/UpdateCompanyInfo', async () => {
+  it('工具剥夺清单：general 拿全量减嵌套/交互/排程/后台治理工具', async () => {
     const fixture = await makeFixture({ cleanupDirs });
     // 父 provider 集里刻意混入被剥夺名字（模拟嵌套/排程/强审批工具在父侧存在）
     const deniedNamesProvider: ToolProvider = {
-      list: () => ['Agent', 'CronManage', 'CronList', 'UpdateCompanyInfo'].map((name) => ({
+      list: () => [
+        'Agent',
+        'CronManage',
+        'CronList',
+        'UpdateCompanyInfo',
+        'BackgroundTaskList',
+        'BackgroundTaskStatus',
+        'BackgroundTaskCancel',
+      ].map((name) => ({
         id: name,
         name,
         displayName: name,
@@ -434,7 +442,16 @@ describe('runSubagent', () => {
     expect(toolNames).toContain('TodoWrite');
     expect(toolNames).toContain('Read');
     expect(toolNames).toContain('Write');
-    for (const denied of ['Agent', 'AskUserQuestion', 'CronManage', 'CronList', 'UpdateCompanyInfo']) {
+    for (const denied of [
+      'Agent',
+      'AskUserQuestion',
+      'CronManage',
+      'CronList',
+      'UpdateCompanyInfo',
+      'BackgroundTaskList',
+      'BackgroundTaskStatus',
+      'BackgroundTaskCancel',
+    ]) {
       expect(toolNames).not.toContain(denied);
     }
   });
@@ -556,6 +573,37 @@ describe('AgentToolProvider', () => {
       childSessionId: outcome.childSessionId,
       resultPreview: '结论文本',
     });
+  });
+
+  it('mode=background 持久化入队后立即返回 taskId，不启动前台子 loop', async () => {
+    const fixture = await makeFixture({ cleanupDirs });
+    const enqueue = vi.fn().mockResolvedValue({
+      taskId: 'bg-task-1',
+      status: 'pending',
+      description: '长时调研',
+      model: 'mock-model',
+    });
+    fixture.config.backgroundTasks = { enqueue } as any;
+    const foreground = vi.fn();
+    const provider = makeProvider(fixture, { impl: foreground as typeof runSubagent });
+
+    const result = await provider.invoke(
+      {
+        toolId: 'Agent',
+        input: { description: '长时调研', prompt: '完整完成这项任务', mode: 'background', agent_type: 'explore' },
+        authorization: { approved: true, source: 'policy_auto' },
+      },
+      fixture.parentContext,
+    );
+
+    expect(JSON.parse(result!.content)).toMatchObject({ taskId: 'bg-task-1', status: 'pending' });
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ toolCallId: 'call_agent_1' }),
+      expect.objectContaining({ description: '长时调研', agentType: 'explore' }),
+    );
+    expect(foreground).not.toHaveBeenCalled();
+    const parentEvents = await fixture.parentEventStore.list(fixture.parentSessionId);
+    expect(parentEvents.filter((event) => event.type.startsWith('subagent_'))).toEqual([]);
   });
 
   it('截断保险丝 + spill：超长输出按行 75/25 截断，全文落 assets/subagents/<childRunId>.md', async () => {

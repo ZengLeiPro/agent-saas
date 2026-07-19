@@ -139,6 +139,8 @@ import { deriveStableWorkspaceId } from './workspaceIdentity.js';
 // 注意：subagent/agentToolProvider.js 反向 import 本文件的装配小件（ESM 循环依赖，
 // 仅函数级引用、无模块求值期访问，安全）。
 import { AgentToolProvider } from './subagent/agentToolProvider.js';
+import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.js';
+import { BackgroundTaskToolProvider } from './background/backgroundTaskToolProvider.js';
 
 export interface ServerRemoteDispatchConfig {
   baseUrl: string;
@@ -271,6 +273,8 @@ export interface RawRuntimeRunDispatchConfig {
    * tokenUsageStore 在 app/runtime.ts 中晚于 dispatch config 实例化，必须走惰性闭包。
    */
   tokenUsageStore?: () => TokenUsageStore | undefined;
+  /** PG durable 后台 Agent；file backend 缺省时 Agent(mode=background) fail-closed。 */
+  backgroundTasks?: BackgroundTaskRuntime;
   /** 当前模型不支持 image 输入时使用的独立图片理解模型链。 */
   getImageUnderstandingModelConfigs?: () => readonly ImageUnderstandingModelConfig[];
   /** 图片理解模型单次尝试超时；默认 30 秒。 */
@@ -1125,7 +1129,7 @@ interface SubagentToolingDeps {
  * 收集本次 dispatch 用到的所有 tool providers + buildInstructions 入参。
  * 两条 dispatch（首跑 / approval resume）共用同一构造，保证 instructions 一致。
  */
-async function collectRuntimeTooling(
+export async function collectRuntimeTooling(
   config: RawRuntimeRunDispatchConfig,
   username: string | undefined,
   skillFilter: RuntimeSkillFilter = allowAllRuntimeSkills,
@@ -1206,6 +1210,12 @@ async function collectRuntimeTooling(
       // MCP 预热失败只影响本轮 MCP tool schema，不阻断主路径。
     }
     providers.push(mcpProvider);
+  }
+
+  // 6.5 durable 后台任务查询/取消。只在 PG background runtime 已装配时暴露；
+  // 子 agent runner 会通过无条件剥夺清单再次移除，禁止后台任务嵌套治理。
+  if (config.backgroundTasks && isToolEnabled(config.toolControls, 'Agent')) {
+    providers.push(new BackgroundTaskToolProvider(config.backgroundTasks));
   }
 
   // 7. Agent 工具（子 agent 委派，2026-07-06）。必须最后 push：parentProviders 快照
@@ -2619,6 +2629,13 @@ export async function wakeRuntimeSession(
   const session = await sessionCatalog.get(run.sessionId);
   if (!session) {
     throw new Error(`wake context restore failed: session metadata not found for ${run.sessionId}`);
+  }
+  // durable 后台 Agent 有自己的子 loop 装配与无重放语义，不能落入普通主会话 wake。
+  // 只有 pending 首跑会走 execute；expired running 由 scheduler.failInterrupted 先冻结。
+  if (run.metadata?.backgroundTask === true) {
+    if (!config.backgroundTasks) throw new Error('background task runtime is not configured');
+    await config.backgroundTasks.execute(run, options.lease);
+    return;
   }
   // 子 agent run 守卫（2026-07-06）：MVP 是父死子亡语义，子 run 绝不允许 scheduler
   // 恢复重放（重放 = 双份模型执行 + 双份计费）。正常路径下 subagentRunner 持有

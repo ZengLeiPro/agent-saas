@@ -40,6 +40,7 @@ import {
 import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
 import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from '../runtime/toolInvocationCancelDelivery.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
+import { DurableBackgroundTaskService } from '../runtime/background/backgroundTaskService.js';
 import { AutoCompactionService } from '../runtime/autoCompaction.js';
 import { runtimeRunController } from '../runtime/runController.js';
 import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
@@ -1670,6 +1671,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ? 'Memory index service hot-swapped for subsequent runs'
       : 'Memory index service disabled for subsequent runs');
   };
+  if (pgRunStore) {
+    rawRuntimeConfig.backgroundTasks = new DurableBackgroundTaskService(rawRuntimeConfig);
+  }
   const baseRunDispatch = createRawRuntimeRunDispatch(rawRuntimeConfig);
   const resumeApprovalDispatch = createRawApprovalResumeDispatch(rawRuntimeConfig);
 
@@ -1682,12 +1686,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       pollIntervalMs: config.runtimeScheduler?.pollIntervalMs,
       leaseMs: config.runtimeScheduler?.leaseMs,
       maxConcurrentRuns: config.runtimeScheduler?.maxConcurrentRuns,
+      maxConcurrentBackgroundRuns: config.runtimeScheduler?.maxConcurrentBackgroundRuns,
       approvalTimeoutMs: config.runtimeScheduler?.approvalTimeoutMs,
+      beforeTick: () => rawRuntimeConfig.backgroundTasks!.reconcileWakeDeliveries(),
+      failInterruptedBackgroundTask: (record) => rawRuntimeConfig.backgroundTasks!.failInterrupted(record),
+      failBackgroundTask: (record, message) => rawRuntimeConfig.backgroundTasks!.fail(record, message),
       wake: async (record, lease) => {
         const tenantId = record.tenantId ?? (record.userId ? userStore?.findById(record.userId)?.tenantId : undefined);
         const tenantAccessError = tenantAccessErrorMessage(tenantStore, tenantId);
         if (tenantAccessError) throw new Error(tenantAccessError);
-        if (tenantId && billingService) {
+        // 后台任务完成 wake 是已获准任务的终态交付，不是新任务派生；若任务执行期间
+        // 恰好触达 hard cap，仍允许这一轮把结果送回父会话（用量照常记账）。
+        if (tenantId && billingService && record.metadata?.backgroundTaskWake !== true) {
           const allowed = await billingService.assertTenantCanStartRun(tenantId);
           if (!allowed.ok) throw new Error(allowed.reason);
         }

@@ -175,7 +175,7 @@ export function stripTaskNotification(text: string): string {
  * 判断用户消息是否为纯 task-notification（没有实际用户文本）。
  * 通知可能带时间戳前缀或 memory-context，剥离后仅剩通知则判为纯通知。
  */
-function isPureTaskNotification(text: string): boolean {
+export function isPureTaskNotification(text: string): boolean {
   if (!text.includes("<task-notification>")) return false;
   const remaining = stripTaskNotification(
     stripTimestampPrefix(stripMemoryContext(text.trim()))
@@ -395,7 +395,13 @@ async function parseTranscriptFileUncached(
             }
             if (isPureTaskNotification(text)) {
               const notif = parseTaskNotification(text);
-              const statusLabel = notif.status === 'failed' ? '失败' : notif.status === 'completed' ? '完成' : notif.status || '未知';
+              const statusLabel = notif.status === 'failed'
+                ? '失败'
+                : notif.status === 'completed'
+                  ? '完成'
+                  : notif.status === 'cancelled'
+                    ? '已取消'
+                    : notif.status || '未知';
               blocks.push({
                 id: `line-${lines}-user-${idx}`,
                 tsMs,
@@ -405,7 +411,7 @@ async function parseTranscriptFileUncached(
                 content: JSON.stringify({ description: notif.summary, status: notif.status }, null, 2),
                 toolName: "BackgroundTask",
                 toolId: notif.toolUseId || `bg-task-${lines}-${idx}`,
-                isError: notif.status === 'failed',
+                isError: notif.status === 'failed' || notif.status === 'cancelled',
               });
               continue;
             }
@@ -451,7 +457,13 @@ async function parseTranscriptFileUncached(
         }
         if (isPureTaskNotification(text)) {
           const notif = parseTaskNotification(text);
-          const statusLabel = notif.status === 'failed' ? '失败' : notif.status === 'completed' ? '完成' : notif.status || '未知';
+          const statusLabel = notif.status === 'failed'
+            ? '失败'
+            : notif.status === 'completed'
+              ? '完成'
+              : notif.status === 'cancelled'
+                ? '已取消'
+                : notif.status || '未知';
           blocks.push({
             id: `line-${lines}-user`,
             tsMs,
@@ -461,7 +473,7 @@ async function parseTranscriptFileUncached(
             content: JSON.stringify({ description: notif.summary, status: notif.status }, null, 2),
             toolName: "BackgroundTask",
             toolId: notif.toolUseId || `bg-task-${lines}`,
-            isError: notif.status === 'failed',
+            isError: notif.status === 'failed' || notif.status === 'cancelled',
           });
           continue;
         }

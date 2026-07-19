@@ -74,6 +74,28 @@ export interface UpsertRunInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface EnqueueBackgroundTaskLimits {
+  /** 单个父 run 最多派生多少个后台任务（含已完成）。 */
+  perParentTotal: number;
+  /** 单个父 run 同时处于 pending/running 的后台任务上限。 */
+  perParentActive: number;
+  /** 单租户同时处于 pending/running 的后台任务上限。 */
+  perTenantActive: number;
+}
+
+export interface ListBackgroundTasksOptions {
+  userId?: string;
+  tenantId?: string;
+  limit?: number;
+}
+
+export class BackgroundTaskLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BackgroundTaskLimitError';
+  }
+}
+
 /**
  * Responses API session state patch（RFC v1 P0.4 / P1.6）
  * lastResponseExpireAt 传 ISO timestamp 或 epoch ms；cumulativeInputTokensDelta 是增量。
@@ -120,6 +142,23 @@ export interface RunStore {
   getActiveCounts?(): Promise<ActiveRunCounts>;
   listBySession?(sessionId: string, options?: { limit?: number; beforeUpdatedAt?: string }): Promise<RunRecord[]>;
   listRecoverable(now?: Date): Promise<RunRecord[]>;
+  /**
+   * 原子校验后台任务配额并入队。PG 实现用事务级 advisory lock 串行化配额读取与写入；
+   * file backend 不实现，Agent(mode=background) 会 fail-closed。
+   */
+  enqueueBackgroundTask?(input: UpsertRunInput, limits: EnqueueBackgroundTaskLimits): Promise<RunRecord>;
+  listBackgroundTasks?(parentSessionId: string, options?: ListBackgroundTasksOptions): Promise<RunRecord[]>;
+  /** 终态且完成通知仍待投递（或 delivering 超时）的后台任务。 */
+  listPendingBackgroundTaskWakes?(staleBefore: Date, limit?: number): Promise<RunRecord[]>;
+  /** CAS 抢占一条完成通知；返回 null 表示已被其他 brain 抢走。 */
+  claimBackgroundTaskWake?(runId: string, claimToken: string, staleBefore: Date): Promise<RunRecord | null>;
+  /** CAS 完成通知投递，claimToken 不匹配时拒绝覆盖。 */
+  finishBackgroundTaskWake?(
+    runId: string,
+    claimToken: string,
+    state: 'pending' | 'queued' | 'discarded',
+    metadataPatch?: Record<string, unknown>,
+  ): Promise<RunRecord | null>;
   listStaleWaitingApproval?(cutoff: Date, limit?: number): Promise<RunRecord[]>;
   cancelStaleWaitingApproval?(runId: string, cutoff: Date, reason: string, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null>;
   acquireLease?(runId: string, workerId: string, leaseMs: number, now?: Date): Promise<RunRecord | null>;
@@ -217,6 +256,9 @@ export class PgRunStore implements RunStore {
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_sandbox_scope_idx ON ${this.runsTable} (sandbox_scope_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_status_idx ON ${this.runsTable} (status, updated_at)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_session_idx ON ${this.runsTable} (session_id, updated_at DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_background_parent_session_idx ON ${this.runsTable} ((metadata->>'parentSessionId'), requested_at DESC) WHERE metadata->>'backgroundTask' = 'true'`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_background_parent_run_idx ON ${this.runsTable} ((metadata->>'parentRunId'), status) WHERE metadata->>'backgroundTask' = 'true'`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_background_tenant_status_idx ON ${this.runsTable} (tenant_id, status, updated_at) WHERE metadata->>'backgroundTask' = 'true'`);
       // RFC v1 P0.4：按 sessionId 找最近完成 run 的 last_response_id（跨 run 接力查询路径）
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_session_last_response_idx ON ${this.runsTable} (session_id, updated_at DESC) WHERE last_response_id IS NOT NULL`);
       await client.query(`DROP INDEX IF EXISTS ${this.runsTable}_active_idempotency_idx`);
@@ -251,6 +293,177 @@ export class PgRunStore implements RunStore {
       RETURNING row_to_json(${this.runsTable}.*) AS row_json
     `, [input.runId, input.sessionId, input.userId ?? null, input.tenantId ?? null, input.model ?? null, input.channel ?? null, now, input.idempotencyKey ?? null, input.executionTarget ?? null, input.workspaceId ?? null, input.sandboxScopeId ?? null, JSON.stringify(input.metadata ?? {})]);
     return normalizeRunRecord(result.rows[0]!.row_json);
+  }
+
+  async enqueueBackgroundTask(
+    input: UpsertRunInput,
+    limits: EnqueueBackgroundTaskLimits,
+  ): Promise<RunRecord> {
+    const parentRunId = stringMetadata(input.metadata, 'parentRunId');
+    const parentSessionId = stringMetadata(input.metadata, 'parentSessionId');
+    if (!parentRunId || !parentSessionId || input.metadata?.backgroundTask !== true) {
+      throw new Error('enqueueBackgroundTask requires backgroundTask/parentRunId/parentSessionId metadata');
+    }
+    const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // 后台任务创建频率低，用单一事务锁换取多 brain 下明确的硬配额语义。
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${this.runsTable}:background-task-quota`]);
+      const counts = await client.query<{
+        parent_total: string | number;
+        parent_active: string | number;
+        tenant_active: string | number;
+      }>(`
+        SELECT
+          COUNT(*) FILTER (WHERE metadata->>'parentRunId' = $1) AS parent_total,
+          COUNT(*) FILTER (
+            WHERE metadata->>'parentRunId' = $1
+              AND status IN ('pending','running')
+          ) AS parent_active,
+          COUNT(*) FILTER (
+            WHERE tenant_id = $2
+              AND status IN ('pending','running')
+          ) AS tenant_active
+        FROM ${this.runsTable}
+        WHERE metadata->>'backgroundTask' = 'true'
+      `, [parentRunId, tenantId]);
+      const row = counts.rows[0];
+      const parentTotal = parseCount(row?.parent_total);
+      const parentActive = parseCount(row?.parent_active);
+      const tenantActive = parseCount(row?.tenant_active);
+      if (parentTotal >= limits.perParentTotal) {
+        throw new BackgroundTaskLimitError(`本次运行的后台 Agent 总数已达上限 ${limits.perParentTotal}`);
+      }
+      if (parentActive >= limits.perParentActive) {
+        throw new BackgroundTaskLimitError(`本次运行同时活跃的后台 Agent 已达上限 ${limits.perParentActive}`);
+      }
+      if (tenantActive >= limits.perTenantActive) {
+        throw new BackgroundTaskLimitError(`当前组织同时活跃的后台 Agent 已达上限 ${limits.perTenantActive}`);
+      }
+
+      const now = new Date().toISOString();
+      const result = await client.query<{ row_json: RunRecord }>(`
+        INSERT INTO ${this.runsTable}
+          (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at,
+           idempotency_key, execution_target, workspace_id, sandbox_scope_id, metadata)
+        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12::jsonb)
+        ON CONFLICT (run_id) DO NOTHING
+        RETURNING row_to_json(${this.runsTable}.*) AS row_json
+      `, [
+        input.runId,
+        input.sessionId,
+        input.userId ?? null,
+        tenantId,
+        input.model ?? null,
+        input.channel ?? null,
+        now,
+        input.idempotencyKey ?? null,
+        input.executionTarget ?? null,
+        input.workspaceId ?? null,
+        input.sandboxScopeId ?? null,
+        JSON.stringify(input.metadata ?? {}),
+      ]);
+      if (!result.rows[0]) throw new Error(`background task run already exists: ${input.runId}`);
+      await client.query('COMMIT');
+      return normalizeRunRecord(result.rows[0].row_json);
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listBackgroundTasks(
+    parentSessionId: string,
+    options: ListBackgroundTasksOptions = {},
+  ): Promise<RunRecord[]> {
+    const limit = Math.min(Math.max(Math.floor(options.limit ?? 20), 1), 100);
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      SELECT row_to_json(${this.runsTable}.*) AS row_json
+      FROM ${this.runsTable}
+      WHERE metadata->>'backgroundTask' = 'true'
+        AND metadata->>'parentSessionId' = $1
+        AND ($2::text IS NULL OR user_id = $2)
+        AND ($3::text IS NULL OR tenant_id = $3)
+      ORDER BY requested_at DESC
+      LIMIT $4
+    `, [parentSessionId, options.userId ?? null, options.tenantId ?? null, limit]);
+    return result.rows.map((entry) => normalizeRunRecord(entry.row_json));
+  }
+
+  async listPendingBackgroundTaskWakes(staleBefore: Date, limit = 50): Promise<RunRecord[]> {
+    const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 500);
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      SELECT row_to_json(${this.runsTable}.*) AS row_json
+      FROM ${this.runsTable}
+      WHERE metadata->>'backgroundTask' = 'true'
+        AND status IN ('completed','failed','cancelled','orphaned')
+        AND (
+          COALESCE(metadata->>'wakeState', 'pending') = 'pending'
+          OR (
+            metadata->>'wakeState' = 'delivering'
+            AND COALESCE((metadata->>'wakeClaimedAt')::timestamptz, '-infinity'::timestamptz) < $1
+          )
+        )
+      ORDER BY updated_at ASC
+      LIMIT $2
+    `, [staleBefore.toISOString(), boundedLimit]);
+    return result.rows.map((entry) => normalizeRunRecord(entry.row_json));
+  }
+
+  async claimBackgroundTaskWake(
+    runId: string,
+    claimToken: string,
+    staleBefore: Date,
+  ): Promise<RunRecord | null> {
+    const now = new Date().toISOString();
+    const patch = JSON.stringify({ wakeState: 'delivering', wakeClaimToken: claimToken, wakeClaimedAt: now });
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      UPDATE ${this.runsTable}
+      SET metadata = metadata || $4::jsonb,
+          updated_at = $5
+      WHERE run_id = $1
+        AND length($2::text) > 0
+        AND metadata->>'backgroundTask' = 'true'
+        AND status IN ('completed','failed','cancelled','orphaned')
+        AND (
+          COALESCE(metadata->>'wakeState', 'pending') = 'pending'
+          OR (
+            metadata->>'wakeState' = 'delivering'
+            AND COALESCE((metadata->>'wakeClaimedAt')::timestamptz, '-infinity'::timestamptz) < $3
+          )
+        )
+      RETURNING row_to_json(${this.runsTable}.*) AS row_json
+    `, [runId, claimToken, staleBefore.toISOString(), patch, now]);
+    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+  }
+
+  async finishBackgroundTaskWake(
+    runId: string,
+    claimToken: string,
+    state: 'pending' | 'queued' | 'discarded',
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<RunRecord | null> {
+    const now = new Date().toISOString();
+    const patch = JSON.stringify({
+      ...metadataPatch,
+      wakeState: state,
+      wakeFinishedAt: now,
+      wakeClaimToken: null,
+    });
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      UPDATE ${this.runsTable}
+      SET metadata = metadata || $4::jsonb,
+          updated_at = $5
+      WHERE run_id = $1
+        AND metadata->>'wakeState' = 'delivering'
+        AND metadata->>'wakeClaimToken' = $2
+        AND $3::text IN ('pending','queued','discarded')
+      RETURNING row_to_json(${this.runsTable}.*) AS row_json
+    `, [runId, claimToken, state, patch, now]);
+    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 
   async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
@@ -584,6 +797,11 @@ function parseCount(value: string | number | null | undefined): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
   return 0;
+}
+
+function stringMetadata(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function normalizeRunRecord(raw: any): RunRecord {

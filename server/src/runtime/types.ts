@@ -802,6 +802,37 @@ export type PlatformEvent =
     errorMessage?: string;
     /** 子任务最终文本的短预览；完整过程仍读取 childSessionId。 */
     resultPreview?: string;
+  }
+  /** durable 后台 Agent 生命周期；只作审计/观测，不进入模型上下文投影。 */
+  | {
+    id: string;
+    timestamp: string;
+    type: 'background_task_started';
+    runId: string;
+    sessionId: string;
+    taskId: string;
+    taskSessionId: string;
+    toolCallId: string;
+    agentType: string;
+    description: string;
+    model: string;
+  }
+  | {
+    id: string;
+    timestamp: string;
+    type: 'background_task_finished';
+    runId: string;
+    sessionId: string;
+    taskId: string;
+    taskSessionId: string;
+    toolCallId: string;
+    agentType: string;
+    description: string;
+    status: 'completed' | 'failed' | 'cancelled' | 'timeout';
+    totalTokens: number;
+    durationMs: number;
+    errorMessage?: string;
+    resultPreview?: string;
   };
 
 export type PlatformEventInput = PlatformEvent extends infer Event

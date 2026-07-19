@@ -38,7 +38,7 @@ export function PlatformAdminHeaderControls({
   searchClassName?: string;
 }) {
   return (
-    <div className={cn("flex min-w-0 items-center gap-2", className)}>
+    <div className={cn("flex min-w-0 flex-col gap-2 md:flex-row md:items-center", className)}>
       <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" aria-label="平台分析分区">
         {platformAdminSections.map(item => {
           const Icon = item.icon;
@@ -58,7 +58,7 @@ export function PlatformAdminHeaderControls({
           );
         })}
       </nav>
-      <div className={cn("w-[min(34vw,30rem)] min-w-[260px] shrink-0", searchClassName)}>
+      <div className={cn("w-full shrink-0 md:w-[min(34vw,30rem)] md:min-w-[260px]", searchClassName)}>
         <PlatformAdminSearch />
       </div>
     </div>

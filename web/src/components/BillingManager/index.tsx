@@ -636,7 +636,7 @@ export function PlatformBillingManager() {
         actions={
           <>
             <Select value={selectedTenantId} onValueChange={setSelectedTenantId} disabled={tenantsLoading || tenants.length === 0}>
-              <SelectTrigger className="w-[240px]">
+              <SelectTrigger className="w-[240px] max-w-full">
                 <SelectValue placeholder={tenantsLoading ? "加载组织中" : "选择组织"} />
               </SelectTrigger>
               <SelectContent>

@@ -33,13 +33,13 @@ export function SettingsPanelHeader({
       className={cn(
         "flex items-center justify-between gap-3",
         sticky
-          ? "mb-6 shrink-0 pr-10"
-          : "mb-6 pr-10",
+          ? "mb-4 shrink-0 md:mb-6 md:pr-10"
+          : "mb-4 md:mb-6 md:pr-10",
         className,
       )}
     >
       <div className="flex min-w-0 items-center gap-1.5">
-        <h2 className="truncate text-2xl font-semibold tracking-tight">{title}</h2>
+        <h2 className="truncate text-xl font-semibold tracking-tight md:text-2xl">{title}</h2>
         {description ? <DescriptionTip description={description} /> : null}
       </div>
       {actions ? (

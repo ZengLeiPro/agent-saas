@@ -2,6 +2,7 @@ import { apiUrl, resolveApiAssetUrl } from "../../lib/apiBase";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, Suspense, type ReactNode } from "react";
 import {
   Brain,
+  ChevronLeft,
   Clock,
   Lock,
   Loader2,
@@ -758,6 +759,12 @@ export function SettingsModal({
     startSectionTransition(() => onSectionChange(id));
   }, [onSectionChange]);
 
+  // 移动端（<md）两级导航：菜单页 ⇄ 内容页。桌面不受影响（max-md 类不生效）。
+  const [mobileView, setMobileView] = useState<"menu" | "content">("menu");
+  useEffect(() => {
+    if (open) setMobileView("menu");
+  }, [open]);
+
   const visibleSections = useMemo(
     () => SETTINGS_SECTIONS.filter((item) => {
       if (!canAccess(item, isAdmin, isPlatformAdmin)) return false;
@@ -919,17 +926,20 @@ export function SettingsModal({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-8 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="设置" onClick={onClose}>
-      <div className="flex h-[min(920px,calc(100vh-96px))] w-[min(1184px,calc(100vw-64px))] overflow-hidden rounded-3xl border bg-background shadow-2xl" onClick={(event) => event.stopPropagation()}>
-        <aside className="flex w-40 shrink-0 flex-col border-r bg-muted/20 p-3">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-sm md:p-8" role="dialog" aria-modal="true" aria-label="设置" onClick={onClose}>
+      <div className="flex h-full w-full overflow-hidden bg-background pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl md:h-[min(920px,calc(100vh-96px))] md:w-[min(1184px,calc(100vw-64px))] md:rounded-3xl md:border md:pb-0 md:pt-0" onClick={(event) => event.stopPropagation()}>
+        <aside className={cn("flex w-full shrink-0 flex-col bg-muted/20 p-3 md:w-40 md:border-r", mobileView === "content" && "max-md:hidden")}>
           <div className="mb-4 flex items-center gap-2.5 px-1">
             <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-600 text-sm font-semibold text-white">
               {user?.avatar ? <img src={resolveApiAssetUrl(user.avatar)} alt="" className="h-full w-full object-cover" /> : initials(user?.realName || user?.username)}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-semibold">{user?.realName || user?.username || "未登录"}</div>
               <div className="truncate text-xs text-muted-foreground">个人</div>
             </div>
+            <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground md:hidden" onClick={onClose} aria-label="关闭设置">
+              <X className="size-5" />
+            </button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto pr-1">
             {grouped.map(group => (
@@ -947,7 +957,7 @@ export function SettingsModal({
                           "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors",
                           active ? SETTINGS_NAV_ITEM_SELECTED : SETTINGS_NAV_ITEM_UNSELECTED,
                         )}
-                        onClick={() => handleSectionChange(item.id)}
+                        onClick={() => { handleSectionChange(item.id); setMobileView("content"); }}
                       >
                         <Icon className="size-4 shrink-0" />
                         <span className="truncate">{item.label}</span>
@@ -965,11 +975,22 @@ export function SettingsModal({
             </button>
           </div>
         </aside>
-        <main className="relative flex min-w-0 flex-1 flex-col">
-          <button type="button" className="absolute right-5 top-5 z-30 rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClose} aria-label="关闭设置">
+        <main className={cn("relative flex min-w-0 flex-1 flex-col", mobileView === "menu" && "max-md:hidden")}>
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b px-2 py-2 md:hidden">
+            <div className="flex min-w-0 items-center gap-1">
+              <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setMobileView("menu")} aria-label="返回设置菜单">
+                <ChevronLeft className="size-5" />
+              </button>
+              <span className="truncate text-sm font-semibold">{activeConfig.label}</span>
+            </div>
+            <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClose} aria-label="关闭设置">
+              <X className="size-5" />
+            </button>
+          </div>
+          <button type="button" className="absolute right-5 top-5 z-30 rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground max-md:hidden" onClick={onClose} aria-label="关闭设置">
             <X className="size-5" />
           </button>
-          <div className="min-h-0 flex-1 overflow-hidden p-8 pb-4 pt-5">
+          <div className="min-h-0 flex-1 overflow-hidden p-4 pb-2 pt-3 md:p-8 md:pb-4 md:pt-5">
             <SettingsPanelHeaderStickyProvider>
               {content}
             </SettingsPanelHeaderStickyProvider>

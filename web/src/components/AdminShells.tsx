@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Loader2, RefreshCw, X, type LucideIcon } from "lucide-react";
+import { ChevronLeft, Loader2, RefreshCw, X, type LucideIcon } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -94,13 +94,23 @@ function AdminSettingsModal<T extends string>({
   headerControl?: ReactNode;
   children: ReactNode;
 }) {
+  // 移动端（<md）两级导航：菜单页 ⇄ 内容页。桌面不受影响（max-md 类不生效）。
+  const [mobileView, setMobileView] = useState<"menu" | "content">("menu");
+  useEffect(() => {
+    if (open) setMobileView("menu");
+  }, [open]);
   if (!open) return null;
   const activeItem = sections.find(item => item.id === active) ?? sections[0];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-8 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
-      <div className="flex h-[min(920px,calc(100vh-96px))] w-[min(1184px,calc(100vw-64px))] overflow-hidden rounded-3xl border bg-background shadow-2xl" onClick={(event) => event.stopPropagation()}>
-        <aside className="flex w-40 shrink-0 flex-col border-r bg-muted/20 p-3">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-sm md:p-8" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
+      <div className="flex h-full w-full overflow-hidden bg-background pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl md:h-[min(920px,calc(100vh-96px))] md:w-[min(1184px,calc(100vw-64px))] md:rounded-3xl md:border md:pb-0 md:pt-0" onClick={(event) => event.stopPropagation()}>
+        <aside className={cn("flex w-full shrink-0 flex-col bg-muted/20 p-3 md:w-40 md:border-r", mobileView === "content" && "max-md:hidden")}>
+          <div className="mb-1 flex justify-end md:hidden">
+            <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClose} aria-label={`关闭${title}`}>
+              <X className="size-5" />
+            </button>
+          </div>
           <div className="mb-4 px-1">
             <div className="flex items-center gap-2">
               <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white">
@@ -128,7 +138,7 @@ function AdminSettingsModal<T extends string>({
                       "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors",
                       selected ? SETTINGS_NAV_ITEM_SELECTED : SETTINGS_NAV_ITEM_UNSELECTED,
                     )}
-                    onClick={() => onActiveChange(item.id)}
+                    onClick={() => { onActiveChange(item.id); setMobileView("content"); }}
                   >
                     <Icon className="size-4 shrink-0" />
                     <span className="truncate">{item.label}</span>
@@ -138,11 +148,22 @@ function AdminSettingsModal<T extends string>({
             </div>
           </div>
         </aside>
-        <main className="relative flex min-w-0 flex-1 flex-col">
-          <button type="button" className="absolute right-5 top-5 z-30 rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClose} aria-label={`关闭${title}`}>
+        <main className={cn("relative flex min-w-0 flex-1 flex-col", mobileView === "menu" && "max-md:hidden")}>
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b px-2 py-2 md:hidden">
+            <div className="flex min-w-0 items-center gap-1">
+              <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setMobileView("menu")} aria-label="返回设置菜单">
+                <ChevronLeft className="size-5" />
+              </button>
+              <span className="truncate text-sm font-semibold">{activeItem.label}</span>
+            </div>
+            <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClose} aria-label={`关闭${title}`}>
+              <X className="size-5" />
+            </button>
+          </div>
+          <button type="button" className="absolute right-5 top-5 z-30 rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground max-md:hidden" onClick={onClose} aria-label={`关闭${title}`}>
             <X className="size-5" />
           </button>
-          <div className="min-h-0 flex-1 overflow-hidden p-8 pt-5">
+          <div className="min-h-0 flex-1 overflow-hidden p-4 pt-3 md:p-8 md:pt-5">
             <SettingsPanelHeaderStickyProvider>
               {children}
             </SettingsPanelHeaderStickyProvider>
@@ -651,7 +672,7 @@ function AuditEventsPanel({
         <CardHeader>
           <CardTitle className="text-base">筛选条件</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-7">
+        <CardContent className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-7">
           <div className="space-y-1.5">
             <Label>事件类别</Label>
             <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={category} onChange={event => setCategory(event.target.value)}>
@@ -904,7 +925,6 @@ export function TenantAdminShell({
           <TenantAdminHeaderControls
             active={active}
             onActiveChange={setActive}
-            className="min-w-[360px]"
           />
         </div>
       )}
@@ -1035,8 +1055,8 @@ export function PlatformAdminShell({
           <PlatformAdminHeaderControls
             active={activeSection}
             onActiveChange={(section) => onSectionChange(section)}
-            className="min-w-[720px]"
-            searchClassName="w-72 min-w-72"
+            className="md:min-w-[720px]"
+            searchClassName="md:w-72 md:min-w-72"
           />
         </div>
       )}

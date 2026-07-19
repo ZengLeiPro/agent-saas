@@ -674,7 +674,7 @@ export function TenantManager() {
         actions={
           <>
             <Select value={selectedTenant?.id ?? ""} onValueChange={setSelectedTenantId} disabled={loading || tenants.length === 0}>
-              <SelectTrigger className="w-[260px]">
+              <SelectTrigger className="w-[260px] max-w-full">
                 <SelectValue placeholder={loading ? "加载组织中" : "选择组织"} />
               </SelectTrigger>
               <SelectContent>

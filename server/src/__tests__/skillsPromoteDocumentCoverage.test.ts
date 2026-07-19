@@ -17,10 +17,10 @@
  *      非法 username/skillId → 400、目标 skill 不存在 404、happy path 读写落盘、
  *      name 与目录 ID 不一致 400
  *   3. resolveAdminTargetUser（L123-134）：目标用户不存在 404；
- *      已知缺陷记录：跨租户目标返回 403（非 404 隐藏），组织 admin 可借状态码差异探测他租户用户名存在性
+ *      跨租户目标同样 404 隐藏（修复后行为：与「不存在」同口径，不泄露用户名存在性）
  *   4. safeName（L51-54）：下划线/点开头等非法名在 promote 与 document 端点的 400 分支；
- *      已知缺陷记录：safeName 允许下划线目录名，但 validateSkillDocument 的 frontmatter name
- *      规则只允许小写/数字/连字符 → 下划线 id 的自建 skill 无法通过 PUT document 编辑
+ *      下划线 id 的自建 skill 可通过 PUT document 编辑（修复后行为：allowName=skillId
+ *      例外放行 name===目录 ID；其余仍执行小写/数字/连字符常规规则）
  *
  * rig 照抄 skillsRoutesCoverage.test.ts：真 express + app.listen(0) + 全局 fetch，
  * 认证伪造=中间件注入 req.user，setCaller 切换；mkdtempSync 真实临时目录种 skill；
@@ -320,19 +320,30 @@ describe('skills promote/document 残余分支覆盖', () => {
       expect(readFileSync(join(h.aliceSkillsDir, 'editable-skill', 'SKILL.md'), 'utf-8')).toBe(updated);
     });
 
-    it('已知缺陷记录：下划线 id 的自建 skill 无法通过 PUT document 编辑（safeName 与 frontmatter name 规则不一致）', async () => {
-      // safeName（L51）允许下划线目录名（alice_custom 可被扫描、promote、GET document），
-      // 但 validateSkillDocument（L187）的 name 规则只允许 [a-z0-9-]，
-      // 于是「name 与目录 ID 保持一致」在下划线 id 上永远无法满足 → PUT 恒 400。
+    it('下划线 id 的自建 skill 可通过 PUT document 编辑（修复后：allowName 放行 name===目录 ID）', async () => {
+      // validateSkillDocument 常规仍只允许 [a-z0-9-]，但对 PUT /custom document
+      // 增加 allowName=skillId 例外：frontmatter name 与（已过 safeName 的）目录 ID
+      // 完全一致即放行，agent 直建/历史存量的下划线 id skill 恢复可编辑。
       const got = await h.request('/api/skills/custom/alice/alice_custom/document');
       expect(got.status).toBe(200); // 读没问题
 
+      // 改写落盘：name 与目录 ID 一致 → 200 + 磁盘内容更新
+      const updated = '---\nname: alice_custom\ndescription: edited\n---\nedited body';
       const put = await h.request('/api/skills/custom/alice/alice_custom/document',
-        jsonInit('PUT', { content: ALICE_CUSTOM_MD })); // 原样回写自己的内容也被拒
-      expect(put.status).toBe(400);
-      expect((await put.json() as { error: string }).error)
+        jsonInit('PUT', { content: updated }));
+      expect(put.status).toBe(200);
+      expect(await put.json()).toMatchObject({
+        ok: true, skillId: 'alice_custom', source: 'custom', username: 'alice', fileName: 'SKILL.md',
+      });
+      expect(readFileSync(join(h.aliceSkillsDir, 'alice_custom', 'SKILL.md'), 'utf-8')).toBe(updated);
+
+      // 安全边界不放松：name 为其他下划线名（≠目录 ID）仍走常规规则被拒，文件不动
+      const mismatch = await h.request('/api/skills/custom/alice/alice_custom/document',
+        jsonInit('PUT', { content: '---\nname: other_underscore\ndescription: d\n---\nx' }));
+      expect(mismatch.status).toBe(400);
+      expect((await mismatch.json() as { error: string }).error)
         .toBe('SKILL.md 必须包含 YAML frontmatter，name 需为小写字母/数字/连字符且 description 非空');
-      expect(readFileSync(join(h.aliceSkillsDir, 'alice_custom', 'SKILL.md'), 'utf-8')).toBe(ALICE_CUSTOM_MD);
+      expect(readFileSync(join(h.aliceSkillsDir, 'alice_custom', 'SKILL.md'), 'utf-8')).toBe(updated);
     });
   });
 
@@ -346,11 +357,10 @@ describe('skills promote/document 残余分支覆盖', () => {
       expect((await res.json() as { error: string }).error).toBe('User not found');
     });
 
-    it('已知缺陷记录：跨租户目标返回 403 而非 404 隐藏，状态码差异泄露用户名存在性', async () => {
-      // 源码 L129-132 有意对跨组织返回 403（注释「跨组织 admin 一律 403」）。
-      // 但与 L125-127 的 404 对照：组织 admin 探测任意 username，
-      // 404 = 不存在、403 = 存在于其他租户 —— 存在性被状态码差异泄露。
-      // 本用例固化当前行为；若改为统一 404 隐藏（本任务原始预期），需同步更新此断言。
+    it('跨租户目标统一 404 隐藏（修复后：与「不存在」同口径，不泄露用户名存在性）', async () => {
+      // 修复后 resolveAdminTargetUser 对跨组织目标返回 404 User not found，
+      // 与「目标不存在」同口径：组织 admin 无法再借 404/403 状态码差异
+      // 探测他租户用户名的存在性。
       h.setCaller(WAIN_ADMIN);
 
       const ghost = await h.request('/api/skills/custom/ghostuser/editable-skill/document');
@@ -358,13 +368,14 @@ describe('skills promote/document 残余分支覆盖', () => {
       expect((await ghost.json() as { error: string }).error).toBe('User not found');
 
       const crossTenant = await h.request('/api/skills/custom/alice/editable-skill/document');
-      expect(crossTenant.status).toBe(403);
-      expect((await crossTenant.json() as { error: string }).error).toBe('跨组织访问被拒绝');
+      expect(crossTenant.status).toBe(404);
+      expect((await crossTenant.json() as { error: string }).error).toBe('User not found');
 
       // PUT 同口径
       const crossPut = await h.request('/api/skills/custom/alice/editable-skill/document',
         jsonInit('PUT', { content: '---\nname: editable-skill\ndescription: d\n---\nx' }));
-      expect(crossPut.status).toBe(403);
+      expect(crossPut.status).toBe(404);
+      expect((await crossPut.json() as { error: string }).error).toBe('User not found');
       // 副作用断言：跨租户写被拒后文件保持原样
       expect(readFileSync(join(h.aliceSkillsDir, 'editable-skill', 'SKILL.md'), 'utf-8')).toBe(EDITABLE_MD);
     });

@@ -2474,13 +2474,15 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           res.status(404).json({ error: "Session not found" });
           return;
         }
-        if (req.user?.role !== "admin") {
-          const expectedNewPath = getTranscriptPath(delUserCwd, sessionId, reqTranscriptOwner(req.user));
-          const expectedLegacyPath = getTranscriptPath(delUserCwd, sessionId);
-          if (transcriptPath !== expectedNewPath && transcriptPath !== expectedLegacyPath) {
-            res.status(403).json({ error: "Access denied" });
-            return;
-          }
+        // 归属校验对所有角色生效（owner-self only，与 canAccessSession 同口径）：
+        // meta 缺失时唯一的归属信号是 transcript 路径。若放过 admin，任意租户的
+        // 组织 admin 都能以自己身份补写 stub meta「收养」孤儿 transcript 再软删，
+        // 所有权被改写，与下方「跨组织 admin 不能删别 tenant 会话」的意图相悖。
+        const expectedNewPath = getTranscriptPath(delUserCwd, sessionId, reqTranscriptOwner(req.user));
+        const expectedLegacyPath = getTranscriptPath(delUserCwd, sessionId);
+        if (transcriptPath !== expectedNewPath && transcriptPath !== expectedLegacyPath) {
+          res.status(403).json({ error: "Access denied" });
+          return;
         }
         // 补写一个最小 meta（channel/createdAt 从 transcript 首行推断）
         const stubMeta: SessionMeta = {

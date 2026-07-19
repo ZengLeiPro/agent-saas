@@ -518,10 +518,10 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(body.users.alice?.map(s => s.id)).not.toContain('old_system');
     });
 
-    it('组织 admin (wain) DELETE /custom/alice/:id (跨组织) → 403', async () => {
+    it('组织 admin (wain) DELETE /custom/alice/:id (跨组织) → 404 隐藏', async () => {
       h.setCaller(WAIN_ADMIN);
       const res = await h.request('/api/skills/custom/alice/alice_custom', { method: 'DELETE' });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
     });
 
     it('组织 admin (wain) DELETE /custom/wain_user/:id (本组织) → 200', async () => {
@@ -535,20 +535,20 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
   // /users/:username/... 跨组织防御
   // ============================================================
   describe('/users/:username/... 跨组织访问防御', () => {
-    it('组织 admin (wain) GET /users/alice → 403', async () => {
+    it('组织 admin (wain) GET /users/alice → 404 隐藏', async () => {
       h.setCaller(WAIN_ADMIN);
       const res = await h.request('/api/skills/users/alice');
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
     });
 
-    it('组织 admin (wain) PUT /users/alice/selections → 403', async () => {
+    it('组织 admin (wain) PUT /users/alice/selections → 404 隐藏', async () => {
       h.setCaller(WAIN_ADMIN);
       const res = await h.request('/api/skills/users/alice/selections', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ selectedSkills: ['shared_skill'] }),
       });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
     });
 
     it('组织 admin (wain) GET /users/wain_user (本组织) → 200', async () => {
@@ -571,10 +571,10 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
   // /sync ?username= 单用户 跨组织防御 + 路径修复
   // ============================================================
   describe('POST /sync', () => {
-    it('组织 admin (wain) POST /sync?username=alice → 403', async () => {
+    it('组织 admin (wain) POST /sync?username=alice → 404 隐藏', async () => {
       h.setCaller(WAIN_ADMIN);
       const res = await h.request('/api/skills/sync?username=alice', { method: 'POST' });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
     });
 
     it('组织 admin (wain) 全量 POST /sync → 仅 sync 本组织', async () => {

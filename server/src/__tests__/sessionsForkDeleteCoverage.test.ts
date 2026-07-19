@@ -509,24 +509,20 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
     await expect(access(transcriptPath)).resolves.toBeUndefined();
   });
 
-  it('已知缺陷记录：跨租户 org admin 可收养并软删 meta 缺失的孤儿 transcript', async () => {
-    // 现状（sessions.ts L2477：仅 role!=='admin' 才做路径归属校验）：任何 admin——
-    // 包括与会话毫无关系的其他租户组织 admin——对 meta 缺失的 transcript 会以
-    // 自己的身份补 stub meta（L2486-2493），随后 canAccessSession 因 meta.userId
-    // 已是 admin 自己而放行，软删成功。等于孤儿 transcript 的所有权被收养方改写。
-    // 与该路由注释「跨组织 admin 不能删别 tenant 会话」的意图不符。
-    // 修复后应改为断言：res.status === 403，且 meta 文件不被创建。
+  it('软删：transcript 在但 meta 缺失 → 跨租户 org admin 403 且不收养（不写 stub meta）', async () => {
+    // 修复后行为（sessions.ts stub-meta 分支的期望路径归属校验对所有角色生效）：
+    // 任何非 owner——包括与会话毫无关系的其他租户组织 admin——都不能以自己
+    // 身份补写 stub meta「收养」孤儿 transcript，统一 403 拒绝，所有权不被改写。
     const { sessionId, transcriptPath } = await writeSession(OWNER, { skipMeta: true });
 
     const { baseUrl } = await startServer(ACME_ADMIN);
     const res = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, softDeleted: true });
+    expect(res.status).toBe(403);
+    expect((await res.json() as { error: string }).error).toBe('Access denied');
 
-    // 现状固化：stub meta 落盘且归属被改写为 acme admin
-    const meta = await readSessionMeta(transcriptPath);
-    expect(meta!.userId).toBe(ACME_ADMIN.id);
-    expect(meta!.deletedBy).toBe(ACME_ADMIN.username);
+    // 副作用检查：stub meta 未被创建，transcript 原样保留
+    await expect(access(getMetaPath(transcriptPath))).rejects.toThrow();
+    await expect(access(transcriptPath)).resolves.toBeUndefined();
   });
 
   // ---------------------------------------------------------------------------

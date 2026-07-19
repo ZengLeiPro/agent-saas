@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import multer from "multer";
 import { z } from "zod";
@@ -523,6 +523,24 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       }
     },
   });
+  // multer 错误 → 语义化 4xx JSON（与 agents.ts/orgAgents.ts avatar 上传同范式）。
+  // 不捕获会落到 Express 默认错误处理器，对外表现为 500 HTML。
+  const avatarUploadSingle: RequestHandler = (req, res, next) => {
+    avatarUpload.single("avatar")(req, res, (err: unknown) => {
+      if (err) {
+        if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+          res.status(413).json({ error: "文件大小超过 2MB 限制" });
+          return;
+        }
+        // fileFilter 抛出的格式错误等
+        res.status(400).json({
+          error: err instanceof Error ? err.message : "上传失败",
+        });
+        return;
+      }
+      next();
+    });
+  };
 
   // POST /api/auth/sms/send-code
   router.post("/sms/send-code", async (req, res) => {
@@ -1410,7 +1428,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   });
 
   // POST /api/auth/avatar — 上传当前用户头像
-  router.post("/avatar", avatarUpload.single("avatar"), async (req, res) => {
+  router.post("/avatar", avatarUploadSingle, async (req, res) => {
     try {
       if (!req.user) {
         res.status(401).json({ error: "Not authenticated" });
@@ -1457,7 +1475,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   router.post(
     "/users/:id/avatar",
     requireAdmin,
-    avatarUpload.single("avatar"),
+    avatarUploadSingle,
     async (req, res) => {
       try {
         const targetId = req.params.id;

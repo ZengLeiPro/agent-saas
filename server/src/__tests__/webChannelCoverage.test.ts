@@ -951,11 +951,10 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect((rig.channel as any).eventBufferStore.get(sessionId)).toBeUndefined();
     });
 
-    it('已知缺陷记录：非 enqueue 路径丢弃 compaction 事件（handler 未实现 onCompaction*）', async () => {
-      // handleEvents 的 handler 没有 onCompactionStart/onCompactionEnd，
-      // dispatch 直连（非 enqueue）路径下 /compact 的状态事件到不了前端；
-      // enqueue 路径由 publishRuntimeOutboundEvent 正常映射为 compaction_status。
-      // 修复后应改为断言 ws 收到 compaction_status started/completed 两条。
+    it('非 enqueue 路径透传 compaction 事件为 compaction_status（修复后与 enqueue 路径同口径）', async () => {
+      // handleEvents 的 handler 已实现 onCompactionStart/onCompactionEnd：
+      // dispatch 直连（非 enqueue）路径与 enqueue 路径（publishRuntimeOutboundEvent）
+      // 同口径映射 started/completed 两条 compaction_status。
       const tmp = await makeTmp('cov-compact-');
       const rig = makeRig({ agentCwd: tmp }, scripted([
         { type: 'compaction_start' },
@@ -963,7 +962,15 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         { type: 'done' },
       ]));
       await rig.send(USER, { client_msg_id: 'cm-compact', message: '/compact' });
-      expect(rig.ws.sent.some((m) => m.data.type === 'compaction_status')).toBe(false);
+      expect(rig.ws.sent.map((m) => m.data.type)).toEqual([
+        'chat_ack', 'stream_id', 'compaction_status', 'compaction_status', 'done',
+      ]);
+      expect(rig.ws.sent[2].data).toEqual({ type: 'compaction_status', phase: 'started' });
+      expect(rig.ws.sent[3].data).toEqual({
+        type: 'compaction_status',
+        phase: 'completed',
+        compaction: { summary: 's', coveredEventCount: 3 },
+      });
       expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'done' });
     });
 

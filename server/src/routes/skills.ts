@@ -127,7 +127,9 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       return null;
     }
     if (!isPlatformAdmin(req.user) && target.tenantId !== req.user?.tenantId) {
-      res.status(403).json({ error: '跨组织访问被拒绝' });
+      // 404 隐藏（与上面「目标不存在」同口径）：返回 403 会让组织 admin
+      // 借状态码差异（404=不存在 / 403=存在于他租户）探测跨租户用户名存在性
+      res.status(404).json({ error: 'User not found' });
       return null;
     }
     return target;
@@ -181,10 +183,17 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   }
 
 
-  function validateSkillDocument(content: string): { name: string; description: string } | null {
+  function validateSkillDocument(content: string, opts?: { allowName?: string }): { name: string; description: string } | null {
     const parsed = scanSkillFrontmatter(content);
     if (!parsed?.name || !parsed.description) return null;
-    if (!/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(parsed.name)) return null;
+    // 常规命名约定：小写字母/数字/连字符（上传创建路径一律执行此规则）。
+    // allowName 例外放行：目录 ID 本身经 safeName 校验（允许大写/下划线、拒绝
+    // 路径穿越与特殊字符），agent 直建/历史存量的下划线 id skill 的 frontmatter
+    // name 只要与目录 ID 完全一致就必须可编辑，否则 PUT document 永远 400。
+    if (
+      !/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(parsed.name) &&
+      !(opts?.allowName !== undefined && parsed.name === opts.allowName)
+    ) return null;
     if (parsed.description.length > 1024) return null;
     return parsed;
   }
@@ -718,7 +727,9 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid document', details: parsed.error.format() });
     }
-    const meta = validateSkillDocument(parsed.data.content);
+    // allowName=skillId：已存在的下划线 id 自建 skill（agent 直建/历史存量）
+    // 必须能原样编辑；skillId 已过 safeName，安全边界不放松
+    const meta = validateSkillDocument(parsed.data.content, { allowName: skillId });
     if (!meta) return res.status(400).json({ error: 'SKILL.md 必须包含 YAML frontmatter，name 需为小写字母/数字/连字符且 description 非空' });
     if (meta.name !== skillId) return res.status(400).json({ error: `SKILL.md name 必须与目录 ID '${skillId}' 保持一致` });
 

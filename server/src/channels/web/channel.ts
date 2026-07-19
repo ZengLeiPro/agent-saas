@@ -3754,6 +3754,14 @@ export class WebChannel implements BaseChannel {
       onMemoryRecall(data) {
         send({ type: 'memory_recall', memoryRecall: data });
       },
+      // /compact v2：压缩黑箱状态透传。enqueue 路径由 publishRuntimeOutboundEvent
+      // 映射为 compaction_status，此处补齐 dispatch 直连路径的同口径事件。
+      onCompactionStart() {
+        send({ type: 'compaction_status', phase: 'started' });
+      },
+      onCompactionEnd(data) {
+        send({ type: 'compaction_status', phase: 'completed', compaction: data });
+      },
     };
 
     const consumer = createEventConsumer();

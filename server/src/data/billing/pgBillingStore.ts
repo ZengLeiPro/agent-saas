@@ -288,7 +288,8 @@ export class PgBillingStore {
     createdBy: string;
   }): Promise<BillingPricingVersion> {
     const status = input.status ?? 'draft';
-    const effectiveFrom = input.effectiveFrom ?? new Date().toISOString();
+    const now = new Date().toISOString();
+    const effectiveFrom = input.effectiveFrom ?? now;
     const fxRate = input.fxRateToCny ?? DEFAULT_FX_RATE_TO_CNY;
     const client = await this.pool.connect();
     try {
@@ -305,7 +306,7 @@ export class PgBillingStore {
         `INSERT INTO ${this.pricingVersionsTable}
           (version, name, status, effective_from, credit_value_yuan_micro, default_target_margin_bps,
            fx_rate_to_cny, currency, created_by, created_at, updated_by, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'CNY', $8, $4, $8, $4)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'CNY', $8, $9, $8, $9)`,
         [
           input.version,
           input.name,
@@ -315,6 +316,7 @@ export class PgBillingStore {
           Math.round(input.defaultTargetMarginBps),
           fxRate,
           input.createdBy,
+          now,
         ],
       );
       await client.query('COMMIT');
@@ -348,11 +350,12 @@ export class PgBillingStore {
     if (!current.rows[0]) throw new Error(`Pricing version not found: ${version}`);
     const currentRow = normalizePricingVersion(current.rows[0].row_json);
     const now = new Date().toISOString();
+    const activatesVersion = patch.status === 'active' && currentRow.status !== 'active';
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       // 切 active：先把旧 active retire 掉（partial unique index 兜底并发）
-      if (patch.status === 'active' && currentRow.status !== 'active') {
+      if (activatesVersion) {
         await client.query(
           `UPDATE ${this.pricingVersionsTable}
            SET status = 'retired', effective_to = COALESCE(effective_to, $1), updated_by = $2, updated_at = $1
@@ -374,14 +377,14 @@ export class PgBillingStore {
       if (patch.name !== undefined) push('name', patch.name);
       if (patch.status !== undefined) push('status', patch.status);
       if (patch.effectiveFrom !== undefined) push('effective_from', patch.effectiveFrom);
-      if (patch.effectiveTo !== undefined) push('effective_to', patch.effectiveTo);
+      if (patch.effectiveTo !== undefined && !activatesVersion) push('effective_to', patch.effectiveTo);
       if (patch.creditValueYuanMicro !== undefined) push('credit_value_yuan_micro', Math.round(patch.creditValueYuanMicro));
       if (patch.defaultTargetMarginBps !== undefined) push('default_target_margin_bps', Math.round(patch.defaultTargetMarginBps));
       if (patch.fxRateToCny !== undefined) push('fx_rate_to_cny', patch.fxRateToCny);
       push('updated_by', patch.updatedBy);
       push('updated_at', now);
       // 如果切到 active：清掉 effective_to
-      if (patch.status === 'active' && currentRow.status !== 'active') {
+      if (activatesVersion) {
         sets.push('effective_to = NULL');
       }
       params.push(version);
@@ -1178,7 +1181,14 @@ export class BillingPricingConflictError extends Error {
 
 function normalizePricingConflictError(err: unknown): unknown {
   if (typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505') {
-    return new BillingPricingConflictError('已有另一个 active 价格版本，请刷新后重试', err);
+    const constraint = (err as { constraint?: string }).constraint ?? '';
+    if (constraint.endsWith('_pkey')) {
+      return new BillingPricingConflictError('定价版本号已存在，请修改版本号后重试', err);
+    }
+    if (constraint.endsWith('_one_active_idx')) {
+      return new BillingPricingConflictError('已有另一个 active 价格版本，请刷新后重试', err);
+    }
+    return new BillingPricingConflictError('定价版本冲突，请刷新后重试', err);
   }
   return err;
 }

@@ -30,12 +30,8 @@
  *   - updatePricingVersion 事务外读 currentRow 的 TOCTOU 竞态（见报告疑点）；
  *   - PG 对 UPDATE 重复列赋值的 42601 报错（本文件仅以 SQL 文本固化该缺陷，见下）。
  *
- * 已知缺陷记录（固化现状、不修源码，详见同日报告）：
- *   - createPricingVersion 的 created_at/updated_at 落为 effectiveFrom（$4 复用）而非当前
- *     时间，回填历史版本时审计时间失真；
- *   - updatePricingVersion 在「切 active + 显式传 effectiveTo」时生成的 UPDATE 对
- *     effective_to 赋值两次，真 PG 会以 42601 (multiple assignments to same column) 拒绝；
- *   - 23505 一律被归因为「已有另一个 active 价格版本」，版本号 PK 重复也用同一文案。
+ * 第三批补测发现的 3 个缺陷回归：创建审计时间使用当前时间、active PATCH 不重复赋值
+ * effective_to、23505 按约束区分版本号重复与 active 冲突。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -193,10 +189,10 @@ class FakePricingPg {
       }
       return { rows: [] };
     }
-    // createPricingVersion INSERT（参数序对齐源码 VALUES ($1..$8, created_at=$4, updated_by=$8, updated_at=$4)）
+    // createPricingVersion INSERT（参数序对齐源码 VALUES：$9 为真实操作时间）
     if (/INSERT INTO \S*billing_pricing_versions/i.test(sql)) {
-      const [version, name, status, effectiveFrom, creditValue, marginBps, fxRate, createdBy] = params as [
-        string, string, PricingRow['status'], string, number, number, number, string,
+      const [version, name, status, effectiveFrom, creditValue, marginBps, fxRate, createdBy, now] = params as [
+        string, string, PricingRow['status'], string, number, number, number, string, string,
       ];
       if (this.rows.has(version)) throw pg23505('runtime_billing_pricing_versions_pkey');
       if (status === 'active' && [...this.rows.values()].some((r) => r.status === 'active')) {
@@ -213,9 +209,9 @@ class FakePricingPg {
         fx_rate_to_cny: fxRate,
         currency: 'CNY',
         created_by: createdBy,
-        created_at: effectiveFrom, // 源码 $4 复用（已知缺陷，见文件头）
+        created_at: now,
         updated_by: createdBy,
-        updated_at: effectiveFrom,
+        updated_at: now,
       });
       return { rows: [] };
     }
@@ -233,8 +229,6 @@ class FakePricingPg {
           continue;
         }
         if (/^effective_to = NULL$/i.test(part)) {
-          // 注意：真 PG 遇到同列二次赋值会直接报 42601；FakePg 按「后写覆盖」执行，
-          // 该差异由「已知缺陷记录」用例以 SQL 文本固化。
           row.effective_to = null;
           continue;
         }
@@ -398,10 +392,7 @@ describe('updatePricingVersion 字段 PATCH 拼装', () => {
     expect(fake.log).toHaveLength(1); // 仅事务外 current 读
   });
 
-  it('已知缺陷记录：切 active + 显式 effectiveTo → 同一 UPDATE 对 effective_to 赋值两次（真 PG 42601）', async () => {
-    // 源码 L377 push('effective_to', $n) 与 L384-386 追加 'effective_to = NULL' 并存。
-    // 真 PG 对 UPDATE 同列多次赋值直接报错（42601 multiple assignments to same column），
-    // 即「激活草稿同时带 effectiveTo 字段」的请求在生产库必失败。此处以 SQL 文本固化现状。
+  it('切 active + 显式 effectiveTo → 只生成 effective_to = NULL，避免真 PG 42601', async () => {
     const fake = new FakePricingPg();
     fake.seed({ version: 'v-old', status: 'active' });
     fake.seed({ version: 'v-new', status: 'draft' });
@@ -411,7 +402,8 @@ describe('updatePricingVersion 字段 PATCH 拼装', () => {
 
     const patch = fake.log.find((e) => e.via === 'tx' && /WHERE version = \$\d+/.test(e.sql))!;
     const assignments = patch.sql.match(/effective_to = (\$\d+|NULL)/g) ?? [];
-    expect(assignments).toEqual(['effective_to = $2', 'effective_to = NULL']); // 双重赋值 → 非法 SQL
+    expect(assignments).toEqual(['effective_to = NULL']);
+    expect(patch.params).toEqual(['active', 'root', FIXED_NOW, 'v-new']);
   });
 });
 
@@ -453,7 +445,7 @@ describe('createPricingVersion', () => {
     // INSERT 参数：取整 + 默认汇率
     const insert = fake.log.find((e) => /INSERT/.test(e.sql))!;
     expect(insert.params).toEqual([
-      'v-2026q4', '2026Q4 提价', 'active', '2026-08-01T00:00:00.000Z', 12_000, 6_000, 7.2, 'root',
+      'v-2026q4', '2026Q4 提价', 'active', '2026-08-01T00:00:00.000Z', 12_000, 6_000, 7.2, 'root', FIXED_NOW,
     ]);
 
     // 返回值来自 COMMIT 后重查
@@ -509,8 +501,7 @@ describe('createPricingVersion', () => {
     }).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(BillingPricingConflictError);
-    // 已知缺陷记录：PK 撞版本号也被归因为「已有另一个 active 价格版本」，文案误导
-    expect((err as BillingPricingConflictError).message).toBe('已有另一个 active 价格版本，请刷新后重试');
+    expect((err as BillingPricingConflictError).message).toBe('定价版本号已存在，请修改版本号后重试');
     expect(((err as BillingPricingConflictError).cause as { code?: string }).code).toBe('23505');
 
     // 序列：INSERT 失败 → ROLLBACK；不发 COMMIT、不做 COMMIT 后重查
@@ -525,9 +516,7 @@ describe('createPricingVersion', () => {
     expect(fake.rows.get('v-dup')!.status).toBe('draft');
   });
 
-  it('已知缺陷记录：created_at/updated_at 落为 effectiveFrom 而非当前时间（回填历史版本时审计时间失真）', async () => {
-    // 源码 INSERT VALUES 里 created_at/updated_at 复用 $4（effectiveFrom）。
-    // 传入回溯的 effectiveFrom 时，"创建时间" 被伪造成历史时刻，审计链路无法还原真实操作时间。
+  it('created_at/updated_at 使用当前操作时间，不复用回填的 effectiveFrom', async () => {
     const fake = new FakePricingPg();
     const store = makeStore(fake);
 
@@ -540,9 +529,9 @@ describe('createPricingVersion', () => {
       createdBy: 'root',
     });
 
-    expect(result.createdAt).toBe('2020-01-01T00:00:00.000Z'); // ≠ FIXED_NOW：当前行为即失真
-    expect(result.updatedAt).toBe('2020-01-01T00:00:00.000Z');
-    expect(result.createdAt).not.toBe(FIXED_NOW);
+    expect(result.effectiveFrom).toBe('2020-01-01T00:00:00.000Z');
+    expect(result.createdAt).toBe(FIXED_NOW);
+    expect(result.updatedAt).toBe(FIXED_NOW);
   });
 });
 

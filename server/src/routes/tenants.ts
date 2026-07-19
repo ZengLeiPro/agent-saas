@@ -28,7 +28,7 @@ const createTenantSchema = z.object({
     TENANT_SLUG_PATTERN,
     'tenant id 必须以小写字母开头，可含小写字母/数字/连字符，长度 2-31',
   ),
-  name: z.string().min(1, 'name 不能为空').max(100, 'name 不超过 100 字符'),
+  name: z.string().trim().min(1, 'name 不能为空').max(100, 'name 不超过 100 字符'),
 });
 
 const updateTenantSchema = z.object({
@@ -259,7 +259,12 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       };
       const requested = parsed.data.models?.allowContextTokenDetails;
       const currentValue = current.models.allowContextTokenDetails === true;
-      if (requested !== undefined && requested !== currentValue) {
+      const requestedShowContextTokens = parsed.data.models?.showContextTokens
+        ?? current.models.showContextTokens;
+      const nextValue = requestedShowContextTokens === false
+        ? false
+        : requested ?? currentValue;
+      if (nextValue !== currentValue) {
         res.status(403).json({ error: '上下文 Token 明细仅平台管理员可配置' });
         return;
       }
@@ -423,8 +428,8 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       return;
     }
     try {
-      opts.onTenantDisabled?.(tenant.id);
       const report = await opts.deleteTenantResources(tenant.id);
+      opts.onTenantDisabled?.(tenant.id);
       auditLog(req, 'tenant_deleted', `${tenant.id} (${tenant.name}) users=${report.usersDeleted}`);
       res.json({ ok: true, report });
     } catch (err: unknown) {

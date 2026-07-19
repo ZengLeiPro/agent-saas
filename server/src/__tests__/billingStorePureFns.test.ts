@@ -242,7 +242,10 @@ const activeRowJson = {
 
 describe('normalizePricingConflictError', () => {
   it('createPricingVersion 落库遇 pg 23505 → BillingPricingConflictError（含 cause），回滚并释放连接', async () => {
-    const pgDup = Object.assign(new Error('duplicate key value violates unique constraint'), { code: '23505' });
+    const pgDup = Object.assign(new Error('duplicate key value violates unique constraint'), {
+      code: '23505',
+      constraint: 'runtime_billing_pricing_versions_one_active_idx',
+    });
     const client = makeTxClient((sql) => sql.includes('INSERT'), pgDup);
     const store = new PgBillingStore({ pool: { connect: vi.fn(async () => client), query: vi.fn() } as any });
 
@@ -280,7 +283,10 @@ describe('normalizePricingConflictError', () => {
   });
 
   it('updatePricingVersion 切 active 时并发唯一索引冲突（23505）→ BillingPricingConflictError', async () => {
-    const pgDup = Object.assign(new Error('duplicate key'), { code: '23505' });
+    const pgDup = Object.assign(new Error('duplicate key'), {
+      code: '23505',
+      constraint: 'runtime_billing_pricing_versions_one_active_idx',
+    });
     // 当前版本是 draft，patch 切 active → 先 retire 旧 active 的 UPDATE 触发 23505
     const client = makeTxClient((sql) => sql.includes("'retired'"), pgDup);
     const pool = {

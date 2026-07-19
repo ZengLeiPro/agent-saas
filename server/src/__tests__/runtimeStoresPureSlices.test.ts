@@ -209,11 +209,7 @@ describe('normalizeRunRecord（经 PgRunStore.get 驱动）', () => {
     expect(record.cumulativeInputTokens).toBe(expected);
   });
 
-  it('已知缺陷记录：camelCase 输入的日期字段为 null 时泄漏为 null 而非 undefined', async () => {
-    // runStore.ts L600-606/L613-615：started_at 分支只对 snake 值做 truthy 判断，
-    // else 分支原样透传 raw.startedAt——camel 端显式 null 不会像 userId（?? undefined）
-    // 那样收敛，违反 RunRecord.startedAt?: string 类型契约。snake 路径（row_to_json 产物）
-    // 不受影响，仅内存态 camel 记录回灌会触发。此用例固化当前行为，防止无意漂移。
+  it('camelCase 输入的可空日期字段为 null 时统一收敛为 undefined', async () => {
     const record = await normalizeViaGet({
       runId: 'run-4',
       sessionId: 'sess-4',
@@ -222,14 +218,18 @@ describe('normalizeRunRecord（经 PgRunStore.get 驱动）', () => {
       updatedAt: '2026-07-18T00:00:00.000Z',
       startedAt: null,
       completedAt: null,
+      failedAt: null,
+      cancelledAt: null,
       leaseExpiresAt: null,
       lastResponseExpireAt: null,
       metadata: {},
     });
-    expect(record.startedAt).toBeNull();
-    expect(record.completedAt).toBeNull();
-    expect(record.leaseExpiresAt).toBeNull();
-    expect(record.lastResponseExpireAt).toBeNull();
+    expect(record.startedAt).toBeUndefined();
+    expect(record.completedAt).toBeUndefined();
+    expect(record.failedAt).toBeUndefined();
+    expect(record.cancelledAt).toBeUndefined();
+    expect(record.leaseExpiresAt).toBeUndefined();
+    expect(record.lastResponseExpireAt).toBeUndefined();
   });
 });
 

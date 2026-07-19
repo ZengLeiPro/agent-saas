@@ -14,21 +14,15 @@
  * 本文件专补（现场读源码核对，均为上述文件未触达的分支）：
  * 1. DELETE /:id 路由层全分支——此前完全无路由级测试：
  *    403（组织 admin）/400（缺 confirm、confirm 不一致）/404/501（未注入清理器）/
- *    200 成功（回调先于清理器 + report 透传 + store 落盘删除）/
+ *    200 成功（清理成功后再回调 + report 透传 + store 落盘删除）/
  *    409（清理器抛 Cannot delete）/404 与 500（清理器抛错映射）。
  * 2. GET /api/tenants 列表 200 主路径（含 disabled 租户 + settings 补全默认）。
  * 3. PATCH settings 的「幽灵租户 admin」404 分支（canAccess 放行但 current 缺失，
  *    对应 token 存活期内组织被删的现实场景）。
  * 4. settings 嵌套 section 的 zod 必填线（mcp/security 缺必填布尔 → 400 不落库）
  *    与 mcp/security/personalization 三个此前未经路由写过的 section 落库主路径。
- * 5. 已知缺陷记录×3（只固化现状不修源码，详见测试报告）：
- *    a. 组织 admin 经 models.showContextTokens=false 间接清掉平台开启的
- *       allowContextTokenDetails（store mergeSettings 联动），绕过「仅平台管理员可配置」
- *       的 403 守卫语义，且重开 showContextTokens 后不恢复；
- *    b. POST name 纯空白 → 500（zod min(1) 放行、store trim 拒绝、路由归入兜底 500，
- *       语义应为 400）；
- *    c. DELETE 清理器失败（含删默认租户被 store 拒绝）时 onTenantDisabled 已先行触发
- *       ——失败的删除也会踢掉该组织全部连接。
+ * 5. 第三批补测发现的 3 个缺陷回归：平台专属字段不可间接清写、POST 空白名称
+ *    返回 400、DELETE 清理失败不触发断连回调。
  * 6. POST 降级路径：company.md 初始化失败只 warn 仍 201；orgAgent seed 持久化失败
  *    只 warn 仍 201（回滚后不留内存脏记录）。
  * 7. company-info 500 分支：company.md 路径被目录占据 → GET/PUT 500。
@@ -242,7 +236,7 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       expect(h.callOrder).toEqual([]); // 501 短路在回调之前
     });
 
-    it('成功：200 {ok, report} 透传清理报告，回调先于清理器执行，store 落盘删除', async () => {
+    it('成功：200 {ok, report} 透传清理报告，清理成功后回调，store 落盘删除', async () => {
       h = await makeTestRig();
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request('/api/tenants/acme', jsonInit('DELETE', { confirm: 'acme' }));
@@ -254,16 +248,13 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       expect(body.report.tenant.name).toBe('阿康');
       expect(body.report.usersDeleted).toBe(2);
       expect(body.report.skills.tenantConfigRemoved).toBe(true);
-      // 副作用：断连回调先于清理器；store 中记录已删，其余租户不受影响
-      expect(h.callOrder).toEqual(['disabled:acme', 'deleter:acme']);
+      // 清理成功后才断连；store 中记录已删，其余租户不受影响
+      expect(h.callOrder).toEqual(['deleter:acme', 'disabled:acme']);
       expect(h.tenantStore.findById('acme')).toBeUndefined();
       expect(h.tenantStore.count()).toBe(2);
     });
 
-    it('已知缺陷记录：删默认租户被 store 拒绝 → 409，但 onTenantDisabled 已先行触发', async () => {
-      // 路由在 try 块内先调 onTenantDisabled 再调清理器（tenants.ts L426-427），
-      // store.delete 对默认租户抛 "Cannot delete..." → 409。
-      // 现状：失败的删除也已把默认租户全部连接踢掉——固化现状并在报告中记疑点。
+    it('删默认租户被 store 拒绝 → 409，且不触发 onTenantDisabled', async () => {
       h = await makeTestRig();
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request(
@@ -274,7 +265,7 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       const body = await res.json() as { error: string };
       expect(body.error).toContain('Cannot delete');
       expect(h.tenantStore.findById(DEFAULT_TENANT_ID)).toBeTruthy(); // 未删成
-      expect(h.callOrder).toEqual([`disabled:${DEFAULT_TENANT_ID}`, `deleter:${DEFAULT_TENANT_ID}`]);
+      expect(h.callOrder).toEqual([`deleter:${DEFAULT_TENANT_ID}`]);
     });
 
     it('清理器抛 "Tenant not found" → 404；抛普通错误 → 500 且组织仍在', async () => {
@@ -286,12 +277,14 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       const raced = await h.request('/api/tenants/acme', jsonInit('DELETE', { confirm: 'acme' }));
       expect(raced.status).toBe(404);
       await expect(raced.json()).resolves.toMatchObject({ error: '组织不存在' });
+      expect(h.callOrder).toEqual(['deleter:acme']);
 
       h.setDeleter(async () => { throw new Error('磁盘清理失败'); });
       const failed = await h.request('/api/tenants/acme', jsonInit('DELETE', { confirm: 'acme' }));
       expect(failed.status).toBe(500);
       await expect(failed.json()).resolves.toMatchObject({ error: '磁盘清理失败' });
       expect(h.tenantStore.findById('acme')).toBeTruthy(); // 默认清理器未跑，记录仍在
+      expect(h.callOrder).toEqual(['deleter:acme', 'deleter:acme']);
     });
   });
 
@@ -387,12 +380,7 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       expect(body.settings.security).toEqual(stored.security);
     });
 
-    it('已知缺陷记录：组织 admin 经 showContextTokens=false 间接清掉平台开启的 allowContextTokenDetails 且不可恢复', async () => {
-      // 直接翻转 allowContextTokenDetails 会 403（governance 已覆盖），但
-      // store.mergeSettings 有联动：showContextTokens===false 时强制
-      // allowContextTokenDetails=false（store.ts L65-67）。组织 admin 合法关闭
-      // showContextTokens 即可绕过 403 守卫把平台设的 true 清成 false，
-      // 且重开 showContextTokens 后不恢复——固化现状，报告中记缺陷。
+    it('组织 admin 经 showContextTokens=false 间接翻转平台专属字段 → 403 且不落库', async () => {
       h = await makeTestRig();
       h.setCaller(PLATFORM_ADMIN);
       const setup = await h.request('/api/tenants/wain/settings', jsonInit('PATCH', {
@@ -402,21 +390,15 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       expect(h.tenantStore.getSettings('wain')!.models.allowContextTokenDetails).toBe(true);
 
       h.setCaller(WAIN_ADMIN);
-      // 不带 allowContextTokenDetails → 路由守卫不视为翻转 → 放行
+      // 即便请求不带 allowContextTokenDetails，也按 merge 后终值检查平台专属字段。
       const indirect = await h.request('/api/tenants/wain/settings', jsonInit('PATCH', {
         models: { allowUserModelSwitch: true, showContextTokens: false },
       }));
-      expect(indirect.status).toBe(200); // 未被 403 拦截
+      expect(indirect.status).toBe(403);
+      await expect(indirect.json()).resolves.toMatchObject({ error: '上下文 Token 明细仅平台管理员可配置' });
       const after = h.tenantStore.getSettings('wain')!;
-      expect(after.models.showContextTokens).toBe(false);
-      expect(after.models.allowContextTokenDetails).toBe(false); // 平台开的值被间接清掉
-
-      // 组织 admin 重开 showContextTokens：details 保持 false，平台配置永久丢失
-      const reopen = await h.request('/api/tenants/wain/settings', jsonInit('PATCH', {
-        models: { allowUserModelSwitch: true, showContextTokens: true },
-      }));
-      expect(reopen.status).toBe(200);
-      expect(h.tenantStore.getSettings('wain')!.models.allowContextTokenDetails).toBe(false);
+      expect(after.models.showContextTokens).toBe(true);
+      expect(after.models.allowContextTokenDetails).toBe(true);
     });
   });
 
@@ -424,15 +406,12 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
   // POST /api/tenants 边界与降级路径
   // -------------------------------------------------------------------------
   describe('POST 边界与降级', () => {
-    it('已知缺陷记录：name 纯空白 → 500（zod min(1) 放行、store trim 拒绝落入兜底分支），未创建', async () => {
-      // '   '.length >= 1 过 zod；store.create trim 后抛 'Tenant name cannot be empty'，
-      // 该消息不含 'already exists' / 'Invalid tenant id' → 路由归入 500。
-      // 语义上应为 400（客户端输入错误）——固化现状，报告中记缺陷。
+    it('name 纯空白 → 400，未创建', async () => {
       h = await makeTestRig();
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request('/api/tenants', jsonInit('POST', { id: 'blanky', name: '   ' }));
-      expect(res.status).toBe(500);
-      await expect(res.json()).resolves.toMatchObject({ error: 'Tenant name cannot be empty' });
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ error: 'name 不能为空' });
       expect(h.tenantStore.findById('blanky')).toBeUndefined();
       expect(h.tenantStore.count()).toBe(3);
     });

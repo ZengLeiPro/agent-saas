@@ -597,13 +597,13 @@ function normalizeRunRecord(raw: any): RunRecord {
     model: raw.model ?? undefined,
     channel: raw.channel ?? undefined,
     requestedAt: new Date(raw.requested_at ?? raw.requestedAt).toISOString(),
-    startedAt: raw.started_at ? new Date(raw.started_at).toISOString() : raw.startedAt,
+    startedAt: raw.started_at ? new Date(raw.started_at).toISOString() : raw.startedAt ?? undefined,
     updatedAt: new Date(raw.updated_at ?? raw.updatedAt).toISOString(),
-    completedAt: raw.completed_at ? new Date(raw.completed_at).toISOString() : raw.completedAt,
-    failedAt: raw.failed_at ? new Date(raw.failed_at).toISOString() : raw.failedAt,
-    cancelledAt: raw.cancelled_at ? new Date(raw.cancelled_at).toISOString() : raw.cancelledAt,
+    completedAt: raw.completed_at ? new Date(raw.completed_at).toISOString() : raw.completedAt ?? undefined,
+    failedAt: raw.failed_at ? new Date(raw.failed_at).toISOString() : raw.failedAt ?? undefined,
+    cancelledAt: raw.cancelled_at ? new Date(raw.cancelled_at).toISOString() : raw.cancelledAt ?? undefined,
     workerId: raw.worker_id ?? raw.workerId ?? undefined,
-    leaseExpiresAt: raw.lease_expires_at ? new Date(raw.lease_expires_at).toISOString() : raw.leaseExpiresAt,
+    leaseExpiresAt: raw.lease_expires_at ? new Date(raw.lease_expires_at).toISOString() : raw.leaseExpiresAt ?? undefined,
     idempotencyKey: raw.idempotency_key ?? raw.idempotencyKey ?? undefined,
     executionTarget: raw.execution_target ?? raw.executionTarget ?? undefined,
     workspaceId: raw.workspace_id ?? raw.workspaceId ?? undefined,
@@ -612,7 +612,7 @@ function normalizeRunRecord(raw: any): RunRecord {
     lastResponseId: raw.last_response_id ?? raw.lastResponseId ?? undefined,
     lastResponseExpireAt: raw.last_response_expire_at
       ? new Date(raw.last_response_expire_at).toISOString()
-      : raw.lastResponseExpireAt,
+      : raw.lastResponseExpireAt ?? undefined,
     actualModelSeen: raw.actual_model_seen ?? raw.actualModelSeen ?? undefined,
     lastResponseModel: raw.last_response_model ?? raw.lastResponseModel ?? undefined,
     cumulativeInputTokens: (() => {

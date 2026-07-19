@@ -41,6 +41,7 @@ import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery
 import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from '../runtime/toolInvocationCancelDelivery.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
 import { DurableBackgroundTaskService } from '../runtime/background/backgroundTaskService.js';
+import { isBackgroundCommandTaskRun } from '../runtime/background/backgroundTaskRuntime.js';
 import { AutoCompactionService } from '../runtime/autoCompaction.js';
 import { runtimeRunController } from '../runtime/runController.js';
 import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
@@ -1691,13 +1692,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       beforeTick: () => rawRuntimeConfig.backgroundTasks!.reconcileWakeDeliveries(),
       failInterruptedBackgroundTask: (record) => rawRuntimeConfig.backgroundTasks!.failInterrupted(record),
       failBackgroundTask: (record, message) => rawRuntimeConfig.backgroundTasks!.fail(record, message),
+      handoffBackgroundCommand: (record) => rawRuntimeConfig.backgroundTasks!.handoffCommandMonitor(record),
       wake: async (record, lease) => {
         const tenantId = record.tenantId ?? (record.userId ? userStore?.findById(record.userId)?.tenantId : undefined);
         const tenantAccessError = tenantAccessErrorMessage(tenantStore, tenantId);
         if (tenantAccessError) throw new Error(tenantAccessError);
         // 后台任务完成 wake 是已获准任务的终态交付，不是新任务派生；若任务执行期间
         // 恰好触达 hard cap，仍允许这一轮把结果送回父会话（用量照常记账）。
-        if (tenantId && billingService && record.metadata?.backgroundTaskWake !== true) {
+        // 后台命令 monitor 不调模型、不产生 token，同样不应被余额闸门中断。
+        if (
+          tenantId
+          && billingService
+          && record.metadata?.backgroundTaskWake !== true
+          && !isBackgroundCommandTaskRun(record)
+        ) {
           const allowed = await billingService.assertTenantCanStartRun(tenantId);
           if (!allowed.ok) throw new Error(allowed.reason);
         }

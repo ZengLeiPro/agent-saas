@@ -30,6 +30,8 @@ export interface ManagedSandbox {
   brokenReason?: string;
   createdAt?: string;
   lastActiveAt?: string;
+  /** 后台 Shell 仍可能运行的最晚时间；生命周期在此之前不得 pause/delete/recreate。 */
+  backgroundShellProtectedUntil?: string;
   /**
    * 当前 sandbox spec 里 podTemplate 主容器的 image tag，用于 image drift 判定。
    */
@@ -106,6 +108,7 @@ const SESSION_ANNOTATION = 'agent-saas.kaiyan.net/session-id';
 const MOUNT_SUBPATH_ANNOTATION = 'agent-saas.kaiyan.net/mount-subpath';
 const CREATED_AT_ANNOTATION = 'agent-saas.kaiyan.net/created-at';
 const LAST_ACTIVE_AT_ANNOTATION = 'agent-saas.kaiyan.net/last-active-at';
+const BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION = 'agent-saas.kaiyan.net/background-shell-protected-until';
 const NETWORK_POLICY_MODE_ANNOTATION = 'agent-saas.kaiyan.net/network-policy-mode';
 const NETWORK_POLICY_DENY_PRIVATE_ANNOTATION = 'agent-saas.kaiyan.net/network-policy-deny-private';
 const ACS_NETWORK_POLICY_AGENT_ANNOTATION = 'network.alibabacloud.com/enable-network-policy-agent';
@@ -172,7 +175,11 @@ export class SandboxManager {
         await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey }));
         existing = null;
       }
-      if (existing && this.existingImage(existing) !== this.config.sandboxImage) {
+      if (
+        existing
+        && this.existingImage(existing) !== this.config.sandboxImage
+        && !backgroundShellProtectionFromStatus(existing)
+      ) {
         path = existing.phase === 'Paused' ? 'refresh_paused_image' : 'recreate_image_changed';
         this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'image changed', options.activeKey);
         this.logger.warn(
@@ -237,20 +244,20 @@ export class SandboxManager {
 
   async deleteByWorkspaceId(workspaceId: string, input: { busySandboxNames?: Set<string> } = {}): Promise<{ names: string[]; skippedBusy: string[] }> {
     const id = validateWorkspaceId(workspaceId);
-    const names = (await this.listManagedSandboxes())
-      .filter((sandbox) => sandbox.workspaceId === id)
-      .map((sandbox) => sandbox.name);
+    const sandboxes = (await this.listManagedSandboxes())
+      .filter((sandbox) => sandbox.workspaceId === id);
+    const names = sandboxes.map((sandbox) => sandbox.name);
     const skippedBusy: string[] = [];
-    for (const name of names) {
-      if (this.isBusy(name, input.busySandboxNames)) {
-        skippedBusy.push(name);
+    for (const sandbox of sandboxes) {
+      if (this.isBusy(sandbox.name, input.busySandboxNames) || isBackgroundShellProtected(sandbox, Date.now())) {
+        skippedBusy.push(sandbox.name);
         continue;
       }
-      await this.kubectl.run(['delete', this.resourceName(name), '--ignore-not-found=true'], {
+      await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
         timeoutMs: this.config.sandboxWaitTimeoutMs,
       });
-      await this.networkPolicyManager.deleteForSandboxName(name);
-      await this.snatManager.deleteForSandboxName(name);
+      await this.networkPolicyManager.deleteForSandboxName(sandbox.name);
+      await this.snatManager.deleteForSandboxName(sandbox.name);
     }
     return { names: names.filter((name) => !skippedBusy.includes(name)), skippedBusy };
   }
@@ -343,6 +350,7 @@ export class SandboxManager {
         ...optionalString('brokenReason', brokenSandboxStateReason({ phase, raw: item })),
         createdAt: stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
         lastActiveAt: stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]) ?? stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
+        backgroundShellProtectedUntil: stringValue(annotations[BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION]),
         image: primaryContainer ? stringValue(primaryContainer.image) : undefined,
       };
     }).filter((sandbox) => sandbox.name);
@@ -362,7 +370,7 @@ export class SandboxManager {
         : Math.max(0, effectiveTtlMs - idleMs);
       return {
         ...sandbox,
-        busy: this.isBusy(sandbox.name, input.busySandboxNames),
+        busy: this.isBusy(sandbox.name, input.busySandboxNames) || isBackgroundShellProtected(sandbox, nowMs),
         imageStale: Boolean(sandbox.image && sandbox.image !== this.config.sandboxImage),
         ...(idleMs === undefined ? {} : { idleMs }),
         ...(effectiveTtlMs > 0 ? { effectiveTtlMs } : {}),
@@ -373,6 +381,7 @@ export class SandboxManager {
 
   async pauseByName(name: string, input: { busySandboxNames?: Set<string> } = {}): Promise<void> {
     this.assertIdleByName(name, 'pause', input.busySandboxNames);
+    await this.assertNotBackgroundShellProtected(name, 'pause');
     await this.patchPaused(name, true);
   }
 
@@ -391,6 +400,7 @@ export class SandboxManager {
 
   async deleteByName(name: string, input: { busySandboxNames?: Set<string> } = {}): Promise<void> {
     this.assertIdleByName(name, 'delete', input.busySandboxNames);
+    await this.assertNotBackgroundShellProtected(name, 'delete');
     await this.kubectl.run(['delete', this.resourceName(name), '--ignore-not-found=true'], {
       timeoutMs: this.config.sandboxWaitTimeoutMs,
     });
@@ -417,7 +427,7 @@ export class SandboxManager {
       if (!sandbox.image) { skipped.push(sandbox.name); continue; }
       if (sandbox.image === currentImage) continue;
       if (!sandbox.workspaceId || !sandbox.sessionId) { skipped.push(sandbox.name); continue; }
-      if (this.isBusy(sandbox.name, busySandboxNames)) {
+      if (this.isBusy(sandbox.name, busySandboxNames) || isBackgroundShellProtected(sandbox, Date.now())) {
         skippedBusy.push(sandbox.name);
         continue;
       }
@@ -513,7 +523,7 @@ export class SandboxManager {
     const snatDeleted: string[] = [];
 
     for (const sandbox of sandboxes) {
-      if (this.isBusy(sandbox.name, busySandboxNames)) {
+      if (this.isBusy(sandbox.name, busySandboxNames) || isBackgroundShellProtected(sandbox, nowMs)) {
         skippedBusy.push(sandbox.name);
         continue;
       }
@@ -621,6 +631,28 @@ export class SandboxManager {
       JSON.stringify({ metadata: { annotations: { [LAST_ACTIVE_AT_ANNOTATION]: now.toISOString() } } }),
     ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
     if (result.exitCode !== 0) throw new Error(`touch sandbox 失败: ${result.stderr || result.stdout}`);
+  }
+
+  async setBackgroundShellProtection(name: string, protectedUntil?: string): Promise<void> {
+    if (protectedUntil && !Number.isFinite(Date.parse(protectedUntil))) {
+      throw new Error('background shell protectedUntil 必须是合法 ISO 时间。');
+    }
+    const result = await this.kubectl.run([
+      'patch',
+      this.resourceName(name),
+      '--type=merge',
+      '-p',
+      JSON.stringify({
+        metadata: {
+          annotations: {
+            [BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION]: protectedUntil ?? null,
+          },
+        },
+      }),
+    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
+    if (result.exitCode !== 0) {
+      throw new Error(`更新后台 Shell 生命周期保护失败: ${result.stderr || result.stdout}`);
+    }
   }
 
   async getStatus(name: string): Promise<SandboxStatus | null> {
@@ -773,7 +805,11 @@ export class SandboxManager {
     const active = sandboxes.filter((sandbox) => sandbox.name !== currentSandboxName && isRunningCostPhase(sandbox.phase));
     if (this.config.lifecycleEnabled && active.length >= this.config.maxRunningSandboxes) {
       const candidates = active
-        .filter((sandbox) => !protectedSandboxes.has(sandbox.name) && sandbox.phase === 'Running')
+        .filter((sandbox) => (
+          !protectedSandboxes.has(sandbox.name)
+          && sandbox.phase === 'Running'
+          && !isBackgroundShellProtected(sandbox, Date.now())
+        ))
         .sort((a, b) => (parseDateMs(a.lastActiveAt) ?? 0) - (parseDateMs(b.lastActiveAt) ?? 0));
       const pauseCount = active.length - this.config.maxRunningSandboxes + 1;
       const paused: string[] = [];
@@ -820,6 +856,12 @@ export class SandboxManager {
   private assertIdleByName(name: string, reason: string, busySandboxNames?: Set<string>, activeKey?: string): void {
     if (!this.isBusy(name, busySandboxNames, activeKey)) return;
     throw new SandboxBusyError(`ACS Sandbox ${name} is busy; refuse to ${reason} while active`);
+  }
+
+  private async assertNotBackgroundShellProtected(name: string, reason: string): Promise<void> {
+    const status = await this.getStatus(name);
+    if (!status || !backgroundShellProtectionFromStatus(status)) return;
+    throw new SandboxBusyError(`ACS Sandbox ${name} has active background shell tasks; refuse to ${reason}`);
   }
 
   private effectiveTtlMs(name: string): number {
@@ -1061,6 +1103,22 @@ function parseDateMs(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function isBackgroundShellProtected(sandbox: Pick<ManagedSandbox, 'backgroundShellProtectedUntil'>, nowMs: number): boolean {
+  const protectedUntilMs = parseDateMs(sandbox.backgroundShellProtectedUntil);
+  return protectedUntilMs !== undefined && protectedUntilMs > nowMs;
+}
+
+function backgroundShellProtectionFromStatus(status: SandboxStatus, nowMs = Date.now()): string | undefined {
+  const raw = status.raw ?? {};
+  const metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata as Record<string, unknown> : {};
+  const annotations = metadata.annotations && typeof metadata.annotations === 'object'
+    ? metadata.annotations as Record<string, unknown>
+    : {};
+  const protectedUntil = stringValue(annotations[BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION]);
+  const parsed = parseDateMs(protectedUntil);
+  return parsed !== undefined && parsed > nowMs ? protectedUntil : undefined;
 }
 
 export function brokenSandboxStateReason(status: SandboxStatus): string | undefined {

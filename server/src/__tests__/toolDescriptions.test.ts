@@ -26,6 +26,8 @@ import {
   MAX_FILE_BYTES,
   MAX_LIST_ENTRIES,
   MAX_READ_LINES,
+  bashOutputToolDescriptor,
+  killBashToolDescriptor,
   listFilesToolDescriptor,
   readFileToolDescriptor,
   runShellToolDescriptor,
@@ -48,12 +50,14 @@ const ALL_TOOLS = [
   todoWriteToolDescriptor,
   askUserQuestionToolDescriptor,
   artifactCreateToolDescriptor,
-  // toolRuntime.ts workspace runtime —— 5
+  // toolRuntime.ts workspace runtime —— 7
   waitForWorkspaceReadyToolDescriptor,
   readFileToolDescriptor,
   writeFileToolDescriptor,
   listFilesToolDescriptor,
   runShellToolDescriptor,
+  bashOutputToolDescriptor,
+  killBashToolDescriptor,
   // sessionContext.ts —— 3
   sessionGetEventsToolDescriptor,
   sessionSearchEventsToolDescriptor,
@@ -70,8 +74,8 @@ const ALL_TOOLS = [
 ] as const;
 
 describe('Tool descriptions', () => {
-  it('covers all 20 tools (regression: 漏 import 立即可见)', () => {
-    expect(ALL_TOOLS).toHaveLength(20);
+  it('covers all 22 tools (regression: 漏 import 立即可见)', () => {
+    expect(ALL_TOOLS).toHaveLength(22);
     const ids = ALL_TOOLS.map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length); // 无重复 id
   });

@@ -333,13 +333,13 @@ export class PgRunStore implements RunStore {
       const parentActive = parseCount(row?.parent_active);
       const tenantActive = parseCount(row?.tenant_active);
       if (parentTotal >= limits.perParentTotal) {
-        throw new BackgroundTaskLimitError(`本次运行的后台 Agent 总数已达上限 ${limits.perParentTotal}`);
+        throw new BackgroundTaskLimitError(`本次运行的后台任务总数已达上限 ${limits.perParentTotal}`);
       }
       if (parentActive >= limits.perParentActive) {
-        throw new BackgroundTaskLimitError(`本次运行同时活跃的后台 Agent 已达上限 ${limits.perParentActive}`);
+        throw new BackgroundTaskLimitError(`本次运行同时活跃的后台任务已达上限 ${limits.perParentActive}`);
       }
       if (tenantActive >= limits.perTenantActive) {
-        throw new BackgroundTaskLimitError(`当前组织同时活跃的后台 Agent 已达上限 ${limits.perTenantActive}`);
+        throw new BackgroundTaskLimitError(`当前组织同时活跃的后台任务已达上限 ${limits.perTenantActive}`);
       }
 
       const now = new Date().toISOString();

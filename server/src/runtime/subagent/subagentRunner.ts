@@ -82,6 +82,8 @@ export const SUBAGENT_DENIED_TOOL_NAMES: ReadonlySet<string> = new Set([
   'BackgroundTaskList',
   'BackgroundTaskStatus',
   'BackgroundTaskCancel',
+  'BashOutput',
+  'KillBash',
 ]);
 
 export type SubagentStatus = 'completed' | 'failed' | 'cancelled' | 'timeout';
@@ -549,6 +551,7 @@ function buildSubagentInstructions(args: {
     '<env>',
     `工作目录: ${args.cwd}（与主 agent 共享同一 workspace，文件读写彼此可见）`,
     `执行环境: ${args.executionTarget}`,
+    'Shell 在子 agent 中仅允许 foreground；不要使用 mode="background"。',
     `当前时间: ${new Date().toISOString()}`,
     '</env>',
   ].join('\n'));

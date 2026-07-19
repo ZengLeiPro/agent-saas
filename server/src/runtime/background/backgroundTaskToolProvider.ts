@@ -14,7 +14,7 @@ const listSchema = z.object({
   limit: z.number().int().min(1).max(100).optional().default(20),
 });
 const taskSchema = z.object({
-  task_id: z.string().min(1).describe('Agent(mode=background) 返回的 taskId。'),
+  task_id: z.string().min(1).describe('Agent(mode=background) 或 Shell(mode=background) 返回的 taskId。'),
 });
 
 export class BackgroundTaskToolProvider implements ToolProvider {
@@ -23,7 +23,7 @@ export class BackgroundTaskToolProvider implements ToolProvider {
       id: 'BackgroundTaskList',
       name: 'BackgroundTaskList',
       displayName: '后台任务列表',
-      description: '列出当前会话创建的后台 Agent 任务及其真实运行状态。通常无需轮询；仅在需要主动核对时调用。',
+      description: '列出当前会话创建的后台 Agent/命令任务及其真实运行状态。通常无需轮询；仅在需要主动核对时调用。',
       schema: listSchema,
       risk: 'safe',
       approvalMode: 'never',
@@ -35,7 +35,7 @@ export class BackgroundTaskToolProvider implements ToolProvider {
       id: 'BackgroundTaskStatus',
       name: 'BackgroundTaskStatus',
       displayName: '后台任务状态',
-      description: '查询当前会话内某个后台 Agent 任务的状态、结果摘要和完整输出文件位置。',
+      description: '查询当前会话内某个后台 Agent/命令任务的状态、结果摘要和完整输出文件位置。',
       schema: taskSchema,
       risk: 'safe',
       approvalMode: 'never',
@@ -47,7 +47,7 @@ export class BackgroundTaskToolProvider implements ToolProvider {
       id: 'BackgroundTaskCancel',
       name: 'BackgroundTaskCancel',
       displayName: '取消后台任务',
-      description: '取消当前会话创建的 pending/running 后台 Agent 任务。已进入终态的任务保持原状态。',
+      description: '取消当前会话创建的 pending/running 后台 Agent/命令任务。命令任务会同时终止 ACS 内的进程；已进入终态的任务保持原状态。',
       schema: taskSchema,
       risk: 'safe',
       approvalMode: 'never',
@@ -91,6 +91,7 @@ function toTaskView(task: RunRecord, includeFullResult: boolean): Record<string,
     : undefined;
   return {
     taskId: task.runId,
+    taskType: task.metadata.backgroundTaskType === 'command' ? 'command' : 'agent',
     status: task.status,
     description: typeof task.metadata.description === 'string' ? task.metadata.description : undefined,
     model: task.model,

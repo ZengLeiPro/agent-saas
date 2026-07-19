@@ -710,6 +710,48 @@ describe('SandboxManager', () => {
     expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-expired')).toBe(true);
   });
 
+  it('keeps a sandbox running while a durable background shell protection is active', async () => {
+    const calls: string[][] = [];
+    const kubectl = {
+      async run(args: string[]): Promise<KubectlResult> {
+        calls.push(args);
+        if (args[0] === 'get' && args.includes('-l')) {
+          return {
+            stdout: JSON.stringify({
+              items: [{
+                metadata: {
+                  name: 'as-background-shell',
+                  annotations: {
+                    'agent-saas.kaiyan.net/created-at': '2026-07-19T00:00:00.000Z',
+                    'agent-saas.kaiyan.net/last-active-at': '2026-07-19T00:00:00.000Z',
+                    'agent-saas.kaiyan.net/background-shell-protected-until': '2026-07-20T00:00:00.000Z',
+                  },
+                },
+                status: { phase: 'Running' },
+              }],
+            }),
+            stderr: '',
+            exitCode: 0,
+            signal: null,
+          };
+        }
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+    const manager = new SandboxManager({
+      ...baseConfig(),
+      sandboxIdlePauseMs: 5 * 60_000,
+      sandboxTtlMs: 60 * 60_000,
+    }, kubectl, noopLogger);
+
+    const report = await manager.cleanupSandboxes({ now: new Date('2026-07-19T12:00:00.000Z') });
+
+    expect(report.paused).toEqual([]);
+    expect(report.deleted).toEqual([]);
+    expect(report.skippedBusy).toEqual(['as-background-shell']);
+    expect(calls).toHaveLength(1);
+  });
+
   it('does not delete Sandboxes older than TTL when they were recently active', async () => {
     const calls: string[][] = [];
     const kubectl = {

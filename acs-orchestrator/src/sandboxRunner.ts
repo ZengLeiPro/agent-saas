@@ -5,9 +5,15 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { ServerLocalExecutionProvider, type WorkspaceRef } from 'server/agent/toolRuntime.js';
-import type { ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
+import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
 
 import type { SandboxRunnerFinalOutput, SandboxRunnerInput, SandboxRunnerOutput } from './protocol.js';
+import {
+  getBackgroundShellOutput,
+  killBackgroundShell,
+  reconcileBackgroundShells,
+  startBackgroundShell,
+} from './backgroundShell.js';
 
 const PYTHON_RUNTIME_CONTRACT_VERSION = 1;
 const DEFAULT_PIP_INSTALL_TIMEOUT_MS = 240_000;
@@ -91,8 +97,22 @@ async function main(): Promise<void> {
         }) as Record<string, string>,
       })
     : new ServerLocalExecutionProvider();
+  const localToolName = toolNameForLocalProvider(input.toolName);
+  const backgroundResponse = await executeBackgroundShellTool({
+    toolName: localToolName,
+    input: input.input,
+    workspaceRoot,
+    env: {
+      ...(process.env as Record<string, string | undefined>),
+      ...wireEnvOverride,
+    },
+  });
+  if (backgroundResponse) {
+    writeJsonLine({ kind: 'final', response: backgroundResponse });
+    return;
+  }
   const request = {
-    toolName: toolNameForLocalProvider(input.toolName),
+    toolName: localToolName,
     input: input.input,
     context: {
       ...(input.invocationId ? { invocationId: input.invocationId } : {}),
@@ -110,6 +130,73 @@ async function main(): Promise<void> {
 
   const response = await provider.execute(request);
   writeJsonLine({ kind: 'final', response });
+}
+
+async function executeBackgroundShellTool(input: {
+  toolName: string;
+  input: unknown;
+  workspaceRoot: string;
+  env: Record<string, string | undefined>;
+}): Promise<ToolInvocationResponse | null> {
+  const args = input.input && typeof input.input === 'object'
+    ? input.input as Record<string, unknown>
+    : {};
+  try {
+    if (input.toolName === 'Shell' && args.mode === 'background') {
+      if (typeof args.taskId !== 'string' || typeof args.command !== 'string' || !args.command) {
+        return { status: 'error', error: '后台 Shell 需要 taskId 和非空 command。' };
+      }
+      const output = await startBackgroundShell({
+        workspaceRoot: input.workspaceRoot,
+        taskId: args.taskId,
+        command: args.command,
+        timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
+        env: input.env,
+      });
+      return backgroundShellResponse(output);
+    }
+    if (input.toolName === 'BashOutput') {
+      if (typeof args.task_id !== 'string') return { status: 'error', error: 'BashOutput 需要 task_id。' };
+      const output = await getBackgroundShellOutput({
+        workspaceRoot: input.workspaceRoot,
+        taskId: args.task_id,
+        stdoutOffset: typeof args.stdout_offset === 'number' ? args.stdout_offset : undefined,
+        stderrOffset: typeof args.stderr_offset === 'number' ? args.stderr_offset : undefined,
+        limitBytes: typeof args.limit_bytes === 'number' ? args.limit_bytes : undefined,
+        waitMs: typeof args.wait_ms === 'number' ? args.wait_ms : undefined,
+      });
+      return backgroundShellResponse(output);
+    }
+    if (input.toolName === 'KillBash') {
+      if (typeof args.task_id !== 'string') return { status: 'error', error: 'KillBash 需要 task_id。' };
+      return backgroundShellResponse(await killBackgroundShell(input.workspaceRoot, args.task_id));
+    }
+    if (input.toolName === '__BackgroundShellReconcile') {
+      const result = await reconcileBackgroundShells(input.workspaceRoot);
+      return {
+        status: 'success',
+        content: JSON.stringify(result),
+        metadata: { backgroundShell: result },
+      };
+    }
+    return null;
+  } catch (err) {
+    return { status: 'error', error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function backgroundShellResponse(output: Awaited<ReturnType<typeof getBackgroundShellOutput>>): ToolInvocationResponse {
+  return {
+    status: 'success',
+    content: JSON.stringify(output),
+    metadata: {
+      backgroundShell: {
+        taskId: output.taskId,
+        status: output.status,
+        ...(output.protectedUntil ? { protectedUntil: output.protectedUntil } : {}),
+      },
+    },
+  };
 }
 
 export function toolNameForLocalProvider(toolName: string): string {

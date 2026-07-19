@@ -28,12 +28,15 @@ import { ClientDaemonTransport } from '../runtime/clientDaemonTransport.js';
 import { HttpTransport } from '../runtime/httpTransport.js';
 import type { ChannelContext } from '../types/index.js';
 import type { ToolControlsConfig } from '../app/config.js';
+import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
 import { ContainerExecutionProvider } from './containerExecutionProvider.js';
 import { MemorySearchToolProvider } from './memorySearchToolProvider.js';
 import { persistShellOutputFiles } from './shellOutputFiles.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import {
   DEFAULT_SHELL_TIMEOUT_MS,
+  DEFAULT_BACKGROUND_SHELL_TIMEOUT_MS,
+  MAX_BACKGROUND_SHELL_TIMEOUT_MS,
   MAX_SHELL_TIMEOUT_MS,
   MAX_FILE_BYTES,
   MAX_LIST_ENTRIES,
@@ -293,6 +296,8 @@ export interface PlatformToolRuntimeOptions {
   artifactService?: ArtifactService;
   providers?: ToolProvider[];
   toolControls?: ToolControlsConfig;
+  /** PG durable 后台任务；存在时 Shell(mode=background) 才可启动并自动完成唤醒。 */
+  backgroundTasks?: BackgroundTaskRuntime;
 }
 
 export const readFileToolDescriptor: ToolDescriptor<{ path: string; offset?: number; limit?: number }> = {
@@ -344,20 +349,73 @@ export const listFilesToolDescriptor: ToolDescriptor<{ path: string; recursive: 
   label: '列出文件',
 };
 
-export const runShellToolDescriptor: ToolDescriptor<{ command: string; timeoutMs?: number }> = {
+const shellToolSchema = z.object({
+  command: z.string(),
+  mode: z.enum(['foreground', 'background']).optional(),
+  timeoutMs: z.number().int().positive().max(MAX_BACKGROUND_SHELL_TIMEOUT_MS).optional(),
+}).superRefine((value, ctx) => {
+  if (value.mode !== 'background' && value.timeoutMs !== undefined && value.timeoutMs > MAX_SHELL_TIMEOUT_MS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['timeoutMs'],
+      message: `前台 Shell timeoutMs 不能超过 ${MAX_SHELL_TIMEOUT_MS}`,
+    });
+  }
+});
+
+export const runShellToolDescriptor: ToolDescriptor<{
+  command: string;
+  mode?: 'foreground' | 'background';
+  timeoutMs?: number;
+}> = {
   id: 'Shell',
   name: 'Shell',
   displayName: 'Run Shell',
   description: loadToolDescription('Shell'),
-  schema: z.object({
-    command: z.string(),
-    timeoutMs: z.number().int().positive().max(MAX_SHELL_TIMEOUT_MS).optional(),
-  }),
+  schema: shellToolSchema,
   risk: 'dangerous',
   approvalMode: 'web',
   auditCategory: 'process.shell',
   category: 'workspace',
   label: '执行 Shell',
+};
+
+export const bashOutputToolDescriptor: ToolDescriptor<{
+  task_id: string;
+  stdout_offset?: number;
+  stderr_offset?: number;
+  limit_bytes?: number;
+  wait_ms?: number;
+}> = {
+  id: 'BashOutput',
+  name: 'BashOutput',
+  displayName: 'Read Background Shell Output',
+  description: loadToolDescription('BashOutput'),
+  schema: z.object({
+    task_id: z.string().min(1),
+    stdout_offset: z.number().int().min(0).optional().default(0),
+    stderr_offset: z.number().int().min(0).optional().default(0),
+    limit_bytes: z.number().int().min(1).max(64 * 1024).optional().default(20_000),
+    wait_ms: z.number().int().min(0).max(30_000).optional().default(0),
+  }),
+  risk: 'safe',
+  approvalMode: 'never',
+  auditCategory: 'process.shell.background.output',
+  category: 'workspace',
+  label: '读取后台命令输出',
+};
+
+export const killBashToolDescriptor: ToolDescriptor<{ task_id: string }> = {
+  id: 'KillBash',
+  name: 'KillBash',
+  displayName: 'Kill Background Shell',
+  description: loadToolDescription('KillBash'),
+  schema: z.object({ task_id: z.string().min(1) }),
+  risk: 'safe',
+  approvalMode: 'never',
+  auditCategory: 'process.shell.background.cancel',
+  category: 'workspace',
+  label: '终止后台命令',
 };
 
 export const waitForWorkspaceReadyToolDescriptor: ToolDescriptor<{ timeoutMs?: number }> = {
@@ -390,6 +448,8 @@ export const WORKSPACE_HAND_TOOLS: ToolDescriptor[] = [
   writeFileToolDescriptor,
   listFilesToolDescriptor,
   runShellToolDescriptor,
+  bashOutputToolDescriptor,
+  killBashToolDescriptor,
   editToolDescriptor,
   globToolDescriptor,
   grepToolDescriptor,
@@ -964,6 +1024,7 @@ class WorkspaceToolProvider implements ToolProvider {
   private readonly resolveWireEnv?: PlatformToolRuntimeOptions['resolveWireEnv'];
   private readonly artifactService?: ArtifactService;
   private readonly memoryIndexService?: MemoryIndexService | null;
+  private readonly backgroundTasks?: BackgroundTaskRuntime;
 
   constructor(
     executionTransportRegistry: ExecutionTransportRegistry,
@@ -972,6 +1033,7 @@ class WorkspaceToolProvider implements ToolProvider {
     artifactService?: ArtifactService,
     memoryIndexService?: MemoryIndexService | null,
     resolveWireEnv?: PlatformToolRuntimeOptions['resolveWireEnv'],
+    backgroundTasks?: BackgroundTaskRuntime,
   ) {
     this.executionTransportRegistry = executionTransportRegistry;
     this.handStore = handStore;
@@ -979,6 +1041,7 @@ class WorkspaceToolProvider implements ToolProvider {
     this.resolveWireEnv = resolveWireEnv;
     this.artifactService = artifactService;
     this.memoryIndexService = memoryIndexService;
+    this.backgroundTasks = backgroundTasks;
   }
 
   list(_context?: ToolCallContext): ToolDescriptor[] {
@@ -1008,7 +1071,7 @@ class WorkspaceToolProvider implements ToolProvider {
     }
 
     // 解析入参用 hand 端公示的 schema（校验 + 应用 default）
-    const parsedInput: unknown = parseToolInput(descriptor, call.input);
+    let parsedInput: unknown = parseToolInput(descriptor, call.input);
     // 普通 workspace 工具不接受 handId 参数。当前 hand 由 harness/session 状态决定；
     // 后续如果需要切换 hand，应通过专门的 hand-switch 工具改变会话默认值。
     const route = await this.resolveTenantHandRoute(context);
@@ -1040,6 +1103,25 @@ class WorkspaceToolProvider implements ToolProvider {
       }
     }
 
+    const shellInput = call.toolId === 'Shell' && parsedInput && typeof parsedInput === 'object'
+      ? parsedInput as { command: string; mode?: 'foreground' | 'background'; timeoutMs?: number }
+      : undefined;
+    const isBackgroundShellStart = shellInput?.mode === 'background';
+    if ((isBackgroundShellStart || call.toolId === 'BashOutput' || call.toolId === 'KillBash')
+      && workspaceForHand.executionTarget !== 'server-remote') {
+      throw new Error(`${call.toolId} 的后台命令能力仅支持 ACS server-remote 隔离运行时。`);
+    }
+    let reservedTaskId: string | undefined;
+    if (isBackgroundShellStart) {
+      if (!this.backgroundTasks) throw new Error('Shell(mode=background) 需要 PG durable background runtime。');
+      const reservation = await this.backgroundTasks.reserveCommand(context, {
+        command: shellInput.command,
+        timeoutMs: shellInput.timeoutMs ?? DEFAULT_BACKGROUND_SHELL_TIMEOUT_MS,
+      });
+      reservedTaskId = reservation.taskId;
+      parsedInput = { ...shellInput, taskId: reservation.taskId };
+    }
+
     const request = {
       toolName: call.toolId,
       input: parsedInput,
@@ -1050,9 +1132,34 @@ class WorkspaceToolProvider implements ToolProvider {
         signal: context.signal,
       },
     };
-    const response = routed.transport.invokeStream && call.toolId === 'Shell' && context.invocationId
-      ? await consumeToolStream(routed.transport.invokeStream(request), context.onStreamChunk)
-      : await routed.transport.invoke(request);
+    const killReservedBackgroundShell = async (): Promise<void> => {
+      if (!reservedTaskId) return;
+      await routed.transport.invoke({
+        toolName: 'KillBash',
+        input: { task_id: reservedTaskId },
+        // 原请求可能正是因 signal abort 失败；补偿终止必须脱离该 signal/invocationId。
+        context: {
+          ...(handId ? { handId } : {}),
+          workspace: workspaceForHand,
+        },
+      }).catch(() => undefined);
+    };
+    let response: ToolInvocationResponse;
+    try {
+      response = routed.transport.invokeStream && call.toolId === 'Shell' && !isBackgroundShellStart && context.invocationId
+        ? await consumeToolStream(routed.transport.invokeStream(request), context.onStreamChunk)
+        : await routed.transport.invoke(request);
+    } catch (err) {
+      if (reservedTaskId && this.backgroundTasks) {
+        await killReservedBackgroundShell();
+        await this.backgroundTasks.failCommandStart(
+          context,
+          reservedTaskId,
+          err instanceof Error ? err.message : String(err),
+        ).catch(() => undefined);
+      }
+      throw err;
+    }
 
     // 把 hand 端产生的 audit 记录回填到 brain 侧 recorder（远程化时同一形态）
     if (response.audit && context.executionAudit) {
@@ -1062,7 +1169,24 @@ class WorkspaceToolProvider implements ToolProvider {
     }
 
     if (response.status === 'error') {
+      if (reservedTaskId && this.backgroundTasks) {
+        await killReservedBackgroundShell();
+        await this.backgroundTasks.failCommandStart(context, reservedTaskId, response.error).catch(() => undefined);
+      }
       throw new Error(response.error);
+    }
+    if (reservedTaskId && this.backgroundTasks) {
+      try {
+        await this.backgroundTasks.activateCommand(context, reservedTaskId);
+      } catch (err) {
+        await killReservedBackgroundShell();
+        await this.backgroundTasks.failCommandStart(
+          context,
+          reservedTaskId,
+          err instanceof Error ? err.message : String(err),
+        ).catch(() => undefined);
+        throw err;
+      }
     }
     this.notifyMemoryIndexIfNeeded(call.toolId, parsedInput, workspaceForHand, response);
     if (call.toolId === artifactCreateToolDescriptor.id) {
@@ -1362,6 +1486,7 @@ export class PlatformToolRuntime implements ToolRuntime {
         options.artifactService,
         options.memoryIndexService,
         options.resolveWireEnv,
+        options.backgroundTasks,
       ),
       ...(options.memoryIndexService ? [new MemorySearchToolProvider(options.memoryIndexService)] : []),
       ...(options.providers ?? []),

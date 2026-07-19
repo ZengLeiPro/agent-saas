@@ -91,10 +91,14 @@ export class AcsExecutor {
         const parsed = parseRunnerLine(line);
         if (!parsed) continue;
         if (parsed.kind === 'chunk') {
-          if (parsed.chunk.type === 'completed') sawCompleted = true;
+          if (parsed.chunk.type === 'completed') {
+            sawCompleted = true;
+            await this.applyBackgroundShellProtection(ref.name, parsed.chunk.response);
+          }
           yield parsed.chunk;
         } else {
           sawCompleted = true;
+          await this.applyBackgroundShellProtection(ref.name, parsed.response);
           yield { type: 'completed', response: parsed.response };
         }
       }
@@ -128,6 +132,47 @@ export class AcsExecutor {
         .map((entry) => entry.sandboxName)
         .filter((name): name is string => Boolean(name)),
     );
+  }
+
+  async reconcileBackgroundShellProtections(): Promise<{ checked: number; failed: number }> {
+    const sandboxes = (await this.sandboxManager.listManagedSandboxes())
+      .filter((sandbox) => Boolean(sandbox.backgroundShellProtectedUntil));
+    let failed = 0;
+    for (const sandbox of sandboxes) {
+      if (!sandbox.workspaceId || !sandbox.sessionId) {
+        failed += 1;
+        continue;
+      }
+      const response = await this.execute({
+        toolName: '__BackgroundShellReconcile',
+        input: {},
+        context: {
+          workspace: {
+            id: sandbox.workspaceId,
+            sessionId: sandbox.sessionId,
+            sandboxScopeId: sandbox.sandboxScopeId,
+            mountSubPath: sandbox.mountSubPath,
+          },
+        },
+      }).catch((err) => ({
+        status: 'error' as const,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+      if (response.status === 'error') {
+        failed += 1;
+        this.logger.warn(`background_shell_reconcile_failed sandbox=${sandbox.name}: ${response.error}`);
+      }
+    }
+    return { checked: sandboxes.length, failed };
+  }
+
+  private async applyBackgroundShellProtection(sandboxName: string, response: ToolInvocationResponse): Promise<void> {
+    const raw = response.metadata?.backgroundShell;
+    if (!raw || typeof raw !== 'object') return;
+    const protectedUntil = typeof (raw as { protectedUntil?: unknown }).protectedUntil === 'string'
+      ? (raw as { protectedUntil: string }).protectedUntil
+      : undefined;
+    await this.sandboxManager.setBackgroundShellProtection(sandboxName, protectedUntil);
   }
 
   private spawnRunner(ref: SandboxRef, input: SandboxRunnerInput, controller: AbortController): ChildProcessWithoutNullStreams {

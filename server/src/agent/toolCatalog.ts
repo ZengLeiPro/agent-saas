@@ -21,6 +21,8 @@ import {
   writeFileToolDescriptor,
   listFilesToolDescriptor,
   runShellToolDescriptor,
+  bashOutputToolDescriptor,
+  killBashToolDescriptor,
   waitForWorkspaceReadyToolDescriptor,
 } from './toolRuntime.js';
 import {
@@ -60,6 +62,8 @@ export const PLATFORM_TOOL_CATALOG: readonly ToolDescriptor[] = [
   grepToolDescriptor,
   artifactCreateToolDescriptor,
   runShellToolDescriptor,
+  bashOutputToolDescriptor,
+  killBashToolDescriptor,
   // memory
   memorySearchToolDescriptor,
   memoryListToolDescriptor,
@@ -109,6 +113,8 @@ export const PLATFORM_TOOL_SOURCE_MODULE: Readonly<Record<string, string>> = {
   Write: 'server/src/agent/toolRuntime.ts',
   List: 'server/src/agent/toolRuntime.ts',
   Shell: 'server/src/agent/toolRuntime.ts',
+  BashOutput: 'server/src/agent/toolRuntime.ts',
+  KillBash: 'server/src/agent/toolRuntime.ts',
   WaitForWorkspaceReady: 'server/src/agent/toolRuntime.ts',
   Edit: 'server/src/agent/workspaceHandTools.ts',
   Glob: 'server/src/agent/workspaceHandTools.ts',

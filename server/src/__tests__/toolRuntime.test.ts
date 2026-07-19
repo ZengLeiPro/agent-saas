@@ -24,7 +24,12 @@ import { DefaultExecutionTransportRegistry } from '../runtime/inProcessTransport
 import type { ToolInvocationResponse } from '../runtime/handProtocol.js';
 import type { HandRecord, HandStore, RegisterHandInput, HandStatus } from '../runtime/handStore.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
-import { DEFAULT_SHELL_TIMEOUT_MS, MAX_SHELL_TIMEOUT_MS } from '../agent/toolOutput.js';
+import {
+  DEFAULT_BACKGROUND_SHELL_TIMEOUT_MS,
+  DEFAULT_SHELL_TIMEOUT_MS,
+  MAX_BACKGROUND_SHELL_TIMEOUT_MS,
+  MAX_SHELL_TIMEOUT_MS,
+} from '../agent/toolOutput.js';
 
 function successResponse(content: string): ToolInvocationResponse {
   return { status: 'success', content };
@@ -80,6 +85,12 @@ describe('PlatformToolRuntime', () => {
       .toEqual({ command: 'sleep 1', timeoutMs: 600_000 });
     expect(() => runShellToolDescriptor.schema.parse({ command: 'sleep 1', timeoutMs: MAX_SHELL_TIMEOUT_MS + 1 }))
       .toThrow();
+    expect(runShellToolDescriptor.schema.parse({
+      command: 'sleep 3600',
+      mode: 'background',
+      timeoutMs: MAX_BACKGROUND_SHELL_TIMEOUT_MS,
+    })).toEqual({ command: 'sleep 3600', mode: 'background', timeoutMs: MAX_BACKGROUND_SHELL_TIMEOUT_MS });
+    expect(DEFAULT_BACKGROUND_SHELL_TIMEOUT_MS).toBe(3_600_000);
   });
 
   it('resolves workspace identity from sessionOwner on scheduler wake paths', () => {
@@ -114,6 +125,8 @@ describe('PlatformToolRuntime', () => {
       ['Write', 'workspace_write'],
       ['List', 'safe'],
       ['Shell', 'dangerous'],
+      ['BashOutput', 'safe'],
+      ['KillBash', 'safe'],
       ['Edit', 'workspace_write'],
       ['Glob', 'safe'],
       ['Grep', 'safe'],
@@ -277,6 +290,98 @@ describe('PlatformToolRuntime', () => {
         signal,
       },
     });
+  });
+
+  it('reserves a durable task before starting Shell(mode=background), then activates it after ACS accepts', async () => {
+    const invoke = vi.fn(async () => successResponse(JSON.stringify({ taskId: 'shell-bg-task-1', status: 'starting' })));
+    const registry = new DefaultExecutionTransportRegistry([
+      ['server-remote', mockExecutionTransport(invoke)],
+    ]);
+    const reserveCommand = vi.fn(async () => ({ taskId: 'shell-bg-task-1', status: 'starting' as const }));
+    const activateCommand = vi.fn(async () => undefined);
+    const failCommandStart = vi.fn(async () => undefined);
+    const runtime = new PlatformToolRuntime({
+      executionTransportRegistry: registry,
+      backgroundTasks: {
+        reserveCommand,
+        activateCommand,
+        failCommandStart,
+      } as never,
+    });
+    const context = {
+      channelContext: {
+        channel: 'web' as const,
+        sessionOwner: { id: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'tenant-1' },
+      },
+      workspace: {
+        ...workspace('/tmp/project'),
+        id: 'workspace-1',
+        tenantId: 'tenant-1',
+        executionTarget: 'server-remote' as const,
+      },
+      sessionId: 'session-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+    };
+
+    const result = await runtime.invoke({
+      toolId: 'Shell',
+      input: { command: 'pnpm build', mode: 'background', timeoutMs: 3_600_000 },
+      authorization: { approved: true, source: 'human_approval' },
+    }, context);
+
+    expect(result.content).toContain('shell-bg-task-1');
+    expect(reserveCommand).toHaveBeenCalledWith(context, { command: 'pnpm build', timeoutMs: 3_600_000 });
+    expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'Shell',
+      input: { command: 'pnpm build', mode: 'background', timeoutMs: 3_600_000, taskId: 'shell-bg-task-1' },
+    }));
+    expect(activateCommand).toHaveBeenCalledWith(context, 'shell-bg-task-1');
+    expect(failCommandStart).not.toHaveBeenCalled();
+  });
+
+  it('kills the reserved command when ACS start returns an error', async () => {
+    const invoke = vi.fn(async (request: Parameters<ExecutionTransport['invoke']>[0]) => request.toolName === 'Shell'
+      ? { status: 'error' as const, error: 'ACS start failed' }
+      : successResponse('{}'));
+    const registry = new DefaultExecutionTransportRegistry([
+      ['server-remote', mockExecutionTransport(invoke)],
+    ]);
+    const failCommandStart = vi.fn(async () => undefined);
+    const runtime = new PlatformToolRuntime({
+      executionTransportRegistry: registry,
+      backgroundTasks: {
+        reserveCommand: vi.fn(async () => ({ taskId: 'shell-bg-task-2', status: 'starting' as const })),
+        activateCommand: vi.fn(async () => undefined),
+        failCommandStart,
+      } as never,
+    });
+    const context = {
+      channelContext: {
+        channel: 'web' as const,
+        sessionOwner: { id: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'tenant-1' },
+      },
+      workspace: {
+        ...workspace('/tmp/project'),
+        id: 'workspace-1',
+        tenantId: 'tenant-1',
+        executionTarget: 'server-remote' as const,
+      },
+      sessionId: 'session-1',
+      runId: 'run-1',
+      toolCallId: 'tool-1',
+    };
+
+    await expect(runtime.invoke({
+      toolId: 'Shell',
+      input: { command: 'pnpm build', mode: 'background' },
+      authorization: { approved: true, source: 'human_approval' },
+    }, context)).rejects.toThrow('ACS start failed');
+
+    expect(invoke.mock.calls.map(([request]) => request.toolName)).toEqual(['Shell', 'KillBash']);
+    expect(invoke.mock.calls[1]?.[0].context).not.toHaveProperty('signal');
+    expect(invoke.mock.calls[1]?.[0].context).not.toHaveProperty('invocationId');
+    expect(failCommandStart).toHaveBeenCalledWith(context, 'shell-bg-task-2', 'ACS start failed');
   });
 
   it('allows approved shell execution for admin-owned resumed sessions without an authenticated user context', async () => {
@@ -1162,4 +1267,3 @@ describe('applyToolDescriptionOverride', () => {
     expect(patched.description.endsWith('仅限企业文档。')).toBe(true);
   });
 });
-

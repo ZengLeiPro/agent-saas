@@ -101,6 +101,52 @@ describe('AcsExecutor active sandbox tracking', () => {
     await expect(iterator.next()).resolves.toMatchObject({ done: true });
     expect(activeRegistry.isBusy(ref.name)).toBe(false);
   });
+
+  it('persists background shell lifecycle protection before returning the final response', async () => {
+    const ref: SandboxRef = {
+      name: 'as-background',
+      workspaceId: 'ws_kaiyan__u-1',
+      sandboxScopeId: 'ws_kaiyan__u-1',
+      sessionId: 'session-1',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    };
+    const child = fakeChild();
+    const setBackgroundShellProtection = vi.fn(async () => undefined);
+    const sandboxManager = {
+      ref: () => ref,
+      ensureRunning: vi.fn(async () => ref),
+      setBackgroundShellProtection,
+    } as unknown as SandboxManager;
+    const kubectl = { spawn: vi.fn(() => child) } as unknown as Kubectl;
+    const executor = new AcsExecutor(baseConfig(), kubectl, sandboxManager, noopLogger);
+    const protectedUntil = '2026-07-20T00:00:00.000Z';
+
+    const resultPromise = executor.execute({
+      toolName: 'Shell',
+      input: { command: 'sleep 60', mode: 'background' },
+      context: {
+        workspace: {
+          id: ref.workspaceId,
+          sessionId: ref.sessionId,
+          sandboxScopeId: ref.sandboxScopeId,
+          mountSubPath: ref.mountSubPath,
+        },
+      },
+    });
+    await vi.waitFor(() => expect(kubectl.spawn).toHaveBeenCalledOnce());
+    child.stdout.end(`${JSON.stringify({
+      kind: 'final',
+      response: {
+        status: 'success',
+        content: '{}',
+        metadata: { backgroundShell: { taskId: 'shell-bg-task-1', status: 'running', protectedUntil } },
+      },
+    })}\n`);
+    child.emit('close', 0, null);
+
+    await expect(resultPromise).resolves.toMatchObject({ status: 'success' });
+    expect(setBackgroundShellProtection).toHaveBeenCalledWith(ref.name, protectedUntil);
+  });
 });
 
 function fakeChild(): EventEmitter & { stdout: PassThrough; stderr: PassThrough; kill: ReturnType<typeof vi.fn> } {

@@ -6,6 +6,8 @@ export const MAX_SHELL_CAPTURE_BYTES = 4 * 1024 * 1024;
 export const MAX_SHELL_STREAM_BYTES = 64 * 1024;
 export const MAX_SHELL_TIMEOUT_MS = 10 * 60_000;
 export const DEFAULT_SHELL_TIMEOUT_MS = MAX_SHELL_TIMEOUT_MS;
+export const MAX_BACKGROUND_SHELL_TIMEOUT_MS = 24 * 60 * 60_000;
+export const DEFAULT_BACKGROUND_SHELL_TIMEOUT_MS = 60 * 60_000;
 
 export interface ShellOutputFileRef {
   channel: 'stdout' | 'stderr';

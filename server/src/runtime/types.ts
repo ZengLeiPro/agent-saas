@@ -803,7 +803,7 @@ export type PlatformEvent =
     /** 子任务最终文本的短预览；完整过程仍读取 childSessionId。 */
     resultPreview?: string;
   }
-  /** durable 后台 Agent 生命周期；只作审计/观测，不进入模型上下文投影。 */
+  /** durable 后台 Agent/命令生命周期；只作审计/观测，不进入模型上下文投影。 */
   | {
     id: string;
     timestamp: string;

@@ -1,12 +1,19 @@
 import { randomUUID } from 'crypto';
 import { buildApprovalRecordsFromEvents } from './approvalStore.js';
-import { isBackgroundTaskRun, isBackgroundTaskWakeRun } from './background/backgroundTaskRuntime.js';
+import {
+  isBackgroundAgentTaskRun,
+  isBackgroundCommandTaskRun,
+  isBackgroundTaskReady,
+  isBackgroundTaskRun,
+  isBackgroundTaskWakeRun,
+} from './background/backgroundTaskRuntime.js';
 import type { RunRecord, RunStatus, RunStore } from './runStore.js';
 import type { EventStore } from './types.js';
 
 const DEFAULT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const STALE_APPROVAL_REASON = 'stale_waiting_approval_timeout';
 const STALE_APPROVAL_BATCH_SIZE = 50;
+const BACKGROUND_COMMAND_START_TIMEOUT_MS = 2 * 60_000;
 
 export interface RunLease {
   runId: string;
@@ -34,6 +41,8 @@ export interface RuntimeSchedulerOptions {
   failInterruptedBackgroundTask?: (record: RunRecord) => Promise<void>;
   /** 后台任务在 wake 前置闸门失败时冻结结果并生成完成通知。 */
   failBackgroundTask?: (record: RunRecord, message: string) => Promise<void>;
+  /** Server drain 时只交接后台命令监控，不终止 ACS 中的真实进程。 */
+  handoffBackgroundCommand?: (record: RunRecord) => void | Promise<void>;
   logger?: {
     info(message: string): void;
     warn(message: string): void;
@@ -97,7 +106,14 @@ export class RuntimeScheduler {
       await new Promise<void>((resolve) => setTimeout(resolve, 10));
     }
     while (this.inFlightRuns.size > 0) {
-      await Promise.allSettled([...this.inFlightRuns.values()]);
+      for (const record of this.inFlightRunRecords.values()) {
+        if (!isBackgroundCommandTaskRun(record)) continue;
+        await this.options.handoffBackgroundCommand?.(record);
+      }
+      await Promise.race([
+        Promise.allSettled([...this.inFlightRuns.values()]),
+        new Promise<void>((resolve) => setTimeout(resolve, 25)),
+      ]);
     }
   }
 
@@ -133,11 +149,34 @@ export class RuntimeScheduler {
       }
 
       const recoverable = await this.options.runStore.listRecoverable();
+      let backgroundStateChanged = false;
+      for (const record of recoverable) {
+        if (
+          record.status !== 'pending'
+          || !isBackgroundCommandTaskRun(record)
+          || isBackgroundTaskReady(record)
+          || Date.parse(record.requestedAt) > Date.now() - BACKGROUND_COMMAND_START_TIMEOUT_MS
+        ) continue;
+        const message = '后台命令启动确认超时；已尝试终止可能存在的 ACS 进程';
+        try {
+          if (this.options.failBackgroundTask) {
+            await this.options.failBackgroundTask(record, message);
+          } else {
+            await this.options.runStore.markStatus(record.runId, 'failed', 'background_command_start_timeout', {
+              wakeState: 'pending',
+            });
+          }
+          backgroundStateChanged = true;
+        } catch (err) {
+          this.options.logger?.error(
+            `Failed to freeze stale background command reservation ${record.runId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       // 后台任务一旦进入 running 就可能已经产生外部副作用。lease 过期只冻结失败，
       // 不允许像普通主会话那样恢复重放；pending 后台任务仍可安全首跑。
-      let interruptedFrozen = false;
       for (const record of recoverable) {
-        if (record.status !== 'running' || !isBackgroundTaskRun(record)) continue;
+        if (record.status !== 'running' || !isBackgroundAgentTaskRun(record)) continue;
         try {
           if (this.options.failInterruptedBackgroundTask) {
             await this.options.failInterruptedBackgroundTask(record);
@@ -149,18 +188,19 @@ export class RuntimeScheduler {
               { wakeState: 'pending' },
             );
           }
-          interruptedFrozen = true;
+          backgroundStateChanged = true;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           this.options.logger?.error(`Failed to freeze interrupted background task ${record.runId}: ${message}`);
         }
       }
-      if (interruptedFrozen) this.tickAgainRequested = true;
+      if (backgroundStateChanged) this.tickAgainRequested = true;
 
       const availableSlots = this.maxConcurrentRuns - this.inFlightRuns.size;
       if (availableSlots <= 0) return;
       const pendingRecoverable = recoverable.filter((record) => (
-        !(record.status === 'running' && isBackgroundTaskRun(record))
+        !(record.status === 'running' && isBackgroundAgentTaskRun(record))
+        && isBackgroundTaskReady(record)
       ));
       // 普通/交互恢复优先；后台任务同时受总槽位和独立后台槽位约束。
       pendingRecoverable.sort((a, b) => Number(isBackgroundTaskRun(a)) - Number(isBackgroundTaskRun(b)));

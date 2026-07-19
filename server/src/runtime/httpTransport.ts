@@ -382,7 +382,10 @@ export class HttpTransport implements ExecutionTransport {
   }
 
   private shouldUseStreaming(request: ToolInvocationRequest): boolean {
-    return Boolean(request.context.invocationId && request.toolName === 'Shell');
+    const mode = request.input && typeof request.input === 'object'
+      ? (request.input as { mode?: unknown }).mode
+      : undefined;
+    return Boolean(request.context.invocationId && request.toolName === 'Shell' && mode !== 'background');
   }
 
   private async cancelInvocation(invocationId: string | undefined): Promise<void> {

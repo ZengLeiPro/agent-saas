@@ -42,6 +42,7 @@ const sandboxManager = new SandboxManager(config, kubectl, logger, activeRegistr
 const executor = new AcsExecutor(config, kubectl, sandboxManager, logger, activeRegistry);
 const provisioner = new Provisioner(config, kubectl, sandboxManager, () => executor.busySandboxNames(), activeRegistry);
 let lifecycleTimer: ReturnType<typeof setInterval> | null = null;
+let lifecycleRunning = false;
 const lastAlertAtByEvent = new Map<string, number>();
 let staleImagePrewarmRunning = false;
 
@@ -722,7 +723,18 @@ async function runStaleImagePrewarmOnce(reason: string): Promise<void> {
 }
 
 async function runLifecycleOnce(reason: string): Promise<void> {
+  if (lifecycleRunning) {
+    logger.info(`sandbox_lifecycle reason=${reason} skipped=already_running`);
+    return;
+  }
+  lifecycleRunning = true;
   try {
+    const backgroundShells = await executor.reconcileBackgroundShellProtections();
+    if (backgroundShells.checked > 0) {
+      logger.info(
+        `background_shell_reconcile reason=${reason} checked=${backgroundShells.checked} failed=${backgroundShells.failed}`,
+      );
+    }
     const report = await sandboxManager.cleanupSandboxes({ busySandboxNames: activeBusySandboxNames() });
     if (report.paused.length || report.deleted.length || report.skippedBusy.length) {
       logger.warn(
@@ -771,6 +783,8 @@ async function runLifecycleOnce(reason: string): Promise<void> {
       message,
       metadata: { reason },
     });
+  } finally {
+    lifecycleRunning = false;
   }
 }
 

@@ -17,6 +17,7 @@ import type {
 } from '../runtime/sessionCatalog.js';
 import type { RawRuntimeRunDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
 import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
+import type { ExecutionTransport } from '../runtime/executionTransport.js';
 import type { SubagentOutcome } from '../runtime/subagent/subagentRunner.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 
@@ -279,6 +280,34 @@ describe('DurableBackgroundTaskService', () => {
     }));
   });
 
+  it('includes failed command stderr and full-log paths in the parent wake', async () => {
+    const base = fixture();
+    const reservation = await base.service.reserveCommand(commandContext(), {
+      command: 'pnpm build',
+      timeoutMs: 60_000,
+    });
+    await base.runStore.markStatus(reservation.taskId, 'failed', 'command exited 1', {
+      wakeState: 'pending',
+      backgroundResult: {
+        status: 'failed',
+        text: 'Status: failed\nFull logs: stdout=.ky-agent/out.log stderr=.ky-agent/err.log\n\nstderr:\ncompile failed',
+        errorMessage: 'command exited 1',
+        totalTokens: 0,
+        toolUseCount: 1,
+        turnCount: 0,
+        durationMs: 500,
+      },
+    });
+
+    await base.service.reconcileWakeDeliveries();
+
+    const wake = base.runStore.records.get(`bg-wake-${reservation.taskId}`)!;
+    const content = (wake.metadata.wakeMessage as { content: string }).content;
+    expect(content).toContain('command exited 1');
+    expect(content).toContain('compile failed');
+    expect(content).toContain('Full logs: stdout=.ky-agent/out.log');
+  });
+
   it('executes through the subagent assembly, freezes the result, then queues the parent wake', async () => {
     const base = fixture();
     const outcome: SubagentOutcome = {
@@ -379,7 +408,145 @@ describe('DurableBackgroundTaskService', () => {
       '&lt;tag a=&quot;b&quot;&gt;Tom &amp; Jerry&apos;s&lt;/tag&gt;',
     );
   });
+
+  it('reserves, activates and monitors a durable background command without replaying it', async () => {
+    const base = fixture();
+    const invocations: Array<{ toolName: string; input: unknown }> = [];
+    const transport: ExecutionTransport = {
+      listInternalTools: () => [],
+      invoke: async (request) => {
+        invocations.push({ toolName: request.toolName, input: request.input });
+        return {
+          status: 'success',
+          content: JSON.stringify({
+            taskId: (request.input as { task_id?: string }).task_id,
+            status: 'completed',
+            stdout: 'build done',
+            stderr: '',
+            stdoutBytes: 10,
+            stderrBytes: 0,
+            exitCode: 0,
+          }),
+        };
+      },
+    };
+    base.config.executionTransportRegistry!.register('server-remote', transport);
+    const context = commandContext();
+    const reservation = await base.service.reserveCommand(context, {
+      command: 'pnpm build',
+      timeoutMs: 60_000,
+    });
+    const reserved = base.runStore.records.get(reservation.taskId)!;
+    expect(reserved.metadata).toMatchObject({
+      backgroundTaskType: 'command',
+      backgroundTaskReady: false,
+      commandPreview: 'pnpm build',
+      wakeState: 'none',
+    });
+
+    await base.service.activateCommand(context, reservation.taskId);
+    expect(base.runStore.records.get(reservation.taskId)?.metadata).toMatchObject({ backgroundTaskReady: true });
+    await base.service.execute(base.runStore.records.get(reservation.taskId)!);
+    expect(invocations).toEqual([expect.objectContaining({ toolName: 'BashOutput' })]);
+    expect(base.runStore.records.get(reservation.taskId)).toMatchObject({
+      status: 'completed',
+      metadata: {
+        wakeState: 'pending',
+        backgroundResult: { status: 'completed', text: expect.stringContaining('build done') },
+      },
+    });
+  });
+
+  it('cancels the ACS process when cancelling a durable background command', async () => {
+    const base = fixture();
+    const invocations: string[] = [];
+    base.config.executionTransportRegistry!.register('server-remote', {
+      listInternalTools: () => [],
+      invoke: async (request) => {
+        invocations.push(request.toolName);
+        return {
+          status: 'success',
+          content: JSON.stringify({
+            taskId: (request.input as { task_id?: string }).task_id,
+            status: 'cancelled',
+            stdout: '',
+            stderr: '',
+            stdoutBytes: 0,
+            stderrBytes: 0,
+          }),
+        };
+      },
+    });
+    const context = commandContext();
+    const reservation = await base.service.reserveCommand(context, { command: 'sleep 60', timeoutMs: 60_000 });
+    await base.service.activateCommand(context, reservation.taskId);
+
+    const cancelled = await base.service.cancel(context, reservation.taskId);
+    expect(invocations).toEqual(['KillBash']);
+    expect(cancelled).toMatchObject({ status: 'cancelled', metadata: { wakeState: 'pending' } });
+  });
+
+  it('hands off only the monitor during Server drain and leaves the ACS command running', async () => {
+    const base = fixture();
+    const invocations: string[] = [];
+    let notifyBashOutputStarted!: () => void;
+    const bashOutputStarted = new Promise<void>((resolve) => { notifyBashOutputStarted = resolve; });
+    base.config.executionTransportRegistry!.register('server-remote', {
+      listInternalTools: () => [],
+      invoke: async (request) => {
+        invocations.push(request.toolName);
+        if (request.toolName !== 'BashOutput') return { status: 'success', content: '{}' };
+        notifyBashOutputStarted();
+        await new Promise<never>((_resolve, reject) => {
+          const signal = request.context.signal;
+          if (signal?.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+        throw new Error('unreachable');
+      },
+    });
+    const context = commandContext();
+    const reservation = await base.service.reserveCommand(context, { command: 'sleep 600', timeoutMs: 600_000 });
+    await base.service.activateCommand(context, reservation.taskId);
+    await base.runStore.markStatus(reservation.taskId, 'running');
+    const record = base.runStore.records.get(reservation.taskId)!;
+
+    const execution = base.service.execute(record);
+    await bashOutputStarted;
+    base.service.handoffCommandMonitor(record);
+    await execution;
+
+    expect(invocations).toEqual(['BashOutput']);
+    expect(base.runStore.records.get(reservation.taskId)).toMatchObject({ status: 'running' });
+  });
 });
+
+function commandContext(): ToolCallContext {
+  return {
+    channelContext: {
+      channel: 'web',
+      timezone: 'Asia/Shanghai',
+      sessionOwner: { id: 'user-1', username: 'alice', role: 'user', tenantId: 'tenant-1' },
+    },
+    workspace: {
+      id: 'parent-session-1',
+      root: '/tmp/workspace',
+      userId: 'user-1',
+      username: 'alice',
+      tenantId: 'tenant-1',
+      sessionId: 'parent-session-1',
+      executionTarget: 'server-remote',
+      sandboxScopeId: 'workspace-user-1',
+      mountSubPath: 'workspaces/tenant-1/user-1',
+    },
+    sessionId: 'parent-session-1',
+    runId: 'parent-run-command',
+    toolCallId: 'tool-call-command',
+  };
+}
 
 describe('PgRunStore background task quota transaction', () => {
   it('serializes quota check and insert in one transaction', async () => {

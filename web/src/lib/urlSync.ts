@@ -9,7 +9,6 @@ const SETTINGS_SECTION_IDS: ReadonlySet<string> = new Set([
   'all-agents',
   'memory',
   'skills',
-  'cron',
   'mcp',
   'files',
   'data',
@@ -200,6 +199,9 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
   if (pathname === '/settings/skills') {
     return parsed({ tab: 'capabilities', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath: '/capabilities/skills' });
   }
+  if (pathname === '/settings/cron') {
+    return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath: '/cron' });
+  }
   if (pathname === '/settings/mcp' || pathname === '/mcp') {
     return parsed({ tab: 'capabilities', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath: '/capabilities/connectors' });
   }
@@ -214,7 +216,7 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
     const id = decodeURIComponent(pathname.slice(6));
     return parsed({ tab: 'chat', sessionId: id || null, settingsSection: null, adminSettings: null });
   }
-  if (pathname === '/cron') return parsed({ tab: 'chat', sessionId: null, settingsSection: 'cron', adminSettings: null });
+  if (pathname === '/cron') return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null });
   if (pathname === '/files') return parsed({ tab: 'chat', sessionId: null, settingsSection: 'files', adminSettings: null });
   if (pathname === '/profile') return parsed({ tab: 'profile', sessionId: null, settingsSection: null, adminSettings: null });
   if (pathname === '/capabilities' || pathname === '/capabilities/templates' || pathname === '/capabilities/experts' || pathname === '/capabilities/skills' || pathname === '/capabilities/connectors') {

@@ -66,7 +66,7 @@ import { LogoutAccountDialog } from "@/components/LogoutAccountDialog";
 import { getAccountKey, type SavedAccountSummary } from "@/lib/savedAccounts";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
-import { baseNavItems, formatShortDate } from "@/types/sidebar";
+import { getSidebarNavItems, formatShortDate } from "@/types/sidebar";
 import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 
@@ -102,6 +102,7 @@ interface DesktopSessionSidebarProps {
   /** 完整未读集（不受分页影响），用于左栏各视图/分组的聚合红点 */
   unreadAiReplySessionIds?: ReadonlySet<string>;
   sidebarLayout?: "double" | "single";
+  personalAgentEnabled?: boolean;
 }
 
 /** 稳定的空集兜底，避免 prop 缺省时每次 render 新建 Set 触发 useMemo 失效 */
@@ -1054,6 +1055,7 @@ export function DesktopSessionSidebar({
   trashPreviewSessionId,
   unreadAiReplySessionIds,
   sidebarLayout = "double",
+  personalAgentEnabled = true,
 }: DesktopSessionSidebarProps) {
   const { user: authUser, accounts, switchAccount, authEnabled } = useAuth();
   const showBilling = useTenantBillingVisibility(authUser?.tenantId);
@@ -1450,11 +1452,8 @@ export function DesktopSessionSidebar({
   }, [hidden, sortMenuOpen]);
 
   const navItems = useMemo(
-    () => [
-      ...baseNavItems.filter((item) => !item.adminOnly || isAdmin),
-      { tab: "capabilities" as AppTab, label: "能力中心" },
-    ],
-    [isAdmin],
+    () => getSidebarNavItems({ isAdmin, personalAgentEnabled }),
+    [isAdmin, personalAgentEnabled],
   );
 
   const [singleSelectionMode, setSingleSelectionMode] = useState(false);

@@ -7,7 +7,6 @@ export type SettingsSectionId =
   | "all-agents"
   | "memory"
   | "skills"
-  | "cron"
   | "mcp"
   | "files"
   | "data";

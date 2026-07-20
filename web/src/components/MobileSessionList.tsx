@@ -23,7 +23,7 @@ import { useGroups } from "@/hooks/useGroups";
 import { getSortedGroupItems } from "@agent/shared";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
-import { baseNavItems, formatShortDate, sourceDisplayText } from "@/types/sidebar";
+import { getSidebarNavItems, formatShortDate, sourceDisplayText } from "@/types/sidebar";
 import type { SessionGroup } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import { DEFAULT_TENANT_ID } from "@agent/shared";
@@ -69,6 +69,7 @@ interface MobileSessionListProps {
   trashPreviewSessionId?: string | null;
   /** 完整未读集（不受分页影响），用于分组折叠行的聚合红点 */
   unreadAiReplySessionIds?: ReadonlySet<string>;
+  personalAgentEnabled?: boolean;
 }
 
 export function MobileSessionList({
@@ -106,6 +107,7 @@ export function MobileSessionList({
   onPreviewTrashSession,
   trashPreviewSessionId,
   unreadAiReplySessionIds,
+  personalAgentEnabled = true,
 }: MobileSessionListProps) {
   const { user: authUser, logout, authEnabled, updateAvatar } = useAuth();
   const query = "";
@@ -266,11 +268,8 @@ export function MobileSessionList({
 
 
   const navItems = useMemo(
-    () => [
-      ...baseNavItems.filter((item) => !item.adminOnly || isAdmin),
-      { tab: "capabilities" as AppTab, label: "能力中心" },
-    ],
-    [isAdmin],
+    () => getSidebarNavItems({ isAdmin, personalAgentEnabled }),
+    [isAdmin, personalAgentEnabled],
   );
 
   // 打开重命名弹窗

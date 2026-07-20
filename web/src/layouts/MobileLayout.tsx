@@ -90,7 +90,7 @@ export function MobileLayout(props: LayoutProps) {
   useScenarioDeepLink(handleScenarioPrefill);
 
   useEffect(() => {
-    if (!personalAgentEnabled && (activeTab === "scenarios" || activeTab === "profile")) {
+    if (!personalAgentEnabled && (activeTab === "scenarios" || activeTab === "profile" || activeTab === "cron")) {
       setActiveTab("capabilities");
       return;
     }
@@ -271,6 +271,7 @@ export function MobileLayout(props: LayoutProps) {
               onLoadGroupSessions={loadGroupSessions}
               onPreviewTrashSession={(id) => { if (id) closeDrawer(); previewTrashSession(id); }}
               trashPreviewSessionId={trashPreviewSessionId}
+              personalAgentEnabled={personalAgentEnabled}
               renderCronManager={() => <Suspense fallback={SuspenseFallback}><CronManager /></Suspense>}
               renderTenantManager={() => <Suspense fallback={SuspenseFallback}><TenantManager /></Suspense>}
               renderTenantAdmin={() => (
@@ -431,7 +432,6 @@ export function MobileLayout(props: LayoutProps) {
           onSectionChange={setSettingsSection}
           onClose={closeSettings}
           renderMemory={() => <MemorySectionPanel />}
-          renderCron={() => <CronManager />}
           renderFiles={() => (
             <FileBrowserLazy
               onPreviewFile={openFilePreview}

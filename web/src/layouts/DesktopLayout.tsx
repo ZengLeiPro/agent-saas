@@ -242,7 +242,7 @@ export function DesktopLayout(props: LayoutProps) {
   // 非 admin 用户访问 admin-only tab 时重定向到 chat
   // 组织分析对 admin 可见；平台分析仅限平台 admin。
   useEffect(() => {
-    if (!personalAgentEnabled && (activeTab === "scenarios" || activeTab === "profile")) {
+    if (!personalAgentEnabled && (activeTab === "scenarios" || activeTab === "profile" || activeTab === "cron")) {
       setActiveTab("capabilities");
       return;
     }
@@ -283,6 +283,7 @@ export function DesktopLayout(props: LayoutProps) {
         onPreviewTrashSession={previewTrashSession}
         trashPreviewSessionId={trashPreviewSessionId}
         sidebarLayout={sidebarLayout}
+        personalAgentEnabled={personalAgentEnabled}
       />
 
       {/* 右侧内容区 */}
@@ -680,7 +681,6 @@ export function DesktopLayout(props: LayoutProps) {
             onSectionChange={setSettingsSection}
             onClose={closeSettings}
             renderMemory={() => <MemorySectionPanel />}
-            renderCron={() => <CronManager onJobCountChange={handleCronJobCountChange} />}
             renderFiles={() => (
               <FileBrowserLazy
                 onPreviewFile={openFilePreview}

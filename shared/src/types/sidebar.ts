@@ -23,7 +23,31 @@ export interface ChatSessionIndexItem {
 
 export type AppTab = "chat" | "capabilities" | "scenarios" | "cron" | "tenants" | "tenant-admin" | "platform-admin" | "files" | "profile" | "skills" | "usage" | "mcp" | "models" | "settings" | "trash";
 
-export const baseNavItems: { tab: AppTab; label: string; adminOnly?: boolean }[] = [];
+export interface SidebarNavItem {
+  tab: AppTab;
+  label: string;
+  adminOnly?: boolean;
+  personalAgentOnly?: boolean;
+}
+
+export const baseNavItems: SidebarNavItem[] = [
+  { tab: "capabilities", label: "能力中心" },
+  { tab: "cron", label: "定时任务", personalAgentOnly: true },
+];
+
+export function getSidebarNavItems({
+  isAdmin,
+  personalAgentEnabled,
+}: {
+  isAdmin: boolean;
+  personalAgentEnabled: boolean;
+}): SidebarNavItem[] {
+  return baseNavItems.filter(
+    (item) =>
+      (!item.adminOnly || isAdmin) &&
+      (!item.personalAgentOnly || personalAgentEnabled),
+  );
+}
 
 export function formatShortDate(ts: number): string {
   try {

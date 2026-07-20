@@ -23,10 +23,11 @@ import {
 
 describe("normalizeSettingsSection", () => {
   it("合法 section 原样返回", () => {
-    expect(normalizeSettingsSection("cron")).toBe("cron");
     expect(normalizeSettingsSection("memory")).toBe("memory");
+    expect(normalizeSettingsSection("files")).toBe("files");
   });
   it("非法 / 空值回退 account", () => {
+    expect(normalizeSettingsSection("cron")).toBe("account");
     expect(normalizeSettingsSection("nope")).toBe("account");
     expect(normalizeSettingsSection(null)).toBe("account");
     expect(normalizeSettingsSection(undefined)).toBe("account");
@@ -63,7 +64,7 @@ describe("isSettingsPath", () => {
 
 describe("buildSettingsUrl / buildAdminSettingsUrl", () => {
   it("settings section 编码", () => {
-    expect(buildSettingsUrl("cron")).toBe("/settings/cron");
+    expect(buildSettingsUrl("files")).toBe("/settings/files");
   });
   it("admin settings 前缀区分 tenant / platform", () => {
     expect(buildAdminSettingsUrl("tenant", "billing")).toBe("/tenant-admin/settings/billing");
@@ -134,6 +135,7 @@ describe("parseUrl 常规路径分支", () => {
   it("settings 根与子 section", () => {
     expect(parseUrl("/settings")).toMatchObject({ tab: "chat", settingsSection: "account" });
     expect(parseUrl("/settings/memory")).toMatchObject({ tab: "chat", settingsSection: "memory" });
+    expect(parseUrl("/settings/cron")).toMatchObject({ tab: "cron", canonicalPath: "/cron" });
   });
 
   it("chat/:id 解码，空 id 归零", () => {
@@ -141,8 +143,8 @@ describe("parseUrl 常规路径分支", () => {
     expect(parseUrl("/chat/")).toMatchObject({ tab: "chat", sessionId: null });
   });
 
-  it("cron / files 走 settings modal", () => {
-    expect(parseUrl("/cron")).toMatchObject({ tab: "chat", settingsSection: "cron" });
+  it("cron 走一级页面，files 走 settings modal", () => {
+    expect(parseUrl("/cron")).toMatchObject({ tab: "cron", settingsSection: null });
     expect(parseUrl("/files")).toMatchObject({ tab: "chat", settingsSection: "files" });
   });
 
@@ -200,8 +202,8 @@ describe("pushUrl / replaceUrl 写入 history（jsdom）", () => {
 
   it("pushSettingsUrl / replaceSettingsUrl", () => {
     const push = vi.spyOn(window.history, "pushState");
-    pushSettingsUrl("cron");
-    expect(push).toHaveBeenCalledWith({}, "", "/settings/cron");
+    pushSettingsUrl("files");
+    expect(push).toHaveBeenCalledWith({}, "", "/settings/files");
 
     const replace = vi.spyOn(window.history, "replaceState");
     replaceSettingsUrl("memory");

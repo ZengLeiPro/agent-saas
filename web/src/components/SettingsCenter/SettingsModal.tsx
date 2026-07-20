@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition, Suspe
 import {
   Brain,
   ChevronLeft,
-  Clock,
   Lock,
   Loader2,
   LogOut,
@@ -43,7 +42,6 @@ export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
   { id: "general", label: "通用", description: "界面、语言、声音和基础偏好。", group: "account", icon: Settings2 },
   { id: "personalization", label: "个性化", description: "侧边栏、会话列表和界面偏好。", group: "account", icon: Palette },
   { id: "memory", label: "记忆", description: "查看和编辑 Agent 长期记忆（MEMORY.md）。", group: "features", icon: Brain },
-  { id: "cron", label: "定时任务", description: "创建和管理个人自动化任务。", group: "features", icon: Clock },
   { id: "files", label: "文件", description: "浏览个人工作区文件和预览内容。", group: "features", icon: EntityIcons.files },
   { id: "data", label: "回收站", description: "查看已删除会话，必要时进行恢复或彻底清理。", group: "features", icon: EntityIcons.trash },
 ];
@@ -723,7 +721,6 @@ export interface SettingsModalProps {
   onSectionChange: (section: SettingsSectionId) => void;
   onClose: () => void;
   renderMemory?: () => ReactNode;
-  renderCron?: () => ReactNode;
   renderFiles?: () => ReactNode;
   renderTrash?: () => ReactNode;
   sidebarLayout?: SidebarLayoutPref;
@@ -738,7 +735,6 @@ export function SettingsModal({
   onSectionChange,
   onClose,
   renderMemory,
-  renderCron,
   renderFiles,
   renderTrash,
   sidebarLayout = "double",
@@ -866,7 +862,7 @@ export function SettingsModal({
   })).filter(group => group.items.length > 0);
 
   // mount-once-visited：每个 section 用 hidden 切换可见性，访问过就留在 DOM。
-  // 避免「切到 cron→useCronJobs 拉数据→渲染→切回→再次重置→再拉数据」式闪烁。
+  // 避免「切换面板→拉数据→渲染→切回→再次重置→再拉数据」式闪烁。
   // visited.has(id) 守门，未访问过的 section 不预先 mount，避免一打开 modal 就
   // 把所有 panel 的数据请求一齐发出。
   const sectionsToRender: { id: SettingsSectionId; node: ReactNode }[] = [
@@ -902,7 +898,6 @@ export function SettingsModal({
       ),
     },
     { id: "memory", node: renderMemory?.() ?? null },
-    { id: "cron", node: renderCron?.() ?? null },
     { id: "files", node: renderFiles?.() ?? null },
     {
       id: "data",

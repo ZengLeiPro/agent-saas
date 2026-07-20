@@ -46,7 +46,7 @@ export type {
 export type { ModelItem, ModelGroup, ModelList } from "./models";
 
 export type { ChatSessionIndexItem, AppTab } from "./sidebar";
-export { baseNavItems, formatShortDate, sourceDisplayText } from "./sidebar";
+export { baseNavItems, getSidebarNavItems, formatShortDate, sourceDisplayText } from "./sidebar";
 
 export type { SessionGroup, SessionListEntry } from "./sessionGroup";
 

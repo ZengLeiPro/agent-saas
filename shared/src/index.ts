@@ -13,6 +13,7 @@ export {
   ACTIVITY_TYPES,
   formatTokenCount,
   baseNavItems,
+  getSidebarNavItems,
   formatShortDate,
   sourceDisplayText,
   PLATFORM_TENANT_ID,

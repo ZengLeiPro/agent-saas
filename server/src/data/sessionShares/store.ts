@@ -71,6 +71,18 @@ export function isShareExpired(record: Pick<SessionShareRecord, 'expiresAt'>, no
   return Boolean(record.expiresAt && Date.parse(record.expiresAt) <= now.getTime());
 }
 
+// PostgreSQL jsonb 不支持 U+0000；分享快照可能包含带 NUL 的工具输出。
+// 在持久化边界转成可见转义文本，同时保留原本的字面量 `\u0000`。
+function serializeSnapshotForJsonb(snapshot: SessionShareSnapshot): string {
+  const serialized = JSON.stringify(snapshot, (_key, value) => (
+    typeof value === 'string' && value.includes('\u0000')
+      ? value.replaceAll('\u0000', '\\u0000')
+      : value
+  ));
+  if (serialized === undefined) throw new Error('session share snapshot 无法序列化为 JSON');
+  return serialized;
+}
+
 export class InMemorySessionShareStore implements SessionShareStore {
   private readonly records = new Map<string, SessionShareRecord>();
 
@@ -269,7 +281,7 @@ export class PgSessionShareStore implements SessionShareStore {
             input.createdByUserId,
             input.expiresAt ?? null,
             input.debugMode,
-            JSON.stringify(input.snapshot),
+            serializeSnapshotForJsonb(input.snapshot),
           ],
         );
         record = rowToRecord(updated.rows[0]);
@@ -292,7 +304,7 @@ export class PgSessionShareStore implements SessionShareStore {
             input.createdByUserId,
             input.expiresAt ?? null,
             input.debugMode,
-            JSON.stringify(input.snapshot),
+            serializeSnapshotForJsonb(input.snapshot),
           ],
         );
         record = rowToRecord(inserted.rows[0]);

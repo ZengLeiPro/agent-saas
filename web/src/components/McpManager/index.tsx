@@ -49,6 +49,12 @@ import {
   dingtalkMatchesCatalog,
   useDwsConnections,
 } from "@/components/CapabilityCenter/DingtalkConnector";
+import {
+  FeishuConnectorCard,
+  FeishuConnectorDrawer,
+  feishuMatchesCatalog,
+  useFeishuConnections,
+} from "@/components/CapabilityCenter/FeishuConnector";
 
 const SCOPE_BADGE: Record<McpSecretScope, { label: string; className: string }> = {
   user: { label: "用户私有", className: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100" },
@@ -145,9 +151,11 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const [detailServerId, setDetailServerId] = useState<string | null>(null);
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [pendingServerId, setPendingServerId] = useState<string | null>(null);
-  // 钉钉是平台内置连接（DWS device flow），与 MCP 连接器同 grid 展示但数据流独立。
+  // 钉钉/飞书是平台内置 CLI 连接，与 MCP 同 grid 展示但数据流独立。
   const dws = useDwsConnections(mode === "personal");
+  const feishu = useFeishuConnections(mode === "personal");
   const [dingtalkDetailOpen, setDingtalkDetailOpen] = useState(false);
+  const [feishuDetailOpen, setFeishuDetailOpen] = useState(false);
 
   const diagnose = useCallback(async (force = false) => {
     setDiagnosing(true);
@@ -454,15 +462,16 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
       return matchesFilter && matchesQuery;
     });
   }, [activeFilter, connectorServers, query]);
-  // 钉钉内置连接计入「全部 / 已启用（有已连接组织）/ 平台提供」的计数。
+  // 两个内置协同办公连接计入「全部 / 已启用 / 平台提供」的计数。
   const connectorFilters = useMemo(() => [
-    { value: "all" as const, label: "全部", count: connectorServers.length + 1 },
-    { value: "enabled" as const, label: "已启用", count: enabledCount + (dws.hasConnected ? 1 : 0) },
-    { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length + 1 },
+    { value: "all" as const, label: "全部", count: connectorServers.length + 2 },
+    { value: "enabled" as const, label: "已启用", count: enabledCount + (dws.hasConnected ? 1 : 0) + (feishu.hasConnected ? 1 : 0) },
+    { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length + 2 },
     { value: "organization" as const, label: "组织提供", count: connectorServers.filter((server) => connectorSource(server) === "organization").length },
     { value: "personal" as const, label: "我创建的", count: connectorServers.filter((server) => connectorSource(server) === "personal").length },
-  ], [connectorServers, dws.hasConnected, enabledCount]);
+  ], [connectorServers, dws.hasConnected, enabledCount, feishu.hasConnected]);
   const showDingtalkCard = dingtalkMatchesCatalog(query, activeFilter, dws);
+  const showFeishuCard = feishuMatchesCatalog(query, activeFilter, feishu);
   const detailServer = detailServerId ? connectorServers.find((server) => server.id === detailServerId) ?? null : null;
 
   const toggleServer = useCallback(async (server: McpServerSummary, nextValue: boolean) => {
@@ -524,7 +533,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
 
         <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
           {error ? <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
-          {filteredServers.length === 0 && !showDingtalkCard ? (
+          {filteredServers.length === 0 && !showDingtalkCard && !showFeishuCard ? (
             <div className="rounded-2xl border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
               没有找到匹配的连接器
             </div>
@@ -532,6 +541,9 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {showDingtalkCard ? (
                 <DingtalkConnectorCard dws={dws} onOpenDetail={() => setDingtalkDetailOpen(true)} />
+              ) : null}
+              {showFeishuCard ? (
+                <FeishuConnectorCard state={feishu} onOpenDetail={() => setFeishuDetailOpen(true)} />
               ) : null}
               {filteredServers.map((server) => {
                 const source = connectorSource(server);
@@ -761,6 +773,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
         </CapabilityDetailDrawer>
 
         <DingtalkConnectorDrawer open={dingtalkDetailOpen} onOpenChange={setDingtalkDetailOpen} dws={dws} />
+        <FeishuConnectorDrawer open={feishuDetailOpen} onOpenChange={setFeishuDetailOpen} state={feishu} />
 
         <Dialog open={customDialogOpen} onOpenChange={setCustomDialogOpen}>
           <DialogContent className="max-h-[min(760px,calc(100vh-48px))] max-w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-2xl">

@@ -11,7 +11,7 @@ import { McpManager } from "@/components/McpManager";
 import { CapabilityTabsList } from "./CapabilityTabsList";
 import { useCapabilityNavigation } from "./navigation";
 import { CatalogToolbar, CapabilityLogo } from "./CatalogUi";
-import { DingtalkOnlyConnectors } from "./DingtalkConnector";
+import { BuiltInConnectors } from "./BuiltInConnectors";
 import { ScenariosPanel } from "@/components/scenarios/ScenariosPanel";
 
 function ManagedCapabilityNotice({ kind }: { kind: "技能" | "连接器" }) {
@@ -150,10 +150,10 @@ export function CapabilityCenter({
 
           <TabsContent value="connectors" className="mt-0 px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
             {personalAgentEnabled ? <McpManager embedded /> : (
-              // 钉钉连接跟随用户 workspace（token 落 .dws/），企业专家会话同样使用，
-              // 因此即使组织未开放个人通用 Agent，也必须保留钉钉连接入口。
+              // 内置协同办公连接跟随用户 workspace，企业专家会话同样使用；即使
+              // 组织未开放个人通用 Agent，也要保留钉钉与飞书入口。
               <div className="space-y-6">
-                <DingtalkOnlyConnectors />
+                <BuiltInConnectors />
                 <ManagedCapabilityNotice kind="连接器" />
               </div>
             )}

@@ -34,3 +34,4 @@ export {
 } from "./scenarios.js";
 export { createContentOpsRouter } from "./contentOps.js";
 export { createDwsRouter, type DwsRouterOptions } from "./dws.js";
+export { createFeishuRouter, type FeishuRouterOptions } from "./feishu.js";

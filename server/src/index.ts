@@ -266,6 +266,7 @@ async function shutdownCleanup(): Promise<void> {
     httpServer?.close();
     cronService?.stop();
     runtime?.dwsAuthKeepaliveShutdown?.();
+    runtime?.feishuAuthKeepaliveShutdown?.();
     kbPreviewScheduler?.stop();
     await runtime?.channelManager.stopAll();
     await runtime?.memoryIndexShutdown?.();
@@ -332,6 +333,7 @@ process.on('SIGUSR2', () => {
   // 停止接受新 HTTP 连接（已建立的 WS/流不受影响，继续跑完）
   httpServer?.close();
   runtime?.dwsAuthKeepaliveShutdown?.();
+  runtime?.feishuAuthKeepaliveShutdown?.();
   kbPreviewScheduler?.stop();
 
   // runtime 侧按序 quiesce：停 cron 触发 → 等 in-flight cron 结清 →

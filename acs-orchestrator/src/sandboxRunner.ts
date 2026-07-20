@@ -69,6 +69,10 @@ async function main(): Promise<void> {
   const raw = await readStdin();
   const input = JSON.parse(raw || '{}') as SandboxRunnerInput;
   const workspaceRoot = input.workspace.root || process.env.ACS_WORKSPACE_PATH || '/workspace';
+  if (input.toolName === '__FeishuCli') {
+    writeJsonLine({ kind: 'final', response: executeFeishuCli(input.input, workspaceRoot) });
+    return;
+  }
   ensurePythonEnv(workspaceRoot);
   const workspace: WorkspaceRef = {
     id: input.workspace.id,
@@ -130,6 +134,120 @@ async function main(): Promise<void> {
 
   const response = await provider.execute(request);
   writeJsonLine({ kind: 'final', response });
+}
+
+/**
+ * 飞书连接器控制面专用入口。
+ *
+ * 不进入 WORKSPACE_HAND_TOOLS，也不复用通用 Shell：App Secret 只经受信 Server→ACS
+ * 请求进入本进程内存，并通过 stdin 交给官方 lark-cli；不会出现在 argv、sandbox env、
+ * Agent transcript 或工具审计中。业务期调用仍由 Agent 通过通用 Shell 执行 lark-cli。
+ */
+export function executeFeishuCli(input: unknown, workspaceRoot: string): ToolInvocationResponse {
+  const args = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : {};
+  const operation = typeof args.operation === 'string' ? args.operation : '';
+  const profile = boundedCliValue(args.profile, 'profile', 64, /^[A-Za-z0-9._-]+$/);
+  const env = {
+    ...(process.env as Record<string, string | undefined>),
+    LARKSUITE_CLI_CONFIG_DIR: join(workspaceRoot, '.lark-cli', 'config'),
+    LARKSUITE_CLI_DATA_DIR: join(workspaceRoot, '.lark-cli', 'data'),
+    LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1',
+    LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1',
+  } as Record<string, string>;
+
+  try {
+    if (operation === 'init') {
+      const appId = boundedCliValue(args.appId, 'appId', 256, /^[A-Za-z0-9._-]+$/);
+      const appSecret = typeof args.appSecret === 'string' ? args.appSecret.trim() : '';
+      if (!appSecret || appSecret.length > 4_096 || /[\r\n\0]/.test(appSecret)) {
+        throw new Error('appSecret 必须为 1-4096 字符且不能包含换行或 NUL');
+      }
+      return runFeishuCli([
+        'config', 'init',
+        '--app-id', appId,
+        '--app-secret-stdin',
+        '--brand', 'feishu',
+        '--name', profile,
+      ], workspaceRoot, env, 60_000, `${appSecret}\n`);
+    }
+    if (operation === 'start_auth') {
+      return runFeishuCli([
+        '--profile', profile,
+        'auth', 'login', '--domain', 'all', '--no-wait', '--json',
+      ], workspaceRoot, env, 60_000);
+    }
+    if (operation === 'complete_auth') {
+      const deviceCode = boundedCliValue(args.deviceCode, 'deviceCode', 1_024, /^[A-Za-z0-9._~-]+$/);
+      return runFeishuCli([
+        '--profile', profile,
+        'auth', 'login', '--device-code', deviceCode, '--json',
+      ], workspaceRoot, env, 11 * 60_000);
+    }
+    if (operation === 'status') {
+      return runFeishuCli([
+        '--profile', profile,
+        'auth', 'status', '--verify', '--json',
+      ], workspaceRoot, env, 60_000);
+    }
+    return { status: 'error', error: '不支持的飞书 CLI 内部操作' };
+  } catch (err) {
+    return { status: 'error', error: redactFeishuCliError(err) };
+  }
+}
+
+function runFeishuCli(
+  args: string[],
+  workspaceRoot: string,
+  env: Record<string, string>,
+  timeoutMs: number,
+  stdin?: string,
+): ToolInvocationResponse {
+  try {
+    const stdout = execFileSync('lark-cli', args, {
+      cwd: workspaceRoot,
+      env,
+      encoding: 'utf-8',
+      input: stdin,
+      timeout: timeoutMs,
+      maxBuffer: 1024 * 1024,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return { status: 'success', content: stdout.trim() };
+  } catch (err) {
+    const childError = err as Error & { stdout?: string | Buffer; stderr?: string | Buffer; status?: number };
+    const stdout = childError.stdout ? String(childError.stdout).trim() : '';
+    const stderr = childError.stderr ? String(childError.stderr).trim() : '';
+    const detail = [stdout, stderr].filter(Boolean).join('\n');
+    return {
+      status: 'error',
+      error: redactFeishuCliError(detail || childError.message),
+      metadata: { exitCode: typeof childError.status === 'number' ? childError.status : null },
+    };
+  }
+}
+
+function boundedCliValue(
+  value: unknown,
+  name: string,
+  maxLength: number,
+  pattern: RegExp,
+): string {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text || text.length > maxLength || !pattern.test(text)) throw new Error(`${name} 格式无效`);
+  return text;
+}
+
+function redactFeishuCliError(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return text
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/((?:app[_-]?secret|access[_-]?token|refresh[_-]?token|device[_-]?code|authorization)\s*[=:]\s*["']?)[^\s,"'}]+/gi, '$1[REDACTED]')
+    .replace(/https:\/\/[^\s"']*feishu\.cn\/[^\s"']+/gi, '[FEISHU_AUTH_URL_REDACTED]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 2_000) || 'unknown_error';
 }
 
 async function executeBackgroundShellTool(input: {

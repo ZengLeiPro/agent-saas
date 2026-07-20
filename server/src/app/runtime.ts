@@ -115,6 +115,10 @@ import { PgDwsConnectionStore, type DwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
 import { DwsAuthFlowService, DwsDeviceLoginRunner, type DwsAuthFlowServiceLike } from '../dws/authFlow.js';
+import { PgFeishuConnectionStore, type FeishuConnectionStore } from '../feishu/store.js';
+import { FeishuAuthKeepaliveService, FeishuAuthStatusRunner } from '../feishu/keepalive.js';
+import { PgFeishuAuthSessionStore } from '../feishu/authStore.js';
+import { FeishuAuthFlowService, FeishuDeviceLoginRunner, type FeishuAuthFlowServiceLike } from '../feishu/authFlow.js';
 
 // δ: skillsDispatchConfig.listForUser 的进程级 cache（configVersion 驱动失效），
 // 避免每次 dispatch / 每次 Skill.invoke 都重新 readdirSync pool 目录。
@@ -177,6 +181,12 @@ export interface AppRuntime {
   dwsAuthFlowService?: DwsAuthFlowServiceLike;
   /** 停止 DWS 授权守活 worker（ws-only 进程不启动）。 */
   dwsAuthKeepaliveShutdown?: () => void;
+  /** 飞书连接只保存非敏感元数据；用户 token 与加密 keychain 均留在其 workspace。 */
+  feishuConnectionStore?: FeishuConnectionStore;
+  /** 飞书首次绑定：Server 驱动官方 lark-cli split device flow。 */
+  feishuAuthFlowService?: FeishuAuthFlowServiceLike;
+  /** 停止飞书授权与守活任务。 */
+  feishuAuthKeepaliveShutdown?: () => void;
   /**
    * Tenant 元数据 store。仅 `config.auth.enabled` 时实例化（与 userStore 共生命周期）。
    * 启动期自动 ensure 平台根组织和开沿日常组织。
@@ -805,6 +815,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let dwsAuthSessionStore: PgDwsAuthSessionStore | undefined;
   let dwsAuthKeepaliveService: DwsAuthKeepaliveService | undefined;
   let dwsAuthFlowService: DwsAuthFlowService | undefined;
+  let feishuConnectionStore: PgFeishuConnectionStore | undefined;
+  let feishuAuthSessionStore: PgFeishuAuthSessionStore | undefined;
+  let feishuAuthKeepaliveService: FeishuAuthKeepaliveService | undefined;
+  let feishuAuthFlowService: FeishuAuthFlowService | undefined;
   let artifactStore: ArtifactStore | undefined;
   let artifactService: ArtifactService | undefined;
   let sessionShareStore: SessionShareStore | undefined;
@@ -870,6 +884,38 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     return cd.authToken;
   })();
 
+  // 飞书官方 CLI 的 device flow 必须先绑定一个企业自建应用。App ID 可由普通 env
+  // 提供；App Secret 优先从 SecretVault ref 解析，兼容直接 env 仅用于部署迁移。
+  // 明文只保留在 server 进程内，后续经 ACS 内部 __FeishuCli 的 stdin 写入用户
+  // workspace 加密 keychain，不进入浏览器、PG、sandbox env 或 Agent transcript。
+  const resolvedFeishuConnector = await (async (): Promise<{ appId: string; appSecret: string } | undefined> => {
+    const appId = process.env.FEISHU_CONNECTOR_APP_ID?.trim();
+    const appSecretRef = process.env.FEISHU_CONNECTOR_APP_SECRET_REF?.trim();
+    const inlineSecret = process.env.FEISHU_CONNECTOR_APP_SECRET?.trim();
+    if (!appId && !appSecretRef && !inlineSecret) return undefined;
+    if (!appId) {
+      serverLogger.warn('Feishu connector disabled: FEISHU_CONNECTOR_APP_ID is missing');
+      return undefined;
+    }
+    try {
+      const appSecret = appSecretRef
+        ? await secretVault.getSecret(appSecretRef, {
+            actor: 'system',
+            userId: '__system__',
+            scopes: ['secret:feishu_connector:read'],
+          })
+        : inlineSecret;
+      if (!appSecret) {
+        serverLogger.warn('Feishu connector disabled: app secret is missing');
+        return undefined;
+      }
+      return { appId, appSecret };
+    } catch (err) {
+      serverLogger.warn(`Feishu connector disabled: app secret resolution failed: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    }
+  })();
+
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
   // 决定是"匿名内部调用保留完整 process.env"还是"明确 tenant 先剔除敏感宿主
@@ -916,6 +962,28 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       } catch (err) {
         dwsAuthSessionStore = undefined;
         serverLogger.warn(`PgDwsAuthSessionStore init failed, DWS one-click connection disabled: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    try {
+      feishuConnectionStore = new PgFeishuConnectionStore({
+        pool: pgEventStore.pool,
+        tablePrefix: config.runtimeEventStore.tablePrefix,
+      });
+      await feishuConnectionStore.init();
+    } catch (err) {
+      feishuConnectionStore = undefined;
+      serverLogger.warn(`PgFeishuConnectionStore init failed, Feishu keepalive disabled: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (feishuConnectionStore) {
+      try {
+        feishuAuthSessionStore = new PgFeishuAuthSessionStore({
+          pool: pgEventStore.pool,
+          tablePrefix: config.runtimeEventStore.tablePrefix,
+        });
+        await feishuAuthSessionStore.init();
+      } catch (err) {
+        feishuAuthSessionStore = undefined;
+        serverLogger.warn(`PgFeishuAuthSessionStore init failed, Feishu one-click connection disabled: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     pgRunStore = new PgRunStore({
@@ -2230,12 +2298,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.info(`RuntimeScheduler worker disabled for processRole=${processRole}; durable enqueue remains enabled`);
   }
 
-  const dwsAcsConfigured = config.tenantRemoteHands?.hands.some((hand) => (
+  const connectorAcsConfigured = config.tenantRemoteHands?.hands.some((hand) => (
     (hand.id === 'agent-saas-acs' || /acs/i.test(hand.id))
     && hand.rollout?.mode !== 'disabled'
     && hand.rollout?.mode !== 'drain'
   )) ?? false;
-  const resolveDwsServerRemote = async (user: UserInfo) => {
+  const resolveConnectorServerRemote = async (user: UserInfo) => {
     if (resolvedServerRemote) return resolvedServerRemote;
     const eligible = selectTenantRemoteHandsForRegistration(config.tenantRemoteHands?.hands, {
       userId: user.id,
@@ -2244,7 +2312,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     const entry = eligible.find((hand) => hand.id === 'agent-saas-acs')
       ?? eligible.find((hand) => /acs/i.test(hand.id));
-    if (!entry) throw new Error(`用户 ${user.id} 没有可用的 ACS DWS 执行环境`);
+    if (!entry) throw new Error(`用户 ${user.id} 没有可用的 ACS 连接器执行环境`);
     const resolved = await tenantRemoteHandResolver.resolveForRegister(entry);
     return {
       baseUrl: resolved.baseUrl,
@@ -2253,12 +2321,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     };
   };
 
-  if (dwsConnectionStore && userStore && (resolvedServerRemote || dwsAcsConfigured)) {
+  if (dwsConnectionStore && userStore && (resolvedServerRemote || connectorAcsConfigured)) {
     dwsAuthKeepaliveService = new DwsAuthKeepaliveService({
       agentCwd,
       userStore,
       connectionStore: dwsConnectionStore,
-      runner: new DwsAuthStatusRunner({ agentCwd, resolveServerRemote: resolveDwsServerRemote }),
+      runner: new DwsAuthStatusRunner({ agentCwd, resolveServerRemote: resolveConnectorServerRemote }),
       logger: serverLogger.child('DwsKeepalive'),
     });
     if (enableSchedulerWorker) {
@@ -2271,7 +2339,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         agentCwd,
         authSessionStore: dwsAuthSessionStore,
         connectionStore: dwsConnectionStore,
-        runner: new DwsDeviceLoginRunner({ agentCwd, resolveServerRemote: resolveDwsServerRemote }),
+        runner: new DwsDeviceLoginRunner({ agentCwd, resolveServerRemote: resolveConnectorServerRemote }),
         onConnected: async (connectedUser) => {
           if (
             skillConfigStore
@@ -2292,6 +2360,52 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     }
   } else if (userStore) {
     serverLogger.warn('DWS auth keepalive unavailable: PG connection store or DWS execution remote is not configured');
+  }
+
+  if (feishuConnectionStore && userStore && (resolvedServerRemote || connectorAcsConfigured)) {
+    feishuAuthKeepaliveService = new FeishuAuthKeepaliveService({
+      userStore,
+      connectionStore: feishuConnectionStore,
+      runner: new FeishuAuthStatusRunner({ agentCwd, resolveServerRemote: resolveConnectorServerRemote }),
+      logger: serverLogger.child('FeishuKeepalive'),
+    });
+    if (enableSchedulerWorker) {
+      feishuAuthKeepaliveService.start();
+    } else {
+      serverLogger.info(`Feishu auth keepalive worker disabled for processRole=${processRole}; status API remains available`);
+    }
+    if (feishuAuthSessionStore && resolvedFeishuConnector) {
+      feishuAuthFlowService = new FeishuAuthFlowService({
+        authSessionStore: feishuAuthSessionStore,
+        connectionStore: feishuConnectionStore,
+        runner: new FeishuDeviceLoginRunner({
+          agentCwd,
+          appId: resolvedFeishuConnector.appId,
+          appSecret: resolvedFeishuConnector.appSecret,
+          resolveServerRemote: resolveConnectorServerRemote,
+        }),
+        onConnected: async (connectedUser) => {
+          if (
+            skillConfigStore
+            && skillConfigStore.isTenantSkillAvailableToUser('feishu', connectedUser.tenantId, connectedUser.username)
+          ) {
+            const selected = skillConfigStore.getUserSelectedSkills(connectedUser.username);
+            if (!selected.includes('feishu')) {
+              await skillConfigStore.setUserSelectedSkills(
+                connectedUser.username,
+                [...selected, 'feishu'].sort(),
+              );
+            }
+          }
+          await feishuAuthKeepaliveService?.runOnce();
+        },
+        logger: serverLogger.child('FeishuAuthFlow'),
+      });
+    } else if (!resolvedFeishuConnector) {
+      serverLogger.warn('Feishu one-click connection unavailable: connector app credentials are not configured');
+    }
+  } else if (userStore) {
+    serverLogger.warn('Feishu auth keepalive unavailable: PG connection store or ACS execution remote is not configured');
   }
 
   // B4: Server-remote hands 健康 scanner（仅 PG runtime）。默认开启；显式 false 关闭。
@@ -2361,6 +2475,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ? () => {
           dwsAuthFlowService?.stop();
           dwsAuthKeepaliveService?.stop();
+        }
+      : undefined,
+    feishuConnectionStore,
+    feishuAuthFlowService,
+    feishuAuthKeepaliveShutdown: feishuAuthKeepaliveService || feishuAuthFlowService
+      ? () => {
+          feishuAuthFlowService?.stop();
+          feishuAuthKeepaliveService?.stop();
         }
       : undefined,
     tenantStore,

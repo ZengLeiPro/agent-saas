@@ -32,6 +32,7 @@ import {
   createScenariosRouter,
   createContentOpsRouter,
   createDwsRouter,
+  createFeishuRouter,
 } from "../routes/index.js";
 import { createAuthRouter } from "../routes/auth.js";
 import { createSignupRouters } from "../routes/signup.js";
@@ -191,6 +192,14 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   app.use("/api", createDwsRouter({
     connectionStore: runtime.dwsConnectionStore,
     authFlowService: runtime.dwsAuthFlowService,
+    userStore: runtime.userStore,
+  }));
+
+  // 飞书单轨连接状态：浏览器/PG 只接触非敏感元数据；用户 token 与官方 CLI
+  // 加密 keychain 始终保存在其独立 NAS workspace 的 .lark-cli/ 内。
+  app.use("/api", createFeishuRouter({
+    connectionStore: runtime.feishuConnectionStore,
+    authFlowService: runtime.feishuAuthFlowService,
     userStore: runtime.userStore,
   }));
 

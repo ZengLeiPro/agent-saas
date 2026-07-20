@@ -6,11 +6,32 @@ import { describe, expect, it } from 'vitest';
 import {
   buildRuntimePath,
   ensurePythonEnv,
+  executeFeishuCli,
   pipInstallArgs,
   pruneVenvArchive,
   toolNameForLocalProvider,
   venvRebuildReasons,
 } from './sandboxRunner.js';
+
+describe('__FeishuCli internal tool', () => {
+  it('rejects unknown operations and malformed sensitive inputs before spawning CLI', () => {
+    expect(executeFeishuCli({ operation: 'shell', profile: 'kaiyan-agent' }, '/workspace')).toEqual({
+      status: 'error',
+      error: '不支持的飞书 CLI 内部操作',
+    });
+    expect(executeFeishuCli({
+      operation: 'init',
+      profile: 'kaiyan-agent',
+      appId: 'cli_test',
+      appSecret: 'secret\nleak',
+    }, '/workspace')).toMatchObject({ status: 'error', error: expect.stringContaining('appSecret') });
+    expect(executeFeishuCli({
+      operation: 'complete_auth',
+      profile: 'kaiyan-agent',
+      deviceCode: 'bad code;echo leak',
+    }, '/workspace')).toMatchObject({ status: 'error', error: expect.stringContaining('deviceCode') });
+  });
+});
 
 describe('toolNameForLocalProvider', () => {
   it('accepts legacy tool names from the deployed orchestrator compatibility layer', () => {

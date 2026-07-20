@@ -193,6 +193,11 @@ RUN pnpm install --frozen-lockfile \
 RUN npm install -g dingtalk-workspace-cli@1.0.51 \
     && dws --version
 
+# 飞书官方 CLI（能力中心飞书连接器 + feishu skill）— pin 版本避免 latest 漂浮。
+# @larksuite/cli 的 postinstall 会按当前 linux/amd64 下载官方二进制，bin 名为 lark-cli。
+RUN npm install -g @larksuite/cli@1.0.73 \
+    && lark-cli --version
+
 # Office skills（pptx/docx）Node 依赖 — 预装到独立前缀（2026-07-16 生产反馈修复）
 # skills-pool 的 pptx skill「从零制作」主路径 require('pptxgenjs')、docx skill 新建文档 require('docx')；
 # agent cwd 在 /workspace，解析不到 /app/node_modules，靠 acs-sandbox stage 的 NODE_PATH 兜底解析。
@@ -358,6 +363,12 @@ ENV NODE_PATH=/opt/ky-agent/node/node_modules
 ENV DWS_DISABLE_KEYCHAIN=1 \
     DWS_CONFIG_DIR=/workspace/.dws/config \
     DWS_KEYCHAIN_DIR=/workspace/.dws/keys
+# lark-cli 的配置与 Linux 加密 keychain 必须同时持久化；只保留其中一个会导致
+# sandbox 重建后 token 无法解密。两者均落当前用户独立的 NAS workspace。
+ENV LARKSUITE_CLI_CONFIG_DIR=/workspace/.lark-cli/config \
+    LARKSUITE_CLI_DATA_DIR=/workspace/.lark-cli/data \
+    LARKSUITE_CLI_NO_UPDATE_NOTIFIER=1 \
+    LARKSUITE_CLI_NO_SKILLS_NOTIFIER=1
 RUN groupadd -f -g 20 dialout \
     && useradd -m -u 501 -g 20 -s /bin/bash agent \
     && mkdir -p /workspace /home/agent/.npm-global/bin /home/agent/.npm-global/lib /ms-playwright \

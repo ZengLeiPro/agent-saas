@@ -50,6 +50,12 @@ services:
       GOOGLE_MCP_OAUTH_CLIENT_SECRET: "${GOOGLE_MCP_OAUTH_CLIENT_SECRET:-}"
       MCP_OAUTH_CALLBACK_URL: "${MCP_OAUTH_CALLBACK_URL:-}"
 
+      # 飞书官方 CLI 连接器：平台自建应用凭据；用户 OAuth token 仍逐用户隔离。
+      # 生产优先用 SecretVault ref，FEISHU_CONNECTOR_APP_SECRET 仅作部署迁移兼容。
+      FEISHU_CONNECTOR_APP_ID: "${FEISHU_CONNECTOR_APP_ID:-}"
+      FEISHU_CONNECTOR_APP_SECRET_REF: "${FEISHU_CONNECTOR_APP_SECRET_REF:-}"
+      FEISHU_CONNECTOR_APP_SECRET: "${FEISHU_CONNECTOR_APP_SECRET:-}"
+
       # Legacy/no-op placeholders: server 核心配置只读挂载的 config.json；
       # runtimeEventStore/serverRemote/auth.jwtSecret 必须写入 config.json。
       # 这些 env 保留给旧脚本/排障观察，不是 server 配置入口。

@@ -12,6 +12,7 @@ const mocked = vi.hoisted(() => {
   const scenariosRouter = { id: 'scenarios-router' };
   const contentOpsRouter = { id: 'content-ops-router' };
   const dwsRouter = { id: 'dws-router' };
+  const feishuRouter = { id: 'feishu-router' };
   const userRoleRouter = { id: 'user-role-router' };
   const dingtalkRouter = { id: 'dingtalk-router' };
   const cronRouter = { id: 'cron-router' };
@@ -41,6 +42,7 @@ const mocked = vi.hoisted(() => {
     scenariosRouter,
     contentOpsRouter,
     dwsRouter,
+    feishuRouter,
     userRoleRouter,
     dingtalkRouter,
     cronRouter,
@@ -68,6 +70,7 @@ const mocked = vi.hoisted(() => {
     createScenariosRouter: vi.fn(() => scenariosRouter),
     createContentOpsRouter: vi.fn(() => contentOpsRouter),
     createDwsRouter: vi.fn(() => dwsRouter),
+    createFeishuRouter: vi.fn(() => feishuRouter),
     createUserRoleRouter: vi.fn(() => userRoleRouter),
     createDingtalkSessionRouter: vi.fn(() => dingtalkRouter),
     createCronRouter: vi.fn(() => cronRouter),
@@ -97,6 +100,7 @@ vi.mock('../routes/index.js', () => ({
   createScenariosRouter: mocked.createScenariosRouter,
   createContentOpsRouter: mocked.createContentOpsRouter,
   createDwsRouter: mocked.createDwsRouter,
+  createFeishuRouter: mocked.createFeishuRouter,
   createUserRoleRouter: mocked.createUserRoleRouter,
   createCronRouter: mocked.createCronRouter,
   createGroupsRouter: mocked.createGroupsRouter,
@@ -155,6 +159,7 @@ describe('registerRoutes', () => {
     mocked.createScenariosRouter.mockClear();
     mocked.createContentOpsRouter.mockClear();
     mocked.createDwsRouter.mockClear();
+    mocked.createFeishuRouter.mockClear();
     mocked.createUserRoleRouter.mockClear();
     mocked.createDingtalkSessionRouter.mockClear();
     mocked.createCronRouter.mockClear();
@@ -236,6 +241,11 @@ describe('registerRoutes', () => {
       authFlowService: runtime.dwsAuthFlowService,
       userStore: runtime.userStore,
     });
+    expect(mocked.createFeishuRouter).toHaveBeenCalledWith({
+      connectionStore: runtime.feishuConnectionStore,
+      authFlowService: runtime.feishuAuthFlowService,
+      userStore: runtime.userStore,
+    });
 
     // Base routes: health + app-update + upload-guard + file-guard + upload + file + azeroth-proxy
     //   + preview(token+serve) + voice + tts + search + scenarios + contentops + sessions + dingtalk
@@ -245,9 +255,10 @@ describe('registerRoutes', () => {
     //   + image-gen pricing admin + memory-polling admin = 29
     //   + 平台管理员分层治理 enforcePlatformWritePolicy（2026-07-18）= 30
     //   + 员工申诉 /api/appeals + /api/tenant/appeals（2026-07-19 装配）= 32
+    //   + 飞书官方 CLI 连接器 = 33
     // 注：upload-guard / file-guard 是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(32);
+    expect(app.use).toHaveBeenCalledTimes(33);
     expect(app.use).toHaveBeenCalledWith('/api/kb', expect.any(Function), mocked.kbFilesRouter);
     expect(app.use).toHaveBeenCalledWith('/api/feedback', mocked.feedbackRouter);
     expect(app.use).toHaveBeenCalledWith('/api/appeals', expect.any(Function));

@@ -8,7 +8,7 @@ const { updateSelections, fetchMyMcp, diagnoseMyMcp, dwsAuthFetch } = vi.hoisted
   dwsAuthFetch: vi.fn(),
 }));
 
-// DingtalkConnector（钉钉内置连接卡片）经 @/lib/authFetch 请求 /api/dws/*。
+// 钉钉/飞书内置连接卡片经 @/lib/authFetch 请求各自 API。
 vi.mock("@/lib/authFetch", () => ({
   authFetch: dwsAuthFetch,
   setOnUnauthorized: vi.fn(),
@@ -112,12 +112,14 @@ describe("McpManager 连接器目录", () => {
     expect(screen.getByRole("button", { name: "启用连接器" })).toBeTruthy();
   });
 
-  it("钉钉内置连接以卡片形式与 MCP 连接器同 grid 展示", async () => {
+  it("钉钉与飞书内置连接以卡片形式与 MCP 连接器同 grid 展示", async () => {
     render(<McpManager />);
 
     expect(await screen.findByText("钉钉")).toBeTruthy();
-    expect(screen.getByText("未连接")).toBeTruthy();
+    expect(screen.getByText("飞书")).toBeTruthy();
+    expect(screen.getAllByText("未连接")).toHaveLength(2);
     expect(dwsAuthFetch).toHaveBeenCalledWith("/api/dws/connections");
+    expect(dwsAuthFetch).toHaveBeenCalledWith("/api/feishu/connections");
 
     fireEvent.click(screen.getByText("钉钉"));
     expect(await screen.findByRole("dialog")).toBeTruthy();

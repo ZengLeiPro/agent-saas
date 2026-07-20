@@ -85,7 +85,7 @@ export function MessageFeedbackButton({ messageId, content }: { messageId: strin
             maxLength={500}
             rows={3}
             placeholder="可选：说明问题（如答非所问、信息有误）"
-            className="w-full resize-none rounded-md border bg-background px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+            className="w-full resize-none rounded-md border bg-background px-2 py-1.5 text-xs outline-none focus:border-foreground/30 focus:ring-0"
           />
           <div className="mt-1.5 flex items-center justify-end gap-1.5">
             <button

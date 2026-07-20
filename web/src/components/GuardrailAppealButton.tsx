@@ -154,7 +154,7 @@ export function GuardrailAppealButton({ guardrailEventId }: GuardrailAppealButto
             maxLength={500}
             rows={3}
             placeholder="您认为为什么应该在范围内？（可选）"
-            className="w-full resize-none rounded-md border bg-background px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+            className="w-full resize-none rounded-md border bg-background px-2 py-1.5 text-xs outline-none focus:border-foreground/30 focus:ring-0"
           />
           {errorMsg && (
             <div className="mt-1.5 text-xs text-destructive">{errorMsg}</div>

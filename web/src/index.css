@@ -36,7 +36,7 @@
 
     --border: 220 13% 91%;                /* #E5E6EB 冷灰描边 */
     --input: 220 13% 88%;
-    --ring: 225 100% 79%;                 /* brand-300 focus ring（按品牌规范） */
+    --ring: 220 9% 46%;                   /* 键盘焦点提示使用中性灰，避免点击后出现品牌蓝外框 */
 
     --radius: 0.5rem;
 
@@ -80,7 +80,7 @@
 
     --border: 227 18% 18%;
     --input: 227 18% 22%;
-    --ring: 227 89% 68%;                  /* brand-400 暗色 focus */
+    --ring: 220 9% 65%;                   /* 暗色模式下的中性键盘焦点提示 */
 
     --success: 134 70% 45%;
     --success-foreground: 0 0% 100%;
@@ -96,6 +96,33 @@
 
   * {
     @apply border-border;
+  }
+
+  /*
+   * 表单控件聚焦时只改变自身边框，不绘制浏览器默认的外部蓝框。
+   * checkbox / radio / button 等离散控件仍由公共组件的 :focus-visible 样式
+   * 提供键盘导航提示，避免为了视觉干净而牺牲可访问性。
+   */
+  :where(
+    input:not([type="button"]):not([type="checkbox"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="radio"]):not([type="range"]):not([type="reset"]):not([type="submit"]),
+    textarea,
+    select
+  ):focus {
+    border-color: hsl(var(--foreground) / 0.32);
+    outline: none;
+  }
+
+  /* 隐藏数字输入框步进按钮；滚轮误改值由公共 Input 组件统一阻断。 */
+  input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    appearance: none;
+    -webkit-appearance: none;
+    margin: 0;
   }
 
   /* prose 内代码块：撑满气泡宽度，内部独立横滚 */

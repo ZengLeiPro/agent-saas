@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { Input } from "./input";
 import { Textarea } from "./textarea";
@@ -46,5 +46,30 @@ describe("输入控件自动填充策略", () => {
     expect(input.getAttribute("data-1p-ignore")).toBe("true");
     expect(input.getAttribute("data-bwignore")).toBe("true");
     expect(input.getAttribute("data-lpignore")).toBe("true");
+  });
+});
+
+describe("数字输入控件滚轮策略", () => {
+  it("聚焦后滚动鼠标滚轮会先失焦，避免浏览器误改数值", () => {
+    render(<Input aria-label="最大轮次" type="number" defaultValue="10" />);
+
+    const input = screen.getByLabelText("最大轮次");
+    input.focus();
+    fireEvent.wheel(input, { deltaY: 100 });
+
+    expect(document.activeElement).not.toBe(input);
+    expect((input as HTMLInputElement).value).toBe("10");
+  });
+
+  it("普通输入框不会因滚轮失焦，并保留调用方的滚轮处理", () => {
+    const onWheel = vi.fn();
+    render(<Input aria-label="名称" onWheel={onWheel} />);
+
+    const input = screen.getByLabelText("名称");
+    input.focus();
+    fireEvent.wheel(input, { deltaY: 100 });
+
+    expect(document.activeElement).toBe(input);
+    expect(onWheel).toHaveBeenCalledOnce();
   });
 });

@@ -11,9 +11,18 @@ function Input({
   type,
   autoComplete = "off",
   passwordManager = autoComplete === "off" ? "ignore" : "allow",
+  onWheel,
   ...props
 }: InputProps) {
   const ignorePasswordManager = passwordManager === "ignore";
+
+  const handleWheel = (event: React.WheelEvent<HTMLInputElement>) => {
+    onWheel?.(event);
+    if (type === "number" && !event.defaultPrevented && event.currentTarget === document.activeElement) {
+      // number 输入框聚焦时滚轮会直接改值。先失焦可保留页面滚动，同时避免误改。
+      event.currentTarget.blur();
+    }
+  };
 
   return (
     <input
@@ -23,9 +32,10 @@ function Input({
       data-bwignore={ignorePasswordManager ? "true" : undefined}
       data-lpignore={ignorePasswordManager ? "true" : undefined}
       className={cn(
-        "flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50",
+        "flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:border-foreground/30 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
         className
       )}
+      onWheel={handleWheel}
       {...props}
     />
   );

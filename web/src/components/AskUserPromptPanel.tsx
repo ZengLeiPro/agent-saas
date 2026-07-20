@@ -224,7 +224,7 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
                 onChange={(event) => setCustomInputs((prev) => ({ ...prev, [activeIndex]: event.target.value }))}
                 placeholder="补充你的回答..."
                 rows={2}
-                className="w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none transition-shadow placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-ring"
+                className="w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-foreground/30 focus:ring-0"
               />
             </div>
           )}

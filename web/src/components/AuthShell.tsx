@@ -36,12 +36,25 @@ export function AuthShell({ children }: { children: ReactNode }) {
             "radial-gradient(circle, rgba(147,169,255,0.28), rgba(189,204,255,0.16) 55%, transparent 72%)",
         }}
       />
-      {/* 线束汇流动画：仅桌面端；水平主干自然穿过左栏与卡片后方 */}
-      <AuthFlowLines className="absolute inset-0 hidden h-full w-full lg:block" />
+      {/*
+       * 线束只延伸到卡片左缘：中段最大偏移 12px；窄桌面左栏收缩时取
+       * calc(44vw - 440px)，超宽屏百分比 padding 增长时取 calc(200px - 6vw)。
+       * 用 clip-path 硬切，避免动画和背景层引入 JS 测量或 resize 抖动。
+       */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 hidden lg:block"
+        style={{
+          clipPath:
+            "inset(0 calc(50% - min(12px, calc(44vw - 440px), calc(200px - 6vw))) 0 0)",
+        }}
+      >
+        <AuthFlowLines className="h-full w-full" />
+      </div>
 
-      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1480px] items-center justify-center px-4 py-8 lg:justify-between lg:px-[7%]">
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1280px] items-center justify-center px-4 py-8 lg:gap-6 lg:px-[6%]">
         {/* 左栏品牌叙事（lg+）：整体上移让背景主干线从副标题与客户墙之间的空白穿过 */}
-        <div className="hidden flex-1 flex-col lg:flex lg:max-w-[620px] lg:-translate-y-16 lg:pr-16">
+        <div className="hidden flex-1 flex-col lg:flex lg:max-w-[440px] lg:-translate-y-16">
           <div className="flex items-center gap-3">
             <img
               src="/kaikai-avatar.png"
@@ -80,7 +93,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
 
         {/* 右栏：登录/注册卡片 */}
         <div className="w-full max-w-[420px] lg:w-[440px] lg:max-w-none lg:shrink-0">
-          <Card className="animate-login-rise rounded-3xl border-brand-100 bg-white/85 shadow-[0_14px_32px_rgba(46,86,225,0.14),0_40px_90px_-30px_rgba(46,86,225,0.25)] backdrop-blur-lg">
+          <Card data-auth-card className="animate-login-rise rounded-3xl border-brand-100 bg-white/85 shadow-[0_14px_32px_rgba(46,86,225,0.14),0_40px_90px_-30px_rgba(46,86,225,0.25)] backdrop-blur-lg">
             <CardContent className="px-8 pb-7 pt-9 sm:px-9">
               {/* 移动端品牌区：桌面端品牌叙事移到左栏，此处隐藏 */}
               <div className="mb-7 flex flex-col items-center text-center lg:hidden">

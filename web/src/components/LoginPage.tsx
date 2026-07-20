@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AuthShell } from "@/components/AuthShell";
 import { useAuth } from "@/contexts/AuthContext";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
@@ -23,9 +22,10 @@ export const AUTH_TAB_CLASS =
 interface LoginPageProps {
   /** 切到注册页（AuthGate 提供；注册入口仅在后端开放自助注册时显示） */
   onSwitchToSignup?: () => void;
+  signupEnabled?: boolean;
 }
 
-export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
+export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPageProps) {
   const { login, loginWithSms } = useAuth();
   const [loginMode, setLoginMode] = useState<"password" | "sms">("password");
   const [username, setUsername] = useState("");
@@ -36,16 +36,7 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
   const [countdown, setCountdown] = useState(0);
-  const [signupEnabled, setSignupEnabled] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval>>();
-
-  useEffect(() => {
-    if (!onSwitchToSignup) return;
-    fetch(apiUrl("/api/signup/status"))
-      .then((res) => res.json())
-      .then((data: { enabled?: boolean }) => setSignupEnabled(data.enabled === true))
-      .catch(() => {});
-  }, [onSwitchToSignup]);
 
   useEffect(() => () => clearInterval(timerRef.current), []);
 
@@ -108,8 +99,7 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
   };
 
   return (
-    <AuthShell>
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4">
         <Tabs value={loginMode} onValueChange={(value) => { setLoginMode(value as "password" | "sms"); setError(""); }}>
           <TabsList className="grid h-11 w-full grid-cols-2 rounded-xl bg-brand-50 p-1">
             <TabsTrigger value="password" className={AUTH_TAB_CLASS}>
@@ -228,7 +218,6 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
             </button>
           </p>
         )}
-      </form>
-    </AuthShell>
+    </form>
   );
 }

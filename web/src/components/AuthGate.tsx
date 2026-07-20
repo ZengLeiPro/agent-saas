@@ -1,10 +1,20 @@
-import { lazy, Suspense, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { AuthShell } from "@/components/AuthShell";
+import { LoginPage } from "@/components/LoginPage";
+import { SignupPage } from "@/components/SignupPage";
+import { apiUrl } from "@/lib/apiBase";
 import App from "@/App";
 
-const LoginPage = lazy(() => import("@/components/LoginPage").then(m => ({ default: m.LoginPage })));
-const SignupPage = lazy(() => import("@/components/SignupPage").then(m => ({ default: m.SignupPage })));
 const SessionSharePage = lazy(() => import("@/components/SessionSharePage").then(m => ({ default: m.SessionSharePage })));
 
 /**
@@ -31,10 +41,75 @@ function FullscreenSpinner() {
   );
 }
 
+/**
+ * 登录/注册只替换卡片内容：外层 AuthShell 与卡片 DOM 常驻。
+ * 高度随内容平滑变化，短促淡入只作用于表单，不重播整张卡片的入场动画。
+ */
+function AuthContentTransition({
+  viewKey,
+  children,
+}: {
+  viewKey: "login" | "signup";
+  children: ReactNode;
+}) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+
+    const syncHeight = () => setHeight(content.getBoundingClientRect().height);
+    syncHeight();
+    const observer = new ResizeObserver(syncHeight);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [viewKey]);
+
+  return (
+    <div
+      className="overflow-hidden transition-[height] duration-300 [transition-timing-function:cubic-bezier(0.2,0.7,0.3,1)] motion-reduce:transition-none"
+      style={height === null ? undefined : { height }}
+    >
+      <div
+        key={viewKey}
+        ref={contentRef}
+        className="animate-auth-content-enter motion-reduce:animate-none"
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function AuthGate() {
   const { isLoading, isAuthenticated, authEnabled } = useAuth();
   const [signupMode, setSignupMode] = useState(initialSignupMode);
+  const [signupEnabled, setSignupEnabled] = useState<boolean | null>(null);
   const shareToken = currentShareToken();
+
+  const switchToLogin = () => {
+    // 清掉 /signup 路径与 utm 参数，回到干净登录页
+    window.history.replaceState(null, "", "/");
+    setSignupMode(false);
+  };
+
+  useEffect(() => {
+    if (isLoading || !authEnabled || isAuthenticated || shareToken) return;
+
+    let cancelled = false;
+    fetch(apiUrl("/api/signup/status"))
+      .then((res) => res.json())
+      .then((data: { enabled?: boolean }) => {
+        if (!cancelled) setSignupEnabled(data.enabled === true);
+      })
+      .catch(() => {
+        if (!cancelled) setSignupEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authEnabled, isAuthenticated, isLoading, shareToken]);
 
   if (shareToken) {
     return (
@@ -55,19 +130,21 @@ export function AuthGate() {
 
   if (!isAuthenticated) {
     return (
-      <Suspense fallback={<FullscreenSpinner />}>
-        {signupMode ? (
-          <SignupPage
-            onSwitchToLogin={() => {
-              // 清掉 /signup 路径与 utm 参数，回到干净登录页
-              window.history.replaceState(null, "", "/");
-              setSignupMode(false);
-            }}
-          />
-        ) : (
-          <LoginPage onSwitchToSignup={() => setSignupMode(true)} />
-        )}
-      </Suspense>
+      <AuthShell>
+        <AuthContentTransition viewKey={signupMode ? "signup" : "login"}>
+          {signupMode ? (
+            <SignupPage
+              enabled={signupEnabled}
+              onSwitchToLogin={switchToLogin}
+            />
+          ) : (
+            <LoginPage
+              signupEnabled={signupEnabled === true}
+              onSwitchToSignup={() => setSignupMode(true)}
+            />
+          )}
+        </AuthContentTransition>
+      </AuthShell>
     );
   }
 

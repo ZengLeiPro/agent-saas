@@ -12,7 +12,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { AuthShell } from "@/components/AuthShell";
 import {
   AUTH_CODE_BTN_CLASS,
   AUTH_INPUT_CLASS,
@@ -40,6 +39,7 @@ function collectScenario(): string | undefined {
 }
 
 interface SignupPageProps {
+  enabled: boolean | null;
   onSwitchToLogin: () => void;
 }
 
@@ -147,8 +147,7 @@ function WaitlistForm({
   );
 }
 
-export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
-  const [enabled, setEnabled] = useState<boolean | null>(null);
+export function SignupPage({ enabled, onSwitchToLogin }: SignupPageProps) {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
@@ -170,10 +169,6 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   const scenario = useMemo(collectScenario, []);
 
   useEffect(() => {
-    fetch(apiUrl("/api/signup/status"))
-      .then((res) => res.json())
-      .then((data: { enabled?: boolean }) => setEnabled(data.enabled === true))
-      .catch(() => setEnabled(false));
     return () => clearInterval(timerRef.current);
   }, []);
 
@@ -255,7 +250,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   };
 
   return (
-    <AuthShell>
+    <>
       {enabled === null ? (
         <div className="flex justify-center py-8">
           <Loader2 className="size-6 animate-spin text-muted-foreground" />
@@ -422,6 +417,6 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
           </p>
         </form>
       )}
-    </AuthShell>
+    </>
   );
 }

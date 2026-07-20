@@ -105,6 +105,15 @@ const selectionsSchema = z.object({
 }).strict();
 
 const secretValueSchema = z.object({ value: z.string().min(1).max(20000) }).strict();
+
+function validateConnectorSecretValue(server: ManagedMcpServer, key: string, value: string): string | undefined {
+  if (server.createdFromTemplateId !== 'github' || key !== 'token') return undefined;
+  const token = value.trim().replace(/^Bearer\s+/i, '');
+  const looksLikeGithubPat = /^ghp_[A-Za-z0-9]+$/.test(token)
+    || /^github_pat_[A-Za-z0-9_]+$/.test(token);
+  if (looksLikeGithubPat && token.length >= 30) return undefined;
+  return 'GitHub Token 格式不正确，请粘贴以 ghp_ 或 github_pat_ 开头的 Personal Access Token（可省略 Bearer 前缀）';
+}
 const oauthStartSchema = z.object({ returnTo: z.string().min(1).max(4000).optional() }).strict();
 const diagnoseSchema = z.object({ force: z.boolean().optional() }).strict();
 
@@ -416,6 +425,8 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
         details: { scope: requirement.scope },
       });
     }
+    const validationError = validateConnectorSecretValue(server, key, parsed.data.value);
+    if (validationError) return res.status(400).json({ error: validationError });
     const ref = await secretVault.putSecret(username, 'mcp', parsed.data.value, {
       serverId,
       key,

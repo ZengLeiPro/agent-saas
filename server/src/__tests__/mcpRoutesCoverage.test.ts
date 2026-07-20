@@ -315,6 +315,36 @@ describe('MCP routes coverage', () => {
     expect((await res.json() as { error: string }).error).toContain('/admin');
   });
 
+  it('PUT GitHub token：绑定前拒绝非 PAT，接受 classic/fine-grained PAT 与可选 Bearer 前缀', async () => {
+    const r = await rig({ withSecretVault: true });
+    await r.store.upsertServer({
+      id: 'github',
+      name: 'GitHub',
+      createdFromTemplateId: 'github',
+      config: { type: 'streamable-http', url: 'https://api.githubcopilot.com/mcp/' },
+      tenantId: '*',
+      secretRequirements: [
+        { key: 'token', label: 'GitHub PAT', target: 'header', name: 'Authorization', prefix: 'Bearer ', scope: 'user', required: true },
+      ],
+    } as ManagedMcpServer);
+
+    const invalid = await r.request('/api/mcp/me/servers/github/secrets/token', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: 'not-a-personal-access-token' }),
+    });
+    expect(invalid.status).toBe(400);
+    expect((await invalid.json() as { error: string }).error).toContain('GitHub Token 格式不正确');
+
+    const classic = await r.request('/api/mcp/me/servers/github/secrets/token', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: `Bearer ghp_${'a'.repeat(36)}` }),
+    });
+    expect(classic.status).toBe(200);
+
+    const fineGrained = await r.request('/api/mcp/me/servers/github/secrets/token', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: `github_pat_${'b'.repeat(40)}` }),
+    });
+    expect(fineGrained.status).toBe(200);
+  });
+
   it('PUT /me/selections：非法请求体 400', async () => {
     const r = await rig();
     const res = await r.request('/api/mcp/me/selections', {

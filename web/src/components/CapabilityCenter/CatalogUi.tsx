@@ -125,7 +125,7 @@ export function CatalogToolbar<T extends string>({
               className={cn(
                 "shrink-0 rounded-lg px-3 py-1.5 text-sm transition-colors",
                 activeFilter === filter.value
-                  ? "bg-foreground font-medium text-background"
+                  ? "bg-brand-600 font-medium text-white shadow-sm"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground",
               )}
               onClick={() => onFilterChange(filter.value)}

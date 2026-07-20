@@ -58,7 +58,9 @@ describe("SkillSelector 能力目录", () => {
     expect(await screen.findByText("平台分析")).toBeTruthy();
 
     const filters = screen.getByLabelText("能力来源筛选");
-    fireEvent.click(within(filters).getByRole("button", { name: /组织提供/ }));
+    const organizationFilter = within(filters).getByRole("button", { name: /组织提供/ });
+    fireEvent.click(organizationFilter);
+    expect(organizationFilter.className).toContain("bg-brand-600");
     expect(screen.getByText("组织 CRM")).toBeTruthy();
     expect(screen.queryByText("平台分析")).toBeNull();
 

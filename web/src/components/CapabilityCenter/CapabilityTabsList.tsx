@@ -1,6 +1,15 @@
-import { EntityIcons } from "@/lib/icons";
-import { TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  BRAND_SEGMENTED_TABS_LIST_CLASS,
+  BRAND_SEGMENTED_TAB_TRIGGER_CLASS,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+
+const CAPABILITY_TAB_TRIGGER_CLASS = cn(
+  BRAND_SEGMENTED_TAB_TRIGGER_CLASS,
+  "px-2 sm:px-3",
+);
 
 export function CapabilityTabsList({
   className,
@@ -11,18 +20,25 @@ export function CapabilityTabsList({
 }) {
   return (
     <TabsList className={cn(
-      "grid h-9 w-full bg-muted/60 p-1",
+      BRAND_SEGMENTED_TABS_LIST_CLASS,
+      "grid",
       showTemplates ? "max-w-2xl grid-cols-4" : "max-w-xl grid-cols-3",
       className,
     )}>
       {showTemplates && (
-        <TabsTrigger value="templates" className="h-7 gap-1.5 py-0">
-          <EntityIcons.taskTemplates className="size-4" />任务模板
+        <TabsTrigger value="templates" className={CAPABILITY_TAB_TRIGGER_CLASS}>
+          任务模板
         </TabsTrigger>
       )}
-      <TabsTrigger value="experts" className="h-7 gap-1.5 py-0"><EntityIcons.expert className="size-4" />专家</TabsTrigger>
-      <TabsTrigger value="skills" className="h-7 gap-1.5 py-0"><EntityIcons.skill className="size-4" />技能</TabsTrigger>
-      <TabsTrigger value="connectors" className="h-7 gap-1.5 py-0"><EntityIcons.connector className="size-4" />连接器</TabsTrigger>
+      <TabsTrigger value="experts" className={CAPABILITY_TAB_TRIGGER_CLASS}>
+        专家
+      </TabsTrigger>
+      <TabsTrigger value="skills" className={CAPABILITY_TAB_TRIGGER_CLASS}>
+        技能
+      </TabsTrigger>
+      <TabsTrigger value="connectors" className={CAPABILITY_TAB_TRIGGER_CLASS}>
+        连接器
+      </TabsTrigger>
     </TabsList>
   );
 }

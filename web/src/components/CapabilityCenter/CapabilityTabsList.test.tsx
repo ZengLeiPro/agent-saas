@@ -5,7 +5,7 @@ import { CapabilityTabsList } from "./CapabilityTabsList";
 
 describe("能力中心标签栏", () => {
   it("把任务模板放在第一个标签", () => {
-    render(
+    const { container } = render(
       <Tabs defaultValue="templates">
         <CapabilityTabsList />
       </Tabs>,
@@ -17,6 +17,8 @@ describe("能力中心标签栏", () => {
       "技能",
       "连接器",
     ]);
+    expect(container.querySelector("svg")).toBeNull();
+    expect(screen.getByRole("tablist").className).toContain("bg-brand-50");
   });
 
   it("未开放个人通用 Agent 时不显示任务模板", () => {

@@ -5,6 +5,10 @@ import { cn } from "@/lib/utils";
 
 const Tabs = TabsPrimitive.Root;
 
+const BRAND_SEGMENTED_TABS_LIST_CLASS = "h-11 w-full rounded-xl bg-brand-50 p-1";
+const BRAND_SEGMENTED_TAB_TRIGGER_CLASS =
+  "rounded-[9px] data-[state=active]:font-semibold data-[state=active]:text-brand-700 data-[state=active]:shadow-[0_2px_8px_rgba(46,86,225,0.14)]";
+
 const TabsList = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>
@@ -50,4 +54,11 @@ const TabsContent = React.forwardRef<
 ));
 TabsContent.displayName = TabsPrimitive.Content.displayName;
 
-export { Tabs, TabsList, TabsTrigger, TabsContent };
+export {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+  BRAND_SEGMENTED_TABS_LIST_CLASS,
+  BRAND_SEGMENTED_TAB_TRIGGER_CLASS,
+};

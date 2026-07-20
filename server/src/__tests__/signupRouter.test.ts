@@ -197,7 +197,7 @@ async function makeTestRig(options?: {
 const REGISTER_BODY = {
   phone: PHONE,
   password: "secret123",
-  name: "张总",
+  name: "张明",
   position: "销售",
   company: "测试制造有限公司",
   utm: { utm_source: "website", utm_content: "ai-employee", evil: "drop-me" },
@@ -400,7 +400,7 @@ describe("signup router", () => {
     };
     expect(data.token).toBeTruthy();
     expect(data.user.username).toBe(PHONE);
-    expect(data.user.role).toBe("user");
+    expect(data.user.role).toBe("admin");
     expect(data.user.tenantId).toMatch(/^trial-[a-z0-9]{8}$/);
     expect(data.user.position).toBe("销售");
     expect(data.user.phone).toBe(PHONE);
@@ -430,6 +430,24 @@ describe("signup router", () => {
     const record = h.userStore.findByUsername(PHONE);
     expect(record?.phone).toBe(PHONE);
     expect(record?.phoneVerifiedAt).toBeTruthy();
+  });
+
+  it("组织/公司名称必填，空白值不创建租户或用户", async () => {
+    h = await makeTestRig();
+    await h.request("/api/signup/send-code", { phone: PHONE });
+
+    const res = await h.request("/api/signup/register", {
+      ...REGISTER_BODY,
+      company: "   ",
+      code: h.sender.lastCode,
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "请填写组织/公司名称" });
+    expect(h.userStore.listAll()).toHaveLength(0);
+    expect(
+      h.tenantStore.listAll().filter((tenant) => tenant.id.startsWith("trial-")),
+    ).toHaveLength(0);
   });
 
   it("验证码错误返回 400，不创建任何资源", async () => {

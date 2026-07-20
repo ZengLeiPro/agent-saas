@@ -228,7 +228,7 @@ export function SignupPage({ enabled, onSwitchToLogin }: SignupPageProps) {
           password,
           name,
           position,
-          company: company || undefined,
+          company,
           utm,
           scenario,
         }),
@@ -334,12 +334,13 @@ export function SignupPage({ enabled, onSwitchToLogin }: SignupPageProps) {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="signup-name">怎么称呼您</Label>
+            <Label htmlFor="signup-name">姓名</Label>
             <Input
               id="signup-name"
               type="text"
               maxLength={20}
-              placeholder="如：张总、李经理"
+              autoComplete="name"
+              placeholder="请输入姓名"
               className={AUTH_INPUT_CLASS}
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -363,18 +364,17 @@ export function SignupPage({ enabled, onSwitchToLogin }: SignupPageProps) {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="signup-company">
-              公司名称
-              <span className="ml-1 text-xs text-muted-foreground">（选填）</span>
-            </Label>
+            <Label htmlFor="signup-company">组织/公司名称</Label>
             <Input
               id="signup-company"
               type="text"
               maxLength={50}
               autoComplete="organization"
+              placeholder="请输入组织或公司名称"
               className={AUTH_INPUT_CLASS}
               value={company}
               onChange={(e) => setCompany(e.target.value)}
+              required
               disabled={loading}
             />
           </div>

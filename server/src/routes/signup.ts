@@ -76,9 +76,13 @@ const registerSchema = z.object({
   phone: z.string().regex(PHONE_PATTERN, "请输入有效的 11 位手机号"),
   code: z.string().regex(/^\d{6}$/, "验证码为 6 位数字"),
   password: z.string().min(6, "密码至少 6 个字符").max(72, "密码过长"),
-  name: z.string().trim().min(1, "请填写称呼").max(20, "称呼不超过 20 个字符"),
+  name: z.string().trim().min(1, "请填写姓名").max(20, "姓名不超过 20 个字符"),
   position: z.string().trim().min(1, "请选择岗位").max(50, "岗位不超过 50 个字符"),
-  company: z.string().trim().max(50, "公司名不超过 50 个字符").optional(),
+  company: z
+    .string()
+    .trim()
+    .min(1, "请填写组织/公司名称")
+    .max(50, "组织/公司名称不超过 50 个字符"),
   utm: z.record(z.string(), z.string()).optional(),
   /**
    * 场景直达：官网场景页带来的场景库 id（如 boss-competitor-daily）。
@@ -445,7 +449,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
       }
       await tenantStore.create({
         id: tenantId,
-        name: company || `试用-${phone.slice(-4)}`,
+        name: company,
         createdBy: SIGNUP_ACTOR,
       });
 
@@ -487,11 +491,11 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
         }
       }
 
-      // 3. 用户（username = 手机号；role=user）
+      // 3. 首位注册者即组织管理员（username = 手机号）
       const user = await userStore.create({
         username: phone,
         password,
-        role: "user",
+        role: "admin",
         tenantId,
         createdBy: SIGNUP_ACTOR,
         realName: name,
@@ -623,7 +627,9 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
       );
       // 逆序尽力回滚，避免留下无 cap 的半开通租户
       if (userId) {
-        await userStore.delete(userId).catch((rollbackErr) => {
+        // 自助注册租户只会在本流程内创建首位用户；按租户清理可绕过
+        // “最后一个组织管理员”常规保护，避免留下注册失败的半成品账号。
+        await userStore.deleteByTenant(tenantId!).catch((rollbackErr) => {
           apiLogger.warn(
             `[signup] 回滚删除用户失败 user=${userId}: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`,
           );

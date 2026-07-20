@@ -142,6 +142,21 @@ describe('groups routes coverage', () => {
     expect(body.groups.map((g) => g.name)).toEqual(['Mine']);
   });
 
+  it('GET /groups 不暴露记忆轮询系统分组', async () => {
+    const ownerRecord = userStore.findByUsername(OWNER.username)!;
+    await groupStore.create({ name: '客户项目', userId: ownerRecord.id, sessionIds: [] });
+    await groupStore.create({ name: '每日简报', kind: 'cron', cronJobId: 'daily', userId: ownerRecord.id, sessionIds: [] });
+    await groupStore.create({ name: '记忆轮询', kind: 'cron', cronJobId: 'memory', userId: ownerRecord.id, sessionIds: [] });
+
+    const { server, baseUrl } = await startServer(agentCwd, groupStore, { ...OWNER, id: ownerRecord.id }, userStore);
+    servers.push(server);
+
+    const res = await fetch(`${baseUrl}/api/groups`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { groups: Array<{ name: string }> };
+    expect(body.groups.map((group) => group.name)).toEqual(['客户项目', '每日简报']);
+  });
+
   it('POST /groups：name 必填 400、forUser 代建 403、成功 201', async () => {
     const ownerRecord = userStore.findByUsername(OWNER.username)!;
     const { server, baseUrl } = await startServer(agentCwd, groupStore, { ...OWNER, id: ownerRecord.id }, userStore);

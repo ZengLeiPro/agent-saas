@@ -181,6 +181,7 @@ export interface ChatAppState {
   previewMode: "dialog" | "side";
   openFilePreview: (path: string, owner?: string, options?: { mode?: "dialog" | "side" }) => void;
   dockFilePreview: () => void;
+  expandFilePreview: () => void;
   closeFilePreview: () => void;
   fileBrowserOpen: boolean;
   toggleFileBrowser: () => void;
@@ -276,6 +277,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }, []);
   const dockFilePreview = useCallback(() => {
     setPreviewMode("side");
+  }, []);
+  const expandFilePreview = useCallback(() => {
+    setPreviewMode("dialog");
   }, []);
   const closeFilePreview = useCallback(() => {
     setPreviewFilePath(null);
@@ -2660,6 +2664,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     previewMode,
     openFilePreview,
     dockFilePreview,
+    expandFilePreview,
     closeFilePreview,
     fileBrowserOpen,
     toggleFileBrowser,

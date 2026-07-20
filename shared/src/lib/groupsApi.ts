@@ -12,11 +12,23 @@ export interface ApiSessionGroup {
   updatedAt: number;
 }
 
+/**
+ * 平台内部记忆轮询分组不属于用户会话目录。
+ * systemKind 是 cron job 的真源，但分组接口只携带名称；后缀兼容规则与服务端
+ * memory poll 判定保持一致，避免旧缓存让系统分组在侧边栏短暂闪现。
+ */
+export function isUserVisibleGroup(
+  group: Pick<ApiSessionGroup, "kind" | "name">,
+): boolean {
+  if (group.kind !== "cron") return true;
+  return !group.name.endsWith("记忆轮询") && !group.name.endsWith("心跳轮询");
+}
+
 export async function fetchGroups(): Promise<ApiSessionGroup[]> {
   const res = await authFetch(`/api/groups`);
   if (!res.ok) return [];
   const data = (await res.json()) as { groups?: ApiSessionGroup[] };
-  return data.groups ?? [];
+  return (data.groups ?? []).filter(isUserVisibleGroup);
 }
 
 export async function createGroup(

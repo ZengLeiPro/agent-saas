@@ -37,7 +37,9 @@ async function loadGroupsCache(): Promise<ApiSessionGroup[] | null> {
   try {
     const raw = await getPlatform().storage.getItem(getGroupsCacheKey());
     if (!raw) return null;
-    const groups = JSON.parse(raw) as ApiSessionGroup[];
+    const groups = (JSON.parse(raw) as ApiSessionGroup[]).filter(
+      api.isUserVisibleGroup,
+    );
     return groups.length > 0 ? groups : null;
   } catch {
     return null;

@@ -854,6 +854,9 @@ interface SidebarDialogsProps {
   setShareSessionId: (id: string | null) => void;
   renameGroupId: string | null;
   setRenameGroupId: (id: string | null) => void;
+  createGroupOpen: boolean;
+  setCreateGroupOpen: (open: boolean) => void;
+  handleCreateGroup: (groupName: string) => Promise<boolean>;
   deleteGroupId: string | null;
   setDeleteGroupId: (id: string | null) => void;
   handleRenameGroup: (newName: string) => Promise<boolean>;
@@ -886,6 +889,9 @@ function SidebarDialogs({
   setShareSessionId,
   renameGroupId,
   setRenameGroupId,
+  createGroupOpen,
+  setCreateGroupOpen,
+  handleCreateGroup,
   deleteGroupId,
   setDeleteGroupId,
   handleRenameGroup,
@@ -942,6 +948,16 @@ function SidebarDialogs({
           if (!open) setRenameGroupId(null);
         }}
         onConfirm={handleRenameGroup}
+      />
+
+      <RenameSessionDialog
+        open={createGroupOpen}
+        initialTitle=""
+        dialogTitle="新建会话分组"
+        dialogDescription="创建一个文件夹，用来整理相关会话"
+        placeholder="分组名称"
+        onOpenChange={setCreateGroupOpen}
+        onConfirm={handleCreateGroup}
       />
 
       <DeleteGroupDialog
@@ -1078,6 +1094,7 @@ export function DesktopSessionSidebar({
   const isSessionSearchActive = sessionSearchQuery.trim().length > 0;
 
   // 分组重命名/删除状态
+  const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
   const [deleteGroupId, setDeleteGroupId] = useState<string | null>(null);
   const [singleExpandedGroupKey, setSingleExpandedGroupKey] = useState<string | null>(null);
@@ -1250,7 +1267,6 @@ export function DesktopSessionSidebar({
         .map((sid) => sessionMap.get(sid))
         .filter((session): session is ChatSessionIndexItem => session !== undefined)
         .sort((a, b) => b.updatedAt - a.updatedAt);
-      if (children.length === 0) continue;
       for (const child of children) consumed.add(child.id);
       entries.push({
         type: "group",
@@ -1564,6 +1580,21 @@ export function DesktopSessionSidebar({
     [addToGroupSessionId, groupsHook],
   );
 
+  const handleCreateGroup = useCallback(
+    async (groupName: string): Promise<boolean> => {
+      const groupId = await groupsHook.createGroup(groupName);
+      if (!groupId) return false;
+      if (sidebarLayout === "single") {
+        setSingleExpandedGroupKey(groupId);
+      } else {
+        setSelectedView(groupId);
+        setSubPanelOpen(true);
+      }
+      return true;
+    },
+    [groupsHook, sidebarLayout],
+  );
+
   const handleBatchMoveToExistingGroup = useCallback(
     async (groupKey: string) => {
       if (!batchMoveSessionIds || batchMoveSessionIds.length === 0) return;
@@ -1703,7 +1734,20 @@ export function DesktopSessionSidebar({
                   <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs" disabled={isReadOnlyGroups || selectedSingleCount === 0} onClick={() => setBatchMoveSessionIds(Array.from(selectedSingleSessionIds))}>移动</Button>
                 </div>
               ) : (
-                <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={beginSingleSelection}>选择</Button>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    onClick={() => setCreateGroupOpen(true)}
+                    title="新建会话分组"
+                    aria-label="新建会话分组"
+                  >
+                    <FolderPlus className="size-4" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={beginSingleSelection}>选择</Button>
+                </div>
               )}
             </div>
             <ScrollArea ref={scrollAreaRef} className="flex-1 [&_[style*=table]]:!block">
@@ -1838,6 +1882,9 @@ export function DesktopSessionSidebar({
           setShareSessionId={setShareSessionId}
           renameGroupId={renameGroupId}
           setRenameGroupId={setRenameGroupId}
+          createGroupOpen={createGroupOpen}
+          setCreateGroupOpen={setCreateGroupOpen}
+          handleCreateGroup={handleCreateGroup}
           deleteGroupId={deleteGroupId}
           setDeleteGroupId={setDeleteGroupId}
           handleRenameGroup={handleRenameGroup}
@@ -1959,39 +2006,52 @@ export function DesktopSessionSidebar({
                     )}
                   </div>
 
-                  {/* 右侧三态按钮 */}
-                  {groupsHook.editing ? (
-                    <div className="flex items-center gap-1">
+                  {/* 新建分组 + 右侧排序状态按钮 */}
+                  <div className="flex items-center gap-1">
+                    {!groupsHook.editing && (
                       <button
                         type="button"
-                        title="取消"
+                        title="新建会话分组"
+                        aria-label="新建会话分组"
                         className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                        onClick={() => groupsHook.cancelEditing()}
+                        onClick={() => setCreateGroupOpen(true)}
                       >
-                        <X className="size-4" />
+                        <FolderPlus className="size-4" />
                       </button>
+                    )}
+                    {groupsHook.editing ? (
+                      <>
+                        <button
+                          type="button"
+                          title="取消"
+                          className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          onClick={() => groupsHook.cancelEditing()}
+                        >
+                          <X className="size-4" />
+                        </button>
+                        <button
+                          type="button"
+                          title="确认"
+                          className="flex size-7 items-center justify-center rounded-md text-primary transition-colors hover:bg-primary/10"
+                          onClick={() => void groupsHook.commitEditing()}
+                        >
+                          <Check className="size-4" />
+                        </button>
+                      </>
+                    ) : groupsHook.sorting.mode === "custom" ? (
                       <button
                         type="button"
-                        title="确认"
-                        className="flex size-7 items-center justify-center rounded-md text-primary transition-colors hover:bg-primary/10"
-                        onClick={() => void groupsHook.commitEditing()}
+                        title="自定义顺序"
+                        className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        onClick={() => {
+                          const currentOrder = sortedGroups.map((g) => g.id);
+                          groupsHook.enterEditing(currentOrder);
+                        }}
                       >
-                        <Check className="size-4" />
+                        <GripVertical className="size-4" />
                       </button>
-                    </div>
-                  ) : groupsHook.sorting.mode === "custom" ? (
-                    <button
-                      type="button"
-                      title="自定义顺序"
-                      className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                      onClick={() => {
-                        const currentOrder = sortedGroups.map((g) => g.id);
-                        groupsHook.enterEditing(currentOrder);
-                      }}
-                    >
-                      <GripVertical className="size-4" />
-                    </button>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </div>
               {/* 全部 */}
               <button
@@ -2349,6 +2409,9 @@ export function DesktopSessionSidebar({
         setShareSessionId={setShareSessionId}
         renameGroupId={renameGroupId}
         setRenameGroupId={setRenameGroupId}
+        createGroupOpen={createGroupOpen}
+        setCreateGroupOpen={setCreateGroupOpen}
+        handleCreateGroup={handleCreateGroup}
         deleteGroupId={deleteGroupId}
         setDeleteGroupId={setDeleteGroupId}
         handleRenameGroup={handleRenameGroup}

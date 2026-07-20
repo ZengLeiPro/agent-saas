@@ -1,4 +1,4 @@
-import { PanelRightOpen, FileQuestion } from "lucide-react";
+import { ChevronLeft, FileQuestion, Maximize2, PanelRight } from "lucide-react";
 import { getPreviewFileType, isKbPath, parseKbPath } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,9 +19,13 @@ interface FilePreviewPanelProps {
   shareToken?: string;
   onBack: () => void;
   hideHeader?: boolean;
+  /** 右侧预览栏使用：切回大尺寸弹窗预览。 */
+  onExpand?: () => void;
 }
 
-export function FilePreviewPanel({ filePath, owner, shareToken, onBack, hideHeader }: FilePreviewPanelProps) {
+type FilePreviewContentProps = Omit<FilePreviewPanelProps, "onExpand">;
+
+function FilePreviewContent({ filePath, owner, shareToken, onBack, hideHeader }: FilePreviewContentProps) {
   // kb:// 伪协议（引用溯源卡）：pdf 走 PdfPreviewPanel kb 分支（带 #page=N 定位）；
   // 其余类型引用卡内部已自行处理（lightbox/新标签），此处仅兜底提示。
   if (isKbPath(filePath)) {
@@ -44,6 +48,60 @@ export function FilePreviewPanel({ filePath, owner, shareToken, onBack, hideHead
   return <MarkdownPreviewPanel filePath={filePath} owner={owner} shareToken={shareToken} onBack={onBack} hideHeader={hideHeader} />;
 }
 
+export function FilePreviewPanel({ onExpand, ...props }: FilePreviewPanelProps) {
+  if (!onExpand) return <FilePreviewContent {...props} />;
+
+  const kbPath = isKbPath(props.filePath) ? parseKbPath(props.filePath) : null;
+  const displayPath = kbPath?.doc ?? props.filePath;
+  const filename = displayPath.split("/").pop() || displayPath;
+  const dirPath = displayPath.includes("/")
+    ? displayPath.slice(0, displayPath.lastIndexOf("/"))
+    : "";
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-card">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-9 shrink-0"
+          onClick={props.onBack}
+          title="关闭预览"
+          aria-label="关闭预览"
+        >
+          <ChevronLeft className="size-5" />
+        </Button>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{filename}</div>
+          {dirPath ? (
+            <div className="truncate text-xs text-muted-foreground">{dirPath}</div>
+          ) : null}
+        </div>
+        {!kbPath ? (
+          <FilePreviewActions
+            filePath={props.filePath}
+            owner={props.owner}
+            shareToken={props.shareToken}
+          />
+        ) : null}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-9 shrink-0"
+          onClick={onExpand}
+          title="放大到弹窗预览"
+          aria-label="放大到弹窗预览"
+        >
+          <Maximize2 className="size-4" />
+        </Button>
+      </header>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <FilePreviewContent {...props} hideHeader />
+      </div>
+    </div>
+  );
+}
+
 interface FilePreviewDialogProps {
   open: boolean;
   filePath: string | null;
@@ -62,7 +120,7 @@ export function FilePreviewDialog({ open, filePath, owner, shareToken, onClose, 
       <DialogContent
         // 阻止 Radix 默认 auto-focus 到首个可交互元素（下载按钮），避免打开就有蓝色 focus ring
         onOpenAutoFocus={(event) => event.preventDefault()}
-        className="flex h-[min(900px,calc(100vh-64px))] w-[min(1180px,calc(100vw-48px))] max-w-none flex-col gap-0 overflow-hidden p-0 [&>button[aria-label='Close']]:top-1.5 sm:rounded-xl">
+        className="flex h-[min(900px,calc(100vh-64px))] w-[min(1180px,calc(100vw-48px))] max-w-none flex-col gap-0 overflow-hidden !border-0 p-0 !shadow-xl outline-none focus:outline-none focus-visible:ring-0 [&>button[aria-label='Close']]:top-1.5 sm:rounded-xl">
         <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4 pr-16">
           <div className="min-w-0 flex-1">
             <DialogTitle className="truncate text-sm font-medium leading-5">
@@ -89,7 +147,7 @@ export function FilePreviewDialog({ open, filePath, owner, shareToken, onClose, 
               onClick={onDock}
               title="在右侧预览栏打开"
             >
-              <PanelRightOpen className="size-4" />
+              <PanelRight className="size-4" />
               右侧打开
             </Button>
           ) : null}

@@ -121,6 +121,7 @@ export interface LayoutProps {
   previewMode: "dialog" | "side";
   openFilePreview: (path: string, owner?: string, options?: { mode?: "dialog" | "side" }) => void;
   dockFilePreview: () => void;
+  expandFilePreview: () => void;
   closeFilePreview: () => void;
 
   // File browser

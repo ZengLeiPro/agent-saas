@@ -73,7 +73,7 @@ export function DesktopLayout(props: LayoutProps) {
     sendMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handlePaste, ttsProps, ttsStateMap, modelList,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
-    previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, closeFilePreview,
+    previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
@@ -313,11 +313,13 @@ export function DesktopLayout(props: LayoutProps) {
               <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="min-w-0">
                 <CapabilityTabsList className="w-[28rem] max-w-[min(28rem,calc(100vw-24rem))]" />
               </Tabs>
-            ) : (
+            ) : activeTab !== "tenants" &&
+              activeTab !== "tenant-admin" &&
+              activeTab !== "platform-admin" ? (
               <div className="truncate text-base font-semibold">
                 {headerTitle}
               </div>
-            )}
+            ) : null}
             {activeTab === "cron" && cronJobCount && (
               <span className="text-xs text-muted-foreground">
                 ({cronJobCount.enabled}/{cronJobCount.total})
@@ -462,7 +464,12 @@ export function DesktopLayout(props: LayoutProps) {
               </div>
               <div className="flex min-w-0 flex-col overflow-hidden" style={{ flexBasis: `${splitRatio * 100}%`, flexShrink: 0, flexGrow: 0 }}>
                 {sidePreviewOpen && previewFilePath ? (
-                  <FilePreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} />
+                  <FilePreviewPanel
+                    filePath={previewFilePath}
+                    owner={previewFileOwner}
+                    onBack={closeFilePreview}
+                    onExpand={expandFilePreview}
+                  />
                 ) : null}
                 <div className={cn("flex h-full flex-col", sidePreviewOpen && "hidden")}>
                   <Suspense fallback={SuspenseFallback}>

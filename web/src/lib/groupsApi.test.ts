@@ -65,6 +65,17 @@ describe("groupsApi（web 通过 shared 复用，mock authFetch 网络边界）"
     await expect(fetchGroups()).resolves.toEqual([]);
   });
 
+  it("fetchGroups 不向侧边栏暴露记忆轮询系统分组", async () => {
+    const groups = [
+      { id: "g1", kind: "manual", name: "项目" },
+      { id: "g2", kind: "cron", name: "晨报" },
+      { id: "g3", kind: "cron", name: "记忆轮询" },
+    ];
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(res({ groups }));
+
+    await expect(fetchGroups()).resolves.toEqual(groups.slice(0, 2));
+  });
+
   it("createGroup POST 携带 name 与 sessionIds", async () => {
     const group = { id: "g2", name: "新组" };
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(res(group));

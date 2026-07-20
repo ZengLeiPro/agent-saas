@@ -62,6 +62,18 @@ describe('groupsApi', () => {
       mockAuthFetch.mockResolvedValue(fail());
       await expect(fetchGroups()).resolves.toEqual([]);
     });
+
+    it('过滤平台内部记忆轮询分组，保留普通定时分组', async () => {
+      const groups = [
+        { id: 'manual', kind: 'manual', name: '客户项目' },
+        { id: 'cron', kind: 'cron', name: '每日简报' },
+        { id: 'memory', kind: 'cron', name: '记忆轮询' },
+        { id: 'legacy', kind: 'cron', name: '旧版心跳轮询' },
+      ];
+      mockAuthFetch.mockResolvedValue(ok({ groups }));
+
+      await expect(fetchGroups()).resolves.toEqual(groups.slice(0, 2));
+    });
   });
 
   describe('createGroup', () => {

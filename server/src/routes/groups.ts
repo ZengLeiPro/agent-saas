@@ -17,7 +17,8 @@ import { auditLog } from "../data/login-logs/index.js";
 import type { EventBus } from "../channels/web/eventBus.js";
 import type { AgentStore } from "../data/agents/store.js";
 import type { AgentProfileInfo } from "../data/agents/types.js";
-import { isMemoryPollSessionMeta, hidesMemoryPollFrom } from "../data/sessions/access.js";
+import { hidesMemoryPollFrom } from "../data/sessions/access.js";
+import { isMemoryPollJob } from "../cron/memoryPoll.js";
 
 type SessionAgent = Pick<
   AgentProfileInfo,
@@ -129,7 +130,14 @@ export function createGroupsRouter(options: GroupsRouterOptions): Router {
    */
   router.get("/groups", (_req: Request, res: Response) => {
     try {
-      const groups = groupStore.listByUserId(getUserId(_req));
+      const groups = groupStore
+        .listByUserId(getUserId(_req))
+        // 记忆轮询是平台内部维护任务，不属于任何用户的会话目录。
+        // 名称后缀兼容旧任务；客户端同样过滤缓存，避免冷启动闪现。
+        .filter(
+          (group) =>
+            group.kind !== "cron" || !isMemoryPollJob({ name: group.name }),
+        );
       return res.json({ groups });
     } catch (err) {
       res.status(500).json({ error: String(err) });

@@ -5,14 +5,6 @@ import { Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import {
-  BRAND_SEGMENTED_TABS_LIST_CLASS,
-  BRAND_SEGMENTED_TAB_TRIGGER_CLASS,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
@@ -32,9 +24,8 @@ interface LoginPageProps {
 export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPageProps) {
   const { login, loginWithSms } = useAuth();
   const [loginMode, setLoginMode] = useState<"password" | "sms">("password");
-  const [username, setUsername] = useState("");
+  const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
-  const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -59,7 +50,7 @@ export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPage
   };
 
   const handleSendSmsCode = async () => {
-    if (!PHONE_PATTERN.test(phone)) {
+    if (!PHONE_PATTERN.test(account)) {
       setError("请输入有效的 11 位手机号");
       return;
     }
@@ -69,7 +60,7 @@ export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPage
       const res = await fetch(apiUrl("/api/auth/sms/send-code"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ phone: account }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(data.error || "验证码发送失败");
@@ -84,16 +75,16 @@ export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPage
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
-    if (loginMode === "sms" && !PHONE_PATTERN.test(phone)) {
+    if (loginMode === "sms" && !PHONE_PATTERN.test(account)) {
       setError("请输入有效的 11 位手机号");
       return;
     }
     setLoading(true);
     try {
       if (loginMode === "password") {
-        await login({ username, password });
+        await login({ username: account, password });
       } else {
-        await loginWithSms({ phone, code });
+        await loginWithSms({ phone: account, code });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
@@ -104,124 +95,111 @@ export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPage
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-        <Tabs value={loginMode} onValueChange={(value) => { setLoginMode(value as "password" | "sms"); setError(""); }}>
-          <TabsList className={`${BRAND_SEGMENTED_TABS_LIST_CLASS} grid grid-cols-2`}>
-            <TabsTrigger value="password" className={BRAND_SEGMENTED_TAB_TRIGGER_CLASS}>
-              密码登录
-            </TabsTrigger>
-            <TabsTrigger value="sms" className={BRAND_SEGMENTED_TAB_TRIGGER_CLASS}>
-              验证码登录
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="password" className="mt-5 space-y-[18px]">
-            <div className="space-y-2">
-              <Label htmlFor="username">用户名</Label>
-              <Input
-                id="username"
-                type="text"
-                autoComplete="username"
-                placeholder="请输入用户名"
-                className={AUTH_INPUT_CLASS}
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required={loginMode === "password"}
-                disabled={loading}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">密码</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                placeholder="请输入密码"
-                className={AUTH_INPUT_CLASS}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required={loginMode === "password"}
-                disabled={loading}
-              />
-            </div>
-          </TabsContent>
-          <TabsContent value="sms" className="mt-5 space-y-[18px]">
-            <div className="space-y-2">
-              <Label htmlFor="sms-phone">手机号</Label>
-              <Input
-                id="sms-phone"
-                type="tel"
-                inputMode="numeric"
-                autoComplete="tel"
-                maxLength={11}
-                placeholder="请输入 11 位手机号"
-                className={AUTH_INPUT_CLASS}
-                value={phone}
-                onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
-                required={loginMode === "sms"}
-                disabled={loading}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="sms-code">验证码</Label>
-              <div className="flex gap-2.5">
-                <Input
-                  id="sms-code"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  placeholder="6 位验证码"
-                  className={AUTH_INPUT_CLASS}
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                  required={loginMode === "sms"}
-                  disabled={loading}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  className={AUTH_CODE_BTN_CLASS}
-                  onClick={handleSendSmsCode}
-                  disabled={sendingCode || countdown > 0 || loading}
-                >
-                  {sendingCode ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : countdown > 0 ? (
-                    `${countdown}s 后重发`
-                  ) : (
-                    "获取验证码"
-                  )}
-                </Button>
-              </div>
-            </div>
-          </TabsContent>
-        </Tabs>
-        {error && (
-          <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        )}
-        <Button type="submit" className={AUTH_SUBMIT_CLASS} disabled={loading}>
-          {loading ? (
-            <>
-              <Loader2 className="size-4 animate-spin" />
-              登录中...
-            </>
-          ) : (
-            loginMode === "password" ? "登录" : "验证码登录"
-          )}
-        </Button>
-        {signupEnabled && onSwitchToSignup && (
-          <p className="text-center text-xs text-muted-foreground">
-            还没有账号？
-            <button
+      <div className="space-y-2">
+        <Label htmlFor="login-account">账号</Label>
+        <Input
+          id="login-account"
+          type="text"
+          inputMode={loginMode === "sms" ? "numeric" : "text"}
+          autoComplete="username"
+          placeholder="请输入手机号或用户名"
+          className={AUTH_INPUT_CLASS}
+          value={account}
+          onChange={(e) => setAccount(e.target.value)}
+          required
+          disabled={loading}
+        />
+      </div>
+      {loginMode === "password" ? (
+        <div className="space-y-2">
+          <Label htmlFor="password">密码</Label>
+          <Input
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            placeholder="请输入密码"
+            className={AUTH_INPUT_CLASS}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            disabled={loading}
+          />
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <Label htmlFor="sms-code">验证码</Label>
+          <div className="flex gap-2.5">
+            <Input
+              id="sms-code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              placeholder="6 位验证码"
+              className={AUTH_INPUT_CLASS}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+              required
+              disabled={loading}
+            />
+            <Button
               type="button"
-              className="ml-1 font-medium text-brand-600 hover:underline"
-              onClick={onSwitchToSignup}
+              variant="outline"
+              className={AUTH_CODE_BTN_CLASS}
+              onClick={handleSendSmsCode}
+              disabled={sendingCode || countdown > 0 || loading}
             >
-              注册试用
-            </button>
-          </p>
+              {sendingCode ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : countdown > 0 ? (
+                `${countdown}s 后重发`
+              ) : (
+                "获取验证码"
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && (
+        <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+      <Button type="submit" className={AUTH_SUBMIT_CLASS} disabled={loading}>
+        {loading ? (
+          <>
+            <Loader2 className="size-4 animate-spin" />
+            登录中...
+          </>
+        ) : loginMode === "password" ? (
+          "登录"
+        ) : (
+          "验证码登录"
         )}
+      </Button>
+      <button
+        type="button"
+        className="block w-full text-center text-sm font-medium text-brand-600 hover:underline"
+        onClick={() => {
+          setLoginMode((mode) => (mode === "password" ? "sms" : "password"));
+          setError("");
+        }}
+        disabled={loading}
+      >
+        {loginMode === "password" ? "使用短信验证码登录" : "使用密码登录"}
+      </button>
+      {signupEnabled && onSwitchToSignup && (
+        <p className="text-center text-xs text-muted-foreground">
+          还没有账号？
+          <button
+            type="button"
+            className="ml-1 font-medium text-brand-600 hover:underline"
+            onClick={onSwitchToSignup}
+          >
+            注册试用
+          </button>
+        </p>
+      )}
     </form>
   );
 }

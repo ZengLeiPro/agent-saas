@@ -55,7 +55,7 @@ import type { McpOAuthService } from "../mcp/oauthService.js";
 // ---- Zod schemas ----
 
 const loginSchema = z.object({
-  username: z.string().min(1, "用户名不能为空"),
+  username: z.string().min(1, "账号不能为空"),
   password: z.string().min(1, "密码不能为空"),
 });
 
@@ -844,7 +844,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
             loginLogFilePath,
           ).catch(() => {});
         }
-        res.status(401).json({ error: "用户名或密码错误" });
+        res.status(401).json({ error: "账号或密码错误" });
         return;
       }
 

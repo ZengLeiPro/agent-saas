@@ -135,7 +135,7 @@ describe('auth routes coverage', () => {
       username: 'wain_user', password: 'wrong-password',
     }, ip));
     expect(wrong.status).toBe(401);
-    expect((await wrong.json() as { error: string }).error).toBe('用户名或密码错误');
+    expect((await wrong.json() as { error: string }).error).toBe('账号或密码错误');
 
     // 空 body → zod 校验 400
     const badBody = await h.request('/api/auth/login', loginInit({ username: '' }, ip));

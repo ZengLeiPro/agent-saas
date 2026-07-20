@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
@@ -24,9 +23,8 @@ interface AddAccountDialogProps {
 export function AddAccountDialog({ open, onOpenChange }: AddAccountDialogProps) {
   const { login, loginWithSms } = useAuth();
   const [loginMode, setLoginMode] = useState<"password" | "sms">("password");
-  const [username, setUsername] = useState("");
+  const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
-  const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -37,9 +35,8 @@ export function AddAccountDialog({ open, onOpenChange }: AddAccountDialogProps) 
   useEffect(() => {
     if (!open) return;
     setLoginMode("password");
-    setUsername("");
+    setAccount("");
     setPassword("");
-    setPhone("");
     setCode("");
     setError("");
     setLoading(false);
@@ -63,7 +60,7 @@ export function AddAccountDialog({ open, onOpenChange }: AddAccountDialogProps) 
   };
 
   const handleSendCode = async () => {
-    if (!PHONE_PATTERN.test(phone)) {
+    if (!PHONE_PATTERN.test(account)) {
       setError("请输入有效的 11 位手机号");
       return;
     }
@@ -73,7 +70,7 @@ export function AddAccountDialog({ open, onOpenChange }: AddAccountDialogProps) 
       const res = await fetch(apiUrl("/api/auth/sms/send-code"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ phone: account }),
       });
       const data = await res.json().catch(() => ({})) as { error?: string };
       if (!res.ok) throw new Error(data.error || "验证码发送失败");
@@ -88,14 +85,14 @@ export function AddAccountDialog({ open, onOpenChange }: AddAccountDialogProps) 
   const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
-    if (loginMode === "sms" && !PHONE_PATTERN.test(phone)) {
+    if (loginMode === "sms" && !PHONE_PATTERN.test(account)) {
       setError("请输入有效的 11 位手机号");
       return;
     }
     setLoading(true);
     try {
-      if (loginMode === "password") await login({ username, password });
-      else await loginWithSms({ phone, code });
+      if (loginMode === "password") await login({ username: account, password });
+      else await loginWithSms({ phone: account, code });
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
@@ -111,72 +108,82 @@ export function AddAccountDialog({ open, onOpenChange }: AddAccountDialogProps) 
           <DialogDescription>登录后会把账号添加到此设备，可随时快速切换。</DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleLogin} className="space-y-4">
-          <Tabs value={loginMode} onValueChange={(value) => { setLoginMode(value as "password" | "sms"); setError(""); }}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="password">密码登录</TabsTrigger>
-              <TabsTrigger value="sms">验证码登录</TabsTrigger>
-            </TabsList>
-            <TabsContent value="password" className="mt-4 space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="add-account-username">用户名</Label>
-                <Input id="add-account-username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required disabled={loading} />
-              </div>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="add-account-login-account">账号</Label>
+              <Input
+                id="add-account-login-account"
+                inputMode={loginMode === "sms" ? "numeric" : "text"}
+                autoComplete="username"
+                placeholder="请输入手机号或用户名"
+                value={account}
+                onChange={(event) => setAccount(event.target.value)}
+                required
+                disabled={loading}
+              />
+            </div>
+            {loginMode === "password" ? (
               <div className="space-y-2">
                 <Label htmlFor="add-account-password">密码</Label>
-                <Input id="add-account-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required disabled={loading} />
+                <Input
+                  id="add-account-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                  disabled={loading}
+                />
               </div>
-            </TabsContent>
-            <TabsContent value="sms" className="mt-4 space-y-4">
-              <PhoneCodeFields phone={phone} code={code} onPhoneChange={setPhone} onCodeChange={setCode} onSendCode={handleSendCode} sendingCode={sendingCode} countdown={countdown} disabled={loading} prefix="add-account-login" />
-            </TabsContent>
-          </Tabs>
-          {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? <><Loader2 className="size-4 animate-spin" />登录中...</> : "继续"}
-          </Button>
-        </form>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="add-account-code">验证码</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="add-account-code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={code}
+                    onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))}
+                    required
+                    disabled={loading}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-32 shrink-0"
+                    onClick={handleSendCode}
+                    disabled={sendingCode || countdown > 0 || loading}
+                  >
+                    {sendingCode ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : countdown > 0 ? (
+                      `${countdown}s 后重发`
+                    ) : (
+                      "获取验证码"
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
+            {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? <><Loader2 className="size-4 animate-spin" />登录中...</> : "继续"}
+            </Button>
+            <button
+              type="button"
+              className="block w-full text-center text-sm font-medium text-brand-600 hover:underline"
+              onClick={() => {
+                setLoginMode((mode) => (mode === "password" ? "sms" : "password"));
+                setError("");
+              }}
+              disabled={loading}
+            >
+              {loginMode === "password" ? "使用短信验证码登录" : "使用密码登录"}
+            </button>
+          </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function PhoneCodeFields({
-  phone,
-  code,
-  onPhoneChange,
-  onCodeChange,
-  onSendCode,
-  sendingCode,
-  countdown,
-  disabled,
-  prefix,
-}: {
-  phone: string;
-  code: string;
-  onPhoneChange: (value: string) => void;
-  onCodeChange: (value: string) => void;
-  onSendCode: () => void;
-  sendingCode: boolean;
-  countdown: number;
-  disabled: boolean;
-  prefix: string;
-}) {
-  return (
-    <>
-      <div className="space-y-2">
-        <Label htmlFor={`${prefix}-phone`}>手机号</Label>
-        <Input id={`${prefix}-phone`} type="tel" inputMode="numeric" autoComplete="tel" maxLength={11} value={phone} onChange={(event) => onPhoneChange(event.target.value.replace(/\D/g, ""))} required disabled={disabled} />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor={`${prefix}-code`}>验证码</Label>
-        <div className="flex gap-2">
-          <Input id={`${prefix}-code`} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(event) => onCodeChange(event.target.value.replace(/\D/g, ""))} required disabled={disabled} />
-          <Button type="button" variant="outline" className="w-32 shrink-0" onClick={onSendCode} disabled={sendingCode || countdown > 0 || disabled}>
-            {sendingCode ? <Loader2 className="size-4 animate-spin" /> : countdown > 0 ? `${countdown}s 后重发` : "获取验证码"}
-          </Button>
-        </div>
-      </div>
-    </>
   );
 }

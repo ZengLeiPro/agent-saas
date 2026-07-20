@@ -5,6 +5,7 @@ import {
   type MessagesController,
   type WsProcessingContext,
 } from '../../../shared/src/lib/wsEventProcessor.js';
+import { DEFAULT_RUNTIME_FAILURE_MESSAGE } from '../../../shared/src/lib/runtimeErrorMessage.js';
 import type { MessageItem, MessageItemInput } from '../../../shared/src/types/message.js';
 import type { WsEvent } from '../../../shared/src/types/ws.js';
 
@@ -237,7 +238,7 @@ describe('wsEventProcessor terminal errors', () => {
       type: 'user',
       status: 'failed',
       // 用户侧通俗文案;原始 model error 留 server.log + PG runtime_events
-      failedReason: '异常中断，请继续对话',
+      failedReason: DEFAULT_RUNTIME_FAILURE_MESSAGE,
     });
   });
 
@@ -328,7 +329,7 @@ describe('wsEventProcessor terminal errors', () => {
     expect(messages[0]).toMatchObject({
       type: 'user',
       status: 'failed',
-      failedReason: '异常中断，请继续对话',
+      failedReason: DEFAULT_RUNTIME_FAILURE_MESSAGE,
     });
   });
 });

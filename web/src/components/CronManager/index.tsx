@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import {
@@ -27,10 +28,13 @@ import {
 
 interface CronManagerProps {
   onJobCountChange?: (enabled: number, total: number) => void;
+  /** 桌面端全局 Header 的操作区；undefined 时在页面内渲染移动端标题与操作。 */
+  headerActionsTarget?: HTMLElement | null;
 }
 
 export function CronManager({
   onJobCountChange,
+  headerActionsTarget,
 }: CronManagerProps) {
   const { user, authEnabled } = useAuth();
   const currentUserId = authEnabled ? user?.id : undefined;
@@ -121,29 +125,64 @@ export function CronManager({
     await refreshStatus();
   };
 
-  return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
-      {/* 标题：与其他设置页面保持一致的样式 */}
-      <SettingsPanelHeader
-        title="定时任务"
-        description="创建和管理自动运行的 Agent 任务。"
-        actions={(
-          <>
-            <Button size="sm" variant="outline" onClick={refreshAll}>
-              <RefreshCw className="size-3.5" />
-              刷新
-            </Button>
-            <Button size="sm" onClick={openCreate}>
-              <Plus className="size-3.5" />
-              新建
-            </Button>
-          </>
-        )}
-      />
+  const closeFormPanel = () => {
+    setShowFormPanel(false);
+    setEditingJob(null);
+  };
 
-      {/* 主体：左右两栏（独立于标题之外），统一使用 SettingsTwoColumn 壳子 */}
+  const headerActions = showFormPanel ? (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={closeFormPanel}
+        disabled={formSubmitting}
+      >
+        取消
+      </Button>
+      <Button
+        type="submit"
+        form="cron-job-form"
+        size="sm"
+        disabled={formSubmitting}
+      >
+        {formSubmitting
+          ? editingJob
+            ? "保存中..."
+            : "创建中..."
+          : editingJob
+            ? "保存"
+            : "创建任务"}
+      </Button>
+    </>
+  ) : (
+    <>
+      <Button size="sm" variant="outline" onClick={refreshAll}>
+        <RefreshCw className="size-3.5" />
+        刷新
+      </Button>
+      <Button size="sm" onClick={openCreate}>
+        <Plus className="size-3.5" />
+        新建
+      </Button>
+    </>
+  );
+
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col px-4 pb-4 pt-4 sm:px-6 sm:pb-6 sm:pt-6">
+      {headerActionsTarget === undefined ? (
+        <SettingsPanelHeader
+          title="定时任务"
+          description="创建和管理自动运行的 Agent 任务。"
+          actions={headerActions}
+        />
+      ) : headerActionsTarget ? createPortal(headerActions, headerActionsTarget) : null}
+
+      {/* 主体：桌面端全宽左右两栏，移动端沿用列表 + Dialog。 */}
       <SettingsTwoColumn
         className="min-h-0 flex-1"
+        sidebarWidth={280}
         sidebarClassName="space-y-0"
         contentClassName="space-y-0"
         sidebar={(
@@ -170,7 +209,7 @@ export function CronManager({
         <div className="hidden h-full flex-col overflow-hidden md:flex">
         {showFormPanel ? (
           <>
-            <div className="flex items-start justify-between gap-3 border-b px-6 py-4">
+            <div className="border-b px-6 py-4">
               <div className="min-w-0">
                 <div className="text-base font-semibold">
                   {editingJob ? "编辑定时任务" : "创建定时任务"}
@@ -180,34 +219,6 @@ export function CronManager({
                     ? "保存后将更新该任务的配置。"
                     : "创建后可在列表中启用、运行或删除。"}
                 </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setShowFormPanel(false);
-                    setEditingJob(null);
-                  }}
-                  disabled={formSubmitting}
-                >
-                  取消
-                </Button>
-                <Button
-                  type="submit"
-                  form="cron-job-form"
-                  size="sm"
-                  disabled={formSubmitting}
-                >
-                  {formSubmitting
-                    ? editingJob
-                      ? "保存中..."
-                      : "创建中..."
-                    : editingJob
-                      ? "保存"
-                      : "创建任务"}
-                </Button>
               </div>
             </div>
             <div className="flex-1 overflow-auto p-6">

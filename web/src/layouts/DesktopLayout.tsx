@@ -112,6 +112,7 @@ export function DesktopLayout(props: LayoutProps) {
 
   // Cron 任务计数（由 CronManager 回报）
   const [cronJobCount, setCronJobCount] = useState<{ enabled: number; total: number } | null>(null);
+  const [cronHeaderActionsTarget, setCronHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
   const handleCronJobCountChange = useCallback((enabled: number, total: number) => {
     setCronJobCount({ enabled, total });
   }, []);
@@ -345,6 +346,12 @@ export function DesktopLayout(props: LayoutProps) {
               className="min-w-0 flex-1"
             />
           )}
+          {activeTab === "cron" && (
+            <div
+              ref={setCronHeaderActionsTarget}
+              className="ml-auto flex shrink-0 items-center gap-2"
+            />
+          )}
           {activeTab === "chat" && (
             <div className="ml-auto flex items-center gap-2">
               {modelList?.showContextTokens !== false && (
@@ -503,7 +510,10 @@ export function DesktopLayout(props: LayoutProps) {
         {cronMounted && (
           <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "cron" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
-              <CronManager onJobCountChange={handleCronJobCountChange} />
+              <CronManager
+                onJobCountChange={handleCronJobCountChange}
+                headerActionsTarget={cronHeaderActionsTarget}
+              />
             </Suspense>
           </div>
         )}

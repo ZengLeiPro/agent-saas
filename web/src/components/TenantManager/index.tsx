@@ -54,8 +54,9 @@ function TenantModelPolicyPanel({
   tenant: Tenant;
   onActionsChange?: (actions: ReactNode | null) => void;
 }) {
-  // 只读平台 admin：保存模型策略 disabled
-  const { platformReadOnly } = useAuth();
+  const { canPlatform } = useAuth();
+  const customerConfigReadOnly = tenant.id === DEFAULT_TENANT_ID
+    || !canPlatform("customer_config.manage");
   const [settings, setSettings] = useState<TenantSettings>(() => cloneTenantSettings(tenant.settings ?? DEFAULT_TENANT_SETTINGS));
   const [modelList, setModelList] = useState<ModelList | null>(null);
   const [loading, setLoading] = useState(false);
@@ -160,12 +161,12 @@ function TenantModelPolicyPanel({
   const actions = useMemo(() => (
     <>
       {saved && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
-      <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || loading || saving}>
+      <Button size="sm" onClick={() => { void save(); }} disabled={customerConfigReadOnly || loading || saving}>
         {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
         保存策略
       </Button>
     </>
-  ), [loading, platformReadOnly, save, saved, saving]);
+  ), [customerConfigReadOnly, loading, save, saved, saving]);
 
   useEffect(() => {
     onActionsChange?.(actions);
@@ -360,8 +361,9 @@ function TenantCapabilitiesPanel({
   onActionsChange?: (actions: ReactNode | null) => void;
   onSaved?: () => Promise<void> | void;
 }) {
-  // 只读平台 admin：保存能力与配额 disabled
-  const { platformReadOnly } = useAuth();
+  const { canPlatform } = useAuth();
+  const customerConfigReadOnly = tenant.id === DEFAULT_TENANT_ID
+    || !canPlatform("customer_config.manage");
   const initialSettings = tenant.settings ?? DEFAULT_TENANT_SETTINGS;
   const [settings, setSettings] = useState<TenantSettings>(() => cloneTenantSettings(initialSettings));
   const [baseline, setBaseline] = useState<TenantSettings>(() => cloneTenantSettings(initialSettings));
@@ -449,12 +451,12 @@ function TenantCapabilitiesPanel({
   const actions = useMemo(() => (
     <>
       {saved && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
-      <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || !dirty || saving}>
+      <Button size="sm" onClick={() => { void save(); }} disabled={customerConfigReadOnly || !dirty || saving}>
         {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
         保存能力与配额
       </Button>
     </>
-  ), [dirty, platformReadOnly, save, saved, saving]);
+  ), [customerConfigReadOnly, dirty, save, saved, saving]);
 
   useEffect(() => {
     onActionsChange?.(actions);
@@ -564,8 +566,8 @@ function TenantCapabilitiesPanel({
 }
 
 export function TenantManager() {
-  // 只读平台 admin：仅保留「新建组织」，其余写操作（保存名称/禁用/删除）disabled
-  const { platformReadOnly } = useAuth();
+  const { platformReadOnly, canPlatform } = useAuth();
+  const canManageTenant = canPlatform("tenant.manage");
   const {
     tenants,
     loading,
@@ -688,7 +690,7 @@ export function TenantManager() {
             {activeDetailTab === "config" && selectedTenant && (
               <>
                 {nameSaved && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
-                <Button size="sm" onClick={() => { void saveTenantName(); }} disabled={platformReadOnly || !nameChanged || nameSaving}>
+                <Button size="sm" onClick={() => { void saveTenantName(); }} disabled={!canManageTenant || !nameChanged || nameSaving}>
                   {nameSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
                   保存名称
                 </Button>
@@ -701,10 +703,12 @@ export function TenantManager() {
                 刷新
               </Button>
             )}
-            <Button size="sm" onClick={openCreate}>
-              <Plus className="size-3.5" />
-              新建组织
-            </Button>
+            {canManageTenant && (
+              <Button size="sm" onClick={openCreate}>
+                <Plus className="size-3.5" />
+                新建组织
+              </Button>
+            )}
           </>
         }
       />

@@ -37,6 +37,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 
 import { isPlatformAdmin } from '../auth/types.js';
+import { hasPlatformCapability, isSuperAdmin } from '../auth/platformGovernance.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import type { BillingUsageEvent } from '../data/billing/types.js';
@@ -296,6 +297,50 @@ export function truncateTraceEvent(
 }
 
 /**
+ * 平台运营管理员只看可定位故障的事件骨架，不返回成员正文、思考、工具参数/结果或审批输入。
+ * 固定占位符让既有时间线 UI 仍能表达“这里发生过什么”，同时不泄露原始内容。
+ */
+export function sanitizeTraceEvent(event: PlatformEvent): Record<string, unknown> {
+  const source = event as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  const safeKeys = [
+    'id', 'type', 'timestamp', 'sessionId', 'runId',
+    'model', 'toolCallId', 'toolName', 'skillName', 'isError',
+    'status', 'risk', 'durationMs', 'executionTarget',
+    'approvalId', 'decision', 'previousStatus',
+    'subtype', 'numTurns', 'handId', 'workspaceId', 'classifiedAs',
+    'workerId', 'leaseExpiresAt', 'userId',
+  ];
+  for (const key of safeKeys) {
+    if (source[key] !== undefined) out[key] = source[key];
+  }
+  if (source.error !== undefined) out.error = '执行失败（详细错误已脱敏）';
+  if (source.reason !== undefined) out.reason = '原因已脱敏';
+  if (Array.isArray(source.toolCalls)) {
+    out.toolCalls = source.toolCalls.map((call) => {
+      const value = call && typeof call === 'object' ? call as Record<string, unknown> : {};
+      return {
+        id: typeof value.id === 'string' ? value.id : '',
+        name: typeof value.name === 'string' ? value.name : 'unknown',
+        arguments: '（参数已脱敏）',
+      };
+    });
+  }
+  if ([
+    'user_message',
+    'memory_context',
+    'assistant_thinking',
+    'assistant_message',
+    'tool_result',
+    'tool_output_delta',
+  ].includes(String(source.type))) {
+    out.content = '（内容已脱敏）';
+  }
+  out.contentRedacted = true;
+  return out;
+}
+
+/**
  * caller + query.tenantId → 生效租户范围（与 usage.ts 的 resolveQueryTenant 同规则）：
  *   - 平台 admin：tenantId = query.tenantId（undefined = 跨组织全量）
  *   - 组织 admin：强制 = caller.tenantId；query 指定他人 tenant → 403
@@ -372,7 +417,7 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
         res.status(404).json({ error: 'Run not found' });
         return;
       }
-      const [events, usageEvents, redactCost] = await Promise.all([
+      const [events, usageEvents, orgCostRedacted] = await Promise.all([
         eventStore.listByRun(run.sessionId, runId),
         billingStore.listUsageEvents({ runId, limit: 1000 }),
         shouldRedactCost(scope.platform, scope.tenantId),
@@ -381,12 +426,19 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
         typeWhitelist ? typeWhitelist.has(event.type) : event.type !== 'assistant_stream_event'
       ));
       const billing = summarizeRunBilling(usageEvents);
+      const redactContent = scope.platform && !isSuperAdmin(req.user);
+      const redactCost = scope.platform
+        ? !hasPlatformCapability(req.user, 'finance.read')
+        : orgCostRedacted;
       res.json({
         runId,
         sessionId: run.sessionId,
         run: pickRunSummary(run),
         billing: redactCost ? redactBillingSummary(billing) : billing,
-        events: filtered.map((event) => truncateTraceEvent(event, maxContentLength)),
+        events: filtered.map((event) => redactContent
+          ? sanitizeTraceEvent(event)
+          : truncateTraceEvent(event, maxContentLength)),
+        ...(redactContent ? { contentRedacted: true } : {}),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

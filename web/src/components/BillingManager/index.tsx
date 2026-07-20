@@ -32,6 +32,7 @@ import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHe
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
+import { DEFAULT_TENANT_ID } from "@agent/shared";
 
 const CREDIT_MICRO = 1_000_000;
 const YUAN_MICRO = 1_000_000;
@@ -223,6 +224,11 @@ function formatDateTime(value?: string): string {
 function formatDate(value?: string): string {
   if (!value) return "-";
   return new Date(value).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+}
+
+function makeIdempotencyKey(): string {
+  return globalThis.crypto?.randomUUID?.()
+    ?? ['manual', Date.now(), Math.random().toString(36).slice(2)].join('_');
 }
 
 function billingModeLabel(mode: BillingMode): string {
@@ -474,8 +480,10 @@ async function fetchBillingState(tenantId: string, includeAudit = true): Promise
 // ============================================================
 
 export function PlatformBillingManager() {
-  // 只读平台 admin：保存策略/投影/账户调整等平台态写操作 disabled（组织侧 TenantBillingPanel 不受影响）
-  const { platformReadOnly } = useAuth();
+  const { isSuperAdmin, platformReadOnly, canPlatform } = useAuth();
+  const canAdjust = canPlatform("billing.adjust");
+  const canOperateRuntime = canPlatform("runtime.operate");
+  const canReadFinance = canPlatform("finance.read");
   const { tenants, loading: tenantsLoading } = useTenants();
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const [pricingVersions, setPricingVersions] = useState<PricingVersion[]>([]);
@@ -490,6 +498,8 @@ export function PlatformBillingManager() {
   const [adjustType, setAdjustType] =
     useState<"recharge" | "grant" | "refund" | "adjustment" | "expire" | "reversal">("recharge");
   const [adjustNote, setAdjustNote] = useState("");
+  const [adjustReference, setAdjustReference] = useState("");
+  const [adjustIdempotencyKey, setAdjustIdempotencyKey] = useState(makeIdempotencyKey);
   const [pricingVersionActions, setPricingVersionActions] = useState<ReactNode | null>(null);
 
   // tab 与 hash 同步
@@ -507,6 +517,11 @@ export function PlatformBillingManager() {
     const next = `#${params.toString()}`;
     if (window.location.hash !== next) window.history.replaceState(null, "", next);
   }, [activeTab]);
+  useEffect(() => {
+    if (!canReadFinance && ["usage-events", "pricing-versions", "audit"].includes(activeTab)) {
+      setActiveTab("overview");
+    }
+  }, [activeTab, canReadFinance]);
 
   // notice 自动消失
   useEffect(() => {
@@ -525,16 +540,17 @@ export function PlatformBillingManager() {
   }, [selectedTenantId, tenants]);
 
   const loadPricingVersions = useCallback(async () => {
+    if (!canReadFinance) return;
     const res = await authFetch("/api/admin/billing/pricing-versions");
     const data = await res.json().catch(() => ({}));
     if (res.ok) setPricingVersions((data as { pricingVersions?: PricingVersion[] }).pricingVersions ?? []);
-  }, []);
+  }, [canReadFinance]);
 
   const load = useCallback(async () => {
     if (!selectedTenantId) return;
     setLoading(true);
     try {
-      const next = await fetchBillingState(selectedTenantId, true);
+      const next = await fetchBillingState(selectedTenantId, canReadFinance);
       setState(next);
       setDraft(next.policy ? makeDraft(next.policy) : null);
     } catch (err) {
@@ -542,7 +558,7 @@ export function PlatformBillingManager() {
     } finally {
       setLoading(false);
     }
-  }, [selectedTenantId]);
+  }, [canReadFinance, selectedTenantId]);
 
   useEffect(() => { void loadPricingVersions(); }, [loadPricingVersions]);
   useEffect(() => { void load(); }, [load]);
@@ -578,25 +594,41 @@ export function PlatformBillingManager() {
       setNotice({ kind: "error", text: "请输入非 0 的积分变动值", expiresAt: Date.now() + 5000 });
       return;
     }
+    if (!isSuperAdmin && (!adjustNote.trim() || !adjustReference.trim())) {
+      setNotice({ kind: "error", text: "请填写备注和业务依据", expiresAt: Date.now() + 5000 });
+      return;
+    }
+    if (!isSuperAdmin && amount < 0) {
+      setNotice({ kind: "error", text: "当前授权只能增加积分", expiresAt: Date.now() + 5000 });
+      return;
+    }
     setAdjusting(true);
     try {
       const res = await authFetch(`/api/admin/billing/accounts/${encodeURIComponent(selectedTenantId)}/adjust`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ creditsDelta: amount, type: adjustType, note: adjustNote.trim() || undefined }),
+        body: JSON.stringify({
+          creditsDelta: amount,
+          type: adjustType,
+          note: adjustNote.trim() || undefined,
+          businessReference: adjustReference.trim() || undefined,
+          idempotencyKey: adjustIdempotencyKey,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as { error?: string }).error || "调整积分失败");
       setNotice({ kind: "success", text: "账户调整已写入流水", expiresAt: Date.now() + 4000 });
       setAdjustAmount("");
       setAdjustNote("");
+      setAdjustReference("");
+      setAdjustIdempotencyKey(makeIdempotencyKey());
       await load();
     } catch (err) {
       setNotice({ kind: "error", text: err instanceof Error ? err.message : String(err), expiresAt: Date.now() + 8000 });
     } finally {
       setAdjusting(false);
     }
-  }, [adjustAmount, adjustNote, adjustType, load, selectedTenantId]);
+  }, [adjustAmount, adjustIdempotencyKey, adjustNote, adjustReference, adjustType, isSuperAdmin, load, selectedTenantId]);
 
   const projectNow = useCallback(async () => {
     setProjecting(true);
@@ -654,7 +686,7 @@ export function PlatformBillingManager() {
               </Button>
             )}
             {activeTab === "pricing-versions" && pricingVersionActions}
-            <Button variant="outline" onClick={() => { void projectNow(); }} disabled={platformReadOnly || projecting}>
+            <Button variant="outline" onClick={() => { void projectNow(); }} disabled={!canOperateRuntime || projecting}>
               {projecting ? <Loader2 className="size-4 animate-spin" /> : <ActionIcons.project className="size-4" />}
               投影 usage
             </Button>
@@ -674,9 +706,9 @@ export function PlatformBillingManager() {
               <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-transparent p-0 text-muted-foreground md:grid-cols-3 xl:grid-cols-5">
                 <TabsTrigger value="overview" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">账户与策略</TabsTrigger>
                 <TabsTrigger value="ledger" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">流水</TabsTrigger>
-                <TabsTrigger value="usage-events" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">用量事件</TabsTrigger>
-                <TabsTrigger value="pricing-versions" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">价格版本</TabsTrigger>
-                <TabsTrigger value="audit" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">平台审计</TabsTrigger>
+                {canReadFinance && <TabsTrigger value="usage-events" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">用量事件</TabsTrigger>}
+                {canReadFinance && <TabsTrigger value="pricing-versions" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">价格版本</TabsTrigger>}
+                {canReadFinance && <TabsTrigger value="audit" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">平台审计</TabsTrigger>}
               </TabsList>
             </div>
 
@@ -700,7 +732,7 @@ export function PlatformBillingManager() {
             </CardContent>
           </Card>
 
-          <BillingOverview summary={state.summary} audit={state.audit} />
+          <BillingOverview summary={state.summary} audit={state.audit} readonly={!canReadFinance} />
           <PricingDetailCard pricing={activePricing} />
 
           {state.audit?.alerts.length ? (
@@ -788,11 +820,11 @@ export function PlatformBillingManager() {
 
           <Card>
             <CardHeader><CardTitle className="text-base">账户调整</CardTitle></CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-[160px_160px_minmax(0,1fr)]">
+            <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-[140px_150px_minmax(0,1fr)_minmax(0,1fr)]">
               <div className="space-y-1.5">
                 <Label>积分变动</Label>
-                <Input type="number" value={adjustAmount} onChange={(e) => setAdjustAmount(e.target.value)} placeholder="正数或负数" />
-                <p className="text-xs text-muted-foreground">正数增加余额，负数扣减余额；类型用于流水归类。</p>
+                <Input type="number" value={adjustAmount} onChange={(e) => setAdjustAmount(e.target.value)} placeholder={isSuperAdmin ? "正数或负数" : "仅正数"} />
+                <p className="text-xs text-muted-foreground">{isSuperAdmin ? "正数增加，负数扣减。" : "受单笔和每日授权额度约束。"}</p>
               </div>
               <div className="space-y-1.5">
                 <Label>类型</Label>
@@ -802,9 +834,9 @@ export function PlatformBillingManager() {
                     <SelectItem value="recharge">充值</SelectItem>
                     <SelectItem value="grant">赠送</SelectItem>
                     <SelectItem value="refund">退款</SelectItem>
-                    <SelectItem value="adjustment">调整</SelectItem>
-                    <SelectItem value="expire">过期</SelectItem>
-                    <SelectItem value="reversal">冲正</SelectItem>
+                    {isSuperAdmin && <SelectItem value="adjustment">调整</SelectItem>}
+                    {isSuperAdmin && <SelectItem value="expire">过期</SelectItem>}
+                    {isSuperAdmin && <SelectItem value="reversal">冲正</SelectItem>}
                   </SelectContent>
                 </Select>
               </div>
@@ -812,8 +844,19 @@ export function PlatformBillingManager() {
                 <Label>备注</Label>
                 <Input value={adjustNote} onChange={(e) => setAdjustNote(e.target.value)} placeholder="例如：首月试用赠送" />
               </div>
-              <div className="flex justify-end md:col-span-3">
-                <Button size="sm" variant="outline" onClick={() => { void adjustAccount(); }} disabled={platformReadOnly || adjusting || !adjustAmount.trim()}>
+              <div className="space-y-1.5">
+                <Label>业务依据</Label>
+                <Input value={adjustReference} onChange={(e) => setAdjustReference(e.target.value)} placeholder="合同号、订单号或审批单号" />
+              </div>
+              <div className="flex justify-end md:col-span-2 xl:col-span-4">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { void adjustAccount(); }}
+                  disabled={!canAdjust || (!isSuperAdmin && selectedTenantId === DEFAULT_TENANT_ID)
+                    || adjusting || !adjustAmount.trim()
+                    || (!isSuperAdmin && (!adjustNote.trim() || !adjustReference.trim()))}
+                >
                   {adjusting ? <Loader2 className="size-4 animate-spin" /> : <EntityIcons.credits className="size-4" />}
                   写入流水
                 </Button>

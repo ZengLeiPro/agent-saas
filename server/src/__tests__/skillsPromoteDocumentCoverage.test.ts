@@ -41,6 +41,10 @@ import type { JwtPayload } from '../auth/types.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
 const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID };
+const PLATFORM_OPERATOR: JwtPayload = {
+  sub: 'u-operator', username: 'platform_operator', role: 'admin', tenantId: DEFAULT_TENANT_ID,
+  platformCapabilities: ['customer_config.manage'],
+};
 const WAIN_ADMIN: JwtPayload = { sub: 'u-wa', username: 'wain_admin', role: 'admin', tenantId: 'wain' };
 
 const ALICE_CUSTOM_MD = '---\nname: alice_custom\ndescription: c\n---\nalice custom body';
@@ -378,6 +382,17 @@ describe('skills promote/document 残余分支覆盖', () => {
       expect((await crossPut.json() as { error: string }).error).toBe('User not found');
       // 副作用断言：跨租户写被拒后文件保持原样
       expect(readFileSync(join(h.aliceSkillsDir, 'editable-skill', 'SKILL.md'), 'utf-8')).toBe(EDITABLE_MD);
+    });
+
+    it('受委托平台管理员不能通过技能接口触达 pantheon 内部员工', async () => {
+      h.setCaller(PLATFORM_OPERATOR);
+
+      const internal = await h.request('/api/skills/users/admin');
+      expect(internal.status).toBe(404);
+      expect((await internal.json() as { error: string }).error).toBe('User not found');
+
+      const customer = await h.request('/api/skills/users/alice');
+      expect(customer.status).toBe(200);
     });
   });
 });

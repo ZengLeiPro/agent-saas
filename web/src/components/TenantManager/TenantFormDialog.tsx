@@ -36,7 +36,7 @@ export function TenantFormDialog({
 }: TenantFormDialogProps) {
   const isEdit = editingTenant !== null;
   // 只读平台 admin：创建组织是唯一保留的写入口，编辑（改名）保存 disabled
-  const { platformReadOnly } = useAuth();
+  const { canPlatform } = useAuth();
   const [id, setId] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState("");
@@ -133,7 +133,7 @@ export function TenantFormDialog({
           >
             取消
           </Button>
-          <Button onClick={handleSubmit} disabled={(platformReadOnly && isEdit) || loading}>
+          <Button onClick={handleSubmit} disabled={!canPlatform("tenant.manage") || loading}>
             {loading ? (
               <>
                 <Loader2 className="size-4 animate-spin" />

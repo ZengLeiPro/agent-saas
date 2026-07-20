@@ -171,13 +171,14 @@ export class BillingService {
     return await this.options.store.updatePricingVersion(version, { ...patch, updatedBy: actor });
   }
 
-  async adjustAccount(input: { tenantId: string; creditsDelta: number; type?: 'recharge' | 'grant' | 'refund' | 'adjustment' | 'expire' | 'reversal'; note?: string; actor: string }) {
+  async adjustAccount(input: { tenantId: string; creditsDelta: number; type?: 'recharge' | 'grant' | 'refund' | 'adjustment' | 'expire' | 'reversal'; note?: string; actor: string; idempotencyKey?: string }) {
     return await this.options.store.adjustAccount({
       tenantId: input.tenantId,
       type: input.type ?? 'adjustment',
       creditsDeltaMicro: Math.round(input.creditsDelta * CREDIT_MICRO),
       note: input.note,
       actor: input.actor,
+      idempotencyKey: input.idempotencyKey,
     });
   }
 

@@ -9,7 +9,13 @@ import {
   requirePlatformAdmin,
   isPlatformAdmin,
 } from "../auth/middleware.js";
-import { isSuperAdmin, requireSuperAdmin } from "../auth/platformGovernance.js";
+import {
+  getEffectivePlatformCapabilities,
+  hasPlatformCapability,
+  isSuperAdmin,
+  normalizePlatformCapabilities,
+  requireSuperAdmin,
+} from "../auth/platformGovernance.js";
 import type { JwtPayload } from "../auth/types.js";
 import type { UserStore } from "../data/users/store.js";
 import type { UserRecord } from "../data/users/types.js";
@@ -85,6 +91,21 @@ const permissionsSchema = z
   })
   .optional();
 
+const platformCapabilitySchema = z.enum([
+  "tenant.manage",
+  "user.manage",
+  "customer_config.manage",
+  "billing.adjust",
+  "credential.reset",
+  "runtime.operate",
+  "finance.read",
+]);
+
+const platformCapabilityLimitsSchema = z.object({
+  billingMaxCreditsPerTransaction: z.number().positive().optional(),
+  billingMaxCreditsPerDay: z.number().positive().optional(),
+}).optional();
+
 // 用户名校验：只允许字母、数字、下划线、连字符、中日韩字符，防止路径注入
 const USERNAME_PATTERN =
   /^[a-zA-Z0-9\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff][a-zA-Z0-9_\-\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]*$/;
@@ -108,6 +129,8 @@ const createUserSchema = z.object({
    */
   tenantId: z.string().regex(TENANT_SLUG_PATTERN, "tenantId 不合法").optional(),
   permissions: permissionsSchema,
+  platformCapabilities: z.array(platformCapabilitySchema).max(20).optional(),
+  platformCapabilityLimits: platformCapabilityLimitsSchema,
 });
 
 const changePasswordSchema = z.object({
@@ -178,7 +201,40 @@ const updateUserSchema = z.object({
   /** 仅平台 admin 可改 tenantId（业务层校验） */
   tenantId: z.string().regex(TENANT_SLUG_PATTERN, "tenantId 不合法").optional(),
   permissions: permissionsSchema.nullable(),
+  platformCapabilities: z.array(platformCapabilitySchema).max(20).optional(),
+  platformCapabilityLimits: platformCapabilityLimitsSchema,
 });
+
+function platformOperatorTargetError(
+  caller: JwtPayload | undefined,
+  target: Pick<UserRecord, "id" | "tenantId">,
+): string | null {
+  if (!caller || !isPlatformAdmin(caller) || isSuperAdmin(caller)) return null;
+  if (target.id === caller.sub) return null;
+  return target.tenantId === DEFAULT_TENANT_ID
+    ? "平台运营管理员不能管理万神殿账号"
+    : null;
+}
+
+function maskPhone(phone: string | undefined): string | undefined {
+  if (!phone) return undefined;
+  if (phone.length < 7) return "***";
+  return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
+}
+
+function validatePlatformCapabilityConfig(
+  capabilities: readonly string[] | undefined,
+  limits: { billingMaxCreditsPerTransaction?: number; billingMaxCreditsPerDay?: number } | undefined,
+): string | null {
+  if (!capabilities?.includes("billing.adjust")) return null;
+  const perTransaction = limits?.billingMaxCreditsPerTransaction;
+  const perDay = limits?.billingMaxCreditsPerDay;
+  if (!perTransaction || !perDay) {
+    return "授权积分流水时必须同时设置单笔上限和每日上限";
+  }
+  if (perDay < perTransaction) return "积分流水每日上限不能小于单笔上限";
+  return null;
+}
 
 function tenantAdminPeerAdminError(
   caller: JwtPayload | undefined,
@@ -329,6 +385,14 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
 
   function buildAuthResponse(user: UserRecord) {
     const tenantId = user.tenantId || DEFAULT_TENANT_ID;
+    const authPayload: JwtPayload = {
+      sub: user.id,
+      username: user.username,
+      role: user.role,
+      tenantId,
+      platformCapabilities: user.platformCapabilities,
+      platformCapabilityLimits: user.platformCapabilityLimits,
+    };
     const token = jwt.sign(
       {
         sub: user.id,
@@ -347,7 +411,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         role: user.role,
         tenantId,
         // 与 /me 同口径：登录响应即带 super 标记，避免前端在下一次 me 刷新前误判只读
-        isSuperAdmin: isSuperAdmin({ sub: user.id, username: user.username, role: user.role, tenantId }),
+        isSuperAdmin: isSuperAdmin(authPayload),
+        platformCapabilities: getEffectivePlatformCapabilities(authPayload),
+        platformCapabilityLimits: user.platformCapabilityLimits,
         realName: user.realName,
         position: user.position,
         phone: user.phone,
@@ -871,6 +937,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       // 平台管理员分层治理（2026-07-18）：前端据此渲染平台管理只读模式；权威判定
       // 始终在服务端 enforcePlatformWritePolicy。
       isSuperAdmin: isSuperAdmin(req.user),
+      platformCapabilities: getEffectivePlatformCapabilities(req.user),
+      platformCapabilityLimits: req.user.platformCapabilityLimits,
       avatar: avatarUrl(req.user.sub, record?.avatar, record?.avatarVersion),
       avatarVersion: record?.avatarVersion,
       debugMode: record?.debugMode === true,
@@ -899,8 +967,23 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     const scoped = isPlatformAdmin(req.user)
       ? allUsers
       : allUsers.filter((u) => u.tenantId === req.user!.tenantId);
+    const canReadPii = isSuperAdmin(req.user);
     const users = scoped.map((u) => ({
       ...u,
+      ...(isPlatformAdmin(req.user) && !canReadPii
+        ? { phone: maskPhone(u.phone), phoneVerifiedAt: undefined }
+        : {}),
+      ...(u.role === "admin" && u.tenantId === DEFAULT_TENANT_ID
+        ? {
+            platformCapabilities: getEffectivePlatformCapabilities({
+              sub: u.id,
+              username: u.username,
+              role: u.role,
+              tenantId: u.tenantId,
+              platformCapabilities: u.platformCapabilities,
+            }),
+          }
+        : {}),
       avatar: avatarUrl(u.id, u.avatar, u.avatarVersion),
       createdBy: resolveCreatedBy(u.createdBy),
       disabledBy: u.disabledBy ? resolveCreatedBy(u.disabledBy) : undefined,
@@ -937,6 +1020,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         dingtalkStaffId,
         debugMode,
         permissions,
+        platformCapabilities,
+        platformCapabilityLimits,
       } = parsed.data;
       // tenantId 业务规则：
       //   - 平台 admin 可指定任意已存在 tenant；省略默认为 platform admin 的 tenant
@@ -948,6 +1033,36 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       } else {
         // 组织 admin：忽略 body.tenantId
         effectiveTenantId = req.user!.tenantId || DEFAULT_TENANT_ID;
+      }
+      if (
+        isPlatformAdmin(req.user)
+        && !isSuperAdmin(req.user)
+        && effectiveTenantId === DEFAULT_TENANT_ID
+      ) {
+        res.status(403).json({ error: "平台运营管理员不能创建万神殿账号" });
+        return;
+      }
+      if (
+        (platformCapabilities !== undefined || platformCapabilityLimits !== undefined)
+        && !isSuperAdmin(req.user)
+      ) {
+        res.status(403).json({ error: "仅平台超级管理员可配置平台能力" });
+        return;
+      }
+      if (
+        (platformCapabilities !== undefined || platformCapabilityLimits !== undefined)
+        && (effectiveTenantId !== DEFAULT_TENANT_ID || role !== "admin")
+      ) {
+        res.status(400).json({ error: "平台能力仅可配置给万神殿管理员" });
+        return;
+      }
+      const capabilityConfigError = validatePlatformCapabilityConfig(
+        platformCapabilities,
+        platformCapabilityLimits,
+      );
+      if (capabilityConfigError) {
+        res.status(400).json({ error: capabilityConfigError });
+        return;
       }
       if (tenantStore) {
         const tenant = tenantStore.findById(effectiveTenantId);
@@ -986,6 +1101,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         dingtalkStaffId,
         debugMode,
         permissions,
+        platformCapabilities: platformCapabilities
+          ? normalizePlatformCapabilities(platformCapabilities)
+          : undefined,
+        platformCapabilityLimits,
       });
 
       // 注册时立即初始化用户工作区（目录结构 + MEMORY.md）
@@ -1053,6 +1172,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(403).json({ error: peerAdminError });
         return;
       }
+      const platformTargetError = platformOperatorTargetError(req.user, target);
+      if (platformTargetError) {
+        res.status(403).json({ error: platformTargetError });
+        return;
+      }
       const destructiveSelfError = selfUpdateError(req.user, target, parsed.data);
       if (destructiveSelfError) {
         res.status(400).json({ error: destructiveSelfError });
@@ -1066,10 +1190,28 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         dingtalkStaffId,
         debugMode,
         permissions,
+        platformCapabilities,
+        platformCapabilityLimits,
       } = parsed.data;
+      if (password && target.id !== req.user!.sub && isPlatformAdmin(req.user)
+        && !hasPlatformCapability(req.user, "credential.reset")) {
+        res.status(403).json({ error: "当前平台管理员未获授权：credential.reset" });
+        return;
+      }
+      if (
+        (platformCapabilities !== undefined || platformCapabilityLimits !== undefined)
+        && !isSuperAdmin(req.user)
+      ) {
+        res.status(403).json({ error: "仅平台超级管理员可配置平台能力" });
+        return;
+      }
       // tenantId 改动权限：仅平台 admin 可改；其他 role 入参被忽略
       let tenantIdUpdate: string | undefined;
       if (parsed.data.tenantId && isPlatformAdmin(req.user)) {
+        if (!isSuperAdmin(req.user) && parsed.data.tenantId !== target.tenantId) {
+          res.status(403).json({ error: "仅平台超级管理员可迁移用户组织归属" });
+          return;
+        }
         if (tenantStore) {
           const tenant = tenantStore.findById(parsed.data.tenantId);
           if (!tenant) {
@@ -1089,6 +1231,23 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       }
       const effectiveUpdatedTenantId = tenantIdUpdate || target.tenantId;
       const effectiveUpdatedRole = role || target.role;
+      if (
+        (platformCapabilities !== undefined || platformCapabilityLimits !== undefined)
+        && (effectiveUpdatedTenantId !== DEFAULT_TENANT_ID || effectiveUpdatedRole !== "admin")
+      ) {
+        res.status(400).json({ error: "平台能力仅可配置给万神殿管理员" });
+        return;
+      }
+      const nextPlatformCapabilities = platformCapabilities ?? target.platformCapabilities;
+      const nextPlatformCapabilityLimits = platformCapabilityLimits ?? target.platformCapabilityLimits;
+      const capabilityConfigError = validatePlatformCapabilityConfig(
+        nextPlatformCapabilities,
+        nextPlatformCapabilityLimits,
+      );
+      if (capabilityConfigError) {
+        res.status(400).json({ error: capabilityConfigError });
+        return;
+      }
       const policyError = validateTenantUserPolicy(
         tenantStore,
         userStore,
@@ -1110,6 +1269,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         debugMode,
         tenantId: tenantIdUpdate,
         permissions: permissions ?? undefined,
+        platformCapabilities: platformCapabilities !== undefined
+          ? normalizePlatformCapabilities(platformCapabilities)
+          : undefined,
+        platformCapabilityLimits,
       });
       auditLog(req, "user_updated", user.username);
       res.json({
@@ -1151,6 +1314,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       const peerAdminError = tenantAdminPeerAdminError(req.user, target);
       if (peerAdminError) {
         res.status(403).json({ error: peerAdminError });
+        return;
+      }
+      const platformTargetError = platformOperatorTargetError(req.user, target);
+      if (platformTargetError) {
+        res.status(403).json({ error: platformTargetError });
         return;
       }
       await mcpOAuthService?.disconnectUser(target.username, target.tenantId);
@@ -1207,6 +1375,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       const peerAdminError = tenantAdminPeerAdminError(req.user, target);
       if (peerAdminError) {
         res.status(403).json({ error: peerAdminError });
+        return;
+      }
+      const platformTargetError = platformOperatorTargetError(req.user, target);
+      if (platformTargetError) {
+        res.status(403).json({ error: platformTargetError });
         return;
       }
       const user = await userStore.setDisabled(
@@ -1495,6 +1668,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         const peerAdminError = tenantAdminPeerAdminError(req.user, target);
         if (peerAdminError) {
           res.status(403).json({ error: peerAdminError });
+          return;
+        }
+        const platformTargetError = platformOperatorTargetError(req.user, target);
+        if (platformTargetError) {
+          res.status(403).json({ error: platformTargetError });
           return;
         }
         const file = req.file;

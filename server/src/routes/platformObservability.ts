@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import type { AppConfig } from '../app/config.js';
 import { isPlatformAdmin } from '../auth/types.js';
+import { hasPlatformCapability, isSuperAdmin } from '../auth/platformGovernance.js';
 import type { JwtPayload } from '../auth/types.js';
 import { USER_ID_PATTERN } from '../data/users/store.js';
 import type { UserInfo } from '../data/users/types.js';
@@ -171,6 +172,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
     if (!access.ok) return res.status(access.status).json({ error: access.error });
 
     try {
+      const canReadFinance = hasPlatformCapability(req.user, 'finance.read');
       const tenants = (options.tenantStore?.listAll() ?? [])
         .filter((tenant) => !access.tenantId || tenant.id === access.tenantId);
       const users = options.userStore?.listAll() ?? [];
@@ -184,7 +186,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
       ] = await Promise.all([
         queryTenantActiveRuns(options, access.tenantId),
         queryTenantSessions7d(options, access.tenantId),
-        queryTenantCost30d(options, access.tenantId),
+        canReadFinance ? queryTenantCost30d(options, access.tenantId) : Promise.resolve(new Map<string, number>()),
         queryTenantBalances(options, access.tenantId),
         queryTenantLastRunActivity(options, access.tenantId),
         queryTenantLastSessionActivity(options, access.tenantId),
@@ -200,7 +202,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
           adminCount: tenantUsers.filter((user) => user.role === 'admin').length,
           activeRuns: activeRuns.get(tenant.id) ?? 0,
           sessions7d: sessions7d.get(tenant.id) ?? 0,
-          costYuan30d: cost30d.get(tenant.id) ?? 0,
+          ...(canReadFinance ? { costYuan30d: cost30d.get(tenant.id) ?? 0 } : {}),
           balanceCredits: balances.get(tenant.id) ?? null,
           lastActiveAt: lastActiveAt ?? null,
         };
@@ -231,7 +233,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
       users = users.filter((user) => compareDesc(user.updatedAt, user.id, cursor.updatedAt, cursor.id) > 0);
     }
     const page = users.slice(0, limit + 1);
-    const items = page.slice(0, limit);
+    const items = page.slice(0, limit).map((user) => sanitizeUser(user, isSuperAdmin(req.user)));
     const last = items[items.length - 1];
     res.json({
       items,
@@ -244,6 +246,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
     if (!user) return res.status(404).json({ error: 'User not found' });
     if (!canAccessTenant(req.user!, user.tenantId)) return res.status(404).json({ error: 'User not found' });
     try {
+      const canReadFinance = hasPlatformCapability(req.user, 'finance.read');
       const [sessions, runs, costs, sandboxes] = await Promise.all([
         queryUserSessionSummary(options, user.tenantId, user.id),
         queryUserRunSummary(options, user.tenantId, user.id),
@@ -251,11 +254,13 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
         listSandboxes(options),
       ]);
       res.json({
-        user: sanitizeUser(user),
+        user: sanitizeUser(user, isSuperAdmin(req.user)),
         sessions30d: sessions.sessions30d,
         runs30d: runs,
-        costYuan30d: costs.costYuan30d,
-        costYuanTotal: costs.costYuanTotal,
+        ...(canReadFinance ? {
+          costYuan30d: costs.costYuan30d,
+          costYuanTotal: costs.costYuanTotal,
+        } : {}),
         lastActiveAt: maxIso(sessions.lastActiveAt, runs.lastActiveAt, costs.lastActiveAt) ?? null,
         sandboxes: sandboxes.filter((sandbox) => sandbox.owner?.kind === 'user'
           && sandbox.owner.tenantId === user.tenantId
@@ -309,10 +314,14 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
         options.billingService?.getSessionSummary(session.tenantId, session.sessionId).catch(() => null) ?? null,
         listSandboxes(options),
       ]);
+      const canReadFinance = hasPlatformCapability(req.user, 'finance.read');
+      const safeBilling = billing && !canReadFinance
+        ? (({ actualCostYuan: _actualCostYuan, ...rest }) => rest)(billing)
+        : billing;
       res.json({
         session: serializeSessionRecord(session, options.userStore),
         runs,
-        billing,
+        billing: safeBilling,
         sandboxes: sandboxes.filter((sandbox) => sandbox.workspaceId && sandbox.workspaceId === session.workspaceId),
       });
     } catch (err) {
@@ -383,6 +392,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
       return;
     }
     try {
+      const canReadFinance = hasPlatformCapability(req.user, 'finance.read');
       const [runHealth, todayCostYuan, toolRouting24h, sandboxes, handFailures, storageHealth] = await Promise.all([
         queryRunHealth(options),
         queryTodayCostYuan(options),
@@ -406,7 +416,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
         health: {
           activeRuns: runHealth.activeRuns,
           sandboxes: summarizeSandboxes(sandboxes),
-          todayCostYuan,
+          ...(canReadFinance ? { todayCostYuan } : {}),
           todayRuns: runHealth.todayRuns,
           completionRateToday: runHealth.completionRateToday,
           toolRouting24h,
@@ -415,7 +425,9 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
           handFailures1h: handFailures.length,
           storage: storageHealth,
         },
-        attention,
+        attention: canReadFinance
+          ? attention
+          : attention.filter((item) => item.kind !== 'cost_daily_high'),
       });
     } catch (err) {
       res.status(500).json({ error: `Overview snapshot query failed: ${errorMessage(err)}` });
@@ -1191,8 +1203,10 @@ function findUserIdentity(
   return { username: user.username, realName: user.realName };
 }
 
-function sanitizeUser(user: UserInfo): UserInfo {
-  return { ...user };
+function sanitizeUser(user: UserInfo, includePii = true): UserInfo {
+  if (includePii) return { ...user };
+  const { phone: _phone, phoneVerifiedAt: _phoneVerifiedAt, ...safe } = user;
+  return safe;
 }
 
 function dedupeMatches(matches: SearchMatch[]): SearchMatch[] {

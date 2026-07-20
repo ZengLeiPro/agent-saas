@@ -21,6 +21,7 @@ import { LoginLogDialog } from "./LoginLogDialog";
 import { ResetUserPasswordDialog } from "./ResetUserPasswordDialog";
 import type { UserInfo } from "./types";
 import type { UserFormData } from "./UserFormDialog";
+import { DEFAULT_TENANT_ID } from "@agent/shared";
 
 export interface UserManagerProps {
   tenantIdScope?: string;
@@ -28,7 +29,7 @@ export interface UserManagerProps {
 }
 
 export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}) {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, isPlatformAdmin, isSuperAdmin, canPlatform } = useAuth();
   const {
     users,
     loading,
@@ -52,6 +53,16 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
 
   const isMobile = useIsMobile();
   const visibleUsers = tenantIdScope ? users.filter((u) => u.tenantId === tenantIdScope) : users;
+  const canCreateUser = !isPlatformAdmin
+    || isSuperAdmin
+    || (canPlatform("user.manage") && !!tenantIdScope && tenantIdScope !== DEFAULT_TENANT_ID);
+  const canResetPassword = (target: UserInfo | null): boolean => {
+    if (!target) return false;
+    if (!isPlatformAdmin) return true;
+    if (target.id === currentUser?.id) return true;
+    return isSuperAdmin
+      || (target.tenantId !== DEFAULT_TENANT_ID && canPlatform("credential.reset"));
+  };
 
   const openCreate = () => {
     setEditingUser(null);
@@ -77,6 +88,8 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
         dingtalkStaffId: data.dingtalkStaffId,
         debugMode: data.debugMode,
         permissions: data.permissions,
+        platformCapabilities: data.platformCapabilities,
+        platformCapabilityLimits: data.platformCapabilityLimits,
         tenantId: data.tenantId,
       });
     } else {
@@ -122,10 +135,12 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
                 刷新
               </Button>
             )}
-            <Button size="sm" onClick={openCreate}>
-              <Plus className="size-4" />
-              新建用户
-            </Button>
+            {canCreateUser && (
+              <Button size="sm" onClick={openCreate}>
+                <Plus className="size-4" />
+                新建用户
+              </Button>
+            )}
           </>
         }
       />
@@ -181,7 +196,7 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
         onOpenChange={setShowForm}
         editingUser={editingUser}
         onSubmit={handleSubmit}
-        onResetPassword={openResetPassword}
+        onResetPassword={canResetPassword(editingUser) ? openResetPassword : undefined}
         defaultTenantId={tenantIdScope}
         lockTenant={Boolean(tenantIdScope)}
       />

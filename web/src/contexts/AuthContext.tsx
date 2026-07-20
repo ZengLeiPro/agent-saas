@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { AuthUser, LoginCredentials, SmsLoginCredentials } from "@/types/auth";
-import type { UserPreferences } from "@agent/shared";
+import type { PlatformCapability, UserPreferences } from "@agent/shared";
 import { DEFAULT_TENANT_ID, clearGroupsCache } from "@agent/shared";
 import { setOnUnauthorized } from "@/lib/authFetch";
 import { wsClient } from "@/lib/wsClient";
@@ -40,10 +40,12 @@ interface AuthContextValue {
   /** 平台超级管理员（默认仅 @admin，来自 /api/auth/me）；权威判定在服务端。 */
   isSuperAdmin: boolean;
   /**
-   * 只读平台 admin（万神殿员工账号）= isPlatformAdmin && !isSuperAdmin。
-   * 平台管理界面可见但只读；创建组织是唯一保留的写入口（2026-07-18 分层治理）。
+   * 平台全局配置只读：非超级平台管理员即使拥有客户运营能力，也不能修改
+   * Secret、模型、价格、工具开关与其他平台级配置。
    */
   platformReadOnly: boolean;
+  /** 平台运营能力判断；超级管理员始终返回 true。 */
+  canPlatform: (capability: PlatformCapability) => boolean;
   /** 鉴权功能是否启用（后端未开启时为 false，此时无需登录） */
   authEnabled: boolean;
   accounts: SavedAccountSummary[];
@@ -81,6 +83,8 @@ function normalizeAuthUser(user: AuthUser): AuthUser {
     // 2026-07-18 平台管理员分层治理：后端 /auth/me 与登录响应下发 isSuperAdmin，
     // 前端 platformReadOnly 判定必须依赖此字段——漏掉会导致 @admin 也被误判为只读。
     isSuperAdmin: user.isSuperAdmin === true,
+    platformCapabilities: user.platformCapabilities ?? [],
+    platformCapabilityLimits: user.platformCapabilityLimits,
     realName: user.realName,
     position: user.position,
     phone: user.phone,
@@ -211,6 +215,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((prev) => prev ? { ...prev, preferences: { ...(prev.preferences ?? {}), ...preferences } } : prev);
   }, []);
 
+  const canPlatform = useCallback((capability: PlatformCapability) => {
+    if (user?.role !== "admin" || user.tenantId !== DEFAULT_TENANT_ID) return false;
+    if (user.isSuperAdmin === true) return true;
+    return (user.platformCapabilities ?? []).includes(capability);
+  }, [user]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -223,6 +233,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user?.role === "admin" &&
         user?.tenantId === DEFAULT_TENANT_ID &&
         user?.isSuperAdmin !== true,
+      canPlatform,
       authEnabled,
       accounts,
       login,
@@ -236,7 +247,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updatePhone,
       updatePreferences,
     }),
-    [user, isLoading, authEnabled, accounts, login, loginWithSms, activateAccount, switchAccount, logoutCurrentAccount, logoutAllAccounts, logout, updateAvatar, updatePhone, updatePreferences],
+    [user, isLoading, authEnabled, accounts, login, loginWithSms, activateAccount, switchAccount, logoutCurrentAccount, logoutAllAccounts, logout, updateAvatar, updatePhone, updatePreferences, canPlatform],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

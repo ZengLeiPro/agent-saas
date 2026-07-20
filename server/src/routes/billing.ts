@@ -3,6 +3,10 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { isPlatformAdmin } from '../auth/types.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
+import { hasPlatformCapability, isSuperAdmin } from '../auth/platformGovernance.js';
+import { auditLog } from '../data/login-logs/index.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import type { AlertNotifier } from '../runtime/alertNotifier.js';
 import type { BillingService } from '../data/billing/service.js';
 import {
   CREDIT_MICRO,
@@ -30,6 +34,7 @@ function encodeCursor(cursor: { createdAt: string; id: string }): string {
 
 export interface BillingRouterOptions {
   billingService: BillingService;
+  alertNotifier?: Pick<AlertNotifier, 'notifyExternal'>;
 }
 
 const tenantIdSchema = z.string().min(2).max(31).regex(/^[a-z][a-z0-9-]{1,30}$/);
@@ -50,7 +55,7 @@ function resolveTenantAccess(req: Request, requestedTenantId?: string):
 
 export function createAdminBillingRouter(options: BillingRouterOptions): Router {
   const router = Router();
-  const { billingService } = options;
+  const { billingService, alertNotifier } = options;
 
   router.get('/pricing-versions', requirePlatformAdmin, async (_req, res) => {
     await billingService.ensureProjected();
@@ -105,7 +110,11 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     const access = resolveTenantAccess(req, parsed.data);
     if (!access.ok) return res.status(access.status).json({ error: access.error });
     const policy = await billingService.store.getTenantPolicy(access.tenantId);
-    res.json({ policy: access.platform ? policy : redactPolicy(policy) });
+    res.json({
+      policy: access.platform && hasPlatformCapability(req.user, 'finance.read')
+        ? policy
+        : redactPolicy(policy),
+    });
   });
 
   router.patch('/tenants/:tenantId/policy', requirePlatformAdmin, async (req: Request, res: Response) => {
@@ -123,7 +132,9 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     if (parsedTenant && !parsedTenant.success) return res.status(400).json({ error: 'Invalid tenantId' });
     const access = resolveTenantAccess(req, parsedTenant?.data);
     if (!access.ok) return res.status(access.status).json({ error: access.error });
-    const summary = await billingService.getSummaryForTenant(access.tenantId, { includeInternalMetrics: access.platform });
+    const summary = await billingService.getSummaryForTenant(access.tenantId, {
+      includeInternalMetrics: access.platform && hasPlatformCapability(req.user, 'finance.read'),
+    });
     res.json({ summary });
   });
 
@@ -132,13 +143,77 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     if (!parsed.success) return res.status(400).json({ error: 'Invalid tenantId' });
     const body = accountAdjustSchema.safeParse(req.body ?? {});
     if (!body.success) return res.status(400).json({ error: 'Invalid body', issues: body.error.issues });
+    const delegated = !isSuperAdmin(req.user);
+    if (delegated) {
+      if (parsed.data === DEFAULT_TENANT_ID) {
+        return res.status(403).json({ error: '万神殿账户流水仅 @admin 可操作' });
+      }
+      if (body.data.creditsDelta <= 0) {
+        return res.status(400).json({ error: '委托管理员只能增加积分；扣减与冲正请由 @admin 执行' });
+      }
+      if (!['recharge', 'grant', 'refund'].includes(body.data.type ?? '')) {
+        return res.status(400).json({ error: '委托管理员仅可写入充值、赠送或退款流水' });
+      }
+      if (!body.data.note || !body.data.businessReference || !body.data.idempotencyKey) {
+        return res.status(400).json({ error: '委托管理员写入流水必须填写备注、业务依据和防重标识' });
+      }
+      const perTransaction = req.user?.platformCapabilityLimits?.billingMaxCreditsPerTransaction;
+      const perDay = req.user?.platformCapabilityLimits?.billingMaxCreditsPerDay;
+      if (!perTransaction || !perDay) {
+        return res.status(403).json({ error: '当前账号未配置积分流水额度，请联系 @admin' });
+      }
+      if (body.data.creditsDelta > perTransaction) {
+        return res.status(403).json({ error: '单笔积分超过授权上限 ' + perTransaction });
+      }
+    }
+    const idempotencyKey = body.data.idempotencyKey
+      ? ['manual', 'admin', req.user!.sub, body.data.idempotencyKey].join(':')
+      : undefined;
+    if (delegated && idempotencyKey) {
+      const existing = await billingService.store.findLedgerByIdempotencyKey(idempotencyKey);
+      if (existing) return res.json({ entry: existing, idempotentReplay: true });
+      const dayLimit = req.user!.platformCapabilityLimits!.billingMaxCreditsPerDay!;
+      const usedToday = await billingService.store.sumManualPositiveCreditsByActorSince(
+        req.user!.username,
+        beijingDayStartIso(),
+      );
+      if (usedToday + body.data.creditsDelta > dayLimit) {
+        return res.status(403).json({
+          error: '今日累计积分将超过授权上限 ' + dayLimit,
+          usedToday,
+        });
+      }
+    }
+    const combinedNote = body.data.businessReference
+      ? '[依据:' + body.data.businessReference + '] ' + (body.data.note ?? '')
+      : body.data.note;
     const entry = await billingService.adjustAccount({
       tenantId: parsed.data,
       creditsDelta: body.data.creditsDelta,
       type: body.data.type,
-      note: body.data.note,
+      note: combinedNote,
       actor: req.user?.username ?? req.user?.sub ?? 'admin',
+      idempotencyKey,
     });
+    auditLog(req, 'billing_account_adjusted', JSON.stringify({
+      tenantId: parsed.data,
+      creditsDelta: body.data.creditsDelta,
+      type: body.data.type,
+      businessReference: body.data.businessReference,
+      ledgerId: entry.id,
+    }));
+    if (delegated) {
+      void alertNotifier?.notifyExternal('delegated_billing', [{
+        kind: 'delegated_billing_adjustment',
+        severity: 'high',
+        title: req.user!.username + ' 为 ' + parsed.data + ' 增加 '
+          + body.data.creditsDelta + ' 积分（' + body.data.businessReference + '）',
+        occurredAt: entry.createdAt,
+        entityRef: { kind: 'tenant', id: parsed.data },
+        actions: ['核对业务依据与积分流水'],
+        dedupeKey: entry.id,
+      }]).catch(() => undefined);
+    }
     res.json({ entry });
   });
 
@@ -154,8 +229,10 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
       ...(cursor ? { cursor } : {}),
     });
     // 组织 admin：实际成本/毛利是平台内部口径，按 showCost/showGrossMargin fail-closed 剥离（2026-07-14）
-    if (!access.platform) {
-      const visibility = await resolveCostVisibility(billingService, access.tenantId);
+    if (!access.platform || !hasPlatformCapability(req.user, 'finance.read')) {
+      const visibility = access.platform
+        ? { showCost: false, showGrossMargin: false }
+        : await resolveCostVisibility(billingService, access.tenantId);
       res.json({
         entries: entries.map((entry) => redactLedgerEntry(entry, visibility)),
         ...(visibility.showCost ? {} : { costRedacted: true }),
@@ -306,8 +383,20 @@ const pricingVersionPatchSchema = z.object({
 const accountAdjustSchema = z.object({
   creditsDelta: z.number().finite(),
   type: z.enum(['recharge', 'grant', 'refund', 'adjustment', 'expire', 'reversal']).optional(),
-  note: z.string().max(500).optional(),
+  note: z.string().trim().min(2).max(500).optional(),
+  businessReference: z.string().trim().min(1).max(120).optional(),
+  idempotencyKey: z.string().trim().min(8).max(120).regex(/^[a-zA-Z0-9:_-]+$/).optional(),
 });
+
+function beijingDayStartIso(now = new Date()): string {
+  const beijing = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const startUtc = Date.UTC(
+    beijing.getUTCFullYear(),
+    beijing.getUTCMonth(),
+    beijing.getUTCDate(),
+  ) - 8 * 60 * 60 * 1000;
+  return new Date(startUtc).toISOString();
+}
 
 const ledgerTypeEnum = z.enum([
   'recharge', 'grant', 'debit', 'refund', 'adjustment', 'expire', 'reversal', 'reserve', 'release',

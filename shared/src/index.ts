@@ -114,6 +114,8 @@ export type {
   CronRunLogEntry,
   CronServiceStatus,
   UserPermissions,
+  PlatformCapability,
+  PlatformCapabilityLimits,
   UserInfo,
   CreateUserInput,
   UpdateUserInput,
@@ -165,7 +167,7 @@ export type {
   McpDiagnosticTool,
   McpDiagnosticResponse,
 } from "./types/index";
-export { FILE_SORT_LABELS, buildScenarioPrompt } from "./types/index";
+export { FILE_SORT_LABELS, PLATFORM_CAPABILITIES, buildScenarioPrompt } from "./types/index";
 export { saveUserPreferences } from "./lib/preferencesApi";
 export { GLOBAL_TENANT_ID } from "./types/index";
 export {

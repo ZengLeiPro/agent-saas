@@ -29,7 +29,9 @@ class CaptureSender implements SmsSender {
 
 interface TestRig {
   users: {
+    superAdmin: UserInfo;
     platformAdmin: UserInfo;
+    platformAdminB: UserInfo;
     wainAdminA: UserInfo;
     wainAdminB: UserInfo;
     wainUser: UserInfo;
@@ -46,6 +48,8 @@ function asCaller(user: UserInfo): JwtPayload {
     username: user.username,
     role: user.role,
     tenantId: user.tenantId,
+    platformCapabilities: user.platformCapabilities,
+    platformCapabilityLimits: user.platformCapabilityLimits,
   };
 }
 
@@ -60,12 +64,27 @@ async function makeTestRig(): Promise<TestRig> {
   await tenantStore.create({ id: "wain", name: "唯恩", createdBy: "system" });
 
   const userStore = new UserStore(join(tmpRoot, "users.json"));
+  const superAdmin = await userStore.create({
+    username: "admin",
+    password: "password123",
+    role: "admin",
+    createdBy: "system",
+    tenantId: DEFAULT_TENANT_ID,
+  });
   const platformAdmin = await userStore.create({
     username: "platform_admin",
     password: "password123",
     role: "admin",
     createdBy: "system",
     tenantId: DEFAULT_TENANT_ID,
+  });
+  const platformAdminB = await userStore.create({
+    username: "platform_admin_b",
+    password: "password123",
+    role: "admin",
+    createdBy: "system",
+    tenantId: DEFAULT_TENANT_ID,
+    phone: "13912345678",
   });
   const wainAdminA = await userStore.create({
     username: "wain_admin_a",
@@ -122,7 +141,7 @@ async function makeTestRig(): Promise<TestRig> {
     typeof addr === "object" && addr ? `http://127.0.0.1:${addr.port}` : "";
 
   return {
-    users: { platformAdmin, wainAdminA, wainAdminB, wainUser },
+    users: { superAdmin, platformAdmin, platformAdminB, wainAdminA, wainAdminB, wainUser },
     sender,
     setCaller(user) {
       currentCaller = asCaller(user);
@@ -241,6 +260,89 @@ describe("auth users router admin boundaries", () => {
     await expect(res.json()).resolves.toMatchObject({
       id: h.users.wainAdminB.id,
       realName: "平台已修改",
+    });
+  });
+
+  it("委托平台管理员可管理客户账号，但不能管理万神殿同事", async () => {
+    h.setCaller(h.users.platformAdmin);
+    const customer = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ realName: "客户账号已更新" }),
+    });
+    expect(customer.status).toBe(200);
+
+    const pantheon = await h.request(`/api/auth/users/${h.users.platformAdminB.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ realName: "不应被更新" }),
+    });
+    expect(pantheon.status).toBe(403);
+    await expect(pantheon.json()).resolves.toMatchObject({
+      error: "平台运营管理员不能管理万神殿账号",
+    });
+  });
+
+  it("委托平台管理员列表只返回脱敏手机号", async () => {
+    h.setCaller(h.users.platformAdmin);
+    const res = await h.request("/api/auth/users");
+    expect(res.status).toBe(200);
+    const { users } = await res.json() as {
+      users: Array<{ id: string; phone?: string; phoneVerifiedAt?: string }>;
+    };
+    const target = users.find((user) => user.id === h.users.platformAdminB.id);
+    expect(target?.phone).toBe("139****5678");
+    expect(target?.phoneVerifiedAt).toBeUndefined();
+  });
+
+  it("密码重置需独立能力，授权后可操作客户账号", async () => {
+    h.setCaller(h.users.platformAdmin);
+    const denied = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "newpass123" }),
+    });
+    expect(denied.status).toBe(403);
+
+    h.setCaller({
+      ...h.users.platformAdmin,
+      platformCapabilities: ["user.manage", "credential.reset"],
+    });
+    const allowed = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "newpass123" }),
+    });
+    expect(allowed.status).toBe(200);
+  });
+
+  it("@admin 可给运营账号配能力，billing.adjust 必须带合法双限额", async () => {
+    h.setCaller(h.users.superAdmin);
+    const missingLimits = await h.request(`/api/auth/users/${h.users.platformAdmin.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platformCapabilities: ["billing.adjust"] }),
+    });
+    expect(missingLimits.status).toBe(400);
+
+    const configured = await h.request(`/api/auth/users/${h.users.platformAdmin.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platformCapabilities: ["tenant.manage", "billing.adjust"],
+        platformCapabilityLimits: {
+          billingMaxCreditsPerTransaction: 500,
+          billingMaxCreditsPerDay: 2_000,
+        },
+      }),
+    });
+    expect(configured.status).toBe(200);
+    await expect(configured.json()).resolves.toMatchObject({
+      platformCapabilities: ["tenant.manage", "billing.adjust"],
+      platformCapabilityLimits: {
+        billingMaxCreditsPerTransaction: 500,
+        billingMaxCreditsPerDay: 2_000,
+      },
     });
   });
 

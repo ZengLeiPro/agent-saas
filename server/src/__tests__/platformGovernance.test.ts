@@ -12,9 +12,9 @@ import {
 } from "../auth/platformGovernance.js";
 
 /**
- * 平台管理员分层治理测试（2026-07-18）。
+ * 平台管理员能力分层治理测试（2026-07-20）。
  * 用探针 app 验证 enforcePlatformWritePolicy 的放行/拦截矩阵：
- * 到达探针 = 放行（200），被策略拦截 = 403 PLATFORM_READ_ONLY。
+ * 到达探针 = 放行（200），被策略拦截 = 403（缺少能力或仅 super 可执行）。
  */
 
 const servers: Server[] = [];
@@ -101,34 +101,38 @@ describe("isSuperAdmin", () => {
 });
 
 describe("enforcePlatformWritePolicy", () => {
-  it("read-only platform admin: reads pass, writes are blocked", async () => {
+  it("历史平台运营账号自动获得客户操作默认包，平台全局操作仍拦截", async () => {
     const rig = makeRig();
     rig.setCaller(STAFF);
 
     expect((await rig.request("GET", "/api/admin/models")).status).toBe(200);
     expect((await rig.request("GET", "/api/tenants")).status).toBe(200);
     expect((await rig.request("GET", "/api/admin/billing/ledger")).status).toBe(200);
+    expect((await rig.request("GET", "/api/admin/billing/pricing-versions")).status).toBe(403);
 
     const put = await rig.request("PUT", "/api/admin/models", {});
     expect(put.status).toBe(403);
-    expect((await put.json()).code).toBe("PLATFORM_READ_ONLY");
+    expect((await put.json()).code).toBe("SUPER_ADMIN_REQUIRED");
     expect((await rig.request("DELETE", "/api/tenants/wain", {})).status).toBe(403);
     expect((await rig.request("PATCH", "/api/tenants/wain/status", {})).status).toBe(403);
     expect((await rig.request("POST", "/api/admin/billing/accounts/wain/adjust", {})).status).toBe(403);
     expect((await rig.request("POST", "/api/admin/system/storage/delete", {})).status).toBe(403);
     expect((await rig.request("PUT", "/api/admin/tool-controls", {})).status).toBe(403);
-    expect((await rig.request("POST", "/api/auth/users", {})).status).toBe(403);
+    expect((await rig.request("POST", "/api/auth/users", {})).status).toBe(200);
     expect((await rig.request("DELETE", "/api/auth/login-logs")).status).toBe(403);
     expect((await rig.request("PUT", "/api/mcp/admin/servers/x", {})).status).toBe(403);
-    expect((await rig.request("POST", "/api/org-agents", {})).status).toBe(403);
+    expect((await rig.request("POST", "/api/org-agents", {})).status).toBe(200);
     expect((await rig.request("POST", "/api/dingtalk/sessions/c1/test", {})).status).toBe(403);
   });
 
-  it("read-only platform admin: write allowlist (create tenant + read-shaped POSTs)", async () => {
+  it("默认包开放组织、账号和客户配置，并保留无副作用诊断", async () => {
     const rig = makeRig();
     rig.setCaller(STAFF);
 
     expect((await rig.request("POST", "/api/tenants", { id: "demo" })).status).toBe(200);
+    expect((await rig.request("PATCH", "/api/tenants/wain", { name: "唯恩" })).status).toBe(200);
+    expect((await rig.request("PUT", "/api/tenants/wain/company-info", {})).status).toBe(200);
+    expect((await rig.request("PATCH", "/api/tenants/wain/settings", {})).status).toBe(200);
     expect(
       (await rig.request("POST", "/api/admin/tenant-remote-hands/pool1/health", {})).status,
     ).toBe(200);
@@ -141,7 +145,7 @@ describe("enforcePlatformWritePolicy", () => {
     ).toBe(200);
   });
 
-  it("read-only platform admin: content-level reads are super-only", async () => {
+  it("原始会话正文仅 super 可读，run trace 由路由层脱敏后开放", async () => {
     const rig = makeRig();
     rig.setCaller(STAFF);
 
@@ -150,11 +154,11 @@ describe("enforcePlatformWritePolicy", () => {
     expect((await rig.request("GET", "/api/admin/sessions/s1")).status).toBe(200);
     expect(
       (await rig.request("GET", "/api/admin/runtime/trace/runs/r1/events")).status,
-    ).toBe(403);
+    ).toBe(200);
     expect((await rig.request("GET", "/api/admin/runtime/trace/recent-runs")).status).toBe(200);
   });
 
-  it("read-only platform admin: self-service writes on own account", async () => {
+  it("自服务保留；他人账号管理与密码重置拆分授权", async () => {
     const rig = makeRig();
     rig.setCaller(STAFF);
 
@@ -172,16 +176,19 @@ describe("enforcePlatformWritePolicy", () => {
     expect(
       (await rig.request("PATCH", `/api/auth/users/${STAFF.sub}`, { tenantId: "wain" })).status,
     ).toBe(403);
-    // 他人账号一律拒
+    // 普通账号字段可由 user.manage 修改，密码需叠加 credential.reset
+    expect(
+      (await rig.request("PATCH", "/api/auth/users/u-other", { realName: "客户" })).status,
+    ).toBe(200);
     expect(
       (await rig.request("PATCH", "/api/auth/users/u-other", { password: "x" })).status,
     ).toBe(403);
     expect(
       (await rig.request("POST", "/api/auth/users/u-other/avatar", {})).status,
-    ).toBe(403);
+    ).toBe(200);
   });
 
-  it("read-only platform admin: skills governance covers admin shapes, spares own custom skills", async () => {
+  it("客户技能配置可写，平台技能池与他人自建技能仍受保护", async () => {
     const rig = makeRig();
     rig.setCaller(STAFF);
 
@@ -190,10 +197,10 @@ describe("enforcePlatformWritePolicy", () => {
     expect((await rig.request("POST", "/api/skills/sync", {})).status).toBe(403);
     expect(
       (await rig.request("PUT", "/api/skills/tenants/wain/pool/selections", {})).status,
-    ).toBe(403);
+    ).toBe(200);
     expect(
       (await rig.request("PUT", "/api/skills/users/someone/selections", {})).status,
-    ).toBe(403);
+    ).toBe(200);
     expect(
       (await rig.request("PUT", "/api/skills/custom/other/skill1/document", {})).status,
     ).toBe(403);
@@ -201,6 +208,44 @@ describe("enforcePlatformWritePolicy", () => {
     // 自己的自建技能（三段以下形态）不属治理路径
     expect((await rig.request("PUT", "/api/skills/custom/skill1", {})).status).toBe(200);
     expect((await rig.request("GET", "/api/skills/pool")).status).toBe(200);
+  });
+
+  it("显式空能力不继承历史默认包", async () => {
+    const rig = makeRig();
+    rig.setCaller({ ...STAFF, platformCapabilities: [] });
+
+    const create = await rig.request("POST", "/api/tenants", { id: "demo" });
+    expect(create.status).toBe(403);
+    expect(await create.json()).toMatchObject({
+      code: "PLATFORM_CAPABILITY_REQUIRED",
+      capability: "tenant.manage",
+    });
+    expect((await rig.request("POST", "/api/auth/users", {})).status).toBe(403);
+    expect((await rig.request("PUT", "/api/tenants/wain/company-info", {})).status).toBe(403);
+  });
+
+  it("可独立授予流水、运维、财务查看和密码重置能力", async () => {
+    const rig = makeRig();
+    rig.setCaller({
+      ...STAFF,
+      platformCapabilities: ["user.manage", "credential.reset", "billing.adjust", "runtime.operate", "finance.read"],
+    });
+
+    expect((await rig.request("PATCH", "/api/auth/users/u-other", { password: "x" })).status).toBe(200);
+    expect((await rig.request("POST", "/api/admin/billing/accounts/wain/adjust", {})).status).toBe(200);
+    expect((await rig.request("POST", "/api/admin/usage/rebuild", {})).status).toBe(200);
+    expect((await rig.request("GET", "/api/admin/billing/pricing-versions")).status).toBe(200);
+    expect((await rig.request("PUT", "/api/admin/models", {})).status).toBe(403);
+  });
+
+  it("万神殿客户域与硬删除始终仅 super 可操作", async () => {
+    const rig = makeRig();
+    rig.setCaller(STAFF);
+
+    expect((await rig.request("PATCH", `/api/tenants/${DEFAULT_TENANT_ID}`, {})).status).toBe(403);
+    expect((await rig.request("PUT", `/api/tenants/${DEFAULT_TENANT_ID}/company-info`, {})).status).toBe(403);
+    expect((await rig.request("PUT", `/api/skills/tenants/${DEFAULT_TENANT_ID}/pool/selections`, {})).status).toBe(403);
+    expect((await rig.request("DELETE", "/api/org-agents/a1", {})).status).toBe(403);
   });
 
   it("read-only platform admin: non-governed paths untouched", async () => {

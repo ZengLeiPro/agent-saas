@@ -5,6 +5,29 @@ export interface UserPermissions {
   rateLimit?: { maxRequests?: number; windowMs?: number };
 }
 
+/**
+ * 平台运营能力。仅对 role=admin + tenantId=pantheon 的平台管理员生效；
+ * 平台超级管理员不受该列表限制。
+ */
+export const PLATFORM_CAPABILITIES = [
+  "tenant.manage",
+  "user.manage",
+  "customer_config.manage",
+  "billing.adjust",
+  "credential.reset",
+  "runtime.operate",
+  "finance.read",
+] as const;
+
+export type PlatformCapability = (typeof PLATFORM_CAPABILITIES)[number];
+
+export interface PlatformCapabilityLimits {
+  /** 单笔最多可增加的积分。仅 billing.adjust 委托账号使用。 */
+  billingMaxCreditsPerTransaction?: number;
+  /** 北京时间自然日内最多可增加的积分。仅 billing.adjust 委托账号使用。 */
+  billingMaxCreditsPerDay?: number;
+}
+
 
 export interface UserInfo {
   id: string;
@@ -26,6 +49,8 @@ export interface UserInfo {
   updatedAt: string;
   dingtalkStaffId?: string;
   permissions?: UserPermissions;
+  platformCapabilities?: PlatformCapability[];
+  platformCapabilityLimits?: PlatformCapabilityLimits;
   preferences?: UserPreferences;
   disabled?: boolean;
   disabledAt?: string;
@@ -43,6 +68,8 @@ export interface CreateUserInput {
   dingtalkStaffId?: string;
   debugMode?: boolean;
   permissions?: UserPermissions;
+  platformCapabilities?: PlatformCapability[];
+  platformCapabilityLimits?: PlatformCapabilityLimits;
   tenantId?: string;
 }
 
@@ -54,6 +81,8 @@ export interface UpdateUserInput {
   dingtalkStaffId?: string;
   debugMode?: boolean;
   permissions?: UserPermissions;
+  platformCapabilities?: PlatformCapability[];
+  platformCapabilityLimits?: PlatformCapabilityLimits;
   preferences?: UserPreferences;
   disabled?: boolean;
   tenantId?: string;

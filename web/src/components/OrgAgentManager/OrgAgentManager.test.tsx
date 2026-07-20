@@ -21,6 +21,14 @@ vi.mock('@/components/UserManager/hooks', () => ({
   useUsers: () => ({ users: [], loading: false, error: null }),
 }));
 
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({
+    isPlatformAdmin: true,
+    isSuperAdmin: true,
+    canPlatform: () => true,
+  }),
+}));
+
 vi.mock('./hooks', () => ({
   useOrgAgentAdmin: () => ({
     agents: [],

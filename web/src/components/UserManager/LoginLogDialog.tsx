@@ -90,6 +90,10 @@ const EVENT_LABELS: Record<string, string> = {
   user_disabled: "禁用用户",
   user_enabled: "启用用户",
   user_password_changed: "修改密码",
+  platform_capability_denied: "平台能力拒绝",
+  platform_privileged_action: "平台授权操作",
+  platform_user_search: "平台用户检索",
+  billing_account_adjusted: "调整积分流水",
   file_previewed: "预览文件",
   file_downloaded: "下载文件",
   file_deleted: "删除文件",
@@ -125,6 +129,7 @@ const EVENT_CATEGORIES: { value: string; label: string }[] = [
   { value: "user", label: "用户管理" },
   { value: "file", label: "文件操作" },
   { value: "agent", label: "Agent" },
+  { value: "platform", label: "平台运营" },
 ];
 
 /** 从 session 事件的 detail 中提取 sessionId */

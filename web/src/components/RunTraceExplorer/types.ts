@@ -161,6 +161,8 @@ export interface RunEventsResponse {
   run: RunSummary;
   billing: RunBillingSummary;
   events: TraceEvent[];
+  /** 平台运营管理员只收到事件骨架，不含正文、思考、工具参数与结果。 */
+  contentRedacted?: boolean;
 }
 
 // ────────── GET /efficiency ──────────

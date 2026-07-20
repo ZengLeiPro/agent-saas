@@ -1,4 +1,5 @@
 import type { IndustryType } from "./scenario";
+import type { PlatformCapability, PlatformCapabilityLimits } from "./user";
 
 export type SidebarLayoutPref = "double" | "single";
 
@@ -35,12 +36,11 @@ export interface AuthUser {
    * 组织 admin = role==='admin' && tenantId !== DEFAULT_TENANT_ID
    */
   tenantId: string;
-  /**
-   * 平台超级管理员（2026-07-18 平台管理员分层治理）：默认仅 @admin。
-   * false 的平台 admin 是「只读平台 admin」——平台管理界面可见但写操作被服务端
-   * enforcePlatformWritePolicy 拦截；前端据此渲染只读模式。来自 /api/auth/me。
-   */
+  /** 平台超级管理员（默认仅 @admin）。 */
   isSuperAdmin?: boolean;
+  /** 非超级平台管理员的实时能力集；每次请求由服务端用户记录覆盖 JWT 旧值。 */
+  platformCapabilities?: PlatformCapability[];
+  platformCapabilityLimits?: PlatformCapabilityLimits;
   realName?: string;
   /** 岗位（自由文本），空会话场景推荐按此优先排序 */
   position?: string;

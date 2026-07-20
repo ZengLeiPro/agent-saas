@@ -4,6 +4,10 @@ import { writeFile, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import bcrypt from "bcrypt";
 import type { UserPermissions } from "../../types/index.js";
+import type {
+  PlatformCapability,
+  PlatformCapabilityLimits,
+} from "../../../../shared/src/types/user.js";
 import { DEFAULT_USER_PREFERENCES } from "./types.js";
 import type {
   UserRecord,
@@ -55,6 +59,8 @@ export interface CreateUserInput {
    */
   tenantId?: string;
   permissions?: UserPermissions;
+  platformCapabilities?: PlatformCapability[];
+  platformCapabilityLimits?: PlatformCapabilityLimits;
   preferences?: UserPreferences;
 }
 
@@ -74,6 +80,8 @@ export interface UpdateUserInput {
   /** B1: 设为非空字符串 = 设置；设为空字符串 = 清除归属。 */
   tenantId?: string;
   permissions?: UserPermissions;
+  platformCapabilities?: PlatformCapability[];
+  platformCapabilityLimits?: PlatformCapabilityLimits;
   preferences?: UserPreferences;
 }
 
@@ -257,6 +265,12 @@ export class UserStore {
         : {}),
       ...(input.debugMode ? { debugMode: true } : {}),
       ...(input.permissions ? { permissions: input.permissions } : {}),
+      ...(input.platformCapabilities !== undefined
+        ? { platformCapabilities: [...input.platformCapabilities] }
+        : {}),
+      ...(input.platformCapabilityLimits !== undefined
+        ? { platformCapabilityLimits: { ...input.platformCapabilityLimits } }
+        : {}),
       preferences: { ...DEFAULT_USER_PREFERENCES, ...(input.preferences ?? {}) },
       createdAt: now,
       createdBy: input.createdBy,
@@ -332,6 +346,12 @@ export class UserStore {
     }
     if (input.permissions !== undefined) {
       user.permissions = input.permissions;
+    }
+    if (input.platformCapabilities !== undefined) {
+      user.platformCapabilities = [...input.platformCapabilities];
+    }
+    if (input.platformCapabilityLimits !== undefined) {
+      user.platformCapabilityLimits = { ...input.platformCapabilityLimits };
     }
     if (input.preferences !== undefined) {
       user.preferences = { ...(user.preferences ?? {}), ...input.preferences };

@@ -105,10 +105,13 @@ export type {
 
 export type {
   UserPermissions,
+  PlatformCapability,
+  PlatformCapabilityLimits,
   UserInfo,
   CreateUserInput,
   UpdateUserInput,
 } from "./user";
+export { PLATFORM_CAPABILITIES } from "./user";
 
 export type {
   Tenant,

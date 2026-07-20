@@ -17,7 +17,9 @@ export type LoginEvent =
   | 'skill_document_updated'
   | 'mcp_server_updated' | 'mcp_server_deleted' | 'mcp_user_selections_updated' | 'mcp_admin_user_selections_updated'
   | 'mcp_secret_bound' | 'mcp_secret_rotated' | 'mcp_secret_deleted' | 'mcp_oauth_connected' | 'mcp_oauth_revoked'
-  | 'tenant_created' | 'tenant_updated' | 'tenant_disabled' | 'tenant_enabled' | 'tenant_deleted';
+  | 'tenant_created' | 'tenant_updated' | 'tenant_disabled' | 'tenant_enabled' | 'tenant_deleted'
+  | 'platform_readonly_denied' | 'platform_capability_denied' | 'platform_privileged_action' | 'platform_user_search'
+  | 'billing_account_adjusted';
 
 export interface LoginLogEntry {
   /** ISO 8601 */

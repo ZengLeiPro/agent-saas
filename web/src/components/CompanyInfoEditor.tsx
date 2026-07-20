@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { MarkdownReadonly } from "@/components/MarkdownReadonly";
 
 import { useAuth } from "@/contexts/AuthContext";
+import { DEFAULT_TENANT_ID } from "@/components/TenantManager/types";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { fetchTenantCompanyInfo, updateTenantCompanyInfo } from "@agent/shared";
 
@@ -27,7 +28,7 @@ interface CompanyInfoSectionProps {
 }
 
 export function CompanyInfoSection({ tenantId, tenantName }: CompanyInfoSectionProps) {
-  const { user, isAdmin, isPlatformAdmin } = useAuth();
+  const { user, isAdmin, isPlatformAdmin, canPlatform } = useAuth();
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -37,7 +38,10 @@ export function CompanyInfoSection({ tenantId, tenantName }: CompanyInfoSectionP
   const initial = useRef("");
 
   const dirty = content !== initial.current;
-  const canEdit = isAdmin && (isPlatformAdmin || user?.tenantId === tenantId);
+  const canEdit = isAdmin && (
+    (isPlatformAdmin && tenantId !== DEFAULT_TENANT_ID && canPlatform("customer_config.manage"))
+    || (!isPlatformAdmin && user?.tenantId === tenantId)
+  );
   const readOnly = !canEdit || !tenantId;
 
   useEffect(() => {

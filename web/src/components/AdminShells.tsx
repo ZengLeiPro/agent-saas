@@ -16,7 +16,7 @@ import { useTenants } from "@/components/TenantManager/hooks";
 import { authFetch } from "@/lib/authFetch";
 import { refreshAll } from "@/lib/refreshBus";
 import { cn } from "@/lib/utils";
-import { DEFAULT_TENANT_SETTINGS, type TenantSettings } from "@/components/TenantManager/types";
+import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type TenantSettings } from "@/components/TenantManager/types";
 import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
 import { pushPlatformAdminUrl, type PlatformAdminSection } from "@/lib/urlSync";
@@ -243,6 +243,9 @@ function SettingSwitch({
 }
 
 function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
+  const { isPlatformAdmin, canPlatform } = useAuth();
+  const readOnly = isPlatformAdmin
+    && (tenantId === DEFAULT_TENANT_ID || !canPlatform("customer_config.manage"));
   const [settings, setSettings] = useState<TenantSettings>(() => cloneTenantSettings(DEFAULT_TENANT_SETTINGS));
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -339,9 +342,9 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
       <SettingsPanelHeader
         title="组织管理"
         description={`配置组织 ${tenantId} 的功能开关、配额、模型、MCP、安全和品牌策略。`}
-        actions={<Button onClick={() => { void save(); }} disabled={loading || saving}>{saving ? "保存中..." : "保存设置"}</Button>}
+        actions={<Button onClick={() => { void save(); }} disabled={readOnly || loading || saving}>{saving ? "保存中..." : "保存设置"}</Button>}
       />
-      <div className="min-h-0 flex-1 space-y-5 overflow-auto">
+      <fieldset disabled={readOnly} className="min-h-0 flex-1 space-y-5 overflow-auto">
       {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
       {saved && <div className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">组织管理已保存</div>}
       <div className="grid gap-4 xl:grid-cols-2">
@@ -472,7 +475,7 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
           </CardContent>
         </Card>
       </div>
-      </div>
+      </fieldset>
     </div>
   );
 }
@@ -548,11 +551,16 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   skill_promoted_to_tenant: "发布到组织技能",
   skill_custom_deleted: "删除自定义技能",
   skill_user_selections_updated: "更新技能选择",
+  platform_capability_denied: "平台能力拒绝",
+  platform_privileged_action: "平台授权操作",
+  platform_user_search: "平台用户检索",
+  billing_account_adjusted: "调整积分流水",
 };
 
 const auditCategories = [
   { value: "", label: "全部事件" },
   { value: "login", label: "登录" },
+  { value: "platform", label: "平台运营" },
   { value: "activity", label: "活动" },
   { value: "session", label: "对话" },
   { value: "group", label: "分组" },
@@ -975,7 +983,7 @@ export function PlatformAdminShell({
   settingsOnly?: boolean;
   headerControlsPlacement?: "inline" | "none";
 }) {
-  // 只读平台 admin（万神殿非 @admin）：写操作被服务端 403 拦截，前端顶部提示 + 各分区写入口 disabled
+  // 委托平台管理员：客户域操作按能力授权，平台全局配置仍仅 @admin 可写。
   const { platformReadOnly } = useAuth();
   // mount-once-visited（与 TenantAdminShell 同模式）
   const [visitedPlatformSections, setVisitedPlatformSections] = useState<Set<PlatformSection>>(() =>
@@ -1001,10 +1009,10 @@ export function PlatformAdminShell({
 
   const settingsContent = (
     <div className="flex h-full min-h-0 flex-col">
-      {/* 只读模式提示条：样式复用现有浅色提示条（rounded-md border bg-muted）风格 */}
+      {/* 委托运营提示条 */}
       {platformReadOnly && (
         <div className="mb-3 shrink-0 rounded-md border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-          只读模式：平台配置仅可查看，写操作需 @admin 执行；你仍可创建组织。
+          委托运营账号：客户与运维操作按授权开放；平台全局配置、原始会话内容和高风险删除仍需 @admin 执行。
         </div>
       )}
       <div className="min-h-0 flex-1">

@@ -1,4 +1,8 @@
 import type { UserRole } from "../data/users/types.js";
+import type {
+  PlatformCapability,
+  PlatformCapabilityLimits,
+} from "../../../shared/src/types/user.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 
 export interface JwtPayload {
@@ -11,6 +15,9 @@ export interface JwtPayload {
    * 所有旧用户记录由迁移脚本补齐组织归属，新签发的 token 必带值。
    */
   tenantId: string;
+  /** 由 auth middleware 每次按 UserStore 实时覆盖，不信任 JWT 存量声明。 */
+  platformCapabilities?: PlatformCapability[];
+  platformCapabilityLimits?: PlatformCapabilityLimits;
   iat?: number;
   exp?: number;
 }

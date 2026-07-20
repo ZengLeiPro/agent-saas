@@ -64,7 +64,8 @@ function useSandboxData() {
 function SandboxList() {
   const adminQuery = useAdminUrlQuery();
   // 只读平台 admin：清理/暂停/启动/删除等写操作 disabled；「网络自检」是服务端白名单放行的只读探测，保留可用
-  const { platformReadOnly } = useAuth();
+  const { platformReadOnly, canPlatform } = useAuth();
+  const runtimeReadOnly = !canPlatform("runtime.operate");
   const { operations, sandboxes, loading, refreshing, error, load } = useSandboxData();
   const [action, setAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -208,7 +209,7 @@ function SandboxList() {
                   size="icon"
                   className="size-7"
                   title="暂停"
-                  disabled={platformReadOnly || !!action || row.phase === "Paused"}
+                  disabled={runtimeReadOnly || !!action || row.phase === "Paused"}
                   onClick={(event) => {
                     event.stopPropagation();
                     pauseSandbox(row);
@@ -222,7 +223,7 @@ function SandboxList() {
                   size="icon"
                   className="size-7"
                   title="启动"
-                  disabled={platformReadOnly || !!action || row.phase !== "Paused"}
+                  disabled={runtimeReadOnly || !!action || row.phase !== "Paused"}
                   onClick={(event) => {
                     event.stopPropagation();
                     startSandbox(row);
@@ -268,7 +269,8 @@ function SandboxList() {
 
 function SandboxDetail({ sandboxName }: { sandboxName: string }) {
   // 只读平台 admin：详情页暂停/启动/删除 disabled
-  const { platformReadOnly } = useAuth();
+  const { platformReadOnly, canPlatform } = useAuth();
+  const runtimeReadOnly = !canPlatform("runtime.operate");
   const [sandbox, setSandbox] = useState<SandboxRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState<string | null>(null);
@@ -336,7 +338,8 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
     });
   };
   const missing = !loading && !sandbox && /not found/i.test(error ?? "");
-  const actionDisabled = platformReadOnly || !!action || (!sandbox && (loading || !!error));
+  const runtimeActionDisabled = runtimeReadOnly || !!action || (!sandbox && (loading || !!error));
+  const destructiveActionDisabled = platformReadOnly || !!action || (!sandbox && (loading || !!error));
 
   return (
     <div className="w-full space-y-5">
@@ -345,15 +348,15 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
         description={`执行环境详情 · ${sandboxName}`}
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={pause} disabled={actionDisabled}>
+            <Button variant="outline" size="sm" onClick={pause} disabled={runtimeActionDisabled}>
               <PauseCircle className="size-3.5" />
               暂停
             </Button>
-            <Button variant="outline" size="sm" onClick={resume} disabled={actionDisabled}>
+            <Button variant="outline" size="sm" onClick={resume} disabled={runtimeActionDisabled}>
               <PlayCircle className="size-3.5" />
               启动
             </Button>
-            <Button variant="destructive" size="sm" onClick={remove} disabled={actionDisabled}>
+            <Button variant="destructive" size="sm" onClick={remove} disabled={destructiveActionDisabled}>
               <Trash2 className="size-3.5" />
               删除
             </Button>

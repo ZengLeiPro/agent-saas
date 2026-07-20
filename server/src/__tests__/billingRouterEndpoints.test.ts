@@ -26,7 +26,18 @@ import type { BillingLedgerEntry, TenantBillingPolicy } from '../data/billing/ty
 import type { JwtPayload } from '../auth/types.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
-const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'root', role: 'admin', tenantId: DEFAULT_TENANT_ID };
+const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID };
+const BILLING_OPERATOR: JwtPayload = {
+  sub: 'u-operator',
+  username: 'ops',
+  role: 'admin',
+  tenantId: DEFAULT_TENANT_ID,
+  platformCapabilities: ['billing.adjust'],
+  platformCapabilityLimits: {
+    billingMaxCreditsPerTransaction: 500,
+    billingMaxCreditsPerDay: 1_000,
+  },
+};
 const WAIN_ADMIN: JwtPayload = { sub: 'u-wa', username: 'wain_admin', role: 'admin', tenantId: 'wain' };
 const WAIN_MEMBER: JwtPayload = { sub: 'u-member', username: 'bob', role: 'user', tenantId: 'wain' };
 
@@ -102,6 +113,8 @@ function makeFns() {
       listPricingVersions: vi.fn(async () => [{ version: 'price-v1', status: 'active', creditValueYuanMicro: 10_000 }]),
       getTenantPolicy: vi.fn(async () => fullPolicy()),
       listUsageEvents: vi.fn(async () => [{ id: 'ue-1', actualCostYuanMicro: 49_380 }]),
+      findLedgerByIdempotencyKey: vi.fn(async () => null as BillingLedgerEntry | null),
+      sumManualPositiveCreditsByActorSince: vi.fn(async () => 0),
     },
   };
 }
@@ -256,7 +269,7 @@ describe('Billing 路由端点', () => {
       expect(res.status).toBe(200);
       expect(rig.fns.createPricingVersion).toHaveBeenCalledWith(
         { version: 'v2026.08', name: '2026Q3 定价', status: 'draft', creditValueYuanMicro: 10_000, defaultTargetMarginBps: 6000 },
-        'root',
+        'admin',
       );
       expect((await res.json()).pricingVersion.creditValueYuanMicro).toBe(10_000);
 
@@ -288,7 +301,7 @@ describe('Billing 路由端点', () => {
         body: { status: 'active', creditValueYuanMicro: 20_000 },
       });
       expect(ok.status).toBe(200);
-      expect(rig.fns.updatePricingVersion).toHaveBeenCalledWith('v2026.08', { status: 'active', creditValueYuanMicro: 20_000 }, 'root');
+      expect(rig.fns.updatePricingVersion).toHaveBeenCalledWith('v2026.08', { status: 'active', creditValueYuanMicro: 20_000 }, 'admin');
 
       rig.fns.updatePricingVersion.mockRejectedValueOnce(
         new BillingPricingConflictError('已有另一个 active 价格版本，请刷新后重试'),
@@ -336,7 +349,7 @@ describe('Billing 路由端点', () => {
         body: { defaultTargetMarginBps: 7000, showCost: true },
       });
       expect(ok.status).toBe(200);
-      expect(rig.fns.updateTenantPolicy).toHaveBeenCalledWith('wain', { defaultTargetMarginBps: 7000, showCost: true }, 'root');
+      expect(rig.fns.updateTenantPolicy).toHaveBeenCalledWith('wain', { defaultTargetMarginBps: 7000, showCost: true }, 'admin');
 
       const outOfRange = await rig.request('/api/admin/billing/tenants/wain/policy', {
         method: 'PATCH',
@@ -366,7 +379,7 @@ describe('Billing 路由端点', () => {
         creditsDelta: 250.5,
         type: 'grant',
         note: '活动补偿',
-        actor: 'root',
+        actor: 'admin',
       });
       expect((await res.json()).entry.creditsDelta).toBe(250.5);
     });
@@ -384,6 +397,74 @@ describe('Billing 路由端点', () => {
         method: 'POST', body: { creditsDelta: 100 },
       });
       expect(forbidden.status).toBe(403);
+    });
+
+    it('委托管理员：业务依据、防重标识、操作人和备注精确落流水', async () => {
+      const rig = await newRig(BILLING_OPERATOR);
+      const res = await rig.request('/api/admin/billing/accounts/wain/adjust', {
+        method: 'POST',
+        body: {
+          creditsDelta: 300,
+          type: 'recharge',
+          note: '客户打款到账',
+          businessReference: 'BANK-20260720-01',
+          idempotencyKey: 'bank_20260720_01',
+        },
+      });
+      expect(res.status).toBe(200);
+      expect(rig.fns.store.findLedgerByIdempotencyKey).toHaveBeenCalledWith(
+        'manual:admin:u-operator:bank_20260720_01',
+      );
+      expect(rig.fns.store.sumManualPositiveCreditsByActorSince).toHaveBeenCalledWith(
+        'ops',
+        expect.any(String),
+      );
+      expect(rig.fns.adjustAccount).toHaveBeenCalledWith({
+        tenantId: 'wain',
+        creditsDelta: 300,
+        type: 'recharge',
+        note: '[依据:BANK-20260720-01] 客户打款到账',
+        actor: 'ops',
+        idempotencyKey: 'manual:admin:u-operator:bank_20260720_01',
+      });
+    });
+
+    it('委托管理员：拒绝扣减、缺业务依据、单笔超限和当日累计超限', async () => {
+      const rig = await newRig(BILLING_OPERATOR);
+      const request = (body: Record<string, unknown>) => rig.request('/api/admin/billing/accounts/wain/adjust', {
+        method: 'POST',
+        body,
+      });
+      const valid = {
+        type: 'grant', note: '补偿备注', businessReference: 'CASE-1', idempotencyKey: 'case_0001',
+      };
+      expect((await request({ ...valid, creditsDelta: -1 })).status).toBe(400);
+      expect((await request({ creditsDelta: 10, type: 'grant' })).status).toBe(400);
+      expect((await request({ ...valid, creditsDelta: 501 })).status).toBe(403);
+      rig.fns.store.sumManualPositiveCreditsByActorSince.mockResolvedValueOnce(800);
+      expect((await request({ ...valid, creditsDelta: 300 })).status).toBe(403);
+      expect(rig.fns.adjustAccount).not.toHaveBeenCalled();
+    });
+
+    it('委托管理员：同一防重标识直接回放，万神殿账户一律拒绝', async () => {
+      const rig = await newRig(BILLING_OPERATOR);
+      rig.fns.store.findLedgerByIdempotencyKey.mockResolvedValueOnce(fullLedgerEntry());
+      const body = {
+        creditsDelta: 100,
+        type: 'refund',
+        note: '退款退回',
+        businessReference: 'REFUND-1',
+        idempotencyKey: 'refund_0001',
+      };
+      const replay = await rig.request('/api/admin/billing/accounts/wain/adjust', { method: 'POST', body });
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toMatchObject({ idempotentReplay: true });
+      expect(rig.fns.adjustAccount).not.toHaveBeenCalled();
+
+      const pantheon = await rig.request(`/api/admin/billing/accounts/${DEFAULT_TENANT_ID}/adjust`, {
+        method: 'POST', body,
+      });
+      expect(pantheon.status).toBe(403);
     });
   });
 

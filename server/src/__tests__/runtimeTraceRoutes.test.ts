@@ -27,6 +27,7 @@ import {
   pickRunSummary,
   redactBillingSummary,
   redactEfficiencyCost,
+  sanitizeTraceEvent,
   summarizeRunBilling,
   truncateTraceEvent,
   type RuntimeTraceRouterOptions,
@@ -54,9 +55,16 @@ const RUN_ID = 'run-trace-1';
 
 const PLATFORM_ADMIN: JwtPayload = {
   sub: 'admin-1',
-  username: 'root',
+  username: 'admin',
   role: 'admin',
   tenantId: DEFAULT_TENANT_ID,
+};
+const PLATFORM_OPERATOR: JwtPayload = {
+  sub: 'operator-1',
+  username: 'ops',
+  role: 'admin',
+  tenantId: DEFAULT_TENANT_ID,
+  platformCapabilities: [],
 };
 const ORG_ADMIN: JwtPayload = {
   sub: 'admin-2',
@@ -344,6 +352,21 @@ describe('/api/admin/runtime/trace', () => {
       expect(calls.recentRuns[0]).toMatchObject({ tenantId: 'other-co' });
       const other = await fetch(`${baseUrl}/api/admin/runtime/trace/runs/${OTHER_RUN_ID}/events`);
       expect(other.status).toBe(200);
+    });
+
+    it('委托平台管理员可看运行骨架，正文、工具参数和成本均脱敏', async () => {
+      ({ server, baseUrl } = await startServer({ user: PLATFORM_OPERATOR }));
+      const res = await fetch(`${baseUrl}/api/admin/runtime/trace/runs/${RUN_ID}/events`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.contentRedacted).toBe(true);
+      expect(body.billing.costRedacted).toBe(true);
+      expect(body.billing.totalCostYuan).toBeUndefined();
+      const userMessage = body.events.find((event: { type: string }) => event.type === 'user_message');
+      expect(userMessage.content).toBe('（内容已脱敏）');
+      const toolCall = body.events.find((event: { type: string }) => event.type === 'assistant_tool_calls');
+      expect(toolCall.toolCalls[0].arguments).toBe('（参数已脱敏）');
+      expect(JSON.stringify(body)).not.toContain('/tmp/');
     });
   });
 
@@ -651,6 +674,48 @@ describe('runtimeTrace 纯转换函数', () => {
     // 信封字段不动
     expect(out.id).toBe('e');
     expect(out.type).toBe('approval_requested');
+  });
+
+  it('sanitizeTraceEvent：保留诊断信封，移除原始内容与工具参数', () => {
+    const out = sanitizeTraceEvent(EVENTS[2]!);
+    expect(out).toMatchObject({
+      id: 'evt-3',
+      type: 'assistant_tool_calls',
+      contentRedacted: true,
+    });
+    expect((out.toolCalls as Array<Record<string, unknown>>)[0]).toMatchObject({
+      id: 'call-1',
+      name: 'Read',
+      arguments: '（参数已脱敏）',
+    });
+    expect(JSON.stringify(out)).not.toContain('/tmp/');
+  });
+
+  it('sanitizeTraceEvent：错误与原因只保留发生事实，不返回原文', () => {
+    const out = sanitizeTraceEvent({
+      id: 'evt-sensitive-error',
+      type: 'tool_result',
+      timestamp: '2026-07-20T08:00:00.000Z',
+      runId: 'run-sensitive-error',
+      sessionId: 'session-sensitive-error',
+      toolCallId: 'call-sensitive-error',
+      toolName: 'Read',
+      content: '客户合同原文',
+      isError: true,
+      error: '客户手机号 13800138000，读取 /secret/customer.txt 失败',
+      reason: '审批备注含客户合同原文',
+    } as PlatformEvent);
+
+    expect(out).toMatchObject({
+      isError: true,
+      error: '执行失败（详细错误已脱敏）',
+      reason: '原因已脱敏',
+      content: '（内容已脱敏）',
+      contentRedacted: true,
+    });
+    expect(JSON.stringify(out)).not.toContain('13800138000');
+    expect(JSON.stringify(out)).not.toContain('/secret/customer.txt');
+    expect(JSON.stringify(out)).not.toContain('合同原文');
   });
 });
 

@@ -15,7 +15,9 @@ import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { isPlatformAdmin } from '../auth/middleware.js';
+import { isSuperAdmin } from '../auth/platformGovernance.js';
 import { auditLog } from '../data/login-logs/index.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { isAssignedToOrgAgent, type OrgAgentStore } from '../data/orgAgents/store.js';
 import type { OrgAgentRecord, OrgAgentSummary } from '../data/orgAgents/types.js';
 import {
@@ -195,6 +197,10 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
       res.status(403).json({ error: '跨组织访问被拒绝' });
       return null;
     }
+    if (isPlatformAdmin(user) && !isSuperAdmin(user) && record.tenantId === DEFAULT_TENANT_ID) {
+      res.status(403).json({ error: '万神殿内部专家仅 @admin 可修改' });
+      return null;
+    }
     return record;
   }
 
@@ -321,6 +327,10 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
     const tenantId = isPlatformAdmin(user)
       ? (parsed.data.tenantId || user.tenantId)
       : user.tenantId;
+    if (isPlatformAdmin(user) && !isSuperAdmin(user) && tenantId === DEFAULT_TENANT_ID) {
+      res.status(403).json({ error: '委托管理员不能在万神殿创建企业专家' });
+      return;
+    }
     try {
       const record = await orgAgentStore.create({
         tenantId,

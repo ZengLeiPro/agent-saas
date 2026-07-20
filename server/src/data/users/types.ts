@@ -1,5 +1,9 @@
 import type { UserPermissions } from "../../types/index.js";
 import type { IndustryType } from "../../../../shared/src/types/scenario.js";
+import type {
+  PlatformCapability,
+  PlatformCapabilityLimits,
+} from "../../../../shared/src/types/user.js";
 
 export type UserRole = "admin" | "user";
 
@@ -59,6 +63,8 @@ export interface UserRecord {
    */
   tenantId: string;
   permissions?: UserPermissions;
+  platformCapabilities?: PlatformCapability[];
+  platformCapabilityLimits?: PlatformCapabilityLimits;
   groupSorting?: GroupSortingPref;
   preferences?: UserPreferences;
   createdAt: string; // ISO 8601
@@ -91,6 +97,8 @@ export interface UserInfo {
   /** Tenant 归属（PR 2 起必选） */
   tenantId: string;
   permissions?: UserPermissions;
+  platformCapabilities?: PlatformCapability[];
+  platformCapabilityLimits?: PlatformCapabilityLimits;
   groupSorting?: GroupSortingPref;
   preferences?: UserPreferences;
   createdAt: string;

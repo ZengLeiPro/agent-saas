@@ -24,6 +24,8 @@ import {
   type OrgAgentRecord,
 } from './types';
 import { fetchOrgAgentTemplates, FALLBACK_TEMPLATES, type OrgAgentTemplate } from './templates';
+import { useAuth } from '@/contexts/AuthContext';
+import { DEFAULT_TENANT_ID } from '@/components/TenantManager/types';
 
 function formValuesToPayload(values: OrgAgentFormValues, editing: OrgAgentRecord | null) {
   // avatar 三态：有图片头像 → 不发字段（路径值仅上传接口写入，PATCH 发路径会被 schema 拒）；
@@ -89,6 +91,10 @@ function audienceText(agent: OrgAgentRecord): string {
  * 表单：门禁配置改为填空题式（allow/reject 示例 + mode 三档 + strictness + 试测按钮）。
  */
 export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; tenantName?: string }) {
+  const { isPlatformAdmin, isSuperAdmin, canPlatform } = useAuth();
+  const canEdit = !isPlatformAdmin
+    || (tenantId !== DEFAULT_TENANT_ID && canPlatform("customer_config.manage"));
+  const canDelete = !isPlatformAdmin || isSuperAdmin;
   const { agents, loading, error, refresh, create, update, remove, uploadAvatar } = useOrgAgentAdmin(tenantId);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<OrgAgentRecord | null>(null);
@@ -167,7 +173,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
             <Button variant="outline" onClick={() => { void refresh(); }} disabled={loading}>
               <RefreshCw className={cn('mr-2 size-4', loading && 'animate-spin')} />刷新
             </Button>
-            <Button onClick={openBlankForm}>
+            <Button onClick={openBlankForm} disabled={!canEdit}>
               <Plus className="size-4" />创建企业专家
             </Button>
           </div>
@@ -205,6 +211,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                     key={template.key}
                     template={template}
                     onUse={() => openTemplateForm(template)}
+                    disabled={!canEdit}
                   />
                 ))}
               </div>
@@ -263,6 +270,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                       <TableCell>
                         <Switch
                           checked={agent.enabled}
+                          disabled={!canEdit}
                           onCheckedChange={(checked) => { void handleToggleEnabled(agent, checked); }}
                           aria-label={`启用 ${agent.name}`}
                         />
@@ -274,11 +282,12 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                             size="icon"
                             className="size-8"
                             title="编辑"
+                            disabled={!canEdit}
                             onClick={() => openEditForm(agent)}
                           >
                             <Pencil className="size-3.5" />
                           </Button>
-                          <Button
+                          {canDelete && <Button
                             variant="ghost"
                             size="icon"
                             className="size-8 text-destructive hover:text-destructive"
@@ -286,7 +295,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                             onClick={() => setDeleting(agent)}
                           >
                             <Trash2 className="size-3.5" />
-                          </Button>
+                          </Button>}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -331,9 +340,11 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
 function TemplateCard({
   template,
   onUse,
+  disabled = false,
 }: {
   template: OrgAgentTemplate;
   onUse: () => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex flex-col justify-between gap-2 rounded-lg border bg-card p-3 shadow-sm transition hover:border-brand-300">
@@ -345,7 +356,7 @@ function TemplateCard({
         <p className="line-clamp-2 text-xs text-muted-foreground">{template.description}</p>
       </div>
       <div className="flex justify-end">
-        <Button type="button" size="sm" variant="outline" onClick={onUse}>
+        <Button type="button" size="sm" variant="outline" onClick={onUse} disabled={disabled}>
           使用此模板
         </Button>
       </div>

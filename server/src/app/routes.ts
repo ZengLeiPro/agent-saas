@@ -402,7 +402,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     app.use(
       "/api/admin/billing",
       requireAdmin,
-      createAdminBillingRouter({ billingService: runtime.billingService }),
+      createAdminBillingRouter({
+        billingService: runtime.billingService,
+        alertNotifier: runtime.alertNotifier,
+      }),
     );
   }
 

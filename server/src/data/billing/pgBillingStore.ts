@@ -543,6 +543,24 @@ export class PgBillingStore {
     });
   }
 
+  async findLedgerByIdempotencyKey(idempotencyKey: string): Promise<BillingLedgerEntry | null> {
+    const result = await this.pool.query<{ row_json: Record<string, unknown> }>(
+      `SELECT row_to_json(l.*) AS row_json FROM ${this.creditLedgerTable} l WHERE idempotency_key = $1`,
+      [idempotencyKey],
+    );
+    return result.rows[0] ? normalizeLedgerEntry(result.rows[0].row_json) : null;
+  }
+
+  async sumManualPositiveCreditsByActorSince(actor: string, since: string): Promise<number> {
+    const result = await this.pool.query<{ total_micro: string | null }>(
+      `SELECT COALESCE(SUM(GREATEST(credits_delta_micro, 0)), 0) AS total_micro
+       FROM ${this.creditLedgerTable}
+       WHERE source = 'manual' AND created_by = $1 AND created_at >= $2::timestamptz`,
+      [actor, since],
+    );
+    return Number(result.rows[0]?.total_micro ?? 0) / CREDIT_MICRO;
+  }
+
   async insertUsageEvent(input: ProjectedRuntimeUsageInput): Promise<BillingUsageEvent | null> {
     const policy = await this.getTenantPolicy(input.tenantId);
     const pricing = await this.getActivePricingVersion();

@@ -184,7 +184,7 @@ describe('auth routes coverage', () => {
     h.setCaller(h.users.platformAdmin);
     // 用户名重复 → 409
     const dup = await h.request('/api/auth/users', jsonInit('POST', {
-      username: 'wain_user', password: 'password123',
+      username: 'wain_user', password: 'password123', tenantId: 'wain',
     }));
     expect(dup.status).toBe(409);
     expect((await dup.json() as { error: string }).error).toBe('用户名已存在');

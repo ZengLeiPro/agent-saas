@@ -8,6 +8,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { requireAdmin, requirePlatformAdmin, isPlatformAdmin } from '../auth/middleware.js';
+import { isSuperAdmin } from '../auth/platformGovernance.js';
 import { auditLog } from '../data/login-logs/index.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import type { PlatformSkillConfig, TenantSkillRule } from '../data/skills/types.js';
@@ -18,6 +19,7 @@ import { agentDir, agentPath, agentSkillsDir, resolveAgentPath } from '../worksp
 import { ensureWorkspaceDir, repairWorkspacePath, repairWorkspaceTree } from '../workspace/permissions.js';
 import type { UserStore } from '../data/users/store.js';
 import type { UserInfo, UserRecord } from '../data/users/types.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 /** getUserSkillsDir/buildUserSkillsResponse 只用 id/username/role/tenantId，
  * UserInfo（无 passwordHash）与 UserRecord 都满足。 */
 type SkillUser = Pick<UserInfo, 'id' | 'username' | 'role' | 'tenantId'>;
@@ -117,7 +119,8 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   /**
    * 跨组织访问 target user 校验（与 routes/mcp.ts resolveTargetUser、
    * routes/agents.ts authorizeAgentAccess 同范式）。
-   * 平台 admin 任意；组织 admin 仅本组织用户；非 admin 调用方不应到达这里
+   * 超级管理员可跨组织；受委托平台管理员只能操作客户组织用户，不能触达平台内部员工；
+   * 组织 admin 仅本组织用户；非 admin 调用方不应到达这里
    * （路由用 requireAdmin 已挡住）。
    */
   function resolveAdminTargetUser(req: Request, res: Response, username: string): UserRecord | null {
@@ -129,6 +132,12 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!isPlatformAdmin(req.user) && target.tenantId !== req.user?.tenantId) {
       // 404 隐藏（与上面「目标不存在」同口径）：返回 403 会让组织 admin
       // 借状态码差异（404=不存在 / 403=存在于他租户）探测跨租户用户名存在性
+      res.status(404).json({ error: 'User not found' });
+      return null;
+    }
+    if (isPlatformAdmin(req.user) && !isSuperAdmin(req.user) && target.tenantId === DEFAULT_TENANT_ID) {
+      // 与用户管理、租户配置的治理边界一致：受委托管理员不能借技能配置接口
+      // 读取或改写平台内部员工配置。继续使用 404，避免泄露内部用户名。
       res.status(404).json({ error: 'User not found' });
       return null;
     }

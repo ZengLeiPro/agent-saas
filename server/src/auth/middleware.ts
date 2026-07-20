@@ -6,6 +6,7 @@ import { isPlatformAdmin } from "./types.js";
 import type { UserStore } from "../data/users/store.js";
 import type { TenantStore } from "../data/tenants/store.js";
 import { checkTenantAccess } from "../data/tenants/access.js";
+import { getEffectivePlatformCapabilities } from "./platformGovernance.js";
 
 export { isPlatformAdmin } from "./types.js";
 
@@ -110,6 +111,12 @@ export function createAuthMiddleware(
           return;
         }
         payload.tenantId = record.tenantId;
+        // 平台能力不信任 JWT 存量声明：每次请求都从用户记录实时覆盖，授权与撤权立即生效。
+        payload.platformCapabilities = record.platformCapabilities;
+        payload.platformCapabilityLimits = record.platformCapabilityLimits;
+        if (isPlatformAdmin(payload)) {
+          payload.platformCapabilities = getEffectivePlatformCapabilities(payload);
+        }
 
         const tenantAccess = checkTenantAccess(tenantStore, payload.tenantId);
         if (!tenantAccess.ok) {

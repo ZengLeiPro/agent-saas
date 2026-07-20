@@ -21,6 +21,11 @@ import { DEFAULT_TENANT_ID } from "@/components/TenantManager/types";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
 import { ROLE_POSITION_OPTIONS } from "@/lib/roleOptions";
+import {
+  PLATFORM_CAPABILITIES,
+  type PlatformCapability,
+  type PlatformCapabilityLimits,
+} from "@agent/shared";
 import type { UserInfo, UserPermissions } from "./types";
 
 const POSITION_EMPTY_VALUE = "__none__";
@@ -34,8 +39,20 @@ export interface UserFormData {
   dingtalkStaffId?: string;
   debugMode?: boolean;
   permissions?: UserPermissions;
+  platformCapabilities?: PlatformCapability[];
+  platformCapabilityLimits?: PlatformCapabilityLimits;
   tenantId?: string;
 }
+
+const CAPABILITY_LABELS: Record<PlatformCapability, { title: string; description: string }> = {
+  "tenant.manage": { title: "组织运营", description: "创建组织、修改组织名称" },
+  "user.manage": { title: "客户账号", description: "创建、编辑、启停非万神殿账号" },
+  "customer_config.manage": { title: "客户配置", description: "维护公司信息、技能、企业专家和组织设置" },
+  "billing.adjust": { title: "积分流水", description: "在授权额度内写入充值、赠送或退款流水" },
+  "credential.reset": { title: "密码重置", description: "为客户账号重置密码" },
+  "runtime.operate": { title: "运行恢复", description: "暂停/恢复执行环境、重扫用量与存储" },
+  "finance.read": { title: "内部财务", description: "查看真实成本、毛利、价格版本和用量明细" },
+};
 
 interface UserFormDialogProps {
   open: boolean;
@@ -58,7 +75,7 @@ export function UserFormDialog({
   lockTenant = false,
 }: UserFormDialogProps) {
   const isEdit = editingUser !== null;
-  const { user: currentUser, isPlatformAdmin } = useAuth();
+  const { user: currentUser, isPlatformAdmin, isSuperAdmin } = useAuth();
   const { tenants } = useTenants();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -70,6 +87,9 @@ export function UserFormDialog({
   const [maxTurns, setMaxTurns] = useState("");
   const [maxRequests, setMaxRequests] = useState("");
   const [tenantId, setTenantId] = useState("");
+  const [platformCapabilities, setPlatformCapabilities] = useState<PlatformCapability[]>([]);
+  const [billingPerTransaction, setBillingPerTransaction] = useState("");
+  const [billingPerDay, setBillingPerDay] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const isEditingSelf = isEdit && editingUser?.id === currentUser?.id;
@@ -79,7 +99,11 @@ export function UserFormDialog({
     !isEditingSelf &&
     !isPlatformAdmin;
   const canChangeRole = !isEditingSelf && !isEditingPeerAdmin;
-  const canChangeTenant = isPlatformAdmin && !isEditingSelf;
+  const canChangeTenant = isSuperAdmin && !isEditingSelf;
+  const isPlatformAccount = role === "admin" && tenantId === DEFAULT_TENANT_ID;
+  const visibleTenants = isSuperAdmin
+    ? tenants
+    : tenants.filter((tenant) => tenant.id !== DEFAULT_TENANT_ID || tenant.id === tenantId);
   const positionOptions = position && !ROLE_POSITION_OPTIONS.some((item) => item === position)
     ? [position, ...ROLE_POSITION_OPTIONS]
     : ROLE_POSITION_OPTIONS;
@@ -97,6 +121,13 @@ export function UserFormDialog({
       setMaxTurns(editingUser?.permissions?.maxTurns?.toString() || "");
       setMaxRequests(
         editingUser?.permissions?.rateLimit?.maxRequests?.toString() || "",
+      );
+      setPlatformCapabilities(editingUser?.platformCapabilities ?? []);
+      setBillingPerTransaction(
+        editingUser?.platformCapabilityLimits?.billingMaxCreditsPerTransaction?.toString() || "",
+      );
+      setBillingPerDay(
+        editingUser?.platformCapabilityLimits?.billingMaxCreditsPerDay?.toString() || "",
       );
       setError("");
     }
@@ -131,6 +162,19 @@ export function UserFormDialog({
       setError("不能修改自己的组织归属");
       return;
     }
+    if (isSuperAdmin && isPlatformAccount && platformCapabilities.includes("billing.adjust")) {
+      const perTransaction = Number(billingPerTransaction);
+      const perDay = Number(billingPerDay);
+      if (!Number.isFinite(perTransaction) || perTransaction <= 0
+        || !Number.isFinite(perDay) || perDay <= 0) {
+        setError("授权积分流水时必须填写正数的单笔上限和每日上限");
+        return;
+      }
+      if (perDay < perTransaction) {
+        setError("每日上限不能小于单笔上限");
+        return;
+      }
+    }
 
     setError("");
     setLoading(true);
@@ -140,6 +184,15 @@ export function UserFormDialog({
       if (maxRequests)
         permissions.rateLimit = { maxRequests: Number(maxRequests) };
       const hasPermissions = Object.keys(permissions).length > 0;
+      const capabilityLimits: PlatformCapabilityLimits | undefined =
+        isSuperAdmin && isPlatformAccount && platformCapabilities.includes("billing.adjust")
+          ? {
+              billingMaxCreditsPerTransaction: Number(billingPerTransaction),
+              billingMaxCreditsPerDay: Number(billingPerDay),
+            }
+          : isSuperAdmin && isPlatformAccount
+            ? {}
+            : undefined;
 
       await onSubmit({
         username: username.trim(),
@@ -150,6 +203,8 @@ export function UserFormDialog({
         dingtalkStaffId: dingtalkStaffId.trim() || undefined,
         debugMode,
         permissions: hasPermissions ? permissions : undefined,
+        platformCapabilities: isSuperAdmin && isPlatformAccount ? platformCapabilities : undefined,
+        platformCapabilityLimits: capabilityLimits,
         tenantId: isPlatformAdmin ? tenantId : undefined,
       });
       onOpenChange(false);
@@ -162,7 +217,7 @@ export function UserFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{isEdit ? "编辑用户" : "新建用户"}</DialogTitle>
         </DialogHeader>
@@ -236,7 +291,7 @@ export function UserFormDialog({
                   <SelectValue placeholder="请选择组织" />
                 </SelectTrigger>
                 <SelectContent>
-                  {tenants.map((tenant) => (
+                  {visibleTenants.map((tenant) => (
                     <SelectItem key={tenant.id} value={tenant.id} disabled={tenant.disabled}>
                       {tenant.name}（{tenant.id}{tenant.disabled ? "，已禁用" : ""}）
                     </SelectItem>
@@ -313,6 +368,67 @@ export function UserFormDialog({
               />
             </div>
           </div>
+          {isSuperAdmin && isPlatformAccount && (
+            <div className="space-y-3 rounded-lg border border-border p-3">
+              <div>
+                <Label>平台运营能力</Label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  未勾选的能力由服务端拒绝；Secret、平台全局配置、原始会话内容和硬删除始终仅 @admin 可执行。
+                </p>
+              </div>
+              <div className="grid gap-2">
+                {PLATFORM_CAPABILITIES.map((capability) => {
+                  const checked = platformCapabilities.includes(capability);
+                  const label = CAPABILITY_LABELS[capability];
+                  return (
+                    <label key={capability} className="flex items-start gap-2 rounded-md border px-3 py-2">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={checked}
+                        onChange={(event) => setPlatformCapabilities((current) => (
+                          event.target.checked
+                            ? [...current, capability]
+                            : current.filter((item) => item !== capability)
+                        ))}
+                        disabled={loading}
+                      />
+                      <span>
+                        <span className="block text-sm font-medium">{label.title}</span>
+                        <span className="block text-xs text-muted-foreground">{label.description}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              {platformCapabilities.includes("billing.adjust") && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="billing-per-transaction">单笔积分上限</Label>
+                    <Input
+                      id="billing-per-transaction"
+                      type="number"
+                      min={1}
+                      value={billingPerTransaction}
+                      onChange={(event) => setBillingPerTransaction(event.target.value)}
+                      disabled={loading}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="billing-per-day">每日积分上限</Label>
+                    <Input
+                      id="billing-per-day"
+                      type="number"
+                      min={1}
+                      value={billingPerDay}
+                      onChange={(event) => setBillingPerDay(event.target.value)}
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {error && (
             <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {error}

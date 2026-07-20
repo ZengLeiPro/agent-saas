@@ -1,97 +1,130 @@
 import type { ReactNode } from "react";
 import { Card, CardContent } from "@/components/ui/card";
+import { AuthFlowLines } from "@/components/AuthFlowLines";
 
 /**
- * 登录/注册共用门面（设计稿 B1「浅色光晕」，assets/20260714，07-14 拍板）：
- * 品牌网格 + 双光晕背景、开开品牌区（开沿 AI 员工 + slogan）、备案 footer。
- * 表单区由 children 提供，两页只维护各自的表单逻辑。
+ * 登录/注册共用门面（07-20 改版，对标 LangSmith 登录页布局）：
+ * 桌面端左右分栏——左栏品牌叙事（wordmark + 大标题 + 副标题 + 实名客户墙），
+ * 右栏登录卡片；背景为浅蓝渐变 + 线束汇流动画（小球沿线滑动，各线速度不同）。
+ * 移动端退化为单卡片布局，品牌区收进卡片内。
+ * 表单区由 children 提供，登录/注册两页只维护各自的表单逻辑。
  */
+
+/** 已授权公开的实名客户（口径与官网 kaiyan.net /cases/ REAL_CASES 一致，勿自行增减） */
+const TRUSTED_CUSTOMERS = ["瑞鹰", "嗨玩购", "经典世家", "德林智能", "汉荣石业", "华恒"];
+
 export function AuthShell({ children }: { children: ReactNode }) {
   return (
     <div
-      className="relative flex min-h-screen items-center justify-center overflow-hidden bg-white px-4 py-8"
+      className="relative min-h-screen overflow-hidden bg-gradient-to-br from-[#F5F8FF] via-[#EAF1FF] to-[#DFE9FD]"
       style={{ paddingTop: "var(--sat)" }}
     >
-      {/* 品牌网格：radial mask 向下淡出，只铺上半屏 */}
+      {/* 左上亮部 + 右下辅光：撑起浅蓝底的空间层次 */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{
-          backgroundImage:
-            "linear-gradient(rgba(189,204,255,0.38) 1px, transparent 1px), linear-gradient(90deg, rgba(189,204,255,0.38) 1px, transparent 1px)",
-          backgroundSize: "44px 44px",
-          WebkitMaskImage: "radial-gradient(120% 90% at 50% 0%, #000 20%, transparent 78%)",
-          maskImage: "radial-gradient(120% 90% at 50% 0%, #000 20%, transparent 78%)",
-        }}
-      />
-      {/* 双光晕：左上主光 + 右下辅光，缓慢漂移 */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-40 -top-52 h-[640px] w-[640px] animate-glow-drift-a rounded-full blur-[72px]"
+        className="pointer-events-none absolute -left-52 -top-56 h-[700px] w-[700px] rounded-full blur-[80px]"
         style={{
           background:
-            "radial-gradient(circle, rgba(147,169,255,0.55), rgba(189,204,255,0.25) 55%, transparent 72%)",
+            "radial-gradient(circle, rgba(255,255,255,0.9), rgba(221,229,255,0.4) 55%, transparent 75%)",
         }}
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -bottom-44 -right-36 h-[560px] w-[560px] animate-glow-drift-b rounded-full blur-[72px]"
+        className="pointer-events-none absolute -bottom-48 -right-40 h-[600px] w-[600px] rounded-full blur-[80px]"
         style={{
           background:
-            "radial-gradient(circle, rgba(221,229,255,0.85), rgba(221,229,255,0.35) 55%, transparent 72%)",
+            "radial-gradient(circle, rgba(147,169,255,0.28), rgba(189,204,255,0.16) 55%, transparent 72%)",
         }}
       />
-      {/* 顶部品牌渐变 hairline */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-transparent via-brand-600 to-transparent"
-      />
+      {/* 线束汇流动画：仅桌面端；水平主干自然穿过左栏与卡片后方 */}
+      <AuthFlowLines className="absolute inset-0 hidden h-full w-full lg:block" />
 
-      <div className="relative w-full max-w-[420px]">
-        <Card className="animate-login-rise rounded-3xl border-brand-100 bg-white/80 shadow-[0_14px_32px_rgba(46,86,225,0.16),0_40px_90px_-30px_rgba(46,86,225,0.28)] backdrop-blur-lg">
-          <CardContent className="px-8 pb-7 pt-10 sm:px-9">
-            {/* 品牌区：开开 IP + 主品牌名（双层叙事 v2）+ slogan，登录/注册一致 */}
-            <div className="mb-7 flex flex-col items-center text-center">
-              <div className="mb-3.5 h-[84px] w-[84px] rounded-full bg-gradient-to-br from-brand-400 to-brand-700 p-[3px] shadow-[0_8px_20px_-6px_rgba(46,86,225,0.5)]">
-                <img
-                  src="/kaikai-avatar.png"
-                  alt="开开"
-                  className="h-full w-full rounded-full border-[2.5px] border-white"
-                />
-              </div>
-              <h1 className="text-[22px] font-bold tracking-tight text-foreground">
-                开沿 AI 员工
-              </h1>
-              <p className="mt-1.5 text-[13px] tracking-wide text-muted-foreground">
-                每个岗位，一个 <span className="font-semibold text-brand-600">AI 同事</span>
-              </p>
-            </div>
-            {children}
-          </CardContent>
-        </Card>
-
-        <footer className="mt-6 text-center text-xs leading-relaxed text-muted-foreground">
-          <p>© 2021–2026 福建开沿科技有限公司</p>
-          <p>
-            <a
-              href="https://beian.miit.gov.cn/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="transition-colors hover:text-brand-600"
-            >
-              闽ICP备2021018290号-1
-            </a>
-            <span className="mx-1.5">·</span>
-            <a
-              href="https://www.kaiyan.net/privacy/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="transition-colors hover:text-brand-600"
-            >
-              隐私政策
-            </a>
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-[1480px] items-center justify-center px-4 py-8 lg:justify-between lg:px-[7%]">
+        {/* 左栏品牌叙事（lg+）：整体上移让背景主干线从副标题与客户墙之间的空白穿过 */}
+        <div className="hidden flex-1 flex-col lg:flex lg:max-w-[620px] lg:-translate-y-16 lg:pr-16">
+          <div className="flex items-center gap-3">
+            <img
+              src="/kaikai-avatar.png"
+              alt="开开"
+              className="h-10 w-10 rounded-full border-2 border-white shadow-[0_4px_12px_-2px_rgba(46,86,225,0.35)]"
+            />
+            <span className="text-[21px] font-bold tracking-tight text-brand-900">
+              开沿 AI 员工
+            </span>
+          </div>
+          <h1 className="mt-10 text-[52px] font-bold leading-[1.16] tracking-tight text-brand-900">
+            每个岗位，
+            <br />
+            一个 <span className="text-brand-600">AI 同事</span>
+          </h1>
+          <p className="mt-6 text-[15px] leading-7 tracking-wide text-slate-600">
+            按业务场景打通钉钉与现有系统，不推倒重做。
+            <br />
+            让每个岗位，都配上真正能干活的 AI 同事。
           </p>
-        </footer>
+          {/* 客户墙：留出大间距，让背景主干线从中穿过（对标原稿中线） */}
+          <div className="mt-24">
+            <p className="text-[13px] tracking-[0.08em] text-slate-500">他们都在用</p>
+            <div className="mt-5 grid max-w-[440px] grid-cols-3 gap-x-10 gap-y-4">
+              {TRUSTED_CUSTOMERS.map((name) => (
+                <span
+                  key={name}
+                  className="whitespace-nowrap text-[17px] font-semibold tracking-wide text-brand-900/75"
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* 右栏：登录/注册卡片 */}
+        <div className="w-full max-w-[420px] lg:w-[440px] lg:max-w-none lg:shrink-0">
+          <Card className="animate-login-rise rounded-3xl border-brand-100 bg-white/85 shadow-[0_14px_32px_rgba(46,86,225,0.14),0_40px_90px_-30px_rgba(46,86,225,0.25)] backdrop-blur-lg">
+            <CardContent className="px-8 pb-7 pt-9 sm:px-9">
+              {/* 移动端品牌区：桌面端品牌叙事移到左栏，此处隐藏 */}
+              <div className="mb-7 flex flex-col items-center text-center lg:hidden">
+                <div className="mb-3.5 h-[84px] w-[84px] rounded-full bg-gradient-to-br from-brand-400 to-brand-700 p-[3px] shadow-[0_8px_20px_-6px_rgba(46,86,225,0.5)]">
+                  <img
+                    src="/kaikai-avatar.png"
+                    alt="开开"
+                    className="h-full w-full rounded-full border-[2.5px] border-white"
+                  />
+                </div>
+                <h1 className="text-[22px] font-bold tracking-tight text-foreground">
+                  开沿 AI 员工
+                </h1>
+                <p className="mt-1.5 text-[13px] tracking-wide text-muted-foreground">
+                  每个岗位，一个 <span className="font-semibold text-brand-600">AI 同事</span>
+                </p>
+              </div>
+              {children}
+            </CardContent>
+          </Card>
+
+          <footer className="mt-6 text-center text-xs leading-relaxed text-muted-foreground">
+            <p>© 2021–2026 福建开沿科技有限公司</p>
+            <p>
+              <a
+                href="https://beian.miit.gov.cn/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition-colors hover:text-brand-600"
+              >
+                闽ICP备2021018290号-1
+              </a>
+              <span className="mx-1.5">·</span>
+              <a
+                href="https://www.kaiyan.net/privacy/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition-colors hover:text-brand-600"
+              >
+                隐私政策
+              </a>
+            </p>
+          </footer>
+        </div>
       </div>
     </div>
   );

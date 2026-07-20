@@ -186,7 +186,7 @@ export function RoleKitDetailPage({
   );
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-6 py-6">
+    <div className="w-full px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
       <div className="mb-5 flex items-start justify-between gap-3">
         <div className="min-w-0">
           {onBack && (

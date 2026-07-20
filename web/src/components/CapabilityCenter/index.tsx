@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { MessageSquarePlus } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
-import type { OrgAgentSummary } from "@agent/shared";
+import type { OrgAgentSummary, ScenarioItem } from "@agent/shared";
 import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import { CapabilityTabsList } from "./CapabilityTabsList";
 import { useCapabilityNavigation } from "./navigation";
 import { CatalogToolbar, CapabilityLogo } from "./CatalogUi";
 import { DingtalkOnlyConnectors } from "./DingtalkConnector";
+import { ScenariosPanel } from "@/components/scenarios/ScenariosPanel";
 
 function ManagedCapabilityNotice({ kind }: { kind: "技能" | "连接器" }) {
   return (
@@ -29,14 +30,22 @@ export function CapabilityCenter({
   experts,
   personalAgentEnabled,
   onStartExpert,
+  onTryScenario,
+  roleDetailId,
+  onOpenRoleDetail,
+  onCloseRoleDetail,
   actionsDisabled = false,
 }: {
   experts: OrgAgentSummary[];
   personalAgentEnabled: boolean;
   onStartExpert: (expertId: string) => void;
+  onTryScenario: (prompt: string, scenario: ScenarioItem) => void;
+  roleDetailId?: string | null;
+  onOpenRoleDetail?: (roleId: string) => void;
+  onCloseRoleDetail?: () => void;
   actionsDisabled?: boolean;
 }) {
-  const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation();
+  const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation(personalAgentEnabled);
   const [expertQuery, setExpertQuery] = useState("");
   const filteredExperts = useMemo(() => {
     const query = expertQuery.trim().toLocaleLowerCase();
@@ -49,10 +58,21 @@ export function CapabilityCenter({
     <div className="flex h-full min-h-0 w-full flex-col">
       <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="flex min-h-0 flex-1 flex-col">
         <div className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-6 md:hidden">
-          <CapabilityTabsList />
+          <CapabilityTabsList showTemplates={personalAgentEnabled} />
         </div>
 
         <div className="mt-5 min-h-0 flex-1 overflow-y-auto md:mt-0">
+          {personalAgentEnabled && (
+            <TabsContent value="templates" className="mt-0">
+              <ScenariosPanel
+                onTryScenario={onTryScenario}
+                roleDetailId={roleDetailId}
+                onOpenRoleDetail={onOpenRoleDetail}
+                onCloseRoleDetail={onCloseRoleDetail}
+              />
+            </TabsContent>
+          )}
+
           <TabsContent value="experts" className="mt-0 px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
             <div className="mb-5 flex items-start justify-between gap-4">
               <div>

@@ -26,7 +26,6 @@ import {
   ChevronsUpDown,
   UserCog,
   Search,
-  LayoutGrid,
   Share2,
 } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
@@ -103,8 +102,6 @@ interface DesktopSessionSidebarProps {
   /** 完整未读集（不受分页影响），用于左栏各视图/分组的聚合红点 */
   unreadAiReplySessionIds?: ReadonlySet<string>;
   sidebarLayout?: "double" | "single";
-  /** 关闭时隐藏只适用于个人通用 Agent 的任务模板入口。 */
-  personalAgentEnabled?: boolean;
 }
 
 /** 稳定的空集兜底，避免 prop 缺省时每次 render 新建 Set 触发 useMemo 失效 */
@@ -528,7 +525,6 @@ function getNavIcon(tab: AppTab) {
   if (tab === "settings") return Settings2;
   if (tab === "cron") return Clock;
   if (tab === "mcp") return EntityIcons.connector;
-  if (tab === "scenarios") return LayoutGrid;
   return null;
 }
 
@@ -1058,7 +1054,6 @@ export function DesktopSessionSidebar({
   trashPreviewSessionId,
   unreadAiReplySessionIds,
   sidebarLayout = "double",
-  personalAgentEnabled = true,
 }: DesktopSessionSidebarProps) {
   const { user: authUser, accounts, switchAccount, authEnabled } = useAuth();
   const showBilling = useTenantBillingVisibility(authUser?.tenantId);
@@ -1458,9 +1453,8 @@ export function DesktopSessionSidebar({
     () => [
       ...baseNavItems.filter((item) => !item.adminOnly || isAdmin),
       { tab: "capabilities" as AppTab, label: "能力中心" },
-      ...(personalAgentEnabled ? [{ tab: "scenarios" as AppTab, label: "任务模板" }] : []),
     ],
-    [isAdmin, personalAgentEnabled],
+    [isAdmin],
   );
 
   const [singleSelectionMode, setSingleSelectionMode] = useState(false);

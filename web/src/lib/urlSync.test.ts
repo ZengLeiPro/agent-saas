@@ -80,9 +80,10 @@ describe("platform admin url sync", () => {
   });
 });
 
-describe("专家与任务模板 URL", () => {
+describe("能力中心 URL", () => {
   it("能力中心使用独立一级路径", () => {
     expect(parseUrl("/capabilities").tab).toBe("capabilities");
+    expect(parseUrl("/capabilities/templates").tab).toBe("capabilities");
     expect(parseUrl("/capabilities/experts").tab).toBe("capabilities");
     expect(parseUrl("/capabilities/skills").tab).toBe("capabilities");
     expect(parseUrl("/capabilities/connectors").tab).toBe("capabilities");
@@ -99,9 +100,9 @@ describe("专家与任务模板 URL", () => {
     }
   });
 
-  it("旧场景库路径 canonical 到任务模板", () => {
-    expect(parseUrl("/scenarios")).toMatchObject({ tab: "scenarios", canonicalPath: "/templates" });
-    expect(parseUrl("/templates").tab).toBe("scenarios");
-    expect(buildUrl("scenarios", null)).toBe("/templates");
+  it("旧任务模板入口收敛到能力中心首标签", () => {
+    expect(parseUrl("/scenarios")).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/templates" });
+    expect(parseUrl("/templates")).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/templates" });
+    expect(buildUrl("scenarios", null)).toBe("/capabilities/templates");
   });
 });

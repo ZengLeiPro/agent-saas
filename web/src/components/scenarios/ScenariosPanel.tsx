@@ -5,7 +5,7 @@
  * 下方为场景卡片流网格。卡片可点开详情（三段式剧本 + 槽位说明），
  * 卡片与详情内均有主 CTA「试一试」：由上层 onTryScenario 新建会话并预填起手 prompt。
  *
- * 本组件在 DesktopLayout 中按「mount-once-visited + hidden」模式挂载（lazy）。
+ * 本组件作为能力中心的第一个标签页挂载。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -144,7 +144,7 @@ export function ScenariosPanel({
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-6">
+    <div className="w-full px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
       {/* 标题区 */}
       <div className="mb-4">
         <div className="flex items-start justify-between gap-3">
@@ -220,7 +220,7 @@ export function ScenariosPanel({
             : "该岗位暂无任务模板"}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {scenarios.map((scenario) => (
             <ScenarioCard
               key={scenario.id}

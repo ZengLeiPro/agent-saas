@@ -217,11 +217,12 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
   if (pathname === '/cron') return parsed({ tab: 'chat', sessionId: null, settingsSection: 'cron', adminSettings: null });
   if (pathname === '/files') return parsed({ tab: 'chat', sessionId: null, settingsSection: 'files', adminSettings: null });
   if (pathname === '/profile') return parsed({ tab: 'profile', sessionId: null, settingsSection: null, adminSettings: null });
-  if (pathname === '/capabilities' || pathname === '/capabilities/experts' || pathname === '/capabilities/skills' || pathname === '/capabilities/connectors') {
+  if (pathname === '/capabilities' || pathname === '/capabilities/templates' || pathname === '/capabilities/experts' || pathname === '/capabilities/skills' || pathname === '/capabilities/connectors') {
     return parsed({ tab: 'capabilities', sessionId: null, settingsSection: null, adminSettings: null });
   }
-  if (pathname === '/templates') return parsed({ tab: 'scenarios', sessionId: null, settingsSection: null, adminSettings: null });
-  if (pathname === '/scenarios') return parsed({ tab: 'scenarios', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath: '/templates' });
+  if (pathname === '/templates' || pathname === '/scenarios') {
+    return parsed({ tab: 'capabilities', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath: '/capabilities/templates' });
+  }
   if (pathname === '/users' || pathname === '/skills' || pathname === '/usage' || pathname === '/tenant-admin') {
     return parsed({ tab: 'tenant-admin', sessionId: null, settingsSection: null, adminSettings: null });
   }
@@ -241,7 +242,7 @@ export function buildUrl(tab: AppTab, sessionId: string | null): string {
   if (tab === 'files') return '/files';
   if (tab === 'profile') return '/profile';
   if (tab === 'capabilities') return '/capabilities';
-  if (tab === 'scenarios') return '/templates';
+  if (tab === 'scenarios') return '/capabilities/templates';
   if (tab === 'skills') return '/skills';
   if (tab === 'usage') return '/usage';
   if (tab === 'mcp') return '/mcp';

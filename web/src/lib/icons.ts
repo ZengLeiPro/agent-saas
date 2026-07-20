@@ -29,6 +29,7 @@ import {
   Files,
   Info,
   Library,
+  LayoutGrid,
   Loader2,
   Plug,
   Puzzle,
@@ -57,6 +58,8 @@ export const EntityIcons = {
   connector: Plug,
   /** 能力中心 */
   capabilityCenter: Blocks,
+  /** 任务模板 */
+  taskTemplates: LayoutGrid,
   /** 知识库 */
   knowledgeBase: Library,
   /** 模型 */

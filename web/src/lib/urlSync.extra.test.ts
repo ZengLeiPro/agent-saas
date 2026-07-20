@@ -101,7 +101,7 @@ describe("buildUrl 覆盖各 tab 分支", () => {
     ["files", "/files"],
     ["profile", "/profile"],
     ["capabilities", "/capabilities"],
-    ["scenarios", "/templates"],
+    ["scenarios", "/capabilities/templates"],
     ["skills", "/skills"],
     ["usage", "/usage"],
     ["mcp", "/mcp"],
@@ -149,7 +149,7 @@ describe("parseUrl 常规路径分支", () => {
   it("profile / trash / templates", () => {
     expect(parseUrl("/profile").tab).toBe("profile");
     expect(parseUrl("/trash").tab).toBe("trash");
-    expect(parseUrl("/templates").tab).toBe("scenarios");
+    expect(parseUrl("/templates")).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/templates" });
   });
 
   it("tenant-admin 旧入口收敛", () => {

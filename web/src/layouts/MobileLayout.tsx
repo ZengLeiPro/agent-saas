@@ -40,7 +40,6 @@ const SignupConfigManagerPanel = lazy(() => import("@/components/SignupConfigMan
 const MemoryPollingManagerPanel = lazy(() => import("@/components/MemoryPollingManager").then(m => ({ default: m.MemoryPollingManager })));
 const SettingsModal = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsModal })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
-const ScenariosPanelLazy = lazy(() => import("@/components/scenarios/ScenariosPanel").then(m => ({ default: m.ScenariosPanel })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
 const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
@@ -331,12 +330,6 @@ export function MobileLayout(props: LayoutProps) {
                       startOrgAgentSession(expertId);
                       closeDrawer();
                     }}
-                  />
-                </Suspense>
-              )}
-              renderTaskTemplates={personalAgentEnabled ? () => (
-                <Suspense fallback={SuspenseFallback}>
-                  <ScenariosPanelLazy
                     onTryScenario={(prompt: string, _scenario: ScenarioItem) => {
                       if (loading) return;
                       newPersonalSession();
@@ -345,7 +338,7 @@ export function MobileLayout(props: LayoutProps) {
                     }}
                   />
                 </Suspense>
-              ) : undefined}
+              )}
               renderAgentProfile={() => <Suspense fallback={SuspenseFallback}><AgentProfilePanel /></Suspense>}
               renderSkillManager={() => <Suspense fallback={SuspenseFallback}><SkillManagerPanel mode={isPlatformAdmin ? "platform" : "tenant"} tenantIdScope={isPlatformAdmin ? undefined : authUser?.tenantId} /></Suspense>}
               renderMcpManager={() => <Suspense fallback={SuspenseFallback}><McpManagerPanel /></Suspense>}

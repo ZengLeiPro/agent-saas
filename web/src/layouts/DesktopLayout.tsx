@@ -39,7 +39,6 @@ const MemoryPollingManagerPanel = lazy(() => import("@/components/MemoryPollingM
 const SettingsModal = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsModal })));
 const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
 const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.PlatformAdminShell })));
-const ScenariosPanelLazy = lazy(() => import("@/components/scenarios/ScenariosPanel").then(m => ({ default: m.ScenariosPanel })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
@@ -94,7 +93,7 @@ export function DesktopLayout(props: LayoutProps) {
 
   const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
   const { isWide: chatWidthWide, setIsWide: setChatWidthWide } = useChatWidth();
-  const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation();
+  const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation(personalAgentEnabled);
 
   const sidePreviewOpen = !!previewFilePath && previewMode === "side";
   const rightPanelOpen = sidePreviewOpen || fileBrowserOpen;
@@ -120,7 +119,7 @@ export function DesktopLayout(props: LayoutProps) {
   // Header 标题：根据 activeTab 动态显示
   const headerTitle = useMemo(() => {
     if (activeTab === "profile") return "我的 Agent";
-    if (activeTab === "capabilities") return "专家与能力";
+    if (activeTab === "capabilities") return "能力中心";
     if (activeTab === "scenarios") return "任务模板";
     if (activeTab === "cron") return "定时任务";
     if (activeTab === "tenants") return "组织分析";
@@ -146,7 +145,6 @@ export function DesktopLayout(props: LayoutProps) {
   const [tenantAdminMounted, setTenantAdminMounted] = useState(false);
   const [platformAdminMounted, setPlatformAdminMounted] = useState(false);
   const [trashMounted, setTrashMounted] = useState(false);
-  const [scenariosMounted, setScenariosMounted] = useState(false);
   const [capabilitiesMounted, setCapabilitiesMounted] = useState(false);
   const [roleDetailId, setRoleDetailId] = useState<string | null>(null);
   const [lastTriedScenario, setLastTriedScenario] = useState<ScenarioItem | null>(null);
@@ -156,7 +154,6 @@ export function DesktopLayout(props: LayoutProps) {
   useEffect(() => {
     if (activeTab === "cron" && !cronMounted) setCronMounted(true);
     if (activeTab === "capabilities" && !capabilitiesMounted) setCapabilitiesMounted(true);
-    if (activeTab === "scenarios" && !scenariosMounted) setScenariosMounted(true);
     if (activeTab === "tenants" && !tenantsMounted && isPlatformAdmin) setTenantsMounted(true);
     if (activeTab === "profile" && !profileMounted) setProfileMounted(true);
     if (activeTab === "skills" && !skillsMounted && isAdmin) setSkillsMounted(true);
@@ -166,7 +163,7 @@ export function DesktopLayout(props: LayoutProps) {
     if (activeTab === "tenant-admin" && !tenantAdminMounted && isAdmin) setTenantAdminMounted(true);
     if (activeTab === "platform-admin" && !platformAdminMounted && isPlatformAdmin) setPlatformAdminMounted(true);
     if (activeTab === "trash" && !trashMounted) setTrashMounted(true);
-  }, [activeTab, capabilitiesMounted, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, tenantAdminMounted, platformAdminMounted, trashMounted, scenariosMounted, isAdmin, isPlatformAdmin]);
+  }, [activeTab, capabilitiesMounted, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, tenantAdminMounted, platformAdminMounted, trashMounted, isAdmin, isPlatformAdmin]);
 
   // ---- 场景库「试一试」链路 ----
   // 整页场景库里点「试一试」：新建会话 → 预填起手 prompt（不自动发送）→ 切回聊天视图。
@@ -191,12 +188,12 @@ export function DesktopLayout(props: LayoutProps) {
 
   // 「查看全部场景」：push 版切换，浏览器后退可回到聊天
   const handleViewAllScenarios = useCallback(() => {
-    pushActiveTab("scenarios");
+    pushActiveTab("capabilities");
   }, [pushActiveTab]);
 
   const handleOpenRoleDetail = useCallback((roleId: string) => {
     setRoleDetailId(roleId);
-    pushActiveTab("scenarios");
+    pushActiveTab("capabilities");
   }, [pushActiveTab]);
 
   const handleOpenCronWizard = useCallback(() => {
@@ -205,7 +202,7 @@ export function DesktopLayout(props: LayoutProps) {
       setCronWizardOpen(true);
       return;
     }
-    pushActiveTab("scenarios");
+    pushActiveTab("capabilities");
   }, [lastTriedScenario, pushActiveTab]);
 
   // 新会话空白态的推荐槽位。MessageList 被 memo，这里必须用 useMemo 保持节点引用稳定，
@@ -286,7 +283,6 @@ export function DesktopLayout(props: LayoutProps) {
         onPreviewTrashSession={previewTrashSession}
         trashPreviewSessionId={trashPreviewSessionId}
         sidebarLayout={sidebarLayout}
-        personalAgentEnabled={personalAgentEnabled}
       />
 
       {/* 右侧内容区 */}
@@ -311,7 +307,10 @@ export function DesktopLayout(props: LayoutProps) {
             </Button>
             {activeTab === "capabilities" ? (
               <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="min-w-0">
-                <CapabilityTabsList className="w-[28rem] max-w-[min(28rem,calc(100vw-24rem))]" />
+                <CapabilityTabsList
+                  showTemplates={personalAgentEnabled}
+                  className="w-[34rem] max-w-[min(34rem,calc(100vw-24rem))]"
+                />
               </Tabs>
             ) : activeTab !== "tenants" &&
               activeTab !== "tenant-admin" &&
@@ -491,19 +490,11 @@ export function DesktopLayout(props: LayoutProps) {
                 experts={myOrgAgents}
                 personalAgentEnabled={personalAgentEnabled}
                 onStartExpert={startOrgAgentSession}
-                actionsDisabled={loading}
-              />
-            </Suspense>
-          </div>
-        )}
-        {scenariosMounted && (
-          <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "scenarios" && "hidden")}>
-            <Suspense fallback={SuspenseFallback}>
-              <ScenariosPanelLazy
                 onTryScenario={handleTryScenario}
                 roleDetailId={roleDetailId}
                 onOpenRoleDetail={setRoleDetailId}
                 onCloseRoleDetail={() => setRoleDetailId(null)}
+                actionsDisabled={loading}
               />
             </Suspense>
           </div>

@@ -56,7 +56,6 @@ interface MobileSessionListProps {
   renderPlatformAdmin?: () => ReactNode;
   renderFileBrowser?: () => ReactNode;
   renderCapabilities?: () => ReactNode;
-  renderTaskTemplates?: () => ReactNode;
   renderAgentProfile?: () => ReactNode;
   renderSkillManager?: () => ReactNode;
   renderMcpManager?: () => ReactNode;
@@ -95,7 +94,6 @@ export function MobileSessionList({
   renderPlatformAdmin,
   renderFileBrowser,
   renderCapabilities,
-  renderTaskTemplates,
   renderAgentProfile,
   renderSkillManager,
   renderMcpManager,
@@ -271,9 +269,8 @@ export function MobileSessionList({
     () => [
       ...baseNavItems.filter((item) => !item.adminOnly || isAdmin),
       { tab: "capabilities" as AppTab, label: "能力中心" },
-      ...(renderTaskTemplates ? [{ tab: "scenarios" as AppTab, label: "任务模板" }] : []),
     ],
-    [isAdmin, renderTaskTemplates],
+    [isAdmin],
   );
 
   // 打开重命名弹窗
@@ -865,12 +862,6 @@ export function MobileSessionList({
             {renderCapabilities && (
               <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "capabilities" && "hidden")} style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
                 {renderCapabilities()}
-              </div>
-            )}
-
-            {renderTaskTemplates && (
-              <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "scenarios" && "hidden")} style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
-                {renderTaskTemplates()}
               </div>
             )}
 

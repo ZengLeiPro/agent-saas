@@ -1,4 +1,4 @@
-export const DEFAULT_RUNTIME_FAILURE_MESSAGE = "异常中断，请继续对话";
+export const DEFAULT_RUNTIME_FAILURE_MESSAGE = "Agent 开小差了，请发送「继续」";
 export const MODEL_REQUEST_FAILURE_MESSAGE = "模型请求错误，请稍后重试";
 export const INSUFFICIENT_CREDITS_FAILURE_MESSAGE = "当前组织积分余额不足，本次任务尚未开始。请补充积分或联系组织管理员调整额度后再试。";
 

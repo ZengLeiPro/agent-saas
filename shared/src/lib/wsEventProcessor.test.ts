@@ -630,7 +630,7 @@ describe('processWsEvent - done 终态', () => {
     expect(ret).toBe('done');
     const user = ctrl.messages[0] as Extract<MessageItem, { type: 'user' }>;
     expect(user.status).toBe('failed');
-    expect(user.failedReason).toBe('异常中断，请继续对话');
+    expect(user.failedReason).toBe('Agent 开小差了，请发送「继续」');
     expect(hooks.onChatDone).toHaveBeenCalledWith('c1', 'boom');
   });
 
@@ -653,7 +653,7 @@ describe('processWsEvent - done 终态', () => {
     const ctrl = makeController();
     const { ctx } = makeCtx(ctrl);
     dispatch({ type: 'done', error: 'boom' }, ctx);
-    expect(ctrl.messages[0]).toMatchObject({ type: 'text', content: '异常中断，请继续对话' });
+    expect(ctrl.messages[0]).toMatchObject({ type: 'text', content: 'Agent 开小差了，请发送「继续」' });
   });
 });
 

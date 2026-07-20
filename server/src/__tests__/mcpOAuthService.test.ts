@@ -25,6 +25,18 @@ async function fixture() {
 }
 
 describe('McpOAuthService', () => {
+  it('CIMD 文档包含与公开 metadata URL 完全一致的 client_id', async () => {
+    const { store, vault } = await fixture();
+    const service = new McpOAuthService({ store, vault });
+
+    expect(service.clientMetadata('https://api.example.com/api/mcp/oauth/callback')).toMatchObject({
+      client_id: 'https://api.example.com/api/mcp/oauth/client-metadata',
+      client_name: '开沿 AI 员工',
+      redirect_uris: ['https://api.example.com/api/mcp/oauth/callback'],
+      token_endpoint_auth_method: 'none',
+    });
+  });
+
   it('按用户保存 PKCE/OAuth token，并用一次性 state 完成回调', async () => {
     const { configPath, store, vault } = await fixture();
     const authFn = vi.fn(async (provider, options) => {

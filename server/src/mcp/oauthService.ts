@@ -275,8 +275,13 @@ export class McpOAuthService {
     });
   }
 
-  clientMetadata(redirectUrl: string): OAuthClientMetadata {
-    return buildClientMetadata(redirectUrl, undefined);
+  clientMetadata(redirectUrl: string): OAuthClientMetadata & { client_id: string } {
+    const clientId = clientMetadataUrl(redirectUrl);
+    if (!clientId) throw new Error('OAuth Client ID Metadata Document requires an HTTPS callback URL');
+    return {
+      client_id: clientId,
+      ...buildClientMetadata(redirectUrl, undefined),
+    };
   }
 
   private createProvider(args: {

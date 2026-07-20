@@ -60,6 +60,9 @@ export interface AutoCompactionScheduleInput {
   transcriptPath?: string;
   /** 该 session 的全量事件（调用方已持有 eventStore，list 后传入） */
   events: PlatformEvent[];
+  /** context_too_large 等已确认超窗错误：跳过 usage 阈值判定，直接排一次压缩。 */
+  force?: boolean;
+  forceReason?: string;
 }
 
 export interface AutoCompactionEvaluation {
@@ -160,11 +163,19 @@ export class AutoCompactionService {
       if (cooldown && cooldown > now) return;
 
       const settings = this.deps.getTenantSettings(input.tenantId);
-      const evaluation = evaluateAutoCompaction({
-        events: input.events,
-        model: input.model,
-        autoCompactEnabled: settings?.autoCompactEnabled === true,
-      });
+      const enabled = settings?.autoCompactEnabled === true;
+      const evaluation = input.force && enabled
+        ? {
+            shouldCompact: true,
+            reason: input.forceReason ?? 'forced',
+            contextWindow: getModelContextWindow(input.model),
+            thresholdRatio: getModelAutoCompactThreshold(input.model),
+          }
+        : evaluateAutoCompaction({
+            events: input.events,
+            model: input.model,
+            autoCompactEnabled: enabled,
+          });
       if (!evaluation.shouldCompact) {
         if (evaluation.reason !== 'tenant_disabled' && evaluation.reason !== 'below_threshold') {
           logger.debug(`[auto-compact] skip session=${input.sessionId} reason=${evaluation.reason}`);
@@ -204,8 +215,9 @@ export class AutoCompactionService {
       this.cooldownUntil.set(input.sessionId, now + ENQUEUE_COOLDOWN_MS);
       logger.info(
         `[auto-compact] enqueued session=${input.sessionId} run=${runId} `
-        + `tokens=${evaluation.currentTokens}/${evaluation.contextWindow} `
-        + `threshold=${evaluation.thresholdTokens}(${evaluation.thresholdRatio}) `
+        + `tokens=${evaluation.currentTokens ?? 'unknown'}/${evaluation.contextWindow ?? 'unknown'} `
+        + `threshold=${evaluation.thresholdTokens ?? 'forced'}(${evaluation.thresholdRatio ?? 'unknown'}) `
+        + `reason=${evaluation.reason} `
         + `model=${input.model} modelRef=${input.modelRef}`,
       );
     } catch (err) {

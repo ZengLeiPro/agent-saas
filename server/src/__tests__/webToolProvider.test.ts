@@ -243,6 +243,28 @@ describe('WebToolProvider', () => {
     expect(result?.content).not.toContain('steal()');
   });
 
+  it.each([
+    ['text/markdown', '# Markdown source'],
+    ['application/xml', '<feed><title>XML source</title></feed>'],
+    ['application/atom+xml', '<feed><title>Atom source</title></feed>'],
+  ])('accepts %s as readable text', async (contentType, body) => {
+    const fetchImpl = vi.fn(async () => new Response(body, {
+      status: 200,
+      headers: { 'content-type': `${contentType}; charset=utf-8` },
+    })) as unknown as typeof fetch;
+    const provider = new WebToolProvider({
+      fetch: {},
+      egress: { allowedHosts: ['93.184.216.34'] },
+    }, fetchImpl);
+    const result = await provider.invoke({
+      toolId: 'WebFetch',
+      input: { url: 'https://93.184.216.34/feed' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context());
+    expect(result?.content).toContain('WEB_FETCH_RESULT');
+    expect(result?.content).toContain(contentType.includes('markdown') ? 'Markdown source' : 'source');
+  });
+
   it('blocks private-network URL literals before fetch is called', async () => {
     const fetchImpl = vi.fn(async () => new Response('should not fetch')) as unknown as typeof fetch;
     const provider = new WebToolProvider({ fetch: {} }, fetchImpl);
@@ -298,13 +320,17 @@ describe('WebToolProvider', () => {
     };
 
     for (let i = 1; i < WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT; i += 1) {
-      await expect(provider.invoke(call, failedRun)).rejects.toThrow(/HTTP 404/);
+      await expect(provider.invoke(call, failedRun)).resolves.toMatchObject({
+        content: expect.stringContaining('WEB_FETCH_UNAVAILABLE'),
+      });
     }
     await expect(provider.invoke(call, failedRun)).rejects.toBeInstanceOf(WebFetchCircuitOpenError);
     await expect(provider.invoke(call, failedRun)).rejects.toBeInstanceOf(WebFetchCircuitOpenError);
     expect(fetchImpl).toHaveBeenCalledTimes(WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT);
 
-    await expect(provider.invoke(call, { ...context(), runId: 'run-independent' })).rejects.toThrow(/HTTP 404/);
+    await expect(provider.invoke(call, { ...context(), runId: 'run-independent' })).resolves.toMatchObject({
+      content: expect.stringContaining('"reason":"http_404"'),
+    });
     expect(fetchImpl).toHaveBeenCalledTimes(WEB_FETCH_CONSECUTIVE_FAILURE_LIMIT + 1);
   });
 
@@ -344,11 +370,7 @@ describe('WebToolProvider', () => {
         input: { url: `https://93.184.216.34/page-${i}` },
         authorization: { approved: true as const, source: 'policy_auto' as const },
       };
-      if (outcomes[i]) {
-        await expect(provider.invoke(call, runContext)).resolves.toBeTruthy();
-      } else {
-        await expect(provider.invoke(call, runContext)).rejects.toThrow(/HTTP 404/);
-      }
+      await expect(provider.invoke(call, runContext)).resolves.toBeTruthy();
     }
 
     await expect(provider.invoke({

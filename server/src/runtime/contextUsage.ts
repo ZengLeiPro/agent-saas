@@ -76,6 +76,11 @@ export class RuntimeContextUsageTracker {
     return this.toContextUsage(model, lastRequest);
   }
 
+  /** 当前 Responses 接力链或全量请求的上下文 token 口径。 */
+  get currentContextTokens(): number {
+    return this.state.contextTokens;
+  }
+
   private applyUsage(
     model: string,
     usage: ModelUsage,

@@ -188,6 +188,22 @@ describe('context projection', () => {
     expect(passthrough).toBe(messages); // 引用相等：未做任何 map
   });
 
+  it('caps recent tool results individually and all tool results cumulatively', () => {
+    const messages: ModelChatMessage[] = Array.from({ length: 40 }, (_, i) => ({
+      role: 'tool' as const,
+      tool_call_id: `call-${i}`,
+      content: 'X'.repeat(30_000),
+    }));
+    const truncated = truncateOldToolResults(messages);
+    const toolChars = truncated.reduce((sum, message) => (
+      message.role === 'tool' ? sum + message.content.length : sum
+    ), 0);
+    expect(toolChars).toBeLessThanOrEqual(96_000);
+    const last = truncated.at(-1);
+    expect(last?.role === 'tool' ? last.content.length : Infinity).toBeLessThanOrEqual(16_000);
+    expect(truncated.every((message) => message.role !== 'tool' || message.content.length <= 16_000)).toBe(true);
+  });
+
   it('supports retrieval augmented slices with a query summary and recent context', () => {
     const events = [event(0), event(1), { ...event(2), content: 'needle in history' }, event(3)];
     const projection = buildContextProjection(events, {

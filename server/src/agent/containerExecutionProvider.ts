@@ -21,6 +21,7 @@ import {
   MAX_FILE_BYTES,
   MAX_LIST_ENTRIES,
   MAX_READ_LINES,
+  MAX_READ_OUTPUT_BYTES,
   MAX_SHELL_CAPTURE_BYTES,
   MAX_SHELL_STREAM_BYTES,
   formatShellOutput,
@@ -666,6 +667,7 @@ const root = process.env.KY_AGENT_WORKDIR || ${JSON.stringify(DEFAULT_CONTAINER_
 const maxFileBytes = ${MAX_FILE_BYTES};
 const maxListEntries = ${MAX_LIST_ENTRIES};
 const maxReadLines = ${MAX_READ_LINES};
+const maxReadOutputBytes = ${MAX_READ_OUTPUT_BYTES};
 const maxEditFileBytes = 1000000;
 const maxGlobPaths = 5000;
 const maxGlobDepth = 12;
@@ -809,6 +811,9 @@ async function readLineRange(fullPath, relPath, options) {
   const lines = [];
   let lineNo = 0;
   let hasMore = false;
+  let returnedBytes = 0;
+  let byteLimitReached = false;
+  const contentByteBudget = maxReadOutputBytes - 512;
   try {
     for await (const line of rl) {
       lineNo++;
@@ -817,7 +822,23 @@ async function readLineRange(fullPath, relPath, options) {
         hasMore = true;
         break;
       }
-      lines.push(line);
+      const separatorBytes = lines.length > 0 ? 1 : 0;
+      const remainingBytes = contentByteBudget - returnedBytes - separatorBytes;
+      if (remainingBytes <= 0) {
+        hasMore = true;
+        byteLimitReached = true;
+        break;
+      }
+      const encoded = Buffer.from(line, 'utf8');
+      let boundedLine = line;
+      if (encoded.length > remainingBytes) {
+        boundedLine = encoded.subarray(0, remainingBytes).toString('utf8').replace(/\\uFFFD$/, '');
+        byteLimitReached = true;
+        hasMore = true;
+      }
+      lines.push(boundedLine);
+      returnedBytes += separatorBytes + Buffer.byteLength(boundedLine, 'utf8');
+      if (byteLimitReached) break;
     }
   } finally {
     rl.close();
@@ -827,7 +848,9 @@ async function readLineRange(fullPath, relPath, options) {
     return '...[no content: offset ' + offset + ' is beyond EOF for ' + relPath + '; total lines=' + lineNo + ']';
   }
   const endLine = offset + lines.length - 1;
-  const suffix = hasMore
+  const suffix = byteLimitReached
+    ? '\\n...[truncated: Read output reached ' + maxReadOutputBytes + ' UTF-8 bytes while showing ' + relPath + ' lines ' + offset + '-' + endLine + '; narrow the line range or use Search/Shell for targeted inspection]'
+    : hasMore
     ? '\\n...[truncated: showing ' + relPath + ' lines ' + offset + '-' + endLine + '; next Read offset=' + (endLine + 1) + ', limit=' + limit + ']'
     : '\\n...[EOF: showing ' + relPath + ' lines ' + offset + '-' + endLine + '; total lines=' + lineNo + ']';
   return lines.join('\\n') + suffix;

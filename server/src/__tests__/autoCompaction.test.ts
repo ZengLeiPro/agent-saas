@@ -252,6 +252,29 @@ describe('AutoCompactionService（调度 / 让路 / 抢占）', () => {
     expect(upserted).toHaveLength(0);
   });
 
+  it('context_too_large 可在本轮没有 usage 时强制 enqueue', async () => {
+    const { service, upserted } = makeService();
+    await service.maybeScheduleAfterRun({
+      ...scheduleInput,
+      events: [],
+      force: true,
+      forceReason: 'context_too_large',
+    });
+    expect(upserted).toHaveLength(1);
+  });
+
+  it('强制压缩仍尊重租户总开关', async () => {
+    const { service, upserted } = makeService();
+    await service.maybeScheduleAfterRun({
+      ...scheduleInput,
+      tenantId: 'other',
+      events: [],
+      force: true,
+      forceReason: 'context_too_large',
+    });
+    expect(upserted).toHaveLength(0);
+  });
+
   it('session 已有其他活跃 run → 让路不 enqueue', async () => {
     const { service, upserted } = makeService([
       { runId: 'run-user', sessionId: 'session-1', status: 'pending' } as RunRecord,

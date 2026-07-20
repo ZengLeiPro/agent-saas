@@ -41,9 +41,11 @@ import {
   MAX_FILE_BYTES,
   MAX_LIST_ENTRIES,
   MAX_READ_LINES,
+  MAX_READ_OUTPUT_BYTES,
   MAX_SHELL_CAPTURE_BYTES,
   MAX_SHELL_STREAM_BYTES,
   formatShellOutput,
+  truncateUtf8Prefix,
 } from './toolOutput.js';
 import {
   WORKSPACE_ARTIFACT_PAYLOAD_METADATA_KEY,
@@ -64,7 +66,7 @@ const exec = promisify(execCb);
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
 const MEMORY_SHELL_MAYBE_CHANGED_DEBOUNCE_MS = 30_000;
 
-export { MAX_FILE_BYTES, MAX_LIST_ENTRIES, MAX_READ_LINES };
+export { MAX_FILE_BYTES, MAX_LIST_ENTRIES, MAX_READ_LINES, MAX_READ_OUTPUT_BYTES };
 
 export type ToolRisk = 'safe' | 'workspace_write' | 'dangerous';
 export type ToolApprovalMode = 'never' | 'web';
@@ -884,6 +886,10 @@ async function readLineRange(
   const lines: string[] = [];
   let lineNo = 0;
   let hasMore = false;
+  let returnedBytes = 0;
+  let byteLimitReached = false;
+  // 为说明性 suffix 预留空间，保证最终 tool_result 仍落在硬上限内。
+  const contentByteBudget = MAX_READ_OUTPUT_BYTES - 512;
   try {
     for await (const line of rl) {
       lineNo += 1;
@@ -892,7 +898,21 @@ async function readLineRange(
         hasMore = true;
         break;
       }
-      lines.push(line);
+      const separatorBytes = lines.length > 0 ? 1 : 0;
+      const remainingBytes = contentByteBudget - returnedBytes - separatorBytes;
+      if (remainingBytes <= 0) {
+        hasMore = true;
+        byteLimitReached = true;
+        break;
+      }
+      const bounded = truncateUtf8Prefix(line, remainingBytes);
+      lines.push(bounded.text);
+      returnedBytes += separatorBytes + Buffer.byteLength(bounded.text, 'utf8');
+      if (bounded.truncated) {
+        hasMore = true;
+        byteLimitReached = true;
+        break;
+      }
     }
   } finally {
     rl.close();
@@ -902,8 +922,10 @@ async function readLineRange(
     return `...[no content: offset ${offset} is beyond EOF for ${relPath}; total lines=${lineNo}]`;
   }
   const endLine = offset + lines.length - 1;
-  const suffix = hasMore
-    ? `\n...[truncated: showing ${relPath} lines ${offset}-${endLine}; next Read offset=${endLine + 1}, limit=${limit}]`
+  const suffix = byteLimitReached
+    ? `\n...[truncated: Read output reached ${MAX_READ_OUTPUT_BYTES} UTF-8 bytes while showing ${relPath} lines ${offset}-${endLine}; narrow the line range or use Search/Shell for targeted inspection]`
+    : hasMore
+      ? `\n...[truncated: showing ${relPath} lines ${offset}-${endLine}; next Read offset=${endLine + 1}, limit=${limit}]`
     : `\n...[EOF: showing ${relPath} lines ${offset}-${endLine}; total lines=${lineNo}]`;
   return `${lines.join('\n')}${suffix}`;
 }

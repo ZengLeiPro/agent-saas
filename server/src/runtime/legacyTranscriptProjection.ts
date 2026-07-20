@@ -190,18 +190,27 @@ function parseToolArguments(raw: string): unknown {
  */
 const DEFAULT_TOOL_RESULT_MAX_CHARS = 4000;
 /**
- * 默认保留最近 N 条 tool 消息原文（不截断）。N=8 大致覆盖最近 2-3 轮
+ * 默认优先保留最近 N 条 tool 消息。N=8 大致覆盖最近 2-3 轮
  * 工具调用（一轮平均 2-4 个并行/串行 call）。
  */
 const DEFAULT_TOOL_RESULT_KEEP_RECENT = 8;
+/** 最近工具结果也必须有单条上限，避免一次并行 Read 把下一轮请求直接撑爆。 */
+const DEFAULT_RECENT_TOOL_RESULT_MAX_CHARS = 16_000;
+/** 单次模型请求中全部 tool_result 的累计字符预算。 */
+const DEFAULT_TOOL_RESULT_TOTAL_MAX_CHARS = 96_000;
+const TOOL_RESULT_PLACEHOLDER_MAX_CHARS = 160;
 
 export interface ToolResultTruncationOptions {
   /** 关掉截断（测试 / 调试 / 显式 full_replay 时用）。默认开启。 */
   enabled?: boolean;
   /** 单条 tool 消息最大字符数。超长尾部用占位符替换。 */
   maxChars?: number;
-  /** 末尾保留多少条 tool 消息原文（不截断）。 */
+  /** 末尾多少条 tool 消息使用较大的 recentMaxChars 上限。 */
   keepRecent?: number;
+  /** 最近 keepRecent 条的单条字符上限。默认 16K。 */
+  recentMaxChars?: number;
+  /** 全部 tool 消息的累计字符上限。默认 96K。 */
+  maxTotalChars?: number;
 }
 
 /**
@@ -209,7 +218,7 @@ export interface ToolResultTruncationOptions {
  *
  * 设计原则：
  * - 只动 role='tool' 的消息，其它 role 完全不碰，前缀字节缓存语义不变。
- * - 最近 keepRecent 条 tool 完整保留 — 模型刚做的工具调用，需要看完整结果继续推理。
+ * - 最近 keepRecent 条 tool 使用更大的上限 — 模型刚做的工具调用，需要更多结果继续推理。
  * - 更早的 tool 消息只截掉超过 maxChars 的尾巴，前段照旧 + 显式占位符 +
  *   引导模型用 SessionSearchEvents 按 toolCallId 拉原文（如果需要）。
  *
@@ -223,30 +232,45 @@ export function truncateOldToolResults(
   if (options.enabled === false) return messages;
   const maxChars = options.maxChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS;
   const keepRecent = options.keepRecent ?? DEFAULT_TOOL_RESULT_KEEP_RECENT;
+  const recentMaxChars = options.recentMaxChars ?? DEFAULT_RECENT_TOOL_RESULT_MAX_CHARS;
+  const maxTotalChars = options.maxTotalChars ?? DEFAULT_TOOL_RESULT_TOTAL_MAX_CHARS;
 
   // 1) 标记每个 tool 消息的"从尾往前"的序号
   const toolIndices: number[] = [];
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i]!.role === 'tool') toolIndices.push(i);
   }
-  if (toolIndices.length <= keepRecent) return messages;
+  // 2) 从最新往最旧分配累计预算。最近结果优先，但也不能无限大；较旧结果
+  // 保留头部和可检索指针。原文始终在 EventStore，不在模型请求里重复搬运。
+  const bounded = new Map<number, ModelChatMessage>();
+  let remainingTotal = Math.max(0, maxTotalChars);
+  for (let position = 0; position < toolIndices.length; position += 1) {
+    const idx = toolIndices[position]!;
+    const message = messages[idx]!;
+    if (message.role !== 'tool') continue;
+    const remainingMessages = toolIndices.length - position;
+    const placeholderReserve = Math.min(
+      TOOL_RESULT_PLACEHOLDER_MAX_CHARS,
+      Math.floor(remainingTotal / Math.max(1, remainingMessages)),
+    );
+    const availableNow = Math.max(0, remainingTotal - placeholderReserve * Math.max(0, remainingMessages - 1));
+    const perMessageLimit = position < keepRecent ? recentMaxChars : maxChars;
+    const budget = Math.min(perMessageLimit, availableNow);
+    const content = truncateToolResultContent(message.content, budget, message.tool_call_id);
+    remainingTotal = Math.max(0, remainingTotal - content.length);
+    if (content !== message.content) bounded.set(idx, { ...message, content });
+  }
+  if (bounded.size === 0) return messages;
+  return messages.map((message, idx) => bounded.get(idx) ?? message);
+}
 
-  // 2) 倒数 keepRecent 个 tool 不动，更早的截断
-  const toolsToTruncate = new Set(toolIndices.slice(keepRecent));
-  return messages.map((m, idx) => {
-    if (m.role !== 'tool') return m;
-    if (!toolsToTruncate.has(idx)) return m;
-    if (m.content.length <= maxChars) return m;
-    const kept = m.content.slice(0, maxChars);
-    const truncated = m.content.length - maxChars;
-    return {
-      ...m,
-      content:
-        kept
-        + `\n\n...[历史 tool_result 已截断 ${truncated} 字符以节省 context；`
-        + `如需完整原文，调用 SessionSearchEvents 工具按 toolCallId=${m.tool_call_id} 查询]`,
-    };
-  });
+function truncateToolResultContent(content: string, maxChars: number, toolCallId: string): string {
+  if (content.length <= maxChars) return content;
+  if (maxChars <= 0) return '';
+  const marker = `\n\n...[tool_result 已截断；完整原文请用 SessionGetToolTrace toolCallId=${toolCallId} 查询]`;
+  if (marker.length >= maxChars) return marker.slice(0, maxChars);
+  const keptChars = maxChars - marker.length;
+  return `${content.slice(0, keptChars)}${marker}`;
 }
 
 export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatMessage[] {

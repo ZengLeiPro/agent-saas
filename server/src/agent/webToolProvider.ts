@@ -142,6 +142,16 @@ export class WebToolProvider implements ToolProvider {
           const lastError = err instanceof Error ? err.message : String(err);
           throw new WebFetchCircuitOpenError(`${reason}；最后一次错误：${lastError}`, { cause: err });
         }
+        const expectedFailure = classifyExpectedSourceFailure(err);
+        if (expectedFailure) {
+          return {
+            content: [
+              'WEB_FETCH_UNAVAILABLE',
+              JSON.stringify({ url: input.url, reason: expectedFailure }),
+              '该来源本次不可用。不要把它当成系统故障；可改用其他来源，或基于已有材料继续。',
+            ].join('\n'),
+          };
+        }
         throw err;
       }
     }
@@ -227,7 +237,7 @@ export class WebToolProvider implements ToolProvider {
           method: 'GET',
           signal: combinedSignal,
           headers: {
-            Accept: 'text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.8',
+            Accept: 'text/html,application/xhtml+xml,text/markdown,application/json,application/xml,text/xml,application/atom+xml,text/plain;q=0.9,*/*;q=0.8',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             'User-Agent': fetchConfig.userAgent || DEFAULT_USER_AGENT,
           },
@@ -272,9 +282,27 @@ export class WebToolProvider implements ToolProvider {
   }
 }
 
+function classifyExpectedSourceFailure(err: unknown): string | undefined {
+  const message = err instanceof Error ? err.message : String(err);
+  const http = /WebFetch failed with HTTP (401|403|404)\b/.exec(message)?.[1];
+  if (http) return `http_${http}`;
+  if (/^Unsupported content type:/i.test(message)) return 'unsupported_content_type';
+  if (/^Response too large \(\d+ bytes > \d+ bytes\)\.$/i.test(message)) return 'response_too_large';
+  return undefined;
+}
+
 function assertAllowedContentType(contentType: string, allowed: string[] | undefined): void {
   const normalized = contentType.split(';')[0].trim().toLowerCase();
-  const allowedTypes = allowed ?? ['text/html', 'application/xhtml+xml', 'text/plain', 'application/json'];
+  const allowedTypes = allowed ?? [
+    'text/html',
+    'application/xhtml+xml',
+    'text/plain',
+    'text/markdown',
+    'text/xml',
+    'application/xml',
+    'application/atom+xml',
+    'application/json',
+  ];
   if (!allowedTypes.some((type) => normalized === type.toLowerCase())) {
     throw new Error(`Unsupported content type: ${normalized}`);
   }

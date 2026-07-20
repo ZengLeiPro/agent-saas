@@ -1037,6 +1037,10 @@ export function resolveTenantRemoteHandsSource(
 
 // 以下装配小件同时被 subagent/subagentRunner.ts 复用（子 loop 精简重建，
 // 见该文件头注释）；除加 export 外语义零改动。
+function isContextTooLargeError(message: string | undefined): boolean {
+  return !!message && /context[_ ]too[_ ]large|maximum context|context window|input.*too (?:large|long)/i.test(message);
+}
+
 export class RunStateTrackingEventStore implements EventStore {
   constructor(
     private readonly inner: EventStore,
@@ -1922,6 +1926,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       // /compact 平台命令（2026-07-03 真实现）：分流到上下文压缩，不进正常 agent run。
       // web / dingtalk / cron 任何通道发裸 "/compact" 行为一致。
       // instructions 传会话正常 system prompt——压缩请求与正常轮同构以命中 prompt cache。
+      let loopError: string | undefined;
       if (isCompactCommand(message.content)) {
         const runRecord = config.autoCompaction ? await config.runStore?.get(runId) : null;
         const isAutoCompactionRun = runRecord?.metadata?.autoCompaction === true;
@@ -1935,15 +1940,21 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           }
           config.autoCompaction.registerActive(sessionId, runId);
           try {
-            yield* loop.compact({ message, instructions }, runContext);
+            for await (const event of loop.compact({ message, instructions }, runContext)) {
+              if (event.type === 'error') loopError = event.error ?? 'context compaction failed';
+              yield event;
+            }
           } finally {
             config.autoCompaction.unregisterActive(sessionId, runId);
           }
         } else {
-          yield* loop.compact({ message, instructions }, runContext);
+          for await (const event of loop.compact({ message, instructions }, runContext)) {
+            if (event.type === 'error') loopError = event.error ?? 'context compaction failed';
+            yield event;
+          }
         }
       } else {
-        yield* loop.run(
+        for await (const event of loop.run(
           {
             message,
             prompt,
@@ -1959,7 +1970,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             connection: { apiKey, baseUrl },
           },
           runContext,
-        );
+        )) {
+          if (event.type === 'error') loopError = event.error ?? 'raw agent loop failed';
+          yield event;
+        }
         // post-run 自动压缩评估（fire-and-forget：绝不阻塞出站流收尾，错误内部吞掉）
         if (config.autoCompaction) {
           const autoCompaction = config.autoCompaction;
@@ -1977,11 +1991,18 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
               cwd,
               transcriptPath: sessionRecord.transcriptPath,
               events: allEvents,
+              ...(isContextTooLargeError(loopError) ? {
+                force: true,
+                forceReason: 'context_too_large',
+              } : {}),
             }))
             .catch(() => undefined);
         }
       }
-      await sessionCatalog.markStatus(sessionId, 'idle');
+      await sessionCatalog.markStatus(
+        sessionId,
+        options.abortController?.signal.aborted ? 'idle' : loopError ? 'error' : 'idle',
+      );
     } catch (err) {
       if (options.abortController?.signal.aborted) {
         await sessionCatalog.markStatus(sessionId, 'idle').catch(() => undefined);
@@ -2269,7 +2290,8 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     });
 
     try {
-      yield* loop.resumeApproval(
+      let loopError: string | undefined;
+      for await (const event of loop.resumeApproval(
         {
           approvalId: request.approvalId,
           response: request.response,
@@ -2296,8 +2318,11 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           hooks: request.hooks,
           signal: request.abortController?.signal,
         },
-      );
-      await sessionCatalog.markStatus(request.sessionId, 'idle');
+      )) {
+        if (event.type === 'error') loopError = event.error ?? 'approval resume failed';
+        yield event;
+      }
+      await sessionCatalog.markStatus(request.sessionId, loopError ? 'error' : 'idle');
     } catch (err) {
       if (request.abortController?.signal.aborted) {
         await sessionCatalog.markStatus(request.sessionId, 'idle').catch(() => undefined);
@@ -2562,7 +2587,8 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     });
 
     try {
-      yield* loop.resumeInteraction(
+      let loopError: string | undefined;
+      for await (const event of loop.resumeInteraction(
         {
           interactionId: request.interactionId,
           response: normalizeInteractionResponse(resolution.response ?? request.response),
@@ -2589,8 +2615,11 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           hooks: request.hooks,
           signal: request.abortController?.signal,
         },
-      );
-      await sessionCatalog.markStatus(request.sessionId, 'idle');
+      )) {
+        if (event.type === 'error') loopError = event.error ?? 'interaction resume failed';
+        yield event;
+      }
+      await sessionCatalog.markStatus(request.sessionId, loopError ? 'error' : 'idle');
     } catch (err) {
       if (request.abortController?.signal.aborted) {
         await sessionCatalog.markStatus(request.sessionId, 'idle').catch(() => undefined);
@@ -2753,6 +2782,7 @@ export async function wakeRuntimeSession(
       intervalMs: options.renewIntervalMs ?? 30_000,
     });
     try {
+      let outboundError: string | undefined;
       for await (const event of dispatch({
         approvalId: resumeApproval.approvalId,
         response: resumeApproval.response,
@@ -2773,10 +2803,13 @@ export async function wakeRuntimeSession(
         runtimeWorkerId: options.lease?.workerId,
       })) {
         await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
-        if (event.type === 'error') throw new Error(event.error ?? 'approval resume wake failed');
+        if (event.type === 'error') outboundError = event.error ?? 'approval resume wake failed';
       }
       const current = await config.runStore?.get(run.runId);
-      await options.lease?.release(current?.status, current?.statusReason ?? 'approval_resume_wake_completed');
+      if (current) {
+        await options.lease?.release(current.status, current.statusReason ?? 'approval_resume_wake_completed');
+      }
+      if (outboundError) throw new Error(outboundError);
     } finally {
       if (renewTimer) clearInterval(renewTimer);
       runtimeRunController.unregister(run.runId);
@@ -2805,6 +2838,7 @@ export async function wakeRuntimeSession(
       intervalMs: options.renewIntervalMs ?? 30_000,
     });
     try {
+      let outboundError: string | undefined;
       for await (const event of dispatch({
         interactionId: resumeInteraction.interactionId,
         response: normalizeInteractionResponse(resolution.response ?? resumeInteraction.response),
@@ -2825,10 +2859,13 @@ export async function wakeRuntimeSession(
         runtimeWorkerId: options.lease?.workerId,
       })) {
         await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
-        if (event.type === 'error') throw new Error(event.error ?? 'interaction resume wake failed');
+        if (event.type === 'error') outboundError = event.error ?? 'interaction resume wake failed';
       }
       const current = await config.runStore?.get(run.runId);
-      await options.lease?.release(current?.status, current?.statusReason ?? 'interaction_resume_wake_completed');
+      if (current) {
+        await options.lease?.release(current.status, current.statusReason ?? 'interaction_resume_wake_completed');
+      }
+      if (outboundError) throw new Error(outboundError);
     } finally {
       if (renewTimer) clearInterval(renewTimer);
       runtimeRunController.unregister(run.runId);
@@ -2854,6 +2891,7 @@ export async function wakeRuntimeSession(
     intervalMs: options.renewIntervalMs ?? 30_000,
   });
   try {
+    let outboundError: string | undefined;
     for await (const event of dispatch(
       wakePrompt.message,
       context,
@@ -2871,12 +2909,13 @@ export async function wakeRuntimeSession(
       },
     )) {
       await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
-      if (event.type === 'error') {
-        throw new Error(event.error ?? 'wake dispatch failed');
-      }
+      if (event.type === 'error') outboundError = event.error ?? 'wake dispatch failed';
     }
     const current = await config.runStore?.get(run.runId);
-    await options.lease?.release(current?.status, current?.statusReason ?? 'wake_completed');
+    if (current) {
+      await options.lease?.release(current.status, current.statusReason ?? 'wake_completed');
+    }
+    if (outboundError) throw new Error(outboundError);
   } finally {
     if (renewTimer) clearInterval(renewTimer);
     runtimeRunController.unregister(run.runId);

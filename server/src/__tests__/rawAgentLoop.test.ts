@@ -26,6 +26,7 @@ import type { LatestResponseSessionState, ResponseSessionStatePatch, RunStore } 
 import type { ModelAdapter, ModelEvent, ModelRequest, ModelToolCall, RunContext } from '../runtime/types.js';
 import type { OutboundEvent } from '../types/index.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { configureModelPricing } from '../data/usage/pricing.js';
 
 class FakeToolCallingAdapter implements ModelAdapter {
   calls = 0;
@@ -271,6 +272,19 @@ class EmptyUsageAdapter implements ModelAdapter {
   }
 }
 
+class PartialFailureAdapter implements ModelAdapter {
+  async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    yield { type: 'text_delta', content: '已经生成但尚未完成' };
+    yield {
+      type: 'completed',
+      content: '已经生成但尚未完成',
+      toolCalls: [],
+      terminalStatus: 'failed',
+      errorCode: 'internal_server_error',
+    };
+  }
+}
+
 class IncompleteToolCallAdapter implements ModelAdapter {
   async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
     yield {
@@ -458,6 +472,45 @@ describe('RawAgentLoop', () => {
     expect(adapter.requests.at(-1)?.messages.at(-1)).toMatchObject({
       role: 'user',
       content: expect.stringContaining('WebFetch 已因持续高失败率熔断'),
+    });
+  });
+
+  it('forces a no-tool synthesis turn when the run turn budget is reached', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-turn-budget-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new WebFetchUntilForcedSynthesisAdapter();
+    const webProvider = new WebToolProvider({
+      fetch: {},
+      egress: { allowedHosts: ['93.184.216.34'] },
+    }, vi.fn(async () => new Response('missing', { status: 404 })) as unknown as typeof fetch);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-turn-budget'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime({ providers: [webProvider] }),
+    });
+    const events = await collect(loop.run({
+      message: { channel: 'web', chatId: 'chat-1', content: '调研' },
+      prompt: '调研',
+      instructions: '先找资料再回答。',
+      maxTurns: 3,
+      forceSynthesisAfterTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId: 'run-turn-budget',
+      sessionId: 'session-turn-budget',
+      model: 'gpt-5.5',
+      cwd,
+      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+    }));
+    expect(events.at(-1)).toEqual({ type: 'done' });
+    expect(adapter.requests).toHaveLength(2);
+    expect(adapter.requests[1]?.toolChoice).toBe('none');
+    expect(adapter.requests[1]?.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: expect.stringContaining('达到 1 轮预算'),
     });
   });
 
@@ -959,6 +1012,39 @@ describe('RawAgentLoop', () => {
           apiRequestCount: 1,
         },
       },
+    });
+  });
+
+  it('persists partial assistant text when the provider fails after output', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-partial-error-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const loop = new RawAgentLoop({
+      modelAdapter: new PartialFailureAdapter(),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-partial-error'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+    });
+    const events = await collect(loop.run({
+      message: { channel: 'web', chatId: 'chat-1', content: '写一份报告' },
+      prompt: '写一份报告',
+      instructions: '完成任务。',
+      maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId: 'run-partial-error',
+      sessionId: 'session-partial-error',
+      model: 'gpt-5.5',
+      cwd,
+      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+    }));
+    expect(events.at(-1)).toMatchObject({ type: 'error', error: expect.stringContaining('可发送“继续”') });
+    const persisted = await eventStore.list('session-partial-error');
+    expect(persisted.find((event) => event.type === 'assistant_message')).toMatchObject({
+      content: '已经生成但尚未完成',
+      streamed: true,
+      incomplete: true,
     });
   });
 
@@ -2347,10 +2433,23 @@ describe('RawAgentLoop', () => {
   async function runRelayScenario(
     state: LatestResponseSessionState | null,
     currentModel: string,
+    priorContextTokens?: number,
   ): Promise<{ adapter: ResponseIdTextAdapter; patches: Array<{ runId: string; patch: ResponseSessionStatePatch }> }> {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-relay-'));
     cleanupDirs.add(cwd);
     const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    if (priorContextTokens) {
+      await eventStore.append({
+        type: 'assistant_message',
+        runId: 'run-relay-1',
+        sessionId: 'session-relay-1',
+        content: 'prior response',
+        model: currentModel,
+        usage: { inputTokens: priorContextTokens, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+        responseMode: 'full',
+        responseChained: false,
+      });
+    }
     const adapter = new ResponseIdTextAdapter('resp_new_run');
     const { runStore, patches } = relayFixtures(state);
     const loop = new RawAgentLoop({
@@ -2389,6 +2488,24 @@ describe('RawAgentLoop', () => {
       'glm-5.2',
     );
     expect(adapter.requests[0]?.previousResponseId).toBe('resp_prev');
+  });
+
+  it('远端接力链达到上下文阈值时断开 previousResponseId，并强制无工具收束', async () => {
+    configureModelPricing({
+      groups: [{ models: [{ value: 'relay-small', context_window: 1_000, auto_compact_threshold: 0.5 }] }],
+    });
+    try {
+      const { adapter } = await runRelayScenario(
+        { runId: 'run-relay-1', lastResponseId: 'resp_prev', lastResponseModel: 'relay-small' },
+        'relay-small',
+        600,
+      );
+      expect(adapter.requests[0]?.previousResponseId).toBeUndefined();
+      expect(adapter.requests[0]?.toolChoice).toBe('none');
+      expect(JSON.stringify(adapter.requests[0]?.messages)).toContain('平台收束指令');
+    } finally {
+      configureModelPricing(undefined);
+    }
   });
 
   it('上一 run 模型不同时禁止接力（切模型后 response id 属于旧后端）', async () => {
@@ -2575,7 +2692,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(projection.messages.some((m) => typeof m.content === 'string' && m.content.includes('/compact'))).toBe(false);
   });
 
-  it('Responses 接力状态存在时透传 previousResponseId（远端已存历史，input 只有增量）', async () => {
+  it('Responses 接力状态存在时仍用本地全量投影压缩，避免已超窗远端链接力失败', async () => {
     const adapter = new SummaryAdapter(['接力摘要正文，长度足够作为摘要输出。']);
     const { eventStore, loop, context, clearedSessions } = await makeCompactHarness(adapter, {
       relayState: { runId: 'run-prev', lastResponseId: 'resp_prev_123', lastResponseModel: 'glm-5.2' },
@@ -2588,7 +2705,8 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     ));
 
     expect(outbound.at(-1)).toEqual({ type: 'done' });
-    expect(adapter.requests[0]?.previousResponseId).toBe('resp_prev_123');
+    expect(adapter.requests[0]?.previousResponseId).toBeUndefined();
+    expect(JSON.stringify(adapter.requests[0]?.messages)).toContain('帮我分析 A 方案');
     // 压缩完成后接力链必须被清空，下一轮全量重建（带 summary）
     expect(clearedSessions).toEqual(['session-compact']);
   });

@@ -673,6 +673,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         terminalEventType,
         terminalStatus,
         errorCode,
+        errorMessage,
         hasEmittedOutput,
       ) && !requestSignal?.aborted
         ? retryDelaysMs[transientRetryIndex]
@@ -1446,11 +1447,15 @@ function isRetryableZeroOutputStreamTerminalError(
   terminalEventType: string | undefined,
   terminalStatus: ModelTerminalStatus | undefined,
   errorCode: string,
+  errorMessage: string,
   hasEmittedOutput: boolean,
 ): boolean {
   if (hasEmittedOutput || terminalStatus !== 'failed') return false;
   if (!['error', 'response.error', 'response.failed'].includes(terminalEventType ?? '')) return false;
-  return errorCode.toLowerCase() === 'internal_server_error';
+  const normalizedCode = errorCode.trim().toLowerCase();
+  if (normalizedCode === 'internal_server_error') return true;
+  return normalizedCode === 'model_provider_error'
+    && errorMessage.trim().toLowerCase() === 'sorry, something went wrong.';
 }
 
 async function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {

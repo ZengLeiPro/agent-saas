@@ -50,6 +50,9 @@ export interface RunInput {
   memoryContext?: string;
   instructions: string;
   maxTurns: number;
+  /** 到达预算后禁用工具并要求基于已有材料收束；用于子 Agent 防失控。 */
+  forceSynthesisAfterTurns?: number;
+  forceSynthesisAfterToolCalls?: number;
   connection: Required<RuntimeConnection>;
 }
 
@@ -393,6 +396,8 @@ export type PlatformEvent =
     requestBodyBytes?: number;
     /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
+    /** 模型流在完整终态前失败；正文是已实际产出的可继续片段。 */
+    incomplete?: boolean;
   }
   | {
     id: string;

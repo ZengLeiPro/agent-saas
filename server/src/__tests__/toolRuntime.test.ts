@@ -10,6 +10,7 @@ import {
   applyToolDescriptionOverride,
   LocalWorkspaceProvider,
   MAX_FILE_BYTES,
+  MAX_READ_OUTPUT_BYTES,
   PlatformToolRuntime,
   readFileToolDescriptor,
   runShellToolDescriptor,
@@ -189,6 +190,18 @@ describe('PlatformToolRuntime', () => {
         expect(rangeResp.content).toContain('line-12 ');
         expect(rangeResp.content).not.toContain('line-9 ');
         expect(rangeResp.content).toContain('next Read offset=13');
+      }
+
+      await writeFile(join(root, 'minified.js'), `const payload="${'界'.repeat(100_000)}";`, 'utf-8');
+      const boundedResp = await provider.execute({
+        toolName: 'Read',
+        input: { path: 'minified.js', offset: 1, limit: 1000 },
+        context: { workspace: workspace(root) },
+      });
+      expect(boundedResp.status).toBe('success');
+      if (boundedResp.status === 'success') {
+        expect(Buffer.byteLength(boundedResp.content, 'utf8')).toBeLessThanOrEqual(MAX_READ_OUTPUT_BYTES);
+        expect(boundedResp.content).toContain(`Read output reached ${MAX_READ_OUTPUT_BYTES} UTF-8 bytes`);
       }
     } finally {
       await rm(root, { recursive: true, force: true });

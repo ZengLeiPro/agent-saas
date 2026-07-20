@@ -39,6 +39,7 @@ import { buildChatMessagesFromEvents, LegacyTranscriptProjection } from './legac
 import { buildModelUserContent } from './imageAttachments.js';
 import { buildContextProjection, type ContextReconstructionPolicy } from './contextProjection.js';
 import { RuntimeContextUsageTracker } from './contextUsage.js';
+import { governModelRequestMessages } from './contextGovernor.js';
 import {
   buildRuntimeReplayState,
   type RuntimeReplayState,
@@ -70,6 +71,11 @@ const RUN_START_REPLAY_EXCLUDED_EVENT_TYPES = [
 const WEB_FETCH_SYNTHESIS_PROMPT = [
   '[平台收束指令]',
   'WebFetch 已因持续高失败率熔断。停止继续扩散 URL，也不要再调用其他工具。',
+  '请立即基于当前上下文中已经取得的材料完成任务；明确区分已核实事实、证据不足项与未完成项。',
+].join('\n');
+const BUDGET_SYNTHESIS_PROMPT = [
+  '[平台收束指令]',
+  '本次任务已达到上下文或执行预算。停止调用任何工具。',
   '请立即基于当前上下文中已经取得的材料完成任务；明确区分已核实事实、证据不足项与未完成项。',
 ].join('\n');
 
@@ -347,7 +353,9 @@ export class RawAgentLoop implements AgentLoop {
   private readonly streamEventBatch: Required<StreamEventBatchOptions>;
   private readonly zombieToolCallTimeoutMs: number;
   private webFetchSynthesisReason?: string;
-  private webFetchSynthesisPromptAppended = false;
+  private forcedSynthesisReason?: string;
+  private forcedSynthesisPrompt = BUDGET_SYNTHESIS_PROMPT;
+  private forcedSynthesisPromptAppended = false;
 
   constructor(options: RawAgentLoopOptions) {
     this.modelAdapter = options.modelAdapter;
@@ -481,16 +489,23 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   private forceWebFetchSynthesis(reason: string, context: RunContext): void {
-    if (this.webFetchSynthesisReason) return;
-    this.webFetchSynthesisReason = reason;
+    if (!this.webFetchSynthesisReason) this.webFetchSynthesisReason = reason;
+    this.forceSynthesis(reason, context, WEB_FETCH_SYNTHESIS_PROMPT);
     logger.warn(`[web-fetch-circuit] force synthesis session=${context.sessionId} run=${context.runId}: ${reason}`);
   }
 
+  private forceSynthesis(reason: string, context: RunContext, prompt = BUDGET_SYNTHESIS_PROMPT): void {
+    if (this.forcedSynthesisReason) return;
+    this.forcedSynthesisReason = reason;
+    this.forcedSynthesisPrompt = prompt;
+    logger.warn(`[context-governor] force synthesis session=${context.sessionId} run=${context.runId}: ${reason}`);
+  }
+
   private prepareForcedSynthesis(messages: ModelChatMessage[]): boolean {
-    if (!this.webFetchSynthesisReason) return false;
-    if (!this.webFetchSynthesisPromptAppended) {
-      messages.push({ role: 'user', content: `${WEB_FETCH_SYNTHESIS_PROMPT}\n原因：${this.webFetchSynthesisReason}` });
-      this.webFetchSynthesisPromptAppended = true;
+    if (!this.forcedSynthesisReason) return false;
+    if (!this.forcedSynthesisPromptAppended) {
+      messages.push({ role: 'user', content: `${this.forcedSynthesisPrompt}\n原因：${this.forcedSynthesisReason}` });
+      this.forcedSynthesisPromptAppended = true;
     }
     return true;
   }
@@ -549,6 +564,7 @@ export class RawAgentLoop implements AgentLoop {
       ...contextProjection.messages,
       { role: 'user', content: buildModelUserContent(input.prompt, input.attachments, input.visionAnalysis) },
     ];
+    const currentUserMessageIndex = messages.length - 1;
 
     if (contextProjection.summaryEvent) await this.append(contextProjection.summaryEvent);
     if (input.memoryContext) {
@@ -579,6 +595,8 @@ export class RawAgentLoop implements AgentLoop {
     let finalText = '';
     let turn = 0;
     let thinkingOnlyContinuationUsed = false;
+    let executedToolCallCount = 0;
+    let pendingTurnText = '';
 
     // RFC v1 P0.4：跨 run 接力 Responses API session state。
     // 启动时查上一已完成 run 的 last_response_id（72h 内未过期），赋给本 run。
@@ -596,12 +614,35 @@ export class RawAgentLoop implements AgentLoop {
         // 时长改由 assistant_thinking 聚合行的 durationMs 携带。
         let turnThinkingMs = 0;
         let thinkingSegmentStartedAt: number | undefined;
+        pendingTurnText = '';
 
         await this.assertNoOpenToolCallBatchesBeforeModel(context.sessionId);
+        if (input.forceSynthesisAfterTurns && turn > input.forceSynthesisAfterTurns) {
+          this.forceSynthesis(`已执行 ${turn - 1} 轮，达到 ${input.forceSynthesisAfterTurns} 轮预算`, context);
+        }
+        if (input.forceSynthesisAfterToolCalls && executedToolCallCount >= input.forceSynthesisAfterToolCalls) {
+          this.forceSynthesis(`已执行 ${executedToolCallCount} 次工具调用，达到 ${input.forceSynthesisAfterToolCalls} 次预算`, context);
+        }
+        const preflight = governModelRequestMessages(
+          messages,
+          context.model,
+          currentUserMessageIndex,
+          contextUsageTracker.currentContextTokens,
+        );
+        if (preflight.forceSynthesis) {
+          this.forceSynthesis(
+            `上下文 ${preflight.triggerTokens} tokens 已达到模型阈值 ${preflight.thresholdTokens}; 已省略 ${preflight.droppedMessages} 条较早消息并断开 Responses 接力链`,
+            context,
+          );
+          // previous_response_id 会在上游重新带回已超窗的远端历史；本轮必须改用
+          // 受 context governor 约束的本地全量投影，成功后 usage 会重新锚定。
+          currentResponseId = undefined;
+        }
         const forceSynthesis = this.prepareForcedSynthesis(messages);
+        const governed = governModelRequestMessages(messages, context.model, currentUserMessageIndex);
         for await (const event of this.modelAdapter.stream({
           model: context.model,
-          messages,
+          messages: governed.messages,
           tools,
           signal: context.signal,
           ...(forceSynthesis ? { toolChoice: 'none' as const } : {}),
@@ -629,6 +670,7 @@ export class RawAgentLoop implements AgentLoop {
               yield { type: 'text_start' };
             }
             turnText += event.content;
+            pendingTurnText += event.content;
             finalText += event.content;
             yield { type: 'text_delta', content: event.content };
           } else {
@@ -718,6 +760,7 @@ export class RawAgentLoop implements AgentLoop {
             ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
             ...(textStarted ? { streamed: true } : {}),
           });
+          pendingTurnText = '';
           if (textStarted) {
             yield { type: 'text_end' };
           }
@@ -776,6 +819,7 @@ export class RawAgentLoop implements AgentLoop {
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
         });
+        pendingTurnText = '';
         if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
         messages.push({
           role: 'assistant',
@@ -786,6 +830,7 @@ export class RawAgentLoop implements AgentLoop {
             function: { name: call.name, arguments: call.arguments },
           })),
         });
+        executedToolCallCount += completed.toolCalls.length;
 
         yield* this.drainToolCalls({
           calls: completed.toolCalls,
@@ -826,6 +871,20 @@ export class RawAgentLoop implements AgentLoop {
       }
       const message = err instanceof Error ? err.message : String(err);
       const modelUsage = buildModelUsage(context.model, totalUsage);
+      if (pendingTurnText) {
+        await this.append({
+          type: 'assistant_message',
+          runId: context.runId,
+          sessionId: context.sessionId,
+          content: pendingTurnText,
+          model: context.model,
+          streamed: true,
+          incomplete: true,
+        });
+      }
+      const surfacedMessage = pendingTurnText
+        ? `${message}；已保留本次未完成正文，可发送“继续”接着完成。`
+        : message;
       await this.append({
         type: 'run_finished',
         runId: context.runId,
@@ -833,7 +892,7 @@ export class RawAgentLoop implements AgentLoop {
         subtype: 'error',
         numTurns: turn,
         ...(modelUsage ? { modelUsage } : {}),
-        error: message,
+        error: surfacedMessage,
       });
       await context.hooks?.onResult?.({
         subtype: 'error',
@@ -841,8 +900,8 @@ export class RawAgentLoop implements AgentLoop {
         resultText: finalText,
         ...(modelUsage ? { modelUsage } : {}),
       });
-      logger.error(`[run] failed session=${context.sessionId} turns=${turn}: ${message}`);
-      yield { type: 'error', error: message };
+      logger.error(`[run] failed session=${context.sessionId} turns=${turn}: ${surfacedMessage}`);
+      yield { type: 'error', error: surfacedMessage };
     }
   }
 
@@ -910,8 +969,8 @@ export class RawAgentLoop implements AgentLoop {
     let totalUsage: ModelUsage | undefined;
     let summaryText = '';
     try {
-      // 与正常轮完全同构的请求（缓存前缀友好，见 CompactInput.instructions 注释）：
-      // 同 system prompt、同工具定义（toolChoice='none' 禁止实际调用）、同接力语义。
+      // 压缩固定用受控的本地全量投影，不能沿用 previous_response_id：触发压缩时
+      // 远端接力链通常已接近或超过窗口，继续接力会让“想压缩却压不动”。
       const workspace = this.workspaceProvider.resolve(context.channelContext, {
         cwd: context.cwd,
         sessionId: context.sessionId,
@@ -929,7 +988,6 @@ export class RawAgentLoop implements AgentLoop {
         hooks: context.hooks,
         signal: context.signal,
       }).map(toModelToolDefinition);
-      const previousResponseId = await this.loadInitialResponseId(context.sessionId, context.model);
       const requestMessages: ModelChatMessage[] = [
         { role: 'system', content: input.instructions },
         ...projection.messages,
@@ -943,7 +1001,6 @@ export class RawAgentLoop implements AgentLoop {
         tools,
         toolChoice: 'none',
         signal: context.signal,
-        ...(previousResponseId ? { previousResponseId } : {}),
       }, this.withModelRequestDiagnostics(context))) {
         if (event.type === 'text_delta') {
           summaryText += event.content;
@@ -2004,6 +2061,14 @@ export class RawAgentLoop implements AgentLoop {
     let finalText = '';
     let turn = 0;
     let thinkingOnlyContinuationUsed = false;
+    let pendingTurnText = '';
+    let currentUserMessageIndex = 0;
+    for (let index = args.messages.length - 1; index >= 0; index -= 1) {
+      if (args.messages[index]?.role === 'user') {
+        currentUserMessageIndex = index;
+        break;
+      }
+    }
     const contextUsageTracker = new RuntimeContextUsageTracker(args.context.model, args.priorEvents);
 
     // RFC v1 P0.4：resume 路径同样接力 Responses API session state。
@@ -2019,12 +2084,27 @@ export class RawAgentLoop implements AgentLoop {
         // 时长改由 assistant_thinking 聚合行的 durationMs 携带。
         let turnThinkingMs = 0;
         let thinkingSegmentStartedAt: number | undefined;
+        pendingTurnText = '';
 
         await this.assertNoOpenToolCallBatchesBeforeModel(args.context.sessionId);
+        const preflight = governModelRequestMessages(
+          args.messages,
+          args.context.model,
+          currentUserMessageIndex,
+          contextUsageTracker.currentContextTokens,
+        );
+        if (preflight.forceSynthesis) {
+          this.forceSynthesis(
+            `上下文 ${preflight.triggerTokens} tokens 已达到模型阈值 ${preflight.thresholdTokens}; 已省略 ${preflight.droppedMessages} 条较早消息并断开 Responses 接力链`,
+            args.context,
+          );
+          currentResponseId = undefined;
+        }
         const forceSynthesis = this.prepareForcedSynthesis(args.messages);
+        const governed = governModelRequestMessages(args.messages, args.context.model, currentUserMessageIndex);
         for await (const event of this.modelAdapter.stream({
           model: args.context.model,
-          messages: args.messages,
+          messages: governed.messages,
           tools: args.tools,
           signal: args.context.signal,
           ...(forceSynthesis ? { toolChoice: 'none' as const } : {}),
@@ -2052,6 +2132,7 @@ export class RawAgentLoop implements AgentLoop {
               yield { type: 'text_start' };
             }
             turnText += event.content;
+            pendingTurnText += event.content;
             finalText += event.content;
             yield { type: 'text_delta', content: event.content };
           } else {
@@ -2140,6 +2221,7 @@ export class RawAgentLoop implements AgentLoop {
             ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
             ...(textStarted ? { streamed: true } : {}),
           });
+          pendingTurnText = '';
           if (textStarted) {
             yield { type: 'text_end' };
           }
@@ -2198,6 +2280,7 @@ export class RawAgentLoop implements AgentLoop {
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
         });
+        pendingTurnText = '';
         if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
         args.messages.push({
           role: 'assistant',
@@ -2248,6 +2331,20 @@ export class RawAgentLoop implements AgentLoop {
       }
       const message = err instanceof Error ? err.message : String(err);
       const modelUsage = buildModelUsage(args.context.model, totalUsage);
+      if (pendingTurnText) {
+        await this.append({
+          type: 'assistant_message',
+          runId: args.context.runId,
+          sessionId: args.context.sessionId,
+          content: pendingTurnText,
+          model: args.context.model,
+          streamed: true,
+          incomplete: true,
+        });
+      }
+      const surfacedMessage = pendingTurnText
+        ? `${message}；已保留本次未完成正文，可发送“继续”接着完成。`
+        : message;
       await this.append({
         type: 'run_finished',
         runId: args.context.runId,
@@ -2255,7 +2352,7 @@ export class RawAgentLoop implements AgentLoop {
         subtype: 'error',
         numTurns: turn,
         ...(modelUsage ? { modelUsage } : {}),
-        error: message,
+        error: surfacedMessage,
       });
       await args.context.hooks?.onResult?.({
         subtype: 'error',
@@ -2263,8 +2360,8 @@ export class RawAgentLoop implements AgentLoop {
         resultText: finalText,
         ...(modelUsage ? { modelUsage } : {}),
       });
-      logger.error(`[resume] failed session=${args.context.sessionId} turns=${turn}: ${message}`);
-      yield { type: 'error', error: message };
+      logger.error(`[resume] failed session=${args.context.sessionId} turns=${turn}: ${surfacedMessage}`);
+      yield { type: 'error', error: surfacedMessage };
     }
   }
 

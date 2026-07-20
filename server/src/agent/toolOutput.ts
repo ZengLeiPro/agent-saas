@@ -1,6 +1,8 @@
 export const MAX_FILE_BYTES = 128 * 1024;
 export const MAX_LIST_ENTRIES = 200;
 export const MAX_READ_LINES = 2_000;
+/** Read 单次返回给模型的 UTF-8 硬上限；完整文件仍保留在 workspace。 */
+export const MAX_READ_OUTPUT_BYTES = 64 * 1024;
 export const MAX_SHELL_RETURN_CHARS = 64 * 1024;
 export const MAX_SHELL_CAPTURE_BYTES = 4 * 1024 * 1024;
 export const MAX_SHELL_STREAM_BYTES = 64 * 1024;
@@ -42,6 +44,17 @@ export function truncateMiddle(text: string, maxChars: number): { text: string; 
     text: `${text.slice(0, head)}${marker.replace('{{OMITTED}}', String(omittedChars))}${text.slice(text.length - tail)}`,
     truncated: true,
     omittedChars,
+  };
+}
+
+export function truncateUtf8Prefix(text: string, maxBytes: number): { text: string; truncated: boolean; omittedBytes: number } {
+  const encoded = Buffer.from(text, 'utf8');
+  if (encoded.length <= maxBytes) return { text, truncated: false, omittedBytes: 0 };
+  const prefix = encoded.subarray(0, Math.max(0, maxBytes)).toString('utf8').replace(/\uFFFD$/, '');
+  return {
+    text: prefix,
+    truncated: true,
+    omittedBytes: encoded.length - Buffer.byteLength(prefix, 'utf8'),
   };
 }
 

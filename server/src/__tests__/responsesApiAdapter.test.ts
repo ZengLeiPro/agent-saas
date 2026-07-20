@@ -906,6 +906,47 @@ describe('ResponsesApiAdapter', () => {
     ]);
   });
 
+  it('零输出 MODEL_PROVIDER_ERROR 且为精确通用故障文案时重试', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStream([
+        sse('error', { type: 'error', message: 'Sorry, something went wrong.' }),
+      ]))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '恢复成功' }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: { id: 'resp_recovered', status: 'completed', usage: { input_tokens: 8, output_tokens: 2 } },
+        }),
+      ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events.at(-1)).toMatchObject({ type: 'completed', content: '恢复成功', modelRequestAttemptCount: 2 });
+  });
+
+  it('不重试其他 MODEL_PROVIDER_ERROR 文案', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('error', { type: 'error', message: 'invalid provider configuration' }),
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(events.at(-1)).toMatchObject({ type: 'completed', terminalStatus: 'failed', errorCode: 'MODEL_PROVIDER_ERROR' });
+  });
+
   it('发流前 EOF 后的零输出流内错误继续消耗下一段退避', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.spyOn(globalThis, 'fetch')

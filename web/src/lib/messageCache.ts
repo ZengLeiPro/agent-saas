@@ -15,7 +15,23 @@ interface CachedEntry {
   sessionId: string;
   messages: MessageItem[];
   timestamp: number;
+  /** 只有完整快照才允许带 cursor 发增量请求。旧缓存缺省为 false。 */
+  complete?: boolean;
+  cursor?: string;
 }
+
+export interface SessionMessageSnapshot {
+  messages: MessageItem[];
+  complete: boolean;
+  cursor?: string;
+}
+
+interface SaveSessionMessagesOptions {
+  complete: boolean;
+  cursor?: string;
+}
+
+const cacheMetadata = new Map<string, SaveSessionMessagesOptions>();
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -104,17 +120,23 @@ const EVICT_CHECK_INTERVAL = 20;
 export function saveSessionMessages(
   sessionId: string,
   messages: MessageItem[],
+  options?: SaveSessionMessagesOptions,
 ): void {
+  if (options) cacheMetadata.set(sessionId, options);
+  const knownMetadata = options ?? cacheMetadata.get(sessionId);
   void (async () => {
     try {
       const db = await getDB();
       const trimmed = messages.slice(-MAX_CACHED_MESSAGES).map((m) =>
         "streaming" in m && m.streaming ? { ...m, streaming: false } : m,
       );
+      const complete = knownMetadata?.complete === true && trimmed.length === messages.length;
       await db.put(STORE_NAME, {
         sessionId,
         messages: trimmed,
         timestamp: Date.now(),
+        complete,
+        ...(complete && knownMetadata?.cursor ? { cursor: knownMetadata.cursor } : {}),
       } satisfies CachedEntry);
 
       if (++saveCounter % EVICT_CHECK_INTERVAL === 0) {
@@ -126,10 +148,10 @@ export function saveSessionMessages(
   })();
 }
 
-/** 读取缓存的 session 消息，过期返回 null */
-export async function loadSessionMessages(
+/** 读取缓存快照；只有未裁剪的完整快照才会暴露增量 cursor。 */
+export async function loadSessionMessageSnapshot(
   sessionId: string,
-): Promise<MessageItem[] | null> {
+): Promise<SessionMessageSnapshot | null> {
   try {
     const db = await getDB();
     const entry: CachedEntry | undefined = await db.get(STORE_NAME, sessionId);
@@ -139,16 +161,35 @@ export async function loadSessionMessages(
       return null;
     }
     // 从缓存加载时，将遗留的 pending 状态转为 failed（上次发送未完成就关闭了页面）
-    return entry.messages.map(m =>
+    const messages = entry.messages.map(m =>
       m.type === 'user' && m.status === 'pending' ? { ...m, status: 'failed' as const } : m
     );
+    const complete = entry.complete === true;
+    const snapshot: SessionMessageSnapshot = {
+      messages,
+      complete,
+      ...(complete && entry.cursor ? { cursor: entry.cursor } : {}),
+    };
+    cacheMetadata.set(sessionId, {
+      complete: snapshot.complete,
+      ...(snapshot.cursor ? { cursor: snapshot.cursor } : {}),
+    });
+    return snapshot;
   } catch {
     return null;
   }
 }
 
+/** 兼容现有调用方：只读取消息数组。 */
+export async function loadSessionMessages(
+  sessionId: string,
+): Promise<MessageItem[] | null> {
+  return (await loadSessionMessageSnapshot(sessionId))?.messages ?? null;
+}
+
 /** 删除指定 session 的消息缓存 */
 export async function clearSessionMessages(sessionId: string): Promise<void> {
+  cacheMetadata.delete(sessionId);
   try {
     const db = await getDB();
     await db.delete(STORE_NAME, sessionId);
@@ -159,6 +200,7 @@ export async function clearSessionMessages(sessionId: string): Promise<void> {
 
 /** 清除所有消息缓存（登出时调用） */
 export async function clearAllMessageCache(): Promise<void> {
+  cacheMetadata.clear();
   try {
     const db = await getDB();
     await db.clear(STORE_NAME);

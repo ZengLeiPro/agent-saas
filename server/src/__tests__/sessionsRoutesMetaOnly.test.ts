@@ -4,9 +4,9 @@ import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promi
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionsRouter } from '../routes/sessions.js';
+import { createSessionsRouter, type SessionsRouterOptions } from '../routes/sessions.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import { writeSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
@@ -49,6 +49,7 @@ async function startServer(
       reason?: string;
     };
     orgAgentStore?: OrgAgentStore;
+    sessionProjectionStore?: SessionsRouterOptions['sessionProjectionStore'];
   } = {},
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
@@ -68,6 +69,7 @@ async function startServer(
     runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
     resolveContextAccounting: options.resolveContextAccounting,
     orgAgentStore: options.orgAgentStore,
+    sessionProjectionStore: options.sessionProjectionStore,
   }));
 
   return new Promise((resolve) => {
@@ -728,6 +730,51 @@ describe('sessions routes for meta-only runtime sessions', () => {
 
       const secondPage = await listSessions(baseUrl, `?fresh=1&limit=1&before=${firstPage.sessions[0]!.updatedAtMs}`);
       expect(secondPage.sessions[0]?.sessionId).toBe(older.sessionId);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('uses the runtime session projection instead of scanning every transcript', async () => {
+    const sessionId = randomUUID();
+    const updatedAt = '2026-07-21T00:30:00.000Z';
+    const list = vi.fn(async () => ({
+      items: [{
+        sessionId,
+        tenantId: TEST_USER.tenantId,
+        userId: TEST_USER.id,
+        username: TEST_USER.username,
+        channel: 'web',
+        kind: 'user' as const,
+        title: '投影会话',
+        createdAt: updatedAt,
+        updatedAt,
+        metaJson: {
+          userId: TEST_USER.id,
+          username: TEST_USER.username,
+          tenantId: TEST_USER.tenantId,
+          channel: 'web',
+          createdAt: updatedAt,
+          updatedAt,
+          customTitle: '投影会话',
+        },
+      }],
+    }));
+
+    const { server, baseUrl } = await startServer(agentCwd, {
+      sessionProjectionStore: { list },
+    });
+    try {
+      const response = await listSessions(baseUrl, '?fresh=1&limit=50');
+      expect(response.sessions).toEqual([
+        expect.objectContaining({ sessionId, title: '投影会话' }),
+      ]);
+      expect(list).toHaveBeenCalledWith(expect.objectContaining({
+        tenantId: TEST_USER.tenantId,
+        userId: TEST_USER.id,
+        kind: 'user',
+        includeDeleted: false,
+      }));
     } finally {
       await stopServer(server);
     }

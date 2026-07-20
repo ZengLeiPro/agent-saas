@@ -63,6 +63,15 @@ export interface ApiSessionDetail {
     parseErrors: number;
   };
   blocks: ApiTranscriptBlock[];
+  /**
+   * full = blocks 是完整快照；delta = blocks 仅包含游标附近的重叠尾部和新增块。
+   * 字段可选以兼容尚未升级的服务端，缺省按 full 处理。
+   */
+  mode?: "full" | "delta";
+  /** 当前完整快照最后一个 transcript block 的稳定 ID，供下一次增量拉取。 */
+  cursor?: string;
+  /** delta 响应所基于的客户端游标；full fallback 时不返回。 */
+  after?: string;
   owner?: SessionOwnerInfo;
   source?: { type: string; label: string };
   /**

@@ -73,10 +73,51 @@ import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import type { SessionShareSnapshot, SessionShareStore } from "../data/sessionShares/store.js";
 import { isShareExpired } from "../data/sessionShares/store.js";
 import { resolveAuthorizedPath } from "../security/extraDirs.js";
+import type {
+  RuntimeSessionListQuery,
+  RuntimeSessionListResult,
+  RuntimeSessionProjectionRecord,
+} from "../runtime/sessionProjectionStore.js";
 
 // 5 分钟。所有 mutation(create/delete/rename/restore/fork...)都已主动 sessionsListCache.clear(),
 // 所以 TTL 只是兜底,越长越好。
 const SESSIONS_LIST_CACHE_TTL_MS = 5 * 60_000;
+const SESSION_DETAIL_DELTA_OVERLAP_BLOCKS = 32;
+
+type SessionDetailPayload = SessionShareSnapshot & {
+  mode: "full" | "delta";
+  cursor?: string;
+  after?: string;
+};
+
+/**
+ * 详情增量协议：命中稳定 block id 时返回一段重叠尾部，供客户端原位刷新工具状态；
+ * 游标因 compact/重写而失配时自动退回完整快照，绝不让客户端拿半截历史。
+ */
+export function buildSessionDetailPayload(
+  detail: SessionShareSnapshot,
+  after?: string,
+): SessionDetailPayload {
+  const cursor = detail.blocks.at(-1)?.id;
+  if (after) {
+    const afterIndex = detail.blocks.findIndex((block) => block.id === after);
+    if (afterIndex >= 0) {
+      const start = Math.max(0, afterIndex - SESSION_DETAIL_DELTA_OVERLAP_BLOCKS + 1);
+      return {
+        ...detail,
+        mode: "delta",
+        blocks: detail.blocks.slice(start),
+        after,
+        ...(cursor ? { cursor } : {}),
+      };
+    }
+  }
+  return {
+    ...detail,
+    mode: "full",
+    ...(cursor ? { cursor } : {}),
+  };
+}
 
 interface SessionSource {
   type: string;
@@ -312,6 +353,10 @@ export interface SessionsRouterOptions {
   resolveContextAccounting?: ContextAccountingResolver;
   /** 会话只读分享存储。 */
   sessionShareStore?: SessionShareStore;
+  /** PG 会话元数据投影；在线列表优先走索引，无 PG 的测试/开发环境回退文件扫描。 */
+  sessionProjectionStore?: {
+    list(query?: RuntimeSessionListQuery): Promise<RuntimeSessionListResult>;
+  };
 }
 
 interface ResolvedSessionPath {
@@ -1032,31 +1077,98 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       // 默认只列当前用户项目（per-user cwd 产生不同的 projectKey，天然隔离）。
       // enqueue-only 新会话在 pending 阶段只有 .meta.json + runtime_events，
       // 尚未生成 .jsonl；列表必须把 meta-only 会话一并纳入，否则刷新后会“消失”。
-      let sessions: SessionListItem[];
+      let sessions: SessionListItem[] = [];
       let hasMore = false;
       const metaOnlySessionIds = new Set<string>();
+      let authMetaMap: Map<string, SessionMeta | null> | undefined;
       const listStageStartedAt = Date.now();
       const transcriptOwner = reqTranscriptOwner(req.user);
-      const [transcriptResult, metaItems] = await Promise.all([
-        listSessions(userCwd, { limit: Number.MAX_SAFE_INTEGER, owner: transcriptOwner }),
-        listSessionMetas(userCwd, transcriptOwner),
-      ]);
-      const bySessionId = new Map<string, SessionListItem>();
-      for (const session of transcriptResult.items) {
-        bySessionId.set(session.sessionId, session);
+      let projectionUsed = false;
+
+      if (options.sessionProjectionStore && req.user) {
+        try {
+          const visibleRecords: RuntimeSessionProjectionRecord[] = [];
+          let cursor: RuntimeSessionListQuery["cursor"];
+          const updatedTo = before && Number.isFinite(before)
+            ? new Date(before - 1).toISOString()
+            : undefined;
+
+          // Store 单页上限 100；持续翻页直到拿够 limit+1 个真正可见会话。
+          for (let guard = 0; guard < 100 && visibleRecords.length <= limit; guard++) {
+            const page = await options.sessionProjectionStore.list({
+              tenantId: req.user.tenantId,
+              userId: req.user.sub,
+              kind: "user",
+              includeDeleted: false,
+              limit: 100,
+              ...(updatedTo ? { updatedTo } : {}),
+              ...(cursor ? { cursor } : {}),
+            });
+            for (const record of page.items) {
+              if (hidesMemoryPollFrom(req.user, record.metaJson)) continue;
+              visibleRecords.push(record);
+              if (visibleRecords.length > limit) break;
+            }
+            if (!page.nextCursor || visibleRecords.length > limit) break;
+            cursor = page.nextCursor;
+          }
+
+          const projected = visibleRecords.slice(0, limit + 1);
+          const entries = await Promise.all(projected.map(async (record) => {
+            const transcriptPath = getTranscriptPath(userCwd, record.sessionId, transcriptOwner);
+            let hasTranscript = false;
+            try {
+              hasTranscript = (await fs.stat(transcriptPath)).size > 0;
+            } catch {
+              // enqueue-only 会话尚未生成 transcript，后续从 runtime events 补 prompt。
+            }
+            if (!hasTranscript) metaOnlySessionIds.add(record.sessionId);
+            const parsedUpdatedAt = Date.parse(record.updatedAt);
+            const parsedCreatedAt = record.createdAt ? Date.parse(record.createdAt) : NaN;
+            return {
+              item: {
+                sessionId: record.sessionId,
+                projectKey: `${record.tenantId}/${record.userId ?? req.user!.sub}`,
+                updatedAtMs: Number.isFinite(parsedUpdatedAt) ? parsedUpdatedAt : Date.now(),
+                ...(Number.isFinite(parsedCreatedAt) ? { createdAtMs: parsedCreatedAt } : {}),
+                transcriptPath,
+              } satisfies SessionListItem,
+              meta: record.metaJson,
+            };
+          }));
+          sessions = entries.map((entry) => entry.item);
+          authMetaMap = new Map(entries.map((entry) => [entry.item.sessionId, entry.meta]));
+          projectionUsed = true;
+          markStage(`listSessionsProjection[user,metaOnly=${metaOnlySessionIds.size}]`, listStageStartedAt);
+        } catch (err) {
+          apiLogger.warn(
+            `[sessions] projection list failed, falling back to files: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
-      for (const item of metaItems) {
-        if (item.hasTranscript || bySessionId.has(item.sessionId)) continue;
-        bySessionId.set(item.sessionId, {
-          sessionId: item.sessionId,
-          projectKey: item.projectKey,
-          updatedAtMs: item.updatedAtMs,
-          transcriptPath: item.metaPath,
-        });
-        metaOnlySessionIds.add(item.sessionId);
+
+      if (!projectionUsed) {
+        const [transcriptResult, metaItems] = await Promise.all([
+          listSessions(userCwd, { limit: Number.MAX_SAFE_INTEGER, owner: transcriptOwner }),
+          listSessionMetas(userCwd, transcriptOwner),
+        ]);
+        const bySessionId = new Map<string, SessionListItem>();
+        for (const session of transcriptResult.items) {
+          bySessionId.set(session.sessionId, session);
+        }
+        for (const item of metaItems) {
+          if (item.hasTranscript || bySessionId.has(item.sessionId)) continue;
+          bySessionId.set(item.sessionId, {
+            sessionId: item.sessionId,
+            projectKey: item.projectKey,
+            updatedAtMs: item.updatedAtMs,
+            transcriptPath: item.metaPath,
+          });
+          metaOnlySessionIds.add(item.sessionId);
+        }
+        sessions = [...bySessionId.values()].sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+        markStage(`listSessionsWithMeta[user,metaOnly=${metaOnlySessionIds.size}]`, listStageStartedAt);
       }
-      sessions = [...bySessionId.values()].sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-      markStage(`listSessionsWithMeta[user,metaOnly=${metaOnlySessionIds.size}]`, listStageStartedAt);
 
       // 构建来源反向索引
       const sourceIndexStageStartedAt = Date.now();
@@ -1082,19 +1194,20 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
 
       // 提前读取 meta 用于授权过滤 + 软删除过滤
       // 非 admin 使用 userCwd 路径，admin 使用 resolveTranscriptPath fallback
-      let authMetaMap: Map<string, SessionMeta | null> | undefined;
       if (req.user && !isAdmin) {
         const userId = req.user.sub;
-        const authMetaStageStartedAt = Date.now();
-        const entries = await Promise.all(
-          sessions.map(async (session) => {
-            const transcriptPath = resolveTranscriptPath(session.sessionId);
-            const meta = await readSessionMeta(transcriptPath);
-            return [session.sessionId, meta] as const;
-          }),
-        );
-        authMetaMap = new Map(entries);
-        markStage("readSessionMeta[user]", authMetaStageStartedAt);
+        if (!authMetaMap) {
+          const authMetaStageStartedAt = Date.now();
+          const entries = await Promise.all(
+            sessions.map(async (session) => {
+              const transcriptPath = resolveTranscriptPath(session.sessionId);
+              const meta = await readSessionMeta(transcriptPath);
+              return [session.sessionId, meta] as const;
+            }),
+          );
+          authMetaMap = new Map(entries);
+          markStage("readSessionMeta[user]", authMetaStageStartedAt);
+        }
         // 权限过滤：只保留属于当前用户的会话 + 排除软删除 + 隐藏系统轮询会话
         // + 隐藏子 agent hidden session（kind='subagent'，2026-07-06——执行细节
         //   经父会话的 SubagentBlock / Run Trace 观测，不作为独立会话展示）
@@ -1107,16 +1220,18 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         });
       } else {
         // Admin / 未认证用户：读取 meta 过滤软删除
-        const authMetaStageStartedAt = Date.now();
-        const entries = await Promise.all(
-          sessions.map(async (session) => {
-            const transcriptPath = resolveTranscriptPath(session.sessionId);
-            const meta = await readSessionMeta(transcriptPath);
-            return [session.sessionId, meta] as const;
-          }),
-        );
-        authMetaMap = new Map(entries);
-        markStage("readSessionMeta[admin]", authMetaStageStartedAt);
+        if (!authMetaMap) {
+          const authMetaStageStartedAt = Date.now();
+          const entries = await Promise.all(
+            sessions.map(async (session) => {
+              const transcriptPath = resolveTranscriptPath(session.sessionId);
+              const meta = await readSessionMeta(transcriptPath);
+              return [session.sessionId, meta] as const;
+            }),
+          );
+          authMetaMap = new Map(entries);
+          markStage("readSessionMeta[admin]", authMetaStageStartedAt);
+        }
         sessions = sessions.filter((s) => {
           const meta = authMetaMap!.get(s.sessionId);
           if (meta?.deletedAt) return false;
@@ -1763,7 +1878,10 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         );
       }
 
-      res.json(built.detail);
+      const after = typeof req.query.after === "string" && req.query.after.trim()
+        ? req.query.after.trim()
+        : undefined;
+      res.json(buildSessionDetailPayload(built.detail, after));
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
       if (msg.includes("outside allowed directory")) {

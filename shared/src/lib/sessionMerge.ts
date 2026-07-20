@@ -34,3 +34,34 @@ export function mergeServerMessagesWithLocalTail(
 
   return [...server, ...local.slice(anchorIdx)];
 }
+
+/**
+ * 把服务端增量消息并入一个完整的本地快照。
+ *
+ * transcript block id 在同一会话内稳定；服务端会在增量中附带一小段重叠尾部，
+ * 因而从首个重叠 id 起整体替换本地尾部：既刷新 tool/duration 状态，也清掉游标后
+ * 尚未落盘时产生的临时本地 id。极端情况下找不到重叠消息，再退回按 id 合并。
+ */
+export function mergeSessionMessageDelta(
+  base: MessageItem[],
+  delta: MessageItem[],
+): MessageItem[] {
+  if (delta.length === 0) return base;
+
+  const baseIndexById = new Map(base.map((message, index) => [message.id, index]));
+  const overlapIndex = delta
+    .map((message) => baseIndexById.get(message.id))
+    .find((index): index is number => index !== undefined);
+  const result = overlapIndex === undefined ? [...base] : base.slice(0, overlapIndex);
+  const indexById = new Map(result.map((message, index) => [message.id, index]));
+  for (const message of delta) {
+    const existingIndex = indexById.get(message.id);
+    if (existingIndex === undefined) {
+      indexById.set(message.id, result.length);
+      result.push(message);
+    } else {
+      result[existingIndex] = message;
+    }
+  }
+  return result;
+}

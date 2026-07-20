@@ -7,14 +7,14 @@ import type {
 import type { AgentProfile, ContextUsageData } from "@agent/shared";
 import { formatRuntimeFailureMessage, isInsufficientCreditsFailure } from "@agent/shared";
 import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
-import { mergeServerMessagesWithLocalTail } from "@agent/shared";
+import { mergeServerMessagesWithLocalTail, mergeSessionMessageDelta } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { SESSION_STORAGE_KEY } from "@/lib/constants";
 import { sessionsPreload } from "@/lib/preload";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import {
   saveSessionMessages,
-  loadSessionMessages,
+  loadSessionMessageSnapshot,
   clearSessionMessages,
 } from "@/lib/messageCache";
 import {
@@ -138,6 +138,7 @@ export function useSession(
   const hasInitialLoadRef = useRef(false);
   const loadDetailPromiseRef = useRef<Promise<void> | null>(null);
   const loadNonceRef = useRef(0);
+  const detailCursorRef = useRef<Map<string, { complete: boolean; cursor?: string }>>(new Map());
 
   const deleteSessionId = deleteSessionIds[0] ?? null;
   const deleteSessionCount = deleteSessionIds.length;
@@ -284,22 +285,44 @@ export function useSession(
       // silent 模式（后台恢复、WS 重连等）不显示 loading 指示器
       if (!opts?.silent) setIsLoadingMessages(true);
 
+      let baseMessages: MessageItem[] | null = null;
+      let baseComplete = false;
+      let requestCursor: string | undefined;
+
       // preserveTail 场景（done 后同会话刷新）：本地内存里已有最新尾部，cached 反而是更旧的快照，
       // 跳过以免闪回。
-      if (!opts?.preserveTail) {
+      if (opts?.preserveTail && cbRef.current.getMessages) {
+        const detailState = detailCursorRef.current.get(id);
+        if (detailState?.complete) {
+          baseMessages = cbRef.current.getMessages();
+          baseComplete = true;
+          requestCursor = detailState.cursor;
+        }
+      } else {
         // 先尝试展示本地缓存（冷启动 / 后台恢复时瞬间可见）
-        const cached = await loadSessionMessages(id);
+        const cached = await loadSessionMessageSnapshot(id);
         if (isStale()) return;
         if (cached) {
-          cbRef.current.setMessages(cached, opts);
+          baseMessages = cached.messages;
+          baseComplete = cached.complete;
+          requestCursor = cached.cursor;
+          detailCursorRef.current.set(id, {
+            complete: cached.complete,
+            ...(cached.cursor ? { cursor: cached.cursor } : {}),
+          });
+          cbRef.current.setMessages(cached.messages, opts);
           setSessionId(id);
         }
       }
 
       try {
-        const silentParam = opts?.silent ? "?silent=1" : "";
+        const params = new URLSearchParams();
+        if (opts?.silent) params.set("silent", "1");
+        if (baseComplete && requestCursor) params.set("after", requestCursor);
+        const serializedParams = params.toString();
+        const query = serializedParams ? `?${serializedParams}` : "";
         const response = await authFetch(
-          `/api/sessions/${encodeURIComponent(id)}${silentParam}`,
+          `/api/sessions/${encodeURIComponent(id)}${query}`,
         );
         if (isStale()) return;
         if (response.ok) {
@@ -309,7 +332,16 @@ export function useSession(
             data.owner?.username ??
             sessionsRef.current.find((s) => s.sessionId === id)?.owner
               ?.username;
-          const msgs = mapSessionDetailToMessages(data, sessionOwner);
+          const incomingMsgs = mapSessionDetailToMessages(data, sessionOwner);
+          let msgs = data.mode === "delta" && baseComplete && baseMessages
+            ? mergeSessionMessageDelta(baseMessages, incomingMsgs)
+            : incomingMsgs;
+
+          // 增量基底里可能保留上一轮的临时状态；以本次 lastRunState / pending API
+          // 为真源重建，避免已结束的交互或失败 banner 永久粘在历史里。
+          msgs = msgs.filter((message) =>
+            !message.id.startsWith("system-error-") && !message.id.startsWith("pending-"),
+          );
 
           // a-2 对账：根据 lastRunState 在消息尾追加 system-error banner,
           // 解决"后端已 failed/cancelled,但用户进会话仍以为 AI 在转/没回复" 的鬼状态。
@@ -430,7 +462,15 @@ export function useSession(
           setSessionId(id);
           setSessionOwner(data.owner ?? null);
           void fetchTokenUsage(id);
-          saveSessionMessages(id, finalMsgs);
+          const complete = data.mode !== "delta" || baseComplete;
+          detailCursorRef.current.set(id, {
+            complete,
+            ...(data.cursor ? { cursor: data.cursor } : {}),
+          });
+          saveSessionMessages(id, finalMsgs, {
+            complete,
+            ...(data.cursor ? { cursor: data.cursor } : {}),
+          });
         } else {
           console.error("加载会话详情失败:", response.statusText);
           if (response.status === 404 || response.status === 403) {
@@ -488,6 +528,7 @@ export function useSession(
           }
 
           await clearSessionMessages(targetId);
+          detailCursorRef.current.delete(targetId);
           localStorage.removeItem(`agentChat.model.${targetId}`);
           deletedIds.add(targetId);
         } catch (err) {

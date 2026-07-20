@@ -9,7 +9,7 @@
  * - 锚点后还有非 text 消息（file_download 等）时整段尾部都要保留
  */
 import { describe, expect, it } from 'vitest';
-import { mergeServerMessagesWithLocalTail } from './sessionMerge';
+import { mergeServerMessagesWithLocalTail, mergeSessionMessageDelta } from './sessionMerge';
 import type { MessageItem } from '../types/message';
 
 const text = (id: string, content: string): MessageItem => ({ id, type: 'text', content });
@@ -66,6 +66,54 @@ describe('mergeServerMessagesWithLocalTail', () => {
     expect(merged).toEqual([
       { id: 'line-1', type: 'text', content: '第一段' },
       { id: 'msg-2', type: 'text', content: '第二段未落盘' },
+    ]);
+  });
+});
+
+describe('mergeSessionMessageDelta', () => {
+  it('按稳定 id 原位刷新重叠消息，并在尾部追加新消息', () => {
+    const base: MessageItem[] = [
+      user('line-1', '问题'),
+      { id: 'line-2', type: 'tool_use', toolName: 'Bash', toolInput: '{}', toolId: 'tool-1', streaming: false },
+    ];
+    const delta: MessageItem[] = [
+      {
+        id: 'line-2',
+        type: 'tool_use',
+        toolName: 'Bash',
+        toolInput: '{}',
+        toolId: 'tool-1',
+        streaming: false,
+        executionStatus: 'completed',
+        result: 'ok',
+        resultReady: true,
+      },
+      text('line-3', '完成'),
+    ];
+
+    expect(mergeSessionMessageDelta(base, delta)).toEqual([
+      base[0],
+      delta[0],
+      delta[1],
+    ]);
+    expect(base[1]).not.toHaveProperty('result');
+  });
+
+  it('从首个重叠 id 起替换尾部，清掉游标后遗留的临时本地消息', () => {
+    const base = [
+      user('line-1', '问题'),
+      text('line-2', '旧回复'),
+      text('msg-local', '本地临时尾部'),
+    ];
+    const delta = [
+      text('line-2', '旧回复'),
+      text('line-3', '已落盘的新回复'),
+    ];
+
+    expect(mergeSessionMessageDelta(base, delta)).toEqual([
+      base[0],
+      delta[0],
+      delta[1],
     ]);
   });
 });

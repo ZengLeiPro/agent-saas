@@ -11,6 +11,7 @@ import type { CronService } from './cron/service.js';
 import { verifyAzerothTokenMetadata } from './integrations/azeroth/tokens.js';
 import { startKbPreviewScheduler, type KbPreviewScheduler } from './kb/previewScheduler.js';
 import { serverLogger, cronLogger } from './utils/logger.js';
+import { sessionCompression } from './middleware/sessionCompression.js';
 
 type ProcessRole = 'all' | 'ws-only' | 'scheduler-only';
 
@@ -82,6 +83,8 @@ async function startServer(): Promise<void> {
     if (req.path.startsWith('/api/azeroth/')) return next();
     jsonParser(req, res, next);
   });
+  // 会话列表/详情是高频大 JSON；仅压缩这一组 HTTP 响应，不触碰 WS、SSE 与文件流。
+  app.use('/api/sessions', sessionCompression);
 
   app.use((req, res, next) => {
     const startedAt = Date.now();

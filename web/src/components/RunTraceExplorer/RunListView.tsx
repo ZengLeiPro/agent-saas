@@ -17,6 +17,7 @@ import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { cn } from "@/lib/utils";
 
 import { formatMs, formatTime, runDurationMs } from "./format";
+import { isRunFailureStatus } from "./runStatus";
 import { RunStatusBadge } from "./StatusBadge";
 
 const HOURS_OPTIONS: { value: number; label: string }[] = [
@@ -266,7 +267,9 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
                 {runs.map((run) => {
                   const endAt = run.completedAt ?? run.failedAt ?? run.cancelledAt;
                   const duration = runDurationMs(run);
-                  const failure = run.statusReason ? classifyFailureReason(run.statusReason) : null;
+                  const failure = isRunFailureStatus(run.status) && run.statusReason
+                    ? classifyFailureReason(run.statusReason)
+                    : null;
                   return (
                     <TableRow key={run.runId} className="cursor-pointer hover:bg-muted/30" onClick={() => onSelectRun(run.runId)}>
                       <TableCell>

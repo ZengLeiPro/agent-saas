@@ -16,6 +16,7 @@ import {
   type SessionLockAcquirer,
   type SessionLockHandle,
 } from '../runtime/rawRuntimeRunDispatch.js';
+import type { RunStore } from '../runtime/runStore.js';
 import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { EventStore } from '../runtime/types.js';
 import type { OutboundEvent } from '../types/index.js';
@@ -154,6 +155,51 @@ describe('runtime stage 2 primitives', () => {
 
     expect(list).toHaveBeenCalledWith('session-1', listOptions);
     expect(listPage).toHaveBeenCalledWith('session-1', pageOptions);
+  });
+
+  it('RunStateTrackingEventStore 只为失败或取消终态写 statusReason', async () => {
+    const append = vi.fn(async (event: Record<string, unknown>) => ({
+      id: `event-${append.mock.calls.length}`,
+      timestamp: new Date().toISOString(),
+      ...event,
+    }));
+    const inner = {
+      append,
+      list: vi.fn(async () => []),
+    } as unknown as EventStore;
+    const markStatus = vi.fn(async () => null);
+    const runStore = {
+      get: vi.fn(async () => ({ status: 'running' })),
+      markStatus,
+    } as unknown as RunStore;
+    const store = new RunStateTrackingEventStore(inner, runStore);
+
+    await store.append({
+      type: 'run_finished',
+      runId: 'run-success',
+      sessionId: 'session-1',
+      subtype: 'success',
+      numTurns: 1,
+    });
+    await store.append({
+      type: 'run_finished',
+      runId: 'run-error',
+      sessionId: 'session-1',
+      subtype: 'error',
+      error: 'model error',
+      numTurns: 1,
+    });
+    await store.append({
+      type: 'run_finished',
+      runId: 'run-cancelled',
+      sessionId: 'session-1',
+      subtype: 'interrupted',
+      numTurns: 1,
+    });
+
+    expect(markStatus).toHaveBeenNthCalledWith(1, 'run-success', 'completed', undefined);
+    expect(markStatus).toHaveBeenNthCalledWith(2, 'run-error', 'failed', 'model error');
+    expect(markStatus).toHaveBeenNthCalledWith(3, 'run-cancelled', 'cancelled', 'interrupted');
   });
 
   it('EventBackedApprovalStore persists approval state inside runtime events', async () => {

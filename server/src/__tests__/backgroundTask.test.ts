@@ -346,6 +346,7 @@ describe('DurableBackgroundTaskService', () => {
 
     expect(base.runStore.records.get(task.runId)).toMatchObject({
       status: 'completed',
+      statusReason: undefined,
       metadata: {
         wakeState: 'pending',
         executionChildRunId: 'child-run-1',
@@ -450,6 +451,7 @@ describe('DurableBackgroundTaskService', () => {
     expect(invocations).toEqual([expect.objectContaining({ toolName: 'BashOutput' })]);
     expect(base.runStore.records.get(reservation.taskId)).toMatchObject({
       status: 'completed',
+      statusReason: undefined,
       metadata: {
         wakeState: 'pending',
         backgroundResult: { status: 'completed', text: expect.stringContaining('build done') },

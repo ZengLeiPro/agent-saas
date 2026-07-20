@@ -15,6 +15,7 @@ import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
 
 import { runTraceApi } from "./api";
 import { formatMs, formatTime, formatYuan, runDurationMs } from "./format";
+import { resolveRunCancellationReason, resolveRunFailureReason } from "./runStatus";
 import { RunStatusBadge } from "./StatusBadge";
 import {
   ApprovalPairItem,
@@ -170,7 +171,8 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
 
   const { run, billing } = data;
   const duration = runDurationMs(run);
-  const failureReason = run.statusReason ?? runFinished?.error ?? null;
+  const failureReason = resolveRunFailureReason(run.status, run.statusReason, runFinished?.error);
+  const cancellationReason = resolveRunCancellationReason(run.status, run.statusReason);
   const friendlyFailure = failureReason ? classifyFailureReason(failureReason) : null;
   const maxToolDuration = Math.max(...toolAgg.map((t) => t.totalDurationMs), 1);
 
@@ -252,6 +254,17 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
                   </div>
                 </details>
               )}
+            </div>
+          )}
+          {cancellationReason && (
+            <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              <div className="font-medium">执行已取消</div>
+              <details className="mt-2">
+                <summary className="cursor-pointer select-none">取消详情</summary>
+                <div className="mt-1 whitespace-pre-wrap break-all rounded bg-background/70 p-2 font-mono text-foreground">
+                  {cancellationReason}
+                </div>
+              </details>
             </div>
           )}
         </CardContent>

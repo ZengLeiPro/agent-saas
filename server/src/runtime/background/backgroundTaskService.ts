@@ -677,13 +677,14 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           : outcomeStatus === 'cancelled'
             ? 'cancelled'
             : 'failed';
-        await this.config.runStore?.markStatus(record.runId, runStatus, view.error ?? `background_command_${view.status}`, {
+        const statusReason = runStatus === 'completed' ? undefined : view.error ?? `background_command_${view.status}`;
+        await this.config.runStore?.markStatus(record.runId, runStatus, statusReason, {
           backgroundResult: result,
           wakeState: 'pending',
           backgroundFinishedAt: new Date().toISOString(),
         });
         await sessionCatalog.markStatus(record.sessionId, runStatus === 'completed' ? 'finished' : 'error').catch(() => undefined);
-        await lease?.release(runStatus, view.error ?? `background_command_${view.status}`);
+        await lease?.release(runStatus, statusReason);
         return;
       }
     } catch (err) {
@@ -788,7 +789,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       durationMs: outcome.durationMs,
     };
     const status = outcomeToRunStatus(outcome.status);
-    await this.config.runStore?.markStatus(record.runId, status, outcome.errorMessage ?? `background_${outcome.status}`, {
+    const statusReason = status === 'completed' ? undefined : outcome.errorMessage ?? `background_${outcome.status}`;
+    await this.config.runStore?.markStatus(record.runId, status, statusReason, {
       backgroundResult: result,
       wakeState: 'pending',
       backgroundFinishedAt: new Date().toISOString(),

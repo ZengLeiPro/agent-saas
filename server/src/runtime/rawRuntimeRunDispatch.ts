@@ -1100,7 +1100,11 @@ export class RunStateTrackingEventStore implements EventStore {
       reason = `interaction_resolved:${event.interactionId}`;
     } else if (event.type === 'run_finished') {
       status = event.subtype === 'success' ? 'completed' : event.subtype === 'interrupted' ? 'cancelled' : 'failed';
-      reason = event.subtype === 'error' ? event.error ?? event.subtype : event.subtype;
+      reason = event.subtype === 'error'
+        ? event.error ?? event.subtype
+        : event.subtype === 'interrupted'
+          ? event.subtype
+          : undefined;
     }
     if (status && 'runId' in event && typeof event.runId === 'string' && typeof event.sessionId === 'string') {
       const before = await this.runStore.get(event.runId);

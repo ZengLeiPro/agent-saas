@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { updateSelections, fetchMyMcp, diagnoseMyMcp, dwsAuthFetch } = vi.hoisted(() => ({
@@ -92,6 +92,10 @@ describe("McpManager 连接器目录", () => {
     expect(screen.getAllByText("平台提供").length).toBeGreaterThan(0);
     expect(screen.getAllByText("组织提供").length).toBeGreaterThan(0);
     expect(screen.getAllByText("我创建的").length).toBeGreaterThan(0);
+    const allFilter = within(screen.getByLabelText("能力来源筛选")).getByRole("tab", { name: /全部/ });
+    expect(allFilter.className).toContain("rounded-full");
+    expect(allFilter.className).toContain("bg-primary");
+    expect(allFilter.getAttribute("aria-selected")).toBe("true");
 
     fireEvent.click(screen.getByRole("button", { name: "启用 通达信" }));
     await waitFor(() => {

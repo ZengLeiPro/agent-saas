@@ -117,6 +117,16 @@ function visibleTitles(): string[] {
 }
 
 describe("ScenariosPanel · industry chip 集成", () => {
+  it("行业与岗位使用完全一致的筛选标签样式", () => {
+    renderPanel();
+
+    const industryTab = screen.getByRole("tab", { name: "全部行业" });
+    const roleTab = screen.getByRole("tab", { name: "全部" });
+    expect(industryTab.className).toBe(roleTab.className);
+    expect(industryTab.className).toContain("rounded-full");
+    expect(industryTab.className).toContain("bg-primary");
+  });
+
   it("默认无 URL / storage / preferences 时全部行业 + 全部岗位：4 条全显", () => {
     renderPanel();
 
@@ -252,7 +262,7 @@ describe("ScenariosPanel · industry chip 集成", () => {
     renderPanel();
 
     fireEvent.click(screen.getByRole("tab", { name: "零售" }));
-    fireEvent.click(screen.getByRole("button", { name: "销售" }));
+    fireEvent.click(screen.getByRole("tab", { name: "销售" }));
 
     // 只有 role=sales 且 industryFocus 命中 retail 的条目
     // manuf-sales: role=sales 但 industryFocus=["manufacturing"] → 不命中

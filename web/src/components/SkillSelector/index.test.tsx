@@ -58,13 +58,16 @@ describe("SkillSelector 能力目录", () => {
     expect(await screen.findByText("平台分析")).toBeTruthy();
 
     const filters = screen.getByLabelText("能力来源筛选");
-    const organizationFilter = within(filters).getByRole("button", { name: /组织提供/ });
+    const organizationFilter = within(filters).getByRole("tab", { name: /组织提供/ });
     fireEvent.click(organizationFilter);
-    expect(organizationFilter.className).toContain("bg-brand-600");
+    expect(organizationFilter.className).toContain("rounded-full");
+    expect(organizationFilter.className).toContain("border-transparent");
+    expect(organizationFilter.className).toContain("bg-primary");
+    expect(organizationFilter.getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("组织 CRM")).toBeTruthy();
     expect(screen.queryByText("平台分析")).toBeNull();
 
-    fireEvent.click(within(filters).getByRole("button", { name: /全部/ }));
+    fireEvent.click(within(filters).getByRole("tab", { name: /全部/ }));
     fireEvent.change(screen.getByRole("textbox", { name: "搜索技能名称或描述" }), { target: { value: "周报" } });
     expect(screen.getByText("我的周报")).toBeTruthy();
     expect(screen.queryByText("组织 CRM")).toBeNull();

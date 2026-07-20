@@ -9,8 +9,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { CapabilityFilterTabs } from "@/components/CapabilityCenter/CatalogUi";
 import {
   Dialog,
   DialogContent,
@@ -47,8 +47,8 @@ const INDUSTRY_ORDER: IndustryType[] = [
   "ecommerce",
 ];
 const INDUSTRY_CHIPS = INDUSTRY_ORDER.map((id) => ({
-  id,
-  name: friendlyIndustry[id],
+  value: id,
+  label: friendlyIndustry[id],
 }));
 
 interface ScenariosPanelProps {
@@ -162,55 +162,24 @@ export function ScenariosPanel({
         </div>
       </div>
 
-      {/* 行业 chip：移动端横滑，桌面端折行 */}
-      <div
-        role="tablist"
-        aria-label="按行业筛选"
-        className="mb-3 flex gap-1.5 overflow-x-auto pb-1 md:flex-wrap md:overflow-visible [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {[{ id: INDUSTRY_ALL, name: "全部行业" }, ...INDUSTRY_CHIPS].map((chip) => {
-          const selected = activeIndustry === chip.id;
-          return (
-            <button
-              key={chip.id}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              onClick={() => setActiveIndustry(chip.id as IndustryFilterValue)}
-              className={cn(
-                "shrink-0 rounded-full border px-3 py-1 text-xs transition-colors",
-                selected
-                  ? "border-brand-200 bg-brand-50 text-brand-700"
-                  : "bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-              )}
-            >
-              {chip.name}
-            </button>
-          );
-        })}
-      </div>
+      <CapabilityFilterTabs
+        ariaLabel="按行业筛选"
+        options={[{ value: INDUSTRY_ALL, label: "全部行业" }, ...INDUSTRY_CHIPS]}
+        value={activeIndustry}
+        onValueChange={(value) => setActiveIndustry(value as IndustryFilterValue)}
+        className="mb-3"
+      />
 
-      {/* 岗位 tab：横向可滚动 */}
-      <div className="mb-5 flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {[{ id: "all", name: "全部" }, ...roles].map((role) => (
-          <button
-            key={role.id}
-            type="button"
-            onClick={() => {
-              userSelectedRoleRef.current = true;
-              setActiveRole(role.id);
-            }}
-            className={cn(
-              "shrink-0 rounded-full border px-3 py-1.5 text-sm transition-colors",
-              activeRole === role.id
-                ? "border-transparent bg-primary text-primary-foreground"
-                : "bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-            )}
-          >
-            {role.name}
-          </button>
-        ))}
-      </div>
+      <CapabilityFilterTabs
+        ariaLabel="按岗位筛选"
+        options={[{ value: "all", label: "全部" }, ...roles.map((role) => ({ value: role.id, label: role.name }))]}
+        value={activeRole}
+        onValueChange={(value) => {
+          userSelectedRoleRef.current = true;
+          setActiveRole(value);
+        }}
+        className="mb-5"
+      />
 
       {/* 卡片流网格 */}
       {scenarios.length === 0 ? (

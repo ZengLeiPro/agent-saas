@@ -64,6 +64,53 @@ export interface CatalogFilterOption<T extends string> {
   count?: number;
 }
 
+export function CapabilityFilterTabs<T extends string>({
+  ariaLabel,
+  options,
+  value,
+  onValueChange,
+  className,
+}: {
+  ariaLabel: string;
+  options: CatalogFilterOption<T>[];
+  value: T;
+  onValueChange: (value: T) => void;
+  className?: string;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label={ariaLabel}
+      className={cn(
+        "flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        className,
+      )}
+    >
+      {options.map((option) => {
+        const selected = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            className={cn(
+              "shrink-0 rounded-full border px-3 py-1.5 text-sm transition-colors",
+              selected
+                ? "border-transparent bg-primary text-primary-foreground"
+                : "bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
+            onClick={() => onValueChange(option.value)}
+          >
+            {option.label}
+            {typeof option.count === "number" ? <span className="ml-1 text-xs opacity-70">{option.count}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function CatalogHeader({
   title,
   description,
@@ -117,24 +164,12 @@ export function CatalogToolbar<T extends string>({
         {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
       </div>
       {filters && activeFilter && onFilterChange ? (
-        <div className="flex gap-1 overflow-x-auto pb-1" aria-label="能力来源筛选">
-          {filters.map((filter) => (
-            <button
-              key={filter.value}
-              type="button"
-              className={cn(
-                "shrink-0 rounded-lg px-3 py-1.5 text-sm transition-colors",
-                activeFilter === filter.value
-                  ? "bg-brand-600 font-medium text-white shadow-sm"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
-              )}
-              onClick={() => onFilterChange(filter.value)}
-            >
-              {filter.label}
-              {typeof filter.count === "number" ? <span className="ml-1 text-xs opacity-70">{filter.count}</span> : null}
-            </button>
-          ))}
-        </div>
+        <CapabilityFilterTabs
+          ariaLabel="能力来源筛选"
+          options={filters}
+          value={activeFilter}
+          onValueChange={onFilterChange}
+        />
       ) : null}
     </div>
   );

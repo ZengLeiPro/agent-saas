@@ -138,7 +138,7 @@ export interface DwsAuthFlowServiceOptions {
   authSessionStore: DwsAuthSessionStore;
   connectionStore: DwsConnectionStore;
   runner: DwsDeviceLoginRunnerLike;
-  onConnected?: () => Promise<void>;
+  onConnected?: (user: UserInfo) => Promise<void>;
   logger?: {
     info(message: string): void;
     warn(message: string): void;
@@ -195,7 +195,7 @@ export class DwsAuthFlowService implements DwsAuthFlowServiceLike {
       if (!profiles || profiles.length === 0) throw new Error('钉钉已返回授权成功，但未生成组织连接信息');
       await this.options.connectionStore.syncProfiles(identity, profiles);
       await this.options.authSessionStore.markConnected(session.sessionId, identity);
-      await this.options.onConnected?.().catch((err) => {
+      await this.options.onConnected?.(user).catch((err) => {
         this.options.logger?.warn(`DWS post-login verification deferred user=${user.id}: ${redactDwsError(err)}`);
       });
       this.options.logger?.info(`DWS authorization connected user=${user.id} profiles=${profiles.length}`);

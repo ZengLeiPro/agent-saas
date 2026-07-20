@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { updateSelections, fetchMyMcp, dwsAuthFetch } = vi.hoisted(() => ({
+const { updateSelections, fetchMyMcp, diagnoseMyMcp, dwsAuthFetch } = vi.hoisted(() => ({
   updateSelections: vi.fn(),
   fetchMyMcp: vi.fn(),
+  diagnoseMyMcp: vi.fn(),
   dwsAuthFetch: vi.fn(),
 }));
 
@@ -32,7 +33,7 @@ vi.mock("@agent/shared", () => ({
   deleteMcpServer: vi.fn(),
   deleteMyMcpServer: vi.fn(),
   disconnectMyMcpOAuth: vi.fn(),
-  diagnoseMyMcp: vi.fn(),
+  diagnoseMyMcp,
   fetchMcpAdminServers: vi.fn(),
   fetchMcpTemplates: vi.fn(),
   fetchMyMcp,
@@ -52,6 +53,17 @@ describe("McpManager 连接器目录", () => {
       json: async () => (url.includes("/api/dws/connections") ? { connections: [] } : { session: null }),
     }));
     updateSelections.mockReset().mockResolvedValue(undefined);
+    diagnoseMyMcp.mockReset().mockResolvedValue({
+      ok: true,
+      toolCount: 2,
+      tools: [],
+      connections: [{
+        serverName: "crm",
+        status: "connected",
+        toolCount: 2,
+        checkedAt: "2026-07-20T14:00:00.000Z",
+      }],
+    });
     fetchMyMcp.mockReset().mockResolvedValue({
       configVersion: 1,
       servers: [
@@ -107,5 +119,35 @@ describe("McpManager 连接器目录", () => {
     expect(await screen.findByRole("dialog")).toBeTruthy();
     expect(screen.getByText("尚未连接钉钉")).toBeTruthy();
     expect(screen.getByRole("button", { name: "连接钉钉" })).toBeTruthy();
+  });
+
+  it("进入目录后自动做真实检测，只有握手成功才显示可用", async () => {
+    render(<McpManager />);
+
+    expect(await screen.findByText("可用 · 2 个工具")).toBeTruthy();
+    expect(diagnoseMyMcp).toHaveBeenCalledWith(false);
+  });
+
+  it("真实连接失败时显示异常和脱敏错误，并允许强制重新检测", async () => {
+    diagnoseMyMcp.mockResolvedValue({
+      ok: false,
+      error: "Authorization header is badly formatted",
+      toolCount: 0,
+      tools: [],
+      connections: [{
+        serverName: "crm",
+        status: "error",
+        toolCount: 0,
+        checkedAt: "2026-07-20T14:00:00.000Z",
+        lastError: "Authorization header is badly formatted",
+      }],
+    });
+    render(<McpManager />);
+
+    expect(await screen.findByText("连接异常")).toBeTruthy();
+    fireEvent.click(screen.getByText("开沿 CRM"));
+    expect(await screen.findByText("Authorization header is badly formatted")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "重新检测" }));
+    await waitFor(() => expect(diagnoseMyMcp).toHaveBeenLastCalledWith(true));
   });
 });

@@ -2272,7 +2272,21 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         authSessionStore: dwsAuthSessionStore,
         connectionStore: dwsConnectionStore,
         runner: new DwsDeviceLoginRunner({ agentCwd, resolveServerRemote: resolveDwsServerRemote }),
-        onConnected: async () => { await dwsAuthKeepaliveService?.runOnce(); },
+        onConnected: async (connectedUser) => {
+          if (
+            skillConfigStore
+            && skillConfigStore.isTenantSkillAvailableToUser('dws', connectedUser.tenantId, connectedUser.username)
+          ) {
+            const selected = skillConfigStore.getUserSelectedSkills(connectedUser.username);
+            if (!selected.includes('dws')) {
+              await skillConfigStore.setUserSelectedSkills(
+                connectedUser.username,
+                [...selected, 'dws'].sort(),
+              );
+            }
+          }
+          await dwsAuthKeepaliveService?.runOnce();
+        },
         logger: serverLogger.child('DwsAuthFlow'),
       });
     }

@@ -161,6 +161,7 @@ describe('DWS device authorization flow', () => {
       releaseClaim: vi.fn(async () => undefined),
       listForUser: vi.fn(async () => []),
     };
+    const onConnected = vi.fn(async () => undefined);
     const service = new DwsAuthFlowService({
       agentCwd: join(root, 'workspaces'),
       authSessionStore: authStore,
@@ -173,6 +174,7 @@ describe('DWS device authorization flow', () => {
           });
         }),
       },
+      onConnected,
     });
 
     await service.start(user());
@@ -189,6 +191,7 @@ describe('DWS device authorization flow', () => {
       [expect.objectContaining({ profileId: 'ding-corp-1', corpName: '示例企业' })],
     );
     expect(JSON.stringify(vi.mocked(connectionStore.syncProfiles).mock.calls)).not.toContain('不应进入状态账本');
+    await vi.waitFor(() => expect(onConnected).toHaveBeenCalledWith(user()));
     expect(authStore.markFailed).not.toHaveBeenCalled();
   });
 });

@@ -64,8 +64,12 @@ export async function bindAdminMcpSecret(serverId: string, key: string, value: s
   }
 }
 
-export async function diagnoseMyMcp(): Promise<McpDiagnosticResponse> {
-  return jsonOrError(await authFetch('/api/mcp/diagnose', { method: 'POST' }), 'Failed to diagnose MCP');
+export async function diagnoseMyMcp(force = false): Promise<McpDiagnosticResponse> {
+  return jsonOrError(await authFetch('/api/mcp/diagnose', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ force }),
+  }), 'Failed to diagnose MCP');
 }
 
 export async function fetchMcpAdminServers(): Promise<McpAdminServersResponse> {

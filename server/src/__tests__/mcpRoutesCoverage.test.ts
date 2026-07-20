@@ -12,7 +12,7 @@
  *     非 user scope 400 / 成功 200
  *   - /me/selections 400 校验
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -178,6 +178,49 @@ describe('MCP routes coverage', () => {
     const failBody = await failRes.json() as { ok: boolean; error: string };
     expect(failBody.ok).toBe(false);
     expect(failBody.error).toContain('boom');
+  });
+
+  it('GET /me 暴露最近真实连接状态；force diagnose 会重新建连并按 server 返回错误', async () => {
+    const invalidateUser = vi.fn(async () => undefined);
+    const manager = {
+      invalidateUser,
+      ensureUser: vi.fn(async () => []),
+      getUserConnectionStatuses: vi.fn(() => [{
+        serverName: 'srv1',
+        status: 'error' as const,
+        toolCount: 0,
+        checkedAt: '2026-07-20T14:00:00.000Z',
+        lastError: 'OAuth connection is not authorized for this user',
+        nextRetryAt: '2026-07-20T14:00:05.000Z',
+      }]),
+    } as unknown as McpClientManager;
+    const r = await rig({ manager });
+    await seedPersonalServer(r.store, 'srv1');
+    await r.store.setUserEnabledServers('alice', ['srv1'], 'kaiyan');
+
+    const me = await r.request('/api/mcp/me');
+    const meBody = await me.json() as { servers: Array<{ id: string; connection?: { status: string; lastError?: string } }> };
+    expect(meBody.servers.find(server => server.id === 'srv1')?.connection).toMatchObject({
+      status: 'error',
+      lastError: 'OAuth connection is not authorized for this user',
+    });
+
+    const diagnosed = await r.request('/api/mcp/diagnose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: true }),
+    });
+    const diagnosedBody = await diagnosed.json() as {
+      ok: boolean;
+      error?: string;
+      connections: Array<{ serverName: string; status: string }>;
+    };
+    expect(invalidateUser).toHaveBeenCalledWith('alice');
+    expect(diagnosedBody).toMatchObject({
+      ok: false,
+      error: 'OAuth connection is not authorized for this user',
+      connections: [{ serverName: 'srv1', status: 'error' }],
+    });
   });
 
   it('PUT /me/servers/:id 个人连接器：stdio 拒绝 400 / 成功 200 / id 冲突 409', async () => {

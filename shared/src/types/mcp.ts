@@ -28,6 +28,14 @@ export interface McpOAuthSummary {
   lastError?: string;
 }
 
+export interface McpConnectionSummary {
+  status: 'connected' | 'error';
+  toolCount: number;
+  checkedAt: string;
+  lastError?: string;
+  nextRetryAt?: string;
+}
+
 export interface McpServerSummary {
   id: string;
   name: string;
@@ -45,6 +53,8 @@ export interface McpServerSummary {
   tenantId?: string;
   config?: Record<string, unknown>;
   oauth?: McpOAuthSummary;
+  /** 运行时最近一次真实握手 + tools/list 结果；缺失表示尚未检测。 */
+  connection?: McpConnectionSummary;
 }
 
 export interface McpOAuthStartResponse {
@@ -113,6 +123,7 @@ export interface McpDiagnosticResponse {
   ok: boolean;
   toolCount: number;
   tools: McpDiagnosticTool[];
+  connections: Array<McpConnectionSummary & { serverName: string }>;
   workspaceRoot?: string;
   error?: string;
 }

@@ -106,6 +106,7 @@ const selectionsSchema = z.object({
 
 const secretValueSchema = z.object({ value: z.string().min(1).max(20000) }).strict();
 const oauthStartSchema = z.object({ returnTo: z.string().min(1).max(4000).optional() }).strict();
+const diagnoseSchema = z.object({ force: z.boolean().optional() }).strict();
 
 export function createMcpRouter(deps: McpRouterDeps): Router {
   const router = Router();
@@ -125,6 +126,9 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
    */
   function serializeForUser(username: string, tenantId: string) {
     const enabled = new Set(store.getUserConfig(username).enabledServers);
+    const connectionByServer = new Map(
+      getConnectionStatuses(username).map(status => [status.serverName, status]),
+    );
     return {
       configVersion: store.getConfigVersion(),
       servers: store.listServersVisibleToUser(username, tenantId).map(s => ({
@@ -142,6 +146,7 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
         ownerUsername: s.ownerUsername,
         personal: s.ownerUsername === username,
         oauth: oauthService?.summary(username, s),
+        connection: connectionByServer.get(s.id),
         ...(s.ownerUsername === username ? { config: s.config } : {}),
       })),
     };
@@ -153,6 +158,25 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
       toolName: t.toolName,
       description: t.description,
     }));
+  }
+
+  function getConnectionStatuses(username: string) {
+    return typeof manager.getUserConnectionStatuses === 'function'
+      ? manager.getUserConnectionStatuses(username)
+      : [];
+  }
+
+  function diagnosticPayload(username: string, tools: McpToolDescriptor[], workspaceRoot?: string) {
+    const connections = getConnectionStatuses(username);
+    const firstFailure = connections.find(connection => connection.status === 'error');
+    return {
+      ok: connections.every(connection => connection.status === 'connected'),
+      tools: sanitizeDiagnosticTools(tools),
+      toolCount: tools.length,
+      connections,
+      ...(workspaceRoot ? { workspaceRoot } : {}),
+      ...(firstFailure?.lastError ? { error: firstFailure.lastError } : {}),
+    };
   }
 
   /**
@@ -407,12 +431,20 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
   router.post('/diagnose', async (req, res) => {
     const username = currentUsername(req);
     if (!username) return res.status(401).json({ error: 'Authentication required' });
+    const parsed = diagnoseSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid diagnose request', details: parsed.error.format() });
     try {
-      await manager.invalidateUser(username);
+      if (parsed.data.force) await manager.invalidateUser(username);
       const tools = await manager.ensureUser(username);
-      res.json({ ok: true, tools: sanitizeDiagnosticTools(tools), toolCount: tools.length });
+      res.json(diagnosticPayload(username, tools));
     } catch (err) {
-      res.status(200).json({ ok: false, error: err instanceof Error ? err.message : String(err), tools: [], toolCount: 0 });
+      res.status(200).json({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        tools: [],
+        toolCount: 0,
+        connections: getConnectionStatuses(username),
+      });
     }
   });
 
@@ -583,9 +615,16 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     try {
       await manager.invalidateUser(user.username);
       const tools = await manager.ensureUser(user.username);
-      res.json({ ok: true, workspaceRoot, tools: sanitizeDiagnosticTools(tools), toolCount: tools.length });
+      res.json(diagnosticPayload(user.username, tools, workspaceRoot));
     } catch (err) {
-      res.status(200).json({ ok: false, workspaceRoot, error: err instanceof Error ? err.message : String(err), tools: [], toolCount: 0 });
+      res.status(200).json({
+        ok: false,
+        workspaceRoot,
+        error: err instanceof Error ? err.message : String(err),
+        tools: [],
+        toolCount: 0,
+        connections: getConnectionStatuses(user.username),
+      });
     }
   });
 

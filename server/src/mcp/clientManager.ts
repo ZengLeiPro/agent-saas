@@ -81,10 +81,29 @@ export interface McpToolDescriptor {
   inputSchema: Record<string, unknown>;
 }
 
+export interface McpServerConnectionStatus {
+  serverName: string;
+  status: 'connected' | 'error';
+  toolCount: number;
+  checkedAt: string;
+  lastError?: string;
+  nextRetryAt?: string;
+}
+
+interface InternalConnectionStatus {
+  status: 'connected' | 'error';
+  toolCount: number;
+  checkedAt: number;
+  attempts: number;
+  lastError?: string;
+  nextRetryAt?: number;
+}
+
 interface UserMcpEntry {
   username: string;
   workspaceRoot: string;
   servers: Map<string, ConnectedServer>;
+  connectionStatuses: Map<string, InternalConnectionStatus>;
 }
 
 interface ConnectedServer {
@@ -104,6 +123,8 @@ export interface McpClientManagerOptions {
   invokeTimeoutMs?: number;
   /** invoke 返回 content 最大字节数（默认 256KB），超出截断。 */
   maxResultBytes?: number;
+  /** 失败 server 的逐次重试间隔；主要供测试覆盖，生产使用默认退避。 */
+  retryDelaysMs?: number[];
   logger?: Logger;
   /** Optional vault used to resolve mcpServers.*.envSecretRefs/headerSecretRefs before connect. */
   secretVault?: SecretVault;
@@ -154,6 +175,7 @@ const MAX_TOOLS_PER_SERVER = 256;
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_INVOKE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_RESULT_BYTES = 256 * 1024;
+const DEFAULT_RETRY_DELAYS_MS = [5_000, 30_000, 2 * 60_000, 10 * 60_000];
 
 /** 私有 / 内网 / 元数据 CIDR 黑名单（IPv4）。 */
 function isPrivateIPv4(host: string): boolean {
@@ -244,6 +266,7 @@ export class McpClientManager {
       connectTimeoutMs: options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
       invokeTimeoutMs: options.invokeTimeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS,
       maxResultBytes: options.maxResultBytes ?? DEFAULT_MAX_RESULT_BYTES,
+      retryDelaysMs: options.retryDelaysMs?.length ? [...options.retryDelaysMs] : DEFAULT_RETRY_DELAYS_MS,
       logger: options.logger,
       secretVault: options.secretVault,
       configProvider: options.configProvider,
@@ -260,12 +283,19 @@ export class McpClientManager {
   async ensureUser(username: string | undefined): Promise<McpToolDescriptor[]> {
     if (!username) return [];
     const existing = this.entries.get(username);
-    if (existing) {
+    const shouldRetry = existing
+      ? [...existing.connectionStatuses.values()].some(status =>
+          status.status === 'error' && (status.nextRetryAt ?? 0) <= Date.now(),
+        )
+      : false;
+    if (existing && !shouldRetry) {
       return [...existing.servers.values()].flatMap((s) => s.tools);
     }
     let pending = this.inflight.get(username);
     if (!pending) {
-      pending = this._connectAllForUser(username);
+      pending = existing
+        ? this._retryFailedServers(username, existing)
+        : this._connectAllForUser(username);
       this.inflight.set(username, pending);
     }
     try {
@@ -285,6 +315,7 @@ export class McpClientManager {
       username,
       workspaceRoot,
       servers: new Map(),
+      connectionStatuses: new Map(),
     };
 
     const config = this.options.configProvider
@@ -292,47 +323,104 @@ export class McpClientManager {
       : await loadMcpServersConfig(workspaceRoot, this.options.logger);
     for (const [serverName, serverConfig] of Object.entries(config.mcpServers ?? {})) {
       if (serverName.includes('__')) {
-        this.options.logger?.warn(
-          `MCP[${username}] server name "${serverName}" contains "__" — rejected (would clash with tool key parser)`,
+        this._recordConnectionFailure(
+          entry,
+          serverName,
+          new Error(`server name "${serverName}" contains "__" — rejected (would clash with tool key parser)`),
         );
         continue;
       }
       try {
-        const resolvedConfig = await resolveMcpServerSecrets({
-          username,
-          tenantId: this.options.tenantResolver?.(username),
-          serverName,
-          config: serverConfig,
-          vault: this.options.secretVault,
-        });
-        const oauthProvider = !isStdioConfig(resolvedConfig) && resolvedConfig.oauth
-          ? await this.options.oauthProviderFactory?.({
-              username,
-              tenantId: this.options.tenantResolver?.(username),
-              serverName,
-              config: resolvedConfig,
-            })
-          : undefined;
-        if (!isStdioConfig(resolvedConfig) && resolvedConfig.oauth && !oauthProvider) {
-          throw new Error('OAuth connection is not authorized for this user');
-        }
-        const connected = await this._connectServerWithTimeout(serverName, resolvedConfig, oauthProvider);
-        entry.servers.set(serverName, connected);
-        this.options.logger?.info(
-          `MCP[${username}] connected server=${serverName} tools=${connected.tools.length}`,
-        );
+        await this._connectServerForUser(entry, serverName, serverConfig);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.options.logger?.warn(`MCP[${username}] failed to connect ${serverName}: ${message}`);
+        this._recordConnectionFailure(entry, serverName, err);
         if (this.options.failOnError) throw err;
-        // 故意不把失败的 server 写进 entry.servers，下次 ensureUser 仍会
-        // 尝试重新连——避免冷启动失败永久死掉
       }
     }
 
     // 全部尝试完才进 entries（避免半连状态被并发 reader 看到）
     this.entries.set(username, entry);
     return entry;
+  }
+
+  private async _retryFailedServers(username: string, entry: UserMcpEntry): Promise<UserMcpEntry> {
+    const config = this.options.configProvider
+      ? await this.options.configProvider(username, entry.workspaceRoot)
+      : await loadMcpServersConfig(entry.workspaceRoot, this.options.logger);
+    const now = Date.now();
+    for (const [serverName, status] of entry.connectionStatuses) {
+      if (status.status !== 'error' || (status.nextRetryAt ?? 0) > now) continue;
+      const serverConfig = config.mcpServers?.[serverName];
+      if (!serverConfig) {
+        entry.connectionStatuses.delete(serverName);
+        continue;
+      }
+      try {
+        await this._connectServerForUser(entry, serverName, serverConfig);
+      } catch (err) {
+        this._recordConnectionFailure(entry, serverName, err);
+        if (this.options.failOnError) throw err;
+      }
+    }
+    return entry;
+  }
+
+  private async _connectServerForUser(
+    entry: UserMcpEntry,
+    serverName: string,
+    serverConfig: McpServerConfig,
+  ): Promise<void> {
+    const { username } = entry;
+    const resolvedConfig = await resolveMcpServerSecrets({
+      username,
+      tenantId: this.options.tenantResolver?.(username),
+      serverName,
+      config: serverConfig,
+      vault: this.options.secretVault,
+    });
+    const oauthProvider = !isStdioConfig(resolvedConfig) && resolvedConfig.oauth
+      ? await this.options.oauthProviderFactory?.({
+          username,
+          tenantId: this.options.tenantResolver?.(username),
+          serverName,
+          config: resolvedConfig,
+        })
+      : undefined;
+    if (!isStdioConfig(resolvedConfig) && resolvedConfig.oauth && !oauthProvider) {
+      throw new Error('OAuth connection is not authorized for this user');
+    }
+    const connected = await this._connectServerWithTimeout(serverName, resolvedConfig, oauthProvider);
+    if (connected.tools.length === 0) {
+      await connected.shutdown().catch(() => undefined);
+      throw new Error('MCP server connected but returned no tools');
+    }
+    entry.servers.set(serverName, connected);
+    entry.connectionStatuses.set(serverName, {
+      status: 'connected',
+      toolCount: connected.tools.length,
+      checkedAt: Date.now(),
+      attempts: 0,
+    });
+    this.options.logger?.info(
+      `MCP[${username}] connected server=${serverName} tools=${connected.tools.length}`,
+    );
+  }
+
+  private _recordConnectionFailure(entry: UserMcpEntry, serverName: string, error: unknown): void {
+    const message = sanitizeConnectionError(error);
+    const previous = entry.connectionStatuses.get(serverName);
+    const attempts = previous?.status === 'error' ? previous.attempts + 1 : 1;
+    const delay = this.options.retryDelaysMs[Math.min(attempts - 1, this.options.retryDelaysMs.length - 1)];
+    const checkedAt = Date.now();
+    entry.connectionStatuses.set(serverName, {
+      status: 'error',
+      toolCount: 0,
+      checkedAt,
+      attempts,
+      lastError: message,
+      nextRetryAt: checkedAt + delay,
+    });
+    this.options.logger?.warn(`MCP[${entry.username}] failed to connect ${serverName}: ${message}`);
   }
 
   private async _connectServerWithTimeout(
@@ -386,9 +474,28 @@ export class McpClientManager {
         }),
       ]);
       return formatMcpResult(result, this.options.maxResultBytes);
+    } catch (err) {
+      await server.shutdown().catch(() => undefined);
+      entry?.servers.delete(parsed.serverName);
+      if (entry) this._recordConnectionFailure(entry, parsed.serverName, err);
+      throw err;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  getUserConnectionStatuses(username: string | undefined): McpServerConnectionStatus[] {
+    if (!username) return [];
+    const entry = this.entries.get(username);
+    if (!entry) return [];
+    return [...entry.connectionStatuses.entries()].map(([serverName, status]) => ({
+      serverName,
+      status: status.status,
+      toolCount: status.toolCount,
+      checkedAt: new Date(status.checkedAt).toISOString(),
+      ...(status.lastError ? { lastError: status.lastError } : {}),
+      ...(status.nextRetryAt ? { nextRetryAt: new Date(status.nextRetryAt).toISOString() } : {}),
+    }));
   }
 
   async shutdown(): Promise<void> {
@@ -504,10 +611,36 @@ async function resolveMcpServerSecrets(args: {
   const refs = validateHeaderSecretRefs(config.headerSecretRefs, `MCP[${username}] ${serverName} headerSecretRefs`);
   if (Object.keys(refs).length > 0 && !vault) throw new Error(`MCP[${username}] ${serverName} headerSecretRefs configured but no SecretVault is available`);
   for (const [name, descriptor] of Object.entries(refs)) {
-    headers[name] = `${descriptor.prefix ?? ''}${await vault!.getSecret(descriptor.ref, baseCaller)}`;
+    headers[name] = applySecretPrefix(
+      descriptor.prefix ?? '',
+      await vault!.getSecret(descriptor.ref, baseCaller),
+    );
   }
   const { headerSecretRefs: _headerSecretRefs, ...rest } = config;
   return { ...rest, headers };
+}
+
+function applySecretPrefix(prefix: string, secret: string): string {
+  const prefixToken = prefix.trim();
+  const trimmedSecret = secret.trim();
+  if (!prefixToken) return trimmedSecret;
+  const existingPrefix = trimmedSecret.slice(0, prefixToken.length);
+  const nextCharacter = trimmedSecret.slice(prefixToken.length, prefixToken.length + 1);
+  if (existingPrefix.toLocaleLowerCase() === prefixToken.toLocaleLowerCase() && /\s/.test(nextCharacter)) {
+    return `${prefix}${trimmedSecret.slice(prefixToken.length).trimStart()}`;
+  }
+  return `${prefix}${trimmedSecret}`;
+}
+
+function sanitizeConnectionError(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return text
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/((?:access_token|refresh_token|authorization|token)\s*[=:]\s*["']?)[^\s,"'}]+/gi, '$1[REDACTED]')
+    .replace(/https?:\/\/[^\s?#]+\?[^\s]+/gi, (url) => url.split('?')[0])
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 1_000) || 'unknown_error';
 }
 
 function validateSecretRefMap(value: unknown, label: string): Record<string, string> {

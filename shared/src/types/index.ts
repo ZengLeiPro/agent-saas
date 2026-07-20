@@ -182,6 +182,7 @@ export type {
   McpOAuthSummary,
   McpOAuthStartResponse,
   McpServerSummary,
+  McpConnectionSummary,
   MyMcpResponse,
   ManagedMcpServer,
   McpTemplate,

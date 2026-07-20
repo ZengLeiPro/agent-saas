@@ -136,6 +136,13 @@ describe('mcpApi', () => {
       const { url, init } = lastCall();
       expect(url).toBe('/api/mcp/diagnose');
       expect(init.method).toBe('POST');
+      expect(JSON.parse(String(init.body))).toEqual({ force: false });
+    });
+
+    it('强制检测显式发送 force=true', async () => {
+      mockAuthFetch.mockResolvedValue(ok({ ok: true }));
+      await diagnoseMyMcp(true);
+      expect(JSON.parse(String(lastCall().init.body))).toEqual({ force: true });
     });
 
     it('非 2xx 抛错', async () => {

@@ -152,6 +152,7 @@ export type {
   SkillDocumentResponse,
   McpTransport,
   McpServerSummary,
+  McpConnectionSummary,
   McpRiskLevel,
   McpSecretScope,
   McpSecretTarget,

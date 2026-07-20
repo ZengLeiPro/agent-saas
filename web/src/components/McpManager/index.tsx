@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Check, ExternalLink, Loader2, Link2Off, Plus, RefreshCw, Save, Stethoscope, Trash2 } from "lucide-react";
+import { Check, ExternalLink, Loader2, Link2Off, Plus, RefreshCw, Save, Stethoscope, Trash2, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
@@ -83,7 +83,7 @@ function connectorSource(server: McpServerSummary): CapabilitySource {
   return "organization";
 }
 
-function connectorStatus(server: McpServerSummary): { label: string; className: string } {
+function connectorStatus(server: McpServerSummary, checking = false): { label: string; className: string } {
   if (server.oauth && server.oauth.status !== "connected") {
     return server.oauth.status === "error"
       ? { label: "授权失败", className: "text-destructive" }
@@ -92,9 +92,16 @@ function connectorStatus(server: McpServerSummary): { label: string; className: 
   if ((server.secretRequirements ?? []).some((requirement) => requirement.required !== false && !requirement.configured)) {
     return { label: "待配置", className: "text-amber-700 dark:text-amber-300" };
   }
-  return server.enabled
-    ? { label: "已启用", className: "text-success" }
-    : { label: "可启用", className: "text-muted-foreground" };
+  if (!server.enabled) return { label: "可启用", className: "text-muted-foreground" };
+  if (checking) return { label: "检测中", className: "text-brand-600" };
+  if (server.connection?.status === "connected") {
+    return {
+      label: server.connection.toolCount > 0 ? `可用 · ${server.connection.toolCount} 个工具` : "可用",
+      className: "text-success",
+    };
+  }
+  if (server.connection?.status === "error") return { label: "连接异常", className: "text-destructive" };
+  return { label: "待检测", className: "text-amber-700 dark:text-amber-300" };
 }
 
 export function McpManager({ embedded = false }: { embedded?: boolean }) {
@@ -116,6 +123,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const [templates, setTemplates] = useState<McpTemplatesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [diagnosing, setDiagnosing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [enabled, setEnabled] = useState<Record<string, boolean>>({});
   const [diagnostic, setDiagnostic] = useState<McpDiagnosticResponse | null>(null);
@@ -141,6 +149,32 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const dws = useDwsConnections(mode === "personal");
   const [dingtalkDetailOpen, setDingtalkDetailOpen] = useState(false);
 
+  const diagnose = useCallback(async (force = false) => {
+    setDiagnosing(true);
+    try {
+      const result = await diagnoseMyMcp(force);
+      setDiagnostic(result);
+      const connectionByServer = new Map(result.connections.map(connection => [connection.serverName, connection]));
+      setMyData(current => current ? {
+        ...current,
+        servers: current.servers.map(server => ({ ...server, connection: connectionByServer.get(server.id) })),
+      } : current);
+      return result;
+    } catch (err) {
+      const result: McpDiagnosticResponse = {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        toolCount: 0,
+        tools: [],
+        connections: [],
+      };
+      setDiagnostic(result);
+      return result;
+    } finally {
+      setDiagnosing(false);
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
@@ -150,6 +184,12 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
         const mine = await fetchMyMcp();
         setMyData(mine);
         setEnabled(Object.fromEntries(mine.servers.map(s => [s.id, s.enabled])));
+        const hasReadyEnabledServer = mine.servers.some(server =>
+          server.enabled
+          && (!server.oauth || server.oauth.status === "connected")
+          && !(server.secretRequirements ?? []).some(requirement => requirement.required !== false && !requirement.configured),
+        );
+        if (hasReadyEnabledServer) void diagnose(false);
       }
       if (mode === "admin" && isAdmin) {
         const [adminServers, templateData] = await Promise.all([fetchMcpAdminServers(), fetchMcpTemplates()]);
@@ -162,7 +202,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, mode]);
+  }, [diagnose, isAdmin, mode]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -176,25 +216,14 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
         ...current,
         servers: current.servers.map((server) => ({ ...server, enabled: nextEnabled[server.id] === true })),
       } : current);
+      await diagnose(false);
     } catch (err) {
       setEnabled(previous);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
-  }, [enabled]);
-
-  const diagnose = useCallback(async () => {
-    setDiagnostic(null);
-    setSaving(true);
-    try {
-      setDiagnostic(await diagnoseMyMcp());
-    } catch (err) {
-      setDiagnostic({ ok: false, error: err instanceof Error ? err.message : String(err), toolCount: 0, tools: [] });
-    } finally {
-      setSaving(false);
-    }
-  }, []);
+  }, [diagnose, enabled]);
 
   const editServer = useCallback((server: ManagedMcpServer) => {
     setForm(server);
@@ -293,12 +322,13 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
         return;
       }
       setEnabled(nextEnabled);
+      if (target?.enabled) await diagnose(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
-  }, [saveSelections, secretInputs]);
+  }, [diagnose, saveSelections, secretInputs]);
 
   /**
    * 角色 → 可绑 scope 的判定：
@@ -471,9 +501,15 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
           title="连接器"
           description="连接常用账号，让 Agent 在你的权限范围内使用数据和工具。"
           actions={
-            <Button variant="outline" onClick={openCreatePersonalServer}>
-              <Plus className="size-4" />自定义连接器
-            </Button>
+            <>
+              <Button variant="outline" onClick={() => { void diagnose(true); }} disabled={diagnosing}>
+                {diagnosing ? <Loader2 className="size-4 animate-spin" /> : <Stethoscope className="size-4" />}
+                检测连接
+              </Button>
+              <Button variant="outline" onClick={openCreatePersonalServer}>
+                <Plus className="size-4" />自定义连接器
+              </Button>
+            </>
           }
         />
 
@@ -499,10 +535,13 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
               ) : null}
               {filteredServers.map((server) => {
                 const source = connectorSource(server);
-                const status = connectorStatus(server);
                 const oauthReady = !server.oauth || server.oauth.status === "connected";
                 const missingSecrets = (server.secretRequirements ?? []).some((requirement) => requirement.required !== false && !requirement.configured);
                 const selected = enabled[server.id] === true;
+                const connectionChecking = diagnosing && selected && oauthReady && !missingSecrets;
+                const status = connectorStatus(server, connectionChecking);
+                const connectionFailed = selected && server.connection?.status === "error";
+                const connectionReady = selected && server.connection?.status === "connected";
                 return (
                   <Card
                     key={server.id}
@@ -533,11 +572,13 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                             type="button"
                             className={cn(
                               "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
-                              selected
+                              connectionReady
                                 ? "border-transparent bg-success text-success-foreground shadow-sm hover:bg-success/85"
+                                : connectionFailed
+                                  ? "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15"
                                 : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
                             )}
-                            disabled={saving || (!!server.oauth && !server.oauth.platformConfigured)}
+                            disabled={saving || diagnosing || (!!server.oauth && !server.oauth.platformConfigured)}
                             title={server.oauth && !server.oauth.platformConfigured ? "平台管理员尚未完成授权配置，暂不可连接" : undefined}
                             aria-label={oauthReady && !missingSecrets ? `${selected ? "停用" : "启用"} ${server.name}` : `配置 ${server.name}`}
                             onClick={(event) => {
@@ -552,7 +593,13 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                               }
                             }}
                           >
-                            {pendingServerId === server.id ? <Loader2 className="size-4 animate-spin" /> : selected ? <Check className="size-4" strokeWidth={2.5} /> : <Plus className="size-4" />}
+                            {pendingServerId === server.id || connectionChecking
+                              ? <Loader2 className="size-4 animate-spin" />
+                              : connectionFailed
+                                ? <TriangleAlert className="size-4" />
+                                : selected
+                                  ? <Check className="size-4" strokeWidth={2.5} />
+                                  : <Plus className="size-4" />}
                           </button>
                         </div>
                         <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{server.description || "暂无连接器说明"}</p>
@@ -578,9 +625,45 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                 <ConnectorBrandLogo server={detailServer} />
                 <div>
                   <CapabilitySourceBadge source={connectorSource(detailServer)} />
-                  <div className={`mt-1 text-xs font-medium ${connectorStatus(detailServer).className}`}>{connectorStatus(detailServer).label}</div>
+                  <div className={`mt-1 text-xs font-medium ${connectorStatus(detailServer, diagnosing && detailServer.enabled).className}`}>{connectorStatus(detailServer, diagnosing && detailServer.enabled).label}</div>
                 </div>
               </div>
+
+              {detailServer.enabled
+                && (!detailServer.oauth || detailServer.oauth.status === "connected")
+                && !(detailServer.secretRequirements ?? []).some(requirement => requirement.required !== false && !requirement.configured) ? (
+                  <div className={cn(
+                    "rounded-xl border p-4",
+                    detailServer.connection?.status === "error" && "border-destructive/40 bg-destructive/5",
+                  )}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium">真实连接检测</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {diagnosing
+                            ? "正在连接远端服务并读取工具清单…"
+                            : detailServer.connection?.status === "connected"
+                              ? `连接正常，Agent 可使用 ${detailServer.connection.toolCount} 个工具。`
+                              : detailServer.connection?.status === "error"
+                                ? "远端连接失败，Agent 当前不会看到这个连接器。"
+                                : "尚未完成远端检测。"}
+                        </div>
+                      </div>
+                      <Button size="sm" variant="outline" onClick={() => { void diagnose(true); }} disabled={diagnosing}>
+                        {diagnosing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                        重新检测
+                      </Button>
+                    </div>
+                    {detailServer.connection?.checkedAt ? (
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        最近检测：{new Date(detailServer.connection.checkedAt).toLocaleString("zh-CN", { hour12: false })}
+                      </div>
+                    ) : null}
+                    {detailServer.connection?.lastError ? (
+                      <div className="mt-2 break-words text-xs text-destructive">{detailServer.connection.lastError}</div>
+                    ) : null}
+                  </div>
+                ) : null}
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl bg-muted/40 p-3">
@@ -724,7 +807,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                 保存 Server
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={() => void diagnose()} disabled={saving}>
+            <Button variant="outline" size="sm" onClick={() => void diagnose(true)} disabled={saving || diagnosing}>
               <Stethoscope className="size-3.5" />诊断
             </Button>
             <Button variant="outline" size="sm" onClick={() => void refresh()}>

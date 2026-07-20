@@ -247,6 +247,90 @@ describe('McpClientManager.ensureUser', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('failed to connect flaky'));
   });
 
+  it('远端握手成功但 tools/list 为空时仍判为不可用', async () => {
+    enqueueClient(fakeClient());
+    const manager = new McpClientManager({
+      agentCwd: '/tmp',
+      configProvider: vi.fn(async (): Promise<McpServersFileShape> => ({
+        mcpServers: { empty: { command: 'empty' } },
+      })),
+    });
+
+    expect(await manager.ensureUser('empty-user')).toEqual([]);
+    expect(manager.getUserConnectionStatuses('empty-user')).toEqual([
+      expect.objectContaining({
+        serverName: 'empty',
+        status: 'error',
+        lastError: 'MCP server connected but returned no tools',
+      }),
+    ]);
+  });
+
+  it('失败 server 到达退避时间后自动重试，不重连已经成功的 server', async () => {
+    const stable = fakeClient({
+      listTools: vi.fn(async () => ({ tools: [{ name: 'stable_tool' }] })),
+    });
+    const failed = fakeClient({
+      connect: vi.fn(async () => { throw new Error('temporary outage'); }),
+    });
+    const recovered = fakeClient({
+      listTools: vi.fn(async () => ({ tools: [{ name: 'recovered_tool' }] })),
+    });
+    enqueueClient(stable);
+    enqueueClient(failed);
+    enqueueClient(recovered);
+    const configProvider = vi.fn(async (): Promise<McpServersFileShape> => ({
+      mcpServers: {
+        stable: { command: 'stable' },
+        flaky: { command: 'flaky' },
+      },
+    }));
+    const mgr = new McpClientManager({ agentCwd: '/tmp', configProvider, retryDelaysMs: [0] });
+
+    expect((await mgr.ensureUser('retry-user')).map(tool => tool.toolName)).toEqual(['stable_tool']);
+    expect(mgr.getUserConnectionStatuses('retry-user')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ serverName: 'stable', status: 'connected', toolCount: 1 }),
+      expect.objectContaining({ serverName: 'flaky', status: 'error', toolCount: 0, lastError: 'temporary outage' }),
+    ]));
+
+    expect((await mgr.ensureUser('retry-user')).map(tool => tool.toolName).sort()).toEqual([
+      'recovered_tool',
+      'stable_tool',
+    ]);
+    expect(stable.connect).toHaveBeenCalledTimes(1);
+    expect(configProvider).toHaveBeenCalledTimes(2);
+    expect(mgr.getUserConnectionStatuses('retry-user')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ serverName: 'flaky', status: 'connected', toolCount: 1 }),
+    ]));
+  });
+
+  it('header secret 已带 Bearer 时不重复拼接前缀', async () => {
+    const connect = vi.fn(async (transport: unknown) => {
+      expect(transport).toMatchObject({
+        opts: { requestInit: { headers: { Authorization: 'Bearer ghp_example' } } },
+      });
+    });
+    enqueueClient(fakeClient({ connect }));
+    const manager = new McpClientManager({
+      agentCwd: '/tmp',
+      configProvider: vi.fn(async (): Promise<McpServersFileShape> => ({
+        mcpServers: {
+          github: {
+            type: 'streamable-http',
+            url: 'https://api.github.example/mcp',
+            headerSecretRefs: { Authorization: { ref: 'secret-ref', prefix: 'Bearer ' } },
+          },
+        },
+      })),
+      secretVault: {
+        getSecret: vi.fn(async () => 'Bearer ghp_example'),
+      } as never,
+    });
+
+    await manager.ensureUser('github-user');
+    expect(connect).toHaveBeenCalledTimes(1);
+  });
+
   it('failOnError=true 时连接失败向上抛（ensureUser 捕获后仍抛出）', async () => {
     enqueueClient(fakeClient({
       connect: vi.fn(async () => { throw new Error('boom'); }),
@@ -305,6 +389,38 @@ describe('McpClientManager.invoke', () => {
   it('缺 username 抛错', async () => {
     const mgr = new McpClientManager({ agentCwd: '/tmp', configProvider: vi.fn(async () => ({})) });
     await expect(mgr.invoke(undefined, 'mcp__srv__run', {})).rejects.toThrow(/missing username/);
+  });
+
+  it('调用期 transport/auth 异常会把 server 标为失败，并允许下一轮重连', async () => {
+    const broken = fakeClient({
+      listTools: vi.fn(async () => ({ tools: [{ name: 'run' }] })),
+      callTool: vi.fn(async () => { throw new Error('upstream 401 unauthorized'); }),
+    });
+    const recovered = fakeClient({
+      listTools: vi.fn(async () => ({ tools: [{ name: 'run' }] })),
+    });
+    enqueueClient(broken);
+    enqueueClient(recovered);
+    const manager = new McpClientManager({
+      agentCwd: '/tmp',
+      retryDelaysMs: [0],
+      configProvider: vi.fn(async (): Promise<McpServersFileShape> => ({
+        mcpServers: { srv: { command: 'x' } },
+      })),
+    });
+    await manager.ensureUser('invoke-retry-user');
+
+    await expect(manager.invoke('invoke-retry-user', 'mcp__srv__run', {})).rejects.toThrow('upstream 401');
+    expect(manager.getUserConnectionStatuses('invoke-retry-user')).toEqual([
+      expect.objectContaining({ serverName: 'srv', status: 'error', toolCount: 0 }),
+    ]);
+
+    expect(await manager.ensureUser('invoke-retry-user')).toEqual([
+      expect.objectContaining({ serverName: 'srv', toolName: 'run' }),
+    ]);
+    expect(manager.getUserConnectionStatuses('invoke-retry-user')).toEqual([
+      expect.objectContaining({ serverName: 'srv', status: 'connected', toolCount: 1 }),
+    ]);
   });
 
   it('非法 toolKey 抛错', async () => {

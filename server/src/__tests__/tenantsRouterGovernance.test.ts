@@ -335,7 +335,7 @@ describe('tenants 路由治理（settings 越权守卫 + CRUD 权限矩阵）', 
       expect(h.tenantStore.getSettings('wain')!.features.debugModeAllowed).toBe(false);
     });
 
-    it('组织 admin 访问平台专属接口（列表/GET :id/POST/改名/status）→ 403 且无副作用', async () => {
+    it('组织 admin 访问平台专属接口（列表/GET :id/POST/改名/排序/status）→ 403 且无副作用', async () => {
       h.setCaller(WAIN_ADMIN);
       expect((await h.request('/api/tenants')).status).toBe(403);
       expect((await h.request('/api/tenants/wain')).status).toBe(403);
@@ -356,6 +356,14 @@ describe('tenants 路由治理（settings 越权守卫 + CRUD 权限矩阵）', 
       expect(rename.status).toBe(403);
       expect(h.tenantStore.findById('wain')!.name).toBe('唯恩电气');
 
+      const reorder = await h.request('/api/tenants', {
+        method: 'PATCH',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ ids: ['acme', 'wain', DEFAULT_TENANT_ID] }),
+      });
+      expect(reorder.status).toBe(403);
+      expect(h.tenantStore.listAll().map(tenant => tenant.id)).toEqual([DEFAULT_TENANT_ID, 'wain', 'acme']);
+
       const status = await h.request('/api/tenants/acme/status', {
         method: 'PATCH',
         headers: JSON_HEADERS,
@@ -364,6 +372,41 @@ describe('tenants 路由治理（settings 越权守卫 + CRUD 权限矩阵）', 
       expect(status.status).toBe(403);
       expect(h.tenantStore.findById('acme')!.disabled).toBeFalsy();
       expect(h.disabledCalls).toEqual([]);
+    });
+  });
+
+  describe('PATCH / 组织排序', () => {
+    it('平台 admin 可保存全局顺序，列表接口按该顺序返回', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      const order = ['acme', DEFAULT_TENANT_ID, 'wain'];
+      const patch = await h.request('/api/tenants', {
+        method: 'PATCH',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ ids: order }),
+      });
+      expect(patch.status).toBe(200);
+      expect((await patch.json() as { tenants: Array<{ id: string }> }).tenants.map(tenant => tenant.id)).toEqual(order);
+
+      const list = await h.request('/api/tenants');
+      expect((await list.json() as { tenants: Array<{ id: string }> }).tenants.map(tenant => tenant.id)).toEqual(order);
+    });
+
+    it('缺失、重复、未知或非法 slug 均返回 400，原顺序不变', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      for (const ids of [
+        [DEFAULT_TENANT_ID, 'wain'],
+        [DEFAULT_TENANT_ID, 'wain', 'wain'],
+        [DEFAULT_TENANT_ID, 'wain', 'ghost'],
+        [DEFAULT_TENANT_ID, 'wain', 'BAD'],
+      ]) {
+        const patch = await h.request('/api/tenants', {
+          method: 'PATCH',
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ ids }),
+        });
+        expect(patch.status).toBe(400);
+      }
+      expect(h.tenantStore.listAll().map(tenant => tenant.id)).toEqual([DEFAULT_TENANT_ID, 'wain', 'acme']);
     });
   });
 

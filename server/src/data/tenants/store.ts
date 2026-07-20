@@ -141,6 +141,19 @@ export class TenantStore {
     return this.tenants.map(t => ({ ...t, settings: cloneSettings(mergeSettings(t.settings)) }));
   }
 
+  async reorder(ids: string[]): Promise<TenantRecord[]> {
+    if (ids.length !== this.tenants.length || new Set(ids).size !== ids.length) {
+      throw new Error('Tenant order must contain every tenant exactly once');
+    }
+    const tenantsById = new Map(this.tenants.map(tenant => [tenant.id, tenant]));
+    if (ids.some(id => !tenantsById.has(id))) {
+      throw new Error('Tenant order contains unknown tenant');
+    }
+    this.tenants = ids.map(id => tenantsById.get(id)!);
+    await this.persist();
+    return this.listAll();
+  }
+
   count(): number {
     return this.tenants.length;
   }

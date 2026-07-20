@@ -105,6 +105,30 @@ describe('TenantStore', () => {
     });
   });
 
+  describe('reorder', () => {
+    it('按完整 slug 列表重排并持久化', async () => {
+      const store = new TenantStore(storePath);
+      await store.create({ id: 'pantheon', name: '万神殿', createdBy: 's' });
+      await store.create({ id: 'wain', name: '唯恩', createdBy: 's' });
+      await store.create({ id: 'acme', name: 'Acme', createdBy: 's' });
+
+      const reordered = await store.reorder(['acme', 'pantheon', 'wain']);
+      expect(reordered.map(tenant => tenant.id)).toEqual(['acme', 'pantheon', 'wain']);
+      expect(new TenantStore(storePath).listAll().map(tenant => tenant.id)).toEqual(['acme', 'pantheon', 'wain']);
+    });
+
+    it('拒绝缺失、重复或未知组织，且不改变原顺序', async () => {
+      const store = new TenantStore(storePath);
+      await store.create({ id: 'wain', name: '唯恩', createdBy: 's' });
+      await store.create({ id: 'acme', name: 'Acme', createdBy: 's' });
+
+      await expect(store.reorder(['wain'])).rejects.toThrow(/every tenant exactly once/);
+      await expect(store.reorder(['wain', 'wain'])).rejects.toThrow(/every tenant exactly once/);
+      await expect(store.reorder(['wain', 'ghost'])).rejects.toThrow(/unknown tenant/);
+      expect(store.listAll().map(tenant => tenant.id)).toEqual(['wain', 'acme']);
+    });
+  });
+
   describe('ensureDefaultTenant', () => {
     it('首次调用创建平台根组织 pantheon', async () => {
       const store = new TenantStore(storePath);

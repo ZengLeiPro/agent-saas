@@ -39,6 +39,11 @@ const setDisabledSchema = z.object({
   disabled: z.boolean(),
 });
 
+const reorderTenantsSchema = z.object({
+  ids: z.array(z.string().regex(TENANT_SLUG_PATTERN)).min(1)
+    .refine(ids => new Set(ids).size === ids.length, 'ids 不可重复'),
+});
+
 const deleteTenantSchema = z.object({
   confirm: z.string().min(1),
 });
@@ -157,6 +162,22 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
   // GET /api/tenants — 列出所有组织（含 disabled）
   router.get('/', requirePlatformAdmin, (_req, res) => {
     res.json({ tenants: tenantStore.listAll() });
+  });
+
+  // PATCH /api/tenants — 持久化全局组织顺序；所有组织选择器沿用该顺序
+  router.patch('/', requirePlatformAdmin, async (req, res) => {
+    const parsed = reorderTenantsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]!.message });
+      return;
+    }
+    try {
+      const tenants = await tenantStore.reorder(parsed.data.ids);
+      auditLog(req, 'tenant_updated', `order=${parsed.data.ids.join(',')}`);
+      res.json({ tenants });
+    } catch (err: unknown) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // ---------------------------------------------------------------------------

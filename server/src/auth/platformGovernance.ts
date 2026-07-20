@@ -173,6 +173,7 @@ function isSelfServiceWrite(req: Request): boolean {
 function requiredWriteCapabilities(req: Request): PlatformCapability[] | null {
   const { method, path } = req;
   if (method === "POST" && path === "/tenants") return ["tenant.manage"];
+  if (method === "PATCH" && path === "/tenants") return ["tenant.manage"];
   const tenantPatchMatch = path.match(/^\/tenants\/([^/]+)$/);
   if (method === "PATCH" && tenantPatchMatch) {
     return tenantPatchMatch[1] === DEFAULT_TENANT_ID ? null : ["tenant.manage"];

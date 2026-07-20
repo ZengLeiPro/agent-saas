@@ -9,6 +9,12 @@ const API_BASE = "/api/tenants";
 let cachedTenants: Tenant[] | null = null;
 let tenantsPreloadConsumed = false;
 let tenantsSkipped = false; // 非平台 admin 跳过请求
+const tenantSubscribers = new Set<(tenants: Tenant[]) => void>();
+
+function publishTenants(tenants: Tenant[]): void {
+  cachedTenants = tenants;
+  for (const subscriber of tenantSubscribers) subscriber(tenants);
+}
 
 export function useTenants() {
   const [tenants, setTenants] = useState<Tenant[]>(cachedTenants ?? []);
@@ -28,14 +34,19 @@ export function useTenants() {
       }
       const data = await res.json();
       const list = (data.tenants || []) as Tenant[];
-      cachedTenants = list;
-      setTenants(list);
+      publishTenants(list);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    tenantSubscribers.add(setTenants);
+    if (cachedTenants) setTenants(cachedTenants);
+    return () => { tenantSubscribers.delete(setTenants); };
   }, []);
 
   useEffect(() => {
@@ -52,8 +63,7 @@ export function useTenants() {
       tenantsPreloadConsumed = true;
       tenantsPreload.then((preloaded) => {
         if (preloaded) {
-          cachedTenants = preloaded as Tenant[];
-          setTenants(cachedTenants);
+          publishTenants(preloaded as Tenant[]);
         } else {
           // preload 返回 null 说明非平台 admin，跳过后续请求
           tenantsSkipped = true;
@@ -97,6 +107,19 @@ export function useTenants() {
     await refresh();
   };
 
+  const reorderTenants = useCallback(async (ids: string[]) => {
+    const res = await authFetch(API_BASE, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error((data as { error?: string }).error || "保存组织排序失败");
+    }
+    await refresh();
+  }, [refresh]);
+
   const setTenantDisabled = async (id: string, disabled: boolean) => {
     const res = await authFetch(`${API_BASE}/${id}/status`, {
       method: "PATCH",
@@ -130,6 +153,7 @@ export function useTenants() {
     refresh,
     createTenant,
     updateTenant,
+    reorderTenants,
     setTenantDisabled,
     deleteTenant,
   };

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { TriangleAlert, CircleCheck, Loader2, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2, type LucideIcon } from "lucide-react";
+import { TriangleAlert, CircleCheck, GripVertical, ListOrdered, Loader2, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2, type LucideIcon } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -18,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { refreshAll } from "@/lib/refreshBus";
 import { authFetch } from "@/lib/authFetch";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import type { ModelList } from "@/types/models";
@@ -305,12 +307,13 @@ function optionalPositiveInteger(value: string): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
 }
 
-type TenantDetailTab = "config" | "models" | "capabilities";
+type TenantDetailTab = "config" | "models" | "capabilities" | "list";
 
 const tenantDetailTabs: Array<{ id: TenantDetailTab; label: string; icon: LucideIcon }> = [
   { id: "config", label: "组织配置", icon: EntityIcons.org },
   { id: "models", label: "模型策略", icon: EntityIcons.model },
   { id: "capabilities", label: "能力与配额", icon: SlidersHorizontal },
+  { id: "list", label: "组织列表", icon: ListOrdered },
 ];
 
 function TenantMetric({ label, value }: { label: string; value: string | number }) {
@@ -565,6 +568,206 @@ function TenantCapabilitiesPanel({
   );
 }
 
+function moveTenantId(ids: string[], tenantId: string, targetTenantId: string): string[] {
+  const fromIndex = ids.indexOf(tenantId);
+  const toIndex = ids.indexOf(targetTenantId);
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return ids;
+  const next = [...ids];
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, moved!);
+  return next;
+}
+
+export function TenantListPanel({
+  tenants,
+  usersByTenant,
+  canReorder,
+  platformReadOnly,
+  onReorder,
+  onToggleDisabled,
+  onDelete,
+  onActionsChange,
+}: {
+  tenants: Tenant[];
+  usersByTenant: Map<string, UserInfo[]>;
+  canReorder: boolean;
+  platformReadOnly: boolean;
+  onReorder: (ids: string[]) => Promise<void>;
+  onToggleDisabled: (tenant: Tenant) => void;
+  onDelete: (tenant: Tenant) => void;
+  onActionsChange?: (actions: ReactNode | null) => void;
+}) {
+  const tenantIds = useMemo(() => tenants.map(tenant => tenant.id), [tenants]);
+  const [orderedTenantIds, setOrderedTenantIds] = useState(tenantIds);
+  const [draggingTenantId, setDraggingTenantId] = useState<string | null>(null);
+  const [dragOverTenantId, setDragOverTenantId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setOrderedTenantIds(tenantIds);
+    setDraggingTenantId(null);
+    setDragOverTenantId(null);
+  }, [tenantIds]);
+
+  const dirty = orderedTenantIds.join("\u0000") !== tenantIds.join("\u0000");
+  const orderedTenants = useMemo(() => {
+    const tenantsById = new Map(tenants.map(tenant => [tenant.id, tenant]));
+    const ordered = orderedTenantIds.flatMap(id => {
+      const tenant = tenantsById.get(id);
+      return tenant ? [tenant] : [];
+    });
+    const knownIds = new Set(ordered.map(tenant => tenant.id));
+    return [...ordered, ...tenants.filter(tenant => !knownIds.has(tenant.id))];
+  }, [orderedTenantIds, tenants]);
+
+  const saveOrder = useCallback(async () => {
+    if (!dirty || !canReorder) return;
+    setSaving(true);
+    try {
+      await onReorder(orderedTenantIds);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [canReorder, dirty, onReorder, orderedTenantIds]);
+
+  const actions = useMemo(() => (
+    <>
+      {dirty && <Badge variant="outline">排序未保存</Badge>}
+      <Button size="sm" onClick={() => { void saveOrder(); }} disabled={!canReorder || !dirty || saving}>
+        {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+        保存排序
+      </Button>
+    </>
+  ), [canReorder, dirty, saveOrder, saving]);
+
+  useEffect(() => {
+    onActionsChange?.(actions);
+    return () => onActionsChange?.(null);
+  }, [actions, onActionsChange]);
+
+  const moveByOffset = (tenantId: string, offset: number) => {
+    setOrderedTenantIds(current => {
+      const fromIndex = current.indexOf(tenantId);
+      const targetTenantId = current[fromIndex + offset];
+      return targetTenantId ? moveTenantId(current, tenantId, targetTenantId) : current;
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">组织列表</CardTitle>
+        <p className="text-sm text-muted-foreground">拖动排序并保存后，平台内所有组织选择框都会沿用这里的顺序。</p>
+      </CardHeader>
+      <CardContent className="p-0">
+        {error && <div className="mx-4 mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+        <Table className="min-w-[1120px] whitespace-nowrap">
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-12" aria-label="排序" />
+              <TableHead>组织名称</TableHead>
+              <TableHead>Slug</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead className="text-right">成员</TableHead>
+              <TableHead>创建时间</TableHead>
+              <TableHead>更新时间</TableHead>
+              <TableHead className="text-right">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {orderedTenants.map(tenant => (
+              <TableRow
+                key={tenant.id}
+                onDragOver={event => {
+                  if (!canReorder || !draggingTenantId) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  setDragOverTenantId(tenant.id);
+                }}
+                onDrop={event => {
+                  if (!canReorder || !draggingTenantId) return;
+                  event.preventDefault();
+                  setOrderedTenantIds(current => moveTenantId(current, draggingTenantId, tenant.id));
+                  setDraggingTenantId(null);
+                  setDragOverTenantId(null);
+                }}
+                className={cn(
+                  "whitespace-nowrap",
+                  draggingTenantId === tenant.id && "opacity-45",
+                  dragOverTenantId === tenant.id && draggingTenantId !== tenant.id && "bg-primary/[0.06]",
+                )}
+              >
+                <TableCell className="w-12 py-1.5">
+                  <button
+                    type="button"
+                    draggable={canReorder}
+                    disabled={!canReorder}
+                    onDragStart={event => {
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", tenant.id);
+                      setDraggingTenantId(tenant.id);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingTenantId(null);
+                      setDragOverTenantId(null);
+                    }}
+                    onKeyDown={event => {
+                      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                      event.preventDefault();
+                      moveByOffset(tenant.id, event.key === "ArrowUp" ? -1 : 1);
+                    }}
+                    className="flex size-8 cursor-grab items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label={`调整组织 ${tenant.name} 的顺序`}
+                    title="拖动排序；聚焦后可用 ↑ ↓ 调整"
+                  >
+                    <GripVertical className="size-4" />
+                  </button>
+                </TableCell>
+                <TableCell className="max-w-[220px] truncate font-medium" title={tenant.name}>{tenant.name}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">{tenant.id}</TableCell>
+                <TableCell>
+                  <Badge variant={tenant.disabled ? "outline" : "secondary"}>{tenant.disabled ? "已禁用" : "启用中"}</Badge>
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{usersByTenant.get(tenant.id)?.length ?? 0}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{formatDateTime(tenant.createdAt)}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{formatDateTime(tenant.updatedAt)}</TableCell>
+                <TableCell>
+                  <div className="flex justify-end gap-1.5">
+                    <Button
+                      variant={tenant.disabled ? "outline" : "destructive"}
+                      size="sm"
+                      className="h-8 whitespace-nowrap px-2.5"
+                      onClick={() => onToggleDisabled(tenant)}
+                      disabled={platformReadOnly}
+                    >
+                      {tenant.disabled ? <Power className="size-3.5" /> : <PowerOff className="size-3.5" />}
+                      {tenant.disabled ? "启用" : "禁用"}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="h-8 whitespace-nowrap px-2.5"
+                      onClick={() => onDelete(tenant)}
+                      disabled={platformReadOnly || tenant.id === DEFAULT_TENANT_ID}
+                    >
+                      <Trash2 className="size-3.5" />
+                      删除
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function TenantManager() {
   const { platformReadOnly, canPlatform } = useAuth();
   const canManageTenant = canPlatform("tenant.manage");
@@ -574,6 +777,7 @@ export function TenantManager() {
     error,
     createTenant,
     updateTenant,
+    reorderTenants,
     setTenantDisabled,
     deleteTenant,
   } = useTenants();
@@ -593,6 +797,7 @@ export function TenantManager() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [modelPolicyActions, setModelPolicyActions] = useState<ReactNode | null>(null);
   const [capabilitiesActions, setCapabilitiesActions] = useState<ReactNode | null>(null);
+  const [tenantListActions, setTenantListActions] = useState<ReactNode | null>(null);
 
   const openCreate = () => {
     setShowForm(true);
@@ -698,10 +903,13 @@ export function TenantManager() {
             )}
             {activeDetailTab === "models" && modelPolicyActions}
             {activeDetailTab === "capabilities" ? capabilitiesActions : (
-              <Button variant="outline" size="sm" onClick={refreshAll} disabled={loading}>
-                <RefreshCw className="size-3.5" />
-                刷新
-              </Button>
+              <>
+                {activeDetailTab === "list" && tenantListActions}
+                <Button variant="outline" size="sm" onClick={refreshAll} disabled={loading}>
+                  <RefreshCw className="size-3.5" />
+                  刷新
+                </Button>
+              </>
             )}
             {canManageTenant && (
               <Button size="sm" onClick={openCreate}>
@@ -735,7 +943,7 @@ export function TenantManager() {
           ) : (
           <Tabs value={activeDetailTab} onValueChange={(value) => setActiveDetailTab(value as TenantDetailTab)} className="flex min-h-0 flex-1 flex-col">
             <div className="rounded-lg border bg-card p-1 shadow-sm">
-              <TabsList className="grid h-auto w-full grid-cols-1 gap-1 bg-transparent p-0 text-muted-foreground sm:grid-cols-3">
+              <TabsList className="grid h-auto w-full grid-cols-1 gap-1 bg-transparent p-0 text-muted-foreground sm:grid-cols-4">
                 {tenantDetailTabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
@@ -813,6 +1021,19 @@ export function TenantManager() {
 
             <TabsContent value="capabilities" forceMount className="mt-0">
               <TenantCapabilitiesPanel tenant={selectedTenant} onActionsChange={setCapabilitiesActions} onSaved={refreshAll} />
+            </TabsContent>
+
+            <TabsContent value="list" forceMount className="mt-0">
+              <TenantListPanel
+                tenants={tenants}
+                usersByTenant={usersByTenant}
+                canReorder={canManageTenant}
+                platformReadOnly={platformReadOnly}
+                onReorder={reorderTenants}
+                onToggleDisabled={requestToggleTenantDisabled}
+                onDelete={requestDeleteTenant}
+                onActionsChange={setTenantListActions}
+              />
             </TabsContent>
             </div>
           </Tabs>

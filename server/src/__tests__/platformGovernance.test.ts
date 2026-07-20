@@ -131,6 +131,7 @@ describe("enforcePlatformWritePolicy", () => {
 
     expect((await rig.request("POST", "/api/tenants", { id: "demo" })).status).toBe(200);
     expect((await rig.request("PATCH", "/api/tenants/wain", { name: "唯恩" })).status).toBe(200);
+    expect((await rig.request("PATCH", "/api/tenants", { ids: ["wain"] })).status).toBe(200);
     expect((await rig.request("PUT", "/api/tenants/wain/company-info", {})).status).toBe(200);
     expect((await rig.request("PATCH", "/api/tenants/wain/settings", {})).status).toBe(200);
     expect(

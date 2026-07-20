@@ -453,8 +453,12 @@ jobs:
           SMOKE_WS="ws_ci_acr_${GITHUB_RUN_ID}"
           SMOKE_MOUNT="workspaces/_ci/${SMOKE_WS}"
           SMOKE_WORKSPACE_DIR="/mnt/agent-saas/${SMOKE_MOUNT}"
+          SMOKE_CLEANUP_ERROR="/tmp/acs-smoke-workspace-cleanup-${GITHUB_RUN_ID}.err"
 
           cleanup() {
+            # EXIT trap 只做资源回收，不能用清理竞态覆盖真实部署结果。
+            local deploy_status=$?
+            set +e
             if [ -n "${SMOKE_SESSION:-}" ] && command -v kubectl >/dev/null 2>&1; then
               if [ -n "${ACS_KUBECONFIG:-}" ]; then KCFG_ARGS="--kubeconfig ${ACS_KUBECONFIG}"; else KCFG_ARGS=""; fi
               # shellcheck disable=SC2086
@@ -493,14 +497,29 @@ jobs:
             if [ -n "${SMOKE_WORKSPACE_DIR:-}" ]; then
               case "$SMOKE_WORKSPACE_DIR" in
                 /mnt/agent-saas/workspaces/_ci/ws_ci_acr_*|/mnt/agent-saas/workspaces/_ci/ws_ci_acs_*)
-                  rm -rf -- "$SMOKE_WORKSPACE_DIR"
+                  # Sandbox CR 删除后 Pod/NFS 写入可能短暂滞后；单次 rm -rf 会因
+                  # __pycache__ 等目录被并发写回而报 Directory not empty。
+                  for cleanup_attempt in 1 2 3 4 5; do
+                    rm -rf -- "$SMOKE_WORKSPACE_DIR" 2>"$SMOKE_CLEANUP_ERROR"
+                    [ ! -e "$SMOKE_WORKSPACE_DIR" ] && break
+                    sleep "$cleanup_attempt"
+                  done
+                  if [ -e "$SMOKE_WORKSPACE_DIR" ]; then
+                    echo "::warning::smoke workspace cleanup incomplete after retries: $SMOKE_WORKSPACE_DIR" >&2
+                    if [ -s "$SMOKE_CLEANUP_ERROR" ]; then
+                      printf '  last error: ' >&2
+                      tr '\n' ' ' <"$SMOKE_CLEANUP_ERROR" >&2
+                      printf '\n' >&2
+                    fi
+                  fi
                   ;;
                 *)
                   echo "skip smoke workspace cleanup: unexpected path $SMOKE_WORKSPACE_DIR" >&2
                   ;;
               esac
             fi
-            rm -f "$RELEASE_TGZ"
+            rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR"
+            return "$deploy_status"
           }
           trap cleanup EXIT
 

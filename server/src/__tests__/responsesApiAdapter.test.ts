@@ -1262,6 +1262,57 @@ describe('ResponsesApiAdapter', () => {
     });
   });
 
+  it('多个 output_text part 分别核对 done 快照后再聚合全文', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_multi_text' } }),
+      sse('response.output_text.delta', {
+        type: 'response.output_text.delta', output_index: 0, content_index: 0, delta: '前言',
+      }),
+      sse('response.output_text.done', {
+        type: 'response.output_text.done', output_index: 0, content_index: 0, text: '前言',
+      }),
+      sse('response.output_text.delta', {
+        type: 'response.output_text.delta', output_index: 0, content_index: 1, delta: '正文',
+      }),
+      sse('response.output_text.done', {
+        type: 'response.output_text.done', output_index: 0, content_index: 1, text: '正文',
+      }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: {
+          id: 'resp_multi_text',
+          status: 'completed',
+          output: [{
+            type: 'message',
+            content: [
+              { type: 'output_text', text: '前言' },
+              { type: 'output_text', text: '正文' },
+            ],
+          }],
+          usage: { input_tokens: 2, output_tokens: 4 },
+        },
+      }),
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, baseContext));
+
+    expect(events.filter((event) => event.type === 'text_delta')).toEqual([
+      { type: 'text_delta', content: '前言' },
+      { type: 'text_delta', content: '正文' },
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      terminalStatus: 'completed',
+      content: '前言正文',
+    });
+  });
+
   it('支持 CRLF SSE 帧边界', async () => {
     const wire = [
       sse('response.created', { type: 'response.created', response: { id: 'resp_crlf' } }),

@@ -385,6 +385,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     // function_call 在 stream 里按 output_index 累积；item 整体在 output_item.done 出现
     const toolCallsByIndex = new Map<number, ModelToolCall>();
     const functionCallArgsBuffer = new Map<number, { call_id: string; name: string; arguments: string }>();
+    const outputTextByPart = new Map<string, string>();
 
     const decoder = new TextDecoder();
     let reader: ReadableStreamDefaultReader<Uint8Array>;
@@ -438,6 +439,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
             } else if (eventType === 'response.output_text.delta') {
               const delta = typeof event.delta === 'string' ? event.delta : '';
               if (delta) {
+                const partKey = responseTextPartKey(event);
+                outputTextByPart.set(partKey, (outputTextByPart.get(partKey) ?? '') + delta);
                 content += delta;
                 hasEmittedOutput = true;
                 yield { type: 'text_delta', content: delta };
@@ -452,7 +455,10 @@ export class ResponsesApiAdapter implements ModelAdapter {
               }
             } else if (eventType === 'response.output_text.done') {
               const doneText = typeof event.text === 'string' ? event.text : '';
-              const suffix = reconcileTextSnapshot(content, doneText);
+              const partKey = responseTextPartKey(event);
+              const partContent = outputTextByPart.get(partKey) ?? '';
+              const suffix = reconcileTextSnapshot(partContent, doneText);
+              outputTextByPart.set(partKey, partContent + suffix);
               if (suffix) {
                 content += suffix;
                 hasEmittedOutput = true;
@@ -1324,6 +1330,15 @@ function normalizeTerminalStatus(value: unknown, fallback: ModelTerminalStatus):
   return value === 'completed' || value === 'incomplete' || value === 'failed' || value === 'cancelled'
     ? value
     : fallback;
+}
+
+function responseTextPartKey(event: Record<string, any>): string {
+  const outputIndex = typeof event.output_index === 'number' ? event.output_index : undefined;
+  const contentIndex = typeof event.content_index === 'number' ? event.content_index : undefined;
+  if (outputIndex !== undefined && contentIndex !== undefined) return `${outputIndex}:${contentIndex}`;
+  const itemId = typeof event.item_id === 'string' ? event.item_id : '';
+  if (itemId) return `${itemId}:${contentIndex ?? 0}`;
+  return `${outputIndex ?? 0}:${contentIndex ?? 0}`;
 }
 
 function reconcileTextSnapshot(current: string, snapshot: string, canonicalPresent = true): string {

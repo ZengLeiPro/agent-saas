@@ -50,9 +50,6 @@ export interface RunInput {
   memoryContext?: string;
   instructions: string;
   maxTurns: number;
-  /** 到达预算后禁用工具并要求基于已有材料收束；用于子 Agent 防失控。 */
-  forceSynthesisAfterTurns?: number;
-  forceSynthesisAfterToolCalls?: number;
   connection: Required<RuntimeConnection>;
 }
 

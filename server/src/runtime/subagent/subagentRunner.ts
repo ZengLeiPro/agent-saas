@@ -59,8 +59,6 @@ import type { SubagentTypeDefinition } from './agentTypes.js';
 import {
   sharedSubagentLimiter,
   SubagentLimiter,
-  SUBAGENT_FORCE_SYNTHESIS_AFTER_TOOL_CALLS,
-  SUBAGENT_FORCE_SYNTHESIS_AFTER_TURNS,
   SUBAGENT_HARD_TIMEOUT_MS,
 } from './subagentLimits.js';
 
@@ -390,8 +388,6 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         prompt,
         instructions,
         maxTurns: agentType.maxTurns,
-        forceSynthesisAfterTurns: SUBAGENT_FORCE_SYNTHESIS_AFTER_TURNS,
-        forceSynthesisAfterToolCalls: SUBAGENT_FORCE_SYNTHESIS_AFTER_TOOL_CALLS,
         connection: { apiKey, baseUrl },
       },
       runContext,

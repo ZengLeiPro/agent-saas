@@ -475,45 +475,6 @@ describe('RawAgentLoop', () => {
     });
   });
 
-  it('forces a no-tool synthesis turn when the run turn budget is reached', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-turn-budget-'));
-    cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
-    const adapter = new WebFetchUntilForcedSynthesisAdapter();
-    const webProvider = new WebToolProvider({
-      fetch: {},
-      egress: { allowedHosts: ['93.184.216.34'] },
-    }, vi.fn(async () => new Response('missing', { status: 404 })) as unknown as typeof fetch);
-    const loop = new RawAgentLoop({
-      modelAdapter: adapter,
-      eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-turn-budget'),
-      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
-      toolRuntime: new PlatformToolRuntime({ providers: [webProvider] }),
-    });
-    const events = await collect(loop.run({
-      message: { channel: 'web', chatId: 'chat-1', content: '调研' },
-      prompt: '调研',
-      instructions: '先找资料再回答。',
-      maxTurns: 3,
-      forceSynthesisAfterTurns: 1,
-      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
-    }, {
-      runId: 'run-turn-budget',
-      sessionId: 'session-turn-budget',
-      model: 'gpt-5.5',
-      cwd,
-      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
-    }));
-    expect(events.at(-1)).toEqual({ type: 'done' });
-    expect(adapter.requests).toHaveLength(2);
-    expect(adapter.requests[1]?.toolChoice).toBe('none');
-    expect(adapter.requests[1]?.messages.at(-1)).toMatchObject({
-      role: 'user',
-      content: expect.stringContaining('达到 1 轮预算'),
-    });
-  });
-
   it('persists approval before executing Write and projects legacy transcript', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-'));
     cleanupDirs.add(cwd);

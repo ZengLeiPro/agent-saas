@@ -538,7 +538,7 @@ describe('AgentToolProvider', () => {
     expect(descriptor!.description).toContain('explore');
     expect(SUBAGENT_TYPES.general.maxTurns).toBe(SUBAGENT_MAX_TURNS);
     expect(SUBAGENT_TYPES.explore.maxTurns).toBe(SUBAGENT_MAX_TURNS);
-    expect(SUBAGENT_MAX_TURNS).toBe(60);
+    expect(SUBAGENT_MAX_TURNS).toBe(200);
   });
 
   it('durable 事件形态：subagent_started/finished 写父 session，字段完整', async () => {

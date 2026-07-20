@@ -73,9 +73,9 @@ const WEB_FETCH_SYNTHESIS_PROMPT = [
   'WebFetch 已因持续高失败率熔断。停止继续扩散 URL，也不要再调用其他工具。',
   '请立即基于当前上下文中已经取得的材料完成任务；明确区分已核实事实、证据不足项与未完成项。',
 ].join('\n');
-const BUDGET_SYNTHESIS_PROMPT = [
+const CONTEXT_SYNTHESIS_PROMPT = [
   '[平台收束指令]',
-  '本次任务已达到上下文或执行预算。停止调用任何工具。',
+  '本次任务的上下文已达到安全阈值。停止调用任何工具。',
   '请立即基于当前上下文中已经取得的材料完成任务；明确区分已核实事实、证据不足项与未完成项。',
 ].join('\n');
 
@@ -354,7 +354,7 @@ export class RawAgentLoop implements AgentLoop {
   private readonly zombieToolCallTimeoutMs: number;
   private webFetchSynthesisReason?: string;
   private forcedSynthesisReason?: string;
-  private forcedSynthesisPrompt = BUDGET_SYNTHESIS_PROMPT;
+  private forcedSynthesisPrompt = CONTEXT_SYNTHESIS_PROMPT;
   private forcedSynthesisPromptAppended = false;
 
   constructor(options: RawAgentLoopOptions) {
@@ -494,7 +494,7 @@ export class RawAgentLoop implements AgentLoop {
     logger.warn(`[web-fetch-circuit] force synthesis session=${context.sessionId} run=${context.runId}: ${reason}`);
   }
 
-  private forceSynthesis(reason: string, context: RunContext, prompt = BUDGET_SYNTHESIS_PROMPT): void {
+  private forceSynthesis(reason: string, context: RunContext, prompt = CONTEXT_SYNTHESIS_PROMPT): void {
     if (this.forcedSynthesisReason) return;
     this.forcedSynthesisReason = reason;
     this.forcedSynthesisPrompt = prompt;
@@ -595,7 +595,6 @@ export class RawAgentLoop implements AgentLoop {
     let finalText = '';
     let turn = 0;
     let thinkingOnlyContinuationUsed = false;
-    let executedToolCallCount = 0;
     let pendingTurnText = '';
 
     // RFC v1 P0.4：跨 run 接力 Responses API session state。
@@ -617,12 +616,6 @@ export class RawAgentLoop implements AgentLoop {
         pendingTurnText = '';
 
         await this.assertNoOpenToolCallBatchesBeforeModel(context.sessionId);
-        if (input.forceSynthesisAfterTurns && turn > input.forceSynthesisAfterTurns) {
-          this.forceSynthesis(`已执行 ${turn - 1} 轮，达到 ${input.forceSynthesisAfterTurns} 轮预算`, context);
-        }
-        if (input.forceSynthesisAfterToolCalls && executedToolCallCount >= input.forceSynthesisAfterToolCalls) {
-          this.forceSynthesis(`已执行 ${executedToolCallCount} 次工具调用，达到 ${input.forceSynthesisAfterToolCalls} 次预算`, context);
-        }
         const preflight = governModelRequestMessages(
           messages,
           context.model,
@@ -830,7 +823,6 @@ export class RawAgentLoop implements AgentLoop {
             function: { name: call.name, arguments: call.arguments },
           })),
         });
-        executedToolCallCount += completed.toolCalls.length;
 
         yield* this.drainToolCalls({
           calls: completed.toolCalls,

@@ -1457,6 +1457,69 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }
   });
 
+  /** 永久清空当前用户自己的回收站。 */
+  router.delete("/sessions/trash", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Authentication required" });
+        return;
+      }
+
+      const userCwd = resolveUserCwd(agentCwd, {
+        id: req.user.sub,
+        username: req.user.username,
+        role: req.user.role,
+        tenantId: req.user.tenantId,
+      });
+      const allMetas = await listSessionMetas(userCwd, reqTranscriptOwner(req.user));
+      let deletedCount = 0;
+      const failedSessionIds: string[] = [];
+
+      for (const item of allMetas) {
+        const meta = await readSessionMeta(item.metaPath);
+        if (!meta?.deletedAt || meta.userId !== req.user.sub) continue;
+
+        try {
+          const result = item.hasTranscript
+            ? await deleteSession(item.sessionId, { deleteSidecarDir: true })
+            : await deleteSessionMetaOnly(item.sessionId, { deleteSidecarDir: true });
+          if (!result.deleted) {
+            failedSessionIds.push(item.sessionId);
+            continue;
+          }
+          if (options.groupStore) {
+            await options.groupStore.removeSessionFromAllGroups(item.sessionId);
+          }
+          auditLog(req, "session_permanently_deleted", item.sessionId);
+          deletedCount += 1;
+        } catch (err) {
+          failedSessionIds.push(item.sessionId);
+          apiLogger.error(
+            `[sessions] clear trash failed sessionId=${item.sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      sessionsListCache.clear();
+      if (failedSessionIds.length > 0) {
+        res.status(500).json({
+          error: `部分会话清空失败（成功 ${deletedCount} 个，失败 ${failedSessionIds.length} 个）`,
+          deletedCount,
+          failedCount: failedSessionIds.length,
+        });
+        return;
+      }
+      res.json({ ok: true, deletedCount });
+    } catch (err) {
+      const msg = String(err instanceof Error ? err.message : err);
+      if (msg.includes("outside allowed directory")) {
+        res.status(403).json({ error: msg });
+        return;
+      }
+      res.status(500).json({ error: msg });
+    }
+  });
+
   /**
    * GET /api/share/sessions/:token
    *

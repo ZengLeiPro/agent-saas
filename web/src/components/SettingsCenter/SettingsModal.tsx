@@ -29,6 +29,7 @@ import {
 import { SettingsPanelHeader, SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { AgentDocEditor } from "@/components/AgentProfile/AgentDocEditor";
+import { TrashView } from "@/components/chat/TrashView";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { TOKEN_KEY } from "@/lib/constants";
@@ -905,7 +906,7 @@ export function SettingsModal({
     { id: "files", node: renderFiles?.() ?? null },
     {
       id: "data",
-      node: <PlaceholderSection title="回收站" description="查看已删除会话，必要时进行恢复或彻底清理。">{renderTrash?.()}</PlaceholderSection>,
+      node: renderTrash?.() ?? <TrashView onClose={onClose} showHeader={false} />,
     },
   ];
 

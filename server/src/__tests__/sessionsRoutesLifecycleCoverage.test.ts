@@ -8,6 +8,7 @@
  *  - POST /sessions/:id/restore：未删除 400、非 owner 403、成功恢复
  *  - DELETE /sessions/:id/permanent：未在回收站 400、成功永久删除
  *  - GET /sessions/trash：列出当前用户已软删除会话
+ *  - DELETE /sessions/trash：清空当前用户回收站，不影响正常会话和其他用户
  *  - GET /sessions/:id/share：无 store 501、无分享返回 enabled:false
  *
  * 模式对齐 sessionsRoutesMetaOnly.test.ts：真实 transcript+meta 落盘 + 真 express + listen(0) + 真 fetch。
@@ -247,6 +248,30 @@ describe('sessions routes lifecycle coverage', () => {
     expect(body.sessions.map((s) => s.sessionId)).toEqual([deleted]);
     expect(body.sessions[0].deletedAt).toBe(deletedAt);
     expect(body.sessions[0].title).toBe('已删标题');
+  });
+
+  it('DELETE /sessions/trash：清空当前用户回收站，不影响正常会话和其他用户', async () => {
+    const deletedAt = new Date().toISOString();
+    const first = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
+    const orphan = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
+    const live = await writeSession(OWNER);
+    const foreign = await writeSession(OTHER, { deletedAt, deletedBy: OTHER.username });
+    await rm(orphan.transcriptPath);
+
+    const { server, baseUrl } = await startServer(agentCwd, OWNER);
+    servers.push(server);
+
+    const res = await fetch(`${baseUrl}/api/sessions/trash`, { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, deletedCount: 2 });
+    await expect(readSessionMeta(first.transcriptPath)).resolves.toBeNull();
+    await expect(readSessionMeta(orphan.transcriptPath)).resolves.toBeNull();
+    await expect(readSessionMeta(live.transcriptPath)).resolves.not.toBeNull();
+    await expect(readSessionMeta(foreign.transcriptPath)).resolves.not.toBeNull();
+
+    const trash = await fetch(`${baseUrl}/api/sessions/trash`);
+    const body = await trash.json() as { sessions: unknown[] };
+    expect(body.sessions).toEqual([]);
   });
 
   it('GET /sessions/:id/share：未装配 store 501、装配后无分享返回 enabled:false', async () => {

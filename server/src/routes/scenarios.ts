@@ -215,8 +215,7 @@ export function createScenariosRouter(
   const v3Enabled = options.v3DataPath !== false
     && (options.v3Loader !== undefined
       || typeof options.v3DataPath === "string"
-      || options.roleKit?.libraryVersion === "v3"
-      || (options.dataPath === undefined && options.roleKit?.libraryVersion === undefined));
+      || options.dataPath === undefined);
   const v3DataPath = typeof options.v3DataPath === "string"
     ? options.v3DataPath
     : DEFAULT_V3_DATA_PATH;

@@ -545,6 +545,37 @@ async function startV3Server(
 }
 
 describe("Workflow V3 library", () => {
+  it("keeps the V3 endpoint warm while a production client is still pinned to V2", async () => {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.user = { sub: "user-1", username: "alice", role: "user", tenantId: "kaiyan" };
+      next();
+    });
+    app.use("/api/scenarios", createScenariosRouter({
+      roleKit: { libraryVersion: "v2" },
+    }));
+    const { server, baseUrl } = await new Promise<{ server: Server; baseUrl: string }>((resolve) => {
+      const server = app.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        const port = typeof address === "object" && address ? address.port : 0;
+        resolve({ server, baseUrl: `http://127.0.0.1:${port}` });
+      });
+    });
+
+    try {
+      const config = await fetch(`${baseUrl}/api/scenarios/config`);
+      expect(config.status).toBe(200);
+      await expect(config.json()).resolves.toMatchObject({
+        libraryVersion: "v2",
+        capabilities: { workflowCatalogV3: true },
+      });
+      expect((await fetch(`${baseUrl}/api/scenarios/v3`)).status).toBe(200);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it("does not cache a rejected cold-start load forever", async () => {
     const loaded = parseWorkflowLibraryV3(buildLibraryFixture());
     let attempts = 0;

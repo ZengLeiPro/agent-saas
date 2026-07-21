@@ -46,6 +46,8 @@ describe("FilePreviewDialog", () => {
     expect(close.parentElement?.className).toContain("!border-0");
     expect(close.parentElement?.className).toContain("!shadow-xl");
     expect(close.parentElement?.className).toContain("outline-none");
+    expect(close.parentElement?.className).toContain("h-[calc(100dvh-32px)]");
+    expect(close.parentElement?.className).not.toContain("900px");
   });
 
   it("右侧预览栏提供返回弹窗预览的放大按钮", () => {

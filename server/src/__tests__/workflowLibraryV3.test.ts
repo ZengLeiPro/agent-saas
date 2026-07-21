@@ -11,6 +11,7 @@ import {
 } from "../../../shared/src/security/sanitizeCustomerFacingText.js";
 import { createScenariosRouter } from "../routes/scenarios.js";
 import {
+  createRetryableWorkflowLibraryLoader,
   loadWorkflowLibraryV3,
   parseWorkflowLibraryV3,
   resolveLoadedScenarioSlug,
@@ -544,6 +545,52 @@ async function startV3Server(
 }
 
 describe("Workflow V3 library", () => {
+  it("keeps the V3 endpoint warm while a production client is still pinned to V2", async () => {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.user = { sub: "user-1", username: "alice", role: "user", tenantId: "kaiyan" };
+      next();
+    });
+    app.use("/api/scenarios", createScenariosRouter({
+      roleKit: { libraryVersion: "v2" },
+    }));
+    const { server, baseUrl } = await new Promise<{ server: Server; baseUrl: string }>((resolve) => {
+      const server = app.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        const port = typeof address === "object" && address ? address.port : 0;
+        resolve({ server, baseUrl: `http://127.0.0.1:${port}` });
+      });
+    });
+
+    try {
+      const config = await fetch(`${baseUrl}/api/scenarios/config`);
+      expect(config.status).toBe(200);
+      await expect(config.json()).resolves.toMatchObject({
+        libraryVersion: "v2",
+        capabilities: { workflowCatalogV3: true },
+      });
+      expect((await fetch(`${baseUrl}/api/scenarios/v3`)).status).toBe(200);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("does not cache a rejected cold-start load forever", async () => {
+    const loaded = parseWorkflowLibraryV3(buildLibraryFixture());
+    let attempts = 0;
+    const getLibrary = createRetryableWorkflowLibraryLoader(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("transient cold-start failure");
+      return loaded;
+    });
+
+    await expect(getLibrary()).rejects.toThrow("transient cold-start failure");
+    await expect(getLibrary()).resolves.toBe(loaded);
+    await expect(getLibrary()).resolves.toBe(loaded);
+    expect(attempts).toBe(2);
+  });
+
   it("keeps the production V1 client contract while removing internal-only fields", async () => {
     const v1Path = resolve(import.meta.dirname, "../data/scenarios/scenario-library-v1.json");
     const v3Path = resolve(import.meta.dirname, "../data/scenarios/workflow-library-v3.json");
@@ -855,6 +902,29 @@ describe("Workflow V3 library", () => {
 });
 
 describe("Workflow V3 scenario routes", () => {
+  it("recovers when eager cold-start warmup fails once", async () => {
+    const loaded = parseWorkflowLibraryV3(buildLibraryFixture());
+    let attempts = 0;
+    const { server, baseUrl } = await startV3Server(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("transient eager warmup failure");
+      return loaded;
+    });
+    try {
+      const v3 = await fetch(`${baseUrl}/api/scenarios/v3`);
+      expect(v3.status).toBe(200);
+      await expect(v3.json()).resolves.toMatchObject({
+        schemaVersion: 3,
+        scenarios: expect.arrayContaining([
+          expect.objectContaining({ id: "catalog-01" }),
+        ]),
+      });
+      expect(attempts).toBe(2);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it("returns V3 config, strict public DTO and legacy compatibility projection", async () => {
     const loaded = parseWorkflowLibraryV3(buildLibraryFixture());
     const { server, baseUrl } = await startV3Server(async () => loaded);

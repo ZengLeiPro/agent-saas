@@ -17,7 +17,10 @@ import type { TenantStore } from '../data/tenants/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import type { WorkflowDemoStore } from '../data/workflowDemos/store.js';
 import type { WorkflowDemoDispatchMetadata } from '../../../shared/src/index.js';
-import { loadWorkflowLibraryV3 } from '../data/scenarios/workflowLibrary.js';
+import {
+  createRetryableWorkflowLibraryLoader,
+  loadWorkflowLibraryV3,
+} from '../data/scenarios/workflowLibrary.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
 import type { WorkspaceRef } from '../agent/toolRuntime.js';
@@ -101,11 +104,12 @@ const DEFAULT_WORKFLOW_DEMO_LIBRARY_PATH = resolve(
   import.meta.dirname,
   '../data/scenarios/workflow-library-v3.json',
 );
-let workflowDemoLibraryPromise: ReturnType<typeof loadWorkflowLibraryV3> | undefined;
+const getWorkflowDemoLibrary = createRetryableWorkflowLibraryLoader(
+  () => loadWorkflowLibraryV3(DEFAULT_WORKFLOW_DEMO_LIBRARY_PATH),
+);
 
 async function resolveWorkflowDemoManifest(demoId: string) {
-  workflowDemoLibraryPromise ??= loadWorkflowLibraryV3(DEFAULT_WORKFLOW_DEMO_LIBRARY_PATH);
-  const library = await workflowDemoLibraryPromise;
+  const library = await getWorkflowDemoLibrary();
   const manifest = library.internal.demos.find((item) => item.id === demoId);
   if (!manifest) throw new Error(`Workflow Demo manifest not found: ${demoId}`);
   return manifest;

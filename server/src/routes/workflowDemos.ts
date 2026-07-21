@@ -8,6 +8,7 @@ import { z } from "zod";
 import { isPlatformAdmin } from "../auth/types.js";
 import { hasPlatformCapability } from "../auth/platformGovernance.js";
 import {
+  createRetryableWorkflowLibraryLoader,
   loadWorkflowLibraryV3,
   type LoadedWorkflowLibraryV3,
 } from "../data/scenarios/workflowLibrary.js";
@@ -88,9 +89,10 @@ export interface WorkflowDemosRouterOptions {
 
 export function createWorkflowDemosRouter(options: WorkflowDemosRouterOptions): Router {
   const router = Router();
-  const libraryPromise = options.v3Loader?.()
-    ?? loadWorkflowLibraryV3(options.v3DataPath ?? DEFAULT_V3_DATA_PATH);
-  void libraryPromise.catch(() => undefined);
+  const getLibrary = createRetryableWorkflowLibraryLoader(
+    options.v3Loader ?? (() => loadWorkflowLibraryV3(options.v3DataPath ?? DEFAULT_V3_DATA_PATH)),
+  );
+  void getLibrary().catch(() => undefined);
 
   router.post("/workflow-demos/catalog/:catalogScenarioId/runs", async (req, res) => {
     if (!req.user) return unauthorized(res);
@@ -106,7 +108,7 @@ export function createWorkflowDemosRouter(options: WorkflowDemosRouterOptions): 
     }
     try {
       await expireStaleLaunches(options.store);
-      const manifest = await requireCatalogManifest(libraryPromise, catalogScenarioId.data);
+      const manifest = await requireCatalogManifest(getLibrary(), catalogScenarioId.data);
       const initialized = await initializeWorkflowDemo(options.store, {
         manifest,
         tenantId: req.user.tenantId,
@@ -143,7 +145,7 @@ export function createWorkflowDemosRouter(options: WorkflowDemosRouterOptions): 
     }
     try {
       await expireStaleLaunches(options.store);
-      const manifest = await requireManifest(libraryPromise, demoId.data);
+      const manifest = await requireManifest(getLibrary(), demoId.data);
       const initialized = await initializeWorkflowDemo(options.store, {
         manifest,
         tenantId: req.user.tenantId,
@@ -195,7 +197,7 @@ export function createWorkflowDemosRouter(options: WorkflowDemosRouterOptions): 
     try {
       const run = await options.store.getByRunId(runId.data);
       if (!run || !canSignalRun(req.user, run)) return notFound(res, "workflow_demo_run_not_found");
-      const manifest = await requireManifest(libraryPromise, run.demoId);
+      const manifest = await requireManifest(getLibrary(), run.demoId);
       const step = manifest.internal.executionPlan?.find((item) => item.eventId === body.data.eventId);
       if (!step || (step.phase !== "approval" && step.phase !== "resume")) {
         res.status(409).json({ error: "当前节点不接受外部信号", code: "WORKFLOW_DEMO_SIGNAL_STEP_MISMATCH" });
@@ -260,7 +262,7 @@ export function createWorkflowDemosRouter(options: WorkflowDemosRouterOptions): 
     try {
       const run = await options.store.getByRunId(runId.data);
       if (!run || !canSignalRun(req.user, run)) return notFound(res, "workflow_demo_run_not_found");
-      const manifest = await requireManifest(libraryPromise, run.demoId);
+      const manifest = await requireManifest(getLibrary(), run.demoId);
       const events = await options.store.readEvents(run.runId);
       const step = manifest.internal.executionPlan?.[events.length];
       if (!step || step.eventId !== body.data.eventId
@@ -298,7 +300,7 @@ export function createWorkflowDemosRouter(options: WorkflowDemosRouterOptions): 
     if (!runId.success) return notFound(res, "workflow_demo_run_not_found");
     try {
       const run = await requireReadableRun(options.store, req, runId.data);
-      const manifest = await requireManifest(libraryPromise, run.demoId);
+      const manifest = await requireManifest(getLibrary(), run.demoId);
       const events = await options.store.readEvents(run.runId);
       const nextEventId = manifest.internal.executionPlan?.[events.length]?.eventId ?? null;
       res.json({

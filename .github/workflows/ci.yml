@@ -109,6 +109,9 @@ jobs:
       - name: Check Web API domain boundary
         run: pnpm -F web check:api-boundary
 
+      - name: Scenarios schema lint
+        run: pnpm scenarios:lint
+
       - name: Scenarios sanitize check
         run: pnpm sanitize-check
 

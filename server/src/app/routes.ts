@@ -59,6 +59,7 @@ import { createRuntimeOperationsAdminRouter } from "../routes/runtimeOperationsA
 import { createToolControlsAdminRouter } from "../routes/toolControlsAdmin.js";
 import { createImageGenPricingAdminRouter } from "../routes/imageGenPricingAdmin.js";
 import { createMemoryPollingAdminRouter } from "../routes/memoryPollingAdmin.js";
+import { createSystemPromptsAdminRouter } from "../routes/systemPromptsAdmin.js";
 import { createAdminBillingRouter, createBillingRouter } from "../routes/billing.js";
 import { createAzerothProxyRouter } from "../routes/azeroth-proxy.js";
 import { createDingtalkSessionRouter } from "../channels/dingtalk/protocol/sessionRouter.js";
@@ -251,6 +252,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
             webChannel.getWsServer()?.broadcastToUser(userId, data)
         : undefined,
       titleGeneratorConfigs: runtime.titleGeneratorConfigs,
+      getTitleSystemPrompt: () => runtime.systemPromptRegistry.get('utility.title'),
       tokenUsageStore: runtime.tokenUsageStore,
       getEventBus: webChannel ? () => webChannel.getEventBus() : undefined,
       runtimeEventStoreFor: runtime.runtimeEventStoreFor,
@@ -350,6 +352,14 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       secretVault: runtime.secretVault,
       validateToolSettingsConfig: runtime.validateToolSettingsConfig,
       onToolSettingsUpdated: runtime.updateToolSettingsConfig,
+    }),
+  );
+  app.use(
+    "/api/admin/system-prompts",
+    createSystemPromptsAdminRouter({
+      processCwd,
+      config,
+      registry: runtime.systemPromptRegistry,
     }),
   );
   // GenerateImage 引擎配置与 per-engine 定价（2026-07-15）：平台管理员运行时可改，

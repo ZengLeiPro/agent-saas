@@ -31,6 +31,7 @@ import {
   Library,
   LayoutGrid,
   Loader2,
+  MessageSquareText,
   Plug,
   Puzzle,
   Recycle,
@@ -94,6 +95,8 @@ export const EntityIcons = {
   cron: Clock,
   /** 平台每日记忆轮询 */
   memoryPolling: BrainCircuit,
+  /** 系统提示语 */
+  systemPrompts: MessageSquareText,
 } as const;
 
 /** 运行状态四件套（+ pending）—— 全站唯一，禁止另起图标 */

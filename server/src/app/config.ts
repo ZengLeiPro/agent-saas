@@ -11,6 +11,7 @@ import {
   normalizeNetworkPolicy,
 } from '../runtime/networkPolicy.js';
 import { looksLikeSecret } from '../security/secretHeuristics.js';
+import { SYSTEM_PROMPT_IDS } from '../systemPrompts/types.js';
 
 const agentPermissionModeSchema = z.enum([
   'default',
@@ -1085,6 +1086,12 @@ const toolControlsConfigSchema = z.object({
   })).optional(),
 }).optional();
 
+/** 平台系统提示语覆盖；未配置的类型继续使用随版本发布的内置默认值。 */
+const systemPromptsConfigSchema = z.partialRecord(
+  z.enum(SYSTEM_PROMPT_IDS),
+  z.string().trim().min(1).max(200_000),
+).optional();
+
 export type ToolDescriptionOverride = z.infer<typeof toolDescriptionOverrideSchema>;
 
 const runtimeSchedulerConfigSchema = z.object({
@@ -1166,6 +1173,7 @@ export const appConfigSchema = z.object({
   webTools: webToolsConfigSchema,
   imageGenTools: imageGenToolsConfigSchema,
   toolControls: toolControlsConfigSchema,
+  systemPrompts: systemPromptsConfigSchema,
 }).superRefine((value, ctx) => {
   if ((value.tenantRemoteHands?.hands.length ?? 0) > 0 && value.runtimeEventStore?.backend !== 'pg') {
     ctx.addIssue({
@@ -1224,6 +1232,7 @@ export type ImageGenEngineConfig = z.infer<typeof imageGenEngineConfigSchema>;
 export type ImageGenToolsConfig = z.infer<typeof imageGenToolsConfigSchema>;
 export type ImageGenPricingConfig = NonNullable<ImageGenToolsConfig>['pricing'];
 export type ToolControlsConfig = z.infer<typeof toolControlsConfigSchema>;
+export type SystemPromptsConfig = z.infer<typeof systemPromptsConfigSchema>;
 export type AppConfig = z.infer<typeof appConfigSchema>;
 
 function formatValidationError(error: z.ZodError): string {

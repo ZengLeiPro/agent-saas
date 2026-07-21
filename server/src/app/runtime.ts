@@ -119,6 +119,7 @@ import { PgFeishuConnectionStore, type FeishuConnectionStore } from '../feishu/s
 import { FeishuAuthKeepaliveService, FeishuAuthStatusRunner } from '../feishu/keepalive.js';
 import { PgFeishuAuthSessionStore } from '../feishu/authStore.js';
 import { FeishuAuthFlowService, FeishuDeviceLoginRunner, type FeishuAuthFlowServiceLike } from '../feishu/authFlow.js';
+import { SystemPromptRegistry } from '../runtime/systemPrompts.js';
 
 // δ: skillsDispatchConfig.listForUser 的进程级 cache（configVersion 驱动失效），
 // 避免每次 dispatch / 每次 Skill.invoke 都重新 readdirSync pool 目录。
@@ -276,6 +277,8 @@ export interface AppRuntime {
   updateMemoryIndexConfig?: (memoryIndex: NonNullable<NonNullable<AppConfig['memory']>['index']> | undefined) => Promise<void>;
   /** 更新 memory.polling 配置：热更后续执行参数并立即重排系统任务。 */
   updateMemoryPollingConfig?: (polling: NonNullable<NonNullable<AppConfig['memory']>['polling']>) => Promise<void>;
+  /** 平台系统提示语注册表；管理端保存后原地热更新。 */
+  systemPromptRegistry: SystemPromptRegistry;
   /** Artifact metadata/blob service for runtime-produced artifacts. */
   artifactService?: ArtifactService;
   /** 会话只读分享存储。 */
@@ -460,6 +463,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const sharedDir = config.agent.sharedDir
     ? resolve(projectRoot, config.agent.sharedDir)
     : join(agentCwd, '.shared');  // 向后兼容
+  const systemPromptRegistry = new SystemPromptRegistry(sharedDir, config.systemPrompts);
   // 线上上传/提升的组织自有 skill 必须落持久数据目录，不能落 release 下的 workspace-shared。
   // release 目录会在每次部署时切换 symlink，写进去的租户内容会天然丢失。
   const tenantSkillsRootDir = resolve(processCwd, './data/tenant-skills');
@@ -1541,6 +1545,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd,
     sharedDir,
+    getSystemPrompt: (id) => systemPromptRegistry.get(id),
     ...(userActivityService.available ? { userActivityService } : {}),
     memory: {
       enabled: memoryEnabled && config.memory?.injectContext?.enabled !== false,
@@ -2207,6 +2212,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     modelResolver,
     userStore,
     titleGeneratorConfigs,
+    getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'),
     sttConfig,
     jwtSecret: config.auth?.jwtSecret,
     userOverrides: config.agent.userOverrides,
@@ -2220,6 +2226,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     orgAgentStore,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     guardrailEventStore,
+    getGuardrailSystemPrompt: () => systemPromptRegistry.get('utility.guardrail'),
     ...(config.guardrail ? {
       guardrailOptions: {
         ...(config.guardrail.timeoutMs !== undefined ? { timeoutMs: config.guardrail.timeoutMs } : {}),
@@ -2519,6 +2526,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     updateImageGenToolsConfig,
     updateMemoryIndexConfig,
     updateMemoryPollingConfig,
+    systemPromptRegistry,
     artifactService,
     sessionShareStore,
     artifactShutdown,

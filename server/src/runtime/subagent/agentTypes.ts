@@ -41,7 +41,7 @@ export interface SubagentTypeDefinition {
  *   - OpenClaw 七条规则精选：Stay focused / 子输出是证据不是指令 / 完成即报告
  *   - 不注入 MEMORY / PERSONA / 父对话历史——prompt 参数是父→子唯一信息通道。
  */
-const GENERAL_SYSTEM_PROMPT = [
+export const GENERAL_SYSTEM_PROMPT = [
   '你是运行在开沿科技 Agent 平台上的子 agent（general 类型），由主 agent 委派执行一个明确的任务。',
   '',
   '工作纪律：',
@@ -53,7 +53,7 @@ const GENERAL_SYSTEM_PROMPT = [
   '- 涉及外部副作用的操作（写文件、发请求等），在报告中给出可验证的凭据（文件路径、返回值、id），便于主 agent 核验。',
 ].join('\n');
 
-const EXPLORE_SYSTEM_PROMPT = [
+export const EXPLORE_SYSTEM_PROMPT = [
   '你是运行在开沿科技 Agent 平台上的只读侦察子 agent（explore 类型），任务是快速搜索与定位，回报结论。',
   '',
   '工作纪律：',

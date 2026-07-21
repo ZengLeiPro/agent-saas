@@ -78,6 +78,8 @@ import {
   analyzeImagesWithFallback,
   type ImageUnderstandingModelConfig,
 } from './imageUnderstanding.js';
+import { MINIMAL_SYSTEM_PROMPT } from './systemPrompts.js';
+import type { SystemPromptId } from '../systemPrompts/types.js';
 
 const logger = createLogger('RawRuntime');
 
@@ -128,7 +130,7 @@ import {
   getInteractionResolution,
   normalizeInteractionResponse,
 } from './interactionProjection.js';
-import { loadAndRenderPrompt, loadPrompt, type PromptVars } from './promptRenderer.js';
+import { loadPrompt, renderPrompt, type PromptVars } from './promptRenderer.js';
 import {
   DEFAULT_SANDBOX_DENY_READ,
   expandSandboxPaths,
@@ -227,6 +229,8 @@ export interface RawRuntimeRunDispatchConfig {
    * 加载 system prompt 片段；同时 `${sharedDir}/tenants/<tenantId>/company.md` 作为 `{{COMPANY_INFO}}` 注入。
    */
   sharedDir: string;
+  /** 平台系统提示语注册表 getter；每次运行现取，以支持管理端热更新。 */
+  getSystemPrompt?: (id: SystemPromptId) => string;
   memory?: { enabled?: boolean; maxLines?: number };
   memoryIndexService?: MemoryIndexService | null;
   agentStore?: AgentStore;
@@ -1492,6 +1496,8 @@ export function buildInstructions(params: {
   executionTarget: ExecutionTargetKind;
   memorySearchEnabled: boolean;
   isPlatformAdmin: boolean;
+  /** 平台系统提示语注册表 getter；缺省走随版本发布的模板。 */
+  getSystemPrompt?: (id: SystemPromptId) => string;
   /** 专职 Agent 覆盖：注入 {{ORG_AGENT_INSTRUCTIONS}}，IF_PERSONA/IF_NO_PERSONA 强制 false，AGENT_NAME 用 org 名。 */
   orgAgent?: Pick<OrgAgentRecord, 'name' | 'instructions'>;
 }): string {
@@ -1515,14 +1521,20 @@ export function buildInstructions(params: {
   };
 
   const sections: string[] = [
-    loadPrompt(params.sharedDir, 'static'),
-    loadAndRenderPrompt(params.sharedDir, 'dynamic-shared', sharedVars),
+    params.getSystemPrompt?.('main.static') ?? loadPrompt(params.sharedDir, 'static'),
+    renderPrompt(
+      params.getSystemPrompt?.('main.dynamicShared') ?? loadPrompt(params.sharedDir, 'dynamic-shared'),
+      sharedVars,
+    ),
   ];
 
   if (params.memorySearchEnabled) {
-    sections.push(loadPrompt(params.sharedDir, 'runtime-memory'));
+    sections.push(params.getSystemPrompt?.('main.runtimeMemory') ?? loadPrompt(params.sharedDir, 'runtime-memory'));
   }
-  sections.push(loadAndRenderPrompt(params.sharedDir, 'dynamic-personal', personalVars));
+  sections.push(renderPrompt(
+    params.getSystemPrompt?.('main.dynamicPersonal') ?? loadPrompt(params.sharedDir, 'dynamic-personal'),
+    personalVars,
+  ));
 
   return sections.join('\n\n');
 }
@@ -1833,7 +1845,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       { executionTransportRegistry, tenantHandResolver },
     );
     const instructions = options.skipSystemPrompt
-      ? '你是运行在开沿科技公司开发的 Agent 平台上的 AI 助理。'
+      ? config.getSystemPrompt?.('main.minimal') ?? MINIMAL_SYSTEM_PROMPT
       : buildInstructions({
           sharedDir: config.sharedDir,
           tenantId: sessionRecord.tenantId,
@@ -1844,6 +1856,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           executionTarget,
           memorySearchEnabled,
           isPlatformAdmin,
+          getSystemPrompt: config.getSystemPrompt,
           ...(orgAgent ? { orgAgent } : {}),
         });
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
@@ -1901,6 +1914,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           runContext,
           {
             timeoutMs: config.getImageUnderstandingTimeoutMs?.(),
+            systemPrompt: config.getSystemPrompt?.('utility.imageUnderstanding'),
             onAttempt: async (attempt) => {
               await eventStore.append({
                 type: 'image_understanding',
@@ -2266,6 +2280,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTarget,
       memorySearchEnabled,
       isPlatformAdmin: resumeIsPlatformAdmin,
+      getSystemPrompt: config.getSystemPrompt,
       ...(orgAgent ? { orgAgent } : {}),
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);
@@ -2563,6 +2578,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTarget,
       memorySearchEnabled,
       isPlatformAdmin: resumeIsPlatformAdmin,
+      getSystemPrompt: config.getSystemPrompt,
       ...(orgAgent ? { orgAgent } : {}),
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);

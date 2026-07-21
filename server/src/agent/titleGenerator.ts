@@ -85,9 +85,11 @@ export interface TitleGeneratorConfig {
 
 export interface TitleGenerationOptions {
   onUsage?: (model: string, usage: SdkResultModelUsage) => void | Promise<void>;
+  /** 平台管理热更新后的系统提示语；缺省继续使用代码内置版本。 */
+  systemPrompt?: string;
 }
 
-const TITLE_SYSTEM_PROMPT = `你的唯一任务是通过阅读我引用的这些用户消息与 Agent 回复来生成一个简短的会话标题。禁止调用工具，禁止执行命令，禁止输出解释。
+export const TITLE_SYSTEM_PROMPT = `你的唯一任务是通过阅读我引用的这些用户消息与 Agent 回复来生成一个简短的会话标题。禁止调用工具，禁止执行命令，禁止输出解释。
 规则：
 - 检测用户消息的语言，用同种语言输出
 - 中文不超过 15 个字，英文不超过 10 个词
@@ -137,7 +139,7 @@ export async function generateTitle(
     const result = await client.chat.completions.create({
       model: config.model,
       messages: [
-        { role: 'system', content: TITLE_SYSTEM_PROMPT },
+        { role: 'system', content: options.systemPrompt ?? TITLE_SYSTEM_PROMPT },
         { role: 'user', content: parts.join('\n') },
       ],
       temperature: 0.2,

@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronLeft, Loader2, RefreshCw, X, type LucideIcon } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { Badge } from "@/components/ui/badge";
@@ -30,8 +30,10 @@ import { RunTraceExplorer } from "@/components/RunTraceExplorer";
 import { OverviewSection as TenantOverviewSection } from "@/components/TenantAnalytics/OverviewSection";
 import { QaConsole } from "@/components/QaConsole";
 
+const SystemPromptsManagerPanel = lazy(() => import("@/components/SystemPromptsManager"));
+
 export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company";
-export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "memory-polling" | "global-mcp" | "skill-pool" | "system";
+export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "system-prompts" | "memory-polling" | "global-mcp" | "skill-pool" | "system";
 
 interface ShellButton<T extends string> {
   id: T;
@@ -65,6 +67,7 @@ const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "billing", label: "计费", icon: EntityIcons.billing },
   { id: "remote-hands", label: "执行环境池", icon: EntityIcons.runtimePool },
   { id: "tool-controls", label: "工具开关", icon: EntityIcons.toolControls },
+  { id: "system-prompts", label: "系统提示语", icon: EntityIcons.systemPrompts },
   { id: "memory-polling", label: "记忆轮询", icon: EntityIcons.memoryPolling },
   { id: "global-mcp", label: "全局 MCP", icon: EntityIcons.connector },
   { id: "skill-pool", label: "技能池", icon: EntityIcons.skill },
@@ -1001,6 +1004,7 @@ export function PlatformAdminShell({
     { id: "billing", node: <PlatformBillingManager /> },
     { id: "remote-hands", node: renderRemoteHands() },
     { id: "tool-controls", node: renderToolControls() },
+    { id: "system-prompts", node: <SystemPromptsManagerPanel /> },
     { id: "memory-polling", node: renderMemoryPolling() },
     { id: "global-mcp", node: renderMcp() },
     { id: "skill-pool", node: renderSkills() },

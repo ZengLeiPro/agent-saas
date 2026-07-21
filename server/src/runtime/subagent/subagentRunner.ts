@@ -302,6 +302,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       agentType,
       cwd: visibleWorkspaceCwd(parentWorkspace.root, executionTarget),
       executionTarget,
+      systemPrompt: config.getSystemPrompt?.(`subagent.${agentType.id}`),
       companyInfo: request.includeCompanyInfo && agentType.allowCompanyInfo
         ? loadCompanyInfoForSubagent(config.sharedDir, tenantId)
         : undefined,
@@ -545,8 +546,9 @@ function buildSubagentInstructions(args: {
   cwd: string;
   executionTarget: string;
   companyInfo?: string;
+  systemPrompt?: string;
 }): string {
-  const sections: string[] = [args.agentType.systemPrompt];
+  const sections: string[] = [args.systemPrompt ?? args.agentType.systemPrompt];
   sections.push([
     '<env>',
     `工作目录: ${args.cwd}（与主 agent 共享同一 workspace，文件读写彼此可见）`,

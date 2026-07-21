@@ -46,6 +46,11 @@ describe("platform admin url sync", () => {
     });
     expect(buildAdminSettingsUrl("platform", "memory-polling"))
       .toBe("/platform-admin/settings/memory-polling");
+    expect(parseUrl("/platform-admin/settings/system-prompts")).toMatchObject({
+      tab: "platform-admin",
+      adminSection: null,
+      adminSettings: { target: "platform", section: "system-prompts" },
+    });
   });
 
   it("canonicalizes legacy runtime settings sections into entity sections", () => {

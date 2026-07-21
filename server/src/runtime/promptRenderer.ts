@@ -8,8 +8,8 @@
  * 不引模板引擎是有意的——这里的 prompt 模板只需要替换和条件，加更多语法会让
  * workspace-shared/prompts/*.md 失去"普通 markdown，编辑器友好"的属性。
  *
- * 模板从 `<sharedDir>/prompts/<name>.md` 读取；命中后缓存在进程内，重启或调用
- * `clearPromptCache()` 才会重读。开发期想热更可以直接重启 dev server。
+ * 模板从 `<sharedDir>/prompts/<name>.md` 读取并作为内置默认版本缓存；平台管理覆盖由
+ * SystemPromptRegistry 单独热更新，不会修改这里的文件缓存。
  */
 
 import { readFileSync } from 'fs';

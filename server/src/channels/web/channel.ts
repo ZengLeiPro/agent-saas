@@ -153,6 +153,8 @@ export interface WebChannelConfig {
   userStore?: UserStore;
   /** 主 + fallback 链；主返回空或异常时按顺序回落，全部失败再 return null。 */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  /** 平台系统提示语热更新 getter；每次标题生成现取。 */
+  getTitleSystemPrompt?: () => string;
   sttConfig?: SttConfig;
   jwtSecret?: string;
   userOverrides?: UserOverrides;
@@ -176,6 +178,8 @@ export interface WebChannelConfig {
   guardrailEventStore?: GuardrailEventStore;
   /** 门禁调用参数（maxRecentRounds 现表示最近真实用户消息数，配置键为兼容历史保留）。 */
   guardrailOptions?: { timeoutMs?: number; maxRecentRounds?: number };
+  /** 平台系统提示语热更新 getter；每次门禁调用现取。 */
+  getGuardrailSystemPrompt?: () => string;
   /** raw runtime 持久化 approval 的恢复入口 */
   resumeApprovalDispatch?: (request: RawApprovalResumeRequest) => AsyncGenerator<OutboundEvent>;
   /**
@@ -2217,6 +2221,7 @@ export class WebChannel implements BaseChannel {
             guardrailConfigs,
             {
               timeoutMs: this.config.guardrailOptions?.timeoutMs,
+              systemPrompt: this.config.getGuardrailSystemPrompt?.(),
               onUsage: async (usageModel, usage) => {
                 // 记账 channel='guardrail'（沿 title 先例，不进 PG credits）
                 const tokenStore = this.config.tokenUsageStore;
@@ -3276,6 +3281,7 @@ export class WebChannel implements BaseChannel {
         ctx?.userMessages[1],
         ctx?.assistantReplies[1],
         {
+          systemPrompt: this.config.getTitleSystemPrompt?.(),
           onUsage: (model, usage) => {
             const tokenStore = this.config.tokenUsageStore;
             if (!tokenStore) return;

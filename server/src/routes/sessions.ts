@@ -334,6 +334,8 @@ export interface SessionsRouterOptions {
   getEventBus?: () => EventBus | undefined;
   /** Title generator 配置链：主 + fallback；空表示功能未配置（接口将 501） */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  /** 平台系统提示语热更新 getter；每次标题生成现取。 */
+  getTitleSystemPrompt?: () => string;
   /** Token 用量统计 store，用于记录手动 auto-title 等基础设施模型调用 */
   tokenUsageStore?: TokenUsageStore;
   /**
@@ -2061,6 +2063,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           userMessages[1],
           assistantReplies[1],
           {
+            systemPrompt: options.getTitleSystemPrompt?.(),
             onUsage: (model, usage) => {
               if (!options.tokenUsageStore || !req.user) return;
               try {

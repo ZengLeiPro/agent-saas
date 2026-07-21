@@ -23,6 +23,7 @@ const mocked = vi.hoisted(() => {
   const systemAdminRouter = { id: 'system-admin-router' };
   const internalAcsAlertsRouter = { id: 'internal-acs-alerts-router' };
   const toolControlsAdminRouter = { id: 'tool-controls-admin-router' };
+  const systemPromptsRouter = { id: 'system-prompts-router' };
   const previewTokenRouter = { id: 'preview-token-router' };
   const previewServeRouter = { id: 'preview-serve-router' };
   const kbFilesRouter = { id: 'kb-files-router' };
@@ -53,6 +54,7 @@ const mocked = vi.hoisted(() => {
     systemAdminRouter,
     internalAcsAlertsRouter,
     toolControlsAdminRouter,
+    systemPromptsRouter,
     previewTokenRouter,
     previewServeRouter,
     kbFilesRouter,
@@ -81,6 +83,7 @@ const mocked = vi.hoisted(() => {
     createSystemAdminRouter: vi.fn(() => systemAdminRouter),
     createInternalAcsAlertsRouter: vi.fn(() => internalAcsAlertsRouter),
     createToolControlsAdminRouter: vi.fn(() => toolControlsAdminRouter),
+    createSystemPromptsAdminRouter: vi.fn(() => systemPromptsRouter),
     createPreviewRoutes: vi.fn(() => ({ tokenRouter: previewTokenRouter, serveRouter: previewServeRouter })),
     createKbFilesRouter: vi.fn(() => kbFilesRouter),
     createOrgQaRouter: vi.fn(() => orgQaRouter),
@@ -136,6 +139,9 @@ vi.mock('../routes/internalAcsAlerts.js', () => ({
 vi.mock('../routes/toolControlsAdmin.js', () => ({
   createToolControlsAdminRouter: mocked.createToolControlsAdminRouter,
 }));
+vi.mock('../routes/systemPromptsAdmin.js', () => ({
+  createSystemPromptsAdminRouter: mocked.createSystemPromptsAdminRouter,
+}));
 
 vi.mock('../auth/middleware.js', () => ({
   requireAdmin: mocked.requireAdmin,
@@ -170,6 +176,7 @@ describe('registerRoutes', () => {
     mocked.createSystemAdminRouter.mockClear();
     mocked.createInternalAcsAlertsRouter.mockClear();
     mocked.createToolControlsAdminRouter.mockClear();
+    mocked.createSystemPromptsAdminRouter.mockClear();
     mocked.createPreviewRoutes.mockClear();
   });
 
@@ -256,9 +263,11 @@ describe('registerRoutes', () => {
     //   + 平台管理员分层治理 enforcePlatformWritePolicy（2026-07-18）= 30
     //   + 员工申诉 /api/appeals + /api/tenant/appeals（2026-07-19 装配）= 32
     //   + 飞书官方 CLI 连接器 = 33
+    //   + 系统提示语管理 = 34
     // 注：upload-guard / file-guard 是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(33);
+    expect(app.use).toHaveBeenCalledTimes(34);
+    expect(app.use).toHaveBeenCalledWith('/api/admin/system-prompts', mocked.systemPromptsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/kb', expect.any(Function), mocked.kbFilesRouter);
     expect(app.use).toHaveBeenCalledWith('/api/feedback', mocked.feedbackRouter);
     expect(app.use).toHaveBeenCalledWith('/api/appeals', expect.any(Function));

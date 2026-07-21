@@ -47,6 +47,8 @@ export interface GuardrailCheckOptions {
   /** 单次模型调用超时（默认 6000ms） */
   timeoutMs?: number;
   onUsage?: (model: string, usage: SdkResultModelUsage) => void | Promise<void>;
+  /** 平台管理热更新后的系统提示语；缺省继续使用代码内置版本。 */
+  systemPrompt?: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 6000;
@@ -56,7 +58,7 @@ const FENCED_BLOCK_RE = /```(?:json)?\s*([\s\S]*?)```/;
 /** 正则兜底仅对短响应启用（2026-07 审查 F12：防长解释文本/prompt 回显中夹带 verdict 字样误匹配） */
 const VERDICT_FALLBACK_MAX_LEN = 200;
 
-const GUARDRAIL_SYSTEM_PROMPT = '你是一个话题范围审查器。你的唯一任务：判断「用户最新提问」是否属于给定的话题范围。禁止回答提问本身，禁止输出判定 JSON 以外的任何内容。只输出一行严格 JSON（无代码块标记、无解释），必须同时包含 verdict 与 confidence 两个字段，confidence 是 0 到 1 的数字表示你对该判定的确信程度，如：{"verdict":"in_scope","confidence":0.95} 或 {"verdict":"off_topic","confidence":0.9} 或 {"verdict":"uncertain","confidence":0.4}';
+export const GUARDRAIL_SYSTEM_PROMPT = '你是一个话题范围审查器。你的唯一任务：判断「用户最新提问」是否属于给定的话题范围。禁止回答提问本身，禁止输出判定 JSON 以外的任何内容。只输出一行严格 JSON（无代码块标记、无解释），必须同时包含 verdict 与 confidence 两个字段，confidence 是 0 到 1 的数字表示你对该判定的确信程度，如：{"verdict":"in_scope","confidence":0.95} 或 {"verdict":"off_topic","confidence":0.9} 或 {"verdict":"uncertain","confidence":0.4}';
 
 /**
  * 从 transcript 尾部读最近 N 条真实用户消息（时间正序返回）。
@@ -194,7 +196,7 @@ async function checkTopicScopeOnce(
     const result = await client.chat.completions.create({
       model: config.model,
       messages: [
-        { role: 'system', content: GUARDRAIL_SYSTEM_PROMPT },
+        { role: 'system', content: options.systemPrompt ?? GUARDRAIL_SYSTEM_PROMPT },
         { role: 'user', content: buildGuardrailUserPrompt(input) },
       ],
       temperature: 0,

@@ -122,6 +122,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createHealthRouter(config, {
       getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
       getActiveStreamCount: () => channelManager.getActiveStreamCount(),
+      getUploadMetrics: () => runtime.uploadManager.getMetricsSnapshot(),
       getActiveRunCounts: runtime.runtimeRunStore?.getActiveCounts
         ? () => runtime.runtimeRunStore!.getActiveCounts!()
         : undefined,
@@ -141,7 +142,11 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     "/api/file",
     tenantFeatureGuard(runtime.tenantStore, "filesEnabled", "文件能力"),
   );
-  app.use("/api", createUploadRouter({ agentCwd }));
+  app.use(
+    "/api/uploads",
+    tenantFeatureGuard(runtime.tenantStore, "filesEnabled", "文件能力"),
+  );
+  app.use("/api", createUploadRouter({ agentCwd, uploadManager: runtime.uploadManager }));
   app.use(
     "/api",
     createFileRouter({ agentCwd, userOverrides: config.agent.userOverrides }),

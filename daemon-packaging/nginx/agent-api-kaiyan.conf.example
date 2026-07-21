@@ -1,0 +1,87 @@
+# agent-saas 后端 API 独立域名（由 ci.yml 部署脚本安装）
+# 链路：https://api.agent.kaiyan.net -> nginx -> agent_saas_backend
+# limit zone 与 $connection_upgrade map 定义在 recovery Web 站点配置中。
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.agent.kaiyan.net;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name api.agent.kaiyan.net;
+
+    ssl_certificate /etc/letsencrypt/live/api.agent.kaiyan.net/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.agent.kaiyan.net/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    limit_conn agent_conn_limit 300;
+    limit_conn_status 444;
+    limit_conn_log_level warn;
+
+    limit_req zone=agent_req_limit burst=200 nodelay;
+    limit_req_status 444;
+
+    location ~* \.(php|asp|aspx|jsp|cgi|env|git|svn|bak|sql|log|ini|conf|htaccess|htpasswd|DS_Store)$ {
+        access_log off;
+        return 444;
+    }
+
+    location ~* ^/(wp-|wordpress|phpmyadmin|mysql|cgi-bin|boaform|vendor|telescope|_ignition|debug|actuator|solr|jenkins|\.git|\.env|\.aws|\.ssh) {
+        access_log off;
+        return 444;
+    }
+
+    # 附件上传专用链路：请求体不在 ECS 根盘缓冲，直接流向 Node，再写 NAS
+    # uploads/.partial。2 GiB × 20 个的理论上限是 40 GiB，预留 multipart 开销。
+    location = /api/upload {
+        proxy_pass http://agent_saas_backend;
+        client_max_body_size 41000m;
+        client_body_temp_path /mnt/agent-saas/runtime/nginx-client-body 1 2;
+        client_body_timeout 300s;
+
+        proxy_http_version 1.1;
+        proxy_request_buffering off;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        proxy_buffering off;
+        proxy_cache off;
+    }
+
+    location / {
+        proxy_pass http://agent_saas_backend;
+        client_max_body_size 10240m;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+
+        proxy_buffering off;
+        proxy_cache off;
+    }
+}

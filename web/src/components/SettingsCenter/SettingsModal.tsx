@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SettingsPanelHeader, SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { AttachmentStorageSection } from "@/components/SettingsCenter/AttachmentStorageSection";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { AgentDocEditor } from "@/components/AgentProfile/AgentDocEditor";
 import { TrashView } from "@/components/chat/TrashView";
@@ -43,6 +44,7 @@ export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
   { id: "personalization", label: "个性化", description: "侧边栏、会话列表和界面偏好。", group: "account", icon: Palette },
   { id: "memory", label: "记忆", description: "查看和编辑 Agent 长期记忆（MEMORY.md）。", group: "features", icon: Brain },
   { id: "files", label: "文件", description: "浏览个人工作区文件和预览内容。", group: "features", icon: EntityIcons.files },
+  { id: "storage", label: "附件存储", description: "查看附件用量并清理未发送文件。", group: "features", icon: EntityIcons.files },
   { id: "data", label: "回收站", description: "查看已删除会话，必要时进行恢复或彻底清理。", group: "features", icon: EntityIcons.trash },
 ];
 
@@ -899,6 +901,7 @@ export function SettingsModal({
     },
     { id: "memory", node: renderMemory?.() ?? null },
     { id: "files", node: renderFiles?.() ?? null },
+    { id: "storage", node: <AttachmentStorageSection /> },
     {
       id: "data",
       node: renderTrash?.() ?? <TrashView onClose={onClose} showHeader={false} />,

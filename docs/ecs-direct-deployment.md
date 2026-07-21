@@ -162,6 +162,11 @@ cp "$REPO/daemon-packaging/nginx/agent-saas-upstream.conf.example" \
 #    中所有 proxy_pass http://127.0.0.1:3200 → proxy_pass http://agent_saas_backend
 #    （两个站点都要改，避免零星旧域名流量与 API 域切流不一致）
 
+# API 站点配置此后由发布流程从
+# daemon-packaging/nginx/agent-api-kaiyan.conf.example 幂等安装。
+# /api/upload 使用 proxy_request_buffering off，nginx fallback 临时目录位于
+# NAS /mnt/agent-saas/runtime/nginx-client-body；不要再手工只改线上 conf。
+
 # 6. active 色标记
 echo blue > /etc/agent-saas/active-color
 

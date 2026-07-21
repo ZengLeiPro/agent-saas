@@ -9,6 +9,7 @@ export type SettingsSectionId =
   | "skills"
   | "mcp"
   | "files"
+  | "storage"
   | "data";
 
 export type SettingsSectionGroup = "account" | "features";

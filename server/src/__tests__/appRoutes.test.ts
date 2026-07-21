@@ -202,6 +202,9 @@ describe('registerRoutes', () => {
         getChannel: vi.fn(() => undefined),
         draining: false,
       },
+      uploadManager: {
+        getMetricsSnapshot: vi.fn(() => ({ activeUploads: 0 })),
+      },
       cronRuntime: {
         service: null,
         cronRunsDir: '/runs',
@@ -218,7 +221,10 @@ describe('registerRoutes', () => {
         getDispatchMetrics: expect.any(Function),
       }),
     );
-    expect(mocked.createUploadRouter).toHaveBeenCalledWith({ agentCwd: '/agent' });
+    expect(mocked.createUploadRouter).toHaveBeenCalledWith({
+      agentCwd: '/agent',
+      uploadManager: runtime.uploadManager,
+    });
     expect(mocked.createFileRouter).toHaveBeenCalledWith({
       agentCwd: '/agent',
       userOverrides: { zengky: { extraDirs: ['/Users/admin/code/kai'] } },
@@ -264,9 +270,10 @@ describe('registerRoutes', () => {
     //   + 员工申诉 /api/appeals + /api/tenant/appeals（2026-07-19 装配）= 32
     //   + 飞书官方 CLI 连接器 = 33
     //   + 系统提示语管理 = 34
-    // 注：upload-guard / file-guard 是 tenantFeatureGuard("filesEnabled") 中间件，
+    //   + 附件用量/清理 guard = 35
+    // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(34);
+    expect(app.use).toHaveBeenCalledTimes(35);
     expect(app.use).toHaveBeenCalledWith('/api/admin/system-prompts', mocked.systemPromptsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/kb', expect.any(Function), mocked.kbFilesRouter);
     expect(app.use).toHaveBeenCalledWith('/api/feedback', mocked.feedbackRouter);
@@ -318,6 +325,9 @@ describe('registerRoutes', () => {
         getActiveStreamCount: vi.fn(() => 0),
         getChannel: vi.fn(() => undefined),
         draining: false,
+      },
+      uploadManager: {
+        getMetricsSnapshot: vi.fn(() => ({ activeUploads: 0 })),
       },
       cronRuntime: {
         service: cronService,

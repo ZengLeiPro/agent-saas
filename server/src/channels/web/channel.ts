@@ -42,6 +42,7 @@ import { resolveUserCwd } from '../../workspace/resolver.js';
 import { agentPath, resolveAgentPath } from '../../workspace/namespace.js';
 import type { UserStore } from '../../data/users/store.js';
 import type { TenantStore } from '../../data/tenants/store.js';
+import type { UploadManager } from '../../uploads/manager.js';
 import { tenantAccessErrorMessage } from '../../data/tenants/access.js';
 import { speechToText, type SttConfig } from '../../integrations/stt/sttClient.js';
 import { EventBufferStore } from './eventBuffer.js';
@@ -166,6 +167,8 @@ export interface WebChannelConfig {
   tenantStore?: TenantStore;
   /** Browser WebSocket Origin allowlist，复用 HTTP CORS origins。 */
   allowedOrigins?: string[];
+  /** Web 上传附件生命周期：消息通过校验后把 staged sidecar 原子标为 referenced。 */
+  uploadManager?: UploadManager;
   /** 公司级专职 Agent store（orgAgentId 解析/audience 校验/门禁配置来源）。 */
   orgAgentStore?: OrgAgentStore;
   /**
@@ -2316,6 +2319,23 @@ export class WebChannel implements BaseChannel {
       pendingGuardrailEvent = undefined;
     };
     // ── 门禁段结束 ─────────────────────────────────────────────────
+
+    // 只有消息通过基础校验、租户校验与企业专家门禁后，附件才从 staged 转为
+    // referenced。后续 run 即使失败也必须保留附件，因为用户消息已被平台接受。
+    if (attachments?.length && this.config.uploadManager && this.config.agentCwd) {
+      const attachmentUserCwd = resolveUserCwd(this.config.agentCwd, userIdentity);
+      try {
+        await this.config.uploadManager.markReferenced(attachmentUserCwd, attachments, {
+          ...(validSessionId ? { sessionId: validSessionId } : {}),
+          clientMessageId: clientMsgId,
+        });
+      } catch (error) {
+        chatLogger.error(`[attachments] failed to mark referenced: ${error instanceof Error ? error.message : String(error)}`);
+        this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+        this.sendChatRejected(ws, clientMsgId, 'attachment_state_failed', '附件状态保存失败，请重试');
+        return;
+      }
+    }
 
     if (validSessionId) {
       void this.appendDurableWebCommand(validSessionId, {

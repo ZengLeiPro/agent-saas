@@ -53,6 +53,17 @@ describe('health router', () => {
     };
     const server = await startHealthServer({
       getActiveStreamCount: () => 1,
+      getUploadMetrics: () => ({
+        activeUploads: 2,
+        completedRequests: 3,
+        failedRequests: 0,
+        abortedRequests: 1,
+        uploadedBytes: 1024,
+        cleanupRuns: 1,
+        cleanedPartialRequests: 0,
+        cleanedStagedFiles: 0,
+        cleanedBytes: 0,
+      }),
       getActiveRunCounts: async () => activeRuns,
       getIsDraining: () => false,
     });
@@ -66,9 +77,42 @@ describe('health router', () => {
       status: 'ok',
       draining: false,
       activeStreams: 1,
+      activeUploads: 2,
       activeRuns,
       idle: false,
     });
+  });
+
+  it('does not report idle while an HTTP upload is active', async () => {
+    const server = await startHealthServer({
+      getActiveStreamCount: () => 0,
+      getUploadMetrics: () => ({
+        activeUploads: 1,
+        completedRequests: 0,
+        failedRequests: 0,
+        abortedRequests: 0,
+        uploadedBytes: 0,
+        cleanupRuns: 0,
+        cleanedPartialRequests: 0,
+        cleanedStagedFiles: 0,
+        cleanedBytes: 0,
+      }),
+      getActiveRunCounts: async () => ({
+        pending: 0,
+        running: 0,
+        waitingApproval: 0,
+        waitingUser: 0,
+        waitingHand: 0,
+        blocking: 0,
+        total: 0,
+      }),
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/drain');
+    const body = await response.json() as any;
+
+    expect(body).toMatchObject({ activeUploads: 1, idle: false });
   });
 
   it('does not report idle when durable active run status is unavailable', async () => {

@@ -321,6 +321,7 @@ jobs:
           DATA_DIR="/mnt/agent-saas/server-data"
           ACTIVE_COLOR_FILE="/etc/agent-saas/active-color"
           UPSTREAM_CONF="/etc/nginx/conf.d/agent-saas-upstream.conf"
+          API_SITE_CONF="/etc/nginx/conf.d/agent-api-kaiyan.conf"
           DEPLOY_LOCK_FILE="/run/lock/agent-saas-deploy.lock"
           MAINTENANCE_SERVICE="agent-saas-deploy-maintenance.service"
           MAINTENANCE_TIMER="agent-saas-deploy-maintenance.timer"
@@ -519,7 +520,16 @@ jobs:
             IDLE_DRAIN_WAITED=0
             while systemctl is-active --quiet "${SERVICE_NAME}@${IDLE}"; do
               if [ "$IDLE_DRAIN_WAITED" -ge 600 ]; then
-                log "WARN: idle unit still active after 600s; forcing systemctl stop (leftover streams may be interrupted)"
+                IDLE_DRAIN_BODY=$(curl -sS -m 5 "$DRAINZ_URL" 2>/dev/null || true)
+                IDLE_ACTIVE_UPLOADS=$(node -e '
+                  try { console.log(Number(JSON.parse(process.argv[1]).activeUploads ?? 0)); }
+                  catch { console.log(-1); }
+                ' "$IDLE_DRAIN_BODY")
+                if [ "$IDLE_ACTIVE_UPLOADS" -ne 0 ]; then
+                  log "ERROR: idle unit still has activeUploads=$IDLE_ACTIVE_UPLOADS after 600s; refusing to interrupt or overwrite it"
+                  exit 1
+                fi
+                log "WARN: idle unit still active after 600s with no active uploads; forcing systemctl stop (durable runs recover via lease)"
                 systemctl stop "${SERVICE_NAME}@${IDLE}"
                 break
               fi
@@ -666,10 +676,11 @@ jobs:
                 process.exit(2);
               }
               const activeStreams = Number(data.activeStreams ?? 0);
+              const activeUploads = Number(data.activeUploads ?? 0);
               const blockingRuns = Number(data.activeRuns?.blocking ?? 0);
               const totalRuns = Number(data.activeRuns?.total ?? 0);
               const idle = data.idle === true;
-              console.log(`${idle ? "idle" : "busy"} ${activeStreams} ${blockingRuns} ${totalRuns} ${data.status ?? "unknown"}`);
+              console.log(`${idle ? "idle" : "busy"} streams=${activeStreams} uploads=${activeUploads} blockingRuns=${blockingRuns} totalRuns=${totalRuns} status=${data.status ?? "unknown"}`);
             ' "$body"
           }
 
@@ -687,9 +698,16 @@ jobs:
 
           # ── 9. 切流：重写 nginx upstream（新色 primary、旧色 backup）→ nginx -t → reload ──
           UPSTREAM_BAK="/tmp/agent-saas-upstream.conf.bak.$$"
+          API_SITE_BAK="/tmp/agent-api-kaiyan.conf.bak.$$"
           if [ -f "$UPSTREAM_CONF" ]; then
             cp "$UPSTREAM_CONF" "$UPSTREAM_BAK"
           fi
+          if [ -f "$API_SITE_CONF" ]; then
+            cp "$API_SITE_CONF" "$API_SITE_BAK"
+          fi
+          install -d -m 0770 -o nginx -g nginx /mnt/agent-saas/runtime/nginx-client-body
+          install -m 0644 "$RELEASE_DIR/daemon-packaging/nginx/agent-api-kaiyan.conf.example" "$API_SITE_CONF"
+          log "installed managed API nginx config with direct-streaming /api/upload"
           log "rewrite nginx upstream: primary=127.0.0.1:$IDLE_PORT ($IDLE) backup=127.0.0.1:$ACTIVE_PORT ($ACTIVE)"
           cat > "$UPSTREAM_CONF" <<EOF
           # active=$IDLE
@@ -705,6 +723,9 @@ jobs:
               cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
             else
               rm -f "$UPSTREAM_CONF"
+            fi
+            if [ -f "$API_SITE_BAK" ]; then
+              cp "$API_SITE_BAK" "$API_SITE_CONF"
             fi
             nginx -t || log "WARN: nginx -t still failing after restore; manual attention needed"
             rollback_idle_and_exit
@@ -723,8 +744,11 @@ jobs:
             log "post-reload verification FAILED; flipping nginx back to $ACTIVE and rolling back"
             if [ -f "$UPSTREAM_BAK" ]; then
               cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
-              { nginx -t && systemctl reload nginx; } || log "WARN: failed to flip nginx back; manual attention needed"
             fi
+            if [ -f "$API_SITE_BAK" ]; then
+              cp "$API_SITE_BAK" "$API_SITE_CONF"
+            fi
+            { nginx -t && systemctl reload nginx; } || log "WARN: failed to flip nginx back; manual attention needed"
             rollback_idle_and_exit
           fi
           TRAFFIC_SWITCHED=1
@@ -774,10 +798,23 @@ jobs:
           }
 
           if systemctl is-active --quiet "$SERVICE@$OTHER"; then
-            log "$SERVICE@$OTHER still running (draining or never exited); fast path: flip nginx only"
-            switch_traffic_back
-            log "rollback ok (fast path)"
-            exit 0
+            if curl -fsS -m 5 "http://127.0.0.1:$OTHER_PORT/api/healthz/ready" >/dev/null 2>&1; then
+              log "$SERVICE@$OTHER still ready; fast path: flip nginx only"
+              switch_traffic_back
+              log "rollback ok (fast path)"
+              exit 0
+            fi
+            TARGET_DRAIN_BODY=$(curl -sS -m 5 "http://127.0.0.1:$OTHER_PORT/api/healthz/drain" 2>/dev/null || true)
+            TARGET_ACTIVE_UPLOADS=$(node -e '
+              try { console.log(Number(JSON.parse(process.argv[1]).activeUploads ?? 0)); }
+              catch { console.log(-1); }
+            ' "$TARGET_DRAIN_BODY")
+            if [ "$TARGET_ACTIVE_UPLOADS" -ne 0 ]; then
+              log "rollback refused: target $OTHER is draining with activeUploads=$TARGET_ACTIVE_UPLOADS; wait for upload completion"
+              exit 1
+            fi
+            log "$SERVICE@$OTHER is draining with no active uploads; stop before slow-path restart"
+            systemctl stop "$SERVICE@$OTHER"
           fi
 
           PREV=$(readlink "$ROOT/previous" 2>/dev/null || true)
@@ -808,8 +845,17 @@ jobs:
           if [ -f "$OLD_PIDFILE" ] && kill -USR2 "$(cat "$OLD_PIDFILE")" 2>/dev/null; then
             log "drain signal SIGUSR2 sent to old color $ACTIVE (pid $(cat "$OLD_PIDFILE" 2>/dev/null || echo '?'))"
           else
-            log "WARN: pidfile $OLD_PIDFILE missing or kill failed; fallback to systemctl stop (SIGTERM graceful shutdown, active streams may be interrupted)"
-            systemctl stop "${SERVICE_NAME}@${ACTIVE}" || true
+            OLD_DRAIN_BODY=$(curl -sS -m 5 "http://127.0.0.1:$ACTIVE_PORT/api/healthz/drain" 2>/dev/null || true)
+            OLD_ACTIVE_UPLOADS=$(node -e '
+              try { console.log(Number(JSON.parse(process.argv[1]).activeUploads ?? 0)); }
+              catch { console.log(-1); }
+            ' "$OLD_DRAIN_BODY")
+            if [ "$OLD_ACTIVE_UPLOADS" -eq 0 ]; then
+              log "WARN: pidfile $OLD_PIDFILE missing or kill failed; no active uploads, fallback to systemctl stop"
+              systemctl stop "${SERVICE_NAME}@${ACTIVE}" || true
+            else
+              log "ERROR: pidfile $OLD_PIDFILE missing or kill failed and activeUploads=$OLD_ACTIVE_UPLOADS; refusing fallback stop"
+            fi
           fi
           OLD_WAITED=0
           OLD_DRAINED=0
@@ -833,7 +879,7 @@ jobs:
             pnpm store prune || log "WARN: pnpm store prune failed (non-fatal)"
           fi
           log "remove uploaded release archive"
-          rm -f "$RELEASE_TGZ" "$UPSTREAM_BAK"
+          rm -f "$RELEASE_TGZ" "$UPSTREAM_BAK" "$API_SITE_BAK"
           log "deploy ok: $RELEASE_ID active=$IDLE (old color $ACTIVE drain issued)"
           exit 0
           REMOTE

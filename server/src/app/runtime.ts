@@ -120,6 +120,7 @@ import { FeishuAuthKeepaliveService, FeishuAuthStatusRunner } from '../feishu/ke
 import { PgFeishuAuthSessionStore } from '../feishu/authStore.js';
 import { FeishuAuthFlowService, FeishuDeviceLoginRunner, type FeishuAuthFlowServiceLike } from '../feishu/authFlow.js';
 import { SystemPromptRegistry } from '../runtime/systemPrompts.js';
+import { UploadManager } from '../uploads/manager.js';
 
 // δ: skillsDispatchConfig.listForUser 的进程级 cache（configVersion 驱动失效），
 // 避免每次 dispatch / 每次 Skill.invoke 都重新 readdirSync pool 目录。
@@ -161,6 +162,7 @@ export interface AppRuntime {
   sharedDir: string;
   tenantSkillsRootDir: string;
   uploadsDir: string;
+  uploadManager: UploadManager;
   channelManager: ChannelManager;
   dispatchMetricsStore: DispatchMetricsStore;
   dingtalkDeps: DingtalkDeps;
@@ -311,7 +313,7 @@ export interface AppRuntime {
    * SIGUSR2 drain 序列（顺序敏感）：停 reconcile 定时器 → 停 cron 触发 →
    * 等 in-flight cron job 结清 → 释放 cron leadership（此后新实例可接管）→
    * 停 scheduler（不再 claim 新 run 并等 in-flight run 结清）。
-   * WS 活跃流不在此处等待，由 index.ts 的 drain 轮询负责。
+   * WS 活跃流与 HTTP 上传不在此处等待，由 index.ts 的 drain 轮询负责。
    */
   beginRuntimeDrain: () => Promise<void>;
 }
@@ -520,6 +522,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
 
   const uploadsDir = join(agentCwd, 'uploads');
+  const uploadManager = new UploadManager({ agentCwd });
+  if (processRole !== 'scheduler-only') uploadManager.start();
   const sessionBasePath = processCwd;
 
   // Memory Index: 只保留索引服务本身；OpenAI Agents 的 MCP/function tool 接入后续单独实现。
@@ -2217,6 +2221,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     jwtSecret: config.auth?.jwtSecret,
     userOverrides: config.agent.userOverrides,
     getIsDraining: () => channelManager.draining,
+    uploadManager,
     tokenUsageStore,
     tenantStore,
     allowedOrigins: config.server.corsOrigins,
@@ -2464,6 +2469,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     sharedDir,
     tenantSkillsRootDir,
     uploadsDir,
+    uploadManager,
     channelManager,
     dispatchMetricsStore,
     dingtalkDeps,

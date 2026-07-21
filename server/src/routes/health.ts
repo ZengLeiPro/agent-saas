@@ -2,10 +2,12 @@ import { Router } from 'express';
 import type { AppConfig } from '../types/index.js';
 import type { DispatchMetricsSnapshot } from '../engine/metricsStore.js';
 import type { ActiveRunCounts } from '../runtime/runStore.js';
+import type { UploadMetricsSnapshot } from '../uploads/manager.js';
 
 export interface HealthRouteOptions {
   getDispatchMetrics?: () => DispatchMetricsSnapshot;
   getActiveStreamCount?: () => number;
+  getUploadMetrics?: () => UploadMetricsSnapshot;
   getActiveRunCounts?: () => Promise<ActiveRunCounts>;
   getIsDraining?: () => boolean;
   /** skills 后台物化进度（结构类型，避免反向依赖 app/runtime）；ready 载荷用 */
@@ -58,6 +60,7 @@ export function createHealthRouter(
         heapTotal: Math.round(mem.heapTotal / 1024 / 1024),
       },
       activeStreams: options.getActiveStreamCount?.() ?? 0,
+      uploads: options.getUploadMetrics?.(),
       draining,
       ttsAvailable: !!config.tts,
       dispatch: options.getDispatchMetrics?.(),
@@ -98,6 +101,8 @@ export function createHealthRouter(
   router.get('/healthz/drain', async (_req, res) => {
     const draining = options.getIsDraining?.() ?? false;
     const activeStreams = options.getActiveStreamCount?.() ?? 0;
+    const uploadMetrics = options.getUploadMetrics?.();
+    const activeUploads = uploadMetrics?.activeUploads ?? 0;
     let activeRuns = ZERO_ACTIVE_RUN_COUNTS;
     try {
       activeRuns = await options.getActiveRunCounts?.() ?? ZERO_ACTIVE_RUN_COUNTS;
@@ -106,6 +111,7 @@ export function createHealthRouter(
         status: 'error',
         draining,
         activeStreams,
+        activeUploads,
         activeRuns,
         idle: false,
         error: err instanceof Error ? err.message : String(err),
@@ -117,8 +123,9 @@ export function createHealthRouter(
       status: draining ? 'draining' : 'ok',
       draining,
       activeStreams,
+      activeUploads,
       activeRuns,
-      idle: !draining && activeStreams === 0 && activeRuns.blocking === 0,
+      idle: !draining && activeStreams === 0 && activeUploads === 0 && activeRuns.blocking === 0,
     });
   });
 

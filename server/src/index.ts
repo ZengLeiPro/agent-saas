@@ -132,10 +132,10 @@ async function startServer(): Promise<void> {
   const PORT = parseInt(process.env.PORT || '', 10) || config.server.port || 3001;
   httpServer = app.listen(PORT, "0.0.0.0", () => {
     // Node.js 22 defaults requestTimeout to 300s (5 min), which kills large
-    // video uploads through the nginx→WireGuard proxy chain. Set a generous
-    // upper bound (2h) instead of disabling entirely, to retain Slowloris
-    // protection. Per-route req.setTimeout() handles idle timeout separately.
-    httpServer!.requestTimeout = 2 * 60 * 60 * 1000; // 2 hours
+    // uploads through the nginx proxy chain. 2 GiB × 20 files can legitimately
+    // exceed 2h on a slow enterprise uplink, so retain a finite 12h total bound;
+    // production connection-idle protection remains at nginx client_body_timeout.
+    httpServer!.requestTimeout = 12 * 60 * 60 * 1000;
     httpServer!.headersTimeout = 0; // nginx handles header timeout upstream
     serverLogger.info(`Server running on http://localhost:${PORT}`);
     serverLogger.info(`Agent cwd: ${agentCwd}`);
@@ -269,6 +269,7 @@ async function shutdownCleanup(): Promise<void> {
     runtime?.feishuAuthKeepaliveShutdown?.();
     kbPreviewScheduler?.stop();
     await runtime?.channelManager.stopAll();
+    runtime?.uploadManager.stop();
     await runtime?.memoryIndexShutdown?.();
     // MCP shutdown 必须在 pkill -TERM 之前调用，让 client.close() 走协议级
     // disconnect；pkill 是兜底，防止某些 transport 没正确收 close。
@@ -328,7 +329,10 @@ process.on('SIGUSR2', () => {
   isDraining = true;
   serverLogger.info('SIGUSR2 received — entering drain mode');
 
-  if (runtime) runtime.channelManager.draining = true;
+  if (runtime) {
+    runtime.channelManager.draining = true;
+    runtime.uploadManager.setDraining(true);
+  }
 
   // 停止接受新 HTTP 连接（已建立的 WS/流不受影响，继续跑完）
   httpServer?.close();
@@ -353,11 +357,13 @@ process.on('SIGUSR2', () => {
     void shutdownCleanup().finally(() => process.exit(0));
   };
 
-  // 轮询等待活跃流清空 + runtime quiesce 完成
+  // 轮询等待活跃流、上传清空 + runtime quiesce 完成
+  let drainDeadline: ReturnType<typeof setTimeout>;
   const drainPoll = setInterval(() => {
     const active = runtime?.channelManager.getActiveStreamCount() ?? 0;
-    serverLogger.info(`Drain: ${active} active stream(s) remaining, runtimeQuiesced=${runtimeQuiesced}`);
-    if (active === 0 && runtimeQuiesced) {
+    const activeUploads = runtime?.uploadManager.getActiveUploadCount() ?? 0;
+    serverLogger.info(`Drain: ${active} active stream(s), ${activeUploads} active upload(s) remaining, runtimeQuiesced=${runtimeQuiesced}`);
+    if (active === 0 && activeUploads === 0 && runtimeQuiesced) {
       clearInterval(drainPoll);
       clearTimeout(drainDeadline);
       finishDrain('complete');
@@ -366,14 +372,22 @@ process.on('SIGUSR2', () => {
   drainPoll.unref();
 
   // 硬性截止（默认 15min，AGENT_SAAS_DRAIN_DEADLINE_MS 可调）：蓝绿模式下
-  // 旧色在后台排空、不阻塞部署，可以给长 run 充足余量；到点仍未清空则
-  // 放弃等待——被打断的 run 由新实例 lease 恢复续跑。
+  // 旧色在后台排空、不阻塞部署，可以给长 run 充足余量。到点后仅允许
+  // 打断可由 lease 恢复的 run；HTTP 上传仍在进行时继续等待，绝不强退。
   const deadlineMs = parseInt(process.env.AGENT_SAAS_DRAIN_DEADLINE_MS || '', 10) || 900_000;
-  const drainDeadline = setTimeout(() => {
-    clearInterval(drainPoll);
+  const onDrainDeadline = (): void => {
     const remaining = runtime?.channelManager.getActiveStreamCount() ?? 0;
-    serverLogger.warn(`Drain deadline after ${deadlineMs}ms: ${remaining} stream(s) still active, forcing exit (interrupted runs recover via lease on the new instance)`);
+    const remainingUploads = runtime?.uploadManager.getActiveUploadCount() ?? 0;
+    if (remainingUploads > 0) {
+      serverLogger.warn(`Drain deadline after ${deadlineMs}ms deferred: ${remainingUploads} upload(s) still active; uploads are never force-interrupted`);
+      drainDeadline = setTimeout(onDrainDeadline, deadlineMs);
+      drainDeadline.unref();
+      return;
+    }
+    clearInterval(drainPoll);
+    serverLogger.warn(`Drain deadline after ${deadlineMs}ms: ${remaining} stream(s) still active and no uploads, forcing exit (runs recover via lease)`);
     finishDrain('deadline reached');
-  }, deadlineMs);
+  };
+  drainDeadline = setTimeout(onDrainDeadline, deadlineMs);
   drainDeadline.unref();
 });

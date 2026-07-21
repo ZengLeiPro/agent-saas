@@ -4,4 +4,5 @@ export {
   INPUT_DRAFT_KEY,
   TTS_AUTOPLAY_KEY,
   MAX_UPLOAD_FILE_SIZE,
+  MAX_UPLOAD_FILES_PER_REQUEST,
 } from '@agent/shared';

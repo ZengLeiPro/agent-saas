@@ -28,6 +28,7 @@ export type ChatRejectReasonCode =
     | 'server_draining'        // 服务端优雅关闭中
     | 'model_not_allowed'      // 组织模型策略不允许使用所选模型
     | 'duplicate_inflight'     // 同 client_msg_id 已在处理
+    | 'attachment_state_failed' // 附件引用状态持久化失败
     | 'personal_agent_disabled' // 租户关闭个人 Agent，普通用户仅可用专职 Agent
     | 'org_agent_unavailable'; // 专职 Agent 不存在/已禁用/未被指派（跨租户防枚举同码）
 

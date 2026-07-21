@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import type { ChangeEvent, ClipboardEvent, DragEvent } from "react";
 import type { UploadedFile } from "@/components/types";
 import { authFetch } from "@/lib/authFetch";
-import { MAX_UPLOAD_FILE_SIZE } from "@/lib/constants";
+import { MAX_UPLOAD_FILE_SIZE, MAX_UPLOAD_FILES_PER_REQUEST } from "@/lib/constants";
 
 function revokeFilePreviews(files: UploadedFile[]): void {
   files.forEach((file) => {
@@ -18,7 +18,15 @@ function findOversizedFiles(files: File[]): File[] {
 
 function formatOversizedMessage(oversized: File[]): string {
   const names = oversized.map((file) => file.name).join("、");
-  return `以下文件超过 1GB 限制：${names}`;
+  return `以下文件超过 2 GiB 限制：${names}`;
+}
+
+function validateFileBatch(files: File[]): string | null {
+  if (files.length > MAX_UPLOAD_FILES_PER_REQUEST) {
+    return `单次最多上传 ${MAX_UPLOAD_FILES_PER_REQUEST} 个文件`;
+  }
+  const oversized = findOversizedFiles(files);
+  return oversized.length > 0 ? formatOversizedMessage(oversized) : null;
 }
 
 export interface FileUploadState {
@@ -69,6 +77,11 @@ export function useFileUpload(
     if (files.length === 0) {
       return;
     }
+    const validationError = validateFileBatch(files);
+    if (validationError) {
+      setUploadError(validationError);
+      return;
+    }
 
     setUploading(true);
     setUploadError(null);
@@ -85,7 +98,8 @@ export function useFileUpload(
       });
 
       if (!response.ok) {
-        throw new Error(`Upload failed: ${response.status}`);
+        const errorBody = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(errorBody.error || `Upload failed: ${response.status}`);
       }
 
       const data = await response.json();
@@ -123,9 +137,9 @@ export function useFileUpload(
     }
 
     const files = Array.from(fileList);
-    const oversized = findOversizedFiles(files);
-    if (oversized.length > 0) {
-      setUploadError(formatOversizedMessage(oversized));
+    const validationError = validateFileBatch(files);
+    if (validationError) {
+      setUploadError(validationError);
       event.target.value = "";
       return;
     }
@@ -151,9 +165,9 @@ export function useFileUpload(
 
     event.preventDefault();
 
-    const oversized = findOversizedFiles(files);
-    if (oversized.length > 0) {
-      setUploadError(formatOversizedMessage(oversized));
+    const validationError = validateFileBatch(files);
+    if (validationError) {
+      setUploadError(validationError);
       return;
     }
 
@@ -217,9 +231,9 @@ export function useFileUpload(
       return;
     }
 
-    const oversized = findOversizedFiles(files);
-    if (oversized.length > 0) {
-      setUploadError(formatOversizedMessage(oversized));
+    const validationError = validateFileBatch(files);
+    if (validationError) {
+      setUploadError(validationError);
       return;
     }
 

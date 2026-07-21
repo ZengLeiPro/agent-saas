@@ -157,7 +157,7 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <div className="hidden text-xs text-muted-foreground sm:block">
-              {data.share.debugMode ? "调试模式已开启" : "调试模式已关闭"}
+              仅展示对话正文
             </div>
             {useSamePath && (
               <Button

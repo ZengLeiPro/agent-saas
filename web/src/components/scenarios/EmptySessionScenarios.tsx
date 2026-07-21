@@ -9,12 +9,13 @@
  */
 import { ArrowRight } from "lucide-react";
 import { buildScenarioPrompt } from "@agent/shared";
-import type { ScenarioItem } from "@agent/shared";
+import type { CatalogScenarioPublic, ScenarioItem } from "@agent/shared";
 import { useAuth } from "@/contexts/AuthContext";
 import { ScenarioCard } from "./ScenarioCard";
 import {
   matchRoleIdByPosition,
   pickRecommendedScenarios,
+  pickRecommendedWorkflowScenarios,
   useScenarioLibrary,
 } from "./useScenarioLibrary";
 import { matchIndustry, useIndustryFilter } from "./useIndustryFilter";
@@ -22,17 +23,54 @@ import { matchIndustry, useIndustryFilter } from "./useIndustryFilter";
 interface EmptySessionScenariosProps {
   /** 点推荐卡：入参为填充好槽位示例值的起手 prompt（上层直接预填当前输入框） */
   onTryScenario: (prompt: string, scenario: ScenarioItem) => void;
+  onStartWorkflow?: (starterMessage: string, scenario: CatalogScenarioPublic) => void;
   /** 「查看全部场景」：跳转到场景库整页 */
   onViewAll: () => void;
 }
 
-export function EmptySessionScenarios({ onTryScenario, onViewAll }: EmptySessionScenariosProps) {
-  const { library, loading, error } = useScenarioLibrary();
+export function EmptySessionScenarios({ onTryScenario, onStartWorkflow, onViewAll }: EmptySessionScenariosProps) {
+  const { library, workflowLibrary, loading, error } = useScenarioLibrary();
   const { user } = useAuth();
   const { activeIndustry } = useIndustryFilter();
 
   // 加载中/失败时保持空白态安静，不打扰用户（推荐位是锦上添花，不是硬依赖）
-  if (loading || error || !library || library.scenarios.length === 0) return null;
+  if (loading || error) return null;
+
+  if (workflowLibrary) {
+    const pool = activeIndustry === "all"
+      ? workflowLibrary.scenarios
+      : workflowLibrary.scenarios.filter((scenario) => scenario.industryTags.includes(activeIndustry));
+    const preferredRoleId = matchRoleIdByPosition(workflowLibrary.roles, user?.position);
+    const recommended = pickRecommendedWorkflowScenarios(pool.length > 0 ? pool : workflowLibrary.scenarios, 3, preferredRoleId);
+    const openCatalog = (scenario: CatalogScenarioPublic) => {
+      onViewAll();
+      const params = new URLSearchParams(window.location.search);
+      params.delete("scenario");
+      params.set("workflow", scenario.id);
+      params.set("intent", scenario.launch.startMode === "connector" ? "connect" : "view");
+      window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+    };
+    return (
+      <div className="mx-auto w-full max-w-2xl pt-[12vh]">
+        <div className="mb-3 text-center text-sm text-muted-foreground">从业务结果开始：能直接体验的现在做，需要接入的先看清边界</div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {recommended.map((scenario) => (
+            <button key={scenario.id} type="button" className="rounded-lg border bg-card p-4 text-left shadow-sm hover:border-brand-200" onClick={() => {
+              if (scenario.launch.startMode === "chat" && onStartWorkflow) onStartWorkflow(scenario.launch.starterMessage, scenario);
+              else openCatalog(scenario);
+            }}>
+              <div className="text-xs text-muted-foreground">{scenario.readiness === "D0_CURRENT" ? "当前即用" : scenario.readiness === "D1_CONNECTOR" ? "标准接入" : "项目集成"}</div>
+              <div className="mt-2 text-sm font-semibold">{scenario.title}</div>
+              <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{scenario.value}</p>
+              <div className="mt-3 text-xs text-brand-600">{scenario.cta.primary}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!library || library.scenarios.length === 0) return null;
 
   const industryFiltered = library.scenarios.filter((s) =>
     matchIndustry(s.industryFocus, activeIndustry),

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   buildTenantRemoteHandWireEnv,
+  collectRuntimeTooling,
   createApprovalStoreForSession,
   createEventStoreForSession,
   createModelAdapterForProtocol,
@@ -25,6 +26,9 @@ import type { WorkspaceRef } from '../agent/toolRuntime.js';
 import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 import type { ApprovalStore, EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 import type { RunRecord } from '../runtime/runStore.js';
+import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
+import type { WorkflowDemoStore } from '../data/workflowDemos/store.js';
+import { WorkflowDemoToolProvider } from '../agent/workflowDemoToolProvider.js';
 
 // 最小可用 config（只放本组 helper 真消费的字段）
 function makeConfig(overrides: Partial<RawRuntimeRunDispatchConfig> = {}): RawRuntimeRunDispatchConfig {
@@ -52,6 +56,36 @@ function makeSession(overrides: Partial<RuntimeSessionRecord> = {}): RuntimeSess
     ...overrides,
   };
 }
+
+describe('collectRuntimeTooling Workflow Demo 来源门禁', () => {
+  const workflowDemoStore = {} as WorkflowDemoStore;
+  const toolInvocationStore = new InMemoryToolInvocationStore();
+  const hasWorkflowDemoProvider = async (
+    config: RawRuntimeRunDispatchConfig,
+    withValidatedDispatch = false,
+  ): Promise<boolean> => {
+    const tooling = await collectRuntimeTooling(
+      config,
+      undefined,
+      undefined,
+      [],
+      undefined,
+      withValidatedDispatch
+        ? { runId: '11111111-1111-4111-8111-111111111111', eventId: 'event-1' }
+        : null,
+    );
+    return tooling.providers.some((provider) => provider instanceof WorkflowDemoToolProvider);
+  };
+
+  it('普通会话即使依赖齐全也不挂载；只有受信任 dispatch 与两项存储同时存在才挂载', async () => {
+    expect(await hasWorkflowDemoProvider(makeConfig({ workflowDemoStore }))).toBe(false);
+    expect(await hasWorkflowDemoProvider(makeConfig({ toolInvocationStore }))).toBe(false);
+    expect(await hasWorkflowDemoProvider(makeConfig({ workflowDemoStore, toolInvocationStore }))).toBe(false);
+    expect(await hasWorkflowDemoProvider(makeConfig({ workflowDemoStore }), true)).toBe(false);
+    expect(await hasWorkflowDemoProvider(makeConfig({ toolInvocationStore }), true)).toBe(false);
+    expect(await hasWorkflowDemoProvider(makeConfig({ workflowDemoStore, toolInvocationStore }), true)).toBe(true);
+  });
+});
 
 describe('visibleWorkspaceCwd', () => {
   it('把 server-remote / server-container 的宿主 cwd 折叠成容器内固定 /workspace', () => {

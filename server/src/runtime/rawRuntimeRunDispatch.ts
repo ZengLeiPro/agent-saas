@@ -15,6 +15,9 @@ import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import type { BillingService } from '../data/billing/service.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
+import type { WorkflowDemoStore } from '../data/workflowDemos/store.js';
+import type { WorkflowDemoDispatchMetadata } from '../../../shared/src/index.js';
+import { loadWorkflowLibraryV3 } from '../data/scenarios/workflowLibrary.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
 import type { WorkspaceRef } from '../agent/toolRuntime.js';
@@ -51,6 +54,7 @@ import {
 import { CronToolProvider } from '../agent/cronToolProvider.js';
 import { TenantCompanyInfoToolProvider } from '../agent/tenantCompanyInfoToolProvider.js';
 import { UserActivityToolProvider } from '../agent/userActivityToolProvider.js';
+import { WorkflowDemoToolProvider } from '../agent/workflowDemoToolProvider.js';
 import type { UserActivityService } from './userActivityService.js';
 import { applyToolProfile, normalizeToolProfile } from './toolProfiles.js';
 import { McpClientToolProvider } from '../mcp/clientToolProvider.js';
@@ -80,6 +84,92 @@ import {
 } from './imageUnderstanding.js';
 
 const logger = createLogger('RawRuntime');
+const DEFAULT_WORKFLOW_DEMO_LIBRARY_PATH = resolve(
+  import.meta.dirname,
+  '../data/scenarios/workflow-library-v3.json',
+);
+let workflowDemoLibraryPromise: ReturnType<typeof loadWorkflowLibraryV3> | undefined;
+
+async function resolveWorkflowDemoManifest(demoId: string) {
+  workflowDemoLibraryPromise ??= loadWorkflowLibraryV3(DEFAULT_WORKFLOW_DEMO_LIBRARY_PATH);
+  const library = await workflowDemoLibraryPromise;
+  const manifest = library.internal.demos.find((item) => item.id === demoId);
+  if (!manifest) throw new Error(`Workflow Demo manifest not found: ${demoId}`);
+  return manifest;
+}
+
+export interface ValidatedWorkflowDemoDispatch {
+  runId: string;
+  eventId: string;
+}
+
+export async function validateWorkflowDemoDispatchMetadata(input: {
+  store?: WorkflowDemoStore;
+  metadata: unknown;
+  sessionId: string;
+  tenantId?: string;
+  actorUserId?: string;
+  resolveManifest?: typeof resolveWorkflowDemoManifest;
+}): Promise<ValidatedWorkflowDemoDispatch | null> {
+  const workflowDemo = readWorkflowDemoDispatchMetadata(input.metadata);
+  if (!workflowDemo) return null;
+  if (!input.store) throw new Error('Workflow Demo 状态库不可用');
+  if (!input.tenantId || !input.actorUserId) throw new Error('Workflow Demo 调度缺少可信用户与组织身份');
+  const run = await input.store.getByRunId(workflowDemo.runId);
+  if (!run
+    || run.tenantId !== input.tenantId
+    || run.actorUserId !== input.actorUserId) {
+    throw new Error('Workflow Demo 调度身份与运行不一致');
+  }
+  if (run.status !== 'running') {
+    throw new Error(`Workflow Demo 当前状态不允许 Agent 推进：${run.status}`);
+  }
+  if (run.runtimeSessionId && run.runtimeSessionId !== input.sessionId) {
+    throw new Error('Workflow Demo 已绑定其他 Agent 会话');
+  }
+  const manifest = await (input.resolveManifest ?? resolveWorkflowDemoManifest)(run.demoId);
+  if (manifest.id !== run.demoId
+    || manifest.workflowId !== run.workflowId
+    || manifest.catalogScenarioId !== run.catalogScenarioId) {
+    throw new Error('Workflow Demo 冻结定义与运行不一致');
+  }
+  const events = await input.store.readEvents(run.runId);
+  const next = manifest.internal.executionPlan?.[events.length];
+  if (!next || next.eventId !== workflowDemo.eventId) {
+    throw new Error(`Workflow Demo 当前步骤不匹配：${next?.eventId ?? 'none'}`);
+  }
+  if (next.phase === 'approval' || next.phase === 'resume') {
+    throw new Error('Workflow Demo 当前步骤必须等待独立外部身份提交信号');
+  }
+  return workflowDemo;
+}
+
+function readWorkflowDemoDispatchMetadata(metadata: unknown): ValidatedWorkflowDemoDispatch | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const workflowDemo = (metadata as Partial<WorkflowDemoDispatchMetadata>).workflowDemo;
+  if (!workflowDemo || typeof workflowDemo !== 'object') return null;
+  if (typeof workflowDemo.runId !== 'string'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(workflowDemo.runId)
+    || typeof workflowDemo.eventId !== 'string'
+    || !/^[a-zA-Z0-9_-]{1,160}$/.test(workflowDemo.eventId)) {
+    throw new Error('Workflow Demo 调度元数据无效');
+  }
+  return { runId: workflowDemo.runId, eventId: workflowDemo.eventId };
+}
+
+function workflowDemoInstructions(metadata: ValidatedWorkflowDemoDispatch): string {
+  return [
+    '<workflow-demo>',
+    '这是隔离状态化 Workflow Demo，不是普通问答。',
+    `必须用 WorkflowDemoStep 推进 workflowRunId=${metadata.runId} 的当前步骤 eventId=${metadata.eventId}。`,
+    '只能按工具回执中的 nextEventId 继续；awaitingExternal=true 时立即停止调用并等待外部信号。',
+    '只有工具返回 completed=true 且状态库已冻结通过回放，才可以说明工作流完成。模型自述、文本总结或文件生成都不是终态证据。',
+    '</workflow-demo>',
+  ].join('\n');
+}
+
+export const HIDDEN_WORKFLOW_DEMO_CONTINUE_PROMPT =
+  '继续已由外部批准或反馈恢复的隔离工作流演示；这不是新的用户请求。';
 
 /**
  * 把 sessionId + runId 合并进当前 AsyncLocalStorage 请求上下文,
@@ -336,6 +426,11 @@ export interface RawRuntimeRunDispatchConfig {
   handStore?: HandStore;
   /** Durable tool invocation index. PG runtime wires PgToolInvocationStore for recovery. */
   toolInvocationStore?: ToolInvocationStore;
+  /**
+   * 隔离 Workflow Demo 状态存储。只有它与 toolInvocationStore 同时存在时，
+   * Runtime 才能挂载带真实 Agent Invocation 来源证明的推进工具。
+   */
+  workflowDemoStore?: WorkflowDemoStore;
   /** Session-as-context projection policy. Defaults to full_replay inside RawAgentLoop. */
   contextPolicy?: ContextReconstructionPolicy;
   /**
@@ -1143,6 +1238,7 @@ export async function collectRuntimeTooling(
   skillFilter: RuntimeSkillFilter = allowAllRuntimeSkills,
   requiredSkillIds: readonly string[] = [],
   subagentDeps?: SubagentToolingDeps,
+  workflowDemoDispatch?: ValidatedWorkflowDemoDispatch | null,
 ): Promise<{
   providers: ToolProvider[];
 }> {
@@ -1163,6 +1259,17 @@ export async function collectRuntimeTooling(
   // 2.5 UserActivityList（safe 只读，身份只从 context 解析；记忆轮询 + 普通会话通用）
   if (config.userActivityService && isToolEnabled(config.toolControls, 'UserActivityList')) {
     providers.push(new UserActivityToolProvider(config.userActivityService));
+  }
+
+  // 2.6 Workflow Demo 推进工具只在状态库与受信任 Invocation 索引同时存在时挂载。
+  // 任一依赖缺失都不做开发环境降级，避免把无法反查来源的 HTTP/模型调用记成 Agent。
+  if (workflowDemoDispatch && config.workflowDemoStore && config.toolInvocationStore) {
+    providers.push(new WorkflowDemoToolProvider({
+      workflowDemoStore: config.workflowDemoStore,
+      toolInvocationStore: config.toolInvocationStore,
+      resolveManifest: resolveWorkflowDemoManifest,
+      dispatch: workflowDemoDispatch,
+    }));
   }
 
   // 3. Web 工具（平台托管网络出站，不走 workspace hand / shell）
@@ -1644,6 +1751,19 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     enterSessionContext(sessionId, runId);
     const identitySource = context.sessionOwner || context.user;
     const effectiveTenantId = resolveContextTenantId(context, existingSession);
+    let workflowDemoDispatch: ValidatedWorkflowDemoDispatch | null;
+    try {
+      workflowDemoDispatch = await validateWorkflowDemoDispatchMetadata({
+        store: config.workflowDemoStore,
+        metadata: message.metadata,
+        sessionId,
+        tenantId: effectiveTenantId,
+        actorUserId: identitySource?.id,
+      });
+    } catch (error) {
+      yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+      return;
+    }
     // BUG FIX 2026-06-23：tenantId 必须与 userId 同源用 identitySource，否则
     // admin 代操作 / cron / 内部触发等 context.user 为空但 sessionOwner 存在的
     // 路径上 hasTranscriptOwnerRef 会返回 false，transcript 会回退到 ownerless
@@ -1831,8 +1951,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       orgAgent ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent)) : baseSkillFilter,
       orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
+      workflowDemoDispatch,
     );
-    const instructions = options.skipSystemPrompt
+    const baseInstructions = options.skipSystemPrompt
       ? '你是运行在开沿科技公司开发的 Agent 平台上的 AI 助理。'
       : buildInstructions({
           sharedDir: config.sharedDir,
@@ -1846,6 +1967,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           isPlatformAdmin,
           ...(orgAgent ? { orgAgent } : {}),
         });
+    const instructions = workflowDemoDispatch
+      ? `${baseInstructions}\n\n${workflowDemoInstructions(workflowDemoDispatch)}`
+      : baseInstructions;
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
     const projection = new LegacyTranscriptProjection(transcriptPath);
     const modelAdapter = createModelAdapterForProtocol({ apiKey, baseUrl }, modelProviderOptions);
@@ -2966,6 +3090,10 @@ export function resolveWakePrompt(
   events: PlatformEvent[],
   session: RuntimeSessionRecord,
 ): { message: InboundMessage; recordUserMessage: boolean } {
+  const metadataMessage = isWakeMessage(run.metadata?.wakeMessage) ? run.metadata.wakeMessage : null;
+  if (metadataMessage?.metadata?.hiddenContinuation === true) {
+    return { message: restoreWakeMessage(run, events, session), recordUserMessage: false };
+  }
   const hasPersistedUserMessage = events.some((event) => (
     event.type === 'user_message'
     && event.sessionId === run.sessionId

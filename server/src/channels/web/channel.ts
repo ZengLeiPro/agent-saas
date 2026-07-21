@@ -2004,6 +2004,7 @@ export class WebChannel implements BaseChannel {
       chatId: sessionId || '',
       content: resolvedMessage,
       attachments,
+      ...(msg.workflowDemo ? { metadata: { workflowDemo: msg.workflowDemo } } : {}),
     };
 
     // 构造 ChannelContext
@@ -2420,6 +2421,7 @@ export class WebChannel implements BaseChannel {
               chatId: enqueueSessionId,
               content: inbound.content,
               attachments: inbound.attachments ?? [],
+              ...(inbound.metadata ? { metadata: inbound.metadata } : {}),
             },
           },
         });

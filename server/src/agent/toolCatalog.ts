@@ -42,6 +42,7 @@ import { skillToolDescriptor } from './skillToolProvider.js';
 import { webSearchToolDescriptor, webFetchToolDescriptor } from './webToolProvider.js';
 import { generateImageToolDescriptor } from './imageGenToolProvider.js';
 import { cronListToolDescriptor, cronManageToolDescriptor } from './cronToolProvider.js';
+import { workflowDemoStepToolDescriptor } from './workflowDemoToolProvider.js';
 import {
   sessionGetEventsToolDescriptor,
   sessionSearchEventsToolDescriptor,
@@ -87,6 +88,8 @@ export const PLATFORM_TOOL_CATALOG: readonly ToolDescriptor[] = [
   // cron
   cronListToolDescriptor,
   cronManageToolDescriptor,
+  // workflow demo
+  workflowDemoStepToolDescriptor,
 ];
 
 /**
@@ -133,6 +136,7 @@ export const PLATFORM_TOOL_SOURCE_MODULE: Readonly<Record<string, string>> = {
   GenerateImage: 'server/src/agent/imageGenToolProvider.ts',
   CronList: 'server/src/agent/cronToolProvider.ts',
   CronManage: 'server/src/agent/cronToolProvider.ts',
+  WorkflowDemoStep: 'server/src/agent/workflowDemoToolProvider.ts',
   SessionGetEvents: 'server/src/runtime/sessionContext.ts',
   SessionSearchEvents: 'server/src/runtime/sessionContext.ts',
   SessionGetToolTrace: 'server/src/runtime/sessionContext.ts',

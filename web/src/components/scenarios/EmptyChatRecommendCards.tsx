@@ -3,6 +3,7 @@ import { ArrowRight, Clock3, Layers3 } from "lucide-react";
 import {
   buildScenarioPrompt,
   sanitizeScenario,
+  type CatalogScenarioPublic,
   type ScenarioItem,
   type ScenarioRole,
 } from "@agent/shared";
@@ -12,6 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   matchRoleIdByPosition,
   pickRecommendedScenarios,
+  pickRecommendedWorkflowScenarios,
   useScenarioLibrary,
 } from "./useScenarioLibrary";
 import { matchIndustry, useIndustryFilter } from "./useIndustryFilter";
@@ -19,6 +21,7 @@ import { friendlyDataDependency } from "./friendlyMappings";
 
 interface EmptyChatRecommendCardsProps {
   onTryScenario: (prompt: string, scenario: ScenarioItem) => void;
+  onStartWorkflow?: (starterMessage: string, scenario: CatalogScenarioPublic) => void;
   onViewAll: () => void;
   onOpenRoleDetail?: (roleId: string) => void;
 }
@@ -85,15 +88,63 @@ function roleName(roles: ScenarioRole[], roleId: string | null): string {
 
 export function EmptyChatRecommendCards({
   onTryScenario,
+  onStartWorkflow,
   onViewAll,
   onOpenRoleDetail,
 }: EmptyChatRecommendCardsProps) {
-  const { library, loading, error } = useScenarioLibrary();
+  const { library, workflowLibrary, loading, error } = useScenarioLibrary();
   const { user } = useAuth();
   const { activeIndustry } = useIndustryFilter();
   const recommendationCount = useRecommendationCount();
 
-  if (loading || error || !library || library.scenarios.length === 0) return null;
+  if (loading || error) return null;
+
+  if (workflowLibrary) {
+    const matchedRoleId = user?.preferences?.activeRoleId && workflowLibrary.roles.some((role) => role.id === user.preferences?.activeRoleId)
+      ? user.preferences.activeRoleId
+      : matchRoleIdByPosition(workflowLibrary.roles, user?.position);
+    const industryFiltered = activeIndustry === "all"
+      ? workflowLibrary.scenarios
+      : workflowLibrary.scenarios.filter((scenario) => scenario.industryTags.includes(activeIndustry));
+    const pool = industryFiltered.length > 0 ? industryFiltered : workflowLibrary.scenarios;
+    const cards = pickRecommendedWorkflowScenarios(pool, recommendationCount, matchedRoleId);
+    const openCatalog = (scenario: CatalogScenarioPublic, intent: "view" | "run" | "connect") => {
+      onViewAll();
+      const params = new URLSearchParams(window.location.search);
+      params.delete("scenario");
+      params.set("workflow", scenario.id);
+      params.set("intent", intent);
+      window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+    };
+    return (
+      <div className="mx-auto w-full max-w-3xl pt-[10vh]">
+        <div className="mb-4 flex items-end justify-between gap-3">
+          <div><div className="text-sm font-medium text-foreground">{roleName(workflowLibrary.roles, matchedRoleId)}工作流</div><div className="mt-1 text-sm text-muted-foreground">从真实业务事件开始，看到行动与完成证明。</div></div>
+          <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 gap-1 text-xs" onClick={onViewAll}>查看目录<ArrowRight className="size-3.5" /></Button>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {cards.map((scenario) => (
+            <button
+              key={scenario.id}
+              type="button"
+              className={cn("flex min-h-[172px] flex-col rounded-lg border bg-card p-4 text-left shadow-sm transition-all", "hover:-translate-y-0.5 hover:border-brand-200")}
+              onClick={() => {
+                if (scenario.launch.startMode === "chat" && onStartWorkflow) onStartWorkflow(scenario.launch.starterMessage, scenario);
+                else openCatalog(scenario, scenario.launch.startMode === "connector" ? "connect" : "view");
+              }}
+            >
+              <div className="text-[11px] font-medium text-muted-foreground">{scenario.primaryType === "CREATE" ? "产出成果" : scenario.primaryType === "WATCH" ? "持续巡检" : scenario.primaryType === "ACT" ? "会动系统" : "持续闭环"} · {scenario.readiness === "D0_CURRENT" ? "当前即用" : scenario.readiness === "D1_CONNECTOR" ? "标准接入" : "项目集成"}</div>
+              <div className="mt-2 line-clamp-2 text-sm font-semibold leading-snug">{scenario.title}</div>
+              <p className="mt-2 line-clamp-3 text-sm leading-5 text-muted-foreground">{scenario.value}</p>
+              <div className="mt-auto pt-3 text-xs text-brand-600">{scenario.cta.primary}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!library || library.scenarios.length === 0) return null;
 
   const industryFiltered = library.scenarios.filter((s) =>
     matchIndustry(s.industryFocus, activeIndustry),

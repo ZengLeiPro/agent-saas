@@ -5,6 +5,7 @@ import {
   type SessionShareSnapshot,
   type UpsertSessionShareInput,
 } from '../data/sessionShares/store.js';
+import { projectSessionShareSnapshot } from '../data/sessionShares/publicProjection.js';
 
 function snapshotRow(snapshot: SessionShareSnapshot) {
   return {
@@ -61,7 +62,7 @@ function createStore(existingSnapshot?: SessionShareSnapshot) {
         return { rows: existingSnapshot ? [snapshotRow(existingSnapshot)] : [] };
       }
       if (sql.includes('INSERT INTO')) {
-        const serialized = String(params?.[9]);
+        const serialized = String(params?.[10]);
         writes.push(serialized);
         return { rows: [snapshotRow(JSON.parse(serialized) as SessionShareSnapshot)] };
       }
@@ -95,5 +96,29 @@ describe('PgSessionShareStore', () => {
     expect(persisted.blocks[0]?.content).toBe('before\\u0000after');
     expect(persisted.blocks[0]?.raw).toBe('literal\\u0000text');
     expect(writes[0]).not.toContain('\u0000');
+  });
+});
+
+describe('session share public projection', () => {
+  it.each([
+    'Authorization: Basic dXNlcjpwYXNzd29yZA==',
+    `aws_access_key_id=${'AK' + 'IA'}IOSFODNN7EXAMPLE`,
+    'postgresql://tester:secret-password@example.com/test',
+    '密码：abcdef123456',
+    'token=abcdef123456',
+    '银行卡 6222021234567890123',
+    '联系邮箱 demo@example.com',
+  ])('敏感正文 fail closed：%s', (content) => {
+    expect(() => projectSessionShareSnapshot({
+      sessionId: 'sensitive-session',
+      stats: { lines: 1, parsedLines: 1, parseErrors: 0 },
+      blocks: [{
+        id: 'prompt-1',
+        kind: 'prompt',
+        title: '用户',
+        defaultOpen: true,
+        content,
+      }],
+    })).toThrow(/请先脱敏后再分享/);
   });
 });

@@ -4,11 +4,9 @@
  * GET /api/scenarios —— 返回按岗位分组的预置场景卡片库 { roles, scenarios }。
  * 所有登录用户可读（走全局 /api 鉴权中间件，无 admin 限制）。
  *
- * 数据源为随代码发布的静态 JSON（src/data/scenarios/scenario-library-v1.json）。
- * 下发前必须：
- *  1. 过滤掉 enabled !== true 的条目（未上架场景不出库）；
- *  2. 剥离 source / enabled / salesPitch 字段；
- *  3. 对所有客户面字符串跑 sanitize。
+ * V3 权威源就绪后，旧接口由 legacyCompatibility 投影 53 条兼容形态；
+ * 新接口 /v3 只返回 shared 的严格客户投影。测试仍可显式关闭 V3 注入旧 fixture。
+ * 所有公开链路都必须 fail closed，不能把校验原文或内部字段回显给客户。
  */
 import { Router } from "express";
 import type { Request, Response } from "express";
@@ -25,6 +23,7 @@ import { buildScenarioPrompt } from "../../../shared/src/types/scenario.js";
 import {
   cronWizardSubmitSchema,
   scenarioLibraryFileSchema,
+  type WorkflowLibraryPublicV3,
 } from "../../../shared/src/index.js";
 import {
   sanitizeRole,
@@ -33,10 +32,21 @@ import {
 import type { CronService } from "../cron/service.js";
 import type { CronJobCreate, NotifyConfig } from "../cron/types.js";
 import type { TenantStore } from "../data/tenants/store.js";
+import type { WorkflowDemoStore } from "../data/workflowDemos/store.js";
+import {
+  findLegacyCompatibility,
+  loadWorkflowLibraryV3,
+  resolveLoadedScenarioSlug,
+  type LoadedWorkflowLibraryV3,
+} from "../data/scenarios/workflowLibrary.js";
 
 const DEFAULT_DATA_PATH = resolve(
   import.meta.dirname,
   "../data/scenarios/scenario-library-v1.json",
+);
+const DEFAULT_V3_DATA_PATH = resolve(
+  import.meta.dirname,
+  "../data/scenarios/workflow-library-v3.json",
 );
 
 export interface RoleKitPublicConfig {
@@ -47,15 +57,20 @@ export interface RoleKitPublicConfig {
     stageTimeoutMs?: number;
     showOnMobile?: boolean;
   };
-  libraryVersion?: "v1" | "v2";
+  libraryVersion?: "v1" | "v2" | "v3";
 }
 
 export interface ScenariosRouterOptions {
   /** 场景库 JSON 路径（测试注入用；缺省为随代码发布的 v1 数据文件） */
   dataPath?: string;
+  /** V3 Workflow 权威库路径；false 仅供 legacy fixture 测试显式关闭。 */
+  v3DataPath?: string | false;
+  /** 仅供定向测试注入已严格解析的 V3 loader。 */
+  v3Loader?: () => Promise<LoadedWorkflowLibraryV3>;
   cronService?: CronService;
   roleKit?: RoleKitPublicConfig;
   tenantStore?: Pick<TenantStore, "getSettings">;
+  workflowDemoStore?: WorkflowDemoStore;
 }
 
 async function loadScenarioLibraryFile(dataPath: string): Promise<ScenarioLibraryFile> {
@@ -74,14 +89,61 @@ async function loadScenarioLibraryFile(dataPath: string): Promise<ScenarioLibrar
 function toPublicLibrary(raw: ScenarioLibraryFile): ScenarioLibraryResponse {
   const roles = [...raw.roles]
     .sort((a, b) => a.sort - b.sort)
-    .map((role) => sanitizeRole({ ...role }).scenario as ScenarioLibraryResponse["roles"][number]);
+    .map((role) => {
+      const report = sanitizeRole({ ...role });
+      if (!report.safeToPublish) throw new Error(`scenario role publication blocked: ${role.id}`);
+      return report.scenario as ScenarioLibraryResponse["roles"][number];
+    });
   const scenarios: ScenarioItem[] = raw.scenarios
     .filter((item) => item.enabled === true)
     .map((item) => {
-      const { source: _source, enabled: _enabled, salesPitch: _salesPitch, ...publicFields } = item;
-      return sanitizeScenario(publicFields).scenario as ScenarioItem;
+      const {
+        source: _source,
+        enabled: _enabled,
+        salesPitch: _salesPitch,
+        cannotPromise: _cannotPromise,
+        ...publicFields
+      } = item;
+      const report = sanitizeScenario(publicFields);
+      if (!report.safeToPublish) throw new Error(`scenario publication blocked: ${item.id}`);
+      return report.scenario as ScenarioItem;
     });
   return { roles, scenarios };
+}
+
+async function enrichRuntimeWorkflowReplays(
+  library: WorkflowLibraryPublicV3,
+  store?: WorkflowDemoStore,
+): Promise<WorkflowLibraryPublicV3> {
+  if (!store) return library;
+  const next = structuredClone(library);
+  const publishedByCatalog = new Map(
+    (await Promise.all(next.scenarios.map(async (scenario) => {
+      try {
+        return [scenario.id, await store.getLatestPublishedByCatalog(scenario.id)] as const;
+      } catch {
+        return [scenario.id, null] as const;
+      }
+    }))).filter((entry) => entry[1] !== null),
+  );
+  // 目录接口只负责告诉客户“有可核验示例”和公开回放地址。
+  // 原始 replay 含运行/事件/证据 ID 与机器状态，只能经专用公开回放投影输出，
+  // 不得重新注入目录的宽 demos 容器。
+  next.demos = [];
+  for (const scenario of next.scenarios) {
+    const published = publishedByCatalog.get(scenario.id);
+    if (!published) continue;
+    scenario.demo = {
+      evidenceLevel: "workflow_replay",
+      sharePath: `/workflow-replays/${encodeURIComponent(published.snapshot.replayId)}`,
+    };
+    scenario.launch.sampleAvailable = true;
+    if (scenario.readiness === "D0_CURRENT") {
+      scenario.launch.startMode = "replay";
+      scenario.cta = { primary: "用示例数据体验" };
+    }
+  }
+  return next;
 }
 
 function buildScenarioPromptWithTargets(
@@ -146,11 +208,25 @@ export function createScenariosRouter(
   options: ScenariosRouterOptions = {},
 ): Router {
   const dataPath = options.dataPath ?? DEFAULT_DATA_PATH;
+  const v3Enabled = options.v3DataPath !== false
+    && (options.v3Loader !== undefined
+      || typeof options.v3DataPath === "string"
+      || options.roleKit?.libraryVersion === "v3"
+      || (options.dataPath === undefined && options.roleKit?.libraryVersion === undefined));
+  const v3DataPath = typeof options.v3DataPath === "string"
+    ? options.v3DataPath
+    : DEFAULT_V3_DATA_PATH;
   const router = Router();
 
   // 进程内缓存：场景库是随代码发布的静态数据，进程生命周期内加载一次即可
   let cache: ScenarioLibraryResponse | null = null;
   let rawCache: ScenarioLibraryFile | null = null;
+  // 构造 Router 时立即预热；路由不会等到首个 V3 请求才发现坏文件。
+  const v3Warmup: Promise<LoadedWorkflowLibraryV3> | null = v3Enabled
+    ? (options.v3Loader?.() ?? loadWorkflowLibraryV3(v3DataPath))
+    : null;
+  // 预热失败由 config/V3/legacy 路由稳定处理，避免未观察 Promise rejection。
+  void v3Warmup?.catch(() => undefined);
 
   async function getRawLibrary(): Promise<ScenarioLibraryFile> {
     if (!rawCache) rawCache = await loadScenarioLibraryFile(dataPath);
@@ -158,15 +234,32 @@ export function createScenariosRouter(
   }
 
   async function getPublicLibrary(): Promise<ScenarioLibraryResponse> {
-    if (!cache) cache = toPublicLibrary(await getRawLibrary());
+    if (!cache) {
+      cache = v3Warmup
+        ? (await v3Warmup).legacy
+        : toPublicLibrary(await getRawLibrary());
+    }
     return cache;
   }
 
-  router.get("/config", (req: Request, res: Response) => {
+  router.get("/config", async (req: Request, res: Response) => {
     const roleKit = options.roleKit ?? {};
     const tenantSettings = req.user?.tenantId
       ? options.tenantStore?.getSettings(req.user.tenantId)
       : undefined;
+    let workflowCatalogV3 = false;
+    if (v3Warmup) {
+      try {
+        await v3Warmup;
+        workflowCatalogV3 = true;
+      } catch {
+        workflowCatalogV3 = false;
+      }
+    }
+    const configuredVersion = roleKit.libraryVersion;
+    const libraryVersion = configuredVersion === "v3" && !workflowCatalogV3
+      ? "v2"
+      : (configuredVersion ?? (workflowCatalogV3 ? "v3" : "v1"));
     res.json({
       roleKitV2Enabled: roleKit.v2Enabled === true,
       sanitizePreviewEnabled: roleKit.sanitizePreviewEnabled === true,
@@ -175,14 +268,49 @@ export function createScenariosRouter(
         stageTimeoutMs: roleKit.firstDayGuideBar?.stageTimeoutMs ?? 5_400_000,
         showOnMobile: roleKit.firstDayGuideBar?.showOnMobile === true,
       },
-      libraryVersion: roleKit.libraryVersion ?? "v1",
+      libraryVersion,
+      capabilities: { workflowCatalogV3 },
     });
+  });
+
+  router.get("/v3", async (_req: Request, res: Response) => {
+    if (!v3Warmup) {
+      res.status(500).json({ error: "workflow_catalog_unavailable" });
+      return;
+    }
+    try {
+      const loaded = await v3Warmup;
+      res.json(await enrichRuntimeWorkflowReplays(loaded.public, options.workflowDemoStore));
+    } catch {
+      res.status(500).json({ error: "workflow_catalog_unavailable" });
+    }
+  });
+
+  router.get("/v3/resolve/:slug", async (req: Request, res: Response) => {
+    if (!v3Warmup) {
+      res.status(500).json({ error: "workflow_catalog_unavailable" });
+      return;
+    }
+    try {
+      const resolved = resolveLoadedScenarioSlug(await v3Warmup, req.params.slug ?? "");
+      if (!resolved) {
+        res.status(404).json({ error: "scenario_not_found" });
+        return;
+      }
+      res.json(resolved);
+    } catch {
+      res.status(500).json({ error: "workflow_catalog_unavailable" });
+    }
   });
 
   router.get("/", async (_req: Request, res: Response) => {
     try {
       res.json(await getPublicLibrary());
     } catch (err) {
+      if (v3Warmup) {
+        res.status(500).json({ error: "workflow_catalog_unavailable" });
+        return;
+      }
       res
         .status(500)
         .json({ error: String(err instanceof Error ? err.message : err) });
@@ -205,10 +333,30 @@ export function createScenariosRouter(
     }
     try {
       const body = parsed.data;
-      const raw = await getRawLibrary();
-      const scenario = raw.scenarios.find((item) => item.id === body.scenarioId && item.enabled === true);
+      let scenario: ScenarioItemInternal | undefined;
+      if (v3Warmup) {
+        const loaded = await v3Warmup;
+        const compatibility = findLegacyCompatibility(loaded.internal, body.scenarioId);
+        if (!compatibility || !compatibility.legacyCronSupported) {
+          res.status(409).json({
+            error: "LEGACY_CRON_NOT_SUPPORTED",
+            nextAction: "查看工作流或接入我的系统",
+          });
+          return;
+        }
+        scenario = loaded.legacy.scenarios.find((item) => item.id === compatibility.legacySlug);
+      } else {
+        const raw = await getRawLibrary();
+        scenario = raw.scenarios.find(
+          (item) => item.id === body.scenarioId && item.enabled === true,
+        );
+        if (!scenario || scenario.mode !== "recurring") {
+          res.status(400).json({ error: "scenario_not_recurring" });
+          return;
+        }
+      }
       if (!scenario || scenario.mode !== "recurring") {
-        res.status(400).json({ error: "scenario_not_recurring" });
+        res.status(409).json({ error: "LEGACY_CRON_NOT_SUPPORTED" });
         return;
       }
       if (scenario.pushSlot?.humanReviewRequired === true && body.pushSlot.humanReviewRequired !== true) {
@@ -228,6 +376,10 @@ export function createScenariosRouter(
         ...(runOnce.error ? { runOnceError: runOnce.error } : {}),
       });
     } catch (err) {
+      if (v3Warmup) {
+        res.status(500).json({ error: "workflow_catalog_unavailable" });
+        return;
+      }
       res.status(500).json({ error: String(err instanceof Error ? err.message : err) });
     }
   });

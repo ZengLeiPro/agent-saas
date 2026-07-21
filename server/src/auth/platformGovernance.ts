@@ -29,6 +29,8 @@ const PLATFORM_CAPABILITY_SET = new Set<PlatformCapability>([
   "credential.reset",
   "runtime.operate",
   "finance.read",
+  "workflow_demo.review",
+  "workflow_demo.publish",
 ]);
 
 /** env SUPER_ADMIN_USERNAMES（逗号分隔）覆盖默认值；空/未设 = ["admin"]。 */

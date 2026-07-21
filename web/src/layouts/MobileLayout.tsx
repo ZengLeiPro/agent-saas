@@ -18,6 +18,12 @@ import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { getPreviewFileType } from "@agent/shared";
 import { useAuth } from "@/contexts/AuthContext";
 import { useScenarioDeepLink } from "@/components/scenarios/useScenarioDeepLink";
+import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
+import { FirstDayGuideBar } from "@/components/onboarding/FirstDayGuideBar";
+import {
+  sendWorkflowExperience,
+  type WorkflowOnboardingContext,
+} from "@/components/onboarding/workflowOnboarding";
 import { ExpertWelcome } from "@/components/experts/ExpertWelcome";
 import type { LayoutProps } from "./types";
 import type { ScenarioItem } from "@agent/shared";
@@ -69,9 +75,11 @@ export function MobileLayout(props: LayoutProps) {
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
   const { user: authUser } = useAuth();
+  const { config: roleKitConfig } = useRoleKitConfig();
   const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
 
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [activeWorkflow, setActiveWorkflow] = useState<WorkflowOnboardingContext | null>(null);
   const closeDrawer = useCallback(() => {
     setSheetOpen(false);
     setActiveTab("chat");
@@ -85,9 +93,38 @@ export function MobileLayout(props: LayoutProps) {
   // 场景直达：消费 ?scenario=<id>（官网注册落地 / 销售场景链接），预填起手指令
   const handleScenarioPrefill = useCallback((prompt: string) => {
     if (!personalAgentEnabled || loading) return;
+    setActiveWorkflow(null);
     setInput(prompt);
   }, [loading, personalAgentEnabled, setInput]);
-  useScenarioDeepLink(handleScenarioPrefill);
+  useScenarioDeepLink(handleScenarioPrefill, () => {
+    setActiveTab("capabilities");
+    setSheetOpen(true);
+  });
+
+  const handleStartWorkflow = useCallback((
+    message: string,
+    scenario: WorkflowOnboardingContext["scenario"],
+    options?: { isolatedDemo?: boolean },
+  ) => {
+    if (loading) return;
+    setActiveWorkflow({
+      scenario,
+      ...(options?.isolatedDemo ? {
+        demoLaunch: {
+          catalogScenarioId: scenario.id,
+          idempotencyKey: crypto.randomUUID?.()
+            ?? `workflow-demo-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        },
+      } : {}),
+    });
+    newPersonalSession();
+    setInput(message);
+    closeDrawer();
+  }, [closeDrawer, loading, newPersonalSession, setInput]);
+
+  const handleSendMessage = useCallback(async () => {
+    await sendWorkflowExperience(sendMessage, input, activeWorkflow);
+  }, [activeWorkflow, input, sendMessage]);
 
   useEffect(() => {
     if (!personalAgentEnabled && (activeTab === "scenarios" || activeTab === "profile" || activeTab === "cron")) {
@@ -337,6 +374,9 @@ export function MobileLayout(props: LayoutProps) {
                       setInput(prompt);
                       closeDrawer();
                     }}
+                    onStartWorkflow={handleStartWorkflow}
+                    onRequestDiagnosis={handleStartWorkflow}
+                    onWorkflowSelected={(scenario) => setActiveWorkflow({ scenario })}
                   />
                 </Suspense>
               )}
@@ -370,7 +410,7 @@ export function MobileLayout(props: LayoutProps) {
               uploadError={uploadError}
               onDismissUploadError={dismissUploadError}
               onInputChange={setInput}
-              onSend={() => { void sendMessage(); }}
+              onSend={() => { void handleSendMessage(); }}
               onStop={stopGeneration}
               stopping={stopping}
               onFileSelect={(event) => { void handleFileSelect(event); }}
@@ -425,6 +465,39 @@ export function MobileLayout(props: LayoutProps) {
           })()}
         </SlidePanel>
       </div>
+      {personalAgentEnabled
+        && activeTab === "chat"
+        && roleKitConfig.roleKitV2Enabled
+        && roleKitConfig.firstDayGuideBar.enabled
+        && roleKitConfig.firstDayGuideBar.showOnMobile ? (
+          <FirstDayGuideBar
+            activeWorkflow={activeWorkflow ?? undefined}
+            onOpenCronWizard={() => { setActiveTab("cron"); setSheetOpen(true); }}
+            onOpenExampleDemo={() => { setActiveTab("capabilities"); setSheetOpen(true); }}
+            onStartWorkflow={(message, context) => handleStartWorkflow(message, context.scenario)}
+            onOpenWorkflowReplay={(sharePath) => window.location.assign(sharePath)}
+            onConnectWorkflow={(context) => {
+              setActiveWorkflow(context);
+              setActiveTab("capabilities");
+              setSheetOpen(true);
+              const params = new URLSearchParams({ returnToWorkflowId: context.scenario.workflowId });
+              window.history.replaceState({}, "", `/capabilities/connectors?${params.toString()}`);
+            }}
+            onRequestDiagnosis={(context) => handleStartWorkflow(
+              `我想为「${context.scenario.title}」预约落地诊断，请先确认业务边界、现有系统和所需人审。`,
+              context.scenario,
+            )}
+            onViewWorkflow={(context) => {
+              setActiveWorkflow(context);
+              setActiveTab("capabilities");
+              setSheetOpen(true);
+              const params = new URLSearchParams({ workflow: context.scenario.id, intent: "view" });
+              window.history.replaceState({}, "", `/capabilities/templates?${params.toString()}`);
+            }}
+            stageTimeoutMs={roleKitConfig.firstDayGuideBar.stageTimeoutMs}
+            showOnMobile
+          />
+        ) : null}
       <Suspense fallback={null}>
         <SettingsModal
           open={settingsOpen}

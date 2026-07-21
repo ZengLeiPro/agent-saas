@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { MessageSquarePlus } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
-import type { OrgAgentSummary, ScenarioItem } from "@agent/shared";
+import type { CatalogScenarioPublic, OrgAgentSummary, ScenarioItem } from "@agent/shared";
 import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -31,6 +31,9 @@ export function CapabilityCenter({
   personalAgentEnabled,
   onStartExpert,
   onTryScenario,
+  onStartWorkflow,
+  onRequestDiagnosis,
+  onWorkflowSelected,
   roleDetailId,
   onOpenRoleDetail,
   onCloseRoleDetail,
@@ -40,6 +43,13 @@ export function CapabilityCenter({
   personalAgentEnabled: boolean;
   onStartExpert: (expertId: string) => void;
   onTryScenario: (prompt: string, scenario: ScenarioItem) => void;
+  onStartWorkflow?: (
+    starterMessage: string,
+    scenario: CatalogScenarioPublic,
+    options?: { isolatedDemo?: boolean },
+  ) => void;
+  onRequestDiagnosis?: (message: string, scenario: CatalogScenarioPublic) => void;
+  onWorkflowSelected?: (scenario: CatalogScenarioPublic) => void;
   roleDetailId?: string | null;
   onOpenRoleDetail?: (roleId: string) => void;
   onCloseRoleDetail?: () => void;
@@ -66,6 +76,15 @@ export function CapabilityCenter({
             <TabsContent value="templates" className="mt-0">
               <ScenariosPanel
                 onTryScenario={onTryScenario}
+                onStartWorkflow={onStartWorkflow}
+                onRequestDiagnosis={onRequestDiagnosis}
+                onWorkflowSelected={onWorkflowSelected}
+                onConnectWorkflow={(workflowId) => {
+                  handleCapabilityTabChange("connectors");
+                  const params = new URLSearchParams(window.location.search);
+                  params.set("returnToWorkflowId", workflowId);
+                  window.history.replaceState({}, "", `/capabilities/connectors?${params.toString()}`);
+                }}
                 roleDetailId={roleDetailId}
                 onOpenRoleDetail={onOpenRoleDetail}
                 onCloseRoleDetail={onCloseRoleDetail}

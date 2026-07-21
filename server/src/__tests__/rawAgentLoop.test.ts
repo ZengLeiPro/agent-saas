@@ -551,6 +551,10 @@ describe('RawAgentLoop', () => {
     expect(invocation?.status).toBe('completed');
     expect(invocation?.toolName).toBe('Write');
     expect(invocation?.tenantId).toBe('wain-test');
+    expect(invocation?.metadata).toMatchObject({
+      toolId: 'Write',
+      toolInputDigest: '47c781d673dfb7199eba98f6bfa649a5f4e64460d310b769e5bf2b99165b5877',
+    });
     expect(adapter.requests[1]?.messages.at(-1)).toEqual({
       role: 'tool',
       tool_call_id: 'call_write_1',

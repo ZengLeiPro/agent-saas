@@ -32,5 +32,9 @@ export {
   createScenariosRouter,
   type ScenariosRouterOptions,
 } from "./scenarios.js";
+export {
+  createWorkflowDemosRouter,
+  type WorkflowDemosRouterOptions,
+} from "./workflowDemos.js";
 export { createContentOpsRouter } from "./contentOps.js";
 export { createDwsRouter, type DwsRouterOptions } from "./dws.js";

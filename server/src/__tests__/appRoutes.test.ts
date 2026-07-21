@@ -10,6 +10,7 @@ const mocked = vi.hoisted(() => {
   const sessionsRouter = { id: 'sessions-router' };
   const searchRouter = { id: 'search-router' };
   const scenariosRouter = { id: 'scenarios-router' };
+  const workflowDemosRouter = { id: 'workflow-demos-router' };
   const contentOpsRouter = { id: 'content-ops-router' };
   const dwsRouter = { id: 'dws-router' };
   const userRoleRouter = { id: 'user-role-router' };
@@ -39,6 +40,7 @@ const mocked = vi.hoisted(() => {
     sessionsRouter,
     searchRouter,
     scenariosRouter,
+    workflowDemosRouter,
     contentOpsRouter,
     dwsRouter,
     userRoleRouter,
@@ -66,6 +68,7 @@ const mocked = vi.hoisted(() => {
     createSessionsRouter: vi.fn(() => sessionsRouter),
     createSearchRouter: vi.fn(() => searchRouter),
     createScenariosRouter: vi.fn(() => scenariosRouter),
+    createWorkflowDemosRouter: vi.fn(() => workflowDemosRouter),
     createContentOpsRouter: vi.fn(() => contentOpsRouter),
     createDwsRouter: vi.fn(() => dwsRouter),
     createUserRoleRouter: vi.fn(() => userRoleRouter),
@@ -95,6 +98,7 @@ vi.mock('../routes/index.js', () => ({
   createSessionsRouter: mocked.createSessionsRouter,
   createSearchRouter: mocked.createSearchRouter,
   createScenariosRouter: mocked.createScenariosRouter,
+  createWorkflowDemosRouter: mocked.createWorkflowDemosRouter,
   createContentOpsRouter: mocked.createContentOpsRouter,
   createDwsRouter: mocked.createDwsRouter,
   createUserRoleRouter: mocked.createUserRoleRouter,
@@ -153,6 +157,7 @@ describe('registerRoutes', () => {
     mocked.createSessionsRouter.mockClear();
     mocked.createSearchRouter.mockClear();
     mocked.createScenariosRouter.mockClear();
+    mocked.createWorkflowDemosRouter.mockClear();
     mocked.createContentOpsRouter.mockClear();
     mocked.createDwsRouter.mockClear();
     mocked.createUserRoleRouter.mockClear();
@@ -196,6 +201,7 @@ describe('registerRoutes', () => {
       },
       groupStore: {},
       userStore: undefined,
+      workflowDemoStore: {},
     };
 
     registerRoutes(app as any, runtime);
@@ -218,6 +224,9 @@ describe('registerRoutes', () => {
     expect(mocked.createSearchRouter).toHaveBeenCalledWith({
       agentCwd: '/agent',
       userStore: runtime.userStore,
+    });
+    expect(mocked.createWorkflowDemosRouter).toHaveBeenCalledWith({
+      store: runtime.workflowDemoStore,
     });
     expect(mocked.createSessionsRouter).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -245,9 +254,10 @@ describe('registerRoutes', () => {
     //   + image-gen pricing admin + memory-polling admin = 29
     //   + 平台管理员分层治理 enforcePlatformWritePolicy（2026-07-18）= 30
     //   + 员工申诉 /api/appeals + /api/tenant/appeals（2026-07-19 装配）= 32
+    //   + Workflow Demo 状态化运行/公开回放 = 33
     // 注：upload-guard / file-guard 是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(32);
+    expect(app.use).toHaveBeenCalledTimes(33);
     expect(app.use).toHaveBeenCalledWith('/api/kb', expect.any(Function), mocked.kbFilesRouter);
     expect(app.use).toHaveBeenCalledWith('/api/feedback', mocked.feedbackRouter);
     expect(app.use).toHaveBeenCalledWith('/api/appeals', expect.any(Function));
@@ -262,6 +272,7 @@ describe('registerRoutes', () => {
     expect(app.use).toHaveBeenCalledWith('/preview', mocked.previewServeRouter);
     expect(app.use).toHaveBeenCalledWith('/api/search', mocked.searchRouter);
     expect(app.use).toHaveBeenCalledWith('/api/scenarios', mocked.scenariosRouter);
+    expect(app.use).toHaveBeenCalledWith('/api', mocked.workflowDemosRouter);
     expect(app.use).toHaveBeenCalledWith('/api/contentops', mocked.contentOpsRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.sessionsRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.groupsRouter);
@@ -305,6 +316,7 @@ describe('registerRoutes', () => {
       },
       groupStore: {},
       userStore: undefined,
+      workflowDemoStore: {},
     };
 
     registerRoutes(app as any, runtime);

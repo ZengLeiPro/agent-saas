@@ -139,7 +139,7 @@ export interface ChatAppState {
   removeFile: (index: number) => void;
   handleFileSelect: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
   handlePaste: (event: ClipboardEvent) => Promise<void>;
-  sendMessage: () => Promise<void>;
+  sendMessage: (options?: { workflowDemo?: { runId: string; eventId: string } }) => Promise<void>;
   sendVoiceMessage: (wavBlob: Blob, durationMs: number) => Promise<void>;
   stopping: boolean;
   stopGeneration: () => void;
@@ -498,12 +498,26 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     attachments: UploadedFile[];
     voiceFile?: { savedPath: string; relativePath: string; duration: number };
     autoApproveRunShell?: boolean;
+    workflowDemo?: { runId: string; eventId: string };
     state: 'queued' | 'sending' | 'acked';
     createdAt: number;
   }
   const outboxRef = useRef<OutboxEntry[]>([]);
   /** 每个 inflight 消息的 ACK 超时定时器（收到 ack 清除） */
   const ackTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const workflowAckWaitersRef = useRef<Map<string, {
+    resolve: () => void;
+    reject: (error: Error) => void;
+  }>>(new Map());
+  const workflowLaunchTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  useEffect(() => () => {
+    for (const waiter of workflowAckWaitersRef.current.values()) {
+      waiter.reject(new Error('工作流启动页面已关闭'));
+    }
+    workflowAckWaitersRef.current.clear();
+    for (const timer of workflowLaunchTimersRef.current.values()) clearTimeout(timer);
+    workflowLaunchTimersRef.current.clear();
+  }, []);
   const ACK_TIMEOUT_MS = 15_000;
 
   const voiceCallbackRef = useRef(options?.onVoiceEvent);
@@ -618,6 +632,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     voiceFile?: { savedPath: string; relativePath: string; duration: number },
     existingClientMsgId?: string,
     autoApproveRunShellForMessage?: boolean,
+    workflowDemo?: { runId: string; eventId: string },
   ) => Promise<void>) | null>(null);
   const reconcileLastRunStateRef = useRef<(sessionId: string, lastRunState: LastRunState) => void>(() => {});
 
@@ -1313,6 +1328,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           nextQueued.voiceFile,
           nextQueued.clientMsgId,
           nextQueued.autoApproveRunShell,
+          nextQueued.workflowDemo,
         );
       }
     }
@@ -1841,6 +1857,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
           if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
           newSessionClientMsgIdsRef.current.delete(clientMsgId);
+          const waiter = workflowAckWaitersRef.current.get(clientMsgId);
+          if (waiter) {
+            workflowAckWaitersRef.current.delete(clientMsgId);
+            const launchTimer = workflowLaunchTimersRef.current.get(clientMsgId);
+            if (launchTimer) clearTimeout(launchTimer);
+            workflowLaunchTimersRef.current.delete(clientMsgId);
+            waiter.reject(new Error('服务端未接受工作流启动消息'));
+          }
           // 若无其他 inflight 条目，清 loading 让用户能继续发
           if (outboxRef.current.every(e => e.state !== 'acked' && e.state !== 'sending')) {
             wsAttachedRef.current = false;
@@ -1856,8 +1880,27 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
           if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
           newSessionClientMsgIdsRef.current.delete(clientMsgId);
+          const waiter = workflowAckWaitersRef.current.get(clientMsgId);
+          if (waiter) {
+            workflowAckWaitersRef.current.delete(clientMsgId);
+            const launchTimer = workflowLaunchTimersRef.current.get(clientMsgId);
+            if (launchTimer) clearTimeout(launchTimer);
+            workflowLaunchTimersRef.current.delete(clientMsgId);
+            waiter.reject(new Error('工作流启动未建立 Runtime stream'));
+          }
         },
       };
+
+      if (data.type === 'stream_id' && data.client_msg_id) {
+        const waiter = workflowAckWaitersRef.current.get(data.client_msg_id);
+        if (waiter) {
+          workflowAckWaitersRef.current.delete(data.client_msg_id);
+          const launchTimer = workflowLaunchTimersRef.current.get(data.client_msg_id);
+          if (launchTimer) clearTimeout(launchTimer);
+          workflowLaunchTimersRef.current.delete(data.client_msg_id);
+          waiter.resolve();
+        }
+      }
 
       const result = processWsEvent(
         data, ctx, wsBlockRef.current,
@@ -2007,6 +2050,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               nextQueued.voiceFile,
               nextQueued.clientMsgId,
               nextQueued.autoApproveRunShell,
+              nextQueued.workflowDemo,
             );
           }
         }
@@ -2056,6 +2100,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       nextQueued.voiceFile,
       nextQueued.clientMsgId,
       nextQueued.autoApproveRunShell,
+      nextQueued.workflowDemo,
     );
   }, []);
 
@@ -2094,6 +2139,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     voiceFile?: { savedPath: string; relativePath: string; duration: number },
     existingClientMsgId?: string,
     autoApproveRunShellForMessage = autoApproveRunShellRef.current,
+    workflowDemo?: { runId: string; eventId: string },
   ) => {
     const activeSessionId = sessionIdRef.current;
     // 自己发起的续聊流：纳入未读追踪，确保切走后流完成（idle）时能标记未读
@@ -2156,6 +2202,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       attachments,
       ...(voiceFile ? { voiceFile } : {}),
       ...(autoApproveRunShellForMessage ? { autoApproveRunShell: true } : {}),
+      ...(workflowDemo ? { workflowDemo } : {}),
       state: 'sending',
       createdAt: Date.now(),
     });
@@ -2165,6 +2212,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     resetWatchdog();
     dispatchConnection('connect');
 
+    const workflowAck = workflowDemo
+      ? new Promise<void>((resolve, reject) => {
+        workflowAckWaitersRef.current.set(clientMsgId, { resolve, reject });
+        const timer = setTimeout(() => {
+          workflowLaunchTimersRef.current.delete(clientMsgId);
+          const waiter = workflowAckWaitersRef.current.get(clientMsgId);
+          if (!waiter) return;
+          workflowAckWaitersRef.current.delete(clientMsgId);
+          waiter.reject(new Error('工作流启动等待 Runtime stream 超时'));
+        }, 20_000);
+        workflowLaunchTimersRef.current.set(clientMsgId, timer);
+      })
+      : undefined;
     const ok = await wsClient.ensureConnectedSend({
       action: 'chat',
       client_msg_id: clientMsgId,
@@ -2176,6 +2236,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         : {}),
       model: selectedModelRef.current || undefined,
       ...(autoApproveRunShellForMessage ? { approvalPolicy: { autoApproveTools: true } } : {}),
+      ...(workflowDemo ? { workflowDemo } : {}),
       attachments: attachments.length > 0
         ? attachments.map((file) => ({
           ...(file.attachmentId ? { attachmentId: file.attachmentId } : {}),
@@ -2198,10 +2259,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       setLoading(false);
       if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
       newSessionClientMsgIdsRef.current.delete(clientMsgId);
+      const waiter = workflowAckWaitersRef.current.get(clientMsgId);
+      if (waiter) {
+        workflowAckWaitersRef.current.delete(clientMsgId);
+      }
+      const launchTimer = workflowLaunchTimersRef.current.get(clientMsgId);
+      if (launchTimer) clearTimeout(launchTimer);
+      workflowLaunchTimersRef.current.delete(clientMsgId);
     } else {
       // 启动 ACK 超时定时器
       armAckTimeout(clientMsgId);
     }
+    if (!ok && workflowDemo) throw new Error('工作流启动消息网络发送失败');
+    if (workflowAck) await workflowAck;
   }, [dispatchConnection, armAckTimeout, markBubbleFailed]);
 
   // 同步 sendChatViaWs 到 ref，让 flushQueuedHead / armAckTimeout 等前置 callback 可调用
@@ -2237,7 +2307,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
   }, [dispatchConnection]);
 
-  const sendMessage = useCallback(async () => {
+  const sendMessage = useCallback(async (options?: {
+    workflowDemo?: { runId: string; eventId: string };
+  }) => {
     const trimmedInput = inputRef.current.trim();
     if (!trimmedInput && uploadedFilesRef.current.length === 0) return;
     if (stoppingRef.current) return; // 停止中禁止发送，保留输入内容
@@ -2248,6 +2320,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     fileUpload.clearFiles();
 
     if (loadingRef.current) {
+      if (options?.workflowDemo) {
+        throw new Error('当前会话仍在运行，请等待结束后再启动工作流');
+      }
       // 排队：新一条消息入 outbox.queued + 渲染 pending bubble
       const queuedClientMsgId = crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       outboxRef.current.push({
@@ -2255,6 +2330,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         input: capturedInput,
         attachments: capturedAttachments,
         ...(autoApproveRunShellRef.current ? { autoApproveRunShell: true } : {}),
+        ...(options?.workflowDemo ? { workflowDemo: options.workflowDemo } : {}),
         state: 'queued',
         createdAt: Date.now(),
       });
@@ -2270,7 +2346,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       return;
     }
 
-    sendChatViaWs(capturedInput, capturedAttachments, true);
+    await sendChatViaWs(capturedInput, capturedAttachments, true, undefined, undefined, undefined, options?.workflowDemo);
   }, [
     setInput,
     fileUpload.clearFiles,

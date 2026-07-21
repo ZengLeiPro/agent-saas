@@ -49,6 +49,11 @@ export interface WsChatMessage {
         autoApproveTools?: boolean;
         autoApproveRunShell?: boolean;
     };
+    /** 只能使用 Demo 启动 API 返回的不透明运行绑定。 */
+    workflowDemo?: {
+        runId: string;
+        eventId: string;
+    };
     voiceFile?: {
         savedPath: string;
         relativePath: string;

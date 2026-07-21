@@ -27,7 +27,7 @@ export function CapabilityTabsList({
     )}>
       {showTemplates && (
         <TabsTrigger value="templates" className={CAPABILITY_TAB_TRIGGER_CLASS}>
-          任务模板
+          工作流
         </TabsTrigger>
       )}
       <TabsTrigger value="experts" className={CAPABILITY_TAB_TRIGGER_CLASS}>

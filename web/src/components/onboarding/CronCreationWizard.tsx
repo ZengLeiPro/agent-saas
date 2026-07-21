@@ -22,10 +22,15 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { friendlyPushChannel, friendlyPushTarget } from "@/components/scenarios/friendlyMappings";
+import {
+  isWorkflowCronEligible,
+  type WorkflowOnboardingContext,
+} from "./workflowOnboarding";
 
 export interface CronCreationWizardProps {
   open: boolean;
   scenario: ScenarioItem | null;
+  workflowContext?: WorkflowOnboardingContext | null;
   onOpenChange: (open: boolean) => void;
   onCreated?: (response: CronWizardResponse) => void;
 }
@@ -72,6 +77,18 @@ function initialPushSlot(scenario: ScenarioItem | null): PushSlotForm {
   };
 }
 
+export function resolveCronScenario(
+  scenario: ScenarioItem | null,
+  workflowContext?: WorkflowOnboardingContext | null,
+): ScenarioItem | null {
+  if (workflowContext) {
+    return isWorkflowCronEligible(workflowContext)
+      ? workflowContext.schedule?.cronScenario ?? null
+      : null;
+  }
+  return scenario?.mode === "recurring" ? scenario : null;
+}
+
 async function submitCron(body: CronWizardSubmit): Promise<CronWizardResponse> {
   const res = await authFetch("/api/scenarios/create-cron", {
     method: "POST",
@@ -85,29 +102,31 @@ async function submitCron(body: CronWizardSubmit): Promise<CronWizardResponse> {
 export function CronCreationWizard({
   open,
   scenario,
+  workflowContext,
   onOpenChange,
   onCreated,
 }: CronCreationWizardProps) {
+  const cronScenario = resolveCronScenario(scenario, workflowContext);
   const [step, setStep] = useState<Step>(1);
   const [targetInput, setTargetInput] = useState("");
   const [monitorTargets, setMonitorTargets] = useState<string[]>([]);
   const [signalAdaptation, setSignalAdaptation] = useState<SignalAdaptation>(DEFAULT_SIGNAL);
-  const [pushSlot, setPushSlot] = useState<PushSlotForm>(() => initialPushSlot(scenario));
+  const [pushSlot, setPushSlot] = useState<PushSlotForm>(() => initialPushSlot(cronScenario));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const forceHumanReview = scenario?.pushSlot?.humanReviewRequired === true;
-  const title = scenario?.title ?? "常驻监测";
+  const forceHumanReview = cronScenario?.pushSlot?.humanReviewRequired === true;
+  const title = workflowContext?.scenario.title ?? cronScenario?.title ?? "常驻监测";
 
   const body = useMemo<CronWizardSubmit | null>(() => {
-    if (!scenario) return null;
+    if (!cronScenario) return null;
     return {
-      scenarioId: scenario.id,
+      scenarioId: cronScenario.id,
       monitorTargets,
       signalAdaptation,
       pushSlot,
     };
-  }, [monitorTargets, pushSlot, scenario, signalAdaptation]);
+  }, [cronScenario, monitorTargets, pushSlot, signalAdaptation]);
 
   const commitTargetInput = () => {
     if (!targetInput.trim()) return;
@@ -120,14 +139,14 @@ export function CronCreationWizard({
     setTargetInput("");
     setMonitorTargets([]);
     setSignalAdaptation(DEFAULT_SIGNAL);
-    setPushSlot(initialPushSlot(scenario));
+    setPushSlot(initialPushSlot(cronScenario));
     setError(null);
     setSubmitting(false);
   };
 
   useEffect(() => {
     reset();
-  }, [scenario?.id]);
+  }, [cronScenario?.id, workflowContext?.scenario.id]);
 
   const validateCurrentStep = (): boolean => {
     setError(null);
@@ -190,6 +209,22 @@ export function CronCreationWizard({
       }}
     >
       <DialogContent className="max-w-xl">
+        {!cronScenario ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>此工作流不能配置常驻监测</DialogTitle>
+              <DialogDescription className="text-left">
+                只有当前即用、具有明确定时触发能力的持续巡检工作流才能在这里配置。其他工作流请按“查看工作流”“接入我的系统”或“预约落地诊断”继续。
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                关闭
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
         <DialogHeader>
           <DialogTitle>配置常驻监测</DialogTitle>
           <DialogDescription className="text-left">
@@ -323,6 +358,8 @@ export function CronCreationWizard({
             </Button>
           )}
         </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

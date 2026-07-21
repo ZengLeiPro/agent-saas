@@ -30,6 +30,7 @@ import {
   createArtifactsRouter,
   createSearchRouter,
   createScenariosRouter,
+  createWorkflowDemosRouter,
   createContentOpsRouter,
   createDwsRouter,
 } from "../routes/index.js";
@@ -220,6 +221,14 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       cronService: cronRuntime.service ?? undefined,
       roleKit: config.roleKit,
       tenantStore: runtime.tenantStore,
+      workflowDemoStore: runtime.workflowDemoStore,
+    }),
+  );
+  app.use(
+    "/api",
+    createWorkflowDemosRouter({
+      store: runtime.workflowDemoStore,
+      signalChallengeSecret: config.auth?.jwtSecret,
     }),
   );
   app.use("/api/contentops", createContentOpsRouter());

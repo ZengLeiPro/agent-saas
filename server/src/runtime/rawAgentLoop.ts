@@ -1,3 +1,4 @@
+
 import type {
   InteractionEvent,
   InteractionResponse,
@@ -21,6 +22,8 @@ import {
   type PlatformEvent,
   type PlatformEventInput,
 } from './types.js';
+import { canonicalToolInputDigest } from './canonicalToolInput.js';
+export { canonicalToolInputDigest } from './canonicalToolInput.js';
 import type { InboundMessage, OutboundEvent } from '../types/index.js';
 import {
   createExecutionAuditRecorder,
@@ -1896,6 +1899,8 @@ export class RawAgentLoop implements AgentLoop {
       executionTarget: args.baseToolContext.workspace.executionTarget,
       tenantId: resolveRunTenantId(args.context),
       metadata: {
+        toolId: args.descriptor.id,
+        toolInputDigest: canonicalToolInputDigest(args.input),
         ...(skillName ? { skillName } : {}),
         ...(effectiveHandId ? { handId: effectiveHandId } : {}),
         ...(autoHandId ? { autoRoutedHandId: autoHandId } : {}),

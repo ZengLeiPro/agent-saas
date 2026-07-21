@@ -1,7 +1,8 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import pg from 'pg';
 
 import type { ParsedTranscript } from '../transcripts/parse.js';
+import { COMPROMISED_LEGACY_SESSION_SHARE_TOKEN_HASHES } from './compromisedTokenHashes.js';
 
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
@@ -24,6 +25,14 @@ export interface SessionShareSnapshot {
     error?: string;
     finishedAt?: string;
   };
+  allowedFiles?: Array<{
+    relativePath: string;
+    fileName: string;
+    sha256?: string;
+    bytes?: number;
+    contentType?: string;
+    contentBase64?: string;
+  }>;
 }
 
 export interface SessionShareRecord {
@@ -138,6 +147,7 @@ export class InMemorySessionShareStore implements SessionShareStore {
   }
 
   async getByToken(token: string): Promise<SessionShareRecord | null> {
+    if (COMPROMISED_LEGACY_SESSION_SHARE_TOKEN_HASHES.has(hashShareToken(token))) return null;
     for (const record of this.records.values()) {
       if (record.token === token) return cloneRecord(record);
     }
@@ -195,6 +205,7 @@ export class PgSessionShareStore implements SessionShareStore {
         CREATE TABLE IF NOT EXISTS ${this.sharesTable} (
           share_id TEXT PRIMARY KEY,
           token TEXT UNIQUE NOT NULL,
+          token_hash TEXT,
           session_id TEXT NOT NULL,
           tenant_id TEXT NOT NULL,
           owner_user_id TEXT NOT NULL,
@@ -210,9 +221,46 @@ export class PgSessionShareStore implements SessionShareStore {
           last_accessed_at TIMESTAMPTZ
         )
       `);
+      await client.query(`ALTER TABLE ${this.sharesTable} ADD COLUMN IF NOT EXISTS token_hash TEXT`);
+      const legacyTokens = await client.query(
+        `SELECT share_id, token, token_hash
+         FROM ${this.sharesTable}
+         WHERE token_hash IS NULL
+            OR (revoked_at IS NULL AND token_hash = ANY($1::text[]))`,
+        [[...COMPROMISED_LEGACY_SESSION_SHARE_TOKEN_HASHES]],
+      );
+      for (const row of legacyTokens.rows) {
+        const tokenHash = row.token_hash ? String(row.token_hash) : hashShareToken(String(row.token));
+        await client.query(
+          `UPDATE ${this.sharesTable}
+           SET token_hash=COALESCE(token_hash,$2),
+               revoked_at=CASE WHEN $3 THEN COALESCE(revoked_at,now()) ELSE revoked_at END,
+               updated_at=CASE WHEN $3 THEN now() ELSE updated_at END
+           WHERE share_id=$1`,
+          [
+            String(row.share_id),
+            tokenHash,
+            COMPROMISED_LEGACY_SESSION_SHARE_TOKEN_HASHES.has(tokenHash),
+          ],
+        );
+      }
+      await client.query(`UPDATE ${this.sharesTable} SET revoked_at=COALESCE(revoked_at,now()),updated_at=now() WHERE revoked_at IS NULL AND expires_at IS NOT NULL AND expires_at <= now()`);
+      await client.query(`
+        WITH ranked AS (
+          SELECT share_id,
+                 row_number() OVER (PARTITION BY session_id, owner_user_id ORDER BY updated_at DESC, share_id DESC) AS rank
+          FROM ${this.sharesTable}
+          WHERE revoked_at IS NULL
+        )
+        UPDATE ${this.sharesTable} shares
+        SET revoked_at=now(),updated_at=now()
+        FROM ranked
+        WHERE shares.share_id=ranked.share_id AND ranked.rank > 1
+      `);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.sharesTable}_session_idx ON ${this.sharesTable} (session_id, owner_user_id)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.sharesTable}_tenant_idx ON ${this.sharesTable} (tenant_id, updated_at DESC)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.sharesTable}_active_idx ON ${this.sharesTable} (session_id, owner_user_id) WHERE revoked_at IS NULL`);
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${this.sharesTable}_active_uidx ON ${this.sharesTable} (session_id, owner_user_id) WHERE revoked_at IS NULL`);
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${this.sharesTable}_token_hash_uidx ON ${this.sharesTable} (token_hash) WHERE token_hash IS NOT NULL`);
     } finally {
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
       client.release();
@@ -244,6 +292,16 @@ export class PgSessionShareStore implements SessionShareStore {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `session-share:${input.sessionId}:${input.ownerUserId}`,
+      ]);
+      await client.query(
+        `UPDATE ${this.sharesTable}
+         SET revoked_at=COALESCE(revoked_at,now()),updated_at=now()
+         WHERE session_id=$1 AND owner_user_id=$2 AND revoked_at IS NULL
+           AND expires_at IS NOT NULL AND expires_at <= now()`,
+        [input.sessionId, input.ownerUserId],
+      );
       const existing = await client.query(
         `
           SELECT *
@@ -289,23 +347,27 @@ export class PgSessionShareStore implements SessionShareStore {
         const inserted = await client.query(
           `
             INSERT INTO ${this.sharesTable}
-              (share_id, token, session_id, tenant_id, owner_user_id, owner_username,
+              (share_id, token, token_hash, session_id, tenant_id, owner_user_id, owner_username,
                created_by_user_id, created_at, updated_at, expires_at, debug_mode, snapshot_json)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now(), $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now(), $9, $10, $11)
             RETURNING *
           `,
-          [
-            randomUUID(),
-            createShareToken(),
-            input.sessionId,
-            input.tenantId,
-            input.ownerUserId,
-            input.ownerUsername,
-            input.createdByUserId,
-            input.expiresAt ?? null,
-            input.debugMode,
-            serializeSnapshotForJsonb(input.snapshot),
-          ],
+          (() => {
+            const token = createShareToken();
+            return [
+              randomUUID(),
+              token,
+              hashShareToken(token),
+              input.sessionId,
+              input.tenantId,
+              input.ownerUserId,
+              input.ownerUsername,
+              input.createdByUserId,
+              input.expiresAt ?? null,
+              input.debugMode,
+              serializeSnapshotForJsonb(input.snapshot),
+            ];
+          })(),
         );
         record = rowToRecord(inserted.rows[0]);
       }
@@ -321,11 +383,29 @@ export class PgSessionShareStore implements SessionShareStore {
   }
 
   async getByToken(token: string): Promise<SessionShareRecord | null> {
+    const tokenHash = hashShareToken(token);
+    if (COMPROMISED_LEGACY_SESSION_SHARE_TOKEN_HASHES.has(tokenHash)) return null;
     const result = await this.pool.query(
-      `SELECT * FROM ${this.sharesTable} WHERE token = $1 LIMIT 1`,
-      [token],
+      `SELECT *
+       FROM ${this.sharesTable}
+       WHERE token_hash = $1
+          OR (token_hash IS NULL AND token = $2)
+       LIMIT 1`,
+      [tokenHash, token],
     );
-    return result.rows[0] ? rowToRecord(result.rows[0]) : null;
+    if (!result.rows[0]) return null;
+
+    // 蓝绿发布期间，N 版本仍可能写入没有 token_hash 的记录。新版本兼容读取，
+    // 并在命中时幂等补齐 hash；plaintext 列需待 N+1 contract 阶段再移除。
+    if (!result.rows[0].token_hash) {
+      await this.pool.query(
+        `UPDATE ${this.sharesTable}
+         SET token_hash = $2
+         WHERE share_id = $1 AND token_hash IS NULL`,
+        [result.rows[0].share_id, tokenHash],
+      );
+    }
+    return rowToRecord(result.rows[0]);
   }
 
   async markAccessed(shareId: string): Promise<void> {
@@ -391,4 +471,8 @@ function sanitizeIdentifier(value: string): string {
     throw new Error(`Invalid PostgreSQL identifier: ${value}`);
   }
   return value;
+}
+
+function hashShareToken(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
 }

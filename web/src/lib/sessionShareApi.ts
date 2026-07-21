@@ -18,8 +18,6 @@ export interface SessionShareSummary {
 
 export interface PublicSessionShareResponse {
   share: {
-    shareId: string;
-    sessionId: string;
     ownerUsername: string;
     debugMode: boolean;
     createdAt: string;
@@ -29,6 +27,12 @@ export interface PublicSessionShareResponse {
     lastAccessedAt?: string;
   };
   detail: ApiSessionDetail;
+}
+
+export interface SessionSharePreview {
+  blockCount: number;
+  files: Array<{ relativePath: string; fileName: string }>;
+  defaultExpiresAt: string;
 }
 
 /**
@@ -47,9 +51,15 @@ export async function getSessionShare(sessionId: string): Promise<SessionShareSu
   return res.json() as Promise<SessionShareSummary>;
 }
 
+export async function getSessionSharePreview(sessionId: string): Promise<SessionSharePreview> {
+  const res = await authFetch(`/api/sessions/${encodeURIComponent(sessionId)}/share-preview`);
+  if (!res.ok) throw new Error(await readApiError(res, "读取公开内容预览失败"));
+  return res.json() as Promise<SessionSharePreview>;
+}
+
 export async function updateSessionShare(
   sessionId: string,
-  input: { debugMode: boolean },
+  input: { confirmPublicText: true; filePaths: string[]; expiresAt?: string },
 ): Promise<SessionShareSummary> {
   const res = await authFetch(`/api/sessions/${encodeURIComponent(sessionId)}/share`, {
     method: "POST",

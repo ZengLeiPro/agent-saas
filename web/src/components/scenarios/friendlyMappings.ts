@@ -1,4 +1,5 @@
 import type {
+  CatalogScenarioPublic,
   DataDependencyLevel,
   DataSourceDifficulty,
   HumanAuditPolicy,
@@ -54,4 +55,17 @@ export const friendlyIndustry: Record<IndustryType, string> = {
   service: "服务",
   export: "出口",
   ecommerce: "电商",
+};
+
+export const friendlyPrimaryType: Record<CatalogScenarioPublic["primaryType"], string> = {
+  CREATE: "产出成果",
+  WATCH: "持续巡检",
+  ACT: "会动系统",
+  LOOP: "持续闭环",
+};
+
+export const friendlyReadiness: Record<CatalogScenarioPublic["readiness"], string> = {
+  D0_CURRENT: "当前即用",
+  D1_CONNECTOR: "标准接入",
+  D2_PROJECT: "项目集成",
 };

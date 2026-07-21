@@ -13,9 +13,9 @@ describe("能力中心标签栏", () => {
 
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "任务模板",
-      "专家",
       "技能",
       "连接器",
+      "专家",
     ]);
     expect(container.querySelector("svg")).toBeNull();
     expect(screen.getByRole("tablist").className).toContain("bg-brand-50");
@@ -29,6 +29,10 @@ describe("能力中心标签栏", () => {
     );
 
     expect(screen.queryByRole("tab", { name: "任务模板" })).toBeNull();
-    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "技能",
+      "连接器",
+      "专家",
+    ]);
   });
 });

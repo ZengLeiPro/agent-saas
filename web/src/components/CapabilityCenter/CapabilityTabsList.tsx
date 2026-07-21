@@ -30,14 +30,14 @@ export function CapabilityTabsList({
           任务模板
         </TabsTrigger>
       )}
-      <TabsTrigger value="experts" className={CAPABILITY_TAB_TRIGGER_CLASS}>
-        专家
-      </TabsTrigger>
       <TabsTrigger value="skills" className={CAPABILITY_TAB_TRIGGER_CLASS}>
         技能
       </TabsTrigger>
       <TabsTrigger value="connectors" className={CAPABILITY_TAB_TRIGGER_CLASS}>
         连接器
+      </TabsTrigger>
+      <TabsTrigger value="experts" className={CAPABILITY_TAB_TRIGGER_CLASS}>
+        专家
       </TabsTrigger>
     </TabsList>
   );

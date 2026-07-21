@@ -73,6 +73,26 @@ export interface LoadedWorkflowLibraryV3 {
   readonly legacy: ScenarioLibraryResponse;
 }
 
+/**
+ * 场景库会在 Server 冷启动时被目录、Demo 路由和 Raw Runtime 分别预热。
+ * 预热若遇到瞬时 IO/资源错误，不能把 rejected Promise 永久缓存到进程退出；
+ * 成功结果仍只加载一次，失败结果则允许下一次请求重新读取并严格校验。
+ */
+export function createRetryableWorkflowLibraryLoader(
+  loader: () => Promise<LoadedWorkflowLibraryV3>,
+): () => Promise<LoadedWorkflowLibraryV3> {
+  let pending: Promise<LoadedWorkflowLibraryV3> | undefined;
+  return () => {
+    if (pending) return pending;
+    const attempt = loader();
+    pending = attempt.catch((error: unknown) => {
+      pending = undefined;
+      throw error;
+    });
+    return pending;
+  };
+}
+
 function assertCount(label: string, actual: number, expected: number): void {
   if (actual !== expected) {
     throw new WorkflowLibraryError(

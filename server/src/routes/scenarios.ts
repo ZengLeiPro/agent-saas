@@ -34,11 +34,15 @@ import type { CronJobCreate, NotifyConfig } from "../cron/types.js";
 import type { TenantStore } from "../data/tenants/store.js";
 import type { WorkflowDemoStore } from "../data/workflowDemos/store.js";
 import {
+  createRetryableWorkflowLibraryLoader,
   findLegacyCompatibility,
   loadWorkflowLibraryV3,
   resolveLoadedScenarioSlug,
   type LoadedWorkflowLibraryV3,
 } from "../data/scenarios/workflowLibrary.js";
+import { createLogger } from "../utils/logger.js";
+
+const logger = createLogger("scenarios");
 
 const DEFAULT_DATA_PATH = resolve(
   import.meta.dirname,
@@ -222,11 +226,16 @@ export function createScenariosRouter(
   let cache: ScenarioLibraryResponse | null = null;
   let rawCache: ScenarioLibraryFile | null = null;
   // 构造 Router 时立即预热；路由不会等到首个 V3 请求才发现坏文件。
-  const v3Warmup: Promise<LoadedWorkflowLibraryV3> | null = v3Enabled
-    ? (options.v3Loader?.() ?? loadWorkflowLibraryV3(v3DataPath))
+  const getV3Library: (() => Promise<LoadedWorkflowLibraryV3>) | null = v3Enabled
+    ? createRetryableWorkflowLibraryLoader(
+      options.v3Loader ?? (() => loadWorkflowLibraryV3(v3DataPath)),
+    )
     : null;
-  // 预热失败由 config/V3/legacy 路由稳定处理，避免未观察 Promise rejection。
-  void v3Warmup?.catch(() => undefined);
+  // 冷启动预热不阻塞 Server ready；失败会记录真实原因并清掉 rejected cache，
+  // 后续请求重新读取。客户面仍只返回稳定错误码，不回显内部路径或 schema。
+  void getV3Library?.().catch((error: unknown) => {
+    logger.error("Workflow v3 冷启动预热失败，下一次请求将重试", error);
+  });
 
   async function getRawLibrary(): Promise<ScenarioLibraryFile> {
     if (!rawCache) rawCache = await loadScenarioLibraryFile(dataPath);
@@ -235,8 +244,8 @@ export function createScenariosRouter(
 
   async function getPublicLibrary(): Promise<ScenarioLibraryResponse> {
     if (!cache) {
-      cache = v3Warmup
-        ? (await v3Warmup).legacy
+      cache = getV3Library
+        ? (await getV3Library()).legacy
         : toPublicLibrary(await getRawLibrary());
     }
     return cache;
@@ -248,11 +257,12 @@ export function createScenariosRouter(
       ? options.tenantStore?.getSettings(req.user.tenantId)
       : undefined;
     let workflowCatalogV3 = false;
-    if (v3Warmup) {
+    if (getV3Library) {
       try {
-        await v3Warmup;
+        await getV3Library();
         workflowCatalogV3 = true;
-      } catch {
+      } catch (error) {
+        logger.error("Workflow v3 配置探测失败", error);
         workflowCatalogV3 = false;
       }
     }
@@ -274,31 +284,33 @@ export function createScenariosRouter(
   });
 
   router.get("/v3", async (_req: Request, res: Response) => {
-    if (!v3Warmup) {
+    if (!getV3Library) {
       res.status(500).json({ error: "workflow_catalog_unavailable" });
       return;
     }
     try {
-      const loaded = await v3Warmup;
+      const loaded = await getV3Library();
       res.json(await enrichRuntimeWorkflowReplays(loaded.public, options.workflowDemoStore));
-    } catch {
+    } catch (error) {
+      logger.error("Workflow v3 目录加载失败", error);
       res.status(500).json({ error: "workflow_catalog_unavailable" });
     }
   });
 
   router.get("/v3/resolve/:slug", async (req: Request, res: Response) => {
-    if (!v3Warmup) {
+    if (!getV3Library) {
       res.status(500).json({ error: "workflow_catalog_unavailable" });
       return;
     }
     try {
-      const resolved = resolveLoadedScenarioSlug(await v3Warmup, req.params.slug ?? "");
+      const resolved = resolveLoadedScenarioSlug(await getV3Library(), req.params.slug ?? "");
       if (!resolved) {
         res.status(404).json({ error: "scenario_not_found" });
         return;
       }
       res.json(resolved);
-    } catch {
+    } catch (error) {
+      logger.error("Workflow v3 路径解析失败", error);
       res.status(500).json({ error: "workflow_catalog_unavailable" });
     }
   });
@@ -307,7 +319,7 @@ export function createScenariosRouter(
     try {
       res.json(await getPublicLibrary());
     } catch (err) {
-      if (v3Warmup) {
+      if (getV3Library) {
         res.status(500).json({ error: "workflow_catalog_unavailable" });
         return;
       }
@@ -334,8 +346,8 @@ export function createScenariosRouter(
     try {
       const body = parsed.data;
       let scenario: ScenarioItemInternal | undefined;
-      if (v3Warmup) {
-        const loaded = await v3Warmup;
+      if (getV3Library) {
+        const loaded = await getV3Library();
         const compatibility = findLegacyCompatibility(loaded.internal, body.scenarioId);
         if (!compatibility || !compatibility.legacyCronSupported) {
           res.status(409).json({
@@ -376,7 +388,7 @@ export function createScenariosRouter(
         ...(runOnce.error ? { runOnceError: runOnce.error } : {}),
       });
     } catch (err) {
-      if (v3Warmup) {
+      if (getV3Library) {
         res.status(500).json({ error: "workflow_catalog_unavailable" });
         return;
       }

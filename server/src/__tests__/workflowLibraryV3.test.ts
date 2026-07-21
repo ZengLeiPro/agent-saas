@@ -11,6 +11,7 @@ import {
 } from "../../../shared/src/security/sanitizeCustomerFacingText.js";
 import { createScenariosRouter } from "../routes/scenarios.js";
 import {
+  createRetryableWorkflowLibraryLoader,
   loadWorkflowLibraryV3,
   parseWorkflowLibraryV3,
   resolveLoadedScenarioSlug,
@@ -544,6 +545,21 @@ async function startV3Server(
 }
 
 describe("Workflow V3 library", () => {
+  it("does not cache a rejected cold-start load forever", async () => {
+    const loaded = parseWorkflowLibraryV3(buildLibraryFixture());
+    let attempts = 0;
+    const getLibrary = createRetryableWorkflowLibraryLoader(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("transient cold-start failure");
+      return loaded;
+    });
+
+    await expect(getLibrary()).rejects.toThrow("transient cold-start failure");
+    await expect(getLibrary()).resolves.toBe(loaded);
+    await expect(getLibrary()).resolves.toBe(loaded);
+    expect(attempts).toBe(2);
+  });
+
   it("keeps the production V1 client contract while removing internal-only fields", async () => {
     const v1Path = resolve(import.meta.dirname, "../data/scenarios/scenario-library-v1.json");
     const v3Path = resolve(import.meta.dirname, "../data/scenarios/workflow-library-v3.json");
@@ -855,6 +871,29 @@ describe("Workflow V3 library", () => {
 });
 
 describe("Workflow V3 scenario routes", () => {
+  it("recovers when eager cold-start warmup fails once", async () => {
+    const loaded = parseWorkflowLibraryV3(buildLibraryFixture());
+    let attempts = 0;
+    const { server, baseUrl } = await startV3Server(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("transient eager warmup failure");
+      return loaded;
+    });
+    try {
+      const v3 = await fetch(`${baseUrl}/api/scenarios/v3`);
+      expect(v3.status).toBe(200);
+      await expect(v3.json()).resolves.toMatchObject({
+        schemaVersion: 3,
+        scenarios: expect.arrayContaining([
+          expect.objectContaining({ id: "catalog-01" }),
+        ]),
+      });
+      expect(attempts).toBe(2);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it("returns V3 config, strict public DTO and legacy compatibility projection", async () => {
     const loaded = parseWorkflowLibraryV3(buildLibraryFixture());
     const { server, baseUrl } = await startV3Server(async () => loaded);

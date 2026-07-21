@@ -51,6 +51,11 @@ export interface WsChatMessage {
         autoApproveTools?: boolean;
         autoApproveRunShell?: boolean;
     };
+    /** 由鉴权 Demo 启动 API 返回；服务端会再校验 run/组织/执行人/当前步骤。 */
+    workflowDemo?: {
+        runId: string;
+        eventId: string;
+    };
     voiceFile?: {
         savedPath: string;
         relativePath: string;

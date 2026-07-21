@@ -44,6 +44,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    services:
+      workflow-demo-postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: workflow_demo_test
+          POSTGRES_PASSWORD: workflow_demo_test
+          POSTGRES_DB: workflow_demo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U workflow_demo_test -d workflow_demo_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      WORKFLOW_DEMO_TEST_PG_URL: postgresql://workflow_demo_test:workflow_demo_test@127.0.0.1:5432/workflow_demo_test
+
     # 评论 PR diff coverage 需要 pull-requests: write；
     # push/dispatch 事件下该权限未使用不产生副作用。
     permissions:
@@ -78,6 +96,15 @@ jobs:
       # 覆盖率数据本轮跑失败=测试跑失败，退化为原 Run tests 行为。
       - name: Run tests with coverage
         run: pnpm test:coverage
+
+      # 单独执行真 PG suite，防止未来 Vitest include/runIf 变化造成静默跳过。
+      - name: Verify Workflow Demo PostgreSQL contract explicitly
+        run: >-
+          pnpm -F server exec vitest run
+          src/__tests__/sessionShareStore.pg.test.ts
+          src/__tests__/workflowDemoStore.pg.test.ts
+          src/__tests__/workflowDemoHero.pg.test.ts
+          src/__tests__/workflowDemoRawAgentLoopPilots.pg.test.ts
 
       - name: Check Web API domain boundary
         run: pnpm -F web check:api-boundary

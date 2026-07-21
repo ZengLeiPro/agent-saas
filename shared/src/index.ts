@@ -99,6 +99,16 @@ export type {
   ScenarioItemInternal,
   ScenarioLibraryFile,
   ScenarioLibraryResponse,
+  CatalogScenarioPublic,
+  CatalogScenarioRecord,
+  DemoManifestRecord,
+  DemoPublicEvidence,
+  WorkflowDemoDispatchMetadata,
+  WorkflowExecutionType,
+  WorkflowTriggerMode,
+  WorkflowDefinitionRecord,
+  WorkflowLibraryFileV3,
+  WorkflowLibraryPublicV3,
   ScheduleAt,
   ScheduleEvery,
   ScheduleCron,
@@ -182,6 +192,35 @@ export {
   demoShareTokenSchema,
   roleKitSchema,
 } from "./schemas/roleKit";
+export {
+  catalogScenarioPublicSchema,
+  catalogScenarioRecordSchema,
+  demoManifestRecordSchema,
+  demoPublicEvidenceSchema,
+  legacyScenarioAliasRecordSchema,
+  legacyScenarioCompatibilityRecordSchema,
+  workflowAliasRecordSchema,
+  workflowDefinitionRecordSchema,
+  workflowGoalTagSchema,
+  workflowLibraryFileV3Schema,
+  workflowLibraryPublicV3Schema,
+  workflowPrimaryTypeSchema,
+  workflowExecutionTypeSchema,
+  workflowTriggerModeSchema,
+  workflowPublicSummarySchema,
+  workflowPublicTextSchema,
+  workflowReadinessSchema,
+} from "./schemas/workflowScenario";
+export {
+  projectWorkflowLibraryPublic,
+  resolveScenarioSlug,
+} from "./security/projectWorkflowPublic";
+export type { ResolvedScenarioSlug } from "./security/projectWorkflowPublic";
+export {
+  customerWorkflowReplayResponseSchema,
+  projectWorkflowDemoPublic,
+} from "./security/projectWorkflowDemoPublic";
+export type { CustomerWorkflowReplayResponse } from "./security/projectWorkflowDemoPublic";
 export {
   cronWizardSubmitSchema,
   cronWizardResponseSchema,

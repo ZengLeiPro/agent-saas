@@ -6,11 +6,13 @@
  * 整页面板走 lazy 加载，避免互相拖入对方的 bundle。
  */
 import { lazy, Suspense, useState } from "react";
-import { Globe, MessageSquareShare, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
+import { Activity, Globe, MessageSquareShare, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { ScenarioItem, ScenarioRequirement } from "@agent/shared";
+import type { CatalogScenarioPublic, ScenarioItem, ScenarioRequirement } from "@agent/shared";
+import { friendlyPrimaryType, friendlyReadiness } from "./friendlyMappings";
+import { workflowCta, type WorkflowPrimaryAction } from "./workflowUi";
 
 // 懒加载：仅点开「看示例结果」时才拉取弹层（内含 markdown 渲染），
 // 不拖累空会话推荐位所在的聊天主 bundle
@@ -191,5 +193,93 @@ export function ScenarioCard({ scenario, onTry, onOpenDetail, compact }: Scenari
       </Suspense>
     )}
     </>
+  );
+}
+
+export interface WorkflowScenarioCardProps {
+  scenario: CatalogScenarioPublic;
+  onOpenDetail: (scenario: CatalogScenarioPublic) => void;
+  onPrimaryAction: (action: WorkflowPrimaryAction, scenario: CatalogScenarioPublic) => void;
+  compact?: boolean;
+}
+
+/** V3 客户目录卡；不消费 prompt、tool 或旧 demoShareToken。 */
+export function WorkflowScenarioCard({
+  scenario,
+  onOpenDetail,
+  onPrimaryAction,
+  compact,
+}: WorkflowScenarioCardProps) {
+  const cta = workflowCta(scenario);
+  return (
+    <article
+      className={cn(
+        "flex flex-col rounded-xl border bg-card p-4 text-left text-card-foreground shadow-sm transition-shadow",
+        "hover:shadow-[0_2px_8px_-2px_rgba(15,23,42,0.18)]",
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        {scenario.featured ? (
+          <Badge className="bg-brand-50 font-normal text-brand-700 hover:bg-brand-50">重点工作流</Badge>
+        ) : null}
+        <Badge variant="secondary" className="font-normal">{friendlyPrimaryType[scenario.primaryType]}</Badge>
+        <Badge variant="outline" className="font-normal">{friendlyReadiness[scenario.readiness]}</Badge>
+        {scenario.demo.evidenceLevel === "workflow_replay" && scenario.demo.sharePath ? (
+          <Badge variant="outline" className="gap-1 font-normal">
+            <Activity className="size-3" aria-hidden="true" />可核验演示
+          </Badge>
+        ) : null}
+      </div>
+      <h3 className="mt-3 text-base font-semibold leading-snug">
+        <button type="button" className="text-left hover:text-brand-600" onClick={() => onOpenDetail(scenario)}>
+          {scenario.title}
+        </button>
+      </h3>
+      <p className={cn("mt-1.5 text-sm leading-5 text-muted-foreground", compact ? "line-clamp-2" : "line-clamp-3")}>
+        {scenario.value}
+      </p>
+      {!compact ? (
+        <ol className="mt-4 flex flex-wrap items-center gap-1 text-xs text-muted-foreground" aria-label="工作流短链">
+          {scenario.shortChain.map((step, index) => (
+            <li key={`${scenario.id}-${index}`} className="inline-flex items-center gap-1">
+              {index > 0 ? <span aria-hidden="true">→</span> : null}
+              <span>{step}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      <div className="mt-4 grid gap-1.5 text-xs text-muted-foreground">
+        <span>触发：{scenario.triggerBadge}</span>
+        <span>行动：{scenario.actionBadge}</span>
+        <span>人审：{scenario.humanApprovalSummary}</span>
+      </div>
+      <div className="mt-auto flex items-center justify-end gap-2 pt-4">
+        {cta.secondaryLabel ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 px-3 text-xs"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenDetail(scenario);
+            }}
+          >
+            {cta.secondaryLabel}
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          className="h-8 px-3 text-xs"
+          onClick={(event) => {
+            event.stopPropagation();
+            onPrimaryAction(cta.action, scenario);
+          }}
+        >
+          {cta.label}
+        </Button>
+      </div>
+    </article>
   );
 }

@@ -101,6 +101,19 @@ describe('sendChatViaWs — 成功路径', () => {
     await sendChatViaWs({ inputText: 'x', selectedModel: 'gpt-x' });
     expect(storageSetSpy).toHaveBeenCalledWith('agentChat.model.s1', 'gpt-x');
   });
+
+  it('只把服务端 Demo 启动结果作为隐藏调度元数据透传', async () => {
+    const store = getChatStore();
+    store.setState({ activeSessionId: 's1' });
+    const workflowDemo = {
+      runId: '11111111-1111-4111-8111-111111111111',
+      eventId: 'event-01',
+    };
+
+    await sendChatViaWs({ inputText: '运行隔离演示', workflowDemo });
+
+    expect(wsEnsureSend).toHaveBeenCalledWith(expect.objectContaining({ workflowDemo }));
+  });
 });
 
 describe('sendChatViaWs — 失败路径', () => {

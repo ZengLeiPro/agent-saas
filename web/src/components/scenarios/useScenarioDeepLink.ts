@@ -10,6 +10,7 @@
 import { useEffect, useRef } from "react";
 import {
   buildScenarioPrompt,
+  resolveScenarioSlug,
   sanitizeScenario,
   type ScenarioItem,
 } from "@agent/shared";
@@ -23,21 +24,58 @@ export function resetScenarioDeepLinkForTest(): void {
 }
 
 export function useScenarioDeepLink(
-  onPrefill: (prompt: string, scenario: ScenarioItem) => void,
+  onPrefill: (prompt: string, scenario?: ScenarioItem) => void,
+  onOpenWorkflow?: () => void,
 ): void {
-  const { library } = useScenarioLibrary();
+  const { library, workflowLibrary } = useScenarioLibrary();
   const onPrefillRef = useRef(onPrefill);
   onPrefillRef.current = onPrefill;
+  const onOpenWorkflowRef = useRef(onOpenWorkflow);
+  onOpenWorkflowRef.current = onOpenWorkflow;
 
   useEffect(() => {
-    if (consumedThisPageLoad || !library) return;
+    if (consumedThisPageLoad || (!library && !workflowLibrary)) return;
     const params = new URLSearchParams(window.location.search);
-    const id = params.get("scenario");
+    const id = params.get("workflow") ?? params.get("scenario");
     if (!id) {
       consumedThisPageLoad = true;
       return;
     }
-    // 先清参数再预填：无论命中与否都只消费一次
+    if (workflowLibrary) {
+      const resolved = resolveScenarioSlug(workflowLibrary, id);
+      if (!resolved) return;
+      consumedThisPageLoad = true;
+      const intent = params.get("intent") ?? "view";
+      if (resolved.resolution === "deferred") {
+        params.delete("scenario");
+        params.set("workflow", resolved.resolvedFromLegacySlug);
+        params.set("intent", "view");
+        onOpenWorkflowRef.current?.();
+        window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+        return;
+      }
+      if (intent === "run" && resolved.scenario.launch.startMode === "chat") {
+        params.delete("workflow");
+        params.delete("scenario");
+        params.delete("intent");
+        const qs = params.toString();
+        window.history.replaceState(null, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+        onPrefillRef.current(resolved.scenario.launch.starterMessage);
+        return;
+      }
+      params.delete("scenario");
+      params.set("workflow", resolved.scenario.id);
+      params.set("intent", intent);
+      if (resolved.skinId && !params.has("skinId")) params.set("skinId", resolved.skinId);
+      if (resolved.roleViewId && !params.has("roleViewId")) params.set("roleViewId", resolved.roleViewId);
+      if (resolved.roleId && !params.has("roleId")) params.set("roleId", resolved.roleId);
+      // 布局切换会改 pathname 并清空 query，因此先切到能力中心，再写回 canonical 参数。
+      onOpenWorkflowRef.current?.();
+      window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+      return;
+    }
+    if (!library || params.has("workflow")) return;
+    // Legacy：先清参数再预填，无论命中与否都只消费一次。
     consumedThisPageLoad = true;
     params.delete("scenario");
     const qs = params.toString();
@@ -50,5 +88,5 @@ export function useScenarioDeepLink(
     if (!matched) return;
     const safe = sanitizeScenario({ ...matched }).scenario as ScenarioItem;
     onPrefillRef.current(buildScenarioPrompt(safe), safe);
-  }, [library]);
+  }, [library, workflowLibrary]);
 }

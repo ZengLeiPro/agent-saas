@@ -11,12 +11,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   getSessionShare,
+  getSessionSharePreview,
   revokeSessionShare,
   updateSessionShare,
   type SessionShareSummary,
+  type SessionSharePreview,
 } from "@/lib/sessionShareApi";
 import type { ChatSessionIndexItem } from "@/types/sidebar";
 
@@ -28,12 +30,14 @@ interface SessionShareDialogProps {
 
 export function SessionShareDialog({ open, session, onOpenChange }: SessionShareDialogProps) {
   const [share, setShare] = useState<SessionShareSummary | null>(null);
-  const [debugMode, setDebugMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<SessionSharePreview | null>(null);
+  const [confirmedPublicText, setConfirmedPublicText] = useState(false);
+  const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!open || !session) return;
@@ -41,17 +45,18 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
     setLoading(true);
     setError(null);
     setCopied(false);
-    setDebugMode(false);
-    getSessionShare(session.id)
-      .then((next) => {
+    setShare(null);
+    setPreview(null);
+    setConfirmedPublicText(false);
+    setSelectedFilePaths(new Set());
+    Promise.allSettled([getSessionShare(session.id), getSessionSharePreview(session.id)])
+      .then(([shareResult, previewResult]) => {
         if (cancelled) return;
-        setShare(next);
-        if (next.enabled && typeof next.debugMode === "boolean") {
-          setDebugMode(next.debugMode);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (shareResult.status === "fulfilled") setShare(shareResult.value);
+        else setError(shareResult.reason instanceof Error ? shareResult.reason.message : String(shareResult.reason));
+        if (previewResult.status === "fulfilled") setPreview(previewResult.value);
+        else setError((current) => current
+          ?? (previewResult.reason instanceof Error ? previewResult.reason.message : String(previewResult.reason)));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -71,7 +76,11 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
     setSaving(true);
     setError(null);
     try {
-      const next = await updateSessionShare(session.id, { debugMode });
+      const next = await updateSessionShare(session.id, {
+        confirmPublicText: true,
+        filePaths: [...selectedFilePaths],
+        ...(preview?.defaultExpiresAt ? { expiresAt: preview.defaultExpiresAt } : {}),
+      });
       setShare(next);
       setCopied(false);
     } catch (err) {
@@ -109,7 +118,7 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
         <DialogHeader>
           <DialogTitle>分享会话</DialogTitle>
           <DialogDescription>
-            生成当前会话的只读分享链接。分享页保留原消息页面和输入框，但无法发送消息。
+            生成当前会话的只读分享链接。公开页只保留对话正文和显式分享的成果文件。
           </DialogDescription>
         </DialogHeader>
 
@@ -117,16 +126,6 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
           <div className="rounded-md border bg-muted/30 px-3 py-2">
             <div className="truncate text-sm font-medium">{session?.title || "当前会话"}</div>
           </div>
-
-          <label className="flex items-center justify-between gap-4 rounded-md border px-3 py-2">
-            <span>
-              <span className="block text-sm font-medium">调试模式</span>
-              <span className="block text-xs text-muted-foreground">
-                开启后分享页会完整展示 thinking、工具调用与执行细节。
-              </span>
-            </span>
-            <Switch checked={debugMode} onCheckedChange={setDebugMode} disabled={loading || saving} />
-          </label>
 
           <div className="space-y-2">
             <div className="text-sm font-medium">分享链接</div>
@@ -155,6 +154,41 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
             </div>
           </div>
 
+          <div className="space-y-3 rounded-md border p-3 text-sm">
+            <label className="flex items-start gap-2">
+              <Checkbox
+                checked={confirmedPublicText}
+                disabled={!preview}
+                onCheckedChange={(checked) => setConfirmedPublicText(checked === true)}
+              />
+              <span>
+                我确认公开当前会话的 {preview?.blockCount ?? 0} 条用户/助手正文；系统会阻断凭据、手机号、邮箱和身份证号。
+              </span>
+            </label>
+            {(preview?.files.length ?? 0) > 0 ? (
+              <div className="space-y-2">
+                <div className="font-medium">选择要公开的成果文件（默认不公开）</div>
+                {preview!.files.map((file) => (
+                  <label key={file.relativePath} className="flex items-center gap-2">
+                    <Checkbox
+                      checked={selectedFilePaths.has(file.relativePath)}
+                      onCheckedChange={(checked) => {
+                        setSelectedFilePaths((current) => {
+                          const next = new Set(current);
+                          if (checked === true) next.add(file.relativePath);
+                          else next.delete(file.relativePath);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span className="truncate" title={file.relativePath}>{file.fileName}</span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+            <p className="text-xs text-muted-foreground">链接默认 7 天失效；文件会冻结为不可变快照，不再读取工作区同名文件。</p>
+          </div>
+
           {error && <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
         </div>
 
@@ -171,7 +205,7 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               关闭
             </Button>
-            <Button type="button" disabled={loading || saving || !session} onClick={() => void handleSave()}>
+            <Button type="button" disabled={loading || saving || !session || !preview || !confirmedPublicText} onClick={() => void handleSave()}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : null}
               {share?.enabled ? "更新快照" : "生成链接"}
             </Button>

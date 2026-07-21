@@ -17,6 +17,8 @@ export const PLATFORM_CAPABILITIES = [
   "credential.reset",
   "runtime.operate",
   "finance.read",
+  "workflow_demo.review",
+  "workflow_demo.publish",
 ] as const;
 
 export type PlatformCapability = (typeof PLATFORM_CAPABILITIES)[number];

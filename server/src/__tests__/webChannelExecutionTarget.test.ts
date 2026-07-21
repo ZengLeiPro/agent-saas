@@ -514,6 +514,10 @@ describe('WebChannel executionTarget gating', () => {
       await (channel as any).processChatMessage(client, chatMessage({
         message: 'enqueue me',
         approvalPolicy: { autoApproveTools: true },
+        workflowDemo: {
+          runId: '11111111-1111-4111-8111-111111111111',
+          eventId: 'event-01',
+        },
       }));
 
       expect(calls).toHaveLength(0);
@@ -525,6 +529,14 @@ describe('WebChannel executionTarget gating', () => {
         executionTarget: 'server-container',
       });
       expect(enqueued[0]?.metadata?.wakeMessage).toMatchObject({ content: 'enqueue me' });
+      expect(enqueued[0]?.metadata?.wakeMessage).toMatchObject({
+        metadata: {
+          workflowDemo: {
+            runId: '11111111-1111-4111-8111-111111111111',
+            eventId: 'event-01',
+          },
+        },
+      });
       expect(enqueued[0]?.metadata?.approvalPolicy).toEqual({ autoApproveTools: true });
       expect(ws.sent.find((m) => m.data?.type === 'stream_id')?.data).toMatchObject({
         runId: enqueued[0]?.runId,

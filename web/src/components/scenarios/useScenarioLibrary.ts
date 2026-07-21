@@ -1,117 +1,165 @@
 /**
- * 场景库数据 hook
+ * AI 同事工作流目录 hook。
  *
- * 通过 GET /api/scenarios 拉取预置场景卡片库，带模块级缓存：
- * 场景库是静态数据，页面生命周期内拉一次即可（整页视图与空会话推荐位共用同一份缓存）。
+ * V3 仅在服务端 config 明确切到 v3 时启用，并在浏览器端再次用 shared schema
+ * 做 runtime parse。V3 响应不可用时回退 legacy，但会暴露 fallbackReason，避免
+ * 把“旧目录仍能显示”误报为 V3 上线成功。
  */
 import { useCallback, useEffect, useState } from "react";
 import { authFetch } from "@/lib/authFetch";
-import type { ScenarioItem, ScenarioLibraryResponse, ScenarioRole } from "@agent/shared";
+import {
+  workflowLibraryPublicV3Schema,
+  type CatalogScenarioPublic,
+  type ScenarioItem,
+  type ScenarioLibraryResponse,
+  type WorkflowLibraryPublicV3,
+} from "@agent/shared";
+import { useRoleKitConfig } from "./useRoleKitConfig";
+import { sortWorkflowScenarios } from "./workflowUi";
 
-// 模块级缓存：多处消费（场景库整页 / 空会话推荐位）共享，避免重复请求
-let cachedLibrary: ScenarioLibraryResponse | null = null;
-let inflight: Promise<ScenarioLibraryResponse> | null = null;
+let cachedLegacy: ScenarioLibraryResponse | null = null;
+let cachedV3: WorkflowLibraryPublicV3 | null = null;
+let legacyInflight: Promise<ScenarioLibraryResponse> | null = null;
+let v3Inflight: Promise<WorkflowLibraryPublicV3> | null = null;
 
-async function fetchScenarioLibrary(): Promise<ScenarioLibraryResponse> {
-  if (cachedLibrary) return cachedLibrary;
-  if (!inflight) {
-    inflight = (async () => {
+async function fetchLegacyLibrary(force = false): Promise<ScenarioLibraryResponse> {
+  if (force) cachedLegacy = null;
+  if (!force && cachedLegacy) return cachedLegacy;
+  if (!legacyInflight) {
+    legacyInflight = (async () => {
       const res = await authFetch("/api/scenarios");
-      if (!res.ok) {
-        throw new Error(`加载任务模板失败 (${res.status})`);
-      }
+      if (!res.ok) throw new Error(`加载兼容任务模板失败 (${res.status})`);
       const data = (await res.json()) as ScenarioLibraryResponse;
-      cachedLibrary = data;
+      cachedLegacy = data;
       return data;
-    })().finally(() => {
-      inflight = null;
-    });
+    })().finally(() => { legacyInflight = null; });
   }
-  return inflight;
+  return legacyInflight;
 }
+
+async function fetchV3Library(force = false): Promise<WorkflowLibraryPublicV3> {
+  if (force) cachedV3 = null;
+  if (!force && cachedV3) return cachedV3;
+  if (!v3Inflight) {
+    v3Inflight = (async () => {
+      const res = await authFetch("/api/scenarios/v3");
+      if (!res.ok) throw new Error(`加载 AI 同事工作流失败 (${res.status})`);
+      const parsed = workflowLibraryPublicV3Schema.safeParse(await res.json());
+      if (!parsed.success) throw new Error("AI 同事工作流响应未通过安全契约校验");
+      cachedV3 = parsed.data;
+      return parsed.data;
+    })().finally(() => { v3Inflight = null; });
+  }
+  return v3Inflight;
+}
+
+export type ScenarioLibraryMode = "v3" | "legacy" | "legacy-fallback";
 
 export interface UseScenarioLibraryResult {
   library: ScenarioLibraryResponse | null;
+  workflowLibrary: WorkflowLibraryPublicV3 | null;
+  mode: ScenarioLibraryMode;
+  fallbackReason: string | null;
   loading: boolean;
   error: string | null;
   reload: () => void;
 }
 
 export function useScenarioLibrary(): UseScenarioLibraryResult {
-  const [library, setLibrary] = useState<ScenarioLibraryResponse | null>(cachedLibrary);
-  const [loading, setLoading] = useState(!cachedLibrary);
-  const [error, setError] = useState<string | null>(null);
+  const { config, loading: configLoading } = useRoleKitConfig();
+  const wantsV3 = config.libraryVersion === "v3";
+  const [state, setState] = useState<Omit<UseScenarioLibraryResult, "reload">>({
+    library: wantsV3 ? null : cachedLegacy,
+    workflowLibrary: wantsV3 ? cachedV3 : null,
+    mode: wantsV3 ? "v3" : "legacy",
+    fallbackReason: null,
+    loading: true,
+    error: null,
+  });
 
-  const load = useCallback(() => {
+  const load = useCallback((force = false) => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchScenarioLibrary()
-      .then((data) => {
-        if (cancelled) return;
-        setLibrary(data);
+    if (configLoading) return () => { cancelled = true; };
+    setState((previous) => ({ ...previous, loading: true, error: null, fallbackReason: null }));
+    const request = wantsV3
+      ? fetchV3Library(force)
+          .then((workflowLibrary) => ({
+            library: null,
+            workflowLibrary,
+            mode: "v3" as const,
+            fallbackReason: null,
+          }))
+          .catch(async () => ({
+            library: await fetchLegacyLibrary(force),
+            workflowLibrary: null,
+            mode: "legacy-fallback" as const,
+            fallbackReason: "当前显示兼容目录",
+          }))
+      : fetchLegacyLibrary(force).then((library) => ({
+          library,
+          workflowLibrary: null,
+          mode: "legacy" as const,
+          fallbackReason: null,
+        }));
+
+    request
+      .then((next) => {
+        if (!cancelled) setState({ ...next, loading: false, error: null });
       })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err instanceof Error ? err.message : err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+      .catch(() => {
+        if (!cancelled) {
+          setState({
+            library: null,
+            workflowLibrary: null,
+            mode: wantsV3 ? "legacy-fallback" : "legacy",
+            fallbackReason: wantsV3 ? "当前显示兼容目录" : null,
+            loading: false,
+            error: "Agent 开小差了，请发送「继续」",
+          });
+        }
       });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    return () => { cancelled = true; };
+  }, [configLoading, wantsV3]);
 
-  useEffect(() => load(), [load]);
+  useEffect(() => load(false), [load]);
 
-  return { library, loading, error, reload: load };
+  return {
+    ...state,
+    reload: () => {
+      cachedLegacy = null;
+      cachedV3 = null;
+      load(true);
+    },
+  };
 }
 
-/**
- * 用户岗位（自由文本）→ 场景库岗位 id 的稳定匹配。
- * role.name 按「/」拆段（如「市场/电商运营」），岗位文本与任一分段互相包含即命中：
- * 「销售」→ sales；「销售经理」→ sales；「电商运营」→ marketing。
- * 反向包含（分段 ⊇ 岗位）要求岗位至少 2 字，避免单字误命中。
- */
 export function matchRoleIdByPosition(
-  roles: ScenarioRole[],
+  roles: readonly { id: string; name: string }[],
   position?: string | null,
 ): string | null {
   const p = position?.trim();
   if (!p) return null;
   for (const role of roles) {
     const segments = role.name.split("/").map((s) => s.trim()).filter(Boolean);
-    if (segments.some((seg) => p.includes(seg) || (p.length >= 2 && seg.includes(p)))) {
+    if (segments.some((segment) => p.includes(segment) || (p.length >= 2 && segment.includes(p)))) {
       return role.id;
     }
   }
   return null;
 }
 
-/**
- * 空会话推荐位精选场景 id（跨岗位、依赖轻、卖点直白）。
- * 固定精选保证每次渲染稳定不跳变；若某 id 未上架则按 id 字典序跨岗位稳定补齐。
- */
 const CURATED_RECOMMEND_IDS = [
-  "boss-competitor-daily", // 老板：竞品动态晨报
-  "sales-customer-profile", // 销售：客户背景调查建档
-  "hr-meeting-minutes", // 人事行政：会议纪要与待办分发
+  "boss-competitor-daily",
+  "sales-customer-profile",
+  "hr-meeting-minutes",
 ];
 
-/**
- * 从已上架场景中稳定选取 count 张推荐卡（禁止随机，避免渲染间跳变）。
- *
- * preferredRoleId 有值时（用户岗位命中场景库岗位）：先取该岗位场景至多 2 张
- * （保持 JSON 声明顺序），剩余名额用 curated 精选补齐——保留至少 1 张跨岗位
- * 场景展示产品广度，避免推荐面过窄。
- */
 export function pickRecommendedScenarios(
   scenarios: ScenarioItem[],
   count = 3,
   preferredRoleId?: string | null,
 ): ScenarioItem[] {
-  const byId = new Map(scenarios.map((s) => [s.id, s]));
+  const byId = new Map(scenarios.map((scenario) => [scenario.id, scenario]));
   const picked: ScenarioItem[] = [];
   if (preferredRoleId) {
     for (const item of scenarios) {
@@ -124,19 +172,35 @@ export function pickRecommendedScenarios(
     if (item && !picked.includes(item)) picked.push(item);
     if (picked.length >= count) return picked.slice(0, count);
   }
-  // 兜底：按 id 字典序稳定遍历，优先补齐未覆盖岗位
-  const rest = [...scenarios].sort((a, b) => a.id.localeCompare(b.id));
-  const usedRoles = new Set(picked.map((s) => s.role));
+  const rest = [...scenarios].sort((left, right) => left.id.localeCompare(right.id));
+  const usedRoles = new Set(picked.map((item) => item.role));
   for (const item of rest) {
     if (picked.length >= count) break;
     if (picked.includes(item) || usedRoles.has(item.role)) continue;
     picked.push(item);
     usedRoles.add(item.role);
   }
-  // 岗位数不足时放宽岗位去重继续补齐
   for (const item of rest) {
     if (picked.length >= count) break;
     if (!picked.includes(item)) picked.push(item);
+  }
+  return picked;
+}
+
+/** V3 推荐顺序完全来自产品源声明顺序，不在 Web 写死旧 ID。 */
+export function pickRecommendedWorkflowScenarios(
+  scenarios: readonly CatalogScenarioPublic[],
+  count = 3,
+  preferredRoleId?: string | null,
+): CatalogScenarioPublic[] {
+  const sorted = sortWorkflowScenarios(scenarios);
+  const preferred = preferredRoleId
+    ? sorted.filter((scenario) => scenario.roleIds.includes(preferredRoleId)).slice(0, Math.min(2, count))
+    : [];
+  const picked = [...preferred];
+  for (const scenario of sorted) {
+    if (picked.length >= count) break;
+    if (!picked.some((item) => item.id === scenario.id)) picked.push(scenario);
   }
   return picked;
 }

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { createRuntime } from '../app/runtime.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
+import { InMemoryWorkflowDemoStore } from '../data/workflowDemos/store.js';
 
 async function createFixture(config: unknown): Promise<{ rootDir: string; processCwd: string }> {
   const rootDir = await mkdtemp(join(tmpdir(), 'agent-runtime-cov-'));
@@ -105,6 +106,7 @@ describe('createRuntime 运行时装配（补充分支）', () => {
     // 这些 store 无论 backend 都必装（AppRuntime 非可选字段）
     expect(runtime.groupStore).toBeTruthy();
     expect(runtime.sessionShareStore).toBeTruthy();
+    expect(runtime.workflowDemoStore).toBeInstanceOf(InMemoryWorkflowDemoStore);
     expect(runtime.dispatchMetricsStore).toBeTruthy();
     // file backend → 不应有 PG-only 句柄
     expect(runtime.runtimePgEventStore).toBeUndefined();

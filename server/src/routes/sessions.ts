@@ -7,8 +7,7 @@
  */
 import { Router } from "express";
 import type { Request, Response } from "express";
-import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import {
@@ -72,6 +71,12 @@ import { isAssignedToOrgAgent, type OrgAgentStore } from "../data/orgAgents/stor
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import type { SessionShareSnapshot, SessionShareStore } from "../data/sessionShares/store.js";
 import { isShareExpired } from "../data/sessionShares/store.js";
+import {
+  collectSessionShareCandidateFiles,
+  normalizeSessionShareFilePath,
+  projectSessionShareSnapshot,
+  SessionShareProjectionError,
+} from "../data/sessionShares/publicProjection.js";
 import { resolveAuthorizedPath } from "../security/extraDirs.js";
 import type {
   RuntimeSessionListQuery,
@@ -931,6 +936,53 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     return mimeMap[ext] || "application/octet-stream";
   }
 
+  const MAX_SESSION_SHARE_FILE_BYTES = 20 * 1024 * 1024;
+  const MAX_SESSION_SHARE_TOTAL_BYTES = 50 * 1024 * 1024;
+  const DEFAULT_SESSION_SHARE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  const MAX_SESSION_SHARE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+  async function freezeSessionShareFiles(
+    selectedFilePaths: readonly string[],
+    candidateFilePaths: ReadonlySet<string>,
+    userCwd: string,
+  ): Promise<NonNullable<SessionShareSnapshot['allowedFiles']>> {
+    const frozen: NonNullable<SessionShareSnapshot['allowedFiles']> = [];
+    if (selectedFilePaths.length === 0) return frozen;
+    let totalBytes = 0;
+    const realUserCwd = await fs.realpath(userCwd);
+    for (const requestedPath of selectedFilePaths) {
+      const normalizedPath = normalizeSessionShareFilePath(requestedPath);
+      if (!normalizedPath || !candidateFilePaths.has(normalizedPath)) {
+        throw new SessionShareProjectionError('所选文件不在本次会话的可分享清单中');
+      }
+      const absolutePath = resolveAuthorizedPath(normalizedPath, userCwd, []);
+      if (!absolutePath) throw new SessionShareProjectionError('所选文件超出工作区边界');
+      const realAbsolutePath = await fs.realpath(absolutePath);
+      const realRelativePath = path.relative(realUserCwd, realAbsolutePath);
+      if (!realRelativePath || realRelativePath.startsWith(`..${path.sep}`) || path.isAbsolute(realRelativePath)) {
+        throw new SessionShareProjectionError('所选文件超出工作区边界');
+      }
+      const stat = await fs.lstat(realAbsolutePath);
+      if (!stat.isFile() || stat.size > MAX_SESSION_SHARE_FILE_BYTES) {
+        throw new SessionShareProjectionError('所选文件不是普通文件或超过 20MB');
+      }
+      totalBytes += stat.size;
+      if (totalBytes > MAX_SESSION_SHARE_TOTAL_BYTES) {
+        throw new SessionShareProjectionError('本次分享文件总量超过 50MB');
+      }
+      const content = await fs.readFile(realAbsolutePath);
+      frozen.push({
+        relativePath: normalizedPath,
+        fileName: path.basename(normalizedPath),
+        sha256: createHash('sha256').update(content).digest('hex'),
+        bytes: content.byteLength,
+        contentType: shareFileContentType(normalizedPath),
+        contentBase64: content.toString('base64'),
+      });
+    }
+    return frozen;
+  }
+
   async function handlePublicShareFile(req: Request, res: Response): Promise<void> {
     try {
       const token = publicShareFileUrlToken(req);
@@ -939,19 +991,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         res.status(400).json({ error: "Missing path parameter" });
         return;
       }
-      const normalizedPath = filePath.replace(/\\/g, "/");
-      if (
-        normalizedPath === ".env" ||
-        normalizedPath.startsWith(".env.") ||
-        normalizedPath.includes("/.env") ||
-        normalizedPath.includes("/.git/") ||
-        normalizedPath.startsWith(".git/") ||
-        normalizedPath.includes("/.ssh/") ||
-        normalizedPath.startsWith(".ssh/") ||
-        normalizedPath.endsWith("/.npmrc") ||
-        normalizedPath === ".npmrc"
-      ) {
-        res.status(403).json({ error: "Access denied: sensitive file path" });
+      const normalizedPath = normalizeSessionShareFilePath(filePath);
+      if (!normalizedPath) {
+        res.status(403).json({ error: "Access denied: file is not in the share manifest" });
         return;
       }
 
@@ -961,30 +1003,23 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
 
-      const userCwd = resolveUserCwd(agentCwd, {
-        id: record.ownerUserId,
-        username: record.ownerUsername,
-        role: "user",
-        tenantId: record.tenantId,
-      });
-      const absolutePath = resolveAuthorizedPath(filePath, userCwd, []);
-      if (!absolutePath) {
-        res.status(403).json({ error: "Access denied: path outside shared workspace" });
+      const frozenFile = record.snapshot.allowedFiles?.find((file) => file.relativePath === normalizedPath);
+      if (!frozenFile) {
+        res.status(403).json({ error: "Access denied: file is not in the share manifest" });
         return;
       }
-
-      const stat = await fs.lstat(absolutePath);
-      if (stat.isSymbolicLink()) {
-        res.status(403).json({ error: "Access denied: symbolic links not allowed" });
+      if (!frozenFile.contentBase64 || !frozenFile.sha256 || frozenFile.bytes === undefined || !frozenFile.contentType) {
+        res.status(410).json({ error: "Legacy shared file snapshot is unavailable" });
         return;
       }
-      if (!stat.isFile()) {
-        res.status(400).json({ error: "Not a file" });
+      const content = Buffer.from(frozenFile.contentBase64, 'base64');
+      const contentHash = createHash('sha256').update(content).digest('hex');
+      if (content.byteLength !== frozenFile.bytes || contentHash !== frozenFile.sha256) {
+        res.status(410).json({ error: "Shared file snapshot integrity check failed" });
         return;
       }
-
-      const fileName = path.basename(absolutePath);
-      const contentType = shareFileContentType(fileName);
+      const fileName = frozenFile.fileName;
+      const contentType = frozenFile.contentType;
       const forceDownload = req.query.download === "1" || req.query.download === "true";
       const disposition = forceDownload
         ? "attachment"
@@ -997,7 +1032,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Referrer-Policy", "no-referrer");
       res.setHeader("Content-Type", contentType);
-      res.setHeader("Content-Length", String(stat.size));
+      res.setHeader("Content-Length", String(content.byteLength));
       res.setHeader(
         "Content-Disposition",
         `${disposition}; filename="${encodeURIComponent(fileName)}"`,
@@ -1006,11 +1041,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         res.end();
         return;
       }
-      const stream = createReadStream(absolutePath);
-      stream.pipe(res);
-      stream.on("error", () => {
-        if (!res.headersSent) res.status(500).json({ error: "Failed to read shared file" });
-      });
+      res.end(content);
     } catch (err: any) {
       if (err?.code === "ENOENT") {
         res.status(404).json({ error: "File not found" });
@@ -1675,24 +1706,26 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         );
       });
 
+      const safeSnapshot = projectSessionShareSnapshot(record.snapshot);
       res.setHeader("Cache-Control", "no-store");
       res.json({
         share: {
-          shareId: record.shareId,
-          sessionId: record.sessionId,
-          ownerUsername: record.ownerUsername,
-          debugMode: record.debugMode,
+          ownerUsername: safeSnapshot.owner?.username ?? "用户",
+          debugMode: false,
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
           expiresAt: record.expiresAt,
           accessCount: record.accessCount + 1,
           lastAccessedAt: new Date().toISOString(),
         },
-        detail: record.snapshot,
+        detail: safeSnapshot,
       });
     } catch (err) {
-      const msg = String(err instanceof Error ? err.message : err);
-      res.status(500).json({ error: msg });
+      if (err instanceof SessionShareProjectionError) {
+        res.status(410).json({ error: "Share is not safe to publish" });
+        return;
+      }
+      res.status(500).json({ error: "Agent 开小差了，请发送「继续」" });
     }
   });
 
@@ -1744,6 +1777,33 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }
   });
 
+  router.get("/sessions/:sessionId/share-preview", async (req: Request, res: Response) => {
+    try {
+      const { sessionId } = req.params;
+      if (!isValidSessionId(sessionId)) {
+        res.status(400).json({ error: "Invalid sessionId format" });
+        return;
+      }
+      const built = await buildSessionDetailSnapshot(req, sessionId);
+      if (!built.ok) {
+        res.status(built.status).json({ error: built.error });
+        return;
+      }
+      const projected = projectSessionShareSnapshot(built.detail, { selectedFilePaths: [] });
+      res.json({
+        blockCount: projected.blocks.length,
+        files: collectSessionShareCandidateFiles(built.detail.blocks),
+        defaultExpiresAt: new Date(Date.now() + DEFAULT_SESSION_SHARE_TTL_MS).toISOString(),
+      });
+    } catch (err) {
+      if (err instanceof SessionShareProjectionError) {
+        res.status(422).json({ error: err.message, code: err.code });
+        return;
+      }
+      res.status(500).json({ error: "Agent 开小差了，请发送「继续」" });
+    }
+  });
+
   /**
    * POST /api/sessions/:sessionId/share
    *
@@ -1762,12 +1822,22 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
 
-      const body = (req.body ?? {}) as { debugMode?: unknown; expiresAt?: unknown };
-      const debugMode = body.debugMode === true;
-      let expiresAt: string | undefined;
+      const body = (req.body ?? {}) as {
+        expiresAt?: unknown;
+        confirmPublicText?: unknown;
+        filePaths?: unknown;
+      };
+      if (body.confirmPublicText !== true || !Array.isArray(body.filePaths)
+        || body.filePaths.length > 32
+        || body.filePaths.some((item) => typeof item !== 'string')
+        || new Set(body.filePaths).size !== body.filePaths.length) {
+        res.status(400).json({ error: "请确认公开正文并提交唯一的文件清单" });
+        return;
+      }
+      let expiresAt = new Date(Date.now() + DEFAULT_SESSION_SHARE_TTL_MS).toISOString();
       if (typeof body.expiresAt === "string" && body.expiresAt.trim()) {
         const parsed = Date.parse(body.expiresAt);
-        if (!Number.isFinite(parsed)) {
+        if (!Number.isFinite(parsed) || parsed <= Date.now() || parsed - Date.now() > MAX_SESSION_SHARE_TTL_MS) {
           res.status(400).json({ error: "Invalid expiresAt" });
           return;
         }
@@ -1784,19 +1854,40 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
 
+      const selectedFilePaths = (body.filePaths as string[]).map(normalizeSessionShareFilePath);
+      if (selectedFilePaths.some((filePath) => !filePath)
+        || new Set(selectedFilePaths).size !== selectedFilePaths.length) {
+        res.status(400).json({ error: "文件清单包含无效或重复路径" });
+        return;
+      }
+      const normalizedSelectedFilePaths = selectedFilePaths as string[];
+      const candidates = collectSessionShareCandidateFiles(built.detail.blocks);
+      const candidatePaths = new Set(candidates.map((file) => file.relativePath));
+      const userCwd = resolveUserCwd(agentCwd, {
+        id: built.meta.userId,
+        username: built.meta.username,
+        role: "user",
+        tenantId: req.user?.tenantId || DEFAULT_TENANT_ID,
+      });
+      const projected = projectSessionShareSnapshot(built.detail, { selectedFilePaths: normalizedSelectedFilePaths });
+      const frozenFiles = await freezeSessionShareFiles(normalizedSelectedFilePaths, candidatePaths, userCwd);
       const record = await store.upsertActive({
         sessionId,
         tenantId: req.user?.tenantId || DEFAULT_TENANT_ID,
         ownerUserId: built.meta.userId,
         ownerUsername: built.meta.username,
         createdByUserId: req.user?.sub || built.meta.userId,
-        debugMode,
-        snapshot: built.detail,
-        ...(expiresAt ? { expiresAt } : {}),
+        debugMode: false,
+        snapshot: { ...projected, allowedFiles: frozenFiles },
+        expiresAt,
       });
       auditLog(req, "session_share_updated", sessionId);
       res.json(toShareResponse(record));
     } catch (err) {
+      if (err instanceof SessionShareProjectionError) {
+        res.status(422).json({ error: err.message, code: err.code });
+        return;
+      }
       const msg = String(err instanceof Error ? err.message : err);
       if (msg.includes("outside allowed directory")) {
         res.status(403).json({ error: msg });

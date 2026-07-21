@@ -3,6 +3,11 @@ import { CircleCheck, Circle, CircleDot, Timer, X } from "lucide-react";
 import type { ScenarioItem } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  buildWorkflowOnboardingPlan,
+  type WorkflowOnboardingContext,
+  type WorkflowOnboardingStep,
+} from "./workflowOnboarding";
 
 export type GuideBarState = "aha" | "cron" | "sprint" | "done" | "closed";
 export type GuideBarEvent =
@@ -12,7 +17,7 @@ export type GuideBarEvent =
   | { type: "USER_CLOSE" }
   | { type: "STAGE_TIMEOUT" };
 
-const STORAGE_KEY = "kaiyan:firstDayGuide:v2";
+export const FIRST_DAY_GUIDE_STORAGE_KEY = "kaiyan:firstDayGuide:v3";
 const DEFAULT_TIMEOUT_MS = 5_400_000;
 
 export function guideReducer(state: GuideBarState, event: GuideBarEvent): GuideBarState {
@@ -87,7 +92,7 @@ export function guideReducer(state: GuideBarState, event: GuideBarEvent): GuideB
 
 function initialState(): GuideBarState {
   if (typeof window === "undefined") return "aha";
-  const stored = window.localStorage.getItem(STORAGE_KEY);
+  const stored = window.localStorage.getItem(FIRST_DAY_GUIDE_STORAGE_KEY);
   if (stored === "aha" || stored === "cron" || stored === "sprint" || stored === "done" || stored === "closed") {
     return stored;
   }
@@ -113,24 +118,40 @@ function ProgressDot({
 }
 
 export interface FirstDayGuideBarProps {
-  activeScenario?: Pick<ScenarioItem, "id" | "day1PathSteps">;
+  activeScenario?: Pick<ScenarioItem, "id" | "day1PathSteps"> & Partial<Pick<ScenarioItem, "mode">>;
+  activeWorkflow?: WorkflowOnboardingContext;
   onOpenCronWizard: () => void;
   onOpenExampleDemo: () => void;
+  onStartWorkflow?: (starterMessage: string, context: WorkflowOnboardingContext) => void;
+  onOpenWorkflowReplay?: (sharePath: string, context: WorkflowOnboardingContext) => void;
+  onConnectWorkflow?: (context: WorkflowOnboardingContext) => void;
+  onRequestDiagnosis?: (context: WorkflowOnboardingContext) => void;
+  onViewWorkflow?: (context: WorkflowOnboardingContext) => void;
+  onOpenWorkflowCron?: (context: WorkflowOnboardingContext) => void;
   onSoftExitAcknowledged?: () => void;
   stageTimeoutMs?: number;
+  showOnMobile?: boolean;
 }
 
 export function FirstDayGuideBar({
   activeScenario,
+  activeWorkflow,
   onOpenCronWizard,
   onOpenExampleDemo,
+  onStartWorkflow,
+  onOpenWorkflowReplay,
+  onConnectWorkflow,
+  onRequestDiagnosis,
+  onViewWorkflow,
+  onOpenWorkflowCron,
   onSoftExitAcknowledged,
   stageTimeoutMs = DEFAULT_TIMEOUT_MS,
+  showOnMobile = false,
 }: FirstDayGuideBarProps) {
   const [state, dispatch] = useReducer(guideReducer, undefined, initialState);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, state);
+    window.localStorage.setItem(FIRST_DAY_GUIDE_STORAGE_KEY, state);
     if (state === "closed") onSoftExitAcknowledged?.();
   }, [onSoftExitAcknowledged, state]);
 
@@ -141,10 +162,16 @@ export function FirstDayGuideBar({
     window.addEventListener("kaiyan:example-demo-opened", onExample);
     window.addEventListener("kaiyan:cron-configured", onCron);
     window.addEventListener("kaiyan:first-dingtalk-invoke", onInvoke);
+    window.addEventListener("kaiyan:workflow-experience-opened", onExample);
+    window.addEventListener("kaiyan:workflow-activation-completed", onCron);
+    window.addEventListener("kaiyan:workflow-terminal-verified", onInvoke);
     return () => {
       window.removeEventListener("kaiyan:example-demo-opened", onExample);
       window.removeEventListener("kaiyan:cron-configured", onCron);
       window.removeEventListener("kaiyan:first-dingtalk-invoke", onInvoke);
+      window.removeEventListener("kaiyan:workflow-experience-opened", onExample);
+      window.removeEventListener("kaiyan:workflow-activation-completed", onCron);
+      window.removeEventListener("kaiyan:workflow-terminal-verified", onInvoke);
     };
   }, []);
 
@@ -162,16 +189,64 @@ export function FirstDayGuideBar({
 
   if (state === "closed") return null;
 
-  const copy = {
+  // 没有显式 Cron 打开能力时移除 schedule proof，避免 CTA 显示“配置常驻”却只能跳目录。
+  const workflowContext = activeWorkflow && !onOpenWorkflowCron && activeWorkflow.schedule
+    ? (({ schedule: _schedule, ...rest }) => rest)(activeWorkflow)
+    : activeWorkflow;
+  const workflowPlan = workflowContext
+    ? buildWorkflowOnboardingPlan(workflowContext)
+    : null;
+
+  const openWorkflowDetail = () => {
+    if (workflowContext && onViewWorkflow) onViewWorkflow(workflowContext);
+    else onOpenExampleDemo();
+  };
+  const runWorkflowStep = (step: WorkflowOnboardingStep) => {
+    if (!workflowContext) return;
+    switch (step.action) {
+      case "chat":
+        if (onStartWorkflow) onStartWorkflow(workflowContext.scenario.launch.starterMessage, workflowContext);
+        else openWorkflowDetail();
+        return;
+      case "replay": {
+        const sharePath = workflowContext.scenario.demo.sharePath;
+        if (sharePath && onOpenWorkflowReplay) onOpenWorkflowReplay(sharePath, workflowContext);
+        else openWorkflowDetail();
+        return;
+      }
+      case "connector":
+        if (onConnectWorkflow) onConnectWorkflow(workflowContext);
+        else openWorkflowDetail();
+        return;
+      case "diagnosis":
+        if (onRequestDiagnosis) onRequestDiagnosis(workflowContext);
+        else openWorkflowDetail();
+        return;
+      case "cron":
+        if (onOpenWorkflowCron) onOpenWorkflowCron(workflowContext);
+        else openWorkflowDetail();
+        return;
+      case "detail":
+        openWorkflowDetail();
+        return;
+      default: {
+        const unreachable: never = step.action;
+        return unreachable;
+      }
+    }
+  };
+
+  const legacyCanCron = activeScenario?.mode !== "oneshot";
+  const legacyCopy = {
     aha: {
       title: activeScenario?.day1PathSteps?.[0]?.userAction ?? "先看一个示例结果",
       cta: "看示例",
       action: onOpenExampleDemo,
     },
     cron: {
-      title: "把它设成每天自动跑",
-      cta: "配置常驻监测",
-      action: onOpenCronWizard,
+      title: legacyCanCron ? "把它设成每天自动跑" : "换一个真实对象继续试跑",
+      cta: legacyCanCron ? "配置常驻监测" : "打开任务模板",
+      action: legacyCanCron ? onOpenCronWizard : onOpenExampleDemo,
     },
     sprint: {
       title: "今天再跑 3 个真实任务",
@@ -184,18 +259,46 @@ export function FirstDayGuideBar({
       action: () => dispatch({ type: "USER_CLOSE" }),
     },
   }[state];
+  const workflowCopy = workflowPlan
+    ? state === "done"
+      ? {
+          title: "首日引导已完成",
+          cta: "完成",
+          action: () => dispatch({ type: "USER_CLOSE" }),
+        }
+      : (() => {
+          const step = state === "aha"
+            ? workflowPlan.experience
+            : state === "cron"
+              ? workflowPlan.activate
+              : workflowPlan.verify;
+          return {
+            title: step.title,
+            cta: step.cta,
+            action: () => runWorkflowStep(step),
+          };
+        })()
+    : null;
+  const copy = workflowCopy ?? legacyCopy;
+  const progressLabels = workflowPlan?.progressLabels
+    ?? (legacyCanCron
+      ? (["看见效果", "设成常驻", "跑真实任务"] as const)
+      : (["看见效果", "跑真实任务", "继续使用"] as const));
 
   return (
-    <div className="hidden border-t bg-slate-950 px-4 py-2 text-slate-50 md:flex">
+    <div className={cn(
+      "border-t bg-slate-950 px-4 py-2 text-slate-50",
+      showOnMobile ? "flex" : "hidden md:flex",
+    )}>
       <div className="mx-auto flex min-h-10 w-full max-w-5xl items-center gap-4">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <Timer className="size-4 shrink-0 text-slate-300" />
           <div className="min-w-0">
             <div className="truncate text-sm font-medium">{copy.title}</div>
             <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-300">
-              <ProgressDot label="看见效果" active={state === "aha"} done={state === "cron" || state === "sprint" || state === "done"} />
-              <ProgressDot label="设成常驻" active={state === "cron"} done={state === "sprint" || state === "done"} />
-              <ProgressDot label="跑真实任务" active={state === "sprint"} done={state === "done"} />
+              <ProgressDot label={progressLabels[0]} active={state === "aha"} done={state === "cron" || state === "sprint" || state === "done"} />
+              <ProgressDot label={progressLabels[1]} active={state === "cron"} done={state === "sprint" || state === "done"} />
+              <ProgressDot label={progressLabels[2]} active={state === "sprint"} done={state === "done"} />
             </div>
           </div>
         </div>

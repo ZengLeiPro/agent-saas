@@ -18,6 +18,7 @@ vi.mock("@/lib/authFetch", () => ({
 import {
   fetchPublicSessionShare,
   getSessionShare,
+  getSessionSharePreview,
   revokeSessionShare,
   updateSessionShare,
 } from "./sessionShareApi";
@@ -59,14 +60,14 @@ describe("getSessionShare", () => {
 describe("updateSessionShare", () => {
   beforeEach(() => authFetchMock.mockReset());
 
-  it("POST 携带 debugMode body", async () => {
+  it("POST 必须传递公开确认与显式文件清单", async () => {
     authFetchMock.mockResolvedValue(okJson({ enabled: true }));
-    await updateSessionShare("s1", { debugMode: true });
+    await updateSessionShare("s1", { confirmPublicText: true, filePaths: ["assets/demo.pdf"] });
 
     expect(authFetchMock).toHaveBeenCalledWith("/api/sessions/s1/share", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ debugMode: true }),
+      body: JSON.stringify({ confirmPublicText: true, filePaths: ["assets/demo.pdf"] }),
     });
   });
 
@@ -76,7 +77,33 @@ describe("updateSessionShare", () => {
       status: 400,
       json: vi.fn().mockResolvedValue({}),
     });
-    await expect(updateSessionShare("s1", { debugMode: false })).rejects.toThrow("生成分享链接失败");
+    await expect(updateSessionShare("s1", { confirmPublicText: true, filePaths: [] }))
+      .rejects.toThrow("生成分享链接失败");
+  });
+});
+
+describe("getSessionSharePreview", () => {
+  beforeEach(() => authFetchMock.mockReset());
+
+  it("读取公开正文与候选文件预览", async () => {
+    const preview = {
+      blockCount: 2,
+      files: [{ relativePath: "assets/demo.pdf", fileName: "demo.pdf" }],
+      defaultExpiresAt: "2026-07-28T00:00:00.000Z",
+    };
+    authFetchMock.mockResolvedValue(okJson(preview));
+
+    await expect(getSessionSharePreview("s p/1")).resolves.toEqual(preview);
+    expect(authFetchMock).toHaveBeenCalledWith("/api/sessions/s%20p%2F1/share-preview");
+  });
+
+  it("预览失败时返回安全错误文案", async () => {
+    authFetchMock.mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: vi.fn().mockResolvedValue({ error: "会话包含手机号，请先脱敏后再分享" }),
+    });
+    await expect(getSessionSharePreview("s1")).rejects.toThrow("会话包含手机号，请先脱敏后再分享");
   });
 });
 
@@ -107,7 +134,7 @@ describe("fetchPublicSessionShare（裸 fetch）", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("走 apiUrl 拼绝对地址并带 Accept 头，成功解析", async () => {
-    const body = { share: { shareId: "sh1" }, detail: {} };
+    const body = { share: { ownerUsername: "用户", debugMode: false }, detail: {} };
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(okJson(body));
 
     await expect(fetchPublicSessionShare("tok 1")).resolves.toEqual(body);

@@ -47,10 +47,14 @@ import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
 import { useScenarioDeepLink } from "@/components/scenarios/useScenarioDeepLink";
 import { FirstDayGuideBar } from "@/components/onboarding/FirstDayGuideBar";
 import { CronCreationWizard } from "@/components/onboarding/CronCreationWizard";
+import {
+  sendWorkflowExperience,
+  type WorkflowOnboardingContext,
+} from "@/components/onboarding/workflowOnboarding";
 import { ExpertWelcome } from "@/components/experts/ExpertWelcome";
 import { CapabilityTabsList } from "@/components/CapabilityCenter/CapabilityTabsList";
 import { useCapabilityNavigation } from "@/components/CapabilityCenter/navigation";
-import type { ScenarioItem } from "@agent/shared";
+import type { CatalogScenarioPublic, ScenarioItem } from "@agent/shared";
 const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
 const OrgAgentManagerPanel = lazy(() => import("@/components/OrgAgentManager").then(m => ({ default: m.OrgAgentManager })));
 
@@ -149,6 +153,7 @@ export function DesktopLayout(props: LayoutProps) {
   const [capabilitiesMounted, setCapabilitiesMounted] = useState(false);
   const [roleDetailId, setRoleDetailId] = useState<string | null>(null);
   const [lastTriedScenario, setLastTriedScenario] = useState<ScenarioItem | null>(null);
+  const [activeWorkflow, setActiveWorkflow] = useState<WorkflowOnboardingContext | null>(null);
   const [cronWizardOpen, setCronWizardOpen] = useState(false);
   const [cronWizardScenario, setCronWizardScenario] = useState<ScenarioItem | null>(null);
   const [tenantAdminSection, setTenantAdminSection] = useState<TenantSection>("overview");
@@ -171,6 +176,7 @@ export function DesktopLayout(props: LayoutProps) {
   // 顺序不能反：newSession 内部会清空输入框（clearComposer），必须先建会话再 setInput。
   const handleTryScenario = useCallback((prompt: string, scenario?: ScenarioItem) => {
     if (!personalAgentEnabled || loading) return;
+    setActiveWorkflow(null);
     if (scenario) setLastTriedScenario(scenario);
     newPersonalSession();
     setInput(prompt);
@@ -180,12 +186,44 @@ export function DesktopLayout(props: LayoutProps) {
   // 空会话推荐卡：当前会话本来就是空的，直接预填当前输入框即可，无需再新建会话
   const handlePrefillScenario = useCallback((prompt: string, scenario?: ScenarioItem) => {
     if (!personalAgentEnabled || loading) return;
+    setActiveWorkflow(null);
     if (scenario) setLastTriedScenario(scenario);
     setInput(prompt);
   }, [loading, personalAgentEnabled, setInput]);
 
+  const handleStartWorkflow = useCallback((
+    message: string,
+    scenario: WorkflowOnboardingContext["scenario"],
+    options?: { isolatedDemo?: boolean },
+  ) => {
+    if (!personalAgentEnabled || loading) return;
+    setActiveWorkflow({
+      scenario,
+      ...(options?.isolatedDemo ? {
+        demoLaunch: {
+          catalogScenarioId: scenario.id,
+          idempotencyKey: crypto.randomUUID?.()
+            ?? `workflow-demo-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        },
+      } : {}),
+    });
+    newPersonalSession();
+    setInput(message);
+    setActiveTab("chat");
+  }, [loading, newPersonalSession, personalAgentEnabled, setInput, setActiveTab]);
+
+  const handlePrefillWorkflow = useCallback((message: string, scenario: CatalogScenarioPublic) => {
+    if (!personalAgentEnabled || loading) return;
+    setActiveWorkflow({ scenario });
+    setInput(message);
+  }, [loading, personalAgentEnabled, setInput]);
+
+  const handleSendMessage = useCallback(async () => {
+    await sendWorkflowExperience(sendMessage, input, activeWorkflow);
+  }, [activeWorkflow, input, sendMessage]);
+
   // 场景直达：消费 ?scenario=<id>（官网注册落地 / 销售场景链接），预填起手指令
-  useScenarioDeepLink(handlePrefillScenario);
+  useScenarioDeepLink(handlePrefillScenario, () => pushActiveTab("capabilities"));
 
   // 「查看全部场景」：push 版切换，浏览器后退可回到聊天
   const handleViewAllScenarios = useCallback(() => {
@@ -212,16 +250,18 @@ export function DesktopLayout(props: LayoutProps) {
     roleKitV2Enabled ? (
       <EmptyChatRecommendCards
         onTryScenario={handlePrefillScenario}
+        onStartWorkflow={handlePrefillWorkflow}
         onViewAll={handleViewAllScenarios}
         onOpenRoleDetail={handleOpenRoleDetail}
       />
     ) : (
       <EmptySessionScenarios
         onTryScenario={handlePrefillScenario}
+        onStartWorkflow={handlePrefillWorkflow}
         onViewAll={handleViewAllScenarios}
       />
     )
-  ), [handleOpenRoleDetail, handlePrefillScenario, handleViewAllScenarios, roleKitV2Enabled]);
+  ), [handleOpenRoleDetail, handlePrefillScenario, handlePrefillWorkflow, handleViewAllScenarios, roleKitV2Enabled]);
 
   const expertEmptySlot = useMemo(() => activeOrgAgent ? (
     <ExpertWelcome expert={activeOrgAgent} onPrefill={setInput} />
@@ -429,7 +469,7 @@ export function DesktopLayout(props: LayoutProps) {
               uploadError={uploadError}
               onDismissUploadError={dismissUploadError}
               onInputChange={setInput}
-              onSend={() => { void sendMessage(); }}
+              onSend={() => { void handleSendMessage(); }}
               onStop={stopGeneration}
               stopping={stopping}
               onFileSelect={(event) => { void handleFileSelect(event); }}
@@ -499,6 +539,9 @@ export function DesktopLayout(props: LayoutProps) {
                 personalAgentEnabled={personalAgentEnabled}
                 onStartExpert={startOrgAgentSession}
                 onTryScenario={handleTryScenario}
+                onStartWorkflow={handleStartWorkflow}
+                onRequestDiagnosis={handleStartWorkflow}
+                onWorkflowSelected={(scenario) => setActiveWorkflow({ scenario })}
                 roleDetailId={roleDetailId}
                 onOpenRoleDetail={setRoleDetailId}
                 onCloseRoleDetail={() => setRoleDetailId(null)}
@@ -665,8 +708,27 @@ export function DesktopLayout(props: LayoutProps) {
         {personalAgentEnabled && activeTab === "chat" && roleKitV2Enabled && roleKitConfig.firstDayGuideBar.enabled && (
           <FirstDayGuideBar
             activeScenario={lastTriedScenario ?? undefined}
+            activeWorkflow={activeWorkflow ?? undefined}
             onOpenCronWizard={handleOpenCronWizard}
             onOpenExampleDemo={handleViewAllScenarios}
+            onStartWorkflow={(message, context) => handleStartWorkflow(message, context.scenario)}
+            onOpenWorkflowReplay={(sharePath) => window.location.assign(sharePath)}
+            onConnectWorkflow={(context) => {
+              setActiveWorkflow(context);
+              pushActiveTab("capabilities");
+              const params = new URLSearchParams({ returnToWorkflowId: context.scenario.workflowId });
+              window.history.replaceState({}, "", `/capabilities/connectors?${params.toString()}`);
+            }}
+            onRequestDiagnosis={(context) => handleStartWorkflow(
+              `我想为「${context.scenario.title}」预约落地诊断，请先确认业务边界、现有系统和所需人审。`,
+              context.scenario,
+            )}
+            onViewWorkflow={(context) => {
+              setActiveWorkflow(context);
+              pushActiveTab("capabilities");
+              const params = new URLSearchParams({ workflow: context.scenario.id, intent: "view" });
+              window.history.replaceState({}, "", `/capabilities/templates?${params.toString()}`);
+            }}
             stageTimeoutMs={roleKitConfig.firstDayGuideBar.stageTimeoutMs}
           />
         )}

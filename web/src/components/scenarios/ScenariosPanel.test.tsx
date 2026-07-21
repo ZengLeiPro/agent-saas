@@ -17,6 +17,7 @@ import { ScenariosPanel } from "./ScenariosPanel";
 
 const mocked = vi.hoisted(() => ({
   library: null as ScenarioLibraryResponse | null,
+  fallbackReason: null as string | null,
   user: null as {
     position?: string | null;
     preferences?: { activeRoleId?: string; industryHint?: string };
@@ -31,6 +32,9 @@ vi.mock("./useScenarioLibrary", async () => {
     ...actual,
     useScenarioLibrary: () => ({
       library: mocked.library,
+      workflowLibrary: null,
+      mode: mocked.fallbackReason ? "legacy-fallback" : "legacy",
+      fallbackReason: mocked.fallbackReason,
       loading: false,
       error: null,
       reload: vi.fn(),
@@ -103,6 +107,7 @@ afterEach(() => {
   localStorage.clear();
   resetHistory();
   mocked.library = null;
+  mocked.fallbackReason = null;
   mocked.user = null;
 });
 
@@ -117,6 +122,14 @@ function visibleTitles(): string[] {
 }
 
 describe("ScenariosPanel · industry chip 集成", () => {
+  it("兼容回退只显示客户安全文案，不暴露校验或内部错误", () => {
+    mocked.fallbackReason = "schema validation failed: upstream response invalid";
+    renderPanel();
+    expect(screen.getByRole("status").textContent).toBe("当前显示兼容目录。Agent 开小差了，请发送「继续」。");
+    expect(document.body.textContent).not.toContain("schema");
+    expect(document.body.textContent).not.toContain("upstream");
+    expect(document.body.textContent).not.toContain("校验");
+  });
   it("行业与岗位使用完全一致的筛选标签样式", () => {
     renderPanel();
 

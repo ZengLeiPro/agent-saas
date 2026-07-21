@@ -38,6 +38,8 @@ const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   { method: "GET", path: /^\/artifacts\/[^/]+\/content$/ },
   { method: "GET", path: /^\/share\/sessions\/[^/]+$/ },
   { path: /^\/share\/sessions\/[^/]+\/file$/ },
+  { method: "GET", path: /^\/share\/workflow-demos\/[A-Za-z0-9_-]+$/ },
+  { method: "GET", path: /^\/share\/workflow-replays\/[a-f0-9-]+$/ },
 ];
 
 function isPublicRoute(req: Request): boolean {

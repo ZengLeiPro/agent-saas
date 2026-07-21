@@ -95,7 +95,7 @@ const roleKitConfigSchema = z.object({
     target: z.enum(["self", "manager", "group"]).optional(),
     humanReviewRequired: z.boolean().optional(),
   }).optional(),
-  libraryVersion: z.enum(["v1", "v2"]).optional(),
+  libraryVersion: z.enum(["v1", "v2", "v3"]).optional(),
   fallbackToV1OnValidationError: z.boolean().optional(),
 }).optional();
 

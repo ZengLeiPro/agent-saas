@@ -10,7 +10,7 @@ export interface RoleKitPublicConfig {
     stageTimeoutMs: number;
     showOnMobile: boolean;
   };
-  libraryVersion: "v1" | "v2";
+  libraryVersion: "v1" | "v2" | "v3";
 }
 
 const DEFAULT_CONFIG: RoleKitPublicConfig = {

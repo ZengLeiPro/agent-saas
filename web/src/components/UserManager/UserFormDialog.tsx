@@ -52,6 +52,8 @@ const CAPABILITY_LABELS: Record<PlatformCapability, { title: string; description
   "credential.reset": { title: "密码重置", description: "为客户账号重置密码" },
   "runtime.operate": { title: "运行恢复", description: "暂停/恢复执行环境、重扫用量与存储" },
   "finance.read": { title: "内部财务", description: "查看真实成本、毛利、价格版本和用量明细" },
+  "workflow_demo.review": { title: "演示复核", description: "独立复核工作流演示运行与证据指纹" },
+  "workflow_demo.publish": { title: "演示发布", description: "发布已由另一身份复核通过的只读回放" },
 };
 
 interface UserFormDialogProps {

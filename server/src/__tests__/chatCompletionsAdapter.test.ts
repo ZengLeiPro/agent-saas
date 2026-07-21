@@ -153,6 +153,69 @@ describe('ChatCompletionsModelAdapter', () => {
       responseMode: 'full',
      });
   });
+
+  it('兼容模型忽略 additional_tools 历史项，MCP 继续按普通 function eager 发送', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse({
+        choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 2, completion_tokens: 1 },
+      }),
+      sse('[DONE]'),
+    ]));
+    const adapter = new ChatCompletionsModelAdapter({
+      apiKey: 'sk-test',
+      baseUrl: 'https://example.invalid/v1',
+    }, {});
+    const mcpTool = {
+      id: 'mcp__github__get_issue',
+      name: 'mcp__github__get_issue',
+      description: '读取 issue',
+      parameters: { type: 'object', properties: {} },
+      mcpServer: {
+        serverName: 'github', namespace: 'mcp_github', displayName: 'GitHub', description: 'GitHub',
+      },
+    };
+
+    await collect(adapter.stream({
+      model: 'glm-5.2',
+      messages: [
+        { role: 'additional_tools', tools: [mcpTool] },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: 'call-old',
+            type: 'function',
+            namespace: 'mcp_github',
+            function: { name: mcpTool.name, arguments: '{"number":1}' },
+          }],
+        },
+        { role: 'tool', tool_call_id: 'call-old', content: 'old result' },
+        { role: 'user', content: '读取 issue' },
+      ],
+      tools: [mcpTool],
+    }, {
+      runId: 'run-1', sessionId: 'session-1', model: 'glm-5.2', cwd: '/tmp',
+      channelContext: { channel: 'web' },
+    }));
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.messages).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        tool_calls: [expect.objectContaining({ id: 'call-old' })],
+      }),
+      expect.objectContaining({ role: 'tool', tool_call_id: 'call-old' }),
+      expect.objectContaining({ role: 'user' }),
+    ]);
+    expect(body.tools).toEqual([{
+      type: 'function',
+      function: expect.objectContaining({ name: mcpTool.name }),
+    }]);
+    expect(JSON.stringify(body)).not.toContain('additional_tools');
+    expect(JSON.stringify(body)).not.toContain('namespace');
+    expect(JSON.stringify(body)).not.toContain('defer_loading');
+  });
 });
 
 describe('ChatCompletionsModelAdapter agent-plan defense (二轮加固)', () => {

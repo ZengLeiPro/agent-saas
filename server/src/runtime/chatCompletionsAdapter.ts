@@ -45,7 +45,10 @@ function computePromptCacheKey(
   tools: ModelToolDefinition[],
 ): string {
   const systemContent = messages.find((m) => m.role === 'system')?.content ?? '';
-  const toolSignature = tools.map((t) => t.name).sort().join(',');
+  const toolSignature = tools
+    .map((tool) => `${tool.mcpServer?.namespace ?? '-'}:${tool.name}:${tool.deferLoading === true ? 'deferred' : 'eager'}`)
+    .sort()
+    .join(',');
   return createHash('sha256')
     .update(`${model}\n${systemContent}\n${toolSignature}`)
     .digest('hex')
@@ -72,7 +75,19 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
     // adapter 不得读取当前时钟改写历史，否则 full replay 的 prompt prefix 会失稳。
     // 平台注入上下文块只保留 escape；与 ResponsesApiAdapter 对齐。
     const sessionIdShort = context.sessionId ? context.sessionId.slice(0, 8) : undefined;
-    const defendedMessages = await Promise.all(request.messages.map(async (message) => {
+    const defendedMessages = await Promise.all(request.messages
+      .filter((message) => message.role !== 'additional_tools')
+      .map(async (message) => {
+      if (message.role === 'assistant' && message.tool_calls) {
+        return {
+          ...message,
+          tool_calls: message.tool_calls.map((call) => ({
+            id: call.id,
+            type: call.type,
+            function: call.function,
+          })),
+        };
+      }
       if (message.role !== 'user') return message;
       if (typeof message.content === 'string') {
         return { ...message, content: defendUserMessageText(message.content, sessionIdShort) };
@@ -99,7 +114,7 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
         });
       }
       return { ...message, content };
-    }));
+      }));
 
     const body = {
       model: request.model,

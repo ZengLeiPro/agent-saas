@@ -180,6 +180,15 @@ export interface ToolDescriptor<TInput = unknown> {
    * admin UI 展示用的中文短标签。缺省时前端 fallback 到 displayName。
    */
   label?: string;
+  /**
+   * MCP 渐进披露元数据。只有 McpClientToolProvider 产生的动态工具设置；
+   * runtime 用它把同一 server 的真实工具定义收进稳定 namespace 能力地图。
+   */
+  mcp?: {
+    serverName: string;
+    serverDisplayName: string;
+    serverDescription?: string;
+  };
 }
 
 export interface ToolResult {

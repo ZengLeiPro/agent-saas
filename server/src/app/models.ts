@@ -299,6 +299,8 @@ type ConfigProviderOptions = {
   is_pseudo_reasoning?: boolean;
   disable_response_chaining?: boolean;
   disable_prompt_cache_key?: boolean;
+  mcp_loading_mode?: 'auto' | 'eager' | 'deferred';
+  tool_search_protocol?: 'none' | 'openai_responses_hosted';
 };
 
 function resolveProviderOptions(
@@ -327,6 +329,8 @@ function resolveProviderOptions(
   const isPseudoReasoning = model.is_pseudo_reasoning ?? group.is_pseudo_reasoning;
   const disableResponseChaining = model.disable_response_chaining ?? group.disable_response_chaining;
   const disablePromptCacheKey = model.disable_prompt_cache_key ?? group.disable_prompt_cache_key;
+  const mcpLoadingMode = model.mcp_loading_mode ?? group.mcp_loading_mode;
+  const toolSearchProtocol = model.tool_search_protocol ?? group.tool_search_protocol;
   const options: ModelProviderOptions = {};
   if (Object.keys(extraBody).length > 0) options.extraBody = extraBody;
   if (reasoningEffort !== undefined) options.reasoningEffort = reasoningEffort;
@@ -343,6 +347,8 @@ function resolveProviderOptions(
   if (isPseudoReasoning !== undefined) options.isPseudoReasoning = isPseudoReasoning;
   if (disableResponseChaining !== undefined) options.disableResponseChaining = disableResponseChaining;
   if (disablePromptCacheKey !== undefined) options.disablePromptCacheKey = disablePromptCacheKey;
+  if (mcpLoadingMode !== undefined) options.mcpLoadingMode = mcpLoadingMode;
+  if (toolSearchProtocol !== undefined) options.toolSearchProtocol = toolSearchProtocol;
   return Object.keys(options).length > 0 ? options : undefined;
 }
 

@@ -25,6 +25,7 @@ import type {
   ModelResponseMode,
   ModelRequestDiagnostic,
   ModelTerminalStatus,
+  ModelToolSearchResult,
   RunContext,
   RuntimeConnection,
 } from './types.js';
@@ -52,7 +53,10 @@ function computePromptCacheKey(
   tools: ModelToolDefinition[] | undefined,
 ): string {
   const systemContent = messages.find((m) => m.role === 'system')?.content ?? '';
-  const toolSignature = (tools ?? []).map((t) => t.name).sort().join(',');
+  const toolSignature = (tools ?? [])
+    .map((tool) => `${tool.mcpServer?.namespace ?? '-'}:${tool.name}:${tool.deferLoading === true ? 'deferred' : 'eager'}`)
+    .sort()
+    .join(',');
   return createHash('sha256')
     .update(`${model}\n${systemContent}\n${toolSignature}`)
     .digest('hex')
@@ -61,7 +65,11 @@ function computePromptCacheKey(
 
 function computeRequestInputPrefixHash(body: Record<string, unknown>): string {
   const input = Array.isArray(body.input) ? body.input.slice(0, 8) : [];
-  return createHash('sha256').update(JSON.stringify(input)).digest('hex').slice(0, 32);
+  return createHash('sha256').update(JSON.stringify({
+    instructions: body.instructions,
+    tools: body.tools,
+    input,
+  })).digest('hex').slice(0, 32);
 }
 
 const logger = createLogger('ResponsesAdapter');
@@ -124,11 +132,17 @@ type ResponsesInputItem =
     call_id: string;
     name: string;
     arguments: string;
+    namespace?: string;
   }
   | {
     type: 'function_call_output';
     call_id: string;
     output: string;
+  }
+  | {
+    type: 'additional_tools';
+    role: 'developer';
+    tools: Array<Record<string, unknown>>;
   };
 
 interface ResponsesRetryState {
@@ -193,7 +207,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
     const buildRequestBody = async (): Promise<Record<string, unknown>> => {
       const { instructions, input } = usePrevious
         ? { instructions: undefined, input: await this.extractIncrementalInput(request.messages, context.cwd, sessionIdShort) }
-        : await this.buildFullInput(request.messages, context.cwd, sessionIdShort);
+        : await this.buildFullInput(
+          request.messages,
+          context.cwd,
+          sessionIdShort,
+          request.tools.some((tool) => tool.mcpServer && tool.deferLoading === true),
+        );
 
       if (usePrevious && input.length === 0) {
         throw new Error(
@@ -380,11 +399,17 @@ export class ResponsesApiAdapter implements ModelAdapter {
     let providerErrorCode: string | undefined;
     let providerErrorMessage: string | undefined;
     let refusal = '';
+    let toolSearchResults: ModelToolSearchResult[] = [];
     let hasEmittedOutput = false;
 
     // function_call 在 stream 里按 output_index 累积；item 整体在 output_item.done 出现
     const toolCallsByIndex = new Map<number, ModelToolCall>();
-    const functionCallArgsBuffer = new Map<number, { call_id: string; name: string; arguments: string }>();
+    const functionCallArgsBuffer = new Map<number, {
+      call_id: string;
+      name: string;
+      arguments: string;
+      namespace?: string;
+    }>();
     const outputTextByPart = new Map<string, string>();
 
     const decoder = new TextDecoder();
@@ -482,6 +507,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
                 if (typeof item.call_id === 'string') buf.call_id = item.call_id;
                 if (typeof item.name === 'string') buf.name = item.name;
                 if (typeof item.arguments === 'string') buf.arguments = item.arguments;
+                if (typeof item.namespace === 'string') buf.namespace = item.namespace;
                 functionCallArgsBuffer.set(outputIndex, buf);
               }
             } else if (eventType === 'response.output_item.done') {
@@ -492,8 +518,14 @@ export class ResponsesApiAdapter implements ModelAdapter {
                 const callId = (typeof item.call_id === 'string' && item.call_id) || buf.call_id;
                 const name = (typeof item.name === 'string' && item.name) || buf.name;
                 const args = (typeof item.arguments === 'string' && item.arguments) || buf.arguments;
+                const namespace = (typeof item.namespace === 'string' && item.namespace) || buf.namespace;
                 if (callId && name) {
-                  toolCallsByIndex.set(outputIndex, { id: callId, name, arguments: args });
+                  toolCallsByIndex.set(outputIndex, {
+                    id: callId,
+                    name,
+                    arguments: args,
+                    ...(namespace ? { namespace } : {}),
+                  });
                 }
               }
             } else if (eventType === 'response.completed') {
@@ -519,6 +551,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
               const snapshot = parseCanonicalOutput(respObj?.output, canonicalOutputPresent);
               canonicalTextSuffix = reconcileTextSnapshot(content, snapshot.text, snapshot.present);
               if (snapshot.refusal) refusal = snapshot.refusal;
+              toolSearchResults = snapshot.toolSearchResults;
               reconcileToolCallSnapshot(toolCallsByIndex, snapshot.toolCalls, snapshot.present);
               finishReason = mapResponsesStatusToFinish('completed', toolCallsByIndex.size > 0);
               await activeAttempt.checkpoint('terminal_received', {
@@ -822,6 +855,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       ...(promptCacheKey ? { promptCacheKey } : {}),
       requestInputPrefixHash,
       requestBodyBytes,
+      ...(toolSearchResults.length > 0 ? { toolSearchResults } : {}),
     };
     return;
   }
@@ -941,7 +975,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
    * 平台注入上下文块只保留 escape）。时间戳已在 runtime 入站时固化，full replay
    * 不得按当前时钟重写历史。
    */
-  private async buildFullInput(messages: ModelChatMessage[], cwd: string, sessionIdShort?: string): Promise<{
+  private async buildFullInput(
+    messages: ModelChatMessage[],
+    cwd: string,
+    sessionIdShort?: string,
+    allowAdditionalTools = false,
+  ): Promise<{
     instructions?: string;
     input: ResponsesInputItem[];
   }> {
@@ -971,6 +1010,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
               call_id: call.id,
               name: call.function.name,
               arguments: call.function.arguments,
+              ...(call.namespace ? { namespace: call.namespace } : {}),
             });
           }
         } else if (m.content) {
@@ -985,6 +1025,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
           type: 'function_call_output',
           call_id: m.tool_call_id,
           output: m.content,
+        });
+      } else if (m.role === 'additional_tools' && allowAdditionalTools) {
+        items.push({
+          type: 'additional_tools',
+          role: 'developer',
+          tools: this.adaptLoadedTools(m.tools),
         });
       }
     }
@@ -1026,12 +1072,45 @@ export class ResponsesApiAdapter implements ModelAdapter {
    * Responses tools 格式：    {type:"function", name, description, parameters}（扁平）
    */
   private adaptTools(tools: ModelToolDefinition[]): Array<Record<string, unknown>> {
-    return tools.map((tool) => ({
+    const deferredMcp = tools.filter((tool) => tool.mcpServer && tool.deferLoading === true);
+    const ordinary = tools
+      .filter((tool) => !tool.mcpServer || tool.deferLoading !== true)
+      .map((tool) => this.adaptFunction(tool));
+    const namespaces = this.adaptMcpNamespaces(deferredMcp);
+    return namespaces.length > 0
+      ? [...ordinary, ...namespaces, { type: 'tool_search' }]
+      : ordinary;
+  }
+
+  private adaptLoadedTools(tools: ModelToolDefinition[]): Array<Record<string, unknown>> {
+    const ordinary = tools.filter((tool) => !tool.mcpServer).map((tool) => this.adaptFunction(tool));
+    return [...ordinary, ...this.adaptMcpNamespaces(tools.filter((tool) => tool.mcpServer))];
+  }
+
+  private adaptMcpNamespaces(tools: ModelToolDefinition[]): Array<Record<string, unknown>> {
+    const grouped = new Map<string, { definition: NonNullable<ModelToolDefinition['mcpServer']>; tools: ModelToolDefinition[] }>();
+    for (const tool of tools) {
+      if (!tool.mcpServer) continue;
+      const group = grouped.get(tool.mcpServer.namespace) ?? { definition: tool.mcpServer, tools: [] };
+      group.tools.push(tool);
+      grouped.set(tool.mcpServer.namespace, group);
+    }
+    return [...grouped.values()].map(({ definition, tools: namespaceTools }) => ({
+      type: 'namespace',
+      name: definition.namespace,
+      description: definition.description,
+      tools: namespaceTools.map((tool) => this.adaptFunction(tool)),
+    }));
+  }
+
+  private adaptFunction(tool: ModelToolDefinition): Record<string, unknown> {
+    return {
       type: 'function',
       name: tool.name,
       description: tool.description,
+      ...(tool.deferLoading ? { defer_loading: true } : {}),
       parameters: tool.parameters,
-    }));
+    };
   }
 
   /**
@@ -1357,12 +1436,14 @@ function parseCanonicalOutput(raw: unknown, present: boolean): {
   text: string;
   refusal: string;
   toolCalls: Map<number, ModelToolCall>;
+  toolSearchResults: ModelToolSearchResult[];
 } {
   const result = {
     present,
     text: '',
     refusal: '',
     toolCalls: new Map<number, ModelToolCall>(),
+    toolSearchResults: [] as ModelToolSearchResult[],
   };
   if (!present) return result;
   if (!Array.isArray(raw)) {
@@ -1372,6 +1453,7 @@ function parseCanonicalOutput(raw: unknown, present: boolean): {
       'Responses terminal output must be an array when present',
     );
   }
+  let pendingPaths: string[] = [];
   raw.forEach((item, outputIndex) => {
     if (!item || typeof item !== 'object') return;
     const obj = item as Record<string, any>;
@@ -1384,10 +1466,48 @@ function parseCanonicalOutput(raw: unknown, present: boolean): {
       const id = typeof obj.call_id === 'string' ? obj.call_id : '';
       const name = typeof obj.name === 'string' ? obj.name : '';
       const args = typeof obj.arguments === 'string' ? obj.arguments : '';
-      if (id && name) result.toolCalls.set(outputIndex, { id, name, arguments: args });
+      const namespace = typeof obj.namespace === 'string' ? obj.namespace : undefined;
+      if (id && name) result.toolCalls.set(outputIndex, {
+        id,
+        name,
+        arguments: args,
+        ...(namespace ? { namespace } : {}),
+      });
+    } else if (obj.type === 'tool_search_call') {
+      pendingPaths = Array.isArray(obj.arguments?.paths)
+        ? obj.arguments.paths.filter((path: unknown): path is string => typeof path === 'string')
+        : [];
+    } else if (obj.type === 'tool_search_output') {
+      result.toolSearchResults.push({
+        execution: obj.execution === 'client' ? 'client' : 'server',
+        ...(typeof obj.call_id === 'string' ? { callId: obj.call_id } : {}),
+        paths: pendingPaths,
+        loadedToolNames: extractLoadedToolNames(obj.tools),
+      });
+      pendingPaths = [];
     }
   });
   return result;
+}
+
+function extractLoadedToolNames(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const names: string[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const tool = item as Record<string, unknown>;
+    if (tool.type === 'function' && typeof tool.name === 'string') {
+      names.push(tool.name);
+      continue;
+    }
+    if (tool.type !== 'namespace' || !Array.isArray(tool.tools)) continue;
+    for (const nested of tool.tools) {
+      if (!nested || typeof nested !== 'object') continue;
+      const nestedTool = nested as Record<string, unknown>;
+      if (nestedTool.type === 'function' && typeof nestedTool.name === 'string') names.push(nestedTool.name);
+    }
+  }
+  return names;
 }
 
 function reconcileToolCallSnapshot(
@@ -1408,7 +1528,8 @@ function reconcileToolCallSnapshot(
     if (!canonical
       || canonical.id !== call.id
       || canonical.name !== call.name
-      || canonical.arguments !== call.arguments) {
+      || canonical.arguments !== call.arguments
+      || canonical.namespace !== call.namespace) {
       throw new ResponsesStreamError(
         'provider_error',
         'MODEL_TOOL_CALL_RECONCILIATION_FAILED',

@@ -216,6 +216,57 @@ describe('context projection', () => {
     expect(projection.messages[0]?.content).toContain('needle');
     expect(projection.selectedEvents.map((e) => e.id)).toEqual(['event-2', 'event-3']);
   });
+
+  it('在 compaction/recent window 丢弃历史位置后恢复已加载 MCP 真实工具定义', () => {
+    const loaded = {
+      id: 'loaded-1',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      type: 'mcp_tools_loaded',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      execution: 'server',
+      paths: ['mcp_github.mcp__github__get_issue'],
+      tools: [{
+        id: 'mcp__github__get_issue',
+        name: 'mcp__github__get_issue',
+        description: '读取 issue',
+        parameters: { type: 'object', properties: {} },
+        deferLoading: true,
+        mcpServer: {
+          serverName: 'github', namespace: 'mcp_github', displayName: 'GitHub', description: 'GitHub',
+        },
+      }],
+    } as PlatformEvent;
+    const compacted = {
+      id: 'compaction-mcp',
+      timestamp: '2026-01-01T00:00:02.000Z',
+      type: 'compaction',
+      runId: 'run-compact',
+      sessionId: 'session-1',
+      summary: '已读取过 GitHub issue。',
+      coveredEventCount: 1,
+    } as PlatformEvent;
+    const after = { ...event(3), content: '继续处理这个 issue' };
+
+    const projection = buildContextProjection([loaded, compacted, after], {
+      sessionId: 'session-1',
+      runId: 'run-next',
+    });
+    expect(projection.messages.map((message) => message.role)).toEqual([
+      'user', 'additional_tools', 'user',
+    ]);
+    expect(projection.messages[1]).toMatchObject({
+      role: 'additional_tools',
+      tools: [expect.objectContaining({ name: 'mcp__github__get_issue' })],
+    });
+
+    const recent = buildContextProjection([loaded, event(2), after], {
+      sessionId: 'session-1',
+      runId: 'run-next',
+      policy: { type: 'recent_window', recentEvents: 1 },
+    });
+    expect(recent.messages.map((message) => message.role)).toEqual(['additional_tools', 'user']);
+  });
 });
 
 describe('compaction 切分（/compact 真实现）', () => {

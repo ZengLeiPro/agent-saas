@@ -20,6 +20,11 @@
         // 否则工具调用后那一轮上游会报 "No tool call found for function call output"。
         // group 级开关，组内所有模型生效；model 级 disable_response_chaining 可单独覆盖。
         // "disable_response_chaining": true,
+        // MCP 目录策略：auto 只在 protocol=responses 且显式声明已验证的
+        // tool_search_protocol 时启用原生渐进加载，否则安全回退 eager。
+        // deferred 在能力不匹配时直接报配置错误；绝不按模型名字猜测。
+        // "mcp_loading_mode": "auto", // auto | eager | deferred
+        // "tool_search_protocol": "openai_responses_hosted", // none | openai_responses_hosted
         "models": [
           {
             "id": "gpt54",
@@ -62,7 +67,9 @@
           //   "supports_tool_reasoning": true,
           //   "tool_choice_modes": ["auto", "required", "none", "specific"],
           //   "call_id_format": "base62-24",
-          //   "disable_response_chaining": true
+          //   "disable_response_chaining": true,
+          //   "mcp_loading_mode": "auto",
+          //   "tool_search_protocol": "openai_responses_hosted"
           // },
           { "id": "qwen35", "name": "Qwen 3.5", "value": "qwen3.5-plus" }
         ]

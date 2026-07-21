@@ -576,11 +576,24 @@ export class McpConfigStore {
 
   async buildUserMcpServers(username: string, workspaceRoot: string, tenantId?: string): Promise<McpServersFileShape> {
     const managed: Record<string, McpServerConfig> = {};
+    const managedMetadata: NonNullable<McpServersFileShape['serverMetadata']> = {};
     for (const server of this.getEffectiveServers(username, tenantId)) {
       managed[server.id] = this.materializeSecrets(username, server);
+      managedMetadata[server.id] = {
+        name: server.name,
+        ...(server.description ? { description: server.description } : {}),
+      };
     }
     const local = await loadWorkspaceMcpServers(workspaceRoot);
-    return { mcpServers: { ...managed, ...(local.mcpServers ?? {}) } };
+    const localServers = local.mcpServers ?? {};
+    const serverMetadata = { ...managedMetadata };
+    for (const serverName of Object.keys(localServers)) {
+      serverMetadata[serverName] = local.serverMetadata?.[serverName] ?? { name: serverName };
+    }
+    return {
+      mcpServers: { ...managed, ...localServers },
+      serverMetadata,
+    };
   }
 
   private materializeSecrets(username: string, server: ManagedMcpServer): McpServerConfig {
@@ -663,7 +676,10 @@ async function loadWorkspaceMcpServers(workspaceRoot: string): Promise<McpServer
   try {
     const raw = await readFile(agentSettingsPath(workspaceRoot), 'utf-8');
     const parsed = JSON.parse(raw) as McpServersFileShape;
-    return { mcpServers: parsed.mcpServers ?? {} };
+    return {
+      mcpServers: parsed.mcpServers ?? {},
+      ...(parsed.serverMetadata ? { serverMetadata: parsed.serverMetadata } : {}),
+    };
   } catch {
     return {};
   }

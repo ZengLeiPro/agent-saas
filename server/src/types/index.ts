@@ -177,6 +177,10 @@ export interface ModelProviderOptions {
    * 显式传稳定 key 后 cached_tokens 命中率 76%+。默认关闭对所有主流兼容端点无害。
    */
   disablePromptCacheKey?: boolean;
+  /** MCP 目录策略：auto 未验证能力时回退 eager；deferred 未验证时配置报错。 */
+  mcpLoadingMode?: 'auto' | 'eager' | 'deferred';
+  /** provider 原生工具搜索能力，必须由平台模型配置显式声明。 */
+  toolSearchProtocol?: 'none' | 'openai_responses_hosted';
   /**
    * D1：deepseek-v4-pro 在 emit tool_call.arguments JSON string 字段时
    * 把反斜杠多 escape 一层（实测 2/2 稳定复现）。开启此 flag 后 ResponsesApiAdapter

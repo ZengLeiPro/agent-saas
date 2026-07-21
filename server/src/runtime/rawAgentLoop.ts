@@ -52,6 +52,13 @@ import type { RunStore } from './runStore.js';
 import { createLogger } from '../utils/logger.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { WebFetchCircuitOpenError } from '../agent/webToolProvider.js';
+import {
+  buildMcpCapabilityDescription,
+  buildMcpNamespaceName,
+  resolveLoadedMcpTools,
+  resolveSessionMcpTools,
+  type EffectiveMcpLoadingMode,
+} from './mcpToolLoading.js';
 
 /**
  * RawAgentLoop 自身原本完全依赖 EventStore 留痕,不打 logger 日志。
@@ -113,6 +120,8 @@ export interface RawAgentLoopOptions {
    * 不传则不做接力，所有请求都走全量 input（行为退化为不使用 Responses API 接力）。
    */
   runStore?: RunStore;
+  /** 已由显式 model capability 解析出的 MCP 加载方式；缺省保持 eager 零回归。 */
+  mcpLoadingMode?: EffectiveMcpLoadingMode;
   streamEventBatch?: StreamEventBatchOptions;
   /**
    * 把「invocationStarted 但既无 completed 也无 cancel_requested」的工具调用判定
@@ -350,6 +359,7 @@ export class RawAgentLoop implements AgentLoop {
   private readonly toolInvocationStore?: ToolInvocationStore;
   private readonly handStore?: HandStore;
   private readonly runStore?: RunStore;
+  private readonly mcpLoadingMode: EffectiveMcpLoadingMode;
   private readonly streamEventBatch: Required<StreamEventBatchOptions>;
   private readonly zombieToolCallTimeoutMs: number;
   private webFetchSynthesisReason?: string;
@@ -369,6 +379,7 @@ export class RawAgentLoop implements AgentLoop {
     this.toolInvocationStore = options.toolInvocationStore;
     this.handStore = options.handStore;
     this.runStore = options.runStore;
+    this.mcpLoadingMode = options.mcpLoadingMode ?? 'eager';
     this.streamEventBatch = {
       maxEvents: options.streamEventBatch?.maxEvents ?? 25,
       maxBytes: options.streamEventBatch?.maxBytes ?? 32 * 1024,
@@ -510,6 +521,123 @@ export class RawAgentLoop implements AgentLoop {
     return true;
   }
 
+  private async prepareSessionTools(
+    descriptors: ToolDescriptor[],
+    priorEvents: PlatformEvent[],
+    context: RunContext,
+  ): Promise<{
+    tools: ReturnType<typeof toModelToolDefinition>[];
+    descriptorsByName: Map<string, ToolDescriptor>;
+  }> {
+    const resolved = resolveSessionMcpTools({
+      liveTools: descriptors.map(toModelToolDefinition),
+      priorEvents,
+      loadingMode: this.mcpLoadingMode,
+    });
+    if (resolved.needsSnapshot) {
+      await this.append({
+        type: 'mcp_tool_catalog_snapshot',
+        runId: context.runId,
+        sessionId: context.sessionId,
+        loadingMode: 'openai_responses_hosted',
+        tools: resolved.snapshotTools,
+      });
+    }
+    const visibleNames = new Set(resolved.tools.map((tool) => tool.name));
+    return {
+      tools: resolved.tools,
+      descriptorsByName: new Map(
+        descriptors
+          .filter((descriptor) => visibleNames.has(descriptor.name))
+          .map((descriptor) => [descriptor.name, descriptor]),
+      ),
+    };
+  }
+
+  private async persistLoadedMcpTools(
+    completed: Extract<ModelEvent, { type: 'completed' }>,
+    availableTools: ReturnType<typeof toModelToolDefinition>[],
+    messages: ModelChatMessage[],
+    context: RunContext,
+  ): Promise<void> {
+    if (!completed.toolSearchResults?.length) return;
+    const previouslyLoaded = new Set(
+      messages
+        .filter((message): message is Extract<ModelChatMessage, { role: 'additional_tools' }> => (
+          message.role === 'additional_tools'
+        ))
+        .flatMap((message) => message.tools.map((tool) => tool.name)),
+    );
+    for (const result of completed.toolSearchResults) {
+      const tools = resolveLoadedMcpTools(result.loadedToolNames, availableTools, result.paths)
+        .filter((tool) => !previouslyLoaded.has(tool.name));
+      if (tools.length === 0) continue;
+      for (const tool of tools) previouslyLoaded.add(tool.name);
+      await this.append({
+        type: 'mcp_tools_loaded',
+        runId: context.runId,
+        sessionId: context.sessionId,
+        execution: result.execution,
+        paths: result.paths,
+        tools,
+      });
+      messages.push({ role: 'additional_tools', tools });
+    }
+  }
+
+  private filterLoadedToolMessages(
+    messages: ModelChatMessage[],
+    availableTools: ReturnType<typeof toModelToolDefinition>[],
+  ): ModelChatMessage[] {
+    if (this.mcpLoadingMode === 'eager') {
+      return messages.filter((message) => message.role !== 'additional_tools');
+    }
+    const allowed = new Set(availableTools.map((tool) => tool.name));
+    return messages.flatMap((message): ModelChatMessage[] => {
+      if (message.role !== 'additional_tools') return [message];
+      const tools = message.tools.filter((tool) => allowed.has(tool.name));
+      return tools.length > 0 ? [{ role: 'additional_tools', tools }] : [];
+    });
+  }
+
+  private restrictDeferredMcpDescriptors(
+    descriptorsByName: Map<string, ToolDescriptor>,
+    loadedToolNames: ReadonlySet<string>,
+  ): Map<string, ToolDescriptor> {
+    if (this.mcpLoadingMode === 'eager') return descriptorsByName;
+    return new Map(
+      [...descriptorsByName].filter(([name, descriptor]) => !descriptor.mcp || loadedToolNames.has(name)),
+    );
+  }
+
+  private callableDescriptorsForMessages(
+    descriptorsByName: Map<string, ToolDescriptor>,
+    messages: ModelChatMessage[],
+  ): Map<string, ToolDescriptor> {
+    const loadedToolNames = new Set(
+      messages
+        .filter((message): message is Extract<ModelChatMessage, { role: 'additional_tools' }> => (
+          message.role === 'additional_tools'
+        ))
+        .flatMap((message) => message.tools.map((tool) => tool.name)),
+    );
+    return this.restrictDeferredMcpDescriptors(descriptorsByName, loadedToolNames);
+  }
+
+  private callableDescriptorsForEvents(
+    descriptorsByName: Map<string, ToolDescriptor>,
+    events: PlatformEvent[],
+  ): Map<string, ToolDescriptor> {
+    const loadedToolNames = new Set(
+      events
+        .filter((event): event is Extract<PlatformEvent, { type: 'mcp_tools_loaded' }> => (
+          event.type === 'mcp_tools_loaded'
+        ))
+        .flatMap((event) => event.tools.map((tool) => tool.name)),
+    );
+    return this.restrictDeferredMcpDescriptors(descriptorsByName, loadedToolNames);
+  }
+
   async *run(input: RunInput, context: RunContext): AsyncIterable<OutboundEvent> {
     const workspace = this.workspaceProvider.resolve(context.channelContext, {
       cwd: context.cwd,
@@ -529,11 +657,10 @@ export class RawAgentLoop implements AgentLoop {
       signal: context.signal,
     };
     const descriptors = this.toolRuntime.list(baseToolContext);
-    const descriptorsByName = new Map(descriptors.map((descriptor) => [descriptor.name, descriptor]));
-    const tools = descriptors.map(toModelToolDefinition);
     const priorEvents = await this.eventStore.list(context.sessionId, {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
     });
+    const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, context);
     const replayState = buildRuntimeReplayState(
       priorEvents,
       await this.approvalStore.list(context.sessionId),
@@ -561,7 +688,7 @@ export class RawAgentLoop implements AgentLoop {
     const messages: ModelChatMessage[] = [
       { role: 'system', content: input.instructions },
       ...memoryMessage,
-      ...contextProjection.messages,
+      ...this.filterLoadedToolMessages(contextProjection.messages, tools),
       { role: 'user', content: buildModelUserContent(input.prompt, input.attachments, input.visionAnalysis) },
     ];
     const currentUserMessageIndex = messages.length - 1;
@@ -709,6 +836,7 @@ export class RawAgentLoop implements AgentLoop {
           currentResponseId = completed.responseId;
           await this.persistResponseSessionState(context.runId, completed, context.model);
         }
+        await this.persistLoadedMcpTools(completed, tools, messages, context);
 
         if (completed.toolCalls.length === 0) {
           if (completed.content && completed.content !== turnText) {
@@ -821,12 +949,13 @@ export class RawAgentLoop implements AgentLoop {
             id: call.id,
             type: 'function',
             function: { name: call.name, arguments: call.arguments },
+            ...(call.namespace ? { namespace: call.namespace } : {}),
           })),
         });
 
         yield* this.drainToolCalls({
           calls: completed.toolCalls,
-          descriptorsByName,
+          descriptorsByName: this.callableDescriptorsForMessages(descriptorsByName, messages),
           baseToolContext,
           context,
           messages,
@@ -1420,13 +1549,14 @@ export class RawAgentLoop implements AgentLoop {
       signal: resumeContext.signal,
     };
     const descriptors = this.toolRuntime.list(baseToolContext);
-    const descriptorsByName = new Map(descriptors.map((descriptor) => [descriptor.name, descriptor]));
-    const tools = descriptors.map(toModelToolDefinition);
-    const descriptor = descriptorsByName.get(approval.toolName);
+    const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, resumeContext);
+    const callableDescriptorsByName = this.callableDescriptorsForEvents(descriptorsByName, priorEvents);
+    const descriptor = callableDescriptorsByName.get(approval.toolName);
     const call: ModelToolCall = {
       id: pendingState.call.id,
       name: pendingState.call.name,
       arguments: pendingState.call.arguments,
+      ...(pendingState.call.namespace ? { namespace: pendingState.call.namespace } : {}),
     };
     const outcome = await this.resolveApprovalDecision({
       approval,
@@ -1449,7 +1579,7 @@ export class RawAgentLoop implements AgentLoop {
       yield* this.drainRemainingToolCallBatch({
         batch: pendingBatch,
         skipToolCallIds: new Set([call.id]),
-        descriptorsByName,
+        descriptorsByName: callableDescriptorsByName,
         baseToolContext,
         context: resumeContext,
       });
@@ -1470,7 +1600,7 @@ export class RawAgentLoop implements AgentLoop {
     });
     const messages: ModelChatMessage[] = [
       { role: 'system', content: input.instructions },
-      ...contextProjection.messages,
+      ...this.filterLoadedToolMessages(contextProjection.messages, tools),
     ];
     if (contextProjection.summaryEvent) await this.append(contextProjection.summaryEvent);
 
@@ -1554,8 +1684,8 @@ export class RawAgentLoop implements AgentLoop {
       signal: context.signal,
     };
     const descriptors = this.toolRuntime.list(baseToolContext);
-    const descriptorsByName = new Map(descriptors.map((descriptor) => [descriptor.name, descriptor]));
-    const tools = descriptors.map(toModelToolDefinition);
+    const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, context);
+    const callableDescriptorsByName = this.callableDescriptorsForEvents(descriptorsByName, priorEvents);
     const call = pendingState.call;
     const resultContent = formatAskUserQuestionResult(input.response);
 
@@ -1582,7 +1712,7 @@ export class RawAgentLoop implements AgentLoop {
       yield* this.drainRemainingToolCallBatch({
         batch: pendingBatch,
         skipToolCallIds: new Set([call.id]),
-        descriptorsByName,
+        descriptorsByName: callableDescriptorsByName,
         baseToolContext,
         context,
       });
@@ -1603,7 +1733,7 @@ export class RawAgentLoop implements AgentLoop {
     });
     const messages: ModelChatMessage[] = [
       { role: 'system', content: input.instructions },
-      ...contextProjection.messages,
+      ...this.filterLoadedToolMessages(contextProjection.messages, tools),
     ];
     if (contextProjection.summaryEvent) await this.append(contextProjection.summaryEvent);
 
@@ -1655,9 +1785,25 @@ export class RawAgentLoop implements AgentLoop {
       return {
         call,
         input,
-        result: { content: standardizeToolError(`tool not found: ${call.name}（不在本轮可用工具集中）`) },
+        result: { content: standardizeToolError(unavailableToolMessage(call.name)) },
         isError: true,
       };
+    }
+    if (this.mcpLoadingMode !== 'eager' && descriptor.mcp) {
+      const expectedNamespace = buildMcpNamespaceName(descriptor.mcp.serverName);
+      if (call.namespace !== expectedNamespace) {
+        return {
+          call,
+          descriptor,
+          input,
+          result: {
+            content: standardizeToolError(
+              `MCP namespace mismatch: ${call.name}（期望 ${expectedNamespace}，实际 ${call.namespace ?? '未提供'}）`,
+            ),
+          },
+          isError: true,
+        };
+      }
     }
 
     if (call.name === 'WebFetch' && this.webFetchSynthesisReason) {
@@ -1787,7 +1933,7 @@ export class RawAgentLoop implements AgentLoop {
       return {
         call: args.call,
         input: args.input,
-        result: { content: standardizeToolError(`tool not found: ${args.call.name}（不在本轮可用工具集中）`) },
+        result: { content: standardizeToolError(unavailableToolMessage(args.call.name)) },
         isError: true,
       };
     }
@@ -2169,6 +2315,7 @@ export class RawAgentLoop implements AgentLoop {
           currentResponseId = completed.responseId;
           await this.persistResponseSessionState(args.context.runId, completed, args.context.model);
         }
+        await this.persistLoadedMcpTools(completed, args.tools, args.messages, args.context);
 
         if (completed.toolCalls.length === 0) {
           if (completed.content && completed.content !== turnText) {
@@ -2281,12 +2428,13 @@ export class RawAgentLoop implements AgentLoop {
             id: call.id,
             type: 'function',
             function: { name: call.name, arguments: call.arguments },
+            ...(call.namespace ? { namespace: call.namespace } : {}),
           })),
         });
 
         yield* this.drainToolCalls({
           calls: completed.toolCalls,
-          descriptorsByName: args.descriptorsByName,
+          descriptorsByName: this.callableDescriptorsForMessages(args.descriptorsByName, args.messages),
           baseToolContext: args.baseToolContext,
           context: args.context,
           messages: args.messages,
@@ -2439,7 +2587,26 @@ function toModelToolDefinition(descriptor: ToolDescriptor) {
     name: descriptor.name,
     description: descriptor.description,
     parameters: schema,
+    ...(descriptor.mcp ? {
+      mcpServer: {
+        serverName: descriptor.mcp.serverName,
+        namespace: buildMcpNamespaceName(descriptor.mcp.serverName),
+        displayName: descriptor.mcp.serverDisplayName,
+        description: buildMcpCapabilityDescription({
+          serverName: descriptor.mcp.serverName,
+          displayName: descriptor.mcp.serverDisplayName,
+          description: descriptor.mcp.serverDescription,
+        }),
+      },
+    } : {}),
   };
+}
+
+function unavailableToolMessage(toolName: string): string {
+  if (toolName.startsWith('mcp__')) {
+    return `MCP tool unavailable: ${toolName}（当前授权/租户策略/全局开关不允许，或该工具 schema 已变化；请重新授权或新建会话后重试）`;
+  }
+  return `tool unavailable: ${toolName}（不在本轮可用工具集中）`;
 }
 
 function parseToolArguments(raw: string): unknown {

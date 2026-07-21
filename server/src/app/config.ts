@@ -425,6 +425,10 @@ const modelResponsesOptionsSchema = z.object({
    * 导致缓存永远打散——显式传稳定 key 后 cached_tokens 命中率 76%+。
    */
   disable_prompt_cache_key: z.boolean().optional(),
+  /** MCP 工具目录策略；auto 仅在显式协议能力通过时启用 deferred。 */
+  mcp_loading_mode: z.enum(['auto', 'eager', 'deferred']).optional(),
+  /** 已现场验证的 provider 原生工具搜索协议；不按模型名推断。 */
+  tool_search_protocol: z.enum(['none', 'openai_responses_hosted']).optional(),
 });
 
 const modelPricingSchema = z.object({

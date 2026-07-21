@@ -159,6 +159,41 @@ describe('OpenAI-only model resolver', () => {
       .toEqual([]);
   });
 
+  it('显式映射 MCP loading/capability，model 可覆盖 group 且不按名称推断', () => {
+    const withMcpCapabilities: ModelsConfig = {
+      default: 'openai/gpt',
+      allowCrossGroupSwitch: false,
+      groups: [{
+        id: 'openai',
+        name: 'OpenAI',
+        protocol: 'responses',
+        mcp_loading_mode: 'auto',
+        tool_search_protocol: 'openai_responses_hosted',
+        models: [
+          { id: 'gpt', name: 'GPT', value: 'opaque-model-id' },
+          {
+            id: 'fallback',
+            name: 'Fallback',
+            value: 'gpt-looking-name',
+            mcp_loading_mode: 'eager',
+            tool_search_protocol: 'none',
+          },
+        ],
+      }],
+    };
+
+    expect(resolveModelRef(withMcpCapabilities, 'openai/gpt')?.providerOptions).toMatchObject({
+      protocol: 'responses',
+      mcpLoadingMode: 'auto',
+      toolSearchProtocol: 'openai_responses_hosted',
+    });
+    expect(resolveModelRef(withMcpCapabilities, 'openai/fallback')?.providerOptions).toMatchObject({
+      protocol: 'responses',
+      mcpLoadingMode: 'eager',
+      toolSearchProtocol: 'none',
+    });
+  });
+
   it('falls back to default when a model ref is stale', () => {
     expect(resolveModelRef(modelsConfig, 'openai-agents/removed')).toEqual({
       model: 'doubao-pro',

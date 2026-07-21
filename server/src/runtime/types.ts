@@ -58,12 +58,30 @@ export interface ModelToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /** OpenAI Responses 原生 tool_search：函数仍保留真实 name，只延迟 schema 加载。 */
+  deferLoading?: boolean;
+  /** MCP server 的稳定能力地图元数据；adapter 以 server 为单位生成 namespace。 */
+  mcpServer?: {
+    serverName: string;
+    namespace: string;
+    displayName: string;
+    description: string;
+  };
+}
+
+export interface ModelToolSearchResult {
+  execution: 'server' | 'client';
+  callId?: string;
+  paths: string[];
+  loadedToolNames: string[];
 }
 
 export interface ModelToolCall {
   id: string;
   name: string;
   arguments: string;
+  /** Responses namespace；执行仍按真实 name 路由，字段只用于忠实协议重放。 */
+  namespace?: string;
 }
 
 export interface ModelUsage {
@@ -215,6 +233,7 @@ export type ModelChatMessage =
       id: string;
       type: 'function';
       function: { name: string; arguments: string };
+      namespace?: string;
     }>;
     /**
      * RFC v1 P1.5：保留 assistant 在该轮的 reasoning summary。
@@ -225,7 +244,8 @@ export type ModelChatMessage =
      */
     reasoning_content?: string;
   }
-  | { role: 'tool'; tool_call_id: string; content: string };
+  | { role: 'tool'; tool_call_id: string; content: string }
+  | { role: 'additional_tools'; tools: ModelToolDefinition[]; content?: undefined };
 
 export interface ModelRequest {
   model: string;
@@ -275,6 +295,8 @@ export type ModelEvent =
     requestInputPrefixHash?: string;
     /** 最终成功请求的 UTF-8 JSON body 大小。 */
     requestBodyBytes?: number;
+    /** 原生 Responses tool_search 的终态事实；为空表示本轮未搜索/加载。 */
+    toolSearchResults?: ModelToolSearchResult[];
   };
 
 export interface ModelAdapter {
@@ -286,6 +308,30 @@ export interface AgentLoop {
 }
 
 export type PlatformEvent =
+  | {
+    id: string;
+    timestamp: string;
+    /**
+     * 原生 deferred session 的首次 MCP 目录快照。后续 run 只会收紧授权交集，
+     * 不把新授权或 tools/list_changed 静默漂入已有 session。
+     */
+    type: 'mcp_tool_catalog_snapshot';
+    runId: string;
+    sessionId: string;
+    loadingMode: 'openai_responses_hosted';
+    tools: ModelToolDefinition[];
+  }
+  | {
+    id: string;
+    timestamp: string;
+    /** Search 命中的真实工具定义，按 provider 返回位置持久化供 full replay/compaction 恢复。 */
+    type: 'mcp_tools_loaded';
+    runId: string;
+    sessionId: string;
+    execution: 'server' | 'client';
+    paths: string[];
+    tools: ModelToolDefinition[];
+  }
   | {
     id: string;
     timestamp: string;

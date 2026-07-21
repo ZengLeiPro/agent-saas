@@ -15,6 +15,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
 type ModelProtocol = "chat_completions" | "responses";
+type McpLoadingMode = "auto" | "eager" | "deferred";
+type ToolSearchProtocol = "none" | "openai_responses_hosted";
 
 const DEFAULT_PROTOCOL: ModelProtocol = "chat_completions";
 const INHERIT_PROTOCOL = "__inherit__";
@@ -41,6 +43,8 @@ type EditableModel = {
   auto_compact_threshold?: number;
   tool_choice_modes?: Array<"auto" | "required" | "none" | "specific">;
   is_pseudo_reasoning?: boolean;
+  mcp_loading_mode?: McpLoadingMode;
+  tool_search_protocol?: ToolSearchProtocol;
 };
 
 type EditableGroup = {
@@ -59,6 +63,8 @@ type EditableGroup = {
   reasoningEffort?: string;
   extraBody?: Record<string, unknown>;
   input_modalities?: Array<"text" | "image">;
+  mcp_loading_mode?: McpLoadingMode;
+  tool_search_protocol?: ToolSearchProtocol;
   models: EditableModel[];
 };
 
@@ -938,6 +944,22 @@ export function ModelManager() {
                   </select>
                   <p className="text-xs text-muted-foreground">当前生效：{formatEffectiveValue(resolveGroupReasoningEffort(selectedGroup))}</p>
                 </div>
+                <div className="space-y-1.5">
+                  <Label>MCP 加载模式</Label>
+                  <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedGroup.mcp_loading_mode ?? "auto"} onChange={(e) => updateGroup(selectedGroup.id, { mcp_loading_mode: e.target.value as McpLoadingMode })}>
+                    <option value="auto">auto（能力通过才渐进加载）</option>
+                    <option value="eager">eager（完整工具列表）</option>
+                    <option value="deferred">deferred（能力不匹配时报错）</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Tool Search 协议能力</Label>
+                  <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedGroup.tool_search_protocol ?? "none"} onChange={(e) => updateGroup(selectedGroup.id, { tool_search_protocol: e.target.value as ToolSearchProtocol })}>
+                    <option value="none">未验证 / 不支持</option>
+                    <option value="openai_responses_hosted">OpenAI Responses hosted tool_search</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">只按真实 endpoint 验证结果配置，不按模型名称猜测。</p>
+                </div>
                 <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_response_chaining} onChange={(e) => updateGroup(selectedGroup.id, { disable_response_chaining: e.target.checked ? undefined : true })} /><span>启用 Responses 有状态接力（previous_response_id）<span className="block text-xs text-muted-foreground">开启后会使用 previous_response_id 连接多轮 Responses 调用。适用于原生 Responses 服务，如火山等。无状态 OpenAI 兼容代理，例如 cli-proxy，请关闭，否则工具调用后可能报 "No tool call found for function call output"。</span></span></label>
                 <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_prompt_cache_key} onChange={(e) => updateGroup(selectedGroup.id, { disable_prompt_cache_key: e.target.checked ? undefined : true })} /><span>启用 prompt_cache_key 内容指纹（Chat Completions + Responses 通用）<span className="block text-xs text-muted-foreground">开启后以 sha256(model + system/instructions + tool 名单) 前 32 hex 作为 prompt_cache_key 传给上游，让相同前缀的请求命中同一缓存分片。07-04 实测 CLIProxyAPI 会为每次请求自动填新 UUID 覆盖 → 缓存永远打散，显式传稳定 key 后 cached_tokens 命中率 76%+。主流 OpenAI 兼容端点 silent ignore 未知字段，默认开启无害；仅在极少数「兼容层会拒绝该字段」的端点上关闭。</span></span></label>
                 <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={selectedGroup.input_modalities?.includes("image") === true} onChange={(e) => updateGroup(selectedGroup.id, { input_modalities: e.target.checked ? ["text", "image"] : ["text"] })} /><span>分组模型支持图片输入<span className="block text-xs text-muted-foreground">只在已验证 provider 协议确实支持视觉时开启；模型可单独覆盖。</span></span></label>
@@ -1009,6 +1031,23 @@ export function ModelManager() {
                       <option value="text">仅 text</option>
                     </select>
                     <p className="text-xs text-muted-foreground">当前生效：{resolveModelImageInput(selectedModelContext.group, selectedModelContext.model) ? "text + image" : "仅 text / unknown"}</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>MCP 加载模式</Label>
+                    <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedModelContext.model.mcp_loading_mode ?? "inherit"} onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, { mcp_loading_mode: e.target.value === "inherit" ? undefined : e.target.value as McpLoadingMode })}>
+                      <option value="inherit">继承分组</option>
+                      <option value="auto">auto</option>
+                      <option value="eager">eager</option>
+                      <option value="deferred">deferred</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Tool Search 协议能力</Label>
+                    <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedModelContext.model.tool_search_protocol ?? "inherit"} onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, { tool_search_protocol: e.target.value === "inherit" ? undefined : e.target.value as ToolSearchProtocol })}>
+                      <option value="inherit">继承分组</option>
+                      <option value="none">本模型不支持</option>
+                      <option value="openai_responses_hosted">OpenAI Responses hosted tool_search</option>
+                    </select>
                   </div>
                 </div>
 

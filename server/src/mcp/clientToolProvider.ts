@@ -101,6 +101,11 @@ function toDescriptor(tool: McpToolDescriptor): ToolDescriptor {
     risk: 'workspace_write',
     approvalMode: 'web',
     auditCategory: `mcp.${tool.serverName}.${tool.toolName}`,
+    mcp: {
+      serverName: tool.serverName,
+      serverDisplayName: tool.serverDisplayName?.trim() || tool.serverName,
+      ...(tool.serverDescription ? { serverDescription: tool.serverDescription } : {}),
+    },
   };
 }
 

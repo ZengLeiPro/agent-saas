@@ -7,7 +7,8 @@
  * 行为：
  *  - 每个 user 第一次需要时 lazy-connect：spawn stdio MCP server 或 dial Streamable
  *    HTTP MCP server；
- *  - 连上后 `client.listTools()` 拉描述符，缓存到内存（不做 hot reload）；
+ *  - 连上后 `client.listTools()` 拉描述符；`notifications/tools/list_changed` 只刷新
+ *    manager 的未来目录，已开始的 Agent session 仍由 runtime snapshot 保持稳定；
  *  - 工具名拼成 `mcp__<serverName>__<toolName>` 与 3000 历史口径一致；
  *  - 提供 `invoke(toolKey, input)` 走对应 client.callTool。
  *
@@ -39,6 +40,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { rejectPlaintextSecretMap } from '../security/secretHeuristics.js';
 import type { SecretVault } from '../security/secretVault.js';
@@ -72,10 +74,18 @@ export interface McpOAuthServerConfig {
 
 export interface McpServersFileShape {
   mcpServers?: Record<string, McpServerConfig>;
+  serverMetadata?: Record<string, McpServerMetadata>;
+}
+
+export interface McpServerMetadata {
+  name: string;
+  description?: string;
 }
 
 export interface McpToolDescriptor {
   serverName: string;
+  serverDisplayName?: string;
+  serverDescription?: string;
   toolName: string;
   description: string;
   inputSchema: Record<string, unknown>;
@@ -331,7 +341,7 @@ export class McpClientManager {
         continue;
       }
       try {
-        await this._connectServerForUser(entry, serverName, serverConfig);
+        await this._connectServerForUser(entry, serverName, serverConfig, config.serverMetadata?.[serverName]);
       } catch (err) {
         this._recordConnectionFailure(entry, serverName, err);
         if (this.options.failOnError) throw err;
@@ -356,7 +366,7 @@ export class McpClientManager {
         continue;
       }
       try {
-        await this._connectServerForUser(entry, serverName, serverConfig);
+        await this._connectServerForUser(entry, serverName, serverConfig, config.serverMetadata?.[serverName]);
       } catch (err) {
         this._recordConnectionFailure(entry, serverName, err);
         if (this.options.failOnError) throw err;
@@ -369,6 +379,7 @@ export class McpClientManager {
     entry: UserMcpEntry,
     serverName: string,
     serverConfig: McpServerConfig,
+    serverMetadata?: McpServerMetadata,
   ): Promise<void> {
     const { username } = entry;
     const resolvedConfig = await resolveMcpServerSecrets({
@@ -389,7 +400,20 @@ export class McpClientManager {
     if (!isStdioConfig(resolvedConfig) && resolvedConfig.oauth && !oauthProvider) {
       throw new Error('OAuth connection is not authorized for this user');
     }
-    const connected = await this._connectServerWithTimeout(serverName, resolvedConfig, oauthProvider);
+    const connected = await this._connectServerWithTimeout(
+      serverName,
+      resolvedConfig,
+      oauthProvider,
+      serverMetadata,
+      (tools) => {
+        entry.connectionStatuses.set(serverName, {
+          status: 'connected',
+          toolCount: tools.length,
+          checkedAt: Date.now(),
+          attempts: 0,
+        });
+      },
+    );
     if (connected.tools.length === 0) {
       await connected.shutdown().catch(() => undefined);
       throw new Error('MCP server connected but returned no tools');
@@ -427,12 +451,21 @@ export class McpClientManager {
     serverName: string,
     config: McpServerConfig,
     oauthProvider?: OAuthClientProvider,
+    serverMetadata?: McpServerMetadata,
+    onToolsChanged?: (tools: McpToolDescriptor[]) => void,
   ): Promise<ConnectedServer> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.options.connectTimeoutMs);
     try {
       return await Promise.race([
-        connectServer(serverName, config, this.options.logger, oauthProvider),
+        connectServer(
+          serverName,
+          config,
+          this.options.logger,
+          oauthProvider,
+          serverMetadata,
+          onToolsChanged,
+        ),
         new Promise<ConnectedServer>((_resolve, reject) => {
           controller.signal.addEventListener('abort', () =>
             reject(new Error(`connect timeout after ${this.options.connectTimeoutMs}ms`)),
@@ -680,8 +713,10 @@ function validateHeaderSecretRefs(value: unknown, label: string): Record<string,
 async function connectServer(
   serverName: string,
   config: McpServerConfig,
-  _logger?: Logger,
+  logger?: Logger,
   oauthProvider?: OAuthClientProvider,
+  serverMetadata?: McpServerMetadata,
+  onToolsChanged?: (tools: McpToolDescriptor[]) => void,
 ): Promise<ConnectedServer> {
   const client = new Client(
     { name: `agent-saas/${serverName}`, version: '0.1.0' },
@@ -710,11 +745,9 @@ async function connectServer(
   }
 
   await client.connect(transport);
-  const tools = await listAndDescribeTools(client, serverName);
-
-  return {
+  const connected: ConnectedServer = {
     client,
-    tools,
+    tools: await listAndDescribeTools(client, serverName, serverMetadata),
     async shutdown() {
       try {
         await client.close();
@@ -723,6 +756,21 @@ async function connectServer(
       }
     },
   };
+  if (typeof client.setNotificationHandler === 'function') {
+    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+      try {
+        const tools = await listAndDescribeTools(client, serverName, serverMetadata);
+        connected.tools = tools;
+        onToolsChanged?.(tools);
+        logger?.info(`MCP tools/list_changed refreshed server=${serverName} tools=${tools.length}`);
+      } catch (err) {
+        logger?.warn(
+          `MCP tools/list_changed refresh failed server=${serverName}: ${sanitizeConnectionError(err)}`,
+        );
+      }
+    });
+  }
+  return connected;
 }
 
 function isStdioConfig(config: McpServerConfig): config is Extract<McpServerConfig, { command: string }> {
@@ -733,7 +781,11 @@ function isStdioConfig(config: McpServerConfig): config is Extract<McpServerConf
   return 'command' in config && typeof (config as { command?: unknown }).command === 'string';
 }
 
-async function listAndDescribeTools(client: Client, serverName: string): Promise<McpToolDescriptor[]> {
+async function listAndDescribeTools(
+  client: Client,
+  serverName: string,
+  serverMetadata?: McpServerMetadata,
+): Promise<McpToolDescriptor[]> {
   const out: McpToolDescriptor[] = [];
   const seenNames = new Set<string>();
   const seenCursors = new Set<string>();
@@ -748,6 +800,10 @@ async function listAndDescribeTools(client: Client, serverName: string): Promise
       seenNames.add(tool.name);
       out.push({
         serverName,
+        serverDisplayName: serverMetadata?.name?.trim() || serverName,
+        ...(serverMetadata?.description?.trim()
+          ? { serverDescription: serverMetadata.description.trim() }
+          : {}),
         toolName: tool.name,
         description: tool.description ?? '',
         inputSchema: (tool.inputSchema as Record<string, unknown>) ?? { type: 'object' },

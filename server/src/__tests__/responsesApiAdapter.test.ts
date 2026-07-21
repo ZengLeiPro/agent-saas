@@ -1509,6 +1509,180 @@ describe('ResponsesApiAdapter', () => {
     }, baseContext))).rejects.toThrow('cannot override reserved fields: stream');
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('原生 MCP deferred：发送透明 namespace+tool_search，恢复 additional_tools，并解析真实工具调用', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', {
+        type: 'response.created',
+        response: { id: 'resp_mcp', model: 'gpt-5.4' },
+      }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: {
+          id: 'resp_mcp',
+          model: 'gpt-5.4',
+          status: 'completed',
+          output: [
+            {
+              type: 'tool_search_call',
+              id: 'ts_1',
+              arguments: { paths: ['mcp_github.mcp__github__get_issue'] },
+            },
+            {
+              type: 'tool_search_output',
+              execution: 'server',
+              tools: [{
+                type: 'namespace',
+                name: 'mcp_github',
+                tools: [{
+                  type: 'function',
+                  name: 'mcp__github__get_issue',
+                  description: '读取 issue',
+                  parameters: { type: 'object', properties: { number: { type: 'integer' } } },
+                }],
+              }],
+            },
+            {
+              type: 'function_call',
+              call_id: 'call_issue',
+              namespace: 'mcp_github',
+              name: 'mcp__github__get_issue',
+              arguments: '{"number":42}',
+            },
+          ],
+          usage: { input_tokens: 90, output_tokens: 12, input_tokens_details: { cached_tokens: 64 } },
+        },
+      }),
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://api.openai.example/v1' },
+      { protocol: 'responses' },
+    );
+    const mcpTool = {
+      id: 'mcp__github__get_issue',
+      name: 'mcp__github__get_issue',
+      description: '读取 issue',
+      parameters: { type: 'object', properties: { number: { type: 'integer' } } },
+      deferLoading: true,
+      mcpServer: {
+        serverName: 'github',
+        namespace: 'mcp_github',
+        displayName: 'GitHub',
+        description: 'GitHub：仓库、代码搜索、Issue 与 Pull Request。仅需私有/实时数据时搜索。',
+      },
+    };
+
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.4',
+      messages: [
+        { role: 'system', content: 'system' },
+        { role: 'additional_tools', tools: [mcpTool] },
+        { role: 'user', content: '读取 42 号 issue' },
+      ],
+      tools: [
+        { id: 'Read', name: 'Read', description: 'read', parameters: { type: 'object' } },
+        mcpTool,
+      ],
+    }, { ...baseContext, model: 'gpt-5.4' }));
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.tools).toEqual([
+      expect.objectContaining({ type: 'function', name: 'Read' }),
+      {
+        type: 'namespace',
+        name: 'mcp_github',
+        description: mcpTool.mcpServer.description,
+        tools: [expect.objectContaining({
+          type: 'function',
+          name: mcpTool.name,
+          defer_loading: true,
+        })],
+      },
+      { type: 'tool_search' },
+    ]);
+    const restored = body.input.find((item: { type?: string }) => item.type === 'additional_tools');
+    expect(restored).toEqual({
+      type: 'additional_tools',
+      role: 'developer',
+      tools: [{
+        type: 'namespace',
+        name: 'mcp_github',
+        description: mcpTool.mcpServer.description,
+        tools: [expect.objectContaining({
+          type: 'function',
+          name: mcpTool.name,
+        })],
+      }],
+    });
+    expect(restored.tools[0].tools[0].defer_loading).toBe(true);
+    expect(events.find((event) => event.type === 'completed')).toMatchObject({
+      toolCalls: [{
+        id: 'call_issue',
+        namespace: 'mcp_github',
+        name: mcpTool.name,
+        arguments: '{"number":42}',
+      }],
+      toolSearchResults: [{
+        execution: 'server',
+        paths: ['mcp_github.mcp__github__get_issue'],
+        loadedToolNames: [mcpTool.name],
+      }],
+    });
+  });
+
+  it('MCP eager fallback 仍是普通 function，不发送 namespace/tool_search 等未知字段', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_eager', model: 'glm-5.2' } }),
+      sse('response.completed', {
+        type: 'response.completed',
+        response: {
+          id: 'resp_eager', model: 'glm-5.2', status: 'completed', output: [],
+          usage: { input_tokens: 10, output_tokens: 1 },
+        },
+      }),
+    ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
+      { protocol: 'responses' },
+    );
+    await collect(adapter.stream({
+      model: 'glm-5.2',
+      messages: [
+        {
+          role: 'additional_tools',
+          tools: [{
+            id: 'mcp__github__get_issue',
+            name: 'mcp__github__get_issue',
+            description: '读取 issue',
+            parameters: { type: 'object', properties: {} },
+            deferLoading: true,
+            mcpServer: {
+              serverName: 'github', namespace: 'mcp_github', displayName: 'GitHub', description: 'GitHub',
+            },
+          }],
+        },
+        { role: 'user', content: '读取 issue' },
+      ],
+      tools: [{
+        id: 'mcp__github__get_issue',
+        name: 'mcp__github__get_issue',
+        description: '读取 issue',
+        parameters: { type: 'object', properties: {} },
+        mcpServer: {
+          serverName: 'github', namespace: 'mcp_github', displayName: 'GitHub', description: 'GitHub',
+        },
+      }],
+    }, { ...baseContext, model: 'glm-5.2' }));
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.tools).toEqual([expect.objectContaining({
+      type: 'function',
+      name: 'mcp__github__get_issue',
+    })]);
+    expect(JSON.stringify(body)).not.toContain('tool_search');
+    expect(JSON.stringify(body)).not.toContain('namespace');
+    expect(JSON.stringify(body)).not.toContain('defer_loading');
+  });
 });
 
 describe('ChatCompletionsModelAdapter cross-API 防御 (P0.3)', () => {

@@ -73,6 +73,7 @@ import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { createLogger } from '../utils/logger.js';
 import { getRequestContext, requestContextStorage } from '../utils/requestContext.js';
 import { RawAgentLoop } from './rawAgentLoop.js';
+import { resolveEffectiveMcpLoadingMode } from './mcpToolLoading.js';
 import { modelSupportsImage, resolveInboundAttachments } from './imageAttachments.js';
 import {
   analyzeImagesWithFallback,
@@ -1883,6 +1884,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore,
       runStore: config.runStore,
+      mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 
     try {
@@ -2306,6 +2308,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore,
       runStore: config.runStore,
+      mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 
     try {
@@ -2604,6 +2607,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore,
       runStore: config.runStore,
+      mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 
     try {

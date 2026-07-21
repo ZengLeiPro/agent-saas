@@ -308,6 +308,9 @@ export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatM
         // 不直接进 messages 数组；累积到下一条 assistant 上（多段 thinking 会拼接）
         pendingReasoning = pendingReasoning ? `${pendingReasoning}\n${event.content}` : event.content;
         break;
+      case 'mcp_tools_loaded':
+        messages.push({ role: 'additional_tools', tools: event.tools });
+        break;
       case 'assistant_tool_calls':
         messages.push({
           role: 'assistant',
@@ -319,6 +322,7 @@ export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatM
               name: call.name,
               arguments: call.arguments,
             },
+            ...(call.namespace ? { namespace: call.namespace } : {}),
           })),
           ...(pendingReasoning ? { reasoning_content: pendingReasoning } : {}),
         });

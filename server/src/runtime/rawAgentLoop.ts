@@ -453,7 +453,11 @@ export class RawAgentLoop implements AgentLoop {
    * model 不一致（含存量数据缺失）一律不接力，退化为全量首轮——中间插过别的模型的对话
    * 本就不在旧 response 链上，全量才是语义正确的选择，不只是安全退化。
    */
-  private async loadInitialResponseId(sessionId: string, model: string): Promise<string | undefined> {
+  private async loadInitialResponseId(
+    sessionId: string,
+    model: string,
+    profileConfigDigest?: string,
+  ): Promise<string | undefined> {
     if (!this.runStore?.findLatestResponseSessionStateBySession) return undefined;
     try {
       const state = await this.runStore.findLatestResponseSessionStateBySession(sessionId);
@@ -462,6 +466,13 @@ export class RawAgentLoop implements AgentLoop {
         logger.info(
           `[responses-chain] skip cross-model relay session=${sessionId} `
           + `prevModel=${state.lastResponseModel ?? '<unknown>'} currentModel=${model}`,
+        );
+        return undefined;
+      }
+      if (state.lastResponseProfileDigest !== profileConfigDigest) {
+        logger.info(
+          `[responses-chain] skip cross-profile relay session=${sessionId} `
+          + `prevProfile=${state.lastResponseProfileDigest ?? '<legacy>'} currentProfile=${profileConfigDigest ?? '<legacy>'}`,
         );
         return undefined;
       }
@@ -480,12 +491,14 @@ export class RawAgentLoop implements AgentLoop {
     runId: string,
     completed: Extract<ModelEvent, { type: 'completed' }>,
     model: string,
+    profileConfigDigest?: string,
   ): Promise<void> {
     if (!this.runStore?.updateResponseSessionState || !completed.responseId) return;
     try {
       await this.runStore.updateResponseSessionState(runId, {
         lastResponseId: completed.responseId,
         lastResponseModel: model,
+        ...(profileConfigDigest ? { lastResponseProfileDigest: profileConfigDigest } : {}),
         ...(typeof completed.responseExpireAt === 'number'
           ? { lastResponseExpireAt: new Date(completed.responseExpireAt * 1000).toISOString() }
           : {}),
@@ -702,7 +715,16 @@ export class RawAgentLoop implements AgentLoop {
         content: formatMemoryContext(input.memoryContext),
       });
     }
-    await this.append({ type: 'run_started', runId: context.runId, sessionId: context.sessionId, model: context.model, channel: context.channelContext.channel });
+    await this.append({
+      type: 'run_started',
+      runId: context.runId,
+      sessionId: context.sessionId,
+      model: context.model,
+      channel: context.channelContext.channel,
+      ...(context.profileId ? { profileId: context.profileId } : {}),
+      ...(context.profileVersionId ? { profileVersionId: context.profileVersionId } : {}),
+      ...(context.profileConfigDigest ? { profileConfigDigest: context.profileConfigDigest } : {}),
+    });
     logger.info(`[run] start session=${context.sessionId} model=${context.model} channel=${context.channelContext.channel}`);
     if (input.recordUserMessage !== false) {
       await this.append({
@@ -728,7 +750,7 @@ export class RawAgentLoop implements AgentLoop {
     // 启动时查上一已完成 run 的 last_response_id（72h 内未过期），赋给本 run。
     // ChatCompletionsAdapter 收到 previousResponseId 会抛错 — 所以 runStore 只在
     // 模型走 protocol="responses" 时才有意义；dispatcher 已按 protocol 路由 adapter。
-    let currentResponseId = await this.loadInitialResponseId(context.sessionId, context.model);
+    let currentResponseId = await this.loadInitialResponseId(context.sessionId, context.model, context.profileConfigDigest);
 
     try {
       for (turn = 1; turn <= input.maxTurns; turn++) {
@@ -834,7 +856,7 @@ export class RawAgentLoop implements AgentLoop {
         // currentResponseId 用于下一轮 turn 接力（同 run 内）；落库后跨 run 也能查回。
         if (completed.responseId) {
           currentResponseId = completed.responseId;
-          await this.persistResponseSessionState(context.runId, completed, context.model);
+          await this.persistResponseSessionState(context.runId, completed, context.model, context.profileConfigDigest);
         }
         await this.persistLoadedMcpTools(completed, tools, messages, context);
 
@@ -1057,6 +1079,9 @@ export class RawAgentLoop implements AgentLoop {
       sessionId: context.sessionId,
       model: context.model,
       channel: context.channelContext.channel,
+      ...(context.profileId ? { profileId: context.profileId } : {}),
+      ...(context.profileVersionId ? { profileVersionId: context.profileVersionId } : {}),
+      ...(context.profileConfigDigest ? { profileConfigDigest: context.profileConfigDigest } : {}),
     });
     logger.info(`[compact] start session=${context.sessionId} model=${context.model} events=${priorEvents.length}`);
     await this.append({
@@ -2210,7 +2235,11 @@ export class RawAgentLoop implements AgentLoop {
     const contextUsageTracker = new RuntimeContextUsageTracker(args.context.model, args.priorEvents);
 
     // RFC v1 P0.4：resume 路径同样接力 Responses API session state。
-    let currentResponseId = await this.loadInitialResponseId(args.context.sessionId, args.context.model);
+    let currentResponseId = await this.loadInitialResponseId(
+      args.context.sessionId,
+      args.context.model,
+      args.context.profileConfigDigest,
+    );
 
     try {
       for (turn = 1; turn <= args.maxTurns; turn++) {
@@ -2313,7 +2342,12 @@ export class RawAgentLoop implements AgentLoop {
         // RFC v1 P0.4：resume 路径同样持久化 last_response_id 等。
         if (completed.responseId) {
           currentResponseId = completed.responseId;
-          await this.persistResponseSessionState(args.context.runId, completed, args.context.model);
+          await this.persistResponseSessionState(
+            args.context.runId,
+            completed,
+            args.context.model,
+            args.context.profileConfigDigest,
+          );
         }
         await this.persistLoadedMcpTools(completed, args.tools, args.messages, args.context);
 

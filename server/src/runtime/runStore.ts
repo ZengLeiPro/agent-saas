@@ -52,6 +52,8 @@ export interface RunRecord {
    * 拿 A 后端的 id 发给 B 后端必报 PreviousResponseNotFound（2026-07-02 切模型事故）。
    */
   lastResponseModel?: string;
+  /** Agent Profile config digest that produced lastResponseId. */
+  lastResponseProfileDigest?: string;
   /** 本 run 内累计 input_tokens（嵌套接力会爆涨，监控用）。 */
   cumulativeInputTokens?: number;
 }
@@ -106,6 +108,7 @@ export interface ResponseSessionStatePatch {
   actualModelSeen?: string | null;
   /** 产生 lastResponseId 的上游 model 值（接力身份键，见 RunRecord.lastResponseModel）。 */
   lastResponseModel?: string | null;
+  lastResponseProfileDigest?: string | null;
   cumulativeInputTokensDelta?: number;
 }
 
@@ -119,6 +122,7 @@ export interface LatestResponseSessionState {
   actualModelSeen?: string;
   /** 产生 lastResponseId 的上游 model 值；缺失（存量数据）视为身份未知，调用方不得接力。 */
   lastResponseModel?: string;
+  lastResponseProfileDigest?: string;
   cumulativeInputTokens?: number;
 }
 
@@ -245,6 +249,7 @@ export class PgRunStore implements RunStore {
       await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS actual_model_seen TEXT`);
       // 2026-07-02：接力身份键（切模型后跨后端接力必炸，见 findLatestResponseSessionStateBySession 调用方）
       await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS last_response_model TEXT`);
+      await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS last_response_profile_digest TEXT`);
       await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS cumulative_input_tokens BIGINT NOT NULL DEFAULT 0`);
       await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS sandbox_scope_id TEXT`);
       // PR 3：多组织改造 — 加 tenant_id 列，旧数据回填 LEGACY_TENANT_ID，新 run 由
@@ -697,6 +702,11 @@ export class PgRunStore implements RunStore {
       params.push(patch.lastResponseModel);
       nextIdx++;
     }
+    if (patch.lastResponseProfileDigest !== undefined) {
+      sets.push(`last_response_profile_digest = $${nextIdx}`);
+      params.push(patch.lastResponseProfileDigest);
+      nextIdx++;
+    }
     if (patch.cumulativeInputTokensDelta !== undefined && patch.cumulativeInputTokensDelta !== 0) {
       sets.push(`cumulative_input_tokens = cumulative_input_tokens + $${nextIdx}`);
       params.push(patch.cumulativeInputTokensDelta);
@@ -726,9 +736,10 @@ export class PgRunStore implements RunStore {
       last_response_expire_at: string | null;
       actual_model_seen: string | null;
       last_response_model: string | null;
+      last_response_profile_digest: string | null;
       cumulative_input_tokens: string | number | null;
     }>(`
-      SELECT run_id, last_response_id, last_response_expire_at, actual_model_seen, last_response_model, cumulative_input_tokens
+      SELECT run_id, last_response_id, last_response_expire_at, actual_model_seen, last_response_model, last_response_profile_digest, cumulative_input_tokens
       FROM ${this.runsTable}
       WHERE session_id = $1
         AND last_response_id IS NOT NULL
@@ -749,6 +760,7 @@ export class PgRunStore implements RunStore {
         : {}),
       ...(row.actual_model_seen ? { actualModelSeen: row.actual_model_seen } : {}),
       ...(row.last_response_model ? { lastResponseModel: row.last_response_model } : {}),
+      ...(row.last_response_profile_digest ? { lastResponseProfileDigest: row.last_response_profile_digest } : {}),
       ...(cumulative ? { cumulativeInputTokens: cumulative } : {}),
     };
   }
@@ -756,7 +768,7 @@ export class PgRunStore implements RunStore {
   async clearResponseSessionStateBySession(sessionId: string): Promise<number> {
     const result = await this.pool.query(`
       UPDATE ${this.runsTable}
-      SET last_response_id = NULL
+      SET last_response_id = NULL, last_response_profile_digest = NULL
       WHERE session_id = $1 AND last_response_id IS NOT NULL
     `, [sessionId]);
     return result.rowCount ?? 0;
@@ -833,6 +845,7 @@ function normalizeRunRecord(raw: any): RunRecord {
       : raw.lastResponseExpireAt ?? undefined,
     actualModelSeen: raw.actual_model_seen ?? raw.actualModelSeen ?? undefined,
     lastResponseModel: raw.last_response_model ?? raw.lastResponseModel ?? undefined,
+    lastResponseProfileDigest: raw.last_response_profile_digest ?? raw.lastResponseProfileDigest ?? undefined,
     cumulativeInputTokens: (() => {
       const v = raw.cumulative_input_tokens ?? raw.cumulativeInputTokens;
       if (typeof v === 'number') return v;

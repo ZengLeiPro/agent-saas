@@ -120,6 +120,12 @@ import { FeishuAuthKeepaliveService, FeishuAuthStatusRunner } from '../feishu/ke
 import { PgFeishuAuthSessionStore } from '../feishu/authStore.js';
 import { FeishuAuthFlowService, FeishuDeviceLoginRunner, type FeishuAuthFlowServiceLike } from '../feishu/authFlow.js';
 import { SystemPromptRegistry } from '../runtime/systemPrompts.js';
+import {
+  InMemoryAgentRuntimeProfileStore,
+  PgAgentRuntimeProfileStore,
+} from '../data/agentProfiles/store.js';
+import type { AgentRuntimeProfileStore } from '../data/agentProfiles/types.js';
+import { AgentRuntimeProfileResolver } from '../runtime/agentProfiles.js';
 import { UploadManager } from '../uploads/manager.js';
 
 // δ: skillsDispatchConfig.listForUser 的进程级 cache（configVersion 驱动失效），
@@ -281,6 +287,8 @@ export interface AppRuntime {
   updateMemoryPollingConfig?: (polling: NonNullable<NonNullable<AppConfig['memory']>['polling']>) => Promise<void>;
   /** 平台系统提示语注册表；管理端保存后原地热更新。 */
   systemPromptRegistry: SystemPromptRegistry;
+  /** 平台 Agent 运行 Profile；PG 为可写真源，file backend 仅提供内置只读兼容版本。 */
+  agentRuntimeProfileStore: AgentRuntimeProfileStore;
   /** Artifact metadata/blob service for runtime-produced artifacts. */
   artifactService?: ArtifactService;
   /** 会话只读分享存储。 */
@@ -830,6 +838,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let artifactStore: ArtifactStore | undefined;
   let artifactService: ArtifactService | undefined;
   let sessionShareStore: SessionShareStore | undefined;
+  let agentRuntimeProfileStore: AgentRuntimeProfileStore | undefined;
   let artifactShutdown: (() => Promise<void>) | undefined;
   let billingService: BillingService | undefined;
   let billingAuditTimer: NodeJS.Timeout | undefined;
@@ -950,6 +959,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: serverLogger.child('PgEventStore'),
     });
     await pgEventStore.init();
+    const pgAgentRuntimeProfileStore = new PgAgentRuntimeProfileStore({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await pgAgentRuntimeProfileStore.init();
+    agentRuntimeProfileStore = pgAgentRuntimeProfileStore;
     try {
       dwsConnectionStore = new PgDwsConnectionStore({
         pool: pgEventStore.pool,
@@ -1244,6 +1259,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     : (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath));
 
   sessionShareStore ??= new InMemorySessionShareStore();
+  if (!agentRuntimeProfileStore) {
+    agentRuntimeProfileStore = new InMemoryAgentRuntimeProfileStore();
+    await agentRuntimeProfileStore.init();
+  }
+  const agentRuntimeProfileResolver = new AgentRuntimeProfileResolver(agentRuntimeProfileStore);
   artifactStore ??= new InMemoryArtifactStore();
   const artifactConfig = config.artifact;
   let artifactBlobStore: ArtifactBlobStore;
@@ -1550,6 +1570,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentCwd,
     sharedDir,
     getSystemPrompt: (id) => systemPromptRegistry.get(id),
+    agentRuntimeProfileResolver,
     ...(userActivityService.available ? { userActivityService } : {}),
     memory: {
       enabled: memoryEnabled && config.memory?.injectContext?.enabled !== false,
@@ -2533,6 +2554,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     updateMemoryIndexConfig,
     updateMemoryPollingConfig,
     systemPromptRegistry,
+    agentRuntimeProfileStore,
     artifactService,
     sessionShareStore,
     artifactShutdown,

@@ -21,6 +21,7 @@
 import { randomUUID } from 'crypto';
 
 import type { AgentRunHooks, SdkResultModelUsage } from '../../agent/types.js';
+import { SkillToolProvider } from '../../agent/skillToolProvider.js';
 import {
   LocalWorkspaceProvider,
   PlatformToolRuntime,
@@ -56,6 +57,14 @@ import type { RunContext } from '../types.js';
 import { createLogger } from '../../utils/logger.js';
 import { addTimestampPrefix } from '../../utils/timestamp.js';
 import type { SubagentTypeDefinition } from './agentTypes.js';
+import {
+  applyAgentRuntimeProfile,
+  assertAgentProfileExecutionTarget,
+  filterAgentProfileSkills,
+  profileRunMetadata,
+  resolveAgentProfileMaxTurns,
+  type BoundAgentRuntimeProfile,
+} from '../agentProfiles.js';
 import {
   sharedSubagentLimiter,
   SubagentLimiter,
@@ -116,6 +125,8 @@ export interface RunSubagentParams {
   /** 父 run 的 ToolCallContext（workspace/channelContext/signal/sessionId/runId/toolCallId 来源）。 */
   parentContext: ToolCallContext;
   agentType: SubagentTypeDefinition;
+  /** Background queue pins its Profile on the reservation session before execution. */
+  profileSourceSession?: RuntimeSessionRecord;
   request: {
     description: string;
     prompt: string;
@@ -159,6 +170,17 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     ?? parentContext.workspace.tenantId;
   const username = parentSession?.username || identity?.username || parentContext.workspace.username;
   const userId = parentSession?.userId || identity?.id || parentContext.workspace.userId;
+  const executionTarget = parentContext.workspace.executionTarget;
+  let boundProfile: BoundAgentRuntimeProfile | undefined;
+  if (config.agentRuntimeProfileResolver) {
+    const bindingKey = params.profileSourceSession?.profileBindingKey
+      ?? (agentType.id === 'explore' ? 'subagent_explore' : 'subagent_general');
+    boundProfile = await config.agentRuntimeProfileResolver.resolveForSession({
+      existingSession: params.profileSourceSession ?? null,
+      bindingKey,
+    });
+    assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
+  }
 
   // ── 闸门 1：billing hard cap 前置（D6，多租户特有——防 cap 停用后经子 agent 继续烧 token） ──
   if (tenantId) {
@@ -172,7 +194,9 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   }
 
   // ── 闸门 2：模型白名单（关键不变量 3：显式传父 tenantId，不能沿用 dispatch 的单参调用） ──
-  const requestedRef = request.model?.trim() || undefined;
+  const requestedRef = boundProfile?.version.config.model.strategy === 'fixed'
+    ? boundProfile.version.config.model.modelRef
+    : request.model?.trim() || undefined;
   const inheritedRef = parentSession?.modelRef;
   const refToResolve = requestedRef ?? inheritedRef;
   let model: string | undefined;
@@ -209,7 +233,6 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   const childSessionId = `sub-${randomUUID()}`;
   const childRunId = `${Date.now()}-${randomUUID()}`;
   const parentWorkspace = parentContext.workspace;
-  const executionTarget = parentWorkspace.executionTarget;
 
   // 硬超时与父 abort 合并；分离的 controller 让终态可区分 timeout / cancelled
   const timeoutController = new AbortController();
@@ -223,7 +246,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
 
   try {
     // ── 子 session/run 落库（D2：hidden session；runStore metadata 挂亲子链） ──
-    const childRecord: RuntimeSessionRecord = createRuntimeSessionRecord({
+    let childRecord: RuntimeSessionRecord = createRuntimeSessionRecord({
       sessionId: childSessionId,
       userId,
       username,
@@ -236,6 +259,9 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       status: 'running',
       kind: 'subagent',
     });
+    if (boundProfile && config.agentRuntimeProfileResolver) {
+      childRecord = config.agentRuntimeProfileResolver.bindSessionRecord(childRecord, boundProfile);
+    }
     await sessionCatalog.upsert(childRecord);
 
     const baseEventStore = createEventStoreForSession(config, childRecord);
@@ -257,6 +283,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         parentToolCallId: parentContext.toolCallId,
         agentType: agentType.id,
         description: request.description,
+        ...(boundProfile ? profileRunMetadata(boundProfile) : {}),
         cwd: parentWorkspace.root,
         // 刻意不写 wakeMessage：子 run 是父死子亡语义，绝不允许 scheduler 恢复重放
       },
@@ -296,6 +323,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       parentProviders: params.parentProviders,
       childEventStore: eventStore,
       agentType,
+      boundProfile,
     });
 
     const instructions = buildSubagentInstructions({
@@ -303,7 +331,10 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       cwd: visibleWorkspaceCwd(parentWorkspace.root, executionTarget),
       executionTarget,
       systemPrompt: config.getSystemPrompt?.(`subagent.${agentType.id}`),
-      companyInfo: request.includeCompanyInfo && agentType.allowCompanyInfo
+      profileSystemInstructions: boundProfile?.version.config.context.systemInstructions,
+      companyInfo: request.includeCompanyInfo
+        && agentType.allowCompanyInfo
+        && (!boundProfile || boundProfile.version.config.context.modules.includes('company_info'))
         ? loadCompanyInfoForSubagent(config.sharedDir, tenantId)
         : undefined,
     });
@@ -362,6 +393,11 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       channelContext: parentContext.channelContext,
       hooks: childHooks,
       signal: combinedSignal,
+      ...(boundProfile ? {
+        profileId: boundProfile.binding.profileId,
+        profileVersionId: boundProfile.binding.profileVersionId,
+        profileConfigDigest: boundProfile.binding.profileConfigDigest,
+      } : {}),
     };
 
     await params.onChildRunCreated?.({ childSessionId, childRunId, model });
@@ -388,7 +424,9 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         },
         prompt,
         instructions,
-        maxTurns: agentType.maxTurns,
+        maxTurns: boundProfile
+          ? resolveAgentProfileMaxTurns(boundProfile.version.config, agentType.maxTurns)!
+          : agentType.maxTurns,
         connection: { apiKey, baseUrl },
       },
       runContext,
@@ -489,7 +527,17 @@ function buildSubagentToolRuntime(args: {
   parentProviders: ToolProvider[];
   childEventStore: import('../types.js').EventStore;
   agentType: SubagentTypeDefinition;
+  boundProfile?: BoundAgentRuntimeProfile;
 }): ToolRuntime {
+  const profileSkillConfig = args.boundProfile?.version.config;
+  const parentProviders = profileSkillConfig
+    ? args.parentProviders.map((provider) => provider instanceof SkillToolProvider
+        ? provider.withEntryFilter(
+            (skill) => filterAgentProfileSkills([skill], profileSkillConfig).length === 1,
+            profileSkillConfig.skills.defaultSkillIds,
+          )
+        : provider)
+    : args.parentProviders;
   const inner = new PlatformToolRuntime({
     memoryIndexService: args.config.memoryIndexService,
     executionTransportRegistry: args.executionTransportRegistry,
@@ -498,7 +546,7 @@ function buildSubagentToolRuntime(args: {
     resolveWireEnv: buildTenantRemoteHandWireEnv,
     artifactService: args.config.artifactService,
     // Session 工具绑定子 session 自己的 event store：子 agent 只能检索自己的事件历史
-    providers: [...args.parentProviders, new SessionToolProvider(new SessionContextService(args.childEventStore))],
+    providers: [...parentProviders, new SessionToolProvider(new SessionContextService(args.childEventStore))],
     toolControls: args.config.toolControls,
   });
   const allowlist = args.agentType.toolAllowlist ? new Set(args.agentType.toolAllowlist) : null;
@@ -507,7 +555,8 @@ function buildSubagentToolRuntime(args: {
     if (allowlist) return allowlist.has(descriptor.name) || allowlist.has(descriptor.id);
     return true;
   };
-  return new FilteredToolRuntime(inner, isAllowed);
+  const sceneFiltered = new FilteredToolRuntime(inner, isAllowed);
+  return args.boundProfile ? applyAgentRuntimeProfile(sceneFiltered, args.boundProfile) : sceneFiltered;
 }
 
 /**
@@ -547,8 +596,12 @@ function buildSubagentInstructions(args: {
   executionTarget: string;
   companyInfo?: string;
   systemPrompt?: string;
+  profileSystemInstructions?: string;
 }): string {
   const sections: string[] = [args.systemPrompt ?? args.agentType.systemPrompt];
+  if (args.profileSystemInstructions?.trim()) {
+    sections.push(`<agent-profile-instructions>\n${args.profileSystemInstructions.trim()}\n</agent-profile-instructions>`);
+  }
   sections.push([
     '<env>',
     `工作目录: ${args.cwd}（与主 agent 共享同一 workspace，文件读写彼此可见）`,

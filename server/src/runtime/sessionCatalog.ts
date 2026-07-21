@@ -1,10 +1,11 @@
 import { getTranscriptPath, findTranscriptOrMetaPathBySessionId } from '../data/transcripts/store.js';
 import { readSessionMeta, writeSessionMeta, updateSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
+import type { AgentProfileSessionBinding } from '../data/agentProfiles/types.js';
 
 export type RuntimeSessionStatus = 'running' | 'idle' | 'waiting_approval' | 'finished' | 'error';
 
-export interface RuntimeSessionRecord {
+export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding> {
   sessionId: string;
   userId: string;
   username: string;
@@ -66,6 +67,13 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(record.kind ? { kind: record.kind } : {}),
       // orgAgentId 缺省时保留 existing 值（resume 路径 record 可能不带），不清除既有绑定
       ...(record.orgAgentId ? { orgAgentId: record.orgAgentId } : {}),
+      ...(record.profileId ? { profileId: record.profileId } : {}),
+      ...(record.profileKey ? { profileKey: record.profileKey } : {}),
+      ...(record.profileVersionId ? { profileVersionId: record.profileVersionId } : {}),
+      ...(record.profileVersionNumber ? { profileVersionNumber: record.profileVersionNumber } : {}),
+      ...(record.profileConfigDigest ? { profileConfigDigest: record.profileConfigDigest } : {}),
+      ...(record.profileBindingKey ? { profileBindingKey: record.profileBindingKey } : {}),
+      ...(record.profileResolution ? { profileResolution: record.profileResolution } : {}),
     } as SessionMeta & { transcriptPath?: string };
     await writeSessionMeta(record.transcriptPath, meta);
   }
@@ -108,6 +116,13 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(isRuntimeSessionStatus(meta.runtimeStatus) ? { status: meta.runtimeStatus } : {}),
       ...(meta.kind === 'subagent' ? { kind: 'subagent' as const } : {}),
       ...(meta.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
+      ...(meta.profileId ? { profileId: meta.profileId } : {}),
+      ...(meta.profileKey ? { profileKey: meta.profileKey } : {}),
+      ...(meta.profileVersionId ? { profileVersionId: meta.profileVersionId } : {}),
+      ...(meta.profileVersionNumber ? { profileVersionNumber: meta.profileVersionNumber } : {}),
+      ...(meta.profileConfigDigest ? { profileConfigDigest: meta.profileConfigDigest } : {}),
+      ...(meta.profileBindingKey ? { profileBindingKey: meta.profileBindingKey } : {}),
+      ...(meta.profileResolution ? { profileResolution: meta.profileResolution } : {}),
       createdAt: meta.createdAt,
       updatedAt: meta.updatedAt ?? meta.createdAt ?? now,
     };
@@ -128,6 +143,7 @@ export function createRuntimeSessionRecord(args: {
   status?: RuntimeSessionStatus;
   kind?: 'subagent';
   orgAgentId?: string;
+  profileBinding?: AgentProfileSessionBinding;
 }): RuntimeSessionRecord {
   const now = new Date().toISOString();
   return {
@@ -145,6 +161,7 @@ export function createRuntimeSessionRecord(args: {
     status: args.status ?? 'running',
     ...(args.kind ? { kind: args.kind } : {}),
     ...(args.orgAgentId ? { orgAgentId: args.orgAgentId } : {}),
+    ...(args.profileBinding ?? {}),
     createdAt: now,
     updatedAt: now,
   };

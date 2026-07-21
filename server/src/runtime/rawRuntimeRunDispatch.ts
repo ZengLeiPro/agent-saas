@@ -53,6 +53,16 @@ import { TenantCompanyInfoToolProvider } from '../agent/tenantCompanyInfoToolPro
 import { UserActivityToolProvider } from '../agent/userActivityToolProvider.js';
 import type { UserActivityService } from './userActivityService.js';
 import { applyToolProfile, normalizeToolProfile } from './toolProfiles.js';
+import {
+  AgentRuntimeProfileResolver,
+  applyAgentRuntimeProfile,
+  assertAgentProfileExecutionTarget,
+  filterAgentProfileSkills,
+  profileRunMetadata,
+  resolveAgentProfileBindingKey,
+  resolveAgentProfileMaxTurns,
+  type BoundAgentRuntimeProfile,
+} from './agentProfiles.js';
 import { McpClientToolProvider } from '../mcp/clientToolProvider.js';
 import type { McpClientManager } from '../mcp/clientManager.js';
 import type { McpProxy } from '../mcp/proxy.js';
@@ -232,6 +242,8 @@ export interface RawRuntimeRunDispatchConfig {
   sharedDir: string;
   /** 平台系统提示语注册表 getter；每次运行现取，以支持管理端热更新。 */
   getSystemPrompt?: (id: SystemPromptId) => string;
+  /** Stable entity + immutable version resolver. New sessions read current binding once; resumes use the pinned version. */
+  agentRuntimeProfileResolver?: AgentRuntimeProfileResolver;
   memory?: { enabled?: boolean; maxLines?: number };
   memoryIndexService?: MemoryIndexService | null;
   agentStore?: AgentStore;
@@ -1148,6 +1160,7 @@ export async function collectRuntimeTooling(
   skillFilter: RuntimeSkillFilter = allowAllRuntimeSkills,
   requiredSkillIds: readonly string[] = [],
   subagentDeps?: SubagentToolingDeps,
+  preferredSkillIds: readonly string[] = [],
 ): Promise<{
   providers: ToolProvider[];
 }> {
@@ -1157,7 +1170,12 @@ export async function collectRuntimeTooling(
   // 派生用户实际可用清单并拼进工具 description（模型注意力最集中的位置）。原
   // <available-skills> xml section 已废弃（2026-07-03）。
   if (config.skills && isToolEnabled(config.toolControls, 'Skill')) {
-    providers.push(new SkillToolProvider(buildRuntimeSkillsResolver(config.skills, skillFilter, requiredSkillIds)));
+    providers.push(new SkillToolProvider(buildRuntimeSkillsResolver(
+      config.skills,
+      skillFilter,
+      requiredSkillIds,
+      preferredSkillIds,
+    )));
   }
 
   // 2. BuiltinTools（TodoWrite/AskUserQuestion；workspace 文件工具由 WorkspaceToolProvider 提供）
@@ -1264,15 +1282,29 @@ export function buildRuntimeSkillsResolver(
   skills: SkillsDispatchConfig,
   skillFilter: RuntimeSkillFilter = allowAllRuntimeSkills,
   requiredSkillIds: readonly string[] = [],
+  preferredSkillIds: readonly string[] = [],
 ): EffectiveSkillsResolver {
   return {
-    list: (ctx) => filterRuntimeSkills(
+    list: (ctx) => prioritizeRuntimeSkills(filterRuntimeSkills(
       skills.listForUser(resolveSkillContextUsername(ctx.channelContext), requiredSkillIds),
       skillFilter,
-    ),
+    ), preferredSkillIds),
     resolveSkillDir: (skill, ctx) =>
       skills.resolveSkillDir(resolveSkillContextUsername(ctx.channelContext), skill, requiredSkillIds),
   };
+}
+
+function prioritizeRuntimeSkills(skills: SkillEntry[], preferredSkillIds: readonly string[]): SkillEntry[] {
+  if (preferredSkillIds.length === 0) return skills;
+  const priority = new Map(preferredSkillIds.map((id, index) => [id, index]));
+  return skills
+    .map((skill, index) => ({ skill, index }))
+    .sort((left, right) => {
+      const leftPriority = priority.get(left.skill.id) ?? priority.get(left.skill.name) ?? Number.MAX_SAFE_INTEGER;
+      const rightPriority = priority.get(right.skill.id) ?? priority.get(right.skill.name) ?? Number.MAX_SAFE_INTEGER;
+      return leftPriority - rightPriority || left.index - right.index;
+    })
+    .map(({ skill }) => skill);
 }
 
 /** AND 组合多个 skill filter：任一 filter 拒绝即拒绝（browser-hand filter 与 org agent 白名单叠加用，不是替换）。 */
@@ -1501,8 +1533,12 @@ export function buildInstructions(params: {
   getSystemPrompt?: (id: SystemPromptId) => string;
   /** 专职 Agent 覆盖：注入 {{ORG_AGENT_INSTRUCTIONS}}，IF_PERSONA/IF_NO_PERSONA 强制 false，AGENT_NAME 用 org 名。 */
   orgAgent?: Pick<OrgAgentRecord, 'name' | 'instructions'>;
+  /** Profile 只选择可选上下文模块；main.static 与 dynamic-personal 中的平台安全底座不可移除。 */
+  contextModules?: readonly ('company_info' | 'runtime_memory' | 'personal_context')[];
+  profileSystemInstructions?: string;
 }): string {
-  const personaBody = params.orgAgent ? '' : params.persona.trim();
+  const modules = new Set(params.contextModules ?? ['company_info', 'runtime_memory', 'personal_context']);
+  const personaBody = params.orgAgent || !modules.has('personal_context') ? '' : params.persona.trim();
   const hasPersona = personaBody.length > 0;
 
   const sharedVars: PromptVars = {
@@ -1521,15 +1557,18 @@ export function buildInstructions(params: {
     ORG_AGENT_INSTRUCTIONS: params.orgAgent?.instructions ?? '',
   };
 
-  const sections: string[] = [
-    params.getSystemPrompt?.('main.static') ?? loadPrompt(params.sharedDir, 'static'),
-    renderPrompt(
+  const sections: string[] = [params.getSystemPrompt?.('main.static') ?? loadPrompt(params.sharedDir, 'static')];
+  if (params.profileSystemInstructions?.trim()) {
+    sections.push(`<agent-profile-instructions>\n${params.profileSystemInstructions.trim()}\n</agent-profile-instructions>`);
+  }
+  if (modules.has('company_info')) {
+    sections.push(renderPrompt(
       params.getSystemPrompt?.('main.dynamicShared') ?? loadPrompt(params.sharedDir, 'dynamic-shared'),
       sharedVars,
-    ),
-  ];
+    ));
+  }
 
-  if (params.memorySearchEnabled) {
+  if (params.memorySearchEnabled && modules.has('runtime_memory')) {
     sections.push(params.getSystemPrompt?.('main.runtimeMemory') ?? loadPrompt(params.sharedDir, 'runtime-memory'));
   }
   sections.push(renderPrompt(
@@ -1631,25 +1670,20 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const resumeSessionId = options.resumeSessionId ?? context.resumeSessionId;
     const existingSession = resumeSessionId ? await sessionCatalog.get(resumeSessionId) : null;
     const cwd = options.cwd ? resolve(options.cwd) : existingSession?.cwd ?? config.agentCwd;
-    const requestedModel = options.model;
-    const { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
+    let requestedModel = options.model;
+    let { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
       config,
       requestedModel,
       options.modelConnection ?? options.openaiAgentsConnection,
       options.modelProviderOptions,
     );
-    const connection = modelConnection;
-    const apiKey = connection?.apiKey || process.env.OPENAI_API_KEY;
-    const baseUrl = connection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
+    let connection = modelConnection;
+    let apiKey = connection?.apiKey || process.env.OPENAI_API_KEY;
+    let baseUrl = connection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
     const executionTarget = options.executionTarget ?? resolveDefaultExecutionTargetForContext(executionConfig, context);
     const sandboxPolicy = buildRawRuntimeSandboxPolicy(config, context, cwd, executionTarget);
     const approvalPolicy = normalizeApprovalPolicy(options.approvalPolicy);
     const toolProfile = normalizeToolProfile(options.toolProfile);
-
-    if (!apiKey) {
-      yield { type: 'error', error: 'Raw runtime 缺少 OPENAI_API_KEY 或模型组 apiKey' };
-      return;
-    }
 
     const isResume = !!resumeSessionId;
     const sessionId = resumeSessionId ?? randomUUID();
@@ -1674,6 +1708,38 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       return;
     }
     const orgAgent = orgAgentResolution?.agent;
+    let boundProfile: BoundAgentRuntimeProfile | undefined;
+    if (config.agentRuntimeProfileResolver) {
+      try {
+        boundProfile = await config.agentRuntimeProfileResolver.resolveForSession({
+          existingSession,
+          bindingKey: resolveAgentProfileBindingKey({ toolProfile, orgAgentId }),
+        });
+        assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
+        if (boundProfile.version.config.model.strategy === 'fixed') {
+          const fixedRef = boundProfile.version.config.model.modelRef;
+          const fixed = config.modelResolver?.(fixedRef, effectiveTenantId);
+          if (!fixed) {
+            yield { type: 'error', error: `Agent Profile 固定模型不可用或未获当前组织授权：${fixedRef}` };
+            return;
+          }
+          requestedModel = fixedRef;
+          model = fixed.model;
+          modelConnection = fixed.connection;
+          modelProviderOptions = fixed.providerOptions;
+          connection = modelConnection;
+          apiKey = connection?.apiKey || process.env.OPENAI_API_KEY;
+          baseUrl = connection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
+        }
+      } catch (error) {
+        yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+        return;
+      }
+    }
+    if (!apiKey) {
+      yield { type: 'error', error: 'Raw runtime 缺少 OPENAI_API_KEY 或模型组 apiKey' };
+      return;
+    }
 
     let resolvedAttachments: ModelAttachmentRef[];
     try {
@@ -1715,16 +1781,22 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const persona = (orgAgent || options.skipPersona) ? '' : ((await loadPersona(cwd)) || '');
 
     let memoryContext: string | undefined;
-    if (memoryEnabled && !isResume && !options.skipMemory && !orgAgent) {
+    const profileAllowsRuntimeMemory = !boundProfile
+      || (boundProfile.version.config.context.modules.includes('runtime_memory')
+        && boundProfile.version.config.memory.scope === 'full');
+    if (memoryEnabled && profileAllowsRuntimeMemory && !isResume && !options.skipMemory && !orgAgent) {
       const memory = await loadMemoryContext(cwd, memoryMaxLines);
       if (memory) memoryContext = memory;
     }
     const prompt = buildPrompt(message, context, resolvedAttachments);
     const memorySearchEnabled = !orgAgent
+      && (!boundProfile || boundProfile.version.config.memory.scope !== 'none')
       && hasMemorySearchTool(config.memoryIndexService)
       && isToolEnabled(config.toolControls, 'MemorySearch');
     const isPlatformAdmin = resolveContextIsPlatformAdmin(context);
-    const sessionModelRef = existingSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
+    const sessionModelRef = boundProfile?.version.config.model.strategy === 'fixed'
+      ? boundProfile.version.config.model.modelRef
+      : existingSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
     const workspaceId = deriveRuntimeWorkspaceId({
       existingSession,
       fallbackSessionId: sessionId,
@@ -1733,7 +1805,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         tenantId: effectiveTenantId,
       },
     });
-    const sessionRecord: RuntimeSessionRecord = {
+    let sessionRecord: RuntimeSessionRecord = {
       ...(existingSession ?? createRuntimeSessionRecord({
         sessionId,
         userId: identitySource?.id,
@@ -1764,6 +1836,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       ...(orgAgentId ? { orgAgentId } : {}),
       updatedAt: new Date().toISOString(),
     };
+    if (boundProfile && config.agentRuntimeProfileResolver) {
+      sessionRecord = config.agentRuntimeProfileResolver.bindSessionRecord(sessionRecord, boundProfile);
+    }
     await sessionCatalog.upsert(sessionRecord);
     const workspaceMountSubPath = deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd });
     const sandboxScopeId = deriveSandboxScopeId({
@@ -1793,6 +1868,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(toolProfile ? { toolProfile } : {}),
+        ...(boundProfile ? profileRunMetadata(boundProfile) : {}),
         wakeMessage: {
           channel: message.channel,
           chatId: message.chatId,
@@ -1837,13 +1913,19 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       buildRuntimeSkillFilter(availableHands),
       buildImageGenSkillFilter(config, sessionRecord.tenantId),
     );
+    const profileSkillFilter = boundProfile
+      ? ((skill: SkillEntry) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1)
+      : allowAllRuntimeSkills;
     const tooling = await collectRuntimeTooling(
       config,
       identitySource?.username,
       // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
-      orgAgent ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent)) : baseSkillFilter,
+      orgAgent
+        ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent), profileSkillFilter)
+        : composeSkillFilters(baseSkillFilter, profileSkillFilter),
       orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
+      boundProfile?.version.config.skills.defaultSkillIds ?? [],
     );
     const instructions = options.skipSystemPrompt
       ? config.getSystemPrompt?.('main.minimal') ?? MINIMAL_SYSTEM_PROMPT
@@ -1858,6 +1940,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           memorySearchEnabled,
           isPlatformAdmin,
           getSystemPrompt: config.getSystemPrompt,
+          ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
+          ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
           ...(orgAgent ? { orgAgent } : {}),
         });
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
@@ -1868,7 +1952,19 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       eventStore,
       approvalStore,
       transcriptProjection: projection,
-      toolRuntime: applyToolProfile(new PlatformToolRuntime({
+      toolRuntime: boundProfile
+        ? applyAgentRuntimeProfile(applyToolProfile(new PlatformToolRuntime({
+            memoryIndexService: config.memoryIndexService,
+            executionTransportRegistry,
+            handStore: config.handStore,
+            resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
+            resolveWireEnv: buildTenantRemoteHandWireEnv,
+            artifactService: config.artifactService,
+            providers: [...tooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
+            toolControls: config.toolControls,
+            backgroundTasks: config.backgroundTasks,
+          }), toolProfile), boundProfile)
+        : applyToolProfile(new PlatformToolRuntime({
         memoryIndexService: config.memoryIndexService,
         executionTransportRegistry,
         handStore: config.handStore,
@@ -1902,6 +1998,11 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         workerId: options.runtimeWorkerId,
         channelContext: context,
         approvalPolicy,
+        ...(boundProfile ? {
+          profileId: boundProfile.binding.profileId,
+          profileVersionId: boundProfile.binding.profileVersionId,
+          profileConfigDigest: boundProfile.binding.profileConfigDigest,
+        } : {}),
         hooks,
         signal: options.abortController?.signal,
       };
@@ -1983,10 +2084,18 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             recordUserMessage: options.recordUserMessage,
             ...(memoryContext ? { memoryContext } : {}),
             instructions,
-            maxTurns: resolveEffectiveMaxTurns(config, options.maxTurns, {
-              userId: context.user?.id ?? context.sessionOwner?.id,
-              username: context.user?.username ?? context.sessionOwner?.username,
-            }),
+            maxTurns: boundProfile
+              ? resolveAgentProfileMaxTurns(
+                  boundProfile.version.config,
+                  resolveEffectiveMaxTurns(config, options.maxTurns, {
+                    userId: context.user?.id ?? context.sessionOwner?.id,
+                    username: context.user?.username ?? context.sessionOwner?.username,
+                  }),
+                )!
+              : resolveEffectiveMaxTurns(config, options.maxTurns, {
+                userId: context.user?.id ?? context.sessionOwner?.id,
+                username: context.user?.username ?? context.sessionOwner?.username,
+              }),
             connection: { apiKey, baseUrl },
           },
           runContext,
@@ -2110,15 +2219,15 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       return;
     }
 
-    const requestedModel = request.model || existingSession?.modelRef;
-    const { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
+    let requestedModel = request.model || existingSession?.modelRef;
+    let { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
       config,
       requestedModel,
       request.modelConnection,
       request.modelProviderOptions,
     );
-    const apiKey = modelConnection?.apiKey || process.env.OPENAI_API_KEY;
-    const baseUrl = modelConnection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
+    let apiKey = modelConnection?.apiKey || process.env.OPENAI_API_KEY;
+    let baseUrl = modelConnection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
     // approval resume 的 executionTarget 由调用方从 approval log / event log 推导（已实现），
     // 调用方应始终传入；缺省时退回 executionConfig.defaultTarget，避免重启场景下"目标漂移"。
     const executionTarget = request.executionTarget
@@ -2126,10 +2235,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       ?? resolveDefaultExecutionTargetForContext(executionConfig, request.context);
     const sandboxPolicy = buildRawRuntimeSandboxPolicy(config, request.context, cwd, executionTarget);
     const approvalPolicy = normalizeApprovalPolicy(request.approvalPolicy);
-    if (!apiKey) {
-      yield { type: 'error', error: 'Raw approval resume 缺少 OPENAI_API_KEY 或模型组 apiKey' };
-      return;
-    }
     const resumeToolProfile = normalizeToolProfile(request.toolProfile);
 
     // Session-level lock：resume 路径上 sessionId 已知，必须早于 catalog upsert
@@ -2153,6 +2258,41 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       return;
     }
     const orgAgent = orgAgentResolution?.agent;
+    let boundProfile: BoundAgentRuntimeProfile | undefined;
+    if (config.agentRuntimeProfileResolver) {
+      try {
+        boundProfile = await config.agentRuntimeProfileResolver.resolveForSession({
+          existingSession,
+          bindingKey: existingSession?.profileBindingKey
+            ?? resolveAgentProfileBindingKey({ toolProfile: resumeToolProfile, orgAgentId }),
+        });
+        assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
+        if (boundProfile.version.config.model.strategy === 'fixed') {
+          const fixedRef = boundProfile.version.config.model.modelRef;
+          const fixed = config.modelResolver?.(fixedRef, effectiveTenantId);
+          if (!fixed) {
+            if (lockHandle) await lockHandle.release().catch(() => undefined);
+            yield { type: 'error', error: `Agent Profile 固定模型不可用或未获当前组织授权：${fixedRef}` };
+            return;
+          }
+          requestedModel = fixedRef;
+          model = fixed.model;
+          modelConnection = fixed.connection;
+          modelProviderOptions = fixed.providerOptions;
+          apiKey = modelConnection?.apiKey || process.env.OPENAI_API_KEY;
+          baseUrl = modelConnection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
+        }
+      } catch (error) {
+        if (lockHandle) await lockHandle.release().catch(() => undefined);
+        yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+        return;
+      }
+    }
+    if (!apiKey) {
+      if (lockHandle) await lockHandle.release().catch(() => undefined);
+      yield { type: 'error', error: 'Raw approval resume 缺少 OPENAI_API_KEY 或模型组 apiKey' };
+      return;
+    }
     const agentProfile = identitySource && config.agentStore
       ? config.agentStore.get(identitySource.username)
       : undefined;
@@ -2160,13 +2300,16 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     const userName = identitySource ? (identitySource.realName || identitySource.username || '') : '';
     const persona = orgAgent ? '' : ((await loadPersona(cwd)) || '');
     const memorySearchEnabled = !orgAgent
+      && (!boundProfile || boundProfile.version.config.memory.scope !== 'none')
       && hasMemorySearchTool(config.memoryIndexService)
       && isToolEnabled(config.toolControls, 'MemorySearch');
     // resume 路径 identitySource 优先 sessionRecord.username（dispatch 首跑时已记录），
     // 防止重启 / anonymous 路径上 user.username 缺失导致 skill / MCP 全部消失。
     const resumeUsername = identitySource?.username || existingSession?.username || undefined;
     const resumeIsPlatformAdmin = resolveContextIsPlatformAdmin(request.context);
-    const sessionModelRef = existingSession?.modelRef ?? request.model ?? model;
+    const sessionModelRef = boundProfile?.version.config.model.strategy === 'fixed'
+      ? boundProfile.version.config.model.modelRef
+      : existingSession?.modelRef ?? request.model ?? model;
 
     const workspaceId = deriveRuntimeWorkspaceId({
       existingSession,
@@ -2176,7 +2319,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         tenantId: effectiveTenantId,
       },
     });
-    const sessionRecord: RuntimeSessionRecord = {
+    let sessionRecord: RuntimeSessionRecord = {
       ...(existingSession ?? createRuntimeSessionRecord({
         sessionId: request.sessionId,
         userId: identitySource?.id,
@@ -2205,6 +2348,9 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       status: 'running',
       updatedAt: new Date().toISOString(),
     };
+    if (boundProfile && config.agentRuntimeProfileResolver) {
+      sessionRecord = config.agentRuntimeProfileResolver.bindSessionRecord(sessionRecord, boundProfile);
+    }
     await sessionCatalog.upsert(sessionRecord);
     const workspaceMountSubPath = deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd });
     const sandboxScopeId = deriveSandboxScopeId({
@@ -2230,7 +2376,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       sandboxScopeId,
-      metadata: { cwd, transcriptPath, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}) },
+      metadata: { cwd, transcriptPath, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
     });
     directRuntimeLease = await acquireDirectRuntimeRunLease({
       runStore: config.runStore,
@@ -2268,9 +2414,20 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       config,
       resumeUsername,
       // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
-      orgAgent ? composeSkillFilters(resumeBaseSkillFilter, buildOrgAgentSkillFilter(orgAgent)) : resumeBaseSkillFilter,
+      orgAgent
+        ? composeSkillFilters(
+            resumeBaseSkillFilter,
+            buildOrgAgentSkillFilter(orgAgent),
+            boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
+          )
+        : composeSkillFilters(
+            resumeBaseSkillFilter,
+            boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
+          ),
       orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
+      undefined,
+      boundProfile?.version.config.skills.defaultSkillIds ?? [],
     );
     const instructions = buildInstructions({
       sharedDir: config.sharedDir,
@@ -2283,6 +2440,8 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       memorySearchEnabled,
       isPlatformAdmin: resumeIsPlatformAdmin,
       getSystemPrompt: config.getSystemPrompt,
+      ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
+      ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);
@@ -2292,7 +2451,19 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       eventStore,
       approvalStore,
       transcriptProjection: projection,
-      toolRuntime: applyToolProfile(new PlatformToolRuntime({
+      toolRuntime: boundProfile
+        ? applyAgentRuntimeProfile(applyToolProfile(new PlatformToolRuntime({
+            memoryIndexService: config.memoryIndexService,
+            executionTransportRegistry,
+            handStore: config.handStore,
+            resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
+            resolveWireEnv: buildTenantRemoteHandWireEnv,
+            artifactService: config.artifactService,
+            providers: [...resumeTooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
+            toolControls: config.toolControls,
+            backgroundTasks: config.backgroundTasks,
+          }), resumeToolProfile), boundProfile)
+        : applyToolProfile(new PlatformToolRuntime({
         memoryIndexService: config.memoryIndexService,
         executionTransportRegistry,
         handStore: config.handStore,
@@ -2318,10 +2489,15 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           approvalId: request.approvalId,
           response: request.response,
           instructions,
-          maxTurns: resolveEffectiveMaxTurns(config, request.maxTurns, {
-            userId: request.context.user?.id ?? request.context.sessionOwner?.id,
-            username: request.context.user?.username ?? request.context.sessionOwner?.username,
-          }),
+          maxTurns: boundProfile
+            ? resolveAgentProfileMaxTurns(boundProfile.version.config, resolveEffectiveMaxTurns(config, request.maxTurns, {
+                userId: request.context.user?.id ?? request.context.sessionOwner?.id,
+                username: request.context.user?.username ?? request.context.sessionOwner?.username,
+              }))!
+            : resolveEffectiveMaxTurns(config, request.maxTurns, {
+                userId: request.context.user?.id ?? request.context.sessionOwner?.id,
+                username: request.context.user?.username ?? request.context.sessionOwner?.username,
+              }),
         },
         {
           runId: resumeRunId,
@@ -2337,6 +2513,11 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           workerId: request.runtimeWorkerId,
           channelContext: request.context,
           approvalPolicy,
+          ...(boundProfile ? {
+            profileId: boundProfile.binding.profileId,
+            profileVersionId: boundProfile.binding.profileVersionId,
+            profileConfigDigest: boundProfile.binding.profileConfigDigest,
+          } : {}),
           hooks: request.hooks,
           signal: request.abortController?.signal,
         },
@@ -2399,24 +2580,20 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       return;
     }
 
-    const requestedModel = request.model || existingSession?.modelRef;
-    const { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
+    let requestedModel = request.model || existingSession?.modelRef;
+    let { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
       config,
       requestedModel,
       request.modelConnection,
       request.modelProviderOptions,
     );
-    const apiKey = modelConnection?.apiKey || process.env.OPENAI_API_KEY;
-    const baseUrl = modelConnection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
+    let apiKey = modelConnection?.apiKey || process.env.OPENAI_API_KEY;
+    let baseUrl = modelConnection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
     const executionTarget = request.executionTarget
       ?? existingSession?.executionTarget
       ?? resolveDefaultExecutionTargetForContext(executionConfig, request.context);
     const sandboxPolicy = buildRawRuntimeSandboxPolicy(config, request.context, cwd, executionTarget);
     const approvalPolicy = normalizeApprovalPolicy(request.approvalPolicy);
-    if (!apiKey) {
-      yield { type: 'error', error: 'Raw interaction resume 缺少 OPENAI_API_KEY 或模型组 apiKey' };
-      return;
-    }
     const resumeToolProfile = normalizeToolProfile(request.toolProfile);
 
     const lockHandle = config.sessionLock ? await config.sessionLock.tryAcquire(request.sessionId) : null;
@@ -2438,6 +2615,41 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       return;
     }
     const orgAgent = orgAgentResolution?.agent;
+    let boundProfile: BoundAgentRuntimeProfile | undefined;
+    if (config.agentRuntimeProfileResolver) {
+      try {
+        boundProfile = await config.agentRuntimeProfileResolver.resolveForSession({
+          existingSession,
+          bindingKey: existingSession?.profileBindingKey
+            ?? resolveAgentProfileBindingKey({ toolProfile: resumeToolProfile, orgAgentId }),
+        });
+        assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
+        if (boundProfile.version.config.model.strategy === 'fixed') {
+          const fixedRef = boundProfile.version.config.model.modelRef;
+          const fixed = config.modelResolver?.(fixedRef, effectiveTenantId);
+          if (!fixed) {
+            if (lockHandle) await lockHandle.release().catch(() => undefined);
+            yield { type: 'error', error: `Agent Profile 固定模型不可用或未获当前组织授权：${fixedRef}` };
+            return;
+          }
+          requestedModel = fixedRef;
+          model = fixed.model;
+          modelConnection = fixed.connection;
+          modelProviderOptions = fixed.providerOptions;
+          apiKey = modelConnection?.apiKey || process.env.OPENAI_API_KEY;
+          baseUrl = modelConnection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
+        }
+      } catch (error) {
+        if (lockHandle) await lockHandle.release().catch(() => undefined);
+        yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+        return;
+      }
+    }
+    if (!apiKey) {
+      if (lockHandle) await lockHandle.release().catch(() => undefined);
+      yield { type: 'error', error: 'Raw interaction resume 缺少 OPENAI_API_KEY 或模型组 apiKey' };
+      return;
+    }
     const agentProfile = identitySource && config.agentStore
       ? config.agentStore.get(identitySource.username)
       : undefined;
@@ -2445,11 +2657,14 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     const userName = identitySource ? (identitySource.realName || identitySource.username || '') : '';
     const persona = orgAgent ? '' : ((await loadPersona(cwd)) || '');
     const memorySearchEnabled = !orgAgent
+      && (!boundProfile || boundProfile.version.config.memory.scope !== 'none')
       && hasMemorySearchTool(config.memoryIndexService)
       && isToolEnabled(config.toolControls, 'MemorySearch');
     const resumeUsername = identitySource?.username || existingSession?.username || undefined;
     const resumeIsPlatformAdmin = resolveContextIsPlatformAdmin(request.context);
-    const sessionModelRef = existingSession?.modelRef ?? request.model ?? model;
+    const sessionModelRef = boundProfile?.version.config.model.strategy === 'fixed'
+      ? boundProfile.version.config.model.modelRef
+      : existingSession?.modelRef ?? request.model ?? model;
 
     const workspaceId = deriveRuntimeWorkspaceId({
       existingSession,
@@ -2459,7 +2674,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         tenantId: effectiveTenantId,
       },
     });
-    const sessionRecord: RuntimeSessionRecord = {
+    let sessionRecord: RuntimeSessionRecord = {
       ...(existingSession ?? createRuntimeSessionRecord({
         sessionId: request.sessionId,
         userId: identitySource?.id,
@@ -2488,6 +2703,9 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       status: 'running',
       updatedAt: new Date().toISOString(),
     };
+    if (boundProfile && config.agentRuntimeProfileResolver) {
+      sessionRecord = config.agentRuntimeProfileResolver.bindSessionRecord(sessionRecord, boundProfile);
+    }
     await sessionCatalog.upsert(sessionRecord);
     const workspaceMountSubPath = deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd });
     const sandboxScopeId = deriveSandboxScopeId({
@@ -2529,7 +2747,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       sandboxScopeId,
-      metadata: { cwd, transcriptPath, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}) },
+      metadata: { cwd, transcriptPath, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
     });
     directRuntimeLease = await acquireDirectRuntimeRunLease({
       runStore: config.runStore,
@@ -2567,9 +2785,20 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       config,
       resumeUsername,
       // AND 组合：browser-hand filter 与 org agent 白名单叠加（不是替换）
-      orgAgent ? composeSkillFilters(resumeBaseSkillFilter, buildOrgAgentSkillFilter(orgAgent)) : resumeBaseSkillFilter,
+      orgAgent
+        ? composeSkillFilters(
+            resumeBaseSkillFilter,
+            buildOrgAgentSkillFilter(orgAgent),
+            boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
+          )
+        : composeSkillFilters(
+            resumeBaseSkillFilter,
+            boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
+          ),
       orgAgent?.allowedSkills ?? [],
       { executionTransportRegistry, tenantHandResolver },
+      undefined,
+      boundProfile?.version.config.skills.defaultSkillIds ?? [],
     );
     const instructions = buildInstructions({
       sharedDir: config.sharedDir,
@@ -2582,6 +2811,8 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       memorySearchEnabled,
       isPlatformAdmin: resumeIsPlatformAdmin,
       getSystemPrompt: config.getSystemPrompt,
+      ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
+      ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);
@@ -2591,7 +2822,19 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       eventStore,
       approvalStore: createApprovalStoreForSession(config, sessionRecord, eventStore),
       transcriptProjection: projection,
-      toolRuntime: applyToolProfile(new PlatformToolRuntime({
+      toolRuntime: boundProfile
+        ? applyAgentRuntimeProfile(applyToolProfile(new PlatformToolRuntime({
+            memoryIndexService: config.memoryIndexService,
+            executionTransportRegistry,
+            handStore: config.handStore,
+            resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
+            resolveWireEnv: buildTenantRemoteHandWireEnv,
+            artifactService: config.artifactService,
+            providers: [...resumeTooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
+            toolControls: config.toolControls,
+            backgroundTasks: config.backgroundTasks,
+          }), resumeToolProfile), boundProfile)
+        : applyToolProfile(new PlatformToolRuntime({
         memoryIndexService: config.memoryIndexService,
         executionTransportRegistry,
         handStore: config.handStore,
@@ -2617,10 +2860,15 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           interactionId: request.interactionId,
           response: normalizeInteractionResponse(resolution.response ?? request.response),
           instructions,
-          maxTurns: resolveEffectiveMaxTurns(config, request.maxTurns, {
-            userId: request.context.user?.id ?? request.context.sessionOwner?.id,
-            username: request.context.user?.username ?? request.context.sessionOwner?.username,
-          }),
+          maxTurns: boundProfile
+            ? resolveAgentProfileMaxTurns(boundProfile.version.config, resolveEffectiveMaxTurns(config, request.maxTurns, {
+                userId: request.context.user?.id ?? request.context.sessionOwner?.id,
+                username: request.context.user?.username ?? request.context.sessionOwner?.username,
+              }))!
+            : resolveEffectiveMaxTurns(config, request.maxTurns, {
+                userId: request.context.user?.id ?? request.context.sessionOwner?.id,
+                username: request.context.user?.username ?? request.context.sessionOwner?.username,
+              }),
         },
         {
           runId: resumeRunId,
@@ -2636,6 +2884,11 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           workerId: request.runtimeWorkerId,
           channelContext: request.context,
           approvalPolicy,
+          ...(boundProfile ? {
+            profileId: boundProfile.binding.profileId,
+            profileVersionId: boundProfile.binding.profileVersionId,
+            profileConfigDigest: boundProfile.binding.profileConfigDigest,
+          } : {}),
           hooks: request.hooks,
           signal: request.abortController?.signal,
         },

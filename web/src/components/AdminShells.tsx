@@ -31,9 +31,10 @@ import { OverviewSection as TenantOverviewSection } from "@/components/TenantAna
 import { QaConsole } from "@/components/QaConsole";
 
 const SystemPromptsManagerPanel = lazy(() => import("@/components/SystemPromptsManager"));
+const AgentRuntimeProfilesManagerPanel = lazy(() => import("@/components/AgentRuntimeProfilesManager"));
 
 export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company";
-export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "system-prompts" | "memory-polling" | "global-mcp" | "skill-pool" | "system";
+export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "agent-profiles" | "system-prompts" | "memory-polling" | "global-mcp" | "skill-pool" | "system";
 
 interface ShellButton<T extends string> {
   id: T;
@@ -67,6 +68,7 @@ const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "billing", label: "计费", icon: EntityIcons.billing },
   { id: "remote-hands", label: "执行环境池", icon: EntityIcons.runtimePool },
   { id: "tool-controls", label: "工具开关", icon: EntityIcons.toolControls },
+  { id: "agent-profiles", label: "Agent 运行配置", icon: EntityIcons.runtimePool },
   { id: "system-prompts", label: "系统提示语", icon: EntityIcons.systemPrompts },
   { id: "memory-polling", label: "记忆轮询", icon: EntityIcons.memoryPolling },
   { id: "global-mcp", label: "全局 MCP", icon: EntityIcons.connector },
@@ -1004,6 +1006,7 @@ export function PlatformAdminShell({
     { id: "billing", node: <PlatformBillingManager /> },
     { id: "remote-hands", node: renderRemoteHands() },
     { id: "tool-controls", node: renderToolControls() },
+    { id: "agent-profiles", node: <AgentRuntimeProfilesManagerPanel /> },
     { id: "system-prompts", node: <SystemPromptsManagerPanel /> },
     { id: "memory-polling", node: renderMemoryPolling() },
     { id: "global-mcp", node: renderMcp() },

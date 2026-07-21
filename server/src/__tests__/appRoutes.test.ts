@@ -271,10 +271,12 @@ describe('registerRoutes', () => {
     //   + 飞书官方 CLI 连接器 = 33
     //   + 系统提示语管理 = 34
     //   + 附件用量/清理 guard = 35
+    //   + Agent 运行 Profile 平台管理 = 36
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(35);
+    expect(app.use).toHaveBeenCalledTimes(36);
     expect(app.use).toHaveBeenCalledWith('/api/admin/system-prompts', mocked.systemPromptsRouter);
+    expect(app.use).toHaveBeenCalledWith('/api/admin/agent-profiles', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api/kb', expect.any(Function), mocked.kbFilesRouter);
     expect(app.use).toHaveBeenCalledWith('/api/feedback', mocked.feedbackRouter);
     expect(app.use).toHaveBeenCalledWith('/api/appeals', expect.any(Function));

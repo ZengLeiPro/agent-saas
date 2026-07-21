@@ -2,8 +2,9 @@ import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { isValidSessionId } from './projectKey.js';
+import type { AgentProfileSessionBinding } from '../agentProfiles/types.js';
 
-export interface SessionMeta {
+export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
   userId: string;
   username: string;
   userRole?: 'admin' | 'user';
@@ -161,6 +162,7 @@ export async function updateSessionMeta(
     | 'deletedAt'
     | 'deletedBy'
     | 'cronJobName'
+    | 'cronSystemKind'
     | 'runtimeStatus'
     | 'updatedAt'
     | 'cwd'
@@ -168,6 +170,13 @@ export async function updateSessionMeta(
     | 'workspaceId'
     | 'transcriptPath'
     | 'userRole'
+    | 'profileId'
+    | 'profileKey'
+    | 'profileVersionId'
+    | 'profileVersionNumber'
+    | 'profileConfigDigest'
+    | 'profileBindingKey'
+    | 'profileResolution'
   >>,
 ): Promise<SessionMeta | null> {
   const metaPath = getMetaPath(transcriptPath);

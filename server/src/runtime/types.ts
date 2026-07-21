@@ -26,6 +26,10 @@ export interface RunContext {
   workerId?: string;
   channelContext: ChannelContext;
   approvalPolicy?: ToolApprovalPolicyOptions;
+  /** Immutable Agent Profile identity pinned on SessionMeta. */
+  profileId?: string;
+  profileVersionId?: string;
+  profileConfigDigest?: string;
   hooks?: AgentRunHooks;
   signal?: AbortSignal;
   /**
@@ -340,6 +344,9 @@ export type PlatformEvent =
     sessionId: string;
     model: string;
     channel: string;
+    profileId?: string;
+    profileVersionId?: string;
+    profileConfigDigest?: string;
   }
   | {
     id: string;

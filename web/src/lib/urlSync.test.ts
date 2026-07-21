@@ -51,6 +51,11 @@ describe("platform admin url sync", () => {
       adminSection: null,
       adminSettings: { target: "platform", section: "system-prompts" },
     });
+    expect(parseUrl("/platform-admin/settings/agent-profiles")).toMatchObject({
+      tab: "platform-admin",
+      adminSection: null,
+      adminSettings: { target: "platform", section: "agent-profiles" },
+    });
   });
 
   it("canonicalizes legacy runtime settings sections into entity sections", () => {

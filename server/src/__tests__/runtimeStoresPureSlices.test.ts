@@ -86,6 +86,7 @@ describe('normalizeRunRecord（经 PgRunStore.get 驱动）', () => {
       last_response_expire_at: '2026-07-21T02:00:00.000Z',
       actual_model_seen: 'glm-5.2-alias',
       last_response_model: 'glm-5.2',
+      last_response_profile_digest: 'digest-v1',
       cumulative_input_tokens: '12345',
     });
     expect(record).toEqual({
@@ -112,6 +113,7 @@ describe('normalizeRunRecord（经 PgRunStore.get 驱动）', () => {
       lastResponseExpireAt: '2026-07-21T02:00:00.000Z',
       actualModelSeen: 'glm-5.2-alias',
       lastResponseModel: 'glm-5.2',
+      lastResponseProfileDigest: 'digest-v1',
       cumulativeInputTokens: 12345,
     });
     // null 的 snake 日期列不映射为 null，而是 undefined
@@ -143,6 +145,7 @@ describe('normalizeRunRecord（经 PgRunStore.get 驱动）', () => {
       last_response_expire_at: null,
       actual_model_seen: null,
       last_response_model: null,
+      last_response_profile_digest: null,
       cumulative_input_tokens: null,
     });
     expect(record).toEqual({
@@ -172,6 +175,7 @@ describe('normalizeRunRecord（经 PgRunStore.get 驱动）', () => {
       idempotencyKey: 'idem-3',
       metadata: { source: 'memory' },
       lastResponseId: 'resp-3',
+      lastResponseProfileDigest: 'digest-v3',
       cumulativeInputTokens: 42,
     });
     expect(record).toEqual({
@@ -186,6 +190,7 @@ describe('normalizeRunRecord（经 PgRunStore.get 驱动）', () => {
       idempotencyKey: 'idem-3',
       metadata: { source: 'memory' },
       lastResponseId: 'resp-3',
+      lastResponseProfileDigest: 'digest-v3',
       cumulativeInputTokens: 42,
     });
   });
@@ -302,13 +307,14 @@ describe('sanitizeIdentifier（经 PgRunStore 构造函数驱动）', () => {
 });
 
 describe('updateResponseSessionState 动态 SET/参数位装配（现场增补的 A 切片）', () => {
-  it('全量 patch：SET 片段按固定顺序编号 $3..$7，delta 走累加而非覆盖', async () => {
+  it('全量 patch：SET 片段按固定顺序编号 $3..$8，delta 走累加而非覆盖', async () => {
     const { store, query } = makeRunStoreRig([]);
     await store.updateResponseSessionState('run-9', {
       lastResponseId: 'resp-9',
       lastResponseExpireAt: '2026-07-22T00:00:00.000Z',
       actualModelSeen: 'glm-actual',
       lastResponseModel: 'glm-5.2',
+      lastResponseProfileDigest: 'digest-v9',
       cumulativeInputTokensDelta: 1234,
     });
     expect(query).toHaveBeenCalledTimes(1);
@@ -316,11 +322,18 @@ describe('updateResponseSessionState 动态 SET/参数位装配（现场增补�
     expect(sql).toContain(
       'SET updated_at = $2, last_response_id = $3, last_response_expire_at = $4, '
       + 'actual_model_seen = $5, last_response_model = $6, '
-      + 'cumulative_input_tokens = cumulative_input_tokens + $7',
+      + 'last_response_profile_digest = $7, cumulative_input_tokens = cumulative_input_tokens + $8',
     );
     expect(params[0]).toBe('run-9');
     expect(typeof params[1]).toBe('string'); // updated_at = now ISO
-    expect(params.slice(2)).toEqual(['resp-9', '2026-07-22T00:00:00.000Z', 'glm-actual', 'glm-5.2', 1234]);
+    expect(params.slice(2)).toEqual([
+      'resp-9',
+      '2026-07-22T00:00:00.000Z',
+      'glm-actual',
+      'glm-5.2',
+      'digest-v9',
+      1234,
+    ]);
   });
 
   it('显式 null 清空：参与 SET 且参数为 null；undefined 字段不进 SET', async () => {
@@ -328,14 +341,18 @@ describe('updateResponseSessionState 动态 SET/参数位装配（现场增补�
     await store.updateResponseSessionState('run-10', {
       lastResponseId: null,
       lastResponseModel: null,
+      lastResponseProfileDigest: null,
       // lastResponseExpireAt / actualModelSeen / delta 均 undefined → 保留原值
     });
     const [sql, params] = query.mock.calls[0]! as [string, unknown[]];
-    expect(sql).toContain('SET updated_at = $2, last_response_id = $3, last_response_model = $4');
+    expect(sql).toContain(
+      'SET updated_at = $2, last_response_id = $3, last_response_model = $4, '
+      + 'last_response_profile_digest = $5',
+    );
     expect(sql).not.toContain('last_response_expire_at');
     expect(sql).not.toContain('actual_model_seen');
     expect(sql).not.toContain('cumulative_input_tokens');
-    expect(params.slice(2)).toEqual([null, null]);
+    expect(params.slice(2)).toEqual([null, null, null]);
   });
 
   it('空 patch 与 delta=0 短路：不发 UPDATE，回退为 get() 的 SELECT', async () => {

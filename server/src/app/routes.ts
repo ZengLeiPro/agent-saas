@@ -60,6 +60,7 @@ import { createToolControlsAdminRouter } from "../routes/toolControlsAdmin.js";
 import { createImageGenPricingAdminRouter } from "../routes/imageGenPricingAdmin.js";
 import { createMemoryPollingAdminRouter } from "../routes/memoryPollingAdmin.js";
 import { createSystemPromptsAdminRouter } from "../routes/systemPromptsAdmin.js";
+import { createAgentRuntimeProfilesAdminRouter } from "../routes/agentRuntimeProfilesAdmin.js";
 import { createAdminBillingRouter, createBillingRouter } from "../routes/billing.js";
 import { createAzerothProxyRouter } from "../routes/azeroth-proxy.js";
 import { createDingtalkSessionRouter } from "../channels/dingtalk/protocol/sessionRouter.js";
@@ -366,6 +367,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       config,
       registry: runtime.systemPromptRegistry,
     }),
+  );
+  app.use(
+    "/api/admin/agent-profiles",
+    createAgentRuntimeProfilesAdminRouter({ store: runtime.agentRuntimeProfileStore }),
   );
   // GenerateImage 引擎配置与 per-engine 定价（2026-07-15）：平台管理员运行时可改，
   // PUT 后 jsonc 回写 config.json + SecretVault 凭据托管 + runtime 热更，无需重启。

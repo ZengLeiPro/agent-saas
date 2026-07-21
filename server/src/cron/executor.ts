@@ -3,7 +3,7 @@
  */
 import * as fs from "node:fs/promises";
 import { getTranscriptPath } from "../data/transcripts/store.js";
-import { writeSessionMeta } from "../data/transcripts/meta.js";
+import { updateSessionMeta } from "../data/transcripts/meta.js";
 import { resolveUserCwd, ensureUserWorkspace, refreshUserWorkspace } from "../workspace/resolver.js";
 import type { ResolvedModel } from "../app/models.js";
 import type { SkillConfigStore } from "../data/skills/store.js";
@@ -359,19 +359,15 @@ async function executeAgentTurn(
           // 立即上报 sessionId，确保即使 pTimeout 打断也能归组
           opts.onSessionId?.(startedSessionId, transcriptPath);
 
-          // 写入 session meta，使 cron 会话能出现在用户的会话列表中
+          // raw dispatch 已经写入完整 session meta。这里只 merge cron 展示字段，
+          // 禁止用不完整对象覆盖 cwd/model/execution/workspace/Profile 版本绑定。
           if (owner && startedSessionId) {
             const tp = startedTranscriptPath ?? getTranscriptPath(effectiveAgentCwd, startedSessionId, { tenantId: owner.tenantId, userId: owner.id });
-            writeSessionMeta(tp, {
-              userId: owner.id,
-              username: owner.username,
-              tenantId: owner.tenantId,
-              channel: 'cron',
-              createdAt: new Date().toISOString(),
+            updateSessionMeta(tp, {
               cronJobName: job.name,
               ...(job.systemKind ? { cronSystemKind: job.systemKind } : {}),
             }).catch((err) => {
-              console.warn(`[cron/meta] Failed to write session meta: sessionId=${startedSessionId} error=${err}`);
+              console.warn(`[cron/meta] Failed to update session meta: sessionId=${startedSessionId} error=${err}`);
             });
           }
         },

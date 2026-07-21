@@ -23,6 +23,11 @@ import {
 } from '../subagent/subagentLimits.js';
 import { runSubagent, type SubagentOutcome } from '../subagent/subagentRunner.js';
 import { BACKGROUND_COMMAND_MONITOR_HANDOFF_REASON } from './backgroundTaskRuntime.js';
+import {
+  assertAgentProfileExecutionTarget,
+  profileRunMetadata,
+  type BoundAgentRuntimeProfile,
+} from '../agentProfiles.js';
 import type {
   BackgroundAgentRequest,
   BackgroundCommandRequest,
@@ -133,12 +138,23 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       }
     }
 
-    const modelRef = request.model?.trim() || parentSession.modelRef;
+    const executionTarget = context.workspace.executionTarget;
+    let boundProfile: BoundAgentRuntimeProfile | undefined;
+    if (this.config.agentRuntimeProfileResolver) {
+      boundProfile = await this.config.agentRuntimeProfileResolver.resolveForSession({
+        existingSession: null,
+        bindingKey: request.agentType === 'explore' ? 'background_explore' : 'background_general',
+      });
+      assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
+    }
+    const modelRef = boundProfile?.version.config.model.strategy === 'fixed'
+      ? boundProfile.version.config.model.modelRef
+      : request.model?.trim() || parentSession.modelRef;
     let model: string | undefined;
     if (modelRef && this.config.modelResolver) {
       const resolved = this.config.modelResolver(modelRef, tenantId);
-      if (!resolved && request.model) {
-        throw new Error(`后台 Agent 模型 "${request.model}" 不在当前组织可用模型白名单内。`);
+      if (!resolved && (request.model || boundProfile?.version.config.model.strategy === 'fixed')) {
+        throw new Error(`后台 Agent 模型 "${modelRef}" 不在当前组织可用模型白名单内。`);
       }
       model = resolved?.model;
     }
@@ -148,8 +164,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     const taskId = `bg-${Date.now()}-${randomUUID()}`;
     const taskSessionId = `sub-${randomUUID()}`;
     const toolCallId = context.toolCallId ?? `agent-${randomUUID()}`;
-    const executionTarget = context.workspace.executionTarget;
-    const taskSession = createRuntimeSessionRecord({
+    let taskSession = createRuntimeSessionRecord({
       sessionId: taskSessionId,
       userId,
       username,
@@ -163,6 +178,9 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       status: 'idle',
       kind: 'subagent',
     });
+    if (boundProfile && this.config.agentRuntimeProfileResolver) {
+      taskSession = this.config.agentRuntimeProfileResolver.bindSessionRecord(taskSession, boundProfile);
+    }
     await sessionCatalog.upsert(taskSession);
 
     const taskRun = await runStore.enqueueBackgroundTask!({
@@ -190,6 +208,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         agentType: request.agentType,
         modelRef,
         includeCompanyInfo: request.includeCompanyInfo,
+        ...(boundProfile ? profileRunMetadata(boundProfile) : {}),
         cwd: context.workspace.root,
         workspaceId: context.workspace.id ?? taskSessionId,
         ...(context.workspace.mountSubPath ? { mountSubPath: context.workspace.mountSubPath } : {}),
@@ -424,6 +443,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         parentProviders: tooling.providers as ToolProvider[],
         parentContext,
         agentType,
+        profileSourceSession: taskSession,
         request: {
           description: metadata.description,
           prompt: metadata.prompt,

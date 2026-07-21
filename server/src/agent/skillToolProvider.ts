@@ -95,6 +95,26 @@ function renderSkillDescription(skills: SkillEntry[]): string {
 export class SkillToolProvider implements ToolProvider {
   constructor(private readonly resolver: EffectiveSkillsResolver) {}
 
+  /**
+   * Derive a narrower provider without expanding the underlying effective skill set.
+   * Profile/subagent policy uses this so list() and invoke() share the same AND filter.
+   */
+  withEntryFilter(
+    predicate: (skill: SkillEntry) => boolean,
+    preferredSkillIds: readonly string[] = [],
+  ): SkillToolProvider {
+    const inner = this.resolver;
+    return new SkillToolProvider({
+      list: (context) => prioritizeSkills(inner.list(context).filter(predicate), preferredSkillIds),
+      resolveSkillDir: (skill, context) => {
+        const allowed = inner.list(context).some((entry) => (
+          (entry.id === skill || entry.name === skill) && predicate(entry)
+        ));
+        return allowed ? inner.resolveSkillDir(skill, context) : null;
+      },
+    });
+  }
+
   list(context?: ToolCallContext): ToolDescriptor[] {
     // context 缺失（少数 warmup/dryrun 路径）时用 base description 兜底，避免抛错；
     // 真实 dispatch 都会传 context（toolRuntime.ts:1318 flatMap((p) => p.list(context))）。
@@ -160,6 +180,19 @@ export class SkillToolProvider implements ToolProvider {
       content: `<skill-doc name="${input.skill}" path="${basename(docPath)}">\n${body}\n</skill-doc>${argsLine}${hint}`,
     };
   }
+}
+
+function prioritizeSkills(skills: SkillEntry[], preferredSkillIds: readonly string[]): SkillEntry[] {
+  if (preferredSkillIds.length === 0) return skills;
+  const priority = new Map(preferredSkillIds.map((id, index) => [id, index]));
+  return skills
+    .map((skill, index) => ({ skill, index }))
+    .sort((left, right) => {
+      const leftPriority = priority.get(left.skill.id) ?? priority.get(left.skill.name) ?? Number.MAX_SAFE_INTEGER;
+      const rightPriority = priority.get(right.skill.id) ?? priority.get(right.skill.name) ?? Number.MAX_SAFE_INTEGER;
+      return leftPriority - rightPriority || left.index - right.index;
+    })
+    .map(({ skill }) => skill);
 }
 
 /**

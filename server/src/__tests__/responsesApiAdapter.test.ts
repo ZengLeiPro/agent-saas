@@ -1047,6 +1047,77 @@ describe('ResponsesApiAdapter', () => {
     expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
   });
 
+  it('Cron 缓冲未完成 attempt 的正文与思考，并在流内 internal_server_error 后安全重试', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_partial' } }),
+        sse('response.reasoning_summary_text.delta', {
+          type: 'response.reasoning_summary_text.delta',
+          delta: '失败轮思考',
+        }),
+        sse('response.output_text.delta', {
+          type: 'response.output_text.delta',
+          delta: '失败轮正文',
+        }),
+        sse('error', {
+          type: 'error',
+          code: 'internal_server_error',
+          message: 'unexpected EOF',
+        }),
+      ]))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_recovered' } }),
+        sse('response.reasoning_summary_text.delta', {
+          type: 'response.reasoning_summary_text.delta',
+          delta: '成功轮思考',
+        }),
+        sse('response.output_text.delta', {
+          type: 'response.output_text.delta',
+          delta: '最终成功',
+        }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: {
+            id: 'resp_recovered',
+            status: 'completed',
+            usage: { input_tokens: 8, output_tokens: 2 },
+          },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      channelContext: { channel: 'cron' },
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([
+      { type: 'thinking_delta', content: '成功轮思考' },
+      { type: 'text_delta', content: '最终成功' },
+      expect.objectContaining({
+        type: 'completed',
+        content: '最终成功',
+        terminalStatus: 'completed',
+        modelRequestAttemptCount: 2,
+      }),
+    ]);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, errorCode: 'internal_server_error', willRetry: true },
+      { attempt: 2, outcome: 'completed' },
+    ]);
+  });
+
   it('终态后立即封口，后续帧不能注入工具调用', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
       sse('response.created', { type: 'response.created', response: { id: 'resp_sealed' } }),

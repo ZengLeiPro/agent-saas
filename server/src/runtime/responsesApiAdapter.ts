@@ -400,7 +400,15 @@ export class ResponsesApiAdapter implements ModelAdapter {
     let providerErrorMessage: string | undefined;
     let refusal = '';
     let toolSearchResults: ModelToolSearchResult[] = [];
-    let hasEmittedOutput = false;
+    // Cron 是无人值守通道，不需要把未完成 attempt 的正文/思考实时暴露给上层。
+    // 先缓冲到官方 completed 终态，可在流内瞬时故障时安全丢弃并重试；工具调用
+    // 本来就只在 completed 后由 RawAgentLoop 执行，不会因此重复副作用。
+    const commitOutputOnTerminal = context.channelContext.channel === 'cron';
+    const bufferedOutputEvents: Array<{
+      type: 'text_delta' | 'thinking_delta';
+      content: string;
+    }> = [];
+    let hasDeliveredOutput = false;
 
     // function_call 在 stream 里按 output_index 累积；item 整体在 output_item.done 出现
     const toolCallsByIndex = new Map<number, ModelToolCall>();
@@ -467,16 +475,24 @@ export class ResponsesApiAdapter implements ModelAdapter {
                 const partKey = responseTextPartKey(event);
                 outputTextByPart.set(partKey, (outputTextByPart.get(partKey) ?? '') + delta);
                 content += delta;
-                hasEmittedOutput = true;
-                yield { type: 'text_delta', content: delta };
+                if (commitOutputOnTerminal) {
+                  bufferedOutputEvents.push({ type: 'text_delta', content: delta });
+                } else {
+                  hasDeliveredOutput = true;
+                  yield { type: 'text_delta', content: delta };
+                }
               }
             } else if (eventType === 'response.reasoning_summary_text.delta') {
               // 公开派模型（glm 在带 tools 复杂 agent loop 时激活）发 reasoning summary；
               // 隐藏派（doubao/minimax）此事件不出现但 reasoning_tokens 仍计费
               const delta = typeof event.delta === 'string' ? event.delta : '';
               if (delta) {
-                hasEmittedOutput = true;
-                yield { type: 'thinking_delta', content: delta };
+                if (commitOutputOnTerminal) {
+                  bufferedOutputEvents.push({ type: 'thinking_delta', content: delta });
+                } else {
+                  hasDeliveredOutput = true;
+                  yield { type: 'thinking_delta', content: delta };
+                }
               }
             } else if (eventType === 'response.output_text.done') {
               const doneText = typeof event.text === 'string' ? event.text : '';
@@ -486,8 +502,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
               outputTextByPart.set(partKey, partContent + suffix);
               if (suffix) {
                 content += suffix;
-                hasEmittedOutput = true;
-                yield { type: 'text_delta', content: suffix };
+                if (commitOutputOnTerminal) {
+                  bufferedOutputEvents.push({ type: 'text_delta', content: suffix });
+                } else {
+                  hasDeliveredOutput = true;
+                  yield { type: 'text_delta', content: suffix };
+                }
               }
             } else if (eventType === 'response.refusal.delta') {
               if (typeof event.delta === 'string') refusal += event.delta;
@@ -661,8 +681,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
       await reader.cancel().catch(() => undefined);
       if (canonicalTextSuffix) {
         content += canonicalTextSuffix;
-        hasEmittedOutput = true;
-        yield { type: 'text_delta', content: canonicalTextSuffix };
+        if (commitOutputOnTerminal) {
+          bufferedOutputEvents.push({ type: 'text_delta', content: canonicalTextSuffix });
+        } else {
+          hasDeliveredOutput = true;
+          yield { type: 'text_delta', content: canonicalTextSuffix };
+        }
       }
       streamReadSettled = true;
     } catch (err) {
@@ -708,12 +732,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
         : terminalStatus === 'incomplete'
           ? `Responses API response incomplete: reason=${incompleteReason ?? 'unknown'}`
           : providerErrorMessage ?? 'Responses API response failed';
-      const retryDelayMs = isRetryableZeroOutputStreamTerminalError(
+      const retryDelayMs = isRetryableUndeliveredStreamTerminalError(
         terminalEventType,
         terminalStatus,
         errorCode,
         errorMessage,
-        hasEmittedOutput,
+        hasDeliveredOutput,
       ) && !requestSignal?.aborted
         ? retryDelaysMs[transientRetryIndex]
         : undefined;
@@ -726,7 +750,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         });
         transientRetryIndex += 1;
         logger.warn(
-          `Responses API 流内 ${terminalEventType} ${errorCode} 且零输出，${retryDelayMs}ms 后重试 `
+          `Responses API 流内 ${terminalEventType} ${errorCode} 且未交付输出，${retryDelayMs}ms 后重试 `
           + `(${transientRetryIndex}/${retryDelaysMs.length})：${errorMessage}`,
         );
         await waitForRetry(retryDelayMs, requestSignal);
@@ -838,6 +862,10 @@ export class ResponsesApiAdapter implements ModelAdapter {
       + `input=${usage?.inputTokens ?? 0} cache_read=${usage?.cacheReadInputTokens ?? 0} `
       + `output=${usage?.outputTokens ?? 0}`,
     );
+
+    for (const bufferedEvent of bufferedOutputEvents) {
+      yield bufferedEvent;
+    }
 
     yield {
       type: 'completed',
@@ -1579,14 +1607,14 @@ function isRetryablePreStreamHttpError(status: number, message: string): boolean
     || /stream error:\s*stream ID \d+;\s*PROTOCOL_ERROR;\s*received from peer/i.test(message);
 }
 
-function isRetryableZeroOutputStreamTerminalError(
+function isRetryableUndeliveredStreamTerminalError(
   terminalEventType: string | undefined,
   terminalStatus: ModelTerminalStatus | undefined,
   errorCode: string,
   errorMessage: string,
-  hasEmittedOutput: boolean,
+  hasDeliveredOutput: boolean,
 ): boolean {
-  if (hasEmittedOutput || terminalStatus !== 'failed') return false;
+  if (hasDeliveredOutput || terminalStatus !== 'failed') return false;
   if (!['error', 'response.error', 'response.failed'].includes(terminalEventType ?? '')) return false;
   const normalizedCode = errorCode.trim().toLowerCase();
   if (normalizedCode === 'internal_server_error') return true;

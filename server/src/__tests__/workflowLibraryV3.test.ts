@@ -777,6 +777,25 @@ describe("Workflow V3 library", () => {
     }
   });
 
+  it("publishes exactly three guided presentations while keeping evidence bindings internal", async () => {
+    const v3Path = resolve(import.meta.dirname, "../data/scenarios/workflow-library-v3.json");
+    const loaded = await loadWorkflowLibraryV3(v3Path);
+    const presented = loaded.public.scenarios.filter((scenario) => scenario.presentation);
+
+    expect(presented.map((scenario) => scenario.id)).toEqual([
+      "catalog-lead-to-opportunity-loop",
+      "catalog-technical-inquiry-to-approved-quote-loop",
+      "catalog-acceptance-to-cash-loop",
+    ]);
+    expect(presented.map((scenario) => scenario.presentation?.chapters.length)).toEqual([7, 8, 8]);
+    expect(presented.every((scenario) => scenario.presentation?.dataLabel === "合成场景演示")).toBe(true);
+
+    const publicJson = JSON.stringify(presented);
+    expect(publicJson).not.toContain("sourceTimelineRefs");
+    expect(publicJson).not.toContain("workflowDefinitionVersion");
+    expect(publicJson).not.toContain("demo-lead-to-opportunity-loop-v1");
+  });
+
   it("keeps every customer action summary aligned with the complete runtime action contract", async () => {
     const v3Path = resolve(import.meta.dirname, "../data/scenarios/workflow-library-v3.json");
     const loaded = await loadWorkflowLibraryV3(v3Path);

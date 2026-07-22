@@ -112,6 +112,34 @@ export function projectWorkflowLibraryPublic(
         demo: {
           evidenceLevel: "design_only",
         },
+        ...(scenario.public.presentation ? {
+          presentation: {
+            version: scenario.public.presentation.version,
+            dataLabel: scenario.public.presentation.dataLabel,
+            limitation: scenario.public.presentation.limitation,
+            chapters: scenario.public.presentation.chapters.map((chapter) => ({
+              id: chapter.id,
+              title: chapter.title,
+              narration: chapter.narration,
+              result: chapter.result,
+              interaction: {
+                kind: chapter.interaction.kind,
+                label: chapter.interaction.label,
+              },
+              surface: {
+                kind: chapter.surface.kind,
+                title: chapter.surface.title,
+                ...(chapter.surface.subtitle ? { subtitle: chapter.surface.subtitle } : {}),
+                items: chapter.surface.items.map((item) => ({
+                  label: item.label,
+                  value: item.value,
+                  state: item.state,
+                  ...(item.changed !== undefined ? { changed: item.changed } : {}),
+                })),
+              },
+            })),
+          },
+        } : {}),
         featured: scenario.internal.hero?.featured === true,
         ...(scenario.internal.hero?.featured && scenario.internal.hero.order
           ? { featuredOrder: scenario.internal.hero.order }

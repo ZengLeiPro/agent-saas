@@ -531,6 +531,62 @@ const catalogDetailRawSchema = z.object({
   valueProof: rawTextSchema,
 }).strict();
 
+const presentationSurfaceKindSchema = z.enum([
+  "crm_table",
+  "erp_table",
+  "im_thread",
+  "mail_panel",
+  "approval_card",
+  "browser_panel",
+  "task_list",
+  "finance_ledger",
+  "summary",
+]);
+
+const presentationItemStateSchema = z.enum([
+  "neutral",
+  "pending",
+  "active",
+  "success",
+  "warning",
+]);
+
+const presentationPublicRawSchema = z.object({
+  version: z.literal(1),
+  dataLabel: z.literal("合成场景演示"),
+  limitation: rawTextSchema,
+  chapters: z.array(z.object({
+    id: idSchema,
+    title: rawTextSchema,
+    narration: rawTextSchema,
+    result: rawTextSchema,
+    interaction: z.object({
+      kind: z.enum(["next", "confirm"]),
+      label: rawTextSchema,
+    }).strict(),
+    surface: z.object({
+      kind: presentationSurfaceKindSchema,
+      title: rawTextSchema,
+      subtitle: rawTextSchema.optional(),
+      items: z.array(z.object({
+        label: rawTextSchema,
+        value: rawTextSchema,
+        state: presentationItemStateSchema,
+        changed: z.boolean().optional(),
+      }).strict()).min(1).max(8),
+    }).strict(),
+  }).strict()).min(6).max(9),
+}).strict();
+
+const presentationBindingSchema = z.object({
+  demoId: idSchema,
+  workflowDefinitionVersion: z.number().int().min(1),
+  chapters: z.array(z.object({
+    chapterId: idSchema,
+    sourceTimelineRefs: z.array(idSchema).min(1),
+  }).strict()).min(6).max(9),
+}).strict();
+
 const catalogPublicRawSchema = z.object({
   title: rawTextSchema,
   value: rawTextSchema,
@@ -549,6 +605,7 @@ const catalogPublicRawSchema = z.object({
     sampleAvailable: z.boolean(),
     inputHint: rawTextSchema.optional(),
   }).strict(),
+  presentation: presentationPublicRawSchema.optional(),
 }).strict();
 
 export const catalogScenarioPublicSchema = z.object({
@@ -596,6 +653,32 @@ export const catalogScenarioPublicSchema = z.object({
     evidenceLevel: z.enum(["design_only", "artifact", "workflow_replay"]),
     sharePath: z.string().startsWith("/").optional(),
   }).strict(),
+  presentation: z.object({
+    version: z.literal(1),
+    dataLabel: z.literal("合成场景演示"),
+    limitation: workflowPublicTextSchema,
+    chapters: z.array(z.object({
+      id: idSchema,
+      title: workflowPublicTextSchema,
+      narration: workflowPublicTextSchema,
+      result: workflowPublicTextSchema,
+      interaction: z.object({
+        kind: z.enum(["next", "confirm"]),
+        label: workflowPublicTextSchema,
+      }).strict(),
+      surface: z.object({
+        kind: presentationSurfaceKindSchema,
+        title: workflowPublicTextSchema,
+        subtitle: workflowPublicTextSchema.optional(),
+        items: z.array(z.object({
+          label: workflowPublicTextSchema,
+          value: workflowPublicTextSchema,
+          state: presentationItemStateSchema,
+          changed: z.boolean().optional(),
+        }).strict()).min(1).max(8),
+      }).strict(),
+    }).strict()).min(6).max(9),
+  }).strict().optional(),
   featured: z.boolean(),
   featuredOrder: z.number().int().min(1).optional(),
 }).strict();
@@ -645,6 +728,7 @@ export const catalogScenarioRecordSchema = z.object({
     legacyCompatRef: refSchema.optional(),
     internalNotes: rawTextSchema.optional(),
     hero: heroReviewSchema.optional(),
+    presentation: presentationBindingSchema.optional(),
   }).strict(),
 }).strict();
 
@@ -1018,6 +1102,40 @@ export const workflowLibraryFileV3Schema = z.object({
     for (const roleViewId of item.roleViewIds) {
       if (!workflowRoleViewIds.has(roleViewId)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 岗位视图不属于目标 Workflow` });
+      }
+    }
+    const presentation = item.public.presentation;
+    const binding = item.internal.presentation;
+    if (Boolean(presentation) !== Boolean(binding)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示内容与证据绑定必须同时存在` });
+    }
+    if (presentation && binding) {
+      const demo = library.demos.find((candidate) => candidate.id === binding.demoId);
+      if (!demo || demo.workflowId !== item.workflowId || demo.catalogScenarioId !== item.id) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示绑定未指向自己的 Demo` });
+      }
+      if (!workflow || binding.workflowDefinitionVersion !== workflow.definitionVersion) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示绑定未跟随当前 Workflow 版本` });
+      }
+      if (item.internal.defaultDemoId !== binding.demoId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示绑定必须使用默认 Demo` });
+      }
+      const publicChapterIds = presentation.chapters.map((chapter) => chapter.id);
+      const bindingChapterIds = binding.chapters.map((chapter) => chapter.chapterId);
+      if (new Set(publicChapterIds).size !== publicChapterIds.length
+        || new Set(bindingChapterIds).size !== bindingChapterIds.length
+        || publicChapterIds.length !== bindingChapterIds.length
+        || publicChapterIds.some((id) => !bindingChapterIds.includes(id))) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示章节与证据绑定不一致` });
+      }
+      if (demo) {
+        const timelineIds = demo.public.timeline.map((event) => event.id);
+        const sourceRefs = binding.chapters.flatMap((chapter) => chapter.sourceTimelineRefs);
+        if (new Set(sourceRefs).size !== sourceRefs.length
+          || sourceRefs.length !== timelineIds.length
+          || timelineIds.some((id) => !sourceRefs.includes(id))) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示章节必须完整且不重复地覆盖 Demo 时间线` });
+        }
       }
     }
   }

@@ -316,7 +316,23 @@ export function lintWorkflowLibraryV3(library: WorkflowLibraryFileV3): void {
     }
   }
   for (const scenario of library.catalogScenarios) {
-    assertCustomerCopy(`${scenario.id}.public`, textLeaves(scenario.public));
+    const { presentation, ...catalogCopy } = scenario.public;
+    assertCustomerCopy(`${scenario.id}.public`, textLeaves(catalogCopy));
+    if (presentation) {
+      assertCustomerCopy(`${scenario.id}.presentation`, [
+        presentation.dataLabel,
+        presentation.limitation,
+        ...presentation.chapters.flatMap((chapter) => [
+          chapter.title,
+          chapter.narration,
+          chapter.result,
+          chapter.interaction.label,
+          chapter.surface.title,
+          ...(chapter.surface.subtitle ? [chapter.surface.subtitle] : []),
+          ...chapter.surface.items.flatMap((item) => [item.label, item.value]),
+        ]),
+      ]);
+    }
     const workflow = workflowById.get(scenario.workflowId);
     if (!scenario.internal.enabled
       || !workflow?.internal.enabled

@@ -10,6 +10,7 @@ import {
   type WorkflowLibraryPublicV3,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { CapabilityFilterTabs } from "@/components/CapabilityCenter/CatalogUi";
 import {
   Dialog,
@@ -24,9 +25,11 @@ import {
   ScenarioCard,
   ScenarioModeBadge,
   ScenarioRequireBadges,
+  WorkflowPresentationCard,
   WorkflowScenarioCard,
 } from "./ScenarioCard";
 import { ScenarioDetailDialog } from "./ScenarioDetailDialog";
+import { WorkflowPresentationDialog } from "./WorkflowPresentationDialog";
 import { matchRoleIdByPosition, useScenarioLibrary } from "./useScenarioLibrary";
 import { RoleKitDetailPage } from "./RoleKitDetailPage";
 import { INDUSTRY_ALL, matchIndustry, type IndustryFilterValue } from "./useIndustryFilter";
@@ -45,6 +48,7 @@ import {
   type OutcomeFilterValue,
   type VerticalFilterValue,
   type WorkflowPrimaryAction,
+  workflowOperationalCta,
 } from "./workflowUi";
 
 const INDUSTRY_ORDER: IndustryType[] = [
@@ -77,6 +81,8 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     roleViewId?: string;
     roleId?: string;
   } | null>(null);
+  const [presentation, setPresentation] = useState<CatalogScenarioPublic | null>(null);
+  const [catalogExpanded, setCatalogExpanded] = useState(false);
   const [deferredNotice, setDeferredNotice] = useState<WorkflowLibraryPublicV3["deferredObjects"][number] | null>(null);
   const deepLinkConsumed = useRef(false);
   const userSelectedRole = useRef(false);
@@ -94,6 +100,11 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
 
   const handleWorkflowAction = (action: WorkflowPrimaryAction, scenario: CatalogScenarioPublic) => {
     props.onWorkflowSelected?.(scenario);
+    if (action === "presentation") {
+      if (scenario.presentation) setPresentation(scenario);
+      else setDetail({ scenario });
+      return;
+    }
     if (action === "chat") {
       if (props.onStartWorkflow) props.onStartWorkflow(scenario.launch.starterMessage, scenario);
       else setDetail({ scenario });
@@ -219,17 +230,53 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     || filters.activeVertical !== VERTICAL_ALL
     || filters.activeBusinessModel !== BUSINESS_MODEL_ALL
     || filters.activeMaturity !== MATURITY_ALL;
+  const presentationScenarios = workflowLibrary.scenarios
+    .filter((scenario) => scenario.presentation)
+    .sort((left, right) => (left.featuredOrder ?? Number.MAX_SAFE_INTEGER) - (right.featuredOrder ?? Number.MAX_SAFE_INTEGER));
+  const showFullCatalog = presentationScenarios.length === 0
+    || catalogExpanded
+    || hasFilters
+    || !!roleDetailName;
 
   return (
     <div className="w-full px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">{roleDetailName ? `${roleDetailName} AI 同事工作流` : "AI 同事工作流"}</h1>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">从业务事件到系统终态，不只生成报告。默认目录共 {workflowLibrary.scenarios.length} 个唯一工作流。</p>
+          <h1 className="text-xl font-semibold">{roleDetailName ? `${roleDetailName} AI 同事工作流` : "AI 同事能帮你完成什么"}</h1>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            {presentationScenarios.length > 0 && !roleDetailName
+              ? "先挑一件真实工作，一步一步看它如何判断、行动并改变业务系统。"
+              : `从业务事件到系统终态，不只生成报告。默认目录共 ${workflowLibrary.scenarios.length} 个唯一工作流。`}
+          </p>
         </div>
         {roleDetailName && props.onCloseRoleDetail ? <Button variant="outline" size="sm" onClick={props.onCloseRoleDetail}>返回目录</Button> : null}
       </div>
 
+      {presentationScenarios.length > 0 && !roleDetailName ? (
+        <section aria-labelledby="guided-presentations-title">
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <h2 id="guided-presentations-title" className="font-semibold">推荐先体验</h2>
+              <p className="mt-1 text-xs text-muted-foreground">演示数据均为虚构；每一步由你推进，不会修改真实系统。</p>
+            </div>
+            <Badge variant="secondary">首批 {presentationScenarios.length} 个</Badge>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" data-testid="guided-presentations">
+            {presentationScenarios.map((scenario) => (
+              <WorkflowPresentationCard key={scenario.id} scenario={scenario} onPrimaryAction={handleWorkflowAction} />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {showFullCatalog ? <>
+      {presentationScenarios.length > 0 && !roleDetailName ? (
+        <div className="mb-5 mt-8 flex items-center gap-3">
+          <span className="h-px flex-1 bg-border" />
+          <span className="text-xs font-medium text-muted-foreground">全部工作场景</span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
+      ) : null}
       <div className="mb-2 text-xs font-medium text-muted-foreground">我要解决什么</div>
       <CapabilityFilterTabs
         ariaLabel="按业务结果筛选"
@@ -306,6 +353,13 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
           ))}
         </div>
       )}
+      </> : (
+        <div className="mt-6 flex justify-center">
+          <Button type="button" variant="outline" onClick={() => setCatalogExpanded(true)}>
+            浏览全部 {workflowLibrary.scenarios.length} 个工作场景
+          </Button>
+        </div>
+      )}
 
       <ScenarioDetailDialog
         scenario={detail?.scenario ?? null}
@@ -319,6 +373,15 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
         open={!!detail}
         onOpenChange={(open) => { if (!open) setDetail(null); }}
         onPrimaryAction={handleWorkflowAction}
+      />
+      <WorkflowPresentationDialog
+        scenario={presentation}
+        open={!!presentation}
+        onOpenChange={(open) => { if (!open) setPresentation(null); }}
+        onUseScenario={(scenario) => {
+          setPresentation(null);
+          handleWorkflowAction(workflowOperationalCta(scenario).action, scenario);
+        }}
       />
       <Dialog open={!!deferredNotice} onOpenChange={(open) => { if (!open) setDeferredNotice(null); }}>
         <DialogContent className="max-w-md">

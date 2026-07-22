@@ -144,12 +144,13 @@ export const readinessLabel: Record<CatalogScenarioPublic["readiness"], string> 
   D2_PROJECT: "项目集成",
 };
 
-export type WorkflowPrimaryAction = "chat" | "replay" | "isolated-demo" | "connector" | "diagnosis" | "detail";
+export type WorkflowPrimaryAction = "chat" | "replay" | "isolated-demo" | "connector" | "diagnosis" | "presentation" | "detail";
 
 export interface WorkflowCta {
   action: WorkflowPrimaryAction;
   label: string;
   secondaryLabel?: string;
+  secondaryAction?: WorkflowPrimaryAction;
 }
 
 /**
@@ -157,6 +158,19 @@ export interface WorkflowCta {
  * 绝不把 planned/design-only Demo 显示成已运行。
  */
 export function workflowCta(scenario: CatalogScenarioPublic): WorkflowCta {
+  const operational = workflowOperationalCta(scenario);
+  if (scenario.presentation) {
+    return {
+      action: "presentation",
+      label: "看它如何完成",
+      secondaryLabel: operational.label,
+      secondaryAction: operational.action,
+    };
+  }
+  return operational;
+}
+
+export function workflowOperationalCta(scenario: CatalogScenarioPublic): WorkflowCta {
   if (scenario.launch.startMode === "chat") {
     return { action: "chat", label: scenario.cta.primary };
   }

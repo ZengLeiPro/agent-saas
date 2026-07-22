@@ -6,7 +6,7 @@
  * 整页面板走 lazy 加载，避免互相拖入对方的 bundle。
  */
 import { lazy, Suspense, useState } from "react";
-import { Activity, Globe, MessageSquareShare, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
+import { Activity, Globe, MessageSquareShare, MousePointerClick, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -262,7 +262,8 @@ export function WorkflowScenarioCard({
             className="h-8 px-3 text-xs"
             onClick={(event) => {
               event.stopPropagation();
-              onOpenDetail(scenario);
+              if (cta.secondaryAction) onPrimaryAction(cta.secondaryAction, scenario);
+              else onOpenDetail(scenario);
             }}
           >
             {cta.secondaryLabel}
@@ -278,6 +279,43 @@ export function WorkflowScenarioCard({
           }}
         >
           {cta.label}
+        </Button>
+      </div>
+    </article>
+  );
+}
+
+/** P0 引导演示入口：只讲业务结果和体验方式，不把完整 Workflow 规格塞回首屏。 */
+export function WorkflowPresentationCard({
+  scenario,
+  onPrimaryAction,
+}: Pick<WorkflowScenarioCardProps, "scenario" | "onPrimaryAction">) {
+  const cta = workflowCta(scenario);
+  const chapterCount = scenario.presentation?.chapters.length ?? 0;
+  return (
+    <article className="flex flex-col overflow-hidden rounded-2xl border border-brand-100 bg-gradient-to-br from-white via-white to-brand-50/70 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge className="gap-1 bg-brand-50 font-normal text-brand-700 hover:bg-brand-50">
+          <MousePointerClick className="size-3" />一步一步演示
+        </Badge>
+        <Badge variant="outline" className="font-normal">{friendlyReadiness[scenario.readiness]}</Badge>
+      </div>
+      <h3 className="mt-4 text-lg font-semibold leading-snug text-slate-950">{scenario.title}</h3>
+      <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">{scenario.value}</p>
+      <div className="mt-4 text-xs font-medium text-brand-700">{chapterCount} 个业务步骤 · 右侧系统状态同步变化</div>
+      <div className="mt-auto flex flex-wrap items-center justify-end gap-2 pt-5">
+        {cta.secondaryAction && cta.secondaryLabel ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onPrimaryAction(cta.secondaryAction!, scenario)}
+          >
+            {cta.secondaryLabel}
+          </Button>
+        ) : null}
+        <Button type="button" size="sm" onClick={() => onPrimaryAction("presentation", scenario)}>
+          看它如何完成
         </Button>
       </div>
     </article>

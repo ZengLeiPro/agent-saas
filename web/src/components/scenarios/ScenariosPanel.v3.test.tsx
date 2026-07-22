@@ -36,6 +36,45 @@ beforeEach(() => {
 });
 
 describe("ScenariosPanel V3", () => {
+  it("有引导演示时默认只展示精选工作现场，完整目录按需展开", () => {
+    const guided = makeWorkflowScenario("guided", {
+      featured: true,
+      featuredOrder: 1,
+      readiness: "D1_CONNECTOR",
+      launch: { sampleAvailable: false, startMode: "connector", starterMessage: "接入后启动" },
+      cta: { primary: "接入我的系统", secondary: "查看工作流" },
+      presentation: {
+        version: 1,
+        dataLabel: "合成场景演示",
+        limitation: "演示数据均为虚构。",
+        chapters: Array.from({ length: 6 }, (_, index) => ({
+          id: `chapter-${index + 1}`,
+          title: `业务步骤 ${index + 1}`,
+          narration: "展示 AI 同事当前正在完成的业务动作。",
+          result: "业务系统状态已经变化。",
+          interaction: { kind: "next" as const, label: "下一步" },
+          surface: {
+            kind: "crm_table" as const,
+            title: "客户关系系统",
+            items: [{ label: "状态", value: "已更新", state: "success" as const }],
+          },
+        })),
+      },
+    });
+    mocked.workflowLibrary = makeWorkflowLibrary([guided, makeWorkflowScenario("ordinary")]);
+
+    render(<ScenariosPanel onTryScenario={vi.fn()} />);
+    expect(screen.getByTestId("guided-presentations").children).toHaveLength(1);
+    expect(screen.queryByTestId("workflow-catalog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "看它如何完成" }));
+    expect(screen.getByRole("heading", { name: guided.title })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "浏览全部 2 个工作场景" }));
+    expect(screen.getByTestId("workflow-catalog").children).toHaveLength(2);
+  });
+
   it("默认只渲染28个唯一 catalog 卡片，skin/role view 不复制卡", () => {
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(28);

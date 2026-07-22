@@ -74,4 +74,35 @@ describe("Workflow V3 UI 纯契约", () => {
     expect(workflowIsolatedDemoFor(library, scenario)).toBe(true);
     expect(workflowIsolatedDemoFor(library, { ...scenario, readiness: "D0_CURRENT" })).toBeNull();
   });
+
+  it("有受控演示时先展示工作现场，真实接入保留为次动作", () => {
+    const scenario = makeWorkflowScenario("presentation", {
+      readiness: "D1_CONNECTOR",
+      launch: { sampleAvailable: false, startMode: "connector", starterMessage: "接入后启动" },
+      cta: { primary: "接入我的系统", secondary: "查看工作流" },
+      presentation: {
+        version: 1,
+        dataLabel: "合成场景演示",
+        limitation: "演示数据均为虚构。",
+        chapters: Array.from({ length: 6 }, (_, index) => ({
+          id: `chapter-${index + 1}`,
+          title: `第 ${index + 1} 步`,
+          narration: "展示当前业务动作。",
+          result: "当前业务状态已变化。",
+          interaction: { kind: "next" as const, label: "下一步" },
+          surface: {
+            kind: "crm_table" as const,
+            title: "客户关系系统",
+            items: [{ label: "状态", value: "已更新", state: "success" as const }],
+          },
+        })),
+      },
+    });
+    expect(workflowCta(scenario)).toEqual({
+      action: "presentation",
+      label: "看它如何完成",
+      secondaryLabel: "接入我的系统",
+      secondaryAction: "connector",
+    });
+  });
 });

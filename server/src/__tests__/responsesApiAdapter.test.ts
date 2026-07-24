@@ -932,6 +932,56 @@ describe('ResponsesApiAdapter', () => {
     expect(events.at(-1)).toMatchObject({ type: 'completed', content: '恢复成功', modelRequestAttemptCount: 2 });
   });
 
+  it('零输出 server_is_overloaded 时重试', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_overloaded' } }),
+        sse('response.in_progress', {
+          type: 'response.in_progress',
+          response: { id: 'resp_overloaded', status: 'in_progress' },
+        }),
+        sse('error', {
+          type: 'error',
+          code: 'server_is_overloaded',
+          message: 'Our servers are currently overloaded. Please try again later.',
+        }),
+      ]))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '恢复成功' }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: { id: 'resp_recovered', status: 'completed', usage: { input_tokens: 8, output_tokens: 2 } },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      content: '恢复成功',
+      terminalStatus: 'completed',
+      modelRequestAttemptCount: 2,
+    });
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, outcome: 'provider_error', errorCode: 'server_is_overloaded', willRetry: true },
+      { attempt: 2, outcome: 'completed' },
+    ]);
+  });
+
   it('不重试其他 MODEL_PROVIDER_ERROR 文案', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
       sse('error', { type: 'error', message: 'invalid provider configuration' }),

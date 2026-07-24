@@ -257,7 +257,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     const modelRequestId = retryState?.modelRequestId ?? randomUUID();
     // 默认仍不重试：网络错误/5xx 不能证明上游未接单、未计费。只有模型组显式配置
     // pre_stream_retry_delays_ms 时才启用有限重试。流内只额外覆盖 provider 官方
-    // internal_server_error 终态且本 attempt 尚未向上层交付任何正文/思考；两类故障
+    // 瞬时服务端错误，且本 attempt 尚未向上层交付任何正文/思考；两类故障
     // 共用同一份次数与退避预算，避免重复工具副作用和重试乘法膨胀。
     const retryDelaysMs = this.providerOptions.preStreamRetryDelaysMs ?? [];
     let transientRetryIndex = retryState?.transientRetryIndex ?? 0;
@@ -1617,7 +1617,7 @@ function isRetryableUndeliveredStreamTerminalError(
   if (hasDeliveredOutput || terminalStatus !== 'failed') return false;
   if (!['error', 'response.error', 'response.failed'].includes(terminalEventType ?? '')) return false;
   const normalizedCode = errorCode.trim().toLowerCase();
-  if (normalizedCode === 'internal_server_error') return true;
+  if (normalizedCode === 'internal_server_error' || normalizedCode === 'server_is_overloaded') return true;
   return normalizedCode === 'model_provider_error'
     && errorMessage.trim().toLowerCase() === 'sorry, something went wrong.';
 }

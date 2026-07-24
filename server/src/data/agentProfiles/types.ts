@@ -67,7 +67,7 @@ export const agentRuntimeProfileConfigSchema = z.object({
     ])).max(4).nullable().default(null),
   }).strict(),
 }).strict().superRefine((config, ctx) => {
-  const workspaceTools = new Set(['Read', 'Write', 'Edit', 'List', 'Glob', 'Grep', 'Shell']);
+  const workspaceTools = new Set(['Read', 'Write', 'Edit', 'Shell']);
   const exposesWorkspaceTool = config.tools.allowlist === null
     || config.tools.allowlist.some((name) => workspaceTools.has(name));
   if (!exposesWorkspaceTool) return;

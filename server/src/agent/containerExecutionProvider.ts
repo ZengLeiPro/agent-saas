@@ -19,7 +19,6 @@ import { persistShellOutputFiles } from './shellOutputFiles.js';
 import {
   DEFAULT_SHELL_TIMEOUT_MS,
   MAX_FILE_BYTES,
-  MAX_LIST_ENTRIES,
   MAX_READ_LINES,
   MAX_READ_OUTPUT_BYTES,
   MAX_SHELL_CAPTURE_BYTES,
@@ -171,15 +170,6 @@ export class ContainerExecutionProvider implements ExecutionProvider {
             metadata: { path: relPath, bytesWritten: args.content.length },
           };
         }
-        case 'List': {
-          const args = input as { path: string; recursive: boolean };
-          const result = await this.runNodeHelper(workspace, {
-            op: 'listFiles',
-            path: workspaceRelativeInputPath(workspace.root, args.path || '.'),
-            recursive: args.recursive,
-          }, audit);
-          return { status: 'success', content: result.content, audit };
-        }
         case 'Shell': {
           const args = input as { command: string; timeoutMs?: number };
           const result = await this.runDocker(workspace, ['/bin/sh', '-lc', args.command], {
@@ -217,33 +207,6 @@ export class ContainerExecutionProvider implements ExecutionProvider {
             old_string: args.old_string,
             new_string: args.new_string,
             replace_all: args.replace_all,
-          }, audit);
-          return { status: 'success', content: result.content, audit };
-        }
-        case 'Glob': {
-          const args = input as { pattern: string; path?: string };
-          const result = await this.runNodeHelper(workspace, {
-            op: 'glob',
-            pattern: args.pattern,
-            path: workspaceRelativeInputPath(workspace.root, args.path || '.'),
-          }, audit);
-          return { status: 'success', content: result.content, audit };
-        }
-        case 'Grep': {
-          const args = input as {
-            pattern: string;
-            path?: string;
-            glob?: string;
-            case_insensitive?: boolean;
-            max_files?: number;
-          };
-          const result = await this.runNodeHelper(workspace, {
-            op: 'grep',
-            pattern: args.pattern,
-            path: workspaceRelativeInputPath(workspace.root, args.path || '.'),
-            glob: args.glob,
-            case_insensitive: args.case_insensitive,
-            max_files: args.max_files,
           }, audit);
           return { status: 'success', content: result.content, audit };
         }
@@ -665,21 +628,10 @@ const path = require('path');
 const readline = require('readline');
 const root = process.env.KY_AGENT_WORKDIR || ${JSON.stringify(DEFAULT_CONTAINER_WORKDIR)};
 const maxFileBytes = ${MAX_FILE_BYTES};
-const maxListEntries = ${MAX_LIST_ENTRIES};
 const maxReadLines = ${MAX_READ_LINES};
 const maxReadOutputBytes = ${MAX_READ_OUTPUT_BYTES};
 const maxEditFileBytes = 1000000;
-const maxGlobPaths = 5000;
-const maxGlobDepth = 12;
-const maxGrepFiles = 200;
-const maxGrepMatchesPerFile = 200;
-const maxGrepFileBytes = 5 * 1024 * 1024;
-const maxGrepPatternLength = 256;
-const maxGrepTotalWallMs = 5000;
 const maxArtifactPayloadBytes = ${MAX_ARTIFACT_PAYLOAD_BYTES};
-const globSkipDirs = new Set(['node_modules', '.git', '.venv', '.cache', '.next', 'dist', 'build', 'out', 'target', 'coverage', '.turbo', '.parcel-cache', '.runtime-events', '.browser-profile', '.ky-agent']);
-const globSkipFilePatterns = [/\\.env(\\..+)?$/i, /\\.(npmrc|netrc|pypirc)$/i, /\\.(pem|key|crt|p12|pfx)$/i];
-const binaryExt = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.pdf', '.zip', '.tar', '.gz', '.tgz', '.bz2', '.xz', '.7z', '.mp3', '.mp4', '.m4a', '.mov', '.avi', '.mkv', '.webm', '.exe', '.bin', '.so', '.dylib', '.dll', '.class', '.jar', '.woff', '.woff2', '.ttf', '.otf']);
 const editDenyPatterns = [/(^|\\/)\\.ky-agent\\/settings\\.json$/i, /(^|\\/)\\.claude\\/settings\\.json$/i, /(^|\\/)\\.env(\\..+)?$/i, /(^|\\/)\\.npmrc$/i, /(^|\\/)\\.netrc$/i, /(^|\\/)\\.ssh\\//i, /(^|\\/)\\.git\\//i];
 function isInside(baseDir, candidate) {
   const rel = path.relative(baseDir, candidate);
@@ -703,90 +655,6 @@ function assertNotDenied(relPath, patterns, message) {
   for (const re of patterns) {
     if (re.test('/' + normalized)) throw new Error(message);
   }
-}
-function segmentToRegex(seg) {
-  let i = 0;
-  let out = '';
-  while (i < seg.length) {
-    const ch = seg[i];
-    if (ch === '*') {
-      out += '[^/]*';
-      i++;
-    } else if (ch === '?') {
-      out += '[^/]';
-      i++;
-    } else if (ch === '[') {
-      const close = seg.indexOf(']', i + 1);
-      if (close === -1) {
-        out += '\\\\[';
-        i++;
-      } else {
-        let body = seg.slice(i + 1, close);
-        if (body.startsWith('!')) body = '^' + body.slice(1);
-        body = body.replace(/\\\\/g, '\\\\\\\\').replace(/\\]/g, '\\\\]');
-        out += '[' + body + ']';
-        i = close + 1;
-      }
-    } else if ('.+()|^$\\\\{}'.includes(ch)) {
-      out += '\\\\' + ch;
-      i++;
-    } else {
-      out += ch;
-      i++;
-    }
-  }
-  return out;
-}
-function globToRegExp(patternValue) {
-  const segs = String(patternValue || '').split('/');
-  const re = [];
-  for (let i = 0; i < segs.length; i++) {
-    const seg = segs[i];
-    if (seg === '**') {
-      if (i === 0) {
-        re.push('(?:.*/)?');
-      } else if (i === segs.length - 1) {
-        re[re.length - 1] = re[re.length - 1].replace(/\\/$/, '(?:/.*)?');
-      } else {
-        re.push('(?:.*/)?');
-      }
-      continue;
-    }
-    re.push(segmentToRegex(seg));
-    if (i < segs.length - 1) re[re.length - 1] += '/';
-  }
-  return new RegExp('^' + re.join('') + '$');
-}
-async function walkWorkspace(baseDir, opts) {
-  const options = opts || { maxPaths: maxGlobPaths, maxDepth: maxGlobDepth };
-  const results = [];
-  async function walk(current, depth) {
-    if (results.length >= options.maxPaths || depth > options.maxDepth) return;
-    let entries;
-    try {
-      entries = await fs.readdir(current, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (results.length >= options.maxPaths) break;
-      if (globSkipDirs.has(entry.name)) continue;
-      if (entry.isSymbolicLink()) continue;
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        await walk(full, depth + 1);
-      } else if (entry.isFile()) {
-        if (globSkipFilePatterns.some((re) => re.test(entry.name))) continue;
-        try {
-          const st = await fs.lstat(full);
-          if (st.isSymbolicLink()) continue;
-          results.push({ path: relativeWorkspacePath(full), mtimeMs: st.mtimeMs });
-        } catch {}
-      }
-    }
-  }
-  await walk(baseDir, 0);
-  return results;
 }
 async function readStdin() {
   let raw = '';
@@ -882,25 +750,6 @@ async function readLineRange(fullPath, relPath, options) {
       process.stdout.write(JSON.stringify({ ok: true, content: '' }));
       return;
     }
-    if (request.op === 'listFiles') {
-      const start = resolveWorkspacePath(request.path || '.');
-      const results = [];
-      async function walk(current) {
-        if (results.length >= maxListEntries) return;
-        const entries = await fs.readdir(current, { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.name === 'node_modules' || entry.name === '.git') continue;
-          const full = path.resolve(current, entry.name);
-          results.push((entry.isDirectory() ? 'dir ' : 'file ') + relativeWorkspacePath(full));
-          if (request.recursive && entry.isDirectory()) await walk(full);
-          if (results.length >= maxListEntries) break;
-        }
-      }
-      await walk(start);
-      const suffix = results.length >= maxListEntries ? '\\n...[truncated at ' + maxListEntries + ' entries]' : '';
-      process.stdout.write(JSON.stringify({ ok: true, content: results.join('\\n') + suffix }));
-      return;
-    }
     if (request.op === 'edit') {
       const fullPath = resolveWorkspacePath(request.file_path);
       const relPath = relativeWorkspacePath(fullPath);
@@ -930,99 +779,6 @@ async function readLineRange(fullPath, relPath, options) {
       const replacements = request.replace_all ? occurrences : 1;
       await fs.writeFile(fullPath, updated, 'utf-8');
       process.stdout.write(JSON.stringify({ ok: true, content: 'Edited ' + relPath + ' (' + replacements + ' replacement' + (replacements === 1 ? '' : 's') + ', ' + updated.length + ' bytes).' }));
-      return;
-    }
-    if (request.op === 'glob') {
-      const baseDir = resolveWorkspacePath(request.path || '.');
-      const regex = globToRegExp(request.pattern);
-      const all = await walkWorkspace(baseDir);
-      const matched = all.filter((entry) => regex.test(normalizePath(entry.path))).sort((a, b) => b.mtimeMs - a.mtimeMs);
-      if (matched.length === 0) {
-        process.stdout.write(JSON.stringify({ ok: true, content: '（无匹配项；扫描 ' + all.length + ' 文件）' }));
-        return;
-      }
-      const lines = matched.slice(0, maxGlobPaths).map((entry) => entry.path);
-      const suffix = matched.length >= maxGlobPaths ? '\\n...[truncated at ' + maxGlobPaths + ' paths]' : '';
-      process.stdout.write(JSON.stringify({ ok: true, content: lines.join('\\n') + suffix }));
-      return;
-    }
-    if (request.op === 'grep') {
-      if (String(request.pattern || '').length > maxGrepPatternLength) throw new Error('Grep: pattern too long');
-      const baseDir = resolveWorkspacePath(request.path || '.');
-      const flags = request.case_insensitive ? 'gi' : 'g';
-      let regex;
-      try {
-        regex = new RegExp(String(request.pattern), flags);
-      } catch (err) {
-        throw new Error('Grep: bad regex (' + (err && err.message ? err.message : String(err)) + ')');
-      }
-      const globRegex = request.glob ? globToRegExp(request.glob) : null;
-      const all = await walkWorkspace(baseDir, { maxPaths: maxGrepFiles * 4, maxDepth: maxGlobDepth });
-      const candidates = globRegex ? all.filter((entry) => globRegex.test(normalizePath(entry.path))) : all;
-      const limit = request.max_files || maxGrepFiles;
-      const files = candidates.slice(0, limit);
-      const matches = [];
-      let totalMatches = 0;
-      let timeBudgetHit = false;
-      let binarySkipped = 0;
-      let oversizeSkipped = 0;
-      const deadline = Date.now() + maxGrepTotalWallMs;
-      for (const file of files) {
-        if (Date.now() > deadline) {
-          timeBudgetHit = true;
-          break;
-        }
-        const ext = path.extname(file.path).toLowerCase();
-        if (binaryExt.has(ext)) {
-          binarySkipped++;
-          continue;
-        }
-        const fullPath = resolveWorkspacePath(file.path);
-        let st;
-        try {
-          st = await fs.stat(fullPath);
-        } catch {
-          continue;
-        }
-        if (st.size > maxGrepFileBytes) {
-          oversizeSkipped++;
-          continue;
-        }
-        let body;
-        try {
-          body = await fs.readFile(fullPath, 'utf-8');
-        } catch {
-          continue;
-        }
-        if (body.indexOf('\\0') >= 0) {
-          binarySkipped++;
-          continue;
-        }
-        const lines = body.split('\\n');
-        let fileMatchCount = 0;
-        for (let lineNo = 0; lineNo < lines.length; lineNo++) {
-          if (fileMatchCount >= maxGrepMatchesPerFile) break;
-          if (Date.now() > deadline) {
-            timeBudgetHit = true;
-            break;
-          }
-          regex.lastIndex = 0;
-          if (regex.test(lines[lineNo])) {
-            matches.push(file.path + ':' + (lineNo + 1) + ':' + lines[lineNo]);
-            fileMatchCount++;
-            totalMatches++;
-          }
-        }
-        if (timeBudgetHit) break;
-      }
-      const summaryParts = ['[matched ' + totalMatches + ' line(s) across ' + files.length + ' file(s); cap=' + limit];
-      if (binarySkipped) summaryParts.push('binarySkipped=' + binarySkipped);
-      if (oversizeSkipped) summaryParts.push('oversizeSkipped=' + oversizeSkipped);
-      if (timeBudgetHit) summaryParts.push('time-budget-hit (' + maxGrepTotalWallMs + 'ms)');
-      summaryParts.push(']');
-      const summary = summaryParts.join('; ');
-      const content = matches.length === 0 ? '（无匹配） ' + summary : matches.join('\\n') + '\\n\\n' + summary;
-      process.stdout.write(JSON.stringify({ ok: true, content }));
       return;
     }
     if (request.op === 'artifactCreate') {

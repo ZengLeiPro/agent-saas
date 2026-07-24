@@ -164,7 +164,8 @@ RUN curl -fsSL "https://aliyuncli.alicdn.com/aliyun-cli-linux-${ALIYUN_CLI_VERSI
     && install -m 0755 /tmp/aliyun /usr/local/bin/aliyun \
     && rm -f /tmp/aliyun /tmp/aliyun-cli.tgz \
     && aliyun version \
-    && gh --version
+    && gh --version \
+    && rg --version
 
 RUN corepack enable \
     && corepack prepare pnpm@10.18.3 --activate \

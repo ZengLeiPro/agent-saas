@@ -433,6 +433,9 @@ export function ToolControlsManager(): JSX.Element {
       />
 
       <div className="min-h-0 flex-1 space-y-4 overflow-auto">
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-950">
+          保存后对后续 dispatch 热生效；已经开始的运行可能继续使用创建时的工具快照，直到该运行结束。关闭工具可能使依赖它的系统 Profile 失去能力，请到「Agent 运行配置」核对有效工具交集。
+        </div>
         {error && (
           <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
             <CircleAlert className="mt-0.5 size-4 shrink-0" />

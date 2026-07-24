@@ -37,7 +37,7 @@ export interface ExecutionTransport {
   /**
    * Hand 端对外暴露的工具集合。
    *
-   * - Workspace hand 暴露 `Read / Write / List / Shell`。
+   * - Workspace hand 暴露 `Read / Write / Edit / Shell`。
    * - 假想的"手机 hand"则暴露 `screenshot / tap / swipe` 之类。
    *
    * PR 1.2 让 `ExecutionProvider` 实现通过本方法对外公示工具描述符；

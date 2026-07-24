@@ -4,7 +4,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { getBuiltinProfileByBinding } from '../data/agentProfiles/builtins.js';
-import { AgentRuntimeProfileError } from '../data/agentProfiles/types.js';
+import { AgentRuntimeProfileError, digestAgentRuntimeProfileConfig } from '../data/agentProfiles/types.js';
 import { PgAgentRuntimeProfileStore } from '../data/agentProfiles/store.js';
 
 const connectionString = process.env.AGENT_PROFILE_TEST_PG_URL;
@@ -29,10 +29,16 @@ describePg('PgAgentRuntimeProfileStore contract', () => {
     await pool.end();
   });
 
-  it('seeds immutable system v1 profiles and bindings idempotently', async () => {
+  it('seeds immutable system profiles, including Shell-first v2 upgrades, idempotently', async () => {
     const profiles = await store!.listProfiles();
     const bindings = await store!.listBindings();
     expect(profiles.filter((profile) => profile.systemProfile)).toHaveLength(5);
+    for (const profileKey of ['memory_poll', 'subagent_explore']) {
+      const profile = profiles.find((item) => item.profileKey === profileKey)!;
+      expect(profile.latestVersion?.versionNumber).toBe(2);
+      expect((await store!.listVersions(profile.profileId)).map((version) => version.versionNumber)).toEqual([2, 1]);
+      expect(profile.draftConfig.tools.allowlist).toContain('Shell');
+    }
     expect(bindings.map((binding) => binding.bindingKey)).toEqual([
       'background_explore', 'background_general', 'main', 'memory_poll',
       'org_agent', 'subagent_explore', 'subagent_general',
@@ -40,6 +46,47 @@ describePg('PgAgentRuntimeProfileStore contract', () => {
     const before = bindings.find((binding) => binding.bindingKey === 'main');
     await store!.init();
     expect((await store!.listBindings()).find((binding) => binding.bindingKey === 'main')).toEqual(before);
+    expect((await store!.listProfiles()).find((profile) => profile.profileKey === 'memory_poll')?.latestVersion?.versionNumber).toBe(2);
+  });
+
+  it('upgrades an untouched system v1 to v2 but preserves an admin-modified draft', async () => {
+    const isolatedPrefix = `arpu_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+    const isolated = new PgAgentRuntimeProfileStore({ pool: pool!, tablePrefix: isolatedPrefix });
+    try {
+      await isolated.init();
+      const memory = (await isolated.listProfiles()).find((profile) => profile.profileKey === 'memory_poll')!;
+      const versions = await isolated.listVersions(memory.profileId);
+      const v1 = versions.find((version) => version.versionNumber === 1)!;
+      const v2 = versions.find((version) => version.versionNumber === 2)!;
+
+      await pool!.query(`
+        UPDATE ${isolated.profilesTable}
+        SET latest_version_id=$2, draft_config=$3::jsonb, draft_digest=$4, revision=1
+        WHERE profile_id=$1
+      `, [memory.profileId, v1.profileVersionId, JSON.stringify(v1.config), v1.configDigest]);
+      await isolated.init();
+      expect((await isolated.getProfile(memory.profileId))?.latestVersion?.profileVersionId).toBe(v2.profileVersionId);
+
+      const customized = structuredClone(v1.config);
+      customized.context.systemInstructions = '管理员保留的未发布草稿';
+      const customizedDigest = digestAgentRuntimeProfileConfig(customized);
+      await pool!.query(`
+        UPDATE ${isolated.profilesTable}
+        SET latest_version_id=$2, draft_config=$3::jsonb, draft_digest=$4, revision=7
+        WHERE profile_id=$1
+      `, [memory.profileId, v1.profileVersionId, JSON.stringify(customized), customizedDigest]);
+      await isolated.init();
+      const preserved = await isolated.getProfile(memory.profileId);
+      expect(preserved?.latestVersion?.profileVersionId).toBe(v1.profileVersionId);
+      expect(preserved?.draftDigest).toBe(customizedDigest);
+      expect(preserved?.revision).toBe(7);
+    } finally {
+      await pool!.query(`DROP TABLE IF EXISTS ${isolated.bindingsTable}`);
+      await pool!.query(`ALTER TABLE ${isolated.profilesTable} DROP CONSTRAINT IF EXISTS ${isolated.profilesTable}_latest_version_fk`);
+      await pool!.query(`DROP TABLE IF EXISTS ${isolated.versionsTable}`);
+      await pool!.query(`DROP TABLE IF EXISTS ${isolated.profilesTable}`);
+      await pool!.query(`DROP FUNCTION IF EXISTS ${isolatedPrefix}_reject_agent_profile_version_mutation()`);
+    }
   });
 
   it('creates a draft, publishes immutable versions, and keeps v1 unchanged', async () => {

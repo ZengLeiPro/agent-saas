@@ -182,12 +182,12 @@ export function createMemoryMaintenanceHook(options: CreateMemoryHookOptions) {
             maxTurns: 5,
             persistSession: false,
             cwd: effectiveCwd,
-            // memory_poll 受限工具白名单 + 路径 guard（只可写 MEMORY.md/memory/**）；
-            // 配合 autoApprove 免人工确认——hook 场景没有交互审批通道
+            // memory_poll 的 Write/Edit 受路径 guard；Shell 是完整命令行能力，
+            // 因此必须在 ACS server-remote 隔离环境执行。hook 无交互审批通道，
+            // 配合 autoApprove 自动放行。
             toolProfile: 'memory_poll',
             approvalPolicy: { autoApproveTools: true },
-            // 白名单无 Shell，文件工具走 server 侧 fs——不付沙箱冷启动成本
-            executionTarget: 'server-local',
+            executionTarget: 'server-remote',
             skipPersona: true,
             skipMemory: true,
           },

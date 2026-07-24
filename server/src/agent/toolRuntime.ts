@@ -1,6 +1,6 @@
 import { exec as execCb, spawn } from 'child_process';
 import { createReadStream } from 'fs';
-import { mkdir, open, readdir, stat, writeFile } from 'fs/promises';
+import { mkdir, open, stat, writeFile } from 'fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'path';
 import { createInterface } from 'readline';
 import { promisify } from 'util';
@@ -39,7 +39,6 @@ import {
   MAX_BACKGROUND_SHELL_TIMEOUT_MS,
   MAX_SHELL_TIMEOUT_MS,
   MAX_FILE_BYTES,
-  MAX_LIST_ENTRIES,
   MAX_READ_LINES,
   MAX_READ_OUTPUT_BYTES,
   MAX_SHELL_CAPTURE_BYTES,
@@ -52,11 +51,7 @@ import {
   artifactCreateToolDescriptor,
   createWorkspaceArtifactPayload,
   editToolDescriptor,
-  globToolDescriptor,
-  grepToolDescriptor,
   runWorkspaceEdit,
-  runWorkspaceGlob,
-  runWorkspaceGrep,
   workspaceArtifactPreparedContent,
   type WorkspaceArtifactPayload,
 } from './workspaceHandTools.js';
@@ -66,7 +61,7 @@ const exec = promisify(execCb);
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
 const MEMORY_SHELL_MAYBE_CHANGED_DEBOUNCE_MS = 30_000;
 
-export { MAX_FILE_BYTES, MAX_LIST_ENTRIES, MAX_READ_LINES, MAX_READ_OUTPUT_BYTES };
+export { MAX_FILE_BYTES, MAX_READ_LINES, MAX_READ_OUTPUT_BYTES };
 
 export type ToolRisk = 'safe' | 'workspace_write' | 'dangerous';
 export type ToolApprovalMode = 'never' | 'web';
@@ -254,7 +249,7 @@ export interface WorkspaceProvider {
 /**
  * Hand-side execution endpoint.
  *
- * PR 1.2 把原来的 4 方法接口（readFile/writeFile/listFiles/runShell）收敛为统一的
+ * PR 1.2 把原来的分散方法接口收敛为统一的
  * `execute(request)` envelope 形态，是 Managed Agents cattle 路线阶段 1 的核心契约变化。
  *
  * 关键约定：
@@ -342,22 +337,6 @@ export const writeFileToolDescriptor: ToolDescriptor<{ path: string; content: st
   auditCategory: 'filesystem.write',
   category: 'workspace',
   label: '写入文件',
-};
-
-export const listFilesToolDescriptor: ToolDescriptor<{ path: string; recursive: boolean }> = {
-  id: 'List',
-  name: 'List',
-  displayName: 'List Files',
-  description: loadToolDescription('List'),
-  schema: z.object({
-    path: z.string().default('.').describe('工作区内的目录。'),
-    recursive: z.boolean().default(false),
-  }),
-  risk: 'safe',
-  approvalMode: 'never',
-  auditCategory: 'filesystem.list',
-  category: 'workspace',
-  label: '列出文件',
 };
 
 const shellToolSchema = z.object({
@@ -457,13 +436,10 @@ export const waitForWorkspaceReadyToolDescriptor: ToolDescriptor<{ timeoutMs?: n
 export const WORKSPACE_HAND_TOOLS: ToolDescriptor[] = [
   readFileToolDescriptor,
   writeFileToolDescriptor,
-  listFilesToolDescriptor,
   runShellToolDescriptor,
   bashOutputToolDescriptor,
   killBashToolDescriptor,
   editToolDescriptor,
-  globToolDescriptor,
-  grepToolDescriptor,
   artifactCreateToolDescriptor,
 ];
 
@@ -582,11 +558,6 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
             metadata: { path: relPath, bytesWritten: args.content.length },
           };
         }
-        case 'List': {
-          const args = input as { path: string; recursive: boolean };
-          const content = await this._listFiles(workspace, args.path, args.recursive);
-          return { status: 'success', content };
-        }
         case 'Shell': {
           const args = input as { command: string; timeoutMs?: number };
           const content = await this._runShell(workspace, args.command, args.timeoutMs, signal, context.invocationId);
@@ -594,14 +565,6 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
         }
         case 'Edit': {
           const result = await runWorkspaceEdit(input as Parameters<typeof runWorkspaceEdit>[0], workspace, (fullPath) => assertSandboxReadAllowed(workspace, fullPath));
-          return { status: 'success', content: result.content };
-        }
-        case 'Glob': {
-          const result = await runWorkspaceGlob(input as Parameters<typeof runWorkspaceGlob>[0], workspace, (fullPath) => assertSandboxReadAllowed(workspace, fullPath));
-          return { status: 'success', content: result.content };
-        }
-        case 'Grep': {
-          const result = await runWorkspaceGrep(input as Parameters<typeof runWorkspaceGrep>[0], workspace, (fullPath) => assertSandboxReadAllowed(workspace, fullPath));
           return { status: 'success', content: result.content };
         }
         case 'CreateArtifact': {
@@ -685,28 +648,6 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     await mkdir(dirname(fullPath), { recursive: true });
     await writeFile(fullPath, content, 'utf-8');
     return relativeWorkspacePath(workspace.root, fullPath);
-  }
-
-  private async _listFiles(workspace: WorkspaceRef, dir: string, recursive: boolean): Promise<string> {
-    const root = resolveWorkspacePath(workspace.root, dir || '.');
-    assertSandboxReadAllowed(workspace, root);
-    const results: string[] = [];
-
-    const walk = async (current: string): Promise<void> => {
-      if (results.length >= MAX_LIST_ENTRIES) return;
-      const entries = await readdir(current, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name === 'node_modules' || entry.name === '.git') continue;
-        const full = resolve(current, entry.name);
-        results.push(`${entry.isDirectory() ? 'dir ' : 'file'} ${relativeWorkspacePath(workspace.root, full)}`);
-        if (recursive && entry.isDirectory()) await walk(full);
-        if (results.length >= MAX_LIST_ENTRIES) break;
-      }
-    };
-
-    await walk(root);
-    const suffix = results.length >= MAX_LIST_ENTRIES ? `\n...[truncated at ${MAX_LIST_ENTRIES} entries]` : '';
-    return results.join('\n') + suffix;
   }
 
   private async _runShell(

@@ -1121,7 +1121,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(responses[6].message).toContain('~/secrets');
     });
 
-    it('文件工具路径审计：域内读写放行、settings 文件写保护、越界拒绝、缺路径按 optional 处理', async () => {
+    it('文件工具路径审计：域内读写放行、settings 文件写保护、越界与缺路径拒绝', async () => {
       const tmp = await makeTmp('cov-audit-file-');
       const userCwd = resolveUserCwd(tmp, { id: USER.sub, username: USER.username, role: 'user', tenantId: TENANT });
       const { responses } = await probe(USER, [
@@ -1131,7 +1131,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         perm('Edit', { file_path: join(userCwd, '.claude/settings.local.json') }),
         perm('Read', { path: '/etc/hosts' }),
         perm('Edit', {}),                       // 必填路径缺失
-        perm('Glob', {}),                       // optional 路径缺失 → 放行
       ], { agentCwd: tmp });
       expect(responses[0]).toEqual({ allow: true });
       expect(responses[1]).toEqual({ allow: true });
@@ -1139,7 +1138,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(responses[3]).toEqual({ allow: false, message: 'Access denied: cannot modify agent settings files' });
       expect(responses[4]).toEqual({ allow: false, message: 'Access denied: path outside your workspace' });
       expect(responses[5]).toEqual({ allow: false, message: 'Access denied: missing file path' });
-      expect(responses[6]).toEqual({ allow: true });
     });
 
     it('extraDirs 与共享 skills 目录放行；未知工具一律拒绝', async () => {

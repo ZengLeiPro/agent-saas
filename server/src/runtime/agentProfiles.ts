@@ -207,8 +207,7 @@ const GENERAL_HARD_DENY = new Set([
 
 const EXPLORE_HARD_ALLOW = new Set([
   'Read',
-  'Glob',
-  'Grep',
+  'Shell',
   'WebSearch',
   'WebFetch',
   'MemorySearch',

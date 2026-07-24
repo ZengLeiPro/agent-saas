@@ -77,8 +77,19 @@ function hydratePreservedSearchCredential(rawConfig: unknown, webTools: unknown)
   return next;
 }
 
+function pruneUnknownToolControls(toolControls: ToolControlsConfig): ToolControlsConfig {
+  if (!toolControls) return toolControls;
+  const knownTools = Object.fromEntries(
+    Object.entries(toolControls.tools ?? {}).filter(([toolId]) => PLATFORM_TOOL_CATALOG_BY_ID.has(toolId)),
+  );
+  const next = { ...toolControls };
+  if (Object.keys(knownTools).length > 0) next.tools = knownTools;
+  else delete next.tools;
+  return next;
+}
+
 function sanitizeToolControlsConfig(toolControls: ToolControlsConfig): ToolControlsConfig | null {
-  return toolControls ?? null;
+  return pruneUnknownToolControls(toolControls) ?? null;
 }
 
 export function listConfiguredWebToolNames(webTools: WebToolsConfig, toolControls?: ToolControlsConfig): string[] {
@@ -177,7 +188,7 @@ function validateToolSettingsUpdate(
   };
   const parsed = parseAppConfig(merged);
   return {
-    toolControls: parsed.toolControls,
+    toolControls: pruneUnknownToolControls(parsed.toolControls),
     webTools: parsed.webTools,
   };
 }

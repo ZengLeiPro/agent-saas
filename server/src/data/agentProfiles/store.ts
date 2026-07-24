@@ -508,7 +508,9 @@ export class PgAgentRuntimeProfileStore implements AgentRuntimeProfileStore {
     await client.query('BEGIN');
     try {
       for (const definition of BUILTIN_AGENT_PROFILES) {
-        const version = records.versions.find((item) => item.profileId === definition.profileId)!;
+        const versionNumber = definition.versionNumber ?? 1;
+        const version = records.versions.find((item) =>
+          item.profileVersionId === builtinProfileVersionId(definition.profileId, versionNumber))!;
         await client.query(`
           INSERT INTO ${this.profilesTable}
             (profile_id, profile_key, name, description, purpose, status, is_system,
@@ -516,18 +518,39 @@ export class PgAgentRuntimeProfileStore implements AgentRuntimeProfileStore {
           VALUES ($1,$2,$3,$4,$5,'published',TRUE,$6::jsonb,$7,1,'system',$8,'system',$8)
           ON CONFLICT (profile_id) DO NOTHING
         `, [definition.profileId, definition.profileKey, definition.name, definition.description, definition.purpose, JSON.stringify(version.config), version.configDigest, version.publishedAt]);
-        await client.query(`
-          INSERT INTO ${this.versionsTable}
-            (profile_version_id, profile_id, version_number, config_schema_version,
-             config_json, config_digest, published_by, published_at)
-          VALUES ($1,$2,1,$3,$4::jsonb,$5,'system',$6)
-          ON CONFLICT (profile_version_id) DO NOTHING
-        `, [builtinProfileVersionId(definition.profileId), definition.profileId, AGENT_PROFILE_SCHEMA_VERSION, JSON.stringify(version.config), version.configDigest, version.publishedAt]);
+        for (const builtinVersion of records.versions.filter((item) => item.profileId === definition.profileId)) {
+          await client.query(`
+            INSERT INTO ${this.versionsTable}
+              (profile_version_id, profile_id, version_number, config_schema_version,
+               config_json, config_digest, published_by, published_at)
+            VALUES ($1,$2,$3,$4,$5::jsonb,$6,'system',$7)
+            ON CONFLICT (profile_version_id) DO NOTHING
+          `, [builtinVersion.profileVersionId, definition.profileId, builtinVersion.versionNumber, AGENT_PROFILE_SCHEMA_VERSION, JSON.stringify(builtinVersion.config), builtinVersion.configDigest, builtinVersion.publishedAt]);
+        }
         await client.query(`
           UPDATE ${this.profilesTable}
           SET latest_version_id=$2
           WHERE profile_id=$1 AND latest_version_id IS NULL
-        `, [definition.profileId, builtinProfileVersionId(definition.profileId)]);
+        `, [definition.profileId, version.profileVersionId]);
+        const previousVersionNumber = Math.max(...(definition.previousVersions ?? []).map((item) => item.versionNumber), 0);
+        if (previousVersionNumber > 0) {
+          const previousVersion = records.versions.find((item) =>
+            item.profileVersionId === builtinProfileVersionId(definition.profileId, previousVersionNumber))!;
+          await client.query(`
+            UPDATE ${this.profilesTable}
+            SET draft_config=$2::jsonb,
+                draft_digest=$3,
+                latest_version_id=$4,
+                revision=revision+1,
+                updated_by='system:builtin-upgrade',
+                updated_at=$5
+            WHERE profile_id=$1
+              AND is_system=TRUE
+              AND status='published'
+              AND latest_version_id=$6
+              AND draft_digest=$7
+          `, [definition.profileId, JSON.stringify(version.config), version.configDigest, version.profileVersionId, version.publishedAt, previousVersion.profileVersionId, previousVersion.configDigest]);
+        }
       }
       for (const [bindingKey, profileId] of Object.entries(BUILTIN_AGENT_PROFILE_BINDINGS)) {
         await client.query(`

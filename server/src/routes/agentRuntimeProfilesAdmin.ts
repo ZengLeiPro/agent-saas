@@ -3,6 +3,9 @@ import { z } from 'zod';
 
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { requireSuperAdmin } from '../auth/platformGovernance.js';
+import type { ToolControlsConfig } from '../app/config.js';
+import { isToolEnabled } from '../agent/toolRuntime.js';
+import { PLATFORM_TOOL_CATALOG } from '../agent/toolCatalog.js';
 import { auditLog } from '../data/login-logs/index.js';
 import {
   AGENT_PROFILE_BINDING_KEYS,
@@ -36,6 +39,7 @@ const bindingSchema = z.object({ profileId: z.string().trim().min(1) }).strict()
 
 export function createAgentRuntimeProfilesAdminRouter(options: {
   store: AgentRuntimeProfileStore;
+  getToolControls?: () => ToolControlsConfig;
 }): Router {
   const router = Router();
   router.use(requirePlatformAdmin);
@@ -51,11 +55,18 @@ export function createAgentRuntimeProfilesAdminRouter(options: {
         profiles,
         bindings,
         bindingKeys: AGENT_PROFILE_BINDING_KEYS,
+        platformTools: {
+          catalog: PLATFORM_TOOL_CATALOG.map((tool) => tool.id),
+          enabled: PLATFORM_TOOL_CATALOG
+            .filter((tool) => isToolEnabled(options.getToolControls?.(), tool))
+            .map((tool) => tool.id),
+        },
         semantics: {
           visibleToolsAreSecurityBoundary: false,
           shellWarning: '开启 Shell 时，模型可见工具范围不构成安全权限；真实边界由执行环境、sandbox、网络、凭据和后端鉴权共同决定。',
           publishedVersionsImmutable: true,
           newSessionsOnly: true,
+          effectiveToolsDependOnRuntime: true,
         },
       });
     } catch (error) {

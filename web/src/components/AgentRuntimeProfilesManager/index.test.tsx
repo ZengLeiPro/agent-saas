@@ -57,10 +57,15 @@ function profilesResponse(): Response {
       updatedAt: "2026-07-22T00:00:00.000Z",
     }],
     bindingKeys: ["main"],
+    platformTools: {
+      catalog: ["Read", "Write", "Edit", "Shell", "WaitForWorkspaceReady"],
+      enabled: ["Read", "Write", "Edit", "Shell", "WaitForWorkspaceReady"],
+    },
     semantics: {
       shellWarning: "模型可见工具不等于安全权限",
       publishedVersionsImmutable: true,
       newSessionsOnly: true,
+      effectiveToolsDependOnRuntime: true,
     },
   }), { status: 200, headers: { "Content-Type": "application/json" } });
 }
@@ -79,10 +84,31 @@ describe("AgentRuntimeProfilesManager", () => {
     expect(screen.getByText("default_interactive · v1")).toBeTruthy();
     expect(screen.getByText(/绑定：默认交互 Agent/)).toBeTruthy();
     expect(screen.getByText("Shell：开放（不是权限边界）")).toBeTruthy();
+    expect(screen.getByText(/平台当前有效 5 项/)).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "场景绑定" }));
     expect(screen.getByText("默认交互 Agent", { selector: ".text-sm.font-medium" })).toBeTruthy();
     expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe(profile.profileId);
+  });
+
+  it("Profile 配了已移除工具且没有 Shell 时给出明确失效提示", async () => {
+    const legacyProfile = {
+      ...profile,
+      draftConfig: {
+        ...config,
+        capabilities: { ...config.capabilities, shell: false },
+        tools: { allowlist: ["Read", "List", "Glob", "Grep", "WaitForWorkspaceReady"], denylist: [] },
+      },
+    };
+    vi.mocked(authFetch).mockResolvedValue(new Response(JSON.stringify({
+      ...JSON.parse(await profilesResponse().text()),
+      profiles: [legacyProfile],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    render(<AgentRuntimeProfilesManager />);
+
+    expect(await screen.findByText("平台已移除：List / Glob / Grep")).toBeTruthy();
+    expect(screen.getByText(/当前有效工具集没有 Shell/)).toBeTruthy();
   });
 
   it("保存草稿时携带乐观锁 revision，且不会冒充热更新", async () => {

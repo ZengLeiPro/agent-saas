@@ -154,6 +154,24 @@ function toolDescriptor(name: string): ToolDescriptor {
 }
 
 describe('Agent Runtime Profile schema and runtime intersection', () => {
+  it('publishes Shell-first memory/explore as v2 while retaining immutable v1 history', () => {
+    const records = createBuiltinAgentProfileRecords('2026-07-22T00:00:00.000Z');
+    for (const key of ['memory_poll', 'subagent_explore'] as const) {
+      const current = getBuiltinProfileByBinding(key);
+      expect(current.version.versionNumber).toBe(2);
+      expect(current.version.publishedAt).toBe('2026-07-24T17:04:00.000Z');
+      expect(current.version.config.tools.allowlist).toContain('Shell');
+      const versions = records.versions
+        .filter((version) => version.profileId === current.profile.profileId)
+        .sort((a, b) => b.versionNumber - a.versionNumber);
+      expect(versions.map((version) => version.versionNumber)).toEqual([2, 1]);
+      expect(versions[0]!.config.tools.allowlist).not.toEqual(expect.arrayContaining(['List', 'Glob', 'Grep']));
+      expect(versions[1]!.config.tools.allowlist).toEqual(expect.arrayContaining(
+        key === 'memory_poll' ? ['List', 'Glob', 'Grep'] : ['Glob', 'Grep'],
+      ));
+    }
+  });
+
   it('normalizes config and keeps digest stable across key order', () => {
     const original = getBuiltinProfileByBinding('main').version.config;
     const parsed = parseAgentRuntimeProfileConfig(JSON.parse(JSON.stringify(original)));
@@ -234,7 +252,7 @@ describe('Agent Runtime Profile schema and runtime intersection', () => {
   it('preserves memory_poll path guard and explore/general non-removable constraints', async () => {
     const memoryInner = new StaticToolRuntime(descriptors);
     const memoryRuntime = applyToolProfile(memoryInner, 'memory_poll');
-    expect(memoryRuntime.list().map((item) => item.name)).not.toContain('Shell');
+    expect(memoryRuntime.list().map((item) => item.name)).toContain('Shell');
     await expect(memoryRuntime.invoke(call('Write', { path: 'notes.txt' }), context())).rejects.toThrow(/MEMORY.md/);
 
     for (const key of ['subagent_explore', 'subagent_general'] as const) {
@@ -257,7 +275,7 @@ describe('Agent Runtime Profile schema and runtime intersection', () => {
       expect(visible).not.toContain('AskUserQuestion');
       expect(visible).not.toContain('CronManage');
       if (key === 'subagent_explore') {
-        expect(visible).not.toContain('Shell');
+        expect(visible).toContain('Shell');
         expect(visible).not.toContain('Write');
       }
     }
@@ -289,18 +307,18 @@ describe('real RawAgentLoop Profile scenarios', () => {
     expect(started).toMatchObject({ profileVersionId: main.version.profileVersionId, profileConfigDigest: main.version.configDigest });
   });
 
-  it('explore Profile hides write and Shell from the model and rejects direct invocation', async () => {
+  it('explore Profile exposes Shell for rg search while still hiding write tools', async () => {
     const bound = boundFromBuiltin('subagent_explore');
     const inner = new StaticToolRuntime(descriptors);
     const runtime = applyAgentRuntimeProfile(inner, bound);
     const adapter = new ToolThenTextAdapter('Shell');
     const { loop } = await loopHarness(adapter, runtime);
     const events = await collect(loop.run(input('explore instructions'), runContext(bound)));
-    expect(adapter.requests[0]!.tools.map((tool) => tool.name)).not.toContain('Shell');
+    expect(adapter.requests[0]!.tools.map((tool) => tool.name)).toContain('Shell');
     expect(adapter.requests[0]!.tools.map((tool) => tool.name)).not.toContain('Write');
-    expect(inner.calls).toEqual([]);
+    expect(inner.calls).toEqual(['Shell']);
     expect(events.at(-1)).toEqual({ type: 'done' });
-    await expect(runtime.invoke(call('Shell'), context())).rejects.toThrow(/有效工具集/);
+    await expect(runtime.invoke(call('Write'), context())).rejects.toThrow(/有效工具集/);
   });
 
   it('publishing v2 keeps an old session on v1 while a new session uses v2', async () => {

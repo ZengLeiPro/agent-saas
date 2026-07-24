@@ -1,5 +1,5 @@
-import { lstat, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { basename, extname as pathExtname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { lstat, readFile, stat, writeFile } from 'node:fs/promises';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { z } from 'zod';
 
@@ -8,46 +8,7 @@ import { loadToolDescription } from './tools/descriptionLoader.js';
 import type { ToolDescriptor, ToolResult, WorkspaceRef } from './toolRuntime.js';
 
 export const MAX_EDIT_FILE_BYTES = 1_000_000;
-export const MAX_GLOB_PATHS = 5_000;
-export const MAX_GLOB_DEPTH = 12;
-export const MAX_GREP_FILES = 200;
-export const MAX_GREP_MATCHES_PER_FILE = 200;
-export const MAX_GREP_FILE_BYTES = 5 * 1024 * 1024;
-export const MAX_GREP_PATTERN_LENGTH = 256;
-export const MAX_GREP_TOTAL_WALL_MS = 5_000;
 export const MAX_ARTIFACT_PAYLOAD_BYTES = 16 * 1024 * 1024;
-
-const GLOB_SKIP_DIRS: ReadonlySet<string> = new Set([
-  'node_modules',
-  '.git',
-  '.venv',
-  '.cache',
-  '.next',
-  'dist',
-  'build',
-  'out',
-  'target',
-  'coverage',
-  '.turbo',
-  '.parcel-cache',
-  '.runtime-events',
-  '.browser-profile',
-  '.ky-agent',
-]);
-
-const GLOB_SKIP_FILE_PATTERNS: RegExp[] = [
-  /\.env(\..+)?$/i,
-  /\.(npmrc|netrc|pypirc)$/i,
-  /\.(pem|key|crt|p12|pfx)$/i,
-];
-
-const BINARY_EXT = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico',
-  '.pdf', '.zip', '.tar', '.gz', '.tgz', '.bz2', '.xz', '.7z',
-  '.mp3', '.mp4', '.m4a', '.mov', '.avi', '.mkv', '.webm',
-  '.exe', '.bin', '.so', '.dylib', '.dll', '.class', '.jar',
-  '.woff', '.woff2', '.ttf', '.otf',
-]);
 
 const EDIT_DENY_PATTERNS: RegExp[] = [
   /(^|\/)\.ky-agent\/settings\.json$/i,
@@ -65,19 +26,6 @@ export type EditInput = {
   old_string: string;
   new_string: string;
   replace_all?: boolean;
-};
-
-export type GlobInput = {
-  pattern: string;
-  path?: string;
-};
-
-export type GrepInput = {
-  pattern: string;
-  path?: string;
-  glob?: string;
-  case_insensitive?: boolean;
-  max_files?: number;
 };
 
 export type CreateArtifactInput = {
@@ -114,41 +62,6 @@ export const editToolDescriptor: ToolDescriptor<EditInput> = {
   auditCategory: 'filesystem.edit',
   category: 'workspace',
   label: '精确编辑文件',
-};
-
-export const globToolDescriptor: ToolDescriptor<GlobInput> = {
-  id: 'Glob',
-  name: 'Glob',
-  displayName: 'Glob',
-  description: loadToolDescription('Glob'),
-  schema: z.object({
-    pattern: z.string().min(1).describe('glob 模式，如 "**/*.ts" 或 "src/**/foo*.md"。'),
-    path: z.string().optional().describe('可选，限定查找的子目录；默认工作区根目录。'),
-  }),
-  risk: 'safe',
-  approvalMode: 'never',
-  auditCategory: 'filesystem.glob',
-  category: 'workspace',
-  label: 'Glob 查找文件',
-};
-
-export const grepToolDescriptor: ToolDescriptor<GrepInput> = {
-  id: 'Grep',
-  name: 'Grep',
-  displayName: 'Grep',
-  description: loadToolDescription('Grep'),
-  schema: z.object({
-    pattern: z.string().min(1).max(MAX_GREP_PATTERN_LENGTH).describe('JavaScript 正则表达式。'),
-    path: z.string().optional().describe('限定搜索的子目录；默认工作区根目录。'),
-    glob: z.string().optional().describe('只搜索匹配该 glob 模式的文件。'),
-    case_insensitive: z.boolean().optional().describe('忽略大小写搜索。'),
-    max_files: z.number().int().positive().max(MAX_GREP_FILES).optional(),
-  }),
-  risk: 'safe',
-  approvalMode: 'never',
-  auditCategory: 'filesystem.grep',
-  category: 'workspace',
-  label: '正则搜索文件',
 };
 
 export const artifactCreateToolDescriptor: ToolDescriptor<CreateArtifactInput> = {
@@ -219,129 +132,6 @@ export async function runWorkspaceEdit(
   };
 }
 
-export async function runWorkspaceGlob(
-  input: GlobInput,
-  workspace: WorkspaceRef,
-  guard?: PathGuard,
-): Promise<ToolResult> {
-  const baseDir = input.path
-    ? resolveInsideWorkspace(workspace.root, input.path)
-    : workspace.root;
-  guard?.(baseDir);
-  const regex = globToRegExp(input.pattern);
-
-  const all = await walkWorkspace(baseDir, workspace.root, guard);
-  const matched = all
-    .filter((entry) => regex.test(normalizeForMatch(entry.path)))
-    .sort((a, b) => b.mtimeMs - a.mtimeMs);
-
-  if (matched.length === 0) {
-    return { content: `（无匹配项；扫描 ${all.length} 文件）` };
-  }
-  const lines = matched.slice(0, MAX_GLOB_PATHS).map((m) => m.path);
-  const suffix = matched.length >= MAX_GLOB_PATHS ? `\n...[truncated at ${MAX_GLOB_PATHS} paths]` : '';
-  return { content: lines.join('\n') + suffix };
-}
-
-export async function runWorkspaceGrep(
-  input: GrepInput,
-  workspace: WorkspaceRef,
-  guard?: PathGuard,
-): Promise<ToolResult> {
-  const baseDir = input.path
-    ? resolveInsideWorkspace(workspace.root, input.path)
-    : workspace.root;
-  guard?.(baseDir);
-  const flags = input.case_insensitive ? 'gi' : 'g';
-  let regex: RegExp;
-  try {
-    regex = new RegExp(input.pattern, flags);
-  } catch (err) {
-    throw new Error(`Grep: bad regex (${err instanceof Error ? err.message : String(err)})`);
-  }
-  const globRegex = input.glob ? globToRegExp(input.glob) : null;
-  const all = await walkWorkspace(baseDir, workspace.root, guard, {
-    maxPaths: MAX_GREP_FILES * 4,
-    maxDepth: MAX_GLOB_DEPTH,
-  });
-  const candidates = globRegex
-    ? all.filter((entry) => globRegex.test(normalizeForMatch(entry.path)))
-    : all;
-  const limit = input.max_files ?? MAX_GREP_FILES;
-  const files = candidates.slice(0, limit);
-
-  const matches: string[] = [];
-  let totalMatches = 0;
-  let timeBudgetHit = false;
-  let binarySkipped = 0;
-  let oversizeSkipped = 0;
-  const deadline = Date.now() + MAX_GREP_TOTAL_WALL_MS;
-
-  for (const f of files) {
-    if (Date.now() > deadline) {
-      timeBudgetHit = true;
-      break;
-    }
-    const ext = pathExtname(f.path);
-    if (BINARY_EXT.has(ext.toLowerCase())) {
-      binarySkipped++;
-      continue;
-    }
-    const filePath = join(workspace.root, f.path);
-    guard?.(filePath);
-    let fileStat;
-    try {
-      fileStat = await stat(filePath);
-    } catch {
-      continue;
-    }
-    if (fileStat.size > MAX_GREP_FILE_BYTES) {
-      oversizeSkipped++;
-      continue;
-    }
-    let body: string;
-    try {
-      body = await readFile(filePath, 'utf-8');
-    } catch {
-      continue;
-    }
-    if (body.indexOf('\0') >= 0) {
-      binarySkipped++;
-      continue;
-    }
-    const lines = body.split('\n');
-    let fileMatchCount = 0;
-    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
-      if (fileMatchCount >= MAX_GREP_MATCHES_PER_FILE) break;
-      if (Date.now() > deadline) {
-        timeBudgetHit = true;
-        break;
-      }
-      regex.lastIndex = 0;
-      if (regex.test(lines[lineNo])) {
-        matches.push(`${f.path}:${lineNo + 1}:${lines[lineNo]}`);
-        fileMatchCount++;
-        totalMatches++;
-      }
-    }
-    if (timeBudgetHit) break;
-  }
-
-  const summaryParts: string[] = [
-    `[matched ${totalMatches} line(s) across ${files.length} file(s); cap=${limit}`,
-  ];
-  if (binarySkipped) summaryParts.push(`binarySkipped=${binarySkipped}`);
-  if (oversizeSkipped) summaryParts.push(`oversizeSkipped=${oversizeSkipped}`);
-  if (timeBudgetHit) summaryParts.push(`time-budget-hit (${MAX_GREP_TOTAL_WALL_MS}ms)`);
-  summaryParts.push(']');
-  const summary = summaryParts.join('; ');
-
-  if (matches.length === 0) {
-    return { content: `（无匹配） ${summary}` };
-  }
-  return { content: matches.join('\n') + '\n\n' + summary };
-}
-
 export async function createWorkspaceArtifactPayload(
   input: CreateArtifactInput,
   workspace: WorkspaceRef,
@@ -381,102 +171,6 @@ export function workspaceArtifactPreparedContent(payload: WorkspaceArtifactPaylo
   }, null, 2);
 }
 
-function globToRegExp(pattern: string): RegExp {
-  const segs = pattern.split('/');
-  const re: string[] = [];
-  for (let i = 0; i < segs.length; i++) {
-    const seg = segs[i];
-    if (seg === '**') {
-      if (i === 0) {
-        re.push('(?:.*/)?');
-      } else if (i === segs.length - 1) {
-        re[re.length - 1] = re[re.length - 1].replace(/\/$/, '(?:/.*)?');
-      } else {
-        re.push('(?:.*/)?');
-      }
-      continue;
-    }
-    re.push(segmentToRegex(seg));
-    if (i < segs.length - 1) re[re.length - 1] += '/';
-  }
-  return new RegExp('^' + re.join('') + '$');
-}
-
-function segmentToRegex(seg: string): string {
-  let i = 0;
-  let out = '';
-  while (i < seg.length) {
-    const ch = seg[i];
-    if (ch === '*') {
-      out += '[^/]*';
-      i++;
-    } else if (ch === '?') {
-      out += '[^/]';
-      i++;
-    } else if (ch === '[') {
-      const close = seg.indexOf(']', i + 1);
-      if (close === -1) {
-        out += '\\[';
-        i++;
-      } else {
-        let body = seg.slice(i + 1, close);
-        if (body.startsWith('!')) body = '^' + body.slice(1);
-        body = body.replace(/\\/g, '\\\\').replace(/\]/g, '\\]');
-        out += '[' + body + ']';
-        i = close + 1;
-      }
-    } else if ('.+()|^$\\{}'.includes(ch)) {
-      out += '\\' + ch;
-      i++;
-    } else {
-      out += ch;
-      i++;
-    }
-  }
-  return out;
-}
-
-async function walkWorkspace(
-  baseDir: string,
-  cwd: string,
-  guard?: PathGuard,
-  opts: { maxPaths: number; maxDepth: number } = { maxPaths: MAX_GLOB_PATHS, maxDepth: MAX_GLOB_DEPTH },
-): Promise<{ path: string; mtimeMs: number }[]> {
-  const results: { path: string; mtimeMs: number }[] = [];
-
-  const walk = async (current: string, depth: number): Promise<void> => {
-    if (results.length >= opts.maxPaths || depth > opts.maxDepth) return;
-    guard?.(current);
-    let dirents;
-    try {
-      dirents = await readdir(current, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const dirent of dirents) {
-      if (results.length >= opts.maxPaths) break;
-      if (GLOB_SKIP_DIRS.has(dirent.name)) continue;
-      if (dirent.isSymbolicLink()) continue;
-      const full = join(current, dirent.name);
-      guard?.(full);
-      if (dirent.isDirectory()) {
-        await walk(full, depth + 1);
-      } else if (dirent.isFile()) {
-        if (GLOB_SKIP_FILE_PATTERNS.some((re) => re.test(dirent.name))) continue;
-        try {
-          const st = await lstat(full);
-          if (st.isSymbolicLink()) continue;
-          results.push({ path: relative(cwd, full), mtimeMs: st.mtimeMs });
-        } catch {
-          // ignore
-        }
-      }
-    }
-  };
-  await walk(baseDir, 0);
-  return results;
-}
-
 function resolveInsideWorkspace(cwd: string, inputPath: string): string {
   const fullPath = isAbsolute(inputPath) ? resolve(inputPath) : resolve(cwd, inputPath);
   const rel = relative(cwd, fullPath);
@@ -488,10 +182,6 @@ function resolveInsideWorkspace(cwd: string, inputPath: string): string {
 
 function relativeWorkspacePath(cwd: string, fullPath: string): string {
   return relative(cwd, fullPath) || '.';
-}
-
-function normalizeForMatch(p: string): string {
-  return sep === '/' ? p : p.split(sep).join('/');
 }
 
 function normalizePath(p: string): string {

@@ -5,14 +5,12 @@
  *   - Edit overlap match 用 split-count 杜绝 silent partial overwrite
  *   - Edit 拒绝敏感路径（.ky-agent/settings.json / .env / .ssh/）
  *   - Edit 超大文件先 stat 拒绝
- *   - Glob: 字符类内 `\d` 不被解释为 regex 简写、`[!abc]` → `[^abc]`、`**` 跨段
- *   - Grep: pattern 长度 cap、binary 文件跳过
  *   - resolveInsideWorkspace 拒绝 `../etc/passwd`
  *   - TodoWrite 需要 sessionId（无 fallback）
  */
 
 import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -26,11 +24,7 @@ import type { AuthorizedToolCall, ToolCallContext, WorkspaceRef } from '../agent
 import {
   artifactCreateToolDescriptor,
   editToolDescriptor,
-  globToolDescriptor,
-  grepToolDescriptor,
   runWorkspaceEdit,
-  runWorkspaceGlob,
-  runWorkspaceGrep,
 } from '../agent/workspaceHandTools.js';
 
 function makeContext(root: string, sessionId = 'test-session'): ToolCallContext {
@@ -68,8 +62,6 @@ describe('Workspace hand tools — provider 边界', () => {
       'AskUserQuestion',
     ]);
     expect(createBuiltinTools().list().map((tool) => tool.id)).not.toContain(editToolDescriptor.id);
-    expect(createBuiltinTools().list().map((tool) => tool.id)).not.toContain(globToolDescriptor.id);
-    expect(createBuiltinTools().list().map((tool) => tool.id)).not.toContain(grepToolDescriptor.id);
     expect(createBuiltinTools().list().map((tool) => tool.id)).not.toContain(artifactCreateToolDescriptor.id);
   });
 
@@ -163,38 +155,6 @@ describe('Workspace hand tools — Edit 安全', () => {
       makeContext(root).workspace,
     );
     expect(res.content).toMatch(/Edited a\.txt/);
-  });
-});
-
-describe('Workspace hand tools — Glob 安全 / 语义', () => {
-  it('`**` 跨多级目录匹配', async () => {
-    const root = await makeWorkspace();
-    await mkdir(join(root, 'src', 'sub'), { recursive: true });
-    await writeFile(join(root, 'src', 'a.md'), '', 'utf-8');
-    await writeFile(join(root, 'src', 'sub', 'b.md'), '', 'utf-8');
-    const res = await runWorkspaceGlob({ pattern: 'src/**/*.md' }, makeContext(root).workspace);
-    const content = res.content;
-    expect(content).toMatch(/a\.md/);
-    expect(content).toMatch(/b\.md/);
-  });
-
-  it('符号链接 → 工作区外目录，被 walkWorkspace 跳过', async () => {
-    const root = await makeWorkspace();
-    try {
-      await symlink('/etc', join(root, 'evil_link'));
-    } catch {
-      // 某些 CI 环境（无符号链接权限）跳过本例
-      return;
-    }
-    const res = await runWorkspaceGlob({ pattern: 'evil_link/**' }, makeContext(root).workspace);
-    expect(res.content).toMatch(/无匹配项/);
-  });
-});
-
-describe('Workspace hand tools — Grep 安全', () => {
-  it('pattern 长度超过 256 拒绝（schema 校验）', async () => {
-    const longPattern = 'a'.repeat(257);
-    expect(() => grepToolDescriptor.schema.parse({ pattern: longPattern })).toThrow();
   });
 });
 

@@ -128,12 +128,10 @@ describe('buildToolsResponse', () => {
     expect(names).toEqual(expect.arrayContaining([
       'Read',
       'Write',
-      'List',
       'Shell',
       'Edit',
-      'Glob',
-      'Grep',
       'CreateArtifact',
     ]));
+    expect(names).not.toEqual(expect.arrayContaining(['List', 'Glob', 'Grep']));
   });
 });

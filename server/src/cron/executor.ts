@@ -170,7 +170,7 @@ async function executeMemoryPollJob(
     return await executeAgentTurn(job, effectivePayload, opts, {
       toolProfile: "memory_poll",
       approvalPolicy: { autoApproveTools: true },
-      executionTarget: "server-local",
+      executionTarget: "server-remote",
     });
   } finally {
     releaseMemoryMaintenance(owner.tenantId, owner.id);
@@ -181,7 +181,7 @@ async function executeMemoryPollJob(
 interface AgentTurnRunOverrides {
   toolProfile?: "memory_poll";
   approvalPolicy?: { autoApproveTools: boolean };
-  executionTarget?: "server-local";
+  executionTarget?: "server-remote";
 }
 
 async function executeAgentTurn(

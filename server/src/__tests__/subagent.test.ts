@@ -456,7 +456,7 @@ describe('runSubagent', () => {
     }
   });
 
-  it('explore 白名单：只读集之外的工具（含 workspace 写工具）全部不可见', async () => {
+  it('explore 白名单：开放 Shell 搜索，但不暴露独立 Write/Edit 工具', async () => {
     const fixture = await makeFixture({ cleanupDirs });
     const adapter = new TextOnlyAdapter();
     await runSubagent({
@@ -469,11 +469,12 @@ describe('runSubagent', () => {
     });
     const toolNames = adapter.requests[0]!.tools.map((tool) => tool.name);
     expect(toolNames).toContain('Read');
-    expect(toolNames).toContain('Glob');
-    expect(toolNames).toContain('Grep');
-    for (const excluded of ['Write', 'Edit', 'Shell', 'TodoWrite', 'AskUserQuestion', 'Agent', 'List']) {
+    expect(toolNames).toContain('Shell');
+    for (const excluded of ['Write', 'Edit', 'TodoWrite', 'AskUserQuestion', 'Agent', 'List', 'Glob', 'Grep']) {
       expect(toolNames).not.toContain(excluded);
     }
+    expect(SUBAGENT_TYPES.explore.systemPrompt).toContain('Shell 是完整命令行能力，不是只读边界');
+    expect(SUBAGENT_TYPES.explore.systemPrompt).not.toContain('你只有只读工具');
   });
 });
 

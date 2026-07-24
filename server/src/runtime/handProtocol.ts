@@ -3,7 +3,7 @@ import type { ExecutionInvocationAudit, WorkspaceRef } from '../agent/toolRuntim
 /**
  * 单次工具调用的请求 envelope。
  *
- * 替代现有 ExecutionProvider 的 4 方法接口（readFile/writeFile/listFiles/runShell），
+ * 替代旧 ExecutionProvider 的分散方法接口，
  * 按 Managed Agents 形态收敛为统一 `execute(name, input)` 形态。
  * 这是 hand 可以是 container / phone / emulator 的前提——后两者没有 readFile 语义但有 screenshot/tap。
  *

@@ -124,13 +124,10 @@ describe('PlatformToolRuntime', () => {
       ['WaitForWorkspaceReady', 'safe'],
       ['Read', 'safe'],
       ['Write', 'workspace_write'],
-      ['List', 'safe'],
       ['Shell', 'dangerous'],
       ['BashOutput', 'safe'],
       ['KillBash', 'safe'],
       ['Edit', 'workspace_write'],
-      ['Glob', 'safe'],
-      ['Grep', 'safe'],
     ]);
   });
 
@@ -923,8 +920,8 @@ describe('PlatformToolRuntime', () => {
 
       const result = await runtime.invoke(
         {
-          toolId: 'List',
-          input: { path: '.' },
+          toolId: 'Read',
+          input: { path: 'hello.txt' },
           authorization: { approved: true, source: 'policy_auto' },
         },
         {
@@ -937,7 +934,7 @@ describe('PlatformToolRuntime', () => {
       expect(result.content).toBe('remote listing');
       expect(containerInvoke).not.toHaveBeenCalled();
       const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
-      expect(body.input).toEqual({ path: '.', recursive: false });
+      expect(body.input).toEqual({ path: 'hello.txt' });
       expect(body.context.handId).toBe('session-1:agent-saas-acs');
       expect(body.context.workspace.executionTarget).toBe('server-remote');
     } finally {

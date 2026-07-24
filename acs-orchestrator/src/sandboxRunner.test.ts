@@ -37,15 +37,13 @@ describe('toolNameForLocalProvider', () => {
   it('accepts legacy tool names from the deployed orchestrator compatibility layer', () => {
     expect(toolNameForLocalProvider('read_file')).toBe('Read');
     expect(toolNameForLocalProvider('write_file')).toBe('Write');
-    expect(toolNameForLocalProvider('list_files')).toBe('List');
     expect(toolNameForLocalProvider('run_shell')).toBe('Shell');
   });
 
   it('keeps current workspace tool names unchanged', () => {
     expect(toolNameForLocalProvider('Read')).toBe('Read');
     expect(toolNameForLocalProvider('Edit')).toBe('Edit');
-    expect(toolNameForLocalProvider('Glob')).toBe('Glob');
-    expect(toolNameForLocalProvider('Grep')).toBe('Grep');
+    expect(toolNameForLocalProvider('Shell')).toBe('Shell');
   });
 });
 

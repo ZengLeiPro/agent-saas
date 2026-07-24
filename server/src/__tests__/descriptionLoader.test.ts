@@ -95,8 +95,8 @@ describe('loadToolDescription', () => {
   it('DESCRIPTIONS_DIR_PATH resolves to server/src/agent/descriptions/', () => {
     expect(DESCRIPTIONS_DIR_PATH.endsWith(join('agent', 'descriptions'))).toBe(true);
     expect(existsSync(DESCRIPTIONS_DIR_PATH)).toBe(true);
-    // PR 1 必备的 6 个文件
-    for (const id of ['Edit', 'Glob', 'Grep', 'TodoWrite', 'AskUserQuestion', 'CreateArtifact']) {
+    // workspace 与 brain-only 工具的代表性 description 文件
+    for (const id of ['Read', 'Edit', 'Shell', 'TodoWrite', 'AskUserQuestion', 'CreateArtifact']) {
       expect(existsSync(join(DESCRIPTIONS_DIR_PATH, `${id}.md`))).toBe(true);
     }
   });

@@ -2713,10 +2713,7 @@ export class WebChannel implements BaseChannel {
           const pathFields: Record<string, { field: string; optional?: boolean }> = {
             Read: { field: 'path' },
             Write: { field: 'path' },
-            List: { field: 'path', optional: true },
             Edit: { field: 'file_path' },
-            Glob: { field: 'path', optional: true },
-            Grep: { field: 'path', optional: true },
             NotebookEdit: { field: 'notebook_path' },
           };
 

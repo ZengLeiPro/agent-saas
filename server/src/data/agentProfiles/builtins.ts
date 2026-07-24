@@ -37,7 +37,7 @@ function baseConfig(overrides: Partial<AgentRuntimeProfileConfig> = {}): AgentRu
   };
 }
 
-const MEMORY_TOOLS = [
+const MEMORY_TOOLS_V1 = [
   'Edit',
   'Glob',
   'Grep',
@@ -50,7 +50,18 @@ const MEMORY_TOOLS = [
   'Write',
 ];
 
-const EXPLORE_TOOLS = [
+const MEMORY_TOOLS = [
+  'Edit',
+  'MemoryList',
+  'MemorySearch',
+  'Read',
+  'Shell',
+  'UserActivityList',
+  'WaitForWorkspaceReady',
+  'Write',
+];
+
+const EXPLORE_TOOLS_V1 = [
   'Glob',
   'Grep',
   'MemorySearch',
@@ -60,12 +71,62 @@ const EXPLORE_TOOLS = [
   'WebSearch',
 ];
 
+const EXPLORE_TOOLS = [
+  'MemorySearch',
+  'Read',
+  'Shell',
+  'WaitForWorkspaceReady',
+  'WebFetch',
+  'WebSearch',
+];
+
+const SHELL_FIRST_PROFILE_PUBLISHED_AT = '2026-07-24T17:04:00.000Z';
+
+function memoryPollConfig(tools: string[], shell: boolean, allowedTargets: AgentRuntimeProfileConfig['execution']['allowedTargets']): AgentRuntimeProfileConfig {
+  return baseConfig({
+    context: { systemInstructions: '', modules: [] },
+    memory: { scope: 'maintenance' },
+    limits: { maxTurns: 30 },
+    capabilities: {
+      shell,
+      backgroundTasks: false,
+      interaction: false,
+      subagents: false,
+      scheduling: false,
+    },
+    tools: { allowlist: tools, denylist: [] },
+    execution: { allowedTargets },
+  });
+}
+
+function exploreConfig(tools: string[], shell: boolean): AgentRuntimeProfileConfig {
+  return baseConfig({
+    memory: { scope: 'search_only' },
+    limits: { maxTurns: SUBAGENT_MAX_TURNS },
+    capabilities: {
+      shell,
+      backgroundTasks: false,
+      interaction: false,
+      subagents: false,
+      scheduling: false,
+    },
+    tools: { allowlist: tools, denylist: [] },
+  });
+}
+
 export interface BuiltinAgentProfileDefinition {
   profileId: string;
   profileKey: string;
   name: string;
   description: string;
   purpose: string;
+  versionNumber?: number;
+  previousVersions?: readonly {
+    versionNumber: number;
+    config: AgentRuntimeProfileConfig;
+    publishedAt?: string;
+  }[];
+  publishedAt?: string;
   config: AgentRuntimeProfileConfig;
 }
 
@@ -93,40 +154,29 @@ export const BUILTIN_AGENT_PROFILES: readonly BuiltinAgentProfileDefinition[] = 
     profileId: 'arp_system_memory_poll',
     profileKey: 'memory_poll',
     name: '记忆轮询',
-    description: '记忆维护专用预设；代码层继续强制记忆路径写入 guard。',
+    description: '记忆维护专用预设；Write/Edit 继续强制记忆路径 guard，Shell 固定在隔离运行时执行。',
     purpose: '每日记忆轮询与记忆维护 hook',
-    config: baseConfig({
-      context: { systemInstructions: '', modules: [] },
-      memory: { scope: 'maintenance' },
-      limits: { maxTurns: 30 },
-      capabilities: {
-        shell: false,
-        backgroundTasks: false,
-        interaction: false,
-        subagents: false,
-        scheduling: false,
-      },
-      tools: { allowlist: MEMORY_TOOLS, denylist: [] },
-    }),
+    versionNumber: 2,
+    previousVersions: [{
+      versionNumber: 1,
+      config: memoryPollConfig(MEMORY_TOOLS_V1, false, null),
+    }],
+    publishedAt: SHELL_FIRST_PROFILE_PUBLISHED_AT,
+    config: memoryPollConfig(MEMORY_TOOLS, true, ['server-remote']),
   },
   {
     profileId: 'arp_system_subagent_explore',
     profileKey: 'subagent_explore',
     name: '子 Agent · Explore',
-    description: '只读代码与资料侦察；代码层不可放宽写入、Shell、交互、嵌套和排程限制。',
-    purpose: '只读子 Agent',
-    config: baseConfig({
-      memory: { scope: 'search_only' },
-      limits: { maxTurns: SUBAGENT_MAX_TURNS },
-      capabilities: {
-        shell: false,
-        backgroundTasks: false,
-        interaction: false,
-        subagents: false,
-        scheduling: false,
-      },
-      tools: { allowlist: EXPLORE_TOOLS, denylist: [] },
-    }),
+    description: '搜索与定位专用子 Agent；Shell 可用，但仍禁用交互、嵌套、排程与后台任务。',
+    purpose: '搜索定位子 Agent',
+    versionNumber: 2,
+    previousVersions: [{
+      versionNumber: 1,
+      config: exploreConfig(EXPLORE_TOOLS_V1, false),
+    }],
+    publishedAt: SHELL_FIRST_PROFILE_PUBLISHED_AT,
+    config: exploreConfig(EXPLORE_TOOLS, true),
   },
   {
     profileId: 'arp_system_subagent_general',
@@ -172,8 +222,8 @@ export const BUILTIN_AGENT_PROFILE_BINDINGS: Readonly<Record<AgentProfileBinding
   background_explore: 'arp_system_subagent_explore',
 };
 
-export function builtinProfileVersionId(profileId: string): string {
-  return `arpv_builtin_${profileId.slice('arp_system_'.length)}_v1`;
+export function builtinProfileVersionId(profileId: string, versionNumber = 1): string {
+  return `arpv_builtin_${profileId.slice('arp_system_'.length)}_v${versionNumber}`;
 }
 
 export function createBuiltinAgentProfileRecords(now = new Date().toISOString()): {
@@ -181,19 +231,22 @@ export function createBuiltinAgentProfileRecords(now = new Date().toISOString())
   versions: AgentRuntimeProfileVersion[];
   bindings: AgentRuntimeProfileBinding[];
 } {
-  const versions = BUILTIN_AGENT_PROFILES.map((definition): AgentRuntimeProfileVersion => {
-    const config = normalizeAgentRuntimeProfileConfig(definition.config);
+  const versions = BUILTIN_AGENT_PROFILES.flatMap((definition): AgentRuntimeProfileVersion[] => [
+    ...(definition.previousVersions ?? []),
+    { versionNumber: definition.versionNumber ?? 1, config: definition.config, publishedAt: definition.publishedAt },
+  ].map((source) => {
+    const config = normalizeAgentRuntimeProfileConfig(source.config);
     return {
-      profileVersionId: builtinProfileVersionId(definition.profileId),
+      profileVersionId: builtinProfileVersionId(definition.profileId, source.versionNumber),
       profileId: definition.profileId,
-      versionNumber: 1,
+      versionNumber: source.versionNumber,
       configSchemaVersion: AGENT_PROFILE_SCHEMA_VERSION,
       config,
       configDigest: digestAgentRuntimeProfileConfig(config),
       publishedBy: 'system',
-      publishedAt: now,
+      publishedAt: source.publishedAt ?? now,
     };
-  });
+  }));
   const versionByProfileId = new Map(versions.map((version) => [version.profileId, version]));
   const profiles = BUILTIN_AGENT_PROFILES.map((definition): AgentRuntimeProfile => {
     const version = versionByProfileId.get(definition.profileId)!;
@@ -231,6 +284,6 @@ export function getBuiltinProfileByBinding(bindingKey: AgentProfileBindingKey): 
   const records = createBuiltinAgentProfileRecords('2026-07-22T00:00:00.000Z');
   const profileId = BUILTIN_AGENT_PROFILE_BINDINGS[bindingKey];
   const profile = records.profiles.find((item) => item.profileId === profileId)!;
-  const version = records.versions.find((item) => item.profileId === profileId)!;
+  const version = records.versions.find((item) => item.profileVersionId === profile.latestVersion?.profileVersionId)!;
   return { profile, version };
 }

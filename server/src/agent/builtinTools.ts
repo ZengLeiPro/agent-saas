@@ -1,7 +1,7 @@
 /**
  * 内置 brain-only 工具集：TodoWrite / AskUserQuestion。
  *
- * Workspace 文件工具（Edit / Glob / Grep / CreateArtifact）已经迁入 workspace hand
+ * Workspace 文件工具（Edit / CreateArtifact）已经迁入 workspace hand
  * 契约，由 WorkspaceToolProvider 统一路由到 server-local / server-container /
  * server-remote / client，避免 brain 进程绕过 hand 直接读写 workspace.root。
  */
@@ -23,17 +23,11 @@ import type {
 export {
   artifactCreateToolDescriptor,
   editToolDescriptor,
-  globToolDescriptor,
-  grepToolDescriptor,
 } from './workspaceHandTools.js';
 
 export interface BuiltinToolsConfig {
   /** Legacy no-op: Edit is now a workspace hand tool. */
   enableEdit?: boolean;
-  /** Legacy no-op: Glob is now a workspace hand tool. */
-  enableGlob?: boolean;
-  /** Legacy no-op: Grep is now a workspace hand tool. */
-  enableGrep?: boolean;
   enableTodoWrite?: boolean;
   enableAskUserQuestion?: boolean;
   /** Legacy no-op: CreateArtifact is now a workspace hand tool. */

@@ -1,5 +1,4 @@
 export const MAX_FILE_BYTES = 128 * 1024;
-export const MAX_LIST_ENTRIES = 200;
 export const MAX_READ_LINES = 2_000;
 /** Read 单次返回给模型的 UTF-8 硬上限；完整文件仍保留在 workspace。 */
 export const MAX_READ_OUTPUT_BYTES = 64 * 1024;

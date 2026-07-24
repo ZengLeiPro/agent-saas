@@ -7,11 +7,10 @@
  * agent 继续用熟悉的 Write/Edit，但只能落在 MEMORY.md / memory/**\/*.md。
  *
  * memory_poll profile 的安全模型：
- *   - 白名单外的工具（Shell、CronManage、WebSearch、WebFetch、Agent、Skill、MCP 等）模型根本看不到；
- *   - 白名单内唯二的 workspace_write 工具（Write/Edit）被路径 guard 收窄到
- *     用户自己的记忆文件；
- *   - 因此配合 approvalPolicy.autoApproveTools 自动放行是安全的——被免除的
- *     只是「人工确认」，可写范围本身已经被收窄。
+ *   - 白名单外的工具（CronManage、WebSearch、WebFetch、Agent、Skill、MCP 等）模型根本看不到；
+ *   - Write/Edit 继续被路径 guard 收窄到用户自己的记忆文件；
+ *   - Shell 是完整命令行能力，因此此 profile 不是只读或写入硬边界；执行器必须
+ *     强制使用隔离的 ACS server-remote，不能落到 server-local。
  *
  * profile 由平台内部执行器设置（cron executor / memoryHook），随 run.metadata
  * 持久化；用户不能通过 API 指定。
@@ -31,9 +30,7 @@ export type ToolProfileId = 'memory_poll';
 
 const MEMORY_POLL_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
   'Read',
-  'List',
-  'Glob',
-  'Grep',
+  'Shell',
   'MemorySearch',
   'MemoryList',
   'UserActivityList',

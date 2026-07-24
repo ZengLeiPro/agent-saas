@@ -59,7 +59,7 @@ function descriptor(name: string, risk: 'safe' | 'workspace_write' | 'dangerous'
 }
 
 const ALL_TOOLS = [
-  descriptor('Read'), descriptor('List'), descriptor('Glob'), descriptor('Grep'),
+  descriptor('Read'),
   descriptor('MemorySearch'), descriptor('MemoryList'), descriptor('UserActivityList'),
   descriptor('Write', 'workspace_write'), descriptor('Edit', 'workspace_write'),
   descriptor('WaitForWorkspaceReady'),
@@ -77,7 +77,7 @@ function fakeToolRuntime(invokeSpy = vi.fn(async () => ({ content: 'ok' }))): To
 function toolContext(root = '/ws/tenant/user'): ToolCallContext {
   return {
     channelContext: { channel: 'cron' },
-    workspace: { root, executionTarget: 'server-local' },
+    workspace: { root, executionTarget: 'server-remote' },
   } as ToolCallContext;
 }
 
@@ -95,10 +95,9 @@ describe('memory_poll tool profile', () => {
     const runtime = applyToolProfile(fakeToolRuntime(), 'memory_poll');
     const names = runtime.list(toolContext()).map((tool) => tool.name).sort();
     expect(names).toEqual([
-      'Edit', 'Glob', 'Grep', 'List', 'MemoryList', 'MemorySearch',
-      'Read', 'UserActivityList', 'WaitForWorkspaceReady', 'Write',
+      'Edit', 'MemoryList', 'MemorySearch', 'Read', 'Shell',
+      'UserActivityList', 'WaitForWorkspaceReady', 'Write',
     ]);
-    expect(names).not.toContain('Shell');
     expect(names).not.toContain('CronManage');
     expect(names).not.toContain('Agent');
   });
@@ -106,8 +105,15 @@ describe('memory_poll tool profile', () => {
   it('invoke 拦截白名单外工具', async () => {
     const runtime = applyToolProfile(fakeToolRuntime(), 'memory_poll');
     await expect(
-      runtime.invoke({ toolId: 'Shell', input: { command: 'ls' } } as never, toolContext()),
+      runtime.invoke({ toolId: 'CronManage', input: {} } as never, toolContext()),
     ).rejects.toThrow(/不在 memory_poll profile/);
+  });
+
+  it('Shell 可用，但不会被 Write/Edit 路径 guard 误判为文件写入', async () => {
+    const invokeSpy = vi.fn(async () => ({ content: 'ok' }));
+    const runtime = applyToolProfile(fakeToolRuntime(invokeSpy), 'memory_poll');
+    await runtime.invoke({ toolId: 'Shell', input: { command: 'rg --files' } } as never, toolContext());
+    expect(invokeSpy).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -629,10 +635,12 @@ describe('executor memory_poll', () => {
     expect(result.status).toBe('ok');
     expect(capturedMessage!.content).toBe(buildMemoryPollPrompt({ lookbackHours: 48 }));
     expect(capturedMessage!.content).toContain('UserActivityList');
+    expect(capturedMessage!.content).toContain('rg --files');
+    expect(capturedMessage!.content).not.toMatch(/\b(?:List|Glob|Grep)\b/);
     expect(capturedOptions).toMatchObject({
       toolProfile: 'memory_poll',
       approvalPolicy: { autoApproveTools: true },
-      executionTarget: 'server-local',
+      executionTarget: 'server-remote',
       skipPersona: true,
       skipMemory: true,
     });
@@ -761,7 +769,7 @@ describe('memory maintenance hook（完整修复）', () => {
     expect(calls[0]!.options).toMatchObject({
       toolProfile: 'memory_poll',
       approvalPolicy: { autoApproveTools: true },
-      executionTarget: 'server-local',
+      executionTarget: 'server-remote',
       persistSession: false,
     });
   });

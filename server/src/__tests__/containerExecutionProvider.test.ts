@@ -128,7 +128,7 @@ describeIfDocker('ContainerExecutionProvider', () => {
     } catch {}
   });
 
-  it('reads, writes and lists files through the container workspace mount', async () => {
+  it('reads and writes files through the container workspace mount', async () => {
     const writeResp = await invoke(provider, workspace(root), 'Write', {
       path: 'assets/20260607/container-file.txt',
       content: 'CONTAINER_OK',
@@ -142,9 +142,6 @@ describeIfDocker('ContainerExecutionProvider', () => {
 
     const readResp = await invokeOrThrow(provider, workspace(root), 'Read', { path: 'assets/20260607/container-file.txt' });
     expect(readResp.content).toBe('CONTAINER_OK');
-
-    const listResp = await invokeOrThrow(provider, workspace(root), 'List', { path: 'assets', recursive: true });
-    expect(listResp.content).toContain('file assets/20260607/container-file.txt');
 
     // audit 字段挪到 response 上（不再走 ExecutionAuditRecorder callback）；
     // 这里直接断言 Write 调用的 response.audit。
@@ -218,7 +215,7 @@ describeIfDocker('ContainerExecutionProvider', () => {
     }
   });
 
-  it('runs Edit, Glob, Grep and CreateArtifact inside the container workspace', async () => {
+  it('runs Edit and CreateArtifact inside the container workspace', async () => {
     await mkdir(join(root, 'src', 'sub'), { recursive: true });
     await writeFile(join(root, 'src', 'a.txt'), 'old value', 'utf-8');
     await writeFile(join(root, 'src', 'sub', 'b.txt'), 'needle line', 'utf-8');
@@ -231,15 +228,6 @@ describeIfDocker('ContainerExecutionProvider', () => {
     expect(editResp.content).toMatch(/Edited src\/a\.txt/);
     expect(editResp.audit?.[0]).toMatchObject({ provider: 'server-container', operation: 'edit' });
     expect(readFileSync(join(root, 'src', 'a.txt'), 'utf-8')).toBe('new value');
-
-    const globResp = await invokeOrThrow(provider, workspace(root), 'Glob', { pattern: 'src/**/*.txt' });
-    expect(globResp.content).toContain('src/a.txt');
-    expect(globResp.content).toContain('src/sub/b.txt');
-    expect(globResp.audit?.[0]).toMatchObject({ provider: 'server-container', operation: 'glob' });
-
-    const grepResp = await invokeOrThrow(provider, workspace(root), 'Grep', { pattern: 'needle', path: 'src' });
-    expect(grepResp.content).toContain('src/sub/b.txt:1:needle line');
-    expect(grepResp.audit?.[0]).toMatchObject({ provider: 'server-container', operation: 'grep' });
 
     const artifactResp = await invoke(provider, workspace(root), 'CreateArtifact', {
       file_path: 'src/sub/b.txt',
@@ -311,24 +299,6 @@ describeIfDocker('ContainerExecutionProvider', () => {
       })).rejects.toThrow();
     }
 
-    await expect(invokeOrThrow(provider, workspace(root), 'Glob', {
-      pattern: '**/*.md',
-      path: '../other-user',
-    })).rejects.toThrow(/outside workspace/);
-    await expect(invokeOrThrow(provider, workspace(root), 'Glob', {
-      pattern: '**/*.md',
-      path: join(outside),
-    })).rejects.toThrow(/outside workspace/);
-
-    await expect(invokeOrThrow(provider, workspace(root), 'Grep', {
-      pattern: 'OTHER_USER_SECRET',
-      path: '../other-user',
-    })).rejects.toThrow(/outside workspace/);
-    await expect(invokeOrThrow(provider, workspace(root), 'Grep', {
-      pattern: 'OTHER_USER_SECRET',
-      path: join(outside),
-    })).rejects.toThrow(/outside workspace/);
-
     await expect(invokeOrThrow(provider, workspace(root), 'CreateArtifact', {
       file_path: '../other-user/MEMORY.md',
       kind: 'log',
@@ -344,9 +314,9 @@ describeIfDocker('ContainerExecutionProvider', () => {
       })).rejects.toThrow(/refused symlink/);
     }
 
-    const grepResp = await invokeOrThrow(provider, workspace(root), 'Grep', { pattern: 'INSIDE_NEEDLE', path: '.' });
-    expect(grepResp.content).toContain('inside.txt:1:INSIDE_NEEDLE');
-    expect(grepResp.content).not.toContain('OTHER_USER_SECRET');
+    const insideResp = await invokeOrThrow(provider, workspace(root), 'Shell', { command: 'cat inside.txt' });
+    expect(insideResp.content).toContain('INSIDE_NEEDLE');
+    expect(insideResp.content).not.toContain('OTHER_USER_SECRET');
     expect(readFileSync(join(outside, 'MEMORY.md'), 'utf-8')).toBe('OTHER_USER_SECRET');
   });
 

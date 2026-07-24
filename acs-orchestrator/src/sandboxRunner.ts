@@ -323,8 +323,6 @@ export function toolNameForLocalProvider(toolName: string): string {
       return 'Read';
     case 'write_file':
       return 'Write';
-    case 'list_files':
-      return 'List';
     case 'run_shell':
       return 'Shell';
     default:

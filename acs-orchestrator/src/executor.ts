@@ -204,8 +204,6 @@ export function toolNameForSandboxRunner(toolName: string): string {
       return 'read_file';
     case 'Write':
       return 'write_file';
-    case 'List':
-      return 'list_files';
     case 'Shell':
       return 'run_shell';
     default:

@@ -401,7 +401,7 @@ async function runVerify(connectionString: string): Promise<void> {
     buildAuditEvent(auditSessionA, runX, 'call-a1', 'Read', 'safe', 'server-local', 'policy_auto', 'success', 12),
     buildAuditEvent(auditSessionA, runY, 'call-a2', 'Write', 'workspace_write', 'server-container', 'human_approval', 'success', 28, 'appr-1'),
     buildAuditEvent(auditSessionB, runX, 'call-b1', 'Shell', 'dangerous', 'server-container', 'policy_auto', 'error', 7),
-    buildAuditEvent(auditSessionB, runY, 'call-b2', 'List', 'safe', 'server-remote', 'policy_auto', 'success', 3),
+    buildAuditEvent(auditSessionB, runY, 'call-b2', 'Read', 'safe', 'server-remote', 'policy_auto', 'success', 3),
   ];
   for (const event of auditEvents) {
     await reopened.append(event);

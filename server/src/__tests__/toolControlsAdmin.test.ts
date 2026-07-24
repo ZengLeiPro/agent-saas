@@ -18,6 +18,7 @@ function baseRawConfig() {
     toolControls: {
       tools: {
         Shell: { enabled: false },
+        Grep: { enabled: false },
       },
     },
     webTools: {
@@ -92,10 +93,7 @@ describe('tool controls admin router', () => {
         'WaitForWorkspaceReady',
         'Read',
         'Write',
-        'List',
         'Edit',
-        'Glob',
-        'Grep',
         'CreateArtifact',
         'Shell',
         'MemorySearch',
@@ -115,6 +113,8 @@ describe('tool controls admin router', () => {
         'CronList',
         'CronManage',
       ]));
+      expect(body.tools.map((tool: { id: string }) => tool.id)).not.toEqual(expect.arrayContaining(['List', 'Glob', 'Grep']));
+      expect(body.toolControls.tools?.Grep).toBeUndefined();
       expect(body.tools.find((tool: { id: string }) => tool.id === 'Shell').enabled).toBe(false);
       expect(body.tools.find((tool: { id: string }) => tool.id === 'Read').enabled).toBe(true);
       // 新增字段：description / effectiveDescription / inputSchema / risk / approvalMode /
@@ -393,6 +393,7 @@ describe('tool controls admin router', () => {
       // config.json 里 Write 的 tools 条目应该被完全删除（无 enabled + 无 override）
       const written = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(written.toolControls.tools?.Write).toBeUndefined();
+      expect(written.toolControls.tools?.Grep).toBeUndefined();
       expect(written.toolControls.tools?.Shell?.enabled).toBe(false);
       expect(runtimeConfig.toolControls?.tools?.Write?.descriptionOverride).toBeUndefined();
     });
@@ -400,28 +401,29 @@ describe('tool controls admin router', () => {
 
   it('single-tool PUT can flip enabled without editing webTools payload', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
-      const res = await fetch(`${baseUrl}/api/admin/tool-controls/Grep`, {
+      const res = await fetch(`${baseUrl}/api/admin/tool-controls/Edit`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ enabled: false }),
       });
       expect(res.status).toBe(200);
       const body = await readJson(res);
-      expect(body.tools.find((tool: { id: string }) => tool.id === 'Grep').enabled).toBe(false);
+      expect(body.tools.find((tool: { id: string }) => tool.id === 'Edit').enabled).toBe(false);
       // webTools 保持原状
       expect(body.webTools.search).toMatchObject({ provider: 'brave', hasApiKey: true });
-      expect(runtimeConfig.toolControls?.tools?.Grep?.enabled).toBe(false);
+      expect(runtimeConfig.toolControls?.tools?.Edit?.enabled).toBe(false);
       const written = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(written.toolControls.tools.Grep.enabled).toBe(false);
+      expect(written.toolControls.tools.Edit.enabled).toBe(false);
+      expect(written.toolControls.tools.Grep).toBeUndefined();
       // 原有的 Shell 关闭仍在
       expect(written.toolControls.tools.Shell.enabled).toBe(false);
     });
   });
 
-  it('single-tool PUT 404s on unknown toolId without touching config.json', async () => {
+  it('single-tool PUT 404s on a retired toolId without touching config.json', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
       const before = readFileSync(configPath, 'utf-8');
-      const res = await fetch(`${baseUrl}/api/admin/tool-controls/NotARealTool`, {
+      const res = await fetch(`${baseUrl}/api/admin/tool-controls/Grep`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ enabled: false }),

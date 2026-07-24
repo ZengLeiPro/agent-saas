@@ -59,7 +59,7 @@ const agentToolSchema = z.object({
   prompt: z.string().min(1)
     .describe('交给子 agent 的完整自包含任务。它看不到本对话；必须写入全部背景、约束与期望的报告格式。'),
   agent_type: z.enum(['general', 'explore']).optional().default('general')
-    .describe('general = 全量工具执行者；explore = 只读侦察（Read/Glob/Grep/WebSearch/WebFetch/MemorySearch）。'),
+    .describe('general = 全量工具执行者；explore = 搜索侦察（Read/Shell/WebSearch/WebFetch/MemorySearch）。'),
   model: z.string().optional()
     .describe('可选，覆盖模型 ref（必须是本租户允许的模型）。省略则继承父模型。'),
   include_company_info: z.boolean().optional().default(false)

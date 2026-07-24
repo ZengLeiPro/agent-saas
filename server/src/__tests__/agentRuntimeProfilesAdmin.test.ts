@@ -40,7 +40,10 @@ async function withApp(username: string, tenantId: string, run: (baseUrl: string
     (req as any).user = { sub: username, username, role: 'admin', tenantId };
     next();
   });
-  app.use('/api/admin/agent-profiles', createAgentRuntimeProfilesAdminRouter({ store }));
+  app.use('/api/admin/agent-profiles', createAgentRuntimeProfilesAdminRouter({
+    store,
+    getToolControls: () => ({ tools: { Shell: { enabled: false } } }),
+  }));
   const server = app.listen(0);
   servers.push(server);
   const address = server.address();
@@ -51,7 +54,13 @@ async function withApp(username: string, tenantId: string, run: (baseUrl: string
 describe('Agent Runtime Profiles admin authorization', () => {
   it('allows delegated platform admins to read but rejects every write server-side', async () => {
     await withApp('operator', DEFAULT_TENANT_ID, async (baseUrl, store) => {
-      expect((await fetch(`${baseUrl}/api/admin/agent-profiles`)).status).toBe(200);
+      const read = await fetch(`${baseUrl}/api/admin/agent-profiles`);
+      expect(read.status).toBe(200);
+      const payload = await read.json() as any;
+      expect(payload.platformTools.catalog).not.toEqual(expect.arrayContaining(['List', 'Glob', 'Grep']));
+      expect(payload.platformTools.catalog).toContain('Shell');
+      expect(payload.platformTools.enabled).not.toContain('Shell');
+      expect(payload.semantics.effectiveToolsDependOnRuntime).toBe(true);
       const mutations = [
         ['POST', '/api/admin/agent-profiles', { profileKey: 'custom_profile', name: '测试' }],
         ['PATCH', '/api/admin/agent-profiles/profile-1/draft', { expectedRevision: 1, name: '测试' }],

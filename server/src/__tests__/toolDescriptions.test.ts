@@ -1,7 +1,7 @@
 /**
  * Tool descriptions snapshot baseline（PR 0）。
  *
- * 目的：把当前 19 个 ToolDescriptor.description 的字面量 dump 进 vitest snapshot，
+ * 目的：把当前 ToolDescriptor.description 的字面量 dump 进 vitest snapshot，
  * 作为后续把 description 抽到 .md 文件迁移的"字符级零回归"基线。
  *
  * 后续 PR 1-4 把 description 改成 loadToolDescription(toolId) 后，本 snapshot
@@ -16,19 +16,15 @@ import {
   artifactCreateToolDescriptor,
   askUserQuestionToolDescriptor,
   editToolDescriptor,
-  globToolDescriptor,
-  grepToolDescriptor,
   todoWriteToolDescriptor,
 } from '../agent/builtinTools.js';
 import { memoryListToolDescriptor, memorySearchToolDescriptor } from '../agent/memorySearchToolProvider.js';
 import { skillToolDescriptor } from '../agent/skillToolProvider.js';
 import {
   MAX_FILE_BYTES,
-  MAX_LIST_ENTRIES,
   MAX_READ_LINES,
   bashOutputToolDescriptor,
   killBashToolDescriptor,
-  listFilesToolDescriptor,
   readFileToolDescriptor,
   runShellToolDescriptor,
   waitForWorkspaceReadyToolDescriptor,
@@ -43,18 +39,15 @@ import {
 } from '../runtime/sessionContext.js';
 
 const ALL_TOOLS = [
-  // builtinTools.ts —— 6
+  // builtinTools.ts / workspaceHandTools.ts —— 4
   editToolDescriptor,
-  globToolDescriptor,
-  grepToolDescriptor,
   todoWriteToolDescriptor,
   askUserQuestionToolDescriptor,
   artifactCreateToolDescriptor,
-  // toolRuntime.ts workspace runtime —— 7
+  // toolRuntime.ts workspace runtime —— 6
   waitForWorkspaceReadyToolDescriptor,
   readFileToolDescriptor,
   writeFileToolDescriptor,
-  listFilesToolDescriptor,
   runShellToolDescriptor,
   bashOutputToolDescriptor,
   killBashToolDescriptor,
@@ -74,8 +67,8 @@ const ALL_TOOLS = [
 ] as const;
 
 describe('Tool descriptions', () => {
-  it('covers all 22 tools (regression: 漏 import 立即可见)', () => {
-    expect(ALL_TOOLS).toHaveLength(22);
+  it('covers all 19 tools (regression: 漏 import 立即可见)', () => {
+    expect(ALL_TOOLS).toHaveLength(19);
     const ids = ALL_TOOLS.map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length); // 无重复 id
   });
@@ -99,25 +92,23 @@ describe('Tool descriptions', () => {
 
   // ─── drift guard：md 里 hardcode 的常量必须跟 TS 常量一致 ────────────────
   //
-  // 背景：Read.md / List.md 原 TS 用 `Max ${MAX_FILE_BYTES} bytes.`
+  // 背景：Read.md 原 TS 用 `Max ${MAX_FILE_BYTES} bytes.`
   // 模板插值，迁移到 md 时把常量当前值写死（"Max 131072 bytes."）。如果 TS 常量改
   // 了但 md 没同步，LLM 收到的描述会跟实际运行行为脱钩（模型按旧上限规划 chunk，
   // 实际运行允许更大文件 → 模型行为退化）。
   //
   // snapshot 测试只锁字符级稳定，**锁不住跟 TS 常量的一致性**。这里加显式断言
-  // 形成 CI 闸门：改 MAX_FILE_BYTES / MAX_LIST_ENTRIES 不同步 md，CI 立刻红。
+  // 形成 CI 闸门：改 MAX_FILE_BYTES 不同步 md，CI 立刻红。
   it('Read description embeds MAX_FILE_BYTES value (drift guard)', () => {
     expect(readFileToolDescriptor.description).toContain(String(MAX_FILE_BYTES));
     expect(readFileToolDescriptor.description).toContain(String(MAX_READ_LINES));
   });
 
-  it('List description embeds MAX_LIST_ENTRIES value (drift guard)', () => {
-    expect(listFilesToolDescriptor.description).toContain(String(MAX_LIST_ENTRIES));
-  });
-
   it('Shell description follows pooled execution defaults (drift guard)', () => {
     expect(runShellToolDescriptor.description).toContain('当前工作区运行时');
     expect(runShellToolDescriptor.description).toContain('包括平台管理员');
+    expect(runShellToolDescriptor.description).toContain('rg --files');
+    expect(runShellToolDescriptor.description).toContain('rg -n');
   });
 
   it('AskUserQuestion description matches multiSelect schema default (drift guard)', () => {

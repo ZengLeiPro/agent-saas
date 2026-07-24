@@ -443,8 +443,6 @@ export function createMiddlewareRunDispatch(
               permissionMode: 'default' as PermissionMode,
               allowDangerouslySkipPermissions: false,
               allowedTools: [
-                // 搜索工具
-                'Glob', 'Grep',
                 // Agent 编排
                 'Agent',
                 // 动态工作流（dynamic workflows，多 agent 编排）

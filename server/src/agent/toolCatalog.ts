@@ -19,7 +19,6 @@ import type { ToolDescriptor } from './toolRuntime.js';
 import {
   readFileToolDescriptor,
   writeFileToolDescriptor,
-  listFilesToolDescriptor,
   runShellToolDescriptor,
   bashOutputToolDescriptor,
   killBashToolDescriptor,
@@ -27,8 +26,6 @@ import {
 } from './toolRuntime.js';
 import {
   editToolDescriptor,
-  globToolDescriptor,
-  grepToolDescriptor,
   artifactCreateToolDescriptor,
 } from './workspaceHandTools.js';
 import { todoWriteToolDescriptor, askUserQuestionToolDescriptor } from './builtinTools.js';
@@ -57,10 +54,7 @@ export const PLATFORM_TOOL_CATALOG: readonly ToolDescriptor[] = [
   waitForWorkspaceReadyToolDescriptor,
   readFileToolDescriptor,
   writeFileToolDescriptor,
-  listFilesToolDescriptor,
   editToolDescriptor,
-  globToolDescriptor,
-  grepToolDescriptor,
   artifactCreateToolDescriptor,
   runShellToolDescriptor,
   bashOutputToolDescriptor,
@@ -114,14 +108,11 @@ export function isPlatformBuiltinTool(toolId: string): boolean {
 export const PLATFORM_TOOL_SOURCE_MODULE: Readonly<Record<string, string>> = {
   Read: 'server/src/agent/toolRuntime.ts',
   Write: 'server/src/agent/toolRuntime.ts',
-  List: 'server/src/agent/toolRuntime.ts',
   Shell: 'server/src/agent/toolRuntime.ts',
   BashOutput: 'server/src/agent/toolRuntime.ts',
   KillBash: 'server/src/agent/toolRuntime.ts',
   WaitForWorkspaceReady: 'server/src/agent/toolRuntime.ts',
   Edit: 'server/src/agent/workspaceHandTools.ts',
-  Glob: 'server/src/agent/workspaceHandTools.ts',
-  Grep: 'server/src/agent/workspaceHandTools.ts',
   CreateArtifact: 'server/src/agent/workspaceHandTools.ts',
   TodoWrite: 'server/src/agent/builtinTools.ts',
   AskUserQuestion: 'server/src/agent/builtinTools.ts',

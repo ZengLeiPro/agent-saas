@@ -56,10 +56,15 @@ interface ProfilesResponse {
   profiles: RuntimeProfile[];
   bindings: ProfileBinding[];
   bindingKeys: string[];
+  platformTools: {
+    catalog: string[];
+    enabled: string[];
+  };
   semantics: {
     shellWarning: string;
     publishedVersionsImmutable: boolean;
     newSessionsOnly: boolean;
+    effectiveToolsDependOnRuntime: boolean;
   };
 }
 
@@ -308,19 +313,19 @@ export function AgentRuntimeProfilesManager(): JSX.Element {
             <div className="grid gap-3 md:grid-cols-2"><div className="space-y-1.5"><Label>名称</Label><Input value={name} onChange={(event) => setName(event.target.value)} disabled={platformReadOnly || selected.status === "archived"} /></div><div className="space-y-1.5"><Label>用途</Label><Input value={purpose} onChange={(event) => setPurpose(event.target.value)} disabled={platformReadOnly || selected.status === "archived"} /></div></div>
             <div className="space-y-1.5"><Label>说明</Label><Textarea value={description} onChange={(event) => setDescription(event.target.value)} className="min-h-20" disabled={platformReadOnly || selected.status === "archived"} /></div>
             <div className="space-y-1.5"><div className="flex items-center justify-between"><Label>Profile 配置 JSON</Label><span className="text-xs text-muted-foreground">schemaVersion 1 · 后端严格校验</span></div><Textarea value={configText} onChange={(event) => setConfigText(event.target.value)} className="min-h-[420px] font-mono text-xs" spellCheck={false} disabled={platformReadOnly || selected.status === "archived"} /></div>
-            <EffectiveSummary config={safeConfig(configText) ?? selected.draftConfig} />
+            <EffectiveSummary config={safeConfig(configText) ?? selected.draftConfig} platformTools={data.platformTools} />
           </CardContent></Card>}
         </div>
       )}
 
       {data && view === "bindings" && <Card className="min-h-0 flex-1 overflow-auto"><CardHeader><CardTitle className="text-base">运行入口绑定</CardTitle><p className="text-sm text-muted-foreground">绑定稳定 Profile；发布新版后只影响后续新会话，已存在会话继续使用自己的不可变版本。</p></CardHeader><CardContent className="space-y-3">{data.bindingKeys.map((key) => { const binding = data.bindings.find((item) => item.bindingKey === key); return <div key={key} className="grid items-center gap-2 rounded-lg border p-3 md:grid-cols-[220px_minmax(0,1fr)_180px]"><div><div className="text-sm font-medium">{BINDING_LABELS[key] ?? key}</div><div className="font-mono text-xs text-muted-foreground">{key}</div></div><select className="h-9 rounded-md border bg-background px-3 text-sm" value={binding?.profileId ?? ""} disabled={platformReadOnly || saving || !data.durable} onChange={(event) => void updateBinding(key, event.target.value)}><option value="" disabled>请选择已发布 Profile</option>{data.profiles.filter((profile) => profile.status === "published" && profile.latestVersion).map((profile) => <option key={profile.profileId} value={profile.profileId}>{profile.name} · v{profile.latestVersion!.versionNumber}</option>)}</select><div className="text-xs text-muted-foreground">{binding ? `${formatTime(binding.updatedAt)} · ${binding.updatedBy}` : "未绑定（运行时使用内置兼容版本）"}</div></div>; })}</CardContent></Card>}
 
-      {data && view === "versions" && <div className="grid min-h-0 flex-1 gap-4 overflow-hidden md:grid-cols-[260px_minmax(0,1fr)]"><Card className="min-h-0 overflow-auto"><CardContent className="p-2">{versions.length === 0 ? <div className="p-4 text-sm text-muted-foreground">当前 Profile 尚无已发布版本</div> : versions.map((version) => <button key={version.profileVersionId} type="button" onClick={() => setSelectedVersionId(version.profileVersionId)} className={cn("mb-1 w-full rounded-lg px-3 py-2 text-left", version.profileVersionId === selectedVersion?.profileVersionId ? "bg-brand-accent-soft" : "hover:bg-muted")}><div className="text-sm font-medium">版本 {version.versionNumber}</div><div className="mt-1 text-xs text-muted-foreground">{formatTime(version.publishedAt)} · {version.publishedBy}</div><div className="mt-1 truncate font-mono text-[10px] text-muted-foreground">{version.configDigest}</div></button>)}</CardContent></Card><Card className="min-h-0 overflow-auto"><CardHeader><CardTitle className="text-base">{selectedVersion ? `${selected?.name ?? "Profile"} · v${selectedVersion.versionNumber}` : "版本详情"}</CardTitle><p className="text-sm text-muted-foreground">已发布版本只读且不可变；数据库 trigger 同时阻止 UPDATE 和 DELETE。</p></CardHeader><CardContent>{selectedVersion ? <><EffectiveSummary config={selectedVersion.config} /><pre className="mt-4 overflow-auto rounded-lg bg-muted p-4 text-xs leading-5">{JSON.stringify(selectedVersion.config, null, 2)}</pre></> : <div className="text-sm text-muted-foreground">选择一个版本查看</div>}</CardContent></Card></div>}
+      {data && view === "versions" && <div className="grid min-h-0 flex-1 gap-4 overflow-hidden md:grid-cols-[260px_minmax(0,1fr)]"><Card className="min-h-0 overflow-auto"><CardContent className="p-2">{versions.length === 0 ? <div className="p-4 text-sm text-muted-foreground">当前 Profile 尚无已发布版本</div> : versions.map((version) => <button key={version.profileVersionId} type="button" onClick={() => setSelectedVersionId(version.profileVersionId)} className={cn("mb-1 w-full rounded-lg px-3 py-2 text-left", version.profileVersionId === selectedVersion?.profileVersionId ? "bg-brand-accent-soft" : "hover:bg-muted")}><div className="text-sm font-medium">版本 {version.versionNumber}</div><div className="mt-1 text-xs text-muted-foreground">{formatTime(version.publishedAt)} · {version.publishedBy}</div><div className="mt-1 truncate font-mono text-[10px] text-muted-foreground">{version.configDigest}</div></button>)}</CardContent></Card><Card className="min-h-0 overflow-auto"><CardHeader><CardTitle className="text-base">{selectedVersion ? `${selected?.name ?? "Profile"} · v${selectedVersion.versionNumber}` : "版本详情"}</CardTitle><p className="text-sm text-muted-foreground">已发布版本只读且不可变；数据库 trigger 同时阻止 UPDATE 和 DELETE。</p></CardHeader><CardContent>{selectedVersion ? <><EffectiveSummary config={selectedVersion.config} platformTools={data.platformTools} /><pre className="mt-4 overflow-auto rounded-lg bg-muted p-4 text-xs leading-5">{JSON.stringify(selectedVersion.config, null, 2)}</pre></> : <div className="text-sm text-muted-foreground">选择一个版本查看</div>}</CardContent></Card></div>}
     </div>
   );
 }
 
-function EffectiveSummary({ config }: { config: Record<string, unknown> }): JSX.Element {
+function EffectiveSummary({ config, platformTools }: { config: Record<string, unknown>; platformTools: ProfilesResponse["platformTools"] }): JSX.Element {
   const capabilities = (config.capabilities ?? {}) as Record<string, unknown>;
   const tools = (config.tools ?? {}) as { allowlist?: string[] | null; denylist?: string[] };
   const model = (config.model ?? {}) as { strategy?: string; modelRef?: string };
@@ -330,20 +335,36 @@ function EffectiveSummary({ config }: { config: Record<string, unknown> }): JSX.
   const mcp = (config.mcp ?? {}) as { serverAllowlist?: string[] | null; toolAllowlist?: string[] | null; denyServers?: string[]; denyTools?: string[] };
   const memory = (config.memory ?? {}) as { scope?: string };
   const execution = (config.execution ?? {}) as { allowedTargets?: string[] | null };
+  const catalog = new Set(platformTools.catalog);
+  const enabled = new Set(platformTools.enabled);
+  const denied = new Set(tools.denylist ?? []);
+  const requested = tools.allowlist ?? platformTools.enabled;
+  const effective = requested.filter((tool) => enabled.has(tool) && !denied.has(tool));
+  const retired = (tools.allowlist ?? []).filter((tool) => !catalog.has(tool));
+  const platformDisabled = (tools.allowlist ?? []).filter((tool) => catalog.has(tool) && !enabled.has(tool));
+  const shellAvailable = capabilities.shell === true && effective.includes("Shell");
   return <div className="rounded-lg border bg-muted/30 p-3">
-    <div className="mb-2 text-sm font-medium">有效配置摘要（Profile 层）</div>
+    <div className="mb-2 text-sm font-medium">有效配置摘要（平台开关 ∩ Profile）</div>
     <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
       <div>上下文：{context.modules?.join(" / ") || "无可选模块"}</div>
       <div>模型：{model.strategy === "fixed" ? model.modelRef : "继承入口/会话"}</div>
       <div>记忆：{memory.scope ?? "full"}</div>
       <div>最大轮次：{limits.maxTurns ?? "继承平台与账号上限"}</div>
-      <div>工具：{tools.allowlist ? `允许 ${tools.allowlist.length} 项` : "从现有有效工具继续收窄"}{tools.denylist?.length ? `，禁止 ${tools.denylist.length} 项` : ""}</div>
+      <div>工具：平台当前有效 {effective.length} 项{tools.allowlist ? ` / Profile 配置 ${tools.allowlist.length} 项` : ""}{tools.denylist?.length ? `，Profile 禁止 ${tools.denylist.length} 项` : ""}</div>
       <div>技能：默认/推荐 {skills.defaultSkillIds?.length ?? 0} 项；{skills.allowlist ? `允许 ${skills.allowlist.length} 项` : "继承现有有效集"}{skills.denylist?.length ? `，禁止 ${skills.denylist.length} 项` : ""}</div>
       <div>MCP：{mcp.serverAllowlist ? `${mcp.serverAllowlist.length} 个 Server` : "继承现有 Server"}{mcp.toolAllowlist ? ` / ${mcp.toolAllowlist.length} 个工具` : ""}{(mcp.denyServers?.length || mcp.denyTools?.length) ? `，禁止 ${(mcp.denyServers?.length ?? 0) + (mcp.denyTools?.length ?? 0)} 项` : ""}</div>
       <div>执行环境：{execution.allowedTargets?.join(" / ") || "继承当前入口"}</div>
       <div>Shell：{capabilities.shell ? "开放（不是权限边界）" : "关闭"}</div>
       <div>后台 / 交互 / 子 Agent / 排程：{["backgroundTasks", "interaction", "subagents", "scheduling"].filter((key) => capabilities[key]).join(" / ") || "均关闭"}</div>
     </div>
+    {(retired.length > 0 || platformDisabled.length > 0) && <div className="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+      {retired.length > 0 && <div>平台已移除：{retired.join(" / ")}</div>}
+      {platformDisabled.length > 0 && <div>平台已关闭：{platformDisabled.join(" / ")}</div>}
+    </div>}
+    {!shellAvailable && <div className="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+      当前有效工具集没有 Shell，Agent 无法通过 rg 发现或搜索工作区文件；仅适合路径已知且可直接 Read 的场景。
+    </div>}
+    <div className="mt-2 text-[11px] text-muted-foreground">实际会话还会继续与入口、租户、运行时就绪状态和后端能力取交集。</div>
   </div>;
 }
 

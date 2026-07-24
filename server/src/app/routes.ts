@@ -379,7 +379,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   );
   app.use(
     "/api/admin/agent-profiles",
-    createAgentRuntimeProfilesAdminRouter({ store: runtime.agentRuntimeProfileStore }),
+    createAgentRuntimeProfilesAdminRouter({
+      store: runtime.agentRuntimeProfileStore,
+      getToolControls: () => config.toolControls,
+    }),
   );
   // GenerateImage 引擎配置与 per-engine 定价（2026-07-15）：平台管理员运行时可改，
   // PUT 后 jsonc 回写 config.json + SecretVault 凭据托管 + runtime 热更，无需重启。

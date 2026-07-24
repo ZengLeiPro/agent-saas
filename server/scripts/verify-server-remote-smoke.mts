@@ -10,13 +10,13 @@
  * 覆盖：
  *   - Bearer token 鉴权（正确 token、错误 token → 401）
  *   - workspace.id → hand 端 sandbox 路径解析
- *   - Read / Write / List 三件套 end-to-end
+ *   - Read / Write / Shell 三件套 end-to-end，并验证 rg 可用
  *   - workspace.root 不上线（脚本传一个绝对路径占位，验证 hand 端不使用它）
  *   - workspaceId 缺失 → 400
  *
  * 不覆盖（留后续）：
  *   - container backend 路径（避免依赖 docker）
- *   - approval / Shell（brain 全链路验证留给后续 wire 进 raw runtime）
+ *   - brain 侧 approval（本脚本从 transport 直连 hand-server）
  *   - ECS 部署
  *
  * 用法：
@@ -96,16 +96,16 @@ async function main(): Promise<void> {
     }
     console.log('[step] Read ok');
 
-    // 3. List
-    const listResp = await transport.invoke({
-      toolName: 'List',
-      input: { path: '.', recursive: false },
+    // 3. Shell + rg 运行时契约
+    const shellResp = await transport.invoke({
+      toolName: 'Shell',
+      input: { command: "rg --version && rg --files -g 'smoke-from-brain.txt'" },
       context: { workspace },
     });
-    if (listResp.status !== 'success' || !listResp.content.includes('smoke-from-brain.txt')) {
-      throw new Error(`List 校验失败: ${JSON.stringify(listResp)}`);
+    if (shellResp.status !== 'success' || !shellResp.content.includes('ripgrep') || !shellResp.content.includes('smoke-from-brain.txt')) {
+      throw new Error(`Shell/rg 校验失败: ${JSON.stringify(shellResp)}`);
     }
-    console.log('[step] List ok');
+    console.log('[step] Shell/rg ok');
 
     // 4. 错 token → 401
     const badTransport = new HttpTransport({
@@ -140,13 +140,13 @@ async function main(): Promise<void> {
       sessionId: `${sessionId}-other`,
       executionTarget: 'server-remote',
     };
-    const otherList = await transport.invoke({
-      toolName: 'List',
-      input: { path: '.', recursive: false },
+    const otherShell = await transport.invoke({
+      toolName: 'Shell',
+      input: { command: "rg --version >/dev/null && test ! -e smoke-from-brain.txt" },
       context: { workspace: otherSession },
     });
-    if (otherList.status !== 'success' || otherList.content.includes('smoke-from-brain.txt')) {
-      throw new Error(`workspace 隔离失败: ${JSON.stringify(otherList)}`);
+    if (otherShell.status !== 'success') {
+      throw new Error(`workspace 隔离失败: ${JSON.stringify(otherShell)}`);
     }
     console.log('[step] workspace 隔离 ok');
 
@@ -158,7 +158,7 @@ async function main(): Promise<void> {
       writeAudit: writeResp.audit,
       writeMetadata: writeResp.metadata,
       readContent: readResp.status === 'success' ? readResp.content : null,
-      listContent: listResp.status === 'success' ? listResp.content : null,
+      shellContent: shellResp.status === 'success' ? shellResp.content : null,
     }, null, 2));
   } catch (err) {
     exitCode = 1;

@@ -5,7 +5,7 @@
  *   - general：通用执行者。拿到父 run 的全量工具（减去无条件剥夺清单），可选注入
  *     租户 company-info（企业子 agent 场景常需组织上下文，这是我们与 Claude Code
  *     场景的差异，做成 agentType 开关字段）。
- *   - explore：只读侦察员。工具白名单收窄到只读集，回「结论 + 定位」，不 dump
+ *   - explore：搜索侦察员。工具白名单收窄到搜索集，回「结论 + 定位」，不 dump
  *     文件内容——探索类 fan-out 是子 agent 最高频的用法，也是上下文噪音最大的来源。
  *
  * 工具过滤语义（关键不变量 5）：
@@ -54,11 +54,11 @@ export const GENERAL_SYSTEM_PROMPT = [
 ].join('\n');
 
 export const EXPLORE_SYSTEM_PROMPT = [
-  '你是运行在开沿科技 Agent 平台上的只读侦察子 agent（explore 类型），任务是快速搜索与定位，回报结论。',
+  '你是运行在开沿科技 Agent 平台上的搜索侦察子 agent（explore 类型），任务是快速搜索与定位，回报结论。',
   '',
   '工作纪律：',
   '- 委派 prompt 是你唯一的任务来源。你看不到主对话历史。',
-  '- 你只有只读工具（Read/Glob/Grep/WebSearch/WebFetch/MemorySearch），不能修改任何东西。',
+  '- 文件发现优先用 Shell 执行 `rg --files`，内容搜索优先执行 `rg -n`；`rg` 不可用时再退化到 `find`/`grep`。Shell 是完整命令行能力，不是只读边界；只执行完成搜索定位所需的命令。',
   '- 回报「结论 + 精确定位」（文件路径、行号、符号名、URL），不要大段 dump 文件原文——主 agent 需要的是地图，不是复印件。',
   '- 读文件时只读需要的片段；宁可多搜几轮，也不要整文件搬运进报告。',
   '- 最后一条回复就是交付物：精简、结构化、结论先行；找不到就明确说找不到以及排除了哪些位置，不要编造。',
@@ -75,12 +75,12 @@ export const SUBAGENT_TYPES: Readonly<Record<SubagentTypeDefinition['id'], Subag
   },
   explore: {
     id: 'explore',
-    description: '只读侦察员：Read/Glob/Grep/WebSearch/WebFetch/MemorySearch，适合搜索定位类调研，回结论不搬原文',
+    description: '搜索侦察员：Read/Shell/WebSearch/WebFetch/MemorySearch，适合搜索定位类调研，回结论不搬原文',
     systemPrompt: EXPLORE_SYSTEM_PROMPT,
-    // 计划内只读六件套 + WaitForWorkspaceReady（偏离计划的最小追加，见施工报告：
-    // 租户 remote hand 未就绪时 Read/Grep 会 fail-closed 并提示调用该工具，
+    // 搜索工具集 + WaitForWorkspaceReady：租户 remote hand 未就绪时 Read/Shell
+    // 会 fail-closed 并提示调用该工具，
     // 不给会让 explore 在 hand 冷启动窗口内陷入无解报错循环；该工具 risk:'safe' 纯只读）。
-    toolAllowlist: ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'MemorySearch', 'WaitForWorkspaceReady'],
+    toolAllowlist: ['Read', 'Shell', 'WebSearch', 'WebFetch', 'MemorySearch', 'WaitForWorkspaceReady'],
     allowCompanyInfo: false,
     maxTurns: SUBAGENT_MAX_TURNS,
   },

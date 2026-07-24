@@ -105,19 +105,19 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage, allowDetails = fal
     : 0;
 
   return (
-    <div ref={containerRef} className="relative" onClick={(e) => e.stopPropagation()}>
+    <div ref={containerRef} className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
       {allowDetails ? (
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className={`rounded-md px-2 py-1 text-xs font-medium tabular-nums transition-colors hover:bg-accent hover:text-accent-foreground ${buttonColor}`}
+          className={`whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium tabular-nums transition-colors hover:bg-accent hover:text-accent-foreground ${buttonColor}`}
           title={title}
         >
           {label}
         </button>
       ) : (
         <span
-          className={`rounded-md px-2 py-1 text-xs font-medium tabular-nums ${buttonColor}`}
+          className={`whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium tabular-nums ${buttonColor}`}
           title={title}
         >
           {label}

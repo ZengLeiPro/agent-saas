@@ -337,7 +337,7 @@ export function DesktopLayout(props: LayoutProps) {
             (scrollContainerRef as React.RefObject<HTMLDivElement>)?.current?.scrollTo({ top: 0, behavior: "smooth" });
           }}
         >
-          <div className="flex min-w-0 items-center gap-2">
+          <div className={cn("flex min-w-0 items-center gap-2", activeTab === "chat" && "flex-1")}>
             <Button
               variant="ghost"
               size="icon"
@@ -357,7 +357,7 @@ export function DesktopLayout(props: LayoutProps) {
             ) : activeTab !== "tenants" &&
               activeTab !== "tenant-admin" &&
               activeTab !== "platform-admin" ? (
-              <div className="truncate text-base font-semibold">
+              <div className="min-w-0 flex-1 truncate text-base font-semibold">
                 {headerTitle}
               </div>
             ) : null}
@@ -367,7 +367,7 @@ export function DesktopLayout(props: LayoutProps) {
               </span>
             )}
             {activeTab === "chat" && sessionId ? (
-              <Badge variant="secondary">
+              <Badge variant="secondary" className="shrink-0">
                 {sessionId.slice(0, 8)}
               </Badge>
             ) : null}
@@ -393,7 +393,7 @@ export function DesktopLayout(props: LayoutProps) {
             />
           )}
           {activeTab === "chat" && (
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex shrink-0 items-center gap-2">
               {modelList?.showContextTokens !== false && (
                 <TokenUsageDisplay
                   tokenUsage={tokenUsage}

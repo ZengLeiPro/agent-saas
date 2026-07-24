@@ -160,6 +160,57 @@ describe('cron executor', () => {
     );
   });
 
+  it('inherits the owner authorization mode for ordinary cron agent turns', async () => {
+    runAgentMock.mockImplementation((_message: any, _context: any, _options: any, hooks: any) => (async function* () {
+      await hooks?.onSessionStart?.('session-authorized', '/tmp/session-authorized.jsonl');
+      yield { type: 'done' };
+    })());
+
+    const result = await executeJob(createOwnedCronJob('run authorized task'), {
+      runAgent: (...args: any[]) => runAgentMock(...args),
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore: {
+        findById: vi.fn(() => ({
+          id: 'u-wain',
+          username: 'wain_user',
+          role: 'user' as const,
+          tenantId: 'wain',
+          preferences: { authorizationModeEnabled: true },
+        })),
+      },
+    });
+
+    expect(result.status).toBe('ok');
+    expect(runAgentMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        approvalPolicy: { autoApproveTools: true },
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('does not report success when the agent run ends without a terminal event', async () => {
+    runAgentMock.mockImplementation((_message: any, _context: any, _options: any, hooks: any) => (async function* () {
+      await hooks?.onSessionStart?.('session-waiting-approval', '/tmp/session-waiting-approval.jsonl');
+      yield { type: 'session_init', sessionId: 'session-waiting-approval' };
+    })());
+
+    const result = await executeJob(createCronJob('run task requiring approval'), {
+      runAgent: (...args: any[]) => runAgentMock(...args),
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+    });
+
+    expect(result).toMatchObject({
+      status: 'error',
+      sessionId: 'session-waiting-approval',
+    });
+    expect(result.error).toContain('without a successful terminal event');
+  });
+
   it('syncs selected tenant-owned skills from the persistent root before running owned jobs', async () => {
     const tmpRoot = await mkdtemp(join(tmpdir(), 'cron-tenant-skill-'));
     const agentCwd = join(tmpRoot, 'workspaces');

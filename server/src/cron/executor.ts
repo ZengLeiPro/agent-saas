@@ -7,6 +7,7 @@ import { updateSessionMeta } from "../data/transcripts/meta.js";
 import { resolveUserCwd, ensureUserWorkspace, refreshUserWorkspace } from "../workspace/resolver.js";
 import type { ResolvedModel } from "../app/models.js";
 import type { SkillConfigStore } from "../data/skills/store.js";
+import type { UserPreferences } from "../data/users/types.js";
 import type {
   InboundMessage,
   ChannelContext,
@@ -27,7 +28,14 @@ import { buildMemoryPollPrompt, MEMORY_POLL_DEFAULTS } from "./memoryPoll.js";
 import { tryAcquireMemoryMaintenance, releaseMemoryMaintenance } from "../memory/maintenanceLock.js";
 
 export interface UserStoreLike {
-  findById(id: string): { id: string; username: string; role: 'admin' | 'user'; disabled?: boolean; tenantId?: string } | undefined;
+  findById(id: string): {
+    id: string;
+    username: string;
+    role: 'admin' | 'user';
+    disabled?: boolean;
+    tenantId?: string;
+    preferences?: UserPreferences;
+  } | undefined;
 }
 
 export interface ExecutorOptions {
@@ -322,6 +330,10 @@ async function executeAgentTurn(
       // 跨组织 cron job 的 audit 会全部错归默认组织、破坏组织隔离。
       ...(owner ? { user: { id: owner.id, username: owner.username, role: owner.role, tenantId: owner.tenantId } } : {}),
     };
+    const approvalPolicy = overrides?.approvalPolicy
+      ?? (owner?.preferences?.authorizationModeEnabled === true
+        ? { autoApproveTools: true }
+        : undefined);
 
     // 不将 abortController 传入 SDK：SDK 内部 handleControlRequest 的
     // 双重 transport.write 在 abort 后会抛出未捕获的 AbortError，
@@ -348,7 +360,7 @@ async function executeAgentTurn(
         includePartialMessages: true,
         ...skipFlags,
         ...(overrides?.toolProfile ? { toolProfile: overrides.toolProfile } : {}),
-        ...(overrides?.approvalPolicy ? { approvalPolicy: overrides.approvalPolicy } : {}),
+        ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(overrides?.executionTarget ? { executionTarget: overrides.executionTarget } : {}),
       },
       {
@@ -393,6 +405,7 @@ async function executeAgentTurn(
     );
 
     try {
+      let completed = false;
       // 手动迭代 async generator：每次 next() 与超时 Promise 竞争，
       // 即使 SDK 阻塞在工具调用中不产出事件，超时仍能触发。
       const TIMEOUT_SENTINEL = Symbol("timeout");
@@ -420,8 +433,13 @@ async function executeAgentTurn(
           runError = event.error || "Unknown error";
         } else if (event.type === "done") {
           // done 表示 runner 最终成功完成；之前的 error event 是中间态（如重试前的连接异常），已恢复
+          completed = true;
           runError = undefined;
         }
+      }
+
+      if (!completed && !didTimeoutAbort && !runError) {
+        runError = "Agent run ended without a successful terminal event (可能正在等待审批或用户输入)";
       }
     } finally {
       // 确保 generator 清理：break 后级联关闭 SDK 子进程

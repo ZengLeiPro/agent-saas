@@ -1617,7 +1617,7 @@ function isRetryableUndeliveredStreamTerminalError(
   if (hasDeliveredOutput || terminalStatus !== 'failed') return false;
   if (!['error', 'response.error', 'response.failed'].includes(terminalEventType ?? '')) return false;
   const normalizedCode = errorCode.trim().toLowerCase();
-  if (normalizedCode === 'internal_server_error' || normalizedCode === 'server_is_overloaded') return true;
+  if (['internal_server_error', 'server_error', 'server_is_overloaded'].includes(normalizedCode)) return true;
   return normalizedCode === 'model_provider_error'
     && errorMessage.trim().toLowerCase() === 'sorry, something went wrong.';
 }

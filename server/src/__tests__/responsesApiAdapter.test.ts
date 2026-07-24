@@ -807,7 +807,7 @@ describe('ResponsesApiAdapter', () => {
 
   it('识别官方 error 事件名，不再误报 empty turn', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
-      sse('error', { type: 'error', code: 'server_error', message: 'upstream failed', sequence_number: 3 }),
+      sse('error', { type: 'error', code: 'invalid_request_error', message: 'invalid request', sequence_number: 3 }),
     ]));
     const adapter = new ResponsesApiAdapter(
       { apiKey: 'sk', baseUrl: 'https://ark.example/api/v3' },
@@ -819,7 +819,7 @@ describe('ResponsesApiAdapter', () => {
     expect(events.at(-1)).toMatchObject({
       type: 'completed',
       terminalStatus: 'failed',
-      errorCode: 'server_error',
+      errorCode: 'invalid_request_error',
       toolCalls: [],
     });
   });
@@ -932,19 +932,30 @@ describe('ResponsesApiAdapter', () => {
     expect(events.at(-1)).toMatchObject({ type: 'completed', content: '恢复成功', modelRequestAttemptCount: 2 });
   });
 
-  it('零输出 server_is_overloaded 时重试', async () => {
+  it.each([
+    [
+      'server_is_overloaded',
+      'Our servers are currently overloaded. Please try again later.',
+      'resp_overloaded',
+    ],
+    [
+      'server_error',
+      'An error occurred while processing your request. You can retry your request.',
+      'resp_server_error',
+    ],
+  ])('零输出 %s 时重试', async (errorCode, errorMessage, responseId) => {
     vi.useFakeTimers();
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(responseStream([
-        sse('response.created', { type: 'response.created', response: { id: 'resp_overloaded' } }),
+        sse('response.created', { type: 'response.created', response: { id: responseId } }),
         sse('response.in_progress', {
           type: 'response.in_progress',
-          response: { id: 'resp_overloaded', status: 'in_progress' },
+          response: { id: responseId, status: 'in_progress' },
         }),
         sse('error', {
           type: 'error',
-          code: 'server_is_overloaded',
-          message: 'Our servers are currently overloaded. Please try again later.',
+          code: errorCode,
+          message: errorMessage,
         }),
       ]))
       .mockResolvedValueOnce(responseStream([
@@ -977,9 +988,55 @@ describe('ResponsesApiAdapter', () => {
       modelRequestAttemptCount: 2,
     });
     expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
-      { attempt: 1, outcome: 'provider_error', errorCode: 'server_is_overloaded', willRetry: true },
+      { attempt: 1, outcome: 'provider_error', errorCode, willRetry: true },
       { attempt: 2, outcome: 'completed' },
     ]);
+  });
+
+  it('零输出 server_error 重试耗尽后保留失败终态', async () => {
+    vi.useFakeTimers();
+    const serverErrorResponse = () => responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_server_error' } }),
+      sse('response.in_progress', {
+        type: 'response.in_progress',
+        response: { id: 'resp_server_error', status: 'in_progress' },
+      }),
+      sse('error', {
+        type: 'error',
+        code: 'server_error',
+        message: 'An error occurred while processing your request. You can retry your request.',
+      }),
+    ]);
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(serverErrorResponse())
+      .mockResolvedValueOnce(serverErrorResponse());
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      terminalStatus: 'failed',
+      errorCode: 'server_error',
+      modelRequestAttemptCount: 2,
+    });
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, outcome: 'provider_error', errorCode: 'server_error', willRetry: true },
+      { attempt: 2, outcome: 'provider_error', errorCode: 'server_error' },
+    ]);
+    expect(diagnostics.some((event) => event.type === 'finished' && event.attempt === 2 && event.willRetry)).toBe(false);
   });
 
   it('不重试其他 MODEL_PROVIDER_ERROR 文案', async () => {
@@ -1093,6 +1150,42 @@ describe('ResponsesApiAdapter', () => {
     });
     expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
       { attempt: 1, outcome: 'provider_error', errorCode: 'internal_server_error' },
+    ]);
+    expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
+  });
+
+  it('已经输出正文后不重试流内 server_error', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStream([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_partial_server_error' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '已经展示' }),
+      sse('error', {
+        type: 'error',
+        code: 'server_error',
+        message: 'An error occurred while processing your request. You can retry your request.',
+      }),
+    ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(events[0]).toEqual({ type: 'text_delta', content: '已经展示' });
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      terminalStatus: 'failed',
+      errorCode: 'server_error',
+    });
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, outcome: 'provider_error', errorCode: 'server_error' },
     ]);
     expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
   });

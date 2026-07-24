@@ -8,6 +8,8 @@ export interface ChatSessionIndexItem {
   updatedAt: number;
   preview?: string;
   hasUnreadAiReply?: boolean;
+  /** 当前会话是否正在执行，列表行用运行指示器替代更新时间 */
+  isRunning?: boolean;
   source?: { type: "web" | "dingtalk" | "cron"; label: string };
   owner?: { userId: string; username: string; realName?: string; avatar?: string; avatarVersion?: number };
   agent?: AgentProfile | null;

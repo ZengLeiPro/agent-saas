@@ -28,6 +28,7 @@ import type { AgentProfile } from "@agent/shared";
 function toSidebarSessions(
   sessions: ApiSessionListItem[],
   unreadAiReplySessionIds: ReadonlySet<string>,
+  runningSessionIds: ReadonlySet<string>,
   currentAgent?: AgentProfile | null,
 ) {
   return sessions.map((s) => ({
@@ -37,6 +38,7 @@ function toSidebarSessions(
     updatedAt: s.updatedAtMs,
     preview: s.preview,
     hasUnreadAiReply: unreadAiReplySessionIds.has(s.sessionId),
+    isRunning: runningSessionIds.has(s.sessionId),
     source: s.source,
     owner: s.owner,
     agent: s.agent ?? (currentAgent && (!s.owner || s.owner.username === currentAgent.username) ? currentAgent : undefined),
@@ -79,7 +81,7 @@ function App() {
     tokenUsage, contextUsage, connectionState, refreshCurrentSession, resumeCurrentStream,
     notifications, dismissNotification,
     lastMemoryRecall, dismissMemoryRecall, pluginInstallStatus,
-    unreadAiReplySessionIds,
+    unreadAiReplySessionIds, runningSessionIds,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     agentProfile, sessionParticipants,
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
@@ -182,8 +184,13 @@ function App() {
   );
 
   const sidebarSessions = useMemo(
-    () => toSidebarSessions(sessions, unreadAiReplySessionIds, agentProfile),
-    [sessions, unreadAiReplySessionIds, agentProfile],
+    () => toSidebarSessions(
+      sessions,
+      unreadAiReplySessionIds,
+      runningSessionIds,
+      agentProfile,
+    ),
+    [sessions, unreadAiReplySessionIds, runningSessionIds, agentProfile],
   );
 
   const layoutProps: LayoutProps = {

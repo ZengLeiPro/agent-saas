@@ -353,7 +353,11 @@ export function MobileSessionList({
               <span className="truncate">{s.title || "新会话"}</span>
             </div>
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
-              {formatShortDate(s.updatedAt)}
+              {s.isRunning ? (
+                <Loader2 className="size-3.5 animate-spin text-blue-500" aria-label="会话运行中" />
+              ) : (
+                formatShortDate(s.updatedAt)
+              )}
             </span>
           </div>
           <div className="mt-1 text-xs text-muted-foreground/60">

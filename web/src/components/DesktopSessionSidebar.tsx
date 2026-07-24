@@ -385,7 +385,11 @@ function SessionRow({
             hasMenu && menuOpen && "opacity-0",
           )}
         >
-          {formatShortDate(session.updatedAt)}
+          {session.isRunning ? (
+            <Loader2 className="size-3.5 animate-spin text-blue-500" aria-label="会话运行中" />
+          ) : (
+            formatShortDate(session.updatedAt)
+          )}
         </span>
         {hasMenu && (
           <div
@@ -455,7 +459,11 @@ function SessionRow({
         </div>
       </div>
       <span className={cn("pointer-events-none absolute right-2 whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground/60", singleColumn ? "bottom-2.5" : "bottom-3")}>
-        {formatShortDate(session.updatedAt)}
+        {session.isRunning ? (
+          <Loader2 className="size-3.5 animate-spin text-blue-500" aria-label="会话运行中" />
+        ) : (
+          formatShortDate(session.updatedAt)
+        )}
       </span>
 
       {/* 省略号操作菜单 */}

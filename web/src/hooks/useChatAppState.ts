@@ -167,6 +167,8 @@ export interface ChatAppState {
   pluginInstallStatus: PluginInstallData | null;
   /** 已完成但用户尚未点击查看的 AI 回复会话 */
   unreadAiReplySessionIds: ReadonlySet<string>;
+  /** 当前处于活跃运行态的会话 ID 集合（含后台会话） */
+  runningSessionIds: ReadonlySet<string>;
   connectionState: ConnectionState;
   refreshCurrentSession: () => void;
   resumeCurrentStream: () => Promise<void>;
@@ -483,6 +485,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     lastEventCursor?: string | null;
   };
   const activeRunsBySession = useRef<Map<string, SessionRuntime>>(new Map());
+  const [runningSessionIds, setRunningSessionIds] = useState<ReadonlySet<string>>(() => new Set());
 
   // ─── 消息可靠性：outbox 队列 + ACK 超时跟踪（2026-04-18）───
   /**
@@ -659,6 +662,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       else next.lastEventCursor = patch.lastEventCursor;
     }
     activeRunsBySession.current.set(sid, next);
+    setRunningSessionIds((current) => {
+      const isRunning = isActiveRuntimeStatus(next.status);
+      if (current.has(sid) === isRunning) return current;
+      const updated = new Set(current);
+      if (isRunning) updated.add(sid);
+      else updated.delete(sid);
+      return updated;
+    });
     if (sid === sessionIdRef.current) {
       if (patch.streamId !== undefined) streamIdRef.current = patch.streamId;
       if (patch.runId !== undefined) runIdRef.current = patch.runId;
@@ -728,15 +739,15 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       existing?.status && isActiveRuntimeStatus(existing.status)
         ? existing.status
         : (loadingRef.current ? 'running' : 'idle');
-    activeRunsBySession.current.set(sid, {
+    patchSessionRuntime(sid, {
       status: inferredStatus,
-      streamId: streamIdRef.current ?? undefined,
-      runId: runIdRef.current ?? undefined,
-      lastEventId: lastEventIdRef.current ?? undefined,
-      lastEventCursor: lastEventCursorRef.current ?? undefined,
+      streamId: streamIdRef.current,
+      runId: runIdRef.current,
+      lastEventId: lastEventIdRef.current,
+      lastEventCursor: lastEventCursorRef.current,
       attached: wsAttachedRef.current,
     });
-  }, []);
+  }, [patchSessionRuntime]);
 
   /** 从 Map 加载 sid 的 runtime 到当前 ref（不调 setState,UI 由调用方决定） */
   const loadSessionRuntimeToRef = useCallback((sid: string): SessionRuntime | undefined => {
@@ -2726,6 +2737,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     dismissMemoryRecall,
     pluginInstallStatus,
     unreadAiReplySessionIds,
+    runningSessionIds,
     connectionState,
     refreshCurrentSession: session.refreshCurrentSession,
     resumeCurrentStream,

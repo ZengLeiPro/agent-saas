@@ -24,6 +24,11 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 
 const MODEL_DEFAULT_VALUE = "__default__";
+const SCHEDULE_KIND_LABELS = {
+  every: "间隔执行",
+  cron: "Cron 表达式",
+  at: "一次性执行",
+} as const;
 
 interface JobFormProps {
   mode?: "create" | "edit";
@@ -374,13 +379,13 @@ export function JobForm({
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label>调度类型</Label>
+          <Label htmlFor="job-schedule-kind">调度类型</Label>
           <Select
             value={scheduleKind}
             onValueChange={(v) => setScheduleKind(v as "every" | "cron" | "at")}
           >
-            <SelectTrigger>
-              <SelectValue placeholder="选择调度类型" />
+            <SelectTrigger id="job-schedule-kind">
+              <SelectValue>{SCHEDULE_KIND_LABELS[scheduleKind]}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="every">间隔执行</SelectItem>

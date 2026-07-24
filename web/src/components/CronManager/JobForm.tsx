@@ -24,11 +24,6 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 
 const MODEL_DEFAULT_VALUE = "__default__";
-const SCHEDULE_KIND_LABELS = {
-  every: "间隔执行",
-  cron: "Cron 表达式",
-  at: "一次性执行",
-} as const;
 
 interface JobFormProps {
   mode?: "create" | "edit";
@@ -58,7 +53,9 @@ export function JobForm({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [enabled, setEnabled] = useState(true);
-  const [scheduleKind, setScheduleKind] = useState<"every" | "cron" | "at">("every");
+  const [scheduleKind, setScheduleKind] = useState<"every" | "cron" | "at">(
+    () => initialJob?.schedule.kind ?? "every",
+  );
   const [everyMinutes, setEveryMinutes] = useState("60");
   const [cronExpr, setCronExpr] = useState("0 9 * * *");
   const [cronTz, setCronTz] = useState("Asia/Shanghai");
@@ -385,7 +382,7 @@ export function JobForm({
             onValueChange={(v) => setScheduleKind(v as "every" | "cron" | "at")}
           >
             <SelectTrigger id="job-schedule-kind">
-              <SelectValue>{SCHEDULE_KIND_LABELS[scheduleKind]}</SelectValue>
+              <SelectValue placeholder="选择调度类型" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="every">间隔执行</SelectItem>

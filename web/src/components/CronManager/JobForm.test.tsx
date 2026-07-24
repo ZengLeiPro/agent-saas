@@ -26,7 +26,10 @@ describe("JobForm", () => {
     );
 
     expect(
-      (await screen.findByRole("combobox", { name: "调度类型" })).textContent,
-    ).toContain("Cron 表达式");
+      (await screen.findByLabelText("Cron 表达式（5 字段）") as HTMLInputElement).value,
+    ).toBe("0 9 * * *");
+    expect((screen.getByLabelText("时区") as HTMLInputElement).value).toBe(
+      "Asia/Shanghai",
+    );
   });
 });

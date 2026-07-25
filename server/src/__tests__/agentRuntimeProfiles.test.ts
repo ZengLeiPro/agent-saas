@@ -327,10 +327,15 @@ describe('real RawAgentLoop Profile scenarios', () => {
     const resolver = new AgentRuntimeProfileResolver(store);
     const oldBound = await resolver.resolveForSession({ existingSession: null, bindingKey: 'main' });
     const oldSession = sessionFromBound(oldBound);
+    // 基线取实际解析到的版本号，不写死 1——内置 main 预设本身会随平台迭代发新版本
+    // （2026-07-25 已升至 v2 以纳入组织自定义规则模块）。本用例断言的是"旧会话不
+    // 跟随新发布"这个行为，与基线版本号具体是几无关。
+    const baselineVersionNumber = oldBound.version.versionNumber;
     const v2 = await store.publishInstructions('main', 'PROFILE_V2_MARKER');
     const resumed = await resolver.resolveForSession({ existingSession: oldSession, bindingKey: 'main' });
     const fresh = await resolver.resolveForSession({ existingSession: null, bindingKey: 'main' });
-    expect(resumed.version.versionNumber).toBe(1);
+    expect(resumed.version.versionNumber).toBe(baselineVersionNumber);
+    expect(fresh.version.versionNumber).toBeGreaterThan(baselineVersionNumber);
     expect(fresh.version.profileVersionId).toBe(v2.profileVersionId);
 
     const oldAdapter = new CaptureInstructionsAdapter();

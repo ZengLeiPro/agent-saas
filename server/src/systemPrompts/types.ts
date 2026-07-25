@@ -1,6 +1,7 @@
 export const SYSTEM_PROMPT_IDS = [
   'main.static',
   'main.dynamicShared',
+  'main.dynamicTenant',
   'main.runtimeMemory',
   'main.dynamicPersonal',
   'main.minimal',

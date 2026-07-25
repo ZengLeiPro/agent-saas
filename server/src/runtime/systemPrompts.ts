@@ -52,6 +52,13 @@ const DEFINITIONS_META: ReadonlyArray<Omit<SystemPromptDefinition, 'defaultConte
     variables: ['COMPANY_INFO'],
   },
   {
+    id: 'main.dynamicTenant',
+    category: 'main',
+    label: '主 Agent · 组织自定义规则模板',
+    description: '按组织渲染管理员自定义的行为规则；未配置 instructions.md 的组织整段不注入。',
+    variables: ['TENANT_INSTRUCTIONS'],
+  },
+  {
     id: 'main.runtimeMemory',
     category: 'main',
     label: '主 Agent · 记忆能力规则',
@@ -155,6 +162,7 @@ export class SystemPromptRegistry {
     switch (id) {
       case 'main.static': return loadPrompt(this.sharedDir, 'static');
       case 'main.dynamicShared': return loadPrompt(this.sharedDir, 'dynamic-shared');
+      case 'main.dynamicTenant': return loadPrompt(this.sharedDir, 'dynamic-tenant');
       case 'main.runtimeMemory': return loadPrompt(this.sharedDir, 'runtime-memory');
       case 'main.dynamicPersonal': return loadPrompt(this.sharedDir, 'dynamic-personal');
       case 'main.minimal': return MINIMAL_SYSTEM_PROMPT;

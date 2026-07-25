@@ -6,6 +6,7 @@ export const AGENT_PROFILE_SCHEMA_VERSION = 1 as const;
 
 export const agentProfileContextModuleSchema = z.enum([
   'company_info',
+  'tenant_instructions',
   'runtime_memory',
   'personal_context',
 ]);
@@ -16,8 +17,9 @@ export const agentRuntimeProfileConfigSchema = z.object({
   schemaVersion: z.literal(AGENT_PROFILE_SCHEMA_VERSION),
   context: z.object({
     systemInstructions: z.string().max(200_000).default(''),
-    modules: z.array(agentProfileContextModuleSchema).max(3).default([
+    modules: z.array(agentProfileContextModuleSchema).max(4).default([
       'company_info',
+      'tenant_instructions',
       'runtime_memory',
       'personal_context',
     ]),

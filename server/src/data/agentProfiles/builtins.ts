@@ -81,6 +81,7 @@ const EXPLORE_TOOLS = [
 ];
 
 const SHELL_FIRST_PROFILE_PUBLISHED_AT = '2026-07-24T17:04:00.000Z';
+const TENANT_INSTRUCTIONS_PROFILE_PUBLISHED_AT = '2026-07-25T04:10:00.000Z';
 
 function memoryPollConfig(tools: string[], shell: boolean, allowedTargets: AgentRuntimeProfileConfig['execution']['allowedTargets']): AgentRuntimeProfileConfig {
   return baseConfig({
@@ -137,7 +138,16 @@ export const BUILTIN_AGENT_PROFILES: readonly BuiltinAgentProfileDefinition[] = 
     name: '默认交互 Agent',
     description: '个人主 Agent 的兼容运行预设。',
     purpose: '主 Agent、多轮交互与普通定时任务',
-    config: baseConfig(),
+    // v2（2026-07-25）：纳入组织自定义规则模块。v1 必须原样保留——config 变化会
+    // 重算 configDigest，而已绑定 v1 的会话存了旧 digest，resolvePinned 会按
+    // CONFLICT 拒绝。子 Agent、memory_poll 等预设刻意不加该模块：它们要么不面向
+    // 用户表达，要么已有独立的指令通道。
+    versionNumber: 2,
+    previousVersions: [{ versionNumber: 1, config: baseConfig() }],
+    publishedAt: TENANT_INSTRUCTIONS_PROFILE_PUBLISHED_AT,
+    config: baseConfig({
+      context: { systemInstructions: '', modules: [...ALL_CONTEXT, 'tenant_instructions'] },
+    }),
   },
   {
     profileId: 'arp_system_org_agent',

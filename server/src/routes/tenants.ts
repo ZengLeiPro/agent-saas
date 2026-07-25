@@ -20,6 +20,11 @@ import {
   readTenantCompanyInfo,
   writeTenantCompanyInfo,
 } from '../data/tenants/companyInfo.js';
+import {
+  MAX_TENANT_INSTRUCTIONS_CHARS,
+  readTenantInstructions,
+  writeTenantInstructions,
+} from '../data/tenants/instructions.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import { seedOrgAgentTemplatesForTenant } from '../data/orgAgentTemplates.js';
 
@@ -135,6 +140,11 @@ const companyInfoSchema = z.object({
   content: z.string().max(MAX_COMPANY_INFO_CHARS),
 });
 
+// instructions.md 是行为规则不是事实，上限刻意远小于 company.md
+const tenantInstructionsSchema = z.object({
+  content: z.string().max(MAX_TENANT_INSTRUCTIONS_CHARS),
+});
+
 function canAccessTenantSettings(reqUser: Request['user'], tenantId: string): boolean {
   if (!reqUser) return false;
   return isPlatformAdmin(reqUser) || reqUser.tenantId === tenantId;
@@ -220,6 +230,52 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
     try {
       await writeTenantCompanyInfo(sharedDir, req.params.id, parsed.data.content);
       auditLog(req, 'tenant_updated', `${req.params.id} → company.md`);
+      res.json({ ok: true, tenantId: req.params.id });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : '保存失败' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 组织自定义规则 instructions.md（注入为 {{TENANT_INSTRUCTIONS}}）
+  //
+  // 与 company-info 的差别是语义而非形态：那边是组织事实，这边是行为规则，
+  // 注入位置更靠后，可覆盖平台默认风格（安全边界除外）。权限口径完全一致。
+  // ---------------------------------------------------------------------------
+  router.get('/:id/instructions', requireAdmin, async (req, res) => {
+    if (!canAccessTenantSettings(req.user, req.params.id)) {
+      res.status(403).json({ error: '跨组织访问被拒绝' });
+      return;
+    }
+    if (!tenantStore.findById(req.params.id)) {
+      res.status(404).json({ error: '组织不存在' });
+      return;
+    }
+    try {
+      const content = await readTenantInstructions(sharedDir, req.params.id);
+      res.json({ tenantId: req.params.id, content: content ?? '' });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : '读取失败' });
+    }
+  });
+
+  router.put('/:id/instructions', requireAdmin, async (req, res) => {
+    if (!canAccessTenantSettings(req.user, req.params.id)) {
+      res.status(403).json({ error: '跨组织访问被拒绝' });
+      return;
+    }
+    if (!tenantStore.findById(req.params.id)) {
+      res.status(404).json({ error: '组织不存在' });
+      return;
+    }
+    const parsed = tenantInstructionsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]!.message });
+      return;
+    }
+    try {
+      await writeTenantInstructions(sharedDir, req.params.id, parsed.data.content);
+      auditLog(req, 'tenant_updated', `${req.params.id} → instructions.md`);
       res.json({ ok: true, tenantId: req.params.id });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : '保存失败' });

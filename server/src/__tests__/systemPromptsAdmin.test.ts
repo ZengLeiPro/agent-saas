@@ -9,6 +9,7 @@ import { parseAppConfig } from '../app/config.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { createSystemPromptsAdminRouter } from '../routes/systemPromptsAdmin.js';
 import { SystemPromptRegistry } from '../runtime/systemPrompts.js';
+import { SYSTEM_PROMPT_IDS } from '../systemPrompts/types.js';
 
 const SHARED_DIR = resolve(import.meta.dirname, '../../../workspace-shared');
 const servers: Array<{ close: () => void }> = [];
@@ -58,7 +59,7 @@ describe('system prompts admin router', () => {
     await withApp('admin', async ({ baseUrl, configPath, registry }) => {
       const listResponse = await fetch(`${baseUrl}/api/admin/system-prompts`);
       expect(listResponse.status).toBe(200);
-      expect(((await listResponse.json()) as any).prompts).toHaveLength(10);
+      expect(((await listResponse.json()) as any).prompts).toHaveLength(SYSTEM_PROMPT_IDS.length);
 
       const updateResponse = await fetch(`${baseUrl}/api/admin/system-prompts/main.static`, {
         method: 'PUT',

@@ -1,26 +1,13 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname } from 'node:path';
 
-import { TENANT_SLUG_PATTERN } from './types.js';
+import { resolveTenantFilePath } from './tenantFiles.js';
 
 export const MAX_COMPANY_INFO_CHARS = 200_000;
 
-function isInside(baseDir: string, candidate: string): boolean {
-  const rel = relative(baseDir, candidate);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
-}
-
 export function resolveTenantCompanyInfoPath(sharedDir: string, tenantId: string): string {
-  if (!TENANT_SLUG_PATTERN.test(tenantId)) {
-    throw new Error(`Invalid tenant id "${tenantId}"`);
-  }
-  const tenantsRoot = resolve(sharedDir, 'tenants');
-  const path = resolve(tenantsRoot, tenantId, 'company.md');
-  if (!isInside(tenantsRoot, path)) {
-    throw new Error(`Invalid tenant company info path for "${tenantId}"`);
-  }
-  return path;
+  return resolveTenantFilePath(sharedDir, tenantId, 'company.md');
 }
 
 export async function readTenantCompanyInfo(sharedDir: string, tenantId: string): Promise<string | null> {

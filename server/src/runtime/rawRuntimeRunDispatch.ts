@@ -25,6 +25,7 @@ import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
 import type { WorkspaceRef } from '../agent/toolRuntime.js';
 import { readTenantCompanyInfoSync } from '../data/tenants/companyInfo.js';
+import { readTenantInstructionsSync } from '../data/tenants/instructions.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import type { UserOverrides } from '../security/extraDirs.js';
@@ -1645,10 +1646,11 @@ export function buildInstructions(params: {
   /** 专职 Agent 覆盖：注入 {{ORG_AGENT_INSTRUCTIONS}}，IF_PERSONA/IF_NO_PERSONA 强制 false，AGENT_NAME 用 org 名。 */
   orgAgent?: Pick<OrgAgentRecord, 'name' | 'instructions'>;
   /** Profile 只选择可选上下文模块；main.static 与 dynamic-personal 中的平台安全底座不可移除。 */
-  contextModules?: readonly ('company_info' | 'runtime_memory' | 'personal_context')[];
+  contextModules?: readonly ('company_info' | 'tenant_instructions' | 'runtime_memory' | 'personal_context')[];
   profileSystemInstructions?: string;
 }): string {
-  const modules = new Set(params.contextModules ?? ['company_info', 'runtime_memory', 'personal_context']);
+  const modules = new Set(params.contextModules
+    ?? ['company_info', 'tenant_instructions', 'runtime_memory', 'personal_context']);
   const personaBody = params.orgAgent || !modules.has('personal_context') ? '' : params.persona.trim();
   const hasPersona = personaBody.length > 0;
 
@@ -1676,6 +1678,19 @@ export function buildInstructions(params: {
     sections.push(renderPrompt(
       params.getSystemPrompt?.('main.dynamicShared') ?? loadPrompt(params.sharedDir, 'dynamic-shared'),
       sharedVars,
+    ));
+  }
+
+  // 组织自定义规则排在 company_info 之后：事实在前（稳定、进 per-tenant 缓存段前部），
+  // 行为规则在后（要能覆盖 static 的风格默认）。未配置 instructions.md 的组织整段不注入
+  // ——没配置就不该凭空多出一节空标题，这与 company_info 有 fallback 文案的处理刻意不同。
+  const tenantInstructions = modules.has('tenant_instructions')
+    ? loadTenantInstructions(params.sharedDir, params.tenantId)
+    : '';
+  if (tenantInstructions) {
+    sections.push(renderPrompt(
+      params.getSystemPrompt?.('main.dynamicTenant') ?? loadPrompt(params.sharedDir, 'dynamic-tenant'),
+      { TENANT_INSTRUCTIONS: tenantInstructions },
     ));
   }
 
@@ -1710,6 +1725,20 @@ function loadCompanyInfo(sharedDir: string, tenantId?: string): string {
     return content || COMPANY_INFO_FALLBACK;
   } catch {
     return COMPANY_INFO_FALLBACK;
+  }
+}
+
+/**
+ * 组织自定义规则正文。无 tenantId、文件缺失、内容为空或读取失败一律返回空串，
+ * 由调用方整段跳过——与 company_info 不同，这里没有 fallback 文案：
+ * 未配置行为规则时不该给模型多一节空指令。
+ */
+function loadTenantInstructions(sharedDir: string, tenantId?: string): string {
+  if (!tenantId) return '';
+  try {
+    return readTenantInstructionsSync(sharedDir, tenantId)?.trim() ?? '';
+  } catch {
+    return '';
   }
 }
 

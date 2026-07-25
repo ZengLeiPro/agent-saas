@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -72,6 +72,7 @@ function profilesResponse(): Response {
 
 describe("AgentRuntimeProfilesManager", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.mocked(authFetch).mockReset();
     vi.mocked(authFetch).mockResolvedValue(profilesResponse());
   });
@@ -109,6 +110,41 @@ describe("AgentRuntimeProfilesManager", () => {
 
     expect(await screen.findByText("平台已移除：List / Glob / Grep")).toBeTruthy();
     expect(screen.getByText(/当前有效工具集没有 Shell/)).toBeTruthy();
+  });
+
+  it("修改后可直接保存并发布，发布使用保存草稿后的最新 revision", async () => {
+    const user = userEvent.setup();
+    const savedProfile = { ...profile, name: "默认交互 Agent 新版", revision: 2, draftDigest: "sha256:v2" };
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(authFetch).mockImplementation(async (_path, init) => {
+      if (init?.method === "PATCH") {
+        return new Response(JSON.stringify({ profile: savedProfile }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (init?.method === "POST") {
+        return new Response(JSON.stringify({ version: { ...profile.latestVersion, versionNumber: 2 } }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return profilesResponse();
+    });
+    render(<AgentRuntimeProfilesManager />);
+
+    const name = await screen.findByDisplayValue("默认交互 Agent");
+    await user.clear(name);
+    await user.type(name, "默认交互 Agent 新版");
+    const configEditor = screen.getAllByRole("textbox").at(-1)!;
+    fireEvent.change(configEditor, { target: { value: JSON.stringify({ ...config, limits: { maxTurns: 12 } }, null, 2) } });
+    const publishButton = screen.getByRole("button", { name: "发布新版" });
+    expect((publishButton as HTMLButtonElement).disabled).toBe(false);
+    await user.click(publishButton);
+
+    expect(await screen.findByText("已保存并发布不可变版本；既有会话继续使用原版本")).toBeTruthy();
+    const patchCall = vi.mocked(authFetch).mock.calls.find((call) => call[1]?.method === "PATCH");
+    expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({
+      expectedRevision: 1,
+      name: "默认交互 Agent 新版",
+    });
+    const publishCall = vi.mocked(authFetch).mock.calls.find((call) => call[1]?.method === "POST");
+    expect(publishCall?.[0]).toBe(`/api/admin/agent-profiles/${profile.profileId}/publish`);
+    expect(JSON.parse(String(publishCall?.[1]?.body))).toEqual({ expectedRevision: 2 });
   });
 
   it("保存草稿时携带乐观锁 revision，且不会冒充热更新", async () => {

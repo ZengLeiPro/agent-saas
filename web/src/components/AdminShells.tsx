@@ -73,7 +73,7 @@ const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "billing", label: "计费", icon: EntityIcons.billing },
   { id: "remote-hands", label: "执行环境池", icon: EntityIcons.runtimePool },
   { id: "tool-controls", label: "工具开关", icon: EntityIcons.toolControls },
-  { id: "agent-profiles", label: "Agent 运行配置", icon: EntityIcons.runtimePool },
+  { id: "agent-profiles", label: "系统 Agent", icon: EntityIcons.runtimePool },
   { id: "system-prompts", label: "系统提示语", icon: EntityIcons.systemPrompts },
   { id: "memory-polling", label: "记忆轮询", icon: EntityIcons.memoryPolling },
   { id: "global-mcp", label: "全局 MCP", icon: EntityIcons.connector },

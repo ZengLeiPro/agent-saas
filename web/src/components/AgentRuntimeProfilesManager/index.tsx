@@ -107,11 +107,12 @@ export function AgentRuntimeProfilesManager(): JSX.Element {
   );
   const selectedVersion = versions.find((version) => version.profileVersionId === selectedVersionId) ?? versions[0] ?? null;
   const hasUnpublishedChanges = !!selected?.latestVersion && selected.draftDigest !== selected.latestVersion.configDigest;
+  const configDirty = !!selected && configText !== JSON.stringify(selected.draftConfig, null, 2);
   const dirty = !!selected && (
     name !== selected.name
     || description !== selected.description
     || purpose !== selected.purpose
-    || configText !== JSON.stringify(selected.draftConfig, null, 2)
+    || configDirty
   );
 
   const syncEditor = useCallback((profile: RuntimeProfile | null) => {
@@ -172,18 +173,34 @@ export function AgentRuntimeProfilesManager(): JSX.Element {
 
   const publish = async () => {
     if (!selected) return;
+    if (!window.confirm(`发布「${name || selected.name}」的新版本？未保存的编辑会先保存为草稿；仅之后创建的会话使用，新版不会改变既有会话。`)) return;
+    let config: Record<string, unknown> | undefined;
     if (dirty) {
-      setMessage({ kind: "error", text: "请先保存草稿，再发布不可变版本" });
-      return;
+      try {
+        config = JSON.parse(configText) as Record<string, unknown>;
+      } catch (error) {
+        setMessage({ kind: "error", text: `配置 JSON 无效：${errorMessage(error)}` });
+        return;
+      }
     }
-    if (!window.confirm(`发布「${selected.name}」的新版本？仅之后创建的会话使用，新版不会改变既有会话。`)) return;
     await mutate(async () => {
+      let expectedRevision = selected.revision;
+      if (dirty && config) {
+        const result = await request<{ profile: RuntimeProfile }>(
+          `/api/admin/agent-profiles/${encodeURIComponent(selected.profileId)}/draft`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ expectedRevision, name, description, purpose, config }),
+          },
+        );
+        expectedRevision = result.profile.revision;
+      }
       await request(`/api/admin/agent-profiles/${encodeURIComponent(selected.profileId)}/publish`, {
         method: "POST",
-        body: JSON.stringify({ expectedRevision: selected.revision }),
+        body: JSON.stringify({ expectedRevision }),
       });
       await load(selected.profileId);
-      setMessage({ kind: "success", text: "已发布不可变版本；既有会话继续使用原版本" });
+      setMessage({ kind: "success", text: "已保存并发布不可变版本；既有会话继续使用原版本" });
     });
   };
 
@@ -309,7 +326,7 @@ export function AgentRuntimeProfilesManager(): JSX.Element {
             })}
           </CardContent></Card>
 
-          {selected && <Card className="min-h-0 overflow-hidden"><CardHeader className="border-b py-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><CardTitle className="text-base">{selected.name}</CardTitle><div className="mt-1 flex gap-2 text-xs text-muted-foreground"><span>{selected.profileKey}</span><span>revision {selected.revision}</span>{selected.systemProfile && <span>系统预置</span>}{hasUnpublishedChanges && <span className="text-amber-700">有未发布修改</span>}</div></div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => void createProfile(selected)} disabled={platformReadOnly || saving || !data.durable}><Copy className="size-3.5" />复制</Button><Button variant="outline" size="sm" onClick={() => void loadVersions()}><History className="size-3.5" />版本</Button>{!selected.systemProfile && <Button variant="outline" size="sm" onClick={() => void archive()} disabled={platformReadOnly || saving || !data.durable || selected.status === "archived"}><Archive className="size-3.5" />归档</Button>}<Button variant="outline" size="sm" onClick={() => void saveDraft()} disabled={platformReadOnly || saving || !data.durable || !dirty || selected.status === "archived"}><Save className="size-3.5" />保存草稿</Button><Button size="sm" onClick={() => void publish()} disabled={platformReadOnly || saving || !data.durable || dirty || selected.status === "archived" || (!!selected.latestVersion && !hasUnpublishedChanges)}><Rocket className="size-3.5" />发布新版</Button></div></div></CardHeader><CardContent className="h-[calc(100%-76px)] space-y-4 overflow-auto py-4">
+          {selected && <Card className="min-h-0 overflow-hidden"><CardHeader className="border-b py-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><CardTitle className="text-base">{selected.name}</CardTitle><div className="mt-1 flex gap-2 text-xs text-muted-foreground"><span>{selected.profileKey}</span><span>revision {selected.revision}</span>{selected.systemProfile && <span>系统预置</span>}{hasUnpublishedChanges && <span className="text-amber-700">有未发布修改</span>}</div></div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => void createProfile(selected)} disabled={platformReadOnly || saving || !data.durable}><Copy className="size-3.5" />复制</Button><Button variant="outline" size="sm" onClick={() => void loadVersions()}><History className="size-3.5" />版本</Button>{!selected.systemProfile && <Button variant="outline" size="sm" onClick={() => void archive()} disabled={platformReadOnly || saving || !data.durable || selected.status === "archived"}><Archive className="size-3.5" />归档</Button>}<Button variant="outline" size="sm" onClick={() => void saveDraft()} disabled={platformReadOnly || saving || !data.durable || !dirty || selected.status === "archived"}><Save className="size-3.5" />保存草稿</Button><Button size="sm" onClick={() => void publish()} disabled={platformReadOnly || saving || !data.durable || selected.status === "archived" || (!configDirty && !!selected.latestVersion && !hasUnpublishedChanges)}><Rocket className="size-3.5" />发布新版</Button></div></div></CardHeader><CardContent className="h-[calc(100%-76px)] space-y-4 overflow-auto py-4">
             <div className="grid gap-3 md:grid-cols-2"><div className="space-y-1.5"><Label>名称</Label><Input value={name} onChange={(event) => setName(event.target.value)} disabled={platformReadOnly || selected.status === "archived"} /></div><div className="space-y-1.5"><Label>用途</Label><Input value={purpose} onChange={(event) => setPurpose(event.target.value)} disabled={platformReadOnly || selected.status === "archived"} /></div></div>
             <div className="space-y-1.5"><Label>说明</Label><Textarea value={description} onChange={(event) => setDescription(event.target.value)} className="min-h-20" disabled={platformReadOnly || selected.status === "archived"} /></div>
             <div className="space-y-1.5"><div className="flex items-center justify-between"><Label>Profile 配置 JSON</Label><span className="text-xs text-muted-foreground">schemaVersion 1 · 后端严格校验</span></div><Textarea value={configText} onChange={(event) => setConfigText(event.target.value)} className="min-h-[420px] font-mono text-xs" spellCheck={false} disabled={platformReadOnly || selected.status === "archived"} /></div>

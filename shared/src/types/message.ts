@@ -1,3 +1,5 @@
+import type { ToolPresentation } from '../lib/toolPresentation';
+
 export type AskUserAnswerValue = string | string[];
 export type AskUserAnswers = Record<string, AskUserAnswerValue>;
 export type SubagentStatus = "running" | "completed" | "failed" | "cancelled" | "timeout";
@@ -20,8 +22,10 @@ export type MessageItem =
       durationMs?: number;
       lastProgress?: string;
       error?: string;
+      /** 「给人看」摘要；有值时非 debug 视图也渲染，debug 视图额外叠加原始 payload */
+      presentation?: ToolPresentation;
     }
-  | { id: string; type: "tool_result"; toolName: string; result: string; toolId: string }
+  | { id: string; type: "tool_result"; toolName: string; result: string; toolId: string; presentation?: ToolPresentation }
   | {
       id: string;
       type: "runtime_status";

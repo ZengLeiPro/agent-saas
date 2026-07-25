@@ -988,7 +988,9 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (message.type === "tool_use") {
-    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.streaming || message.executionStatus === "running" || (!message.resultReady && message.executionStatus !== "failed" && message.executionStatus !== "cancelled")} durationMs={message.durationMs} hasIssue={message.executionStatus === "failed"} />;
+    // 有「给人看」摘要时，非 debug 视图也呈现——摘要正是为业务观众准备的。
+    // 无摘要则维持原行为（占位符），不把原始 payload 推给全量客户。
+    if (!debugMode && !message.presentation) return <ExecutionHiddenPlaceholder isActive={message.streaming || message.executionStatus === "running" || (!message.resultReady && message.executionStatus !== "failed" && message.executionStatus !== "cancelled")} durationMs={message.durationMs} hasIssue={message.executionStatus === "failed"} />;
     return (
       <ToolBlock
         toolName={message.toolName}
@@ -1000,16 +1002,20 @@ export const MessageItem = memo(function MessageItem({
         durationMs={message.durationMs}
         lastProgress={message.lastProgress}
         error={message.error}
+        {...(message.presentation ? { presentation: message.presentation } : {})}
+        debugMode={debugMode}
       />
     );
   }
 
   if (message.type === "tool_result") {
-    if (!debugMode) return <ExecutionHiddenPlaceholder />;
+    if (!debugMode && !message.presentation) return <ExecutionHiddenPlaceholder />;
     return (
       <ToolResultBlock
         toolName={message.toolName}
         result={message.result}
+        {...(message.presentation ? { presentation: message.presentation } : {})}
+        debugMode={debugMode}
       />
     );
   }

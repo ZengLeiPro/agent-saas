@@ -287,17 +287,28 @@ function GroupStatusIcon({ summary }: { summary: GroupSummaryInfo }) {
   return <StatusIcons.success className={activityStatusIconClass("success", className)} />;
 }
 
-function ActivityItem({ item }: { item: MessageItem }) {
+/** 该项是否带「给人看」摘要——带摘要的项在非 debug 视图下也应呈现 */
+function hasPresentation(item: MessageItem): boolean {
+  return (item.type === 'tool_use' || item.type === 'tool_result') && !!item.presentation;
+}
+
+function ActivityItem({ item, debugMode = true }: { item: MessageItem; debugMode?: boolean }) {
   switch (item.type) {
     case 'runtime_status':
       return <RuntimeStatusBlock status={item.status} content={item.content} />;
     case 'thinking':
+      if (!debugMode) return <ExecutionHiddenPlaceholder isActive={item.streaming} durationMs={item.durationMs} />;
       return <ThinkingBlock content={item.content} streaming={item.streaming} durationMs={item.durationMs} />;
     case 'tool_use':
-      return <ToolBlock toolName={item.toolName} toolInput={item.toolInput} streaming={item.streaming} result={item.result} resultReady={item.resultReady} executionStatus={item.executionStatus} durationMs={item.durationMs} lastProgress={item.lastProgress} error={item.error} />;
+      if (!debugMode && !item.presentation) {
+        return <ExecutionHiddenPlaceholder isActive={item.streaming || item.executionStatus === 'running'} durationMs={item.durationMs} hasIssue={item.executionStatus === 'failed'} />;
+      }
+      return <ToolBlock toolName={item.toolName} toolInput={item.toolInput} streaming={item.streaming} result={item.result} resultReady={item.resultReady} executionStatus={item.executionStatus} durationMs={item.durationMs} lastProgress={item.lastProgress} error={item.error} {...(item.presentation ? { presentation: item.presentation } : {})} debugMode={debugMode} />;
     case 'tool_result':
-      return <ToolResultBlock toolName={item.toolName} result={item.result} />;
+      if (!debugMode && !item.presentation) return <ExecutionHiddenPlaceholder />;
+      return <ToolResultBlock toolName={item.toolName} result={item.result} {...(item.presentation ? { presentation: item.presentation } : {})} debugMode={debugMode} />;
     case 'subagent':
+      if (!debugMode) return <ExecutionHiddenPlaceholder isActive={item.status === 'running'} durationMs={item.durationMs} hasIssue={item.status === 'failed' || item.status === 'timeout'} />;
       return <SubagentBlock {...item} />;
     default:
       return null;
@@ -329,15 +340,20 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
 }
 
 export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true }: ActivityGroupBlockProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  // 客户视图下的摘要组默认展开：摘要本身已是精简业务语义，再折一层等于没做。
+  // debug 视图维持折叠，避免几十次调用刷屏。
+  const [isExpanded, setIsExpanded] = useState(!debugMode && items.some(hasPresentation));
 
-  if (!debugMode) {
+  // 非 debug 且整组无摘要：折叠成一行占位（原行为）。
+  // 组内一旦有「给人看」摘要，就必须逐项渲染——否则摘要会被整组吞掉，
+  // 普通客户永远看不到，那正是本批次要消灭的「只有演示看得到」的视图。
+  if (!debugMode && !items.some(hasPresentation)) {
     return <ExecutionHiddenPlaceholder isActive={isActive} durationMs={getActivityDurationMs(items)} hasIssue={items.length === 1 && hasActivityIssue(items)} />;
   }
 
   // 单项分组：直接渲染子项本身（单层展开），不套分组壳
   if (items.length === 1) {
-    return <ActivityItem item={items[0]} />;
+    return <ActivityItem item={items[0]} debugMode={debugMode} />;
   }
 
   const summary = getGroupSummary(items, isActive);
@@ -364,7 +380,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
       {isExpanded && (
         <div className="ml-5 flex flex-col border-l border-border pl-2 [&>*]:my-0" style={{ gap: 10, paddingTop: 10 }}>
           {items.map(item => (
-            <ActivityItem key={item.id} item={item} />
+            <ActivityItem key={item.id} item={item} debugMode={debugMode} />
           ))}
         </div>
       )}

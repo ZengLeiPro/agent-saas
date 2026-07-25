@@ -454,6 +454,10 @@ export {
 } from "./lib/markers";
 export type { MarkerSegment, CitationSegment } from "./lib/markers";
 
+// Lib - 工具执行「给人看」摘要（与原始 payload 并存，不替代）
+export { normalizeToolPresentation } from "./lib/toolPresentation";
+export type { ToolPresentation, ToolReceipt, DetailLine } from "./lib/toolPresentation";
+
 // Lib - 租户共享 KB 文件访问（kb:// 伪协议 + 鉴权 API URL）
 export {
   KB_SCHEME,

@@ -1,4 +1,5 @@
 import type { AgentProfile } from './agent';
+import type { ToolPresentation } from '../lib/toolPresentation';
 
 /** 丰富的 owner 信息（含显示所需的头像、名字） */
 export interface SessionOwnerInfo {
@@ -221,4 +222,9 @@ export interface ApiTranscriptBlock {
   attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
   /** text block：门禁拒答气泡关联的 guardrail event id（员工申诉入口用） */
   guardrailEventId?: string;
+  /**
+   * tool_use block：工具执行的「给人看」摘要。
+   * 与 content/raw（给模型看的原始 payload）并存；缺省时渲染回退到原始 payload。
+   */
+  presentation?: ToolPresentation;
 }

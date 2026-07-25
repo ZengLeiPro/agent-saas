@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { formatJson } from './types';
-import { parseToolResult, getToolDisplayInfo } from '@agent/shared';
+import { parseToolResult, getToolDisplayInfo, type ToolPresentation } from '@agent/shared';
+import { PresentationDetail } from './PresentationDetail';
 import { Wrench, ChevronRight, X } from "lucide-react";
 import { StatusIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
@@ -86,6 +87,13 @@ interface ToolBlockProps {
   durationMs?: number;
   lastProgress?: string;
   error?: string;
+  /** 「给人看」摘要。有值时展开态默认呈现它，原始 payload 退居 debug 视图。 */
+  presentation?: ToolPresentation;
+  /**
+   * 是否呈现原始 payload。
+   * 语义是「看不看得到原始数据」——无 presentation 时恒为真（否则展开将一片空白）。
+   */
+  debugMode?: boolean;
 }
 
 function getExecutionLabel(status?: ToolBlockProps["executionStatus"], resultReady?: boolean): string {
@@ -105,8 +113,10 @@ function getExecutionTone(status?: ToolBlockProps["executionStatus"], resultRead
   return "pending";
 }
 
-export function ToolBlock({ toolName, toolInput, streaming, result, resultReady, executionStatus, durationMs, lastProgress, error }: ToolBlockProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+export function ToolBlock({ toolName, toolInput, streaming, result, resultReady, executionStatus, durationMs, lastProgress, error, presentation, debugMode = true }: ToolBlockProps) {
+  // 有摘要时默认展开：摘要是精简的业务语义，藏起来等于没做
+  const [isExpanded, setIsExpanded] = useState(!!presentation);
+  const showRaw = debugMode || !presentation;
 
   const formatted = useMemo(() => formatJson(toolInput), [toolInput]);
   const displayInfo = useMemo(() => getToolDisplayInfo(toolName, toolInput), [toolName, toolInput]);
@@ -134,14 +144,21 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
       >
         {icon}
         <span className="flex min-w-0 max-w-sm items-baseline overflow-hidden whitespace-nowrap">
-          <span className="shrink-0">{displayInfo.name}{displayInfo.detail ? ':' : ''}&nbsp;</span>
-          {displayInfo.detail && (
-            <span
-              className="min-w-0 truncate"
-              style={displayInfo.detailTruncate === 'start' ? { direction: 'rtl', textAlign: 'left' } : undefined}
-            >
-              {displayInfo.detail}
-            </span>
+          {presentation ? (
+            // 摘要标题是业务语言，视觉权重高于机械拼出的 "工具名: 入参"
+            <span className="min-w-0 truncate text-foreground">{presentation.title}</span>
+          ) : (
+            <>
+              <span className="shrink-0">{displayInfo.name}{displayInfo.detail ? ':' : ''}&nbsp;</span>
+              {displayInfo.detail && (
+                <span
+                  className="min-w-0 truncate"
+                  style={displayInfo.detailTruncate === 'start' ? { direction: 'rtl', textAlign: 'left' } : undefined}
+                >
+                  {displayInfo.detail}
+                </span>
+              )}
+            </>
           )}
           {(streaming || executionStatus === "running") && <span className="shrink-0 animate-pulse">...</span>}
         </span>
@@ -157,6 +174,8 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
       </button>
       {isExpanded && (
         <div>
+          {presentation && <PresentationDetail data={presentation} />}
+          {showRaw && (
           <div className="code-preview mt-1">
             <pre className="whitespace-pre-wrap break-words">{formatted}</pre>
             {resultReady && (
@@ -178,6 +197,7 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
               </>
             )}
           </div>
+          )}
         </div>
       )}
     </div>
@@ -191,10 +211,13 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
 interface ToolResultBlockProps {
   toolName: string;
   result: string;
+  presentation?: ToolPresentation;
+  debugMode?: boolean;
 }
 
-export function ToolResultBlock({ toolName, result }: ToolResultBlockProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+export function ToolResultBlock({ toolName, result, presentation, debugMode = true }: ToolResultBlockProps) {
+  const [isExpanded, setIsExpanded] = useState(!!presentation);
+  const showRaw = debugMode || !presentation;
 
   return (
     <div className="my-0.5">
@@ -203,14 +226,19 @@ export function ToolResultBlock({ toolName, result }: ToolResultBlockProps) {
         className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <StatusIcons.success className={activityStatusIconClass("success", "size-3.5 shrink-0")} />
-        <span className="min-w-0 truncate">Result: {toolName}</span>
+        <span className={cn("min-w-0 truncate", presentation && "text-foreground")}>
+          {presentation ? presentation.title : `Result: ${toolName}`}
+        </span>
         <ChevronRight className={cn(
           "size-3.5 shrink-0 transition-transform",
           isExpanded && "rotate-90",
         )} />
       </button>
       {isExpanded && (
-        <ResultContent result={result} toolName={toolName} standalone />
+        <>
+          {presentation && <PresentationDetail data={presentation} />}
+          {showRaw && <ResultContent result={result} toolName={toolName} standalone />}
+        </>
       )}
     </div>
   );

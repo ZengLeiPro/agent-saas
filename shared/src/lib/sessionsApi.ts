@@ -7,6 +7,7 @@ import type { MessageItem } from '../types/message';
 import type { AskUserAnswers } from '../types/message';
 import type { ApiSessionDetail, ApiTranscriptBlock } from '../types/session';
 import { resolveDisplayToolName } from './toolDisplay';
+import { normalizeToolPresentation } from './toolPresentation';
 
 // -- Interactive tool history restore --
 
@@ -287,6 +288,8 @@ function mapBlock(
 
     case "tool_use": {
       const resultText = block.toolId ? toolResultMap.get(block.toolId) : undefined;
+      // 摘要来自不可信来源（transcript 文件 / 演示剧本），必须规范化后再入渲染层
+      const presentation = normalizeToolPresentation(block.presentation);
       if (block.toolName === "AskUserQuestion") {
         return tryConvertAskUser(block, resultText);
       }
@@ -344,12 +347,14 @@ function mapBlock(
             ? { executionStatus: "completed" as const }
             : {}),
         ...(resultText !== undefined ? { result: resultText, resultReady: true } : {}),
+        ...(presentation ? { presentation } : {}),
       };
     }
 
     case "tool_result": {
       if (INTERACTIVE_RESULT_TOOLS.has(block.toolName || "")) return null;
       if (block.toolId && toolResultMap.has(block.toolId)) return null;
+      const resultPresentation = normalizeToolPresentation(block.presentation);
       const resolvedResultName = resolveDisplayToolName({
         toolId: block.toolId || "",
         toolName: block.toolName || "unknown",
@@ -361,6 +366,7 @@ function mapBlock(
         toolName: resolvedResultName,
         result: block.content,
         toolId: block.toolId || "",
+        ...(resultPresentation ? { presentation: resultPresentation } : {}),
       };
     }
 

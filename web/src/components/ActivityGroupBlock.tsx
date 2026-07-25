@@ -289,7 +289,7 @@ function GroupStatusIcon({ summary }: { summary: GroupSummaryInfo }) {
 
 /** 该项是否带「给人看」摘要——带摘要的项在非 debug 视图下也应呈现 */
 function hasPresentation(item: MessageItem): boolean {
-  return (item.type === 'tool_use' || item.type === 'tool_result') && !!item.presentation;
+  return (item.type === 'tool_use' || item.type === 'tool_result' || item.type === 'subagent') && !!item.presentation;
 }
 
 function ActivityItem({ item, debugMode = true }: { item: MessageItem; debugMode?: boolean }) {
@@ -308,7 +308,7 @@ function ActivityItem({ item, debugMode = true }: { item: MessageItem; debugMode
       if (!debugMode && !item.presentation) return <ExecutionHiddenPlaceholder />;
       return <ToolResultBlock toolName={item.toolName} result={item.result} {...(item.presentation ? { presentation: item.presentation } : {})} debugMode={debugMode} />;
     case 'subagent':
-      if (!debugMode) return <ExecutionHiddenPlaceholder isActive={item.status === 'running'} durationMs={item.durationMs} hasIssue={item.status === 'failed' || item.status === 'timeout'} />;
+      if (!debugMode && !item.presentation) return <ExecutionHiddenPlaceholder isActive={item.status === 'running'} durationMs={item.durationMs} hasIssue={item.status === 'failed' || item.status === 'timeout'} />;
       return <SubagentBlock {...item} />;
     default:
       return null;

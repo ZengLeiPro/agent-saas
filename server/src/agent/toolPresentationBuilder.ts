@@ -56,6 +56,13 @@ export interface PresentationSourceEntry {
   state: PresentationSourceState;
   /** state !== 'covered' 时必填：还缺什么 */
   gap?: string;
+  /**
+   * 摘要在哪一层产出。缺省 `server-metadata`＝本模块按 provider 的截断前
+   * metadata 产出。`mapping` 是例外：该工具的关键数字在服务端写 tool_use 行
+   * 时尚未产生（如子 Agent 的耗时/token 要等子 run 结束聚合），只能在
+   * shared 的映射层组装——这类工具不受本模块规则表约束。
+   */
+  producedIn?: 'server-metadata' | 'mapping';
 }
 
 function parseInput(raw: unknown): Record<string, unknown> {
@@ -187,6 +194,63 @@ const METADATA_RULES: Record<string, MetadataRule> = {
     };
   },
 
+  WebSearch: (input, metadata) => {
+    const query = str(metadata.query) ?? str(input.query);
+    if (!query) return null;
+    const detail: PresentationDetailLine[] = [{ k: '检索词', v: query }];
+    const provider = str(metadata.provider);
+    if (provider) detail.push({ tree: '├', k: '来源', v: provider });
+    const count = num(metadata.resultCount);
+    if (count !== undefined) detail.push({ tree: '└', k: '命中', v: `${count} 条` });
+    if (metadata.truncated === true) detail.push({ indent: 0, text: '⚠ 结果过多，已截断' });
+    return { title: '联网检索', detail, status: 'ok' };
+  },
+
+  WebFetch: (input, metadata) => {
+    const url = str(metadata.finalUrl) ?? str(metadata.url) ?? str(input.url);
+    if (!url) return null;
+    const detail: PresentationDetailLine[] = [{ k: '来源', v: url }];
+    // 发生跳转时把原始地址也写出来——落到哪个域名是安全相关的事实
+    const original = str(metadata.url);
+    const finalUrl = str(metadata.finalUrl);
+    if (original && finalUrl && original !== finalUrl) {
+      detail.push({ tree: '├', k: '原始地址', v: original });
+    }
+    const status = num(metadata.status);
+    if (status !== undefined) detail.push({ tree: '├', k: 'HTTP', v: String(status) });
+    const returned = num(metadata.returnedLength);
+    const raw = num(metadata.rawLength);
+    if (returned !== undefined) {
+      const ratio = raw !== undefined && raw > returned ? `（原文 ${raw.toLocaleString('zh-CN')} 字）` : '';
+      detail.push({ tree: '├', k: '正文', v: `${returned.toLocaleString('zh-CN')} 字${ratio}` });
+    }
+    const tookMs = num(metadata.tookMs);
+    if (tookMs !== undefined) detail.push({ tree: '└', k: '耗时', v: formatDuration(tookMs) });
+    if (metadata.truncated === true) detail.push({ indent: 0, text: '⚠ 正文超出上限，已截断' });
+    return { title: '读取网页', detail, status: metadata.truncated === true ? 'warn' : 'ok' };
+  },
+
+  GenerateImage: (input, metadata) => {
+    const engine = str(metadata.engine);
+    const detail: PresentationDetailLine[] = [];
+    const prompt = str(input.prompt);
+    if (prompt) detail.push({ k: '画面', v: prompt });
+    if (engine) detail.push({ tree: '├', k: '引擎', v: engine });
+    const size = str(metadata.size);
+    if (size) detail.push({ tree: '├', k: '尺寸', v: size });
+    const count = num(metadata.count);
+    if (count !== undefined) detail.push({ tree: '├', k: '数量', v: `${count} 张` });
+    // 扣费是客户最该看见的一行，缺省时不猜
+    const credits = num(metadata.creditsCharged);
+    if (credits !== undefined) {
+      const note = str(metadata.pricingNote);
+      detail.push({ tree: '└', k: '积分', v: note ? `${credits}（${note}）` : String(credits) });
+    } else if (str(metadata.billingNote)) {
+      detail.push({ tree: '└', k: '计费', v: str(metadata.billingNote)! });
+    }
+    return detail.length ? { title: '生成图片', detail, status: 'ok' } : null;
+  },
+
   Edit: (input, metadata) => {
     const filePath = str(metadata.path) ?? str(input.file_path);
     if (!filePath) return null;
@@ -292,10 +356,15 @@ export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
     gap: '成功路径已用截断前 metadata（退出码/字节数/耗时/截断与超时标记）。'
       + '失败路径当前在 toolRuntime 直接 throw，摘要随之丢失——待「失败态进契约」批次一并处理',
   },
-  { tool: 'WebSearch', state: 'partial', gap: '缺命中条数与来源域名' },
-  { tool: 'WebFetch', state: 'partial', gap: '缺响应状态与正文长度' },
-  { tool: 'Agent', state: 'partial', gap: '缺子 Agent 的耗时/token/工具次数（事件里已有，未接进摘要）' },
-  { tool: 'GenerateImage', state: 'none', gap: '尚无规则；应展示引擎、尺寸与积分扣费' },
+  { tool: 'WebSearch', state: 'covered' },
+  { tool: 'WebFetch', state: 'covered' },
+  {
+    tool: 'Agent',
+    state: 'covered',
+    producedIn: 'mapping',
+    gap: '子 run 的耗时/token/轮次在服务端写 tool_use 行时尚未产生，摘要由 shared 的 mapBlock 取聚合值组装',
+  },
+  { tool: 'GenerateImage', state: 'covered' },
   { tool: 'Skill', state: 'none', gap: '刻意不做：Skill 的 tool_result 是技能正文，摘要价值近乎零；观众关心的是技能内部的 Shell/Read，已被覆盖' },
 ] as const;
 
@@ -303,10 +372,11 @@ export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
  * 未覆盖（state !== 'covered'）工具数的上限，**只减不增**。
  *
  * 每让一个工具真正做到 covered，就把这个数字减一并在 PR 里说明。
- * 07-25：Shell 与 Write 接上截断前 metadata，9 → 7；Read 与 Edit 补 provider metadata，7 → 5。
+ * 07-25：Shell/Write 接截断前 metadata（9→7）；Read/Edit 补 provider metadata（7→5）；
+ * WebSearch/WebFetch/GenerateImage/Agent 接各自真实结果（5→1）。仅剩 Skill，刻意不做。
  * 调高它需要 code review 显式批准——这正是 `[CITE]` 当年缺的那道闸门。
  */
-export const PRESENTATION_TODO_BUDGET = 5;
+export const PRESENTATION_TODO_BUDGET = 1;
 
 /**
  * 在工具执行结果上补一份「给人看」摘要。

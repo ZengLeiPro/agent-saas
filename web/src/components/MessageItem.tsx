@@ -1044,7 +1044,7 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (message.type === "subagent") {
-    if (!debugMode) return <ExecutionHiddenPlaceholder isActive={message.status === "running"} hasIssue={message.status === "failed" || message.status === "timeout"} />;
+    if (!debugMode && !message.presentation) return <ExecutionHiddenPlaceholder isActive={message.status === "running"} hasIssue={message.status === "failed" || message.status === "timeout"} />;
     return (
       <SubagentBlock
         {...message}

@@ -28,7 +28,8 @@ describe('产出方登记表', () => {
       expect(registered.has(rule), `规则 ${rule} 未登记到 PRESENTATION_SOURCES`).toBe(true);
     }
     for (const [tool, entry] of registered) {
-      if (entry.state !== 'none') {
+      // mapping 层产出的工具（如 Agent）不在本模块规则表内，是显式例外
+      if (entry.state !== 'none' && entry.producedIn !== 'mapping') {
         expect(rules.has(tool), `${tool} 登记为 ${entry.state} 但没有规则`).toBe(true);
       }
     }
@@ -60,7 +61,7 @@ describe('截断前 metadata 规则', () => {
   it('covered 的工具都有 metadata 规则——covered 的定义就是「用了截断前的真实数据」', () => {
     const metadataRules = new Set(listMetadataRuleNames());
     for (const entry of PRESENTATION_SOURCES) {
-      if (entry.state !== 'covered') continue;
+      if (entry.state !== 'covered' || entry.producedIn === 'mapping') continue;
       expect(metadataRules.has(entry.tool), `${entry.tool} 标为 covered 但没有 metadata 规则`).toBe(true);
     }
   });
@@ -253,5 +254,75 @@ describe('buildToolPresentation', () => {
   it('provider 已自产的摘要不被规则覆盖——它拿得到截断前的原始数据', () => {
     const own = { title: '读取 差旅.md（1,204 行，已截断）' };
     expect(buildToolPresentation('Read', { file_path: '/w/差旅.md' }, own)).toBe(own);
+  });
+});
+
+describe('联网与生图', () => {
+  it('WebSearch 写出来源与命中条数', () => {
+    const result = buildToolPresentation(
+      'WebSearch',
+      { query: '差旅标准' },
+      undefined,
+      { query: '差旅标准', provider: 'bing', resultCount: 8, truncated: false },
+    );
+    expect(result?.title).toBe('联网检索');
+    expect(result?.detail).toEqual([
+      { k: '检索词', v: '差旅标准' },
+      { tree: '├', k: '来源', v: 'bing' },
+      { tree: '└', k: '命中', v: '8 条' },
+    ]);
+  });
+
+  it('WebFetch 在发生跳转时把原始地址也写出来——落到哪个域名是安全事实', () => {
+    const result = buildToolPresentation(
+      'WebFetch',
+      { url: 'http://a.example/x' },
+      undefined,
+      {
+        url: 'http://a.example/x',
+        finalUrl: 'https://b.example/y',
+        status: 200,
+        rawLength: 42_000,
+        returnedLength: 12_000,
+        truncated: true,
+        tookMs: 1840,
+      },
+    );
+    expect(result?.detail?.[0]).toEqual({ k: '来源', v: 'https://b.example/y' });
+    expect(result?.detail).toContainEqual({ tree: '├', k: '原始地址', v: 'http://a.example/x' });
+    expect(result?.detail).toContainEqual({ tree: '├', k: '正文', v: '12,000 字（原文 42,000 字）' });
+    expect(result?.status).toBe('warn');
+  });
+
+  it('WebFetch 未跳转时不画蛇添足写原始地址', () => {
+    const result = buildToolPresentation(
+      'WebFetch',
+      { url: 'https://a.example/x' },
+      undefined,
+      { url: 'https://a.example/x', finalUrl: 'https://a.example/x', status: 200 },
+    );
+    expect(result?.detail?.some((line) => typeof line === 'object' && 'k' in line && line.k === '原始地址')).toBe(false);
+  });
+
+  it('GenerateImage 把扣费写进摘要——这是客户最该看见的一行', () => {
+    const result = buildToolPresentation(
+      'GenerateImage',
+      { prompt: '一只蓝白英短' },
+      undefined,
+      { engine: 'seedream', size: '1024x1024', count: 2, creditsCharged: 40, pricingNote: '20 积分/张' },
+    );
+    expect(result?.detail).toContainEqual({ tree: '└', k: '积分', v: '40（20 积分/张）' });
+    expect(result?.detail).toContainEqual({ k: '画面', v: '一只蓝白英短' });
+  });
+
+  it('GenerateImage 未计费租户显示计费说明而非编造 0 积分', () => {
+    const result = buildToolPresentation(
+      'GenerateImage',
+      { prompt: 'x' },
+      undefined,
+      { engine: 'gpt-image-2', size: '512x512', count: 1, billingNote: '该组织未启用积分计费' },
+    );
+    expect(result?.detail).toContainEqual({ tree: '└', k: '计费', v: '该组织未启用积分计费' });
+    expect(result?.detail?.some((line) => typeof line === 'object' && 'k' in line && line.k === '积分')).toBe(false);
   });
 });

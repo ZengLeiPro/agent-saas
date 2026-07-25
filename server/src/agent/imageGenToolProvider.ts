@@ -4,6 +4,7 @@ import { basename, extname, join, posix } from 'node:path';
 import { z } from 'zod';
 
 import type { BillingService } from '../data/billing/service.js';
+import { buildToolPresentation } from './toolPresentationBuilder.js';
 import { CREDIT_MICRO, YUAN_MICRO } from '../data/billing/types.js';
 import { getImageGenEnginePricing } from '../data/usage/imageGenPricing.js';
 import type { EventAppendContext, PlatformEventInput } from '../runtime/types.js';
@@ -643,7 +644,9 @@ export class ImageGenToolProvider implements ToolProvider {
       deliveryInstruction:
         `在给用户的最终回复中用 markdown 图片语法内联展示图片，例如：![图片描述](${relPaths[0]})。路径必须原样使用返回的相对路径。`,
     };
-    return { content: JSON.stringify(payload, null, 2) };
+    // payload 里已有引擎/尺寸/张数/扣费的真实结果，直接复用作摘要来源
+    const presentation = buildToolPresentation(call.toolId, call.input, undefined, payload as unknown as Record<string, unknown>);
+    return { content: JSON.stringify(payload, null, 2), ...(presentation ? { presentation } : {}) };
   }
 
   /** refImages 只收 workspace 相对路径；resolveAuthorizedPath + realpath 双重校验，拒 symlink 逃逸。 */

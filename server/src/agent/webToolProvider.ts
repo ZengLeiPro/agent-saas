@@ -4,6 +4,7 @@ import { extractReadableContent, truncateChars } from './web/htmlExtract.js';
 import { runWebSearch, type WebSearchProviderConfig } from './web/searchProviders.js';
 import { fetchRemoteText, type WebEgressPolicy } from './web/ssrf.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
+import { buildToolPresentation } from './toolPresentationBuilder.js';
 import type {
   AuthorizedToolCall,
   ToolCallContext,
@@ -126,16 +127,19 @@ export class WebToolProvider implements ToolProvider {
     if (call.toolId === webSearchToolDescriptor.id) {
       if (!this.config.search || this.config.search.enabled === false) return undefined;
       const input = webSearchToolDescriptor.schema.parse(call.input) as WebSearchInput;
-      return { content: await this.runSearch(input, context.signal) };
+      const search = await this.runSearch(input, context.signal);
+      const presentation = buildToolPresentation(call.toolId, call.input, undefined, search.meta);
+      return { content: search.content, ...(presentation ? { presentation } : {}) };
     }
     if (call.toolId === webFetchToolDescriptor.id) {
       const input = webFetchToolDescriptor.schema.parse(call.input) as WebFetchInput;
       const state = this.getFetchFailureState(context);
       if (state.circuitReason) throw new WebFetchCircuitOpenError(state.circuitReason);
       try {
-        const content = await this.runFetch(input, context.signal);
+        const fetched = await this.runFetch(input, context.signal);
         this.recordFetchOutcome(state, true);
-        return { content };
+        const presentation = buildToolPresentation(call.toolId, call.input, undefined, fetched.meta);
+        return { content: fetched.content, ...(presentation ? { presentation } : {}) };
       } catch (err) {
         const reason = this.recordFetchOutcome(state, false);
         if (reason) {
@@ -187,7 +191,7 @@ export class WebToolProvider implements ToolProvider {
     return state.circuitReason;
   }
 
-  private async runSearch(input: WebSearchInput, signal?: AbortSignal): Promise<string> {
+  private async runSearch(input: WebSearchInput, signal?: AbortSignal): Promise<{ content: string; meta: Record<string, unknown> }> {
     if (input.allowedDomains?.length && input.blockedDomains?.length) {
       throw new Error('WebSearch cannot use allowedDomains and blockedDomains at the same time.');
     }
@@ -207,20 +211,24 @@ export class WebToolProvider implements ToolProvider {
       },
       this.fetchImpl,
     );
-    return formatUntrustedToolResult({
-      label: 'WEB_SEARCH_RESULTS',
-      metadata: {
-        query: output.query,
-        provider: output.provider,
-        resultCount: output.results.length,
-        truncated: output.truncated,
-        fetchedAt: output.fetchedAt,
-      },
-      untrustedContent: JSON.stringify(output.results, null, 2),
-    });
+    const meta = {
+      query: output.query,
+      provider: output.provider,
+      resultCount: output.results.length,
+      truncated: output.truncated,
+      fetchedAt: output.fetchedAt,
+    };
+    return {
+      content: formatUntrustedToolResult({
+        label: 'WEB_SEARCH_RESULTS',
+        metadata: meta,
+        untrustedContent: JSON.stringify(output.results, null, 2),
+      }),
+      meta,
+    };
   }
 
-  private async runFetch(input: WebFetchInput, signal?: AbortSignal): Promise<string> {
+  private async runFetch(input: WebFetchInput, signal?: AbortSignal): Promise<{ content: string; meta: Record<string, unknown> }> {
     const fetchConfig = this.config.fetch ?? {};
     const timeoutMs = fetchConfig.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
     const controller = new AbortController();
@@ -259,23 +267,27 @@ export class WebToolProvider implements ToolProvider {
         extracted.title ? `# ${extracted.title}` : '',
         truncated.text,
       ].filter(Boolean).join('\n\n');
-      return formatUntrustedToolResult({
-        label: 'WEB_FETCH_RESULT',
-        metadata: {
-          url: input.url,
-          finalUrl: response.finalUrl,
-          status: response.status,
-          contentType: contentType.split(';')[0].trim().toLowerCase(),
-          extractMode: input.extractMode ?? 'markdown',
-          extractor: extracted.extractor,
-          rawLength: truncated.rawLength,
-          returnedLength: truncated.text.length,
-          truncated: truncated.truncated,
-          fetchedAt: new Date().toISOString(),
-          tookMs: Date.now() - startedAt,
-        },
-        untrustedContent: untrusted,
-      });
+      const meta = {
+        url: input.url,
+        finalUrl: response.finalUrl,
+        status: response.status,
+        contentType: contentType.split(';')[0].trim().toLowerCase(),
+        extractMode: input.extractMode ?? 'markdown',
+        extractor: extracted.extractor,
+        rawLength: truncated.rawLength,
+        returnedLength: truncated.text.length,
+        truncated: truncated.truncated,
+        fetchedAt: new Date().toISOString(),
+        tookMs: Date.now() - startedAt,
+      };
+      return {
+        content: formatUntrustedToolResult({
+          label: 'WEB_FETCH_RESULT',
+          metadata: meta,
+          untrustedContent: untrusted,
+        }),
+        meta,
+      };
     } finally {
       clearTimeout(timeout);
     }

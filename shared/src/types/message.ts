@@ -73,6 +73,8 @@ export type MessageItem =
       turnCount?: number;
       errorMessage?: string;
       resultPreview?: string;
+      /** 「给人看」摘要；有值时非 debug 视图也呈现子任务 */
+      presentation?: ToolPresentation;
     }
   | {
       id: string;

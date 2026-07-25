@@ -3,11 +3,11 @@
  * Platform-agnostic: no browser-specific APIs.
  */
 
-import type { MessageItem } from '../types/message';
+import type { MessageItem, SubagentStatus } from '../types/message';
 import type { AskUserAnswers } from '../types/message';
 import type { ApiSessionDetail, ApiTranscriptBlock } from '../types/session';
 import { resolveDisplayToolName } from './toolDisplay';
-import { normalizeToolPresentation } from './toolPresentation';
+import { normalizeToolPresentation, type DetailLine, type ToolPresentation } from './toolPresentation';
 import { normalizeDisplay } from './presentation/registry';
 
 // -- Interactive tool history restore --
@@ -179,6 +179,36 @@ function tryConvertPlanMode(
   };
 }
 
+/**
+ * 子 Agent 摘要。
+ *
+ * 与其他工具的差别：这些数字（耗时/token/工具次数/轮次）是子 run 结束后才
+ * 聚合出来的，服务端写 tool_use 行时还不存在，因此只能在映射层组装。
+ * 全部字段直取 durable 聚合值，不做任何推算。
+ */
+function subagentPresentation(
+  agentType: string,
+  status: SubagentStatus,
+  subagent: ApiTranscriptBlock['subagent'],
+): ToolPresentation | undefined {
+  const detail: DetailLine[] = [];
+  if (subagent?.model) detail.push({ k: '模型', v: subagent.model });
+  if (typeof subagent?.turnCount === 'number') detail.push({ tree: '├', k: '轮次', v: `${subagent.turnCount}` });
+  if (typeof subagent?.toolUseCount === 'number') detail.push({ tree: '├', k: '工具调用', v: `${subagent.toolUseCount} 次` });
+  if (typeof subagent?.totalTokens === 'number') {
+    detail.push({ tree: '├', k: 'Token', v: subagent.totalTokens.toLocaleString('zh-CN') });
+  }
+  if (typeof subagent?.durationMs === 'number') {
+    const ms = subagent.durationMs;
+    const v = ms < 1000 ? `${ms} ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`;
+    detail.push({ tree: '└', k: '耗时', v });
+  }
+  if (subagent?.errorMessage) detail.push({ indent: 0, text: `⚠ ${subagent.errorMessage}` });
+  if (!detail.length) return undefined;
+  const failed = status === 'failed' || status === 'timeout' || status === 'cancelled';
+  return { title: agentType, detail, status: failed ? 'warn' : 'ok' };
+}
+
 // -- FILE marker parsing --
 
 const FILE_MARKER_RE = /\[FILE\](\{.*?\})\[\/FILE\]/g;
@@ -316,11 +346,17 @@ function mapBlock(
                 : "running");
         const resultPreview = block.subagent?.resultPreview
           ?? (resultText?.trim() ? resultText.trim().slice(0, 2_000) : undefined);
+        const agentType = block.subagent?.description || parseSubagentDescription(block.content);
+        // 摘要在这里组装而非服务端：子 Agent 的耗时/token/轮次是 run 结束后才
+        // 聚合到 block.subagent 上的，而 tool_use 行在派发时就已写出。
+        // 字段全部取自 durable 事件的真实聚合值，不含任何推算。
+        const presentation = subagentPresentation(agentType, subagentStatus, block.subagent);
         return {
           id,
           type: "subagent",
+          ...(presentation ? { presentation } : {}),
           toolId: block.toolId || "",
-          agentType: block.subagent?.description || parseSubagentDescription(block.content),
+          agentType,
           status: subagentStatus,
           ...(block.subagent?.childSessionId ? { childSessionId: block.subagent.childSessionId } : {}),
           ...(block.subagent?.childRunId ? { childRunId: block.subagent.childRunId } : {}),

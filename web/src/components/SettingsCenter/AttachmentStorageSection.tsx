@@ -41,6 +41,7 @@ export function AttachmentStorageSection() {
   const [usage, setUsage] = useState<AttachmentUsage | null>(null);
   const [loading, setLoading] = useState(true);
   const [cleaning, setCleaning] = useState(false);
+  const [purging, setPurging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -92,13 +93,43 @@ export function AttachmentStorageSection() {
     }
   }, [load, usage]);
 
+  const purge = useCallback(async () => {
+    if (!usage?.totalFiles) return;
+    const confirmed = window.confirm(
+      `将永久删除全部 ${usage.totalFiles} 个附件（${formatFileSize(usage.totalBytes)}），其中包含 ${usage.referencedFiles} 个已发送附件。\n\n`
+      + "历史会话里的这些附件将无法再预览或下载，删除后不可恢复。确定继续？",
+    );
+    if (!confirmed) return;
+    setPurging(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await authFetch("/api/uploads/all", { method: "DELETE" });
+      const body = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        error?: string;
+        deletedFiles?: number;
+        deletedBytes?: number;
+      };
+      if (!response.ok || !body.success) throw new Error(body.error || "清空附件失败");
+      setNotice(`已清空 ${body.deletedFiles ?? 0} 个文件，释放 ${formatFileSize(body.deletedBytes ?? 0)}`);
+      await load();
+    } catch (purgeError) {
+      setError(purgeError instanceof Error ? purgeError.message : "清空附件失败");
+    } finally {
+      setPurging(false);
+    }
+  }, [load, usage]);
+
+  const busy = loading || cleaning || purging;
+
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
         title="附件存储"
         description="查看个人工作区附件用量；未发送附件超过 24 小时会自动清理，已发送附件不会自动删除。"
         actions={(
-          <Button variant="outline" size="sm" onClick={() => { void load(); }} disabled={loading || cleaning}>
+          <Button variant="outline" size="sm" onClick={() => { void load(); }} disabled={busy}>
             {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             刷新
           </Button>
@@ -137,11 +168,29 @@ export function AttachmentStorageSection() {
                 <Button
                   variant="destructive"
                   onClick={() => { void cleanup(); }}
-                  disabled={cleaning || usage.stagedFiles === 0}
+                  disabled={busy || usage.stagedFiles === 0}
                   className="shrink-0"
                 >
                   {cleaning ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
                   {usage.stagedFiles > 0 ? `清理 ${usage.stagedFiles} 个` : "无需清理"}
+                </Button>
+              </div>
+
+              <div className="flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-medium text-destructive">清空全部附件</div>
+                  <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                    删除工作区内的所有上传附件，包含已发送附件和历史文件；历史会话里的附件将无法再预览或下载，且不可恢复。
+                  </div>
+                </div>
+                <Button
+                  variant="destructive"
+                  onClick={() => { void purge(); }}
+                  disabled={busy || usage.totalFiles === 0}
+                  className="shrink-0"
+                >
+                  {purging ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                  {usage.totalFiles > 0 ? `清空 ${usage.totalFiles} 个` : "已无附件"}
                 </Button>
               </div>
 

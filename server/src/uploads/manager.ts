@@ -377,6 +377,36 @@ export class UploadManager {
     return { deletedFiles, deletedBytes };
   }
 
+  /**
+   * 清空该用户 uploads/ 下的全部附件（未发送 + 已发送 + 历史文件）与状态记录。
+   * 不触碰 .partial：其中可能有正在传输的请求，交由请求生命周期与超龄清理负责；
+   * 与 completeRequest/markReferenced 共用同一把用户写锁，不会删到 finalize 到一半的文件。
+   */
+  async purgeUserUploads(userCwd: string): Promise<UploadCleanupResult> {
+    this.knownUserCwds.add(userCwd);
+    return this.withUserMutation(userCwd, async () => {
+      const uploadsDir = join(userCwd, 'uploads');
+      const files = await listFilesRecursive(uploadsDir, new Set(['.partial', '.state']));
+      let deletedFiles = 0;
+      let deletedBytes = 0;
+
+      for (const file of files) {
+        if (!isWithin(file.path, uploadsDir)) continue;
+        try {
+          await unlink(file.path);
+          deletedFiles += 1;
+          deletedBytes += file.size;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+      }
+
+      // 状态目录整体移除；readStates 遇 ENOENT 返回空，writeState 会按需重建
+      await rm(join(uploadsDir, '.state'), { recursive: true, force: true });
+      return { deletedFiles, deletedBytes };
+    });
+  }
+
   async runMaintenance(): Promise<void> {
     await this.discoverUserWorkspaces();
     let cleanedStagedFiles = 0;

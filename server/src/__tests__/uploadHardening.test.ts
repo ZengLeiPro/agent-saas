@@ -229,6 +229,76 @@ describe('attachment upload hardening', () => {
     expect((await stat(join(userB, 'uploads', `${idB}_tenant.txt`))).isFile()).toBe(true);
   });
 
+  it('purges every attachment of one user but keeps in-flight partials and other workspaces', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const userA = join(root, 'tenant-a', 'user-a');
+    const userB = join(root, 'tenant-b', 'user-b');
+    const stagedId = '33333333-3333-4333-8333-333333333333';
+    const referencedId = '44444444-4444-4444-8444-444444444444';
+    const otherId = '55555555-5555-4555-8555-555555555555';
+
+    const partialDir = await manager.beginRequest(userA, 'request-a');
+    await writeFile(join(partialDir, `${stagedId}_staged.txt`), 'staged');
+    await writeFile(join(partialDir, `${referencedId}_referenced.txt`), 'referenced');
+    const finalized = await manager.completeRequest('request-a', [
+      {
+        attachmentId: stagedId,
+        filename: `${stagedId}_staged.txt`,
+        partialPath: join(partialDir, `${stagedId}_staged.txt`),
+        originalName: 'staged.txt',
+        size: 6,
+        mimeType: 'text/plain',
+        isImage: false,
+        isVoiceUpload: false,
+      },
+      {
+        attachmentId: referencedId,
+        filename: `${referencedId}_referenced.txt`,
+        partialPath: join(partialDir, `${referencedId}_referenced.txt`),
+        originalName: 'referenced.txt',
+        size: 10,
+        mimeType: 'text/plain',
+        isImage: false,
+        isVoiceUpload: false,
+      },
+    ]);
+    await manager.markReferenced(userA, [finalized[1].info], { sessionId: 'session-1' });
+    const legacyPath = join(userA, 'uploads', 'legacy.txt');
+    await writeFile(legacyPath, 'legacy');
+
+    // 另一个用户的附件，以及 userA 一个仍在传输中的请求
+    const otherPartialDir = await manager.beginRequest(userB, 'request-b');
+    await writeFile(join(otherPartialDir, `${otherId}_other.txt`), 'other');
+    await manager.completeRequest('request-b', [{
+      attachmentId: otherId,
+      filename: `${otherId}_other.txt`,
+      partialPath: join(otherPartialDir, `${otherId}_other.txt`),
+      originalName: 'other.txt',
+      size: 5,
+      mimeType: 'text/plain',
+      isImage: false,
+      isVoiceUpload: false,
+    }]);
+    const inFlightDir = await manager.beginRequest(userA, 'request-in-flight');
+    const inFlightPath = join(inFlightDir, 'uploading.bin');
+    await writeFile(inFlightPath, 'streaming');
+
+    const purge = await manager.purgeUserUploads(userA);
+
+    expect(purge).toEqual({ deletedFiles: 3, deletedBytes: 22 });
+    for (const path of [finalized[0].absolutePath, finalized[1].absolutePath, legacyPath]) {
+      await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    await expect(stat(join(userA, 'uploads', '.state'))).rejects.toMatchObject({ code: 'ENOENT' });
+    // 传输中的请求与其它用户不受影响
+    expect((await stat(inFlightPath)).isFile()).toBe(true);
+    expect((await stat(join(userB, 'uploads', `${otherId}_other.txt`))).isFile()).toBe(true);
+
+    const usage = await manager.getUsage(userA);
+    expect(usage).toMatchObject({ totalFiles: 0, totalBytes: 0, stagedFiles: 0, referencedFiles: 0, legacyFiles: 0 });
+  });
+
   it('ships nginx upload streaming with a NAS fallback temp path', async () => {
     const configPath = new URL('../../../daemon-packaging/nginx/agent-api-kaiyan.conf.example', import.meta.url);
     const config = await readFile(configPath, 'utf8');

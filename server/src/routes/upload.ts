@@ -186,5 +186,17 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
     }
   });
 
+  router.delete('/uploads/all', async (req, res) => {
+    try {
+      const userCwd = resolveRequestUserCwd(agentCwd, req);
+      const result = await uploadManager.purgeUserUploads(userCwd);
+      uploadLogger.warn(`Manual purge of all attachments user=${req.user?.username ?? 'anonymous'} files=${result.deletedFiles} bytes=${result.deletedBytes}`);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      uploadLogger.error('Failed to purge attachments:', error);
+      res.status(500).json({ success: false, error: '清空附件失败' });
+    }
+  });
+
   return router;
 }

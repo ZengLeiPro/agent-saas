@@ -39,15 +39,17 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useUsers } from "@/components/UserManager/hooks";
 import { HISTORY_PUSH, useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
+import { navigatePlatformAdmin } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 import { RANGE_OPTIONS, RangeSelector, type CustomRange, type RangeValue } from "@/components/UsageDashboard/RangeSelector";
+import { USAGE_USER_KEY } from "@/components/UsageDashboard";
 import { formatDateRange } from "@/components/UsageDashboard/format";
 import { formatCount, formatMs, formatRate } from "@/components/RunTraceExplorer/format";
 import { RunStatusBadge } from "@/components/RunTraceExplorer/StatusBadge";
 import { MetricCard } from "@/components/PlatformAdmin/common";
 
 import { AuroraCard, ToneBadge, type Tone } from "./AuroraCard";
-import { DonutChart, MiniBarTrend, Sparkline } from "./charts";
+import { DonutChart, MiniBarTrend } from "./charts";
 import {
   useModelDisplayMap,
   useTenantBillingDisplayPolicy,
@@ -202,6 +204,19 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
   const showUsageCredits = billingActive && displayPolicy.showUsageCredits;
   const creditTrend = useTenantCreditTrend(tenantId, creditDays, showUsageCredits);
 
+  /**
+   * 成员排行 → 该成员的用量明细。
+   *
+   * 只在宿主提供了页签切换能力时才可点——tenant-admin 的区块可能被嵌在没有
+   * 「用量与配额」页签的位置，那时渲染成可点的行是骗人的。
+   */
+  const canDrillToUsage = Boolean(onNavigateUsage);
+  const drillToUsage = useCallback((username: string) => {
+    // 先把目标成员写进 URL，再切页签：UsageDashboard 挂载时直接读到 usageUser
+    url.set(USAGE_USER_KEY, username, HISTORY_PUSH);
+    onNavigateUsage?.();
+  }, [onNavigateUsage, url]);
+
   const handleRangeChange = useCallback((value: RangeValue, custom?: CustomRange) => {
     url.patch({
       [ORG_RANGE_KEY]: value === DEFAULT_ORG_RANGE ? null : value,
@@ -286,10 +301,10 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
         }
       />
 
-      <AuroraCard tone="indigo">
+      <AuroraCard tone="neutral">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
-            <ToneBadge tone="indigo" icon={EntityIcons.org} className="size-10" />
+            <ToneBadge tone="neutral" icon={EntityIcons.org} className="size-10" />
             <div className="min-w-0">
               <div className="text-xs uppercase tracking-wide text-muted-foreground">当前组织</div>
               <div className="mt-0.5 truncate text-xl font-semibold">{currentTenant?.name || tenantId || "当前组织"}</div>
@@ -307,7 +322,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
         <SectionTitle title="团队使用" caption={rangeLabel ? `统计区间 ${rangeLabel}` : undefined} loading={usage.loading} />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <KpiCard
-          tone="cyan"
+          tone="neutral"
           icon={Users}
           label="成员"
           value={tenantUsers.length}
@@ -315,7 +330,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
           loading={usersLoading}
         />
         <KpiCard
-          tone="emerald"
+          tone="good"
           icon={Activity}
           label="活跃成员 · 期间"
           value={usage.loading || usersLoading ? "—" : activeEnabledUsers}
@@ -323,7 +338,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
           loading={usage.loading || usersLoading}
         />
         <KpiCard
-          tone="fuchsia"
+          tone="neutral"
           icon={MessageSquare}
           label="对话轮次 · 期间"
           value={formatNumber(periodTurns)}
@@ -331,7 +346,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
           loading={usage.loading}
         />
         <KpiCard
-          tone={inactiveEnabledUsers > 0 ? "amber" : "emerald"}
+          tone={inactiveEnabledUsers > 0 ? "warn" : "good"}
           icon={UserPlus}
           label="待带动成员"
           value={usage.loading || usersLoading ? "—" : inactiveEnabledUsers}
@@ -352,7 +367,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {showBalance && (
               <KpiCard
-                tone={credits.summary?.lowBalance ? "rose" : "amber"}
+                tone={credits.summary?.lowBalance ? "bad" : "neutral"}
                 icon={Wallet}
                 label="积分余额"
                 value={credits.summary ? formatCredits(credits.summary.balanceCredits) : "—"}
@@ -362,7 +377,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
             )}
             {showUsageCredits && (
               <KpiCard
-                tone="indigo"
+                tone="neutral"
                 icon={EntityIcons.credits}
                 label="本月已用积分"
                 value={credits.summary ? formatCredits(credits.summary.currentMonthCreditsUsed) : "—"}
@@ -371,7 +386,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
               />
             )}
             {showUsageCredits && (
-              <AuroraCard tone="slate">
+              <AuroraCard tone="neutral">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 space-y-1">
                     <div className="text-xs font-medium text-muted-foreground">积分消耗 · {windowCaption(creditWindow)}</div>
@@ -379,16 +394,16 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                       {creditTrend.loading ? "—" : formatCredits(creditTrend.periodCredits)}
                     </div>
                   </div>
-                  <ToneBadge tone="slate" icon={EntityIcons.analytics} />
+                  <ToneBadge tone="neutral" icon={EntityIcons.analytics} />
                 </div>
-                <div className="mt-3">
-                  <Sparkline data={creditTrend.points.map(point => point.credits)} />
-                </div>
+                {/* 原先这里还画一条 Sparkline，但它和下方「积分日消耗」柱图是同一份
+                    creditTrend.points——重复展示且无坐标轴、无单位。删掉后本卡专管总量，
+                    下方柱图专管分布，与「总量 + 分布成对」的呈现模式一致。 */}
               </AuroraCard>
             )}
           </div>
           {showUsageCredits && (
-            <AuroraCard tone="slate">
+            <AuroraCard tone="neutral">
               <div className="mb-2 text-xs font-medium text-muted-foreground">积分日消耗</div>
               {creditTrend.loading && creditTrend.points.length === 0 ? (
                 <div className="flex h-[160px] items-center justify-center text-sm text-muted-foreground">
@@ -420,21 +435,21 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
             <>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <KpiCard
-                  tone={report.outcome.completionRate !== null && report.outcome.completionRate < 0.85 ? "rose" : "emerald"}
+                  tone={report.outcome.completionRate !== null && report.outcome.completionRate < 0.85 ? "bad" : "good"}
                   icon={CircleCheck}
                   label="任务完成率"
                   value={formatRate(report.outcome.completionRate)}
                   hint={`成功 ${formatCount(report.outcome.success)} / 共 ${formatCount(report.outcome.totalRuns)} 个任务`}
                 />
                 <KpiCard
-                  tone="cyan"
+                  tone="neutral"
                   icon={Activity}
                   label="任务总数"
                   value={formatCount(report.outcome.totalRuns)}
                   hint="期间团队发起的 AI 任务"
                 />
                 <KpiCard
-                  tone={report.outcome.error > 0 ? "rose" : "slate"}
+                  tone={report.outcome.error > 0 ? "bad" : "neutral"}
                   icon={TriangleAlert}
                   label="失败任务"
                   value={formatCount(report.outcome.error)}
@@ -444,7 +459,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                   ].filter(Boolean).join(" · ") || "无中断"}
                 />
                 <KpiCard
-                  tone="slate"
+                  tone="neutral"
                   icon={Timer}
                   label="等待确认耗时"
                   value={formatMs(report.approvals.waitP50Ms)}
@@ -453,7 +468,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
               </div>
 
               <div className="grid gap-3 lg:grid-cols-2">
-                <AuroraCard tone="slate">
+                <AuroraCard tone="neutral">
                   <div className="mb-2 text-xs font-medium text-muted-foreground">失败原因 Top {report.outcome.errorReasons.length || ""}</div>
                   {report.outcome.errorReasons.length === 0 ? (
                     <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
@@ -461,33 +476,89 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                     </div>
                   ) : (
                     <ul className="space-y-1.5 text-xs">
-                      {report.outcome.errorReasons.slice(0, 6).map(reason => (
-                        <li key={reason.reason} className="flex items-center justify-between gap-3">
-                          <span className="min-w-0 truncate" title={reason.reason}>{reasonLabel(reason.reason)}</span>
-                          <span className="shrink-0 font-mono tabular-nums text-muted-foreground">×{reason.count}</span>
-                        </li>
-                      ))}
+                      {report.outcome.errorReasons.slice(0, 6).map(reason => {
+                        const body = (
+                          <>
+                            <span className="min-w-0 truncate" title={reason.reason}>{reasonLabel(reason.reason)}</span>
+                            <span className="shrink-0 font-mono tabular-nums text-muted-foreground">×{reason.count}</span>
+                          </>
+                        );
+                        return (
+                          <li key={reason.reason}>
+                            {/* 平台管理员可以按这个原因筛出全部失败 run；客户面无 runs 列表页，保持只读 */}
+                            {isPlatformAdmin ? (
+                              <button
+                                type="button"
+                                className="flex w-full items-center justify-between gap-3 rounded px-1 py-0.5 text-left hover:bg-muted/50"
+                                title={`查看该原因的失败执行：${reason.reason}`}
+                                onClick={() => navigatePlatformAdmin({
+                                  section: "runs",
+                                  search: { status: "failed", reason: reason.reason, tenantId },
+                                })}
+                              >
+                                {body}
+                              </button>
+                            ) : (
+                              <span className="flex items-center justify-between gap-3 px-1 py-0.5">{body}</span>
+                            )}
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </AuroraCard>
 
-                <AuroraCard tone="slate">
+                <AuroraCard tone="neutral">
                   <div className="mb-2 text-xs font-medium text-muted-foreground">最耗时任务 Top {Math.min(5, report.longTail.slowestRuns.length) || ""}</div>
                   {report.longTail.slowestRuns.length === 0 ? (
                     <div className="py-4 text-xs text-muted-foreground">期间无任务记录</div>
                   ) : (
                     <ul className="space-y-1.5 text-xs">
-                      {report.longTail.slowestRuns.slice(0, 5).map(run => (
-                        <li key={run.runId} className="flex items-center justify-between gap-3">
-                          <span className="flex min-w-0 items-center gap-2">
-                            <RunStatusBadge status={run.status} />
-                            <span className="min-w-0 truncate text-muted-foreground" title={run.model ? labelFor(run.model) : undefined}>
-                              {run.model ? labelFor(run.model) : "—"}
+                      {/*
+                        改造前这一列只有「状态徽章 + 模型 + 耗时」，runId 既不显示也不可点——
+                        客户看到「有个任务很慢」却没有任何下一步。
+
+                        现在按受众分流：
+                        - 平台管理员：整行可点，进该 run 的执行详情排查
+                        - 客户组织管理员：tenant-admin 没有执行详情页，造一个跳转是骗人的。
+                          改为给出可复制的任务编号，客户报障时能精确指认是哪一次。
+                      */}
+                      {report.longTail.slowestRuns.slice(0, 5).map((run, index) => {
+                        const modelLabel = run.model ? labelFor(run.model) : "—";
+                        const body = (
+                          <>
+                            <span className="flex min-w-0 items-center gap-2">
+                              <RunStatusBadge status={run.status} />
+                              <span className="shrink-0 text-muted-foreground">任务 {index + 1}</span>
+                              <span className="min-w-0 truncate text-muted-foreground" title={modelLabel}>
+                                {modelLabel}
+                              </span>
                             </span>
-                          </span>
-                          <span className="shrink-0 font-mono tabular-nums">{formatMs(run.durationMs)}</span>
-                        </li>
-                      ))}
+                            <span className="shrink-0 font-mono tabular-nums">{formatMs(run.durationMs)}</span>
+                          </>
+                        );
+                        return (
+                          <li key={run.runId}>
+                            {isPlatformAdmin ? (
+                              <button
+                                type="button"
+                                className="flex w-full items-center justify-between gap-3 rounded px-1 py-0.5 text-left hover:bg-muted/50"
+                                title={`执行记录 ${run.runId}`}
+                                onClick={() => navigatePlatformAdmin({ section: "runs", entityId: run.runId })}
+                              >
+                                {body}
+                              </button>
+                            ) : (
+                              <span
+                                className="flex items-center justify-between gap-3 px-1 py-0.5"
+                                title={`任务编号 ${run.runId}（反馈问题时可提供此编号）`}
+                              >
+                                {body}
+                              </span>
+                            )}
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </AuroraCard>
@@ -499,7 +570,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
 
       {/* 4. 使用趋势 + 模型占比 */}
       <div className="grid gap-3 lg:grid-cols-2">
-        <AuroraCard tone="slate">
+        <AuroraCard tone="neutral">
           <div className="mb-2 text-xs font-medium text-muted-foreground">对话轮次 · 日趋势</div>
           {usage.loading && turnTrendPoints.length === 0 ? (
             <div className="flex h-[160px] items-center justify-center text-sm text-muted-foreground">
@@ -514,7 +585,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
           )}
         </AuroraCard>
 
-        <AuroraCard tone="fuchsia">
+        <AuroraCard tone="neutral">
           <div className="mb-2 text-xs font-medium text-muted-foreground">模型使用占比 · 按对话轮次</div>
           <DonutChart
             slices={modelSlices}
@@ -526,7 +597,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
       </div>
 
       {/* 5. 成员排行 */}
-      <AuroraCard tone="slate">
+      <AuroraCard tone="neutral">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
           <div className="text-xs font-medium text-muted-foreground">
             成员使用排行 Top {Math.min(8, topUsers.length) || ""}
@@ -555,17 +626,36 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
               </TableRow>
             </TableHeader>
             <TableBody>
-              {topUsers.map(user => (
-                <TableRow key={user.username}>
-                  <TableCell className="font-medium">
-                    <span>{user.realName ?? user.username}</span>
-                    {user.realName && <span className="ml-1.5 text-2xs text-muted-foreground">({user.username})</span>}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums">{user.totalTurns.toLocaleString()}</TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums">{formatShare(user.totalTurns, periodTurns)}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground tabular-nums">{user.lastActiveDate}</TableCell>
-                </TableRow>
-              ))}
+              {topUsers.map(user => {
+                const displayName = user.realName ?? user.username;
+                return (
+                  <TableRow
+                    key={user.username}
+                    // 排行是「看到谁用得多」，下一步必然是「他具体在用什么」。
+                    // 改造前这一行完全不可点，客户只能自己切页签再翻一遍列表。
+                    className={cn(canDrillToUsage && "cursor-pointer hover:bg-muted/40")}
+                    tabIndex={canDrillToUsage ? 0 : undefined}
+                    role={canDrillToUsage ? "button" : undefined}
+                    aria-label={canDrillToUsage ? `查看 ${displayName} 的用量明细` : undefined}
+                    onClick={canDrillToUsage ? () => drillToUsage(user.username) : undefined}
+                    onKeyDown={canDrillToUsage
+                      ? (event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          drillToUsage(user.username);
+                        }
+                      : undefined}
+                  >
+                    <TableCell className="font-medium">
+                      <span>{displayName}</span>
+                      {user.realName && <span className="ml-1.5 text-2xs text-muted-foreground">({user.username})</span>}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs tabular-nums">{user.totalTurns.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-mono text-xs tabular-nums">{formatShare(user.totalTurns, periodTurns)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground tabular-nums">{user.lastActiveDate}</TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         )}

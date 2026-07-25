@@ -11,7 +11,7 @@
  *   [Detail]    单用户详情（替换主区域）
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RefreshCw, ChevronDown, ChevronRight, CircleAlert, RotateCcw, Database, ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import { Loader2, RefreshCw, ChevronDown, ChevronRight, CircleAlert, Download, RotateCcw, Database, ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { useAuth } from "@/contexts/AuthContext";
 
+import { csvFilename, exportCsv, type CsvColumn } from "@/components/PlatformAdmin/common/exportCsv";
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
 
 import { usageApi } from "./api";
@@ -57,7 +58,11 @@ const USAGE_FROM_KEY = "usageFrom";
 const USAGE_TO_KEY = "usageTo";
 const USAGE_MODEL_GROUP_KEY = "usageModelGroup";
 const USAGE_VIEW_KEY = "usageView";
-const USAGE_USER_KEY = "usageUser";
+/**
+ * 导出给「组织综合分析」的成员排行用：点某个成员直接落到他的用量详情。
+ * 导出而不是两边各写一遍字符串，避免其中一处改名后下钻静默失效。
+ */
+export const USAGE_USER_KEY = "usageUser";
 const USAGE_SORT_KEY = "usageSort";
 const USAGE_SORT_DIR_KEY = "usageSortDir";
 
@@ -610,6 +615,40 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
     [byUser, selectedUsername],
   );
 
+  /**
+   * 导出当前筛选下的用户排行。
+   *
+   * 两点刻意的处理：
+   * 1. 列集合跟随 `simplified`——客户视图不含 USD 成本与缓存工程指标，导出不能绕过
+   *    后端的 costRedacted 脱敏，否则一个下载按钮就把内部成本口径漏出去了。
+   * 2. 文件名带时间区间，避免下载一堆同名文件后分不清是哪个窗口的数据。
+   */
+  const exportRanking = useCallback(() => {
+    const users = byUser?.users;
+    if (!users || users.length === 0) return;
+
+    const columns: CsvColumn<UserAggregate>[] = [
+      { header: "用户名", value: (u) => u.username },
+      { header: "姓名", value: (u) => u.realName ?? null },
+      { header: "对话轮次", value: (u) => u.totalTurns },
+      { header: "总 Token", value: (u) => u.totalTokens },
+      { header: "输入 Token", value: (u) => u.totalInputTokens },
+      { header: "输出 Token", value: (u) => u.totalOutputTokens },
+      ...(simplified
+        ? []
+        : [
+            { header: "缓存读 Token", value: (u: UserAggregate) => u.totalCacheReadTokens },
+            { header: "缓存写 Token", value: (u: UserAggregate) => u.totalCacheCreationTokens },
+            { header: "缓存命中率", value: (u: UserAggregate) => formatPercent(u.cacheHitRatio) },
+            { header: "成本(USD)", value: (u: UserAggregate) => u.totalCostUsd ?? null },
+          ]),
+      { header: "最后活跃", value: (u) => u.lastActiveDate },
+    ];
+
+    const rangeLabel = overview ? formatDateRange(overview.fromDate, overview.toDate) : undefined;
+    exportCsv(csvFilename(rangeLabel ? `用户排行_${rangeLabel}` : "用户排行"), users, columns);
+  }, [byUser, overview, simplified]);
+
   return (
     <div className={cn("w-full", !fullWidth && "mx-auto max-w-5xl")}>
       {/* 列表保持挂载（隐藏）以保留排序态、行展开态与已加载数据；详情按需挂载。
@@ -716,8 +755,19 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
       </Card>
 
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="flex-row items-start justify-between gap-3 pb-2">
           <CardTitle>用户排行 <span className="ml-1 text-2xs font-normal text-muted-foreground">（点用户名查看详情；点 <ChevronRight className="inline size-3 align-[-1.5px]" aria-hidden="true" /> 展开模型分布）</span></CardTitle>
+          {/* 导出用于对账与月报。改造前全站零导出能力，这类需求只能靠截图 */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={!byUser || byUser.users.length === 0}
+            onClick={() => exportRanking()}
+          >
+            <Download className="mr-1.5 size-3.5" />
+            导出 CSV
+          </Button>
         </CardHeader>
         <CardContent>
           {byUser ? (

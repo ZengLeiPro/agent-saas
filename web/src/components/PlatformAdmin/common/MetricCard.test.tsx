@@ -75,12 +75,23 @@ describe("MetricCard · 数值呈现", () => {
 });
 
 describe("MetricCard · aurora（客户面外观）", () => {
-  it("aurora 变体渲染渐变外壳 + 图标徽章，而不是 platform 的灰卡", () => {
+  it("aurora 变体渲染语义描边外壳 + 图标徽章，而不是 platform 的灰卡", () => {
     const { container } = render(
-      <MetricCard variant="aurora" auroraTone="cyan" icon={Users} title="成员" value={12} description="管理员 2" />,
+      <MetricCard variant="aurora" auroraTone="neutral" icon={Users} title="成员" value={12} description="管理员 2" />,
     );
-    expect(container.querySelector(".bg-gradient-to-br")).toBeTruthy();
+    // S5-C 起外壳从七彩渐变改为单档语义描边——渐变类不该再出现
+    expect(container.querySelector(".bg-gradient-to-br")).toBeNull();
+    expect(container.querySelector(".bg-border")).toBeTruthy();
     expect(container.querySelectorAll("svg")).toHaveLength(1);
+  });
+
+  it("aurora 语气按四档语义映射，不接受调色板色名", () => {
+    const { container } = render(
+      <MetricCard variant="aurora" auroraTone="bad" icon={Users} title="失败任务" value={3} />,
+    );
+    const shell = container.firstChild as HTMLElement;
+    expect(shell.className).toContain("bg-danger/30");
+    expect(shell.className).not.toMatch(/rose|fuchsia|amber|emerald|cyan|indigo/);
   });
 
   it("aurora 下数值仍是 tabular-nums，字号是客户面的 3xl", () => {

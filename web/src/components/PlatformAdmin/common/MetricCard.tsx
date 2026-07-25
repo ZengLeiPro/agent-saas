@@ -24,10 +24,13 @@ function toneClassOf(tone: MetricTone): string {
  *
  * **两种外观**：
  * - `variant="default"`：内部运维面（platform-admin / RunTraceExplorer），紧凑 Card。
- * - `variant="aurora"`：客户面（tenant-admin），走 AuroraCard 渐变边 + ToneBadge 图标。
+ * - `variant="aurora"`：客户面（tenant-admin），走 AuroraCard 语义描边 + ToneBadge 图标。
  *   没有硬合成一种外观，因为客户面的观感是刻意设计的，硬合会让 tenant-admin 变成
  *   一片灰卡。注意 aurora 只是**外观**——「客户面不显示原始 ID / ¥$ 成本」这条约束
  *   由调用点传什么 value 决定，本组件不做也不该做脱敏。
+ *
+ * `auroraTone` 只有四档语义（good / warn / bad / neutral），默认 neutral：
+ * 不传语气不代表「好」。见 `TenantAnalytics/AuroraCard.tsx` 的取舍说明。
  */
 export function MetricCard({
   title,
@@ -36,7 +39,7 @@ export function MetricCard({
   tone = "default",
   onClick,
   variant = "default",
-  auroraTone = "slate",
+  auroraTone = "neutral",
   icon: Icon,
   loading = false,
   descriptionClassName,

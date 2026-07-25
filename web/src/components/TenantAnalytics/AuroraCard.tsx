@@ -2,26 +2,40 @@ import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
-export type Tone = "indigo" | "fuchsia" | "cyan" | "emerald" | "amber" | "rose" | "slate";
+/**
+ * 客户面指标卡的语气。
+ *
+ * 改造前是七彩色板（indigo / fuchsia / cyan / emerald / amber / rose / slate），
+ * 问题不是"不好看"，而是**同一个颜色承载两种含义**：`emerald` 既用在「成员数」
+ * （纯装饰）又用在「完成率达标」（真的是好事），`fuchsia` 用在「对话轮次」上
+ * 不表达任何东西。结果客户看到一片颜色，判断不出哪个需要他行动。
+ *
+ * 现在颜色预算全部给状态语义，只有四档：
+ *   - good    确实是好状态，不需要动作
+ *   - warn    需要留意（余额偏低、有成员没用起来）
+ *   - bad     需要处理（余额告急、完成率不达标、有失败任务）
+ *   - neutral 纯展示量，不承载好坏（成员数、对话轮次、任务总数）
+ *
+ * 判断依据：这个数字变化时，客户需不需要做什么。不需要就是 neutral。
+ */
+export type Tone = "good" | "warn" | "bad" | "neutral";
 
-const toneGradients: Record<Tone, string> = {
-  indigo: "from-indigo-500/60 via-violet-500/40 to-sky-400/40",
-  fuchsia: "from-fuchsia-500/60 via-pink-500/40 to-rose-400/40",
-  cyan: "from-cyan-500/60 via-sky-500/40 to-blue-400/40",
-  emerald: "from-emerald-500/60 via-teal-500/40 to-cyan-400/40",
-  amber: "from-amber-500/60 via-orange-500/40 to-rose-400/40",
-  rose: "from-rose-500/60 via-pink-500/40 to-fuchsia-400/40",
-  slate: "from-slate-400/40 via-slate-500/30 to-slate-400/20",
+/**
+ * 卡片描边。用语义 token 而非调色板值，暗色由 token 自身承担（不写 dark: 两段式）。
+ * 强度刻意压低：描边是用来分组的，不该盖过卡内数字。
+ */
+const toneRing: Record<Tone, string> = {
+  good: "bg-success/25",
+  warn: "bg-warning/30",
+  bad: "bg-danger/30",
+  neutral: "bg-border",
 };
 
 const toneBadgeBg: Record<Tone, string> = {
-  indigo: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-300",
-  fuchsia: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-300",
-  cyan: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-300",
-  emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
-  amber: "bg-amber-500/10 text-amber-600 dark:text-amber-300",
-  rose: "bg-rose-500/10 text-rose-600 dark:text-rose-300",
-  slate: "bg-slate-500/10 text-slate-600 dark:text-slate-300",
+  good: "bg-success-subtle text-success-ink",
+  warn: "bg-warning-subtle text-warning-ink",
+  bad: "bg-danger-subtle text-danger-ink",
+  neutral: "bg-muted text-muted-foreground",
 };
 
 /**
@@ -30,7 +44,7 @@ const toneBadgeBg: Record<Tone, string> = {
  * 把可交互属性传进来后会被静默丢掉，卡片看着能点、键盘完全到不了。
  */
 export function AuroraCard({
-  tone = "slate",
+  tone = "neutral",
   className,
   children,
   ...props
@@ -41,8 +55,8 @@ export function AuroraCard({
   return (
     <div
       className={cn(
-        "relative rounded-2xl bg-gradient-to-br p-px shadow-sm transition hover:shadow-md",
-        toneGradients[tone],
+        "relative rounded-2xl p-px shadow-sm transition hover:shadow-md",
+        toneRing[tone],
         className,
       )}
       {...props}
@@ -53,7 +67,7 @@ export function AuroraCard({
 }
 
 export function ToneBadge({
-  tone = "slate",
+  tone = "neutral",
   icon: Icon,
   className,
 }: {

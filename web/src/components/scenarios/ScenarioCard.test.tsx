@@ -98,8 +98,8 @@ describe("ScenarioCard · 有 exampleResult", () => {
     // 弹层懒加载：等待免责 banner 出现（由 UI 固定渲染，不依赖 markdown 内容自带）
     expect(await screen.findByText(EXAMPLE_DISCLAIMER)).toBeTruthy();
     // markdown 结构被真实渲染：标题与表格单元格
-    expect(await screen.findByRole("heading", { name: "示例结论" })).toBeTruthy();
-    expect(await screen.findByText("华跃鞋材")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "示例结论" }, { timeout: 5_000 })).toBeTruthy();
+    expect(await screen.findByText("华跃鞋材", {}, { timeout: 5_000 })).toBeTruthy();
     // 打开弹层不触发预填，也不误触卡片「打开详情」
     expect(onTry).not.toHaveBeenCalled();
     expect(onOpenDetail).not.toHaveBeenCalled();

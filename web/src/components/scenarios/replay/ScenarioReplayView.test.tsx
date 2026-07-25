@@ -58,7 +58,8 @@ describe('ScenarioReplayView', () => {
     renderReplay();
     clickNext(2);
     expect(screen.getByText('检索企业制度库')).toBeTruthy();
-    expect(screen.getByText('制度中心 · 财务与行政')).toBeTruthy();
+    // 同一文本也出现在右侧面板工具栏里，说明两处同源；此处只断言会话流里有
+    expect(screen.getAllByText('制度中心 · 财务与行政').length).toBeGreaterThan(0);
     expect(screen.getByText('《差旅管理办法》2026 修订版')).toBeTruthy();
   });
 
@@ -91,12 +92,75 @@ describe('ScenarioReplayView', () => {
   it('末步产物卡走真实 [FILE] 通道，点击后右侧渲染剧本内嵌 HTML', () => {
     renderReplay();
     clickNext(knowledgeQaScript.steps.length);
+    // 该文件名同时出现在会话流产物卡与面板留痕卡里，取会话流那个（DOM 在前）
     const card = screen.getByText('制度条款引用.html');
     fireEvent.click(card);
     const frame = screen.getByTitle('制度条款引用.html') as HTMLIFrameElement;
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
     expect(frame.getAttribute('srcdoc')).toContain('Content-Security-Policy');
     expect(frame.getAttribute('srcdoc')).toContain('第四章 第 12 条');
+  });
+});
+
+describe('右侧企业系统面板', () => {
+  it('第一步不出现面板——真实会话此时也还没触达任何系统', () => {
+    renderReplay();
+    clickNext(1);
+    expect(screen.queryByText('企业系统实况')).toBeNull();
+  });
+
+  it('第一次工具执行后面板出现，并常驻于后续每一步', () => {
+    renderReplay();
+    clickNext(2);
+    expect(screen.getByText('企业系统实况')).toBeTruthy();
+    expect(screen.getByText('差旅管理办法(2026).md')).toBeTruthy();
+    clickNext(1);
+    expect(screen.getByText('企业系统实况')).toBeTruthy();
+  });
+
+  it('面板随步骤变化：检索命中 → 条款插入 → 档案填充 → 留痕', () => {
+    renderReplay();
+    clickNext(2);
+    expect(screen.getAllByText('命中').length).toBeGreaterThan(0);
+
+    clickNext(1);
+    expect(screen.getByText('第四章 第 12 条 住宿标准')).toBeTruthy();
+
+    clickNext(1);
+    expect(screen.getByText('600 元/晚')).toBeTruthy();
+    expect(screen.getByText('1,800 元')).toBeTruthy();
+
+    clickNext(1);
+    expect(screen.getByText(/生成条款出处清单并附于答复/)).toBeTruthy();
+  });
+
+  it('后退＝少喂 patch，面板回到上一步状态（无需逆运算）', () => {
+    renderReplay();
+    clickNext(4);
+    expect(screen.getByText('600 元/晚')).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(screen.queryByText('600 元/晚')).toBeNull();
+    expect(screen.getByText('第四章 第 12 条 住宿标准')).toBeTruthy();
+  });
+
+  it('面板可切 tab，且切过之后不被后续 focus patch 抢走', () => {
+    renderReplay();
+    clickNext(2);
+    fireEvent.click(screen.getByRole('button', { name: '操作留痕' }));
+    expect(screen.getByText('本次会话的系统动作')).toBeTruthy();
+    clickNext(2);
+    // step4 带 focus profile，但用户已手动选过 tab，焦点不被抢
+    expect(screen.getByText('本次会话的系统动作')).toBeTruthy();
+  });
+
+  it('产物预览抢占面板，可一键退回系统实况', () => {
+    renderReplay();
+    clickNext(knowledgeQaScript.steps.length);
+    fireEvent.click(screen.getByText('制度条款引用.html'));
+    expect(screen.getByTitle('制度条款引用.html')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /系统实况/ }));
+    expect(screen.queryByTitle('制度条款引用.html')).toBeNull();
+    expect(screen.getByText('企业系统实况')).toBeTruthy();
   });
 });
 

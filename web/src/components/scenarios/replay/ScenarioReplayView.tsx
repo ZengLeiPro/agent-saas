@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { MessageList } from "@/components/MessageList";
 import { FilePreviewProvider } from "@/contexts/FilePreviewContext";
 import { HTML_SANDBOX_CSP } from "@/components/HtmlPreviewPanel";
+import { SystemPanel } from "@/components/SystemPanel";
+import { useSystemPanel } from "@/hooks/useSystemPanel";
 import { cn } from "@/lib/utils";
 import type { ReplayScript } from "./types";
 
@@ -27,17 +29,23 @@ function buildDetail(blocks: ApiTranscriptBlock[]): ApiSessionDetail {
   };
 }
 
-/** 产物面板：数据源来自剧本，渲染与沙箱策略与真实 HTML 产物预览一致。 */
-function ArtifactPanel({ html, fileName, onClose }: { html: string; fileName: string; onClose: () => void }) {
+/** 产物预览：数据源来自剧本，渲染与沙箱策略与真实 HTML 产物预览一致。 */
+function ArtifactPanel({ html, fileName, onClose, onBackToPanel }: { html: string; fileName: string; onClose: () => void; onBackToPanel?: () => void }) {
   const srcDoc = useMemo(
     () => html.replace(/<head(\s[^>]*)?>/i, (m) => `${m}<meta http-equiv="Content-Security-Policy" content="${HTML_SANDBOX_CSP}">`),
     [html],
   );
   return (
-    <div className="flex min-h-0 w-full flex-col border-l border-border bg-background">
+    <div className="flex min-h-0 w-full flex-1 flex-col bg-background">
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        {onBackToPanel ? (
+          <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={onBackToPanel}>
+            <ChevronLeft className="size-3.5" />
+            系统实况
+          </Button>
+        ) : null}
         <span className="min-w-0 truncate text-sm font-medium">{fileName}</span>
-        <Button variant="ghost" size="icon" className="ml-auto size-7" onClick={onClose} aria-label="关闭产物面板">
+        <Button variant="ghost" size="icon" className="ml-auto size-7" onClick={onClose} aria-label="关闭产物预览">
           <X className="size-4" />
         </Button>
       </div>
@@ -63,6 +71,11 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
     const blocks = script.steps.slice(0, stepIndex).flatMap((step) => step.blocks);
     return blocks.length ? mapSessionDetailToMessages(buildDetail(blocks)) : [];
   }, [script, stepIndex]);
+
+  // 面板从消息流 fold，与真实会话同一个 hook——面板没有独立数据通道
+  const { snapshot, selectView } = useSystemPanel(messages);
+  const artifactHtml = artifact ? script.artifacts?.[artifact.path] : undefined;
+  const rightOpen = !!snapshot || !!artifactHtml;
 
   const next = useCallback(() => setStepIndex((i) => Math.min(total, i + 1)), [total]);
   const prev = useCallback(() => {
@@ -118,7 +131,7 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
       </div>
 
       <div className="flex min-h-0 flex-1">
-        <div className={cn("flex min-h-0 flex-col", artifact ? "w-1/2" : "w-full")}>
+        <div className={cn("flex min-h-0 flex-col", rightOpen ? "w-1/2" : "w-full")}>
           <FilePreviewProvider value={{ openPreview }}>
             <MessageList
               messages={messages}
@@ -129,13 +142,22 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
             />
           </FilePreviewProvider>
         </div>
-        {artifact && script.artifacts?.[artifact.path] && (
-          <div className="flex min-h-0 w-1/2">
-            <ArtifactPanel
-              html={script.artifacts[artifact.path]}
-              fileName={artifact.fileName}
-              onClose={() => setArtifact(null)}
-            />
+
+        {rightOpen && (
+          <div className="flex min-h-0 w-1/2 flex-col border-l border-border">
+            {/* 产物预览抢占面板：用户显式点击的意图压过自动跟随。
+                面板不卸载，只是被盖住，fold 状态与滚动位置都保留。 */}
+            {artifactHtml ? (
+              <ArtifactPanel
+                html={artifactHtml}
+                fileName={artifact!.fileName}
+                onClose={() => setArtifact(null)}
+                onBackToPanel={snapshot ? () => setArtifact(null) : undefined}
+              />
+            ) : null}
+            <div className={cn("flex min-h-0 flex-1 flex-col", artifactHtml && "hidden")}>
+              {snapshot ? <SystemPanel snapshot={snapshot} onSelectView={selectView} className="min-h-0 flex-1" /> : null}
+            </div>
           </div>
         )}
       </div>

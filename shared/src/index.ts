@@ -476,6 +476,24 @@ export type { MarkerSegment, CitationSegment } from "./lib/markers";
 export { normalizeToolPresentation } from "./lib/toolPresentation";
 export type { ToolPresentation, ToolReceipt, DetailLine } from "./lib/toolPresentation";
 
+// Lib - 右侧企业系统面板（与 ToolPresentation 同源，无独立数据通道）
+export { normalizeSystemPanel, normalizePanelPatches, foldPanel } from "./lib/systemPanel";
+export type {
+  SystemPanelSnapshot,
+  PanelPatch,
+  PanelView,
+  PanelWidget,
+  PanelRow,
+  PanelCard,
+  PanelCol,
+  PanelTableRow,
+  PanelStat,
+  PanelFeedItem,
+  PanelBadge,
+  PanelEmpty,
+  PanelTone,
+} from "./lib/systemPanel";
+
 // Lib - 租户共享 KB 文件访问（kb:// 伪协议 + 鉴权 API URL）
 export {
   KB_SCHEME,

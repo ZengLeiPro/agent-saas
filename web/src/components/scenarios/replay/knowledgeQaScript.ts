@@ -1,3 +1,4 @@
+import type { SystemPanelSnapshot } from "@agent/shared";
 import type { ReplayScript } from "./types";
 
 /**
@@ -63,6 +64,49 @@ const CITATION_PANEL_HTML = `<!doctype html>
 <p class="foot">示例内容，不对应任何真实企业制度。</p>
 </body></html>`;
 
+/**
+ * 面板底稿：三个被触达的企业系统视图。
+ * 初始状态是"还没被检索过"的样子——每一步的 patch 才让它动起来。
+ */
+const PANEL_BASE: SystemPanelSnapshot = {
+  title: "企业系统实况",
+  live: true,
+  activeView: "kb",
+  foot: "已连接：制度中心 · 通讯录（只读）",
+  views: [
+    {
+      key: "kb",
+      label: "制度中心",
+      winTitle: "制度中心 · 文档库",
+      toolbar: { title: "制度中心 · 文档库", sub: "共 5 篇" },
+      widget: {
+        kind: "rows",
+        rows: [
+          { id: "doc-travel", text: "差旅管理办法(2026).md", sub: "2026 修订版 · 财务", meta: "18 KB" },
+          { id: "doc-expense", text: "费用报销操作指引(2025-11).md", sub: "2025-11 发布 · 财务", meta: "24 KB" },
+          { id: "doc-finance", text: "财务制度总则.md", sub: "2024 版 · 财务", meta: "31 KB" },
+          { id: "doc-handbook", text: "员工手册(2025).md", sub: "2025 版 · 行政", meta: "56 KB" },
+          { id: "doc-purchase", text: "采购管理办法.md", sub: "2025 版 · 供应链", meta: "22 KB" },
+        ],
+      },
+    },
+    {
+      key: "profile",
+      label: "通讯录",
+      winTitle: "组织通讯录 · 本人档案",
+      toolbar: { title: "本人档案", sub: "只读" },
+      widget: { kind: "stats", cols: 3, items: [] },
+    },
+    {
+      key: "audit",
+      label: "操作留痕",
+      winTitle: "操作留痕 · 本次会话",
+      toolbar: { title: "本次会话的系统动作", sub: "全部只读" },
+      widget: { kind: "feed", items: [], empty: { title: "尚无系统动作" } },
+    },
+  ],
+};
+
 export const knowledgeQaScript: ReplayScript = {
   scenarioId: "catalog-evidence-backed-communication-create",
   title: "有出处、数字不走样的业务答复",
@@ -102,6 +146,17 @@ export const knowledgeQaScript: ReplayScript = {
               { tree: "├", k: "最相关", v: "《差旅管理办法》2026 修订版" },
               { tree: "└", k: "次相关", v: "《费用报销操作指引》2025-11" },
             ],
+            // 面板底稿只在第一条带它的摘要上生效——面板随第一次工具执行出现，
+            // 这与真实会话一致（用户刚提问时确实还没有任何系统被触达）
+            panelBase: PANEL_BASE,
+            panel: [
+              { op: "focus", view: "kb" },
+              { op: "toolbar", view: "kb", title: "制度中心 · 财务与行政", sub: "命中 3 / 共 5 篇" },
+              { op: "rowsUpdate", view: "kb", ids: ["doc-travel", "doc-expense"], set: { state: "hit", badge: { text: "命中", tone: "pass" } } },
+              { op: "rowUpdate", view: "kb", id: "doc-finance", set: { badge: { text: "弱相关", tone: "info" } } },
+              { op: "rowsUpdate", view: "kb", ids: ["doc-handbook", "doc-purchase"], set: { state: "excluded", badge: { text: "未命中", tone: "pending" } } },
+              { op: "feedAppend", view: "audit", item: { id: "a1", from: "AI 同事", time: "10:24:01", text: "检索制度中心：差旅 住宿 标准 发票" } },
+            ],
           },
         },
         {
@@ -135,6 +190,12 @@ export const knowledgeQaScript: ReplayScript = {
               { tree: "├", k: "住宿标准", v: "第四章 第 12 条" },
               { tree: "└", k: "票据要求", v: "第四章 第 15 条" },
               { indent: 0, text: "→ 标准按「城市档位 × 本人职级」分档，需先确认职级" },
+            ],
+            panel: [
+              { op: "toolbar", view: "kb", title: "差旅管理办法 2026 · 条款定位", sub: "命中 2 条" },
+              { op: "rowInsert", view: "kb", row: { id: "c12", text: "第四章 第 12 条 住宿标准", sub: "一类城市 P5 及以下 600 元/晚", state: "hit", badge: { text: "适用", tone: "pass" } }, at: 1 },
+              { op: "rowInsert", view: "kb", row: { id: "c15", text: "第四章 第 15 条 票据要求", sub: "住宿业增值税发票，抬头须与公司主体一致", state: "hit", badge: { text: "适用", tone: "pass" } }, at: 2 },
+              { op: "feedAppend", view: "audit", item: { id: "a2", from: "AI 同事", time: "10:24:03", text: "读取《差旅管理办法(2026)》第四章 12/15 条" } },
             ],
           },
         },
@@ -170,6 +231,18 @@ export const knowledgeQaScript: ReplayScript = {
               { tree: "└", k: "适用档位", v: "一类城市 · P5 及以下" },
             ],
             status: "ok",
+            panel: [
+              { op: "focus", view: "profile" },
+              { op: "statsSet", view: "profile", items: [
+                { k: "部门", v: "市场部" },
+                { k: "职级", v: "P5" },
+                { k: "出差城市", v: "上海（一类）" },
+                { k: "住宿上限", v: "600 元/晚", tone: "pass" },
+                { k: "行程天数", v: "3 天" },
+                { k: "合计上限", v: "1,800 元", tone: "pass" },
+              ] },
+              { op: "feedAppend", view: "audit", item: { id: "a3", from: "AI 同事", time: "10:24:04", text: "读取通讯录：本人部门与职级（只读）" } },
+            ],
           },
         },
         {
@@ -184,8 +257,46 @@ export const knowledgeQaScript: ReplayScript = {
       ],
     },
     {
-      caption: "给出答复与条款出处",
+      caption: "生成条款出处并答复",
       blocks: [
+        {
+          id: "s5-tool",
+          kind: "tool_use",
+          title: "Write",
+          defaultOpen: false,
+          toolName: "Write",
+          toolId: "t-write",
+          content: JSON.stringify({ file_path: CITATION_PANEL_PATH }),
+          executionStatus: "completed",
+          durationMs: 1120,
+          presentation: {
+            title: "生成条款出处清单",
+            detail: [
+              { k: "产物", v: "条款出处清单（HTML）" },
+              { tree: "├", k: "引用条款", v: "2 条（第 12 / 15 条）" },
+              { tree: "└", k: "另附", v: "报销提交时限 30 日" },
+            ],
+            panel: [
+              { op: "focus", view: "audit" },
+              { op: "feedAppend", view: "audit", item: {
+                id: "a4",
+                from: "AI 同事",
+                time: "10:24:06",
+                text: "生成条款出处清单并附于答复",
+                card: { title: "条款出处清单已生成", body: "引用《差旅管理办法(2026)》第 12/15 条、《费用报销操作指引》第 3 节", meta: [{ text: "只读引用", tone: "pass" }, { text: "未修改任何系统", tone: "info" }] },
+              } },
+            ],
+          },
+        },
+        {
+          id: "s5-result",
+          kind: "tool_result",
+          title: "Write 结果",
+          defaultOpen: false,
+          toolName: "Write",
+          toolId: "t-write",
+          content: `written: ${CITATION_PANEL_PATH} (2.4 KB)`,
+        },
         {
           id: "s5-text",
           kind: "text",
@@ -209,25 +320,32 @@ export const knowledgeQaScript: ReplayScript = {
     },
   ],
 
-  // 治理条款：state != exists 的条目就是「演示到真实」的距离
+  // 治理条款：state != exists 的条目就是「演示到真实」的距离。
+  // 面板 patch 与 detail 同源，产出方即工具本身，故不另行登记面板。
   sources: [
     {
       blockRef: "step2.tool.KnowledgeSearch",
       producer: "企业知识库检索工具",
       state: "needs-change",
-      gap: "检索能力已有，但不返回结构化 presentation；需在工具执行器包一层摘要",
+      gap: "检索能力已有，但服务端不产出 presentation（server/src 对该字段零命中）；需在工具执行器统一包一层摘要 + 命中行 patch",
     },
     {
       blockRef: "step3.tool.Read",
       producer: "Read 工具执行器",
       state: "needs-change",
-      gap: "命中章节号需由检索侧带出，Read 自身不知道条款结构",
+      gap: "命中章节号需由检索侧带出，Read 自身不知道条款结构；面板的条款行同理",
     },
     {
       blockRef: "step4.tool.DingtalkContact",
       producer: "钉钉通讯录（DWS）",
       state: "needs-change",
-      gap: "DWS 可查通讯录，但职级字段依赖客户组织架构是否维护；无 presentation 输出",
+      gap: "DWS 可查通讯录，但职级字段依赖客户组织架构是否维护；且无 presentation 输出",
+    },
+    {
+      blockRef: "step5.tool.Write",
+      producer: "Write 工具执行器",
+      state: "needs-change",
+      gap: "写文件本身已有，但不产出 presentation；产物摘要与留痕 feed 需执行器补",
     },
     {
       blockRef: "step5.artifact.制度条款引用",

@@ -10,6 +10,13 @@
  * 观众是业务决策者，不是工程师。原始 payload 有它自己的通道。
  */
 
+import {
+  normalizePanelPatches,
+  normalizeSystemPanel,
+  type PanelPatch,
+  type SystemPanelSnapshot,
+} from './systemPanel';
+
 /** 摘要行。字符串＝整行纯文本；其余变体各对应一种对齐排版。 */
 export type DetailLine =
   /** 纯文本行 */
@@ -41,6 +48,14 @@ export interface ToolPresentation {
   /** 业务级状态，与 executionStatus（技术级）正交：技术成功但业务被拦截是合法组合。 */
   status?: 'ok' | 'warn' | 'blocked' | 'waiting';
   receipt?: ToolReceipt;
+  /**
+   * 本次工具执行对右侧企业系统面板的增量。
+   * 面板与 detail 同源——同一条摘要，detail 进会话流，panel 进右侧面板，
+   * 面板没有独立数据通道。这是反两套皮的物理约束。
+   */
+  panel?: PanelPatch[];
+  /** 面板底稿。一个会话里只有第一条带 panelBase 的 presentation 生效，后续忽略。 */
+  panelBase?: SystemPanelSnapshot;
 }
 
 const DETAIL_LINE_LIMIT = 200;
@@ -92,7 +107,7 @@ const STATUS_VALUES = new Set(['ok', 'warn', 'blocked', 'waiting']);
  * 一律返回 null 而非抛错——渲染层永远不应因为摘要脏数据而崩，
  * 返回 null 即自动回退到原始 payload 通道。
  */
-export function normalizeToolPresentation(raw: unknown): ToolPresentation | null {
+export function normalizeToolPresentation(raw: unknown, options?: { allowCustomHtml?: boolean }): ToolPresentation | null {
   if (!raw || typeof raw !== 'object') return null;
   const input = raw as Record<string, unknown>;
 
@@ -112,6 +127,14 @@ export function normalizeToolPresentation(raw: unknown): ToolPresentation | null
   if (typeof input.status === 'string' && STATUS_VALUES.has(input.status)) {
     result.status = input.status as ToolPresentation['status'];
   }
+
+  const panel = normalizePanelPatches(input.panel);
+  if (panel.length > 0) result.panel = panel;
+
+  // allowCustomHtml 只对演示剧本内嵌来源开放；解析 transcript 时恒为 false，
+  // 使工具产出的 custom HTML 无法进入面板（安全硬线，见 systemPanel.ts）
+  const panelBase = normalizeSystemPanel(input.panelBase, options?.allowCustomHtml === true);
+  if (panelBase) result.panelBase = panelBase;
 
   const receipt = input.receipt as Record<string, unknown> | undefined;
   if (receipt && typeof receipt === 'object') {

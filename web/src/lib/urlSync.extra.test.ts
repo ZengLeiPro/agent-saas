@@ -25,6 +25,8 @@ describe("normalizeSettingsSection", () => {
   it("合法 section 原样返回", () => {
     expect(normalizeSettingsSection("memory")).toBe("memory");
     expect(normalizeSettingsSection("files")).toBe("files");
+    // 附件存储曾漏配白名单被静默回退到 account
+    expect(normalizeSettingsSection("storage")).toBe("storage");
   });
   it("非法 / 空值回退 account", () => {
     expect(normalizeSettingsSection("cron")).toBe("account");
@@ -65,6 +67,7 @@ describe("isSettingsPath", () => {
 describe("buildSettingsUrl / buildAdminSettingsUrl", () => {
   it("settings section 编码", () => {
     expect(buildSettingsUrl("files")).toBe("/settings/files");
+    expect(buildSettingsUrl("storage")).toBe("/settings/storage");
   });
   it("admin settings 前缀区分 tenant / platform", () => {
     expect(buildAdminSettingsUrl("tenant", "billing")).toBe("/tenant-admin/settings/billing");
@@ -135,6 +138,7 @@ describe("parseUrl 常规路径分支", () => {
   it("settings 根与子 section", () => {
     expect(parseUrl("/settings")).toMatchObject({ tab: "chat", settingsSection: "account" });
     expect(parseUrl("/settings/memory")).toMatchObject({ tab: "chat", settingsSection: "memory" });
+    expect(parseUrl("/settings/storage")).toMatchObject({ tab: "chat", settingsSection: "storage" });
     expect(parseUrl("/settings/cron")).toMatchObject({ tab: "cron", canonicalPath: "/cron" });
   });
 

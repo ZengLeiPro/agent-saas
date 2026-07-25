@@ -2,17 +2,24 @@ import type { AppTab } from '@/types/sidebar';
 import type { SettingsSectionId } from '@/types/settings';
 import { maybeNavigateWithUpdate } from '@/lib/swUpdate';
 
-const SETTINGS_SECTION_IDS: ReadonlySet<string> = new Set([
-  'account',
-  'general',
-  'personalization',
-  'all-agents',
-  'memory',
-  'skills',
-  'mcp',
-  'files',
-  'data',
-]);
+/**
+ * 用 Record 穷举而非字面量数组：往 SettingsSectionId 加成员却漏配这里时，
+ * TS 会直接报缺失属性，避免新 section 被静默 fallback 到 account。
+ */
+const SETTINGS_SECTION_ID_MAP: Record<SettingsSectionId, true> = {
+  'account': true,
+  'general': true,
+  'personalization': true,
+  'all-agents': true,
+  'memory': true,
+  'skills': true,
+  'mcp': true,
+  'files': true,
+  'storage': true,
+  'data': true,
+};
+
+const SETTINGS_SECTION_IDS: ReadonlySet<string> = new Set(Object.keys(SETTINGS_SECTION_ID_MAP));
 
 /** 组织管理 modal 的合法 section（与 AdminShells.tenantSettingsSections 对齐） */
 const TENANT_ADMIN_SETTINGS_SECTIONS: ReadonlySet<string> = new Set([

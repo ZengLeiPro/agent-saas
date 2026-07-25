@@ -14,6 +14,7 @@ import { navigatePlatformAdmin } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
+import { useConfirmDialog } from "../ConfirmDialog";
 import {
   SANDBOX_LABEL,
   formatBusyState,
@@ -34,6 +35,15 @@ const PHASE_OPTIONS: AdminSelectOption[] = [
     label: formatSandboxPhase(value),
   })),
 ];
+
+/** 状态列排序权重：坏的排前面（运维先看异常，不是先看字母序） */
+const PHASE_ORDER: Record<string, number> = {
+  Failed: 0,
+  Pending: 1,
+  Provisioning: 2,
+  Running: 3,
+  Paused: 4,
+};
 
 export function SandboxesPage({ sandboxName }: { sandboxName: string | null }) {
   if (sandboxName) return <SandboxDetail sandboxName={sandboxName} />;
@@ -72,6 +82,7 @@ function useSandboxData() {
 
 function SandboxList() {
   const adminQuery = useAdminUrlQuery();
+  const { confirm, confirmDialog } = useConfirmDialog();
   // 只读平台 admin：清理/暂停/启动/删除等写操作 disabled；「网络自检」是服务端白名单放行的只读探测，保留可用
   const { platformReadOnly, canPlatform } = useAuth();
   const runtimeReadOnly = !canPlatform("runtime.operate");
@@ -117,35 +128,63 @@ function SandboxList() {
     }
   }, [load]);
 
-  const cleanupLifecycle = () => {
-    if (!window.confirm("立即清理长期空闲的执行环境？平台会按现有规则暂停或删除环境，用户文件不会被删除。")) return;
-    void runAction("cleanup", () => platformAdminApi.cleanupLifecycle());
-  };
+  const cleanupLifecycle = () => confirm({
+    title: "立即清理长期空闲的执行环境？",
+    description: "平台会按现有生命周期规则暂停或删除空闲环境。用户文件不会被删除，被清理的用户下次发起任务会自动重建环境。",
+    confirmLabel: "开始清理",
+    tone: "danger",
+    onConfirm: () => void runAction("cleanup", () => platformAdminApi.cleanupLifecycle()),
+  });
 
-  const probeNetwork = () => {
-    if (!window.confirm("执行网络自检？平台会创建一个临时执行环境，检查完成后自动删除。")) return;
-    void runAction("network-probe", () => platformAdminApi.probeNetworkPolicy());
-  };
+  const probeNetwork = () => confirm({
+    title: "执行网络自检？",
+    description: "平台会创建一个临时执行环境做出口连通性探测，检查完成后自动删除，不影响现有环境。",
+    confirmLabel: "开始自检",
+    onConfirm: () => void runAction("network-probe", () => platformAdminApi.probeNetworkPolicy()),
+  });
 
-  const cleanupSnat = () => {
-    if (!window.confirm("清理已经失效的网络出口规则？只处理平台托管且没有对应执行环境的规则。")) return;
-    void runAction("snat-cleanup", () => platformAdminApi.cleanupOrphanSnat());
-  };
+  const cleanupSnat = () => confirm({
+    title: "清理已经失效的网络出口规则？",
+    description: "只处理平台托管、且没有对应执行环境的规则；用户自建或仍在使用的规则不会被动到。",
+    details: [{ label: "待清理规则", value: formatNumber(snat?.orphanCount) }],
+    confirmLabel: "开始清理",
+    onConfirm: () => void runAction("snat-cleanup", () => platformAdminApi.cleanupOrphanSnat()),
+  });
 
-  const pauseSandbox = (row: SandboxRecord) => {
-    if (!window.confirm(`暂停执行环境 ${row.name}？`)) return;
-    void runAction(`pause:${row.name}`, () => platformAdminApi.pauseSandbox(row.name));
-  };
+  const pauseSandbox = (row: SandboxRecord) => confirm({
+    title: "暂停这个执行环境？",
+    description: "暂停后用户下次发起任务会自动恢复，文件与会话不受影响。",
+    details: [
+      { label: "环境名称", value: row.name },
+      { label: "归属", value: sandboxOwnerText(row.owner) },
+    ],
+    confirmLabel: "暂停",
+    onConfirm: () => void runAction(`pause:${row.name}`, () => platformAdminApi.pauseSandbox(row.name)),
+  });
 
-  const startSandbox = (row: SandboxRecord) => {
-    if (!window.confirm(`启动执行环境 ${row.name}？`)) return;
-    void runAction(`resume:${row.name}`, () => platformAdminApi.resumeSandbox(row.name));
-  };
+  const startSandbox = (row: SandboxRecord) => confirm({
+    title: "启动这个执行环境？",
+    description: "启动后会占用一份计算资源，空闲一段时间后按生命周期策略自动暂停。",
+    details: [
+      { label: "环境名称", value: row.name },
+      { label: "归属", value: sandboxOwnerText(row.owner) },
+    ],
+    confirmLabel: "启动",
+    onConfirm: () => void runAction(`resume:${row.name}`, () => platformAdminApi.resumeSandbox(row.name)),
+  });
 
-  const deleteSandbox = (row: SandboxRecord) => {
-    if (!window.confirm(`删除执行环境 ${row.name}？用户文件不会被删除。`)) return;
-    void runAction(`delete:${row.name}`, () => platformAdminApi.deleteSandbox(row.name));
-  };
+  const deleteSandbox = (row: SandboxRecord) => confirm({
+    title: "删除这个执行环境？",
+    description: "用户文件不会被删除；正在进行的任务会中断，用户下次发起任务时会重建一个新环境。",
+    details: [
+      { label: "环境名称", value: row.name },
+      { label: "归属", value: sandboxOwnerText(row.owner) },
+      { label: "当前状态", value: formatSandboxPhase(row.phase ?? "Unknown") },
+    ],
+    confirmLabel: "删除",
+    tone: "danger",
+    onConfirm: () => void runAction(`delete:${row.name}`, () => platformAdminApi.deleteSandbox(row.name)),
+  });
 
   return (
     <div className="w-full space-y-5">
@@ -180,6 +219,8 @@ function SandboxList() {
         rows={filtered}
         rowKey={(row) => row.name}
         loading={loading}
+        // 服务端一次返回全量环境（无 cursor 分页），排序作用于全部行
+        sortScope="all"
         emptyState={
           <EmptyState
             icon={SearchX}
@@ -204,13 +245,15 @@ function SandboxList() {
           navigatePlatformAdmin({ section: "sandboxes", entityId: row.name });
         }}
         columns={[
-          { key: "phase", header: "状态", cell: row => <div className="space-y-1"><StatusBadge kind="sandbox" status={row.phase ?? "Unknown"} /><div className="max-w-44 truncate text-2xs text-destructive">{row.brokenReason}</div></div> },
+          // 异常环境排最前是运维第一诉求：Failed → Pending → Running → Paused
+          { key: "phase", header: "状态", alwaysVisible: true, sortable: true, sortValue: row => PHASE_ORDER[row.phase ?? ""] ?? 9, cell: row => <div className="space-y-1"><StatusBadge kind="sandbox" status={row.phase ?? "Unknown"} /><div className="max-w-44 truncate text-2xs text-destructive">{row.brokenReason}</div></div> },
           { key: "name", header: "名称", alwaysVisible: true, sortable: true, sortValue: row => row.name, cell: row => <EntityLink kind="sandbox" id={row.name} /> },
-          { key: "owner", header: "组织 / 用户", cell: row => row.owner?.kind === "user" ? <div><EntityLink kind="tenant" id={row.owner.tenantId} /><div><EntityLink kind="user" id={row.owner.userId} /></div></div> : <span className="text-muted-foreground">{formatSystemOwner(row.owner?.kind)}</span> },
-          { key: "username", header: "用户名", cell: row => row.owner?.username ? <span className="font-mono text-xs">{row.owner.username}</span> : "—" },
-          { key: "realName", header: "姓名", cell: row => row.owner?.realName ?? "—" },
-          { key: "busy", header: "占用", cell: row => <Badge variant={row.busy ? "default" : "secondary"}>{formatBusyState(row.busy)}</Badge> },
-          { key: "image", header: "运行版本", cell: row => <Badge variant={row.imageStale ? "destructive" : "secondary"} title={row.image}>{formatImageFreshness(row.imageStale)}</Badge> },
+          { key: "owner", header: "组织 / 用户", sortable: true, sortValue: row => row.owner?.tenantId || null, cell: row => row.owner?.kind === "user" ? <div><EntityLink kind="tenant" id={row.owner.tenantId} /><div><EntityLink kind="user" id={row.owner.userId} /></div></div> : <span className="text-muted-foreground">{formatSystemOwner(row.owner?.kind)}</span> },
+          { key: "username", header: "用户名", sortable: true, sortValue: row => row.owner?.username || null, cell: row => row.owner?.username ? <span className="font-mono text-xs">{row.owner.username}</span> : "—" },
+          { key: "realName", header: "姓名", sortable: true, sortValue: row => row.owner?.realName || null, cell: row => row.owner?.realName ?? "—" },
+          { key: "busy", header: "占用", sortable: true, sortNumeric: true, sortValue: row => (row.busy ? 1 : 0), cell: row => <Badge variant={row.busy ? "default" : "secondary"}>{formatBusyState(row.busy)}</Badge> },
+          // 镜像新旧只在「排查为什么这个环境行为和别人不一样」时才看，默认隐藏换回一屏列宽
+          { key: "image", header: "运行版本", hiddenByDefault: true, sortable: true, sortNumeric: true, sortValue: row => (row.imageStale ? 1 : 0), cell: row => <Badge variant={row.imageStale ? "destructive" : "secondary"} title={row.image}>{formatImageFreshness(row.imageStale)}</Badge> },
           { key: "idle", header: "空闲", className: "text-right", sortable: true, sortNumeric: true, sortValue: row => row.idleMs ?? null, cell: row => <span className="text-xs tabular-nums">{formatDuration(row.idleMs)}</span> },
           { key: "ttl", header: "剩余时间", className: "text-right", sortable: true, sortNumeric: true, sortValue: row => row.ttlRemainingMs ?? null, cell: row => <span className="text-xs tabular-nums">{formatDuration(row.ttlRemainingMs)}</span> },
           { key: "created", header: "创建", sortable: true, sortNumeric: true, sortValue: row => (row.createdAt ? Date.parse(row.createdAt) || null : null), cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.createdAt)}</span> },
@@ -269,9 +312,9 @@ function SandboxList() {
         ]}
       />
       {snat?.entries && snat.entries.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle className="text-base">网络出口技术详情</CardTitle></CardHeader>
-          <CardContent className="grid gap-2 md:grid-cols-2">
+        <Card density="compact">
+          <CardHeader><CardTitle>网络出口技术详情</CardTitle></CardHeader>
+          <CardContent className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {snat.entries.slice(0, 12).map(entry => (
               <div key={entry.id} className="rounded-md border p-2 text-xs">
                 <div className="font-mono">{entry.name}</div>
@@ -281,11 +324,13 @@ function SandboxList() {
           </CardContent>
         </Card>
       )}
+      {confirmDialog}
     </div>
   );
 }
 
 function SandboxDetail({ sandboxName }: { sandboxName: string }) {
+  const { confirm, confirmDialog } = useConfirmDialog();
   // 只读平台 admin：详情页暂停/启动/删除 disabled
   const { platformReadOnly, canPlatform } = useAuth();
   const runtimeReadOnly = !canPlatform("runtime.operate");
@@ -339,21 +384,35 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
     }
   }, [load]);
 
-  const pause = () => {
-    if (!window.confirm(`暂停 ${sandboxName}？`)) return;
-    void runAction("pause", () => platformAdminApi.pauseSandbox(sandboxName));
-  };
-  const resume = () => {
-    if (!window.confirm(`启动 ${sandboxName}？`)) return;
-    void runAction("resume", () => platformAdminApi.resumeSandbox(sandboxName));
-  };
-  const remove = () => {
-    if (!window.confirm(`删除执行环境“${sandboxName}”？用户文件不会被删除。`)) return;
-    void runAction("delete", () => platformAdminApi.deleteSandbox(sandboxName), {
+  const pause = () => confirm({
+    title: "暂停这个执行环境？",
+    description: "暂停后用户下次发起任务会自动恢复，文件与会话不受影响。",
+    details: [{ label: "环境名称", value: sandboxName }],
+    confirmLabel: "暂停",
+    onConfirm: () => void runAction("pause", () => platformAdminApi.pauseSandbox(sandboxName)),
+  });
+  const resume = () => confirm({
+    title: "启动这个执行环境？",
+    description: "启动后会占用一份计算资源，空闲一段时间后按生命周期策略自动暂停。",
+    details: [{ label: "环境名称", value: sandboxName }],
+    confirmLabel: "启动",
+    onConfirm: () => void runAction("resume", () => platformAdminApi.resumeSandbox(sandboxName)),
+  });
+  const remove = () => confirm({
+    title: "删除这个执行环境？",
+    description: "用户文件不会被删除；正在进行的任务会中断，用户下次发起任务时会重建一个新环境。删除后会返回列表。",
+    details: [
+      { label: "环境名称", value: sandboxName },
+      { label: "归属", value: sandboxOwnerText(sandbox?.owner) },
+      { label: "当前状态", value: formatSandboxPhase(sandbox?.phase ?? "Unknown") },
+    ],
+    confirmLabel: "删除",
+    tone: "danger",
+    onConfirm: () => void runAction("delete", () => platformAdminApi.deleteSandbox(sandboxName), {
       reload: false,
       onSuccess: goBackToList,
-    });
-  };
+    }),
+  });
   const missing = !loading && !sandbox && /not found/i.test(error ?? "");
   const runtimeActionDisabled = runtimeReadOnly || !!action || (!sandbox && (loading || !!error));
   const destructiveActionDisabled = platformReadOnly || !!action || (!sandbox && (loading || !!error));
@@ -393,10 +452,14 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
           加载执行环境详情...
         </div>
       ) : missing ? (
-        <div className="flex h-40 flex-col items-center justify-center gap-3 rounded-lg border bg-card text-sm text-muted-foreground">
-          <div>平台没有找到这个执行环境，它可能已经被自动清理。</div>
-          <Button variant="outline" size="sm" onClick={goBackToList}>返回列表</Button>
-        </div>
+        <Card>
+          <EmptyState
+            icon={SearchX}
+            title="平台没有找到这个执行环境"
+            description="它可能已经被生命周期策略自动清理，或者环境名有误。回到列表可以按用户或组织重新查找。"
+            action={{ label: "返回列表", onClick: goBackToList }}
+          />
+        </Card>
       ) : sandbox ? (
         <>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -406,9 +469,9 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
             <MetricCard title="运行版本" value={formatImageFreshness(sandbox.imageStale)} description={sandbox.image || "—"} tone={sandbox.imageStale ? "warn" : "good"} />
           </div>
           <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-            <Card>
-              <CardHeader><CardTitle className="text-base">关联</CardTitle></CardHeader>
-              <CardContent className="space-y-3 text-sm">
+            <Card density="compact">
+              <CardHeader><CardTitle>关联</CardTitle></CardHeader>
+              <CardContent className="space-y-2.5 text-sm">
                 <div>
                   <div className="text-xs text-muted-foreground">组织</div>
                   <EntityLink kind="tenant" id={sandbox.owner?.tenantId} />
@@ -427,10 +490,10 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
                 </div>
               </CardContent>
             </Card>
-            <Card>
+            <Card density="compact">
               <details>
-                <summary className="cursor-pointer list-none px-5 py-4 text-base font-medium">技术详情</summary>
-                <CardContent className="border-t pt-4">
+                <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium">技术详情</summary>
+                <CardContent className="border-t pt-3">
                   <pre className="max-h-[520px] overflow-auto rounded-md bg-muted p-3 text-xs text-muted-foreground">
                     {JSON.stringify(sandbox.raw ?? sandbox, null, 2)}
                   </pre>
@@ -440,6 +503,7 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
           </div>
         </>
       ) : null}
+      {confirmDialog}
     </div>
   );
 }

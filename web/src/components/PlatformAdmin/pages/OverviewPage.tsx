@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw, TriangleAlert } from "lucide-react";
+import { ChartNoAxesColumn, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { AdminErrorAlert, AttentionQueue, MetricCard } from "@/components/PlatformAdmin/common";
+import { AdminErrorAlert, AttentionQueue, EmptyState, MetricCard } from "@/components/PlatformAdmin/common";
+import { MiniBarTrend, type MiniTrendPoint } from "@/components/TenantAnalytics/charts";
 import { buildPlatformAdminUrl, navigatePlatformAdmin, type PlatformAdminSection } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
@@ -91,7 +92,6 @@ export function OverviewPage() {
   const internalIssueCount = dispatchErrors + projectionFailed;
   const activeStatuses = Object.entries(health?.activeRuns.byStatus ?? {}).filter(([, count]) => count > 0);
   const trendValues = costTrend.map((point) => point.actualCostYuanMicro / 1_000_000);
-  const trendMax = Math.max(...trendValues, 0.01);
   const latest7 = trendValues.slice(-7).reduce((sum, value) => sum + value, 0);
   const previous7 = trendValues.slice(-14, -7).reduce((sum, value) => sum + value, 0);
   const weekChange = previous7 > 0 ? (latest7 - previous7) / previous7 : null;
@@ -105,7 +105,12 @@ export function OverviewPage() {
   const recentTerminal = recentUsage.reduce((sum, point) => sum + point.completed + point.failed + point.cancelled, 0);
   const recentCompleted = recentUsage.reduce((sum, point) => sum + point.completed, 0);
   const recentCompletionRate = recentTerminal > 0 ? recentCompleted / recentTerminal : null;
-  const usageMax = Math.max(...usageDaily.map((point) => point.runs), 1);
+  // 两张趋势图统一走 MiniBarTrend（视觉审计 11：这两处原先是页面内一次性手绘 div 柱图）
+  const usagePoints: MiniTrendPoint[] = usageDaily.map((point) => ({ date: point.date, value: point.runs }));
+  const costPoints: MiniTrendPoint[] = costTrend.map((point) => ({
+    date: point.date,
+    value: point.actualCostYuanMicro / 1_000_000,
+  }));
 
   return (
     <div className="w-full space-y-5">
@@ -122,7 +127,9 @@ export function OverviewPage() {
 
       {error && <AdminErrorAlert error={error} />}
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {/* 6 张卡在 xl 上单行排完（原来 4 列 → 第二行只有 2 张，白吃一屏高度）。
+          每张卡都是入口：点进去带上对应筛选参数，这是我们优于对标产品的设计，不要改成纯展示。 */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <MetricCard
           title="正在执行"
           value={formatNumber(health?.activeRuns.total)}
@@ -165,80 +172,83 @@ export function OverviewPage() {
         />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader className="flex-row items-start justify-between gap-3 pb-2">
+      <div className="grid gap-3 xl:grid-cols-2">
+        <Card density="compact">
+          <CardHeader className="flex-row items-start justify-between gap-3">
             <div>
               <CardTitle>近 14 天使用趋势</CardTitle>
-              <div className="mt-1 text-xs text-muted-foreground">最近 7 天：执行 {formatNumber(recentRuns)} · 新对话 {formatNumber(recentSessions)} · 日均活跃用户 {recentActiveUsers.toFixed(1)} · 完成率 {formatRate(recentCompletionRate)}</div>
+              <div className="mt-1 text-xs text-muted-foreground">柱高＝当日执行数 · 最近 7 天：执行 {formatNumber(recentRuns)} · 新对话 {formatNumber(recentSessions)} · 日均活跃用户 {recentActiveUsers.toFixed(1)} · 完成率 {formatRate(recentCompletionRate)}</div>
             </div>
             <Button variant="ghost" size="sm" onClick={() => navigate("runs", { hours: 168 })}>查看记录</Button>
           </CardHeader>
           <CardContent>
-            {!platformTrend || platformTrend.daily.length === 0 ? (
-              <div className="flex h-28 items-center justify-center text-sm text-muted-foreground">使用趋势暂不可用</div>
+            {usagePoints.length === 0 ? (
+              <EmptyState
+                compact
+                icon={ChartNoAxesColumn}
+                title="使用趋势暂不可用"
+                description="趋势依赖执行记录聚合，采集未启用或窗口内没有任何执行时这里为空。可以直接看执行记录确认。"
+                action={{ label: "查看近 7 天执行记录", onClick: () => navigate("runs", { hours: 168 }) }}
+              />
             ) : (
               <>
-                {!platformTrend.available && <div className="mb-2 text-xs text-warning-ink">部分数据源不可用：{platformTrend.missingSources.join("、")}</div>}
-                <div className="flex h-32 items-end gap-1 border-b px-1 pt-2">
-                  {platformTrend.daily.map((point) => {
-                    const height = point.runs > 0 ? Math.max(4, (point.runs / usageMax) * 100) : 2;
-                    return (
-                      <div key={point.date} className="group flex min-w-0 flex-1 flex-col items-center justify-end gap-1" title={`${point.date} · 执行 ${point.runs} · 对话 ${point.sessions} · 活跃用户 ${point.activeUsers} · 完成率 ${formatRate(point.completionRate)}`}>
-                        <div className="w-full max-w-9 rounded-t bg-chart-1/70 transition-colors group-hover:bg-chart-1" style={{ height: `${height}%` }} />
-                        <span className="hidden text-2xs text-muted-foreground sm:block">{point.date.slice(5)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
+                {/* 数据源缺失必须显式告知：否则矮柱会被读成「真的没量」 */}
+                {platformTrend && !platformTrend.available && <div className="mb-2 text-xs text-warning-ink">部分数据源不可用：{platformTrend.missingSources.join("、")}，柱高可能偏低，不代表实际用量。</div>}
+                <MiniBarTrend
+                  points={usagePoints}
+                  height={128}
+                  formatValue={(value) => `执行 ${formatNumber(value)}`}
+                  emptyText="区间内没有执行"
+                />
               </>
             )}
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex-row items-start justify-between gap-3 pb-2">
+        <Card density="compact">
+          <CardHeader className="flex-row items-start justify-between gap-3">
             <div>
               <CardTitle>近 14 天成本趋势</CardTitle>
-              <div className="mt-1 text-xs text-muted-foreground">最近 7 天 {formatYuan(latest7)}{weekChange == null ? "" : ` · 较前 7 天${weekChange >= 0 ? "增加" : "下降"} ${Math.abs(weekChange * 100).toFixed(1)}%`}</div>
+              <div className="mt-1 text-xs text-muted-foreground">柱高＝当日模型实际成本 · 最近 7 天 {formatYuan(latest7)}{weekChange == null ? "" : ` · 较前 7 天${weekChange >= 0 ? "增加" : "下降"} ${Math.abs(weekChange * 100).toFixed(1)}%`}</div>
             </div>
             <Button variant="ghost" size="sm" onClick={() => navigate("efficiency")}>查看执行效率</Button>
           </CardHeader>
           <CardContent>
-            {costTrend.length === 0 ? (
-              <div className="flex h-28 items-center justify-center text-sm text-muted-foreground">成本趋势暂不可用</div>
+            {costPoints.length === 0 ? (
+              <EmptyState
+                compact
+                icon={ChartNoAxesColumn}
+                title="成本趋势暂不可用"
+                description="成本来自计费流水的日汇总，尚未产生流水或汇总任务未跑时这里为空。"
+                action={{ label: "查看执行效率", onClick: () => navigate("efficiency") }}
+              />
             ) : (
-              <div className="flex h-32 items-end gap-1 border-b px-1 pt-2">
-                {costTrend.map((point) => {
-                  const value = point.actualCostYuanMicro / 1_000_000;
-                  const height = value > 0 ? Math.max(4, (value / trendMax) * 100) : 2;
-                  return (
-                    <div key={point.date} className="group flex min-w-0 flex-1 flex-col items-center justify-end gap-1" title={`${point.date} · ${formatYuan(value)}`}>
-                      <div className="w-full max-w-9 rounded-t bg-primary/70 transition-colors group-hover:bg-primary" style={{ height: `${height}%` }} />
-                      <span className="hidden text-2xs text-muted-foreground sm:block">{point.date.slice(5)}</span>
-                    </div>
-                  );
-                })}
-              </div>
+              <MiniBarTrend
+                points={costPoints}
+                height={128}
+                barClassName="bg-primary/70"
+                formatValue={(value) => formatYuan(value)}
+                emptyText="区间内没有成本"
+              />
             )}
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
         <AttentionQueue
           items={attentionItems}
           loading={refreshing && !snapshot}
           unavailable={!snapshot}
         />
-        <Card>
-          <CardHeader className="pb-2">
+        <Card density="compact">
+          <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <TriangleAlert className="size-4" />
               当前执行情况
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm">
+          <CardContent className="space-y-1.5 text-sm">
             <div className="flex justify-between gap-3">
               <span className="text-muted-foreground">数据更新时间</span>
               <span className="tabular-nums">{formatTime(snapshot?.generatedAt)}</span>
@@ -249,7 +259,8 @@ export function OverviewPage() {
                 {formatNumber(health?.activeRuns.total)} 条执行记录
               </a>
             </div>
-            <div className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
+            {/* 「当前没有任务」是好消息，不是故障空态 —— 不加 CTA、不加灰色「暂无数据」 */}
+            <div className="rounded-md bg-muted/40 p-2.5 text-xs text-muted-foreground">
               {activeStatuses.length > 0
                 ? activeStatuses.map(([status, count]) => `${formatRunStatus(status)} ${count}`).join(" · ")
                 : "当前没有正在执行或等待中的任务"}
@@ -258,9 +269,9 @@ export function OverviewPage() {
         </Card>
       </div>
 
-      <Card>
+      <Card density="compact">
         <details>
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5">
             <span className="flex items-center gap-2 text-sm font-medium">
               <TriangleAlert className="size-4" />
               系统内部健康
@@ -269,14 +280,14 @@ export function OverviewPage() {
               {internalIssueCount > 0 ? `${internalIssueCount} 项需关注` : "正常"}
             </span>
           </summary>
-          <CardContent className="grid gap-3 border-t pt-4 sm:grid-cols-2">
-            <div className="rounded-md bg-muted/40 p-3 text-sm">
+          <CardContent className="grid gap-2 border-t pt-3 sm:grid-cols-2">
+            <div className="rounded-md bg-muted/40 p-2.5 text-sm">
               <div className="font-medium">任务派发</div>
               <div className="mt-1 text-xs text-muted-foreground">
                 {dispatchErrors > 0 ? `${dispatchErrors} 次派发异常；仅统计本次服务启动后。` : "未发现任务派发异常。"}
               </div>
             </div>
-            <div className="rounded-md bg-muted/40 p-3 text-sm">
+            <div className="rounded-md bg-muted/40 p-2.5 text-sm">
               <div className="font-medium">对话列表数据</div>
               <div className="mt-1 text-xs text-muted-foreground">
                 {projectionFailed > 0 ? `${projectionFailed} 个对话同步失败，列表可能显示不全。` : "对话列表数据同步正常。"}

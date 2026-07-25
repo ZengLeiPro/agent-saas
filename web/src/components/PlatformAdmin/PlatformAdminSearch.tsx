@@ -45,11 +45,19 @@ function resultSubtitle(match: PlatformSearchMatch): string | undefined {
 export function PlatformAdminSearch({ className }: { className?: string } = {}) {
   const adminQuery = useAdminUrlQuery();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [q, setQ] = useState(adminQuery.get("lookup") ?? "");
   const [matches, setMatches] = useState<PlatformSearchMatch[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 键盘高亮项下标。-1 = 无高亮，此时 Enter 走「重新搜索」而不是「打开某条结果」。
+   *
+   * 这是本站唯一的全局快捷键（`/`）入口，若只能用 `/` 聚焦却必须切回鼠标点结果，
+   * 键盘动线是断的。
+   */
+  const [activeIndex, setActiveIndex] = useState(-1);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -76,15 +84,60 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
       } else {
         setMatches(data.matches);
         setOpen(true);
+        setActiveIndex(-1);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setMatches([]);
       setOpen(true);
+      setActiveIndex(-1);
     } finally {
       setLoading(false);
     }
   }, [adminQuery, q]);
+
+  const openMatch = useCallback((match: PlatformSearchMatch) => {
+    navigateToHref(match.href);
+    setOpen(false);
+    setActiveIndex(-1);
+  }, []);
+
+  /** 高亮项滚进可视区——结果最多 80px 高的滚动容器，第 5 条之后不滚就看不见 */
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    listRef.current?.querySelectorAll<HTMLElement>("[data-search-result]")[activeIndex]?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
+
+  const onInputKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      setOpen(false);
+      setActiveIndex(-1);
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      // 结果没展开时，方向键不该劫持光标移动
+      if (!open || matches.length === 0) return;
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      setActiveIndex((prev) => {
+        const next = prev + step;
+        // 两端循环：到底回顶、到顶回底，长列表里比撞墙好用
+        if (next < 0) return matches.length - 1;
+        if (next >= matches.length) return 0;
+        return next;
+      });
+      return;
+    }
+    if (event.key === "Enter") {
+      const active = activeIndex >= 0 ? matches[activeIndex] : undefined;
+      if (active) {
+        event.preventDefault();
+        openMatch(active);
+        return;
+      }
+      void runSearch();
+    }
+  }, [activeIndex, matches, open, openMatch, runSearch]);
 
   return (
     <div className={cn("relative w-full max-w-xl", className)}>
@@ -94,16 +147,21 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
           <Input
             ref={inputRef}
             value={q}
-            onChange={(event) => setQ(event.target.value)}
+            onChange={(event) => {
+              setQ(event.target.value);
+              // 词变了，旧的高亮不再对应任何结果
+              setActiveIndex(-1);
+            }}
             onFocus={() => {
               if (matches.length > 0 || error) setOpen(true);
             }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void runSearch();
-              if (event.key === "Escape") setOpen(false);
-            }}
+            onKeyDown={onInputKeyDown}
             placeholder="搜索组织、用户、对话或完整记录 ID"
             className="h-9 pl-7 pr-16 text-xs"
+            role="combobox"
+            aria-expanded={open}
+            aria-controls="platform-admin-search-results"
+            aria-activedescendant={activeIndex >= 0 ? `platform-admin-search-result-${activeIndex}` : undefined}
           />
           <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 text-2xs text-muted-foreground">/</span>
         </div>
@@ -121,16 +179,23 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
               <div className="mt-1 text-xs">支持搜索：组织名、用户名、姓名、手机号、对话标题或完整记录 ID</div>
             </div>
           ) : (
-            <div className="max-h-80 overflow-auto py-1">
-              {matches.map(match => (
+            <div className="max-h-80 overflow-auto py-1" ref={listRef} id="platform-admin-search-results" role="listbox">
+              {matches.map((match, index) => (
                 <button
                   key={`${match.kind}:${match.id}:${match.href}`}
+                  id={`platform-admin-search-result-${index}`}
+                  data-search-result
                   type="button"
-                  className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-muted/60"
-                  onClick={() => {
-                    navigateToHref(match.href);
-                    setOpen(false);
-                  }}
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  tabIndex={-1}
+                  className={cn(
+                    "flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-muted/60",
+                    index === activeIndex && "bg-muted/60",
+                  )}
+                  // 鼠标移到哪就把键盘高亮同步到哪，避免两套高亮同时亮着
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => openMatch(match)}
                 >
                   <Badge variant="secondary" className="mt-0.5 shrink-0">{KIND_LABEL[match.kind]}</Badge>
                   <span className="min-w-0">

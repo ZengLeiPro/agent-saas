@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw, Settings } from "lucide-react";
+import { ListX, Loader2, MessageSquareDashed, PackageOpen, RefreshCw, Settings, UserPlus } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 
 import { Badge } from "@/components/ui/badge";
@@ -85,18 +85,23 @@ function TenantList() {
         rowKey={(row) => row.id}
         loading={loading}
         onRefresh={() => void load()}
+        // 服务端一次返回全部组织（无分页），排序等于全量排序
+        sortScope="all"
+        skeletonRows={6}
         emptyState={
           <EmptyState
             icon={EntityIcons.org}
             title="还没有任何组织"
             description="平台上还没有创建组织。在「平台管理 · 组织」里新建后，这里会显示各组织的用量与余额。"
+            action={{ label: "去新建组织", onClick: openSettings }}
           />
         }
         onRowClick={(row) => {
           navigatePlatformAdmin({ section: "tenants", entityId: row.id });
         }}
         columns={[
-          { key: "status", header: "状态", cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },
+          // 已禁用排前面（降序），运维要先看异常组织
+          { key: "status", header: "状态", sortable: true, sortNumeric: true, sortValue: row => (row.disabled ? 1 : 0), cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },
           { key: "name", header: "名称", alwaysVisible: true, sortable: true, sortValue: row => row.name, cell: row => <div><div className="font-medium">{row.name}</div><EntityLink kind="tenant" id={row.id} /></div> },
           { key: "users", header: "用户", sortable: true, sortNumeric: true, sortValue: row => row.userCount, cell: row => <span className="tabular-nums">{row.userCount} / 管理员 {row.adminCount}</span> },
           { key: "activeRuns", header: "正在执行", sortable: true, sortNumeric: true, sortValue: row => row.activeRuns, cell: row => <span className="tabular-nums">{row.activeRuns}</span> },
@@ -178,24 +183,32 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
         </div>
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
-          <Card>
-            <CardHeader><CardTitle className="text-base">用户</CardTitle></CardHeader>
-            <CardContent className="space-y-2">
+          <Card density="compact">
+            <CardHeader><CardTitle>用户</CardTitle></CardHeader>
+            <CardContent className="space-y-1.5">
               {users.map(user => (
                 <div key={user.id} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
                   <div className="min-w-0">
                     <div className="truncate font-medium">{user.realName || user.username}</div>
                     <EntityLink kind="user" id={user.id} />
                   </div>
-	                  <Badge variant={user.disabled ? "destructive" : "secondary"}>{formatRole(user.role)}</Badge>
+                  <Badge variant={user.disabled ? "destructive" : "secondary"}>{formatRole(user.role)}</Badge>
                 </div>
               ))}
-              {users.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无用户</div>}
+              {users.length === 0 && (
+                <EmptyState
+                  compact
+                  icon={UserPlus}
+                  title="这个组织还没有成员"
+                  description="没有成员，组织就不会产生任何对话与成本。在「组织配置」里添加成员后即可使用。"
+                  action={{ label: "去添加成员", onClick: openSettings }}
+                />
+              )}
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader><CardTitle className="text-base">最近对话</CardTitle></CardHeader>
-            <CardContent className="space-y-2">
+          <Card density="compact">
+            <CardHeader><CardTitle>最近对话</CardTitle></CardHeader>
+            <CardContent className="space-y-1.5">
               {sessions.map(session => (
                 <div key={session.sessionId} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
                   <div className="min-w-0">
@@ -205,12 +218,20 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
                   <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(session.updatedAt)}</span>
                 </div>
               ))}
-              {sessions.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无对话</div>}
+              {sessions.length === 0 && (
+                <EmptyState
+                  compact
+                  icon={MessageSquareDashed}
+                  title="这个组织还没有对话"
+                  description="这里默认不含已删除对话。成员发起第一条消息后即会出现。"
+                  action={{ label: "包含已删除查看", onClick: () => go("sessions", { tenantId, includeDeleted: "true" }) }}
+                />
+              )}
             </CardContent>
           </Card>
-          <Card>
-	            <CardHeader><CardTitle className="text-base">最近执行</CardTitle></CardHeader>
-            <CardContent className="space-y-2">
+          <Card density="compact">
+            <CardHeader><CardTitle>最近执行</CardTitle></CardHeader>
+            <CardContent className="space-y-1.5">
               {runs.map(run => (
                 <div key={run.runId} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
                   <div className="min-w-0">
@@ -220,12 +241,20 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
                   <StatusBadge kind="run" status={run.status} />
                 </div>
               ))}
-	              {runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无执行记录</div>}
+              {runs.length === 0 && (
+                <EmptyState
+                  compact
+                  icon={ListX}
+                  title="近 7 天没有执行记录"
+                  description="这里只看近 7 天。放宽到 30 天可以确认是否更早有过执行。"
+                  action={{ label: "放宽到近 30 天", onClick: () => go("runs", { tenantId, hours: "720" }) }}
+                />
+              )}
             </CardContent>
           </Card>
-          <Card>
-	            <CardHeader><CardTitle className="text-base">执行环境</CardTitle></CardHeader>
-            <CardContent className="space-y-2">
+          <Card density="compact">
+            <CardHeader><CardTitle>执行环境</CardTitle></CardHeader>
+            <CardContent className="space-y-1.5">
               {sandboxes.map(sandbox => (
                 <div key={sandbox.name} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
                   <div className="min-w-0">
@@ -235,7 +264,15 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
                   <StatusBadge kind="sandbox" status={sandbox.phase ?? "Unknown"} />
                 </div>
               ))}
-	              {sandboxes.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无执行环境</div>}
+              {sandboxes.length === 0 && (
+                <EmptyState
+                  compact
+                  icon={PackageOpen}
+                  title="当前没有执行环境"
+                  description="环境空闲后会被自动回收，这不是故障；成员下次发起任务时自动重建。"
+                  action={{ label: "查看全部执行环境", onClick: () => go("sandboxes", { tenantId }) }}
+                />
+              )}
             </CardContent>
           </Card>
         </div>

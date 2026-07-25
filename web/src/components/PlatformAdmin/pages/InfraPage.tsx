@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, HardDrive, Loader2, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
+import { Archive, FolderOpen, HardDrive, Loader2, RefreshCw, SearchX, Trash2, TriangleAlert } from "lucide-react";
 
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
+import { useConfirmDialog } from "../ConfirmDialog";
 import { TENANT_LABEL, formatWorkspaceStatus } from "../displayText";
 import { formatBytes, formatNumber, formatTime } from "../format";
 import type { SystemMetricsResponse, SystemStorageResponse, WorkspaceUsageRecord, WorkspaceUsageStatus } from "../types";
@@ -21,6 +22,7 @@ const WORKSPACE_FILTER_OPTIONS: AdminSelectOption[] = WORKSPACE_FILTERS.map(valu
 }));
 
 export function InfraPage() {
+  const { confirm, confirmDialog } = useConfirmDialog();
   // 只读平台 admin：扫描存储/归档目录/永久删除目录 disabled
   const { platformReadOnly } = useAuth();
   const [metrics, setMetrics] = useState<SystemMetricsResponse | null>(null);
@@ -97,10 +99,7 @@ export function InfraPage() {
     }
   }, [load]);
 
-  const onArchive = useCallback(async (row: WorkspaceUsageRecord) => {
-    const lastSegment = row.path.split("/").at(-1) ?? row.path;
-    const confirmed = window.prompt(`输入目录名确认归档：${lastSegment}`);
-    if (confirmed !== lastSegment) return;
+  const runArchive = useCallback(async (row: WorkspaceUsageRecord, confirmed: string) => {
     setArchivingPath(row.path);
     try {
       await platformAdminApi.archiveWorkspace(row.path, confirmed);
@@ -112,12 +111,7 @@ export function InfraPage() {
     }
   }, [load]);
 
-  const onDelete = useCallback(async (row: WorkspaceUsageRecord) => {
-    const lastSegment = row.path.split("/").at(-1) ?? row.path;
-    const sizeText = row.bytes < 0 ? "扫描失败" : formatBytes(row.bytes);
-    if (!window.confirm(`永久删除 workspace 目录 ${row.path}？\n\n大小：${sizeText}\n文件数：${formatNumber(row.fileCount)}\n\n此操作不可恢复。`)) return;
-    const confirmed = window.prompt(`输入目录名确认永久删除：${lastSegment}`);
-    if (confirmed !== lastSegment) return;
+  const runDelete = useCallback(async (row: WorkspaceUsageRecord, confirmed: string) => {
     setDeletingPath(row.path);
     try {
       await platformAdminApi.deleteWorkspace(row.path, confirmed);
@@ -128,6 +122,45 @@ export function InfraPage() {
       setDeletingPath(null);
     }
   }, [load]);
+
+  // 归档 / 删除都要求逐字输入目录名（原来是 window.prompt）。
+  // 换成应用内对话框只是换壳，**保护强度不降**：仍然要手打目录名，服务端也仍然校验该值。
+  const onArchive = useCallback((row: WorkspaceUsageRecord) => {
+    const lastSegment = row.path.split("/").at(-1) ?? row.path;
+    confirm({
+      title: "归档这个文件目录？",
+      description: "归档 = 移动到 runtime/archive/，数据不会被删除，可以人工还原。",
+      details: [
+        { label: "路径", value: row.path },
+        { label: "大小", value: row.bytes < 0 ? "扫描失败" : formatBytes(row.bytes) },
+        { label: "文件数", value: formatNumber(row.fileCount) },
+      ],
+      requireText: lastSegment,
+      requireTextLabel: <>输入目录名 <code className="rounded bg-muted px-1 font-mono text-foreground">{lastSegment}</code> 确认归档</>,
+      confirmLabel: "归档",
+      onConfirm: () => void runArchive(row, lastSegment),
+    });
+  }, [confirm, runArchive]);
+
+  const onDelete = useCallback((row: WorkspaceUsageRecord) => {
+    const lastSegment = row.path.split("/").at(-1) ?? row.path;
+    confirm({
+      title: "永久删除这个文件目录？",
+      description: "目录下的全部文件会被删除，此操作不可恢复，也无法从归档还原。只在确认该目录无主或用户已注销时使用。",
+      details: [
+        { label: "路径", value: row.path },
+        // 「扫描失败」不能显示成 0 B——运维会据此判断「反正是空的，删了吧」
+        { label: "大小", value: row.bytes < 0 ? "扫描失败（未计入汇总）" : formatBytes(row.bytes) },
+        { label: "文件数", value: formatNumber(row.fileCount) },
+        { label: "状态", value: formatWorkspaceStatus(row.status) },
+      ],
+      requireText: lastSegment,
+      requireTextLabel: <>输入目录名 <code className="rounded bg-muted px-1 font-mono text-foreground">{lastSegment}</code> 确认永久删除</>,
+      confirmLabel: "永久删除",
+      tone: "danger",
+      onConfirm: () => void runDelete(row, lastSegment),
+    });
+  }, [confirm, runDelete]);
 
   if (loading && !metrics && !storage) {
     return (
@@ -217,8 +250,12 @@ export function InfraPage() {
         rows={storage?.summary.byTenant ?? []}
         rowKey={row => row.tenantId}
         defaultSort={{ key: "bytes", direction: "desc" }}
+        // 汇总由服务端一次算完，排序就是全量排序
+        sortScope="all"
+        loading={loading || refreshing}
+        skeletonRows={4}
         columns={[
-          { key: "tenant", header: TENANT_LABEL, alwaysVisible: true, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
+          { key: "tenant", header: TENANT_LABEL, alwaysVisible: true, sortable: true, sortValue: row => row.tenantId, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
           { key: "count", header: "文件目录", className: "text-right", sortable: true, sortNumeric: true, sortValue: row => row.workspaceCount, cell: row => formatNumber(row.workspaceCount) },
           { key: "bytes", header: "总量", className: "text-right", sortable: true, sortNumeric: true, sortValue: row => row.bytes, cell: row => formatBytes(row.bytes) },
           {
@@ -253,6 +290,10 @@ export function InfraPage() {
         storageKey="infra-workspaces"
         rows={workspaceRows}
         rowKey={row => row.path}
+        // 服务端一次返回全量目录，前端只按状态过滤 → 排序作用于全部行
+        sortScope="all"
+        loading={loading || refreshing}
+        skeletonRows={8}
         toolbar={
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">扫描：{formatTime(storage?.summary.lastScanAt)}</span>
@@ -266,10 +307,32 @@ export function InfraPage() {
         }
         columns={[
           { key: "path", header: "路径", alwaysVisible: true, className: "max-w-[320px]", sortable: true, sortValue: row => row.path, cell: row => <span className="font-mono text-xs">{row.path}</span> },
-          { key: "tenant", header: TENANT_LABEL, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
-          { key: "username", header: "用户名", sortable: true, sortValue: row => row.username || null, cell: row => row.username ? <span className="font-mono text-xs">{row.username}</span> : "—" },
-          { key: "realName", header: "姓名", cell: row => row.realName ?? "—" },
-          { key: "status", header: "状态", cell: row => <WorkspaceStatusBadge status={row.status} /> },
+          { key: "tenant", header: TENANT_LABEL, sortable: true, sortValue: row => row.tenantId, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
+          // 改造前这两列是纯文本：从「这个目录占了 12 GB」到「这个人是谁」必须自己复制用户名去用户页搜。
+          // orphan_user 状态下 userId 为空，此时退回纯文本（EntityLink 会渲染「—」，不适合当身份列）。
+          {
+            key: "username",
+            header: "用户名",
+            sortable: true,
+            sortValue: row => row.username || null,
+            cell: row => row.userId
+              ? <EntityLink kind="user" id={row.userId} label={row.username || undefined} tenantId={row.tenantId} />
+              : row.username
+                ? <span className="font-mono text-xs" title="该目录已无对应用户记录">{row.username}</span>
+                : "—",
+          },
+          {
+            key: "realName",
+            header: "姓名",
+            sortable: true,
+            sortValue: row => row.realName || null,
+            cell: row => row.realName
+              ? (row.userId
+                ? <EntityLink kind="user" id={row.userId} label={row.realName} tenantId={row.tenantId} />
+                : <span className="text-xs" title="该目录已无对应用户记录">{row.realName}</span>)
+              : "—",
+          },
+          { key: "status", header: "状态", sortable: true, sortValue: row => WORKSPACE_STATUS_ORDER[row.status] ?? 9, cell: row => <WorkspaceStatusBadge status={row.status} /> },
           {
             key: "bytes",
             header: "大小",
@@ -299,7 +362,7 @@ export function InfraPage() {
                   className="size-8"
                   onClick={(event) => {
                     event.stopPropagation();
-                    void onArchive(row);
+                    onArchive(row);
                   }}
                   disabled={platformReadOnly || archivingPath === row.path || deletingPath === row.path}
                   title="归档=移动到 runtime/archive/，不删除数据"
@@ -313,7 +376,7 @@ export function InfraPage() {
                   className="size-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
                   onClick={(event) => {
                     event.stopPropagation();
-                    void onDelete(row);
+                    onDelete(row);
                   }}
                   disabled={platformReadOnly || archivingPath === row.path || deletingPath === row.path}
                   title="永久删除 workspace 目录"
@@ -324,17 +387,50 @@ export function InfraPage() {
             ),
           },
         ]}
-        emptyText={storageUnavailable ? "文件用量扫描未启用，无法获取数据" : "暂无文件目录数据"}
+        emptyState={
+          <EmptyState
+            icon={storageUnavailable ? TriangleAlert : statusFilter === "all" ? FolderOpen : SearchX}
+            title={storageUnavailable
+              ? "文件用量扫描未启用，无法获取数据"
+              : statusFilter === "all"
+                ? "暂无文件目录数据"
+                : `没有「${formatWorkspaceStatus(statusFilter)}」状态的文件目录`}
+            description={storageUnavailable
+              ? "这里显示「—」表示无法获取，不代表目录数为 0。点「手动扫描」可立即采集一次。"
+              : statusFilter === "all"
+                ? "成员上传或生成文件后，扫描任务会在这里逐个目录列出占用与归属。"
+                : "这通常是好消息：没有待归档或无主目录。切回「全部状态」可以看到所有目录。"}
+            tone={!storageUnavailable && statusFilter !== "all" ? "positive" : "default"}
+            action={storageUnavailable
+              ? (platformReadOnly ? undefined : { label: "手动扫描", onClick: () => void onScan() })
+              : statusFilter !== "all"
+                ? { label: "查看全部状态", onClick: () => setStatusFilter("all") }
+                : undefined}
+          />
+        }
       />
+      {confirmDialog}
     </div>
   );
 }
 
+/** 状态列排序权重：需要处理的排前面（无主目录 → 软删 → 正常） */
+const WORKSPACE_STATUS_ORDER: Record<string, number> = {
+  orphan_tenant: 0,
+  orphan_user: 1,
+  soft_deleted: 2,
+  active: 3,
+};
+
+/**
+ * 状态徽章走 `ui/badge` 的语义 variant，不再手写「15% 底 + -ink 字」类串
+ * ——那正是 S2 把这套形态收进 badge variant 的原因。
+ */
 function WorkspaceStatusBadge({ status }: { status: WorkspaceUsageStatus }) {
-  const className = status === "active"
-    ? "border-0 bg-success/15 text-success-ink"
+  const variant = status === "active"
+    ? "success"
     : status === "soft_deleted"
-      ? "border-0 bg-warning/15 text-warning-ink"
-      : "border-0 bg-danger/15 text-danger-ink";
-  return <Badge className={className}>{formatWorkspaceStatus(status)}</Badge>;
+      ? "warning"
+      : "danger";
+  return <Badge variant={variant}>{formatWorkspaceStatus(status)}</Badge>;
 }

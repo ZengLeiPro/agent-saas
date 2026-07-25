@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw, Search, SearchX } from "lucide-react";
+import { ListX, Loader2, MessageSquareDashed, PackageOpen, RefreshCw, Search, SearchX } from "lucide-react";
 
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,7 @@ import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, 
 import { useTenants } from "@/components/TenantManager/hooks";
 import type { UserInfo } from "@/components/UserManager/types";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
-import { navigatePlatformAdmin } from "@/lib/urlSync";
+import { navigateAdminSettings, navigatePlatformAdmin } from "@/lib/urlSync";
 
 import { platformAdminApi } from "../api";
 import { RUN_LABEL, SESSION_LABEL, TENANT_LABEL, formatRole, formatRunStatus } from "../displayText";
@@ -90,16 +90,19 @@ function UserList() {
         rows={rows}
         rowKey={(row) => row.id}
         loading={loading}
+        // cursor 分页：rows 只是当前 50 条，排序不是全量排序，必须明示
+        sortScope="page"
+        skeletonRows={8}
         emptyState={
           <EmptyState
             icon={SearchX}
             title={q || tenantId ? "没有匹配的用户" : "还没有任何用户"}
             description={q || tenantId
-              ? "换个关键词，或清除组织筛选后再看一次。"
+              ? "关键词按用户名、姓名、用户 ID 精确/前缀匹配，不匹配手机号中间段。换个关键词，或清除组织筛选后再看一次。"
               : "组织下还没有成员。在「平台管理 · 组织」里为组织添加成员后，这里会显示。"}
             action={q || tenantId
               ? { label: "清除筛选", onClick: () => adminQuery.clear(["q", "tenantId", "cursor"]) }
-              : undefined}
+              : { label: "去组织配置添加成员", onClick: () => navigateAdminSettings("platform", "tenants") }}
           />
         }
         toolbar={
@@ -139,10 +142,11 @@ function UserList() {
         }}
         columns={[
           { key: "user", header: "用户", alwaysVisible: true, sortable: true, sortValue: row => row.realName || row.username, cell: row => <div><div className="font-medium">{row.realName || row.username}</div><EntityLink kind="user" id={row.id} /></div> },
-          { key: "tenant", header: TENANT_LABEL, cell: row => <EntityLink kind="tenant" id={row.tenantId} label={tenantName.get(row.tenantId) ?? row.tenantId} /> },
-          { key: "role", header: "角色", cell: row => <Badge variant={row.role === "admin" ? "default" : "secondary"}>{formatRole(row.role)}</Badge> },
+          { key: "tenant", header: TENANT_LABEL, sortable: true, sortValue: row => tenantName.get(row.tenantId) ?? row.tenantId, cell: row => <EntityLink kind="tenant" id={row.tenantId} label={tenantName.get(row.tenantId) ?? row.tenantId} /> },
+          // 管理员排前面（降序），排查权限问题时先看谁有管理员
+          { key: "role", header: "角色", sortable: true, sortNumeric: true, sortValue: row => (row.role === "admin" ? 1 : 0), cell: row => <Badge variant={row.role === "admin" ? "default" : "secondary"}>{formatRole(row.role)}</Badge> },
           { key: "position", header: "岗位", sortable: true, sortValue: row => row.position || null, cell: row => row.position || "—" },
-          { key: "status", header: "状态", cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },
+          { key: "status", header: "状态", sortable: true, sortNumeric: true, sortValue: row => (row.disabled ? 1 : 0), cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },
           { key: "updated", header: "最后更新", sortable: true, sortNumeric: true, sortValue: row => (row.updatedAt ? Date.parse(row.updatedAt) || null : null), cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.updatedAt)}</span> },
         ]}
       />
@@ -215,21 +219,32 @@ function UserDetail({ userId }: { userId: string }) {
             <MetricCard title="近 30 天成本" value={formatYuan(summary.costYuan30d)} description={`累计 ${formatYuan(summary.costYuanTotal)}`} />
           </div>
           <div className="grid gap-4 xl:grid-cols-3">
-            <Card>
-              <CardHeader><CardTitle className="text-base">执行环境</CardTitle></CardHeader>
-              <CardContent className="space-y-2">
+            <Card density="compact">
+              <CardHeader><CardTitle>执行环境</CardTitle></CardHeader>
+              <CardContent className="space-y-1.5">
                 {summary.sandboxes.map(sandbox => (
                   <div key={sandbox.name} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
                     <div className="min-w-0"><EntityLink kind="sandbox" id={sandbox.name} /><div className="truncate text-xs text-muted-foreground">{sandbox.workspaceId || "—"}</div></div>
                     <StatusBadge kind="sandbox" status={sandbox.phase ?? "Unknown"} />
                   </div>
                 ))}
-                {summary.sandboxes.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无执行环境</div>}
+                {summary.sandboxes.length === 0 && (
+                  <EmptyState
+                    compact
+                    icon={PackageOpen}
+                    title="当前没有执行环境"
+                    description="环境空闲后会被自动回收；用户下次发起任务时自动重建，不需要人工干预。"
+                    action={{
+                      label: "查看全部执行环境",
+                      onClick: () => navigatePlatformAdmin({ section: "sandboxes", search: { tenantId: user.tenantId, q: user.username } }),
+                    }}
+                  />
+                )}
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader><CardTitle className="text-base">最近对话</CardTitle></CardHeader>
-              <CardContent className="space-y-2">
+            <Card density="compact">
+              <CardHeader><CardTitle>最近对话</CardTitle></CardHeader>
+              <CardContent className="space-y-1.5">
                 {sessions.map(session => (
                   <div key={session.sessionId} className="rounded-md border p-2 text-sm">
                     <div className="truncate font-medium">{session.title || session.sessionId}</div>
@@ -239,19 +254,41 @@ function UserDetail({ userId }: { userId: string }) {
                     </div>
                   </div>
                 ))}
-                {sessions.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无对话</div>}
+                {sessions.length === 0 && (
+                  <EmptyState
+                    compact
+                    icon={MessageSquareDashed}
+                    title="这个用户还没有对话"
+                    description="可能是新加入的成员，也可能对话都被删除了。勾选「包含已删除」能看到删除记录。"
+                    action={{
+                      label: "包含已删除查看",
+                      onClick: () => navigatePlatformAdmin({ section: "sessions", search: { tenantId: user.tenantId, userId: user.id, includeDeleted: true } }),
+                    }}
+                  />
+                )}
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader><CardTitle className="text-base">最近执行</CardTitle></CardHeader>
-              <CardContent className="space-y-2">
+            <Card density="compact">
+              <CardHeader><CardTitle>最近执行</CardTitle></CardHeader>
+              <CardContent className="space-y-1.5">
                 {runs.map(run => (
                   <div key={run.runId} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
                     <div className="min-w-0"><EntityLink kind="run" id={run.runId} /><div className="mt-1 text-xs text-muted-foreground"><EntityLink kind="session" id={run.sessionId} /></div></div>
                     <StatusBadge kind="run" status={run.status} />
                   </div>
                 ))}
-                {runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无执行记录</div>}
+                {runs.length === 0 && (
+                  <EmptyState
+                    compact
+                    icon={ListX}
+                    title="近 30 天没有执行记录"
+                    description="这里只看近 30 天。要确认是否更早有过执行，可以放宽到该组织的全部记录。"
+                    action={{
+                      label: `查看该组织的${RUN_LABEL}`,
+                      onClick: () => navigatePlatformAdmin({ section: "runs", search: { tenantId: user.tenantId } }),
+                    }}
+                  />
+                )}
               </CardContent>
             </Card>
           </div>

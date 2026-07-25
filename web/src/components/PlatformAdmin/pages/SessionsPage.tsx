@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, RefreshCw, SearchX } from "lucide-react";
+import { ListX, Loader2, PackageOpen, RefreshCw, SearchX } from "lucide-react";
 
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Badge } from "@/components/ui/badge";
@@ -132,14 +132,20 @@ function SessionList() {
         rows={rows}
         rowKey={(row) => row.sessionId}
         loading={loading}
+        // cursor 分页：rows 只是当前 50 条，排序不是全量排序，必须明示
+        sortScope="page"
+        skeletonRows={8}
         emptyState={
           <EmptyState
             icon={SearchX}
             title="没有符合条件的对话"
             description={hasFilters
-              ? "已生效的筛选可能过窄，清除后再看一次。"
-              : "还没有任何对话记录。"}
+              ? "已生效的筛选可能过窄，清除后再看一次。也有可能这批对话已被删除（可勾选「包含已删除」）。"
+              : "还没有任何对话记录。成员在聊天里发起第一条消息后，这里就会出现。"}
             action={hasFilters ? { label: "清除全部筛选", onClick: clearFilters } : undefined}
+            secondaryAction={hasFilters && !includeDeleted
+              ? { label: "包含已删除再看一次", onClick: () => adminQuery.patch({ includeDeleted: true, cursor: null }) }
+              : undefined}
           />
         }
         toolbar={
@@ -182,13 +188,14 @@ function SessionList() {
           adminQuery.patch({ cursor: nextCursor });
         }}
         columns={[
-          { key: "status", header: "状态", cell: row => <Badge variant={row.deletedAt ? "destructive" : "secondary"}>{row.deletedAt ? "已删除" : formatSessionStatus(row.runtimeStatus)}</Badge> },
-          { key: "title", header: "标题", alwaysVisible: true, cell: row => <div><div className="max-w-72 truncate font-medium" title={row.title ?? undefined}>{row.title || row.sessionId}</div><EntityLink kind="session" id={row.sessionId} /></div> },
-          { key: "username", header: "用户名", cell: row => <EntityLink kind="user" id={row.userId} label={row.username || undefined} /> },
-          { key: "realName", header: "姓名", cell: row => row.realName ?? "—" },
-          { key: "tenant", header: TENANT_LABEL, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
-          { key: "model", header: "模型", cell: row => <span title={row.model ?? undefined}>{row.model ? labelFor(row.model) : "—"}</span> },
-          { key: "channel", header: "来源", cell: row => row.channel ? formatChannel(row.channel) : "—" },
+          { key: "status", header: "状态", sortable: true, sortValue: row => (row.deletedAt ? "已删除" : formatSessionStatus(row.runtimeStatus)), cell: row => <Badge variant={row.deletedAt ? "destructive" : "secondary"}>{row.deletedAt ? "已删除" : formatSessionStatus(row.runtimeStatus)}</Badge> },
+          { key: "title", header: "标题", alwaysVisible: true, sortable: true, sortValue: row => row.title || row.sessionId, cell: row => <div><div className="max-w-72 truncate font-medium" title={row.title ?? undefined}>{row.title || row.sessionId}</div><EntityLink kind="session" id={row.sessionId} /></div> },
+          { key: "username", header: "用户名", sortable: true, sortValue: row => row.username || null, cell: row => <EntityLink kind="user" id={row.userId} label={row.username || undefined} /> },
+          { key: "realName", header: "姓名", sortable: true, sortValue: row => row.realName || null, cell: row => row.realName ?? "—" },
+          { key: "tenant", header: TENANT_LABEL, sortable: true, sortValue: row => row.tenantId, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
+          // 模型按中文展示名排序（而不是原始 ID），否则 UI 上看到的顺序和排序结果不一致
+          { key: "model", header: "模型", sortable: true, sortValue: row => (row.model ? labelFor(row.model) : null), cell: row => <span title={row.model ?? undefined}>{row.model ? labelFor(row.model) : "—"}</span> },
+          { key: "channel", header: "来源", sortable: true, sortValue: row => (row.channel ? formatChannel(row.channel) : null), cell: row => row.channel ? formatChannel(row.channel) : "—" },
           // 类型已由工具栏的「对话类型」筛选决定（默认只看用户对话），列里每行同值 → 默认隐藏，需要时从「列」里打开
           { key: "kind", header: "类型", hiddenByDefault: true, cell: row => <Badge variant={row.kind === "subagent" ? "outline" : "secondary"}>{formatSessionKind(row.kind)}</Badge> },
           { key: "cost", header: "历史成本（美元）", className: "text-right", sortable: true, sortNumeric: true, sortValue: row => row.totalCostUsd ?? null, cell: row => <span className="tabular-nums" title="历史对话投影只保存模型原始美元计价">{formatUsd(row.totalCostUsd)}</span> },
@@ -257,9 +264,9 @@ function SessionDetail({ sessionId }: { sessionId: string }) {
             <MetricCard title={RUN_LABEL} value={formatNumber(detail.runs.length)} description={`最后活动 ${formatTime(session.updatedAt)}`} />
           </div>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_360px]">
-            <Card>
-              <CardHeader><CardTitle className="text-base">执行记录</CardTitle></CardHeader>
-              <CardContent className="space-y-2">
+            <Card density="compact">
+              <CardHeader><CardTitle>执行记录</CardTitle></CardHeader>
+              <CardContent className="space-y-1.5">
                 {detail.runs.map(run => (
                   <div key={run.runId} className="flex items-center justify-between gap-3 rounded-md border p-2 text-sm">
                     <div className="min-w-0">
@@ -269,12 +276,23 @@ function SessionDetail({ sessionId }: { sessionId: string }) {
                     <StatusBadge kind="run" status={run.status} />
                   </div>
                 ))}
-                {detail.runs.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无执行记录</div>}
+                {detail.runs.length === 0 && (
+                  <EmptyState
+                    compact
+                    icon={ListX}
+                    title="这个对话还没有执行记录"
+                    description="用户发了消息但还没触发任务，或者执行记录已超出保留期。可以按组织维度看看同期还有哪些执行。"
+                    action={{
+                      label: `查看该组织的${RUN_LABEL}`,
+                      onClick: () => navigatePlatformAdmin({ section: "runs", search: { tenantId: session.tenantId } }),
+                    }}
+                  />
+                )}
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader><CardTitle className="text-base">执行环境</CardTitle></CardHeader>
-              <CardContent className="space-y-2">
+            <Card density="compact">
+              <CardHeader><CardTitle>执行环境</CardTitle></CardHeader>
+              <CardContent className="space-y-1.5">
                 {detail.sandboxes.map(sandbox => (
                   <div key={sandbox.name} className="rounded-md border p-2 text-sm">
                     <div className="flex items-center justify-between gap-3">
@@ -284,7 +302,18 @@ function SessionDetail({ sessionId }: { sessionId: string }) {
                     <div className="mt-1 truncate text-xs text-muted-foreground">{sandbox.workspaceId || "—"}</div>
                   </div>
                 ))}
-                {detail.sandboxes.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">暂无执行环境</div>}
+                {detail.sandboxes.length === 0 && (
+                  <EmptyState
+                    compact
+                    icon={PackageOpen}
+                    title="没有关联的执行环境"
+                    description="环境空闲后会被自动回收，历史对话通常看不到环境。用户下次发起任务会重建。"
+                    action={{
+                      label: "查看该用户的执行环境",
+                      onClick: () => navigatePlatformAdmin({ section: "sandboxes", search: { tenantId: session.tenantId, q: session.username || session.userId } }),
+                    }}
+                  />
+                )}
               </CardContent>
             </Card>
           </div>

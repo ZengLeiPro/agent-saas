@@ -107,6 +107,7 @@ export function AdminEntityTable<T>({
   storageKey,
   columnSelector = true,
   defaultSort,
+  sortScope,
   skeletonRows = 6,
   containerClassName,
 }: {
@@ -131,6 +132,17 @@ export function AdminEntityTable<T>({
   storageKey?: string;
   columnSelector?: boolean;
   defaultSort?: AdminEntitySortState;
+  /**
+   * 排序口径。排序是**客户端**的，所以它只能作用于 `rows` 里已有的数据：
+   * - `"page"`：`rows` 只是服务端某一页（cursor / offset 分页）→ 排序只重排当前页，
+   *   必须在 UI 上明示，否则「按耗时降序 + 翻下一页」会被误读成全量 Top N。
+   * - `"all"`：`rows` 就是全量（服务端一次返回）→ 排序等价于全量排序，不该显示误导性提示。
+   *
+   * 不传时按「有没有翻页控件」推断，保持既有调用点行为不变。
+   * 走服务端排序需要后端 `sort`/`order` 参数，当前 `/admin/users`、`/admin/sessions` 都不支持，
+   * 因此这里选择「明示口径」而不是假装全量排序。
+   */
+  sortScope?: "page" | "all";
   skeletonRows?: number;
   containerClassName?: string;
 }) {
@@ -190,6 +202,12 @@ export function AdminEntityTable<T>({
     });
   }, []);
 
+  const paginated = Boolean(onPrev || onNext);
+  const effectiveSortScope = sortScope ?? (paginated ? "page" : "all");
+  const sortHint = effectiveSortScope === "page"
+    ? `点击按此列排序（仅当前页 ${rows.length} 条）`
+    : "点击按此列排序";
+
   const columnCount = visibleColumns.length;
   const alignments = useMemo(
     () => visibleColumns.map((column) => (column.className?.includes("text-right") ? "right" as const : "left" as const)),
@@ -216,7 +234,7 @@ export function AdminEntityTable<T>({
                   column.className?.includes("text-right") && "ml-auto flex-row-reverse",
                   sortActive && "text-foreground",
                 )}
-                title={sortActive ? "点击切换排序，再次点击取消排序" : "点击按此列排序（仅当前页）"}
+                title={sortActive ? "点击切换排序，再次点击取消排序" : sortHint}
               >
                 <span className="truncate">{column.header}</span>
                 {sortActive ? (
@@ -318,9 +336,9 @@ export function AdminEntityTable<T>({
       </CardContent>
       {(onPrev || onNext) && (
         <div className="flex items-center justify-end gap-2 border-t p-3">
-          {sort && (
+          {sort && effectiveSortScope === "page" && (
             <span className="mr-auto text-2xs text-muted-foreground">
-              排序只作用于当前页，跨页排序需按服务端顺序翻页
+              排序只作用于当前页 {rows.length} 条，跨页排序需按服务端顺序翻页
             </span>
           )}
           <Button variant="outline" size="sm" onClick={onPrev} disabled={loading || !hasPrev}>上一页</Button>

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { X } from "lucide-react";
 import type {
   PanelBadge,
   PanelCard,
@@ -251,10 +252,13 @@ function CustomFrame({ html }: { html: string }) {
 export function SystemPanel({
   snapshot,
   onSelectView,
+  onClose,
   className,
 }: {
   snapshot: SystemPanelSnapshot;
   onSelectView?: (key: string) => void;
+  /** 真实会话里提供关闭入口；关闭后本会话不再自动打开 */
+  onClose?: () => void;
   className?: string;
 }) {
   const active = snapshot.views.find((view) => view.key === snapshot.activeView) ?? snapshot.views[0];
@@ -265,6 +269,16 @@ export function SystemPanel({
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         {snapshot.live ? <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-success" /> : null}
         <span className="min-w-0 truncate text-sm font-medium">{snapshot.title ?? "企业系统实况"}</span>
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭企业系统面板"
+            className="ml-auto shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
+        ) : null}
       </div>
 
       {snapshot.views.length > 1 ? (

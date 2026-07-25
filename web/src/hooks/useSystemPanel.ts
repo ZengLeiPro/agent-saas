@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { foldPanel, type MessageItem, type PanelPatch, type SystemPanelSnapshot } from "@agent/shared";
 
 /**
@@ -39,4 +39,50 @@ export function useSystemPanel(messages: MessageItem[]): {
   const selectView = useCallback((key: string) => setViewOverride(key), []);
 
   return { snapshot, selectView };
+}
+
+const DISMISS_KEY_PREFIX = "system-panel-dismissed:";
+
+/**
+ * 真实会话里的面板停靠状态。
+ *
+ * 首次收到带 panel 的摘要时自动打开；**用户手动关闭一次后，本会话内不再
+ * 自动打开**——面板是跟随 Agent 的自动行为，用户的显式意图必须能压过它，
+ * 否则每次 Agent 动一下面板就弹回来，是骚扰。
+ *
+ * 按 sessionId 隔离：切会话即按该会话自己的消息流重新 fold。
+ */
+export function useSystemPanelDock(messages: MessageItem[], sessionId?: string | null): {
+  snapshot: SystemPanelSnapshot | null;
+  open: boolean;
+  selectView: (key: string) => void;
+  dismiss: () => void;
+} {
+  const { snapshot, selectView } = useSystemPanel(messages);
+  const [dismissed, setDismissed] = useState(false);
+
+  // 切会话时重读该会话的关闭态；sessionStorage 让刷新后仍记得用户关过
+  useEffect(() => {
+    if (!sessionId) {
+      setDismissed(false);
+      return;
+    }
+    try {
+      setDismissed(sessionStorage.getItem(`${DISMISS_KEY_PREFIX}${sessionId}`) === "1");
+    } catch {
+      setDismissed(false);
+    }
+  }, [sessionId]);
+
+  const dismiss = useCallback(() => {
+    setDismissed(true);
+    if (!sessionId) return;
+    try {
+      sessionStorage.setItem(`${DISMISS_KEY_PREFIX}${sessionId}`, "1");
+    } catch {
+      // 隐私模式下 sessionStorage 可能不可写，关闭仍在本次渲染内生效
+    }
+  }, [sessionId]);
+
+  return { snapshot, open: !!snapshot && !dismissed, selectView, dismiss };
 }

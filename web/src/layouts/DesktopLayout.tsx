@@ -16,6 +16,8 @@ import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControl
 import { useChatFontSize } from "@/hooks/useChatFontSize";
 import { useChatWidth } from "@/hooks/useChatWidth";
 import { useResizePanel } from "@/hooks/useResizePanel";
+import { useSystemPanelDock } from "@/hooks/useSystemPanel";
+import { SystemPanel } from "@/components/SystemPanel";
 import { saveUserPreferences } from "@agent/shared";
 import type { LayoutProps } from "./types";
 import { useAuth } from "@/contexts/AuthContext";
@@ -99,9 +101,25 @@ export function DesktopLayout(props: LayoutProps) {
   const { isWide: chatWidthWide, setIsWide: setChatWidthWide } = useChatWidth();
   const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation(personalAgentEnabled);
 
+  // 企业系统面板：从当前会话消息流 fold，与演示回放共用同一个 hook
+  const { snapshot: systemPanel, open: systemPanelOpen, selectView: selectSystemPanelView, dismiss: dismissSystemPanel } =
+    useSystemPanelDock(messages, sessionId);
+
   const sidePreviewOpen = !!previewFilePath && previewMode === "side";
-  const rightPanelOpen = sidePreviewOpen || fileBrowserOpen;
-  const rightPanelKey = sidePreviewOpen ? previewFilePath : (fileBrowserOpen ? 'browser' : null);
+  /**
+   * 右栏是**单 slot + 优先级**，不是多个布尔的「或」。
+   *
+   * 优先级 preview > system > browser 的理由：preview 与 browser 是用户显式
+   * 点开的，system 是自动跟随 Agent 的——用户的显式意图必须压过自动行为。
+   * 被压住的一方不卸载（走 hidden），保住滚动位置与内部状态。
+   */
+  const rightPanelKind: 'preview' | 'system' | 'browser' | null =
+    sidePreviewOpen ? 'preview'
+      : systemPanelOpen ? 'system'
+        : fileBrowserOpen ? 'browser'
+          : null;
+  const rightPanelOpen = rightPanelKind !== null;
+  const rightPanelKey = rightPanelKind === 'preview' ? previewFilePath : rightPanelKind;
   const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(0.5, 0.25, 0.75, rightPanelKey);
 
   // 侧边栏折叠
@@ -513,7 +531,7 @@ export function DesktopLayout(props: LayoutProps) {
                 <div className="pointer-events-none absolute inset-y-0 w-px bg-border transition-colors group-hover:w-[3px] group-hover:bg-primary/30" />
               </div>
               <div className="flex min-w-0 flex-col overflow-hidden" style={{ flexBasis: `${splitRatio * 100}%`, flexShrink: 0, flexGrow: 0 }}>
-                {sidePreviewOpen && previewFilePath ? (
+                {rightPanelKind === 'preview' && previewFilePath ? (
                   <FilePreviewPanel
                     filePath={previewFilePath}
                     owner={previewFileOwner}
@@ -521,7 +539,17 @@ export function DesktopLayout(props: LayoutProps) {
                     onExpand={expandFilePreview}
                   />
                 ) : null}
-                <div className={cn("flex h-full flex-col", sidePreviewOpen && "hidden")}>
+                {systemPanel ? (
+                  <div className={cn("flex h-full min-h-0 flex-col", rightPanelKind !== 'system' && "hidden")}>
+                    <SystemPanel
+                      snapshot={systemPanel}
+                      onSelectView={selectSystemPanelView}
+                      onClose={dismissSystemPanel}
+                      className="min-h-0 flex-1"
+                    />
+                  </div>
+                ) : null}
+                <div className={cn("flex h-full flex-col", rightPanelKind !== 'browser' && "hidden")}>
                   <Suspense fallback={SuspenseFallback}>
                     <FileBrowserLazy
                       onClose={closeFileBrowser}

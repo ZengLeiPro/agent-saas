@@ -1,5 +1,5 @@
 import type { DetailLine, ToolPresentation } from "@agent/shared";
-import { CheckCircle2 } from "lucide-react";
+import { CircleCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { activityStatusBadgeClass, activityStatusTextClass, type ActivityStatusTone } from "./activityStatusStyles";
 
@@ -93,7 +93,7 @@ export function PresentationDetail({ data, className }: { data: ToolPresentation
           <span className="break-all text-foreground">{data.receipt.id}</span>
           {data.receipt.readBack && (
             <span className={cn("inline-flex items-center gap-1", activityStatusTextClass("success"))}>
-              <CheckCircle2 className="size-3" />
+              <CircleCheck className="size-3" />
               回读校验通过
             </span>
           )}

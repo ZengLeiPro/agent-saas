@@ -1,0 +1,120 @@
+/**
+ * 场景回放视图测试。
+ *
+ * 最重要的一条是「摘要在 debugModeOverride=false 下可见」——它对应本批次的
+ * 验收标准：演示与普通客户视图必须同构，不允许存在只有演示看得到的内容。
+ */
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { ScenarioReplayView } from './ScenarioReplayView';
+import { knowledgeQaScript } from './knowledgeQaScript';
+
+beforeAll(() => {
+  Range.prototype.getClientRects = () => ({
+    length: 0,
+    item: () => null,
+    [Symbol.iterator]: [][Symbol.iterator],
+  }) as unknown as DOMRectList;
+});
+
+vi.mock('@/lib/authFetch', () => ({
+  authFetch: vi.fn(async () => new Response(null, { status: 200 })),
+  setOnUnauthorized: vi.fn(),
+}));
+
+// MessageList 读取登录态判断 debugMode；回放显式传 debugModeOverride={false}，
+// 这里给一个 debugMode 为真的用户，正好验证 override 确实压过了用户设置。
+vi.mock('@/contexts/AuthContext', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/contexts/AuthContext')>()),
+  useAuth: () => ({ user: { username: 'tester', debugMode: true } }),
+}));
+
+function renderReplay() {
+  return render(<ScenarioReplayView script={knowledgeQaScript} onExit={vi.fn()} />);
+}
+
+function clickNext(times: number) {
+  for (let i = 0; i < times; i++) fireEvent.click(screen.getByRole('button', { name: /下一步/ }));
+}
+
+describe('ScenarioReplayView', () => {
+  it('初始不显示任何剧本内容，进度为 0', () => {
+    renderReplay();
+    expect(screen.getByText(`0 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+    expect(screen.queryByText(/住宿能报多少/)).toBeNull();
+  });
+
+  it('逐步推进，内容累加而非替换', () => {
+    renderReplay();
+    clickNext(1);
+    expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
+    clickNext(1);
+    // 第一步的用户消息仍在
+    expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
+    expect(screen.getByText('检索企业制度库')).toBeTruthy();
+  });
+
+  it('工具摘要在客户同构视图（debugModeOverride=false）下可见', () => {
+    renderReplay();
+    clickNext(2);
+    expect(screen.getByText('检索企业制度库')).toBeTruthy();
+    expect(screen.getByText('制度中心 · 财务与行政')).toBeTruthy();
+    expect(screen.getByText('《差旅管理办法》2026 修订版')).toBeTruthy();
+  });
+
+  it('客户同构视图下不泄露原始工具 payload', () => {
+    renderReplay();
+    clickNext(2);
+    expect(screen.queryByText(/"scope"/)).toBeNull();
+    expect(screen.queryByText(/score=0\.91/)).toBeNull();
+  });
+
+  it('空格与方向键推进/回退（与客户演示稿一致，禁止自动播放）', () => {
+    renderReplay();
+    fireEvent.keyDown(window, { key: ' ' });
+    expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(screen.getByText(`2 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+  });
+
+  it('走到末步时下一步禁用，重放归零', () => {
+    renderReplay();
+    clickNext(knowledgeQaScript.steps.length);
+    expect(screen.getByRole('button', { name: /下一步/ })).toHaveProperty('disabled', true);
+    expect(screen.getByText('演示结束')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /重放/ }));
+    expect(screen.getByText(`0 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+  });
+
+  it('末步产物卡走真实 [FILE] 通道，点击后右侧渲染剧本内嵌 HTML', () => {
+    renderReplay();
+    clickNext(knowledgeQaScript.steps.length);
+    const card = screen.getByText('制度条款引用.html');
+    fireEvent.click(card);
+    const frame = screen.getByTitle('制度条款引用.html') as HTMLIFrameElement;
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
+    expect(frame.getAttribute('srcdoc')).toContain('Content-Security-Policy');
+    expect(frame.getAttribute('srcdoc')).toContain('第四章 第 12 条');
+  });
+});
+
+describe('剧本来源登记（治理条款）', () => {
+  it('每个 presentation 都有对应的来源登记条目', () => {
+    const presentationCount = knowledgeQaScript.steps
+      .flatMap((step) => step.blocks)
+      .filter((block) => block.presentation).length;
+    // 4 个工具摘要 + 1 个产物 = 5 条中，工具摘要必须逐条登记
+    expect(knowledgeQaScript.sources.length).toBeGreaterThanOrEqual(presentationCount);
+  });
+
+  it('登记条目的 producer 非空，且 state 非 exists 时必须写明 gap', () => {
+    for (const source of knowledgeQaScript.sources) {
+      expect(source.producer.trim().length).toBeGreaterThan(0);
+      if (source.state !== 'exists') {
+        expect(source.gap?.trim().length ?? 0).toBeGreaterThan(0);
+      }
+    }
+  });
+});

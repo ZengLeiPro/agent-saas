@@ -10,7 +10,8 @@ import {
   useFilePreviewPrint,
 } from "@/components/FilePreviewActions";
 
-const HTML_SANDBOX_CSP = [
+/** HTML 产物预览的沙箱 CSP。演示回放的产物面板复用同一份，避免安全策略分叉。 */
+export const HTML_SANDBOX_CSP = [
   "default-src 'none'",
   "script-src 'unsafe-inline' blob:",
   "style-src 'unsafe-inline' data:",

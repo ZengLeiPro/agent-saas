@@ -30,6 +30,7 @@ import {
 } from "./ScenarioCard";
 import { ScenarioDetailDialog } from "./ScenarioDetailDialog";
 import { WorkflowPresentationDialog } from "./WorkflowPresentationDialog";
+import { getReplayScript, ScenarioReplayView, type ReplayScript } from "./replay";
 import { matchRoleIdByPosition, useScenarioLibrary } from "./useScenarioLibrary";
 import { RoleKitDetailPage } from "./RoleKitDetailPage";
 import { INDUSTRY_ALL, matchIndustry, type IndustryFilterValue } from "./useIndustryFilter";
@@ -82,6 +83,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     roleId?: string;
   } | null>(null);
   const [presentation, setPresentation] = useState<CatalogScenarioPublic | null>(null);
+  const [replay, setReplay] = useState<ReplayScript | null>(null);
   const [catalogExpanded, setCatalogExpanded] = useState(false);
   const [deferredNotice, setDeferredNotice] = useState<WorkflowLibraryPublicV3["deferredObjects"][number] | null>(null);
   const deepLinkConsumed = useRef(false);
@@ -101,7 +103,10 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
   const handleWorkflowAction = (action: WorkflowPrimaryAction, scenario: CatalogScenarioPublic) => {
     props.onWorkflowSelected?.(scenario);
     if (action === "presentation") {
-      if (scenario.presentation) setPresentation(scenario);
+      // 已登记会话式回放剧本的场景走新视图；其余维持原分章对话框，互不影响
+      const script = getReplayScript(scenario.id);
+      if (script) setReplay(script);
+      else if (scenario.presentation) setPresentation(scenario);
       else setDetail({ scenario });
       return;
     }
@@ -231,12 +236,17 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     || filters.activeBusinessModel !== BUSINESS_MODEL_ALL
     || filters.activeMaturity !== MATURITY_ALL;
   const presentationScenarios = workflowLibrary.scenarios
-    .filter((scenario) => scenario.presentation)
+    .filter((scenario) => scenario.presentation || getReplayScript(scenario.id))
     .sort((left, right) => (left.featuredOrder ?? Number.MAX_SAFE_INTEGER) - (right.featuredOrder ?? Number.MAX_SAFE_INTEGER));
   const showFullCatalog = presentationScenarios.length === 0
     || catalogExpanded
     || hasFilters
     || !!roleDetailName;
+
+  // 回放接管整个主区：左侧会话栏在外层布局，不受影响
+  if (replay) {
+    return <ScenarioReplayView script={replay} onExit={() => setReplay(null)} />;
+  }
 
   return (
     <div className="w-full px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">

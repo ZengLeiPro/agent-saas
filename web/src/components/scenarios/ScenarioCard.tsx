@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import type { CatalogScenarioPublic, ScenarioItem, ScenarioRequirement } from "@agent/shared";
 import { friendlyPrimaryType, friendlyReadiness } from "./friendlyMappings";
 import { workflowCta, type WorkflowPrimaryAction } from "./workflowUi";
+import { getReplayScript } from "./replay/registry";
 
 // 懒加载：仅点开「看示例结果」时才拉取弹层（内含 markdown 渲染），
 // 不拖累空会话推荐位所在的聊天主 bundle
@@ -291,7 +292,8 @@ export function WorkflowPresentationCard({
   onPrimaryAction,
 }: Pick<WorkflowScenarioCardProps, "scenario" | "onPrimaryAction">) {
   const cta = workflowCta(scenario);
-  const chapterCount = scenario.presentation?.chapters.length ?? 0;
+  // 会话式回放剧本优先：它的步数才是观众实际要按几次
+  const chapterCount = getReplayScript(scenario.id)?.steps.length ?? scenario.presentation?.chapters.length ?? 0;
   return (
     <article className="flex flex-col overflow-hidden rounded-2xl border border-brand-100 bg-gradient-to-br from-white via-white to-brand-50/70 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md">
       <div className="flex flex-wrap items-center gap-1.5">

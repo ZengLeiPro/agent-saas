@@ -409,7 +409,8 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                 <MiniBarTrend
                   points={creditTrend.points.map(point => ({ date: point.date, value: point.credits }))}
                   barClassName="bg-chart-1/80"
-                  formatValue={value => `${formatCredits(value)} 积分`}
+                  formatValue={value => formatCredits(value)}
+                  unit="积分"
                   emptyText="近期暂无积分消耗"
                 />
               )}
@@ -575,7 +576,8 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
           ) : (
             <MiniBarTrend
               points={turnTrendPoints}
-              formatValue={value => `${formatNumber(value)} 轮`}
+              formatValue={value => formatNumber(value)}
+              unit="轮"
               emptyText="区间内暂无使用记录"
             />
           )}

@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { barWidth, buildYTicks, pickXLabelIndexes } from "@/lib/chartAxis";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "./format";
 
@@ -58,17 +59,10 @@ export function TrendChart({ data, height = DEFAULT_HEIGHT }: { data: TrendBarDa
   const H = height;
   const innerW = W - PAD_L - PAD_R;
   const innerH = H - PAD_T - PAD_B;
-  const barW = Math.max(2, innerW / data.length - BAR_GAP);
-
-  const yTicks = Array.from({ length: 5 }, (_, i) => {
-    const v = (maxTotal / 4) * i;
-    return { v, y: PAD_T + innerH - (v / maxTotal) * innerH };
-  });
-
-  // X 轴标签密度：宽度大就多显示几个
-  const labelStep = Math.max(1, Math.ceil(data.length / Math.max(3, Math.floor(innerW / 80))));
-  const labelIdxSet = new Set<number>([0, data.length - 1]);
-  for (let i = labelStep; i < data.length - 1; i += labelStep) labelIdxSet.add(i);
+  // 轴计算抽到 lib/chartAxis 与 TenantAnalytics/MiniBarTrend 共用，避免两处各写一遍
+  const barW = barWidth({ innerWidth: innerW, count: data.length, gap: BAR_GAP });
+  const yTicks = buildYTicks({ max: maxTotal, innerHeight: innerH, padTop: PAD_T });
+  const labelIdxs = pickXLabelIndexes({ count: data.length, innerWidth: innerW });
 
   return (
     <div ref={containerRef} className="relative w-full overflow-hidden">
@@ -96,7 +90,7 @@ export function TrendChart({ data, height = DEFAULT_HEIGHT }: { data: TrendBarDa
             className="fill-muted-foreground tabular-nums"
             style={{ fontSize: 11 }}
           >
-            {formatTokens(t.v)}
+            {formatTokens(t.value)}
           </text>
         ))}
         {/* 柱子 */}
@@ -136,7 +130,7 @@ export function TrendChart({ data, height = DEFAULT_HEIGHT }: { data: TrendBarDa
           );
         })}
         {/* X 轴标签 */}
-        {Array.from(labelIdxSet).map((i) => {
+        {labelIdxs.map((i) => {
           const x = PAD_L + i * (barW + BAR_GAP) + barW / 2;
           return (
             <text

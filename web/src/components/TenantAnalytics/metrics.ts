@@ -1,7 +1,18 @@
 import type { ModelAggregate } from "@/components/UsageDashboard/types";
 import type { DonutSlice } from "./charts";
 
-const MODEL_COLORS = ["#6366f1", "#06b6d4", "#10b981", "#f59e0b"];
+/**
+ * 分类色板。走 S1 建立的 --chart-* token 而不是硬编码 hex：
+ * 这些是「分类」维度（哪个模型用得多），不承载好坏，因此不取绿/琥珀/红；
+ * 且 token 自带亮/暗两套值，硬编码 hex 在暗色下会过亮。
+ */
+const MODEL_COLORS = [
+  "hsl(var(--chart-1))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-4))",
+  "hsl(var(--chart-5))",
+];
 
 export interface BuildModelSlicesOptions {
   maxVisible?: number;

@@ -70,8 +70,19 @@ export const FORCED_SANDBOX_NO_PROXY = [
   '192.168.0.0/16',
 ] as const;
 
-export const DEFAULT_PIP_INDEX_URL = 'https://mirrors.cloud.aliyuncs.com/pypi/simple/';
-export const DEFAULT_PIP_TRUSTED_HOST = 'mirrors.cloud.aliyuncs.com';
+/**
+ * 默认镜像源必须用**公网**地址。
+ *
+ * 曾用阿里云内网源 `mirrors.cloud.aliyuncs.com`，2026-07-25 生产实测发现它解析到
+ * `100.100.2.148`——正好落在 TrafficPolicy 默认拒绝的 `100.64.0.0/10` 里，Sandbox
+ * 里访问会被自家网络策略挡死；连 ECS 上都不可达（HTTP 000 / 19ms）。一旦有人开启
+ * 镜像源，pip 会全面失效，比不开还糟。
+ *
+ * 公网源经 SNAT 出口可达：mirrors.aliyun.com → 14.215.57.119 (200/121ms)，
+ * registry.npmmirror.com → 113.113.100.44 (200/353ms)。
+ */
+export const DEFAULT_PIP_INDEX_URL = 'https://mirrors.aliyun.com/pypi/simple/';
+export const DEFAULT_PIP_TRUSTED_HOST = 'mirrors.aliyun.com';
 export const DEFAULT_NPM_REGISTRY = 'https://registry.npmmirror.com';
 
 export const DEFAULT_EGRESS_CONFIG: EgressConfig = Object.freeze({

@@ -31,8 +31,8 @@ const EMPTY_CONFIG: EgressConfig = {
   sandbox: { enabled: false, proxyUrl: "", noProxy: [] },
   packageMirrors: {
     enabled: false,
-    pipIndexUrl: "https://mirrors.cloud.aliyuncs.com/pypi/simple/",
-    pipTrustedHost: "mirrors.cloud.aliyuncs.com",
+    pipIndexUrl: "https://mirrors.aliyun.com/pypi/simple/",
+    pipTrustedHost: "mirrors.aliyun.com",
     npmRegistry: "https://registry.npmmirror.com",
   },
 };

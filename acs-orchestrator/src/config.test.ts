@@ -50,8 +50,8 @@ describe('ACS runtime config', () => {
         proxy: { enabled: false, proxyUrl: '', noProxy: [] },
         packageMirrors: {
           enabled: false,
-          pipIndexUrl: 'https://mirrors.cloud.aliyuncs.com/pypi/simple/',
-          pipTrustedHost: 'mirrors.cloud.aliyuncs.com',
+          pipIndexUrl: 'https://mirrors.aliyun.com/pypi/simple/',
+          pipTrustedHost: 'mirrors.aliyun.com',
           npmRegistry: 'https://registry.npmmirror.com',
         },
       },
@@ -187,8 +187,8 @@ describe('egress runtime config patch', () => {
       proxy: { enabled: true, proxyUrl: 'http://172.16.177.77:7890', noProxy: ['internal.example.com', ' '] },
       packageMirrors: {
         enabled: true,
-        pipIndexUrl: 'https://mirrors.cloud.aliyuncs.com/pypi/simple/',
-        pipTrustedHost: 'mirrors.cloud.aliyuncs.com',
+        pipIndexUrl: 'https://mirrors.aliyun.com/pypi/simple/',
+        pipTrustedHost: 'mirrors.aliyun.com',
         npmRegistry: 'https://registry.npmmirror.com',
       },
     });

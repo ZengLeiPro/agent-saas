@@ -108,8 +108,8 @@ describe('buildPackageMirrorEnv', () => {
   it('启用后注入 pip / npm 源', () => {
     const env = buildPackageMirrorEnv({
       enabled: true,
-      pipIndexUrl: 'https://mirrors.cloud.aliyuncs.com/pypi/simple/',
-      pipTrustedHost: 'mirrors.cloud.aliyuncs.com',
+      pipIndexUrl: 'https://mirrors.aliyun.com/pypi/simple/',
+      pipTrustedHost: 'mirrors.aliyun.com',
       npmRegistry: 'https://registry.npmmirror.com',
     });
     expect(env.map((entry) => entry.name)).toEqual([

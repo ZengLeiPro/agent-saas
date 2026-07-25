@@ -43,7 +43,7 @@ export interface EgressSandboxProxyConfig {
 
 export interface EgressPackageMirrorsConfig {
   enabled: boolean;
-  /** pip 索引地址，如 https://mirrors.cloud.aliyuncs.com/pypi/simple/ */
+  /** pip 索引地址，如 https://mirrors.aliyun.com/pypi/simple/ */
   pipIndexUrl: string;
   /** pip trusted-host，通常是 pipIndexUrl 的主机名 */
   pipTrustedHost: string;

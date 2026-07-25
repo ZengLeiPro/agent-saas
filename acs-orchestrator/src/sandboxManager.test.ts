@@ -83,13 +83,13 @@ describe('SandboxManager egress injection', () => {
       proxy: { enabled: false, proxyUrl: '', noProxy: [] },
       packageMirrors: {
         enabled: true,
-        pipIndexUrl: 'https://mirrors.cloud.aliyuncs.com/pypi/simple/',
-        pipTrustedHost: 'mirrors.cloud.aliyuncs.com',
+        pipIndexUrl: 'https://mirrors.aliyun.com/pypi/simple/',
+        pipTrustedHost: 'mirrors.aliyun.com',
         npmRegistry: 'https://registry.npmmirror.com',
       },
     });
     const byName = Object.fromEntries(env.map((entry) => [entry.name, entry.value]));
-    expect(byName.PIP_INDEX_URL).toBe('https://mirrors.cloud.aliyuncs.com/pypi/simple/');
+    expect(byName.PIP_INDEX_URL).toBe('https://mirrors.aliyun.com/pypi/simple/');
     expect(byName.NPM_CONFIG_REGISTRY).toBe('https://registry.npmmirror.com');
     expect(Object.keys(byName).filter((name) => /proxy/i.test(name))).toEqual([]);
   });

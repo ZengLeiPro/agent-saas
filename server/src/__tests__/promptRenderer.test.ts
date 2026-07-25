@@ -65,8 +65,12 @@ describe('prompt smoke', () => {
     const s = loadPrompt(SHARED, 'static');
     expect(s).toContain('# 语言');
     expect(s).toContain('# 记忆系统');
-    expect(s).toContain('只有平台`GenerateImage`工具的成功结果才算完成');
-    expect(s).toContain('禁止用WebSearch、WebFetch、browser网页截图或下载的现成图片冒充AI生成结果');
+    // 2026-07-25：GenerateImage「不得用截图/网图冒充生成结果」已从 static.md 删除——
+    // 与 descriptions/GenerateImage.md 逐句重复，由 toolDescriptions.test.ts snapshot 锁定。
+    // static.md 只保留工具描述**不可能覆盖**的场景：工具未启用时它的 description 也不在
+    // context 里，此时"未开通就直说"这条必须由 system prompt 承载。
+    expect(s).toContain('未出现在当前工具清单');
+    expect(s).toContain('不要用其他方式凑出图片');
   });
 
   it('static.md no longer hardcodes stale local-runtime assumptions', () => {
@@ -77,7 +81,14 @@ describe('prompt smoke', () => {
     // 2026-07-03 <current-runtime> 段已删（status 快照恒 provisioning 恒错），
     // 防幽灵标签回归：static.md 不得再预授信任何平台从不拼装的标签名
     expect(s).not.toContain('<current-runtime>');
-    expect(s).toContain('当前workspace运行态');
+    // 2026-07-25 Python/venv 段已移交 descriptions/Shell.md（B5）——原「当前workspace运行态」
+    // 正面锚点随之迁到 toolDescriptions.test.ts 的 Shell drift guard。
+    // 这里继续守 static.md 侧：陈旧的"本机内置 venv"假设不得回流。
+    expect(s).not.toContain('工作区内置 venv');
     expect(s).toContain('WaitForWorkspaceReady');
+    // 2026-07-25 防幽灵状态值回归：static.md 曾让模型按 `unhealthy` 分支处置，
+    // 但 WaitForWorkspaceReady 返回的 status 联合类型（toolRuntime.ts:495）从来只有
+    // ready/provisioning/failed/unavailable 四个值。
+    expect(s).not.toContain('unhealthy');
   });
 });

@@ -111,6 +111,15 @@ describe('Tool descriptions', () => {
     expect(runShellToolDescriptor.description).toContain('rg -n');
   });
 
+  // 2026-07-25（B5）：Python/venv 指引从 static.md 移入 Shell.md——它讲的全是 shell 行为，
+  // 应随 Shell 工具一起条件化。正面锚点从 promptRenderer.test.ts 迁来：Python 能力必须表述为
+  // "取决于当前运行时"，不得退回"本机内置 venv"的陈旧假设。
+  it('Shell description carries runtime-dependent Python guidance (drift guard)', () => {
+    expect(runShellToolDescriptor.description).toContain('python3');
+    expect(runShellToolDescriptor.description).toContain('取决于当前运行时');
+    expect(runShellToolDescriptor.description).not.toContain('工作区内置 venv');
+  });
+
   it('AskUserQuestion description matches multiSelect schema default (drift guard)', () => {
     expect(askUserQuestionToolDescriptor.description).toContain('运行时默认为 false');
   });

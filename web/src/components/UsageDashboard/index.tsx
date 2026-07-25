@@ -24,6 +24,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 import { csvFilename, exportCsv, type CsvColumn } from "@/components/PlatformAdmin/common/exportCsv";
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
+import { rangeToStatsWindow, todayBeijingDate } from "@/components/TenantAnalytics/metrics";
 
 import { usageApi } from "./api";
 import type {
@@ -40,7 +41,7 @@ import { TrendChart, type TrendBarDatum } from "./TrendChart";
 import { UserDetailView } from "./UserDetailView";
 import { RANGE_OPTIONS, RangeSelector, type RangeQuery, type RangeValue, type CustomRange } from "./RangeSelector";
 import { FamilyFilter } from "./FamilyFilter";
-import { EfficiencyView } from "./EfficiencyView";
+import { EfficiencyView, nearestEffDays } from "./EfficiencyView";
 
 const VIEW_TAB_OPTIONS: SegmentedOption<"usage" | "efficiency">[] = [
   { value: "usage", label: "用量" },
@@ -616,6 +617,18 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
   );
 
   /**
+   * 用量页签的时间窗 → 效率视图可用的天数档位。
+   *
+   * 效率后端上限 30 天（与 TenantAnalytics 的 health 同源），所以这里 cap 取 30；
+   * 再折到 7/14/30 三档里最近的一档。用户在效率视图手动改过天数后，URL 上的
+   * effDays 优先，这个继承值就不再生效。
+   */
+  const inheritedEffDays = useMemo(
+    () => nearestEffDays(rangeToStatsWindow(range, customRange, 30, todayBeijingDate()).days),
+    [range, customRange],
+  );
+
+  /**
    * 导出当前筛选下的用户排行。
    *
    * 两点刻意的处理：
@@ -669,7 +682,8 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
         />
       )}
       {viewTab === "efficiency" && isPlatformAdmin ? (
-        <EfficiencyView tenantId={tenantId} linkEntities={isPlatformAdmin} />
+        /* inheritedDays：把用量页签已选的时间窗折算过去，切页签不再静默跳回 7 天 */
+        <EfficiencyView tenantId={tenantId} linkEntities={isPlatformAdmin} inheritedDays={inheritedEffDays} />
       ) : (
         <>
       {/* Header */}

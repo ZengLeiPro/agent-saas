@@ -59,7 +59,7 @@ import {
   useTenantUsageBundle,
   type UsageDateArgs,
 } from "./hooks";
-import { buildModelSlices, countActiveEnabledUsers, rangeToStatsWindow, windowCaption } from "./metrics";
+import { buildModelSlices, countActiveEnabledUsers, rangeToStatsWindow, todayBeijingDate, windowCaption } from "./metrics";
 
 interface OverviewSectionProps {
   tenantId: string;
@@ -83,10 +83,6 @@ function formatCredits(value: number): string {
 function formatShare(value: number, total: number): string {
   if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0) return "—";
   return `${((value / total) * 100).toFixed(1)}%`;
-}
-
-function todayBeijing(): string {
-  return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 /** 失败原因 → 客户可读文案（未识别的保留原文） */
@@ -187,8 +183,8 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
     return { range: range === "custom" ? "7d" : range };
   }, [range, customRange]);
 
-  const healthWindow = useMemo(() => rangeToStatsWindow(range, customRange, 30, todayBeijing()), [range, customRange]);
-  const creditWindow = useMemo(() => rangeToStatsWindow(range, customRange, 90, todayBeijing()), [range, customRange]);
+  const healthWindow = useMemo(() => rangeToStatsWindow(range, customRange, 30, todayBeijingDate()), [range, customRange]);
+  const creditWindow = useMemo(() => rangeToStatsWindow(range, customRange, 90, todayBeijingDate()), [range, customRange]);
   const healthDays = healthWindow.days;
   const creditDays = creditWindow.days;
 
@@ -245,7 +241,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
     : "—";
 
   const trendPoints = usage.trend?.points ?? [];
-  const todayTurns = trendPoints.find(point => point.date === todayBeijing())?.turns ?? 0;
+  const todayTurns = trendPoints.find(point => point.date === todayBeijingDate())?.turns ?? 0;
   const periodTurns = usage.overview?.totalTurns ?? 0;
   const turnTrendPoints = useMemo(
     () => trendPoints.map(point => ({ date: point.date, value: point.turns })),

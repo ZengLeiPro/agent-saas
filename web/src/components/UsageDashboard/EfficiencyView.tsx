@@ -40,10 +40,31 @@ const DAYS_OPTIONS: SegmentedOption<number>[] = [
 const DEFAULT_EFF_DAYS = 7;
 const ALLOWED_EFF_DAYS = new Set(DAYS_OPTIONS.map((option) => option.value));
 
-/** URL 上的 effDays 只接受白名单值；非法/缺失回落 7，避免拼错参数拉一年数据 */
-function parseEffDays(raw: string | null): number {
+/**
+ * URL 上的 effDays 只接受白名单值；非法/缺失时回落到 `fallback`，避免拼错参数拉一年数据。
+ *
+ * `fallback` 让本视图能继承宿主页已选的时间窗（见 `inheritedDays`）；未提供时才用 7 天。
+ */
+function parseEffDays(raw: string | null, fallback?: number): number {
   const value = Number(raw);
-  return Number.isFinite(value) && ALLOWED_EFF_DAYS.has(value) ? value : DEFAULT_EFF_DAYS;
+  if (Number.isFinite(value) && ALLOWED_EFF_DAYS.has(value)) return value;
+  if (fallback !== undefined && ALLOWED_EFF_DAYS.has(fallback)) return fallback;
+  return DEFAULT_EFF_DAYS;
+}
+
+/**
+ * 宿主页时间窗（天）→ 本视图可选的最近档位。
+ *
+ * 只向下取，不向上：用户选「7 天」时给他 14 天的数据是多给了他没要的东西，
+ * 而给 7 天最多是少给——在排障场景里，窗口偏小比偏大安全。
+ */
+export function nearestEffDays(days: number): number {
+  const sorted = [...ALLOWED_EFF_DAYS].sort((a, b) => a - b);
+  let hit = sorted[0];
+  for (const option of sorted) {
+    if (option <= days) hit = option;
+  }
+  return hit;
 }
 
 /** 工具错误率红色高亮阈值 */
@@ -51,16 +72,25 @@ const ERROR_RATE_ALERT = 0.05;
 
 /* 本视图原有的 StatCard 已删除，12 处调用点统一走 `common/MetricCard`（S3-7）。 */
 
-export function EfficiencyView({ tenantId, linkEntities = true }: {
+export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }: {
   tenantId?: string;
   /** false = 租户上下文：EntityLink 纯文本、组织列隐藏 */
   linkEntities?: boolean;
+  /**
+   * 宿主页当前时间窗折算出的天数（用量页签的 RangeSelector 选了什么）。
+   *
+   * 存在理由：本视图天数只有 7/14/30 三档，而 RangeSelector 有 today/7d/30d/本月/
+   * 全部/自定义六种。两套控件值域不同，改造前切页签会**静默丢掉**用户刚选的区间、
+   * 跳回 7 天——用户以为自己还在看 30 天的数据。现在 URL 未显式指定时跟随宿主窗口，
+   * 只有用户在本视图手动改过才固定下来。
+   */
+  inheritedDays?: number;
 }) {
   const { labelFor } = useModelDisplayMap();
   // URL 同步：`eff*` 命名空间前缀。改造前天数是本机 useState，切页签静默重置回 7 天，
   // 且排障时无法把「近 30 天的失败原因」链接发给同事（交互审计 §2）。
   const url = useAdminUrlQuery();
-  const days = parseEffDays(url.get("effDays"));
+  const days = parseEffDays(url.get("effDays"), inheritedDays);
   const setDays = useCallback(
     (next: number) => url.set("effDays", next === DEFAULT_EFF_DAYS ? null : next, HISTORY_PUSH),
     [url],

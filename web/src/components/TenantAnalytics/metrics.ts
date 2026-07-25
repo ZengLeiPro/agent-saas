@@ -39,6 +39,16 @@ export function countActiveEnabledUsers(enabledUsernames: string[], usageUsernam
   return enabledUsernames.filter(username => active.has(username)).length;
 }
 
+/**
+ * 北京时间的今天（YYYY-MM-DD）。
+ *
+ * 全站日切口径统一为北京时间：后端多处用 `AT TIME ZONE 'Asia/Shanghai'`，
+ * 前端若用本地时区，跨时区访问时「今日」会和后端错开一天。
+ */
+export function todayBeijingDate(): string {
+  return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 /** 区块的真实统计窗口。capped=true 表示用户选的区间长于该后端上限，数据已被截断 */
 export interface StatsWindow {
   days: number;

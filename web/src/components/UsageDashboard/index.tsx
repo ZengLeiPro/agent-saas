@@ -19,7 +19,7 @@ import { Segmented, type SegmentedOption } from "@/components/ui/segmented";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { HISTORY_PUSH, useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { cn } from "@/lib/utils";
-import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { SETTINGS_CONTENT_WIDTH, SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { useAuth } from "@/contexts/AuthContext";
 
 import { csvFilename, exportCsv, type CsvColumn } from "@/components/PlatformAdmin/common/exportCsv";
@@ -663,7 +663,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
   }, [byUser, overview, simplified]);
 
   return (
-    <div className={cn("w-full", !fullWidth && "mx-auto max-w-5xl")}>
+    <div className={cn("w-full", !fullWidth && SETTINGS_CONTENT_WIDTH)}>
       {/* 列表保持挂载（隐藏）以保留排序态、行展开态与已加载数据；详情按需挂载。
           改造前是 `if (selectedUser) return <UserDetailView/>` 早返回——整块替换，
           排序/展开/滚动全丢，且地址栏不变（交互审计给这条动线打 1/5，是全平台最差）。

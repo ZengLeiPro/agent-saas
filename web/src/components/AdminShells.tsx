@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, Loader2, RefreshCw, X, type LucideIcon } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { SettingsPanelHeader, SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { SETTINGS_CONTENT_WIDTH, SettingsPanelHeader, SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLoginLogs, useUsers, type LoginLogFilters } from "@/components/UserManager/hooks";
 import type { LoginLogEntry } from "@/components/UserManager/types";
@@ -21,6 +21,7 @@ import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type TenantSettings } from 
 import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
 import { HISTORY_PUSH, HISTORY_PUSH_MERGED, useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
+import { decideFocusTrap, findFocusables } from "@/lib/focusTrap";
 import { navigatePlatformAdmin, type PlatformAdminSection } from "@/lib/urlSync";
 import { AdminErrorAlert, EmptyState, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
 import { formatChannel } from "@/components/PlatformAdmin/displayText";
@@ -110,15 +111,71 @@ function AdminSettingsModal<T extends string>({
 }) {
   // 移动端（<md）两级导航：菜单页 ⇄ 内容页。桌面不受影响（max-md 类不生效）。
   const [mobileView, setMobileView] = useState<"menu" | "content">("menu");
+  const panelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (open) setMobileView("menu");
   }, [open]);
+
+  /**
+   * 打开时把焦点移进面板，关闭时还给触发它的元素。
+   * 不做的话：打开后第一次按 Tab 之前，焦点还留在背后的页面上，屏幕阅读器会继续
+   * 念背景内容；关闭后焦点掉到 body，键盘用户得从头 Tab 一遍才能回到原来的位置。
+   */
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const timer = window.setTimeout(() => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      findFocusables(panel)[0]?.focus();
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      previouslyFocused?.focus?.();
+    };
+  }, [open]);
+
+  /**
+   * Esc 关闭 + 焦点陷阱。
+   *
+   * 这个组件标了 `role="dialog" aria-modal="true"`，但改造前**没有任何键盘处理**：
+   * 按 Esc 关不掉（点遮罩才行），Tab 会一路跑到模态背后的页面上去——对屏幕阅读器
+   * 和纯键盘用户，这个「模态」等于没关住。声明了 aria-modal 却不实现对应行为，
+   * 比不声明更糟。
+   *
+   * 没有引 Radix Dialog 重写：这个壳有移动端两级导航、自定义栅格与安全区内边距，
+   * 换壳的爆炸半径远大于补两个 handler。
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      // 决策逻辑抽在 lib/focusTrap（可单测，不必渲染整个管理壳），这里只绑定与执行
+      const decision = decideFocusTrap({
+        container: panel,
+        activeElement: document.activeElement,
+        shiftKey: event.shiftKey,
+      });
+      if (decision.preventDefault) event.preventDefault();
+      decision.focus?.focus();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
   if (!open) return null;
   const activeItem = sections.find(item => item.id === active) ?? sections[0];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-sm md:p-8" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
-      <div className="flex h-full w-full overflow-hidden bg-background pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl md:h-[min(920px,calc(100vh-96px))] md:w-[min(1184px,calc(100vw-64px))] md:rounded-3xl md:border md:pb-0 md:pt-0" onClick={(event) => event.stopPropagation()}>
+      <div ref={panelRef} className="flex h-full w-full overflow-hidden bg-background pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl md:h-[min(920px,calc(100vh-96px))] md:w-[min(1184px,calc(100vw-64px))] md:rounded-3xl md:border md:pb-0 md:pt-0" onClick={(event) => event.stopPropagation()}>
         <aside className={cn("flex w-full shrink-0 flex-col bg-muted/20 p-3 md:w-40 md:border-r", mobileView === "content" && "max-md:hidden")}>
           <div className="mb-1 flex justify-end md:hidden">
             <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClose} aria-label={`关闭${title}`}>
@@ -348,7 +405,7 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
   }, [patch]);
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className={cn("flex h-full min-h-0 flex-col", SETTINGS_CONTENT_WIDTH)}>
       <SettingsPanelHeader
         title="组织管理"
         description={`配置组织 ${tenantId} 的功能开关、配额、模型、MCP、安全和品牌策略。`}

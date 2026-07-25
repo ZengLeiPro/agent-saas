@@ -3,7 +3,7 @@ import { Loader2, Send } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { SETTINGS_CONTENT_WIDTH, SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { MetricCard } from "@/components/PlatformAdmin/common";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
@@ -50,7 +50,7 @@ export function SystemSettingsPanel() {
   }, [load]);
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className={cn("flex h-full min-h-0 flex-col", SETTINGS_CONTENT_WIDTH)}>
       <SettingsPanelHeader
         title="系统配置"
         description="平台运行参数、集成、备份、存储和健康检查。"

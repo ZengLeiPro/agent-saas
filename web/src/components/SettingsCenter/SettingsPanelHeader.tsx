@@ -2,6 +2,18 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+/**
+ * 设置类面板的内容区宽度。
+ *
+ * 抽成常量而不是各处写 `max-w-5xl`：改造前 AdminShells、SystemSettingsPanel、
+ * UsageDashboard 三处各写一遍，改宽度得记得同时改三处，漏一处就会出现同一个
+ * 抽屉里两块内容左右边界对不齐。
+ *
+ * 取 5xl（64rem）是「设置表单可读宽度」——再宽标签与输入框会拉得太开、眼睛要横扫。
+ * 数据密集型页面（列表 / 看板 / trace）不适用，那些走 fullWidth。
+ */
+export const SETTINGS_CONTENT_WIDTH = "mx-auto w-full max-w-5xl";
+
 interface SettingsPanelHeaderProps {
   title: string;
   description?: ReactNode;

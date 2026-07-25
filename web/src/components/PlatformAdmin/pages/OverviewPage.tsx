@@ -228,7 +228,11 @@ export function OverviewPage() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <AttentionQueue items={attentionItems} />
+        <AttentionQueue
+          items={attentionItems}
+          loading={refreshing && !snapshot}
+          unavailable={!snapshot}
+        />
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">

@@ -10,7 +10,7 @@
  *   [Ranking]   用户排行表（行展开模型分布；点用户名进二级页）
  *   [Detail]    单用户详情（替换主区域）
  */
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RefreshCw, ChevronDown, ChevronRight, CircleAlert, RotateCcw, Database, ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -444,6 +444,20 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
     void load();
   }, [load]);
 
+  // 重扫轮询的 timer 句柄与存活标记：组件卸载后必须停下，否则会在已卸载的树上继续 setState
+  const rebuildTimerRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (rebuildTimerRef.current !== null) {
+        window.clearTimeout(rebuildTimerRef.current);
+        rebuildTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // 触发重扫 + 轮询 data-range 等完成
   const onRebuild = useCallback(async () => {
     if (!isPlatformAdmin) return;
@@ -451,6 +465,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
     setRebuilding(true);
     try {
       const r = await usageApi.rebuild();
+      if (!mountedRef.current) return;
       if (r.conflict) {
         setRebuildMsg("已有重扫任务在跑");
         setRebuilding(false);
@@ -461,6 +476,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
       const before = dataRange?.rebuild?.lastRebuildAtMs ?? 0;
       const start = Date.now();
       const tick = async () => {
+        if (!mountedRef.current) return;
         if (Date.now() - start > 60_000) {
           setRebuildMsg("超时（60s 未完成），可手动刷新");
           setRebuilding(false);
@@ -468,6 +484,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
         }
         try {
           const dr = await usageApi.dataRange({ tenantId });
+          if (!mountedRef.current) return;
           if (dr.rebuild && dr.rebuild.lastRebuildAtMs > before) {
             setDataRange(dr);
             setRebuildMsg(`重扫完成：${dr.rebuild.totalFilesScanned} 文件 / ${dr.rebuild.totalRowsBuilt} 行`);
@@ -478,10 +495,12 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
         } catch {
           // ignore
         }
-        setTimeout(() => void tick(), 1500);
+        if (!mountedRef.current) return;
+        rebuildTimerRef.current = window.setTimeout(() => void tick(), 1500);
       };
-      setTimeout(() => void tick(), 1500);
+      rebuildTimerRef.current = window.setTimeout(() => void tick(), 1500);
     } catch (e) {
+      if (!mountedRef.current) return;
       setRebuildMsg(e instanceof Error ? e.message : String(e));
       setRebuilding(false);
     }

@@ -55,6 +55,10 @@ export function InfraPage() {
     metrics?.latest.find(item => item.metric === metric && item.label === label) ?? null
   ), [metrics?.latest]);
 
+  // 后端显式声明的数据源可用性：available=false 时所有派生值都不可信，必须渲染「—」而非 0
+  const metricsUnavailable = metrics != null && metrics.available === false;
+  const storageUnavailable = storage != null && storage.available === false;
+
   const rootDisk = latest("disk_root");
   const rootDetail = rootDisk?.detailJson as { usedBytes?: number; totalBytes?: number } | null | undefined;
   const nasUsed = latest("disk_nas")?.valueNum ?? null;
@@ -150,34 +154,55 @@ export function InfraPage() {
 
       {error && <AdminErrorAlert error={error} />}
 
+      {/* 数据源缺失必须显式告知：否则下面的 0 会被读成“真的没有”，而不是“没采到” */}
+      {(metricsUnavailable || storageUnavailable) && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+          {[
+            metricsUnavailable ? "系统指标采集未启用" : null,
+            storageUnavailable ? "文件用量扫描未启用" : null,
+          ].filter(Boolean).join(" · ")}
+          ，相关指标显示为「—」表示无法获取，不代表数值为 0。
+        </div>
+      )}
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard
           title="服务器磁盘"
-          value={rootDisk ? `${rootDisk.valueNum.toFixed(1)}%` : "—"}
-          description={`${formatBytes(rootDetail?.usedBytes)} / ${formatBytes(rootDetail?.totalBytes)}`}
-          tone={(rootDisk?.valueNum ?? 0) >= 90 ? "bad" : (rootDisk?.valueNum ?? 0) >= 80 ? "warn" : "good"}
+          value={metricsUnavailable || !rootDisk ? "—" : `${rootDisk.valueNum.toFixed(1)}%`}
+          description={metricsUnavailable ? "指标采集未启用" : `${formatBytes(rootDetail?.usedBytes)} / ${formatBytes(rootDetail?.totalBytes)}`}
+          tone={metricsUnavailable || !rootDisk ? "default" : rootDisk.valueNum >= 90 ? "bad" : rootDisk.valueNum >= 80 ? "warn" : "good"}
         />
         <MetricCard
           title="用户文件存储"
-          value={formatBytes(nasUsed)}
-          description="NAS 容量型存储"
+          value={metricsUnavailable || nasUsed == null ? "—" : formatBytes(nasUsed)}
+          description={metricsUnavailable ? "指标采集未启用" : "NAS 容量型存储"}
         />
         <MetricCard
           title="平台数据最大表"
-          value={pgTopTables[0] ? formatBytes(pgTopTables[0].valueNum) : "—"}
-          description={pgTopTables[0]?.label ?? "暂无平台数据"}
+          value={metricsUnavailable || !pgTopTables[0] ? "—" : formatBytes(pgTopTables[0].valueNum)}
+          description={metricsUnavailable ? "指标采集未启用" : pgTopTables[0]?.label ?? "暂无平台数据"}
         />
         <MetricCard
           title="用户文件目录"
-          value={formatBytes(storage?.summary.totalBytes)}
-          description={`无主目录 ${formatNumber(storage?.summary.orphanCount)} 个 / ${formatBytes(storage?.summary.orphanBytes)}`}
-          tone={(storage?.summary.orphanCount ?? 0) > 20 || (storage?.summary.orphanBytes ?? 0) > 10 * 1024 ** 3 ? "warn" : "default"}
+          value={storageUnavailable ? "—" : formatBytes(storage?.summary.totalBytes)}
+          description={
+            storageUnavailable
+              ? "文件用量扫描未启用"
+              : `无主目录 ${formatNumber(storage?.summary.orphanCount)} 个 / ${formatBytes(storage?.summary.orphanBytes)}`
+          }
+          tone={
+            storageUnavailable
+              ? "default"
+              : (storage?.summary.orphanCount ?? 0) > 20 || (storage?.summary.orphanBytes ?? 0) > 10 * 1024 ** 3
+                ? "warn"
+                : "default"
+          }
         />
         <MetricCard
           title="HTTPS 证书"
-          value={tlsDaysLeft == null ? "—" : `${tlsDaysLeft.toFixed(1)} 天`}
-          description="最短剩余有效期"
-          tone={tlsDaysLeft == null ? "default" : tlsDaysLeft < 7 ? "bad" : tlsDaysLeft < 14 ? "warn" : "good"}
+          value={metricsUnavailable || tlsDaysLeft == null ? "—" : `${tlsDaysLeft.toFixed(1)} 天`}
+          description={metricsUnavailable ? "指标采集未启用" : "最短剩余有效期"}
+          tone={metricsUnavailable || tlsDaysLeft == null ? "default" : tlsDaysLeft < 7 ? "bad" : tlsDaysLeft < 14 ? "warn" : "good"}
         />
       </div>
 
@@ -199,7 +224,7 @@ export function InfraPage() {
             },
           },
         ]}
-        emptyText="暂无组织文件用量数据"
+        emptyText={storageUnavailable ? "文件用量扫描未启用，无法获取数据" : "暂无组织文件用量数据"}
       />
 
       <AdminEntityTable
@@ -275,7 +300,7 @@ export function InfraPage() {
             ),
           },
         ]}
-        emptyText="暂无文件目录数据"
+        emptyText={storageUnavailable ? "文件用量扫描未启用，无法获取数据" : "暂无文件目录数据"}
       />
     </div>
   );

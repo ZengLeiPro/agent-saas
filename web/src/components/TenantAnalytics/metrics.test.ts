@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ModelAggregate } from "@/components/UsageDashboard/types";
-import { buildModelSlices, countActiveEnabledUsers } from "./metrics";
+import { buildModelSlices, countActiveEnabledUsers, rangeToStatsWindow, windowCaption } from "./metrics";
 
 function model(model: string, totalTokens: number): ModelAggregate {
   return {
@@ -58,5 +58,55 @@ describe("tenant analytics metrics", () => {
       { getLabel: m => names.get(m.model) ?? m.model },
     );
     expect(slices.map(slice => slice.label)).toEqual(["智谱 GLM", "legacy-model"]);
+  });
+});
+
+describe("统计窗口口径", () => {
+  const TODAY = "2026-07-25";
+
+  it("选“全部”时，任何有限 cap 都必须标记为截断", () => {
+    // 这是原 bug 的核心：顶部显示“全部”，health 实际只有 30 天、credits 只有 90 天，
+    // 且界面不作任何提示，客户会把 30 天的数字当成全部历史对外汇报。
+    const health = rangeToStatsWindow("all", null, 30, TODAY);
+    const credits = rangeToStatsWindow("all", null, 90, TODAY);
+
+    expect(health).toEqual({ days: 30, capped: true });
+    expect(credits).toEqual({ days: 90, capped: true });
+    expect(windowCaption(health)).toBe("近 30 天（本区块数据上限）");
+    expect(windowCaption(credits)).toBe("近 90 天（本区块数据上限）");
+  });
+
+  it("同一选择在不同 cap 下窗口不同，必须各自如实标注", () => {
+    expect(rangeToStatsWindow("30d", null, 30, TODAY)).toEqual({ days: 30, capped: false });
+    // 30 天请求落在 90 天 cap 内，不算截断
+    expect(rangeToStatsWindow("30d", null, 90, TODAY)).toEqual({ days: 30, capped: false });
+  });
+
+  it("未触达上限时不加多余提示", () => {
+    const window = rangeToStatsWindow("7d", null, 30, TODAY);
+    expect(window).toEqual({ days: 7, capped: false });
+    expect(windowCaption(window)).toBe("近 7 天");
+  });
+
+  it("本月至今按当天日期换算，超过 cap 时标记截断", () => {
+    expect(rangeToStatsWindow("mtd", null, 90, TODAY)).toEqual({ days: 25, capped: false });
+    // cap 小于当月已过天数 → 截断
+    expect(rangeToStatsWindow("mtd", null, 10, TODAY)).toEqual({ days: 10, capped: true });
+  });
+
+  it("自定义区间超出 cap 时标记截断，非法区间回退 7 天", () => {
+    expect(rangeToStatsWindow("custom", { from: "2026-01-01", to: "2026-07-25" }, 30, TODAY))
+      .toEqual({ days: 30, capped: true });
+    expect(rangeToStatsWindow("custom", { from: "2026-07-18", to: "2026-07-25" }, 30, TODAY))
+      .toEqual({ days: 7, capped: false });
+    // to <= from / 非法日期 → 回退 7 天且不谎报截断
+    expect(rangeToStatsWindow("custom", { from: "2026-07-25", to: "2026-07-18" }, 30, TODAY))
+      .toEqual({ days: 7, capped: false });
+    expect(rangeToStatsWindow("custom", null, 30, TODAY)).toEqual({ days: 7, capped: false });
+  });
+
+  it("窗口天数下限为 1，不会出现 0 天或负数", () => {
+    expect(rangeToStatsWindow("today", null, 30, TODAY).days).toBe(1);
+    expect(rangeToStatsWindow("mtd", null, 30, "2026-07-01").days).toBe(1);
   });
 });

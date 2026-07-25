@@ -1,4 +1,4 @@
-import { TriangleAlert, CircleCheck } from "lucide-react";
+import { TriangleAlert, CircleCheck, Loader2 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,16 @@ const severityClass: Record<AttentionItem["severity"], string> = {
   info: "text-muted-foreground",
 };
 
-export function AttentionQueue({ items }: { items: AttentionItem[] }) {
+export function AttentionQueue({
+  items,
+  loading = false,
+  unavailable = false,
+}: {
+  items: AttentionItem[];
+  loading?: boolean;
+  /** 数据源没取到（请求失败/接口缺失）。必须与“确实没有异常”区分开 */
+  unavailable?: boolean;
+}) {
   const sorted = [...items].sort((a, b) => {
     const rank = { critical: 0, warning: 1, info: 2 };
     return rank[a.severity] - rank[b.severity];
@@ -31,7 +40,18 @@ export function AttentionQueue({ items }: { items: AttentionItem[] }) {
         <CardTitle className="text-sm font-medium">异常队列</CardTitle>
       </CardHeader>
       <CardContent>
-        {sorted.length === 0 ? (
+        {/* “没查成”绝不能渲染成“查过了没问题”——三态必须分开 */}
+        {loading && sorted.length === 0 ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            正在检查异常…
+          </div>
+        ) : unavailable && sorted.length === 0 ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <TriangleAlert className="size-4 text-amber-600" />
+            异常检查暂不可用，无法确认当前是否有异常
+          </div>
+        ) : sorted.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
             <CircleCheck className="size-4 text-emerald-600" />
             暂无待处理异常

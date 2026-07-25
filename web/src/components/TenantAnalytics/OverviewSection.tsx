@@ -53,7 +53,7 @@ import {
   useTenantUsageBundle,
   type UsageDateArgs,
 } from "./hooks";
-import { buildModelSlices, countActiveEnabledUsers } from "./metrics";
+import { buildModelSlices, countActiveEnabledUsers, rangeToStatsWindow, windowCaption } from "./metrics";
 
 interface OverviewSectionProps {
   tenantId: string;
@@ -81,31 +81,6 @@ function formatShare(value: number, total: number): string {
 
 function todayBeijing(): string {
   return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
-
-/** RangeSelector 的选择 → 后端天数窗口（cap = 各后端上限：efficiency 30 / billing audit 90） */
-function rangeToDays(range: RangeValue, custom: CustomRange | null, cap: number): number {
-  switch (range) {
-    case "today":
-      return 1;
-    case "7d":
-      return 7;
-    case "30d":
-      return Math.min(cap, 30);
-    case "all":
-      return cap;
-    case "mtd": {
-      const day = Number(todayBeijing().slice(8, 10));
-      return Math.min(cap, Math.max(1, day));
-    }
-    case "custom": {
-      if (!custom) return 7;
-      const fromMs = Date.parse(custom.from);
-      const toMs = Date.parse(custom.to);
-      if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return 7;
-      return Math.min(cap, Math.max(1, Math.ceil((toMs - fromMs) / 86_400_000)));
-    }
-  }
 }
 
 /** 失败原因 → 客户可读文案（未识别的保留原文） */
@@ -178,8 +153,10 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
     return { range: range === "custom" ? "7d" : range };
   }, [range, customRange]);
 
-  const healthDays = useMemo(() => rangeToDays(range, customRange, 30), [range, customRange]);
-  const creditDays = useMemo(() => rangeToDays(range, customRange, 90), [range, customRange]);
+  const healthWindow = useMemo(() => rangeToStatsWindow(range, customRange, 30, todayBeijing()), [range, customRange]);
+  const creditWindow = useMemo(() => rangeToStatsWindow(range, customRange, 90, todayBeijing()), [range, customRange]);
+  const healthDays = healthWindow.days;
+  const creditDays = creditWindow.days;
 
   const usage = useTenantUsageBundle(tenantId, dateArgs);
   const health = useTenantHealth(tenantId, healthDays);
@@ -288,13 +265,15 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
       </AuroraCard>
 
       {/* 1. 团队使用 */}
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="space-y-3">
+        <SectionTitle title="团队使用" caption={rangeLabel ? `统计区间 ${rangeLabel}` : undefined} loading={usage.loading} />
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           tone="cyan"
           icon={Users}
           label="成员"
           value={tenantUsers.length}
-          hint={`管理员 ${admins.length}${disabledUsers.length > 0 ? ` · 已停用 ${disabledUsers.length}` : ""}`}
+          hint={`管理员 ${admins.length}${disabledUsers.length > 0 ? ` · 已停用 ${disabledUsers.length}` : ""}（当前在册，不随区间变化）`}
           loading={usersLoading}
         />
         <KpiCard
@@ -321,12 +300,17 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
           hint={inactiveEnabledUsers > 0 ? "期间未使用 AI 的成员，建议重点带动" : "全员都在使用，保持得很好"}
           loading={usage.loading || usersLoading}
         />
+        </div>
       </div>
 
       {/* 2. 积分与费用（计费启用的组织才展示；显示项随平台配置自适应） */}
       {(showBalance || showUsageCredits) && (
         <div className="space-y-3">
-          <SectionTitle title="积分与费用" caption={showUsageCredits ? `消耗趋势为近 ${creditDays} 天` : undefined} loading={credits.loading || creditTrend.loading} />
+          <SectionTitle
+            title="积分与费用"
+            caption={showUsageCredits ? `消耗趋势为${windowCaption(creditWindow)}` : "余额为实时值"}
+            loading={credits.loading || creditTrend.loading}
+          />
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {showBalance && (
               <KpiCard
@@ -352,7 +336,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
               <AuroraCard tone="slate">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 space-y-1">
-                    <div className="text-xs font-medium text-muted-foreground">积分消耗 · 近 {creditDays} 天</div>
+                    <div className="text-xs font-medium text-muted-foreground">积分消耗 · {windowCaption(creditWindow)}</div>
                     <div className={cn("text-3xl font-semibold tracking-tight tabular-nums", creditTrend.loading && "text-muted-foreground/40")}>
                       {creditTrend.loading ? "—" : formatCredits(creditTrend.periodCredits)}
                     </div>
@@ -388,7 +372,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
       {/* 3. AI 任务健康 */}
       {!health.unavailable && (
         <div className="space-y-3">
-          <SectionTitle title="AI 任务健康" caption={`近 ${healthDays} 天`} loading={health.loading} />
+          <SectionTitle title="AI 任务健康" caption={windowCaption(healthWindow)} loading={health.loading} />
           {health.error && (
             <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
               {health.error}

@@ -238,8 +238,8 @@ export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string;
           {subView === 'appeals' && (
             appealsUnavailable ? (
               <QaFeatureNotDeployedHint
-                title="申诉队列端点未部署"
-                hint="需要后端 GET /api/tenant/appeals + runtime_guardrail_appeals 表（B4 · 3 § 3.3）"
+                title="申诉处理暂未开放"
+                hint="当前部署尚未启用申诉功能，如需使用请联系管理员。"
               />
             ) : (
               <AppealsView

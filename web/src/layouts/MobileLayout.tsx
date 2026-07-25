@@ -60,7 +60,7 @@ const SuspenseFallback = (
 export function MobileLayout(props: LayoutProps) {
   const {
     sidebarSessions, unreadAiReplySessionIds, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, renameSession, autoTitleSession,
-    isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
+    isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
     messages, loading, isLoadingMessages, retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
@@ -324,6 +324,8 @@ export function MobileLayout(props: LayoutProps) {
                     settingsSection={(adminSettings?.target === "tenant" ? adminSettings.section : "users") as TenantSection}
                     onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
                     onSettingsClose={closeAdminSettings}
+                    activeAnalysisSection={tenantAdminSection}
+                    onAnalysisSectionChange={setTenantAdminRoute}
                   />
                 </Suspense>
               )}

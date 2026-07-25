@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Segmented, type SegmentedOption } from "@/components/ui/segmented";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { HISTORY_PUSH, useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { cn } from "@/lib/utils";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { useAuth } from "@/contexts/AuthContext";
@@ -36,7 +37,7 @@ import type {
 import { formatTokens, formatUsd, formatPercent, formatDateRange } from "./format";
 import { TrendChart, type TrendBarDatum } from "./TrendChart";
 import { UserDetailView } from "./UserDetailView";
-import { RangeSelector, type RangeQuery, type RangeValue, type CustomRange } from "./RangeSelector";
+import { RANGE_OPTIONS, RangeSelector, type RangeQuery, type RangeValue, type CustomRange } from "./RangeSelector";
 import { FamilyFilter } from "./FamilyFilter";
 import { EfficiencyView } from "./EfficiencyView";
 
@@ -44,6 +45,33 @@ const VIEW_TAB_OPTIONS: SegmentedOption<"usage" | "efficiency">[] = [
   { value: "usage", label: "用量" },
   { value: "efficiency", label: "效率" },
 ];
+
+/**
+ * URL 参数契约（`usage*` 命名空间前缀）。
+ *
+ * 本面板同时是**客户视图**（组织分析 →「用量与配额」），因此参数名一律取业务可读词：
+ * 不用 `family`（内部字段名）而用 `usageModelGroup`，值域仍是 UI 上已经展示的品牌分组。
+ */
+const USAGE_RANGE_KEY = "usageRange";
+const USAGE_FROM_KEY = "usageFrom";
+const USAGE_TO_KEY = "usageTo";
+const USAGE_MODEL_GROUP_KEY = "usageModelGroup";
+const USAGE_VIEW_KEY = "usageView";
+const USAGE_USER_KEY = "usageUser";
+const USAGE_SORT_KEY = "usageSort";
+const USAGE_SORT_DIR_KEY = "usageSortDir";
+
+const DEFAULT_USAGE_RANGE: RangeValue = "30d";
+const RANGE_VALUES: ReadonlySet<string> = new Set([...RANGE_OPTIONS.map((option) => option.value), "custom"]);
+const MODEL_GROUP_VALUES: ReadonlySet<string> = new Set(["claude", "gpt", "other"]);
+
+function parseUsageRange(raw: string | null): RangeValue {
+  return raw && RANGE_VALUES.has(raw) ? (raw as RangeValue) : DEFAULT_USAGE_RANGE;
+}
+
+function parseModelGroup(raw: string | null): ModelFamily | "all" {
+  return raw && MODEL_GROUP_VALUES.has(raw) ? (raw as ModelFamily) : "all";
+}
 
 // ────────── 子组件 ──────────
 
@@ -200,6 +228,27 @@ type SortField =
 
 type SortDir = "asc" | "desc";
 
+const DEFAULT_SORT_FIELD: SortField = "totalTokens";
+
+const SORT_FIELDS: ReadonlySet<string> = new Set<SortField>([
+  "username",
+  "totalTokens",
+  "ioTokens",
+  "totalInputTokens",
+  "totalOutputTokens",
+  "totalCacheReadTokens",
+  "totalCacheCreationTokens",
+  "cacheHitRatio",
+  "totalCostUsd",
+  "totalTurns",
+  "lastActiveDate",
+]);
+
+/** URL 上的 usageSort 只接受白名单字段；非法值回落默认排序而不是崩掉表格 */
+function parseSortField(raw: string | null): SortField {
+  return raw && SORT_FIELDS.has(raw) ? (raw as SortField) : DEFAULT_SORT_FIELD;
+}
+
 /** 字符串字段（点击默认 asc）；其他都是数值，默认 desc */
 const ASC_DEFAULT_FIELDS: ReadonlySet<SortField> = new Set(["username", "lastActiveDate"]);
 
@@ -283,17 +332,20 @@ function UserRankTable({
   labelFor?: (modelId: string) => string;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [sortField, setSortField] = useState<SortField>("totalTokens");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // 排序也进 URL：分享「按成本从高到低的排行」链接时，对方看到的必须是同一个排序
+  const url = useAdminUrlQuery();
+  const sortField = parseSortField(url.get(USAGE_SORT_KEY));
+  const sortDir: SortDir = url.get(USAGE_SORT_DIR_KEY) === "asc" ? "asc" : "desc";
 
   const handleSort = useCallback((f: SortField) => {
-    if (f === sortField) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortField(f);
-      setSortDir(ASC_DEFAULT_FIELDS.has(f) ? "asc" : "desc");
-    }
-  }, [sortField]);
+    const nextDir: SortDir = f === sortField
+      ? (sortDir === "asc" ? "desc" : "asc")
+      : (ASC_DEFAULT_FIELDS.has(f) ? "asc" : "desc");
+    url.patch({
+      [USAGE_SORT_KEY]: f === DEFAULT_SORT_FIELD ? null : f,
+      [USAGE_SORT_DIR_KEY]: nextDir === "desc" ? null : nextDir,
+    }, HISTORY_PUSH);
+  }, [url, sortField, sortDir]);
 
   const sortedUsers = useMemo(
     () => sortUsers(users, sortField, sortDir),
@@ -389,19 +441,43 @@ interface UsageDashboardProps {
 export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platform", fullWidth = false }: UsageDashboardProps = {}) {
   // platformReadOnly：只读平台 admin，重扫 usage 数据 disabled
   const { isPlatformAdmin, canPlatform } = useAuth();
+  // 全量筛选态走 URL：客户筛到某个月想把链接发给财务，改造前发出去对方看到的是默认 30 天。
+  const url = useAdminUrlQuery();
   /** 顶部 tab：用量（现有内容）/ 效率（仅平台 admin 可见） */
-  const [viewTab, setViewTab] = useState<"usage" | "efficiency">("usage");
-  const [range, setRange] = useState<RangeValue>("30d");
-  const [customRange, setCustomRange] = useState<CustomRange | null>(null);
+  const viewTab: "usage" | "efficiency" = url.get(USAGE_VIEW_KEY) === "efficiency" ? "efficiency" : "usage";
+  const setViewTab = useCallback(
+    (next: "usage" | "efficiency") => url.set(USAGE_VIEW_KEY, next === "usage" ? null : next, HISTORY_PUSH),
+    [url],
+  );
+  const range = parseUsageRange(url.get(USAGE_RANGE_KEY));
+  const customFrom = url.get(USAGE_FROM_KEY);
+  const customTo = url.get(USAGE_TO_KEY);
+  const customRange = useMemo<CustomRange | null>(
+    () => (customFrom && customTo ? { from: customFrom, to: customTo } : null),
+    [customFrom, customTo],
+  );
   /** 家族筛选；'all' = 全部（请求时不带 family 参数） */
-  const [family, setFamily] = useState<ModelFamily | "all">("all");
+  const family = parseModelGroup(url.get(USAGE_MODEL_GROUP_KEY));
+  const setFamily = useCallback(
+    (next: ModelFamily | "all") => url.set(USAGE_MODEL_GROUP_KEY, next === "all" ? null : next, HISTORY_PUSH),
+    [url],
+  );
   const [overview, setOverview] = useState<OverviewStats | null>(null);
   const [byUser, setByUser] = useState<ByUserResp | null>(null);
   const [trend, setTrend] = useState<TrendResp | null>(null);
   const [dataRange, setDataRange] = useState<DataRangeResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedUser, setSelectedUser] = useState<UserAggregate | null>(null);
+  /**
+   * 下钻到单用户：改造前是 `useState<UserAggregate>` + 早返回整块替换（交互审计评 1/5——
+   * 地址栏不变、刷新回列表、后退键直接退出整个组织分析、无法把「张三的用量明细」发给任何人）。
+   * 现在只在 URL 存 username；行数据从已加载的 byUser 里回查，刷新后照样能进详情页。
+   */
+  const selectedUsername = url.get(USAGE_USER_KEY);
+  const setSelectedUsername = useCallback(
+    (next: string | null) => url.set(USAGE_USER_KEY, next, HISTORY_PUSH),
+    [url],
+  );
 
   // Rebuild 状态
   const [rebuilding, setRebuilding] = useState(false);
@@ -421,9 +497,13 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
   }, [range, customRange, family, tenantId]);
 
   const handleRangeChange = useCallback((v: RangeValue, c?: CustomRange) => {
-    setRange(v);
-    if (v === "custom" && c) setCustomRange(c);
-  }, []);
+    url.patch({
+      [USAGE_RANGE_KEY]: v === DEFAULT_USAGE_RANGE ? null : v,
+      // 只有 custom 才写 from/to；切回预设时清掉，避免 URL 里留一段无效的自定义区间
+      [USAGE_FROM_KEY]: v === "custom" ? c?.from ?? customFrom : null,
+      [USAGE_TO_KEY]: v === "custom" ? c?.to ?? customTo : null,
+    }, HISTORY_PUSH);
+  }, [url, customFrom, customTo]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -524,27 +604,19 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
     }));
   }, [trend]);
 
-  // 详情视图
-  if (selectedUser) {
-    return (
-      <div className={cn("w-full", !fullWidth && "mx-auto max-w-5xl")}>
-        <UserDetailView
-          username={selectedUser.username}
-          realName={selectedUser.realName}
-          tenantId={tenantId}
-          range={range}
-          customRange={customRange}
-          family={family}
-          onRangeChange={handleRangeChange}
-          onFamilyChange={setFamily}
-          onBack={() => setSelectedUser(null)}
-        />
-      </div>
-    );
-  }
+  // 选中用户的姓名：从已加载的排行数据回查（深链直达时 byUser 还没到，先只显示 username）
+  const selectedRealName = useMemo(
+    () => byUser?.users.find((item) => item.username === selectedUsername)?.realName,
+    [byUser, selectedUsername],
+  );
 
   return (
-    <div className={cn("w-full space-y-4", !fullWidth && "mx-auto max-w-5xl")}>
+    <div className={cn("w-full", !fullWidth && "mx-auto max-w-5xl")}>
+      {/* 列表保持挂载（隐藏）以保留排序态、行展开态与已加载数据；详情按需挂载。
+          改造前是 `if (selectedUser) return <UserDetailView/>` 早返回——整块替换，
+          排序/展开/滚动全丢，且地址栏不变（交互审计给这条动线打 1/5，是全平台最差）。
+          现在与 RunTraceExplorer/index.tsx:43 的「hidden 保留状态」做法统一。 */}
+      <div className={cn("space-y-4", selectedUsername && "hidden")} aria-hidden={!!selectedUsername}>
       {/* 用量 / 效率 tab。效率视图是工程排查口径（工具健康/浪费探测/真实模型 ID），
           2026-07-14 起收回平台管理员专属；组织 admin 的健康信息由综合分析页以客户口径承载 */}
       {isPlatformAdmin && (
@@ -652,7 +724,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
             <UserRankTable
               users={byUser.users}
               dateArgs={dateArgs}
-              onSelectUser={setSelectedUser}
+              onSelectUser={(user) => setSelectedUsername(user.username)}
               simplified={simplified}
               labelFor={labelFor}
             />
@@ -664,6 +736,21 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
         </CardContent>
       </Card>
         </>
+      )}
+      </div>
+      {selectedUsername && (
+        <UserDetailView
+          username={selectedUsername}
+          realName={selectedRealName}
+          tenantId={tenantId}
+          range={range}
+          customRange={customRange}
+          family={family}
+          onRangeChange={handleRangeChange}
+          onFamilyChange={setFamily}
+          onBack={() => setSelectedUsername(null)}
+          breadcrumb={[scopeLabel, "Token 用量"]}
+        />
       )}
     </div>
   );

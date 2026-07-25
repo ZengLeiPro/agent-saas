@@ -34,6 +34,7 @@ import {
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { wgs84ToGcj02 } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
+import { navigateToHref } from "@/lib/urlSync";
 import { useLoginLogs, useUsers, type LoginLogFilters } from "./hooks";
 
 interface LoginLogDialogProps {
@@ -459,14 +460,7 @@ export function LoginLogDialog({
                                 onClick={(e) => {
                                   e.preventDefault();
                                   onOpenChange(false);
-                                  window.history.pushState(
-                                    null,
-                                    "",
-                                    `/chat/${encodeURIComponent(sid)}`,
-                                  );
-                                  window.dispatchEvent(
-                                    new PopStateEvent("popstate"),
-                                  );
+                                  navigateToHref(`/chat/${encodeURIComponent(sid)}`);
                                 }}
                                 className="cursor-pointer font-mono text-link hover:underline"
                                 title={`${sid}${title ? "\n" + title : ""}`}

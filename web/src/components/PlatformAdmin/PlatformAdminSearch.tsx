@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
+import { navigateToHref } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "./api";
@@ -19,11 +20,6 @@ const KIND_LABEL: Record<SearchMatchKind, string> = {
   sandbox: formatEntityKind("sandbox"),
   workspace: formatEntityKind("workspace"),
 };
-
-function navigateTo(href: string) {
-  window.history.pushState({}, "", href);
-  window.dispatchEvent(new PopStateEvent("popstate"));
-}
 
 function resultTitle(match: PlatformSearchMatch): string {
   if (match.kind === "run") return `执行记录 ${match.id}`;
@@ -75,7 +71,7 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
     try {
       const data = await platformAdminApi.search(value);
       if (data.matches.length === 1 && data.matches[0].id === value) {
-        navigateTo(data.matches[0].href);
+        navigateToHref(data.matches[0].href);
         setOpen(false);
       } else {
         setMatches(data.matches);
@@ -132,7 +128,7 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
                   type="button"
                   className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-muted/60"
                   onClick={() => {
-                    navigateTo(match.href);
+                    navigateToHref(match.href);
                     setOpen(false);
                   }}
                 >

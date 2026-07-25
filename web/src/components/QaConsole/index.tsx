@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { LayoutDashboard, MessageSquareText, ShieldAlert, ThumbsDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { HISTORY_PUSH, useAdminUrlQuery } from '@/hooks/useAdminUrlQuery';
 import { authFetch } from '@/lib/authFetch';
 import { cn } from '@/lib/utils';
 import type { OrgAgentRecord } from '@agent/shared';
@@ -18,6 +19,15 @@ const QA_VIEWS: Array<{ id: QaView; label: string; icon: typeof MessageSquareTex
   { id: 'feedback', label: '用户反馈', icon: ThumbsDown },
 ];
 
+/** URL 参数契约：`qa*` 命名空间前缀；默认视图不写进 URL */
+const QA_VIEW_KEY = 'qaView';
+const DEFAULT_QA_VIEW: QaView = 'sessions';
+const QA_VIEW_IDS: ReadonlySet<string> = new Set(QA_VIEWS.map((item) => item.id));
+
+function parseQaView(raw: string | null): QaView {
+  return raw && QA_VIEW_IDS.has(raw) ? (raw as QaView) : DEFAULT_QA_VIEW;
+}
+
 /**
  * 组织对话质检台（组织分析第 4 个 header tab「对话质检」，2026-07 唯恩批次）
  *
@@ -26,7 +36,13 @@ const QA_VIEWS: Array<{ id: QaView; label: string; icon: typeof MessageSquareTex
  * 过滤器的 Agent 下拉共享一次 /api/org-agents 拉取。
  */
 export function QaConsole({ tenantId }: { tenantId?: string }) {
-  const [view, setView] = useState<QaView>('sessions');
+  // 视图切换进 URL：改造前是本机 useState，刷新回到第一个子视图，也无法把「门禁看板」链接发出去
+  const url = useAdminUrlQuery();
+  const view = parseQaView(url.get(QA_VIEW_KEY));
+  const setView = useCallback(
+    (next: QaView) => url.set(QA_VIEW_KEY, next === DEFAULT_QA_VIEW ? null : next, HISTORY_PUSH),
+    [url],
+  );
   const [orgAgents, setOrgAgents] = useState<OrgAgentRecord[]>([]);
 
   useEffect(() => {

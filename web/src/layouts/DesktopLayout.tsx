@@ -67,7 +67,7 @@ const SuspenseFallback = (
 export function DesktopLayout(props: LayoutProps) {
   const {
     sidebarSessions, unreadAiReplySessionIds, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
-    isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
+    isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
     messages, loading, isLoadingMessages, retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
@@ -156,7 +156,6 @@ export function DesktopLayout(props: LayoutProps) {
   const [activeWorkflow, setActiveWorkflow] = useState<WorkflowOnboardingContext | null>(null);
   const [cronWizardOpen, setCronWizardOpen] = useState(false);
   const [cronWizardScenario, setCronWizardScenario] = useState<ScenarioItem | null>(null);
-  const [tenantAdminSection, setTenantAdminSection] = useState<TenantSection>("overview");
   useEffect(() => {
     if (activeTab === "cron" && !cronMounted) setCronMounted(true);
     if (activeTab === "capabilities" && !capabilitiesMounted) setCapabilitiesMounted(true);
@@ -386,7 +385,7 @@ export function DesktopLayout(props: LayoutProps) {
           {activeTab === "tenant-admin" && (
             <TenantAdminHeaderControls
               active={tenantAdminSection}
-              onActiveChange={setTenantAdminSection}
+              onActiveChange={setTenantAdminRoute}
               className="min-w-0 flex-1"
             />
           )}
@@ -625,7 +624,7 @@ export function DesktopLayout(props: LayoutProps) {
                 onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
                 onSettingsClose={closeAdminSettings}
                 activeAnalysisSection={tenantAdminSection}
-                onAnalysisSectionChange={setTenantAdminSection}
+                onAnalysisSectionChange={setTenantAdminRoute}
                 headerControlsPlacement="none"
               />
             </Suspense>

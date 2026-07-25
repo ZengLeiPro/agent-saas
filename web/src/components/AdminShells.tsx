@@ -20,7 +20,8 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type TenantSettings } from "@/components/TenantManager/types";
 import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
-import { pushPlatformAdminUrl, type PlatformAdminSection } from "@/lib/urlSync";
+import { HISTORY_PUSH, HISTORY_PUSH_MERGED, useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
+import { navigatePlatformAdmin, type PlatformAdminSection } from "@/lib/urlSync";
 import { AdminErrorAlert, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
 import { formatChannel } from "@/components/PlatformAdmin/displayText";
 import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
@@ -635,12 +636,23 @@ function AuditEventsPanel({
 }) {
   const { users } = useUsers();
   const { tenants } = useTenants();
-  const [category, setCategory] = useState("");
-  const [channel, setChannel] = useState("");
-  const [usernameFilter, setUsernameFilter] = useState("");
-  const [tenantIdFilter, setTenantIdFilter] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  // URL 同步：`audit*` 命名空间前缀（同 ToolAnalysisPanel 的 `tool*` 方案），避免与宿主页 key 冲突。
+  // 参数名一律取业务可读词（auditType / auditOrg / auditFrom），不暴露内部字段名——
+  // 本面板同时服务平台运维与组织管理员，客户看得见地址栏。
+  const url = useAdminUrlQuery();
+  const category = url.get("auditType") ?? "";
+  const channel = url.get("auditChannel") ?? "";
+  const usernameFilter = url.get("auditUser") ?? "";
+  const tenantIdFilter = url.get("auditOrg") ?? "";
+  const startDate = url.get("auditFrom") ?? "";
+  const endDate = url.get("auditTo") ?? "";
+  const setCategory = useCallback((value: string) => url.set("auditType", value || null, HISTORY_PUSH), [url]);
+  const setChannel = useCallback((value: string) => url.set("auditChannel", value || null, HISTORY_PUSH), [url]);
+  const setTenantIdFilter = useCallback((value: string) => url.set("auditOrg", value || null, HISTORY_PUSH), [url]);
+  // 文本 / 日期输入：500ms 合并，否则每敲一个字符一条历史记录
+  const setUsernameFilter = useCallback((value: string) => url.set("auditUser", value || null, HISTORY_PUSH_MERGED), [url]);
+  const setStartDate = useCallback((value: string) => url.set("auditFrom", value || null, HISTORY_PUSH_MERGED), [url]);
+  const setEndDate = useCallback((value: string) => url.set("auditTo", value || null, HISTORY_PUSH_MERGED), [url]);
 
   const tenantUsers = useMemo(
     () => tenantId ? users.filter(user => user.tenantId === tenantId) : users,
@@ -844,11 +856,26 @@ export function TenantAdminShell({
   const [internalActive, setInternalActive] = useState<TenantSection>("overview");
   const active = activeAnalysisSection ?? internalActive;
   const setActive = onAnalysisSectionChange ?? setInternalActive;
-  const [targetTenantId, setTargetTenantId] = useState(user?.tenantId ?? "");
+  // 组织切换器（仅平台管理员可见）进 URL：`org` 是业务可读参数名，
+  // 分享出去的组织分析链接必须落到同一个组织，而不是分享者自己的默认组织。
+  const shellUrl = useAdminUrlQuery();
+  const urlTenantId = shellUrl.get("org") ?? "";
+  const [fallbackTenantId, setFallbackTenantId] = useState(user?.tenantId ?? "");
+  const targetTenantId = urlTenantId || fallbackTenantId;
+  const setTargetTenantId = useCallback(
+    (next: string) => shellUrl.set("org", next || null, HISTORY_PUSH),
+    [shellUrl],
+  );
 
   useEffect(() => {
-    if (!targetTenantId && user?.tenantId) setTargetTenantId(user.tenantId);
-  }, [targetTenantId, user?.tenantId]);
+    if (!fallbackTenantId && user?.tenantId) setFallbackTenantId(user.tenantId);
+  }, [fallbackTenantId, user?.tenantId]);
+
+  // 管理弹窗路径（/tenant-admin/settings/*）不带 search，`org` 会暂时消失；
+  // 把最近一次的选择记进 fallback，避免打开再关闭管理弹窗后被打回自己的组织。
+  useEffect(() => {
+    if (urlTenantId) setFallbackTenantId(urlTenantId);
+  }, [urlTenantId]);
 
   const effectiveTenantId = isPlatformAdmin ? targetTenantId || user?.tenantId || "" : user?.tenantId || "";
   const currentTenant = tenants.find(t => t.id === effectiveTenantId);
@@ -1051,8 +1078,8 @@ export function PlatformAdminShell({
     if (activeSection === "sessions") return <SessionsPage sessionId={entityId} />;
     if (activeSection === "runs") {
       return <RunTraceExplorer runId={entityId} onRunIdChange={(next) => {
-        pushPlatformAdminUrl({ section: "runs", entityId: next, search: window.location.search });
-        window.dispatchEvent(new PopStateEvent("popstate"));
+        // 同 section 内换 entityId：整串 search 透传（列表筛选必须原样保留）
+        navigatePlatformAdmin({ section: "runs", entityId: next, search: window.location.search });
       }} />;
     }
     if (activeSection === "sandboxes") return <SandboxesPage sandboxName={entityId} />;

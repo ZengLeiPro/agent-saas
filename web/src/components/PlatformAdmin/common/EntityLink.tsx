@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { Check, Copy } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { buildPlatformAdminUrl, pushPlatformAdminUrl, type PlatformAdminSection } from "@/lib/urlSync";
+import { buildPlatformAdminUrl, navigatePlatformAdmin, preserveScopeSearch, type PlatformAdminSection } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
 export type EntityKind = "tenant" | "user" | "session" | "run" | "sandbox" | "workspace";
@@ -25,10 +25,30 @@ const ENTITY_SEARCH_PARAM: Partial<Record<EntityKind, string>> = {
   workspace: "workspaceId",
 };
 
+/**
+ * 目标实体自身代表的作用域键——跳过去就不该再带同名筛选。
+ * 例：点 tenant 链接时不要把当前列表的 `tenantId` 筛选带到另一个组织的详情页上。
+ */
+const ENTITY_OWN_SCOPE_KEY: Partial<Record<EntityKind, string>> = {
+  tenant: "tenantId",
+  user: "userId",
+};
+
+/**
+ * 构造跳转目标。改造前这里**丢弃整串 query**（交互审计 §3 的 3/5 扣分项）：
+ * 从 runs 页筛了某组织、点进 session 详情再回列表，组织筛选就没了。
+ * 现在按白名单透传作用域筛选（tenantId / userId），section 私有筛选仍丢弃。
+ */
 function entityTarget(kind: EntityKind, id: string) {
   const section = ENTITY_SECTION[kind];
   const param = ENTITY_SEARCH_PARAM[kind];
-  return param ? { section, search: { [param]: id } } : { section, entityId: id };
+  const ownKey = ENTITY_OWN_SCOPE_KEY[kind];
+  const search = preserveScopeSearch({ omit: ownKey ? [ownKey] : undefined });
+  if (param) {
+    search.set(param, id);
+    return { section, search };
+  }
+  return { section, entityId: id, search };
 }
 
 function shortId(value: string, len: number) {
@@ -63,8 +83,7 @@ export function EntityLink({
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
-    pushPlatformAdminUrl(entityTarget(kind, id));
-    window.dispatchEvent(new PopStateEvent("popstate"));
+    navigatePlatformAdmin(entityTarget(kind, id));
   }, [id, kind]);
 
   const onCopy = useCallback((event: React.MouseEvent) => {

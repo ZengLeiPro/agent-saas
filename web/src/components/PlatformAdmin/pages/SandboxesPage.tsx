@@ -10,7 +10,7 @@ import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHe
 import { useAuth } from "@/contexts/AuthContext";
 import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, ScopeFilters, StatusBadge } from "@/components/PlatformAdmin/common";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
-import { pushPlatformAdminUrl } from "@/lib/urlSync";
+import { navigatePlatformAdmin } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
@@ -201,8 +201,7 @@ function SandboxList() {
           </div>
         }
         onRowClick={(row) => {
-          pushPlatformAdminUrl({ section: "sandboxes", entityId: row.name });
-          window.dispatchEvent(new PopStateEvent("popstate"));
+          navigatePlatformAdmin({ section: "sandboxes", entityId: row.name });
         }}
         columns={[
           { key: "phase", header: "状态", cell: row => <div className="space-y-1"><StatusBadge kind="sandbox" status={row.phase ?? "Unknown"} /><div className="max-w-44 truncate text-2xs text-destructive">{row.brokenReason}</div></div> },
@@ -317,8 +316,7 @@ function SandboxDetail({ sandboxName }: { sandboxName: string }) {
   useEffect(() => { void load(); }, [load]);
 
   const goBackToList = useCallback(() => {
-    pushPlatformAdminUrl({ section: "sandboxes" });
-    window.dispatchEvent(new PopStateEvent("popstate"));
+    navigatePlatformAdmin({ section: "sandboxes" });
   }, []);
 
   const runAction = useCallback(async (

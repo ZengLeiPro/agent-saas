@@ -12,7 +12,7 @@
  *
  * 3 个 KPI 卡片（B4 § 4.4.4）：**拒答率 / 申诉率 / fail-open 率**
  */
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { AdminSelect } from '@/components/ui/admin-select';
@@ -21,6 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { HISTORY_PUSH, HISTORY_PUSH_MERGED, useAdminUrlQuery } from '@/hooks/useAdminUrlQuery';
 import { cn } from '@/lib/utils';
 import type { OrgAgentRecord } from '@agent/shared';
 import { useQaAppeals, useQaGuardrailBoard } from './hooks';
@@ -66,6 +67,25 @@ const MODEL_COLORS = [
  * 由日期字符串（YYYY-MM-DD）反推「过去 N 天」——默认拉 30 天
  * from / to 用 ISO；空则默认 30 天窗口
  */
+/** URL 参数契约（客户视图）：`qaBoard*` 前缀，与另外三个子视图分开 */
+const BOARD_TAB_KEY = 'qaBoardTab';
+const BOARD_MODE_KEY = 'qaBoardMode';
+const BOARD_AGENT_KEY = 'qaBoardAgent';
+const BOARD_FROM_KEY = 'qaBoardFrom';
+const BOARD_TO_KEY = 'qaBoardTo';
+const DEFAULT_BOARD_TAB: BoardSubView = 'top';
+const DEFAULT_BOARD_MODE: QaGuardrailMode = 'all';
+const BOARD_TAB_IDS: ReadonlySet<string> = new Set(SUB_VIEWS.map((item) => item.id));
+const BOARD_MODE_IDS: ReadonlySet<string> = new Set(MODE_TABS.map((item) => item.id));
+
+function parseBoardTab(raw: string | null): BoardSubView {
+  return raw && BOARD_TAB_IDS.has(raw) ? (raw as BoardSubView) : DEFAULT_BOARD_TAB;
+}
+
+function parseBoardMode(raw: string | null): QaGuardrailMode {
+  return raw && BOARD_MODE_IDS.has(raw) ? (raw as QaGuardrailMode) : DEFAULT_BOARD_MODE;
+}
+
 function defaultDateRange(): { from: string; to: string; fromInput: string; toInput: string } {
   const now = new Date();
   const to = new Date(now);
@@ -77,12 +97,25 @@ function defaultDateRange(): { from: string; to: string; fromInput: string; toIn
 }
 
 export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string; orgAgents: OrgAgentRecord[] }) {
-  const [subView, setSubView] = useState<BoardSubView>('top');
-  const [mode, setMode] = useState<QaGuardrailMode>('all');
-  const [orgAgentId, setOrgAgentId] = useState('');
+  const url = useAdminUrlQuery();
+  const subView = parseBoardTab(url.get(BOARD_TAB_KEY));
+  const mode = parseBoardMode(url.get(BOARD_MODE_KEY));
+  const orgAgentId = url.get(BOARD_AGENT_KEY) ?? '';
+  // 默认 30 天窗口仍然是算出来的（不写进 URL，保持链接短）；URL 上有值时以 URL 为准
   const initial = useMemo(defaultDateRange, []);
-  const [startDate, setStartDate] = useState(initial.fromInput);
-  const [endDate, setEndDate] = useState(initial.toInput);
+  const startDate = url.get(BOARD_FROM_KEY) ?? initial.fromInput;
+  const endDate = url.get(BOARD_TO_KEY) ?? initial.toInput;
+  const setSubView = useCallback(
+    (next: BoardSubView) => url.set(BOARD_TAB_KEY, next === DEFAULT_BOARD_TAB ? null : next, HISTORY_PUSH),
+    [url],
+  );
+  const setMode = useCallback(
+    (next: QaGuardrailMode) => url.set(BOARD_MODE_KEY, next === DEFAULT_BOARD_MODE ? null : next, HISTORY_PUSH),
+    [url],
+  );
+  const setOrgAgentId = useCallback((value: string) => url.set(BOARD_AGENT_KEY, value || null, HISTORY_PUSH), [url]);
+  const setStartDate = useCallback((value: string) => url.set(BOARD_FROM_KEY, value || null, HISTORY_PUSH_MERGED), [url]);
+  const setEndDate = useCallback((value: string) => url.set(BOARD_TO_KEY, value || null, HISTORY_PUSH_MERGED), [url]);
 
   const from = startDate ? new Date(startDate).toISOString() : undefined;
   const to = endDate ? new Date(`${endDate}T23:59:59.999Z`).toISOString() : undefined;

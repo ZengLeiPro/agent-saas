@@ -11,7 +11,7 @@ import type { ConnectionState } from "@/hooks/useConnectionState";
 import type { AgentProfile, OrgAgentSummary, SessionParticipants } from "@agent/shared";
 import type { SettingsSectionId } from "@/types/settings";
 import type { AdminSettingsState, AdminSettingsTarget } from "@/lib/urlSync";
-import type { PlatformAdminSection } from "@/lib/urlSync";
+import type { PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 
 export interface LayoutProps {
   // 会话导航
@@ -44,6 +44,10 @@ export interface LayoutProps {
   activeTab: AppTab;
   platformAdminSection: PlatformAdminSection;
   platformAdminEntityId: string | null;
+  /** 组织分析当前页签（来自 URL 路径，刷新/分享可保留） */
+  tenantAdminSection: TenantAdminSection;
+  /** 切换组织分析页签（push 历史） */
+  setTenantAdminRoute: (section: string) => void;
   setActiveTab: (tab: AppTab) => void;
   /** push 版本的 setActiveTab：浏览器历史会新增一条记录（user menu 跳转用） */
   pushActiveTab: (tab: AppTab) => void;

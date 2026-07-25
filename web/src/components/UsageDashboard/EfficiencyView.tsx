@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Segmented, type SegmentedOption } from "@/components/ui/segmented";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { HISTORY_PUSH, useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { cn } from "@/lib/utils";
 import { AdminErrorAlert, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
 import { RUN_LABEL, formatToolName } from "@/components/PlatformAdmin/displayText";
@@ -36,6 +37,15 @@ const DAYS_OPTIONS: SegmentedOption<number>[] = [
   { value: 30, label: "30 天" },
 ];
 
+const DEFAULT_EFF_DAYS = 7;
+const ALLOWED_EFF_DAYS = new Set(DAYS_OPTIONS.map((option) => option.value));
+
+/** URL 上的 effDays 只接受白名单值；非法/缺失回落 7，避免拼错参数拉一年数据 */
+function parseEffDays(raw: string | null): number {
+  const value = Number(raw);
+  return Number.isFinite(value) && ALLOWED_EFF_DAYS.has(value) ? value : DEFAULT_EFF_DAYS;
+}
+
 /** 工具错误率红色高亮阈值 */
 const ERROR_RATE_ALERT = 0.05;
 
@@ -47,7 +57,14 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
   linkEntities?: boolean;
 }) {
   const { labelFor } = useModelDisplayMap();
-  const [days, setDays] = useState<number>(7);
+  // URL 同步：`eff*` 命名空间前缀。改造前天数是本机 useState，切页签静默重置回 7 天，
+  // 且排障时无法把「近 30 天的失败原因」链接发给同事（交互审计 §2）。
+  const url = useAdminUrlQuery();
+  const days = parseEffDays(url.get("effDays"));
+  const setDays = useCallback(
+    (next: number) => url.set("effDays", next === DEFAULT_EFF_DAYS ? null : next, HISTORY_PUSH),
+    [url],
+  );
   const [data, setData] = useState<EfficiencyReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

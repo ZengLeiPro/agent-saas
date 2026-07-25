@@ -11,7 +11,7 @@ import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, 
 import { useTenants } from "@/components/TenantManager/hooks";
 import type { UserInfo } from "@/components/UserManager/types";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
-import { pushPlatformAdminUrl } from "@/lib/urlSync";
+import { navigatePlatformAdmin } from "@/lib/urlSync";
 
 import { platformAdminApi } from "../api";
 import { RUN_LABEL, SESSION_LABEL, TENANT_LABEL, formatRole, formatRunStatus } from "../displayText";
@@ -122,8 +122,7 @@ function UserList() {
           </div>
         }
         onRowClick={(row) => {
-          pushPlatformAdminUrl({ section: "users", entityId: row.id });
-          window.dispatchEvent(new PopStateEvent("popstate"));
+          navigatePlatformAdmin({ section: "users", entityId: row.id });
         }}
         hasPrev={cursorStack.length > 0}
         hasNext={!!nextCursor}
@@ -189,12 +188,10 @@ function UserDetail({ userId }: { userId: string }) {
         actions={
           <>
             {user && <Button variant="outline" size="sm" onClick={() => {
-              pushPlatformAdminUrl({ section: "sessions", search: { tenantId: user.tenantId, userId: user.id } });
-              window.dispatchEvent(new PopStateEvent("popstate"));
+              navigatePlatformAdmin({ section: "sessions", search: { tenantId: user.tenantId, userId: user.id } });
             }}>{SESSION_LABEL}</Button>}
             {user && <Button variant="outline" size="sm" onClick={() => {
-              pushPlatformAdminUrl({ section: "runs", search: { tenantId: user.tenantId, userId: user.id } });
-              window.dispatchEvent(new PopStateEvent("popstate"));
+              navigatePlatformAdmin({ section: "runs", search: { tenantId: user.tenantId, userId: user.id } });
             }}>{RUN_LABEL}</Button>}
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
               {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}

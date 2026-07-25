@@ -40,6 +40,11 @@ interface Props {
   onRangeChange: (v: RangeValue, c?: CustomRange) => void;
   onFamilyChange: (v: ModelFamily | "all") => void;
   onBack: () => void;
+  /**
+   * 面包屑的祖先层级（不含当前用户本身）。改造前这里只有一个「返回列表」按钮，
+   * 用户不知道自己在哪一层，也无法一步跳回更上层。
+   */
+  breadcrumb?: string[];
 }
 
 export function UserDetailView({
@@ -52,6 +57,7 @@ export function UserDetailView({
   onRangeChange,
   onFamilyChange,
   onBack,
+  breadcrumb,
 }: Props) {
   // 折算成 API 参数：自定义走 from/to，否则走 range；family 始终透传
   const dateArgs = useMemo<{
@@ -138,6 +144,27 @@ export function UserDetailView({
   return (
     <div className="space-y-4">
       {/* Header */}
+      {breadcrumb && breadcrumb.length > 0 && (
+        <nav aria-label="面包屑" className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+          {breadcrumb.map((crumb, index) => (
+            <span key={`${crumb}-${index}`} className="flex items-center gap-1">
+              {index === breadcrumb.length - 1 ? (
+                <button
+                  type="button"
+                  onClick={onBack}
+                  className="rounded px-1 hover:bg-accent hover:text-foreground hover:underline"
+                >
+                  {crumb}
+                </button>
+              ) : (
+                <span className="px-1">{crumb}</span>
+              )}
+              <span aria-hidden="true">/</span>
+            </span>
+          ))}
+          <span className="px-1 font-medium text-foreground">{realName ?? username}</span>
+        </nav>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onBack}>

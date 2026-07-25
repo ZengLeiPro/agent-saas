@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { AdminSelect } from '@/components/ui/admin-select';
 import { Button } from '@/components/ui/button';
@@ -8,14 +8,20 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import type { OrgAgentRecord } from '@agent/shared';
+import { HISTORY_PUSH, HISTORY_PUSH_MERGED, useAdminUrlQuery } from '@/hooks/useAdminUrlQuery';
 import { useQaFeedback } from './hooks';
 import { QaUnavailableHint, formatQaTime, orgAgentSelectOptions } from './shared';
 
 /** 用户反馈标注视图（offset 分页）：员工点「踩」的回答 + 评论 */
 export function FeedbackView({ tenantId, orgAgents }: { tenantId?: string; orgAgents: OrgAgentRecord[] }) {
-  const [orgAgentId, setOrgAgentId] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  // URL 参数契约（客户视图）：`qaFeedback*` 前缀
+  const url = useAdminUrlQuery();
+  const orgAgentId = url.get('qaFeedbackAgent') ?? '';
+  const startDate = url.get('qaFeedbackFrom') ?? '';
+  const endDate = url.get('qaFeedbackTo') ?? '';
+  const setOrgAgentId = useCallback((value: string) => url.set('qaFeedbackAgent', value || null, HISTORY_PUSH), [url]);
+  const setStartDate = useCallback((value: string) => url.set('qaFeedbackFrom', value || null, HISTORY_PUSH_MERGED), [url]);
+  const setEndDate = useCallback((value: string) => url.set('qaFeedbackTo', value || null, HISTORY_PUSH_MERGED), [url]);
 
   const filter = useMemo(() => ({
     tenantId,

@@ -15,7 +15,7 @@
  *   - 缓存命中率 / 输入输出 Token 分解 / 沙箱等工程概念
  * 平台管理员需要工程视图时走平台管理（用量 / 效率 / Run Trace）。
  */
-import { useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import {
   Activity,
   TriangleAlert,
@@ -38,8 +38,9 @@ import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHe
 import { useAuth } from "@/contexts/AuthContext";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useUsers } from "@/components/UserManager/hooks";
+import { HISTORY_PUSH, useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { cn } from "@/lib/utils";
-import { RangeSelector, type CustomRange, type RangeValue } from "@/components/UsageDashboard/RangeSelector";
+import { RANGE_OPTIONS, RangeSelector, type CustomRange, type RangeValue } from "@/components/UsageDashboard/RangeSelector";
 import { formatDateRange } from "@/components/UsageDashboard/format";
 import { formatCount, formatMs, formatRate } from "@/components/RunTraceExplorer/format";
 import { RunStatusBadge } from "@/components/RunTraceExplorer/StatusBadge";
@@ -146,13 +147,36 @@ function SectionTitle({ title, caption, loading }: { title: string; caption?: st
   );
 }
 
+/**
+ * URL 参数契约（`org*` 命名空间前缀）。
+ *
+ * 这是**客户视图**：参数名取业务可读词，不出现内部字段名。
+ * 时间窗默认 7 天（与改造前的 useState 初值一致），默认值不写进 URL 以保持链接短。
+ */
+const ORG_RANGE_KEY = "orgRange";
+const ORG_FROM_KEY = "orgFrom";
+const ORG_TO_KEY = "orgTo";
+const DEFAULT_ORG_RANGE: RangeValue = "7d";
+const ORG_RANGE_VALUES: ReadonlySet<string> = new Set([...RANGE_OPTIONS.map((option) => option.value), "custom"]);
+
+function parseOrgRange(raw: string | null): RangeValue {
+  return raw && ORG_RANGE_VALUES.has(raw) ? (raw as RangeValue) : DEFAULT_ORG_RANGE;
+}
+
 export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: OverviewSectionProps) {
   const { isPlatformAdmin } = useAuth();
   const { users, loading: usersLoading } = useUsers();
   const { tenants } = useTenants();
 
-  const [range, setRange] = useState<RangeValue>("7d");
-  const [customRange, setCustomRange] = useState<CustomRange | null>(null);
+  // 时间窗进 URL：客户筛到某个区间想把链接发给同事，改造前发出去对方看到的是默认 7 天
+  const url = useAdminUrlQuery();
+  const range = parseOrgRange(url.get(ORG_RANGE_KEY));
+  const customFrom = url.get(ORG_FROM_KEY);
+  const customTo = url.get(ORG_TO_KEY);
+  const customRange = useMemo<CustomRange | null>(
+    () => (customFrom && customTo ? { from: customFrom, to: customTo } : null),
+    [customFrom, customTo],
+  );
 
   const dateArgs = useMemo<UsageDateArgs>(() => {
     if (range === "custom" && customRange) {
@@ -178,10 +202,13 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
   const showUsageCredits = billingActive && displayPolicy.showUsageCredits;
   const creditTrend = useTenantCreditTrend(tenantId, creditDays, showUsageCredits);
 
-  const handleRangeChange = (value: RangeValue, custom?: CustomRange) => {
-    setRange(value);
-    if (value === "custom" && custom) setCustomRange(custom);
-  };
+  const handleRangeChange = useCallback((value: RangeValue, custom?: CustomRange) => {
+    url.patch({
+      [ORG_RANGE_KEY]: value === DEFAULT_ORG_RANGE ? null : value,
+      [ORG_FROM_KEY]: value === "custom" ? custom?.from ?? customFrom : null,
+      [ORG_TO_KEY]: value === "custom" ? custom?.to ?? customTo : null,
+    }, HISTORY_PUSH);
+  }, [url, customFrom, customTo]);
 
   const currentTenant = tenants.find(tenant => tenant.id === tenantId);
   const tenantSelectOptions = useMemo<AdminSelectOption[]>(

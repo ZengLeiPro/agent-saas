@@ -29,9 +29,9 @@ import {
   createCompactionRunningItem,
 } from "@/lib/compaction";
 import type { CompactionMessageItem, CompactionStatusEvent } from "@/lib/compaction";
-import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, pushSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl } from "@/lib/urlSync";
+import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, pushSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS } from "@/lib/urlSync";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
-import type { AdminSettingsState, AdminSettingsTarget, PlatformAdminSection } from "@/lib/urlSync";
+import type { AdminSettingsState, AdminSettingsTarget, PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSession } from "@/hooks/useSession";
@@ -93,6 +93,8 @@ export interface ChatAppState {
   activeTab: AppTab;
   platformAdminSection: PlatformAdminSection;
   platformAdminEntityId: string | null;
+  /** 组织分析当前页签（进路径，可分享/刷新保留） */
+  tenantAdminSection: TenantAdminSection;
   settingsOpen: boolean;
   settingsSection: SettingsSectionId;
   uploadedFiles: UploadedFile[];
@@ -112,6 +114,8 @@ export interface ChatAppState {
   /** push 版本的 setActiveTab：会在浏览器历史里创建一条记录，供 user menu 跳转使用 */
   pushActiveTab: (tab: AppTab) => void;
   setPlatformAdminRoute: (section: PlatformAdminSection, entityId?: string | null) => void;
+  /** 切换组织分析页签（push 历史，浏览器后退可回到上一个页签） */
+  setTenantAdminRoute: (section: string) => void;
   openSettings: (section?: SettingsSectionId) => void;
   closeSettings: () => void;
   setSettingsSection: (section: SettingsSectionId) => void;
@@ -433,6 +437,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const [activeTab, setActiveTabRaw] = useState<AppTab>(urlState.tab);
   const [platformAdminSection, setPlatformAdminSectionRaw] = useState<PlatformAdminSection>(urlState.adminSection ?? 'overview');
   const [platformAdminEntityId, setPlatformAdminEntityIdRaw] = useState<string | null>(urlState.adminEntityId);
+  const [tenantAdminSection, setTenantAdminSectionRaw] = useState<TenantAdminSection>(urlState.tenantAdminSection ?? 'overview');
   const [pendingCanonicalPath, setPendingCanonicalPath] = useState<string | null>(urlState.canonicalPath);
   const [settingsOpen, setSettingsOpen] = useState(() => urlState.settingsSection !== null);
   const [settingsSection, setSettingsSectionRaw] = useState<SettingsSectionId>(urlState.settingsSection ?? 'account');
@@ -444,6 +449,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     entityId: platformAdminEntityId,
   });
   platformAdminRouteRef.current = { section: platformAdminSection, entityId: platformAdminEntityId };
+  const tenantAdminSectionRef = useRef<TenantAdminSection>(tenantAdminSection);
+  tenantAdminSectionRef.current = tenantAdminSection;
   const adminSettingsRef = useRef<AdminSettingsState | null>(adminSettings);
   adminSettingsRef.current = adminSettings;
   const streamNonceRef = useRef(0);
@@ -953,6 +960,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       setPlatformAdminSectionRaw('overview');
       setPlatformAdminEntityIdRaw(null);
       replacePlatformAdminUrl({ section: 'overview' });
+    } else if (tab === 'tenant-admin') {
+      // 组织分析页签在路径里，进入时保留上一次的页签（URL 跟随 state，而不是把 state 打回第一个 tab）
+      replaceTenantAdminUrl({ section: tenantAdminSectionRef.current, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
     } else {
       replaceUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
     }
@@ -969,7 +979,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (tab === 'platform-admin') {
       setPlatformAdminSectionRaw('overview');
       setPlatformAdminEntityIdRaw(null);
-      pushPlatformAdminUrl({ section: 'overview' });
+      // 作用域筛选（组织/用户）跨页面粘连，section 私有筛选丢弃
+      pushPlatformAdminUrl({ section: 'overview', search: preserveScopeSearch() });
+    } else if (tab === 'tenant-admin') {
+      pushTenantAdminUrl({ section: tenantAdminSectionRef.current, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
     } else {
       pushUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
     }
@@ -983,7 +996,21 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setActiveTabRaw('platform-admin');
     setPlatformAdminSectionRaw(section);
     setPlatformAdminEntityIdRaw(entityId);
-    pushPlatformAdminUrl({ section, entityId });
+    // 改造前这里丢弃整串 query：从 sessions 筛了某组织再点侧栏「执行记录」，组织筛选没了。
+    // 现在按白名单透传作用域筛选（tenantId / userId）——section 私有筛选（kind/phase/cursor…）
+    // 跨 section 无意义，仍然丢弃。
+    pushPlatformAdminUrl({ section, entityId, search: preserveScopeSearch() });
+  }, []);
+
+  /** 切换组织分析页签：进路径 + push 历史（后退回上一个页签，而不是退出整个组织分析） */
+  const setTenantAdminRoute = useCallback((section: string) => {
+    const next = normalizeTenantAdminSection(section);
+    setSettingsOpen(false);
+    setAdminSettingsRaw(null);
+    setActiveTabRaw('tenant-admin');
+    setTenantAdminSectionRaw(next);
+    // 切页签丢弃页内私有筛选，但带着组织作用域走
+    pushTenantAdminUrl({ section: next, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
   }, []);
 
   const openSettings = useCallback((section: SettingsSectionId = 'account') => {
@@ -997,6 +1024,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setSettingsOpen(false);
     if (activeTabRef.current === 'platform-admin') {
       pushPlatformAdminUrl(platformAdminRouteRef.current);
+    } else if (activeTabRef.current === 'tenant-admin') {
+      pushTenantAdminUrl({ section: tenantAdminSectionRef.current, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
     } else {
       pushUrl(activeTabRef.current, activeTabRef.current === 'chat' ? immediateSessionIdRef.current : null);
     }
@@ -1025,6 +1054,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     const tab = activeTabRef.current;
     if (tab === 'platform-admin') {
       pushPlatformAdminUrl(platformAdminRouteRef.current);
+    } else if (tab === 'tenant-admin') {
+      pushTenantAdminUrl({ section: tenantAdminSectionRef.current, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
     } else {
       pushUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
     }
@@ -1146,6 +1177,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         settingsSection: urlSettingsSection,
         adminSection: urlAdminSection,
         adminEntityId: urlAdminEntityId,
+        tenantAdminSection: urlTenantAdminSection,
         adminSettings: urlAdminSettings,
         canonicalPath,
       } = parseUrl();
@@ -1168,6 +1200,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (tab === 'platform-admin') {
         setPlatformAdminSectionRaw(urlAdminSection ?? 'overview');
         setPlatformAdminEntityIdRaw(urlAdminEntityId);
+      }
+      if (tab === 'tenant-admin' && urlTenantAdminSection) {
+        setTenantAdminSectionRaw(urlTenantAdminSection);
       }
       immediateSessionIdRef.current = urlSessionId;
       setActiveTabRaw(tab);
@@ -1226,11 +1261,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       }
       return;
     }
+    if (activeTab === 'tenant-admin') {
+      // 与 platform-admin 完全对称：路径带页签，search（筛选）原样保留
+      const expectedPath = buildTenantAdminUrl({ section: tenantAdminSection });
+      if (expectedPath !== window.location.pathname) {
+        replaceTenantAdminUrl({ section: tenantAdminSection, search: window.location.search });
+      }
+      return;
+    }
     if (expectedUrl !== window.location.pathname) {
       immediateSessionIdRef.current = session.sessionId;
       replaceUrl(activeTab, activeTab === 'chat' ? session.sessionId : null);
     }
-  }, [session.sessionId, activeTab, settingsOpen, settingsSection, adminSettings, platformAdminSection, platformAdminEntityId, pendingCanonicalPath]);
+  }, [session.sessionId, activeTab, settingsOpen, settingsSection, adminSettings, platformAdminSection, platformAdminEntityId, tenantAdminSection, pendingCanonicalPath]);
 
   // ---- Loading watchdog：超时保护，防止 done 事件丢失时 loading 永久锁定 ----
   const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2675,6 +2718,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     activeTab,
     platformAdminSection,
     platformAdminEntityId,
+    tenantAdminSection,
     settingsOpen,
     settingsSection,
     uploadedFiles: fileUpload.uploadedFiles,
@@ -2693,6 +2737,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setActiveTab,
     pushActiveTab,
     setPlatformAdminRoute,
+    setTenantAdminRoute,
     openSettings,
     closeSettings,
     setSettingsSection,

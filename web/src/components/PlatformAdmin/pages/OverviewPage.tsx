@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { AdminErrorAlert, AttentionQueue, MetricCard } from "@/components/PlatformAdmin/common";
-import { buildPlatformAdminUrl, pushPlatformAdminUrl, type PlatformAdminSection } from "@/lib/urlSync";
+import { buildPlatformAdminUrl, navigatePlatformAdmin, type PlatformAdminSection } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
@@ -14,8 +14,7 @@ import { attentionSeverity, formatNumber, formatRate, formatTime, formatYuan } f
 import type { BillingDailyPoint, OverviewAttentionEntityRef, OverviewSnapshot, PlatformTrendResponse } from "../types";
 
 function navigate(section: PlatformAdminSection, search?: Record<string, string | number | boolean | null | undefined>) {
-  pushPlatformAdminUrl({ section, search });
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  navigatePlatformAdmin({ section, search });
 }
 
 function navigateRef(ref: OverviewAttentionEntityRef | undefined) {
@@ -29,8 +28,7 @@ function navigateRef(ref: OverviewAttentionEntityRef | undefined) {
         : ref.kind === "user"
           ? "users"
           : "tenants";
-  pushPlatformAdminUrl({ section, entityId: ref.id });
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  navigatePlatformAdmin({ section, entityId: ref.id });
 }
 
 export function OverviewPage() {

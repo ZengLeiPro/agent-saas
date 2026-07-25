@@ -11,7 +11,7 @@ import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHe
 import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, ScopeFilters, StatusBadge } from "@/components/PlatformAdmin/common";
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
-import { pushPlatformAdminUrl } from "@/lib/urlSync";
+import { navigatePlatformAdmin } from "@/lib/urlSync";
 
 import { platformAdminApi } from "../api";
 import { RUN_LABEL, SESSION_LABEL, TENANT_LABEL, formatChannel, formatSessionKind, formatSessionStatus } from "../displayText";
@@ -166,8 +166,7 @@ function SessionList() {
           </div>
         }
         onRowClick={(row) => {
-          pushPlatformAdminUrl({ section: "sessions", entityId: row.sessionId });
-          window.dispatchEvent(new PopStateEvent("popstate"));
+          navigatePlatformAdmin({ section: "sessions", entityId: row.sessionId });
         }}
         hasPrev={cursorStack.length > 0}
         hasNext={!!nextCursor}
@@ -234,8 +233,7 @@ function SessionDetail({ sessionId }: { sessionId: string }) {
         actions={
           <>
             {session && <Button variant="outline" size="sm" onClick={() => {
-              pushPlatformAdminUrl({ section: "runs", search: { tenantId: session.tenantId, sessionId: session.sessionId } });
-              window.dispatchEvent(new PopStateEvent("popstate"));
+              navigatePlatformAdmin({ section: "runs", search: { tenantId: session.tenantId, sessionId: session.sessionId } });
             }}>查看全部{RUN_LABEL}</Button>}
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
               {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { AdminSelect, type AdminSelectOption } from '@/components/ui/admin-select';
 import { Badge } from '@/components/ui/badge';
@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { HISTORY_PUSH, HISTORY_PUSH_MERGED, useAdminUrlQuery } from '@/hooks/useAdminUrlQuery';
 import { cn } from '@/lib/utils';
 import type { OrgAgentRecord } from '@agent/shared';
 import { useQaGuardrailEvents } from './hooks';
@@ -20,10 +21,18 @@ const VERDICT_OPTIONS: AdminSelectOption[] = [
 
 /** 门禁拒绝/打标日志视图（offset 分页，仿 AuditEventsPanel 上/下一页）——拒绝记录即需求雷达 */
 export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string; orgAgents: OrgAgentRecord[] }) {
-  const [orgAgentId, setOrgAgentId] = useState('');
-  const [verdict, setVerdict] = useState<'' | 'off_topic' | 'pass_flagged'>('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  // URL 参数契约（客户视图）：`qaLog*` 前缀，与会话记录视图的 `qa*` 分开，切视图互不干扰
+  const url = useAdminUrlQuery();
+  const orgAgentId = url.get('qaLogAgent') ?? '';
+  const rawResult = url.get('qaLogResult');
+  const verdict: '' | 'off_topic' | 'pass_flagged' =
+    rawResult === 'off_topic' || rawResult === 'pass_flagged' ? rawResult : '';
+  const startDate = url.get('qaLogFrom') ?? '';
+  const endDate = url.get('qaLogTo') ?? '';
+  const setOrgAgentId = useCallback((value: string) => url.set('qaLogAgent', value || null, HISTORY_PUSH), [url]);
+  const setVerdict = useCallback((value: string) => url.set('qaLogResult', value || null, HISTORY_PUSH), [url]);
+  const setStartDate = useCallback((value: string) => url.set('qaLogFrom', value || null, HISTORY_PUSH_MERGED), [url]);
+  const setEndDate = useCallback((value: string) => url.set('qaLogTo', value || null, HISTORY_PUSH_MERGED), [url]);
 
   const filter = useMemo(() => ({
     tenantId,

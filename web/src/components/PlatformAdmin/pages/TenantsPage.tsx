@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
-import { pushAdminSettingsUrl, pushPlatformAdminUrl } from "@/lib/urlSync";
+import { navigateAdminSettings, navigatePlatformAdmin } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
@@ -16,13 +16,11 @@ import { formatCredits, formatNumber, formatTime, formatYuan } from "../format";
 import type { PlatformRunRecord, PlatformSessionRecord, SandboxRecord, TenantOverviewItem } from "../types";
 
 function openSettings() {
-  pushAdminSettingsUrl("platform", "tenants");
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  navigateAdminSettings("platform", "tenants");
 }
 
 function go(section: "users" | "sessions" | "runs" | "sandboxes", search: Record<string, string>) {
-  pushPlatformAdminUrl({ section, search });
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  navigatePlatformAdmin({ section, search });
 }
 
 export function TenantsPage({ tenantId }: { tenantId: string | null }) {
@@ -95,8 +93,7 @@ function TenantList() {
           />
         }
         onRowClick={(row) => {
-          pushPlatformAdminUrl({ section: "tenants", entityId: row.id });
-          window.dispatchEvent(new PopStateEvent("popstate"));
+          navigatePlatformAdmin({ section: "tenants", entityId: row.id });
         }}
         columns={[
           { key: "status", header: "状态", cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },

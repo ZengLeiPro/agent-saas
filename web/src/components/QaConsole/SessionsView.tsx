@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { AdminSelect, type AdminSelectOption } from '@/components/ui/admin-select';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useUsers } from '@/components/UserManager/hooks';
+import { HISTORY_PUSH, HISTORY_PUSH_MERGED, useAdminUrlQuery } from '@/hooks/useAdminUrlQuery';
 import { cn } from '@/lib/utils';
 import type { OrgAgentRecord } from '@agent/shared';
 import { useQaSessions } from './hooks';
@@ -17,10 +18,16 @@ import type { QaSessionItem } from './types';
 /** 专职 Agent 会话列表视图：Agent/成员/时间过滤 + cursor 加载更多 + 行点击开详情 */
 export function SessionsView({ tenantId, orgAgents }: { tenantId?: string; orgAgents: OrgAgentRecord[] }) {
   const { users } = useUsers();
-  const [orgAgentId, setOrgAgentId] = useState('');
-  const [userId, setUserId] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  // URL 参数契约（客户视图）：业务可读词，不暴露内部字段名（orgAgentId → qaAgent、userId → qaMember）
+  const url = useAdminUrlQuery();
+  const orgAgentId = url.get('qaAgent') ?? '';
+  const userId = url.get('qaMember') ?? '';
+  const startDate = url.get('qaFrom') ?? '';
+  const endDate = url.get('qaTo') ?? '';
+  const setOrgAgentId = useCallback((value: string) => url.set('qaAgent', value || null, HISTORY_PUSH), [url]);
+  const setUserId = useCallback((value: string) => url.set('qaMember', value || null, HISTORY_PUSH), [url]);
+  const setStartDate = useCallback((value: string) => url.set('qaFrom', value || null, HISTORY_PUSH_MERGED), [url]);
+  const setEndDate = useCallback((value: string) => url.set('qaTo', value || null, HISTORY_PUSH_MERGED), [url]);
   const [detailSession, setDetailSession] = useState<QaSessionItem | null>(null);
 
   const tenantUsers = useMemo(

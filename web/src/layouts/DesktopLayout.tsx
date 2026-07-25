@@ -321,6 +321,7 @@ export function DesktopLayout(props: LayoutProps) {
         onLoadMore={loadMoreSessions}
         onLoadGroupSessions={loadGroupSessions}
         hidden={sidebarCollapsed}
+        onCollapse={toggleSidebar}
         onPreviewTrashSession={previewTrashSession}
         trashPreviewSessionId={trashPreviewSessionId}
         sidebarLayout={sidebarLayout}
@@ -338,15 +339,18 @@ export function DesktopLayout(props: LayoutProps) {
           }}
         >
           <div className={cn("flex min-w-0 items-center gap-2", activeTab === "chat" && "flex-1")}>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              onClick={(e) => { e.stopPropagation(); toggleSidebar(); }}
-              title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
-            >
-              <PanelLeft className="size-4" />
-            </Button>
+            {/* 侧边栏展开后，收起入口移到侧边栏 header；此处只在收起态承接展开入口 */}
+            {sidebarCollapsed && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 shrink-0"
+                onClick={(e) => { e.stopPropagation(); toggleSidebar(); }}
+                title="展开侧边栏"
+              >
+                <PanelLeft className="size-4" />
+              </Button>
+            )}
             {activeTab === "capabilities" ? (
               <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="min-w-0">
                 <CapabilityTabsList

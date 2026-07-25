@@ -17,7 +17,7 @@ import {
   ChevronRight,
   FolderMinus,
   Check,
-  RefreshCw,
+  PanelLeft,
   Clock,
   Minimize2,
   Settings2,
@@ -38,7 +38,6 @@ import { SessionShareDialog } from "@/components/chat/SessionShareDialog";
 import { TrashView } from "@/components/chat/TrashView";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
 
-import { refreshAll } from "@/lib/refreshBus";
 import { requestOpenBillingBadge } from "@/lib/billingBadgeBus";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -97,6 +96,8 @@ interface DesktopSessionSidebarProps {
   onLoadMore?: () => void;
   onLoadGroupSessions?: (groupId: string) => Promise<void>;
   hidden?: boolean;
+  /** 收起侧边栏（入口在侧边栏 header；收起后展开入口回到内容区 header） */
+  onCollapse?: () => void;
   onPreviewTrashSession?: (id: string | null) => void;
   trashPreviewSessionId?: string | null;
   /** 完整未读集（不受分页影响），用于左栏各视图/分组的聚合红点 */
@@ -496,9 +497,11 @@ function SessionRow({
 
 interface SidebarBrandHeaderProps {
   className?: string;
+  /** 收起侧边栏。收起后侧边栏整体隐藏，展开入口由内容区 header 承接 */
+  onCollapse?: () => void;
 }
 
-function SidebarBrandHeader({ className }: SidebarBrandHeaderProps) {
+function SidebarBrandHeader({ className, onCollapse }: SidebarBrandHeaderProps) {
   return (
     <div className={cn("flex items-center justify-between gap-2 px-3 py-3", className)}>
       <div className="flex min-w-0 items-center">
@@ -506,14 +509,16 @@ function SidebarBrandHeader({ className }: SidebarBrandHeaderProps) {
           KY Agent
         </span>
       </div>
-      <button
-        type="button"
-        className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        onClick={() => void refreshAll()}
-        title="刷新会话列表"
-      >
-        <RefreshCw className="size-4" />
-      </button>
+      {onCollapse && (
+        <button
+          type="button"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onClick={onCollapse}
+          title="收起侧边栏"
+        >
+          <PanelLeft className="size-4" />
+        </button>
+      )}
     </div>
   );
 }
@@ -1059,6 +1064,7 @@ export function DesktopSessionSidebar({
   onLoadMore,
   onLoadGroupSessions,
   hidden = false,
+  onCollapse,
   onPreviewTrashSession,
   trashPreviewSessionId,
   unreadAiReplySessionIds,
@@ -1710,7 +1716,7 @@ export function DesktopSessionSidebar({
         // @ts-expect-error -- inert is a valid HTML attribute, React types lag behind
         inert={hidden ? "" : undefined}
       >
-        <SidebarBrandHeader />
+        <SidebarBrandHeader onCollapse={onCollapse} />
 
         <SidebarNav
           navItems={navItems}
@@ -1937,8 +1943,8 @@ export function DesktopSessionSidebar({
           className="relative flex h-full shrink-0 flex-col border-r border-black/[0.08]"
           style={{ width: mainPanelWidth }}
         >
-          {/* Header: 品牌徽标 + 刷新 */}
-          <SidebarBrandHeader />
+          {/* Header: 品牌徽标 + 收起侧边栏 */}
+          <SidebarBrandHeader onCollapse={onCollapse} />
 
           {/* Navigation: 新建会话 + 竖排导航 */}
           <SidebarNav

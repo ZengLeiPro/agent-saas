@@ -79,9 +79,46 @@ def load_playwright():
     return sync_playwright
 
 
+def proxy_settings():
+    """
+    从环境变量读出口代理并显式传给 Chromium。
+
+    为什么不能只靠环境变量：Chromium 在无 GNOME/KDE 的容器里确实会读 *小写* 的
+    http_proxy/https_proxy/no_proxy，但这条路径依赖桌面环境探测、行为不稳定，
+    Chromium 官方文档对容器/CI 场景的建议是显式传 --proxy-server。Playwright 的
+    proxy 参数最终就落到这个 flag 上，因此这里显式传一份，语义确定。
+
+    返回 None 表示不配代理（Playwright 会走它自己的默认行为）。
+    """
+    proxy_url = (
+        os.environ.get("HTTPS_PROXY")
+        or os.environ.get("https_proxy")
+        or os.environ.get("HTTP_PROXY")
+        or os.environ.get("http_proxy")
+        or ""
+    ).strip()
+    if not proxy_url:
+        return None
+
+    raw_bypass = (os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or "").strip()
+    # Chromium 的 --proxy-bypass-list 不支持 CIDR，带 "/" 的条目会让整条列表被忽略，
+    # 因此这里过滤掉内网段；内网直连由容器网络策略本身保证。
+    bypass_items = [
+        item.strip()
+        for item in raw_bypass.split(",")
+        if item.strip() and "/" not in item.strip()
+    ]
+
+    settings = {"server": proxy_url}
+    if bypass_items:
+        settings["bypass"] = ",".join(bypass_items)
+    return settings
+
+
 def open_context(args):
     sync_playwright = load_playwright()
     playwright = sync_playwright().start()
+    proxy = proxy_settings()
     context = playwright.chromium.launch_persistent_context(
         str(profile_dir(args.session)),
         headless=not args.headed,
@@ -89,6 +126,7 @@ def open_context(args):
         downloads_path=str(downloads_dir()),
         viewport=DEFAULT_VIEWPORT,
         args=["--disable-dev-shm-usage"],
+        **({"proxy": proxy} if proxy else {}),
     )
     context.set_default_timeout(args.timeout_ms)
     context.set_default_navigation_timeout(args.timeout_ms)

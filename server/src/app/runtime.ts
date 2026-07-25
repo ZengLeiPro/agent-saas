@@ -93,6 +93,9 @@ import { GroupStore } from '../data/groups/store.js';
 import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { McpConfigStore } from '../data/mcpConfig.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
+import { EgressConfigStore } from '../data/egressConfig.js';
+import { EgressDispatcherRegistry, createEgressFetch } from '../runtime/egressDispatcher.js';
+import type { EgressConfig } from '../runtime/egressPolicy.js';
 import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds, scanUserCustomSkills } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import { syncSkills, resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
@@ -217,6 +220,10 @@ export interface AppRuntime {
   mcpOAuthService?: McpOAuthService;
   /** 自助注册动态配置（platform-admin 配置页写入，signup router 按 version 懒重建） */
   signupConfigStore?: SignupConfigStore;
+  /** 网络出口（代理/镜像源）动态配置（platform-admin「网络出口」页写入） */
+  egressConfigStore?: EgressConfigStore;
+  /** 保存代理凭据后刷新 dispatcher 用的同步缓存 */
+  refreshEgressProxyCredential?: () => Promise<void>;
   groupStore: GroupStore;
   authMiddleware?: ReturnType<typeof createAuthMiddleware>;
   /**
@@ -1482,6 +1489,44 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     join(processCwd, 'data', 'signup-config.json'),
     config.auth?.selfSignup,
   );
+  // 网络出口（代理/镜像源）动态配置：文件不存在时用 config.json 的 egress 段作 seed。
+  const egressConfigStore = new EgressConfigStore(
+    join(processCwd, 'data', 'egress-config.json'),
+    config.egress as EgressConfig | undefined,
+  );
+  const egressLogger = serverLogger.child('Egress');
+  // 代理凭据同步缓存：dispatcher 需要同步取值，而 vault.getSecret 是异步的，
+  // 因此在启动与每次配置保存后主动刷新一次，中间态按「无凭据」处理（内网代理通常无认证）。
+  let egressProxyCredential: string | undefined;
+  const refreshEgressProxyCredential = async (): Promise<void> => {
+    const ref = egressConfigStore.getProxyCredentialRef();
+    if (!ref || !secretVault) {
+      egressProxyCredential = undefined;
+      return;
+    }
+    try {
+      egressProxyCredential = await secretVault.getSecret(ref, {
+        actor: 'system',
+        userId: '__system__',
+        scopes: ['secret:egress_proxy:read'],
+      });
+    } catch (err) {
+      egressProxyCredential = undefined;
+      egressLogger.warn(
+        `代理凭据解析失败，按无凭据处理: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+  void refreshEgressProxyCredential();
+  const egressDispatchers = new EgressDispatcherRegistry(
+    {
+      getConfig: () => egressConfigStore.getConfig(),
+      getConfigVersion: () => egressConfigStore.getConfigVersion(),
+      getProxyCredential: () => egressProxyCredential,
+    },
+    egressLogger,
+  );
+  const egressFetch = createEgressFetch(egressDispatchers, egressLogger);
   const mcpCapabilityTokens = new CapabilityTokenService();
   const mcpClientManager = new McpClientManager({
     agentCwd,
@@ -1698,6 +1743,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...(artifactService ? { artifactService } : {}),
     ...(resolvedServerRemote ? { serverRemote: resolvedServerRemote } : {}),
     ...(resolvedWebTools ? { webTools: resolvedWebTools } : {}),
+    // WebSearch/WebFetch 走 egress-aware fetch：按平台「网络出口」配置决定
+    // 逐域名走代理还是直连；未启用时内部直接透传全局 fetch。
+    webFetchImpl: egressFetch,
     ...(resolvedImageGenTools ? { imageGenTools: resolvedImageGenTools } : {}),
     // metered_tool_usage（GenerateImage 按次扣费）事件直写 runtime_events；
     // file backend 不配置 → 工具跳过扣费事件（billingService 也不存在，语义一致）。
@@ -2592,6 +2640,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     mcpConfigStore,
     mcpOAuthService,
     signupConfigStore,
+    egressConfigStore,
+    refreshEgressProxyCredential,
     groupStore,
     authMiddleware,
     titleGeneratorConfigs,

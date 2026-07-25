@@ -10,6 +10,12 @@ import {
   isValidDomain,
   normalizeNetworkPolicy,
 } from '../runtime/networkPolicy.js';
+import {
+  DEFAULT_EGRESS_CONFIG,
+  DEFAULT_NPM_REGISTRY,
+  DEFAULT_PIP_INDEX_URL,
+  DEFAULT_PIP_TRUSTED_HOST,
+} from '../runtime/egressPolicy.js';
 import { looksLikeSecret } from '../security/secretHeuristics.js';
 import { SYSTEM_PROMPT_IDS } from '../systemPrompts/types.js';
 
@@ -1144,8 +1150,51 @@ const runtimeEventRetentionConfigSchema = z.object({
   billingCatchupMaxBatches: z.number().int().min(1).max(10_000).optional(),
 });
 
+/**
+ * 网络出口（代理 / 镜像源）配置（2026-07-25）。
+ *
+ * 与上面的 `proxyConfigSchema` 区别：那个只影响 spawn 出去的 agent 子进程 env，
+ * 对 Node 原生 fetch（模型调用 / WebFetch / MCP）完全无效；这里是真正生效的一套，
+ * 通过独立 JSON store 持久化，platform-admin「网络出口」页可改，改完即生效。
+ *
+ * config.json 里的同名段仅作首次 seed，之后以 data/egress-config.json 为准。
+ */
+export const egressServerProxyConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** http/https/socks5 代理地址；enabled=true 时必填 */
+  proxyUrl: z.string().default(''),
+  /** 走代理的域名后缀；留空表示全部走代理 */
+  matchDomains: z.array(z.string().min(1)).default([]),
+  /** 永不走代理的域名后缀，优先级高于 matchDomains */
+  bypassDomains: z.array(z.string().min(1)).default([]),
+  timeoutMs: z.number().int().min(1_000).max(300_000).default(20_000),
+  /** 代理不可用时降级直连（推荐），false 则直接失败 */
+  failOpen: z.boolean().default(true),
+});
+
+export const egressSandboxProxyConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  proxyUrl: z.string().default(''),
+  /** 额外绕过代理的地址；VPC DNS/localhost/内网段由服务端强制补齐 */
+  noProxy: z.array(z.string().min(1)).default([]),
+});
+
+export const egressPackageMirrorsConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  pipIndexUrl: z.string().default(DEFAULT_PIP_INDEX_URL),
+  pipTrustedHost: z.string().default(DEFAULT_PIP_TRUSTED_HOST),
+  npmRegistry: z.string().default(DEFAULT_NPM_REGISTRY),
+});
+
+export const egressConfigSchema = z.object({
+  server: egressServerProxyConfigSchema.default(DEFAULT_EGRESS_CONFIG.server),
+  sandbox: egressSandboxProxyConfigSchema.default(DEFAULT_EGRESS_CONFIG.sandbox),
+  packageMirrors: egressPackageMirrorsConfigSchema.default(DEFAULT_EGRESS_CONFIG.packageMirrors),
+});
+
 export const appConfigSchema = z.object({
   proxy: proxyConfigSchema.optional(),
+  egress: egressConfigSchema.optional(),
   agent: agentConfigSchema,
   server: serverConfigSchema,
   cron: cronConfigSchema.optional(),

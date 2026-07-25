@@ -9,6 +9,11 @@ import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './netwo
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
 import { SnatManager, type SnatCleanupReport, type SnatStatus } from './snatManager.js';
 import type { NetworkPolicyStatus } from 'server/runtime/networkPolicy.js';
+import {
+  buildPackageMirrorEnv,
+  buildSandboxProxyEnv,
+  egressSandboxFingerprint,
+} from 'server/runtime/egressPolicy.js';
 
 export interface SandboxStatus {
   phase?: string;
@@ -113,6 +118,7 @@ const NETWORK_POLICY_MODE_ANNOTATION = 'agent-saas.kaiyan.net/network-policy-mod
 const NETWORK_POLICY_DENY_PRIVATE_ANNOTATION = 'agent-saas.kaiyan.net/network-policy-deny-private';
 const ACS_NETWORK_POLICY_AGENT_ANNOTATION = 'network.alibabacloud.com/enable-network-policy-agent';
 const ACS_NETWORK_POLICY_MODE_ANNOTATION = 'network.alibabacloud.com/network-policy-mode';
+const EGRESS_FINGERPRINT_ANNOTATION = 'agent-saas.kaiyan.net/egress-fingerprint';
 const SANDBOX_TIMEZONE = 'Asia/Shanghai';
 
 export class SandboxManager {
@@ -942,6 +948,12 @@ export class SandboxManager {
       [NETWORK_POLICY_DENY_PRIVATE_ANNOTATION]: String(this.config.networkPolicy.denyPrivateNetworks),
       [ACS_NETWORK_POLICY_AGENT_ANNOTATION]: 'true',
       [ACS_NETWORK_POLICY_MODE_ANNOTATION]: acsNetworkPolicyMode(this.config.networkPolicy.mode),
+      // 出口配置指纹：Pod env 创建后固化，靠它能一眼看出某个容器用的是哪版出口配置。
+      // 刻意不作为重建条件——改配置就重建会中断用户在跑的会话，让它随自然 pause/重建生效。
+      [EGRESS_FINGERPRINT_ANNOTATION]: egressSandboxFingerprint(
+        this.config.egress.proxy,
+        this.config.egress.packageMirrors,
+      ) || 'none',
     };
     const container: Record<string, unknown> = {
       name: this.config.sandboxContainerName,
@@ -967,6 +979,11 @@ export class SandboxManager {
         { name: 'TZ', value: SANDBOX_TIMEZONE },
         { name: 'LANG', value: 'C.UTF-8' },
         { name: 'LC_ALL', value: 'C.UTF-8' },
+        // 出口代理与国内镜像源（2026-07-25）：由 server「网络出口」配置页下发。
+        // 代理变量大小写各一份是刚需——curl/wget/git 与容器内 Chromium 只认小写，
+        // Go 二进制（gh/aliyun/dws/lark-cli）优先读大写。未启用时这里为空数组。
+        ...buildSandboxProxyEnv(this.config.egress.proxy),
+        ...buildPackageMirrorEnv(this.config.egress.packageMirrors),
       ],
       workingDir: this.config.workspaceMountPath,
       securityContext: {

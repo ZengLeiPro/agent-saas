@@ -55,6 +55,8 @@ const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
   'session_renamed', 'session_forked', 'session_share_updated', 'session_share_revoked',
   // 工具启停与描述覆盖只有平台管理员能做，不进本集合等于完全不留痕
   'tool_controls_updated',
+  // 网络出口配置改变出站路径（代理/镜像源），同样只有平台管理员能做
+  'egress_config_updated',
 ]);
 
 /** 从 Express Request 构建并追加一条审计日志（fire-and-forget） */

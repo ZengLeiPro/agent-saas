@@ -37,9 +37,10 @@ const TenantInstructionsPanel = lazy(() => import("@/components/TenantInstructio
   .then((m) => ({ default: m.TenantInstructionsSection })));
 const SystemPromptsManagerPanel = lazy(() => import("@/components/SystemPromptsManager"));
 const AgentRuntimeProfilesManagerPanel = lazy(() => import("@/components/AgentRuntimeProfilesManager"));
+const EgressConfigManagerPanel = lazy(() => import("@/components/EgressConfigManager"));
 
 export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company" | "instructions";
-export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "agent-profiles" | "system-prompts" | "memory-polling" | "global-mcp" | "skill-pool" | "system";
+export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "agent-profiles" | "system-prompts" | "memory-polling" | "global-mcp" | "skill-pool" | "egress" | "system";
 
 interface ShellButton<T extends string> {
   id: T;
@@ -79,6 +80,7 @@ const platformSettingsSections: ShellButton<PlatformSection>[] = [
   { id: "memory-polling", label: "记忆轮询", icon: EntityIcons.memoryPolling },
   { id: "global-mcp", label: "全局 MCP", icon: EntityIcons.connector },
   { id: "skill-pool", label: "技能池", icon: EntityIcons.skill },
+  { id: "egress", label: "网络出口", icon: EntityIcons.egress },
   { id: "system", label: "系统配置", icon: EntityIcons.systemConfig },
 ];
 
@@ -1022,6 +1024,7 @@ export function PlatformAdminShell({
     { id: "memory-polling", node: renderMemoryPolling() },
     { id: "global-mcp", node: renderMcp() },
     { id: "skill-pool", node: renderSkills() },
+    { id: "egress", node: <EgressConfigManagerPanel /> },
     { id: "system", node: <SystemSettingsPanel /> },
   ];
 

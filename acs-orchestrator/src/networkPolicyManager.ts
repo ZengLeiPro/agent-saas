@@ -10,6 +10,7 @@ import {
   type NetworkPolicyConfig,
   type NetworkPolicyStatus,
 } from 'server/runtime/networkPolicy.js';
+import { proxyHostCidr } from 'server/runtime/egressPolicy.js';
 
 const TRAFFIC_POLICY_API_VERSION = 'network.alibabacloud.com/v1alpha1';
 const TRAFFIC_POLICY_KIND = 'TrafficPolicy';
@@ -69,18 +70,35 @@ export class AcsNetworkPolicyManager {
     };
   }
 
+  /**
+   * 出口代理地址若是内网 IP，必须随策略一起放行。TrafficPolicy 每次 reconcile
+   * 都会重算，所以改配置后下一次 ensureRunning 就会拉齐（不需要重建容器）。
+   */
+  private egressProxyAllowCidrs(): string[] {
+    const proxy = this.config.egress?.proxy;
+    if (!proxy?.enabled) return [];
+    const cidr = proxyHostCidr(proxy.proxyUrl);
+    return cidr ? [cidr] : [];
+  }
+
   async reconcile(ref: SandboxRef): Promise<void> {
+    const extraAllowCidrs = this.egressProxyAllowCidrs();
     const manifest = buildTrafficPolicyManifest({
       namespace: this.config.namespace,
       ref,
       policy: this.config.networkPolicy,
+      extraAllowCidrs,
     });
     const result = await this.kubectl.run(['apply', '-f', '-'], {
       input: JSON.stringify(manifest),
       timeoutMs: this.config.sandboxWaitTimeoutMs,
     });
     if (result.exitCode !== 0) throw new Error(`apply TrafficPolicy 失败: ${result.stderr || result.stdout}`);
-    this.logger.info(`traffic_policy_applied sandbox=${ref.name} policy=${trafficPolicyNameFor(ref.name)} mode=${this.config.networkPolicy.mode}`);
+    this.logger.info(
+      `traffic_policy_applied sandbox=${ref.name} policy=${trafficPolicyNameFor(ref.name)}`
+        + ` mode=${this.config.networkPolicy.mode}`
+        + (extraAllowCidrs.length ? ` egressProxyAllow=${extraAllowCidrs.join(',')}` : ''),
+    );
   }
 
   async deleteForSandboxName(sandboxName: string): Promise<void> {
@@ -125,8 +143,13 @@ export function buildTrafficPolicyManifest(input: {
   namespace: string;
   ref: SandboxRef;
   policy: NetworkPolicyConfig;
+  /**
+   * 出口代理地址的 /32。必须显式放行——public-egress 模式默认 deny 整个
+   * `172.16.0.0/12`，而内网代理通常就落在这一段里，不放行等于代理配了也用不了。
+   */
+  extraAllowCidrs?: readonly string[];
 }): Record<string, unknown> {
-  const rules = buildTrafficPolicyRules(input.policy);
+  const rules = buildTrafficPolicyRules(input.policy, input.extraAllowCidrs ?? []);
   return {
     apiVersion: TRAFFIC_POLICY_API_VERSION,
     kind: TRAFFIC_POLICY_KIND,
@@ -163,8 +186,12 @@ export function buildTrafficPolicyManifest(input: {
   };
 }
 
-function buildTrafficPolicyRules(policy: NetworkPolicyConfig): Array<Record<string, unknown>> {
+function buildTrafficPolicyRules(
+  policy: NetworkPolicyConfig,
+  extraAllowCidrs: readonly string[] = [],
+): Array<Record<string, unknown>> {
   if (policy.mode === 'isolated') {
+    // isolated 语义就是「什么都不许出」，代理也不例外，否则等于开了后门
     return [denyRule([cidrPeer(IPV4_ALL)])];
   }
 
@@ -172,8 +199,16 @@ function buildTrafficPolicyRules(policy: NetworkPolicyConfig): Array<Record<stri
     const denyCidrs = policy.denyPrivateNetworks === false
       ? ipv4Cidrs(policy.denyCidrs ?? [])
       : ipv4Cidrs([...DEFAULT_DENY_PRIVATE_CIDRS, ...(policy.denyCidrs ?? [])]);
+    // 明确放行项必须排在 deny 之前：规则数组有序、先匹配先生效。
+    // 但元数据服务永远不放行——把 allow 提前后，一个误配的 100.100.100.200/32
+    // 就能绕过下面的 deny 拿到 ECS 临时凭据，这里硬性剔除。
+    const allowPeers = [
+      ...withoutMetadata(ipv4Cidrs([...(policy.allowCidrs ?? []), ...extraAllowCidrs])).map(cidrPeer),
+      ...(policy.allowDomains ?? []).map((fqdn) => ({ fqdn })),
+    ];
     return [
       allowRule(DNS_ALLOW_PEERS),
+      ...(allowPeers.length ? [allowRule(allowPeers)] : []),
       ...(denyCidrs.length ? [denyRule(denyCidrs.map(cidrPeer))] : []),
       allowRule([cidrPeer(IPV4_ALL)]),
     ];
@@ -181,7 +216,7 @@ function buildTrafficPolicyRules(policy: NetworkPolicyConfig): Array<Record<stri
 
   const explicitDenyCidrs = ipv4Cidrs([METADATA_CIDR, ...(policy.denyCidrs ?? [])]);
   const allowPeers = [
-    ...ipv4Cidrs(policy.allowCidrs ?? []).map(cidrPeer),
+    ...withoutMetadata(ipv4Cidrs([...(policy.allowCidrs ?? []), ...extraAllowCidrs])).map(cidrPeer),
     ...(policy.allowDomains ?? []).map((fqdn) => ({ fqdn })),
   ];
   const privateDenyCidrs = policy.denyPrivateNetworks === false
@@ -206,6 +241,11 @@ function denyRule(to: TrafficPeer[]): Record<string, unknown> {
 
 function cidrPeer(cidr: string): TrafficPeer {
   return { cidr };
+}
+
+/** 元数据服务不接受任何形式的显式放行（含 /32 与更宽的包含段） */
+function withoutMetadata(cidrs: readonly string[]): string[] {
+  return cidrs.filter((cidr) => cidr !== METADATA_CIDR && cidr !== '100.100.100.200');
 }
 
 function ipv4Cidrs(values: readonly string[]): string[] {

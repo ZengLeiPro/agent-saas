@@ -5,6 +5,12 @@ import {
   parseNetworkPolicyFromEnv,
   type NetworkPolicyConfig,
 } from 'server/runtime/networkPolicy.js';
+import {
+  DEFAULT_EGRESS_CONFIG,
+  parseProxyUrl,
+  type EgressPackageMirrorsConfig,
+  type EgressSandboxProxyConfig,
+} from 'server/runtime/egressPolicy.js';
 
 export interface AcsOrchestratorConfig {
   port: number;
@@ -51,6 +57,8 @@ export interface AcsOrchestratorConfig {
   drainDeadlineMs: number;
   networkPolicy: NetworkPolicyConfig;
   snat: AcsSnatConfig;
+  /** 出口代理与镜像源；由 server 侧配置页经 PATCH /runtime-config 下发 */
+  egress: AcsEgressConfig;
   runtimeConfigPath?: string;
   alertWebhookUrl?: string;
   alertWebhookBearerToken?: string;
@@ -80,10 +88,24 @@ export interface AcsSnatConfig {
   stabilizeAfterCreateMs: number;
 }
 
+/**
+ * 网络出口（代理 / 镜像源）配置（2026-07-25）。
+ * 由 server 侧「网络出口」配置页经 PATCH /runtime-config 下发并持久化到
+ * runtimeConfigPath，orchestrator 重启后仍生效。
+ *
+ * 注意生效边界：proxy/mirror 通过 Pod spec env 注入，容器创建时固化，
+ * 因此只对**新建 Sandbox** 生效；已运行的容器要等自然 pause/重建。
+ */
+export interface AcsEgressConfig {
+  proxy: EgressSandboxProxyConfig;
+  packageMirrors: EgressPackageMirrorsConfig;
+}
+
 export interface AcsRuntimeConfigSnapshot {
   maxRunningSandboxes: number;
   warnRunningSandboxes: number;
   drainDeadlineMs: number;
+  egress: AcsEgressConfig;
   runtimeConfigPath?: string;
   persisted: boolean;
 }
@@ -92,6 +114,7 @@ export interface AcsRuntimeConfigPatch {
   maxRunningSandboxes?: number;
   warnRunningSandboxes?: number;
   drainDeadlineMs?: number;
+  egress?: AcsEgressConfig;
 }
 
 function readIntEnv(name: string, fallback: number, opts: { min?: number; max?: number } = {}): number {
@@ -177,6 +200,9 @@ export function parseRuntimeConfigPatch(input: unknown): AcsRuntimeConfigPatch {
   if ('drainDeadlineMs' in raw) {
     patch.drainDeadlineMs = parseRuntimeConfigDuration('drainDeadlineMs', raw.drainDeadlineMs);
   }
+  if ('egress' in raw) {
+    patch.egress = parseEgressConfigPatch(raw.egress);
+  }
   validateRuntimeConfigValues(patch);
   return patch;
 }
@@ -191,6 +217,75 @@ function parseRuntimeConfigDuration(name: string, value: unknown): number {
   if (typeof value !== 'number' || !Number.isInteger(value)) throw new Error(`${name} must be an integer`);
   if (value < 1_000 || value > 24 * 60 * 60_000) throw new Error(`${name} must be between 1000 and 86400000`);
   return value;
+}
+
+function parseBool(name: string, value: unknown): boolean {
+  if (typeof value !== 'boolean') throw new Error(`${name} must be a boolean`);
+  return value;
+}
+
+function parseStringList(name: string, value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error(`${name} must be an array of strings`);
+  return value.map((item, index) => {
+    if (typeof item !== 'string') throw new Error(`${name}[${index}] must be a string`);
+    return item.trim();
+  }).filter(Boolean);
+}
+
+function parseOptionalString(name: string, value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string') throw new Error(`${name} must be a string`);
+  return value.trim();
+}
+
+/**
+ * 校验 server 下发的出口配置。启用但地址非法时直接拒绝——
+ * 静默忽略会让管理员以为代理已生效，比报错更难排查。
+ */
+export function parseEgressConfigPatch(input: unknown): AcsEgressConfig {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('egress must be an object');
+  }
+  const raw = input as Record<string, unknown>;
+  const proxyRaw = (raw.proxy ?? {}) as Record<string, unknown>;
+  const mirrorsRaw = (raw.packageMirrors ?? {}) as Record<string, unknown>;
+
+  const proxy: EgressSandboxProxyConfig = {
+    enabled: proxyRaw.enabled === undefined ? false : parseBool('egress.proxy.enabled', proxyRaw.enabled),
+    proxyUrl: parseOptionalString('egress.proxy.proxyUrl', proxyRaw.proxyUrl),
+    noProxy: parseStringList('egress.proxy.noProxy', proxyRaw.noProxy),
+  };
+  if (proxy.enabled && !parseProxyUrl(proxy.proxyUrl)) {
+    throw new Error('egress.proxy.enabled=true 时 proxyUrl 必须是合法的 http/https/socks5 地址');
+  }
+
+  const packageMirrors: EgressPackageMirrorsConfig = {
+    enabled: mirrorsRaw.enabled === undefined ? false : parseBool('egress.packageMirrors.enabled', mirrorsRaw.enabled),
+    pipIndexUrl: parseOptionalString('egress.packageMirrors.pipIndexUrl', mirrorsRaw.pipIndexUrl),
+    pipTrustedHost: parseOptionalString('egress.packageMirrors.pipTrustedHost', mirrorsRaw.pipTrustedHost),
+    npmRegistry: parseOptionalString('egress.packageMirrors.npmRegistry', mirrorsRaw.npmRegistry),
+  };
+  if (packageMirrors.enabled && !packageMirrors.pipIndexUrl && !packageMirrors.npmRegistry) {
+    throw new Error('egress.packageMirrors.enabled=true 时至少需要 pipIndexUrl 或 npmRegistry');
+  }
+
+  return { proxy, packageMirrors };
+}
+
+function defaultEgressConfig(): AcsEgressConfig {
+  return {
+    proxy: { ...DEFAULT_EGRESS_CONFIG.sandbox, noProxy: [] },
+    packageMirrors: { ...DEFAULT_EGRESS_CONFIG.packageMirrors },
+  };
+}
+
+function cloneEgressConfig(value: AcsEgressConfig | undefined): AcsEgressConfig {
+  if (!value) return defaultEgressConfig();
+  return {
+    proxy: { ...value.proxy, noProxy: [...(value.proxy?.noProxy ?? [])] },
+    packageMirrors: { ...value.packageMirrors },
+  };
 }
 
 function validateRuntimeConfigValues(values: AcsRuntimeConfigPatch): void {
@@ -209,6 +304,9 @@ export function runtimeConfigSnapshot(config: AcsOrchestratorConfig): AcsRuntime
     maxRunningSandboxes: config.maxRunningSandboxes,
     warnRunningSandboxes: config.warnRunningSandboxes,
     drainDeadlineMs: config.drainDeadlineMs,
+    // 容错 undefined：生产上已存在的 runtime-config.json 是旧格式（只有三个配额字段），
+    // 启动回灌时 config.egress 可能还没被赋值。
+    egress: cloneEgressConfig(config.egress),
     ...(config.runtimeConfigPath ? { runtimeConfigPath: config.runtimeConfigPath } : {}),
     persisted: Boolean(config.runtimeConfigPath),
   };
@@ -222,11 +320,13 @@ export function applyRuntimeConfigPatch(
     maxRunningSandboxes: patch.maxRunningSandboxes ?? config.maxRunningSandboxes,
     warnRunningSandboxes: patch.warnRunningSandboxes ?? config.warnRunningSandboxes,
     drainDeadlineMs: patch.drainDeadlineMs ?? config.drainDeadlineMs,
+    egress: cloneEgressConfig(patch.egress ?? config.egress),
   };
   validateRuntimeConfigValues(next);
   config.maxRunningSandboxes = next.maxRunningSandboxes;
   config.warnRunningSandboxes = next.warnRunningSandboxes;
   config.drainDeadlineMs = next.drainDeadlineMs;
+  config.egress = next.egress;
   if (config.runtimeConfigPath) {
     mkdirSync(dirname(config.runtimeConfigPath), { recursive: true });
     writeFileSync(config.runtimeConfigPath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
@@ -298,6 +398,8 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
       requestTimeoutMs: readIntEnv('ACS_SNAT_REQUEST_TIMEOUT_MS', 20_000, { min: 1_000, max: 120_000 }),
       stabilizeAfterCreateMs: readIntEnv('ACS_SNAT_STABILIZE_AFTER_CREATE_MS', 8_000, { min: 0, max: 60_000 }),
     },
+    // 默认全关；实际值由 server 下发的 runtime-config 覆盖（下方 applyRuntimeConfigPatch）
+    egress: defaultEgressConfig(),
     ...(runtimeConfigPath ? { runtimeConfigPath } : {}),
     alertWebhookUrl: process.env.ACS_ALERT_WEBHOOK_URL?.trim() || undefined,
     alertWebhookBearerToken: process.env.ACS_ALERT_WEBHOOK_BEARER_TOKEN?.trim() || undefined,

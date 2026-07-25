@@ -59,6 +59,7 @@ import { createTenantRemoteHandsAdminRouter } from "../routes/tenantRemoteHandsA
 import { createRuntimeOperationsAdminRouter } from "../routes/runtimeOperationsAdmin.js";
 import { createToolControlsAdminRouter } from "../routes/toolControlsAdmin.js";
 import { createImageGenPricingAdminRouter } from "../routes/imageGenPricingAdmin.js";
+import { createEgressConfigAdminRouter } from "../routes/egressConfigAdmin.js";
 import { createMemoryPollingAdminRouter } from "../routes/memoryPollingAdmin.js";
 import { createSystemPromptsAdminRouter } from "../routes/systemPromptsAdmin.js";
 import { createAgentRuntimeProfilesAdminRouter } from "../routes/agentRuntimeProfilesAdmin.js";
@@ -397,6 +398,19 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       onImageGenToolsUpdated: runtime.updateImageGenToolsConfig,
     }),
   );
+  // 网络出口（代理 / 国内镜像源，2026-07-25）：server 段落盘即生效（dispatcher 按
+  // configVersion 懒重建）；sandbox 段另行 PATCH 给 acs-orchestrator，只对新建容器生效。
+  if (runtime.egressConfigStore) {
+    app.use(
+      "/api/admin/egress-config",
+      createEgressConfigAdminRouter({
+        config,
+        store: runtime.egressConfigStore,
+        secretVault: runtime.secretVault,
+        refreshProxyCredential: runtime.refreshEgressProxyCredential,
+      }),
+    );
+  }
   app.use(
     "/api/admin/memory-polling",
     createMemoryPollingAdminRouter({

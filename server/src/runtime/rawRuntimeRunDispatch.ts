@@ -396,6 +396,13 @@ export interface RawRuntimeRunDispatchConfig {
   /** Platform-managed web access tools (`WebSearch` / `WebFetch`). */
   webTools?: ResolvedWebToolsConfig;
   /**
+   * WebSearch / WebFetch 的出站 fetch 实现（2026-07-25）。
+   * 平台配置了网络出口代理时注入 egress-aware fetch：按域名决定走代理还是直连，
+   * 代理不通时按配置降级。不注入则退回全局 fetch（直连），行为与改造前一致。
+   * 只影响这两个工具——模型调用、OSS、钉钉等出站一律不受影响。
+   */
+  webFetchImpl?: typeof fetch;
+  /**
    * 平台托管生图工具（GenerateImage，2026-07-15）。API key 已在装配层经
    * secretVault 解析，只存在于 server 进程内——绝不进 sandbox env、绝不上 wire。
    */
@@ -1310,7 +1317,7 @@ export async function collectRuntimeTooling(
 
   // 4. Web 工具（平台托管网络出站，不走 workspace hand / shell）
   if (config.webTools && config.webTools.enabled !== false) {
-    const webProvider = new WebToolProvider(config.webTools);
+    const webProvider = new WebToolProvider(config.webTools, config.webFetchImpl ?? fetch);
     const webDescriptors = webProvider.list().filter((tool) => isToolEnabled(config.toolControls, tool));
     if (webDescriptors.length > 0) {
       providers.push(webProvider);

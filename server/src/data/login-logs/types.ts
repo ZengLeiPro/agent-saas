@@ -30,7 +30,9 @@ export type LoginEvent =
   | 'runtime_profile_created' | 'runtime_profile_draft_updated' | 'runtime_profile_published'
   | 'runtime_profile_archived' | 'runtime_profile_copied' | 'runtime_profile_binding_updated'
   // 工具启停与描述覆盖：直接改变模型可见的工具契约，必须留痕
-  | 'tool_controls_updated';
+  | 'tool_controls_updated'
+  // 网络出口：改变平台与容器的出站路径，属高敏配置
+  | 'egress_config_updated';
 
 export interface LoginLogEntry {
   timestamp: string;

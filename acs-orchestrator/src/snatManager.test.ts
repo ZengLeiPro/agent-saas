@@ -252,6 +252,10 @@ function baseConfig(aliyunCliPath: string): AcsOrchestratorConfig {
       officeDocuments: true,
       pythonBasePackages: true,
     },
+    egress: {
+      proxy: { enabled: false, proxyUrl: '', noProxy: [] },
+      packageMirrors: { enabled: false, pipIndexUrl: '', pipTrustedHost: '', npmRegistry: '' },
+    },
     logLevel: 'info',
   };
 }

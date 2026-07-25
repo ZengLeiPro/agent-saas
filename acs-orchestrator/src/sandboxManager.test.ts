@@ -9,6 +9,108 @@ import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import type { Kubectl, KubectlResult } from './kubectl.js';
 import { SandboxManager } from './sandboxManager.js';
 
+describe('SandboxManager egress injection', () => {
+  async function applyWithEgress(egress: AcsOrchestratorConfig['egress']) {
+    const applies: Array<Record<string, unknown>> = [];
+    let created = false;
+    const kubectl = {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
+          return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'get') {
+          if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
+          return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        if (args[0] === 'apply') {
+          applies.push(JSON.parse(options.input ?? '{}') as Record<string, unknown>);
+          created = true;
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+
+    const manager = new SandboxManager({ ...baseConfig(), egress }, kubectl, noopLogger);
+    await manager.ensureRunning({
+      workspaceId: 'ws_kaiyan__test',
+      sessionId: 'session-123',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    });
+
+    const sandbox = applies.find((item) => item.kind === 'Sandbox');
+    const trafficPolicy = applies.find((item) => item.kind === 'TrafficPolicy');
+    const podSpec = ((sandbox?.spec as Record<string, unknown>).template as Record<string, unknown>).spec as Record<string, unknown>;
+    const container = (podSpec.containers as Array<Record<string, unknown>>)[0]!;
+    return {
+      env: container.env as Array<{ name: string; value: string }>,
+      annotations: (sandbox?.metadata as Record<string, unknown>).annotations as Record<string, string>,
+      trafficRules: ((trafficPolicy?.spec as any)?.egress?.rules ?? []) as any[],
+    };
+  }
+
+  it('未启用时 Pod env 不含任何代理/镜像源变量', async () => {
+    const { env } = await applyWithEgress({
+      proxy: { enabled: false, proxyUrl: '', noProxy: [] },
+      packageMirrors: { enabled: false, pipIndexUrl: '', pipTrustedHost: '', npmRegistry: '' },
+    });
+    const names = env.map((entry) => entry.name);
+    expect(names.filter((name) => /proxy/i.test(name))).toEqual([]);
+    expect(names).not.toContain('PIP_INDEX_URL');
+    expect(names).not.toContain('NPM_CONFIG_REGISTRY');
+  });
+
+  it('启用代理时大小写各注一份（Chromium/curl 认小写，Go 二进制认大写）', async () => {
+    const { env, annotations } = await applyWithEgress({
+      proxy: { enabled: true, proxyUrl: 'http://172.16.177.77:7890', noProxy: ['internal.example.com'] },
+      packageMirrors: { enabled: false, pipIndexUrl: '', pipTrustedHost: '', npmRegistry: '' },
+    });
+    const byName = Object.fromEntries(env.map((entry) => [entry.name, entry.value]));
+    expect(byName.HTTP_PROXY).toBe('http://172.16.177.77:7890');
+    expect(byName.http_proxy).toBe('http://172.16.177.77:7890');
+    expect(byName.HTTPS_PROXY).toBe('http://172.16.177.77:7890');
+    expect(byName.https_proxy).toBe('http://172.16.177.77:7890');
+    // VPC DNS 必须在 NO_PROXY 里，否则容器 DNS 会整体走代理并失败
+    expect(byName.NO_PROXY).toContain('100.100.2.136');
+    expect(byName.no_proxy).toBe(byName.NO_PROXY);
+    expect(byName.NO_PROXY).toContain('internal.example.com');
+    expect(annotations['agent-saas.kaiyan.net/egress-fingerprint']).toContain('HTTP_PROXY=');
+  });
+
+  it('启用镜像源时注入 pip/npm 源，且与代理相互独立', async () => {
+    const { env } = await applyWithEgress({
+      proxy: { enabled: false, proxyUrl: '', noProxy: [] },
+      packageMirrors: {
+        enabled: true,
+        pipIndexUrl: 'https://mirrors.cloud.aliyuncs.com/pypi/simple/',
+        pipTrustedHost: 'mirrors.cloud.aliyuncs.com',
+        npmRegistry: 'https://registry.npmmirror.com',
+      },
+    });
+    const byName = Object.fromEntries(env.map((entry) => [entry.name, entry.value]));
+    expect(byName.PIP_INDEX_URL).toBe('https://mirrors.cloud.aliyuncs.com/pypi/simple/');
+    expect(byName.NPM_CONFIG_REGISTRY).toBe('https://registry.npmmirror.com');
+    expect(Object.keys(byName).filter((name) => /proxy/i.test(name))).toEqual([]);
+  });
+
+  it('启用代理时 TrafficPolicy 自动放行代理 IP，且排在私网 deny 之前', async () => {
+    const { trafficRules } = await applyWithEgress({
+      proxy: { enabled: true, proxyUrl: 'http://172.16.177.77:7890', noProxy: [] },
+      packageMirrors: { enabled: false, pipIndexUrl: '', pipTrustedHost: '', npmRegistry: '' },
+    });
+    const allowIndex = trafficRules.findIndex(
+      (rule) => rule.action === 'allow' && rule.to?.some((peer: any) => peer.cidr === '172.16.177.77/32'),
+    );
+    const denyIndex = trafficRules.findIndex(
+      (rule) => rule.action === 'deny' && rule.to?.some((peer: any) => peer.cidr === '172.16.0.0/12'),
+    );
+    expect(allowIndex).toBeGreaterThanOrEqual(0);
+    expect(denyIndex).toBeGreaterThanOrEqual(0);
+    expect(allowIndex).toBeLessThan(denyIndex);
+  });
+});
+
 describe('SandboxManager', () => {
   it('writes configured imagePullSecrets into the Sandbox pod template', async () => {
     let applied: Record<string, unknown> | undefined;
@@ -1271,6 +1373,10 @@ function baseConfig(): AcsOrchestratorConfig {
       media: true,
       officeDocuments: true,
       pythonBasePackages: true,
+    },
+    egress: {
+      proxy: { enabled: false, proxyUrl: '', noProxy: [] },
+      packageMirrors: { enabled: false, pipIndexUrl: '', pipTrustedHost: '', npmRegistry: '' },
     },
     logLevel: 'info',
   };

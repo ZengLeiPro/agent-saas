@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyRuntimeConfigPatch,
   loadConfigFromEnv,
+  parseEgressConfigPatch,
   parseRuntimeConfigPatch,
   runtimeConfigSnapshot,
   type AcsOrchestratorConfig,
@@ -39,10 +40,21 @@ describe('ACS runtime config', () => {
       warnRunningSandboxes: 3,
       drainDeadlineMs: 900_000,
     });
+    // 持久化文件自 2026-07-25 起额外包含 egress 段（缺省全关），
+    // 旧格式文件回灌时由 cloneEgressConfig 补默认值，不会崩。
     expect(JSON.parse(readFileSync(runtimeConfigPath, 'utf-8'))).toEqual({
       maxRunningSandboxes: 4,
       warnRunningSandboxes: 3,
       drainDeadlineMs: 900_000,
+      egress: {
+        proxy: { enabled: false, proxyUrl: '', noProxy: [] },
+        packageMirrors: {
+          enabled: false,
+          pipIndexUrl: 'https://mirrors.cloud.aliyuncs.com/pypi/simple/',
+          pipTrustedHost: 'mirrors.cloud.aliyuncs.com',
+          npmRegistry: 'https://registry.npmmirror.com',
+        },
+      },
     });
   });
 
@@ -166,5 +178,61 @@ describe('ACS runtime config', () => {
     } finally {
       process.env = originalEnv;
     }
+  });
+});
+
+describe('egress runtime config patch', () => {
+  it('接受 server 下发的完整出口配置', () => {
+    const parsed = parseEgressConfigPatch({
+      proxy: { enabled: true, proxyUrl: 'http://172.16.177.77:7890', noProxy: ['internal.example.com', ' '] },
+      packageMirrors: {
+        enabled: true,
+        pipIndexUrl: 'https://mirrors.cloud.aliyuncs.com/pypi/simple/',
+        pipTrustedHost: 'mirrors.cloud.aliyuncs.com',
+        npmRegistry: 'https://registry.npmmirror.com',
+      },
+    });
+    expect(parsed.proxy).toEqual({
+      enabled: true,
+      proxyUrl: 'http://172.16.177.77:7890',
+      noProxy: ['internal.example.com'],
+    });
+    expect(parsed.packageMirrors.enabled).toBe(true);
+  });
+
+  it('缺省字段按全关处理，不抛错', () => {
+    expect(parseEgressConfigPatch({})).toEqual({
+      proxy: { enabled: false, proxyUrl: '', noProxy: [] },
+      packageMirrors: { enabled: false, pipIndexUrl: '', pipTrustedHost: '', npmRegistry: '' },
+    });
+  });
+
+  it('启用但地址非法直接拒绝——静默忽略会让管理员误以为代理已生效', () => {
+    expect(() => parseEgressConfigPatch({ proxy: { enabled: true, proxyUrl: '' } }))
+      .toThrow(/proxyUrl/);
+    expect(() => parseEgressConfigPatch({ proxy: { enabled: true, proxyUrl: '172.16.177.77:7890' } }))
+      .toThrow(/proxyUrl/);
+    expect(() => parseEgressConfigPatch({ packageMirrors: { enabled: true } }))
+      .toThrow(/pipIndexUrl/);
+  });
+
+  it('类型不对时报错而不是静默转换', () => {
+    expect(() => parseEgressConfigPatch({ proxy: { enabled: 'yes' } })).toThrow(/boolean/);
+    expect(() => parseEgressConfigPatch({ proxy: { noProxy: 'a,b' } })).toThrow(/array/);
+    expect(() => parseEgressConfigPatch('nope')).toThrow(/object/);
+  });
+
+  it('applyRuntimeConfigPatch 只改 egress 时保留原有配额', () => {
+    const config = {
+      maxRunningSandboxes: 8,
+      warnRunningSandboxes: 6,
+      drainDeadlineMs: 120_000,
+    } as AcsOrchestratorConfig;
+    const snapshot = applyRuntimeConfigPatch(config, {
+      egress: parseEgressConfigPatch({ proxy: { enabled: true, proxyUrl: 'http://10.0.0.1:8080' } }),
+    });
+    expect(snapshot.maxRunningSandboxes).toBe(8);
+    expect(snapshot.egress.proxy.proxyUrl).toBe('http://10.0.0.1:8080');
+    expect(config.egress.proxy.enabled).toBe(true);
   });
 });

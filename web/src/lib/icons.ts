@@ -45,6 +45,7 @@ import {
   UserPlus,
   Users,
   WalletCards,
+  Waypoints,
   Wrench,
 } from "lucide-react";
 
@@ -98,6 +99,8 @@ export const EntityIcons = {
   cron: Clock,
   /** 平台每日记忆轮询 */
   memoryPolling: BrainCircuit,
+  /** 网络出口（出站代理 / 镜像源分流） */
+  egress: Waypoints,
   /** 系统提示语 */
   systemPrompts: MessageSquareText,
 } as const;

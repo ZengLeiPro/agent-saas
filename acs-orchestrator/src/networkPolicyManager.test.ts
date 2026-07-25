@@ -70,6 +70,79 @@ describe('AcsNetworkPolicyManager helpers', () => {
     expect(rules[2]).toEqual({ action: 'allow', to: [{ cidr: '10.8.0.0/16' }, { fqdn: 'internal.example.com' }] });
     expect(rules.at(-1)).toEqual({ action: 'deny', to: [{ cidr: '0.0.0.0/0' }] });
   });
+
+  const REF = {
+    name: 'as-session-abcdef',
+    workspaceId: 'ws_kaiyan__test',
+    sandboxScopeId: 'ws_kaiyan__test',
+    sessionId: 'session-123',
+    mountSubPath: 'workspaces/kaiyan/u-1',
+  };
+
+  it('public-egress 下把出口代理 /32 放行在私网 deny 之前', () => {
+    // 代理落在 172.16.0.0/12 里，若 allow 排在 deny 之后就会被整段私网 deny 吃掉，
+    // 表现为「代理配了但容器连不上」——这条断言就是防这个回归。
+    const manifest = buildTrafficPolicyManifest({
+      namespace: 'agent-saas-coding',
+      ref: REF,
+      policy: { mode: 'public-egress', denyPrivateNetworks: true },
+      extraAllowCidrs: ['172.16.177.77/32'],
+    });
+    const rules = ((manifest.spec as any).egress.rules ?? []) as any[];
+    expect(rules[0].action).toBe('allow');
+    expect(rules[0].to).toContainEqual({ service: { namespace: 'kube-system', name: 'kube-dns' } });
+    expect(rules[1]).toEqual({ action: 'allow', to: [{ cidr: '172.16.177.77/32' }] });
+    expect(rules[2].action).toBe('deny');
+    expect(rules[2].to).toContainEqual({ cidr: '172.16.0.0/12' });
+    expect(rules.at(-1)).toEqual({ action: 'allow', to: [{ cidr: '0.0.0.0/0' }] });
+  });
+
+  it('无出口代理时规则形状与改造前完全一致', () => {
+    const before = buildTrafficPolicyManifest({
+      namespace: 'agent-saas-coding',
+      ref: REF,
+      policy: { mode: 'public-egress', denyPrivateNetworks: true },
+    });
+    const withEmpty = buildTrafficPolicyManifest({
+      namespace: 'agent-saas-coding',
+      ref: REF,
+      policy: { mode: 'public-egress', denyPrivateNetworks: true },
+      extraAllowCidrs: [],
+    });
+    expect((withEmpty.spec as any).egress.rules).toEqual((before.spec as any).egress.rules);
+  });
+
+  it('元数据服务永远不进 allow —— 误配也不能拿到 ECS 临时凭据', () => {
+    const manifest = buildTrafficPolicyManifest({
+      namespace: 'agent-saas-coding',
+      ref: REF,
+      policy: {
+        mode: 'public-egress',
+        denyPrivateNetworks: true,
+        allowCidrs: ['100.100.100.200/32', '172.16.177.77/32'],
+      },
+      extraAllowCidrs: ['100.100.100.200/32'],
+    });
+    const rules = ((manifest.spec as any).egress.rules ?? []) as any[];
+    const allowRules = rules.filter((rule) => rule.action === 'allow');
+    for (const rule of allowRules) {
+      expect(rule.to).not.toContainEqual({ cidr: '100.100.100.200/32' });
+    }
+    // 正常代理地址仍然放行
+    expect(rules[1]).toEqual({ action: 'allow', to: [{ cidr: '172.16.177.77/32' }] });
+  });
+
+  it('isolated 模式下代理也不放行（隔离语义不留后门）', () => {
+    const manifest = buildTrafficPolicyManifest({
+      namespace: 'agent-saas-coding',
+      ref: REF,
+      policy: { mode: 'isolated', denyPrivateNetworks: true },
+      extraAllowCidrs: ['172.16.177.77/32'],
+    });
+    expect((manifest.spec as any).egress.rules).toEqual([
+      { action: 'deny', to: [{ cidr: '0.0.0.0/0' }] },
+    ]);
+  });
 });
 
 function labelValue(value: string): string {

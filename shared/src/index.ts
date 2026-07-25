@@ -416,6 +416,24 @@ export type {
   UpdateSignupConfigRequest,
 } from "./lib/signupConfigApi";
 
+// Lib - platform egress (proxy / package mirrors) config API
+export {
+  fetchEgressConfig,
+  probeEgressProxy,
+  updateEgressConfig,
+} from "./lib/egressConfigApi";
+export type {
+  EgressConfig,
+  EgressConfigAdminView,
+  EgressPackageMirrorsConfig,
+  EgressProbeResponse,
+  EgressProbeResult,
+  EgressSandboxProxyConfig,
+  EgressSandboxSyncState,
+  EgressServerProxyConfig,
+  UpdateEgressConfigRequest,
+} from "./lib/egressConfigApi";
+
 // Lib - persona parser
 export { parsePersona } from "./lib/parsePersona";
 

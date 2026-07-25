@@ -1,4 +1,5 @@
 import type { ExecutionInvocationAudit, ToolDescriptor, ToolResult } from '../agent/toolRuntime.js';
+import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
 import type { ToolAuthorization, ToolRisk, ExecutionTargetKind } from '../agent/toolRuntime.js';
 import type { AgentRunHooks, SdkResultModelUsage, ToolApprovalPolicyOptions } from '../agent/types.js';
 import type { ChannelContext, InboundMessage, OutboundEvent } from '../types/index.js';
@@ -529,6 +530,8 @@ export type PlatformEvent =
     toolName: string;
     content: string;
     isError?: boolean;
+    /** 「给人看」摘要，与 content 并存的第二通道；不进入模型上下文 */
+    presentation?: ToolPresentation;
   }
   | {
     id: string;

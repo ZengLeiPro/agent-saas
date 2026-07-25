@@ -7,6 +7,8 @@
 
 import type { Express } from "express";
 
+import type { ToolPresentation } from "../agent/toolPresentationBuilder.js";
+
 // ============================================
 // Core Runtime Contracts
 // ============================================
@@ -207,6 +209,8 @@ export interface OutboundEvent {
   toolId?: string;
   partialJson?: string;
   toolResult?: string;
+  /** 「给人看」摘要，与 toolResult 并存的第二通道 */
+  toolPresentation?: ToolPresentation;
   isError?: boolean;
   invocationId?: string;
   status?: "success" | "error" | "cancelled";

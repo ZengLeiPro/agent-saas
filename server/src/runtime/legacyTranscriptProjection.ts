@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from 'fs/promises';
 import { dirname } from 'path';
 
+import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
 import type { ModelChatMessage, ModelResponseMode, ModelUsage, PlatformEvent } from './types.js';
 import {
   buildModelUserContent,
@@ -78,12 +79,27 @@ function assistantLine(
   });
 }
 
-function userToolResultLine(toolUseId: string, content: string, sessionId: string, isError = false): string {
+function userToolResultLine(
+  toolUseId: string,
+  content: string,
+  sessionId: string,
+  isError = false,
+  presentation?: ToolPresentation,
+): string {
   return jsonl({
     type: 'user',
     message: {
       role: 'user',
-      content: [{ type: 'tool_result', tool_use_id: toolUseId, content, is_error: isError }],
+      content: [{
+        type: 'tool_result',
+        tool_use_id: toolUseId,
+        content,
+        is_error: isError,
+        // 纯追加字段：老 server 读新文件只取自己认识的 key，新 server 读老文件
+        // 取不到即 undefined —— 双向兼容，不需要 JSONL schema 版本号。
+        // 解析侧按 tool_use_id 反向嫁接到 tool_use block（见 parse.ts）。
+        ...(presentation ? { presentation } : {}),
+      }],
     },
     sessionId,
     timestamp: new Date().toISOString(),
@@ -169,7 +185,7 @@ export class LegacyTranscriptProjection {
         });
       }
       case 'tool_result':
-        return userToolResultLine(event.toolCallId, event.content, event.sessionId, event.isError);
+        return userToolResultLine(event.toolCallId, event.content, event.sessionId, event.isError, event.presentation);
       default:
         return null;
     }

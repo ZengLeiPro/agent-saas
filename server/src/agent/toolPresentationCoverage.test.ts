@@ -1,0 +1,103 @@
+/**
+ * 工具摘要产出方的覆盖率闸门。
+ *
+ * 存在理由：`[CITE]` 引用溯源卡（shared/src/lib/markers.ts）有解析器、有组件、
+ * 有 30 处测试，却因为**没有任何产出方**而零使用四个月。那次缺的不是代码，
+ * 是一道会失败的闸门。本文件就是那道闸门。
+ *
+ * 规则：让一个工具真正做到 covered 后，把 PRESENTATION_TODO_BUDGET 减一。
+ * 调高该常量必须在 PR 里显式说明理由——只减不增。
+ */
+import { describe, expect, it } from 'vitest';
+import {
+  PRESENTATION_SOURCES,
+  PRESENTATION_TODO_BUDGET,
+  buildToolPresentation,
+  listPresentationRuleNames,
+} from './toolPresentationBuilder.js';
+
+describe('产出方登记表', () => {
+  it('登记表与规则表互相覆盖：有规则必登记，登记为非 none 必有规则', () => {
+    const rules = new Set(listPresentationRuleNames());
+    const registered = new Map(PRESENTATION_SOURCES.map((entry) => [entry.tool, entry]));
+
+    for (const rule of rules) {
+      expect(registered.has(rule), `规则 ${rule} 未登记到 PRESENTATION_SOURCES`).toBe(true);
+    }
+    for (const [tool, entry] of registered) {
+      if (entry.state !== 'none') {
+        expect(rules.has(tool), `${tool} 登记为 ${entry.state} 但没有规则`).toBe(true);
+      }
+    }
+  });
+
+  it('state 非 covered 时必须写明 gap', () => {
+    for (const entry of PRESENTATION_SOURCES) {
+      if (entry.state === 'covered') continue;
+      expect(entry.gap?.trim().length ?? 0, `${entry.tool} 缺 gap 说明`).toBeGreaterThan(0);
+    }
+  });
+
+  it('登记表无重复条目', () => {
+    const names = PRESENTATION_SOURCES.map((entry) => entry.tool);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('未覆盖工具数不得超过预算（只减不增的棘轮）', () => {
+    const pending = PRESENTATION_SOURCES.filter((entry) => entry.state !== 'covered');
+    expect(
+      pending.length,
+      `未覆盖 ${pending.length} 个（${pending.map((e) => e.tool).join(', ')}），预算 ${PRESENTATION_TODO_BUDGET}。`
+      + '让一个工具做到 covered 后请把 PRESENTATION_TODO_BUDGET 减一；调高需 PR 显式说明。',
+    ).toBeLessThanOrEqual(PRESENTATION_TODO_BUDGET);
+  });
+});
+
+describe('buildToolPresentation', () => {
+  it('Read 用入参侧信息产出摘要', () => {
+    const result = buildToolPresentation('Read', JSON.stringify({ file_path: '/w/制度/差旅.md' }));
+    expect(result?.title).toBe('读取 差旅.md');
+    expect(result?.detail).toEqual([{ k: '路径', v: '/w/制度/差旅.md' }]);
+  });
+
+  it('Read 带 offset/limit 时补范围行', () => {
+    const result = buildToolPresentation('Read', { file_path: '/w/a.md', offset: 120, limit: 60 });
+    expect(result?.detail).toContainEqual({ tree: '└', k: '范围', v: '第 120–180 行' });
+  });
+
+  it('Shell 优先用 description 作标题——它是模型对本次执行的意图说明', () => {
+    const result = buildToolPresentation('Shell', { command: 'rg -n foo /w', description: '检索合同关键词' });
+    expect(result?.title).toBe('检索合同关键词');
+    expect(result?.detail).toEqual([{ k: '命令', v: 'rg -n foo /w' }]);
+  });
+
+  it('Shell 无 description 时退回通用标题，不编造意图', () => {
+    expect(buildToolPresentation('Shell', { command: 'ls' })?.title).toBe('执行命令');
+  });
+
+  it('超长命令截断，避免单行撑爆摘要', () => {
+    const result = buildToolPresentation('Shell', { command: 'x'.repeat(400) });
+    const line = result?.detail?.[0] as { k: string; v: string };
+    expect(line.v.length).toBeLessThanOrEqual(121);
+    expect(line.v.endsWith('…')).toBe(true);
+  });
+
+  it('未登记规则的工具返回 undefined，渲染优雅退化', () => {
+    expect(buildToolPresentation('SomeUnknownTool', { a: 1 })).toBeUndefined();
+  });
+
+  it('入参缺关键字段时返回 undefined，不产出半截摘要', () => {
+    expect(buildToolPresentation('Read', {})).toBeUndefined();
+    expect(buildToolPresentation('Shell', {})).toBeUndefined();
+  });
+
+  it('入参不是合法 JSON 时不抛错', () => {
+    expect(() => buildToolPresentation('Read', '{ 坏 JSON')).not.toThrow();
+    expect(buildToolPresentation('Read', '{ 坏 JSON')).toBeUndefined();
+  });
+
+  it('provider 已自产的摘要不被规则覆盖——它拿得到截断前的原始数据', () => {
+    const own = { title: '读取 差旅.md（1,204 行，已截断）' };
+    expect(buildToolPresentation('Read', { file_path: '/w/差旅.md' }, own)).toBe(own);
+  });
+});

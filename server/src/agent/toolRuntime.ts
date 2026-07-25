@@ -8,6 +8,7 @@ import { promisify } from 'util';
 import { z } from 'zod';
 
 import type { AgentRunHooks } from './types.js';
+import { buildToolPresentation, type ToolPresentation } from './toolPresentationBuilder.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import type {
   ToolInvocationRequest,
@@ -204,6 +205,13 @@ export interface ToolDescriptor<TInput = unknown> {
 
 export interface ToolResult {
   content: string;
+  /**
+   * 「给人看」摘要。与 content（给模型看的原始输出）并存，**不进入 messages**。
+   *
+   * provider 可在**截断前**用原始数据自产（信息量更高）；未自产时由
+   * `PlatformToolRuntime.invoke` 按 toolPresentationBuilder 的规则兜底补齐。
+   */
+  presentation?: ToolPresentation;
 }
 
 export interface ExecutionInvocationAudit {
@@ -1500,7 +1508,12 @@ export class PlatformToolRuntime implements ToolRuntime {
     }
     for (const provider of this.providers) {
       const result = await provider.invoke(call, context);
-      if (result) return result;
+      if (!result) continue;
+      // 全仓唯一的工具执行收口点：builtin / MCP / Skill / hand / subagent / cron
+      // 等所有 provider 都经过这里，故摘要兜底放在此处覆盖率最高。
+      // provider 已自产的不覆盖——它拿得到截断前的原始数据，信息量更高。
+      const presentation = buildToolPresentation(call.toolId, call.input, result.presentation);
+      return presentation ? { ...result, presentation } : result;
     }
     throw new Error(`Unknown tool: ${call.toolId}`);
   }

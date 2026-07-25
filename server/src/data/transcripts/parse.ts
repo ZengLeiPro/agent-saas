@@ -66,6 +66,18 @@ export interface TranscriptBlock {
   coveredEventCount?: number;
   /** 门禁拒答合成 assistant 行关联的 guardrail event id（员工申诉入口用） */
   guardrailEventId?: string;
+  /**
+   * tool_use block：工具执行的「给人看」摘要。
+   *
+   * 类型刻意是 `unknown` 而非 ToolPresentation——本文件是不可信边界
+   * （JSONL 可能被手改、可能来自旧版本、可能来自 fork），真正的校验器是
+   * shared 的 `normalizeToolPresentation`。在这里标强类型等于把校验责任
+   * 错放到一个不做校验的地方。
+   *
+   * 落盘写在 tool_result 行上（tool_use 行在工具执行前就已写出），
+   * 解析时按 tool_use_id 反向嫁接到对应的 tool_use block。
+   */
+  presentation?: unknown;
 }
 
 export interface ParsedTranscript {
@@ -218,6 +230,14 @@ async function parseTranscriptFileUncached(
 
   // toolId -> toolName 映射，用于 tool_result 关联
   const toolIdToName: Record<string, string> = {};
+  /**
+   * tool_use_id → 该 tool_use block 在 blocks 里的下标。
+   *
+   * presentation 落盘在 tool_result 行（tool_use 行在工具执行前就已写出，
+   * 那时还不知道结果），解析时需按此映射反向嫁接回 tool_use block——
+   * 前端只在 tool_use 分支读 presentation，配对过的 tool_result 会被丢弃。
+   */
+  const toolIdToBlockIndex: Record<string, number> = {};
 
   const rl = readline.createInterface({
     input: createReadStream(resolved, { encoding: "utf-8" }),
@@ -305,6 +325,7 @@ async function parseTranscriptFileUncached(
             // 记录 toolId -> toolName 映射
             if (toolId) {
               toolIdToName[toolId] = toolName;
+              toolIdToBlockIndex[toolId] = blocks.length;
             }
 
             blocks.push({
@@ -361,6 +382,15 @@ async function parseTranscriptFileUncached(
             const isError = block?.is_error === true;
             const toolUseId = String(block?.tool_use_id ?? "");
             const toolName = toolUseId ? (toolIdToName[toolUseId] ?? "unknown") : undefined;
+
+            // 反向嫁接：presentation 写在 tool_result 行，但要挂到 tool_use block 上。
+            // 刻意不写进 raw——raw 的语义是「给模型看的原始 payload」，
+            // 混进去会在 debug 视图制造「模型也看到了摘要」的错觉。
+            if (block?.presentation !== undefined && toolUseId) {
+              const target = toolIdToBlockIndex[toolUseId];
+              const targetBlock = target === undefined ? undefined : blocks[target];
+              if (targetBlock) targetBlock.presentation = block.presentation;
+            }
 
             blocks.push({
               id: `line-${lines}-user-${idx}`,

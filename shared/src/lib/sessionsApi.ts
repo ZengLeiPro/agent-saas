@@ -354,6 +354,8 @@ function mapBlock(
     case "tool_result": {
       if (INTERACTIVE_RESULT_TOOLS.has(block.toolName || "")) return null;
       if (block.toolId && toolResultMap.has(block.toolId)) return null;
+      // 仅对「孤儿」tool_result 生效：已与 tool_use 配对的在上一行就 return null 了。
+      // 正常链路里 presentation 由 parse 阶段反向嫁接到 tool_use block，走 :292 那条路。
       const resultPresentation = normalizeToolPresentation(block.presentation);
       const resolvedResultName = resolveDisplayToolName({
         toolId: block.toolId || "",

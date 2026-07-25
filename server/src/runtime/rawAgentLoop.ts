@@ -22,6 +22,7 @@ import {
   type PlatformEventInput,
 } from './types.js';
 import { canonicalToolInputDigest } from './canonicalToolInput.js';
+import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
 export { canonicalToolInputDigest } from './canonicalToolInput.js';
 import type { InboundMessage, OutboundEvent } from '../types/index.js';
 import {
@@ -1424,6 +1425,7 @@ export class RawAgentLoop implements AgentLoop {
             call: segment[i]!,
             content: outcome.result.content,
             ...(outcome.isError ? { isError: true } : {}),
+            ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
             context: args.context,
             messages: args.messages,
           });
@@ -1452,6 +1454,7 @@ export class RawAgentLoop implements AgentLoop {
         call,
         content: outcome.result.content,
         ...(outcome.isError ? { isError: true } : {}),
+        ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
         context: args.context,
         messages: args.messages,
       });
@@ -1497,6 +1500,7 @@ export class RawAgentLoop implements AgentLoop {
     isError?: boolean;
     context: RunContext;
     messages?: ModelChatMessage[];
+    presentation?: ToolPresentation;
   }): AsyncIterable<OutboundEvent> {
     yield {
       type: 'tool_result',
@@ -1504,6 +1508,7 @@ export class RawAgentLoop implements AgentLoop {
       toolName: args.call.name,
       toolResult: args.content,
       ...(args.isError ? { isError: true } : {}),
+      ...(args.presentation ? { toolPresentation: args.presentation } : {}),
     };
     await this.append({
       type: 'tool_result',
@@ -1513,7 +1518,10 @@ export class RawAgentLoop implements AgentLoop {
       toolName: args.call.name,
       content: args.content,
       ...(args.isError ? { isError: true } : {}),
+      ...(args.presentation ? { presentation: args.presentation } : {}),
     });
+    // 模型面刻意不带 presentation：它是给人看的第二通道，混进 messages
+    // 会平白消耗上下文，也会让模型误以为摘要是它自己写的
     args.messages?.push({
       role: 'tool',
       tool_call_id: args.call.id,
@@ -1599,6 +1607,7 @@ export class RawAgentLoop implements AgentLoop {
       call,
       content: outcome.result.content,
       ...(outcome.isError ? { isError: true } : {}),
+      ...(outcome.result.presentation ? { presentation: outcome.result.presentation } : {}),
       context: resumeContext,
     });
 

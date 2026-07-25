@@ -16,7 +16,7 @@ const SETTINGS_SECTION_IDS: ReadonlySet<string> = new Set([
 
 /** 组织管理 modal 的合法 section（与 AdminShells.tenantSettingsSections 对齐） */
 const TENANT_ADMIN_SETTINGS_SECTIONS: ReadonlySet<string> = new Set([
-  'users', 'skills', 'org-agents', 'mcp', 'billing', 'files', 'company', 'settings',
+  'users', 'skills', 'org-agents', 'mcp', 'billing', 'files', 'company', 'instructions', 'settings',
 ]);
 /** 平台管理 modal 的合法 section（与 AdminShells.platformSettingsSections 对齐） */
 const PLATFORM_ADMIN_SETTINGS_SECTIONS: ReadonlySet<string> = new Set([

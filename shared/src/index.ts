@@ -342,10 +342,12 @@ export {
   getAgentAvatarUrl,
 } from "./lib/agentsApi";
 
-// Lib - tenant-scoped company.md API
+// Lib - tenant-scoped company.md / instructions.md API
 export {
   fetchTenantCompanyInfo,
   updateTenantCompanyInfo,
+  fetchTenantInstructions,
+  updateTenantInstructions,
 } from "./lib/tenantsApi";
 
 // Lib - skills API

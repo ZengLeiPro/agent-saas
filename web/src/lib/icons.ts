@@ -40,6 +40,7 @@ import {
   Settings2,
   ShieldCheck,
   SkipForward,
+  Speech,
   Undo2,
   UserPlus,
   Users,
@@ -91,6 +92,8 @@ export const EntityIcons = {
   runtimePool: ServerCog,
   /** 公司信息 */
   companyInfo: Info,
+  /** 组织自定义规则（表达方式） */
+  tenantInstructions: Speech,
   /** 定时任务 */
   cron: Clock,
   /** 平台每日记忆轮询 */

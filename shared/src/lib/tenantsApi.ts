@@ -39,3 +39,37 @@ export async function updateTenantCompanyInfo(tenantId: string, content: string)
     throw new Error(msg);
   }
 }
+
+/**
+ * 读取指定组织的 instructions.md（注入为 {{TENANT_INSTRUCTIONS}}）。
+ * 与 company.md 的区别是语义：那边是组织事实，这边是行为规则，注入位置更靠后，
+ * 可覆盖平台默认表达风格（安全边界除外）。权限口径一致；未配置时返回空串。
+ */
+export async function fetchTenantInstructions(tenantId: string): Promise<string> {
+  const res = await authFetch(`/api/tenants/${encodeURIComponent(tenantId)}/instructions`);
+  if (!res.ok) throw new Error(`Failed to fetch tenant instructions: ${res.status}`);
+  const data = (await res.json()) as { content: string };
+  return data.content;
+}
+
+/**
+ * 写入指定组织的 instructions.md。
+ * 平台 admin 可写任意组织；组织 admin 仅可写自己组织。
+ */
+export async function updateTenantInstructions(tenantId: string, content: string): Promise<void> {
+  const res = await authFetch(`/api/tenants/${encodeURIComponent(tenantId)}/instructions`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) {
+    let msg = `更新失败 (${res.status})`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+}

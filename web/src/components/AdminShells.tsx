@@ -30,10 +30,14 @@ import { RunTraceExplorer } from "@/components/RunTraceExplorer";
 import { OverviewSection as TenantOverviewSection } from "@/components/TenantAnalytics/OverviewSection";
 import { QaConsole } from "@/components/QaConsole";
 
+// 直接内嵌而不走 render prop：本面板只依赖 tenantId/tenantName，走 prop 就得在
+// Desktop 两处 + Mobile 两处各传一遍，漏一处该 section 会空白（见 renderOrgAgents 注释）。
+const TenantInstructionsPanel = lazy(() => import("@/components/TenantInstructionsEditor")
+  .then((m) => ({ default: m.TenantInstructionsSection })));
 const SystemPromptsManagerPanel = lazy(() => import("@/components/SystemPromptsManager"));
 const AgentRuntimeProfilesManagerPanel = lazy(() => import("@/components/AgentRuntimeProfilesManager"));
 
-export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company";
+export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company" | "instructions";
 export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "agent-profiles" | "system-prompts" | "memory-polling" | "global-mcp" | "skill-pool" | "system";
 
 interface ShellButton<T extends string> {
@@ -51,6 +55,7 @@ const tenantSettingsSections: ShellButton<TenantSection>[] = [
   { id: "billing", label: "计费", icon: EntityIcons.billing },
   { id: "files", label: "文件与数据", icon: EntityIcons.files },
   { id: "company", label: "公司信息", icon: EntityIcons.companyInfo },
+  { id: "instructions", label: "自定义规则", icon: EntityIcons.tenantInstructions },
   { id: "settings", label: "组织管理", icon: EntityIcons.org },
 ];
 
@@ -891,6 +896,7 @@ export function TenantAdminShell({
     { id: "billing", node: <TenantBillingPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} /> },
     { id: "files", node: renderFiles() },
     { id: "company", node: renderCompanyInfo(effectiveTenantId, currentTenant?.name) },
+    { id: "instructions", node: <TenantInstructionsPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} /> },
     { id: "settings", node: <TenantSettingsPanel tenantId={effectiveTenantId} /> },
   ];
 

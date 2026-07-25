@@ -22,6 +22,33 @@ export function formatMs(ms: number | null | undefined): string {
   return `${Math.floor(h)} 小时 ${Math.round(m % 60)} 分`;
 }
 
+/**
+ * 时间线的**相对偏移**（对标 waterfall 横轴的 `3s / 8s / 13s`）：以 run 起点为 0。
+ *
+ * 为什么不直接复用 `formatMs`：这个值出现在时间线每一行的同一列上，需要**等宽可纵向扫读**
+ * 且尽量短（`+13.81s` 比 `+13.8 秒` 窄一档、比 `+1 分 3 秒` 窄两档）。绝对时刻不丢——
+ * 调用点把 `formatTime` 放进 `title`（口径可查是本模块的既有约定）。
+ *
+ * 非法值 / 负偏移一律 "—"（空值统一 "—" 的既有优势）。
+ */
+export function formatOffset(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 60_000) return `+${(ms / 1000).toFixed(2)}s`;
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `+${minutes}m${String(totalSeconds % 60).padStart(2, "0")}s`;
+  return `+${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/** 两个 ISO 时间戳之差（ms）；任一非法 → null */
+export function diffMs(timestamp?: string | null, origin?: string | null): number | null {
+  if (!timestamp || !origin) return null;
+  const a = new Date(timestamp).getTime();
+  const b = new Date(origin).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  return a - b;
+}
+
 /** ISO 时间 → zh-CN "MM-dd HH:mm:ss"；空值显示 "—" */
 export function formatTime(value?: string | null): string {
   if (!value) return "—";

@@ -147,6 +147,17 @@ export interface TraceEvent {
   handId?: string;
   workspaceId?: string;
   classifiedAs?: string;
+  // subagent_started / subagent_finished（后端 runtime/types.ts 的子 agent 生命周期事件；
+  // 两条都写在**父** session 上，childSessionId/childRunId 指向子 agent 自己的执行）
+  agentType?: string;
+  description?: string;
+  childSessionId?: string;
+  childRunId?: string;
+  totalTokens?: number;
+  toolUseCount?: number;
+  turnCount?: number;
+  errorMessage?: string;
+  resultPreview?: string;
   // run_lease_acquired
   workerId?: string;
   leaseExpiresAt?: string;

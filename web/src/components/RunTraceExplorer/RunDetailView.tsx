@@ -1,21 +1,24 @@
 /** Run 追踪：单 run 详情（汇总头卡 + 事件时间线 + 工具/成本统计） */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, FileText, Loader2, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { ArrowLeft, FileText, Inbox, ListFilter, Loader2, RefreshCw, SearchX, Wrench } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { navigatePlatformAdmin } from "@/lib/urlSync";
 import { formatTokens } from "@/components/UsageDashboard/format";
-import { AdminErrorAlert, EntityLink, MetricStat } from "@/components/PlatformAdmin/common";
+import { AdminErrorAlert, EmptyState, EntityLink, MetricStat } from "@/components/PlatformAdmin/common";
 import { RUN_LABEL, SESSION_LABEL, WORKSPACE_LABEL, formatChannel, formatExecutionTarget, formatToolName } from "@/components/PlatformAdmin/displayText";
 import { classifyFailureReason } from "@/components/PlatformAdmin/errorText";
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
 
 import { runTraceApi } from "./api";
 import { formatMs, formatTime, formatYuan, runDurationMs } from "./format";
-import { resolveRunCancellationReason, resolveRunFailureReason } from "./runStatus";
+import { failureQueryKeyword, resolveRunCancellationReason, resolveRunFailureReason } from "./runStatus";
+import { spanKindOf } from "./spanKind";
 import { RunStatusBadge } from "./StatusBadge";
 import {
   ApprovalPairItem,
@@ -26,9 +29,14 @@ import {
   OrphanToolEventItem,
   RunFinishedItem,
   RunStateChangedNode,
+  SpanKindLegend,
+  SubagentPairItem,
   ThinkingItem,
+  TimelineFrameProvider,
   ToolCallsItem,
   UserMessageItem,
+  type SubagentDrillTarget,
+  type TimelineFrame,
 } from "./TimelineItems";
 import type { RunEventsResponse, TraceEvent } from "./types";
 
@@ -60,7 +68,21 @@ function aggregateToolAudits(events: TraceEvent[]): ToolAggRow[] {
    它是「标签 + 数值」的密集网格形态，与 MetricCard 同一模块、不同外观——
    这 11 项放在一张卡的 6 列网格里，换成 11 张卡会把一屏拉成三屏。 */
 
-export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void }) {
+export function RunDetailView({
+  runId,
+  onBack,
+  backLabel = "返回列表",
+  breadcrumb,
+  onDrillSubagent,
+}: {
+  runId: string;
+  onBack: () => void;
+  /** 下钻到子 agent 后，返回按钮语义变成「回上一层」而不是「回列表」 */
+  backLabel?: string;
+  /** 子 agent 下钻路径（由 RunTraceExplorer 维护，详情视图只负责展示） */
+  breadcrumb?: ReactNode;
+  onDrillSubagent?: (target: SubagentDrillTarget) => void;
+}) {
   const { labelFor } = useModelDisplayMap();
   const [data, setData] = useState<RunEventsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,16 +120,28 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
   }, [load]);
 
   // ── 事件关联：toolCallId → result/audit；approvalId → resolved；被吸收的事件不再单独渲染 ──
-  const { resultByCallId, auditByCallId, resolvedByApprovalId, consumedIds } = useMemo(() => {
+  const { resultByCallId, auditByCallId, resolvedByApprovalId, subagentByCallId, subagentFinishedByKey, consumedIds } = useMemo(() => {
     const resultByCallId = new Map<string, TraceEvent>();
     const auditByCallId = new Map<string, TraceEvent>();
     const resolvedByApprovalId = new Map<string, TraceEvent>();
+    /** Agent 工具调用 id → subagent_started（让工具调用行直接给出子 agent 下钻入口） */
+    const subagentByCallId = new Map<string, TraceEvent>();
+    /** toolCallId（缺失时退回 childRunId）→ subagent_finished */
+    const subagentFinishedByKey = new Map<string, TraceEvent>();
     const consumedIds = new Set<string>();
     const events = data?.events ?? [];
+    /** 子 agent 成对匹配键：优先 toolCallId（父 run 内唯一），存量事件缺失时退回 childRunId */
+    const subagentKey = (e: TraceEvent): string | null => e.toolCallId ?? (typeof e.childRunId === "string" ? e.childRunId : null);
     for (const e of events) {
       if (e.type === "tool_result" && e.toolCallId) resultByCallId.set(e.toolCallId, e);
       else if (e.type === "tool_audit" && e.toolCallId) auditByCallId.set(e.toolCallId, e);
       else if (e.type === "approval_resolved" && e.approvalId) resolvedByApprovalId.set(e.approvalId, e);
+      else if (e.type === "subagent_started") {
+        if (e.toolCallId) subagentByCallId.set(e.toolCallId, e);
+      } else if (e.type === "subagent_finished") {
+        const key = subagentKey(e);
+        if (key) subagentFinishedByKey.set(key, e);
+      }
     }
     for (const e of events) {
       if (e.type === "assistant_tool_calls") {
@@ -120,10 +154,44 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
       } else if (e.type === "approval_requested" && e.approvalId) {
         const resolved = resolvedByApprovalId.get(e.approvalId);
         if (resolved) consumedIds.add(resolved.id);
+      } else if (e.type === "subagent_started") {
+        const key = subagentKey(e);
+        const finished = key ? subagentFinishedByKey.get(key) : undefined;
+        if (finished) consumedIds.add(finished.id);
       }
     }
-    return { resultByCallId, auditByCallId, resolvedByApprovalId, consumedIds };
+    return { resultByCallId, auditByCallId, resolvedByApprovalId, subagentByCallId, subagentFinishedByKey, consumedIds };
   }, [data?.events]);
+
+  /** 折叠掉被吸收事件后的可见序列——轴线要知道谁是最后一个节点，否则尾部拖一条没有终点的线 */
+  const visibleEvents = useMemo(
+    () => (data?.events ?? []).filter((event) => !consumedIds.has(event.id)),
+    [consumedIds, data?.events],
+  );
+
+  /** 本次运行出现过的事件类型（图例只列实际出现的，不摆一排用不上的颜色） */
+  const presentKinds = useMemo(() => new Set(visibleEvents.map((event) => spanKindOf(event.type))), [visibleEvents]);
+
+  /**
+   * 时间线坐标系：
+   *   - 相对时间 0 点取「run 起点 / 入队时刻 / 最早事件」三者最小值，保证没有负偏移；
+   *   - 耗时条基准优先用本次运行总耗时（每条的宽度=占整个 run 的比例，口径最直观），
+   *     运行未结束拿不到总耗时时退回「最长单步耗时」，并在 title 里写明用的是哪把尺子。
+   */
+  const timelineFrame = useMemo<TimelineFrame>(() => {
+    const events = data?.events ?? [];
+    const run = data?.run;
+    const stamps = [run?.startedAt, run?.requestedAt, ...events.map((event) => event.timestamp)]
+      .map((value) => (value ? new Date(value).getTime() : Number.NaN))
+      .filter((value) => Number.isFinite(value));
+    const origin = stamps.length > 0 ? new Date(Math.min(...stamps)).toISOString() : null;
+    const runMs = run ? runDurationMs(run) : null;
+    const stepMs = events
+      .map((event) => (typeof event.durationMs === "number" ? event.durationMs : 0))
+      .reduce((max, value) => Math.max(max, value), 0);
+    if (runMs != null && runMs > 0) return { origin, basisMs: runMs, basisLabel: "本次运行总耗时", onDrillSubagent };
+    return { origin, basisMs: stepMs > 0 ? stepMs : null, basisLabel: "最长单步耗时", onDrillSubagent };
+  }, [data?.events, data?.run, onDrillSubagent]);
 
   const runFinished = useMemo(
     () => data?.events.find((e) => e.type === "run_finished"),
@@ -138,7 +206,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
   const backButton = (
     <Button variant="outline" size="sm" onClick={onBack}>
       <ArrowLeft className="size-3.5" />
-      返回列表
+      {backLabel}
     </Button>
   );
 
@@ -146,6 +214,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
     return (
       <div className="space-y-4">
         {backButton}
+        {breadcrumb}
         <div className="flex h-40 items-center justify-center rounded-2xl border bg-card text-sm text-muted-foreground">
           <Loader2 className="mr-2 size-4 animate-spin" /> 加载运行详情...
         </div>
@@ -157,18 +226,40 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
     return (
       <div className="space-y-4">
         {backButton}
+        {breadcrumb}
         <AdminErrorAlert error={error} />
       </div>
     );
   }
 
-  if (!data) return null;
+  // 既没在加载、也没有错误、还是拿不到数据（后端返回空体 / 记录已过保留期）：
+  // 改造前这里 `return null` 直接渲染整片白屏，连返回按钮都没有，用户只能按浏览器后退。
+  if (!data) {
+    return (
+      <div className="space-y-4">
+        {backButton}
+        {breadcrumb}
+        <Card>
+          <CardContent className="p-0">
+            <EmptyState
+              icon={SearchX}
+              title="没有取到这次执行的详情"
+              description="记录可能已超出保留期，或编号不属于当前可见范围。可重新拉取，或回到列表按时间窗重新定位。"
+              action={{ label: "重新加载", onClick: () => void load() }}
+              secondaryAction={{ label: backLabel, onClick: onBack }}
+            />
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   const { run, billing } = data;
   const duration = runDurationMs(run);
   const failureReason = resolveRunFailureReason(run.status, run.statusReason, runFinished?.error);
   const cancellationReason = resolveRunCancellationReason(run.status, run.statusReason);
   const friendlyFailure = failureReason ? classifyFailureReason(failureReason) : null;
+  const failureKeyword = failureReason ? failureQueryKeyword(failureReason) : null;
   const maxToolDuration = Math.max(...toolAgg.map((t) => t.totalDurationMs), 1);
 
   return (
@@ -191,6 +282,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
         )}
         {error && <span className="text-xs text-destructive">刷新失败：{error}</span>}
       </div>
+      {breadcrumb}
       {data.contentRedacted && (
         <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           当前为脱敏诊断视图：保留状态、耗时、Token、工具名称和错误骨架；成员正文、思考、工具参数与结果仅 @admin 可见。
@@ -250,6 +342,27 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
                   </div>
                 </details>
               )}
+              {/* 从一条失败反查同类失败：排障的下一个动作几乎总是「这是个例还是普遍问题」。
+                  关键词由原始 statusReason 提炼（去掉每次都不同的 id / 毫秒数），
+                  落到执行记录列表已有的 reason 子串筛选上（RunListView 的 reason 参数）。 */}
+              {failureKeyword && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    title={`在最近 7 天的失败与取消记录里检索包含「${failureKeyword}」的执行`}
+                    onClick={() => navigatePlatformAdmin({
+                      section: "runs",
+                      search: { status: "failed", reason: failureKeyword, hours: 168 },
+                    })}
+                  >
+                    <ListFilter className="mr-1 size-3.5" />
+                    查看同类失败
+                  </Button>
+                  <span className="text-2xs text-destructive/80">检索关键词：{failureKeyword}</span>
+                </div>
+              )}
             </div>
           )}
           {cancellationReason && (
@@ -267,29 +380,42 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
       </Card>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(300px,0.9fr)]">
-        {/* 时间线 */}
+        {/* 时间线（TimelineFrameProvider 提供相对时间 0 点、耗时条基准与子 agent 下钻回调） */}
+        <TimelineFrameProvider value={timelineFrame}>
         <Card>
-          <CardHeader className="pb-2">
+          <CardHeader className="space-y-1.5 pb-2">
             <CardTitle>
               事件时间线 <span className="text-xs font-normal text-muted-foreground">· {data.events.length} 条事件</span>
             </CardTitle>
+            {/* 口径写在标题下：时间是相对偏移不是绝对时刻、耗时条按什么归一化，都不该让人自己猜 */}
+            <div className="text-2xs text-muted-foreground">
+              时间为相对起点偏移（悬停看绝对时刻）· 耗时条按{timelineFrame.basisLabel}归一化
+            </div>
+            <SpanKindLegend kinds={presentKinds} />
           </CardHeader>
           <CardContent>
-            {data.events.length === 0 ? (
-              <div className="py-8 text-center text-sm text-muted-foreground">没有事件记录</div>
+            {visibleEvents.length === 0 ? (
+              <EmptyState
+                compact
+                icon={Inbox}
+                title="没有事件记录"
+                description="这次执行没有留下事件，通常是刚入队还没开始，或事件已超出保留期。"
+                action={{ label: "重新加载", onClick: () => void load(fullLoaded ? "full" : "default") }}
+              />
             ) : (
-              <div>
-                {data.events.map((event) => {
-                  if (consumedIds.has(event.id)) return null;
+              /* relative：时间轴（含轻量节点自己画的那段）的定位上下文 */
+              <div className="relative">
+                {visibleEvents.map((event, index) => {
+                  const isLast = index === visibleEvents.length - 1;
                   switch (event.type) {
                     case "user_message":
-                      return <UserMessageItem key={event.id} event={event} />;
+                      return <UserMessageItem key={event.id} event={event} isLast={isLast} />;
                     case "memory_context":
-                      return <MemoryContextItem key={event.id} event={event} />;
+                      return <MemoryContextItem key={event.id} event={event} isLast={isLast} />;
                     case "assistant_thinking":
-                      return <ThinkingItem key={event.id} event={event} />;
+                      return <ThinkingItem key={event.id} event={event} isLast={isLast} />;
                     case "assistant_message":
-                      return <AssistantMessageItem key={event.id} event={event} />;
+                      return <AssistantMessageItem key={event.id} event={event} isLast={isLast} />;
                     case "assistant_tool_calls":
                       return (
                         <ToolCallsItem
@@ -297,38 +423,54 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
                           event={event}
                           resultByCallId={resultByCallId}
                           auditByCallId={auditByCallId}
+                          subagentByCallId={subagentByCallId}
+                          isLast={isLast}
                         />
                       );
                     case "tool_result":
                     case "tool_audit":
-                      return <OrphanToolEventItem key={event.id} event={event} />;
+                      return <OrphanToolEventItem key={event.id} event={event} isLast={isLast} />;
                     case "approval_requested":
                       return (
                         <ApprovalPairItem
                           key={event.id}
                           event={event}
                           resolved={event.approvalId ? resolvedByApprovalId.get(event.approvalId) : undefined}
+                          isLast={isLast}
                         />
                       );
                     case "approval_resolved":
                       // 未被 approval_requested 吸收的孤儿 resolved
                       return (
-                        <GenericEventNode key={event.id} event={event} />
+                        <GenericEventNode key={event.id} event={event} isLast={isLast} />
                       );
+                    case "subagent_started":
+                      return (
+                        <SubagentPairItem
+                          key={event.id}
+                          event={event}
+                          finished={subagentFinishedByKey.get(event.toolCallId ?? String(event.childRunId ?? ""))}
+                          isLast={isLast}
+                        />
+                      );
+                    case "subagent_finished":
+                      // 未被 subagent_started 吸收的孤儿 finished（起跑事件缺失）：终态事件自带全部身份字段
+                      return <SubagentPairItem key={event.id} event={event} finished={event} isLast={isLast} />;
                     case "hand_failure":
-                      return <HandFailureItem key={event.id} event={event} />;
+                      return <HandFailureItem key={event.id} event={event} isLast={isLast} />;
                     case "run_state_changed":
-                      return <RunStateChangedNode key={event.id} event={event} />;
+                      return <RunStateChangedNode key={event.id} event={event} isLast={isLast} />;
                     case "run_finished":
-                      return <RunFinishedItem key={event.id} event={event} />;
+                      return <RunFinishedItem key={event.id} event={event} isLast={isLast} />;
                     default:
-                      return <GenericEventNode key={event.id} event={event} />;
+                      return <GenericEventNode key={event.id} event={event} isLast={isLast} />;
                   }
                 })}
               </div>
             )}
           </CardContent>
         </Card>
+        </TimelineFrameProvider>
 
         {/* 侧栏统计 */}
         <div className="space-y-4">
@@ -338,7 +480,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
             </CardHeader>
             <CardContent>
               {toolAgg.length === 0 ? (
-                <div className="py-4 text-center text-xs text-muted-foreground">本次运行无工具调用</div>
+                <EmptyState compact icon={Wrench} title="本次运行没有工具调用" description="模型只做了文本回复，没有触发任何工具。" />
               ) : (
                 <div className="space-y-1.5">
                   {toolAgg.map((t) => (
@@ -371,7 +513,14 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
             </CardHeader>
             <CardContent className="p-0">
               {billing.requests.length === 0 ? (
-                <div className="py-4 text-center text-xs text-muted-foreground">无计费记录</div>
+                <EmptyState
+                  compact
+                  icon={EntityIcons.credits}
+                  title="没有计费记录"
+                  description={billing.costRedacted
+                    ? "当前账号看不到成本明细（缺 finance.read 能力），Token 口径仍在头卡里。"
+                    : "这次执行没有产生模型请求，或用量事件还没落库。"}
+                />
               ) : (
                 <Table>
                   <TableHeader>

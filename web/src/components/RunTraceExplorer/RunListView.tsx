@@ -1,6 +1,6 @@
 /** 执行记录排查：支持按组织、用户、对话、状态与时间快速定位。 */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Loader2, RefreshCw, SearchX } from "lucide-react";
+import { ArrowRight, Loader2, Maximize2, RefreshCw, SearchX } from "lucide-react";
 
 import { ActiveFilterBar, AdminErrorAlert, EmptyState, EntityLink, ScopeFilters, type ActiveFilterItem } from "@/components/PlatformAdmin/common";
 import { formatChannel, formatRunStatus } from "@/components/PlatformAdmin/displayText";
@@ -52,7 +52,24 @@ function statusGroupFromQuery(value: string): StatusGroup {
   return value ? "custom" : "all";
 }
 
-export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => void }) {
+export function RunListView({
+  onSelectRun,
+  selectedRunId = null,
+  compact = false,
+  onExpand,
+}: {
+  onSelectRun: (runId: string) => void;
+  /** 当前打开的执行记录：窄栏形态下靠它高亮「我正在看哪一条」 */
+  selectedRunId?: string | null;
+  /**
+   * 窄栏形态（详情打开时列表压窄常驻）。只保留「状态 + 失败摘要 + 执行记录 + 开始时间」，
+   * 完整筛选器留在展开态——320px 里塞 5 档时间窗 + 关键词框只会挤成一团。
+   * 生效中的筛选仍以可删除的 chip 呈现，所以窄栏下筛选依然可见可撤销。
+   */
+  compact?: boolean;
+  /** 窄栏下「展开完整列表」（关掉详情），让被折起来的筛选器可达 */
+  onExpand?: () => void;
+}) {
   const adminQuery = useAdminUrlQuery();
   const { tenants } = useTenants();
   const { labelFor } = useModelDisplayMap();
@@ -151,43 +168,57 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
     <div className="space-y-4">
       <div className="rounded-lg border bg-card p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <ScopeFilters
-            tenantId={tenantId}
-            userId={userId}
-            onChange={(values) => adminQuery.patch({ ...values, cursor: null })}
-          />
-          <Segmented
-            ariaLabel="时间窗"
-            size="sm"
-            options={HOURS_OPTIONS}
-            value={hours}
-            onChange={(next) => adminQuery.patch({ hours: next === 24 ? null : next, cursor: null })}
-          />
-          <div className="flex items-center gap-1">
-            <Input
-              value={reasonDraft}
-              onChange={(event) => setReasonDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") adminQuery.patch({ reason: reasonDraft.trim() || null, cursor: null });
-              }}
-              placeholder="搜索失败原因关键词"
-              className="h-8 w-48 text-xs"
+          {!compact && (
+            <ScopeFilters
+              tenantId={tenantId}
+              userId={userId}
+              onChange={(values) => adminQuery.patch({ ...values, cursor: null })}
             />
-            <Button variant="secondary" size="sm" className="h-8" onClick={() => adminQuery.patch({ reason: reasonDraft.trim() || null, cursor: null })}>搜索</Button>
+          )}
+          {!compact && (
+            <Segmented
+              ariaLabel="时间窗"
+              size="sm"
+              options={HOURS_OPTIONS}
+              value={hours}
+              onChange={(next) => adminQuery.patch({ hours: next === 24 ? null : next, cursor: null })}
+            />
+          )}
+          {!compact && (
+            <div className="flex items-center gap-1">
+              <Input
+                value={reasonDraft}
+                onChange={(event) => setReasonDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") adminQuery.patch({ reason: reasonDraft.trim() || null, cursor: null });
+                }}
+                placeholder="搜索失败原因关键词"
+                className="h-8 w-48 text-xs"
+              />
+              <Button variant="secondary" size="sm" className="h-8" onClick={() => adminQuery.patch({ reason: reasonDraft.trim() || null, cursor: null })}>搜索</Button>
+            </div>
+          )}
+          <div className={cn(compact && "-mx-1 max-w-full overflow-x-auto px-1")}>
+            <Segmented
+              ariaLabel="状态分组"
+              size="sm"
+              options={STATUS_GROUP_OPTIONS}
+              // statusGroup 可能是 "custom"（URL 带了手写状态串），此时无选项命中、整体不高亮，
+              // 与改造前的三元判断行为一致
+              value={statusGroup as Exclude<StatusGroup, "custom">}
+              onChange={(next) => adminQuery.patch({ status: next === "all" ? null : next, cursor: null })}
+            />
           </div>
-          <Segmented
-            ariaLabel="状态分组"
-            size="sm"
-            options={STATUS_GROUP_OPTIONS}
-            // statusGroup 可能是 "custom"（URL 带了手写状态串），此时无选项命中、整体不高亮，
-            // 与改造前的三元判断行为一致
-            value={statusGroup as Exclude<StatusGroup, "custom">}
-            onChange={(next) => adminQuery.patch({ status: next === "all" ? null : next, cursor: null })}
-          />
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={cn("mr-1 size-3.5", loading && "animate-spin")} />
             刷新
           </Button>
+          {compact && onExpand && (
+            <Button variant="ghost" size="sm" onClick={onExpand} title="关闭详情，回到带完整筛选器的列表">
+              <Maximize2 className="mr-1 size-3.5" />
+              展开列表
+            </Button>
+          )}
         </div>
 
         <ActiveFilterBar
@@ -197,25 +228,27 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
         />
       </div>
 
-      <div className="flex flex-wrap items-start justify-end gap-1.5">
-        <Input
-          value={jumpId}
-          onChange={(event) => {
-            setJumpId(event.target.value);
-            setJumpError(null);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") void onJump();
-          }}
-          placeholder="粘贴完整执行记录 ID 或对话 ID"
-          className="h-8 w-72 font-mono text-xs"
-        />
-        <Button variant="outline" size="sm" onClick={() => void onJump()} disabled={jumping || !jumpId.trim()}>
-          {jumping ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowRight className="size-3.5" />}
-          定位
-        </Button>
-        {jumpError && <div className="basis-full text-right text-xs text-destructive">{jumpError}</div>}
-      </div>
+      {!compact && (
+        <div className="flex flex-wrap items-start justify-end gap-1.5">
+          <Input
+            value={jumpId}
+            onChange={(event) => {
+              setJumpId(event.target.value);
+              setJumpError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void onJump();
+            }}
+            placeholder="粘贴完整执行记录 ID 或对话 ID"
+            className="h-8 w-72 font-mono text-xs"
+          />
+          <Button variant="outline" size="sm" onClick={() => void onJump()} disabled={jumping || !jumpId.trim()}>
+            {jumping ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowRight className="size-3.5" />}
+            定位
+          </Button>
+          {jumpError && <div className="basis-full text-right text-xs text-destructive">{jumpError}</div>}
+        </div>
+      )}
 
       {error != null && <AdminErrorAlert error={error} />}
 
@@ -248,13 +281,13 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
                 <TableRow>
                   <TableHead>状态</TableHead>
                   <TableHead>执行记录</TableHead>
-                  <TableHead>对话</TableHead>
-                  <TableHead>组织 / 用户</TableHead>
-                  <TableHead>模型</TableHead>
-                  <TableHead>来源</TableHead>
+                  {!compact && <TableHead>对话</TableHead>}
+                  {!compact && <TableHead>组织 / 用户</TableHead>}
+                  {!compact && <TableHead>模型</TableHead>}
+                  {!compact && <TableHead>来源</TableHead>}
                   <TableHead className="text-right">耗时</TableHead>
                   <TableHead>开始</TableHead>
-                  <TableHead>结束</TableHead>
+                  {!compact && <TableHead>结束</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -264,29 +297,39 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
                   const failure = isRunFailureStatus(run.status) && run.statusReason
                     ? classifyFailureReason(run.statusReason)
                     : null;
+                  const isSelected = selectedRunId != null && run.runId === selectedRunId;
                   return (
-                    <TableRow key={run.runId} className="cursor-pointer" onClick={() => onSelectRun(run.runId)}>
+                    <TableRow
+                      key={run.runId}
+                      // 选中行高亮 + 左侧色条：窄栏常驻后必须能一眼看出「详情里那条是哪一行」
+                      data-state={isSelected ? "selected" : undefined}
+                      aria-selected={isSelected}
+                      className={cn("cursor-pointer", isSelected && "border-l-2 border-l-primary")}
+                      onClick={() => onSelectRun(run.runId)}
+                    >
                       <TableCell>
                         <div className="space-y-1">
                           <RunStatusBadge status={run.status} />
                           {failure && (
-                            <div className="max-w-44 truncate text-2xs text-destructive" title={failure.technicalDetail}>
+                            <div className={cn("truncate text-2xs text-destructive", compact ? "max-w-32" : "max-w-44")} title={failure.technicalDetail}>
                               {failure.summary}
                             </div>
                           )}
                         </div>
                       </TableCell>
-                      <TableCell><EntityLink kind="run" id={run.runId} /></TableCell>
-                      <TableCell><EntityLink kind="session" id={run.sessionId} /></TableCell>
-                      <TableCell>
-                        <div><EntityLink kind="tenant" id={run.tenantId} label={run.tenantId ? tenantNames.get(run.tenantId) : undefined} /></div>
-                        <div className="text-xs text-muted-foreground"><EntityLink kind="user" id={run.userId} label={run.realName || run.username || undefined} /></div>
-                      </TableCell>
-                      <TableCell className="max-w-44 truncate text-xs" title={run.model ?? undefined}>{run.model ? labelFor(run.model) : "—"}</TableCell>
-                      <TableCell className="text-xs">{run.channel ? formatChannel(run.channel) : "—"}</TableCell>
+                      <TableCell><EntityLink kind="run" id={run.runId} short={compact ? 6 : undefined} /></TableCell>
+                      {!compact && <TableCell><EntityLink kind="session" id={run.sessionId} /></TableCell>}
+                      {!compact && (
+                        <TableCell>
+                          <div><EntityLink kind="tenant" id={run.tenantId} label={run.tenantId ? tenantNames.get(run.tenantId) : undefined} /></div>
+                          <div className="text-xs text-muted-foreground"><EntityLink kind="user" id={run.userId} label={run.realName || run.username || undefined} /></div>
+                        </TableCell>
+                      )}
+                      {!compact && <TableCell className="max-w-44 truncate text-xs" title={run.model ?? undefined}>{run.model ? labelFor(run.model) : "—"}</TableCell>}
+                      {!compact && <TableCell className="text-xs">{run.channel ? formatChannel(run.channel) : "—"}</TableCell>}
                       <TableCell className="text-right text-xs tabular-nums">{formatMs(duration)}</TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">{formatTime(run.startedAt ?? run.requestedAt)}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">{formatTime(endAt)}</TableCell>
+                      {!compact && <TableCell className="whitespace-nowrap text-xs text-muted-foreground tabular-nums">{formatTime(endAt)}</TableCell>}
                     </TableRow>
                   );
                 })}

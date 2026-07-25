@@ -22,7 +22,7 @@ import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
 import { HISTORY_PUSH, HISTORY_PUSH_MERGED, useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { navigatePlatformAdmin, type PlatformAdminSection } from "@/lib/urlSync";
-import { AdminErrorAlert, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
+import { AdminErrorAlert, EmptyState, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
 import { formatChannel } from "@/components/PlatformAdmin/displayText";
 import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
 import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControls";
@@ -673,6 +673,23 @@ function AuditEventsPanel({
   }), [category, channel, endDate, scope, startDate, tenantId, tenantIdFilter, tenantUsernames, usernameFilter]);
 
   const { entries, total, loading, error, offset, limit, refresh, nextPage, prevPage } = useLoginLogs(filters);
+
+  // 空态要能分辨「真的没有」和「被筛没了」，后者必须给一条退路。
+  // scope=tenant 时组织是上下文而非用户选的筛选，不算在内。
+  const hasAuditFilters = Boolean(
+    category || channel || usernameFilter.trim() || startDate || endDate
+    || (scope === "platform" && tenantIdFilter.trim()),
+  );
+  const clearAuditFilters = useCallback(() => {
+    url.patch({
+      auditType: null,
+      auditChannel: null,
+      auditUser: null,
+      auditOrg: null,
+      auditFrom: null,
+      auditTo: null,
+    }, HISTORY_PUSH);
+  }, [url]);
   const userMap = useMemo(() => new Map(users.map(user => [user.username, user])), [users]);
   const uniqueActors = useMemo(() => new Set(entries.map(entry => entry.username)).size, [entries]);
   const failures = entries.filter(entry => entry.event === "login_fail").length;
@@ -751,12 +768,25 @@ function AuditEventsPanel({
           <div className="text-xs text-muted-foreground">第 {Math.floor(offset / limit) + 1} 页 · {offset + 1}-{Math.min(offset + entries.length, total)} / {total}</div>
         </CardHeader>
         <CardContent className="p-0">
-          {loading ? (
+          {/*
+            用 `loading && entries.length === 0` 而不是 `loading`：翻页或改筛选时
+            旧数据仍留在屏上，只由头部刷新图标转圈表示在拉新数据。改造前是无条件
+            替换整表，每次刷新都会闪一下空白，与 AdminEntityTable 的行为也不一致。
+          */}
+          {loading && entries.length === 0 ? (
             <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
               <Loader2 className="mr-2 size-4 animate-spin" />正在加载操作记录…
             </div>
           ) : entries.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">暂无操作记录</div>
+            <EmptyState
+              compact
+              icon={EntityIcons.audit}
+              title={hasAuditFilters ? "当前筛选条件下没有操作记录" : "暂无操作记录"}
+              description={hasAuditFilters
+                ? "换个事件类型、成员或放宽日期范围再看看。"
+                : "成员在平台上的关键操作会记录在这里。"}
+              action={hasAuditFilters ? { label: "清除筛选", onClick: clearAuditFilters } : undefined}
+            />
           ) : (
             <Table>
               <TableHeader>

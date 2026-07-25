@@ -14,8 +14,8 @@
 #   SIGUSR2 精确 drain 旧色（活跃流清空后自退，Restart=on-failure 不复活）。
 #   切流前任何失败只回收 idle 色并还原 current/previous/idle 色 symlink，
 #   老色全程在服务，用户零影响。
-# 零停机门禁(P2): 部署期间 runner 每 1s 探测公网 healthz，
-#   最大连续非 200 ≥ 2 即判失败（容忍单次公网抖动）。
+# 零停机门禁(P2): 部署期间 runner 持续探测公网 healthz、业务 API 与 WS；
+#   HTTP 传输错误先即时重试 1 次，逻辑样本仍要求 health/API/WS 全部成功。
 # ============================================================================
 
 name: App CI / Deploy
@@ -294,18 +294,60 @@ jobs:
           echo "WS probe mode=$WS_MODE preflight=$ws_preflight"
 
           : > "$RUNNER_TEMP/probe.log"
+          : > "$RUNNER_TEMP/probe-details.log"
           (
             set +e
+
+            # GitHub runner 到生产入口偶发单次传输超时，且请求可能根本未到 nginx。
+            # 只对 curl 非零退出（DNS/TCP/TLS/timeout）即时重试一次；HTTP 4xx/5xx、
+            # 200 非法正文等应用层失败不重试，仍由严格门禁直接计失败。
+            probe_http() {
+              local url="$1"
+              local body_file="$2"
+              local label="$3"
+              local attempt code rc error_text
+
+              for attempt in 1 2; do
+                code=$(curl -sS -o "$body_file" -m 4 -w '%{http_code}' "$url" 2>"${body_file}.error")
+                rc=$?
+                if [ "$rc" -eq 0 ]; then
+                  printf '%s' "${code:-000}"
+                  return 0
+                fi
+
+                error_text=$(tr '\n' ' ' < "${body_file}.error" | cut -c1-300)
+                if [ "$attempt" -eq 1 ]; then
+                  printf '%s %s transport retry rc=%s error=%s\n' \
+                    "$(date +%s)" "$label" "$rc" "$error_text" >> "$RUNNER_TEMP/probe-details.log"
+                else
+                  printf '%s %s transport failed rc=%s error=%s\n' \
+                    "$(date +%s)" "$label" "$rc" "$error_text" >> "$RUNNER_TEMP/probe-details.log"
+                fi
+              done
+
+              printf '%s' "${code:-000}"
+              return "$rc"
+            }
+
             while true; do
-              health_code=$(curl -s -o /dev/null -m 4 -w '%{http_code}' "$HEALTH_URL")
-              [ -n "$health_code" ] || health_code=000
+              sample_epoch=$(date +%s)
+
+              health_body="$RUNNER_TEMP/probe-health-body.txt"
+              health_code=$(probe_http "$HEALTH_URL" "$health_body" health)
+              if [ "$health_code" != "200" ]; then
+                printf '%s health validation failed http=%s\n' \
+                  "$sample_epoch" "${health_code:-000}" >> "$RUNNER_TEMP/probe-details.log"
+              fi
 
               api_body="$RUNNER_TEMP/probe-api-body.json"
-              api_code=$(curl -s -o "$api_body" -m 4 -w '%{http_code}' "$BUSINESS_API_URL")
+              api_code=$(probe_http "$BUSINESS_API_URL" "$api_body" api)
               if [ "$api_code" = "200" ] && grep -Eq '"enabled"[[:space:]]*:[[:space:]]*(true|false)' "$api_body"; then
                 api_status=ok
               else
                 api_status=failed
+                api_excerpt=$(tr '\n' ' ' < "$api_body" | cut -c1-300)
+                printf '%s api validation failed http=%s body=%s\n' \
+                  "$sample_epoch" "${api_code:-000}" "$api_excerpt" >> "$RUNNER_TEMP/probe-details.log"
               fi
 
               ws_output=$(node "$WS_PROBE_SCRIPT" "$WS_URL" 4000 2>&1)
@@ -313,10 +355,15 @@ jobs:
               case "$ws_rc" in
                 0) ws_status=ok ;;
                 2) ws_status=legacy-auth ;;
-                *) ws_status=failed ;;
+                *)
+                  ws_status=failed
+                  printf '%s ws failed rc=%s detail=%s\n' \
+                    "$sample_epoch" "$ws_rc" "$(printf '%s' "$ws_output" | tr '\n' ' ' | cut -c1-300)" \
+                    >> "$RUNNER_TEMP/probe-details.log"
+                  ;;
               esac
 
-              echo "$(date +%s) $health_code $api_status $ws_status"
+              echo "$sample_epoch $health_code $api_status $ws_status"
               sleep 1
             done
           ) >> "$RUNNER_TEMP/probe.log" 2>/dev/null &
@@ -963,6 +1010,10 @@ jobs:
             awk '$2 != "200" || $3 != "ok" || ($4 != "ok" && $4 != "legacy-auth")' "$RUNNER_TEMP/probe.log"
           else
             awk '$2 != "200" || $3 != "ok" || $4 != "ok"' "$RUNNER_TEMP/probe.log"
+          fi
+          if [ -s "$RUNNER_TEMP/probe-details.log" ]; then
+            echo "--- probe transport/validation details ---"
+            cat "$RUNNER_TEMP/probe-details.log"
           fi
           # deploy 失败时旧色未动，探测应全绿；此处只报告不守门，不改变 job 结论
           if [ "$DEPLOY_OUTCOME" != "success" ]; then

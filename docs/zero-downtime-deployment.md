@@ -334,8 +334,10 @@ SIGTERM → `gracefulShutdown`（drain 中收到会跳过等待直接清理）�
 
 `deploy-ecs` job 的 `Start zero-downtime probe` / `Assert zero downtime` 两个
 step 持续覆盖三条用户路径：轻量 `healthz`、经过 Express 路由与动态配置读取的
-注册状态业务 API、经过 nginx 和 Node upgrade handler 的 WebSocket 建连。断言规则是
-**所有样本必须全部成功，不容忍单次失败**。deploy step 失败时 Assert 只打印报告
+注册状态业务 API、经过 nginx 和 Node upgrade handler 的 WebSocket 建连。HTTP 探针遇到
+curl 非零退出（DNS/TCP/TLS/timeout，且请求可能根本未到 nginx）会即时重试一次；HTTP
+4xx/5xx、200 非法正文和 WebSocket 失败均不重试。断言仍要求**每个逻辑样本全部成功**，
+不会用总体成功率或连续失败阈值掩盖应用层中断。deploy step 失败时 Assert 只打印报告
 不守门（旧色未动，探测本应全绿）。
 
 首次发布 `/ws?probe=1` 时，旧版本仍会按未鉴权请求返回 401，因此 CI 自动进入一次性

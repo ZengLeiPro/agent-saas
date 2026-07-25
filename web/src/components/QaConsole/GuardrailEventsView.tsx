@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
+import { AdminSelect, type AdminSelectOption } from '@/components/ui/admin-select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,7 +10,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils';
 import type { OrgAgentRecord } from '@agent/shared';
 import { useQaGuardrailEvents } from './hooks';
-import { QaUnavailableHint, formatQaTime } from './shared';
+import { QaUnavailableHint, formatQaTime, orgAgentSelectOptions } from './shared';
+
+const VERDICT_OPTIONS: AdminSelectOption[] = [
+  { value: '', label: '全部' },
+  { value: 'off_topic', label: '范围外拒绝' },
+  { value: 'pass_flagged', label: '放行打标' },
+];
 
 /** 门禁拒绝/打标日志视图（offset 分页，仿 AuditEventsPanel 上/下一页）——拒绝记录即需求雷达 */
 export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string; orgAgents: OrgAgentRecord[] }) {
@@ -43,20 +50,25 @@ export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string
         <CardContent className="grid gap-3 md:grid-cols-4">
           <div className="space-y-1.5">
             <Label>企业专家</Label>
-            <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={orgAgentId} onChange={(e) => setOrgAgentId(e.target.value)}>
-              <option value="">全部</option>
-              {orgAgents.map((agent) => (
-                <option key={agent.id} value={agent.id}>{agent.name}</option>
-              ))}
-            </select>
+            <AdminSelect
+              ariaLabel="企业专家"
+              size="md"
+              className="w-full"
+              options={orgAgentSelectOptions(orgAgents)}
+              value={orgAgentId}
+              onValueChange={setOrgAgentId}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>判定</Label>
-            <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={verdict} onChange={(e) => setVerdict(e.target.value as '' | 'off_topic' | 'pass_flagged')}>
-              <option value="">全部</option>
-              <option value="off_topic">范围外拒绝</option>
-              <option value="pass_flagged">放行打标</option>
-            </select>
+            <AdminSelect
+              ariaLabel="判定"
+              size="md"
+              className="w-full"
+              options={VERDICT_OPTIONS}
+              value={verdict}
+              onValueChange={(value) => setVerdict(value as '' | 'off_topic' | 'pass_flagged')}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>开始日期</Label>
@@ -104,9 +116,9 @@ export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string
                     <TableCell className="text-sm">{agentNameById.get(event.orgAgentId) || event.orgAgentId}</TableCell>
                     <TableCell>
                       {event.verdict === 'off_topic' ? (
-                        <Badge className="border-0 bg-destructive/15 text-destructive">范围外拒绝</Badge>
+                        <Badge variant="danger">范围外拒绝</Badge>
                       ) : (
-                        <Badge className="border-0 bg-warning/15 text-warning">放行打标</Badge>
+                        <Badge variant="warning">放行打标</Badge>
                       )}
                     </TableCell>
                     <TableCell className="max-w-md truncate text-sm" title={event.messageText}>{event.messageText}</TableCell>

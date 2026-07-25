@@ -65,7 +65,7 @@ export function SystemSettingsPanel() {
         {message && (
           <div className={cn(
             "rounded-md px-3 py-2 text-sm",
-            message.includes("已发送") ? "bg-emerald-500/10 text-emerald-700" : "bg-destructive/10 text-destructive",
+            message.includes("已发送") ? "bg-success/10 text-success-ink" : "bg-destructive/10 text-destructive",
           )}>
             {message}
           </div>

@@ -171,7 +171,7 @@ export function OverviewPage() {
         <Card>
           <CardHeader className="flex-row items-start justify-between gap-3 pb-2">
             <div>
-              <CardTitle className="text-sm font-medium">近 14 天使用趋势</CardTitle>
+              <CardTitle>近 14 天使用趋势</CardTitle>
               <div className="mt-1 text-xs text-muted-foreground">最近 7 天：执行 {formatNumber(recentRuns)} · 新对话 {formatNumber(recentSessions)} · 日均活跃用户 {recentActiveUsers.toFixed(1)} · 完成率 {formatRate(recentCompletionRate)}</div>
             </div>
             <Button variant="ghost" size="sm" onClick={() => navigate("runs", { hours: 168 })}>查看记录</Button>
@@ -181,14 +181,14 @@ export function OverviewPage() {
               <div className="flex h-28 items-center justify-center text-sm text-muted-foreground">使用趋势暂不可用</div>
             ) : (
               <>
-                {!platformTrend.available && <div className="mb-2 text-xs text-amber-700">部分数据源不可用：{platformTrend.missingSources.join("、")}</div>}
+                {!platformTrend.available && <div className="mb-2 text-xs text-warning-ink">部分数据源不可用：{platformTrend.missingSources.join("、")}</div>}
                 <div className="flex h-32 items-end gap-1 border-b px-1 pt-2">
                   {platformTrend.daily.map((point) => {
                     const height = point.runs > 0 ? Math.max(4, (point.runs / usageMax) * 100) : 2;
                     return (
                       <div key={point.date} className="group flex min-w-0 flex-1 flex-col items-center justify-end gap-1" title={`${point.date} · 执行 ${point.runs} · 对话 ${point.sessions} · 活跃用户 ${point.activeUsers} · 完成率 ${formatRate(point.completionRate)}`}>
-                        <div className="w-full max-w-9 rounded-t bg-blue-500/70 transition-colors group-hover:bg-blue-500" style={{ height: `${height}%` }} />
-                        <span className="hidden text-[10px] text-muted-foreground sm:block">{point.date.slice(5)}</span>
+                        <div className="w-full max-w-9 rounded-t bg-chart-1/70 transition-colors group-hover:bg-chart-1" style={{ height: `${height}%` }} />
+                        <span className="hidden text-2xs text-muted-foreground sm:block">{point.date.slice(5)}</span>
                       </div>
                     );
                   })}
@@ -201,7 +201,7 @@ export function OverviewPage() {
         <Card>
           <CardHeader className="flex-row items-start justify-between gap-3 pb-2">
             <div>
-              <CardTitle className="text-sm font-medium">近 14 天成本趋势</CardTitle>
+              <CardTitle>近 14 天成本趋势</CardTitle>
               <div className="mt-1 text-xs text-muted-foreground">最近 7 天 {formatYuan(latest7)}{weekChange == null ? "" : ` · 较前 7 天${weekChange >= 0 ? "增加" : "下降"} ${Math.abs(weekChange * 100).toFixed(1)}%`}</div>
             </div>
             <Button variant="ghost" size="sm" onClick={() => navigate("efficiency")}>查看执行效率</Button>
@@ -217,7 +217,7 @@ export function OverviewPage() {
                   return (
                     <div key={point.date} className="group flex min-w-0 flex-1 flex-col items-center justify-end gap-1" title={`${point.date} · ${formatYuan(value)}`}>
                       <div className="w-full max-w-9 rounded-t bg-primary/70 transition-colors group-hover:bg-primary" style={{ height: `${height}%` }} />
-                      <span className="hidden text-[10px] text-muted-foreground sm:block">{point.date.slice(5)}</span>
+                      <span className="hidden text-2xs text-muted-foreground sm:block">{point.date.slice(5)}</span>
                     </div>
                   );
                 })}
@@ -235,7 +235,7 @@ export function OverviewPage() {
         />
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <CardTitle className="flex items-center gap-2">
               <TriangleAlert className="size-4" />
               当前执行情况
             </CardTitle>
@@ -267,7 +267,7 @@ export function OverviewPage() {
               <TriangleAlert className="size-4" />
               系统内部健康
             </span>
-            <span className={cn("text-xs", internalIssueCount > 0 ? "text-destructive" : "text-emerald-600")}>
+            <span className={cn("text-xs", internalIssueCount > 0 ? "text-destructive" : "text-success")}>
               {internalIssueCount > 0 ? `${internalIssueCount} 项需关注` : "正常"}
             </span>
           </summary>

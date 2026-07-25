@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 
+import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,12 +18,30 @@ import { RUN_LABEL, SESSION_LABEL, TENANT_LABEL, formatChannel, formatSessionKin
 import { formatNumber, formatTime, formatUsd, formatYuan } from "../format";
 import type { PlatformSessionRecord, SessionDetailResponse } from "../types";
 
-const SESSION_STATUSES = ["", "idle", "running", "failed", "completed", "cancelled"];
-const SESSION_RANGES = [
+const SESSION_STATUS_OPTIONS: AdminSelectOption[] = [
+  { value: "", label: "全部状态" },
+  ...["idle", "running", "failed", "completed", "cancelled"].map((value) => ({
+    value,
+    label: formatSessionStatus(value),
+  })),
+];
+const SESSION_RANGES: AdminSelectOption[] = [
   { value: "", label: "全部时间" },
   { value: "1", label: "24 小时" },
   { value: "7", label: "7 天" },
   { value: "30", label: "30 天" },
+];
+const SESSION_KIND_OPTIONS: AdminSelectOption[] = [
+  { value: "user", label: formatSessionKind("user") },
+  { value: "subagent", label: formatSessionKind("subagent") },
+];
+const SESSION_CHANNEL_OPTIONS: AdminSelectOption[] = [
+  { value: "", label: "全部来源" },
+  { value: "web", label: "Web 端" },
+  { value: "mobile", label: "移动端" },
+  { value: "dingtalk", label: "钉钉" },
+  { value: "cron", label: "定时任务" },
+  { value: "api", label: "API" },
 ];
 
 export function SessionsPage({ sessionId }: { sessionId: string | null }) {
@@ -119,24 +138,10 @@ function SessionList() {
               placeholder="搜索对话标题"
               className="h-8 w-44 text-xs"
             />
-            <select className="h-8 rounded-md border bg-background px-2 text-xs" value={days} onChange={(event) => adminQuery.patch({ days: event.target.value, cursor: null })}>
-              {SESSION_RANGES.map(item => <option key={item.value || "all"} value={item.value}>{item.label}</option>)}
-            </select>
-            <select className="h-8 rounded-md border bg-background px-2 text-xs" value={status} onChange={(event) => adminQuery.patch({ status: event.target.value, cursor: null })}>
-              {SESSION_STATUSES.map(item => <option key={item || "all"} value={item}>{item ? formatSessionStatus(item) : "全部状态"}</option>)}
-            </select>
-            <select className="h-8 rounded-md border bg-background px-2 text-xs" value={kind} onChange={(event) => adminQuery.patch({ kind: event.target.value, cursor: null })}>
-              <option value="user">{formatSessionKind("user")}</option>
-              <option value="subagent">{formatSessionKind("subagent")}</option>
-            </select>
-            <select className="h-8 rounded-md border bg-background px-2 text-xs" value={channel} onChange={(event) => adminQuery.patch({ channel: event.target.value, cursor: null })}>
-              <option value="">全部来源</option>
-              <option value="web">Web 端</option>
-              <option value="mobile">移动端</option>
-              <option value="dingtalk">钉钉</option>
-              <option value="cron">定时任务</option>
-              <option value="api">API</option>
-            </select>
+            <AdminSelect ariaLabel="时间范围" options={SESSION_RANGES} value={days} onValueChange={(value) => adminQuery.patch({ days: value, cursor: null })} />
+            <AdminSelect ariaLabel="对话状态" options={SESSION_STATUS_OPTIONS} value={status} onValueChange={(value) => adminQuery.patch({ status: value, cursor: null })} />
+            <AdminSelect ariaLabel="对话类型" options={SESSION_KIND_OPTIONS} value={kind} onValueChange={(value) => adminQuery.patch({ kind: value, cursor: null })} />
+            <AdminSelect ariaLabel="来源渠道" options={SESSION_CHANNEL_OPTIONS} value={channel} onValueChange={(value) => adminQuery.patch({ channel: value, cursor: null })} />
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Checkbox checked={includeDeleted} onCheckedChange={(checked) => adminQuery.patch({ includeDeleted: checked === true, cursor: null })} />
               包含已删除

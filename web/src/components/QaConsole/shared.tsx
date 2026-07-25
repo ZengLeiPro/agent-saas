@@ -1,4 +1,6 @@
 import { Database, Info } from 'lucide-react';
+import type { OrgAgentRecord } from '@agent/shared';
+import type { AdminSelectOption } from '@/components/ui/admin-select';
 import { cn } from '@/lib/utils';
 
 /** 数据面不可用（file backend 未装配 PG）：503 → 隐藏功能换提示 */
@@ -37,6 +39,17 @@ export function formatQaTime(iso: string | null): string {
   }
 }
 
+/**
+ * 「企业专家」下拉选项。四个质检视图（会话 / 门禁日志 / 反馈 / 门禁看板）
+ * 各自都要这一份，收敛到此处避免"全部"的文案与空值约定各写一遍。
+ */
+export function orgAgentSelectOptions(orgAgents: OrgAgentRecord[]): AdminSelectOption[] {
+  return [
+    { value: '', label: '全部' },
+    ...orgAgents.map((agent) => ({ value: agent.id, label: agent.name })),
+  ];
+}
+
 /** 数值卡片（KPI）：门禁看板顶部拒答率/申诉率/fail_open 率 */
 export function QaKpiCard({
   label,
@@ -59,7 +72,7 @@ export function QaKpiCard({
     <div className="rounded-lg border bg-card p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className={cn('mt-1 text-2xl font-semibold tabular-nums', tone[intent])}>{value}</div>
-      {hint && <div className="mt-0.5 text-[11px] text-muted-foreground">{hint}</div>}
+      {hint && <div className="mt-0.5 text-2xs text-muted-foreground">{hint}</div>}
     </div>
   );
 }
@@ -69,7 +82,7 @@ export function QaHorizontalBar({
   label,
   count,
   total,
-  color = 'bg-indigo-400/80 dark:bg-indigo-500/70',
+  color = 'bg-chart-1/80',
   suffix,
 }: {
   label: string;
@@ -132,14 +145,14 @@ export function QaMiniBarTrend({
               title={`${point.date} · ${point.value}`}
             >
               <div
-                className="w-full rounded-sm bg-indigo-400/70 transition-colors group-hover:opacity-80 dark:bg-indigo-500/60"
+                className="w-full rounded-sm bg-chart-1/70 transition-colors group-hover:opacity-80"
                 style={{ height: point.value > 0 ? `${Math.max(ratio * 100, 2)}%` : '1px' }}
               />
             </div>
           );
         })}
       </div>
-      <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground tabular-nums">
+      <div className="mt-1 flex items-center justify-between text-2xs text-muted-foreground tabular-nums">
         <span>{first}</span>
         {points.length > 2 && <span>{last}</span>}
       </div>
@@ -154,8 +167,8 @@ export function QaVerdictBadge({ verdict }: { verdict: string }) {
   const label = isOffTopic ? '范围外拒绝' : '放行打标';
   const shadowSuffix = isShadow ? ' · shadow' : '';
   const cls = isOffTopic
-    ? 'border-0 bg-destructive/15 text-destructive'
-    : 'border-0 bg-warning/15 text-warning';
+    ? 'border-0 bg-danger/15 text-danger-ink'
+    : 'border-0 bg-warning/15 text-warning-ink';
   return (
     <span className={cn('inline-flex items-center rounded-md px-1.5 py-0.5 text-xs', cls)}>
       {label}{shadowSuffix}

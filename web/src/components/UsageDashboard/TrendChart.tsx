@@ -107,10 +107,10 @@ export function TrendChart({ data, height = DEFAULT_HEIGHT }: { data: TrendBarDa
           const x = PAD_L + i * (barW + BAR_GAP);
           let y = PAD_T + innerH - (total / maxTotal) * innerH;
           const segs: { val: number; cls: string }[] = [
-            { val: d.cacheRead, cls: "fill-blue-400 dark:fill-blue-500" },
-            { val: d.cacheCreation, cls: "fill-purple-400 dark:fill-purple-500" },
-            { val: d.input, cls: "fill-emerald-500 dark:fill-emerald-400" },
-            { val: d.output, cls: "fill-amber-500 dark:fill-amber-400" },
+            { val: d.cacheRead, cls: "fill-chart-3" },
+            { val: d.cacheCreation, cls: "fill-chart-4" },
+            { val: d.input, cls: "fill-chart-1" },
+            { val: d.output, cls: "fill-chart-2" },
           ];
           const isHover = hover === i;
           return (
@@ -165,19 +165,19 @@ export function TrendChart({ data, height = DEFAULT_HEIGHT }: { data: TrendBarDa
               </span>
             </div>
             <div className="flex justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-emerald-500" />输入</span>
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-chart-1" />输入</span>
               <span className="font-mono tabular-nums">{formatTokens(data[hover].input)}</span>
             </div>
             <div className="flex justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-amber-500" />输出</span>
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-chart-2" />输出</span>
               <span className="font-mono tabular-nums">{formatTokens(data[hover].output)}</span>
             </div>
             <div className="flex justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-blue-400" />缓存读</span>
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-chart-3" />缓存读</span>
               <span className="font-mono tabular-nums">{formatTokens(data[hover].cacheRead)}</span>
             </div>
             <div className="flex justify-between gap-3">
-              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-purple-400" />缓存写</span>
+              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm bg-chart-4" />缓存写</span>
               <span className="font-mono tabular-nums">{formatTokens(data[hover].cacheCreation)}</span>
             </div>
           </div>
@@ -185,11 +185,11 @@ export function TrendChart({ data, height = DEFAULT_HEIGHT }: { data: TrendBarDa
       )}
 
       {/* 图例 */}
-      <div className="mt-1 flex flex-wrap items-center gap-3 px-2 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-emerald-500" />输入</span>
-        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-amber-500" />输出</span>
-        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-blue-400" />缓存读</span>
-        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-purple-400" />缓存写</span>
+      <div className="mt-1 flex flex-wrap items-center gap-3 px-2 text-2xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-chart-1" />输入</span>
+        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-chart-2" />输出</span>
+        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-chart-3" />缓存读</span>
+        <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-chart-4" />缓存写</span>
       </div>
     </div>
   );

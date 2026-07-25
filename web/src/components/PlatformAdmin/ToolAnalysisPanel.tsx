@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Info, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 
+import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,12 +25,18 @@ import { formatMs } from "../RunTraceExplorer/format";
 
 const PAGE_SIZE = 50;
 const HOUR_OPTIONS = [24, 72, 168, 720] as const;
-const STATUS_OPTIONS: Array<{ value: ToolInvocationStatus | ""; label: string }> = [
+const STATUS_OPTIONS: AdminSelectOption[] = [
   { value: "", label: "全部结果" },
   { value: "failed", label: "仅失败" },
   { value: "completed", label: "仅成功" },
   { value: "running", label: "正在调用" },
   { value: "cancelled", label: "已取消" },
+];
+const HOUR_SELECT_OPTIONS: AdminSelectOption[] = [
+  { value: "24", label: "最近 24 小时" },
+  { value: "72", label: "最近 3 天" },
+  { value: "168", label: "最近 7 天" },
+  { value: "720", label: "最近 30 天" },
 ];
 
 function parseHours(raw: string | null): number {
@@ -44,9 +51,9 @@ function parseOffset(raw: string | null): number {
 
 function statusTone(status: ToolInvocationStatus) {
   if (status === "failed") return "bg-destructive/10 text-destructive";
-  if (status === "cancelled") return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
-  if (status === "running") return "bg-blue-500/10 text-blue-700 dark:text-blue-300";
-  return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  if (status === "cancelled") return "bg-warning/10 text-warning-ink";
+  if (status === "running") return "bg-info/10 text-info-ink";
+  return "bg-success/10 text-success-ink";
 }
 
 function ToolLabel({ name }: { name: string }) {
@@ -54,7 +61,7 @@ function ToolLabel({ name }: { name: string }) {
   return (
     <div className="min-w-0">
       <div className="truncate text-xs font-medium" title={name}>{label}</div>
-      {label !== name && <div className="truncate font-mono text-[10px] text-muted-foreground">{name}</div>}
+      {label !== name && <div className="truncate font-mono text-2xs text-muted-foreground">{name}</div>}
     </div>
   );
 }
@@ -78,6 +85,19 @@ export function ToolAnalysisPanel({ tenantId: fixedTenantId, linkEntities = true
   const [error, setError] = useState<string | null>(null);
   const [knownTools, setKnownTools] = useState<string[]>(toolName ? [toolName] : []);
   const [knownSkills, setKnownSkills] = useState<string[]>(skillName ? [skillName] : []);
+
+  const toolSelectOptions = useMemo<AdminSelectOption[]>(() => [
+    { value: "", label: "全部工具" },
+    ...knownTools.map((name) => ({
+      value: name,
+      // 中文名与原始名不同时并排显示，排障时需要肉眼比对原始工具名
+      label: formatToolName(name) === name ? name : `${formatToolName(name)}（${name}）`,
+    })),
+  ], [knownTools]);
+  const skillSelectOptions = useMemo<AdminSelectOption[]>(() => [
+    { value: "", label: "全部技能" },
+    ...knownSkills.map((name) => ({ value: name, label: name })),
+  ], [knownSkills]);
 
   useEffect(() => setReasonDraft(reasonContains), [reasonContains]);
 
@@ -139,7 +159,7 @@ export function ToolAnalysisPanel({ tenantId: fixedTenantId, linkEntities = true
       <CardHeader className="space-y-1 pb-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <CardTitle className="text-sm font-medium">工具与技能排查</CardTitle>
+            <CardTitle>工具与技能排查</CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">定位某个组织、用户、工具或技能的调用记录和失败原因。以下筛选只作用于本区域。</p>
           </div>
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
@@ -160,43 +180,34 @@ export function ToolAnalysisPanel({ tenantId: fixedTenantId, linkEntities = true
               })}
             />
           )}
-          <select
-            aria-label="按工具筛选"
-            className="h-8 min-w-36 rounded-md border bg-background px-2 text-xs"
+          <AdminSelect
+            ariaLabel="按工具筛选"
+            className="min-w-36"
+            options={toolSelectOptions}
             value={toolName}
-            onChange={(event) => url.patch({ toolName: event.target.value || null, toolOffset: null })}
-          >
-            <option value="">全部工具</option>
-            {knownTools.map((name) => <option key={name} value={name}>{formatToolName(name)}{formatToolName(name) === name ? "" : `（${name}）`}</option>)}
-          </select>
-          <select
-            aria-label="按技能筛选"
-            className="h-8 min-w-40 rounded-md border bg-background px-2 text-xs"
+            onValueChange={(value) => url.patch({ toolName: value || null, toolOffset: null })}
+          />
+          <AdminSelect
+            ariaLabel="按技能筛选"
+            className="min-w-40"
+            options={skillSelectOptions}
             value={skillName}
-            onChange={(event) => url.patch({ skillName: event.target.value || null, toolOffset: null })}
-          >
-            <option value="">全部技能</option>
-            {knownSkills.map((name) => <option key={name} value={name}>{name}</option>)}
-          </select>
-          <select
-            aria-label="按调用结果筛选"
-            className="h-8 min-w-28 rounded-md border bg-background px-2 text-xs"
+            onValueChange={(value) => url.patch({ skillName: value || null, toolOffset: null })}
+          />
+          <AdminSelect
+            ariaLabel="按调用结果筛选"
+            className="min-w-28"
+            options={STATUS_OPTIONS}
             value={status}
-            onChange={(event) => url.patch({ toolStatus: event.target.value || null, toolOffset: null })}
-          >
-            {STATUS_OPTIONS.map((option) => <option key={option.value || "all"} value={option.value}>{option.label}</option>)}
-          </select>
-          <select
-            aria-label="按时间范围筛选"
-            className="h-8 min-w-28 rounded-md border bg-background px-2 text-xs"
-            value={hours}
-            onChange={(event) => url.patch({ toolHours: Number(event.target.value), toolOffset: null })}
-          >
-            <option value={24}>最近 24 小时</option>
-            <option value={72}>最近 3 天</option>
-            <option value={168}>最近 7 天</option>
-            <option value={720}>最近 30 天</option>
-          </select>
+            onValueChange={(value) => url.patch({ toolStatus: value || null, toolOffset: null })}
+          />
+          <AdminSelect
+            ariaLabel="按时间范围筛选"
+            className="min-w-28"
+            options={HOUR_SELECT_OPTIONS}
+            value={String(hours)}
+            onValueChange={(value) => url.patch({ toolHours: Number(value), toolOffset: null })}
+          />
           <div className="flex min-w-52 flex-1 items-center gap-1">
             <Input
               value={reasonDraft}
@@ -223,14 +234,14 @@ export function ToolAnalysisPanel({ tenantId: fixedTenantId, linkEntities = true
                 ["涉及用户", data.summary.affectedUsers],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl border bg-card px-3 py-2">
-                  <div className="text-[11px] text-muted-foreground">{label}</div>
+                  <div className="text-2xs text-muted-foreground">{label}</div>
                   <div className={cn("mt-1 text-xl font-semibold tabular-nums", label === "失败或取消" && Number(value) > 0 && "text-destructive")}>{value}</div>
                 </div>
               ))}
             </div>
 
             {data.summary.skillCalls > data.summary.skillCallsTracked && (
-              <div className="flex gap-2 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
+              <div className="flex gap-2 rounded-lg border border-info/30 bg-info-subtle px-3 py-2 text-xs text-info-ink">
                 <Info className="mt-0.5 size-3.5 shrink-0" />
                 <span>技能名采集是本批次新增能力：当前窗口有 {data.summary.skillCalls - data.summary.skillCallsTracked} 次旧技能调用只能识别为“技能”，无法还原具体技能名。采集覆盖率 {skillCoverage == null ? "—" : `${(skillCoverage * 100).toFixed(0)}%`}。</span>
               </div>
@@ -243,7 +254,7 @@ export function ToolAnalysisPanel({ tenantId: fixedTenantId, linkEntities = true
                   <TableHeader><TableRow><TableHead>工具</TableHead><TableHead className="text-right">调用</TableHead><TableHead className="text-right">失败</TableHead><TableHead className="text-right">平均耗时</TableHead></TableRow></TableHeader>
                   <TableBody>
                     {data.byTool.length === 0 ? <TableRow><TableCell colSpan={4} className="h-20 text-center text-xs text-muted-foreground">没有匹配的工具调用</TableCell></TableRow> : data.byTool.slice(0, 12).map((row) => (
-                      <TableRow key={row.toolName} className="cursor-pointer hover:bg-muted/40" onClick={() => url.patch({ toolName: row.toolName, toolOffset: null })}>
+                      <TableRow key={row.toolName} className="cursor-pointer" onClick={() => url.patch({ toolName: row.toolName, toolOffset: null })}>
                         <TableCell><ToolLabel name={row.toolName} /></TableCell>
                         <TableCell className="text-right font-mono text-xs">{row.count}</TableCell>
                         <TableCell className={cn("text-right font-mono text-xs", row.failed > 0 && "text-destructive")}>{row.failed}</TableCell>
@@ -259,7 +270,7 @@ export function ToolAnalysisPanel({ tenantId: fixedTenantId, linkEntities = true
                   <TableHeader><TableRow><TableHead>技能</TableHead><TableHead className="text-right">调用</TableHead><TableHead className="text-right">失败</TableHead><TableHead className="text-right">使用人数</TableHead></TableRow></TableHeader>
                   <TableBody>
                     {data.bySkill.length === 0 ? <TableRow><TableCell colSpan={4} className="h-20 text-center text-xs text-muted-foreground">暂无可识别的技能调用</TableCell></TableRow> : data.bySkill.slice(0, 12).map((row) => (
-                      <TableRow key={row.skillName} className="cursor-pointer hover:bg-muted/40" onClick={() => url.patch({ skillName: row.skillName, toolOffset: null })}>
+                      <TableRow key={row.skillName} className="cursor-pointer" onClick={() => url.patch({ skillName: row.skillName, toolOffset: null })}>
                         <TableCell className="max-w-48 truncate font-mono text-xs" title={row.skillName}>{row.skillName}</TableCell>
                         <TableCell className="text-right font-mono text-xs">{row.count}</TableCell>
                         <TableCell className={cn("text-right font-mono text-xs", row.failed > 0 && "text-destructive")}>{row.failed}</TableCell>
@@ -274,7 +285,7 @@ export function ToolAnalysisPanel({ tenantId: fixedTenantId, linkEntities = true
             <div className="overflow-hidden rounded-xl border">
               <div className="flex items-center justify-between gap-2 border-b bg-muted/20 px-3 py-2">
                 <div className="text-xs font-medium">调用明细</div>
-                <div className="text-[11px] text-muted-foreground">第 {currentPage}/{totalPages} 页 · {pageRange}</div>
+                <div className="text-2xs text-muted-foreground">第 {currentPage}/{totalPages} 页 · {pageRange}</div>
               </div>
               <Table>
                 <TableHeader>
@@ -287,13 +298,13 @@ export function ToolAnalysisPanel({ tenantId: fixedTenantId, linkEntities = true
                     const friendly = item.error ? classifyFailureReason(item.error) : null;
                     return (
                       <TableRow key={item.invocationId}>
-                        <TableCell className="whitespace-nowrap text-[11px] text-muted-foreground">{new Date(item.startedAt).toLocaleString("zh-CN", { hour12: false })}</TableCell>
+                        <TableCell className="whitespace-nowrap text-2xs text-muted-foreground">{new Date(item.startedAt).toLocaleString("zh-CN", { hour12: false })}</TableCell>
                         <TableCell className="max-w-48">
                           <div><EntityLink kind="tenant" id={item.tenantId} plain={!linkEntities} /></div>
                           <EntityLink kind="user" id={item.userId} label={item.realName || item.username} tenantId={item.tenantId} plain={!linkEntities} />
                         </TableCell>
-                        <TableCell className="max-w-48"><ToolLabel name={item.toolName} />{item.skillName && <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground" title={item.skillName}>{item.skillName}</div>}</TableCell>
-                        <TableCell><span className={cn("inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium", statusTone(item.status))}>{formatToolInvocationStatus(item.status)}</span><div className="mt-1 text-[10px] text-muted-foreground">{formatExecutionTarget(item.executionTarget)}</div></TableCell>
+                        <TableCell className="max-w-48"><ToolLabel name={item.toolName} />{item.skillName && <div className="mt-1 truncate font-mono text-2xs text-muted-foreground" title={item.skillName}>{item.skillName}</div>}</TableCell>
+                        <TableCell><span className={cn("inline-flex rounded-full px-2 py-0.5 text-2xs font-medium", statusTone(item.status))}>{formatToolInvocationStatus(item.status)}</span><div className="mt-1 text-2xs text-muted-foreground">{formatExecutionTarget(item.executionTarget)}</div></TableCell>
                         <TableCell className="whitespace-nowrap font-mono text-xs">{formatMs(item.durationMs)}</TableCell>
                         <TableCell className="max-w-64"><span className={cn("line-clamp-2 text-xs", friendly && "text-destructive")} title={item.error ?? undefined}>{friendly?.summary ?? "—"}</span></TableCell>
                         <TableCell><EntityLink kind="run" id={item.runId} tenantId={item.tenantId} plain={!linkEntities} /></TableCell>

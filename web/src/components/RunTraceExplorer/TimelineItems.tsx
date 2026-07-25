@@ -27,7 +27,7 @@ const COLLAPSE_THRESHOLD = 500;
 export function TruncatedBadge({ event }: { event: TraceEvent }) {
   if (!event.truncated) return null;
   return (
-    <Badge className="border-0 bg-amber-500/15 text-[10px] text-amber-700 dark:text-amber-300">已截断</Badge>
+    <Badge variant="warning" className="text-2xs">已截断</Badge>
   );
 }
 
@@ -164,9 +164,9 @@ export function DividerNode({
   tone?: "muted" | "warn";
 }) {
   return (
-    <div className="flex items-center gap-2 py-1 pl-9 text-[11px]">
-      <div className={cn("h-px w-4", tone === "warn" ? "bg-amber-400" : "bg-border")} />
-      <span className={cn(tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground")}>{children}</span>
+    <div className="flex items-center gap-2 py-1 pl-9 text-2xs">
+      <div className={cn("h-px w-4", tone === "warn" ? "bg-warning" : "bg-border")} />
+      <span className={cn(tone === "warn" ? "text-warning-ink" : "text-muted-foreground")}>{children}</span>
       <span className="text-muted-foreground/70 tabular-nums">{formatTime(timestamp)}</span>
     </div>
   );
@@ -178,12 +178,12 @@ export function UserMessageItem({ event }: { event: TraceEvent }) {
   return (
     <EventShell
       icon={<User className="size-3.5" />}
-      iconClass="bg-blue-500/15 text-blue-700 dark:text-blue-300"
+      iconClass="bg-info/15 text-info-ink"
       title="用户消息"
       timestamp={event.timestamp}
       badges={<TruncatedBadge event={event} />}
     >
-      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900/40 dark:bg-blue-950/30">
+      <div className="rounded-lg border border-info/30 bg-info-subtle p-3">
         <CollapsibleText text={event.content ?? ""} />
       </div>
     </EventShell>
@@ -229,7 +229,7 @@ export function AssistantMessageItem({ event }: { event: TraceEvent }) {
       timestamp={event.timestamp}
       badges={
         <>
-          {event.model && <Badge variant="outline" className="font-mono text-[10px]">{event.model}</Badge>}
+          {event.model && <Badge variant="outline" className="font-mono text-2xs">{event.model}</Badge>}
           <TruncatedBadge event={event} />
         </>
       }
@@ -258,7 +258,7 @@ export function ToolCallRow({
   const [open, setOpen] = useState(false);
   const failed = audit?.status === "error" || result?.isError === true;
   const finished = audit != null || result != null;
-  const dotClass = failed ? "bg-destructive" : finished ? "bg-emerald-500" : "bg-muted-foreground/40";
+  const dotClass = failed ? "bg-destructive" : finished ? "bg-success" : "bg-muted-foreground/40";
   const prettyArgs = useMemo(() => prettyJson(args), [args]);
   return (
     <div className="rounded-md border">
@@ -270,29 +270,29 @@ export function ToolCallRow({
         {open ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
         <span className={cn("size-2 shrink-0 rounded-full", dotClass)} />
         <span className="font-medium">{formatToolName(name)}</span>
-        {formatToolName(name) !== name && <span className="font-mono text-[10px] text-muted-foreground">{name}</span>}
-        {audit?.skillName && <Badge variant="outline" className="font-mono text-[10px]">技能：{audit.skillName}</Badge>}
+        {formatToolName(name) !== name && <span className="font-mono text-2xs text-muted-foreground">{name}</span>}
+        {audit?.skillName && <Badge variant="outline" className="font-mono text-2xs">技能：{audit.skillName}</Badge>}
         {audit?.durationMs != null && (
           <span className="text-muted-foreground tabular-nums">{formatMs(audit.durationMs)}</span>
         )}
         {audit?.risk && (
-          <Badge variant="outline" className="text-[10px]">风险：{formatToolRisk(audit.risk)}</Badge>
+          <Badge variant="outline" className="text-2xs">风险：{formatToolRisk(audit.risk)}</Badge>
         )}
         {audit?.executionTarget && (
-          <Badge variant="outline" className="text-[10px]">{formatExecutionTarget(audit.executionTarget)}</Badge>
+          <Badge variant="outline" className="text-2xs">{formatExecutionTarget(audit.executionTarget)}</Badge>
         )}
-        {failed && <Badge className="border-0 bg-destructive/15 text-[10px] text-destructive">失败</Badge>}
-        {!finished && <span className="text-[10px] text-muted-foreground">无结果记录</span>}
+        {failed && <Badge variant="danger" className="text-2xs">失败</Badge>}
+        {!finished && <span className="text-2xs text-muted-foreground">无结果记录</span>}
       </button>
       {open && (
         <div className="space-y-2 border-t px-2.5 py-2">
           <div>
-            <div className="mb-1 text-[11px] font-medium text-muted-foreground">参数（调用 ID：{callId}）</div>
+            <div className="mb-1 text-2xs font-medium text-muted-foreground">参数（调用 ID：{callId}）</div>
             <CollapsibleText text={prettyArgs} mono className="rounded bg-muted/40 p-2" />
           </div>
           {result && (
             <div>
-              <div className="mb-1 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+              <div className="mb-1 flex items-center gap-2 text-2xs font-medium text-muted-foreground">
                 结果 <TruncatedBadge event={result} />
               </div>
               <CollapsibleText
@@ -324,12 +324,12 @@ export function ToolCallsItem({
   return (
     <EventShell
       icon={<Wrench className="size-3.5" />}
-      iconClass="bg-violet-500/15 text-violet-700 dark:text-violet-300"
+      iconClass="bg-chart-3/15 text-chart-3"
       title={`工具调用 × ${calls.length}`}
       timestamp={event.timestamp}
       badges={
         <>
-          {event.model && <Badge variant="outline" className="font-mono text-[10px]">{event.model}</Badge>}
+          {event.model && <Badge variant="outline" className="font-mono text-2xs">{event.model}</Badge>}
           <TruncatedBadge event={event} />
         </>
       }
@@ -366,9 +366,9 @@ export function OrphanToolEventItem({ event }: { event: TraceEvent }) {
       badges={
         <>
           <span>{formatToolName(event.toolName)}</span>
-          {event.skillName && <Badge variant="outline" className="font-mono text-[10px]">技能：{event.skillName}</Badge>}
+          {event.skillName && <Badge variant="outline" className="font-mono text-2xs">技能：{event.skillName}</Badge>}
           {event.durationMs != null && <span className="text-muted-foreground tabular-nums">{formatMs(event.durationMs)}</span>}
-          {failed && <Badge className="border-0 bg-destructive/15 text-[10px] text-destructive">失败</Badge>}
+          {failed && <Badge variant="danger" className="text-2xs">失败</Badge>}
           <TruncatedBadge event={event} />
         </>
       }
@@ -397,7 +397,7 @@ export function ApprovalPairItem({ event, resolved }: { event: TraceEvent; resol
   return (
     <EventShell
       icon={<EntityIcons.admin className="size-3.5" />}
-      iconClass="bg-amber-500/15 text-amber-700 dark:text-amber-300"
+      iconClass="bg-warning/15 text-warning-ink"
       title="审批"
       timestamp={event.timestamp}
       badges={
@@ -406,16 +406,16 @@ export function ApprovalPairItem({ event, resolved }: { event: TraceEvent; resol
           {resolved ? (
             <Badge
               className={cn(
-                "border-0 text-[10px]",
+                "border-0 text-2xs",
                 approved
-                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                  : "bg-destructive/15 text-destructive",
+                  ? "bg-success/15 text-success-ink"
+                  : "bg-danger/15 text-danger-ink",
               )}
             >
               {decisionLabel(resolved.decision)}
             </Badge>
           ) : (
-            <Badge className="border-0 bg-amber-500/15 text-[10px] text-amber-700 dark:text-amber-300">未决</Badge>
+            <Badge variant="warning" className="text-2xs">未决</Badge>
           )}
           {waitMs != null && waitMs >= 0 && (
             <span className="text-muted-foreground">等待 {formatMs(waitMs)}</span>
@@ -436,19 +436,19 @@ export function HandFailureItem({ event }: { event: TraceEvent }) {
   return (
     <EventShell
       icon={<TriangleAlert className="size-3.5" />}
-      iconClass="bg-destructive/15 text-destructive"
+      iconClass="bg-danger/15 text-danger-ink"
       title="执行环境故障"
       timestamp={event.timestamp}
       badges={
         <>
-          {event.classifiedAs && <Badge className="border-0 bg-destructive/15 text-[10px] text-destructive">{formatFailureClass(event.classifiedAs)}</Badge>}
+          {event.classifiedAs && <Badge className="border-0 bg-destructive/15 text-2xs text-destructive">{formatFailureClass(event.classifiedAs)}</Badge>}
           {event.toolName && <span>{formatToolName(event.toolName)}</span>}
         </>
       }
     >
       <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
         {event.error ?? "（无错误详情）"}
-        {event.handId != null && <div className="mt-1 font-mono text-[11px] opacity-80">执行环境：{String(event.handId)}</div>}
+        {event.handId != null && <div className="mt-1 font-mono text-2xs opacity-80">执行环境：{String(event.handId)}</div>}
       </div>
     </EventShell>
   );
@@ -475,10 +475,10 @@ export function RunFinishedItem({ event }: { event: TraceEvent }) {
       icon={<Flag className="size-3.5" />}
       iconClass={cn(
         event.subtype === "success"
-          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+          ? "bg-success/15 text-success-ink"
           : event.subtype === "error"
-            ? "bg-destructive/15 text-destructive"
-            : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+            ? "bg-danger/15 text-danger-ink"
+            : "bg-warning/15 text-warning-ink",
       )}
       title="运行结束"
       timestamp={event.timestamp}

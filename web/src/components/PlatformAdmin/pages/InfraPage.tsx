@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, Loader2, RefreshCw, Trash2 } from "lucide-react";
 
+import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
@@ -14,6 +15,10 @@ import { formatBytes, formatNumber, formatTime } from "../format";
 import type { SystemMetricsResponse, SystemStorageResponse, WorkspaceUsageRecord, WorkspaceUsageStatus } from "../types";
 
 const WORKSPACE_FILTERS: Array<WorkspaceUsageStatus | "all"> = ["all", "active", "soft_deleted", "orphan_tenant", "orphan_user"];
+const WORKSPACE_FILTER_OPTIONS: AdminSelectOption[] = WORKSPACE_FILTERS.map(value => ({
+  value,
+  label: value === "all" ? "全部状态" : formatWorkspaceStatus(value),
+}));
 
 export function InfraPage() {
   // 只读平台 admin：扫描存储/归档目录/永久删除目录 disabled
@@ -156,7 +161,7 @@ export function InfraPage() {
 
       {/* 数据源缺失必须显式告知：否则下面的 0 会被读成“真的没有”，而不是“没采到” */}
       {(metricsUnavailable || storageUnavailable) && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+        <div className="rounded-md border border-warning/30 bg-warning-subtle px-3 py-2 text-xs text-warning-ink">
           {[
             metricsUnavailable ? "系统指标采集未启用" : null,
             storageUnavailable ? "文件用量扫描未启用" : null,
@@ -234,16 +239,12 @@ export function InfraPage() {
         toolbar={
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">扫描：{formatTime(storage?.summary.lastScanAt)}</span>
-            <select
-              className="h-8 rounded-md border bg-background px-2 text-xs"
+            <AdminSelect
+              ariaLabel="筛选文件目录状态"
+              options={WORKSPACE_FILTER_OPTIONS}
               value={statusFilter}
-              onChange={event => setStatusFilter(event.target.value as WorkspaceUsageStatus | "all")}
-              aria-label="筛选 workspace 状态"
-            >
-              {WORKSPACE_FILTERS.map(value => (
-                <option key={value} value={value}>{value === "all" ? "全部状态" : formatWorkspaceStatus(value)}</option>
-              ))}
-            </select>
+              onValueChange={value => setStatusFilter(value as WorkspaceUsageStatus | "all")}
+            />
           </div>
         }
         columns={[
@@ -308,9 +309,9 @@ export function InfraPage() {
 
 function WorkspaceStatusBadge({ status }: { status: WorkspaceUsageStatus }) {
   const className = status === "active"
-    ? "border-0 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+    ? "border-0 bg-success/15 text-success-ink"
     : status === "soft_deleted"
-      ? "border-0 bg-amber-500/15 text-amber-700 dark:text-amber-300"
-      : "border-0 bg-destructive/15 text-destructive";
+      ? "border-0 bg-warning/15 text-warning-ink"
+      : "border-0 bg-danger/15 text-danger-ink";
   return <Badge className={className}>{formatWorkspaceStatus(status)}</Badge>;
 }

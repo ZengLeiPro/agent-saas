@@ -40,10 +40,63 @@
 
     --radius: 0.5rem;
 
+    /*
+     * 状态语义色板（后台唯一合法的"带含义的颜色"来源）
+     * ----------------------------------------------------------------
+     * 四个家族：success 绿 / warning 琥珀 / danger 红 / info 蓝。
+     * 每族三支：
+     *   DEFAULT      实心块、圆点、进度条、图表系列（承载"这是什么状态"）
+     *   -foreground  实心底上的文字
+     *   -subtle      不透明浅底（横幅 / 告警条；需要压住下层内容时用它，
+     *                轻量场景直接写 `bg-success/15` 即可，无需 subtle）
+     *   -ink         浅底之上的文字色（一个 token 同时覆盖亮/暗，
+     *                取代 `text-emerald-700 dark:text-emerald-300` 两段式）
+     *
+     * 中性（neutral）不另设 token，直接复用 muted / muted-foreground。
+     * 后台工具页不铺品牌色：颜色预算全部留给这四族状态语义，
+     * 品牌蓝只保留在主 CTA（button primary）、链接（--link）与选中导航。
+     */
     --success: 134 100% 35%;              /* #00B42A Arco 国产惯例 */
     --success-foreground: 0 0% 100%;
+    --success-subtle: 138 60% 95%;        /* 浅绿底 ≈ #E9F9ED */
+    --success-ink: 140 90% 24%;           /* 浅底上的深绿文字，对比度 ≥ 7:1 */
+
     --warning: 26 100% 50%;               /* #FF7D00 比 brand-accent 更红，与之拉开距离 */
     --warning-foreground: 0 0% 100%;
+    --warning-subtle: 34 100% 95%;        /* 浅琥珀底 ≈ #FFF3E5 */
+    --warning-ink: 26 92% 30%;            /* 浅底上的深琥珀文字 */
+
+    /* danger 与 destructive 同值：destructive 是 shadcn 结构名（按钮/删除动作），
+       danger 是状态语义名（失败/异常）。用 var 指向保证两者永不漂移。 */
+    --danger: var(--destructive);
+    --danger-foreground: var(--destructive-foreground);
+    --danger-subtle: 358 100% 96%;        /* 浅红底 ≈ #FFECEC */
+    --danger-ink: 358 72% 42%;            /* 浅底上的深红文字 */
+
+    /* info = 运行中 / 持久态 / 中性提示。刻意选偏青的蓝（hue 212），
+       与品牌蓝 brand-600（hue 227）拉开，避免"这块蓝是装饰还是在跑"的歧义。 */
+    --info: 212 92% 45%;
+    --info-foreground: 0 0% 100%;
+    --info-subtle: 208 100% 96%;          /* 浅蓝底 ≈ #EAF4FF */
+    --info-ink: 214 88% 34%;              /* 浅底上的深蓝文字 */
+
+    /*
+     * 图表 / 分类色板（categorical，不承载好坏）
+     * ----------------------------------------------------------------
+     * 用途：多系列图表、Token 类型构成、审计事件类别这类"只需要区分、
+     * 不需要判断好坏"的场景。
+     *
+     * 刻意全部落在冷色（蓝 / 青 / 紫 / 洋红 / 蓝灰），与状态语义的
+     * 绿-琥珀-红三色**完全不重叠**——否则用户会把"输出 Token 的绿柱"
+     * 误读成"这项是好的"。绿/琥珀/红在图表里出现时，必须真的表示状态。
+     * chart-5 是兜底"其他"档，饱和度最低。
+     */
+    --chart-1: 212 92% 52%;
+    --chart-2: 187 72% 38%;
+    --chart-3: 262 70% 60%;
+    --chart-4: 322 60% 55%;
+    --chart-5: 232 16% 52%;
+
     --link: 227 76% 53%;                  /* brand-600 链接收敛到品牌主色 */
     --user-bubble: 28 86% 95%;            /* brand-accent-soft #FDF2E8 用户=人=暖橙，与 AI 蓝色技术语境拉开 */
     --code-block-bg: 225 60% 97%;         /* 极淡蓝灰，代码块从品牌底浮起 */
@@ -82,10 +135,35 @@
     --input: 227 18% 22%;
     --ring: 220 9% 65%;                   /* 暗色模式下的中性键盘焦点提示 */
 
+    /* 状态语义色板暗色版：DEFAULT 提亮保对比度，subtle 换成低亮度深底，
+       ink 翻转为浅色文字（对应亮色的 700 档 → 暗色的 300 档）。 */
     --success: 134 70% 45%;
     --success-foreground: 0 0% 100%;
+    --success-subtle: 140 45% 14%;
+    --success-ink: 142 62% 68%;
+
     --warning: 26 100% 60%;
     --warning-foreground: 0 0% 10%;
+    --warning-subtle: 28 55% 15%;
+    --warning-ink: 34 95% 70%;
+
+    --danger: var(--destructive);
+    --danger-foreground: var(--destructive-foreground);
+    --danger-subtle: 358 45% 16%;
+    --danger-ink: 358 92% 78%;
+
+    --info: 213 94% 66%;
+    --info-foreground: 0 0% 10%;
+    --info-subtle: 214 55% 17%;
+    --info-ink: 213 94% 76%;
+
+    /* 分类色板暗色版：提亮度、降饱和，暗底上不刺眼 */
+    --chart-1: 212 92% 64%;
+    --chart-2: 187 65% 50%;
+    --chart-3: 262 75% 70%;
+    --chart-4: 322 65% 66%;
+    --chart-5: 232 18% 62%;
+
     --link: 227 89% 68%;                  /* brand-400 */
     --user-bubble: 24 28% 18%;            /* 暖棕深底，暗色下保持用户=橙的语义 */
     --code-block-bg: 227 22% 13%;
@@ -138,6 +216,22 @@
   }
   .prose table th,
   .prose table td {
+    white-space: nowrap;
+  }
+
+  /*
+   * admin 表格的中英混排规则（ui/table.tsx 的 <table> 自动带 data-admin-table）。
+   * 后台表格不在 .prose 内，此前完全没享受到 keep-all，中文表头（如「历史成本（美元）」）
+   * 会逐字折行把列宽挤垮。
+   *   - th/td: keep-all —— 中文只在标点处断行
+   *   - th: nowrap —— 表头是短标签，永不折行；正文单元格保留折行能力，
+   *     否则会破坏 line-clamp / truncate 的既有排版
+   */
+  [data-admin-table] th,
+  [data-admin-table] td {
+    word-break: keep-all;
+  }
+  [data-admin-table] th {
     white-space: nowrap;
   }
 

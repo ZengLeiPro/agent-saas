@@ -15,6 +15,7 @@ import { Loader2, RefreshCw, ChevronDown, ChevronRight, CircleAlert, RotateCcw, 
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Segmented, type SegmentedOption } from "@/components/ui/segmented";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
@@ -38,6 +39,11 @@ import { UserDetailView } from "./UserDetailView";
 import { RangeSelector, type RangeQuery, type RangeValue, type CustomRange } from "./RangeSelector";
 import { FamilyFilter } from "./FamilyFilter";
 import { EfficiencyView } from "./EfficiencyView";
+
+const VIEW_TAB_OPTIONS: SegmentedOption<"usage" | "efficiency">[] = [
+  { value: "usage", label: "用量" },
+  { value: "efficiency", label: "效率" },
+];
 
 // ────────── 子组件 ──────────
 
@@ -95,7 +101,7 @@ function OverviewCards({ data }: { data: OverviewStats }) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold tabular-nums">{c.value}</div>
-            {c.sub && <div className="mt-1 truncate text-[11px] text-muted-foreground">{c.sub}</div>}
+            {c.sub && <div className="mt-1 truncate text-2xs text-muted-foreground">{c.sub}</div>}
           </CardContent>
         </Card>
       ))}
@@ -147,7 +153,7 @@ function ModelBar({ user, dateArgs, labelFor }: { user: string; dateArgs: DateAr
       </div>
     );
   }
-  if (error) return <div className="py-2 text-xs text-red-500">{error}</div>;
+  if (error) return <div className="py-2 text-xs text-destructive">{error}</div>;
   if (!data || data.models.length === 0) {
     return <div className="py-2 text-xs text-muted-foreground">无模型数据</div>;
   }
@@ -163,10 +169,10 @@ function ModelBar({ user, dateArgs, labelFor }: { user: string; dateArgs: DateAr
             {labelFor ? labelFor(m.model) : m.model}
           </div>
           <div className="flex h-4 flex-1 overflow-hidden rounded bg-muted">
-            <div className="bg-emerald-500" style={{ width: `${(m.inputTokens / maxTokens) * 100}%` }} title={`输入 ${formatTokens(m.inputTokens)}`} />
-            <div className="bg-amber-500" style={{ width: `${(m.outputTokens / maxTokens) * 100}%` }} title={`输出 ${formatTokens(m.outputTokens)}`} />
-            <div className="bg-blue-400" style={{ width: `${(m.cacheReadTokens / maxTokens) * 100}%` }} title={`缓存读 ${formatTokens(m.cacheReadTokens)}`} />
-            <div className="bg-purple-400" style={{ width: `${(m.cacheCreationTokens / maxTokens) * 100}%` }} title={`缓存写 ${formatTokens(m.cacheCreationTokens)}`} />
+            <div className="bg-chart-1" style={{ width: `${(m.inputTokens / maxTokens) * 100}%` }} title={`输入 ${formatTokens(m.inputTokens)}`} />
+            <div className="bg-chart-2" style={{ width: `${(m.outputTokens / maxTokens) * 100}%` }} title={`输出 ${formatTokens(m.outputTokens)}`} />
+            <div className="bg-chart-3" style={{ width: `${(m.cacheReadTokens / maxTokens) * 100}%` }} title={`缓存读 ${formatTokens(m.cacheReadTokens)}`} />
+            <div className="bg-chart-4" style={{ width: `${(m.cacheCreationTokens / maxTokens) * 100}%` }} title={`缓存写 ${formatTokens(m.cacheCreationTokens)}`} />
           </div>
           <div className="w-20 text-right font-mono tabular-nums">{formatTokens(m.totalTokens)}</div>
           {showCost && (
@@ -322,7 +328,7 @@ function UserRankTable({
           const isOpen = expanded === u.username;
           return (
             <Fragment key={u.username}>
-              <TableRow className="hover:bg-muted/30">
+              <TableRow>
                 <TableCell className="font-medium">
                   <div className="flex items-center gap-1.5">
                     <button
@@ -341,7 +347,7 @@ function UserRankTable({
                     >
                       <span>{u.realName ?? u.username}</span>
                       {u.realName && (
-                        <span className="ml-1.5 text-[11px] text-muted-foreground">({u.username})</span>
+                        <span className="ml-1.5 text-2xs text-muted-foreground">({u.username})</span>
                       )}
                     </button>
                   </div>
@@ -542,23 +548,14 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
       {/* 用量 / 效率 tab。效率视图是工程排查口径（工具健康/浪费探测/真实模型 ID），
           2026-07-14 起收回平台管理员专属；组织 admin 的健康信息由综合分析页以客户口径承载 */}
       {isPlatformAdmin && (
-        <div className="inline-flex items-center self-start rounded-md border bg-card p-0.5">
-          {([["usage", "用量"], ["efficiency", "效率"]] as const).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setViewTab(key)}
-              className={cn(
-                "rounded px-4 py-1 text-xs font-medium transition-colors",
-                viewTab === key
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          ariaLabel="视图"
+          size="lg"
+          className="self-start"
+          options={VIEW_TAB_OPTIONS}
+          value={viewTab}
+          onChange={setViewTab}
+        />
       )}
       {viewTab === "efficiency" && isPlatformAdmin ? (
         <EfficiencyView tenantId={tenantId} linkEntities={isPlatformAdmin} />
@@ -588,7 +585,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
       {/* 数据完整性 + Rebuild 状态条 */}
       <div className="space-y-2">
         {dataRange?.firstCostDate && dataRange.earliestDate && dataRange.firstCostDate !== dataRange.earliestDate && (
-          <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+          <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-subtle px-3 py-2 text-xs text-warning-ink">
             <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
             <span>
               Token 数据自 <span className="font-mono">{dataRange.earliestDate}</span> 起记录；
@@ -622,7 +619,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
       </div>
 
       {error && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
+        <div className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-sm text-danger-ink">
           加载失败：{error}
         </div>
       )}
@@ -631,7 +628,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">
+          <CardTitle>
             日趋势 <span className="text-xs font-normal text-muted-foreground">· {scopeLabel}合计</span>
           </CardTitle>
         </CardHeader>
@@ -648,7 +645,7 @@ export function UsageDashboard({ tenantId, scope = tenantId ? "tenant" : "platfo
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">用户排行 <span className="ml-1 text-[11px] font-normal text-muted-foreground">（点用户名查看详情；点 <ChevronRight className="inline size-3 align-[-1.5px]" aria-hidden="true" /> 展开模型分布）</span></CardTitle>
+          <CardTitle>用户排行 <span className="ml-1 text-2xs font-normal text-muted-foreground">（点用户名查看详情；点 <ChevronRight className="inline size-3 align-[-1.5px]" aria-hidden="true" /> 展开模型分布）</span></CardTitle>
         </CardHeader>
         <CardContent>
           {byUser ? (

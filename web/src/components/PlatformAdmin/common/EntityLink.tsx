@@ -88,7 +88,7 @@ export function EntityLink({
         onClick={onCopy}
         aria-label={`复制 ${id}`}
       >
-        {copied ? <Check className="size-3 text-emerald-600" /> : <Copy className="size-3" />}
+        {copied ? <Check className="size-3 text-success" /> : <Copy className="size-3" />}
       </Button>
     </span>
   );

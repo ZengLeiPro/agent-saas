@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Network, PauseCircle, PlayCircle, RefreshCw, Trash2 } from "lucide-react";
 
+import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,6 +26,14 @@ import {
 } from "../displayText";
 import { formatDuration, formatNumber, formatTime, sandboxOwnerText } from "../format";
 import type { RuntimeOperationsResponse, SandboxRecord } from "../types";
+
+const PHASE_OPTIONS: AdminSelectOption[] = [
+  { value: "", label: "全部状态" },
+  ...["Running", "Paused", "Pending", "Failed"].map((value) => ({
+    value,
+    label: formatSandboxPhase(value),
+  })),
+];
 
 export function SandboxesPage({ sandboxName }: { sandboxName: string | null }) {
   if (sandboxName) return <SandboxDetail sandboxName={sandboxName} />;
@@ -173,13 +182,7 @@ function SandboxList() {
             <Input value={q} onChange={(event) => adminQuery.patch({ q: event.target.value })} placeholder="搜索用户、姓名或环境名称" className="h-8 w-56 text-xs" />
             <ScopeFilters tenantId={tenantId} onChange={(values) => adminQuery.patch(values)} />
             <Input value={workspaceId} onChange={(event) => adminQuery.patch({ workspaceId: event.target.value })} placeholder="文件目录 ID（可选）" className="h-8 w-52 font-mono text-xs" />
-            <select className="h-8 rounded-md border bg-background px-2 text-xs" value={phase} onChange={(event) => adminQuery.patch({ phase: event.target.value })}>
-              <option value="">全部状态</option>
-              <option value="Running">{formatSandboxPhase("Running")}</option>
-              <option value="Paused">{formatSandboxPhase("Paused")}</option>
-              <option value="Pending">{formatSandboxPhase("Pending")}</option>
-              <option value="Failed">{formatSandboxPhase("Failed")}</option>
-            </select>
+            <AdminSelect ariaLabel="筛选执行环境状态" options={PHASE_OPTIONS} value={phase} onValueChange={(value) => adminQuery.patch({ phase: value })} />
           </div>
         }
         onRowClick={(row) => {
@@ -187,7 +190,7 @@ function SandboxList() {
           window.dispatchEvent(new PopStateEvent("popstate"));
         }}
         columns={[
-          { key: "phase", header: "状态", cell: row => <div className="space-y-1"><StatusBadge kind="sandbox" status={row.phase ?? "Unknown"} /><div className="max-w-44 truncate text-[11px] text-destructive">{row.brokenReason}</div></div> },
+          { key: "phase", header: "状态", cell: row => <div className="space-y-1"><StatusBadge kind="sandbox" status={row.phase ?? "Unknown"} /><div className="max-w-44 truncate text-2xs text-destructive">{row.brokenReason}</div></div> },
           { key: "name", header: "名称", cell: row => <EntityLink kind="sandbox" id={row.name} /> },
           { key: "owner", header: "组织 / 用户", cell: row => row.owner?.kind === "user" ? <div><EntityLink kind="tenant" id={row.owner.tenantId} /><div><EntityLink kind="user" id={row.owner.userId} /></div></div> : <span className="text-muted-foreground">{formatSystemOwner(row.owner?.kind)}</span> },
           { key: "username", header: "用户名", cell: row => row.owner?.username ? <span className="font-mono text-xs">{row.owner.username}</span> : "—" },

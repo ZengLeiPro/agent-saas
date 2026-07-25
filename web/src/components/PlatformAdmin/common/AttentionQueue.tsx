@@ -15,7 +15,7 @@ export interface AttentionItem {
 
 const severityClass: Record<AttentionItem["severity"], string> = {
   critical: "text-destructive",
-  warning: "text-amber-700 dark:text-amber-300",
+  warning: "text-warning-ink",
   info: "text-muted-foreground",
 };
 
@@ -37,7 +37,7 @@ export function AttentionQueue({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium">异常队列</CardTitle>
+        <CardTitle>异常队列</CardTitle>
       </CardHeader>
       <CardContent>
         {/* “没查成”绝不能渲染成“查过了没问题”——三态必须分开 */}
@@ -48,12 +48,12 @@ export function AttentionQueue({
           </div>
         ) : unavailable && sorted.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <TriangleAlert className="size-4 text-amber-600" />
+            <TriangleAlert className="size-4 text-warning" />
             异常检查暂不可用，无法确认当前是否有异常
           </div>
         ) : sorted.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <CircleCheck className="size-4 text-emerald-600" />
+            <CircleCheck className="size-4 text-success" />
             暂无待处理异常
           </div>
         ) : (

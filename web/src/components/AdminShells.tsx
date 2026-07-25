@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronLeft, Loader2, RefreshCw, X, type LucideIcon } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
+import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -196,7 +197,7 @@ function SettingsSectionFallback() {
 function MetricCard({ title, value, description }: { title: string; value: string | number; description: string }) {
   return (
     <Card>
-      <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">{title}</CardTitle></CardHeader>
+      <CardHeader className="pb-2"><CardTitle className="text-muted-foreground">{title}</CardTitle></CardHeader>
       <CardContent>
         <div className="text-2xl font-semibold">{value}</div>
         <p className="mt-1 text-xs text-muted-foreground">{description}</p>
@@ -338,6 +339,11 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
     })),
   ) ?? [];
 
+  const defaultModelOptions: AdminSelectOption[] = [
+    { value: "", label: "继承平台默认" },
+    ...modelOptions.map(model => ({ value: model.ref, label: model.label })),
+  ];
+
   const toggleAllowedModel = useCallback((modelRef: string, checked: boolean) => {
     patch(d => {
       d.models.allowedModels = checked
@@ -416,16 +422,14 @@ function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
           <CardContent className="grid gap-3">
             <div className="space-y-1.5">
               <Label>默认模型</Label>
-              <select
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+              <AdminSelect
+                ariaLabel="默认模型"
+                size="md"
+                className="w-full"
+                options={defaultModelOptions}
                 value={settings.models.defaultModel ?? ""}
-                onChange={event => patch(d => { d.models.defaultModel = event.target.value || undefined; })}
-              >
-                <option value="">继承平台默认</option>
-                {modelOptions.map(model => (
-                  <option key={model.ref} value={model.ref}>{model.label}</option>
-                ))}
-              </select>
+                onValueChange={value => patch(d => { d.models.defaultModel = value || undefined; })}
+              />
             </div>
             <SettingSwitch label="允许用户切换模型" description="关闭后可在后续运行时策略中限制用户只能使用默认模型。" checked={settings.models.allowUserModelSwitch} onCheckedChange={checked => patch(d => { d.models.allowUserModelSwitch = checked; })} />
             <SettingSwitch label="显示分组名" description="模型选择器中显示模型分组标题。" checked={!!settings.models.showGroupNames} onCheckedChange={checked => patch(d => { d.models.showGroupNames = checked; })} />
@@ -567,7 +571,7 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   billing_account_adjusted: "调整积分流水",
 };
 
-const auditCategories = [
+const auditCategories: AdminSelectOption[] = [
   { value: "", label: "全部事件" },
   { value: "login", label: "登录" },
   { value: "platform", label: "平台运营" },
@@ -583,7 +587,7 @@ const auditCategories = [
   { value: "tenant", label: "组织" },
 ];
 
-const auditChannels = [
+const auditChannels: AdminSelectOption[] = [
   { value: "", label: "全部渠道" },
   { value: "web", label: "Web 端" },
   { value: "mobile", label: "移动端" },
@@ -617,13 +621,13 @@ function auditEventLabel(event: string): string {
 
 function auditEventBadgeClass(event: string): string {
   if (event === "login_fail") return "bg-destructive text-destructive-foreground border-0";
-  if (event === "login_success") return "bg-success/15 text-success border-0";
-  if (event.startsWith("tenant_")) return "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-0";
-  if (event.startsWith("user_")) return "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-0";
-  if (event.startsWith("mcp_")) return "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-0";
-  if (event.startsWith("skill_")) return "bg-purple-500/15 text-purple-700 dark:text-purple-300 border-0";
-  if (event.startsWith("file_")) return "bg-teal-500/15 text-teal-700 dark:text-teal-300 border-0";
-  if (event.startsWith("cron_")) return "bg-warning/15 text-warning border-0";
+  if (event === "login_success") return "bg-success/15 text-success-ink border-0";
+  if (event.startsWith("tenant_")) return "bg-chart-1/15 border-0";
+  if (event.startsWith("user_")) return "bg-chart-2/15 border-0";
+  if (event.startsWith("mcp_")) return "bg-chart-4/15 border-0";
+  if (event.startsWith("skill_")) return "bg-chart-3/15 border-0";
+  if (event.startsWith("file_")) return "bg-chart-5/15 border-0";
+  if (event.startsWith("cron_")) return "bg-warning/15 text-warning-ink border-0";
   return "bg-muted text-muted-foreground border-0";
 }
 
@@ -650,6 +654,10 @@ function AuditEventsPanel({
     [tenantId, users],
   );
   const tenantUsernames = useMemo(() => tenantUsers.map(user => user.username), [tenantUsers]);
+  const tenantFilterOptions = useMemo<AdminSelectOption[]>(() => [
+    { value: "", label: "全部组织" },
+    ...tenants.map(item => ({ value: item.id, label: item.name })),
+  ], [tenants]);
   const filters: LoginLogFilters = useMemo(() => ({
     username: usernameFilter.trim() || (scope === "tenant" ? (tenantUsernames.length > 0 ? tenantUsernames : ["__empty_tenant__"]) : undefined),
     tenantId: scope === "tenant" ? tenantId : tenantIdFilter.trim() || undefined,
@@ -693,15 +701,11 @@ function AuditEventsPanel({
         <CardContent className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-7">
           <div className="space-y-1.5">
             <Label>事件类别</Label>
-            <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={category} onChange={event => setCategory(event.target.value)}>
-              {auditCategories.map(item => <option key={item.value || "all"} value={item.value}>{item.label}</option>)}
-            </select>
+            <AdminSelect ariaLabel="事件类别" size="md" className="w-full" options={auditCategories} value={category} onValueChange={setCategory} />
           </div>
           <div className="space-y-1.5">
             <Label>渠道</Label>
-            <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={channel} onChange={event => setChannel(event.target.value)}>
-              {auditChannels.map(item => <option key={item.value || "all"} value={item.value}>{item.label}</option>)}
-            </select>
+            <AdminSelect ariaLabel="渠道" size="md" className="w-full" options={auditChannels} value={channel} onValueChange={setChannel} />
           </div>
           <div className="space-y-1.5">
             <Label>用户名</Label>
@@ -709,15 +713,15 @@ function AuditEventsPanel({
           </div>
           <div className="space-y-1.5">
             <Label>组织</Label>
-            <select
-              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+            <AdminSelect
+              ariaLabel="组织"
+              size="md"
+              className="w-full"
+              options={tenantFilterOptions}
               value={scope === "tenant" ? tenantId || "" : tenantIdFilter}
-              onChange={event => setTenantIdFilter(event.target.value)}
+              onValueChange={setTenantIdFilter}
               disabled={scope === "tenant"}
-            >
-              <option value="">全部组织</option>
-              {tenants.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
+            />
           </div>
           <div className="space-y-1.5">
             <Label>开始日期</Label>
@@ -855,23 +859,24 @@ export function TenantAdminShell({
 
   const effectiveTenantId = isPlatformAdmin ? targetTenantId || user?.tenantId || "" : user?.tenantId || "";
   const currentTenant = tenants.find(t => t.id === effectiveTenantId);
+  const tenantSwitcherOptions: AdminSelectOption[] = tenants.map(tenant => ({
+    value: tenant.id,
+    label: tenant.name,
+  }));
 
   const tenantSwitcher = isPlatformAdmin && tenants.length > 0 ? (
-    <label className="block space-y-1.5">
+    // label 包裹的是自定义控件而非原生 select，因此这里的文案改用 span + aria-label 关联
+    <div className="block space-y-1.5">
       <span className="text-xs font-medium text-muted-foreground">当前组织</span>
-      <select
-        className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+      <AdminSelect
+        ariaLabel="切换组织管理目标"
+        size="md"
+        className="w-full"
+        options={tenantSwitcherOptions}
         value={effectiveTenantId}
-        onChange={event => setTargetTenantId(event.target.value)}
-        aria-label="切换组织管理目标"
-      >
-        {tenants.map(tenant => (
-          <option key={tenant.id} value={tenant.id}>
-            {tenant.name}
-          </option>
-        ))}
-      </select>
-    </label>
+        onValueChange={setTargetTenantId}
+      />
+    </div>
   ) : null;
 
   // mount-once-visited：避免切换 section 时 panel 整体 unmount/mount 引发的数据

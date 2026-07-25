@@ -110,7 +110,7 @@ export function DonutChart({
         <text x={center} y={center - 2} textAnchor="middle" className="fill-foreground text-[15px] font-semibold">
           {centerValue}
         </text>
-        <text x={center} y={center + 14} textAnchor="middle" className="fill-muted-foreground text-[10px]">
+        <text x={center} y={center + 14} textAnchor="middle" className="fill-muted-foreground text-2xs">
           {centerCaption}
         </text>
       </svg>
@@ -143,7 +143,7 @@ export interface MiniTrendPoint {
 export function MiniBarTrend({
   points,
   height = 160,
-  barClassName = "bg-indigo-400/80 dark:bg-indigo-500/70",
+  barClassName = "bg-chart-1/80",
   formatValue = (value: number) => String(Math.round(value * 100) / 100),
   emptyText = "区间内暂无数据",
 }: {
@@ -182,7 +182,7 @@ export function MiniBarTrend({
           );
         })}
       </div>
-      <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground tabular-nums">
+      <div className="mt-1 flex items-center justify-between text-2xs text-muted-foreground tabular-nums">
         <span>{first}</span>
         {points.length > 2 && <span>{last}</span>}
       </div>

@@ -154,7 +154,7 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
 
       <Card>
         <CardHeader className="py-3">
-          <CardTitle className="text-sm font-medium text-muted-foreground">
+          <CardTitle className="text-muted-foreground">
             共 {visibleUsers.length} 个用户
           </CardTitle>
         </CardHeader>

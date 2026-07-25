@@ -12,6 +12,7 @@ import { useTenants } from "@/components/TenantManager/hooks";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Segmented } from "@/components/ui/segmented";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { cn } from "@/lib/utils";
@@ -155,21 +156,13 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
             userId={userId}
             onChange={(values) => adminQuery.patch({ ...values, cursor: null })}
           />
-          <div className="inline-flex items-center rounded-md border bg-background p-0.5">
-            {HOURS_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => adminQuery.patch({ hours: option.value === 24 ? null : option.value, cursor: null })}
-                className={cn(
-                  "rounded px-2.5 py-1 text-xs font-medium transition-colors",
-                  hours === option.value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            ariaLabel="时间窗"
+            size="sm"
+            options={HOURS_OPTIONS}
+            value={hours}
+            onChange={(next) => adminQuery.patch({ hours: next === 24 ? null : next, cursor: null })}
+          />
           <div className="flex items-center gap-1">
             <Input
               value={reasonDraft}
@@ -182,21 +175,15 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
             />
             <Button variant="secondary" size="sm" className="h-8" onClick={() => adminQuery.patch({ reason: reasonDraft.trim() || null, cursor: null })}>搜索</Button>
           </div>
-          <div className="inline-flex items-center rounded-md border bg-background p-0.5">
-            {STATUS_GROUP_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => adminQuery.patch({ status: option.value === "all" ? null : option.value, cursor: null })}
-                className={cn(
-                  "rounded px-2.5 py-1 text-xs font-medium transition-colors",
-                  statusGroup === option.value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            ariaLabel="状态分组"
+            size="sm"
+            options={STATUS_GROUP_OPTIONS}
+            // statusGroup 可能是 "custom"（URL 带了手写状态串），此时无选项命中、整体不高亮，
+            // 与改造前的三元判断行为一致
+            value={statusGroup as Exclude<StatusGroup, "custom">}
+            onChange={(next) => adminQuery.patch({ status: next === "all" ? null : next, cursor: null })}
+          />
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={cn("mr-1 size-3.5", loading && "animate-spin")} />
             刷新
@@ -271,12 +258,12 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
                     ? classifyFailureReason(run.statusReason)
                     : null;
                   return (
-                    <TableRow key={run.runId} className="cursor-pointer hover:bg-muted/30" onClick={() => onSelectRun(run.runId)}>
+                    <TableRow key={run.runId} className="cursor-pointer" onClick={() => onSelectRun(run.runId)}>
                       <TableCell>
                         <div className="space-y-1">
                           <RunStatusBadge status={run.status} />
                           {failure && (
-                            <div className="max-w-44 truncate text-[11px] text-destructive" title={failure.technicalDetail}>
+                            <div className="max-w-44 truncate text-2xs text-destructive" title={failure.technicalDetail}>
                               {failure.summary}
                             </div>
                           )}

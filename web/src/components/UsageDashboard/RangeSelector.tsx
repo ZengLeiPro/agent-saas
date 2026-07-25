@@ -1,8 +1,8 @@
 /** 共用：时间范围选择器（一二级视图复用） */
 import { useEffect, useRef, useState } from "react";
 import { Calendar as CalendarIcon } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Segmented, segmentedItemClass, type SegmentedOption } from "@/components/ui/segmented";
 import type { RangePreset } from "./types";
 
 export type RangeQuery = Exclude<RangePreset, "custom">;
@@ -12,7 +12,7 @@ export interface CustomRange {
   to: string;
 }
 
-export const RANGE_OPTIONS: { value: RangeQuery; label: string }[] = [
+export const RANGE_OPTIONS: SegmentedOption<RangeQuery>[] = [
   { value: "today", label: "今日" },
   { value: "7d", label: "7 天" },
   { value: "30d", label: "30 天" },
@@ -99,40 +99,29 @@ export function RangeSelector({ value, customRange, onChange, dateRangeLabel }: 
 
   return (
     <div ref={wrapperRef} className="relative flex items-center gap-2">
-      <div className="inline-flex items-center rounded-md border bg-card p-0.5">
-        {RANGE_OPTIONS.map((opt) => (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => {
-              onChange(opt.value);
-              setOpen(false);
-            }}
-            className={cn(
-              "rounded px-3 py-1 text-xs font-medium transition-colors",
-              value === opt.value
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-          >
-            {opt.label}
-          </button>
-        ))}
+      <Segmented
+        ariaLabel="时间范围"
+        options={RANGE_OPTIONS}
+        // value 为 "custom" 时无预设选项命中，整枚胶囊里只有右侧自定义按钮高亮
+        value={value as RangeQuery}
+        onChange={(next) => {
+          onChange(next);
+          setOpen(false);
+        }}
+      >
+        {/* 自定义区间是弹层触发器而非互斥选项，因此不进 ToggleGroup 的选项列表，
+            只借 segmentedItemClass 保持外观一致 */}
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className={cn(
-            "flex items-center gap-1 rounded px-3 py-1 text-xs font-medium transition-colors",
-            value === "custom"
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:bg-accent hover:text-foreground",
-          )}
+          className={segmentedItemClass({ active: value === "custom" })}
+          aria-expanded={open}
           title="自定义时间范围"
         >
           <CalendarIcon className="size-3" />
           <span className="tabular-nums">{customLabel}</span>
         </button>
-      </div>
+      </Segmented>
       {dateRangeLabel && (
         <span className="text-xs text-muted-foreground tabular-nums">{dateRangeLabel}</span>
       )}

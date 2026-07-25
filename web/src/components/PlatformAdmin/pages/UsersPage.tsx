@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, RefreshCw, Search } from "lucide-react";
 
+import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -46,6 +47,11 @@ function UserList() {
     const timer = window.setTimeout(() => patchQuery({ q: qInput, cursor: null }), 300);
     return () => window.clearTimeout(timer);
   }, [patchQuery, q, qInput]);
+
+  const tenantSelectOptions = useMemo<AdminSelectOption[]>(() => [
+    { value: "", label: "全部组织" },
+    ...tenants.map(tenant => ({ value: tenant.id, label: tenant.name })),
+  ], [tenants]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,14 +100,12 @@ function UserList() {
                 className="h-8 w-56 pl-7 text-xs"
               />
             </div>
-            <select
-              className="h-8 rounded-md border bg-background px-2 text-xs"
+            <AdminSelect
+              ariaLabel="按组织筛选"
+              options={tenantSelectOptions}
               value={tenantId}
-              onChange={(event) => adminQuery.patch({ tenantId: event.target.value, cursor: null })}
-            >
-              <option value="">全部组织</option>
-              {tenants.map(tenant => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}
-            </select>
+              onValueChange={(value) => adminQuery.patch({ tenantId: value, cursor: null })}
+            />
           </div>
         }
         onRowClick={(row) => {

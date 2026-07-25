@@ -159,7 +159,7 @@ export function UserDetailView({
       </div>
 
       {error && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
+        <div className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-sm text-danger-ink">
           加载失败：{error}
         </div>
       )}
@@ -184,7 +184,7 @@ export function UserDetailView({
           {/* 日趋势 */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">日趋势</CardTitle>
+              <CardTitle>日趋势</CardTitle>
             </CardHeader>
             <CardContent>
               <TrendChart data={trendData} />
@@ -195,7 +195,7 @@ export function UserDetailView({
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">模型分布</CardTitle>
+                <CardTitle>模型分布</CardTitle>
               </CardHeader>
               <CardContent>
                 {byModel && byModel.models.length > 0 ? (
@@ -215,7 +215,7 @@ export function UserDetailView({
 
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">通道分布</CardTitle>
+                <CardTitle>通道分布</CardTitle>
               </CardHeader>
               <CardContent>
                 {byChannel && byChannel.channels.length > 0 ? (
@@ -247,7 +247,7 @@ function DetailCard({ label, value, sub }: { label: string; value: string; sub?:
       </CardHeader>
       <CardContent>
         <div className="text-2xl font-semibold tabular-nums">{value}</div>
-        {sub && <div className="mt-1 truncate text-[11px] text-muted-foreground">{sub}</div>}
+        {sub && <div className="mt-1 truncate text-2xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
   );
@@ -270,7 +270,7 @@ function ProportionBars({ rows }: { rows: { label: string; tokens: number; cost?
           </div>
           <div className="h-2 w-full overflow-hidden rounded bg-muted">
             <div
-              className={cn("h-full transition-all", "bg-emerald-500")}
+              className={cn("h-full transition-all", "bg-chart-1")}
               style={{ width: `${(r.tokens / max) * 100}%` }}
             />
           </div>

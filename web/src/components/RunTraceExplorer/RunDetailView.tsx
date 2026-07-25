@@ -59,7 +59,7 @@ function aggregateToolAudits(events: TraceEvent[]): ToolAggRow[] {
 function StatItem({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-2xs text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate text-sm font-medium">{children}</div>
     </div>
   );
@@ -257,7 +257,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
             </div>
           )}
           {cancellationReason && (
-            <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-ink">
               <div className="font-medium">执行已取消</div>
               <details className="mt-2">
                 <summary className="cursor-pointer select-none">取消详情</summary>
@@ -274,7 +274,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
         {/* 时间线 */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">
+            <CardTitle>
               事件时间线 <span className="text-xs font-normal text-muted-foreground">· {data.events.length} 条事件</span>
             </CardTitle>
           </CardHeader>
@@ -338,7 +338,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
         <div className="space-y-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">工具调用前 10</CardTitle>
+              <CardTitle>工具调用前 10</CardTitle>
             </CardHeader>
             <CardContent>
               {toolAgg.length === 0 ? (
@@ -369,7 +369,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle>
                 逐请求成本 <span className="text-xs font-normal text-muted-foreground">· 共 {formatYuan(billing.totalCostYuan)}</span>
               </CardTitle>
             </CardHeader>
@@ -396,7 +396,7 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
                         <TableCell className="whitespace-nowrap text-right font-mono text-xs tabular-nums">
                           {formatTokens(req.inputTokens)}/{formatTokens(req.cachedInputTokens)}/{formatTokens(req.outputTokens)}
                           {req.reasoningTokens > 0 && (
-                            <Badge variant="outline" className="ml-1 text-[9px]">推理 {formatTokens(req.reasoningTokens)}</Badge>
+                            <Badge variant="outline" className="ml-1 text-2xs">推理 {formatTokens(req.reasoningTokens)}</Badge>
                           )}
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs tabular-nums">{formatYuan(req.costYuan)}</TableCell>

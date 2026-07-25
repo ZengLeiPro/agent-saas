@@ -12,6 +12,47 @@ export default {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
+      /*
+       * Type scale（全站唯一合法字号阶梯）
+       * ------------------------------------------------------------------
+       * 规则：新代码不允许再写 `text-[10px]` 这类 arbitrary 字号。
+       * 需要比 `text-xs` 更小的密集元信息（表格内徽章、时间线 meta、口径标注）
+       * 一律用 `text-2xs`。低于 11px 在 CJK 下已不可读，不再提供更小档位。
+       *
+       * `xs` 及以上刻意与 Tailwind 默认值保持一致（此处是显式固化而非改值），
+       * 目的是把"允许的档位"集中写在一个可检索的位置，同时保证既有 UI 零视觉变化。
+       */
+      fontSize: {
+        "2xs": ["0.6875rem", { lineHeight: "1rem" }], // 11px / 16px 密集元信息（新增档位）
+        xs: ["0.75rem", { lineHeight: "1rem" }], //      12px / 16px 表格与后台正文
+        sm: ["0.875rem", { lineHeight: "1.25rem" }], //  14px / 20px 卡片标题、表单
+        base: ["1rem", { lineHeight: "1.5rem" }], //     16px / 24px 聊天正文
+        lg: ["1.125rem", { lineHeight: "1.75rem" }], //  18px / 28px 区块标题
+        xl: ["1.25rem", { lineHeight: "1.75rem" }], //   20px / 28px
+        "2xl": ["1.5rem", { lineHeight: "2rem" }], //    24px / 32px 指标卡数值、页标题
+      },
+      fontFamily: {
+        /*
+         * 等宽栈：ID / token 数 / 耗时 / 代码片段。
+         * 末尾挂 CJK 字体，避免中英混排时中文回退到系统默认无衬线字体导致
+         * 基线与字重跳变（Windows 上 Consolas + YaHei 的经典错位）。
+         */
+        mono: [
+          "ui-monospace",
+          "SFMono-Regular",
+          "SF Mono",
+          "JetBrains Mono",
+          "Menlo",
+          "Monaco",
+          "Consolas",
+          "Liberation Mono",
+          "Courier New",
+          "PingFang SC",
+          "HarmonyOS Sans SC",
+          "Microsoft YaHei",
+          "monospace",
+        ],
+      },
       colors: {
         // 开沿科技品牌色板（跨项目对齐：brand-50…900 + accent / accent-soft / accent-ink）
         brand: {
@@ -76,14 +117,48 @@ export default {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
+        /*
+         * 状态语义色板（定义见 src/index.css）。后台界面的颜色一律从这里取，
+         * 禁止再写 bg-emerald-500/15 这类硬编码调色板值——它们不随暗色切换，
+         * 也不承载"这是什么状态"的信息。
+         *   DEFAULT     实心块 / 圆点 / 进度条
+         *   -foreground 实心底上的文字
+         *   -subtle     不透明浅底（横幅）
+         *   -ink        浅底上的文字（一个 token 覆盖亮/暗两套）
+         */
         success: {
           DEFAULT: "hsl(var(--success))",
           foreground: "hsl(var(--success-foreground))",
+          subtle: "hsl(var(--success-subtle))",
+          ink: "hsl(var(--success-ink))",
         },
         warning: {
           DEFAULT: "hsl(var(--warning))",
           foreground: "hsl(var(--warning-foreground))",
+          subtle: "hsl(var(--warning-subtle))",
+          ink: "hsl(var(--warning-ink))",
         },
+        danger: {
+          DEFAULT: "hsl(var(--danger))",
+          foreground: "hsl(var(--danger-foreground))",
+          subtle: "hsl(var(--danger-subtle))",
+          ink: "hsl(var(--danger-ink))",
+        },
+        info: {
+          DEFAULT: "hsl(var(--info))",
+          foreground: "hsl(var(--info-foreground))",
+          subtle: "hsl(var(--info-subtle))",
+          ink: "hsl(var(--info-ink))",
+        },
+        /*
+         * 分类色板（categorical）。多系列图表、Token 构成、事件类别用它，
+         * 不要用状态语义色——绿/琥珀/红出现在图表里必须真的表示好坏。
+         */
+        "chart-1": "hsl(var(--chart-1))",
+        "chart-2": "hsl(var(--chart-2))",
+        "chart-3": "hsl(var(--chart-3))",
+        "chart-4": "hsl(var(--chart-4))",
+        "chart-5": "hsl(var(--chart-5))",
         link: "hsl(var(--link))",
         "user-bubble": "hsl(var(--user-bubble))",
         "code-block-bg": "hsl(var(--code-block-bg))",

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { useTenants } from "@/components/TenantManager/hooks";
+import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import type { UserInfo } from "@/components/UserManager/types";
 import { cn } from "@/lib/utils";
 
@@ -44,32 +45,37 @@ export function ScopeFilters({
     return [{ id: userId, username: userId, tenantId, role: "user" as const, disabled: false }, ...users] as UserInfo[];
   }, [tenantId, userId, users]);
 
+  const tenantSelectOptions = useMemo<AdminSelectOption[]>(() => [
+    { value: "", label: "全部组织" },
+    ...tenants.map((tenant) => ({ value: tenant.id, label: tenant.name })),
+  ], [tenants]);
+
+  const userSelectOptions = useMemo<AdminSelectOption[]>(() => [
+    { value: "", label: loadingUsers ? "正在加载用户…" : "全部用户" },
+    ...userOptions.map((user) => ({
+      value: user.id,
+      label: user.realName ? `${user.realName}（${user.username}）` : user.username,
+    })),
+  ], [loadingUsers, userOptions]);
+
   return (
     <div className={cn("flex flex-wrap items-center gap-2", className)}>
-      <select
-        aria-label="按组织筛选"
-        className="h-8 min-w-36 rounded-md border bg-background px-2 text-xs"
+      <AdminSelect
+        ariaLabel="按组织筛选"
+        className="min-w-36"
+        options={tenantSelectOptions}
         value={tenantId}
-        onChange={(event) => onChange({ tenantId: event.target.value || null, userId: null })}
-      >
-        <option value="">全部组织</option>
-        {tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}
-      </select>
+        onValueChange={(value) => onChange({ tenantId: value || null, userId: null })}
+      />
       {userId !== undefined && (
-        <select
-          aria-label="按用户筛选"
-          className="h-8 min-w-44 max-w-64 rounded-md border bg-background px-2 text-xs"
+        <AdminSelect
+          ariaLabel="按用户筛选"
+          className="min-w-44 max-w-64"
+          options={userSelectOptions}
           value={userId}
-          onChange={(event) => onChange({ userId: event.target.value || null })}
+          onValueChange={(value) => onChange({ userId: value || null })}
           disabled={loadingUsers}
-        >
-          <option value="">{loadingUsers ? "正在加载用户…" : "全部用户"}</option>
-          {userOptions.map((user) => (
-            <option key={user.id} value={user.id}>
-              {user.realName ? `${user.realName}（${user.username}）` : user.username}
-            </option>
-          ))}
-        </select>
+        />
       )}
     </div>
   );

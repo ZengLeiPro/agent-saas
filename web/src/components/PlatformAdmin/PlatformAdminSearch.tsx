@@ -109,7 +109,7 @@ export function PlatformAdminSearch({ className }: { className?: string } = {}) 
             placeholder="搜索组织、用户、对话或完整记录 ID"
             className="h-9 pl-7 pr-16 text-xs"
           />
-          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">/</span>
+          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 text-2xs text-muted-foreground">/</span>
         </div>
         <Button variant="outline" size="sm" onClick={() => void runSearch()} disabled={loading || !q.trim()}>
           {loading ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowRight className="size-3.5" />}

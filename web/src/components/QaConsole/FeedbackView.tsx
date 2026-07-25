@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
+import { AdminSelect } from '@/components/ui/admin-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -8,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils';
 import type { OrgAgentRecord } from '@agent/shared';
 import { useQaFeedback } from './hooks';
-import { QaUnavailableHint, formatQaTime } from './shared';
+import { QaUnavailableHint, formatQaTime, orgAgentSelectOptions } from './shared';
 
 /** 用户反馈标注视图（offset 分页）：员工点「踩」的回答 + 评论 */
 export function FeedbackView({ tenantId, orgAgents }: { tenantId?: string; orgAgents: OrgAgentRecord[] }) {
@@ -40,12 +41,14 @@ export function FeedbackView({ tenantId, orgAgents }: { tenantId?: string; orgAg
         <CardContent className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1.5">
             <Label>企业专家</Label>
-            <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={orgAgentId} onChange={(e) => setOrgAgentId(e.target.value)}>
-              <option value="">全部</option>
-              {orgAgents.map((agent) => (
-                <option key={agent.id} value={agent.id}>{agent.name}</option>
-              ))}
-            </select>
+            <AdminSelect
+              ariaLabel="企业专家"
+              size="md"
+              className="w-full"
+              options={orgAgentSelectOptions(orgAgents)}
+              value={orgAgentId}
+              onValueChange={setOrgAgentId}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>开始日期</Label>

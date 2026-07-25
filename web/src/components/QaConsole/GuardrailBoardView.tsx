@@ -15,6 +15,7 @@
 import { useMemo, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { AdminSelect } from '@/components/ui/admin-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -33,6 +34,7 @@ import {
   formatLatencyMs,
   formatPercent,
   formatQaTime,
+  orgAgentSelectOptions,
 } from './shared';
 import type { QaGuardrailMode } from './types';
 
@@ -51,12 +53,13 @@ const MODE_TABS: Array<{ id: QaGuardrailMode; label: string; tooltip: string }> 
   { id: 'enforce', label: '仅看 enforce', tooltip: '门禁生效的生产判定' },
 ];
 
+// 分类色板：只用于区分 model，不承载好坏（故不取绿/琥珀/红）
 const MODEL_COLORS = [
-  'bg-indigo-500/70',
-  'bg-emerald-500/70',
-  'bg-amber-500/70',
-  'bg-rose-500/70',
-  'bg-sky-500/70',
+  'bg-chart-1/70',
+  'bg-chart-2/70',
+  'bg-chart-3/70',
+  'bg-chart-4/70',
+  'bg-chart-5/70',
 ];
 
 /**
@@ -136,7 +139,7 @@ export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string;
         ))}
         <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
           {truncated && (
-            <Badge className="border-0 bg-warning/15 text-warning">近 200 条估算</Badge>
+            <Badge variant="warning">近 200 条估算</Badge>
           )}
           <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
             <RefreshCw className={cn('mr-2 size-3.5', loading && 'animate-spin')} />刷新
@@ -178,12 +181,14 @@ export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string;
         <CardContent className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1.5">
             <Label>企业专家</Label>
-            <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={orgAgentId} onChange={(e) => setOrgAgentId(e.target.value)}>
-              <option value="">全部</option>
-              {orgAgents.map((agent) => (
-                <option key={agent.id} value={agent.id}>{agent.name}</option>
-              ))}
-            </select>
+            <AdminSelect
+              ariaLabel="企业专家"
+              size="md"
+              className="w-full"
+              options={orgAgentSelectOptions(orgAgents)}
+              value={orgAgentId}
+              onValueChange={setOrgAgentId}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>开始日期</Label>
@@ -220,7 +225,7 @@ export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string;
               role="tab"
             >
               <span className="font-medium">{item.label}{badge}</span>
-              <span className="text-[10px] text-muted-foreground">{item.hint}</span>
+              <span className="text-2xs text-muted-foreground">{item.hint}</span>
             </button>
           );
         })}
@@ -283,7 +288,7 @@ function TopRejectionsView({
               count={item.count}
               total={totalTop}
               suffix={`${item.count} · 拒 ${item.offTopic} / 打标 ${item.passFlagged}`}
-              color={item.offTopic > item.passFlagged ? 'bg-rose-500/70' : 'bg-amber-500/70'}
+              color={item.offTopic > item.passFlagged ? 'bg-danger/70' : 'bg-warning/70'}
             />
             {item.sampleTexts.length > 0 && (
               <ul className="ml-2 space-y-0.5 text-xs text-muted-foreground">
@@ -501,7 +506,7 @@ function AppealsView({
                           </Button>
                         </div>
                       ) : appeal.status === 'accepted' ? (
-                        <Badge className="border-0 bg-success/15 text-success">已接受</Badge>
+                        <Badge variant="success">已接受</Badge>
                       ) : (
                         <Badge className="border-0 bg-muted text-muted-foreground">已拒绝</Badge>
                       )}

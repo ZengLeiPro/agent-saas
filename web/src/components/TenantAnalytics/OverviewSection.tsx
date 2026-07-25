@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 
+import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -176,6 +177,10 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
   };
 
   const currentTenant = tenants.find(tenant => tenant.id === tenantId);
+  const tenantSelectOptions = useMemo<AdminSelectOption[]>(
+    () => tenants.map(tenant => ({ value: tenant.id, label: tenant.name })),
+    [tenants],
+  );
   const tenantUsers = useMemo(() => users.filter(user => user.tenantId === tenantId), [tenantId, users]);
   const admins = tenantUsers.filter(user => user.role === "admin");
   const disabledUsers = tenantUsers.filter(user => user.disabled);
@@ -235,14 +240,13 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
               刷新
             </Button>
             {isPlatformAdmin && tenants.length > 0 && onTenantChange && (
-              <select
-                className="h-9 rounded-md border bg-background px-3 text-sm"
+              <AdminSelect
+                ariaLabel="切换组织分析目标"
+                size="md"
+                options={tenantSelectOptions}
                 value={tenantId}
-                onChange={event => onTenantChange(event.target.value)}
-                aria-label="切换组织分析目标"
-              >
-                {tenants.map(tenant => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}
-              </select>
+                onValueChange={onTenantChange}
+              />
             )}
           </div>
         }
@@ -359,7 +363,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
               ) : (
                 <MiniBarTrend
                   points={creditTrend.points.map(point => ({ date: point.date, value: point.credits }))}
-                  barClassName="bg-amber-400/80 dark:bg-amber-500/70"
+                  barClassName="bg-chart-1/80"
                   formatValue={value => `${formatCredits(value)} 积分`}
                   emptyText="近期暂无积分消耗"
                 />
@@ -374,7 +378,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
         <div className="space-y-3">
           <SectionTitle title="AI 任务健康" caption={windowCaption(healthWindow)} loading={health.loading} />
           {health.error && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+            <div className="rounded-md border border-warning/30 bg-warning-subtle px-3 py-2 text-xs text-warning-ink">
               {health.error}
             </div>
           )}
@@ -419,7 +423,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                   <div className="mb-2 text-xs font-medium text-muted-foreground">失败原因 Top {report.outcome.errorReasons.length || ""}</div>
                   {report.outcome.errorReasons.length === 0 ? (
                     <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-                      <CircleCheck className="size-4 text-emerald-500" /> 期间没有失败的任务，团队用得很顺
+                      <CircleCheck className="size-4 text-success" /> 期间没有失败的任务，团队用得很顺
                     </div>
                   ) : (
                     <ul className="space-y-1.5 text-xs">
@@ -493,7 +497,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
           <div className="text-xs font-medium text-muted-foreground">
             成员使用排行 Top {Math.min(8, topUsers.length) || ""}
             {inactiveEnabledUsers > 0 && !usage.loading && (
-              <span className="ml-2 text-amber-600 dark:text-amber-400">· {inactiveEnabledUsers} 名成员期间未使用</span>
+              <span className="ml-2 text-warning-ink">· {inactiveEnabledUsers} 名成员期间未使用</span>
             )}
           </div>
           {onNavigateUsage && (
@@ -521,7 +525,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
                 <TableRow key={user.username}>
                   <TableCell className="font-medium">
                     <span>{user.realName ?? user.username}</span>
-                    {user.realName && <span className="ml-1.5 text-[11px] text-muted-foreground">({user.username})</span>}
+                    {user.realName && <span className="ml-1.5 text-2xs text-muted-foreground">({user.username})</span>}
                   </TableCell>
                   <TableCell className="text-right font-mono text-xs tabular-nums">{user.totalTurns.toLocaleString()}</TableCell>
                   <TableCell className="text-right font-mono text-xs tabular-nums">{formatShare(user.totalTurns, periodTurns)}</TableCell>
@@ -534,7 +538,7 @@ export function OverviewSection({ tenantId, onTenantChange, onNavigateUsage }: O
       </AuroraCard>
 
       {usage.error && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger-subtle p-3 text-xs text-danger-ink">
           <span>组织用量加载失败：{usage.error}</span>
           <Button size="sm" variant="outline" onClick={() => { void usage.refresh(); }}>重试</Button>
         </div>

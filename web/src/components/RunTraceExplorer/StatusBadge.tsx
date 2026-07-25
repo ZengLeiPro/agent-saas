@@ -7,9 +7,9 @@ export function RunStatusBadge({ status, className }: { status: string; classNam
 
 /** run_finished.subtype 的终态色块样式 */
 export function finishSubtypeClass(subtype?: string): string {
-  if (subtype === "success") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  if (subtype === "success") return "border-success/40 bg-success/10 text-success-ink";
   if (subtype === "error") return "border-destructive/40 bg-destructive/10 text-destructive";
-  if (subtype === "interrupted") return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  if (subtype === "interrupted") return "border-warning/40 bg-warning/10 text-warning-ink";
   return "border bg-muted/40 text-muted-foreground";
 }
 

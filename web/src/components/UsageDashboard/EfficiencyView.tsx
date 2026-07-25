@@ -14,6 +14,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Segmented, type SegmentedOption } from "@/components/ui/segmented";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { AdminErrorAlert, EntityLink } from "@/components/PlatformAdmin/common";
@@ -29,7 +30,11 @@ import type { EfficiencyReport } from "@/components/RunTraceExplorer/types";
 
 import { formatTokens } from "./format";
 
-const DAYS_OPTIONS = [7, 14, 30] as const;
+const DAYS_OPTIONS: SegmentedOption<number>[] = [
+  { value: 7, label: "7 天" },
+  { value: 14, label: "14 天" },
+  { value: 30, label: "30 天" },
+];
 
 /** 工具错误率红色高亮阈值 */
 const ERROR_RATE_ALERT = 0.05;
@@ -40,15 +45,15 @@ function StatCard({ label, value, sub, tone = "default" }: {
   sub?: string;
   tone?: "default" | "bad" | "warn";
 }) {
-  const toneClass = tone === "bad" ? "text-destructive" : tone === "warn" ? "text-amber-700 dark:text-amber-300" : "";
+  const toneClass = tone === "bad" ? "text-destructive" : tone === "warn" ? "text-warning-ink" : "";
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs font-medium text-muted-foreground">{label}</CardTitle>
+    <Card density="compact">
+      <CardHeader className="pb-1.5">
+        <CardTitle className="text-xs text-muted-foreground">{label}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className={cn("text-2xl font-semibold tabular-nums", toneClass)}>{value}</div>
-        {sub && <div className="mt-1 truncate text-[11px] text-muted-foreground">{sub}</div>}
+        {sub && <div className="mt-1 truncate text-2xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
   );
@@ -87,23 +92,12 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
     <div className="space-y-4">
       {/* 天数选择 + 刷新 */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex items-center rounded-md border bg-card p-0.5">
-          {DAYS_OPTIONS.map((d) => (
-            <button
-              key={d}
-              type="button"
-              onClick={() => setDays(d)}
-              className={cn(
-                "rounded px-3 py-1 text-xs font-medium transition-colors",
-                days === d
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-            >
-              {d} 天
-            </button>
-          ))}
-        </div>
+        <Segmented
+          ariaLabel="统计天数"
+          options={DAYS_OPTIONS}
+          value={days}
+          onChange={setDays}
+        />
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
           <RefreshCw className={cn("mr-1 size-3.5", loading && "animate-spin")} />
           刷新
@@ -149,7 +143,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
           {/* 2. 失败原因 TopN */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">失败原因前 {data.outcome.errorReasons.length || ""} 项</CardTitle>
+              <CardTitle>失败原因前 {data.outcome.errorReasons.length || ""} 项</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               {data.outcome.errorReasons.length === 0 ? (
@@ -206,7 +200,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
 
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">{costRedacted ? "按模型用量" : "按模型成本"}</CardTitle>
+                    <CardTitle>{costRedacted ? "按模型用量" : "按模型成本"}</CardTitle>
                   </CardHeader>
                   <CardContent className="p-0">
                     {data.cost.byModel.length === 0 ? (
@@ -250,7 +244,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
           {/* 4. 工具健康 */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">
+              <CardTitle>
                 工具调用情况 <span className="text-xs font-normal text-muted-foreground">· 失败率超过 5% 会标红</span>
               </CardTitle>
             </CardHeader>
@@ -297,7 +291,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">耗时最长的执行</CardTitle>
+                <CardTitle>耗时最长的执行</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 {data.longTail.slowestRuns.length === 0 ? (
@@ -317,7 +311,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
                         <TableRow key={r.runId}>
                           <TableCell>
                             <EntityLink kind="run" id={r.runId} plain={plain} />
-                            <div className="mt-0.5 text-[10px] text-muted-foreground">
+                            <div className="mt-0.5 text-2xs text-muted-foreground">
                               {linkEntities && (
                                 <>
                                   <EntityLink kind="tenant" id={r.tenantId} />
@@ -339,7 +333,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">交互轮次最多的执行</CardTitle>
+                <CardTitle>交互轮次最多的执行</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 {data.longTail.mostTurns.length === 0 ? (
@@ -371,24 +365,24 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
           {/* 6. 审批摩擦 */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">审批等待</CardTitle>
+              <CardTitle>审批等待</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div>
-                  <div className="text-[11px] text-muted-foreground">审批请求数</div>
+                  <div className="text-2xs text-muted-foreground">审批请求数</div>
                   <div className="mt-0.5 text-lg font-semibold tabular-nums">{formatCount(data.approvals.count)}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] text-muted-foreground">已裁决</div>
+                  <div className="text-2xs text-muted-foreground">已裁决</div>
                   <div className="mt-0.5 text-lg font-semibold tabular-nums">{formatCount(data.approvals.resolvedCount)}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] text-muted-foreground">典型等待时间（中位）</div>
+                  <div className="text-2xs text-muted-foreground">典型等待时间（中位）</div>
                   <div className="mt-0.5 text-lg font-semibold tabular-nums">{formatMs(data.approvals.waitP50Ms)}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] text-muted-foreground">偏高等待时间（90 分位）</div>
+                  <div className="text-2xs text-muted-foreground">偏高等待时间（90 分位）</div>
                   <div className="mt-0.5 text-lg font-semibold tabular-nums">{formatMs(data.approvals.waitP90Ms)}</div>
                 </div>
               </div>
@@ -411,7 +405,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
           <div className="grid gap-4 lg:grid-cols-3">
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">重复工具调用</CardTitle>
+                <CardTitle>重复工具调用</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-xs">
                 <div className="flex items-center justify-between">
@@ -436,7 +430,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">重复读文件</CardTitle>
+                <CardTitle>重复读文件</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-xs">
                 <div className="flex items-center justify-between">
@@ -451,7 +445,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
                           <span className="truncate font-mono" title={f.filePath}>{f.filePath}</span>
                           <span className="shrink-0 text-muted-foreground tabular-nums">×{f.repeats}</span>
                         </div>
-                        <EntityLink kind="run" id={f.runId} className="text-[10px]" short={6} plain={plain} />
+                        <EntityLink kind="run" id={f.runId} className="text-2xs" short={6} plain={plain} />
                       </div>
                     ))}
                   </div>
@@ -460,7 +454,7 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">无修正重试</CardTitle>
+                <CardTitle>无修正重试</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-xs">
                 <div className="flex items-center justify-between">

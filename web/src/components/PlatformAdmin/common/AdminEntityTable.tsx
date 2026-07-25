@@ -81,7 +81,7 @@ export function AdminEntityTable<T>({
               {rows.map(row => (
                 <TableRow
                   key={rowKey(row)}
-                  className={cn(onRowClick && "cursor-pointer hover:bg-muted/30")}
+                  className={cn(onRowClick && "cursor-pointer")}
                   onClick={() => onRowClick?.(row)}
                 >
                   {visibleColumns.map(column => (

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
+import { AdminSelect, type AdminSelectOption } from '@/components/ui/admin-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -10,7 +11,7 @@ import { cn } from '@/lib/utils';
 import type { OrgAgentRecord } from '@agent/shared';
 import { useQaSessions } from './hooks';
 import { SessionDetailDialog } from './SessionDetailDialog';
-import { QaUnavailableHint, formatQaTime } from './shared';
+import { QaUnavailableHint, formatQaTime, orgAgentSelectOptions } from './shared';
 import type { QaSessionItem } from './types';
 
 /** 专职 Agent 会话列表视图：Agent/成员/时间过滤 + cursor 加载更多 + 行点击开详情 */
@@ -26,6 +27,10 @@ export function SessionsView({ tenantId, orgAgents }: { tenantId?: string; orgAg
     () => (tenantId ? users.filter((user) => user.tenantId === tenantId) : users),
     [tenantId, users],
   );
+  const userOptions = useMemo<AdminSelectOption[]>(() => [
+    { value: '', label: '全部' },
+    ...tenantUsers.map((user) => ({ value: user.id, label: user.realName || user.username })),
+  ], [tenantUsers]);
 
   const filter = useMemo(() => ({
     tenantId,
@@ -51,21 +56,25 @@ export function SessionsView({ tenantId, orgAgents }: { tenantId?: string; orgAg
         <CardContent className="grid gap-3 md:grid-cols-4">
           <div className="space-y-1.5">
             <Label>企业专家</Label>
-            <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={orgAgentId} onChange={(e) => setOrgAgentId(e.target.value)}>
-              <option value="">全部</option>
-              {orgAgents.map((agent) => (
-                <option key={agent.id} value={agent.id}>{agent.name}</option>
-              ))}
-            </select>
+            <AdminSelect
+              ariaLabel="企业专家"
+              size="md"
+              className="w-full"
+              options={orgAgentSelectOptions(orgAgents)}
+              value={orgAgentId}
+              onValueChange={setOrgAgentId}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>成员</Label>
-            <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={userId} onChange={(e) => setUserId(e.target.value)}>
-              <option value="">全部</option>
-              {tenantUsers.map((user) => (
-                <option key={user.id} value={user.id}>{user.realName || user.username}</option>
-              ))}
-            </select>
+            <AdminSelect
+              ariaLabel="成员"
+              size="md"
+              className="w-full"
+              options={userOptions}
+              value={userId}
+              onValueChange={setUserId}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>开始日期</Label>

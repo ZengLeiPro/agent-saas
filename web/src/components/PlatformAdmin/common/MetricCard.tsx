@@ -19,15 +19,16 @@ export function MetricCard({
   const toneClass = tone === "bad"
     ? "text-destructive"
     : tone === "warn"
-      ? "text-amber-700 dark:text-amber-300"
+      ? "text-warning-ink"
       : tone === "good"
-        ? "text-emerald-700 dark:text-emerald-300"
+        ? "text-success-ink"
         : "";
   return (
     <Card
+      density="compact"
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
-      className={cn(onClick && "cursor-pointer transition-colors hover:bg-muted/30")}
+      className={cn(onClick && "cursor-pointer transition-colors hover:bg-muted/50")}
       onClick={onClick}
       onKeyDown={(event) => {
         if (!onClick) return;
@@ -37,8 +38,8 @@ export function MetricCard({
         }
       }}
     >
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm text-muted-foreground">{title}</CardTitle>
+      <CardHeader className="pb-1.5">
+        <CardTitle className="text-muted-foreground">{title}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className={cn("text-2xl font-semibold tabular-nums", toneClass)}>{value}</div>

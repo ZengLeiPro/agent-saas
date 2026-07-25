@@ -4,22 +4,26 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatRunStatus, formatSandboxPhase } from "@/components/PlatformAdmin/displayText";
 
-function toneClass(tone: "persistent" | "transient" | "success" | "danger" | "muted") {
-  switch (tone) {
-    case "persistent":
-      return "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-0";
-    case "transient":
-      return "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-0";
-    case "success":
-      return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-0";
-    case "danger":
-      return "bg-destructive/15 text-destructive border-0";
-    case "muted":
-      return "bg-muted text-muted-foreground border-0";
-  }
-}
+/**
+ * run / sandbox 五档状态语义。
+ *
+ * 改造前这里手写「浅绿底 + 深绿字 + dark: 覆盖」一类硬编码调色板类串，
+ * 现在 tone 直接映射到 `ui/badge.tsx` 的语义 variant，颜色由 index.css 的 token 决定。
+ * 新增状态只需要在下面两个映射函数里加一行，不要再回来写 className。
+ */
+type StatusTone = "persistent" | "transient" | "success" | "danger" | "muted";
 
-function runTone(status: string) {
+const TONE_VARIANT = {
+  /** 持久态（运行中 / 已挂起）——蓝 */
+  persistent: "info",
+  /** 瞬时态（等待中 / 供应中）——琥珀，附 spinner */
+  transient: "warning",
+  success: "success",
+  danger: "destructive",
+  muted: "muted",
+} as const satisfies Record<StatusTone, string>;
+
+function runTone(status: string): StatusTone {
   if (status === "completed") return "success";
   if (status === "failed") return "danger";
   if (status === "cancelled" || status === "orphaned") return "muted";
@@ -28,7 +32,7 @@ function runTone(status: string) {
   return "muted";
 }
 
-function sandboxTone(status: string) {
+function sandboxTone(status: string): StatusTone {
   if (status === "Running" || status === "Paused") return "persistent";
   if (status === "Failed") return "danger";
   if (status === "Pending" || status === "Provisioning") return "transient";
@@ -50,7 +54,7 @@ export function StatusBadge({
   const label = kind === "run" ? formatRunStatus(status) : formatSandboxPhase(status);
   const showSpinner = pulse || tone === "transient";
   return (
-    <Badge className={cn(toneClass(tone), className)}>
+    <Badge variant={TONE_VARIANT[tone]} className={cn(className)}>
       {showSpinner && <Loader2 className="mr-1 size-3 animate-spin" />}
       {label}
     </Badge>

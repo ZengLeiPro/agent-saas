@@ -15,7 +15,7 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
-import { ProxyAgent } from 'undici';
+import { ProxyAgent, fetch as undiciFetch } from 'undici';
 
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import type { AppConfig } from '../app/config.js';
@@ -101,12 +101,20 @@ async function probeOnce(args: {
       if (!parsed) throw new Error('代理地址格式非法');
       agent = new ProxyAgent({ uri: parsed.sanitizedUrl, connectTimeout: args.timeoutMs });
     }
-    const response = await args.fetchImpl(args.target, {
-      method: 'GET',
-      redirect: 'manual',
-      signal: controller.signal,
-      ...(agent ? ({ dispatcher: agent } as RequestInit) : {}),
-    });
+    // 走代理时必须用 undici 自带 fetch —— 外部 ProxyAgent 交给全局 fetch 会因
+    // 两个 undici 实例的内部接口不匹配立即失败，详见 egressDispatcher.ts 注释。
+    const response = agent
+      ? await undiciFetch(args.target, {
+        method: 'GET',
+        redirect: 'manual',
+        signal: controller.signal,
+        dispatcher: agent,
+      }) as unknown as Response
+      : await args.fetchImpl(args.target, {
+        method: 'GET',
+        redirect: 'manual',
+        signal: controller.signal,
+      });
     return {
       target: args.target,
       ok: response.status > 0 && response.status < 500,

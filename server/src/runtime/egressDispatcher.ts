@@ -12,7 +12,7 @@
  * 放大成全站不可用是更糟的选择。降级会打 warn 日志，便于发现代理静默失效。
  */
 
-import { ProxyAgent, type Dispatcher } from 'undici';
+import { ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
 
 import {
   parseProxyUrl,
@@ -147,25 +147,41 @@ function isProxyTransportError(err: unknown): boolean {
 /**
  * 构造一个 egress-aware 的 fetch，签名与全局 fetch 一致，可直接作为
  * `fetchImpl` 注入 webToolProvider / searchProviders，无需改动它们的 SSRF 逻辑。
+ *
+ * ⚠️ 走代理时必须用 `undici` 包自带的 fetch，不能用全局 fetch：
+ * Node 内置的 undici 与 node_modules 里的 `undici` 是**两个独立实例**，把外部
+ * ProxyAgent 交给全局 fetch 会在内部接口校验时直接失败
+ * （`TypeError: invalid onRequestStart method`），耗时仅几毫秒，极易被误判成
+ * 「网络不通」。2026-07-25 生产实测：curl 经同一代理 204/192ms，全局 fetch +
+ * 外部 ProxyAgent 9ms 失败，undici.fetch + 同一 ProxyAgent 204/240ms 成功。
  */
 export function createEgressFetch(
   registry: EgressDispatcherRegistry,
   logger: EgressDispatcherLogger = { warn: () => undefined },
   baseFetch: typeof fetch = fetch,
+  proxyFetch: typeof undiciFetch = undiciFetch,
 ): typeof fetch {
   return async function egressFetch(input, init) {
-    const url = input instanceof Request ? input.url : input;
-    const { dispatcher, failOpen } = registry.resolve(url as string | URL);
+    // Request 形态无法安全拆成 (url, init) 交给另一个 fetch 实现（body 是流），
+    // 当前调用方（WebFetch/WebSearch）只传 string|URL；遇到 Request 一律直连。
+    if (input instanceof Request) return baseFetch(input, init);
+
+    const { dispatcher, failOpen } = registry.resolve(input as string | URL);
     if (!dispatcher) return baseFetch(input, init);
 
+    const target = typeof input === 'string' ? input : String(input);
     try {
-      // Node 的全局 fetch 是 undici 实现，支持 dispatcher init 选项，
-      // 但 lib.dom 的 RequestInit 类型里没有它，因此这里需要断言。
-      return await baseFetch(input, { ...init, dispatcher } as RequestInit);
+      const response = await proxyFetch(target, {
+        ...(init as Parameters<typeof undiciFetch>[1]),
+        dispatcher,
+      });
+      // undici 的 Response 与全局 Response 结构等价（都是 WHATWG 实现），
+      // 但类型来自不同声明，调用方只用标准成员，断言安全。
+      return response as unknown as Response;
     } catch (err) {
       if (!failOpen || !isProxyTransportError(err)) throw err;
       logger.warn(
-        `[egress] 经代理请求失败，已降级直连重试: ${typeof url === 'string' ? url : String(url)}`
+        `[egress] 经代理请求失败，已降级直连重试: ${target}`
           + ` (${err instanceof Error ? err.message : String(err)})`,
       );
       return baseFetch(input, init);

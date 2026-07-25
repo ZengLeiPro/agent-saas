@@ -101,85 +101,100 @@ describe('EgressDispatcherRegistry', () => {
 });
 
 describe('createEgressFetch', () => {
-  it('不走代理时原样透传，不附加 dispatcher', async () => {
-    const { registry } = makeRegistry(makeSource());
-    const baseFetch = vi.fn(async () => new Response('ok'));
-    const egressFetch = createEgressFetch(registry, { warn: vi.fn() }, baseFetch as unknown as typeof fetch);
+  function harness(serverCfg: Partial<EgressConfig['server']>) {
+    const { registry } = makeRegistry(makeSource(serverCfg));
+    const baseFetch = vi.fn(async () => new Response('direct-ok'));
+    const proxyFetch = vi.fn(async () => new Response('proxy-ok'));
+    const logger = { warn: vi.fn() };
+    const egressFetch = createEgressFetch(
+      registry,
+      logger,
+      baseFetch as unknown as typeof fetch,
+      proxyFetch as never,
+    );
+    return { egressFetch, baseFetch, proxyFetch, logger };
+  }
 
-    await egressFetch('https://example.com');
-    expect(baseFetch).toHaveBeenCalledTimes(1);
+  it('不走代理时用全局 fetch，且不附加 dispatcher', async () => {
+    const { egressFetch, baseFetch, proxyFetch } = harness({});
+    const response = await egressFetch('https://example.com');
+    expect(await response.text()).toBe('direct-ok');
+    expect(proxyFetch).not.toHaveBeenCalled();
     expect((baseFetch.mock.calls[0] as any[])[1]).toBeUndefined();
   });
 
-  it('走代理时附加 dispatcher', async () => {
-    const { registry } = makeRegistry(makeSource({
+  it('走代理时必须用 undici 自带 fetch，不能用全局 fetch', async () => {
+    // 回归防线：Node 内置 undici 与外部 undici 包是两个实例，把外部 ProxyAgent
+    // 交给全局 fetch 会以 "invalid onRequestStart method" 在几毫秒内失败。
+    // 2026-07-25 生产实测踩到过，单元测试当时因 mock 了 fetch 而没能发现。
+    const { egressFetch, baseFetch, proxyFetch } = harness({
       enabled: true,
       proxyUrl: 'http://127.0.0.1:7890',
-    }));
-    const baseFetch = vi.fn(async () => new Response('ok'));
-    const egressFetch = createEgressFetch(registry, { warn: vi.fn() }, baseFetch as unknown as typeof fetch);
-
-    await egressFetch('https://example.com');
-    expect((baseFetch.mock.calls[0] as any[])[1]).toHaveProperty('dispatcher');
+    });
+    const response = await egressFetch('https://example.com');
+    expect(await response.text()).toBe('proxy-ok');
+    expect(proxyFetch).toHaveBeenCalledTimes(1);
+    expect(baseFetch).not.toHaveBeenCalled();
+    expect((proxyFetch.mock.calls[0] as any[])[1]).toHaveProperty('dispatcher');
   });
 
-  it('fail-open：代理链路不通时降级直连并告警', async () => {
-    const { registry } = makeRegistry(makeSource({
+  it('Request 形态无法安全转交另一个 fetch 实现，一律直连', async () => {
+    const { egressFetch, baseFetch, proxyFetch } = harness({
+      enabled: true,
+      proxyUrl: 'http://127.0.0.1:7890',
+    });
+    await egressFetch(new Request('https://example.com'));
+    expect(baseFetch).toHaveBeenCalledTimes(1);
+    expect(proxyFetch).not.toHaveBeenCalled();
+  });
+
+  it('fail-open：代理链路不通时降级到全局 fetch 直连并告警', async () => {
+    const { egressFetch, baseFetch, proxyFetch, logger } = harness({
       enabled: true,
       proxyUrl: 'http://127.0.0.1:7890',
       failOpen: true,
-    }));
-    const logger = { warn: vi.fn() };
-    let call = 0;
-    const baseFetch = vi.fn(async (_input: unknown, init?: RequestInit) => {
-      call += 1;
-      if (call === 1 && init && 'dispatcher' in init) {
-        const err = new Error('connect ECONNREFUSED 127.0.0.1:7890');
-        (err as NodeJS.ErrnoException).code = 'ECONNREFUSED';
-        throw err;
-      }
-      return new Response('direct-ok');
     });
-    const egressFetch = createEgressFetch(registry, logger, baseFetch as unknown as typeof fetch);
+    proxyFetch.mockImplementationOnce(async () => {
+      const err = new Error('connect ECONNREFUSED 127.0.0.1:7890');
+      (err as NodeJS.ErrnoException).code = 'ECONNREFUSED';
+      throw err;
+    });
 
     const response = await egressFetch('https://example.com');
     expect(await response.text()).toBe('direct-ok');
-    expect(baseFetch).toHaveBeenCalledTimes(2);
-    // 第二次是直连：原样传回调用方给的 init（本例为 undefined），不带 dispatcher
-    const retryInit = (baseFetch.mock.calls[1] as any[])[1];
-    expect(retryInit === undefined || !('dispatcher' in retryInit)).toBe(true);
+    expect(proxyFetch).toHaveBeenCalledTimes(1);
+    expect(baseFetch).toHaveBeenCalledTimes(1);
+    expect((baseFetch.mock.calls[0] as any[])[1]).toBeUndefined();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('降级直连'));
   });
 
   it('fail-closed：不降级，错误如实抛出', async () => {
-    const { registry } = makeRegistry(makeSource({
+    const { egressFetch, baseFetch, proxyFetch } = harness({
       enabled: true,
       proxyUrl: 'http://127.0.0.1:7890',
       failOpen: false,
-    }));
-    const baseFetch = vi.fn(async () => {
+    });
+    proxyFetch.mockImplementationOnce(async () => {
       const err = new Error('connect ECONNREFUSED');
       (err as NodeJS.ErrnoException).code = 'ECONNREFUSED';
       throw err;
     });
-    const egressFetch = createEgressFetch(registry, { warn: vi.fn() }, baseFetch as unknown as typeof fetch);
 
     await expect(egressFetch('https://example.com')).rejects.toThrow(/ECONNREFUSED/);
-    expect(baseFetch).toHaveBeenCalledTimes(1);
+    expect(baseFetch).not.toHaveBeenCalled();
   });
 
   it('非传输类错误不降级——直连大概率同样失败，重试只会放大延迟', async () => {
-    const { registry } = makeRegistry(makeSource({
+    const { egressFetch, baseFetch, proxyFetch } = harness({
       enabled: true,
       proxyUrl: 'http://127.0.0.1:7890',
       failOpen: true,
-    }));
-    const baseFetch = vi.fn(async () => {
+    });
+    proxyFetch.mockImplementationOnce(async () => {
       throw new TypeError('Invalid header value');
     });
-    const egressFetch = createEgressFetch(registry, { warn: vi.fn() }, baseFetch as unknown as typeof fetch);
 
     await expect(egressFetch('https://example.com')).rejects.toThrow(/Invalid header/);
-    expect(baseFetch).toHaveBeenCalledTimes(1);
+    expect(baseFetch).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,8 @@ import {
   buildToolPresentation,
   listPresentationRuleNames,
   listMetadataRuleNames,
+  buildFailurePresentation,
+  ToolExecutionError,
 } from './toolPresentationBuilder.js';
 
 describe('产出方登记表', () => {
@@ -169,6 +171,39 @@ describe('截断前 metadata 规则', () => {
     const small = buildToolPresentation('Shell', { command: 'x' }, undefined, { exitCode: 0, stdoutBytes: 512, durationMs: 40 });
     expect(small?.detail).toContainEqual({ tree: '├', k: '输出', v: '512 B' });
     expect(small?.detail).toContainEqual({ tree: '└', k: '耗时', v: '40 ms' });
+  });
+});
+
+describe('失败态摘要', () => {
+  it('错误自带摘要时原样保留——那是 provider 按真实 metadata 产出的', () => {
+    const carried = { title: '执行命令', detail: [{ k: '退出码', v: '127' }], status: 'warn' as const };
+    const result = buildFailurePresentation('Shell', { command: 'nope' }, new ToolExecutionError('command not found', carried));
+    expect(result).toEqual(carried);
+  });
+
+  it('错误自带摘要但没写 status 时补 warn——失败绝不能显示为 ok', () => {
+    const result = buildFailurePresentation('Shell', {}, new ToolExecutionError('boom', { title: '执行命令' }));
+    expect(result?.status).toBe('warn');
+  });
+
+  it('普通错误退回入参侧规则，并强制标 warn', () => {
+    const result = buildFailurePresentation('Read', { file_path: '/w/缺失.md' }, new Error('ENOENT'));
+    expect(result?.title).toBe('读取 缺失.md');
+    expect(result?.status).toBe('warn');
+  });
+
+  it('无规则的工具失败时不产出摘要，退化为原有占位', () => {
+    expect(buildFailurePresentation('未知工具', {}, new Error('x'))).toBeUndefined();
+  });
+
+  it('入参也解析不出时不硬凑摘要', () => {
+    expect(buildFailurePresentation('Read', {}, new Error('x'))).toBeUndefined();
+  });
+
+  it('ToolExecutionError 不带摘要时同样退回入参侧规则', () => {
+    const result = buildFailurePresentation('Shell', { command: 'ls', description: '看一眼' }, new ToolExecutionError('failed'));
+    expect(result?.title).toBe('看一眼');
+    expect(result?.status).toBe('warn');
   });
 });
 

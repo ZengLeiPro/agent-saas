@@ -9,7 +9,7 @@ import type {
   PresentationBlockKind,
   RecordItem,
   RecordsBlock,
-  Tone,
+  PresentationTone,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import { PresentationDetail } from "@/components/PresentationDetail";
@@ -25,7 +25,7 @@ import { activityStatusBadgeClass, activityStatusTextClass, type ActivityStatusT
  * 继续走 MessageItem 已有的消息级懒加载。
  */
 
-const TONE_MAP: Record<Tone, ActivityStatusTone> = {
+const TONE_MAP: Record<PresentationTone, ActivityStatusTone> = {
   neutral: "neutral",
   info: "active",
   success: "success",

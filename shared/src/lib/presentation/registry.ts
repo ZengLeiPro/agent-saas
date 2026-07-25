@@ -7,7 +7,7 @@ import type {
   PresentationBlockKind,
   RecordItem,
   RecordsBlock,
-  Tone,
+  PresentationTone,
 } from './types';
 
 /**
@@ -18,7 +18,7 @@ import type {
  * 这是分享链路的前后兼容红线。
  */
 
-const TONES = new Set<Tone>(['neutral', 'info', 'success', 'warn', 'danger', 'muted']);
+const TONES = new Set<PresentationTone>(['neutral', 'info', 'success', 'warn', 'danger', 'muted']);
 const ACTION_KINDS = new Set(['primary', 'warning', 'danger', 'ghost', 'copy', 'link']);
 const LAYOUTS = new Set(['rows', 'grid', 'checklist']);
 
@@ -28,8 +28,8 @@ const ITEM_LIMIT = 100;
 const ACTION_LIMIT = 4;
 const DETAIL_LIMIT = 60;
 
-function tone(value: unknown): Tone | undefined {
-  return typeof value === 'string' && TONES.has(value as Tone) ? (value as Tone) : undefined;
+function tone(value: unknown): PresentationTone | undefined {
+  return typeof value === 'string' && TONES.has(value as PresentationTone) ? (value as PresentationTone) : undefined;
 }
 
 function optional<T>(key: string, value: T | undefined): Record<string, T> {

@@ -174,7 +174,14 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
       </button>
       {isExpanded && (
         <div>
-          {presentation && <PresentationDetail data={presentation} />}
+          {presentation && (
+            // 折叠行的状态徽章已表达技术终态（有异常/已取消），
+            // 摘要里不再重复一遍业务状态，避免同一条信息说两遍且措辞不一致
+            <PresentationDetail
+              data={presentation}
+              hideStatus={executionStatus === 'failed' || executionStatus === 'cancelled'}
+            />
+          )}
           {showRaw && (
           <div className="code-preview mt-1">
             <pre className="whitespace-pre-wrap break-words">{formatted}</pre>

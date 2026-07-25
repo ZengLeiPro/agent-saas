@@ -17,7 +17,7 @@ import type { DetailLine } from '../toolPresentation';
  */
 
 /** 语气。与 web 的 activityStatusStyles 色板对齐。 */
-export type Tone = 'neutral' | 'info' | 'success' | 'warn' | 'danger' | 'muted';
+export type PresentationTone = 'neutral' | 'info' | 'success' | 'warn' | 'danger' | 'muted';
 
 export interface BlockAction {
   /** copy/link 由渲染器本地处理；其余需要 interactionId 才生效 */
@@ -35,7 +35,7 @@ export interface BlockAction {
 /** 语气卡：结论、风险提示、拦截说明、等待说明等 */
 export interface CalloutBlock {
   kind: 'callout';
-  tone: Tone;
+  tone: PresentationTone;
   title?: string;
   /** 段落。渲染为纯文本，不解析 markdown——避免与消息正文的渲染管线重复 */
   body: string[];
@@ -49,10 +49,10 @@ export interface CalloutBlock {
 export interface RecordItem {
   label: string;
   value?: string;
-  tag?: { tone: Tone; text: string };
+  tag?: { tone: PresentationTone; text: string };
   note?: string;
   /** 整行语气：danger 走删除线，warn 走警示底 */
-  tone?: Tone;
+  tone?: PresentationTone;
   /** 条目级展开详情，复用 DetailLine */
   detail?: DetailLine[];
   /** 等宽显示（哈希 / URL / 提取码） */

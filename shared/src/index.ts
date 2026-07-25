@@ -486,7 +486,7 @@ export type {
   GateBlock,
   RecordItem,
   BlockAction,
-  Tone,
+  PresentationTone,
 } from "./lib/presentation/types";
 
 // Lib - 右侧企业系统面板（与 ToolPresentation 同源，无独立数据通道）

@@ -8,7 +8,7 @@ import { promisify } from 'util';
 import { z } from 'zod';
 
 import type { AgentRunHooks } from './types.js';
-import { buildToolPresentation, type ToolPresentation } from './toolPresentationBuilder.js';
+import { buildToolPresentation, ToolExecutionError, type ToolPresentation } from './toolPresentationBuilder.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import type {
   ToolInvocationRequest,
@@ -1199,7 +1199,12 @@ class WorkspaceToolProvider implements ToolProvider {
         await killReservedBackgroundShell();
         await this.backgroundTasks.failCommandStart(context, reservedTaskId, response.error).catch(() => undefined);
       }
-      throw new Error(response.error);
+      // 失败路径同样带上摘要：error 分支的 metadata 里有 exitCode/timedOut/aborted
+      // 等真实信号，丢掉它等于让客户在最该看清楚的时刻只看到一行「有异常」
+      throw new ToolExecutionError(
+        response.error,
+        buildToolPresentation(call.toolId, parsedInput, undefined, response.metadata),
+      );
     }
     if (reservedTaskId && this.backgroundTasks) {
       try {

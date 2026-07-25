@@ -339,6 +339,39 @@ export function buildToolPresentation(
   }
 }
 
+/**
+ * 携带摘要的工具执行错误。
+ *
+ * 工具失败时链路是 `throw` → 上层 catch → 构造错误 tool_result，摘要在这一跳
+ * 会丢。但失败恰恰是最该说清楚的时刻：客户看到「读取 差旅.md · 有异常 · 文件
+ * 不存在」远好过看到一行「已执行，有异常」。
+ */
+export class ToolExecutionError extends Error {
+  constructor(message: string, readonly presentation?: ToolPresentation) {
+    super(message);
+    this.name = 'ToolExecutionError';
+  }
+}
+
+/**
+ * 失败时的摘要。
+ *
+ * 优先用错误自带的（那是 provider 在截断前按真实 metadata 产出的）；
+ * 否则退回入参侧规则，并强制标记为 warn——**失败的执行绝不允许显示为 ok**。
+ * 入参侧规则本身不产出 status，所以这里必须显式兜底。
+ */
+export function buildFailurePresentation(
+  toolName: string,
+  toolInput: unknown,
+  error: unknown,
+): ToolPresentation | undefined {
+  if (error instanceof ToolExecutionError && error.presentation) {
+    return { ...error.presentation, status: error.presentation.status ?? 'warn' };
+  }
+  const base = buildToolPresentation(toolName, toolInput);
+  return base ? { ...base, status: 'warn' } : undefined;
+}
+
 /** 供覆盖率测试使用 */
 export function listPresentationRuleNames(): string[] {
   return [...new Set([...Object.keys(RULES), ...Object.keys(METADATA_RULES)])];

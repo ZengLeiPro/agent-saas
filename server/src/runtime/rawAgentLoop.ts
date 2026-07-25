@@ -22,7 +22,7 @@ import {
   type PlatformEventInput,
 } from './types.js';
 import { canonicalToolInputDigest } from './canonicalToolInput.js';
-import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
+import { buildFailurePresentation, type ToolPresentation } from '../agent/toolPresentationBuilder.js';
 export { canonicalToolInputDigest } from './canonicalToolInput.js';
 import type { InboundMessage, OutboundEvent } from '../types/index.js';
 import {
@@ -1985,11 +1985,18 @@ export class RawAgentLoop implements AgentLoop {
       });
       return { call: args.call, descriptor: args.descriptor, input: args.input, result };
     } catch (err) {
+      // 失败也要有摘要：优先用错误自带的（provider 按真实 metadata 产出），
+      // 否则退回入参侧规则并强制标 warn。客户看到「读取 差旅.md · 有异常」
+      // 远好过一行「已执行，有异常」。
+      const presentation = buildFailurePresentation(args.call.name, args.input, err);
       return {
         call: args.call,
         descriptor: args.descriptor,
         input: args.input,
-        result: { content: standardizeToolError(`tool error: ${err instanceof Error ? err.message : String(err)}`) },
+        result: {
+          content: standardizeToolError(`tool error: ${err instanceof Error ? err.message : String(err)}`),
+          ...(presentation ? { presentation } : {}),
+        },
         isError: true,
       };
     }

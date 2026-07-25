@@ -6,7 +6,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import type { MessageItem, SystemPanelSnapshot } from '@agent/shared';
+import type { MessageItem, SystemPanelSnapshot, ToolPresentation } from '@agent/shared';
 import { useSystemPanel, useSystemPanelDock } from './useSystemPanel';
 
 const BASE: SystemPanelSnapshot = {
@@ -17,7 +17,7 @@ const BASE: SystemPanelSnapshot = {
   ],
 };
 
-function toolMessage(id: string, presentation: MessageItem extends { presentation?: infer P } ? P : never): MessageItem {
+function toolMessage(id: string, presentation: ToolPresentation): MessageItem {
   return {
     id,
     type: 'tool_use',

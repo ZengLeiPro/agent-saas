@@ -65,8 +65,17 @@ function DetailRow({ line }: { line: DetailLine }) {
   );
 }
 
-export function PresentationDetail({ data, className }: { data: ToolPresentation; className?: string }) {
-  const statusMeta = data.status ? STATUS_META[data.status] : null;
+export function PresentationDetail({
+  data,
+  className,
+  hideStatus,
+}: {
+  data: ToolPresentation;
+  className?: string;
+  /** 调用方已在别处表达了状态时置真，避免同一条信息说两遍 */
+  hideStatus?: boolean;
+}) {
+  const statusMeta = !hideStatus && data.status ? STATUS_META[data.status] : null;
   const hasBody = (data.detail?.length ?? 0) > 0 || !!data.receipt || !!statusMeta;
   if (!hasBody) return null;
 

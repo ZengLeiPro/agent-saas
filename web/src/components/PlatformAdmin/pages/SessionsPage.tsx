@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, SearchX } from "lucide-react";
 
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { AdminEntityTable, AdminErrorAlert, EntityLink, MetricCard, ScopeFilters, StatusBadge } from "@/components/PlatformAdmin/common";
+import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, ScopeFilters, StatusBadge } from "@/components/PlatformAdmin/common";
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { pushPlatformAdminUrl } from "@/lib/urlSync";
@@ -107,6 +107,12 @@ function SessionList() {
 
   useEffect(() => { void load(); }, [load]);
 
+  const hasFilters = Boolean(tenantId || userId || q || status || channel || days || includeDeleted);
+  const clearFilters = useCallback(
+    () => adminQuery.clear(["tenantId", "userId", "q", "status", "channel", "days", "includeDeleted", "cursor"]),
+    [adminQuery],
+  );
+
   return (
     <div className="w-full space-y-5">
       <SettingsPanelHeader
@@ -122,9 +128,20 @@ function SessionList() {
       {error && <AdminErrorAlert error={error} />}
       <AdminEntityTable
         title="对话列表"
+        storageKey="sessions"
         rows={rows}
         rowKey={(row) => row.sessionId}
         loading={loading}
+        emptyState={
+          <EmptyState
+            icon={SearchX}
+            title="没有符合条件的对话"
+            description={hasFilters
+              ? "已生效的筛选可能过窄，清除后再看一次。"
+              : "还没有任何对话记录。"}
+            action={hasFilters ? { label: "清除全部筛选", onClick: clearFilters } : undefined}
+          />
+        }
         toolbar={
           <div className="flex flex-wrap items-center gap-2">
             <ScopeFilters
@@ -167,15 +184,16 @@ function SessionList() {
         }}
         columns={[
           { key: "status", header: "状态", cell: row => <Badge variant={row.deletedAt ? "destructive" : "secondary"}>{row.deletedAt ? "已删除" : formatSessionStatus(row.runtimeStatus)}</Badge> },
-          { key: "title", header: "标题", cell: row => <div><div className="max-w-72 truncate font-medium" title={row.title ?? undefined}>{row.title || row.sessionId}</div><EntityLink kind="session" id={row.sessionId} /></div> },
+          { key: "title", header: "标题", alwaysVisible: true, cell: row => <div><div className="max-w-72 truncate font-medium" title={row.title ?? undefined}>{row.title || row.sessionId}</div><EntityLink kind="session" id={row.sessionId} /></div> },
           { key: "username", header: "用户名", cell: row => <EntityLink kind="user" id={row.userId} label={row.username || undefined} /> },
           { key: "realName", header: "姓名", cell: row => row.realName ?? "—" },
           { key: "tenant", header: TENANT_LABEL, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
           { key: "model", header: "模型", cell: row => <span title={row.model ?? undefined}>{row.model ? labelFor(row.model) : "—"}</span> },
           { key: "channel", header: "来源", cell: row => row.channel ? formatChannel(row.channel) : "—" },
-          { key: "kind", header: "类型", cell: row => <Badge variant={row.kind === "subagent" ? "outline" : "secondary"}>{formatSessionKind(row.kind)}</Badge> },
-          { key: "cost", header: "历史成本（美元）", cell: row => <span className="tabular-nums" title="历史对话投影只保存模型原始美元计价">{formatUsd(row.totalCostUsd)}</span> },
-          { key: "updated", header: "最后活动", cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.updatedAt)}</span> },
+          // 类型已由工具栏的「对话类型」筛选决定（默认只看用户对话），列里每行同值 → 默认隐藏，需要时从「列」里打开
+          { key: "kind", header: "类型", hiddenByDefault: true, cell: row => <Badge variant={row.kind === "subagent" ? "outline" : "secondary"}>{formatSessionKind(row.kind)}</Badge> },
+          { key: "cost", header: "历史成本（美元）", className: "text-right", sortable: true, sortNumeric: true, sortValue: row => row.totalCostUsd ?? null, cell: row => <span className="tabular-nums" title="历史对话投影只保存模型原始美元计价">{formatUsd(row.totalCostUsd)}</span> },
+          { key: "updated", header: "最后活动", sortable: true, sortNumeric: true, sortValue: row => Date.parse(row.updatedAt) || null, cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.updatedAt)}</span> },
         ]}
       />
     </div>

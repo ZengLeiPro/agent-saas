@@ -1,8 +1,8 @@
 /** 执行记录排查：支持按组织、用户、对话、状态与时间快速定位。 */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Loader2, RefreshCw, X } from "lucide-react";
+import { ArrowRight, Loader2, RefreshCw, SearchX } from "lucide-react";
 
-import { AdminErrorAlert, EntityLink, ScopeFilters } from "@/components/PlatformAdmin/common";
+import { ActiveFilterBar, AdminErrorAlert, EmptyState, EntityLink, ScopeFilters, type ActiveFilterItem } from "@/components/PlatformAdmin/common";
 import { formatChannel, formatRunStatus } from "@/components/PlatformAdmin/displayText";
 import { classifyFailureReason } from "@/components/PlatformAdmin/errorText";
 import { platformAdminApi } from "@/components/PlatformAdmin/api";
@@ -50,17 +50,6 @@ function statusGroupFromQuery(value: string): StatusGroup {
   if (value === "active" || value === STATUS_GROUP_QUERY.active) return "active";
   if (value === "completed") return "completed";
   return value ? "custom" : "all";
-}
-
-function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
-  return (
-    <span className="inline-flex h-7 items-center gap-1 rounded-full border border-primary/25 bg-primary/5 px-2.5 text-xs text-primary">
-      {label}
-      <button type="button" onClick={onRemove} className="rounded-full p-0.5 hover:bg-primary/10" aria-label={`移除筛选：${label}`}>
-        <X className="size-3" />
-      </button>
-    </span>
-  );
 }
 
 export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => void }) {
@@ -142,10 +131,21 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
     }
   }, [jumpId, onSelectRun]);
 
-  const hasEntityFilters = Boolean(tenantId || userId || sessionId || statusGroup !== "all" || reasonContains);
+
   const statusLabel = statusGroup === "custom"
     ? rawStatus.split(",").map(formatRunStatus).join("、")
     : STATUS_GROUP_OPTIONS.find((item) => item.value === statusGroup)?.label;
+
+  // 「字段名：值」的中文键值形态（不是查询 DSL），可读性是我们对标下的既有优势
+  const activeFilters = useMemo<ActiveFilterItem[]>(() => {
+    const items: ActiveFilterItem[] = [];
+    if (tenantId) items.push({ key: "tenantId", label: `组织：${tenantNames.get(tenantId) ?? tenantId}`, onRemove: () => adminQuery.patch({ tenantId: null, userId: null }) });
+    if (userId) items.push({ key: "userId", label: `用户：${userId}`, onRemove: () => adminQuery.set("userId", null) });
+    if (sessionId) items.push({ key: "sessionId", label: `对话：${sessionId}`, onRemove: () => adminQuery.set("sessionId", null) });
+    if (statusGroup !== "all") items.push({ key: "status", label: `状态：${statusLabel}`, onRemove: () => adminQuery.set("status", null) });
+    if (reasonContains) items.push({ key: "reason", label: `失败原因：${reasonContains}`, onRemove: () => adminQuery.set("reason", null) });
+    return items;
+  }, [adminQuery, reasonContains, sessionId, statusGroup, statusLabel, tenantId, tenantNames, userId]);
 
   return (
     <div className="space-y-4">
@@ -190,19 +190,11 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
           </Button>
         </div>
 
-        {hasEntityFilters && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
-            <span className="text-xs font-medium text-muted-foreground">筛选生效中</span>
-            {tenantId && <FilterChip label={`组织：${tenantNames.get(tenantId) ?? tenantId}`} onRemove={() => adminQuery.patch({ tenantId: null, userId: null })} />}
-            {userId && <FilterChip label={`用户：${userId}`} onRemove={() => adminQuery.set("userId", null)} />}
-            {sessionId && <FilterChip label={`对话：${sessionId}`} onRemove={() => adminQuery.set("sessionId", null)} />}
-            {statusGroup !== "all" && <FilterChip label={`状态：${statusLabel}`} onRemove={() => adminQuery.set("status", null)} />}
-            {reasonContains && <FilterChip label={`失败原因：${reasonContains}`} onRemove={() => adminQuery.set("reason", null)} />}
-            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => adminQuery.clear(["tenantId", "userId", "sessionId", "status", "reason", "cursor"])}>
-              清除全部
-            </Button>
-          </div>
-        )}
+        <ActiveFilterBar
+          className="mt-3 border-t pt-3"
+          items={activeFilters}
+          onClearAll={() => adminQuery.clear(["tenantId", "userId", "sessionId", "status", "reason", "cursor"])}
+        />
       </div>
 
       <div className="flex flex-wrap items-start justify-end gap-1.5">
@@ -234,7 +226,22 @@ export function RunListView({ onSelectRun }: { onSelectRun: (runId: string) => v
               <Loader2 className="mr-2 size-4 animate-spin" /> 正在加载执行记录…
             </div>
           ) : !runs || runs.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">当前筛选条件下没有执行记录</div>
+            <EmptyState
+              icon={SearchX}
+              title="当前筛选条件下没有执行记录"
+              description={activeFilters.length > 0
+                ? "已生效的筛选可能过窄。清除筛选或放宽时间窗后再看一次。"
+                : "所选时间窗内还没有任何执行。把时间窗放宽到 7 天或 30 天试试。"}
+              action={activeFilters.length > 0
+                ? {
+                  label: "清除全部筛选",
+                  onClick: () => adminQuery.clear(["tenantId", "userId", "sessionId", "status", "reason", "cursor"]),
+                }
+                : undefined}
+              secondaryAction={hours < 720
+                ? { label: "放宽到 30 天", onClick: () => adminQuery.patch({ hours: 720, cursor: null }) }
+                : undefined}
+            />
           ) : (
             <Table>
               <TableHeader>

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { Archive, HardDrive, Loader2, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { AdminEntityTable, AdminErrorAlert, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
+import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 
@@ -213,27 +213,44 @@ export function InfraPage() {
 
       <AdminEntityTable
         title="各组织文件用量"
+        storageKey="infra-tenant-usage"
         rows={storage?.summary.byTenant ?? []}
         rowKey={row => row.tenantId}
+        defaultSort={{ key: "bytes", direction: "desc" }}
         columns={[
-          { key: "tenant", header: TENANT_LABEL, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
-          { key: "count", header: "文件目录", className: "text-right", cell: row => formatNumber(row.workspaceCount) },
-          { key: "bytes", header: "总量", className: "text-right", cell: row => formatBytes(row.bytes) },
+          { key: "tenant", header: TENANT_LABEL, alwaysVisible: true, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
+          { key: "count", header: "文件目录", className: "text-right", sortable: true, sortNumeric: true, sortValue: row => row.workspaceCount, cell: row => formatNumber(row.workspaceCount) },
+          { key: "bytes", header: "总量", className: "text-right", sortable: true, sortNumeric: true, sortValue: row => row.bytes, cell: row => formatBytes(row.bytes) },
           {
             key: "ratio",
             header: "占比",
             className: "text-right",
+            sortable: true,
+            sortNumeric: true,
+            sortValue: row => row.bytes,
             cell: row => {
               const total = storage?.summary.totalBytes ?? 0;
               return total > 0 ? `${((row.bytes / total) * 100).toFixed(1)}%` : "—";
             },
           },
         ]}
-        emptyText={storageUnavailable ? "文件用量扫描未启用，无法获取数据" : "暂无组织文件用量数据"}
+        emptyState={
+          <EmptyState
+            icon={storageUnavailable ? TriangleAlert : HardDrive}
+            title={storageUnavailable ? "文件用量扫描未启用，无法获取数据" : "暂无组织文件用量数据"}
+            description={storageUnavailable
+              ? "这里显示「—」表示无法获取，不代表用量为 0。点「手动扫描」可立即采集一次。"
+              : "成员上传或生成文件后，扫描任务会在这里汇总各组织的占用。"}
+            action={storageUnavailable && !platformReadOnly
+              ? { label: "手动扫描", onClick: () => void onScan() }
+              : undefined}
+          />
+        }
       />
 
       <AdminEntityTable
         title="文件目录明细"
+        storageKey="infra-workspaces"
         rows={workspaceRows}
         rowKey={row => row.path}
         toolbar={
@@ -248,24 +265,30 @@ export function InfraPage() {
           </div>
         }
         columns={[
-          { key: "path", header: "路径", className: "max-w-[320px]", cell: row => <span className="font-mono text-xs">{row.path}</span> },
+          { key: "path", header: "路径", alwaysVisible: true, className: "max-w-[320px]", sortable: true, sortValue: row => row.path, cell: row => <span className="font-mono text-xs">{row.path}</span> },
           { key: "tenant", header: TENANT_LABEL, cell: row => <EntityLink kind="tenant" id={row.tenantId} /> },
-          { key: "username", header: "用户名", cell: row => row.username ? <span className="font-mono text-xs">{row.username}</span> : "—" },
+          { key: "username", header: "用户名", sortable: true, sortValue: row => row.username || null, cell: row => row.username ? <span className="font-mono text-xs">{row.username}</span> : "—" },
           { key: "realName", header: "姓名", cell: row => row.realName ?? "—" },
           { key: "status", header: "状态", cell: row => <WorkspaceStatusBadge status={row.status} /> },
           {
             key: "bytes",
             header: "大小",
             className: "text-right",
+            sortable: true,
+            sortNumeric: true,
+            // bytes < 0 = 扫描失败（缺失，不是 0）→ 返回 null 让它恒排末尾，
+            // 排序不会把「扫描失败」伪装成「最小的目录」
+            sortValue: row => (row.bytes < 0 ? null : row.bytes),
             // bytes = -1 表示该目录 du 失败/超时（FIX-4），与空目录的 0 区分。
             cell: row => row.bytes < 0
               ? <span className="text-destructive" title="du 失败或超时，未计入汇总">扫描失败</span>
               : formatBytes(row.bytes),
           },
-          { key: "scanned", header: "扫描时间", cell: row => formatTime(row.scannedAt) },
+          { key: "scanned", header: "扫描时间", sortable: true, sortNumeric: true, sortValue: row => (row.scannedAt ? Date.parse(row.scannedAt) || null : null), cell: row => formatTime(row.scannedAt) },
           {
             key: "actions",
             header: "",
+            alwaysVisible: true,
             className: "w-[104px] text-right",
             cell: row => row.status === "active" ? null : (
               <div className="flex justify-end gap-1">

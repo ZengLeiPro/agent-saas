@@ -21,7 +21,7 @@ import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type TenantSettings } from 
 import type { ModelList } from "@/types/models";
 import { PlatformBillingManager, TenantBillingPanel } from "@/components/BillingManager";
 import { pushPlatformAdminUrl, type PlatformAdminSection } from "@/lib/urlSync";
-import { AdminErrorAlert, EntityLink } from "@/components/PlatformAdmin/common";
+import { AdminErrorAlert, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
 import { formatChannel } from "@/components/PlatformAdmin/displayText";
 import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
 import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControls";
@@ -196,17 +196,8 @@ function SettingsSectionFallback() {
   );
 }
 
-function MetricCard({ title, value, description }: { title: string; value: string | number; description: string }) {
-  return (
-    <Card>
-      <CardHeader className="pb-2"><CardTitle className="text-muted-foreground">{title}</CardTitle></CardHeader>
-      <CardContent>
-        <div className="text-2xl font-semibold">{value}</div>
-        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-      </CardContent>
-    </Card>
-  );
-}
+// 本地 MetricCard 已删除，统一用 `PlatformAdmin/common` 的那一套（S3-7）。
+// 差异：改用 Card 的 compact 密度 + 数值带 tabular-nums，审计的 4 张卡口径文字不变。
 
 
 function cloneTenantSettings(settings: TenantSettings): TenantSettings {

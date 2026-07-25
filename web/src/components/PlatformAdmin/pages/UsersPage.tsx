@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw, Search } from "lucide-react";
+import { Loader2, RefreshCw, Search, SearchX } from "lucide-react";
 
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Badge } from "@/components/ui/badge";
@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { AdminEntityTable, AdminErrorAlert, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
+import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
 import { useTenants } from "@/components/TenantManager/hooks";
 import type { UserInfo } from "@/components/UserManager/types";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
@@ -86,9 +86,22 @@ function UserList() {
       {error && <AdminErrorAlert error={error} />}
       <AdminEntityTable
         title="用户列表"
+        storageKey="users"
         rows={rows}
         rowKey={(row) => row.id}
         loading={loading}
+        emptyState={
+          <EmptyState
+            icon={SearchX}
+            title={q || tenantId ? "没有匹配的用户" : "还没有任何用户"}
+            description={q || tenantId
+              ? "换个关键词，或清除组织筛选后再看一次。"
+              : "组织下还没有成员。在「平台管理 · 组织」里为组织添加成员后，这里会显示。"}
+            action={q || tenantId
+              ? { label: "清除筛选", onClick: () => adminQuery.clear(["q", "tenantId", "cursor"]) }
+              : undefined}
+          />
+        }
         toolbar={
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
@@ -126,12 +139,12 @@ function UserList() {
           adminQuery.patch({ cursor: nextCursor });
         }}
         columns={[
-          { key: "user", header: "用户", cell: row => <div><div className="font-medium">{row.realName || row.username}</div><EntityLink kind="user" id={row.id} /></div> },
+          { key: "user", header: "用户", alwaysVisible: true, sortable: true, sortValue: row => row.realName || row.username, cell: row => <div><div className="font-medium">{row.realName || row.username}</div><EntityLink kind="user" id={row.id} /></div> },
           { key: "tenant", header: TENANT_LABEL, cell: row => <EntityLink kind="tenant" id={row.tenantId} label={tenantName.get(row.tenantId) ?? row.tenantId} /> },
           { key: "role", header: "角色", cell: row => <Badge variant={row.role === "admin" ? "default" : "secondary"}>{formatRole(row.role)}</Badge> },
-          { key: "position", header: "岗位", cell: row => row.position || "—" },
+          { key: "position", header: "岗位", sortable: true, sortValue: row => row.position || null, cell: row => row.position || "—" },
           { key: "status", header: "状态", cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },
-          { key: "updated", header: "最后更新", cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.updatedAt)}</span> },
+          { key: "updated", header: "最后更新", sortable: true, sortNumeric: true, sortValue: row => (row.updatedAt ? Date.parse(row.updatedAt) || null : null), cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.updatedAt)}</span> },
         ]}
       />
     </div>

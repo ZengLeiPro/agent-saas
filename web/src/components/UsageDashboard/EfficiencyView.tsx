@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Segmented, type SegmentedOption } from "@/components/ui/segmented";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { AdminErrorAlert, EntityLink } from "@/components/PlatformAdmin/common";
+import { AdminErrorAlert, EntityLink, MetricCard } from "@/components/PlatformAdmin/common";
 import { RUN_LABEL, formatToolName } from "@/components/PlatformAdmin/displayText";
 import { classifyFailureReason } from "@/components/PlatformAdmin/errorText";
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
@@ -39,25 +39,7 @@ const DAYS_OPTIONS: SegmentedOption<number>[] = [
 /** 工具错误率红色高亮阈值 */
 const ERROR_RATE_ALERT = 0.05;
 
-function StatCard({ label, value, sub, tone = "default" }: {
-  label: string;
-  value: string;
-  sub?: string;
-  tone?: "default" | "bad" | "warn";
-}) {
-  const toneClass = tone === "bad" ? "text-destructive" : tone === "warn" ? "text-warning-ink" : "";
-  return (
-    <Card density="compact">
-      <CardHeader className="pb-1.5">
-        <CardTitle className="text-xs text-muted-foreground">{label}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className={cn("text-2xl font-semibold tabular-nums", toneClass)}>{value}</div>
-        {sub && <div className="mt-1 truncate text-2xs text-muted-foreground">{sub}</div>}
-      </CardContent>
-    </Card>
-  );
-}
+/* 本视图原有的 StatCard 已删除，12 处调用点统一走 `common/MetricCard`（S3-7）。 */
 
 export function EfficiencyView({ tenantId, linkEntities = true }: {
   tenantId?: string;
@@ -119,20 +101,20 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
         <>
           {/* 1. 结果卡行 */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <StatCard label="执行完成率" value={formatRate(data.outcome.completionRate)} sub={`成功 ${formatCount(data.outcome.success)}`} />
-            <StatCard label="执行总数" value={formatCount(data.outcome.totalRuns)} />
-            <StatCard
-              label="失败数"
+            <MetricCard title="执行完成率" value={formatRate(data.outcome.completionRate)} description={`成功 ${formatCount(data.outcome.success)}`} descriptionClassName="truncate text-2xs" />
+            <MetricCard title="执行总数" value={formatCount(data.outcome.totalRuns)} />
+            <MetricCard
+              title="失败数"
               value={formatCount(data.outcome.error)}
               tone={data.outcome.error > 0 ? "bad" : "default"}
             />
-            <StatCard
-              label="中断数"
+            <MetricCard
+              title="中断数"
               value={formatCount(data.outcome.interrupted)}
               tone={data.outcome.interrupted > 0 ? "warn" : "default"}
             />
-            <StatCard
-              label="执行环境失败"
+            <MetricCard
+              title="执行环境失败"
               value={formatCount(data.tools.handFailures)}
               tone={data.tools.handFailures > 0 ? "bad" : "default"}
             />
@@ -181,20 +163,20 @@ export function EfficiencyView({ tenantId, linkEntities = true }: {
               <>
                 {costRedacted ? (
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                    <StatCard label="缓存命中率" value={formatRate(data.cost.cacheHitRate)} />
+                    <MetricCard title="缓存命中率" value={formatRate(data.cost.cacheHitRate)} />
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                    <StatCard label="总成本" value={formatYuan(data.cost.totalCostYuan ?? 0, 2)} />
-                    <StatCard label="典型单次成本（中位）" value={formatYuan(data.cost.perRun?.p50 ?? null)} />
-                    <StatCard label="偏高单次成本（90 分位）" value={formatYuan(data.cost.perRun?.p90 ?? null)} />
-                    <StatCard label="极端单次成本（99 分位）" value={formatYuan(data.cost.perRun?.p99 ?? null)} />
-                    <StatCard
-                      label="失败执行消耗的成本"
+                    <MetricCard title="总成本" value={formatYuan(data.cost.totalCostYuan ?? 0, 2)} />
+                    <MetricCard title="典型单次成本（中位）" value={formatYuan(data.cost.perRun?.p50 ?? null)} />
+                    <MetricCard title="偏高单次成本（90 分位）" value={formatYuan(data.cost.perRun?.p90 ?? null)} />
+                    <MetricCard title="极端单次成本（99 分位）" value={formatYuan(data.cost.perRun?.p99 ?? null)} />
+                    <MetricCard
+                      title="失败执行消耗的成本"
                       value={formatYuan(data.cost.failedRunsCostYuan ?? 0, 2)}
                       tone={(data.cost.failedRunsCostYuan ?? 0) > 0 ? "warn" : "default"}
                     />
-                    <StatCard label="缓存命中率" value={formatRate(data.cost.cacheHitRate)} />
+                    <MetricCard title="缓存命中率" value={formatRate(data.cost.cacheHitRate)} />
                   </div>
                 )}
 

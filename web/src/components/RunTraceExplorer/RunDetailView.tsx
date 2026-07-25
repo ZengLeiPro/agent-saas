@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/components/UsageDashboard/format";
-import { AdminErrorAlert, EntityLink } from "@/components/PlatformAdmin/common";
+import { AdminErrorAlert, EntityLink, MetricStat } from "@/components/PlatformAdmin/common";
 import { RUN_LABEL, SESSION_LABEL, WORKSPACE_LABEL, formatChannel, formatExecutionTarget, formatToolName } from "@/components/PlatformAdmin/displayText";
 import { classifyFailureReason } from "@/components/PlatformAdmin/errorText";
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
@@ -56,14 +56,9 @@ function aggregateToolAudits(events: TraceEvent[]): ToolAggRow[] {
   return [...map.values()].sort((a, b) => b.calls - a.calls).slice(0, 10);
 }
 
-function StatItem({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-2xs text-muted-foreground">{label}</div>
-      <div className="mt-0.5 truncate text-sm font-medium">{children}</div>
-    </div>
-  );
-}
+/* 本视图原有的 StatItem 已删除，改用 `common/MetricStat`（S3-7）：
+   它是「标签 + 数值」的密集网格形态，与 MetricCard 同一模块、不同外观——
+   这 11 项放在一张卡的 6 列网格里，换成 11 张卡会把一屏拉成三屏。 */
 
 export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void }) {
   const { labelFor } = useModelDisplayMap();
@@ -216,31 +211,32 @@ export function RunDetailView({ runId, onBack }: { runId: string; onBack: () => 
             </span>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
-            <StatItem label="耗时">{formatMs(duration)}</StatItem>
-            <StatItem label="轮次">{runFinished?.numTurns != null ? runFinished.numTurns : "—"}</StatItem>
-            <StatItem label="模型">
+            <MetricStat label="耗时">{formatMs(duration)}</MetricStat>
+            <MetricStat label="轮次">{runFinished?.numTurns != null ? runFinished.numTurns : "—"}</MetricStat>
+            <MetricStat label="模型">
               <span className="text-xs" title={billing.models.join(", ") || (run.model ?? "")}>
                 {billing.models.length > 0 ? billing.models.map(labelFor).join("、") : run.model ? labelFor(run.model) : "—"}
               </span>
-            </StatItem>
-            <StatItem label="本次运行成本">
+            </MetricStat>
+            <MetricStat label="本次运行成本">
               <span className="tabular-nums">{formatYuan(billing.totalCostYuan)}</span>
-            </StatItem>
-            <StatItem label="Token（输入/缓存/输出/推理）">
+            </MetricStat>
+            <MetricStat label="Token（输入/缓存/输出/推理）">
               <span className="font-mono text-xs tabular-nums">
                 {formatTokens(billing.inputTokens)} / {formatTokens(billing.cachedInputTokens)} / {formatTokens(billing.outputTokens)} / {formatTokens(billing.reasoningTokens)}
               </span>
-            </StatItem>
-            <StatItem label="执行目标">{run.executionTarget ? formatExecutionTarget(run.executionTarget) : "—"}</StatItem>
-            <StatItem label="组织 / 用户">
+            </MetricStat>
+            <MetricStat label="执行目标">{run.executionTarget ? formatExecutionTarget(run.executionTarget) : "—"}</MetricStat>
+            <MetricStat label="组织 / 用户">
               <EntityLink kind="tenant" id={run.tenantId} /> / <EntityLink kind="user" id={run.userId} />
-            </StatItem>
-            <StatItem label="渠道">{run.channel ? formatChannel(run.channel) : "—"}</StatItem>
-            <StatItem label="模型请求数">{billing.requestCount}</StatItem>
-            <StatItem label={WORKSPACE_LABEL}>
-              <span className="font-mono text-xs" title={run.workspaceId ?? undefined}>{run.workspaceId ?? "—"}</span>
-            </StatItem>
-            <StatItem label="累计输入 Token">{formatTokens(run.cumulativeInputTokens)}</StatItem>
+            </MetricStat>
+            <MetricStat label="渠道">{run.channel ? formatChannel(run.channel) : "—"}</MetricStat>
+            <MetricStat label="模型请求数">{billing.requestCount}</MetricStat>
+            <MetricStat label={WORKSPACE_LABEL}>
+              {/* workspace kind 的首个调用点：点它跳执行环境列表并按该文件目录预置筛选 */}
+              <EntityLink kind="workspace" id={run.workspaceId} short={10} />
+            </MetricStat>
+            <MetricStat label="累计输入 Token">{formatTokens(run.cumulativeInputTokens)}</MetricStat>
           </div>
           {friendlyFailure && (
             <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">

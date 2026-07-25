@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, RefreshCw, Settings } from "lucide-react";
+import { EntityIcons } from "@/lib/icons";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { AdminEntityTable, AdminErrorAlert, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
+import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
 import { pushAdminSettingsUrl, pushPlatformAdminUrl } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
@@ -81,23 +82,31 @@ function TenantList() {
       </div>
       <AdminEntityTable
         title="组织列表"
+        storageKey="tenants"
         rows={items}
         rowKey={(row) => row.id}
         loading={loading}
         onRefresh={() => void load()}
+        emptyState={
+          <EmptyState
+            icon={EntityIcons.org}
+            title="还没有任何组织"
+            description="平台上还没有创建组织。在「平台管理 · 组织」里新建后，这里会显示各组织的用量与余额。"
+          />
+        }
         onRowClick={(row) => {
           pushPlatformAdminUrl({ section: "tenants", entityId: row.id });
           window.dispatchEvent(new PopStateEvent("popstate"));
         }}
         columns={[
           { key: "status", header: "状态", cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },
-          { key: "name", header: "名称", cell: row => <div><div className="font-medium">{row.name}</div><EntityLink kind="tenant" id={row.id} /></div> },
-          { key: "users", header: "用户", cell: row => <span className="tabular-nums">{row.userCount} / 管理员 {row.adminCount}</span> },
-          { key: "activeRuns", header: "正在执行", cell: row => <span className="tabular-nums">{row.activeRuns}</span> },
-          { key: "sessions", header: "近 7 天对话", cell: row => <span className="tabular-nums">{row.sessions7d}</span> },
-          { key: "cost", header: "近 30 天成本", cell: row => <span className="tabular-nums">{formatYuan(row.costYuan30d)}</span> },
-          { key: "balance", header: "余额", cell: row => <span className="tabular-nums">{formatCredits(row.balanceCredits)}</span> },
-          { key: "last", header: "最后活跃", cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.lastActiveAt)}</span> },
+          { key: "name", header: "名称", alwaysVisible: true, sortable: true, sortValue: row => row.name, cell: row => <div><div className="font-medium">{row.name}</div><EntityLink kind="tenant" id={row.id} /></div> },
+          { key: "users", header: "用户", sortable: true, sortNumeric: true, sortValue: row => row.userCount, cell: row => <span className="tabular-nums">{row.userCount} / 管理员 {row.adminCount}</span> },
+          { key: "activeRuns", header: "正在执行", sortable: true, sortNumeric: true, sortValue: row => row.activeRuns, cell: row => <span className="tabular-nums">{row.activeRuns}</span> },
+          { key: "sessions", header: "近 7 天对话", sortable: true, sortNumeric: true, sortValue: row => row.sessions7d, cell: row => <span className="tabular-nums">{row.sessions7d}</span> },
+          { key: "cost", header: "近 30 天成本", sortable: true, sortNumeric: true, sortValue: row => row.costYuan30d, cell: row => <span className="tabular-nums">{formatYuan(row.costYuan30d)}</span> },
+          { key: "balance", header: "余额", sortable: true, sortNumeric: true, sortValue: row => row.balanceCredits ?? null, cell: row => <span className="tabular-nums">{formatCredits(row.balanceCredits)}</span> },
+          { key: "last", header: "最后活跃", sortable: true, sortNumeric: true, sortValue: row => (row.lastActiveAt ? Date.parse(row.lastActiveAt) || null : null), cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.lastActiveAt)}</span> },
         ]}
       />
     </div>

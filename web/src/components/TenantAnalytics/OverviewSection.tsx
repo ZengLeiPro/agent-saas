@@ -43,6 +43,8 @@ import { RangeSelector, type CustomRange, type RangeValue } from "@/components/U
 import { formatDateRange } from "@/components/UsageDashboard/format";
 import { formatCount, formatMs, formatRate } from "@/components/RunTraceExplorer/format";
 import { RunStatusBadge } from "@/components/RunTraceExplorer/StatusBadge";
+import { MetricCard } from "@/components/PlatformAdmin/common";
+
 import { AuroraCard, ToneBadge, type Tone } from "./AuroraCard";
 import { DonutChart, MiniBarTrend, Sparkline } from "./charts";
 import {
@@ -98,6 +100,14 @@ function reasonLabel(reason: string): string {
   return REASON_LABELS[reason] ?? reason;
 }
 
+/**
+ * 客户面 KPI 卡：外观与交互全部下沉到 `common/MetricCard` 的 aurora 变体（S3-7），
+ * 这里只保留一层把客户面词汇（label / hint / tone）映射到统一 props 的适配。
+ *
+ * 保留 AuroraCard 外观而不并入 platform 的灰卡，是因为这一屏是给**客户**看的；
+ * 「不显示原始 ID / 不显示 ¥$ 成本」的约束由本文件顶部注释列出的口径保证，
+ * 调用点传什么就显示什么，MetricCard 不介入脱敏。
+ */
 function KpiCard({
   tone,
   icon,
@@ -114,18 +124,15 @@ function KpiCard({
   loading?: boolean;
 }) {
   return (
-    <AuroraCard tone={tone}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="text-xs font-medium text-muted-foreground">{label}</div>
-          <div className={cn("text-3xl font-semibold tracking-tight tabular-nums", loading && "text-muted-foreground/40")}>
-            {loading ? "—" : value}
-          </div>
-        </div>
-        <ToneBadge tone={tone} icon={icon} />
-      </div>
-      <p className="mt-2 text-xs text-muted-foreground">{hint}</p>
-    </AuroraCard>
+    <MetricCard
+      variant="aurora"
+      auroraTone={tone}
+      icon={icon}
+      title={label}
+      value={value}
+      description={hint}
+      loading={loading}
+    />
   );
 }
 

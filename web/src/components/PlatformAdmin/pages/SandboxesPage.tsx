@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Network, PauseCircle, PlayCircle, RefreshCw, Trash2 } from "lucide-react";
+import { Loader2, Network, PauseCircle, PlayCircle, RefreshCw, SearchX, Trash2 } from "lucide-react";
 
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { useAuth } from "@/contexts/AuthContext";
-import { AdminEntityTable, AdminErrorAlert, EntityLink, MetricCard, ScopeFilters, StatusBadge } from "@/components/PlatformAdmin/common";
+import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, ScopeFilters, StatusBadge } from "@/components/PlatformAdmin/common";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { pushPlatformAdminUrl } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
@@ -83,6 +83,8 @@ function SandboxList() {
   const tenantId = adminQuery.get("tenantId") ?? "";
   const workspaceId = adminQuery.get("workspaceId") ?? "";
   const phase = adminQuery.get("phase") ?? "";
+
+  const hasFilters = Boolean(q || tenantId || workspaceId || phase);
 
   const acsHealth = operations?.tenantRemoteHands.health.find(item => item.id === "agent-saas-acs")
     ?? operations?.tenantRemoteHands.health.find(item => item.metadata?.backend === "acs-agent-sandbox");
@@ -174,9 +176,22 @@ function SandboxList() {
       </div>
       <AdminEntityTable
         title="执行环境列表"
+        storageKey="sandboxes"
         rows={filtered}
         rowKey={(row) => row.name}
         loading={loading}
+        emptyState={
+          <EmptyState
+            icon={SearchX}
+            title={hasFilters ? "没有符合条件的执行环境" : "当前没有执行环境"}
+            description={hasFilters
+              ? "清除筛选后再看一次；也可能这些环境已被自动清理。"
+              : "成员发起任务时会自动创建执行环境，空闲后按生命周期策略自动回收。"}
+            action={hasFilters
+              ? { label: "清除全部筛选", onClick: () => adminQuery.clear(["q", "tenantId", "workspaceId", "phase"]) }
+              : undefined}
+          />
+        }
         toolbar={
           <div className="flex flex-wrap items-center gap-2">
             <Input value={q} onChange={(event) => adminQuery.patch({ q: event.target.value })} placeholder="搜索用户、姓名或环境名称" className="h-8 w-56 text-xs" />
@@ -191,18 +206,19 @@ function SandboxList() {
         }}
         columns={[
           { key: "phase", header: "状态", cell: row => <div className="space-y-1"><StatusBadge kind="sandbox" status={row.phase ?? "Unknown"} /><div className="max-w-44 truncate text-2xs text-destructive">{row.brokenReason}</div></div> },
-          { key: "name", header: "名称", cell: row => <EntityLink kind="sandbox" id={row.name} /> },
+          { key: "name", header: "名称", alwaysVisible: true, sortable: true, sortValue: row => row.name, cell: row => <EntityLink kind="sandbox" id={row.name} /> },
           { key: "owner", header: "组织 / 用户", cell: row => row.owner?.kind === "user" ? <div><EntityLink kind="tenant" id={row.owner.tenantId} /><div><EntityLink kind="user" id={row.owner.userId} /></div></div> : <span className="text-muted-foreground">{formatSystemOwner(row.owner?.kind)}</span> },
           { key: "username", header: "用户名", cell: row => row.owner?.username ? <span className="font-mono text-xs">{row.owner.username}</span> : "—" },
           { key: "realName", header: "姓名", cell: row => row.owner?.realName ?? "—" },
           { key: "busy", header: "占用", cell: row => <Badge variant={row.busy ? "default" : "secondary"}>{formatBusyState(row.busy)}</Badge> },
           { key: "image", header: "运行版本", cell: row => <Badge variant={row.imageStale ? "destructive" : "secondary"} title={row.image}>{formatImageFreshness(row.imageStale)}</Badge> },
-          { key: "idle", header: "空闲", cell: row => <span className="text-xs tabular-nums">{formatDuration(row.idleMs)}</span> },
-          { key: "ttl", header: "剩余时间", cell: row => <span className="text-xs tabular-nums">{formatDuration(row.ttlRemainingMs)}</span> },
-          { key: "created", header: "创建", cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.createdAt)}</span> },
+          { key: "idle", header: "空闲", className: "text-right", sortable: true, sortNumeric: true, sortValue: row => row.idleMs ?? null, cell: row => <span className="text-xs tabular-nums">{formatDuration(row.idleMs)}</span> },
+          { key: "ttl", header: "剩余时间", className: "text-right", sortable: true, sortNumeric: true, sortValue: row => row.ttlRemainingMs ?? null, cell: row => <span className="text-xs tabular-nums">{formatDuration(row.ttlRemainingMs)}</span> },
+          { key: "created", header: "创建", sortable: true, sortNumeric: true, sortValue: row => (row.createdAt ? Date.parse(row.createdAt) || null : null), cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.createdAt)}</span> },
           {
             key: "actions",
             header: "操作",
+            alwaysVisible: true,
             className: "w-[132px] text-right",
             cell: row => (
               <div className="flex justify-end gap-1">

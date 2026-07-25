@@ -24,13 +24,18 @@ const toneBadgeBg: Record<Tone, string> = {
   slate: "bg-slate-500/10 text-slate-600 dark:text-slate-300",
 };
 
+/**
+ * 透传剩余 div props（role / tabIndex / onClick / onKeyDown / aria-*）。
+ * 不透传的话「指标卡即入口」在客户面就是死的：`common/MetricCard` 的 aurora 变体
+ * 把可交互属性传进来后会被静默丢掉，卡片看着能点、键盘完全到不了。
+ */
 export function AuroraCard({
   tone = "slate",
   className,
   children,
-}: {
+  ...props
+}: React.ComponentProps<"div"> & {
   tone?: Tone;
-  className?: string;
   children: ReactNode;
 }) {
   return (
@@ -40,6 +45,7 @@ export function AuroraCard({
         toneGradients[tone],
         className,
       )}
+      {...props}
     >
       <div className="relative h-full rounded-[calc(1rem-1px)] bg-card p-4">{children}</div>
     </div>

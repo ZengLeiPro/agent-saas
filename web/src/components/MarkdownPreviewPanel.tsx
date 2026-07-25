@@ -201,6 +201,14 @@ export function MarkdownPreviewPanel({ filePath, owner, shareToken, onBack, hide
   const filename = state.status === "success" ? state.filename : filePath.split("/").pop() || filePath;
   const dirPath = filePath.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
 
+  // 读文件与加载 markdown chunk 共用同一个加载态：内容已到但渲染器未就绪时
+  // 继续转圈，而不是先铺一屏纯文本再替换成渲染结果。
+  const spinner = (
+    <div className="flex items-center justify-center py-12">
+      <Loader2 className="size-6 animate-spin text-muted-foreground" />
+    </div>
+  );
+
   return (
     <>
       {!hideHeader && (
@@ -220,11 +228,7 @@ export function MarkdownPreviewPanel({ filePath, owner, shareToken, onBack, hide
 
       <div ref={printRootRef} className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-card px-6 py-6 lg:px-10">
         <div className="mx-auto max-w-[72ch]">
-          {state.status === "loading" && (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="size-6 animate-spin text-muted-foreground" />
-            </div>
-          )}
+          {state.status === "loading" && spinner}
           {state.status === "error" && (
             <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
               <CircleAlert className="size-6" />
@@ -232,13 +236,11 @@ export function MarkdownPreviewPanel({ filePath, owner, shareToken, onBack, hide
             </div>
           )}
           {state.status === "success" && (
-            <div className="prose-chat text-sm">
-              <Suspense
-                fallback={<div className="whitespace-pre-wrap break-words">{state.content}</div>}
-              >
+            <Suspense fallback={spinner}>
+              <div className="prose-chat text-sm">
                 <LazyMarkdownRenderer content={state.content} owner={owner} referrer={filePath} />
-              </Suspense>
-            </div>
+              </div>
+            </Suspense>
           )}
         </div>
       </div>

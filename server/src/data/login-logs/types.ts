@@ -28,7 +28,9 @@ export type LoginEvent =
   | 'platform_readonly_denied' | 'platform_capability_denied' | 'platform_privileged_action' | 'platform_user_search'
   | 'billing_account_adjusted'
   | 'runtime_profile_created' | 'runtime_profile_draft_updated' | 'runtime_profile_published'
-  | 'runtime_profile_archived' | 'runtime_profile_copied' | 'runtime_profile_binding_updated';
+  | 'runtime_profile_archived' | 'runtime_profile_copied' | 'runtime_profile_binding_updated'
+  // 工具启停与描述覆盖：直接改变模型可见的工具契约，必须留痕
+  | 'tool_controls_updated';
 
 export interface LoginLogEntry {
   timestamp: string;

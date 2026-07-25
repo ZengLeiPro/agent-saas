@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
 import { requirePlatformAdmin } from '../auth/middleware.js';
+import { auditLog } from '../data/login-logs/index.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
 import type {
   AppConfig,
@@ -10,7 +11,11 @@ import type {
   ToolDescriptionOverride,
   WebToolsConfig,
 } from '../app/config.js';
-import { applyToolDescriptionOverride, isToolEnabled } from '../agent/toolRuntime.js';
+import {
+  applyToolDescriptionOverride,
+  findToolDescriptionInvariantViolations,
+  isToolEnabled,
+} from '../agent/toolRuntime.js';
 import type { ToolDescriptor } from '../agent/toolRuntime.js';
 import {
   PLATFORM_TOOL_CATALOG,
@@ -187,10 +192,28 @@ function validateToolSettingsUpdate(
     webTools: hydratedWebTools,
   };
   const parsed = parseAppConfig(merged);
+  const prunedToolControls = pruneUnknownToolControls(parsed.toolControls);
+  assertDescriptionInvariants(prunedToolControls);
   return {
-    toolControls: pruneUnknownToolControls(parsed.toolControls),
+    toolControls: prunedToolControls,
     webTools: parsed.webTools,
   };
+}
+
+/**
+ * 描述覆盖不得抹掉与运行时行为绑定的关键片段。
+ *
+ * CI 里的 drift guard 守的是内置默认描述，守不住这里的后台覆盖：`mode: 'replace'`
+ * 能把 Read 的字节上限、Shell 的 rg 优先级整段换掉，模型随即按错误契约行动，而
+ * 没有任何测试会红。这道闸门把同一份 descriptionInvariants 声明用在保存时。
+ */
+function assertDescriptionInvariants(toolControls: ToolControlsConfig | undefined): void {
+  const violations = findToolDescriptionInvariantViolations(PLATFORM_TOOL_CATALOG, toolControls);
+  if (!violations.length) return;
+  const detail = violations
+    .map(({ toolId, missing }) => `${toolId} 缺少 ${missing.map((item) => `「${item}」`).join('、')}`)
+    .join('；');
+  throw new Error(`描述覆盖丢失了必须保留的运行时契约片段：${detail}`);
 }
 
 /**
@@ -314,6 +337,7 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
 
     try {
       const persisted = await persistUpdatedSettings(options, nextSettings);
+      auditLog(req, 'tool_controls_updated', describeToolControlsChange(persisted.toolControls));
       res.json(catalogResponse(persisted));
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
@@ -355,6 +379,7 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
 
     try {
       const persisted = await persistUpdatedSettings(options, nextSettings);
+      auditLog(req, 'tool_controls_updated', `${toolId}：${describeToolEntry(persisted.toolControls, toolId)}`);
       res.json(catalogResponse(persisted));
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
@@ -362,4 +387,22 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
   });
 
   return router;
+}
+
+/** 单个工具的最终状态摘要，进审计 detail。不记描述正文，只记是否被覆盖及模式。 */
+function describeToolEntry(toolControls: ToolControlsConfig | undefined, toolId: string): string {
+  const entry = toolControls?.tools?.[toolId];
+  if (!entry) return '恢复默认';
+  const parts = [entry.enabled === false ? '已禁用' : '已启用'];
+  parts.push(entry.descriptionOverride
+    ? `描述覆盖(${entry.descriptionOverride.mode ?? 'append'})`
+    : '描述默认');
+  return parts.join('，');
+}
+
+/** 整包保存的审计 detail：列出所有非默认工具，避免 detail 里塞进全部描述正文。 */
+function describeToolControlsChange(toolControls: ToolControlsConfig | undefined): string {
+  const entries = Object.keys(toolControls?.tools ?? {});
+  if (!entries.length) return '全部工具恢复默认';
+  return entries.map((toolId) => `${toolId}：${describeToolEntry(toolControls, toolId)}`).join('；');
 }

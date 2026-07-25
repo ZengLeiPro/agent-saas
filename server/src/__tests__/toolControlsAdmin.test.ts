@@ -359,6 +359,72 @@ describe('tool controls admin router', () => {
     });
   });
 
+  // 2026-07-25：descriptionOverride 是运行时热更的，CI 的 drift guard 守不到它。
+  // 这组用例守的是「后台改坏描述会被当场拒绝」——没有这道闸门，管理员用
+  // mode:'replace' 抹掉 Read 的字节上限或 Shell 的 rg 优先级，模型会按错误契约行动。
+  describe('descriptionInvariants 保存闸门', () => {
+    it('replace 抹掉运行时契约片段时拒绝保存并指出缺了什么', async () => {
+      await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+        const response = await fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            descriptionOverride: { mode: 'replace', text: '读文件。' },
+          }),
+        });
+        expect(response.status).toBe(400);
+        const body = await readJson(response);
+        expect(body.error).toContain('Read');
+        expect(body.error).toContain('131072');
+
+        // 拒绝必须是原子的：不落盘、不热更
+        const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+        expect(written.toolControls?.tools?.Read).toBeUndefined();
+        expect(runtimeConfig.toolControls?.tools?.Read).toBeUndefined();
+      });
+    });
+
+    it('replace 保留全部片段时正常保存', async () => {
+      await withApp(baseRawConfig(), async ({ baseUrl, runtimeConfig }) => {
+        const text = '读取工作区 UTF-8 文本文件，超过 131072 字节时返回前 131072 字节，'
+          + '可用 offset/limit 读取指定行区间，limit 最多 2000 行。';
+        const response = await fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ descriptionOverride: { mode: 'replace', text } }),
+        });
+        expect(response.status).toBe(200);
+        expect(runtimeConfig.toolControls?.tools?.Read?.descriptionOverride?.mode).toBe('replace');
+      });
+    });
+
+    it('append 不会触发闸门（原描述整体保留）', async () => {
+      await withApp(baseRawConfig(), async ({ baseUrl }) => {
+        const response = await fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            descriptionOverride: { mode: 'append', text: '本组织仅允许读取 docs/ 下的文件。' },
+          }),
+        });
+        expect(response.status).toBe(200);
+      });
+    });
+
+    it('未声明 invariants 的工具不受影响', async () => {
+      await withApp(baseRawConfig(), async ({ baseUrl }) => {
+        const response = await fetch(`${baseUrl}/api/admin/tool-controls/Write`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            descriptionOverride: { mode: 'replace', text: '仅用于生成客户交付文档。' },
+          }),
+        });
+        expect(response.status).toBe(200);
+      });
+    });
+  });
+
   it('single-tool PUT can set / clear descriptionOverride without touching other tools', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
       // 1) 设置 override

@@ -184,6 +184,22 @@ export interface ToolDescriptor<TInput = unknown> {
     serverDisplayName: string;
     serverDescription?: string;
   };
+  /**
+   * 描述中必须保留的关键片段（运行时行为契约的锚点）。
+   *
+   * 背景：平台管理员可在后台用 descriptionOverride 覆盖描述，`mode: 'replace'`
+   * 会整体替换内置文本。CI 里的 drift guard 只守内置默认值，守不住后台覆盖——
+   * 一旦有人把 Read 的字节上限写错、或删掉 Shell 的 rg 优先级，模型会按错误契约
+   * 规划动作，而没有任何闸门会红。
+   *
+   * 因此把"描述必须提到什么"声明为数据，同时服务两处：
+   *   1. 保存 override 时校验生效描述仍含全部片段，缺失直接拒绝
+   *   2. CI 遍历同一份声明校验内置默认值，不再逐工具硬编码断言
+   *
+   * 只声明**与运行时行为绑定**的片段（数值上限、必须遵守的命令优先级、schema
+   * 默认值），不要把文风偏好写进来——那属于可以自由覆盖的部分。
+   */
+  descriptionInvariants?: readonly string[];
 }
 
 export interface ToolResult {
@@ -321,6 +337,8 @@ export const readFileToolDescriptor: ToolDescriptor<{ path: string; offset?: num
   auditCategory: 'filesystem.read',
   category: 'workspace',
   label: '读取文件',
+  // 两个上限必须留在描述里：模型按它规划分片读取，写错会导致反复截断或超限重试。
+  descriptionInvariants: [String(MAX_FILE_BYTES), String(MAX_READ_LINES)],
 };
 
 export const writeFileToolDescriptor: ToolDescriptor<{ path: string; content: string }> = {
@@ -368,6 +386,9 @@ export const runShellToolDescriptor: ToolDescriptor<{
   auditCategory: 'process.shell',
   category: 'workspace',
   label: '执行 Shell',
+  // 运行时事实与搜索契约：执行环境认知错误会让模型误判可操作范围；rg 优先级是
+  // Shell-first 搜索改造（2026-07-25）的落点，删掉会退回全目录 grep。
+  descriptionInvariants: ['当前工作区运行时', 'rg --files', 'rg -n', 'python3'],
 };
 
 export const bashOutputToolDescriptor: ToolDescriptor<{
@@ -1507,6 +1528,30 @@ export function isToolEnabled(
  * 保证 md 里的多行段落和 override 里的多行输入行为一致，模型看到的 description
  * 永远是单行连续字符串。
  */
+/**
+ * 校验覆盖后的生效描述仍保留全部 descriptionInvariants。
+ *
+ * 只对声明了 invariants 的工具生效；`mode: 'append'` 天然保留原文，这里仍统一
+ * 校验，避免将来 append 语义变化后出现无人看守的缺口。
+ *
+ * 返回违规明细而不是直接抛错——调用方（admin 保存接口）要把工具名和缺失片段
+ * 一并回给操作者，"保存失败"三个字帮不上忙。
+ */
+export function findToolDescriptionInvariantViolations(
+  descriptors: readonly ToolDescriptor[],
+  controls: ToolControlsConfig | undefined,
+): Array<{ toolId: string; missing: string[] }> {
+  const violations: Array<{ toolId: string; missing: string[] }> = [];
+  for (const descriptor of descriptors) {
+    const invariants = descriptor.descriptionInvariants;
+    if (!invariants?.length) continue;
+    const effective = applyToolDescriptionOverride(descriptor, controls).description;
+    const missing = invariants.filter((fragment) => !effective.includes(fragment));
+    if (missing.length) violations.push({ toolId: descriptor.id, missing });
+  }
+  return violations;
+}
+
 export function applyToolDescriptionOverride(
   descriptor: ToolDescriptor,
   controls: ToolControlsConfig | undefined,

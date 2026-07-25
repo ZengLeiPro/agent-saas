@@ -53,6 +53,8 @@ const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
   'runtime_profile_archived', 'runtime_profile_copied', 'runtime_profile_binding_updated',
   'session_soft_deleted', 'session_restored', 'session_permanently_deleted',
   'session_renamed', 'session_forked', 'session_share_updated', 'session_share_revoked',
+  // 工具启停与描述覆盖只有平台管理员能做，不进本集合等于完全不留痕
+  'tool_controls_updated',
 ]);
 
 /** 从 Express Request 构建并追加一条审计日志（fire-and-forget） */

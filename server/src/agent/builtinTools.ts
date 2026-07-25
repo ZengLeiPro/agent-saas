@@ -103,6 +103,8 @@ export const askUserQuestionToolDescriptor: ToolDescriptor<AskUserQuestionInput>
   auditCategory: 'meta.ask_user',
   category: 'meta',
   label: '向用户提问',
+  // 与 schema 的 multiSelect 默认值绑定：描述丢了这句，模型会以为必须显式传 false。
+  descriptionInvariants: ['运行时默认为 false'],
 };
 
 export interface SessionTodoStore {

@@ -99,24 +99,28 @@ describe('Tool descriptions', () => {
   //
   // snapshot 测试只锁字符级稳定，**锁不住跟 TS 常量的一致性**。这里加显式断言
   // 形成 CI 闸门：改 MAX_FILE_BYTES 不同步 md，CI 立刻红。
-  it('Read description embeds MAX_FILE_BYTES value (drift guard)', () => {
-    expect(readFileToolDescriptor.description).toContain(String(MAX_FILE_BYTES));
-    expect(readFileToolDescriptor.description).toContain(String(MAX_READ_LINES));
+  // 2026-07-25：逐工具硬编码的 drift guard 已收敛为 descriptor.descriptionInvariants
+  // 单一声明——同一份数据同时守 CI（下面这条）和后台保存（toolControlsAdmin 的
+  // assertDescriptionInvariants）。此前只守内置默认值，管理员用 mode:'replace'
+  // 覆盖描述时没有任何闸门。
+  it.each(
+    ALL_TOOLS.filter((tool) => tool.descriptionInvariants?.length).map((tool) => [tool.id, tool]),
+  )('%s description keeps its declared invariants (drift guard)', (_id, tool) => {
+    for (const fragment of tool.descriptionInvariants!) {
+      expect(tool.description).toContain(fragment);
+    }
   });
 
-  it('Shell description follows pooled execution defaults (drift guard)', () => {
-    expect(runShellToolDescriptor.description).toContain('当前工作区运行时');
-    expect(runShellToolDescriptor.description).toContain('包括平台管理员');
-    expect(runShellToolDescriptor.description).toContain('rg --files');
-    expect(runShellToolDescriptor.description).toContain('rg -n');
+  // 声明本身也要防退化：Read 的两个上限必须来自 TS 常量而不是手抄的字面量，
+  // 否则改了常量、invariants 与描述一起停留在旧值，闸门形同虚设。
+  it('Read invariants track the TS constants (drift guard)', () => {
+    expect(readFileToolDescriptor.descriptionInvariants).toContain(String(MAX_FILE_BYTES));
+    expect(readFileToolDescriptor.descriptionInvariants).toContain(String(MAX_READ_LINES));
   });
 
-  // 2026-07-25（B5）：Python/venv 指引从 static.md 移入 Shell.md——它讲的全是 shell 行为，
-  // 应随 Shell 工具一起条件化。正面锚点从 promptRenderer.test.ts 迁来：Python 能力必须表述为
-  // "取决于当前运行时"，不得退回"本机内置 venv"的陈旧假设。
-  it('Shell description carries runtime-dependent Python guidance (drift guard)', () => {
-    expect(runShellToolDescriptor.description).toContain('python3');
-    expect(runShellToolDescriptor.description).toContain('取决于当前运行时');
+  // 2026-07-25（B5）：Python/venv 指引从 static.md 移入 Shell.md。正向片段已进
+  // invariants；这里守负向——不得退回"本机内置 venv"的陈旧假设。
+  it('Shell description does not resurrect the stale venv assumption', () => {
     expect(runShellToolDescriptor.description).not.toContain('工作区内置 venv');
   });
 

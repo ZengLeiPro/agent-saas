@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_CN_DIRECT_SUFFIXES,
   DEFAULT_EGRESS_CONFIG,
   FORCED_SANDBOX_NO_PROXY,
   buildNoProxyList,
@@ -97,6 +98,38 @@ describe('buildSandboxProxyEnv', () => {
     expect(byName.no_proxy).toBe(byName.NO_PROXY);
     expect(byName.NO_PROXY).toContain('internal.example.com');
     expect(byName.NO_PROXY).toContain('100.100.2.136');
+  });
+});
+
+describe('DEFAULT_CN_DIRECT_SUFFIXES 境内兜底', () => {
+  it('容器段默认就带境内后缀——它没有 fail-open，代理挂了这是唯一退路', () => {
+    expect(DEFAULT_EGRESS_CONFIG.sandbox.noProxy.length).toBeGreaterThan(0);
+    for (const suffix of DEFAULT_CN_DIRECT_SUFFIXES) {
+      expect(DEFAULT_EGRESS_CONFIG.sandbox.noProxy).toContain(suffix);
+    }
+    // 镜像源与自家服务必须能在代理故障时直连
+    expect(DEFAULT_CN_DIRECT_SUFFIXES).toContain('.aliyun.com');
+    expect(DEFAULT_CN_DIRECT_SUFFIXES).toContain('.npmmirror.com');
+    expect(DEFAULT_CN_DIRECT_SUFFIXES).toContain('.kaiyan.net');
+  });
+
+  it('境内兜底与强制项合并后无重复', () => {
+    const list = buildNoProxyList([...DEFAULT_CN_DIRECT_SUFFIXES]);
+    expect(new Set(list).size).toBe(list.length);
+    // 强制项仍在最前
+    expect(list[0]).toBe(FORCED_SANDBOX_NO_PROXY[0]);
+  });
+
+  it('境内兜底会真正进入 Pod env 的 NO_PROXY', () => {
+    const env = buildSandboxProxyEnv({
+      enabled: true,
+      proxyUrl: 'http://172.16.177.77:7890',
+      noProxy: [...DEFAULT_CN_DIRECT_SUFFIXES],
+    });
+    const byName = Object.fromEntries(env.map((e) => [e.name, e.value]));
+    expect(byName.NO_PROXY).toContain('.aliyun.com');
+    expect(byName.NO_PROXY).toContain('.dingtalk.com');
+    expect(byName.no_proxy).toBe(byName.NO_PROXY);
   });
 });
 

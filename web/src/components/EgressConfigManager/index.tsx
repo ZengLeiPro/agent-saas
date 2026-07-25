@@ -28,7 +28,16 @@ const EMPTY_CONFIG: EgressConfig = {
     timeoutMs: 20_000,
     failOpen: true,
   },
-  sandbox: { enabled: false, proxyUrl: "", noProxy: [] },
+  sandbox: {
+    enabled: false,
+    proxyUrl: "",
+    // 与服务端默认一致：容器段没有降级机制，境内后缀兜底不能少
+    noProxy: [
+      ".cn", ".aliyun.com", ".alicdn.com", ".volces.com", ".volcengine.com",
+      ".dingtalk.com", ".npmmirror.com", ".qq.com", ".tencent.com",
+      ".baidu.com", ".163.com", ".huaweicloud.com", ".kaiyan.net",
+    ],
+  },
   packageMirrors: {
     enabled: false,
     pipIndexUrl: "https://mirrors.aliyun.com/pypi/simple/",
@@ -375,9 +384,15 @@ export function EgressConfigManager() {
             </div>
           </CardHeader>
           <CardContent className="grid gap-5">
-            <div className="rounded-md border border-warning/30 bg-warning-subtle px-3 py-2 text-xs leading-5 text-warning-ink">
-              环境变量在容器创建时固化，因此这里的改动<strong>只对新建容器生效</strong>。
-              已在运行的容器需等待其空闲暂停后重建，或在「执行环境池」里手动删除对应容器。
+            <div className="space-y-2">
+              <div className="rounded-md border border-warning/30 bg-warning-subtle px-3 py-2 text-xs leading-5 text-warning-ink">
+                环境变量在容器创建时固化，因此这里的改动<strong>只对新建容器生效</strong>。
+                已在运行的容器需等待其空闲暂停后重建，或在「执行环境池」里手动删除对应容器。
+              </div>
+              <div className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-xs leading-5 text-danger-ink">
+                与上方平台出站不同，容器段<strong>没有自动降级</strong>：代理不可用时容器将完全无法访问外部网络。
+                请务必在下方保留境内域名兜底，让代理故障时容器仍能访问镜像源与境内服务。
+              </div>
             </div>
             <Field
               label="代理地址"
@@ -392,8 +407,8 @@ export function EgressConfigManager() {
               />
             </Field>
             <Field
-              label="额外绕过代理的地址"
-              description="每行一条。本机地址、VPC DNS、内网段、.aliyuncs.com 与集群域名已强制绕过，无需重复填写。"
+              label="绕过代理的地址（含境内兜底）"
+              description="每行一条。本机地址、VPC DNS、内网段、.aliyuncs.com 与集群域名已强制绕过，无需重复填写。此处的境内后缀是代理故障时的唯一退路，删除前请确认。"
             >
               <Textarea
                 aria-label="容器绕过代理地址"

@@ -11,6 +11,7 @@ import {
   normalizeNetworkPolicy,
 } from '../runtime/networkPolicy.js';
 import {
+  DEFAULT_CN_DIRECT_SUFFIXES,
   DEFAULT_EGRESS_CONFIG,
   DEFAULT_NPM_REGISTRY,
   DEFAULT_PIP_INDEX_URL,
@@ -1175,8 +1176,11 @@ export const egressServerProxyConfigSchema = z.object({
 export const egressSandboxProxyConfigSchema = z.object({
   enabled: z.boolean().default(false),
   proxyUrl: z.string().default(''),
-  /** 额外绕过代理的地址；VPC DNS/localhost/内网段由服务端强制补齐 */
-  noProxy: z.array(z.string().min(1)).default([]),
+  /**
+   * 额外绕过代理的地址；VPC DNS/localhost/内网段由服务端强制补齐。
+   * 默认带境内后缀兜底——容器段没有 fail-open，代理挂了这些还能直连。
+   */
+  noProxy: z.array(z.string().min(1)).default([...DEFAULT_CN_DIRECT_SUFFIXES]),
 });
 
 export const egressPackageMirrorsConfigSchema = z.object({

@@ -71,6 +71,36 @@ export const FORCED_SANDBOX_NO_PROXY = [
 ] as const;
 
 /**
+ * 容器段代理的「境内直连兜底」默认值。
+ *
+ * 为什么需要：server 段代理不通时能 fail-open 降级直连，但容器段是写进 Pod env
+ * 的静态配置，**没有降级机制**——代理一挂，容器连境内都出不去，因为所有流量都
+ * 交给了代理。而代理所在机器有实打实的故障史（2026-07-14 GEOIP 误分流导致六连
+ * 失败、07-23 假活 3 小时 19 分）。
+ *
+ * 把常见境内后缀放进 noProxy 默认值，代理挂掉时容器至少还能访问镜像源、钉钉、
+ * 火山、自家服务，不至于全线断网。管理员可按需增删。
+ *
+ * 与 FORCED_SANDBOX_NO_PROXY 的区别：那些是少一条就会让容器起不来或 DNS 断掉的
+ * 内网地址，不可删；这里是可调的策略默认值。
+ */
+export const DEFAULT_CN_DIRECT_SUFFIXES = [
+  '.cn',
+  '.aliyun.com',
+  '.alicdn.com',
+  '.volces.com',
+  '.volcengine.com',
+  '.dingtalk.com',
+  '.npmmirror.com',
+  '.qq.com',
+  '.tencent.com',
+  '.baidu.com',
+  '.163.com',
+  '.huaweicloud.com',
+  '.kaiyan.net',
+] as const;
+
+/**
  * 默认镜像源必须用**公网**地址。
  *
  * 曾用阿里云内网源 `mirrors.cloud.aliyuncs.com`，2026-07-25 生产实测发现它解析到
@@ -97,7 +127,8 @@ export const DEFAULT_EGRESS_CONFIG: EgressConfig = Object.freeze({
   sandbox: Object.freeze({
     enabled: false,
     proxyUrl: '',
-    noProxy: [],
+    // 默认带上境内直连兜底：容器段没有 fail-open，代理挂了这些还能走
+    noProxy: [...DEFAULT_CN_DIRECT_SUFFIXES],
   }),
   packageMirrors: Object.freeze({
     enabled: false,

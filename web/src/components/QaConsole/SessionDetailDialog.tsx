@@ -11,6 +11,7 @@ import { FilePreviewProvider } from '@/contexts/FilePreviewContext';
 import { mapSessionDetailToMessages, type ApiSessionDetail } from '@/lib/sessionsApi';
 import { authFetch } from '@/lib/authFetch';
 import { isKbPath } from '@agent/shared';
+import { QaErrorNotice } from './shared';
 import type { QaSessionItem } from './types';
 
 /**
@@ -95,7 +96,11 @@ export function SessionDetailDialog({
               <Loader2 className="mr-2 size-4 animate-spin" />加载会话记录...
             </div>
           ) : error ? (
-            <div className="flex flex-1 items-center justify-center px-6 text-sm text-destructive">{error}</div>
+            <div className="flex flex-1 items-center justify-center px-6">
+              <div className="w-full max-w-md">
+                <QaErrorNotice error={error} />
+              </div>
+            </div>
           ) : (
             <FilePreviewProvider
               value={{

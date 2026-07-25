@@ -1,7 +1,8 @@
 import { useCallback, useMemo } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw, ThumbsUp } from 'lucide-react';
 import { AdminSelect } from '@/components/ui/admin-select';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/PlatformAdmin/common';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,7 +11,7 @@ import { cn } from '@/lib/utils';
 import type { OrgAgentRecord } from '@agent/shared';
 import { HISTORY_PUSH, HISTORY_PUSH_MERGED, useAdminUrlQuery } from '@/hooks/useAdminUrlQuery';
 import { useQaFeedback } from './hooks';
-import { QaUnavailableHint, formatQaTime, orgAgentSelectOptions } from './shared';
+import { QaErrorNotice, QaUnavailableHint, formatQaTime, orgAgentSelectOptions } from './shared';
 
 /** 用户反馈标注视图（offset 分页）：员工点「踩」的回答 + 评论 */
 export function FeedbackView({ tenantId, orgAgents }: { tenantId?: string; orgAgents: OrgAgentRecord[] }) {
@@ -22,6 +23,12 @@ export function FeedbackView({ tenantId, orgAgents }: { tenantId?: string; orgAg
   const setOrgAgentId = useCallback((value: string) => url.set('qaFeedbackAgent', value || null, HISTORY_PUSH), [url]);
   const setStartDate = useCallback((value: string) => url.set('qaFeedbackFrom', value || null, HISTORY_PUSH_MERGED), [url]);
   const setEndDate = useCallback((value: string) => url.set('qaFeedbackTo', value || null, HISTORY_PUSH_MERGED), [url]);
+
+  // 空态要能分辨「真的没有」和「被筛没了」，后者必须给一条退路
+  const hasFilters = Boolean(orgAgentId) || Boolean(startDate) || Boolean(endDate);
+  const clearFilters = useCallback(() => {
+    url.patch({ qaFeedbackAgent: null, qaFeedbackFrom: null, qaFeedbackTo: null }, HISTORY_PUSH);
+  }, [url]);
 
   const filter = useMemo(() => ({
     tenantId,
@@ -67,7 +74,7 @@ export function FeedbackView({ tenantId, orgAgents }: { tenantId?: string; orgAg
         </CardContent>
       </Card>
 
-      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+      {error && <QaErrorNotice error={error} onRetry={refresh} />}
 
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-3">
@@ -82,7 +89,16 @@ export function FeedbackView({ tenantId, orgAgents }: { tenantId?: string; orgAg
               <Loader2 className="mr-2 size-4 animate-spin" />加载反馈...
             </div>
           ) : items.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">暂无用户反馈</div>
+            <EmptyState
+              compact
+              icon={ThumbsUp}
+              tone={hasFilters ? 'default' : 'positive'}
+              title={hasFilters ? '当前筛选条件下没有反馈' : '期间没有收到负面反馈'}
+              description={hasFilters
+                ? '换个专家或放宽时间范围再看看。'
+                : '成员对回答不满意时点「踩」，反馈会出现在这里。'}
+              action={hasFilters ? { label: '清除筛选', onClick: clearFilters } : undefined}
+            />
           ) : (
             <Table>
               <TableHeader>

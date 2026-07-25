@@ -1,7 +1,76 @@
-import { Database, Info } from 'lucide-react';
+import { useState } from 'react';
+import { Check, Copy, Database, Info, RefreshCw, TriangleAlert } from 'lucide-react';
 import type { OrgAgentRecord } from '@agent/shared';
 import type { AdminSelectOption } from '@/components/ui/admin-select';
+import { Button } from '@/components/ui/button';
+import { classifyLoadError } from '@/components/PlatformAdmin/errorText';
 import { cn } from '@/lib/utils';
+
+/**
+ * 客户面错误提示。
+ *
+ * 与 `common/AdminErrorAlert` 的区别：**不渲染 technicalDetail**。
+ * AdminErrorAlert 会折叠展示原始错误串，那是给内部运维排查用的；这一屏是给
+ * 客户组织管理员看的，原始 `HTTP 500` / request id 不该出现在他面前
+ * （2026-07-21 客户面禁技术归因）。改造前 QaConsole 七处直接渲染 error.message，
+ * `HTTP 500` 会原样显示给客户。
+ *
+ * 同时补上重试入口——改造前这些错误态只有一行红字，用户唯一的出路是刷新整页。
+ */
+export function QaErrorNotice({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+  const friendly = classifyLoadError(error);
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-danger-ink">
+      <div className="flex min-w-0 items-start gap-2">
+        <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+        <div className="min-w-0 space-y-0.5">
+          <div className="text-sm font-medium">{friendly.summary}</div>
+          {friendly.suggestion && <div className="text-xs opacity-90">{friendly.suggestion}</div>}
+        </div>
+      </div>
+      {onRetry && (
+        <Button variant="outline" size="sm" className="shrink-0" onClick={onRetry}>
+          <RefreshCw className="mr-1.5 size-3.5" />
+          重试
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 客户面可复制编号。
+ *
+ * 改造前是 `sessionId.slice(0, 8)` —— 一段既不完整、又不能复制、也点不动的
+ * 字符。客户发现某个会话有问题想反馈给我们时，手上只有半截 ID。
+ *
+ * 不用 `common/EntityLink`：那个会跳 platform-admin 路由，客户没有权限。
+ * 这里只做「看得见前 8 位 + 一键复制完整值」。
+ */
+export function QaCopyableId({ id, label = '会话编号' }: { id: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="group/id inline-flex items-center gap-1 rounded text-xs text-muted-foreground hover:text-foreground"
+      title={`${label} ${id}（点击复制完整编号）`}
+      aria-label={`复制${label} ${id}`}
+      onClick={(event) => {
+        // 行本身可点开详情，复制不该顺带打开弹窗
+        event.stopPropagation();
+        void navigator.clipboard?.writeText(id).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1200);
+        }).catch(() => undefined);
+      }}
+    >
+      <span className="font-mono">{id.slice(0, 8)}</span>
+      {copied
+        ? <Check className="size-3 text-success" />
+        : <Copy className="size-3 opacity-0 transition-opacity group-hover/id:opacity-100 group-focus-visible/id:opacity-100" />}
+    </button>
+  );
+}
 
 /** 数据面不可用（file backend 未装配 PG）：503 → 隐藏功能换提示 */
 export function QaUnavailableHint() {

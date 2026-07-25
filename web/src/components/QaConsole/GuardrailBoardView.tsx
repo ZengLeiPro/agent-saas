@@ -36,6 +36,7 @@ import {
   formatPercent,
   formatQaTime,
   orgAgentSelectOptions,
+  QaErrorNotice,
 } from './shared';
 import type { QaGuardrailMode } from './types';
 
@@ -132,6 +133,25 @@ export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string;
   ));
   const agentNameById = useMemo(() => new Map(orgAgents.map((a) => [a.id, a.name])), [orgAgents]);
 
+  /**
+   * 看板 → 门禁日志（只看拒答）。
+   *
+   * 一次 patch 同时改视图与筛选，而不是「先切视图再设筛选」两次写 URL：
+   * 分两步写会让门禁日志先用旧筛选拉一次数据，白跑一个请求还会闪一下旧结果。
+   *
+   * 时间范围只在用户显式改过（URL 上有值）时才带过去。看板默认 30 天窗口是算出来的、
+   * 不写 URL，硬塞过去会让门禁日志显示一个用户从没选过的日期区间。
+   */
+  const viewRejectionLogs = useCallback(() => {
+    url.patch({
+      qaView: 'guardrail',
+      qaLogResult: 'off_topic',
+      qaLogAgent: orgAgentId || null,
+      qaLogFrom: url.get(BOARD_FROM_KEY),
+      qaLogTo: url.get(BOARD_TO_KEY),
+    }, HISTORY_PUSH);
+  }, [orgAgentId, url]);
+
   if (availability === 'unavailable') return <QaUnavailableHint />;
 
   const pendingAppeals = appeals.items.filter((a) => a.status === 'pending').length;
@@ -171,8 +191,17 @@ export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string;
           </Button>
         ))}
         <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+          {/*
+            这块徽章之下的三个 KPI 与四个子视图**全部**基于被截断的 200 条样本算出来的。
+            改造前只有「近 200 条估算」四个字、无任何解释，用户不会知道自己看的是抽样。
+          */}
           {truncated && (
-            <Badge variant="warning">近 200 条估算</Badge>
+            <Badge
+              variant="warning"
+              title="当前范围记录数超过 200 条，页面上的比率与分布基于最近 200 条抽样计算，不是全量精确值。缩小时间范围可得到精确结果。"
+            >
+              近 200 条估算
+            </Badge>
           )}
           <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
             <RefreshCw className={cn('mr-2 size-3.5', loading && 'animate-spin')} />刷新
@@ -234,7 +263,7 @@ export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string;
         </CardContent>
       </Card>
 
-      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+      {error && <QaErrorNotice error={error} onRetry={refresh} />}
 
       {/* 4 视图子 tab */}
       <nav className="flex items-center gap-1 border-b" aria-label="门禁看板子视图">
@@ -270,7 +299,13 @@ export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string;
         </div>
       ) : (
         <div>
-          {subView === 'top' && <TopRejectionsView board={board} agentNameById={agentNameById} />}
+          {subView === 'top' && (
+            <TopRejectionsView
+              board={board}
+              agentNameById={agentNameById}
+              onViewRejectionLogs={board.offTopicCount > 0 ? viewRejectionLogs : undefined}
+            />
+          )}
           {subView === 'model' && <ModelBreakdownView board={board} />}
           {subView === 'latency' && <LatencyView board={board} />}
           {subView === 'appeals' && (
@@ -300,9 +335,12 @@ export function GuardrailBoardView({ tenantId, orgAgents }: { tenantId?: string;
 function TopRejectionsView({
   board,
   agentNameById: _agentNameById,
+  onViewRejectionLogs,
 }: {
   board: ReturnType<typeof useQaGuardrailBoard>['board'];
   agentNameById: Map<string, string>;
+  /** 跳到门禁日志并只看拒答。undefined 表示宿主没提供子视图切换，此时不渲染入口 */
+  onViewRejectionLogs?: () => void;
 }) {
   if (board.topRejections.length === 0) {
     return <EmptyBlock>当前范围无拒答记录</EmptyBlock>;
@@ -310,8 +348,26 @@ function TopRejectionsView({
   const totalTop = board.topRejections.reduce((sum, item) => sum + item.count, 0);
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex-row items-start justify-between gap-3">
         <CardTitle className="text-base">按 message 类型 Top 10（{board.offTopicCount} 拒答 · {board.passFlaggedCount} 放行打标）</CardTitle>
+        {/*
+          改造前这一屏是死路：看到拒答分布，没有任何入口去看具体记录。
+
+          注意措辞——门禁日志只支持按专家/判定/日期筛选，**没有按 message 文本筛的参数**，
+          所以跳过去是「这段时间的全部拒答」而不是「这一类拒答」。文案必须说清楚，
+          否则用户会以为筛的是自己刚点的那一类。
+        */}
+        {onViewRejectionLogs && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={onViewRejectionLogs}
+            title="按当前专家与时间范围，查看全部拒答明细"
+          >
+            查看拒答明细
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
         {board.topRejections.map((item, idx) => (
@@ -478,7 +534,7 @@ function AppealsView({
     );
   }
   if (error) {
-    return <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>;
+    return <QaErrorNotice error={error} />;
   }
   if (appeals.length === 0) {
     return <EmptyBlock>当前范围无申诉记录</EmptyBlock>;
@@ -487,7 +543,7 @@ function AppealsView({
   return (
     <div className="space-y-3">
       {actionError && (
-        <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{actionError}</div>
+        <QaErrorNotice error={actionError} />
       )}
       <Card>
         <CardContent className="p-0">

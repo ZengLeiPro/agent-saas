@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, MessageSquareOff, RefreshCw } from 'lucide-react';
 import { AdminSelect, type AdminSelectOption } from '@/components/ui/admin-select';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/PlatformAdmin/common';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,7 +13,8 @@ import { cn } from '@/lib/utils';
 import type { OrgAgentRecord } from '@agent/shared';
 import { useQaSessions } from './hooks';
 import { SessionDetailDialog } from './SessionDetailDialog';
-import { QaUnavailableHint, formatQaTime, orgAgentSelectOptions } from './shared';
+import { QaCopyableId, QaErrorNotice, QaUnavailableHint, formatQaTime, orgAgentSelectOptions } from './shared';
+import { formatRunStatus } from '@/components/PlatformAdmin/displayText';
 import type { QaSessionItem } from './types';
 
 /** 专职 Agent 会话列表视图：Agent/成员/时间过滤 + cursor 加载更多 + 行点击开详情 */
@@ -29,6 +31,12 @@ export function SessionsView({ tenantId, orgAgents }: { tenantId?: string; orgAg
   const setStartDate = useCallback((value: string) => url.set('qaFrom', value || null, HISTORY_PUSH_MERGED), [url]);
   const setEndDate = useCallback((value: string) => url.set('qaTo', value || null, HISTORY_PUSH_MERGED), [url]);
   const [detailSession, setDetailSession] = useState<QaSessionItem | null>(null);
+  // 空态要能分辨「真的没有」和「被筛没了」，后者必须给一条退路
+  const hasFilters = Boolean(orgAgentId) || Boolean(userId) || Boolean(startDate) || Boolean(endDate);
+  const clearFilters = useCallback(() => {
+    url.patch({ qaAgent: null, qaMember: null, qaFrom: null, qaTo: null }, HISTORY_PUSH);
+  }, [url]);
+
 
   const tenantUsers = useMemo(
     () => (tenantId ? users.filter((user) => user.tenantId === tenantId) : users),
@@ -94,7 +102,7 @@ export function SessionsView({ tenantId, orgAgents }: { tenantId?: string; orgAg
         </CardContent>
       </Card>
 
-      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+      {error && <QaErrorNotice error={error} onRetry={refresh} />}
 
       <Card>
         <CardContent className="p-0">
@@ -103,7 +111,15 @@ export function SessionsView({ tenantId, orgAgents }: { tenantId?: string; orgAg
               <Loader2 className="mr-2 size-4 animate-spin" />加载会话...
             </div>
           ) : items.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">暂无企业专家会话</div>
+            <EmptyState
+              compact
+              icon={MessageSquareOff}
+              title={hasFilters ? '当前筛选条件下没有会话' : '还没有企业专家会话'}
+              description={hasFilters
+                ? '换个专家或放宽时间范围再看看。'
+                : '成员开始与企业专家对话后，会话会出现在这里。'}
+              action={hasFilters ? { label: '清除筛选', onClick: clearFilters } : undefined}
+            />
           ) : (
             <Table>
               <TableHeader>
@@ -124,13 +140,16 @@ export function SessionsView({ tenantId, orgAgents }: { tenantId?: string; orgAg
                   >
                     <TableCell>
                       <div className="max-w-sm truncate text-sm font-medium">{item.title || '未命名会话'}</div>
-                      <div className="text-xs text-muted-foreground">{item.sessionId.slice(0, 8)}</div>
+                      <QaCopyableId id={item.sessionId} />
                     </TableCell>
-                    <TableCell className="text-sm">{item.username || item.userId || '-'}</TableCell>
+                    <TableCell className="text-sm">{item.username || item.userId || '—'}</TableCell>
                     <TableCell className="text-sm">
-                      {item.orgAgentAvatar ? `${item.orgAgentAvatar} ` : ''}{item.orgAgentName || item.orgAgentId || '-'}
+                      {item.orgAgentAvatar ? `${item.orgAgentAvatar} ` : ''}{item.orgAgentName || item.orgAgentId || '—'}
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{item.runtimeStatus || '-'}</TableCell>
+                    {/* 状态走中文映射：改造前直接显示 running / completed 这类英文原值 */}
+                    <TableCell className="text-xs text-muted-foreground">
+                      {item.runtimeStatus ? formatRunStatus(item.runtimeStatus) : '—'}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatQaTime(item.updatedAt)}</TableCell>
                   </TableRow>
                 ))}

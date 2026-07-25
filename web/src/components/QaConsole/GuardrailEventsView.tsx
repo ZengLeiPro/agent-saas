@@ -1,8 +1,9 @@
 import { useCallback, useMemo } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { CircleCheck, Loader2, RefreshCw } from 'lucide-react';
 import { AdminSelect, type AdminSelectOption } from '@/components/ui/admin-select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/PlatformAdmin/common';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,7 +12,7 @@ import { HISTORY_PUSH, HISTORY_PUSH_MERGED, useAdminUrlQuery } from '@/hooks/use
 import { cn } from '@/lib/utils';
 import type { OrgAgentRecord } from '@agent/shared';
 import { useQaGuardrailEvents } from './hooks';
-import { QaUnavailableHint, formatQaTime, orgAgentSelectOptions } from './shared';
+import { QaErrorNotice, QaUnavailableHint, formatQaTime, orgAgentSelectOptions } from './shared';
 
 const VERDICT_OPTIONS: AdminSelectOption[] = [
   { value: '', label: '全部' },
@@ -33,6 +34,12 @@ export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string
   const setVerdict = useCallback((value: string) => url.set('qaLogResult', value || null, HISTORY_PUSH), [url]);
   const setStartDate = useCallback((value: string) => url.set('qaLogFrom', value || null, HISTORY_PUSH_MERGED), [url]);
   const setEndDate = useCallback((value: string) => url.set('qaLogTo', value || null, HISTORY_PUSH_MERGED), [url]);
+
+  // 空态要能分辨「真的没有」和「被筛没了」，后者必须给一条退路
+  const hasFilters = Boolean(orgAgentId) || Boolean(rawResult) || Boolean(startDate) || Boolean(endDate);
+  const clearFilters = useCallback(() => {
+    url.patch({ qaLogAgent: null, qaLogResult: null, qaLogFrom: null, qaLogTo: null }, HISTORY_PUSH);
+  }, [url]);
 
   const filter = useMemo(() => ({
     tenantId,
@@ -90,7 +97,7 @@ export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string
         </CardContent>
       </Card>
 
-      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+      {error && <QaErrorNotice error={error} onRetry={refresh} />}
 
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-3">
@@ -105,7 +112,16 @@ export function GuardrailEventsView({ tenantId, orgAgents }: { tenantId?: string
               <Loader2 className="mr-2 size-4 animate-spin" />加载门禁记录...
             </div>
           ) : events.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">暂无门禁记录</div>
+            <EmptyState
+              compact
+              icon={CircleCheck}
+              tone={hasFilters ? 'default' : 'positive'}
+              title={hasFilters ? '当前筛选条件下没有门禁记录' : '期间没有触发门禁'}
+              description={hasFilters
+                ? '换个专家、判定结果或放宽时间范围再看看。'
+                : '说明成员的提问都在专家的服务范围内。'}
+              action={hasFilters ? { label: '清除筛选', onClick: clearFilters } : undefined}
+            />
           ) : (
             <Table>
               <TableHeader>

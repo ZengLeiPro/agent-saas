@@ -154,6 +154,60 @@ const METADATA_RULES: Record<string, MetadataRule> = {
     if (bytes !== undefined) detail.push({ tree: '└', k: '写入', v: formatBytes(bytes) });
     return { title: `写入 ${basename(filePath)}`, detail, status: 'ok' };
   },
+
+  Read: (input, metadata) => {
+    const filePath = str(metadata.path) ?? str(input.file_path) ?? str(input.path);
+    if (!filePath) return null;
+    const linesRead = num(metadata.linesRead);
+    const fileBytes = num(metadata.fileBytes);
+    const truncated = metadata.truncated === true;
+
+    const detail: PresentationDetailLine[] = [{ k: '路径', v: filePath }];
+    // 请求范围与实读行数分开写：两者不一致本身就是重要信息
+    if (metadata.ranged === true) {
+      const offset = num(input.offset) ?? 1;
+      const limit = num(input.limit);
+      detail.push({
+        tree: '├',
+        k: '请求范围',
+        v: limit !== undefined ? `第 ${offset}–${offset + limit} 行` : `自第 ${offset} 行`,
+      });
+    }
+    if (linesRead !== undefined) detail.push({ tree: '├', k: '实读', v: `${linesRead.toLocaleString('zh-CN')} 行` });
+    if (fileBytes !== undefined) detail.push({ tree: '└', k: '文件大小', v: formatBytes(fileBytes) });
+    if (truncated) {
+      const shown = num(metadata.shownBytes);
+      detail.push({ indent: 0, text: shown !== undefined ? `⚠ 超出单次读取上限，仅返回前 ${formatBytes(shown)}` : '⚠ 内容已截断' });
+    }
+
+    return {
+      title: `读取 ${basename(filePath)}`,
+      detail,
+      status: truncated ? 'warn' : 'ok',
+    };
+  },
+
+  Edit: (input, metadata) => {
+    const filePath = str(metadata.path) ?? str(input.file_path);
+    if (!filePath) return null;
+    const replacements = num(metadata.replacements);
+    const occurrences = num(metadata.occurrences);
+    const before = num(metadata.bytesBefore);
+    const after = num(metadata.bytesAfter);
+
+    const detail: PresentationDetailLine[] = [{ k: '路径', v: filePath }];
+    if (replacements !== undefined) {
+      // 命中多处但只替换一处时把两个数都写出来——这正是 replace_all 语义最容易看漏的地方
+      const hint = occurrences !== undefined && occurrences !== replacements ? `（命中 ${occurrences} 处）` : '';
+      detail.push({ tree: '├', k: '替换', v: `${replacements} 处${hint}` });
+    }
+    if (before !== undefined && after !== undefined) {
+      const delta = after - before;
+      const sign = delta > 0 ? '+' : delta < 0 ? '−' : '±';
+      detail.push({ tree: '└', k: '体积变化', v: `${sign}${formatBytes(Math.abs(delta))}` });
+    }
+    return { title: `修改 ${basename(filePath)}`, detail, status: 'ok' };
+  },
 };
 
 const RULES: Record<string, Rule> = {
@@ -229,9 +283,9 @@ const RULES: Record<string, Rule> = {
  * 未覆盖数量设只减不增的上限——这是防止「数据后补」再次无限期拖下去的闸门。
  */
 export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
-  { tool: 'Read', state: 'partial', gap: '缺读取行数/截断提示；Read 的 provider 目前不产出 metadata，需先补' },
+  { tool: 'Read', state: 'covered' },
   { tool: 'Write', state: 'covered' },
-  { tool: 'Edit', state: 'partial', gap: '缺替换处数；Edit 的 provider 目前不产出 metadata，需先补' },
+  { tool: 'Edit', state: 'covered' },
   {
     tool: 'Shell',
     state: 'covered',
@@ -249,10 +303,10 @@ export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
  * 未覆盖（state !== 'covered'）工具数的上限，**只减不增**。
  *
  * 每让一个工具真正做到 covered，就把这个数字减一并在 PR 里说明。
- * 07-25：Shell 与 Write 接上截断前 metadata，9 → 7。
+ * 07-25：Shell 与 Write 接上截断前 metadata，9 → 7；Read 与 Edit 补 provider metadata，7 → 5。
  * 调高它需要 code review 显式批准——这正是 `[CITE]` 当年缺的那道闸门。
  */
-export const PRESENTATION_TODO_BUDGET = 7;
+export const PRESENTATION_TODO_BUDGET = 5;
 
 /**
  * 在工具执行结果上补一份「给人看」摘要。

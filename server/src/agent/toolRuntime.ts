@@ -575,8 +575,8 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
       switch (toolName) {
         case 'Read': {
           const args = input as { path: string; offset?: number; limit?: number };
-          const content = await this._readFile(workspace, args.path, { offset: args.offset, limit: args.limit });
-          return { status: 'success', content };
+          const read = await this._readFile(workspace, args.path, { offset: args.offset, limit: args.limit });
+          return { status: 'success', content: read.content, metadata: read.metadata };
         }
         case 'Write': {
           const args = input as { path: string; content: string };
@@ -594,7 +594,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
         }
         case 'Edit': {
           const result = await runWorkspaceEdit(input as Parameters<typeof runWorkspaceEdit>[0], workspace, (fullPath) => assertSandboxReadAllowed(workspace, fullPath));
-          return { status: 'success', content: result.content };
+          return { status: 'success', content: result.content, ...(result.metadata ? { metadata: result.metadata } : {}) };
         }
         case 'CreateArtifact': {
           const payload = await createWorkspaceArtifactPayload(input as Parameters<typeof createWorkspaceArtifactPayload>[0], workspace, (fullPath) => assertSandboxReadAllowed(workspace, fullPath));
@@ -641,34 +641,59 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     }
   }
 
+  /**
+   * 返回内容 + **截断前**的真实统计。
+   *
+   * 统计必须在这里产出：调用链下游拿到的只是可能已被截断的文本，
+   * 在那上面数行数会静默错报（少报正是最危险的错报——读者会以为文件就这么大）。
+   */
   private async _readFile(
     workspace: WorkspaceRef,
     path: string,
     options: { offset?: number; limit?: number } = {},
-  ): Promise<string> {
+  ): Promise<{ content: string; metadata: Record<string, unknown> }> {
     const fullPath = resolveWorkspacePath(workspace.root, path);
     assertSandboxReadAllowed(workspace, fullPath);
     const fileStat = await stat(fullPath);
     if (!fileStat.isFile()) throw new Error(`Read: path is not a file (${path})`);
     const relPath = relativeWorkspacePath(workspace.root, fullPath);
+    const countLines = (text: string): number => (text ? text.split('\n').length : 0);
+
     if (options.offset !== undefined || options.limit !== undefined) {
-      return await readLineRange(fullPath, relPath, {
+      const content = await readLineRange(fullPath, relPath, {
         offset: options.offset ?? 1,
         limit: options.limit ?? MAX_READ_LINES,
       });
+      return {
+        content,
+        metadata: { path: relPath, fileBytes: fileStat.size, linesRead: countLines(content), ranged: true },
+      };
     }
     if (fileStat.size <= MAX_FILE_BYTES) {
       const handle = await open(fullPath, 'r');
       try {
         const buffer = Buffer.alloc(fileStat.size);
         const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-        return buffer.toString('utf-8', 0, bytesRead);
+        const content = buffer.toString('utf-8', 0, bytesRead);
+        return {
+          content,
+          metadata: { path: relPath, fileBytes: fileStat.size, linesRead: countLines(content) },
+        };
       } finally {
         await handle.close();
       }
     }
     const prefix = await readFilePrefix(fullPath, MAX_FILE_BYTES);
-    return `${prefix}\n...[truncated: file ${relPath} is ${fileStat.size} bytes; showing first ${MAX_FILE_BYTES} bytes. Use Read with {"path":"${relPath}","offset":1,"limit":${MAX_READ_LINES}} to continue by line chunks.]`;
+    return {
+      content: `${prefix}\n...[truncated: file ${relPath} is ${fileStat.size} bytes; showing first ${MAX_FILE_BYTES} bytes. Use Read with {"path":"${relPath}","offset":1,"limit":${MAX_READ_LINES}} to continue by line chunks.]`,
+      metadata: {
+        path: relPath,
+        fileBytes: fileStat.size,
+        linesRead: countLines(prefix),
+        truncated: true,
+        shownBytes: MAX_FILE_BYTES,
+      },
+    };
   }
 
   private async _writeFile(workspace: WorkspaceRef, path: string, content: string): Promise<string> {

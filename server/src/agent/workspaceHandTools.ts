@@ -86,7 +86,7 @@ export async function runWorkspaceEdit(
   input: EditInput,
   workspace: WorkspaceRef,
   guard?: PathGuard,
-): Promise<ToolResult> {
+): Promise<ToolResult & { metadata?: Record<string, unknown> }> {
   const fullPath = resolveInsideWorkspace(workspace.root, input.file_path);
   guard?.(fullPath);
   const relPath = relativeWorkspacePath(workspace.root, fullPath);
@@ -129,6 +129,14 @@ export async function runWorkspaceEdit(
   await writeFile(fullPath, updated, 'utf-8');
   return {
     content: `Edited ${relPath} (${replacements} replacement${replacements === 1 ? '' : 's'}, ${updated.length} bytes).`,
+    // 摘要要说清「实际替换了几处」——replace_all 时 1 处与 37 处在审计上完全不同
+    metadata: {
+      path: relPath,
+      replacements,
+      occurrences,
+      bytesBefore: content.length,
+      bytesAfter: updated.length,
+    },
   };
 }
 

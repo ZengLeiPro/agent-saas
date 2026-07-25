@@ -118,6 +118,49 @@ describe('截断前 metadata 规则', () => {
     ]);
   });
 
+  it('Read 区分「请求范围」与「实读行数」——两者不一致本身就是信息', () => {
+    const result = buildToolPresentation(
+      'Read',
+      { path: '制度/差旅.md', offset: 120, limit: 60 },
+      undefined,
+      { path: '制度/差旅.md', fileBytes: 18_600, linesRead: 41, ranged: true },
+    );
+    expect(result?.detail).toContainEqual({ tree: '├', k: '请求范围', v: '第 120–180 行' });
+    expect(result?.detail).toContainEqual({ tree: '├', k: '实读', v: '41 行' });
+    expect(result?.status).toBe('ok');
+  });
+
+  it('Read 截断时标 warn 并写明只返回了多少', () => {
+    const result = buildToolPresentation(
+      'Read',
+      { path: 'big.log' },
+      undefined,
+      { path: 'big.log', fileBytes: 5_000_000, linesRead: 900, truncated: true, shownBytes: 131_072 },
+    );
+    expect(result?.status).toBe('warn');
+    expect(result?.detail).toContainEqual({ indent: 0, text: '⚠ 超出单次读取上限，仅返回前 128.0 KB' });
+  });
+
+  it('Edit 写出实际替换处数；命中数与替换数不一致时两个都写', () => {
+    const partial = buildToolPresentation(
+      'Edit',
+      { file_path: 'a.ts' },
+      undefined,
+      { path: 'a.ts', replacements: 1, occurrences: 7, bytesBefore: 1000, bytesAfter: 1128 },
+    );
+    expect(partial?.detail).toContainEqual({ tree: '├', k: '替换', v: '1 处（命中 7 处）' });
+    expect(partial?.detail).toContainEqual({ tree: '└', k: '体积变化', v: '+128 B' });
+
+    const all = buildToolPresentation(
+      'Edit',
+      { file_path: 'a.ts', replace_all: true },
+      undefined,
+      { path: 'a.ts', replacements: 7, occurrences: 7, bytesBefore: 1000, bytesAfter: 900 },
+    );
+    expect(all?.detail).toContainEqual({ tree: '├', k: '替换', v: '7 处' });
+    expect(all?.detail).toContainEqual({ tree: '└', k: '体积变化', v: '−100 B' });
+  });
+
   it('字节与耗时的量级格式正确', () => {
     const big = buildToolPresentation('Shell', { command: 'x' }, undefined, { exitCode: 0, stdoutBytes: 3_500_000, durationMs: 125_000 });
     expect(big?.detail).toContainEqual({ tree: '├', k: '输出', v: '3.3 MB' });

@@ -121,7 +121,9 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
   const caption = atEnd ? "演示结束" : script.steps[stepIndex]?.caption ?? "";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    // h-full 而非 flex-1：父级 TabsContent 是普通块、不是 flex 容器，
+    // flex-1 在那里不生效，会导致消息区高度塌陷、回放条被顶到页面上方
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2">
         <Button variant="ghost" size="sm" onClick={onExit} className="gap-1 px-2">
           <ChevronLeft className="size-4" />

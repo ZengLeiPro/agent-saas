@@ -72,8 +72,10 @@ export function CapabilityCenter({
         </div>
 
         <div className="mt-5 min-h-0 flex-1 overflow-y-auto md:mt-0">
+          {/* templates 页签给 h-full：场景回放视图需要确定高度才能铺满并把回放条压在底部；
+              列表态内容超高时照常由父级滚动容器承担 */}
           {personalAgentEnabled && (
-            <TabsContent value="templates" className="mt-0">
+            <TabsContent value="templates" className="mt-0 h-full">
               <ScenariosPanel
                 onTryScenario={onTryScenario}
                 onStartWorkflow={onStartWorkflow}

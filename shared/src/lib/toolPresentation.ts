@@ -61,14 +61,14 @@ export interface ToolPresentation {
 const DETAIL_LINE_LIMIT = 200;
 const TEXT_LIMIT = 500;
 
-function clampText(value: unknown): string | null {
+export function clampText(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
   return trimmed.length > TEXT_LIMIT ? `${trimmed.slice(0, TEXT_LIMIT)}…` : trimmed;
 }
 
-function normalizeDetailLine(raw: unknown): DetailLine | null {
+export function normalizeDetailLine(raw: unknown): DetailLine | null {
   const asText = clampText(raw);
   if (asText !== null) return asText;
   if (!raw || typeof raw !== 'object') return null;

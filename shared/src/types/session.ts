@@ -227,4 +227,9 @@ export interface ApiTranscriptBlock {
    * 与 content/raw（给模型看的原始 payload）并存；缺省时渲染回退到原始 payload。
    */
   presentation?: ToolPresentation;
+  /**
+   * text block：附加呈现块。类型为 unknown——本字段来自不可信来源
+   * （transcript 文件 / 演示剧本 / 工具产出），权威校验器是 normalizeDisplay。
+   */
+  display?: unknown;
 }

@@ -8,6 +8,7 @@ import type { AskUserAnswers } from '../types/message';
 import type { ApiSessionDetail, ApiTranscriptBlock } from '../types/session';
 import { resolveDisplayToolName } from './toolDisplay';
 import { normalizeToolPresentation } from './toolPresentation';
+import { normalizeDisplay } from './presentation/registry';
 
 // -- Interactive tool history restore --
 
@@ -270,13 +271,17 @@ function mapBlock(
         timestamp: block.tsMs,
       };
     }
-    case "text":
+    case "text": {
+      // 呈现块来自不可信来源，归一后才进渲染层；未知 kind 静默丢弃
+      const display = normalizeDisplay(block.display);
       return {
         id, type: "text", content: block.content, streaming: false,
         ...(owner ? { owner } : {}),
         ...(block.guardrailEventId ? { guardrailEventId: block.guardrailEventId } : {}),
+        ...(display ? { display } : {}),
         timestamp: block.tsMs,
       };
+    }
     case "thinking":
       return {
         id,

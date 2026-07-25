@@ -476,6 +476,19 @@ export type { MarkerSegment, CitationSegment } from "./lib/markers";
 export { normalizeToolPresentation } from "./lib/toolPresentation";
 export type { ToolPresentation, ToolReceipt, DetailLine } from "./lib/toolPresentation";
 
+// Lib - 会话区呈现块（kind 闭集 + 参数开集；新增块 = 2 文件 2 行）
+export { normalizeDisplay, BLOCK_NORMALIZERS, listBlockKinds } from "./lib/presentation/registry";
+export type {
+  PresentationBlock,
+  PresentationBlockKind,
+  CalloutBlock,
+  RecordsBlock,
+  GateBlock,
+  RecordItem,
+  BlockAction,
+  Tone,
+} from "./lib/presentation/types";
+
 // Lib - 右侧企业系统面板（与 ToolPresentation 同源，无独立数据通道）
 export { normalizeSystemPanel, normalizePanelPatches, foldPanel } from "./lib/systemPanel";
 export type {

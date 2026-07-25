@@ -1,7 +1,9 @@
 import { memo, useMemo, useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref, type MutableRefObject } from 'react';
 import { ArrowDown, Loader2 } from 'lucide-react';
 import { MessageItem as MessageItemType, type RenderItem } from './types';
-import { MessageItem, type TtsProps } from './MessageItem';
+// 呈现块外挂层：display 缺省时直通 MessageItem，MessageItem.tsx 本身零改动
+import { MessageItemWithDisplay as MessageItem } from './MessageItemWithDisplay';
+import type { TtsProps } from './MessageItem';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
 import { CompactionDivider } from './CompactionDivider';
 import { asCompactionItem } from '@/lib/compaction';

@@ -119,6 +119,14 @@ export function CodePreviewPanel({ filePath, owner, onBack, hideHeader }: CodePr
   const display = state.status === "success" ? normalizeContent(state.content, ext) : "";
   const skipHighlight = display.length > MAX_HIGHLIGHT_CHARS;
 
+  // 读文件与加载 highlight.js chunk 共用同一个加载态：内容已到但高亮器未就绪时
+  // 继续转圈，而不是先出一屏无高亮代码再整块换色。
+  const spinner = (
+    <div className="flex items-center justify-center py-12">
+      <Loader2 className="size-6 animate-spin text-muted-foreground" />
+    </div>
+  );
+
   return (
     <>
       {!hideHeader && (
@@ -137,11 +145,7 @@ export function CodePreviewPanel({ filePath, owner, onBack, hideHeader }: CodePr
       )}
 
       <div ref={printRootRef} className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-card px-4 py-4 lg:px-6">
-        {state.status === "loading" && (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="size-6 animate-spin text-muted-foreground" />
-          </div>
-        )}
+        {state.status === "loading" && spinner}
         {state.status === "error" && (
           <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
             <CircleAlert className="size-6" />
@@ -152,7 +156,7 @@ export function CodePreviewPanel({ filePath, owner, onBack, hideHeader }: CodePr
           skipHighlight ? (
             <pre className="hljs-pre"><code className="hljs">{display}</code></pre>
           ) : (
-            <Suspense fallback={<pre className="hljs-pre"><code className="hljs">{display}</code></pre>}>
+            <Suspense fallback={spinner}>
               <LazyHighlighter content={display} lang={lang} />
             </Suspense>
           )

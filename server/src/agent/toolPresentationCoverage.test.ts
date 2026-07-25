@@ -14,6 +14,7 @@ import {
   PRESENTATION_TODO_BUDGET,
   buildToolPresentation,
   listPresentationRuleNames,
+  listMetadataRuleNames,
 } from './toolPresentationBuilder.js';
 
 describe('产出方登记表', () => {
@@ -50,6 +51,81 @@ describe('产出方登记表', () => {
       `未覆盖 ${pending.length} 个（${pending.map((e) => e.tool).join(', ')}），预算 ${PRESENTATION_TODO_BUDGET}。`
       + '让一个工具做到 covered 后请把 PRESENTATION_TODO_BUDGET 减一；调高需 PR 显式说明。',
     ).toBeLessThanOrEqual(PRESENTATION_TODO_BUDGET);
+  });
+});
+
+describe('截断前 metadata 规则', () => {
+  it('covered 的工具都有 metadata 规则——covered 的定义就是「用了截断前的真实数据」', () => {
+    const metadataRules = new Set(listMetadataRuleNames());
+    for (const entry of PRESENTATION_SOURCES) {
+      if (entry.state !== 'covered') continue;
+      expect(metadataRules.has(entry.tool), `${entry.tool} 标为 covered 但没有 metadata 规则`).toBe(true);
+    }
+  });
+
+  it('Shell 用退出码/字节数/耗时，全部来自截断前', () => {
+    const result = buildToolPresentation(
+      'Shell',
+      { command: 'rg -n foo /w', description: '检索关键词' },
+      undefined,
+      { exitCode: 0, stdoutBytes: 12_698, stderrBytes: 0, durationMs: 3210 },
+    );
+    expect(result?.title).toBe('检索关键词');
+    expect(result?.detail).toEqual([
+      { k: '命令', v: 'rg -n foo /w' },
+      { tree: '├', k: '退出码', v: '0' },
+      { tree: '├', k: '输出', v: '12.4 KB' },
+      { tree: '└', k: '耗时', v: '3.2 s' },
+    ]);
+    expect(result?.status).toBe('ok');
+  });
+
+  it('Shell 非零退出码标记为 warn', () => {
+    const result = buildToolPresentation('Shell', { command: 'false' }, undefined, { exitCode: 1, durationMs: 12 });
+    expect(result?.status).toBe('warn');
+    expect(result?.detail).toContainEqual({ tree: '├', k: '退出码', v: '1' });
+  });
+
+  it('Shell 截断/超时/中止各自留下明确痕迹，不静默', () => {
+    const truncated = buildToolPresentation('Shell', { command: 'x' }, undefined, { exitCode: 0, outputExceeded: true });
+    expect(truncated?.detail).toContainEqual({ indent: 0, text: '⚠ 输出超出捕获上限，已截断' });
+
+    const timedOut = buildToolPresentation('Shell', { command: 'x' }, undefined, { timedOut: true });
+    expect(timedOut?.status).toBe('warn');
+    expect(timedOut?.detail).toContainEqual({ indent: 0, text: '⚠ 执行超时' });
+
+    const aborted = buildToolPresentation('Shell', { command: 'x' }, undefined, { aborted: true });
+    expect(aborted?.status).toBe('warn');
+  });
+
+  it('Shell 无 metadata 时退回入参侧规则，不编造统计', () => {
+    const result = buildToolPresentation('Shell', { command: 'ls', description: '看一眼' });
+    expect(result?.title).toBe('看一眼');
+    expect(result?.detail).toEqual([{ k: '命令', v: 'ls' }]);
+  });
+
+  it('Write 用实际写入字节数，且优先用 metadata 里的真实落盘路径', () => {
+    const result = buildToolPresentation(
+      'Write',
+      { file_path: '相对/路径.md' },
+      undefined,
+      { path: 'workspace/最终/路径.md', bytesWritten: 2458 },
+    );
+    expect(result?.title).toBe('写入 路径.md');
+    expect(result?.detail).toEqual([
+      { k: '路径', v: 'workspace/最终/路径.md' },
+      { tree: '└', k: '写入', v: '2.4 KB' },
+    ]);
+  });
+
+  it('字节与耗时的量级格式正确', () => {
+    const big = buildToolPresentation('Shell', { command: 'x' }, undefined, { exitCode: 0, stdoutBytes: 3_500_000, durationMs: 125_000 });
+    expect(big?.detail).toContainEqual({ tree: '├', k: '输出', v: '3.3 MB' });
+    expect(big?.detail).toContainEqual({ tree: '└', k: '耗时', v: '2 分 5 秒' });
+
+    const small = buildToolPresentation('Shell', { command: 'x' }, undefined, { exitCode: 0, stdoutBytes: 512, durationMs: 40 });
+    expect(small?.detail).toContainEqual({ tree: '├', k: '输出', v: '512 B' });
+    expect(small?.detail).toContainEqual({ tree: '└', k: '耗时', v: '40 ms' });
   });
 });
 

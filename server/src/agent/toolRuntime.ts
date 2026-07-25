@@ -1211,7 +1211,11 @@ class WorkspaceToolProvider implements ToolProvider {
         }, null, 2),
       };
     }
-    return { content: response.content };
+    // 在这里产出摘要而不是等收口点兜底：response.metadata 是**截断前**的真实
+    // 执行结果（Shell 的 exitCode/字节数/耗时、Write 的写入字节数），
+    // 到了收口点只剩截断后的 content，再数就会静默错报。
+    const presentation = buildToolPresentation(call.toolId, parsedInput, undefined, response.metadata);
+    return { content: response.content, ...(presentation ? { presentation } : {}) };
   }
 
   private notifyMemoryIndexIfNeeded(

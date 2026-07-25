@@ -84,7 +84,77 @@ function briefCommand(command: string): string {
   return singleLine.length > 120 ? `${singleLine.slice(0, 120)}…` : singleLine;
 }
 
+function num(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  return `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`;
+}
+
 type Rule = (input: Record<string, unknown>) => ToolPresentation | null;
+
+/**
+ * 基于执行元数据的规则。
+ *
+ * 与入参侧规则的关键区别：metadata 来自**截断之前**的真实执行结果
+ * （Shell 的 exitCode/字节数/耗时、Write 的写入字节数），所以可以给出
+ * 精确统计而不会错报。有 metadata 规则时优先用它。
+ */
+type MetadataRule = (
+  input: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+) => ToolPresentation | null;
+
+const METADATA_RULES: Record<string, MetadataRule> = {
+  Shell: (input, metadata) => {
+    const command = str(input.command);
+    if (!command) return null;
+    const exitCode = num(metadata.exitCode);
+    const signal = str(metadata.signal);
+    const stdoutBytes = num(metadata.stdoutBytes);
+    const stderrBytes = num(metadata.stderrBytes);
+    const durationMs = num(metadata.durationMs);
+
+    const detail: PresentationDetailLine[] = [{ k: '命令', v: briefCommand(command) }];
+    if (exitCode !== undefined) detail.push({ tree: '├', k: '退出码', v: String(exitCode) });
+    else if (signal) detail.push({ tree: '├', k: '终止信号', v: signal });
+    if (stdoutBytes !== undefined) detail.push({ tree: '├', k: '输出', v: formatBytes(stdoutBytes) });
+    if (stderrBytes) detail.push({ tree: '├', k: '错误输出', v: formatBytes(stderrBytes) });
+    if (durationMs !== undefined) detail.push({ tree: '└', k: '耗时', v: formatDuration(durationMs) });
+    if (metadata.outputExceeded === true) detail.push({ indent: 0, text: '⚠ 输出超出捕获上限，已截断' });
+    if (metadata.timedOut === true) detail.push({ indent: 0, text: '⚠ 执行超时' });
+    if (metadata.aborted === true) detail.push({ indent: 0, text: '⚠ 已被中止' });
+
+    const failed = metadata.timedOut === true
+      || metadata.aborted === true
+      || (exitCode !== undefined && exitCode !== 0)
+      || (exitCode === undefined && !!signal);
+
+    return {
+      title: str(input.description) ?? '执行命令',
+      detail,
+      status: failed ? 'warn' : 'ok',
+    };
+  },
+
+  Write: (input, metadata) => {
+    const filePath = str(metadata.path) ?? str(input.file_path);
+    if (!filePath) return null;
+    const bytes = num(metadata.bytesWritten);
+    const detail: PresentationDetailLine[] = [{ k: '路径', v: filePath }];
+    if (bytes !== undefined) detail.push({ tree: '└', k: '写入', v: formatBytes(bytes) });
+    return { title: `写入 ${basename(filePath)}`, detail, status: 'ok' };
+  },
+};
 
 const RULES: Record<string, Rule> = {
   Read: (input) => {
@@ -159,10 +229,15 @@ const RULES: Record<string, Rule> = {
  * 未覆盖数量设只减不增的上限——这是防止「数据后补」再次无限期拖下去的闸门。
  */
 export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
-  { tool: 'Read', state: 'partial', gap: '缺读取行数/截断提示；需 Read provider 在 64KB 截断前自产' },
-  { tool: 'Write', state: 'partial', gap: '缺写入字节数；需 Write provider 在返回前自产' },
-  { tool: 'Edit', state: 'partial', gap: '缺替换处数；需 Edit provider 在返回前自产' },
-  { tool: 'Shell', state: 'partial', gap: '缺退出码/输出行数/是否被截断；需 Shell provider 在截断前用原始 stdout 自产' },
+  { tool: 'Read', state: 'partial', gap: '缺读取行数/截断提示；Read 的 provider 目前不产出 metadata，需先补' },
+  { tool: 'Write', state: 'covered' },
+  { tool: 'Edit', state: 'partial', gap: '缺替换处数；Edit 的 provider 目前不产出 metadata，需先补' },
+  {
+    tool: 'Shell',
+    state: 'covered',
+    gap: '成功路径已用截断前 metadata（退出码/字节数/耗时/截断与超时标记）。'
+      + '失败路径当前在 toolRuntime 直接 throw，摘要随之丢失——待「失败态进契约」批次一并处理',
+  },
   { tool: 'WebSearch', state: 'partial', gap: '缺命中条数与来源域名' },
   { tool: 'WebFetch', state: 'partial', gap: '缺响应状态与正文长度' },
   { tool: 'Agent', state: 'partial', gap: '缺子 Agent 的耗时/token/工具次数（事件里已有，未接进摘要）' },
@@ -174,9 +249,10 @@ export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
  * 未覆盖（state !== 'covered'）工具数的上限，**只减不增**。
  *
  * 每让一个工具真正做到 covered，就把这个数字减一并在 PR 里说明。
+ * 07-25：Shell 与 Write 接上截断前 metadata，9 → 7。
  * 调高它需要 code review 显式批准——这正是 `[CITE]` 当年缺的那道闸门。
  */
-export const PRESENTATION_TODO_BUDGET = 9;
+export const PRESENTATION_TODO_BUDGET = 7;
 
 /**
  * 在工具执行结果上补一份「给人看」摘要。
@@ -189,13 +265,20 @@ export function buildToolPresentation(
   toolName: string,
   toolInput: unknown,
   existing?: ToolPresentation,
+  metadata?: Record<string, unknown>,
 ): ToolPresentation | undefined {
   // provider 在截断前自产的摘要信息量严格更高，规则不得覆盖
   if (existing) return existing;
-  const rule = RULES[toolName];
-  if (!rule) return undefined;
+  const input = parseInput(toolInput);
   try {
-    return rule(parseInput(toolInput)) ?? undefined;
+    // metadata 来自截断前的真实执行结果，优先于只看入参的规则
+    const metadataRule = METADATA_RULES[toolName];
+    if (metadataRule && metadata) {
+      const fromMetadata = metadataRule(input, metadata);
+      if (fromMetadata) return fromMetadata;
+    }
+    const rule = RULES[toolName];
+    return rule ? (rule(input) ?? undefined) : undefined;
   } catch {
     // 摘要是锦上添花，任何异常都不得影响工具执行结果本身
     return undefined;
@@ -204,5 +287,10 @@ export function buildToolPresentation(
 
 /** 供覆盖率测试使用 */
 export function listPresentationRuleNames(): string[] {
-  return Object.keys(RULES);
+  return [...new Set([...Object.keys(RULES), ...Object.keys(METADATA_RULES)])];
+}
+
+/** 供覆盖率测试使用：哪些工具有基于截断前元数据的精确规则 */
+export function listMetadataRuleNames(): string[] {
+  return Object.keys(METADATA_RULES);
 }

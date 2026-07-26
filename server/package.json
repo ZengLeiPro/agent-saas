@@ -7,7 +7,8 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
-    "start": "tsx src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=dist/index.js --sourcemap",
+    "start": "node --enable-source-maps dist/index.js",
     "dev": "tsx watch --watch-path=src/agent/descriptions src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "pnpm run typecheck && WORKFLOW_DEMO_ALLOW_PG_SKIP=true vitest run",
@@ -99,6 +100,7 @@
     "@types/turndown": "^5.0.6",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.0.18",
+    "esbuild": "^0.27.2",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^4.0.18"

@@ -45,12 +45,12 @@ import { createLogger } from "../utils/logger.js";
 const logger = createLogger("scenarios");
 
 const DEFAULT_DATA_PATH = resolve(
-  import.meta.dirname,
-  "../data/scenarios/scenario-library-v1.json",
+  process.cwd(),
+  "src/data/scenarios/scenario-library-v1.json",
 );
 const DEFAULT_V3_DATA_PATH = resolve(
-  import.meta.dirname,
-  "../data/scenarios/workflow-library-v3.json",
+  process.cwd(),
+  "src/data/scenarios/workflow-library-v3.json",
 );
 
 export interface RoleKitPublicConfig {

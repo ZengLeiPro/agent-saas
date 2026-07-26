@@ -91,6 +91,9 @@ jobs:
       - name: Typecheck server
         run: pnpm -F server typecheck
 
+      - name: Build server production bundle
+        run: pnpm -F server build
+
       # 用 test:coverage 替代 test：@vitest/coverage-v8 产 lcov + json-summary，
       # 供后续 Report/Upload/Diff 步骤消费。observed 期不设阈值门禁，
       # 覆盖率数据本轮跑失败=测试跑失败，退化为原 Run tests 行为。
@@ -223,8 +226,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build server production bundle
+        run: pnpm -F server build
+
       - name: Pack ECS release
         run: |
+          test -s server/dist/index.js
           tar \
             --exclude='./.git' \
             --exclude='./node_modules' \
@@ -241,6 +248,10 @@ jobs:
             -czf "$RUNNER_TEMP/agent-saas-release.tgz" .
           if tar -tzf "$RUNNER_TEMP/agent-saas-release.tgz" | grep -Eq '^\./web(/|$)'; then
             echo "ECS release boundary violated: web/ must not be packaged"
+            exit 1
+          fi
+          if ! tar -tzf "$RUNNER_TEMP/agent-saas-release.tgz" | grep -Eq '^\./server/dist/index\.js$'; then
+            echo "ECS release is missing server/dist/index.js"
             exit 1
           fi
           mv "$RUNNER_TEMP/agent-saas-release.tgz" agent-saas-release.tgz
@@ -1103,6 +1114,43 @@ jobs:
           # 1) hash 静态资源：不可变长缓存（只增量新增，不删除旧 hash 文件）
           ossutil cp assets "oss://$OSS_BUCKET/assets" -r -f --region "$OSS_REGION" \
             --cache-control "public, max-age=31536000, immutable"
+          # JS/CSS 预压缩后覆盖同一对象键，并显式写入 Content-Encoding。
+          # 浏览器按原 URL 获取，OSS 直接返回 gzip，避免约 1MB 主脚本冷加载。
+          compressed_js_assets=0
+          compressed_css_assets=0
+          while IFS= read -r -d '' asset_file; do
+            relative_file="${asset_file#assets/}"
+            case "$asset_file" in
+              *.js|*.mjs)
+                compressed_file="$RUNNER_TEMP/oss-gzip-js/assets/$relative_file"
+                compressed_js_assets=$((compressed_js_assets + 1))
+                ;;
+              *.css)
+                compressed_file="$RUNNER_TEMP/oss-gzip-css/assets/$relative_file"
+                compressed_css_assets=$((compressed_css_assets + 1))
+                ;;
+              *) continue ;;
+            esac
+            mkdir -p "$(dirname "$compressed_file")"
+            gzip -n -9 -c "$asset_file" > "$compressed_file"
+          done < <(find assets -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.css' \) -print0)
+          if [ "$compressed_js_assets" -gt 0 ]; then
+            ossutil cp "$RUNNER_TEMP/oss-gzip-js/assets" "oss://$OSS_BUCKET/assets" \
+              -r -f --region "$OSS_REGION" \
+              --cache-control "public, max-age=31536000, immutable" \
+              --content-type "text/javascript; charset=utf-8" --content-encoding gzip
+          fi
+          if [ "$compressed_css_assets" -gt 0 ]; then
+            ossutil cp "$RUNNER_TEMP/oss-gzip-css/assets" "oss://$OSS_BUCKET/assets" \
+              -r -f --region "$OSS_REGION" \
+              --cache-control "public, max-age=31536000, immutable" \
+              --content-type "text/css; charset=utf-8" --content-encoding gzip
+          fi
+          if [ "$compressed_js_assets" -eq 0 ] || [ "$compressed_css_assets" -eq 0 ]; then
+            echo "No JS/CSS assets found for OSS compression"
+            exit 1
+          fi
+          echo "uploaded $compressed_js_assets JS and $compressed_css_assets CSS precompressed assets"
           # 2) 图标与预置资源：短缓存
           for d in icons kaikai-presets; do
             [ -d "$d" ] && ossutil cp "$d" "oss://$OSS_BUCKET/$d" -r -f --region "$OSS_REGION" \
@@ -1128,7 +1176,9 @@ jobs:
           echo "web dist uploaded to oss://$OSS_BUCKET"
 
       - name: Verify live Web/API split-domain contract
-        run: node web/scripts/check-live-oss.mjs
+        run: |
+          node web/scripts/check-live-oss.mjs
+          node web/scripts/check-live-compression.mjs
 
       - name: Package recovery Web release
         run: |

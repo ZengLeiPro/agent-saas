@@ -367,6 +367,74 @@ describe('RuntimeScheduler', () => {
     expect(eventStore.events.map((event) => event.type)).toEqual(['run_lease_acquired', 'run_state_changed']);
   });
 
+  it('defers recoverable runs before leasing while another brain holds the session', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    await runStore.upsertPending({ runId: 'run-busy', sessionId: 'session-busy' });
+    const acquireLease = vi.spyOn(runStore, 'acquireLease');
+    const canWake = vi.fn(async () => false);
+    const wake = vi.fn(async () => undefined);
+
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      pollIntervalMs: 60_000,
+      autoWake: true,
+      canWake,
+      wake,
+    });
+
+    await scheduler.tick();
+    await flushSchedulerMicrotasks();
+    await scheduler.tick();
+    await flushSchedulerMicrotasks();
+    await scheduler.stop();
+
+    expect(canWake).toHaveBeenCalledTimes(1);
+    expect(acquireLease).not.toHaveBeenCalled();
+    expect(wake).not.toHaveBeenCalled();
+    const deferredRun = await runStore.get('run-busy');
+    expect(deferredRun).toMatchObject({ status: 'pending' });
+    expect(deferredRun?.workerId).toBeUndefined();
+    expect(deferredRun?.leaseExpiresAt).toBeUndefined();
+    expect(eventStore.events).toEqual([]);
+  });
+
+  it('releases the run lease without failing when the session becomes busy during wake', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    await runStore.upsertPending({ runId: 'run-raced', sessionId: 'session-raced' });
+    const wake = vi.fn(async () => {
+      throw new Error('Session session-raced 已被另一个 brain 持有，本次 dispatch 退让');
+    });
+
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      pollIntervalMs: 60_000,
+      autoWake: true,
+      canWake: async () => true,
+      wake,
+    });
+
+    await scheduler.tick();
+    await flushSchedulerMicrotasks();
+    await scheduler.tick();
+    await flushSchedulerMicrotasks();
+    await scheduler.stop();
+
+    expect(wake).toHaveBeenCalledTimes(1);
+    await expect(runStore.get('run-raced')).resolves.toMatchObject({
+      status: 'running',
+      statusReason: 'session_busy',
+      workerId: undefined,
+      leaseExpiresAt: undefined,
+    });
+    expect(eventStore.events.map((event) => event.type)).toEqual(['run_lease_acquired']);
+  });
+
   it('runs different sessions concurrently up to the configured limit', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();

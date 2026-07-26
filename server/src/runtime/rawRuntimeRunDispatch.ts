@@ -102,8 +102,8 @@ import type { SystemPromptId } from '../systemPrompts/types.js';
 
 const logger = createLogger('RawRuntime');
 const DEFAULT_WORKFLOW_DEMO_LIBRARY_PATH = resolve(
-  import.meta.dirname,
-  '../data/scenarios/workflow-library-v3.json',
+  process.cwd(),
+  'src/data/scenarios/workflow-library-v3.json',
 );
 const getWorkflowDemoLibrary = createRetryableWorkflowLibraryLoader(
   () => loadWorkflowLibraryV3(DEFAULT_WORKFLOW_DEMO_LIBRARY_PATH),

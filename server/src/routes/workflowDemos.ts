@@ -28,8 +28,8 @@ import type { DemoManifestRecord } from "../../../shared/src/index.js";
 import { projectWorkflowDemoPublic } from "../../../shared/src/index.js";
 
 const DEFAULT_V3_DATA_PATH = resolve(
-  import.meta.dirname,
-  "../data/scenarios/workflow-library-v3.json",
+  process.cwd(),
+  "src/data/scenarios/workflow-library-v3.json",
 );
 
 const idSchema = z.string().min(1).max(160).regex(/^[a-zA-Z0-9_-]+$/);

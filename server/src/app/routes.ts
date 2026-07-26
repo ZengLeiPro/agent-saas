@@ -134,7 +134,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
   // App update: version check + APK download
-  const mobileDir = resolve(import.meta.dirname, "../../../mobile");
+  const mobileDir = resolve(processCwd, "../mobile");
   app.use("/api", createAppUpdateRouter({ mobileDir }));
 
   app.use(

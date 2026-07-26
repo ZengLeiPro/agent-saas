@@ -5,7 +5,6 @@ import {
   isBackgroundCommandTaskRun,
   isBackgroundTaskReady,
   isBackgroundTaskRun,
-  isBackgroundTaskWakeRun,
 } from './background/backgroundTaskRuntime.js';
 import type { RunRecord, RunStatus, RunStore } from './runStore.js';
 import type { EventStore } from './types.js';
@@ -34,6 +33,8 @@ export interface RuntimeSchedulerOptions {
   maxConcurrentBackgroundRuns?: number;
   approvalTimeoutMs?: number;
   autoWake?: boolean;
+  /** acquire run lease 前先确认目标 session 当前没有被其他 brain 持有。 */
+  canWake?: (record: RunRecord) => Promise<boolean>;
   wake?: (record: RunRecord, lease: RunLease) => Promise<void>;
   /** 每轮恢复扫描前执行 durable outbox 等轻量协调工作。 */
   beforeTick?: () => Promise<void>;
@@ -65,6 +66,7 @@ export class RuntimeScheduler {
   private readonly inFlightRuns = new Map<string, Promise<void>>();
   private readonly inFlightRunRecords = new Map<string, RunRecord>();
   private readonly inFlightSessions = new Set<string>();
+  private readonly deferredUntilByRun = new Map<string, number>();
 
   constructor(private readonly options: RuntimeSchedulerOptions) {
     this.workerId = options.workerId ?? `worker-${process.pid}-${randomUUID()}`;
@@ -149,6 +151,10 @@ export class RuntimeScheduler {
       }
 
       const recoverable = await this.options.runStore.listRecoverable();
+      const recoverableRunIds = new Set(recoverable.map((record) => record.runId));
+      for (const runId of this.deferredUntilByRun.keys()) {
+        if (!recoverableRunIds.has(runId)) this.deferredUntilByRun.delete(runId);
+      }
       let backgroundStateChanged = false;
       for (const record of recoverable) {
         if (
@@ -198,10 +204,18 @@ export class RuntimeScheduler {
 
       const availableSlots = this.maxConcurrentRuns - this.inFlightRuns.size;
       if (availableSlots <= 0) return;
-      const pendingRecoverable = recoverable.filter((record) => (
-        !(record.status === 'running' && isBackgroundAgentTaskRun(record))
-        && isBackgroundTaskReady(record)
-      ));
+      const now = Date.now();
+      const pendingRecoverable = recoverable.filter((record) => {
+        const deferredUntil = this.deferredUntilByRun.get(record.runId);
+        if (deferredUntil !== undefined) {
+          if (deferredUntil > now) return false;
+          this.deferredUntilByRun.delete(record.runId);
+        }
+        return (
+          !(record.status === 'running' && isBackgroundAgentTaskRun(record))
+          && isBackgroundTaskReady(record)
+        );
+      });
       // 普通/交互恢复优先；后台任务同时受总槽位和独立后台槽位约束。
       pendingRecoverable.sort((a, b) => Number(isBackgroundTaskRun(a)) - Number(isBackgroundTaskRun(b)));
       const selected: RunRecord[] = [];
@@ -315,6 +329,12 @@ export class RuntimeScheduler {
   }
 
   private async tryHandle(record: RunRecord): Promise<void> {
+    if (this.options.canWake && !(await this.options.canWake(record))) {
+      this.deferRun(record.runId);
+      this.options.logger?.info(`Deferred recoverable run ${record.runId}: session busy`);
+      return;
+    }
+
     const acquired = await this.options.runStore.acquireLease?.(record.runId, this.workerId, this.leaseMs);
     if (!acquired) return;
     const lease = this.createLease(acquired);
@@ -342,14 +362,15 @@ export class RuntimeScheduler {
 
     try {
       await this.options.wake(acquired, lease);
+      this.deferredUntilByRun.delete(acquired.runId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (isBackgroundTaskWakeRun(acquired) && message.includes('已被另一个 brain 持有')) {
-        // 父会话仍在另一实例收尾时，不把 durable 完成通知打成永久失败。
-        // 清 lease 后短退避，随后由正常恢复扫描重试同一 wake runId。
-        await lease.release(undefined, 'background_wake_parent_busy');
-        await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
-        this.options.logger?.warn(`Deferred background wake ${acquired.runId}: parent session busy`);
+      if (message.includes('已被另一个 brain 持有')) {
+        // 蓝绿交接期间旧实例可能仍在收尾同一会话。此时只释放 run lease，
+        // 保持 run 可恢复，并在本实例本地退避；不能把正常交接写成永久失败。
+        await lease.release(undefined, 'session_busy');
+        this.deferRun(acquired.runId);
+        this.options.logger?.info(`Deferred recoverable run ${acquired.runId}: session became busy`);
         return;
       }
       if (isBackgroundTaskRun(acquired) && this.options.failBackgroundTask) {
@@ -367,8 +388,13 @@ export class RuntimeScheduler {
         previousStatus: acquired.status,
         reason: message,
       }, { tenantId: acquired.tenantId });
+      this.deferredUntilByRun.delete(acquired.runId);
       this.options.logger?.error(`Runtime scheduler wake failed for ${acquired.runId}: ${message}`);
     }
+  }
+
+  private deferRun(runId: string): void {
+    this.deferredUntilByRun.set(runId, Date.now() + Math.max(1_000, this.pollIntervalMs));
   }
 
   private createLease(record: RunRecord): RunLease {

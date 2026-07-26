@@ -41,7 +41,7 @@
  */
 
 import { existsSync, readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
+import { resolve } from 'path';
 
 import { createLogger } from '../../utils/logger.js';
 import { LEGACY_TENANT_ID } from '../../data/tenants/types.js';
@@ -123,7 +123,7 @@ interface AzerothWhoamiResponse {
 export function resolveAzerothTokensConfigPath(): string {
   const fromEnv = process.env['AZEROTH_TOKENS_FILE'];
   if (fromEnv) return fromEnv;
-  return fileURLToPath(new URL('../../../config/azeroth-tokens.json', import.meta.url));
+  return resolve(process.cwd(), 'config/azeroth-tokens.json');
 }
 
 let _warnedMissing = false;

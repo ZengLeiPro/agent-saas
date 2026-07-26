@@ -1858,6 +1858,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       maxConcurrentRuns: config.runtimeScheduler?.maxConcurrentRuns,
       maxConcurrentBackgroundRuns: config.runtimeScheduler?.maxConcurrentBackgroundRuns,
       approvalTimeoutMs: config.runtimeScheduler?.approvalTimeoutMs,
+      canWake: sessionLock
+        ? async (record) => {
+          const lockHandle = await sessionLock.tryAcquire(record.sessionId);
+          if (!lockHandle) return false;
+          await lockHandle.release();
+          return true;
+        }
+        : undefined,
       beforeTick: () => rawRuntimeConfig.backgroundTasks!.reconcileWakeDeliveries(),
       failInterruptedBackgroundTask: (record) => rawRuntimeConfig.backgroundTasks!.failInterrupted(record),
       failBackgroundTask: (record, message) => rawRuntimeConfig.backgroundTasks!.fail(record, message),

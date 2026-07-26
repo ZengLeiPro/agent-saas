@@ -79,9 +79,9 @@
   切流成功后改写；
 - `Restart=on-failure`：drain 完成后进程自行 `exit(0)` 不会被拉起，崩溃
   （非零退出/信号）仍自动重启；
-- PG 角色 `agent_runtime_app` 的连接上限为 20。共享查询 Pool 默认 `poolMax=6`
+- PG 角色 `agent_runtime_app` 的连接上限为 20。共享查询 Pool 默认 `poolMax=4`
   （可由 `runtimeEventStore.poolMax` 调整），加上每实例各 1 条 LISTEN 与 cron
-  leadership 专用连接，蓝绿并存时最多占 16 条，保留 4 条运维余量；
+  leadership 专用连接，蓝绿并存时最多占 12 条，保留 8 条给运维及其他连接；
 - `/etc/nginx/conf.d/agent-kaiyan.conf` 是 `agent.kaiyan.net` 冷灾备静态站点，
   直接读取 `/opt/agent-saas-web-recovery/current`，不再引用 `agent_saas_backend`；
   正常生产 DNS 指向 OSS，只有 OSS 故障回切 DNS 后才承载用户流量。

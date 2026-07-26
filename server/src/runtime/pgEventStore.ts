@@ -6,7 +6,7 @@ import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 
 const { Client, Pool } = pg;
 const NOTIFY_RANGE_PAGE_LIMIT = 250;
-const DEFAULT_POOL_MAX = 6;
+const DEFAULT_POOL_MAX = 4;
 
 // PostgreSQL jsonb 不支持 U+0000；工具仍可能从普通文本文件或命令输出读到 NUL。
 // 只在持久化边界把它保存为可见转义文本，避免单条 tool_result 终止整个 run。

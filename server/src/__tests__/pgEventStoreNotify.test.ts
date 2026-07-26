@@ -216,7 +216,7 @@ describe('PgEventStore notify coalescing', () => {
     new PgEventStore({ connectionString: 'postgresql://unit-test' });
     new PgEventStore({ connectionString: 'postgresql://unit-test', poolMax: 4 });
 
-    expect(pgMock.MockPool.instances[0]?.options.max).toBe(6);
+    expect(pgMock.MockPool.instances[0]?.options.max).toBe(4);
     expect(pgMock.MockPool.instances[1]?.options.max).toBe(4);
   });
 

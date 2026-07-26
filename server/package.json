@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm run typecheck && WORKFLOW_DEMO_ALLOW_PG_SKIP=true vitest run",
     "test:watch": "WORKFLOW_DEMO_ALLOW_PG_SKIP=true vitest",
-    "test:coverage": "WORKFLOW_DEMO_ALLOW_PG_SKIP=true vitest run --coverage",
+    "test:coverage": "WORKFLOW_DEMO_ALLOW_PG_SKIP=true vitest run --coverage --maxWorkers=2 --coverage.processingConcurrency=2",
     "scenarios:lint": "tsx scripts/scenarios-lint.mjs",
     "scenarios:lint:fix": "tsx scripts/scenarios-lint.mjs --fix",
     "scenarios:sanitize-check": "tsx scripts/scenarios-sanitize-check.mjs",

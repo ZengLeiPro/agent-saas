@@ -122,7 +122,7 @@ describe('attachment upload hardening', () => {
     await waitFor(() => manager.getActiveUploadCount() === 0);
 
     const partialRoot = join(root, USER.tenantId, USER.sub, 'uploads', '.partial');
-    expect(await readdir(partialRoot)).toEqual([]);
+    await waitFor(async () => (await readdir(partialRoot)).length === 0);
     expect(manager.getMetricsSnapshot().abortedRequests).toBe(1);
   });
 
@@ -310,9 +310,9 @@ describe('attachment upload hardening', () => {
   });
 });
 
-async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 2_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() > deadline) throw new Error('Timed out waiting for condition');
     await new Promise((resolve) => setTimeout(resolve, 10));
   }

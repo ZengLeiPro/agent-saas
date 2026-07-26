@@ -9,7 +9,7 @@
  *   5. UserStore.load tenantId 回填 + 持久化往返
  */
 
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -254,10 +254,11 @@ describe('PR 7 多组织隔离 - 必补测试', () => {
       const found = store.findById('u1');
       expect(found?.tenantId).toBe(LEGACY_TENANT_ID);
 
-      // 等异步 persist 完成
-      await new Promise(r => setTimeout(r, 50));
-      const persisted = JSON.parse(readFileSync(usersFile, 'utf-8'));
-      expect(persisted.users[0].tenantId).toBe(LEGACY_TENANT_ID);
+      // 等异步 persist 完成；coverage 下文件写入可能超过固定 50ms。
+      await vi.waitFor(() => {
+        const persisted = JSON.parse(readFileSync(usersFile, 'utf-8'));
+        expect(persisted.users[0].tenantId).toBe(LEGACY_TENANT_ID);
+      });
     });
 
     it('旧 admin 无 tenantId 字段 → 启动期回填到 pantheon 并持久化', async () => {
@@ -275,9 +276,10 @@ describe('PR 7 多组织隔离 - 必补测试', () => {
       const found = store.findById('admin-1');
       expect(found?.tenantId).toBe(DEFAULT_TENANT_ID);
 
-      await new Promise(r => setTimeout(r, 50));
-      const persisted = JSON.parse(readFileSync(usersFile, 'utf-8'));
-      expect(persisted.users[0].tenantId).toBe(DEFAULT_TENANT_ID);
+      await vi.waitFor(() => {
+        const persisted = JSON.parse(readFileSync(usersFile, 'utf-8'));
+        expect(persisted.users[0].tenantId).toBe(DEFAULT_TENANT_ID);
+      });
     });
 
     it('新建用户：不传 tenantId 默认平台根组织', async () => {

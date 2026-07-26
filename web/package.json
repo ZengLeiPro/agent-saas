@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "NODE_ENV=test vitest run --passWithNoTests",
-    "test:coverage": "NODE_ENV=test vitest run --coverage --passWithNoTests"
+    "test:coverage": "NODE_ENV=test vitest run --coverage --passWithNoTests --maxWorkers=2 --coverage.processingConcurrency=2"
   },
   "dependencies": {
     "@agent/shared": "workspace:*",

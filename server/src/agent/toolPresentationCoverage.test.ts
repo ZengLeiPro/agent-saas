@@ -175,6 +175,49 @@ describe('截断前 metadata 规则', () => {
   });
 });
 
+describe('连接器动作还原成业务语言', () => {
+  it('dws 命令识别出系统与模块，标题不再是一行 shell', () => {
+    const result = buildToolPresentation('Shell', { command: 'dws todo create --title 复核合同' });
+    expect(result?.title).toBe('钉钉 · 待办 · create');
+    expect(result?.detail?.[0]).toEqual({ k: '系统', v: '钉钉' });
+  });
+
+  it('模型给了 description 时仍以业务意图为准，系统行照样保留', () => {
+    const result = buildToolPresentation(
+      'Shell',
+      { command: 'lark im send --chat x', description: '把结论发到项目群' },
+      undefined,
+      { exitCode: 0, durationMs: 220 },
+    );
+    expect(result?.title).toBe('把结论发到项目群');
+    expect(result?.detail?.[0]).toEqual({ k: '系统', v: '飞书' });
+  });
+
+  it('普通命令不被误判成连接器', () => {
+    const result = buildToolPresentation('Shell', { command: 'rg -n foo /w' });
+    expect(result?.title).toBe('执行命令');
+    expect(result?.detail?.[0]).toEqual({ k: '命令', v: 'rg -n foo /w' });
+  });
+
+  it('MCP 工具显示「系统 · 动作」与关键入参，而不是 mcp__server__tool', () => {
+    const result = buildToolPresentation('mcp__dingtalk__create_todo', {
+      title: '复核出口证据',
+      dueDate: '2026-07-28',
+    });
+    expect(result?.title).toBe('钉钉 · create_todo');
+    expect(result?.detail).toContainEqual({ k: '动作', v: 'create_todo' });
+    expect(result?.detail).toContainEqual({ tree: '└', k: 'dueDate', v: '2026-07-28' });
+  });
+
+  it('未登记的 MCP server 用原名，不硬凑中文', () => {
+    expect(buildToolPresentation('mcp__acme__do_thing', {})?.title).toBe('acme · do_thing');
+  });
+
+  it('形如 MCP 但结构不完整时不产出摘要', () => {
+    expect(buildToolPresentation('mcp__onlyserver', {})).toBeUndefined();
+  });
+});
+
 describe('失败态摘要', () => {
   it('错误自带摘要时原样保留——那是 provider 按真实 metadata 产出的', () => {
     const carried = { title: '执行命令', detail: [{ k: '退出码', v: '127' }], status: 'warn' as const };

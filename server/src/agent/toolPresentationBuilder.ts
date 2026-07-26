@@ -107,6 +107,103 @@ function formatDuration(ms: number): string {
   return `${Math.floor(ms / 60_000)} 分 ${Math.round((ms % 60_000) / 1000)} 秒`;
 }
 
+/**
+ * 连接器 CLI 识别。
+ *
+ * 客户在演示里看到的是「钉钉 · 创建待办」，真实会话里同一个动作是
+ * `Shell · dws todo create ...`——落差就在这里（07-26 实机对比）。
+ * 这张表把命令行还原成业务语言：系统 + 动作，命令本身退到第二行。
+ */
+const CONNECTOR_CLI: Record<string, { system: string; module?: Record<string, string> }> = {
+  dws: {
+    system: '钉钉',
+    module: {
+      calendar: '日历',
+      contact: '通讯录',
+      todo: '待办',
+      im: '群聊与消息',
+      approval: '审批',
+      attendance: '考勤',
+      report: '日志',
+      doc: '钉钉文档',
+      drive: '云盘',
+      sheet: '在线表格',
+      table: 'AI 表格',
+      kb: '知识库',
+      mail: '邮箱',
+      minutes: 'AI 听记',
+      auth: '授权',
+    },
+  },
+  lark: { system: '飞书' },
+  feishu: { system: '飞书' },
+  gog: { system: 'Google 工作区', module: { gmail: 'Gmail', drive: '云端硬盘', calendar: '日历', contacts: '通讯录' } },
+};
+
+/** MCP server 名 → 客户读得懂的系统名。未登记的直接用原名，不硬凑。 */
+const MCP_SYSTEM_NAMES: Record<string, string> = {
+  dingtalk: '钉钉',
+  dws: '钉钉',
+  feishu: '飞书',
+  lark: '飞书',
+  github: 'GitHub',
+  notion: 'Notion',
+  slack: 'Slack',
+  gmail: 'Gmail',
+  'google-drive': 'Google 云端硬盘',
+  'google-calendar': 'Google 日历',
+};
+
+interface ConnectorCommand {
+  system: string;
+  action: string;
+}
+
+/** 从命令行里认出连接器动作；不是连接器命令时返回 null（绝不硬猜） */
+export function parseConnectorCommand(command: string): ConnectorCommand | null {
+  const tokens = command.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return null;
+  // 允许 `npx dws ...` / `pnpm dws ...` 这类前缀
+  const start = tokens[0] === 'npx' || tokens[0] === 'pnpm' || tokens[0] === 'bunx' ? 1 : 0;
+  const binary = (tokens[start] ?? '').split('/').pop();
+  if (!binary) return null;
+  const entry = CONNECTOR_CLI[binary];
+  if (!entry) return null;
+  const sub = tokens.slice(start + 1).filter((token) => !token.startsWith('-'));
+  const moduleName = sub[0] ? entry.module?.[sub[0]] ?? sub[0] : undefined;
+  const verb = sub[1];
+  const action = [moduleName, verb].filter(Boolean).join(' · ');
+  return { system: entry.system, action: action || '命令行调用' };
+}
+
+/**
+ * MCP 工具摘要。
+ *
+ * 工具名恒为 `mcp__<server>__<tool>`，只有入参可用（MCP 结果没有统一 metadata
+ * 契约），所以这里给的是"调了哪个系统的什么动作、带了哪些关键参数"，
+ * 不编造条数、耗时这类它拿不到的统计。
+ */
+export function buildMcpPresentation(toolName: string, input: Record<string, unknown>): ToolPresentation | null {
+  if (!toolName.startsWith('mcp__')) return null;
+  const [server, ...rest] = toolName.slice('mcp__'.length).split('__');
+  const tool = rest.join('__');
+  if (!server || !tool) return null;
+  const system = MCP_SYSTEM_NAMES[server] ?? server;
+  const detail: PresentationDetailLine[] = [{ k: '动作', v: tool }];
+  const keys = Object.keys(input).slice(0, 4);
+  keys.forEach((key, index) => {
+    const value = input[key];
+    if (value === undefined || value === null || typeof value === 'object') return;
+    const text = String(value);
+    detail.push({
+      tree: index === keys.length - 1 ? '└' : '├',
+      k: key,
+      v: text.length > 80 ? `${text.slice(0, 80)}…` : text,
+    });
+  });
+  return { title: `${system} · ${tool}`, detail, status: 'ok' };
+}
+
 type Rule = (input: Record<string, unknown>) => ToolPresentation | null;
 
 /**
@@ -131,7 +228,11 @@ const METADATA_RULES: Record<string, MetadataRule> = {
     const stderrBytes = num(metadata.stderrBytes);
     const durationMs = num(metadata.durationMs);
 
-    const detail: PresentationDetailLine[] = [{ k: '命令', v: briefCommand(command) }];
+    // 连接器命令先还原成业务语言：客户关心的是「钉钉 · 待办 create」，不是一行 shell
+    const connector = parseConnectorCommand(command);
+    const detail: PresentationDetailLine[] = connector
+      ? [{ k: '系统', v: connector.system }, { k: '命令', v: briefCommand(command) }]
+      : [{ k: '命令', v: briefCommand(command) }];
     if (exitCode !== undefined) detail.push({ tree: '├', k: '退出码', v: String(exitCode) });
     else if (signal) detail.push({ tree: '├', k: '终止信号', v: signal });
     if (stdoutBytes !== undefined) detail.push({ tree: '├', k: '输出', v: formatBytes(stdoutBytes) });
@@ -147,7 +248,8 @@ const METADATA_RULES: Record<string, MetadataRule> = {
       || (exitCode === undefined && !!signal);
 
     return {
-      title: str(input.description) ?? '执行命令',
+      // description 是模型对本次执行的意图说明；没有它时，连接器命令仍能给出业务标题
+      title: str(input.description) ?? (connector ? `${connector.system} · ${connector.action}` : '执行命令'),
       detail,
       status: failed ? 'warn' : 'ok',
     };
@@ -308,8 +410,11 @@ const RULES: Record<string, Rule> = {
     if (!command) return null;
     // description 是模型对本次执行的意图说明，比命令本身更接近业务语言
     const description = str(input.description);
-    const detail: ToolPresentation['detail'] = [{ k: '命令', v: briefCommand(command) }];
-    return { title: description ?? '执行命令', detail };
+    const connector = parseConnectorCommand(command);
+    const detail: ToolPresentation['detail'] = connector
+      ? [{ k: '系统', v: connector.system }, { k: '命令', v: briefCommand(command) }]
+      : [{ k: '命令', v: briefCommand(command) }];
+    return { title: description ?? (connector ? `${connector.system} · ${connector.action}` : '执行命令'), detail };
   },
 
   WebSearch: (input) => {
@@ -366,6 +471,15 @@ export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
   },
   { tool: 'GenerateImage', state: 'covered' },
   { tool: 'Skill', state: 'none', gap: '刻意不做：Skill 的 tool_result 是技能正文，摘要价值近乎零；观众关心的是技能内部的 Shell/Read，已被覆盖' },
+  {
+    tool: 'mcp__*',
+    state: 'partial',
+    producedIn: 'mapping',
+    gap: '07-26 已按 `mcp__<server>__<tool>` 前缀产出「系统 · 动作 + 关键入参」摘要，'
+      + '把钉钉/飞书/GitHub 等动作从 `MCP:server/tool` 还原成业务语言。'
+      + '但 MCP 结果没有统一 metadata 契约，拿不到写入条数、单据号与回读结果，'
+      + '因此不算 covered——要到 covered 需要各 server 回传结构化回执（ToolReceipt）',
+  },
 ] as const;
 
 /**
@@ -375,8 +489,13 @@ export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
  * 07-25：Shell/Write 接截断前 metadata（9→7）；Read/Edit 补 provider metadata（7→5）；
  * WebSearch/WebFetch/GenerateImage/Agent 接各自真实结果（5→1）。仅剩 Skill，刻意不做。
  * 调高它需要 code review 显式批准——这正是 `[CITE]` 当年缺的那道闸门。
+ *
+ * **07-26 例外，1→2**：新登记 `mcp__*`。理由是它此前根本不在表内（连接器动作
+ * 显示为 `MCP:server/tool`，是演示与真实之间最大的一处落差），这次把它显式纳入
+ * 治理并给出入参侧摘要，但 MCP 缺统一 metadata 契约，诚实标记为 partial
+ * 而不是硬凑成 covered。各 server 回传结构化回执后，这个数应回到 1。
  */
-export const PRESENTATION_TODO_BUDGET = 1;
+export const PRESENTATION_TODO_BUDGET = 2;
 
 /**
  * 在工具执行结果上补一份「给人看」摘要。
@@ -402,7 +521,9 @@ export function buildToolPresentation(
       if (fromMetadata) return fromMetadata;
     }
     const rule = RULES[toolName];
-    return rule ? (rule(input) ?? undefined) : undefined;
+    if (rule) return rule(input) ?? undefined;
+    // MCP 工具名是动态的（mcp__<server>__<tool>），走前缀规则而不是精确表
+    return buildMcpPresentation(toolName, input) ?? undefined;
   } catch {
     // 摘要是锦上添花，任何异常都不得影响工具执行结果本身
     return undefined;

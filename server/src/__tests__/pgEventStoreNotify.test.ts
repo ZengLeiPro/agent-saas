@@ -218,11 +218,11 @@ describe('PgEventStore notify coalescing', () => {
     pgMock.reset();
   });
 
-  it('caps the shared pool for blue-green overlap and allows an explicit override', () => {
+  it('reserves event I/O capacity beyond four concurrent session locks and allows an explicit override', () => {
     new PgEventStore({ connectionString: 'postgresql://unit-test' });
     new PgEventStore({ connectionString: 'postgresql://unit-test', poolMax: 4 });
 
-    expect(pgMock.MockPool.instances[0]?.options.max).toBe(4);
+    expect(pgMock.MockPool.instances[0]?.options.max).toBe(6);
     expect(pgMock.MockPool.instances[1]?.options.max).toBe(4);
   });
 

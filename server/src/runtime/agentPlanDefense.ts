@@ -352,22 +352,16 @@ function unescapeDoubleEscapedJsonString(s: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────
-// D4: tool error 措辞标准化（避免 deepseek 字面回声"try different approach"）
+// D4: tool error 措辞标准化
 // ─────────────────────────────────────────────────────────────
 
 /**
- * 主报告 D4：deepseek 把 error message 措辞当字面指令执行 —
- * "ERROR: tool unavailable, please try different approach" → 模型真的换语言
- * 重试工具调用，可能进入循环。
- *
- * 标准化原则：错误措辞用具体指令式（"请勿重试，请告知用户"）替代含糊建议。
+ * 保留工具的原始错误信息，并兼容清理历史工具返回中携带的旧版统一提醒。
  */
 export function standardizeToolError(rawMessage: string): string {
   const trimmed = (rawMessage ?? '').trim();
-  if (!trimmed) return '工具执行失败：请勿重试，请告知用户错误已上报。';
-  // 二轮加固：短路条件从"全文包含"收紧为"末尾 30 字符内包含"，避免工具结果含
-  // 用户字面文本 "the user said 'do not retry'" 触发误判跳过加后缀。
-  const tail = trimmed.slice(-30);
-  if (/请勿重试|请告知用户|do not retry|stop retrying/i.test(tail)) return trimmed;
-  return `${trimmed}（请勿重试，请告知用户）`;
+  if (!trimmed) return '工具执行失败。';
+  return trimmed
+    .replace(/（请勿重试，请告知用户）\s*$/, '')
+    .replace(/：请勿重试，请告知用户错误已上报。\s*$/, '。');
 }

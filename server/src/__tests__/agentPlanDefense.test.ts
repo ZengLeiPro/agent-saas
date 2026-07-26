@@ -388,49 +388,33 @@ describe('agentPlanDefense', () => {
   });
 
   describe('standardizeToolError (D4)', () => {
-    it('appends "请勿重试，请告知用户" to non-standard error', () => {
-      const result = standardizeToolError('tool not found: foo');
-      expect(result).toMatch(/请勿重试.*请告知用户/);
+    it('keeps the original error without appending a retry reminder', () => {
+      expect(standardizeToolError('tool not found: foo')).toBe('tool not found: foo');
     });
 
-    it('keeps already-standardized message untouched', () => {
-      const standard = 'something failed（请勿重试，请告知用户）';
-      expect(standardizeToolError(standard)).toBe(standard);
+    it('removes the legacy retry reminder suffix', () => {
+      expect(standardizeToolError('something failed（请勿重试，请告知用户）')).toBe('something failed');
     });
 
-    it('keeps English standardized messages untouched (do not retry)', () => {
-      const msg = 'failed — do not retry';
-      expect(standardizeToolError(msg)).toBe(msg);
+    it('removes the legacy empty-error reminder', () => {
+      expect(standardizeToolError('工具执行失败：请勿重试，请告知用户错误已上报。')).toBe('工具执行失败。');
     });
 
-    it('handles empty input', () => {
-      const result = standardizeToolError('');
-      expect(result).toMatch(/请勿重试/);
-    });
-
-    // 二轮加固：短路条件收紧
-    it('does not short-circuit when "do not retry" appears in middle as user text', () => {
-      // 用户字面文本含 "do not retry"，应仍被加后缀
+    it('does not alter reminder-like text that is part of the actual error', () => {
       const msg = 'tool error: the user said "do not retry" but actually failed';
-      const result = standardizeToolError(msg);
-      expect(result).toMatch(/请勿重试，请告知用户/);
-    });
-
-    it('short-circuits when standardization is already at end', () => {
-      const msg = 'tool error happened（请勿重试，请告知用户）';
       expect(standardizeToolError(msg)).toBe(msg);
     });
 
     it('handles null / undefined / whitespace-only input', () => {
-      expect(standardizeToolError(null as unknown as string)).toMatch(/请勿重试/);
-      expect(standardizeToolError(undefined as unknown as string)).toMatch(/请勿重试/);
-      expect(standardizeToolError('   ')).toMatch(/请勿重试/);
+      expect(standardizeToolError(null as unknown as string)).toBe('工具执行失败。');
+      expect(standardizeToolError(undefined as unknown as string)).toBe('工具执行失败。');
+      expect(standardizeToolError('   ')).toBe('工具执行失败。');
     });
   });
 
   describe('D4 contract: rawAgentLoop 所有 tool error 路径必须走 standardizeToolError', () => {
-    // 结构性测试：用 grep 锁定 rawAgentLoop.ts 中"tool error:" / "tool not found:" 5 处
-    // 都被 standardizeToolError(...) 包装，防止后续重构破坏 D4 措辞契约。
+    // 结构性测试：用 grep 锁定 rawAgentLoop.ts 中"tool error:" / "tool not found:" 字面值，
+    // 都由 standardizeToolError(...) 统一处理，兼容清理历史工具返回中的旧版提醒。
     it('rawAgentLoop.ts 中 tool error / tool not found 字面值都被 standardizeToolError 包装', async () => {
       const { readFileSync } = await import('fs');
       const { fileURLToPath } = await import('url');

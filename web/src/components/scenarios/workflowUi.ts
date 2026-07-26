@@ -1,5 +1,6 @@
 import type { CatalogScenarioPublic, WorkflowLibraryPublicV3 } from "@agent/shared";
 import type { IndustryFilterValue } from "./useIndustryFilter";
+import { hasReplayScript } from "./replay/registry";
 
 export const OUTCOME_ALL = "all" as const;
 export const ROLE_ALL = "all" as const;
@@ -159,7 +160,8 @@ export interface WorkflowCta {
  */
 export function workflowCta(scenario: CatalogScenarioPublic): WorkflowCta {
   const operational = workflowOperationalCta(scenario);
-  if (scenario.presentation) {
+  // 手写剧本与 Workflow V3 presentation 同权：能看演示的场景，主按钮就是看演示
+  if (hasReplayScript(scenario)) {
     return {
       action: "presentation",
       label: "看它如何完成",

@@ -175,12 +175,16 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     if (skinId) params.set("skinId", skinId);
     if (roleViewId) params.set("roleViewId", roleViewId);
     if (roleId) params.set("roleId", roleId);
-    if (intent === "run" || intent === "connect") params.set("intent", "view");
+    if (intent === "run" || intent === "connect" || intent === "presentation") params.set("intent", "view");
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
     if (intent === "run" && resolved.scenario.launch.startMode === "chat") {
       handleWorkflowAction("chat", resolved.scenario);
     } else if (intent === "connect" && resolved.scenario.launch.startMode === "connector") {
       handleWorkflowAction("connector", resolved.scenario);
+    } else if (intent === "presentation") {
+      // 首屏推荐卡的「看它如何完成」：切到能力中心后直接进回放，不停在详情弹窗
+      setDetail(null);
+      handleWorkflowAction("presentation", resolved.scenario);
     }
   // handleWorkflowAction 只消费当前 props；deep link 明确只运行一次。
   // eslint-disable-next-line react-hooks/exhaustive-deps

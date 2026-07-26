@@ -299,7 +299,14 @@ export function SystemPanel({
         </div>
       ) : null}
 
-      <div className="flex shrink-0 items-baseline gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
+      {/* 三个圆点＝「右侧不是聊天的一部分，是被打开的另一个系统」。
+          客户演示稿里最有效的一招，成本一行，语义比任何说明文案都直接。 */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
+        <span aria-hidden className="flex shrink-0 items-center gap-1">
+          <span className="size-1.5 rounded-full bg-muted-foreground/30" />
+          <span className="size-1.5 rounded-full bg-muted-foreground/30" />
+          <span className="size-1.5 rounded-full bg-muted-foreground/30" />
+        </span>
         <span className="min-w-0 truncate text-xs font-medium">{active.toolbar?.title ?? active.winTitle}</span>
         {active.toolbar?.sub ? <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">{active.toolbar.sub}</span> : null}
       </div>

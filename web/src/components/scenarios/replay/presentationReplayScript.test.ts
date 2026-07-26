@@ -68,6 +68,51 @@ describe("presentationToReplayScript", () => {
     expect(approval?.approvedBlocks.some((block) => block.toolName === "Approval")).toBe(true);
   });
 
+  it("右侧按被仿真的系统分视图，不同界面形态用不同控件", () => {
+    const script = presentationToReplayScript(makeScenarioWithApproval());
+    const base = script?.steps[0].blocks.find((block) => block.presentation?.panelBase)?.presentation?.panelBase;
+    expect(base).toBeTruthy();
+    const views = Object.fromEntries((base?.views ?? []).map((view) => [view.key, view]));
+    // 三章分别落在业务系统 / 审批 / 终态核对，加上留痕共 4 个视图
+    expect(Object.keys(views).sort()).toEqual(["approval", "audit", "records", "summary"]);
+    expect(views.records.widget.kind).toBe("table");
+    expect(views.summary.widget.kind).toBe("table");
+    expect(views.approval.widget.kind).toBe("rows");
+    expect(views.audit.widget.kind).toBe("feed");
+    // 窗口标题带系统名，底部写清楚接了哪些系统
+    expect(base?.foot).toContain("已连接：");
+    expect(base?.foot).toContain("CRM");
+  });
+
+  it("每一步聚焦到这一步真正动了的系统", () => {
+    const script = presentationToReplayScript(makeScenarioWithApproval());
+    const focusOf = (index: number) => script?.steps[index].blocks
+      .flatMap((block) => block.presentation?.panel ?? [])
+      .find((patch) => patch.op === "focus");
+    expect(focusOf(0)).toMatchObject({ op: "focus", view: "records" });
+    expect(focusOf(1)).toMatchObject({ op: "focus", view: "approval" });
+    expect(focusOf(2)).toMatchObject({ op: "focus", view: "summary" });
+  });
+
+  it("工具摘要展开是本步的业务字段，正文不再重复同一句话", () => {
+    const script = presentationToReplayScript(makeScenarioWithApproval());
+    const tool = script?.steps[0].blocks.find((block) => block.kind === "tool_use");
+    expect(tool?.presentation?.detail).toEqual([
+      "读取客户、产品和历史报价。",
+      { tree: "└", k: "询价状态", v: "资料齐备" },
+    ]);
+    const text = script?.steps[0].blocks.find((block) => block.kind === "text");
+    expect(text?.content).toBe("报价所需事实已经齐备。");
+    expect(text?.content).not.toContain("这一步完成后");
+  });
+
+  it("终态不使用中文冒号前的加粗定界符（会渲染成字面星号）", () => {
+    const script = presentationToReplayScript(makeScenarioWithApproval());
+    const last = script?.steps.at(-1)?.blocks.at(-1)?.content ?? "";
+    expect(last).toContain("**业务结果**：");
+    expect(last).not.toContain("**业务结果：**");
+  });
+
   it("每个演示动作都有诚实的真实产出方与差距登记", () => {
     const script = presentationToReplayScript(makeScenarioWithApproval());
     expect(script?.sources).toHaveLength(3);

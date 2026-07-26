@@ -83,6 +83,8 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
     const blocks = script.steps.slice(0, stepIndex).flatMap((step, index) => [
       ...step.blocks,
       ...(decisions[index] === "approved" ? step.approval?.approvedBlocks ?? [] : []),
+      // 退回同样有下文：客户要看到"退回之后系统怎么处理"，而不是一个死按钮
+      ...(decisions[index] === "rejected" ? step.approval?.rejectedBlocks ?? [] : []),
     ]);
     return blocks.length ? mapSessionDetailToMessages(buildDetail(blocks)) : [];
   }, [decisions, script, stepIndex]);
@@ -188,7 +190,9 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
       </div>
 
       <div className="flex min-h-0 flex-1">
-        <div className={cn("flex min-h-0 flex-col", rightOpen ? "w-1/2" : "w-full")}>
+        {/* 右栏固定宽度、会话区吃掉剩余空间：50/50 会让 1600 宽下的会话区只剩 ~700px，
+            而右栏大半是空的（07-26 实机对比，三家客户演示稿都是右栏定宽 400~430px）。 */}
+        <div className={cn("flex min-h-0 flex-col", rightOpen ? "min-w-0 flex-1" : "w-full")}>
           <FilePreviewProvider value={{ openPreview, downloadFile }}>
             <MessageList
               messages={messages}
@@ -248,7 +252,7 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
         </div>
 
         {rightOpen && (
-          <div className="flex min-h-0 w-1/2 flex-col border-l border-border">
+          <div className="flex min-h-0 w-[420px] shrink-0 flex-col border-l border-border xl:w-[460px]">
             {/* 产物预览抢占面板：用户显式点击的意图压过自动跟随。
                 面板不卸载，只是被盖住，fold 状态与滚动位置都保留。 */}
             {artifactHtml ? (

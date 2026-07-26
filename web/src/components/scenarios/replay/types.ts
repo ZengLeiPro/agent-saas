@@ -30,6 +30,14 @@ export interface ReplayStep {
     approveLabel: string;
     rejectLabel?: string;
     approvedBlocks: ApiTranscriptBlock[];
+    /**
+     * 退回之后 Agent 做了什么。
+     *
+     * 三家客户演示稿的「退回修改」都是只弹 toast 的死按钮、拒绝是死路，
+     * 而真实审批里"打回重改"才是最高频动作。有这一段，退回就不是断头路：
+     * 客户看到的是「没有写入任何系统 + 退回已记账 + 等待重新提交」。
+     */
+    rejectedBlocks?: ApiTranscriptBlock[];
   };
 }
 

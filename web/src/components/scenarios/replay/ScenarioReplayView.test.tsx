@@ -103,12 +103,16 @@ describe('ScenarioReplayView', () => {
 });
 
 describe('右侧企业系统面板', () => {
-  it('第一步不出现面板——真实会话此时也还没触达任何系统', () => {
+  // 07-26 修订：原断言是「第一步不出现面板」。实机走查发现首屏因此只有一句提问 +
+  // 80% 空白，客户第一眼看不到「它接到了哪些系统」。剧本改为第一步就做一次真实的
+  // 范围确认工具调用——面板依旧跟着工具执行出现，没有凭空冒出来的通道。
+  it('面板跟着第一次工具执行出现，首屏就不是空的', () => {
     renderReplay();
-    expect(screen.queryByText('企业系统实况')).toBeNull();
+    expect(screen.getByText('企业系统实况')).toBeTruthy();
+    expect(screen.getByText('确认问题范围与可用资料')).toBeTruthy();
   });
 
-  it('第一次工具执行后面板出现，并常驻于后续每一步', () => {
+  it('面板常驻于后续每一步', () => {
     renderReplay();
     clickNext(1);
     expect(screen.getByText('企业系统实况')).toBeTruthy();
@@ -192,6 +196,13 @@ describe('人工审批门禁', () => {
             defaultOpen: true,
             content: '人工确认已记录。',
           }],
+          rejectedBlocks: [{
+            id: 'approval-rejected',
+            kind: 'text',
+            title: '退回说明',
+            defaultOpen: true,
+            content: '已停在审核点：业务系统没有任何写入，退回记录已留痕。',
+          }],
         },
       },
       {
@@ -227,6 +238,16 @@ describe('人工审批门禁', () => {
     expect(screen.getByText('已退回修改，未写入业务系统')).toBeTruthy();
     expect(screen.getByRole('button', { name: '重新提交审核' })).toBeTruthy();
     expect(screen.getByText('1 / 2')).toBeTruthy();
+  });
+
+  it('退回不是死路：会话里出现退回后的处理，重新提交后消失', () => {
+    render(<ScenarioReplayView script={approvalScript} onExit={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '退回修改' }));
+    expect(screen.getByText('已停在审核点：业务系统没有任何写入，退回记录已留痕。')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '重新提交审核' }));
+    expect(screen.queryByText('已停在审核点：业务系统没有任何写入，退回记录已留痕。')).toBeNull();
+    expect(screen.getByRole('button', { name: '批准并继续' })).toBeTruthy();
   });
 });
 

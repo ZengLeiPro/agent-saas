@@ -126,6 +126,32 @@ export const knowledgeQaScript: ReplayScript = {
           defaultOpen: true,
           content: "我下周去上海出差三天，住宿能报多少？发票有什么要求吗？",
         },
+        {
+          // 首屏就要让客户看见「它接到了哪些系统」——空白首屏是实机走查抓到的问题
+          id: "s1-tool",
+          kind: "tool_use",
+          title: "ScopeCheck",
+          defaultOpen: false,
+          toolName: "ScopeCheck",
+          toolId: "t-scope",
+          content: JSON.stringify({ question: "差旅住宿标准与发票要求" }),
+          executionStatus: "completed",
+          durationMs: 320,
+          presentation: {
+            title: "确认问题范围与可用资料",
+            detail: [
+              { k: "问题归类", v: "差旅报销 · 制度类" },
+              { k: "可用资料", v: "制度中心 · 财务与行政（5 篇）" },
+              { tree: "└", k: "本次权限", v: "只读，不涉及任何系统写入" },
+            ],
+            status: "ok",
+            panelBase: PANEL_BASE,
+            panel: [
+              { op: "focus", view: "kb" },
+              { op: "toolbar", view: "kb", title: "制度中心 · 文档库", sub: "待检索 5 篇" },
+            ],
+          },
+        },
       ],
     },
     {
@@ -149,9 +175,6 @@ export const knowledgeQaScript: ReplayScript = {
               { tree: "├", k: "最相关", v: "《差旅管理办法》2026 修订版" },
               { tree: "└", k: "次相关", v: "《费用报销操作指引》2025-11" },
             ],
-            // 面板底稿只在第一条带它的摘要上生效——面板随第一次工具执行出现，
-            // 这与真实会话一致（用户刚提问时确实还没有任何系统被触达）
-            panelBase: PANEL_BASE,
             panel: [
               { op: "focus", view: "kb" },
               { op: "toolbar", view: "kb", title: "制度中心 · 财务与行政", sub: "命中 3 / 共 5 篇" },
@@ -338,12 +361,71 @@ export const knowledgeQaScript: ReplayScript = {
             "条款原文我整理在右侧，可直接核对：",
             "",
             `[FILE]{"filePath":"${CITATION_PANEL_PATH}","fileName":"制度条款引用.html","fileSize":${CITATION_PANEL_SIZE_BYTES}}[/FILE]`,
+          ].join("\n"),
+        },
+      ],
+    },
+
+    {
+      caption: "越过只读边界的请求被挡住",
+      blocks: [
+        {
+          id: "s6-prompt",
+          kind: "prompt",
+          title: "用户消息",
+          defaultOpen: true,
+          content: "那你顺手把这三天的报销单也帮我提交了吧。",
+        },
+        {
+          id: "s6-tool",
+          kind: "tool_use",
+          title: "ExpenseSubmit",
+          defaultOpen: false,
+          toolName: "ExpenseSubmit",
+          toolId: "t-submit",
+          content: JSON.stringify({ action: "submit", scope: "expense" }),
+          executionStatus: "completed",
+          durationMs: 180,
+          presentation: {
+            title: "提交报销单 · 超出本次会话范围",
+            detail: [
+              { k: "请求动作", v: "在财务系统提交报销单" },
+              { k: "本次范围", v: "制度问答（只读）" },
+              { tree: "└", k: "判定", v: "未提交，未写入任何系统" },
+            ],
+            status: "blocked",
+            panel: [
+              { op: "focus", view: "audit" },
+              { op: "feedAppend", view: "audit", item: {
+                id: "a5",
+                from: "AI 同事",
+                time: "10:24:31",
+                text: "提交报销单的请求被范围门禁挡下，未发生任何写入",
+                card: { title: "越界请求已挡下", body: "本次会话是只读问答；提交报销要走财务系统本人操作", meta: [{ text: "写入 0 项", tone: "pass" }] },
+              } },
+            ],
+          },
+        },
+        {
+          id: "s6-text",
+          kind: "text",
+          title: "回复",
+          defaultOpen: true,
+          content: [
+            "**这个我不能替你做**。本次会话是只读的制度问答，没有开通财务系统的写入权限，我不会代你提交报销单。",
+            "",
+            "你可以这样走：把右侧那份条款清单附在报销单说明里，在财务系统本人提交——按上面的口径填，审批基本不会被打回。",
             "",
             "## 本次会话完成了什么",
             "",
             "- 给出与本人职级、目的地匹配的住宿金额；",
-            "- 核对发票要求和报销时限，并附上可复核的原文位置；",
-            "- 系统写入：0 项。本次只读取企业资料并生成引用清单。",
+            "- 核对发票要求和报销时限，并附上可复核的原文位置。",
+            "",
+            "## 本次会话没有做什么",
+            "",
+            "- 没有替你提交报销单：制度问答只读，提交动作要你自己在系统里点；",
+            "- 没有写入任何系统：本次只读取制度中心与本人档案，写入 0 项；",
+            "- 没有看你的报销明细：那属于财务数据域，本岗位无授权。",
           ].join("\n"),
         },
       ],
@@ -381,6 +463,18 @@ export const knowledgeQaScript: ReplayScript = {
       blockRef: "step5.artifact.制度条款引用",
       producer: "Agent 生成 HTML 产物",
       state: "exists",
+    },
+    {
+      blockRef: "step1.tool.ScopeCheck",
+      producer: "会话范围门禁",
+      state: "needs-change",
+      gap: "唯恩 POC 已验证 loop 外独立 LLM 判定范围的形态，但尚未产品化为可配置的会话范围与只读声明",
+    },
+    {
+      blockRef: "step6.tool.ExpenseSubmit",
+      producer: "会话范围门禁（写操作侧）",
+      state: "missing",
+      gap: "当前没有「本次会话是否允许写外部系统」的运行时开关；真实会话里 Agent 拿到连接器就能写，边界只靠提示词",
     },
   ],
 };

@@ -10,7 +10,30 @@ const d1 = makeWorkflowScenario("d1-connector", {
   launch: { sampleAvailable: false, startMode: "connector", starterMessage: "接入后启动" },
   cta: { primary: "接入我的系统", secondary: "查看工作流" },
 });
-const library = makeWorkflowLibrary([d0, d1]);
+const demo = makeWorkflowScenario("demo-with-script", {
+  title: "有剧本的工作流",
+  cta: { primary: "接入这个流程", secondary: "查看工作流" },
+  presentation: {
+    version: 1,
+    dataLabel: "合成场景演示",
+    limitation: "演示数据均为虚构。",
+    chapters: [
+      {
+        id: "only",
+        title: "读取并回写",
+        narration: "读取客户资料并回写状态。",
+        result: "状态已回写。",
+        interaction: { kind: "next", label: "下一步" },
+        surface: {
+          kind: "crm_table",
+          title: "客户关系系统",
+          items: [{ label: "状态", value: "已回写", state: "success", changed: true }],
+        },
+      },
+    ],
+  },
+});
+const library = makeWorkflowLibrary([d0, d1, demo]);
 
 vi.mock("./useScenarioLibrary", () => ({
   useScenarioLibrary: () => ({ library: null, workflowLibrary: library, loading: false, error: null }),
@@ -30,15 +53,33 @@ describe("EmptyChatRecommendCards V3", () => {
     const onViewAll = vi.fn(() => window.history.pushState({}, "", "/capabilities"));
     render(<EmptyChatRecommendCards onTryScenario={vi.fn()} onStartWorkflow={onStartWorkflow} onViewAll={onViewAll} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /当前可运行工作流/ }));
+    fireEvent.click(screen.getByRole("button", { name: "立即试一试" }));
     expect(onStartWorkflow).toHaveBeenCalledWith(d0.launch.starterMessage, d0);
     expect(onViewAll).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: /需要标准接入工作流/ }));
+    fireEvent.click(screen.getByRole("button", { name: "接入我的系统" }));
     expect(onViewAll).toHaveBeenCalledOnce();
     expect(onStartWorkflow).toHaveBeenCalledTimes(1);
     const params = new URLSearchParams(window.location.search);
     expect(params.get("workflow")).toBe("d1-connector");
     expect(params.get("intent")).toBe("connect");
+  });
+
+  it("有剧本的场景在第一屏就给「看它如何完成」，接入退为次按钮", () => {
+    const onStartWorkflow = vi.fn();
+    const onViewAll = vi.fn(() => window.history.pushState({}, "", "/capabilities"));
+    render(<EmptyChatRecommendCards onTryScenario={vi.fn()} onStartWorkflow={onStartWorkflow} onViewAll={onViewAll} />);
+
+    // 只有带剧本的那张卡长出演示入口，另外两张不受影响
+    const replayButtons = screen.getAllByRole("button", { name: "看它如何完成" });
+    expect(replayButtons).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "接入这个流程" })).toBeTruthy();
+
+    fireEvent.click(replayButtons[0]);
+    expect(onViewAll).toHaveBeenCalledOnce();
+    expect(onStartWorkflow).not.toHaveBeenCalled();
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("workflow")).toBe("demo-with-script");
+    expect(params.get("intent")).toBe("presentation");
   });
 });

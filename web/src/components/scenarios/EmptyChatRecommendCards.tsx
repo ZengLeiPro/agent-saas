@@ -18,6 +18,7 @@ import {
 } from "./useScenarioLibrary";
 import { matchIndustry, useIndustryFilter } from "./useIndustryFilter";
 import { friendlyDataDependency } from "./friendlyMappings";
+import { hasReplayScript } from "./replay/registry";
 
 interface EmptyChatRecommendCardsProps {
   onTryScenario: (prompt: string, scenario: ScenarioItem) => void;
@@ -108,7 +109,7 @@ export function EmptyChatRecommendCards({
       : workflowLibrary.scenarios.filter((scenario) => scenario.industryTags.includes(activeIndustry));
     const pool = industryFiltered.length > 0 ? industryFiltered : workflowLibrary.scenarios;
     const cards = pickRecommendedWorkflowScenarios(pool, recommendationCount, matchedRoleId);
-    const openCatalog = (scenario: CatalogScenarioPublic, intent: "view" | "run" | "connect") => {
+    const openCatalog = (scenario: CatalogScenarioPublic, intent: "view" | "run" | "connect" | "presentation") => {
       onViewAll();
       const params = new URLSearchParams(window.location.search);
       params.delete("scenario");
@@ -123,22 +124,40 @@ export function EmptyChatRecommendCards({
           <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 gap-1 text-xs" onClick={onViewAll}>查看目录<ArrowRight className="size-3.5" /></Button>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {cards.map((scenario) => (
-            <button
-              key={scenario.id}
-              type="button"
-              className={cn("flex min-h-[172px] flex-col rounded-lg border bg-card p-4 text-left shadow-sm transition-all", "hover:-translate-y-0.5 hover:border-brand-200")}
-              onClick={() => {
-                if (scenario.launch.startMode === "chat" && onStartWorkflow) onStartWorkflow(scenario.launch.starterMessage, scenario);
-                else openCatalog(scenario, scenario.launch.startMode === "connector" ? "connect" : "view");
-              }}
-            >
-              <div className="text-[11px] font-medium text-muted-foreground">{scenario.primaryType === "CREATE" ? "产出成果" : scenario.primaryType === "WATCH" ? "持续巡检" : scenario.primaryType === "ACT" ? "会动系统" : "持续闭环"} · {scenario.readiness === "D0_CURRENT" ? "当前即用" : scenario.readiness === "D1_CONNECTOR" ? "标准接入" : "项目集成"}</div>
-              <div className="mt-2 line-clamp-2 text-sm font-semibold leading-snug">{scenario.title}</div>
-              <p className="mt-2 line-clamp-3 text-sm leading-5 text-muted-foreground">{scenario.value}</p>
-              <div className="mt-auto pt-3 text-xs text-brand-600">{scenario.cta.primary}</div>
-            </button>
-          ))}
+          {cards.map((scenario) => {
+            const canReplay = hasReplayScript(scenario);
+            const openOperational = () => {
+              if (scenario.launch.startMode === "chat" && onStartWorkflow) onStartWorkflow(scenario.launch.starterMessage, scenario);
+              else openCatalog(scenario, scenario.launch.startMode === "connector" ? "connect" : "view");
+            };
+            return (
+              <div
+                key={scenario.id}
+                className={cn("flex min-h-[172px] flex-col rounded-lg border bg-card p-4 text-left shadow-sm transition-all", "hover:-translate-y-0.5 hover:border-brand-200")}
+              >
+                <div className="text-[11px] font-medium text-muted-foreground">{scenario.primaryType === "CREATE" ? "产出成果" : scenario.primaryType === "WATCH" ? "持续巡检" : scenario.primaryType === "ACT" ? "会动系统" : "持续闭环"} · {scenario.readiness === "D0_CURRENT" ? "当前即用" : scenario.readiness === "D1_CONNECTOR" ? "标准接入" : "项目集成"}</div>
+                <div className="mt-2 line-clamp-2 text-sm font-semibold leading-snug">{scenario.title}</div>
+                <p className="mt-2 line-clamp-3 text-sm leading-5 text-muted-foreground">{scenario.value}</p>
+                {/* 能看演示的场景，第一屏就给「看它如何完成」；接入是第二选择，不是唯一入口 */}
+                <div className="mt-auto flex flex-wrap items-center justify-end gap-1.5 pt-3">
+                  {canReplay ? (
+                    <>
+                      <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={openOperational}>
+                        {scenario.cta.primary}
+                      </Button>
+                      <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={() => openCatalog(scenario, "presentation")}>
+                        看它如何完成
+                      </Button>
+                    </>
+                  ) : (
+                    <Button type="button" size="sm" className="h-7 px-2.5 text-xs" onClick={openOperational}>
+                      {scenario.cta.primary}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     );

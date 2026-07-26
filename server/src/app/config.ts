@@ -1330,3 +1330,50 @@ export function loadAppConfig(processCwd: string): AppConfig {
 
   return parseAppConfig(rawConfig);
 }
+
+/** 允许非 production 进程直连的本机数据库主机名。 */
+const LOCAL_DB_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]']);
+
+/** 从 PG 连接串取主机名；解析不出来返回 null（不阻断，交由连接层报错）。 */
+function extractDbHostname(connectionString: string): string | null {
+  try {
+    const hostname = new URL(connectionString).hostname.trim().toLowerCase();
+    return hostname.length > 0 ? hostname : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 开发环境数据库护栏：非 production 进程禁止连接远程 PG。
+ *
+ * 背景（2026-07-26 实际事故）：本地 `pnpm dev` 沿用了指向生产库的 config.json，
+ * 于是本机进程真实接管了生产 EventStore —— 抢走 cron leadership 的 advisory lock、
+ * 占满角色连接额度（蓝绿部署新实例启动时 `FATAL 53300`），并让 HandHealthScanner
+ * 从连不到 VPC 的本机把 runtime_hands 批量误标 unhealthy。
+ *
+ * 这类事故靠"启动前记得改配置"的纪律防不住，因此在启动路径上做硬断言。
+ * 确需连远程库调试时显式设置 `ALLOW_REMOTE_DB_IN_DEV=1`。
+ */
+export function assertDevDatabaseSafety(
+  config: AppConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (env.NODE_ENV === 'production') return;
+  if (env.ALLOW_REMOTE_DB_IN_DEV === '1') return;
+
+  const store = config.runtimeEventStore;
+  if (store?.backend !== 'pg') return;
+
+  const hostname = extractDbHostname(store.connectionString);
+  if (hostname === null || LOCAL_DB_HOSTNAMES.has(hostname)) return;
+
+  throw new Error(
+    [
+      `拒绝启动：NODE_ENV=${env.NODE_ENV ?? '(未设置)'} 的进程试图连接远程数据库 ${hostname}。`,
+      '非生产进程连上生产库会抢占 cron leadership、占满角色连接额度并误标 runtime_hands。',
+      '请改用 runtimeEventStore.backend="file" 或本机 PG；',
+      '确需连远程库调试时设置 ALLOW_REMOTE_DB_IN_DEV=1。',
+    ].join('\n'),
+  );
+}

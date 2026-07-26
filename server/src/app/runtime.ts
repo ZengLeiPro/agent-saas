@@ -70,7 +70,7 @@ import { createCronNotifier } from '../cron/notifier.js';
 import type { NotifyChannel } from '../cron/notifyChannel.js';
 import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
 import { buildFollowupContext } from '../cron/followup.js';
-import { loadAppConfig } from './config.js';
+import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
 import { resolveModelRef } from './models.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
@@ -473,6 +473,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const processRole = options.processRole ?? 'all';
   const enableSchedulerWorker = processRole !== 'ws-only';
   const config = loadAppConfig(processCwd);
+  // 非 production 进程禁止连远程 PG（2026-07-26 本地 dev 接管生产库事故）
+  assertDevDatabaseSafety(config);
 
   // 从配置初始化全局 Logger（必须在其他模块使用 logger 之前）
   const loggingConfig = config.observability?.logging;

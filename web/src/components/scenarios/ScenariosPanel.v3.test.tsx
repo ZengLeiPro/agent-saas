@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScenariosPanel } from "./ScenariosPanel";
 import { makeWorkflowLibrary, makeWorkflowScenario, makeWorkflowSkin } from "./workflowTestFixtures";
 import { OUTCOME_OPTIONS } from "./workflowUi";
@@ -23,6 +23,14 @@ vi.mock("./useScenarioLibrary", async () => {
 });
 
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: null }) }));
+
+beforeAll(() => {
+  Range.prototype.getClientRects = () => ({
+    length: 0,
+    item: () => null,
+    [Symbol.iterator]: [][Symbol.iterator],
+  }) as unknown as DOMRectList;
+});
 
 beforeEach(() => {
   localStorage.clear();
@@ -69,7 +77,9 @@ describe("ScenariosPanel V3", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "看它如何完成" }));
     expect(screen.getByRole("heading", { name: guided.title })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.getByText("1 / 6")).toBeTruthy();
+    expect(screen.getByText("业务步骤 1")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
 
     fireEvent.click(screen.getByRole("button", { name: "浏览全部 2 个工作场景" }));
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(2);

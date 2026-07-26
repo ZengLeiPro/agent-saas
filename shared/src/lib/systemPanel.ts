@@ -128,6 +128,7 @@ export type PanelPatch =
   | { op: 'focus'; view: string }
   | { op: 'toolbar'; view: string; title?: string; sub?: string }
   | { op: 'rowInsert'; view: string; row: PanelRow; at?: number }
+  | { op: 'rowsSet'; view: string; rows: PanelRow[] }
   | { op: 'rowUpdate'; view: string; id: string; set: Partial<Omit<PanelRow, 'id'>> }
   | { op: 'rowsUpdate'; view: string; ids: string[]; set: Partial<Omit<PanelRow, 'id'>> }
   | { op: 'mode'; view: string; mode: string }
@@ -451,7 +452,7 @@ export function normalizeSystemPanel(raw: unknown, allowCustomHtml = false): Sys
 }
 
 const PATCH_OPS = new Set([
-  'focus', 'toolbar', 'rowInsert', 'rowUpdate', 'rowsUpdate', 'mode',
+  'focus', 'toolbar', 'rowInsert', 'rowsSet', 'rowUpdate', 'rowsUpdate', 'mode',
   'cardInsert', 'cardUpdate', 'tableRowInsert', 'tableRowUpdate',
   'cellFlag', 'statsSet', 'feedAppend', 'pulse',
 ]);
@@ -485,6 +486,14 @@ function patch(raw: unknown): PanelPatch | null {
         row: value,
         ...(typeof source.at === 'number' && Number.isFinite(source.at) ? { at: Math.trunc(source.at) } : {}),
       };
+    }
+    case 'rowsSet': {
+      if (!Array.isArray(source.rows)) return null;
+      const rows = source.rows
+        .slice(0, PANEL_ROW_LIMIT)
+        .map((item) => row(item))
+        .filter((item): item is PanelRow => item !== null);
+      return { op: 'rowsSet', view: viewKey!, rows };
     }
     case 'rowUpdate': {
       const id = text(source.id, 120);
@@ -632,6 +641,11 @@ function applyPatch(snapshot: SystemPanelSnapshot, p: PanelPatch): SystemPanelSn
       return mapView(snapshot, p.view, (view) =>
         view.widget.kind === 'rows'
           ? { ...view, widget: { ...view.widget, rows: insertAt(view.widget.rows, p.row, p.at) } }
+          : view);
+    case 'rowsSet':
+      return mapView(snapshot, p.view, (view) =>
+        view.widget.kind === 'rows'
+          ? { ...view, widget: { ...view.widget, rows: p.rows.map((row) => ({ ...row })) } }
           : view);
     case 'rowUpdate':
       return mapView(snapshot, p.view, (view) =>

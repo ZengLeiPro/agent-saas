@@ -316,6 +316,8 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
 
   useEffect(() => {
     if (fileSize > 0) return;
+    // 演示/离线产物由上下文直接提供内容与下载，不查询真实会话文件 API。
+    if (filePreview?.downloadFile) return;
     // artifact 卡片：大小已由 tool result 带出（sizeBytes 常存在但可能为 0）
     // 这时不 fallback HEAD /api/file/download——sourcePath 可能不在工作区里。
     if (artifactId) return;
@@ -339,7 +341,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [filePath, fileSize, ownerParam, artifactId, shareToken]);
+  }, [filePath, fileSize, ownerParam, artifactId, shareToken, filePreview?.downloadFile]);
 
   const previewType = getPreviewFileType(fileName);
   const isPreviewable = !!previewType;
@@ -413,6 +415,8 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
                 void artifactDownload(artifactId, fileName);
               } else if (shareToken) {
                 void shareFileDownload(shareToken, filePath, fileName);
+              } else if (filePreview?.downloadFile) {
+                filePreview.downloadFile(filePath, fileName);
               } else {
                 void authFetchDownload(filePath, fileName, owner);
               }

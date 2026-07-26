@@ -106,6 +106,16 @@ describe('normalizePanelPatches', () => {
     const [patch] = normalizePanelPatches([{ op: 'rowUpdate', view: 'kb', id: 'r1', set: { tone: 'rainbow', state: 'hit' } }]);
     expect((patch as Extract<PanelPatch, { op: 'rowUpdate' }>).set).toEqual({ state: 'hit' });
   });
+
+  it('rowsSet 只保留合法行，允许把当前对象集合替换为空', () => {
+    expect(normalizePanelPatches([
+      { op: 'rowsSet', view: 'kb', rows: [{ id: 'new', text: '新对象' }, { text: '无 id' }] },
+      { op: 'rowsSet', view: 'kb', rows: [] },
+    ])).toEqual([
+      { op: 'rowsSet', view: 'kb', rows: [{ id: 'new', text: '新对象' }] },
+      { op: 'rowsSet', view: 'kb', rows: [] },
+    ]);
+  });
 });
 
 describe('foldPanel', () => {
@@ -130,6 +140,18 @@ describe('foldPanel', () => {
     ]);
     const widget = result.views[0].widget;
     expect(widget.kind === 'rows' && widget.rows.map((r) => r.id)).toEqual(['r1', 'x', 'r2', 'y']);
+  });
+
+  it('rowsSet 替换当前对象集合，不保留上一步占位或旧对象', () => {
+    const result = foldPanel(BASE, [{
+      op: 'rowsSet',
+      view: 'kb',
+      rows: [{ id: 'current', text: '本步唯一对象', state: 'hit' }],
+    }]);
+    const widget = result.views[0].widget;
+    expect(widget.kind === 'rows' && widget.rows).toEqual([
+      { id: 'current', text: '本步唯一对象', state: 'hit' },
+    ]);
   });
 
   it('cellFlag 落到表格单元格', () => {

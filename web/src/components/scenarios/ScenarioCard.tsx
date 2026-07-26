@@ -292,13 +292,15 @@ export function WorkflowPresentationCard({
   onPrimaryAction,
 }: Pick<WorkflowScenarioCardProps, "scenario" | "onPrimaryAction">) {
   const cta = workflowCta(scenario);
-  // 会话式回放剧本优先：它的步数才是观众实际要按几次
-  const chapterCount = getReplayScript(scenario.id)?.steps.length ?? scenario.presentation?.chapters.length ?? 0;
+  // 会话式回放剧本优先：它的步数才是观众实际要按几次。
+  const replayScript = getReplayScript(scenario.id, scenario);
+  const chapterCount = replayScript?.steps.length ?? 0;
   return (
     <article className="flex flex-col overflow-hidden rounded-2xl border border-brand-100 bg-gradient-to-br from-white via-white to-brand-50/70 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md">
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge className="gap-1 bg-brand-50 font-normal text-brand-700 hover:bg-brand-50">
-          <MousePointerClick className="size-3" />一步一步演示
+          <MousePointerClick className="size-3" />
+          {replayScript?.mode === "hero" ? "完整业务闭环" : "快速体验"}
         </Badge>
         <Badge variant="outline" className="font-normal">{friendlyReadiness[scenario.readiness]}</Badge>
       </div>

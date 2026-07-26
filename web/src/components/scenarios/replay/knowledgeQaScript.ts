@@ -64,6 +64,8 @@ const CITATION_PANEL_HTML = `<!doctype html>
 <p class="foot">示例内容，不对应任何真实企业制度。</p>
 </body></html>`;
 
+const CITATION_PANEL_SIZE_BYTES = new TextEncoder().encode(CITATION_PANEL_HTML).length;
+
 /**
  * 面板底稿：三个被触达的企业系统视图。
  * 初始状态是"还没被检索过"的样子——每一步的 patch 才让它动起来。
@@ -110,6 +112,7 @@ const PANEL_BASE: SystemPanelSnapshot = {
 export const knowledgeQaScript: ReplayScript = {
   scenarioId: "catalog-evidence-backed-communication-create",
   title: "有出处、数字不走样的业务答复",
+  mode: "quick",
   artifacts: { [CITATION_PANEL_PATH]: CITATION_PANEL_HTML },
 
   steps: [
@@ -168,6 +171,13 @@ export const knowledgeQaScript: ReplayScript = {
           toolId: "t-search",
           content: "hits=3\n1. 差旅管理办法(2026).md  score=0.91\n2. 费用报销操作指引(2025-11).md  score=0.77\n3. 财务制度总则.md  score=0.42",
         },
+        {
+          id: "s2-text",
+          kind: "text",
+          title: "检索结果",
+          defaultOpen: true,
+          content: "已锁定 3 篇候选制度，下一步只读取最相关制度中的住宿与票据条款。",
+        },
       ],
     },
     {
@@ -207,6 +217,13 @@ export const knowledgeQaScript: ReplayScript = {
           toolName: "Read",
           toolId: "t-read",
           content: "第四章 第 12 条 住宿标准\n员工因公出差，住宿费按出差目的地城市档位与本人职级分档控制……",
+        },
+        {
+          id: "s3-text",
+          kind: "text",
+          title: "条款定位",
+          defaultOpen: true,
+          content: "已定位第 12 条住宿标准与第 15 条票据要求。金额取决于城市档位和本人职级。",
         },
       ],
     },
@@ -253,6 +270,13 @@ export const knowledgeQaScript: ReplayScript = {
           toolName: "DingtalkContact",
           toolId: "t-contact",
           content: '{"dept":"市场部","level":"P5"}',
+        },
+        {
+          id: "s4-text",
+          kind: "text",
+          title: "适用标准",
+          defaultOpen: true,
+          content: "适用档位已确认：上海（一类城市）× P5，住宿上限 600 元/晚，三天合计 1,800 元。",
         },
       ],
     },
@@ -313,7 +337,13 @@ export const knowledgeQaScript: ReplayScript = {
             "",
             "条款原文我整理在右侧，可直接核对：",
             "",
-            `[FILE]{"filePath":"${CITATION_PANEL_PATH}","fileName":"制度条款引用.html"}[/FILE]`,
+            `[FILE]{"filePath":"${CITATION_PANEL_PATH}","fileName":"制度条款引用.html","fileSize":${CITATION_PANEL_SIZE_BYTES}}[/FILE]`,
+            "",
+            "## 本次会话完成了什么",
+            "",
+            "- 给出与本人职级、目的地匹配的住宿金额；",
+            "- 核对发票要求和报销时限，并附上可复核的原文位置；",
+            "- 系统写入：0 项。本次只读取企业资料并生成引用清单。",
           ].join("\n"),
         },
       ],

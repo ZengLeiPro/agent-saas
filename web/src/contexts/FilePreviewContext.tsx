@@ -14,6 +14,8 @@ export interface OpenPreviewOptions {
 
 interface FilePreviewContextValue {
   openPreview: (filePath: string, owner?: string, options?: OpenPreviewOptions) => void;
+  /** 演示或离线产物可提供自己的下载实现，避免回落到真实会话文件 API。 */
+  downloadFile?: (filePath: string, fileName: string) => void;
   /** 当前会话所属用户（admin 查看其他用户会话时需要） */
   owner?: string;
   /** 只读分享页的公开访问 token，用于文件卡读取分享快照里的交付物。 */

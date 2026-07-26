@@ -29,7 +29,6 @@ import {
   WorkflowScenarioCard,
 } from "./ScenarioCard";
 import { ScenarioDetailDialog } from "./ScenarioDetailDialog";
-import { WorkflowPresentationDialog } from "./WorkflowPresentationDialog";
 import { getReplayScript, ScenarioReplayView, type ReplayScript } from "./replay";
 import { matchRoleIdByPosition, useScenarioLibrary } from "./useScenarioLibrary";
 import { RoleKitDetailPage } from "./RoleKitDetailPage";
@@ -49,7 +48,6 @@ import {
   type OutcomeFilterValue,
   type VerticalFilterValue,
   type WorkflowPrimaryAction,
-  workflowOperationalCta,
 } from "./workflowUi";
 
 const INDUSTRY_ORDER: IndustryType[] = [
@@ -82,7 +80,6 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     roleViewId?: string;
     roleId?: string;
   } | null>(null);
-  const [presentation, setPresentation] = useState<CatalogScenarioPublic | null>(null);
   const [replay, setReplay] = useState<ReplayScript | null>(null);
   const [catalogExpanded, setCatalogExpanded] = useState(false);
   const [deferredNotice, setDeferredNotice] = useState<WorkflowLibraryPublicV3["deferredObjects"][number] | null>(null);
@@ -103,10 +100,9 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
   const handleWorkflowAction = (action: WorkflowPrimaryAction, scenario: CatalogScenarioPublic) => {
     props.onWorkflowSelected?.(scenario);
     if (action === "presentation") {
-      // 已登记会话式回放剧本的场景走新视图；其余维持原分章对话框，互不影响
-      const script = getReplayScript(scenario.id);
+      // 静态剧本与 Workflow V3 presentation 统一走产品原生会话回放。
+      const script = getReplayScript(scenario.id, scenario);
       if (script) setReplay(script);
-      else if (scenario.presentation) setPresentation(scenario);
       else setDetail({ scenario });
       return;
     }
@@ -236,7 +232,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     || filters.activeBusinessModel !== BUSINESS_MODEL_ALL
     || filters.activeMaturity !== MATURITY_ALL;
   const presentationScenarios = workflowLibrary.scenarios
-    .filter((scenario) => scenario.presentation || getReplayScript(scenario.id))
+    .filter((scenario) => !!getReplayScript(scenario.id, scenario))
     .sort((left, right) => (left.featuredOrder ?? Number.MAX_SAFE_INTEGER) - (right.featuredOrder ?? Number.MAX_SAFE_INTEGER));
   const showFullCatalog = presentationScenarios.length === 0
     || catalogExpanded
@@ -383,15 +379,6 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
         open={!!detail}
         onOpenChange={(open) => { if (!open) setDetail(null); }}
         onPrimaryAction={handleWorkflowAction}
-      />
-      <WorkflowPresentationDialog
-        scenario={presentation}
-        open={!!presentation}
-        onOpenChange={(open) => { if (!open) setPresentation(null); }}
-        onUseScenario={(scenario) => {
-          setPresentation(null);
-          handleWorkflowAction(workflowOperationalCta(scenario).action, scenario);
-        }}
       />
       <Dialog open={!!deferredNotice} onOpenChange={(open) => { if (!open) setDeferredNotice(null); }}>
         <DialogContent className="max-w-md">

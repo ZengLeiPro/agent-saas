@@ -17,6 +17,20 @@ export interface ReplayStep {
   caption: string;
   /** 本步新增的 transcript block（回放时累加，不替换） */
   blocks: ApiTranscriptBlock[];
+  /**
+   * 本步需要有权人明确确认时使用。
+   *
+   * 回放器会阻断「下一步」和键盘推进，只有点击批准才会加入 approvedBlocks
+   * 并继续。这样人审是工作流的一部分，不是写在文案里的装饰。
+   */
+  approval?: {
+    title: string;
+    description: string;
+    facts: Array<{ label: string; value: string }>;
+    approveLabel: string;
+    rejectLabel?: string;
+    approvedBlocks: ApiTranscriptBlock[];
+  };
 }
 
 /**
@@ -47,6 +61,8 @@ export interface ReplayScript {
   /** 对应 catalogScenario 的 id */
   scenarioId: string;
   title: string;
+  /** 推荐卡与回放头部使用；Hero 强调完整业务闭环，quick 是轻量即用体验。 */
+  mode?: "hero" | "quick";
   steps: ReplayStep[];
   /**
    * 剧本内嵌的 HTML 产物，键为 [FILE] 标记里的 filePath。

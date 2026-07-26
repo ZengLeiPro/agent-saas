@@ -1,4 +1,6 @@
 import { knowledgeQaScript } from "./knowledgeQaScript";
+import { presentationToReplayScript } from "./presentationReplayScript";
+import type { CatalogScenarioPublic } from "@agent/shared";
 import type { ReplayScript } from "./types";
 
 /**
@@ -14,8 +16,12 @@ const SCRIPTS: ReplayScript[] = [knowledgeQaScript];
 
 const BY_SCENARIO_ID = new Map(SCRIPTS.map((script) => [script.scenarioId, script]));
 
-export function getReplayScript(scenarioId: string): ReplayScript | null {
-  return BY_SCENARIO_ID.get(scenarioId) ?? null;
+export function getReplayScript(
+  scenarioId: string,
+  scenario?: CatalogScenarioPublic,
+): ReplayScript | null {
+  return BY_SCENARIO_ID.get(scenarioId)
+    ?? (scenario ? presentationToReplayScript(scenario) : null);
 }
 
 export function allReplayScripts(): ReplayScript[] {

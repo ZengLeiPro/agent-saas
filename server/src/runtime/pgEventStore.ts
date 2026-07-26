@@ -7,6 +7,14 @@ import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 const { Client, Pool } = pg;
 const NOTIFY_RANGE_PAGE_LIMIT = 250;
 const DEFAULT_POOL_MAX = 4;
+const PG_TOO_MANY_CONNECTIONS = '53300';
+
+function isPgConnectionCapacityError(err: unknown): boolean {
+  return typeof err === 'object'
+    && err !== null
+    && 'code' in err
+    && (err as { code?: unknown }).code === PG_TOO_MANY_CONNECTIONS;
+}
 
 // PostgreSQL jsonb 不支持 U+0000；工具仍可能从普通文本文件或命令输出读到 NUL。
 // 只在持久化边界把它保存为可见转义文本，避免单条 tool_result 终止整个 run。
@@ -557,8 +565,13 @@ export class PgEventStore implements EventStore {
         if (!closed && client === next) scheduleReconnect();
       });
       next.on('notification', handleNotification);
-      await next.connect();
-      await next.query(`LISTEN ${this.notifyChannel}`);
+      try {
+        await next.connect();
+        await next.query(`LISTEN ${this.notifyChannel}`);
+      } catch (err) {
+        teardownClient(next);
+        throw err;
+      }
       client = next;
       reconnectDelay = reconnectBaseDelayMs;
       // (重)连接后对所有已跟踪会话 catch-up，补回断线窗口内 commit 的事件。
@@ -584,8 +597,18 @@ export class PgEventStore implements EventStore {
       reconnectTimer.unref?.();
     };
 
-    // 初次连接：失败直接抛（保留原启动语义，让配置错误在启动期暴露）。
-    await connectOnce();
+    // 初次连接遇到 PG 连接额度耗尽时进入现有指数退避重连：主查询池已完成初始化，
+    // LISTEN 仅负责实时通知，安全轮询会兜底补拉，不应让蓝绿新色反复崩溃重启。
+    // 其他错误仍直接抛出，确保认证、DNS、SSL、数据库名等配置错误在启动期暴露。
+    try {
+      await connectOnce();
+    } catch (err) {
+      if (!isPgConnectionCapacityError(err)) throw err;
+      this.options.logger?.warn?.('PgEventStore listener initial connect deferred: connection capacity exhausted', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      scheduleReconnect();
+    }
 
     if (safetyPollIntervalMs > 0) {
       pollTimer = setInterval(() => {

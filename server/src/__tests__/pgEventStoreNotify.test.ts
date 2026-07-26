@@ -106,6 +106,8 @@ const pgMock = vi.hoisted(() => {
   class MockClient {
     static instances: MockClient[] = [];
 
+    static connectErrors: unknown[] = [];
+
     readonly queries: string[] = [];
     ended = false;
     private readonly handlers = new Map<string, (arg: unknown) => void>();
@@ -123,7 +125,10 @@ const pgMock = vi.hoisted(() => {
       else this.handlers.clear();
     }
 
-    async connect(): Promise<void> {}
+    async connect(): Promise<void> {
+      const err = MockClient.connectErrors.shift();
+      if (err) throw err;
+    }
 
     async query(text: string): Promise<QueryResult> {
       this.queries.push(text);
@@ -152,6 +157,7 @@ const pgMock = vi.hoisted(() => {
     MockPool,
     reset() {
       MockClient.instances = [];
+      MockClient.connectErrors = [];
       MockPool.instances = [];
     },
   };
@@ -457,6 +463,30 @@ describe('PgEventStore notify coalescing', () => {
     });
 
     await unsub();
+  });
+
+  it('defers an initial 53300 listener failure and reconnects without blocking startup', async () => {
+    const capacityError = Object.assign(new Error('too many connections'), { code: '53300' });
+    pgMock.MockClient.connectErrors.push(capacityError);
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+
+    const unsub = await store.subscribeAppended(() => undefined, FAST_SUBSCRIBE);
+
+    await vi.waitFor(() => {
+      expect(pgMock.MockClient.instances.length).toBeGreaterThanOrEqual(2);
+      expect(pgMock.MockClient.instances[1]!.queries.some((q) => q.includes('LISTEN'))).toBe(true);
+    });
+    expect(pgMock.MockClient.instances[0]!.ended).toBe(true);
+
+    await unsub();
+  });
+
+  it('still rejects non-capacity errors during the initial listener connection', async () => {
+    const authError = Object.assign(new Error('password authentication failed'), { code: '28P01' });
+    pgMock.MockClient.connectErrors.push(authError);
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+
+    await expect(store.subscribeAppended(() => undefined, FAST_SUBSCRIBE)).rejects.toBe(authError);
   });
 
   it('reconnects after the listen connection drops and catches up missed events', async () => {

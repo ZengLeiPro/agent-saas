@@ -4,9 +4,11 @@ import { mapSessionDetailToMessages, type ApiSessionDetail, type ApiTranscriptBl
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MessageList } from "@/components/MessageList";
+import { ResizablePanelDivider } from "@/components/ResizablePanelDivider";
 import { FilePreviewProvider } from "@/contexts/FilePreviewContext";
 import { HTML_SANDBOX_CSP } from "@/components/HtmlPreviewPanel";
 import { SystemPanel } from "@/components/SystemPanel";
+import { useResizePanel } from "@/hooks/useResizePanel";
 import { useSystemPanel } from "@/hooks/useSystemPanel";
 import { ActionIcons, EntityIcons, StatusIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
@@ -162,6 +164,12 @@ export function ScenarioReplayView({
   const { snapshot, selectView } = useSystemPanel(messages);
   const artifactHtml = artifact ? script.artifacts?.[artifact.path] : undefined;
   const rightOpen = !!snapshot || !!artifactHtml;
+  const {
+    ratio: splitRatio,
+    containerRef: splitContainerRef,
+    onDividerMouseDown,
+    onDividerDoubleClick,
+  } = useResizePanel(0.3, 0.25, 0.5);
 
   const next = useCallback(() => {
     if (gateBlocked) return;
@@ -259,12 +267,16 @@ export function ScenarioReplayView({
         </Badge>
       </div>
 
-      <div className="flex min-h-0 flex-1">
-        {/* 右栏固定宽度、会话区吃掉剩余空间：50/50 会让 1600 宽下的会话区只剩 ~700px，
-            而右栏大半是空的（07-26 实机对比，三家客户演示稿都是右栏定宽 400~430px）。 */}
+      <div ref={rightOpen ? splitContainerRef : undefined} className="flex min-h-0 flex-1">
+        {/* 默认保持会话区更宽；右侧看板的拖拽交互与正式会话复用同一个 useResizePanel。 */}
         <div
           data-scenario-replay-conversation
-          className={cn("flex min-h-0 flex-col", rightOpen ? "min-w-0 flex-1" : "w-full")}
+          className={cn("flex min-h-0 flex-col", rightOpen ? "min-w-0" : "w-full")}
+          style={rightOpen ? {
+            flexBasis: `${(1 - splitRatio) * 100}%`,
+            flexShrink: 0,
+            flexGrow: 0,
+          } : undefined}
         >
           <FilePreviewProvider value={{ openPreview, downloadFile }}>
             <MessageList
@@ -354,21 +366,32 @@ export function ScenarioReplayView({
         </div>
 
         {rightOpen && (
-          <div className="flex min-h-0 w-[420px] shrink-0 flex-col border-l border-border xl:w-[460px]">
-            {/* 产物预览抢占面板：用户显式点击的意图压过自动跟随。
-                面板不卸载，只是被盖住，fold 状态与滚动位置都保留。 */}
-            {artifactHtml ? (
-              <ArtifactPanel
-                html={artifactHtml}
-                fileName={artifact!.fileName}
-                onClose={() => setArtifact(null)}
-                onBackToPanel={snapshot ? () => setArtifact(null) : undefined}
-              />
-            ) : null}
-            <div className={cn("flex min-h-0 flex-1 flex-col", artifactHtml && "hidden")}>
-              {snapshot ? <SystemPanel snapshot={snapshot} onSelectView={selectView} className="min-h-0 flex-1" /> : null}
+          <>
+            <ResizablePanelDivider
+              label="调整右侧看板宽度"
+              onMouseDown={onDividerMouseDown}
+              onDoubleClick={onDividerDoubleClick}
+            />
+            <div
+              data-scenario-replay-panel
+              className="flex min-h-0 shrink-0 flex-col border-l border-border"
+              style={{ flexBasis: `${splitRatio * 100}%`, flexGrow: 0, flexShrink: 0 }}
+            >
+              {/* 产物预览抢占面板：用户显式点击的意图压过自动跟随。
+                  面板不卸载，只是被盖住，fold 状态与滚动位置都保留。 */}
+              {artifactHtml ? (
+                <ArtifactPanel
+                  html={artifactHtml}
+                  fileName={artifact!.fileName}
+                  onClose={() => setArtifact(null)}
+                  onBackToPanel={snapshot ? () => setArtifact(null) : undefined}
+                />
+              ) : null}
+              <div className={cn("flex min-h-0 flex-1 flex-col", artifactHtml && "hidden")}>
+                {snapshot ? <SystemPanel snapshot={snapshot} onSelectView={selectView} className="min-h-0 flex-1" /> : null}
+              </div>
             </div>
-          </div>
+          </>
         )}
       </div>
 

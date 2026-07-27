@@ -165,6 +165,33 @@ describe('右侧企业系统面板', () => {
     expect(screen.getByText('确认问题范围与可用资料')).toBeTruthy();
   });
 
+  it('可拖拽调整宽度，双击恢复默认宽度', () => {
+    renderReplay();
+    const divider = screen.getByRole('separator', { name: '调整右侧看板宽度' });
+    const panel = document.querySelector('[data-scenario-replay-panel]') as HTMLElement;
+    const container = panel.parentElement as HTMLElement;
+    vi.spyOn(container, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 1000,
+      bottom: 800,
+      width: 1000,
+      height: 800,
+      toJSON: () => ({}),
+    });
+
+    expect(panel.style.flexBasis).toBe('30%');
+    fireEvent.mouseDown(divider, { clientX: 700 });
+    fireEvent.mouseMove(window, { clientX: 300 });
+    fireEvent.mouseUp(window);
+    expect(panel.style.flexBasis).toBe('50%');
+
+    fireEvent.doubleClick(divider);
+    expect(panel.style.flexBasis).toBe('30%');
+  });
+
   it('面板常驻于后续每一步', () => {
     renderReplay();
     clickNext(1);

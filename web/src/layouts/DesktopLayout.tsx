@@ -18,6 +18,7 @@ import { useChatWidth } from "@/hooks/useChatWidth";
 import { useResizePanel } from "@/hooks/useResizePanel";
 import { useSystemPanelDock } from "@/hooks/useSystemPanel";
 import { SystemPanel } from "@/components/SystemPanel";
+import { ResizablePanelDivider } from "@/components/ResizablePanelDivider";
 import { saveUserPreferences } from "@agent/shared";
 import type { LayoutProps } from "./types";
 import { useAuth } from "@/contexts/AuthContext";
@@ -521,15 +522,11 @@ export function DesktopLayout(props: LayoutProps) {
           </div>
           {rightPanelOpen && (
             <>
-              {/* 拖拽分割条 */}
-              <div
-                className="group relative flex w-0 shrink-0 cursor-col-resize items-center justify-center"
+              <ResizablePanelDivider
+                label="调整右侧面板宽度"
                 onMouseDown={onDividerMouseDown}
                 onDoubleClick={onDividerDoubleClick}
-              >
-                <div className="absolute inset-y-0 -left-1 -right-1 z-10" />
-                <div className="pointer-events-none absolute inset-y-0 w-px bg-border transition-colors group-hover:w-[3px] group-hover:bg-primary/30" />
-              </div>
+              />
               <div className="flex min-w-0 flex-col overflow-hidden" style={{ flexBasis: `${splitRatio * 100}%`, flexShrink: 0, flexGrow: 0 }}>
                 {rightPanelKind === 'preview' && previewFilePath ? (
                   <FilePreviewPanel

@@ -501,6 +501,8 @@ describe('WebChannel active stream reconnect', () => {
       contextUsage: {
         totalTokens: 4321,
         categories: [],
+        breakdown: undefined,
+        usageTotals: undefined,
         memoryFiles: [],
         mcpTools: [],
       },

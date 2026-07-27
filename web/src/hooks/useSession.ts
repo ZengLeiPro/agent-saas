@@ -263,6 +263,7 @@ export function useSession(
           ? { ...data.tokenUsage, totalCostUsd: data.totalCostUsd ?? null }
           : null;
         setTokenUsage(usage);
+        setContextUsage(data.contextUsage ?? null);
       }
     } catch {
       // silent fail

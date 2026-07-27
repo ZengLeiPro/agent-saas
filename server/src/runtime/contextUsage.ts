@@ -1,4 +1,7 @@
-import type { ContextUsageData } from '../types/index.js';
+import type {
+  ContextUsageBreakdown,
+  ContextUsageData,
+} from '../types/index.js';
 import {
   computeCacheHitDenominatorTokens,
   computeUsageTotalTokens,
@@ -14,6 +17,7 @@ interface UsageAccumulator {
   totalOutputTokens: number;
   totalCacheReadTokens: number;
   totalCacheCreationTokens: number;
+  totalReasoningTokens: number;
   totalTokens: number;
   cacheHitDenominatorTokens: number;
   hasUsage: boolean;
@@ -38,10 +42,15 @@ export class RuntimeContextUsageTracker {
     totalOutputTokens: 0,
     totalCacheReadTokens: 0,
     totalCacheCreationTokens: 0,
+    totalReasoningTokens: 0,
     totalTokens: 0,
     cacheHitDenominatorTokens: 0,
     hasUsage: false,
   };
+
+  private latestBreakdown: ContextUsageBreakdown | undefined;
+  private latestMemoryFiles: ContextUsageData['memoryFiles'] = [];
+  private latestMcpTools: ContextUsageData['mcpTools'] = [];
 
   constructor(
     private readonly defaultModel: string,
@@ -60,8 +69,22 @@ export class RuntimeContextUsageTracker {
           event.responseMode,
           event.responseChained,
         );
+        if (event.contextBreakdown) {
+          this.latestBreakdown = event.contextBreakdown;
+          this.latestMemoryFiles = event.contextBreakdown.memoryFiles ?? [];
+          this.latestMcpTools = event.contextBreakdown.mcpTools ?? [];
+        }
       }
     }
+  }
+
+  previewCurrentContextTokens(
+    model: string,
+    usage: ModelUsage,
+    responseMode?: ModelResponseMode,
+    responseChained?: boolean,
+  ): number {
+    return this.contextAccumulator.preview(model, usage, responseMode, responseChained);
   }
 
   record(
@@ -69,7 +92,17 @@ export class RuntimeContextUsageTracker {
     usage: ModelUsage | undefined,
     responseMode?: ModelResponseMode,
     responseChained?: boolean,
+    snapshot?: {
+      breakdown: ContextUsageBreakdown;
+      memoryFiles: ContextUsageData['memoryFiles'];
+      mcpTools: ContextUsageData['mcpTools'];
+    },
   ): ContextUsageData | null {
+    if (snapshot) {
+      this.latestBreakdown = snapshot.breakdown;
+      this.latestMemoryFiles = snapshot.memoryFiles;
+      this.latestMcpTools = snapshot.mcpTools;
+    }
     if (!usage) return this.state.hasUsage ? this.toContextUsage(model, null) : null;
     const lastRequest = this.applyUsage(model, usage, responseMode, responseChained);
     if (!this.state.hasUsage) return null;
@@ -91,6 +124,7 @@ export class RuntimeContextUsageTracker {
     const outputTokens = nonNegativeInt(usage.outputTokens);
     const cacheReadTokens = nonNegativeInt(usage.cacheReadInputTokens);
     const cacheCreationTokens = nonNegativeInt(usage.cacheCreationInputTokens);
+    const reasoningTokens = nonNegativeInt(usage.reasoningTokens);
     const tokens = {
       inputTokens,
       outputTokens,
@@ -104,6 +138,7 @@ export class RuntimeContextUsageTracker {
     this.state.totalOutputTokens += outputTokens;
     this.state.totalCacheReadTokens += cacheReadTokens;
     this.state.totalCacheCreationTokens += cacheCreationTokens;
+    this.state.totalReasoningTokens += reasoningTokens;
     this.state.totalTokens += turnTotal;
     this.state.cacheHitDenominatorTokens += denominatorTokens;
     this.state.hasUsage = true;
@@ -131,14 +166,28 @@ export class RuntimeContextUsageTracker {
         autoCompactThreshold,
       } : {}),
       model,
-      categories: [
+      categories: this.latestBreakdown?.categories.map((item) => ({
+        name: item.name,
+        tokens: item.tokens,
+        color: item.color,
+        ...(item.isDeferred !== undefined ? { isDeferred: item.isDeferred } : {}),
+      })) ?? [
         { name: '累计输入', tokens: this.state.totalInputTokens, color: '#10b981' },
         { name: '累计缓存读', tokens: this.state.totalCacheReadTokens, color: '#60a5fa' },
         { name: '累计缓存写', tokens: this.state.totalCacheCreationTokens, color: '#a78bfa' },
         { name: '累计输出', tokens: this.state.totalOutputTokens, color: '#f59e0b' },
       ],
-      memoryFiles: [],
-      mcpTools: [],
+      ...(this.latestBreakdown ? { breakdown: this.latestBreakdown } : {}),
+      usageTotals: {
+        inputTokens: this.state.totalInputTokens,
+        uncachedInputTokens: Math.max(0, this.state.totalInputTokens - this.state.totalCacheReadTokens),
+        cacheReadTokens: this.state.totalCacheReadTokens,
+        cacheCreationTokens: this.state.totalCacheCreationTokens,
+        outputTokens: this.state.totalOutputTokens,
+        reasoningTokens: this.state.totalReasoningTokens,
+      },
+      memoryFiles: this.latestMemoryFiles,
+      mcpTools: this.latestMcpTools,
       cacheReadTokens: this.state.totalCacheReadTokens,
       cacheHitDenominatorTokens: this.state.cacheHitDenominatorTokens,
       cacheHitRatio,

@@ -3,6 +3,7 @@ import type {
   ApiSessionListItem,
   ApiSessionDetail,
   TokenUsage,
+  ContextUsageData,
   MessageItem,
   SessionOwnerInfo,
 } from "@agent/shared";
@@ -40,6 +41,8 @@ export interface SessionState {
   deleteSessionId: string | null;
   isNewSession: boolean;
   tokenUsage: TokenUsage | null;
+  contextUsage: ContextUsageData | null;
+  setContextUsage: (usage: ContextUsageData | null) => void;
   hasMore: boolean;
   isLoadingMore: boolean;
   loadDetailPromiseRef: React.RefObject<Promise<void> | null>;
@@ -99,6 +102,7 @@ export function useSession(
   const [sessionsHydrated, setSessionsHydrated] = useState(false);
   const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
   const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
+  const [contextUsage, setContextUsage] = useState<ContextUsageData | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
@@ -231,12 +235,14 @@ export function useSession(
       if (response.ok) {
         const data = (await response.json()) as {
           tokenUsage?: TokenUsage;
+          contextUsage?: ContextUsageData;
           totalCostUsd?: number | null;
         };
         const usage = data.tokenUsage
           ? { ...data.tokenUsage, totalCostUsd: data.totalCostUsd ?? null }
           : null;
         setTokenUsage(usage);
+        setContextUsage(data.contextUsage ?? null);
       }
     } catch {
       /* silent */
@@ -696,6 +702,8 @@ export function useSession(
     deleteSessionId,
     isNewSession: isNewSessionRef.current,
     tokenUsage,
+    contextUsage,
+    setContextUsage,
     hasMore,
     isLoadingMore,
     loadDetailPromiseRef,

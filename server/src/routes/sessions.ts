@@ -59,6 +59,7 @@ import {
   listActivityDurationEvents,
 } from "../data/transcripts/activityDurations.js";
 import type { EventStore, PlatformEvent } from "../runtime/types.js";
+import { RuntimeContextUsageTracker } from "../runtime/contextUsage.js";
 import { buildRuntimeReplayState } from "../runtime/replay.js";
 import { buildPendingInteractionsFromEvents } from "../runtime/interactionProjection.js";
 import { auditLog } from "../data/login-logs/index.js";
@@ -2400,7 +2401,21 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             contextAccounting,
           )
           : null;
-        res.json({ tokenUsage, totalCostUsd: meta?.totalCostUsd ?? null });
+        let contextUsage = null;
+        try {
+          const runtimeEvents = runtimeEventStoreFor
+            ? await runtimeEventStoreFor(transcriptPath).list(sessionId)
+            : [];
+          contextUsage = new RuntimeContextUsageTracker(meta?.model ?? 'unknown', runtimeEvents).record(
+            meta?.model ?? 'unknown',
+            undefined,
+          );
+        } catch (err) {
+          apiLogger.warn(
+            `[sessions] context usage reconstruction failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        res.json({ tokenUsage, contextUsage, totalCostUsd: meta?.totalCostUsd ?? null });
       } catch (err) {
         const msg = String(err instanceof Error ? err.message : err);
         if (msg.includes("outside allowed directory")) {

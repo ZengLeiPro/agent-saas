@@ -55,6 +55,69 @@ describe("TokenUsageDisplay", () => {
     expect(screen.getByText("缓存写入为 provider 上报值；0 不代表一定未创建缓存。")).toBeTruthy();
   });
 
+  it("renders structured context breakdown and cumulative usage separately", async () => {
+    render(
+      <TokenUsageDisplay
+        allowDetails
+        tokenUsage={null}
+        contextUsage={{
+          totalTokens: 64_000,
+          maxTokens: 128_000,
+          percentage: 0.5,
+          categories: [],
+          breakdown: {
+            method: 'utf8_bytes_v1',
+            estimatedTokens: 60_000,
+            providerInputTokens: 60_000,
+            providerContextTokens: 64_000,
+            unattributedTokens: 4_000,
+            categories: [
+              {
+                key: 'system_prompt',
+                name: '系统提示语',
+                tokens: 20_000,
+                color: '#8B5CF6',
+                accuracy: 'estimated',
+                children: [{
+                  key: 'system:platform',
+                  name: '平台基础规则',
+                  tokens: 20_000,
+                  color: '#8B5CF6',
+                  accuracy: 'estimated',
+                }],
+              },
+              {
+                key: 'unattributed',
+                name: '协议及未归因开销',
+                tokens: 4_000,
+                color: '#94A3B8',
+                accuracy: 'derived',
+              },
+            ],
+          },
+          usageTotals: {
+            inputTokens: 100_000,
+            uncachedInputTokens: 60_000,
+            cacheReadTokens: 40_000,
+            cacheCreationTokens: 0,
+            outputTokens: 5_000,
+            reasoningTokens: 2_000,
+          },
+          memoryFiles: [],
+          mcpTools: [],
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /上下文 64\.0k/ }));
+    expect(screen.getByText("上下文构成")).toBeTruthy();
+    expect(screen.getByText("系统提示语")).toBeTruthy();
+    expect(screen.getByText("平台基础规则")).toBeTruthy();
+    expect(screen.getByText("协议及未归因开销")).toBeTruthy();
+    expect(screen.getByText("累计模型用量")).toBeTruthy();
+    expect(screen.getByText("思考 Token")).toBeTruthy();
+  });
+
   it("renders a non-interactive value when tenant policy disables details", () => {
     render(
       <TokenUsageDisplay

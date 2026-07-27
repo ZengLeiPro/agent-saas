@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { TokenUsage } from "@/lib/sessionsApi";
-import type { ContextUsageData } from "@agent/shared";
+import type { ContextUsageCategory, ContextUsageData } from "@agent/shared";
 import { formatTokenCount } from "@/lib/sessionsApi";
 
 interface TokenUsageDisplayProps {
@@ -24,6 +24,36 @@ function DetailRow({ label, value }: { label: string; value: number | string }) 
 
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function AccuracyBadge({ accuracy }: { accuracy: ContextUsageCategory['accuracy'] }) {
+  const label = accuracy === 'provider' ? '实际' : accuracy === 'derived' ? '差额' : '估算';
+  return (
+    <span className="rounded bg-muted px-1 py-px text-[9px] text-muted-foreground">
+      {label}
+    </span>
+  );
+}
+
+function CategoryTree({ categories, depth = 0 }: { categories: ContextUsageCategory[]; depth?: number }) {
+  return (
+    <div className={depth > 0 ? "ml-3 border-l pl-2" : ""}>
+      {categories.filter((item) => item.tokens > 0).map((item) => (
+        <div key={item.key} className="py-0.5">
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+              <span className="size-2 shrink-0 rounded-sm" style={{ backgroundColor: item.color }} />
+              <span className="truncate" title={item.name}>{item.name}</span>
+              {item.isDeferred && <span className="text-[9px]">deferred</span>}
+              <AccuracyBadge accuracy={item.accuracy} />
+            </span>
+            <span className="shrink-0 font-mono tabular-nums">{formatTokenCount(item.tokens)}</span>
+          </div>
+          {item.children?.length ? <CategoryTree categories={item.children} depth={depth + 1} /> : null}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function TokenUsageDisplay({ tokenUsage, contextUsage, allowDetails = false }: TokenUsageDisplayProps) {
@@ -125,10 +155,17 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage, allowDetails = fal
       )}
 
       {open && allowDetails && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border bg-popover p-3 text-xs shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 max-h-[75vh] w-96 overflow-y-auto rounded-lg border bg-popover p-3 text-xs shadow-lg">
           {hasRealtime && (
             <>
-              <div className="mb-1 font-medium">实时</div>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="font-medium">当前上下文</span>
+                {contextUsage!.breakdown && (
+                  <span className="text-[10px] text-muted-foreground">
+                    总量为 provider 实际值 · 构成为平台估算
+                  </span>
+                )}
+              </div>
 
               {/* 百分比进度条 */}
               {hasContextWindow && (
@@ -156,12 +193,25 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage, allowDetails = fal
                 </div>
               )}
 
-              {/* 分类堆叠条 */}
-              {contextUsage!.categories.length > 0 && (
+              {/* 当前上下文构成 */}
+              {contextUsage!.breakdown?.categories.length ? (
+                <div className="my-2 rounded-md border bg-muted/20 p-2">
+                  <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                    <span>上下文构成</span>
+                    <span>
+                      估算 {formatTokenCount(contextUsage!.breakdown.estimatedTokens)}
+                      {contextUsage!.breakdown.providerContextTokens != null
+                        ? ` / 实际 ${formatTokenCount(contextUsage!.breakdown.providerContextTokens)}`
+                        : ''}
+                    </span>
+                  </div>
+                  <CategoryTree categories={contextUsage!.breakdown.categories} />
+                </div>
+              ) : contextUsage!.categories.length > 0 ? (
                 <div className="my-2 space-y-0.5">
                   {contextUsage!.categories
                     .filter((c: ContextUsageData['categories'][number]) => c.tokens > 0)
-                    .slice(0, 6)
+                    .slice(0, 8)
                     .map((c: ContextUsageData['categories'][number]) => (
                       <div key={c.name} className="flex items-center justify-between gap-2 text-[11px]">
                         <span className="flex items-center gap-1.5 truncate text-muted-foreground">
@@ -172,7 +222,7 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage, allowDetails = fal
                       </div>
                     ))}
                 </div>
-              )}
+              ) : null}
 
               {/* memoryFiles */}
               {contextUsage!.memoryFiles.length > 0 && (
@@ -210,13 +260,29 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage, allowDetails = fal
                       .map((t: ContextUsageData['mcpTools'][number]) => (
                         <div key={`${t.serverName}:${t.name}`} className="flex items-center justify-between gap-2">
                           <span className="truncate text-muted-foreground" title={`${t.serverName}:${t.name}`}>
-                            {t.name}
+                            {t.serverName} / {t.name}{t.isLoaded === false ? ' (deferred)' : ''}
                           </span>
                           <span className="font-mono tabular-nums">{formatTokenCount(t.tokens)}</span>
                         </div>
                       ))}
                   </div>
                 </details>
+              )}
+
+              {contextUsage!.usageTotals && (
+                <div className="mt-3 border-t pt-2">
+                  <div className="mb-1 font-medium">累计模型用量</div>
+                  <div className="space-y-1">
+                    <DetailRow label="输入 Token" value={contextUsage!.usageTotals.inputTokens} />
+                    <DetailRow label="未缓存输入" value={contextUsage!.usageTotals.uncachedInputTokens} />
+                    <DetailRow label="缓存命中" value={contextUsage!.usageTotals.cacheReadTokens} />
+                    <DetailRow label="缓存写入" value={contextUsage!.usageTotals.cacheCreationTokens} />
+                    <DetailRow label="输出 Token" value={contextUsage!.usageTotals.outputTokens} />
+                    {contextUsage!.usageTotals.reasoningTokens > 0 && (
+                      <DetailRow label="思考 Token" value={contextUsage!.usageTotals.reasoningTokens} />
+                    )}
+                  </div>
+                </div>
               )}
 
               <div className="my-2 border-t" />

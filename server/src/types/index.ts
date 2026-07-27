@@ -81,17 +81,53 @@ export interface CompactionOutboundData {
   note?: string;
 }
 
+export type ContextUsageAccuracy = 'provider' | 'estimated' | 'derived';
+
+export interface ContextUsageCategory {
+  key: string;
+  name: string;
+  tokens: number;
+  color: string;
+  accuracy: ContextUsageAccuracy;
+  isDeferred?: boolean;
+  children?: ContextUsageCategory[];
+}
+
+export interface ContextUsageBreakdown {
+  method: 'utf8_bytes_v1';
+  estimatedTokens: number;
+  providerInputTokens?: number;
+  providerContextTokens?: number;
+  unattributedTokens: number;
+  categories: ContextUsageCategory[];
+  memoryFiles?: Array<{ path: string; type: string; tokens: number }>;
+  mcpTools?: Array<{ name: string; serverName: string; tokens: number; isLoaded?: boolean }>;
+  capturedAt?: string;
+}
+
+export interface ContextUsageTotals {
+  inputTokens: number;
+  uncachedInputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
 export interface ContextUsageData {
   totalTokens: number;
   maxTokens?: number;
   percentage?: number;
   model?: string;
+  /** 旧客户端兼容字段；新客户端优先展示 breakdown.categories。 */
   categories: Array<{
     name: string;
     tokens: number;
     color: string;
     isDeferred?: boolean;
   }>;
+  breakdown?: ContextUsageBreakdown;
+  usageTotals?: ContextUsageTotals;
   memoryFiles: Array<{ path: string; type: string; tokens: number }>;
   mcpTools: Array<{
     name: string;

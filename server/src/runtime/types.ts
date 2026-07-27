@@ -1,3 +1,4 @@
+import type { ContextUsageBreakdown } from '../types/index.js';
 import type { ExecutionInvocationAudit, ToolDescriptor, ToolResult } from '../agent/toolRuntime.js';
 import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
 import type { ToolAuthorization, ToolRisk, ExecutionTargetKind } from '../agent/toolRuntime.js';
@@ -56,8 +57,15 @@ export interface RunInput {
   recordUserMessage?: boolean;
   memoryContext?: string;
   instructions: string;
+  instructionSections?: InstructionSection[];
   maxTurns: number;
   connection: Required<RuntimeConnection>;
+}
+
+export interface InstructionSection {
+  key: string;
+  name: string;
+  content: string;
 }
 
 export interface ModelToolDefinition {
@@ -453,6 +461,7 @@ export type PlatformEvent =
     promptCacheKey?: string;
     requestInputPrefixHash?: string;
     requestBodyBytes?: number;
+    contextBreakdown?: ContextUsageBreakdown;
     /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
     /** 模型流在完整终态前失败；正文是已实际产出的可继续片段。 */
@@ -500,6 +509,7 @@ export type PlatformEvent =
     promptCacheKey?: string;
     requestInputPrefixHash?: string;
     requestBodyBytes?: number;
+    contextBreakdown?: ContextUsageBreakdown;
     /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
     toolCalls: ModelToolCall[];

@@ -65,6 +65,24 @@ export class ContextTokenAccumulator {
     return this.currentTokens;
   }
 
+  preview(
+    model: string,
+    usage: ModelUsage,
+    responseMode?: ModelResponseMode,
+    responseChained?: boolean,
+  ): number {
+    const snapshot = {
+      currentTokens: this.currentTokens,
+      sawUsage: this.sawUsage,
+      lastModel: this.lastModel,
+    };
+    const value = this.apply(model, usage, responseMode, responseChained);
+    this.currentTokens = snapshot.currentTokens;
+    this.sawUsage = snapshot.sawUsage;
+    this.lastModel = snapshot.lastModel;
+    return value;
+  }
+
   get value(): number {
     return this.currentTokens;
   }

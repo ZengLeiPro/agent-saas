@@ -7,6 +7,7 @@ import type {
   UploadedFile,
   ApiSessionListItem,
   TokenUsage,
+  ContextUsageData,
   ModelList,
   WsEvent,
   WsEnvelope,
@@ -43,6 +44,7 @@ export interface ChatAppState {
   sessions: ApiSessionListItem[];
   connectionState: ConnectionState;
   tokenUsage: TokenUsage | null;
+  contextUsage: ContextUsageData | null;
   modelList: ModelList | null;
   selectedModel: string | null;
   hasMoreSessions: boolean;
@@ -1079,6 +1081,11 @@ export function useChatAppStateCore(): ChatAppState {
         resetWatchdog();
       }
 
+      if (data.type === "context_usage") {
+        sessionRef.current.setContextUsage(data.contextUsage);
+        return;
+      }
+
       // ── /compact v2：压缩状态事件（黑箱，shared WsEvent 联合类型暂未收录，
       // 经 unknown 走类型守卫，在 processWsEvent 之前本地拦截处理）──
       const rawEvent: unknown = data;
@@ -1728,6 +1735,7 @@ export function useChatAppStateCore(): ChatAppState {
     sessions: session.sessions,
     connectionState,
     tokenUsage: session.tokenUsage,
+    contextUsage: session.contextUsage,
     modelList,
     selectedModel,
     hasMoreSessions: session.hasMore,

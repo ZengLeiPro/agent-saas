@@ -52,6 +52,14 @@ describe('ContextTokenAccumulator', () => {
     expect(accumulator.apply('glm-5.2', usage(50_000, 45_000, 8_000), 'relay')).toBe(86_000);
   });
 
+  it('preview 返回下一次结果但不修改累计器状态', () => {
+    const accumulator = new ContextTokenAccumulator();
+    accumulator.apply('glm-5.2', usage(60_000, 0, 1_000), 'full');
+    expect(accumulator.preview('glm-5.2', usage(50_000, 45_000, 7_000), 'relay')).toBe(73_000);
+    expect(accumulator.value).toBe(61_000);
+    expect(accumulator.apply('glm-5.2', usage(50_000, 45_000, 8_000), 'relay')).toBe(74_000);
+  });
+
   it('切换模型与 Responses 降级全量都会重锚', () => {
     const accumulator = new ContextTokenAccumulator();
     accumulator.apply('glm-5.2', usage(60_000, 0, 1_000), 'full');

@@ -1645,7 +1645,7 @@ function normalizeApprovalPolicy(value: unknown): ToolApprovalPolicyOptions | un
  * static.md「## 运行态」静态规则。删除后 instructions 无易变尾巴，per-user
  * 段之后逐字节稳定。
  */
-export function buildInstructions(params: {
+export function buildInstructionSections(params: {
   sharedDir: string;
   tenantId?: string;
   agentName: string;
@@ -1662,7 +1662,7 @@ export function buildInstructions(params: {
   /** Profile 只选择可选上下文模块；main.static 与 dynamic-personal 中的平台安全底座不可移除。 */
   contextModules?: readonly ('company_info' | 'tenant_instructions' | 'runtime_memory' | 'personal_context')[];
   profileSystemInstructions?: string;
-}): string {
+}): Array<{ key: string; name: string; content: string }> {
   const modules = new Set(params.contextModules
     ?? ['company_info', 'tenant_instructions', 'runtime_memory', 'personal_context']);
   const personaBody = params.orgAgent || !modules.has('personal_context') ? '' : params.persona.trim();
@@ -1684,15 +1684,27 @@ export function buildInstructions(params: {
     ORG_AGENT_INSTRUCTIONS: params.orgAgent?.instructions ?? '',
   };
 
-  const sections: string[] = [params.getSystemPrompt?.('main.static') ?? loadPrompt(params.sharedDir, 'static')];
+  const sections: Array<{ key: string; name: string; content: string }> = [{
+    key: 'platform_rules',
+    name: '平台基础规则',
+    content: params.getSystemPrompt?.('main.static') ?? loadPrompt(params.sharedDir, 'static'),
+  }];
   if (params.profileSystemInstructions?.trim()) {
-    sections.push(`<agent-profile-instructions>\n${params.profileSystemInstructions.trim()}\n</agent-profile-instructions>`);
+    sections.push({
+      key: 'profile_instructions',
+      name: 'Agent Profile 指令',
+      content: `<agent-profile-instructions>\n${params.profileSystemInstructions.trim()}\n</agent-profile-instructions>`,
+    });
   }
   if (modules.has('company_info')) {
-    sections.push(renderPrompt(
-      params.getSystemPrompt?.('main.dynamicShared') ?? loadPrompt(params.sharedDir, 'dynamic-shared'),
-      sharedVars,
-    ));
+    sections.push({
+      key: 'company_info',
+      name: '公司与组织资料',
+      content: renderPrompt(
+        params.getSystemPrompt?.('main.dynamicShared') ?? loadPrompt(params.sharedDir, 'dynamic-shared'),
+        sharedVars,
+      ),
+    });
   }
 
   // 组织自定义规则排在 company_info 之后：事实在前（稳定、进 per-tenant 缓存段前部），
@@ -1702,21 +1714,37 @@ export function buildInstructions(params: {
     ? loadTenantInstructions(params.sharedDir, params.tenantId)
     : '';
   if (tenantInstructions) {
-    sections.push(renderPrompt(
-      params.getSystemPrompt?.('main.dynamicTenant') ?? loadPrompt(params.sharedDir, 'dynamic-tenant'),
-      { TENANT_INSTRUCTIONS: tenantInstructions },
-    ));
+    sections.push({
+      key: 'tenant_instructions',
+      name: '组织自定义规则',
+      content: renderPrompt(
+        params.getSystemPrompt?.('main.dynamicTenant') ?? loadPrompt(params.sharedDir, 'dynamic-tenant'),
+        { TENANT_INSTRUCTIONS: tenantInstructions },
+      ),
+    });
   }
 
   if (params.memorySearchEnabled && modules.has('runtime_memory')) {
-    sections.push(params.getSystemPrompt?.('main.runtimeMemory') ?? loadPrompt(params.sharedDir, 'runtime-memory'));
+    sections.push({
+      key: 'memory_instructions',
+      name: '记忆系统规则',
+      content: params.getSystemPrompt?.('main.runtimeMemory') ?? loadPrompt(params.sharedDir, 'runtime-memory'),
+    });
   }
-  sections.push(renderPrompt(
-    params.getSystemPrompt?.('main.dynamicPersonal') ?? loadPrompt(params.sharedDir, 'dynamic-personal'),
-    personalVars,
-  ));
+  sections.push({
+    key: params.orgAgent ? 'org_agent' : 'personal_context',
+    name: params.orgAgent ? '专职 Agent 指令' : '人格与个人上下文',
+    content: renderPrompt(
+      params.getSystemPrompt?.('main.dynamicPersonal') ?? loadPrompt(params.sharedDir, 'dynamic-personal'),
+      personalVars,
+    ),
+  });
 
-  return sections.join('\n\n');
+  return sections;
+}
+
+export function buildInstructions(params: Parameters<typeof buildInstructionSections>[0]): string {
+  return buildInstructionSections(params).map((section) => section.content).join('\n\n');
 }
 
 export function visibleWorkspaceCwd(hostCwd: string, executionTarget: ExecutionTargetKind): string {
@@ -2103,9 +2131,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       workflowDemoDispatch,
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
     );
-    const baseInstructions = options.skipSystemPrompt
-      ? config.getSystemPrompt?.('main.minimal') ?? MINIMAL_SYSTEM_PROMPT
-      : buildInstructions({
+    const instructionSections = options.skipSystemPrompt
+      ? [{ key: 'minimal', name: '最小系统提示语', content: config.getSystemPrompt?.('main.minimal') ?? MINIMAL_SYSTEM_PROMPT }]
+      : buildInstructionSections({
           sharedDir: config.sharedDir,
           tenantId: sessionRecord.tenantId,
           agentName,
@@ -2120,9 +2148,14 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
           ...(orgAgent ? { orgAgent } : {}),
         });
-    const instructions = workflowDemoDispatch
-      ? `${baseInstructions}\n\n${workflowDemoInstructions(workflowDemoDispatch)}`
-      : baseInstructions;
+    if (workflowDemoDispatch) {
+      instructionSections.push({
+        key: 'workflow_demo',
+        name: '工作流演示指令',
+        content: workflowDemoInstructions(workflowDemoDispatch),
+      });
+    }
+    const instructions = instructionSections.map((section) => section.content).join('\n\n');
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
     const projection = new LegacyTranscriptProjection(transcriptPath);
     const modelAdapter = createModelAdapterForProtocol({ apiKey, baseUrl }, modelProviderOptions);
@@ -2263,6 +2296,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             recordUserMessage: options.recordUserMessage,
             ...(memoryContext ? { memoryContext } : {}),
             instructions,
+            instructionSections,
             maxTurns: boundProfile
               ? resolveAgentProfileMaxTurns(
                   boundProfile.version.config,

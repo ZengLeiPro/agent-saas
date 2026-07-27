@@ -121,6 +121,8 @@ function redactContextUsageDetails(usage: ContextUsageData): ContextUsageData {
   return {
     ...usage,
     categories: [],
+    breakdown: undefined,
+    usageTotals: undefined,
     memoryFiles: [],
     mcpTools: [],
   };

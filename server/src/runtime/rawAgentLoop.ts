@@ -43,6 +43,10 @@ import { buildChatMessagesFromEvents, LegacyTranscriptProjection } from './legac
 import { buildModelUserContent } from './imageAttachments.js';
 import { buildContextProjection, type ContextReconstructionPolicy } from './contextProjection.js';
 import { RuntimeContextUsageTracker } from './contextUsage.js';
+import {
+  buildContextBreakdownSnapshot,
+  calibrateContextBreakdown,
+} from './contextBreakdown.js';
 import { governModelRequestMessages } from './contextGovernor.js';
 import {
   buildRuntimeReplayState,
@@ -866,6 +870,30 @@ export class RawAgentLoop implements AgentLoop {
         }
         const forceSynthesis = this.prepareForcedSynthesis(messages);
         const governed = governModelRequestMessages(messages, context.model, currentUserMessageIndex);
+        const requestSystemIndex = governed.messages.findIndex((message) => message.role !== 'system');
+        const requestHistory = governed.messages.slice(Math.max(0, requestSystemIndex));
+        const requestCurrentUserMessage = requestHistory.at(-1);
+        const requestCurrentUser = requestCurrentUserMessage?.role === 'user'
+          ? requestCurrentUserMessage.content
+          : '';
+        const requestHistoryMessages = requestHistory.slice(0, -1);
+        const contextSnapshot = buildContextBreakdownSnapshot({
+          instructionSections: input.instructionSections,
+          instructions: input.instructions,
+          memoryContext: input.memoryContext,
+          historyMessages: requestHistoryMessages.filter((message, index) => (
+            !(
+              index === 0
+              && input.memoryContext
+              && message.role === 'user'
+              && message.content === input.memoryContext
+            )
+          )),
+          currentUserContent: requestCurrentUser,
+          attachmentCount: input.attachments?.length,
+          tools,
+          descriptorsByName,
+        });
         for await (const event of this.modelAdapter.stream({
           model: context.model,
           messages: governed.messages,
@@ -937,12 +965,30 @@ export class RawAgentLoop implements AgentLoop {
           totalUsage = mergeUsage(totalUsage, completed.usage);
         }
         assertSuccessfulModelTerminal(completed);
+        const projectedContextTokens = completed.usage
+          ? contextUsageTracker.previewCurrentContextTokens(
+              context.model,
+              completed.usage,
+              completed.responseMode,
+              completed.responseChained,
+            )
+          : undefined;
+        const calibratedBreakdown = calibrateContextBreakdown(
+          contextSnapshot.breakdown,
+          completed.usage,
+          projectedContextTokens,
+        );
         if (completed.usage) {
           turnContextUsage = contextUsageTracker.record(
             context.model,
             completed.usage,
             completed.responseMode,
             completed.responseChained,
+            {
+              breakdown: calibratedBreakdown,
+              memoryFiles: contextSnapshot.memoryFiles,
+              mcpTools: contextSnapshot.mcpTools,
+            },
           );
         }
         if (turnThinking) {
@@ -1010,6 +1056,7 @@ export class RawAgentLoop implements AgentLoop {
               ? { requestInputPrefixHash: completed.requestInputPrefixHash }
               : {}),
             ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+            contextBreakdown: calibratedBreakdown,
             ...(textStarted ? { streamed: true } : {}),
           });
           pendingTurnText = '';
@@ -1073,6 +1120,7 @@ export class RawAgentLoop implements AgentLoop {
             ? { requestInputPrefixHash: completed.requestInputPrefixHash }
             : {}),
           ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+          contextBreakdown: calibratedBreakdown,
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
         });
@@ -1765,6 +1813,7 @@ export class RawAgentLoop implements AgentLoop {
       baseToolContext,
       context: resumeContext,
       maxTurns: input.maxTurns,
+      instructions: input.instructions,
       priorEvents: replayEvents,
     });
   }
@@ -1898,6 +1947,7 @@ export class RawAgentLoop implements AgentLoop {
       baseToolContext,
       context,
       maxTurns: input.maxTurns,
+      instructions: input.instructions,
       priorEvents: replayEvents,
     });
   }
@@ -2353,6 +2403,7 @@ export class RawAgentLoop implements AgentLoop {
     baseToolContext: ToolCallContext;
     context: RunContext;
     maxTurns: number;
+    instructions: string;
     priorEvents: PlatformEvent[];
   }): AsyncIterable<OutboundEvent> {
     let textStarted = false;
@@ -2435,6 +2486,15 @@ export class RawAgentLoop implements AgentLoop {
         }
         const forceSynthesis = this.prepareForcedSynthesis(args.messages);
         const governed = governModelRequestMessages(args.messages, args.context.model, currentUserMessageIndex);
+        const requestHistory = governed.messages.filter((message) => message.role !== 'system');
+        const currentUserMessage = requestHistory.at(-1);
+        const contextSnapshot = buildContextBreakdownSnapshot({
+          instructions: args.instructions,
+          historyMessages: requestHistory.slice(0, -1),
+          currentUserContent: currentUserMessage?.role === 'user' ? currentUserMessage.content : '',
+          tools: args.tools,
+          descriptorsByName: args.descriptorsByName,
+        });
         for await (const event of this.modelAdapter.stream({
           model: args.context.model,
           messages: governed.messages,
@@ -2506,12 +2566,30 @@ export class RawAgentLoop implements AgentLoop {
           totalUsage = mergeUsage(totalUsage, completed.usage);
         }
         assertSuccessfulModelTerminal(completed);
+        const projectedContextTokens = completed.usage
+          ? contextUsageTracker.previewCurrentContextTokens(
+              args.context.model,
+              completed.usage,
+              completed.responseMode,
+              completed.responseChained,
+            )
+          : undefined;
+        const calibratedBreakdown = calibrateContextBreakdown(
+          contextSnapshot.breakdown,
+          completed.usage,
+          projectedContextTokens,
+        );
         if (completed.usage) {
           turnContextUsage = contextUsageTracker.record(
             args.context.model,
             completed.usage,
             completed.responseMode,
             completed.responseChained,
+            {
+              breakdown: calibratedBreakdown,
+              memoryFiles: contextSnapshot.memoryFiles,
+              mcpTools: contextSnapshot.mcpTools,
+            },
           );
         }
         if (turnThinking) {
@@ -2583,6 +2661,7 @@ export class RawAgentLoop implements AgentLoop {
               ? { requestInputPrefixHash: completed.requestInputPrefixHash }
               : {}),
             ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+            contextBreakdown: calibratedBreakdown,
             ...(textStarted ? { streamed: true } : {}),
           });
           pendingTurnText = '';
@@ -2646,6 +2725,7 @@ export class RawAgentLoop implements AgentLoop {
             ? { requestInputPrefixHash: completed.requestInputPrefixHash }
             : {}),
           ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+          contextBreakdown: calibratedBreakdown,
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
         });

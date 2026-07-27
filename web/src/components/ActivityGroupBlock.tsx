@@ -340,9 +340,8 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
 }
 
 export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true }: ActivityGroupBlockProps) {
-  // 客户视图下的摘要组默认展开：摘要本身已是精简业务语义，再折一层等于没做。
-  // debug 视图维持折叠，避免几十次调用刷屏。
-  const [isExpanded, setIsExpanded] = useState(!debugMode && items.some(hasPresentation));
+  // 折叠行已提供分组摘要，具体工具详情由用户按需展开，避免长会话默认铺满执行细节。
+  const [isExpanded, setIsExpanded] = useState(false);
 
   // 非 debug 且整组无摘要：折叠成一行占位（原行为）。
   // 组内一旦有「给人看」摘要，就必须逐项渲染——否则摘要会被整组吞掉，

@@ -56,15 +56,20 @@ describe('ScenarioReplayView', () => {
     renderReplay();
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
     clickNext(1);
-    // 第一步的用户消息仍在
+    // 第一步的用户消息仍在；工具活动默认折叠，但可按需展开查看新增内容。
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
+    const activitySummary = screen.getByText(/已完成 .*个工具/);
+    fireEvent.click(activitySummary.closest('button')!);
     expect(screen.getByText('检索企业制度库')).toBeTruthy();
   });
 
-  it('工具摘要在客户同构视图（debugModeOverride=false）下可见', () => {
+  it('工具摘要在客户同构视图（debugModeOverride=false）下按需展开可见', () => {
     renderReplay();
     clickNext(1);
-    expect(screen.getByText('检索企业制度库')).toBeTruthy();
+    const activitySummary = screen.getByText(/已完成 .*个工具/);
+    fireEvent.click(activitySummary.closest('button')!);
+    const title = screen.getByText('检索企业制度库');
+    fireEvent.click(title.closest('button')!);
     // 同一文本也出现在右侧面板工具栏里，说明两处同源；此处只断言会话流里有
     expect(screen.getAllByText('制度中心 · 财务与行政').length).toBeGreaterThan(0);
     expect(screen.getByText('《差旅管理办法》2026 修订版')).toBeTruthy();

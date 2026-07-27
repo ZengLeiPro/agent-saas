@@ -7,7 +7,7 @@
  * 而无摘要时的渲染必须与本批次之前逐像素一致（零破坏）。
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MessageItem } from './MessageItem';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
 import { PresentationDetail } from './PresentationDetail';
@@ -60,16 +60,27 @@ function renderMessage(message: MessageItemType, debugMode: boolean) {
 }
 
 describe('MessageItem 工具摘要分流', () => {
-  it('有摘要 + 非 debug（普通客户默认）：摘要可见，原始 payload 不出现', () => {
+  it('有摘要 + 非 debug（普通客户默认）：折叠行显示摘要，展开后显示详情且不出现原始 payload', () => {
     renderMessage(toolMessage(PRESENTATION), false);
-    expect(screen.getByText('核对魏德米勒选型表')).toBeTruthy();
+    const title = screen.getByText('核对魏德米勒选型表');
+    expect(screen.queryByText('WDU 2.5')).toBeNull();
+    expect(screen.queryByText(/rg -n selection/)).toBeNull();
+
+    fireEvent.click(title.closest('button')!);
+
     expect(screen.getByText('WDU 2.5')).toBeTruthy();
     expect(screen.queryByText(/rg -n selection/)).toBeNull();
   });
 
-  it('有摘要 + debug：摘要与原始 payload 同时可见', () => {
+  it('有摘要 + debug：默认折叠，展开后摘要与原始 payload 同时可见', () => {
     renderMessage(toolMessage(PRESENTATION), true);
-    expect(screen.getByText('核对魏德米勒选型表')).toBeTruthy();
+    const title = screen.getByText('核对魏德米勒选型表');
+    expect(screen.queryByText('WDU 2.5')).toBeNull();
+    expect(screen.queryByText(/rg -n selection/)).toBeNull();
+
+    fireEvent.click(title.closest('button')!);
+
+    expect(screen.getByText('WDU 2.5')).toBeTruthy();
     expect(screen.getByText(/rg -n selection/)).toBeTruthy();
   });
 
@@ -95,9 +106,18 @@ describe('ActivityGroupBlock 摘要不被整组吞掉', () => {
     expect(screen.getByText(/已执行/)).toBeTruthy();
   });
 
-  it('组内有摘要 + 非 debug：摘要必须可见，且默认展开', () => {
+  it('组内有摘要 + 非 debug：分组和工具详情均默认折叠', () => {
     render(<ActivityGroupBlock items={[plainTool, richTool]} isActive={false} debugMode={false} />);
-    expect(screen.getByText('核对魏德米勒选型表')).toBeTruthy();
+    const groupSummary = screen.getByText('已完成 2 条：2 个工具');
+    expect(screen.queryByText('核对魏德米勒选型表')).toBeNull();
+    expect(screen.queryByText('WDU 2.5')).toBeNull();
+
+    fireEvent.click(groupSummary.closest('button')!);
+
+    const title = screen.getByText('核对魏德米勒选型表');
+    expect(screen.queryByText('WDU 2.5')).toBeNull();
+
+    fireEvent.click(title.closest('button')!);
     expect(screen.getByText('WDU 2.5')).toBeTruthy();
   });
 

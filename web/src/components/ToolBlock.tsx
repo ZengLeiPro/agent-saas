@@ -114,8 +114,8 @@ function getExecutionTone(status?: ToolBlockProps["executionStatus"], resultRead
 }
 
 export function ToolBlock({ toolName, toolInput, streaming, result, resultReady, executionStatus, durationMs, lastProgress, error, presentation, debugMode = true }: ToolBlockProps) {
-  // 有摘要时默认展开：摘要是精简的业务语义，藏起来等于没做
-  const [isExpanded, setIsExpanded] = useState(!!presentation);
+  // 折叠行已展示业务摘要标题，详情由用户按需展开，避免工具调用密集时刷屏。
+  const [isExpanded, setIsExpanded] = useState(false);
   const showRaw = debugMode || !presentation;
 
   const formatted = useMemo(() => formatJson(toolInput), [toolInput]);
@@ -223,7 +223,7 @@ interface ToolResultBlockProps {
 }
 
 export function ToolResultBlock({ toolName, result, presentation, debugMode = true }: ToolResultBlockProps) {
-  const [isExpanded, setIsExpanded] = useState(!!presentation);
+  const [isExpanded, setIsExpanded] = useState(false);
   const showRaw = debugMode || !presentation;
 
   return (

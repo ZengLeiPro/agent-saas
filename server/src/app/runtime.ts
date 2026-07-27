@@ -835,6 +835,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const sessionCatalog = new FileSessionCatalog({ agentCwd });
   let runtimeEventStoreShutdown: (() => Promise<void>) | undefined;
   let pgEventStore: PgEventStore | undefined;
+  let sessionLock: PgSessionLock | undefined;
   let pgRunStore: PgRunStore | undefined;
   let pgSessionProjectionStore: PgSessionProjectionStore | undefined;
   let pgHandStore: PgHandStore | undefined;
@@ -1260,6 +1261,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       if (billingAuditTimer) clearInterval(billingAuditTimer);
       runtimeEventRetention?.stop();
       await runtimeEventSubscriptionShutdown?.();
+      await sessionLock?.close();
       await pgEventStore!.close();
     };
     serverLogger.info('Runtime EventStore initialized: backend=pg; durable RunStore + HandStore + RuntimeScheduler initialized');
@@ -1355,9 +1357,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     allowAdminOverride: true,
     allowUserOverride: false,
   });
-  // PG backend 时：用同一 pool 启动 PgSessionLock 给两条 dispatch 防多 brain
-  // 并发 wake；file backend 时不启用 lock（单 brain 场景）。
-  const sessionLock = pgEventStore ? new PgSessionLock({ pool: pgEventStore.pool }) : undefined;
+  const sessionLockMode = config.runtimeScheduler?.sessionLockMode ?? 'dual';
+  // PG backend：session single-writer 从常驻 advisory connection 迁到短查询表租约。
+  // dual 是滚动升级兼容态；全量跑过 dual 后，生产配置切 lease 才真正去掉旧连接。
+  if (pgEventStore) {
+    sessionLock = new PgSessionLock({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore?.backend === 'pg'
+        ? config.runtimeEventStore.tablePrefix
+        : undefined,
+      mode: sessionLockMode,
+      logger: serverLogger.child('PgSessionLock'),
+    });
+    await sessionLock.init();
+  }
 
   // Skills wiring：把 SkillConfigStore + sharedDir 缝成 raw runtime 的 SkillsDispatchConfig，
   // 让 dispatch 不直接依赖 store 实现。
@@ -1855,7 +1868,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       autoWake: runtimeSchedulerAutoWake,
       pollIntervalMs: config.runtimeScheduler?.pollIntervalMs,
       leaseMs: config.runtimeScheduler?.leaseMs,
-      maxConcurrentRuns: config.runtimeScheduler?.maxConcurrentRuns,
+      // dual 仍为每个 active session 占一条旧 advisory connection，迁移首版必须
+      // 保持历史 4 槽；切到 lease 后才启用 RuntimeScheduler 的新默认 16。
+      maxConcurrentRuns: sessionLockMode === 'dual'
+        ? Math.min(config.runtimeScheduler?.maxConcurrentRuns ?? 4, 4)
+        : config.runtimeScheduler?.maxConcurrentRuns,
       maxConcurrentBackgroundRuns: config.runtimeScheduler?.maxConcurrentBackgroundRuns,
       approvalTimeoutMs: config.runtimeScheduler?.approvalTimeoutMs,
       canWake: sessionLock

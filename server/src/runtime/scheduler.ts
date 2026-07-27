@@ -13,6 +13,7 @@ const DEFAULT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const STALE_APPROVAL_REASON = 'stale_waiting_approval_timeout';
 const STALE_APPROVAL_BATCH_SIZE = 50;
 const BACKGROUND_COMMAND_START_TIMEOUT_MS = 2 * 60_000;
+const DEFAULT_MAX_CONCURRENT_RUNS = 16;
 
 export interface RunLease {
   runId: string;
@@ -72,7 +73,10 @@ export class RuntimeScheduler {
     this.workerId = options.workerId ?? `worker-${process.pid}-${randomUUID()}`;
     this.pollIntervalMs = options.pollIntervalMs ?? 10_000;
     this.leaseMs = options.leaseMs ?? 60_000;
-    this.maxConcurrentRuns = Math.max(1, Math.floor(options.maxConcurrentRuns ?? 4));
+    this.maxConcurrentRuns = Math.max(
+      1,
+      Math.floor(options.maxConcurrentRuns ?? DEFAULT_MAX_CONCURRENT_RUNS),
+    );
     this.maxConcurrentBackgroundRuns = Math.min(
       this.maxConcurrentRuns,
       Math.max(1, Math.floor(options.maxConcurrentBackgroundRuns ?? 2)),

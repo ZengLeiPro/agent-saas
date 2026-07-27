@@ -267,8 +267,15 @@ export interface SessionLockHandle {
   release(): Promise<void>;
 }
 
+export interface SessionLockAcquireOptions {
+  onLost?: (reason: Error) => void;
+}
+
 export interface SessionLockAcquirer {
-  tryAcquire(sessionId: string): Promise<SessionLockHandle | null>;
+  tryAcquire(
+    sessionId: string,
+    options?: SessionLockAcquireOptions,
+  ): Promise<SessionLockHandle | null>;
 }
 
 const DEFAULT_MODEL = 'gpt-5.4-mini';
@@ -1835,6 +1842,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const isResume = !!resumeSessionId;
     const sessionId = resumeSessionId ?? randomUUID();
     const runId = options.runtimeRunId ?? `${Date.now()}-${randomUUID()}`;
+    const abortController = options.abortController ?? new AbortController();
     enterSessionContext(sessionId, runId);
     const identitySource = context.sessionOwner || context.user;
     const effectiveTenantId = resolveContextTenantId(context, existingSession);
@@ -1915,13 +1923,20 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
 
     // Session-level lock：尽早占用，失败即退让；resume 路径多 brain 抢同一
     // session 时只让一个进入 dispatch。lock 必须在 try/finally 内 release。
-    let lockHandle = config.sessionLock ? await config.sessionLock.tryAcquire(sessionId) : null;
+    const sessionLockAcquireOptions: SessionLockAcquireOptions = {
+      onLost: (reason) => abortController.abort(reason),
+    };
+    let lockHandle = config.sessionLock
+      ? await config.sessionLock.tryAcquire(sessionId, sessionLockAcquireOptions)
+      : null;
     if (config.sessionLock && !lockHandle && !isCompactCommand(message.content) && config.autoCompaction) {
       // 自动压缩抢占（/compact v2）：用户消息永远第一优先级。若持锁的是本进程
       // 进行中的自动压缩 run，abort 它并短暂重试拿锁（压缩中途 abort 无残留——
       // compaction 事件只在成功收尾时落库）。
       if (config.autoCompaction.preempt(sessionId)) {
-        lockHandle = await waitAcquireSessionLock(() => config.sessionLock!.tryAcquire(sessionId));
+        lockHandle = await waitAcquireSessionLock(
+          () => config.sessionLock!.tryAcquire(sessionId, sessionLockAcquireOptions),
+        );
         if (lockHandle) {
           logger.info(`[auto-compact] user message preempted auto compaction, lock acquired session=${sessionId}`);
         }
@@ -2168,7 +2183,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           profileConfigDigest: boundProfile.binding.profileConfigDigest,
         } : {}),
         hooks,
-        signal: options.abortController?.signal,
+        signal: abortController.signal,
       };
       let visionAnalysis;
       if (
@@ -2294,10 +2309,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       }
       await sessionCatalog.markStatus(
         sessionId,
-        options.abortController?.signal.aborted ? 'idle' : loopError ? 'error' : 'idle',
+        abortController.signal.aborted ? 'idle' : loopError ? 'error' : 'idle',
       );
     } catch (err) {
-      if (options.abortController?.signal.aborted) {
+      if (abortController.signal.aborted) {
         await sessionCatalog.markStatus(sessionId, 'idle').catch(() => undefined);
         return;
       }
@@ -2400,10 +2415,15 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     const sandboxPolicy = buildRawRuntimeSandboxPolicy(config, request.context, cwd, executionTarget);
     const approvalPolicy = normalizeApprovalPolicy(request.approvalPolicy);
     const resumeToolProfile = normalizeToolProfile(request.toolProfile);
+    const abortController = request.abortController ?? new AbortController();
 
     // Session-level lock：resume 路径上 sessionId 已知，必须早于 catalog upsert
     // 和 loop.resumeApproval 占用，避免两个 brain 同时 wake 同一 session。
-    const lockHandle = config.sessionLock ? await config.sessionLock.tryAcquire(request.sessionId) : null;
+    const lockHandle = config.sessionLock
+      ? await config.sessionLock.tryAcquire(request.sessionId, {
+        onLost: (reason) => abortController.abort(reason),
+      })
+      : null;
     if (config.sessionLock && !lockHandle) {
       yield { type: 'error', error: `Session ${request.sessionId} 已被另一个 brain 持有，本次 approval resume 退让` };
       return;
@@ -2683,7 +2703,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
             profileConfigDigest: boundProfile.binding.profileConfigDigest,
           } : {}),
           hooks: request.hooks,
-          signal: request.abortController?.signal,
+          signal: abortController.signal,
         },
       )) {
         if (event.type === 'error') loopError = event.error ?? 'approval resume failed';
@@ -2691,7 +2711,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       }
       await sessionCatalog.markStatus(request.sessionId, loopError ? 'error' : 'idle');
     } catch (err) {
-      if (request.abortController?.signal.aborted) {
+      if (abortController.signal.aborted) {
         await sessionCatalog.markStatus(request.sessionId, 'idle').catch(() => undefined);
         return;
       }
@@ -2759,8 +2779,13 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     const sandboxPolicy = buildRawRuntimeSandboxPolicy(config, request.context, cwd, executionTarget);
     const approvalPolicy = normalizeApprovalPolicy(request.approvalPolicy);
     const resumeToolProfile = normalizeToolProfile(request.toolProfile);
+    const abortController = request.abortController ?? new AbortController();
 
-    const lockHandle = config.sessionLock ? await config.sessionLock.tryAcquire(request.sessionId) : null;
+    const lockHandle = config.sessionLock
+      ? await config.sessionLock.tryAcquire(request.sessionId, {
+        onLost: (reason) => abortController.abort(reason),
+      })
+      : null;
     if (config.sessionLock && !lockHandle) {
       yield { type: 'error', error: `Session ${request.sessionId} 已被另一个 brain 持有，本次 interaction resume 退让` };
       return;
@@ -3054,7 +3079,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
             profileConfigDigest: boundProfile.binding.profileConfigDigest,
           } : {}),
           hooks: request.hooks,
-          signal: request.abortController?.signal,
+          signal: abortController.signal,
         },
       )) {
         if (event.type === 'error') loopError = event.error ?? 'interaction resume failed';
@@ -3062,7 +3087,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       }
       await sessionCatalog.markStatus(request.sessionId, loopError ? 'error' : 'idle');
     } catch (err) {
-      if (request.abortController?.signal.aborted) {
+      if (abortController.signal.aborted) {
         await sessionCatalog.markStatus(request.sessionId, 'idle').catch(() => undefined);
         return;
       }

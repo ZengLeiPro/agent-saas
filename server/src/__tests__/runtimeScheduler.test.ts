@@ -474,6 +474,39 @@ describe('RuntimeScheduler', () => {
     await scheduler.stop();
   });
 
+  it('defaults to sixteen concurrent top-level runs', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    for (let index = 1; index <= 17; index += 1) {
+      await runStore.upsertPending({
+        runId: `run-default-${index}`,
+        sessionId: `session-default-${index}`,
+      });
+    }
+    const gate = deferred();
+    const started: string[] = [];
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-default-capacity',
+      autoWake: true,
+      wake: async (record, lease) => {
+        started.push(record.runId);
+        await gate.promise;
+        await lease.release('completed', 'done');
+      },
+    });
+
+    await scheduler.tick();
+    await flushSchedulerMicrotasks();
+
+    expect(started).toHaveLength(16);
+    expect(started).not.toContain('run-default-17');
+
+    gate.resolve();
+    await scheduler.stop();
+  });
+
   it('does not let a long run in one session block another session', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();

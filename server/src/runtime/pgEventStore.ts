@@ -6,10 +6,8 @@ import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 
 const { Client, Pool } = pg;
 const NOTIFY_RANGE_PAGE_LIMIT = 250;
-// RuntimeScheduler 默认最多并发 4 个 session，而 PgSessionLock 会在整个 run
-// 期间各占一条 shared pool connection。pool 必须额外保留事件读写通道，否则
-// 四个会话同时恢复时会先占满连接，再一起卡死在 run_started 事件落库。
-// 设为 6 后每色最多比旧值多 2 条连接；蓝绿双实例仍控制在 RDS 20 连接上限内。
+// PgSessionLock 已迁为短查询表租约，不再按 active session 常驻占连接。
+// 默认 6 给事件 append/投影/运行状态等并发短事务留出余量；显式配置仍可覆盖。
 const DEFAULT_POOL_MAX = 6;
 const PG_TOO_MANY_CONNECTIONS = '53300';
 

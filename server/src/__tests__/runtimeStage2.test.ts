@@ -85,6 +85,44 @@ describe('runtime stage 2 primitives', () => {
     expect((await sessionCatalog.get(sessionId!))?.status).toBe('idle');
   });
 
+  it('PG session lease 丢失会中止 dispatch 并把 session 收口为 idle', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'runtime-session-lease-lost-'));
+    cleanupDirs.add(cwd);
+    const sessionCatalog = new MemorySessionCatalog();
+    const release = vi.fn(async () => undefined);
+    const sessionLock: SessionLockAcquirer = {
+      async tryAcquire(_sessionId, options) {
+        options?.onLost?.(new Error('session lease lost'));
+        return { release };
+      },
+    };
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('aborted', 'AbortError'));
+
+    const dispatch = createRawRuntimeRunDispatch({
+      agentCwd: cwd,
+      sharedDir: SHARED_DIR,
+      sessionCatalog,
+      sessionLock,
+      memory: { enabled: false },
+    });
+    let sessionId: string | undefined;
+    for await (const event of dispatch(
+      { channel: 'web', chatId: 'chat-lease-lost', content: '租约丢失测试' },
+      { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      {
+        modelConnection: { apiKey: 'sk-test' },
+        skipSystemPrompt: true,
+        maxTurns: 1,
+      },
+    )) {
+      if (event.type === 'session_init') sessionId = event.sessionId;
+    }
+
+    expect(sessionId).toBeTruthy();
+    expect((await sessionCatalog.get(sessionId!))?.status).toBe('idle');
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it('FileEventStore supports appendBatch and cursor pages without changing list()', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'eventstore-v2-'));
     cleanupDirs.add(cwd);

@@ -192,7 +192,10 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
       <div className="flex min-h-0 flex-1">
         {/* 右栏固定宽度、会话区吃掉剩余空间：50/50 会让 1600 宽下的会话区只剩 ~700px，
             而右栏大半是空的（07-26 实机对比，三家客户演示稿都是右栏定宽 400~430px）。 */}
-        <div className={cn("flex min-h-0 flex-col", rightOpen ? "min-w-0 flex-1" : "w-full")}>
+        <div
+          data-scenario-replay-conversation
+          className={cn("flex min-h-0 flex-col", rightOpen ? "min-w-0 flex-1" : "w-full")}
+        >
           <FilePreviewProvider value={{ openPreview, downloadFile }}>
             <MessageList
               messages={messages}
@@ -249,6 +252,35 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
               </div>
             ) : null}
           </FilePreviewProvider>
+
+          {/* 回放控制替代真实输入框，只占会话列，并复用输入框的居中宽度。 */}
+          <div className="shrink-0 bg-background" style={{ paddingBottom: "var(--sab)" }}>
+            <div className="content-container pb-1 pt-3">
+              <div className="rounded-xl border border-border/60 bg-card px-3 py-2.5 shadow-sm">
+                <div className="grid gap-2 md:grid-cols-[1fr_auto_1fr] md:items-center">
+                  <span className="hidden md:block" aria-hidden="true" />
+                  <div role="toolbar" aria-label="演示回放控制" className="flex flex-wrap items-center justify-center gap-2">
+                    <Button variant="outline" size="sm" onClick={prev} disabled={stepIndex === 1} className="gap-1">
+                      <ChevronLeft className="size-4" />
+                      上一步
+                    </Button>
+                    <Button size="sm" onClick={next} disabled={atEnd || gateBlocked} className="gap-1">
+                      {gateBlocked ? "需先批准" : "下一步"}
+                      <ChevronRight className="size-4" />
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={reset} disabled={stepIndex === 1 && Object.keys(decisions).length === 0} className="gap-1">
+                      <RotateCcw className="size-4" />
+                      重放
+                    </Button>
+                  </div>
+                  <div className="flex min-w-0 items-center justify-center gap-3 text-xs text-muted-foreground md:justify-end">
+                    <span className="truncate">{caption}</span>
+                    <span className="shrink-0 tabular-nums">{Math.min(stepIndex, total)} / {total}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {rightOpen && (
@@ -270,25 +302,6 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
         )}
       </div>
 
-      {/* 回放条占据真实会话输入框的位置，它本身即演示状态的标识 */}
-      <div className="flex shrink-0 items-center gap-3 border-t border-border bg-muted/40 px-4 py-3">
-        <Button variant="outline" size="sm" onClick={prev} disabled={stepIndex === 1} className="gap-1">
-          <ChevronLeft className="size-4" />
-          上一步
-        </Button>
-        <Button size="sm" onClick={next} disabled={atEnd || gateBlocked} className="gap-1">
-          {gateBlocked ? "需先批准" : "下一步"}
-          <ChevronRight className="size-4" />
-        </Button>
-        <Button variant="ghost" size="sm" onClick={reset} disabled={stepIndex === 1 && Object.keys(decisions).length === 0} className="gap-1">
-          <RotateCcw className="size-4" />
-          重放
-        </Button>
-        <div className="ml-auto flex items-center gap-3 text-sm text-muted-foreground">
-          <span className="truncate">{caption}</span>
-          <span className="tabular-nums">{Math.min(stepIndex, total)} / {total}</span>
-        </div>
-      </div>
     </div>
   );
 }

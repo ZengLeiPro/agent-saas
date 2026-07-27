@@ -45,6 +45,13 @@ describe('ScenarioReplayView', () => {
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
   });
 
+  it('回放控制位于会话列底部，替代输入框而非横跨右侧面板', () => {
+    renderReplay();
+    const toolbar = screen.getByRole('toolbar', { name: '演示回放控制' });
+    expect(toolbar.closest('[data-scenario-replay-conversation]')).toBeTruthy();
+    expect(toolbar.closest('.content-container')).toBeTruthy();
+  });
+
   it('逐步推进，内容累加而非替换', () => {
     renderReplay();
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();

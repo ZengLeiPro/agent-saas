@@ -1,0 +1,32 @@
+[
+  {
+    "customer": "施耐德测试客户",
+    "customer_code": "TEST001",
+    "statement_no": "TEST-STATEMENT-001",
+    "billing_no": "TEST-BILLING-001",
+    "invoice_no": "TEST-INVOICE-001",
+    "invoice_remark": "非寄售测试批次",
+    "amount_excl_tax": "100.00",
+    "tax": "13.00",
+    "amount_incl_tax": "113.00",
+    "invoice_date": "2026-07-26",
+    "reconciliation_name": "PP-AVXP-测试对账结果.xlsx",
+    "portal_url": "https://vendor.schneider-electric.cn/webLogin/weblogin.jsp",
+    "portal_username": "test-user",
+    "portal_password": "test-password",
+    "uploaded": "N",
+    "mock_company_code": "AVXP",
+    "mock_rows": [
+      {
+        "receipt_date": "2026-07-20",
+        "order_no": "PO-TEST-001",
+        "line_no": "10"
+      },
+      {
+        "receipt_date": "2026-07-21",
+        "order_no": "PO-TEST-002",
+        "line_no": "20"
+      }
+    ]
+  }
+]

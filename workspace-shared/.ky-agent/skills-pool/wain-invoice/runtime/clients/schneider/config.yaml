@@ -1,0 +1,19 @@
+client_id: schneider
+name: 施耐德客户系统
+url: https://vendor.schneider-electric.cn/webLogin/weblogin.jsp
+credentials_from_t100: true
+mock_pending_fixture: schneider_pending_invoices.json
+browser_backend: playwright-chromium
+browser_user_agent: ie11-compatible
+email_download_dir:
+verify_tolerance: 0
+
+# 2026-07-27 客户明确：查询接口返回的单据均可用于联调，机器人按步骤完成后
+# 可以直接在施耐德页面最终确认；T100 回写接口待网页自动化验证通过后再提供。
+poc_allow_website_commit_without_t100_writeback: true
+
+t100:
+  order_url: http://10.9.15.62:8000/ipaas/aiservice/erp/order/shinaide/list
+  excel_url: http://10.9.15.62:8000/ipaas/aiservice/erp/file/result-excel
+  mark_uploaded_url:
+  timeout_seconds: 30

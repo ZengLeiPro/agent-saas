@@ -9,7 +9,7 @@
  *  - **同步**：descriptor 是模块顶层 `export const`，必须在 import 求值时拿到 string。
  *  - **fail-fast**：md 缺失或为空直接 throw，启动阶段崩 = CI/部署阻断，避免上线后 LLM
  *    拿到空 description 的灰色失败。
- *  - **路径稳定**：以 server 工作目录解析，源码运行、生产 bundle 与 vitest 行为一致。
+ *  - **路径稳定**：源码/跨包运行优先按当前模块定位；生产 bundle 再回退到 server 工作目录。
  *  - **归一化**：md 文件可以多行自然段落写（便于阅读编辑），loader 用
  *    `split('\n') → map(trim) → filter(非空) → join(' ')` 还原成单行字符串，与
  *    原 TS 多行 `+` 拼接的字面量字符级等价。当前 16 个工具的 description 都是单段
@@ -20,10 +20,19 @@
  * 参考范式：server/src/runtime/promptRenderer.ts loadPrompt（也是 readFileSync + Map）。
  */
 
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const DESCRIPTIONS_DIR = resolve(process.cwd(), 'src', 'agent', 'descriptions');
+const MODULE_DESCRIPTIONS_DIR = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'descriptions',
+);
+const CWD_DESCRIPTIONS_DIR = resolve(process.cwd(), 'src', 'agent', 'descriptions');
+const DESCRIPTIONS_DIR = existsSync(MODULE_DESCRIPTIONS_DIR)
+  ? MODULE_DESCRIPTIONS_DIR
+  : CWD_DESCRIPTIONS_DIR;
 
 const cache = new Map<string, string>();
 

@@ -71,6 +71,7 @@ import type { AgentProfileInfo } from "../data/agents/types.js";
 import { isAssignedToOrgAgent, type OrgAgentStore } from "../data/orgAgents/store.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import type { SessionShareSnapshot, SessionShareStore } from "../data/sessionShares/store.js";
+import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
 import { isShareExpired } from "../data/sessionShares/store.js";
 import {
   collectSessionShareCandidateFiles,
@@ -151,6 +152,7 @@ interface EnrichedSessionListItem extends SessionListItem {
   model?: string;
   cronJobId?: string;
   cronJobName?: string;
+  hasUnreadAiReply?: boolean;
 }
 
 interface SessionsListResponse {
@@ -365,6 +367,8 @@ export interface SessionsRouterOptions {
   sessionProjectionStore?: {
     list(query?: RuntimeSessionListQuery): Promise<RuntimeSessionListResult>;
   };
+  /** 用户维度会话未读状态真源。 */
+  sessionReadStateStore?: SessionReadStateStore;
 }
 
 interface ResolvedSessionPath {
@@ -1437,7 +1441,18 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         `enrichSessions[count=${sessions.length}]`,
         enrichStageStartedAt,
       );
-      const visibleSessions = enrichedSessions;
+      let visibleSessions = enrichedSessions;
+      if (options.sessionReadStateStore && req.user && scope !== "all") {
+        const unreadSessionIds = await options.sessionReadStateStore.listUnreadSessionIds({
+          tenantId: req.user.tenantId,
+          userId: req.user.sub,
+          sessionIds: visibleSessions.map((session) => session.sessionId),
+        });
+        visibleSessions = visibleSessions.map((session) => ({
+          ...session,
+          hasUnreadAiReply: unreadSessionIds.has(session.sessionId),
+        }));
+      }
 
       const payload = { sessions: visibleSessions, hasMore };
       if (cacheKey) {
@@ -1932,6 +1947,76 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
       res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * PUT /api/sessions/:sessionId/read
+   *
+   * 将当前用户在该会话的未读状态推进到最新关注版本。
+   */
+  router.put("/sessions/:sessionId/read", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: "Authentication required" });
+        return;
+      }
+      if (!options.sessionReadStateStore) {
+        res.status(503).json({ error: "Session read state store unavailable" });
+        return;
+      }
+
+      const { sessionId } = req.params;
+      if (!isValidSessionId(sessionId)) {
+        res.status(400).json({ error: "Invalid session ID format" });
+        return;
+      }
+
+      const userCwd = resolveUserCwd(agentCwd, {
+        id: req.user.sub,
+        username: req.user.username,
+        role: req.user.role,
+        tenantId: req.user.tenantId,
+      });
+      const resolved = await resolveSessionPathForRead(
+        userCwd,
+        sessionId,
+        reqTranscriptOwner(req.user),
+      );
+      if (!resolved) {
+        res.status(404).json({ error: "Session not found" });
+        return;
+      }
+
+      const changed = await options.sessionReadStateStore.markRead({
+        tenantId: req.user.tenantId,
+        userId: req.user.sub,
+        sessionId,
+      });
+      if (changed) {
+        const store = options.runtimeEventStoreFor?.(resolved.transcriptPath);
+        if (store) {
+          await store.append({
+            type: "session_read_state_changed",
+            sessionId,
+            userId: req.user.sub,
+            hasUnreadAiReply: false,
+          }, { tenantId: req.user.tenantId });
+        } else {
+          options.getEventBus?.()?.emitUser(req.user.sub, {
+            type: "session_read_state_changed",
+            sessionId,
+            hasUnreadAiReply: false,
+          });
+        }
+      }
+      res.json({ ok: true, sessionId, hasUnreadAiReply: false });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        res.status(404).json({ error: "Session not found" });
+        return;
+      }
+      res.status(500).json({ error: String(err instanceof Error ? err.message : err) });
     }
   });
 

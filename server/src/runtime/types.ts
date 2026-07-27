@@ -642,6 +642,14 @@ export type PlatformEvent =
   | {
     id: string;
     timestamp: string;
+    type: 'session_read_state_changed';
+    sessionId: string;
+    userId: string;
+    hasUnreadAiReply: boolean;
+  }
+  | {
+    id: string;
+    timestamp: string;
     type: 'run_lease_acquired';
     runId: string;
     sessionId: string;

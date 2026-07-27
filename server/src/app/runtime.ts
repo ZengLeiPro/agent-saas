@@ -26,6 +26,11 @@ import { PgSessionLock } from '../runtime/pgSessionLock.js';
 import { PgRunStore } from '../runtime/runStore.js';
 import { PgHandStore } from '../runtime/handStore.js';
 import { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
+import {
+  FileSessionReadStateStore,
+  PgSessionReadStateStore,
+  type SessionReadStateStore,
+} from '../data/sessionReadStateStore.js';
 import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import { PgClientDaemonRegistry } from '../runtime/clientDaemonRegistry.js';
 import {
@@ -280,6 +285,8 @@ export interface AppRuntime {
   runtimeSchedulerCapacity?: RuntimeSchedulerCapacityController;
   /** PG runtime session projection store（平台观测会话列表用；file backend 为 undefined）。 */
   runtimeSessionProjectionStore?: PgSessionProjectionStore;
+  /** 用户维度会话未读状态真源。PG 后端持久化，file 后端落 runtime event。 */
+  sessionReadStateStore: SessionReadStateStore;
   /** PG runtime tool invocation store（组织删除清理用；file backend 为 undefined）。 */
   runtimeToolInvocationStore?: PgToolInvocationStore;
   /** PG runtime hand store（组织删除清理用；file backend 为 undefined）。 */
@@ -846,6 +853,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let sessionLock: PgSessionLock | undefined;
   let pgRunStore: PgRunStore | undefined;
   let pgSessionProjectionStore: PgSessionProjectionStore | undefined;
+  let sessionReadStateStore: SessionReadStateStore | undefined;
   let pgHandStore: PgHandStore | undefined;
   let pgToolInvocationStore: PgToolInvocationStore | undefined;
   let pgClientDaemonRegistry: PgClientDaemonRegistry | undefined;
@@ -1067,6 +1075,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await pgSessionProjectionStore.init();
+    sessionReadStateStore = new PgSessionReadStateStore(pgEventStore.pool, {
+      tableName: `${config.runtimeEventStore.tablePrefix || 'runtime'}_session_read_states`,
+    });
+    await sessionReadStateStore.init();
     setSessionMetaProjectionSink({
       upsert: async (transcriptPath, meta) => {
         await pgSessionProjectionStore!.upsertFromMeta(transcriptPath, meta);
@@ -1308,6 +1320,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const runtimeEventStoreFor: (transcriptPath: string) => EventStore = pgEventStore
     ? (_transcriptPath) => pgEventStore!  // PG backend：共享 pool，按 session_id 过滤
     : (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+
+  if (!sessionReadStateStore) {
+    sessionReadStateStore = new FileSessionReadStateStore(
+      resolve(processCwd, './data/session-read-states.json'),
+    );
+    await sessionReadStateStore.init();
+  }
 
   sessionShareStore ??= new InMemorySessionShareStore();
   workflowDemoStore ??= new InMemoryWorkflowDemoStore();
@@ -2451,6 +2470,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     orgAgentStore,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     guardrailEventStore,
+    sessionReadStateStore: sessionReadStateStore!,
     getGuardrailSystemPrompt: () => systemPromptRegistry.get('utility.guardrail'),
     ...(config.guardrail ? {
       guardrailOptions: {
@@ -2742,6 +2762,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runtimeRunStore: pgRunStore,
     runtimeSchedulerCapacity,
     runtimeSessionProjectionStore: pgSessionProjectionStore,
+    sessionReadStateStore: sessionReadStateStore!,
     runtimeToolInvocationStore: pgToolInvocationStore,
     runtimeHandStore: pgHandStore,
     systemMetricsStore,

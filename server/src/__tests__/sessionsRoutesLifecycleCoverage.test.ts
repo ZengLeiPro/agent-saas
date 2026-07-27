@@ -19,7 +19,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionsRouter } from '../routes/sessions.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
@@ -37,7 +37,16 @@ function stopServer(server: Server): Promise<void> {
 async function startServer(
   agentCwd: string,
   user: WorkspaceUser,
-  opts: { withShareStore?: boolean; shareStore?: InMemorySessionShareStore } = {},
+  opts: {
+    withShareStore?: boolean;
+    shareStore?: InMemorySessionShareStore;
+    sessionReadStateStore?: {
+      init(): Promise<void>;
+      markUnread(input: { tenantId: string; userId: string; sessionId: string; eventKey: string }): Promise<boolean>;
+      markRead(input: { tenantId: string; userId: string; sessionId: string }): Promise<boolean>;
+      listUnreadSessionIds(input: { tenantId: string; userId: string; sessionIds: readonly string[] }): Promise<Set<string>>;
+    };
+  } = {},
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
@@ -48,6 +57,7 @@ async function startServer(
   app.use('/api', createSessionsRouter({
     agentCwd,
     ...(opts.withShareStore ? { sessionShareStore: opts.shareStore ?? new InMemorySessionShareStore() } : {}),
+    ...(opts.sessionReadStateStore ? { sessionReadStateStore: opts.sessionReadStateStore } : {}),
   }));
 
   return new Promise((resolve) => {
@@ -134,6 +144,32 @@ describe('sessions routes lifecycle coverage', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: 'X' }),
     });
+    expect(missing.status).toBe(404);
+  });
+
+  it('PUT /sessions/:id/read：本人会话标记已读，不存在返回 404', async () => {
+    const { sessionId } = await writeSession(OWNER);
+    const markRead = vi.fn(async () => true);
+    const store = {
+      init: async () => {},
+      markUnread: async () => true,
+      markRead,
+      listUnreadSessionIds: async () => new Set<string>(),
+    };
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      sessionReadStateStore: store,
+    });
+    servers.push(server);
+
+    const ok = await fetch(`${baseUrl}/api/sessions/${sessionId}/read`, { method: 'PUT' });
+    expect(ok.status).toBe(200);
+    expect(markRead).toHaveBeenCalledWith({
+      tenantId: OWNER.tenantId,
+      userId: OWNER.id,
+      sessionId,
+    });
+
+    const missing = await fetch(`${baseUrl}/api/sessions/${randomUUID()}/read`, { method: 'PUT' });
     expect(missing.status).toBe(404);
   });
 

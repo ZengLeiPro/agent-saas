@@ -69,7 +69,7 @@ const SuspenseFallback = (
 
 export function DesktopLayout(props: LayoutProps) {
   const {
-    sidebarSessions, unreadAiReplySessionIds, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
+    sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
     isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
@@ -317,7 +317,6 @@ export function DesktopLayout(props: LayoutProps) {
     <div className="flex min-h-0 flex-1">
       <DesktopSessionSidebar
         sessions={sidebarSessions}
-        unreadAiReplySessionIds={unreadAiReplySessionIds}
         activeSessionId={sessionId}
         onSelect={selectSession}
         onNew={newSession}
@@ -421,6 +420,8 @@ export function DesktopLayout(props: LayoutProps) {
                   tokenUsage={tokenUsage}
                   contextUsage={contextUsage}
                   allowDetails={modelList?.allowContextTokenDetails === true}
+                  messages={messages}
+                  onOpenChildSession={selectSession}
                 />
               )}
               <BillingMiniBadge sessionId={sessionId} />

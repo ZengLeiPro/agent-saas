@@ -713,6 +713,19 @@ describe('processWsEvent - 会话元数据事件', () => {
     expect(hooks.removeSession).toHaveBeenCalledWith('s1');
   });
 
+  it('session_read_state_changed：同步未读状态', () => {
+    const ctrl = makeController();
+    const { ctx, hooks } = makeCtx(ctrl);
+    dispatch({
+      type: 'session_read_state_changed',
+      sessionId: 's1',
+      hasUnreadAiReply: true,
+    }, ctx);
+    expect(hooks.updateSessionMeta).toHaveBeenCalledWith('s1', {
+      hasUnreadAiReply: true,
+    });
+  });
+
   it('session_updated(isNew 且有可展示内容)：upsertSession 直插本地列表', () => {
     const ctrl = makeController();
     const { ctx, hooks } = makeCtx(ctrl);

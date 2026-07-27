@@ -54,6 +54,7 @@ import { isAssignedToOrgAgent, type OrgAgentStore } from '../../data/orgAgents/s
 import type { OrgAgentGuardrailMode, OrgAgentRecord } from '../../data/orgAgents/types.js';
 import { normalizeGuardrailConfig } from '../../data/orgAgents/types.js';
 import type { GuardrailEventStore, GuardrailEventVerdict } from '../../data/guardrail/pgGuardrailEventStore.js';
+import type { SessionReadStateStore } from '../../data/sessionReadStateStore.js';
 import { WsServer, type WsClient } from './wsServer.js';
 import { EventBus, type SessionContext } from './eventBus.js';
 import type { WsChatMessage, WsRespondMessage, WsAbortMessage, WsRunStatusMessage, WsResumeMessage, WsSyncMessage, WsInboundMessage, ChatRejectReasonCode } from './wsTypes.js';
@@ -181,6 +182,8 @@ export interface WebChannelConfig {
   getGuardrailModelConfigs?: () => GuardrailModelConfig[];
   /** 门禁事件落库（PG backend）。缺省（file backend）时降级 log，判定照常。 */
   guardrailEventStore?: GuardrailEventStore;
+  /** 用户维度会话未读状态真源。 */
+  sessionReadStateStore?: SessionReadStateStore;
   /** 门禁调用参数（maxRecentRounds 现表示最近真实用户消息数，配置键为兼容历史保留）。 */
   guardrailOptions?: { timeoutMs?: number; maxRecentRounds?: number };
   /** 平台系统提示语热更新 getter；每次门禁调用现取。 */
@@ -778,6 +781,13 @@ export class WebChannel implements BaseChannel {
         break;
       case 'permission_request':
       case 'ask_user':
+        if (input.userId) {
+          void this.markSessionUnread({
+            userId: input.userId,
+            sessionId: input.sessionId,
+            eventKey: `interaction:${input.event.interactionId}`,
+          });
+        }
         emitSession({
           type: input.event.type,
           interactionId: input.event.interactionId,
@@ -805,6 +815,13 @@ export class WebChannel implements BaseChannel {
         this.activeStreams.delete(streamId);
         this.inProcessOutboundRuns.delete(input.runId);
         if (input.userId) {
+          if (!input.event.error) {
+            void this.markSessionUnread({
+              userId: input.userId,
+              sessionId: input.sessionId,
+              eventKey: `done:${input.runId}`,
+            });
+          }
           this.eventBus.emitUser(input.userId, {
             type: 'session_status',
             sessionId: input.sessionId,
@@ -869,6 +886,23 @@ export class WebChannel implements BaseChannel {
    */
   publishRuntimePlatformEvent(event: PlatformEvent): void {
     if (!this.eventBus) return;
+    if (event.type === 'session_read_state_changed') {
+      clearSessionsListCache();
+      this.eventBus.emitUser(event.userId, {
+        type: 'session_read_state_changed',
+        sessionId: event.sessionId,
+        hasUnreadAiReply: event.hasUnreadAiReply,
+      });
+      return;
+    }
+    if (event.type === 'interaction_requested' && event.userId && event.sessionId) {
+      void this.markSessionUnread({
+        userId: event.userId,
+        sessionId: event.sessionId,
+        eventKey: `interaction:${event.interactionId}`,
+        broadcastEvenIfUnchanged: true,
+      });
+    }
     const sessionId = event.sessionId;
     if (!sessionId) return;
     const runId = 'runId' in event ? event.runId : undefined;
@@ -949,6 +983,22 @@ export class WebChannel implements BaseChannel {
       // run_finished。userId 不在事件 payload 里，从 RunStore 反查；失败状态不命名。
       // 单进程部署下 PG NOTIFY 也会回投 run_finished，靠 titleGenerationAttempts
       // 去重避免与 publishRuntimeOutboundEvent('done') 路径双发。
+      if (runId && projection.sessionStatus === 'completed') {
+        const runStore = this.config.enqueueRuntime?.runStore;
+        if (runStore) {
+          void runStore.get(runId).then((record) => {
+            if (!record?.userId) return;
+            return this.markSessionUnread({
+              userId: record.userId,
+              sessionId,
+              eventKey: `done:${runId}`,
+              broadcastEvenIfUnchanged: true,
+            });
+          }).catch((err) => {
+            chatLogger.warn(`unread cross-process hook failed run=${runId}:`, err);
+          });
+        }
+      }
       if (runId && projection.sessionStatus === 'completed' && this.claimTitleGenerationAttempt(runId)) {
         const runStore = this.config.enqueueRuntime?.runStore;
         const eventBus = this.eventBus;
@@ -3290,6 +3340,37 @@ export class WebChannel implements BaseChannel {
    * `userInfo` 由调用方按各自上下文准备：handleEvents 用 ChannelContext.user，
    * 后两条用 userId → UserStore.findById 反查 username/role/tenantId。
    */
+  private async markSessionUnread(input: {
+    userId: string;
+    sessionId: string;
+    eventKey: string;
+    broadcastEvenIfUnchanged?: boolean;
+  }): Promise<void> {
+    const store = this.config.sessionReadStateStore;
+    const user = this.config.userStore?.findById(input.userId);
+    if (!store) return;
+    const tenantId = user?.tenantId ?? DEFAULT_TENANT_ID;
+    if (!tenantId) return;
+    try {
+      const changed = await store.markUnread({
+        tenantId,
+        userId: input.userId,
+        sessionId: input.sessionId,
+        eventKey: input.eventKey,
+      });
+      if (!changed && !input.broadcastEvenIfUnchanged) return;
+      // PG runtime event 会投递到每个 Web 进程；跨进程路径即使数据库幂等更新只由
+      // 一个进程命中，也要在每个进程广播，才能覆盖连接在不同进程上的设备。
+      this.eventBus?.emitUser(input.userId, {
+        type: 'session_read_state_changed',
+        sessionId: input.sessionId,
+        hasUnreadAiReply: true,
+      });
+    } catch (err) {
+      chatLogger.warn(`Failed to mark session unread ${input.sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async resolveTitleForSession(
     sessionId: string,
     userInfo: { id: string; username: string; role: string; tenantId?: string },

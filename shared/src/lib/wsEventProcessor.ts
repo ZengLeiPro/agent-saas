@@ -184,7 +184,7 @@ export interface WsProcessingContext {
     setSessionId: (id: string | null) => void;
     loadSessions: () => Promise<void>;
     updateSessionTitle: (sessionId: string, title: string) => void;
-    updateSessionMeta: (sessionId: string, patch: { preview?: string; updatedAtMs?: number; title?: string }) => void;
+    updateSessionMeta: (sessionId: string, patch: { preview?: string; updatedAtMs?: number; title?: string; hasUnreadAiReply?: boolean }) => void;
     removeSession: (sessionId: string) => void;
     upsertSession?: (session: { sessionId: string; title?: string; preview?: string; updatedAtMs: number; model?: string; username?: string }) => void;
   };
@@ -755,6 +755,13 @@ export function processWsEvent(
 
   if (data.type === "session_deleted") {
     ctx.session.removeSession(data.sessionId);
+    return;
+  }
+
+  if (data.type === "session_read_state_changed") {
+    ctx.session.updateSessionMeta(data.sessionId, {
+      hasUnreadAiReply: data.hasUnreadAiReply,
+    });
     return;
   }
 

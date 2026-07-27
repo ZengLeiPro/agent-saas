@@ -100,14 +100,10 @@ interface DesktopSessionSidebarProps {
   onCollapse?: () => void;
   onPreviewTrashSession?: (id: string | null) => void;
   trashPreviewSessionId?: string | null;
-  /** 完整未读集（不受分页影响），用于左栏各视图/分组的聚合红点 */
-  unreadAiReplySessionIds?: ReadonlySet<string>;
   sidebarLayout?: "double" | "single";
   personalAgentEnabled?: boolean;
 }
 
-/** 稳定的空集兜底，避免 prop 缺省时每次 render 新建 Set 触发 useMemo 失效 */
-const EMPTY_UNREAD_SET: ReadonlySet<string> = new Set();
 
 // 侧边栏导航/分组的选中态：左侧 brand-accent rail + 暖橙浅底 + 字加粗。
 const NAV_ITEM_SELECTED =
@@ -1067,7 +1063,6 @@ export function DesktopSessionSidebar({
   onCollapse,
   onPreviewTrashSession,
   trashPreviewSessionId,
-  unreadAiReplySessionIds,
   sidebarLayout = "double",
   personalAgentEnabled = true,
 }: DesktopSessionSidebarProps) {
@@ -1195,32 +1190,29 @@ export function DesktopSessionSidebar({
     [sessions, groupedIds],
   );
 
-  // 聚合未读红点：基于「完整未读集 ∩ 分组成员全集」计算，两份数据都不受会话分页影响，
-  // 因此能正确反映分页外的未读会话——根治「全部看着干净、切到分组冒红点」的不一致。
-  // 残留 id（已删除会话）既不属于现存分组的 sessionIds、也不在已加载 sessions 里，故不会误亮。
-  const unreadSet = unreadAiReplySessionIds ?? EMPTY_UNREAD_SET;
+  // 聚合未读红点来自服务端同步后的会话列表。
   const unreadByGroupId = useMemo(() => {
     const map = new Map<string, boolean>();
     for (const g of groupsHook.groups) {
       map.set(
         g.id,
-        g.sessionIds.some((id) => unreadSet.has(id)),
+        sessions.some((session) => g.sessionIds.includes(session.id) && session.hasUnreadAiReply),
       );
     }
     return map;
-  }, [groupsHook.groups, unreadSet]);
+  }, [groupsHook.groups, sessions]);
   const hasUnreadUngrouped = useMemo(
-    () => sessions.some((s) => !groupedIds.has(s.id) && unreadSet.has(s.id)),
-    [sessions, groupedIds, unreadSet],
+    () => sessions.some((s) => !groupedIds.has(s.id) && s.hasUnreadAiReply),
+    [sessions, groupedIds],
   );
   // 「全部」= 未分组未读 ∪ 任一分组未读，自洽且不会被残留 id 永久点亮
   const hasUnreadAll = useMemo(
     () =>
       hasUnreadUngrouped ||
       groupsHook.groups.some((g) =>
-        g.sessionIds.some((id) => unreadSet.has(id)),
+        sessions.some((session) => g.sessionIds.includes(session.id) && session.hasUnreadAiReply),
       ),
-    [hasUnreadUngrouped, groupsHook.groups, unreadSet],
+    [hasUnreadUngrouped, groupsHook.groups, sessions],
   );
 
   // 当前视图的 sessions 子集

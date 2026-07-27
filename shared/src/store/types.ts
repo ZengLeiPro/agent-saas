@@ -75,7 +75,7 @@ export interface SessionSlice {
   updateSessionTitle(sessionId: string, title: string): void;
   updateSessionMeta(
     sessionId: string,
-    patch: { preview?: string; updatedAtMs?: number; title?: string },
+    patch: { preview?: string; updatedAtMs?: number; title?: string; hasUnreadAiReply?: boolean },
   ): void;
   updateSessionStatus(sessionId: string, status: "busy" | "idle"): void;
   removeSession(sessionId: string): void;

@@ -16,8 +16,6 @@ import type { PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 export interface LayoutProps {
   // 会话导航
   sidebarSessions: ChatSessionIndexItem[];
-  /** 完整未读 AI 回复会话集（不受会话分页影响），供 sidebar 计算分组聚合红点 */
-  unreadAiReplySessionIds: ReadonlySet<string>;
   sessionId: string | null;
   selectSession: (id: string) => void;
   newSession: () => void;

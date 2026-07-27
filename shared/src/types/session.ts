@@ -24,6 +24,7 @@ export interface ApiSessionListItem {
   projectKey?: string;
   updatedAtMs: number;
   createdAtMs?: number;
+  hasUnreadAiReply?: boolean;
   title?: string;
   preview?: string;
   source?: { type: "web" | "dingtalk" | "cron"; label: string };

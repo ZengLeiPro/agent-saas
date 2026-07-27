@@ -29,7 +29,6 @@ import type { AdminSettingsTarget } from "@/lib/urlSync";
 import { DEFAULT_TENANT_ID } from "@agent/shared";
 
 /** 稳定的空集兜底，避免 prop 缺省时每次 render 新建 Set */
-const EMPTY_UNREAD_SET: ReadonlySet<string> = new Set();
 
 interface MobileSessionListProps {
   sessions: ChatSessionIndexItem[];
@@ -67,8 +66,6 @@ interface MobileSessionListProps {
   onLoadGroupSessions?: (groupId: string) => Promise<void>;
   onPreviewTrashSession?: (id: string | null) => void;
   trashPreviewSessionId?: string | null;
-  /** 完整未读集（不受分页影响），用于分组折叠行的聚合红点 */
-  unreadAiReplySessionIds?: ReadonlySet<string>;
   personalAgentEnabled?: boolean;
 }
 
@@ -106,7 +103,6 @@ export function MobileSessionList({
   onLoadGroupSessions,
   onPreviewTrashSession,
   trashPreviewSessionId,
-  unreadAiReplySessionIds,
   personalAgentEnabled = true,
 }: MobileSessionListProps) {
   const { user: authUser, logout, authEnabled, updateAvatar } = useAuth();
@@ -182,16 +178,17 @@ export function MobileSessionList({
   // 分组数据
   const groupedEntries = useGroupedSessions(sessions, query, groupsHook.groups);
 
-  // 分组折叠行的聚合未读红点：基于「完整未读集 ∩ 分组成员全集」，不受会话分页影响，
-  // 因此能反映组内分页外会话的未读。（分组行本身在组内会话全未加载时不渲染，属既有限制）
-  const unreadSet = unreadAiReplySessionIds ?? EMPTY_UNREAD_SET;
+  // 分组折叠行的聚合未读红点来自服务端同步后的会话列表。
   const unreadByGroupId = useMemo(() => {
     const map = new Map<string, boolean>();
     for (const g of groupsHook.groups) {
-      map.set(g.id, g.sessionIds.some(id => unreadSet.has(id)));
+      map.set(
+        g.id,
+        sessions.some((session) => g.sessionIds.includes(session.id) && session.hasUnreadAiReply),
+      );
     }
     return map;
-  }, [groupsHook.groups, unreadSet]);
+  }, [groupsHook.groups, sessions]);
 
   // 展开的分组对象
   const expandedGroup = useMemo<SessionGroup | null>(() => {

@@ -21,11 +21,6 @@ import {
   saveComposerAttachments,
   saveComposerText,
 } from "@/lib/composerDraftStorage";
-import {
-  getUnreadAiRepliesStorageKey,
-  loadUnreadAiReplySessionIds,
-  saveUnreadAiReplySessionIds,
-} from "@/lib/unreadAiReplies";
 import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
 import type { ApiSessionDetail } from "@/lib/sessionsApi";
 import {
@@ -175,8 +170,6 @@ export interface ChatAppState {
   dismissMemoryRecall: () => void;
   /** SDK 插件安装进度（仅在 /plugin install 等命令期间有值）*/
   pluginInstallStatus: PluginInstallData | null;
-  /** 已完成但用户尚未点击查看的 AI 回复会话 */
-  unreadAiReplySessionIds: ReadonlySet<string>;
   /** 当前处于活跃运行态的会话 ID 集合（含后台会话） */
   runningSessionIds: ReadonlySet<string>;
   connectionState: ConnectionState;
@@ -385,41 +378,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const [lastMemoryRecall, setLastMemoryRecall] = useState<MemoryRecallData | null>(null);
   const dismissMemoryRecall = useCallback(() => setLastMemoryRecall(null), []);
   const [pluginInstallStatus, setPluginInstallStatus] = useState<PluginInstallData | null>(null);
-  const unreadAiReplyStorageKey = getUnreadAiRepliesStorageKey(user?.id);
-  const [unreadAiReplySessionIds, setUnreadAiReplySessionIds] = useState<Set<string>>(
-    () => loadUnreadAiReplySessionIds(unreadAiReplyStorageKey),
-  );
-  const isSessionVisibleRef = useRef<(targetSessionId: string) => boolean>(() => false);
-  const markUnreadAiReply = useCallback((targetSessionId: string | null | undefined) => {
-    if (!targetSessionId) return;
-    if (isSessionVisibleRef.current(targetSessionId)) {
-      setUnreadAiReplySessionIds((prev) => {
-        if (!prev.has(targetSessionId)) return prev;
-        const next = new Set(prev);
-        next.delete(targetSessionId);
-        saveUnreadAiReplySessionIds(unreadAiReplyStorageKey, next);
-        return next;
-      });
-      return;
-    }
-    setUnreadAiReplySessionIds((prev) => {
-      if (prev.has(targetSessionId)) return prev;
-      const next = new Set(prev);
-      next.add(targetSessionId);
-      saveUnreadAiReplySessionIds(unreadAiReplyStorageKey, next);
-      return next;
-    });
-  }, [unreadAiReplyStorageKey]);
-  const clearUnreadAiReply = useCallback((targetSessionId: string | null | undefined) => {
-    if (!targetSessionId) return;
-    setUnreadAiReplySessionIds((prev) => {
-      if (!prev.has(targetSessionId)) return prev;
-      const next = new Set(prev);
-      next.delete(targetSessionId);
-      saveUnreadAiReplySessionIds(unreadAiReplyStorageKey, next);
-      return next;
-    });
-  }, [unreadAiReplyStorageKey]);
   // pluginInstall 自动清除计时器：ref 化防止切会话时旧 timer 误清新会话状态
   const pluginInstallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearPluginInstallTimer = useCallback(() => {
@@ -597,11 +555,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   trashPreviewSessionIdRef.current = trashPreviewSessionId;
   const refreshTokenUsageRef = useRef<() => void>(() => { });
   const loadSessionDetailRef = useRef<(id: string) => Promise<void>>(async () => { });
-  isSessionVisibleRef.current = (targetSessionId: string) =>
-    activeTabRef.current === 'chat'
-    && !trashPreviewSessionIdRef.current
-    && immediateSessionIdRef.current === targetSessionId;
-
   // ---- SW 更新协作（lib/swUpdate.ts）----
   // 守门：上传中 / 消息在途（outbox 未清）/ 任一会话 run 处于进行态 → 导航时不强刷
   useEffect(() => {
@@ -885,6 +838,23 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot]);
 
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId });
+  const markingReadSessionIdsRef = useRef(new Set<string>());
+  const markSessionRead = useCallback((targetSessionId: string | null | undefined) => {
+    if (!targetSessionId || markingReadSessionIdsRef.current.has(targetSessionId)) return;
+    markingReadSessionIdsRef.current.add(targetSessionId);
+    session.updateSessionMeta(targetSessionId, { hasUnreadAiReply: false });
+    void fetch(`/api/sessions/${encodeURIComponent(targetSessionId)}/read`, {
+      method: 'PUT',
+      credentials: 'include',
+    }).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    }).catch((err) => {
+      console.warn(`Failed to mark session read ${targetSessionId}:`, err);
+      void session.loadSessions();
+    }).finally(() => {
+      markingReadSessionIdsRef.current.delete(targetSessionId);
+    });
+  }, [session.updateSessionMeta, session.loadSessions]);
   const sessionRef = useRef(session); sessionRef.current = session;
   const attachmentsHydratedRef = useRef(false);
   const attachmentScopeRef = useRef<string | null>(null);
@@ -960,9 +930,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   useEffect(() => {
     if (activeTab === 'chat' && session.sessionId && !trashPreviewSessionId) {
-      clearUnreadAiReply(session.sessionId);
+      markSessionRead(session.sessionId);
     }
-  }, [activeTab, session.sessionId, trashPreviewSessionId, clearUnreadAiReply]);
+  }, [activeTab, session.sessionId, trashPreviewSessionId, markSessionRead]);
 
   // 切换会话时清理 SDK 新 state，避免跨会话串扰
   // - notifications 是 user scope（跨会话保留？业务含义说是 REPL 级，切会话应该清）
@@ -1196,11 +1166,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setTrashPreviewSessionId(null); // 选择正常会话时退出回收站预览
     clearPendingOrgAgent(); // 切换既有会话 = 放弃挂起的专职 Agent 新会话
     pendingNewSessionClientMsgIdRef.current = null;
-    clearUnreadAiReply(id);
+    markSessionRead(id);
     immediateSessionIdRef.current = id;
     session.selectSession(id);
     pushUrl('chat', id);
-  }, [clearPendingOrgAgent, clearUnreadAiReply, session.selectSession]);
+  }, [clearPendingOrgAgent, markSessionRead, session.selectSession]);
 
   const newSessionWithUrl = useCallback(() => {
     setTrashPreviewSessionId(null);
@@ -1318,7 +1288,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       setActiveTabRaw(tab);
       if (tab === 'chat') {
         if (urlSessionId && urlSessionId !== sessionIdRef.current) {
-          clearUnreadAiReply(urlSessionId);
+          markSessionRead(urlSessionId);
           selectSessionRawRef.current(urlSessionId);
         } else if (!urlSessionId && sessionIdRef.current) {
           newSessionRawRef.current();
@@ -1327,7 +1297,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     };
     window.addEventListener('popstate', handler);
     return () => window.removeEventListener('popstate', handler);
-  }, []);
+  }, [markSessionRead]);
 
   // 兜底：确保 URL 始终与 state 一致（覆盖 delete fallback 等间接变更）
   useEffect(() => {
@@ -1749,6 +1719,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         return;
       }
 
+      if (
+        data.type === 'session_read_state_changed'
+        && data.hasUnreadAiReply
+        && activeTabRef.current === 'chat'
+        && !trashPreviewSessionIdRef.current
+        && immediateSessionIdRef.current === data.sessionId
+      ) {
+        markSessionRead(data.sessionId);
+      }
+
       // ── session_status（Agent/run 生命周期）──
       // 架构改造（2026-06-25）：摘掉"d.sessionId === sessionIdRef.current"守卫,
       // 总是更新 activeRunsBySession Map（per-session 持久态）。后台会话的状态变更
@@ -1767,11 +1747,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           attached: isActiveRuntimeStatus(d.status),
         });
 
-        // ② tracking 集合（用于"AI 回复未读"红点,与当前会话无关）
+        // ② tracking 集合仅用于关联运行态；未读状态由服务端事件同步。
         if (isActiveRuntimeStatus(d.status)) {
           trackedAiReplyStreamsRef.current.add(d.sessionId);
-        } else if (isTerminalRuntimeStatus(d.status) && trackedAiReplyStreamsRef.current.delete(d.sessionId)) {
-          if (d.status === 'idle' || d.status === 'completed') markUnreadAiReply(d.sessionId);
+        } else if (isTerminalRuntimeStatus(d.status)) {
+          trackedAiReplyStreamsRef.current.delete(d.sessionId);
         }
 
         // ③ 仅当事件属于当前选中会话,才动 UI（loading/banner/outbox）
@@ -2086,14 +2066,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         pendingNewSessionClientMsgIdRef.current = null;
       }
 
-      if (data.type === 'session_updated' && !data.isNew && trackedAiReplyStreamsRef.current.delete(data.sessionId)) {
-        markUnreadAiReply(data.sessionId);
-      }
-
-      if (data.type === 'ask_user' || data.type === 'permission_request') {
-        markUnreadAiReply(wsLatestSessionIdRef.current.value || sessionIdRef.current);
-      } else if (data.type === 'pending_interactions' && data.interactions.length > 0) {
-        markUnreadAiReply(wsLatestSessionIdRef.current.value || sessionIdRef.current);
+      if (data.type === 'session_updated' && !data.isNew) {
+        trackedAiReplyStreamsRef.current.delete(data.sessionId);
       }
 
       if (result === 'buffer_overflow') {
@@ -2135,9 +2109,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         if (latestSid) {
           trackedAiReplyStreamsRef.current.delete(latestSid);
           const doneEvent = data as Extract<WsEvent, { type: 'done' }>;
-          if (!doneEvent.error) {
-            markUnreadAiReply(latestSid);
-          } else {
+          if (doneEvent.error) {
             // done.error：本轮 run 失败,必须把失败明确地呈现给用户,而不是只静默清 loading。
             // 用户侧通俗文案;原始 doneEvent.error（model error）仅保留在 server.log + PG runtime_events。
             // 协调：shared/wsEventProcessor 在 done 时若所有 user 气泡都已 failed,会注入一条同样
@@ -2758,8 +2730,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           : m
       );
     }
-    clearUnreadAiReply(sessionIdRef.current);
-  }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, clearUnreadAiReply]);
+    markSessionRead(sessionIdRef.current);
+  }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, markSessionRead]);
 
   const handleAskUserResponse = useCallback(async (
     interactionId: string,
@@ -2777,8 +2749,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           : m
       );
     }
-    clearUnreadAiReply(sessionIdRef.current);
-  }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, clearUnreadAiReply]);
+    markSessionRead(sessionIdRef.current);
+  }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, markSessionRead]);
 
   // ---- 会话切换时恢复模型选择 ----
   // 仅在 sessionId 实际切换时才重置/恢复，避免 sessions 列表刷新（WS 重连、
@@ -2900,7 +2872,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     lastMemoryRecall,
     dismissMemoryRecall,
     pluginInstallStatus,
-    unreadAiReplySessionIds,
     runningSessionIds,
     connectionState,
     refreshCurrentSession: session.refreshCurrentSession,

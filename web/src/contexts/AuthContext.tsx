@@ -9,7 +9,6 @@ import { TOKEN_KEY, SESSION_STORAGE_KEY } from "@/lib/constants";
 import { authPreload } from "@/lib/preload";
 import { clearSessionListCache } from "@/lib/sessionListCache";
 import { clearAllMessageCache } from "@/lib/messageCache";
-import { clearUnreadAiReplyCache } from "@/lib/unreadAiReplies";
 import {
   loginWithPassword,
   loginWithSmsCode,
@@ -68,7 +67,6 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 function clearAccountScopedState(): void {
   localStorage.removeItem(SESSION_STORAGE_KEY);
   clearSessionListCache();
-  clearUnreadAiReplyCache();
   void clearAllMessageCache();
   void clearGroupsCache();
 }

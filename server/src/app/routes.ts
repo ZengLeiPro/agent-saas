@@ -275,6 +275,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       resolveContextAccounting: (modelRef) => resolveContextAccountingFromModels(config.models, modelRef),
       sessionShareStore: runtime.sessionShareStore,
       sessionProjectionStore: runtime.runtimeSessionProjectionStore,
+      sessionReadStateStore: runtime.sessionReadStateStore,
     }),
   );
   app.use(

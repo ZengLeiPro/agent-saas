@@ -13,6 +13,7 @@ const METADATA_EVENT_TYPES = new Set([
   'title_updated',
   'session_updated',
   'session_deleted',
+  'session_read_state_changed',
   'session_status',
   'groups_changed',
   'stream_started',

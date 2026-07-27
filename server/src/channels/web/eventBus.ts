@@ -53,6 +53,7 @@ export const EVENT_SCOPE: Record<string, EventScope> = {
 
   // ── user scope: 跨会话通知 ──
   session_deleted: 'user',
+  session_read_state_changed: 'user',
   groups_changed: 'user',
 
   // ── SDK 0.2.112+ 新增事件 ──

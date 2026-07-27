@@ -78,7 +78,7 @@ export interface SessionState {
   updateSessionTitle: (sessionId: string, title: string) => void;
   updateSessionMeta: (
     sessionId: string,
-    patch: { preview?: string; updatedAtMs?: number },
+    patch: { preview?: string; updatedAtMs?: number; hasUnreadAiReply?: boolean },
   ) => void;
   removeSession: (sessionId: string) => void;
   upsertSession: (session: {
@@ -582,7 +582,7 @@ export function useSession(
   const updateSessionMeta = useCallback(
     (
       targetId: string,
-      patch: { preview?: string; updatedAtMs?: number; title?: string },
+      patch: { preview?: string; updatedAtMs?: number; title?: string; hasUnreadAiReply?: boolean },
     ) => {
       setSessions((prev) => {
         const updated = prev.map((s) =>
@@ -596,6 +596,9 @@ export function useSession(
                   ? { updatedAtMs: patch.updatedAtMs }
                   : {}),
                 ...(patch.title !== undefined ? { title: patch.title } : {}),
+                ...(patch.hasUnreadAiReply !== undefined
+                  ? { hasUnreadAiReply: patch.hasUnreadAiReply }
+                  : {}),
               }
             : s,
         );

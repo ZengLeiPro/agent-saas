@@ -65,6 +65,7 @@ export type WsEvent =
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string }
     | { type: 'session_deleted'; sessionId: string }
+    | { type: 'session_read_state_changed'; sessionId: string; hasUnreadAiReply: boolean }
     | { type: 'user_message'; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; client_msg_id?: string }
     | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string }
     | { type: 'groups_changed' }

@@ -27,7 +27,6 @@ import type { AgentProfile } from "@agent/shared";
 /** 将 API 会话列表转换为 sidebar 所需的格式 */
 function toSidebarSessions(
   sessions: ApiSessionListItem[],
-  unreadAiReplySessionIds: ReadonlySet<string>,
   runningSessionIds: ReadonlySet<string>,
   currentAgent?: AgentProfile | null,
 ) {
@@ -37,7 +36,7 @@ function toSidebarSessions(
     createdAt: s.createdAtMs || s.updatedAtMs,
     updatedAt: s.updatedAtMs,
     preview: s.preview,
-    hasUnreadAiReply: unreadAiReplySessionIds.has(s.sessionId),
+    hasUnreadAiReply: s.hasUnreadAiReply === true,
     isRunning: runningSessionIds.has(s.sessionId),
     source: s.source,
     owner: s.owner,
@@ -81,7 +80,7 @@ function App() {
     tokenUsage, contextUsage, connectionState, resumeCurrentStream,
     notifications, dismissNotification,
     lastMemoryRecall, dismissMemoryRecall, pluginInstallStatus,
-    unreadAiReplySessionIds, runningSessionIds,
+    runningSessionIds,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     agentProfile, sessionParticipants,
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
@@ -186,15 +185,14 @@ function App() {
   const sidebarSessions = useMemo(
     () => toSidebarSessions(
       sessions,
-      unreadAiReplySessionIds,
       runningSessionIds,
       agentProfile,
     ),
-    [sessions, unreadAiReplySessionIds, runningSessionIds, agentProfile],
+    [sessions, runningSessionIds, agentProfile],
   );
 
   const layoutProps: LayoutProps = {
-    sidebarSessions, unreadAiReplySessionIds, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
+    sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
     isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,

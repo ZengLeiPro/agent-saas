@@ -37,7 +37,7 @@ export const createSessionSlice: StateCreator<ChatStore, [], [], SessionSlice> =
     }));
   },
 
-  updateSessionMeta(sessionId: string, patch: { preview?: string; updatedAtMs?: number; title?: string }): void {
+  updateSessionMeta(sessionId: string, patch: { preview?: string; updatedAtMs?: number; title?: string; hasUnreadAiReply?: boolean }): void {
     set(state => {
       const updated = state.sessions.map(s =>
         s.sessionId === sessionId
@@ -46,6 +46,9 @@ export const createSessionSlice: StateCreator<ChatStore, [], [], SessionSlice> =
               ...(patch.preview !== undefined ? { preview: patch.preview } : {}),
               ...(patch.updatedAtMs !== undefined ? { updatedAtMs: patch.updatedAtMs } : {}),
               ...(patch.title !== undefined ? { title: patch.title } : {}),
+              ...(patch.hasUnreadAiReply !== undefined
+                ? { hasUnreadAiReply: patch.hasUnreadAiReply }
+                : {}),
             }
           : s
       );

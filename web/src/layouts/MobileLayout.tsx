@@ -59,7 +59,7 @@ const SuspenseFallback = (
 
 export function MobileLayout(props: LayoutProps) {
   const {
-    sidebarSessions, unreadAiReplySessionIds, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, renameSession, autoTitleSession,
+    sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, renameSession, autoTitleSession,
     isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
@@ -241,6 +241,8 @@ export function MobileLayout(props: LayoutProps) {
                   tokenUsage={tokenUsage}
                   contextUsage={contextUsage}
                   allowDetails={modelList?.allowContextTokenDetails === true}
+                  messages={messages}
+                  onOpenChildSession={selectSession}
                 />
               )}
               <BillingMiniBadge sessionId={sessionId} />
@@ -283,7 +285,6 @@ export function MobileLayout(props: LayoutProps) {
           listPanel={
             <MobileSessionList
               sessions={sidebarSessions}
-              unreadAiReplySessionIds={unreadAiReplySessionIds}
               activeSessionId={sessionId}
               onSelect={(id) => {
                 closeDrawer();

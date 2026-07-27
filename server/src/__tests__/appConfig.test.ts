@@ -81,6 +81,40 @@ describe('parseAppConfig', () => {
     })).toThrow();
   });
 
+  it('accepts bounded runtime event retention windows and rejects a shorter finished-model window', () => {
+    const config = parseAppConfig({
+      ...baseConfig,
+      runtimeEventRetention: {
+        enabled: true,
+        sweepIntervalMinutes: 10,
+        batchLimit: 10_000,
+        terminalDeltaGraceMinutes: 10,
+        successfulSummaryRetentionHours: 24,
+        failedSummaryRetentionDays: 7,
+        modelDiagnosticRetentionDays: 7,
+        modelRequestFinishedRetentionDays: 30,
+        handEventRetentionDays: 30,
+      },
+    });
+
+    expect(config.runtimeEventRetention).toMatchObject({
+      enabled: true,
+      sweepIntervalMinutes: 10,
+      terminalDeltaGraceMinutes: 10,
+      successfulSummaryRetentionHours: 24,
+      failedSummaryRetentionDays: 7,
+      modelDiagnosticRetentionDays: 7,
+      modelRequestFinishedRetentionDays: 30,
+    });
+    expect(() => parseAppConfig({
+      ...baseConfig,
+      runtimeEventRetention: {
+        modelDiagnosticRetentionDays: 30,
+        modelRequestFinishedRetentionDays: 7,
+      },
+    })).toThrow(/不得短于/);
+  });
+
   it('accepts platform tool controls', () => {
     const config = parseAppConfig({
       ...baseConfig,

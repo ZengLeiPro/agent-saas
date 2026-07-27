@@ -16,6 +16,18 @@ const ApprovalIcon = EntityIcons.admin;
 const ApprovalSuccessIcon = StatusIcons.success;
 const UndoIcon = ActionIcons.undo;
 
+/** 模拟真实模型流式输出：短回答逐字，长回答按小块输出，单条约 1～3 秒。 */
+const DEFAULT_TYPEWRITER_INTERVAL_MS = 24;
+const TYPEWRITER_TARGET_TICKS = 120;
+
+function splitText(content: string): string[] {
+  return Array.from(content);
+}
+
+function typewriterChunkSize(length: number): number {
+  return Math.max(1, Math.ceil(length / TYPEWRITER_TARGET_TICKS));
+}
+
 /**
  * 场景演示回放视图。
  *
@@ -65,11 +77,21 @@ function ArtifactPanel({ html, fileName, onClose, onBackToPanel }: { html: strin
   );
 }
 
-export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; onExit: () => void }) {
+export function ScenarioReplayView({
+  script,
+  onExit,
+  typewriterIntervalMs = DEFAULT_TYPEWRITER_INTERVAL_MS,
+}: {
+  script: ReplayScript;
+  onExit: () => void;
+  /** 测试可缩短间隔；生产默认模拟真实模型流式输出速度。 */
+  typewriterIntervalMs?: number;
+}) {
   // 打开即显示第一步，避免过去 0/N 的空白首屏。
   const [stepIndex, setStepIndex] = useState(1);
   const [decisions, setDecisions] = useState<Record<number, "approved" | "rejected">>({});
   const [artifact, setArtifact] = useState<{ path: string; fileName: string } | null>(null);
+  const [streamedTextLengths, setStreamedTextLengths] = useState<Record<string, number>>({});
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const total = script.steps.length;
@@ -77,17 +99,64 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
   const currentStepIndex = Math.max(0, stepIndex - 1);
   const currentStep = script.steps[currentStepIndex];
   const currentDecision = decisions[currentStepIndex];
-  const gateBlocked = !!currentStep?.approval && currentDecision !== "approved";
+
+  const visibleBlocks = useMemo(() => script.steps.slice(0, stepIndex).flatMap((step, index) => [
+    ...step.blocks,
+    ...(decisions[index] === "approved" ? step.approval?.approvedBlocks ?? [] : []),
+    // 退回同样有下文：客户要看到"退回之后系统怎么处理"，而不是一个死按钮
+    ...(decisions[index] === "rejected" ? step.approval?.rejectedBlocks ?? [] : []),
+  ]), [decisions, script, stepIndex]);
+
+  const typewriterEnabled = typewriterIntervalMs > 0;
+  const activeTextBlock = useMemo(() => {
+    if (!typewriterEnabled) return null;
+    for (const block of visibleBlocks) {
+      if (block.kind !== "text") continue;
+      const length = splitText(block.content).length;
+      if ((streamedTextLengths[block.id] ?? 0) < length) return block;
+    }
+    return null;
+  }, [streamedTextLengths, typewriterEnabled, visibleBlocks]);
+  const isStreaming = activeTextBlock !== null;
+  const gateBlocked = isStreaming || (!!currentStep?.approval && currentDecision !== "approved");
+
+  useEffect(() => {
+    if (!activeTextBlock) return;
+    const characters = splitText(activeTextBlock.content);
+    const timer = window.setTimeout(() => {
+      setStreamedTextLengths((current) => {
+        const nextLength = Math.min(
+          characters.length,
+          (current[activeTextBlock.id] ?? 0) + typewriterChunkSize(characters.length),
+        );
+        if (nextLength === current[activeTextBlock.id]) return current;
+        return { ...current, [activeTextBlock.id]: nextLength };
+      });
+    }, typewriterIntervalMs);
+    return () => window.clearTimeout(timer);
+  }, [activeTextBlock, streamedTextLengths, typewriterIntervalMs]);
 
   const messages = useMemo(() => {
-    const blocks = script.steps.slice(0, stepIndex).flatMap((step, index) => [
-      ...step.blocks,
-      ...(decisions[index] === "approved" ? step.approval?.approvedBlocks ?? [] : []),
-      // 退回同样有下文：客户要看到"退回之后系统怎么处理"，而不是一个死按钮
-      ...(decisions[index] === "rejected" ? step.approval?.rejectedBlocks ?? [] : []),
-    ]);
-    return blocks.length ? mapSessionDetailToMessages(buildDetail(blocks)) : [];
-  }, [decisions, script, stepIndex]);
+    const blocks = visibleBlocks.map((block) => {
+      if (block.kind !== "text") return block;
+      const characters = splitText(block.content);
+      const visibleLength = typewriterEnabled
+        ? Math.min(characters.length, streamedTextLengths[block.id] ?? 0)
+        : characters.length;
+      return {
+        ...block,
+        content: characters.slice(0, visibleLength).join(""),
+        // 结构化展示块在正文完成后再出现，贴近真实流式事件的到达顺序。
+        ...(visibleLength < characters.length ? { display: undefined } : {}),
+      };
+    });
+    const mapped = blocks.length ? mapSessionDetailToMessages(buildDetail(blocks)) : [];
+    return mapped.map((message) => (
+      message.type === "text" && message.id === activeTextBlock?.id
+        ? { ...message, streaming: true }
+        : message
+    ));
+  }, [activeTextBlock?.id, streamedTextLengths, typewriterEnabled, visibleBlocks]);
 
   // 面板从消息流 fold，与真实会话同一个 hook——面板没有独立数据通道
   const { snapshot, selectView } = useSystemPanel(messages);
@@ -106,18 +175,19 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
     setStepIndex(1);
     setDecisions({});
     setArtifact(null);
+    setStreamedTextLengths({});
   }, []);
 
   const approveCurrentStep = useCallback(() => {
-    if (!currentStep?.approval) return;
+    if (isStreaming || !currentStep?.approval) return;
     setDecisions((current) => ({ ...current, [currentStepIndex]: "approved" }));
     setStepIndex((i) => Math.min(total, i + 1));
-  }, [currentStep?.approval, currentStepIndex, total]);
+  }, [currentStep?.approval, currentStepIndex, isStreaming, total]);
 
   const rejectCurrentStep = useCallback(() => {
-    if (!currentStep?.approval) return;
+    if (isStreaming || !currentStep?.approval) return;
     setDecisions((current) => ({ ...current, [currentStepIndex]: "rejected" }));
-  }, [currentStep?.approval, currentStepIndex]);
+  }, [currentStep?.approval, currentStepIndex, isStreaming]);
 
   const reopenReview = useCallback(() => {
     setDecisions((current) => {
@@ -144,11 +214,11 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
     return () => window.removeEventListener("keydown", onKey);
   }, [next, prev]);
 
-  // 推进后滚到底，模拟真实会话的跟随行为
+  // 推进或流式吐字时滚到底，模拟真实会话的跟随行为。
   useEffect(() => {
     const node = scrollRef.current;
     if (node) node.scrollTop = node.scrollHeight;
-  }, [messages.length]);
+  }, [messages]);
 
   const openPreview = useCallback(
     (filePath: string) => {
@@ -238,10 +308,10 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
                         ))}
                       </dl>
                       <div className="mt-3 flex justify-end gap-2">
-                        <Button type="button" variant="outline" size="sm" onClick={rejectCurrentStep}>
+                        <Button type="button" variant="outline" size="sm" onClick={rejectCurrentStep} disabled={isStreaming}>
                           {currentStep.approval.rejectLabel ?? "退回修改"}
                         </Button>
-                        <Button type="button" size="sm" className="gap-1" onClick={approveCurrentStep}>
+                        <Button type="button" size="sm" className="gap-1" onClick={approveCurrentStep} disabled={isStreaming}>
                           <ApprovalSuccessIcon className="size-4" />
                           {currentStep.approval.approveLabel}
                         </Button>
@@ -265,7 +335,7 @@ export function ScenarioReplayView({ script, onExit }: { script: ReplayScript; o
                       上一步
                     </Button>
                     <Button size="sm" onClick={next} disabled={atEnd || gateBlocked} className="gap-1">
-                      {gateBlocked ? "需先批准" : "下一步"}
+                      {isStreaming ? "生成中" : gateBlocked ? "需先批准" : "下一步"}
                       <ChevronRight className="size-4" />
                     </Button>
                     <Button variant="ghost" size="sm" onClick={reset} disabled={stepIndex === 1 && Object.keys(decisions).length === 0} className="gap-1">

@@ -5,7 +5,7 @@
  * 验收标准：演示与普通客户视图必须同构，不允许存在只有演示看得到的内容。
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { ScenarioReplayView } from './ScenarioReplayView';
 import { knowledgeQaScript } from './knowledgeQaScript';
 import type { ReplayScript } from './types';
@@ -31,7 +31,8 @@ vi.mock('@/contexts/AuthContext', async (importOriginal) => ({
 }));
 
 function renderReplay() {
-  return render(<ScenarioReplayView script={knowledgeQaScript} onExit={vi.fn()} />);
+  // 既有交互测试关注步进/审批/面板，不等待动画；流式效果在独立用例中验证。
+  return render(<ScenarioReplayView script={knowledgeQaScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
 }
 
 function clickNext(times: number) {
@@ -50,6 +51,46 @@ describe('ScenarioReplayView', () => {
     const toolbar = screen.getByRole('toolbar', { name: '演示回放控制' });
     expect(toolbar.closest('[data-scenario-replay-conversation]')).toBeTruthy();
     expect(toolbar.closest('.content-container')).toBeTruthy();
+  });
+
+  it('AI 文本按真实 streaming 消息逐步吐出，完成前不能推进', () => {
+    vi.useFakeTimers();
+    const script: ReplayScript = {
+      scenarioId: 'typewriter-test',
+      title: '流式输出测试',
+      sources: [],
+      steps: [
+        {
+          caption: '生成回答',
+          blocks: [
+            { id: 'user-1', kind: 'prompt', title: '用户', defaultOpen: false, content: '开始' },
+            { id: 'text-1', kind: 'text', title: '助手', defaultOpen: false, content: '逐字输出测试' },
+          ],
+        },
+        {
+          caption: '下一步',
+          blocks: [
+            { id: 'user-2', kind: 'prompt', title: '用户', defaultOpen: false, content: '继续' },
+          ],
+        },
+      ],
+    };
+
+    render(<ScenarioReplayView script={script} onExit={vi.fn()} typewriterIntervalMs={10} />);
+    const nextButton = screen.getByRole('button', { name: /生成中/ });
+    expect(nextButton).toHaveProperty('disabled', true);
+    expect(screen.queryByText('逐字输出测试')).toBeNull();
+
+    act(() => vi.advanceTimersByTime(10));
+    expect(screen.getByText('逐')).toBeTruthy();
+    expect(screen.queryByText('逐字输出测试')).toBeNull();
+
+    for (let index = 0; index < 6; index += 1) {
+      act(() => vi.advanceTimersByTime(10));
+    }
+    expect(screen.getByText('逐字输出测试')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /下一步/ })).toHaveProperty('disabled', false);
+    vi.useRealTimers();
   });
 
   it('逐步推进，内容累加而非替换', () => {
@@ -231,7 +272,7 @@ describe('人工审批门禁', () => {
   };
 
   it('未批准时按钮和键盘都不能越过门禁，批准后自动继续并留痕', () => {
-    render(<ScenarioReplayView script={approvalScript} onExit={vi.fn()} />);
+    render(<ScenarioReplayView script={approvalScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
     expect(screen.getByText('1 / 2')).toBeTruthy();
     expect(screen.getByRole('button', { name: '需先批准' })).toHaveProperty('disabled', true);
 
@@ -245,7 +286,7 @@ describe('人工审批门禁', () => {
   });
 
   it('退回时明确显示未写入系统，并允许重新提交审核', () => {
-    render(<ScenarioReplayView script={approvalScript} onExit={vi.fn()} />);
+    render(<ScenarioReplayView script={approvalScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
     fireEvent.click(screen.getByRole('button', { name: '退回修改' }));
     expect(screen.getByText('已退回修改，未写入业务系统')).toBeTruthy();
     expect(screen.getByRole('button', { name: '重新提交审核' })).toBeTruthy();
@@ -253,7 +294,7 @@ describe('人工审批门禁', () => {
   });
 
   it('退回不是死路：会话里出现退回后的处理，重新提交后消失', () => {
-    render(<ScenarioReplayView script={approvalScript} onExit={vi.fn()} />);
+    render(<ScenarioReplayView script={approvalScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
     fireEvent.click(screen.getByRole('button', { name: '退回修改' }));
     expect(screen.getByText('已停在审核点：业务系统没有任何写入，退回记录已留痕。')).toBeTruthy();
 

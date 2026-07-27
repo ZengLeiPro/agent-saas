@@ -51,10 +51,6 @@ function workflowContext(
         starterMessage: "查看订单异常",
       },
       cta: { primary: "用示例数据体验" },
-      demo: {
-        evidenceLevel: "workflow_replay",
-        sharePath: "/share/workflows/demo-watch",
-      },
     },
     schedule: {
       scheduleCapable: true,

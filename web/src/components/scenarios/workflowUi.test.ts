@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterWorkflowScenarios, workflowCta, workflowIsolatedDemoFor } from "./workflowUi";
-import { makeWorkflowLibrary } from "./workflowTestFixtures";
+import { filterWorkflowScenarios, workflowCta } from "./workflowUi";
 import { makeWorkflowScenario } from "./workflowTestFixtures";
 
 describe("Workflow V3 UI 纯契约", () => {
@@ -38,42 +37,6 @@ describe("Workflow V3 UI 纯契约", () => {
     })).action).toBe("diagnosis");
   });
 
-  it("只有真实 workflow replay 且有公开路径才显示回放动作", () => {
-    const noPath = makeWorkflowScenario("no-path", {
-      launch: { sampleAvailable: true, startMode: "replay", starterMessage: "查看演示" },
-      demo: { evidenceLevel: "workflow_replay" },
-    });
-    expect(workflowCta(noPath)).toEqual({ action: "detail", label: "查看工作流" });
-    expect(workflowCta({ ...noPath, demo: { evidenceLevel: "workflow_replay", sharePath: "/workflow-replay/demo" } }).action).toBe("replay");
-  });
-
-  it("只有服务端明确声明可运行且为 D1/D2 才形成独立隔离演示入口", () => {
-    const scenario = makeWorkflowScenario("isolated", {
-      readiness: "D1_CONNECTOR",
-      launch: {
-        sampleAvailable: false,
-        isolatedDemoAvailable: true,
-        startMode: "connector",
-        starterMessage: "运行隔离演示",
-      },
-    });
-    const library = makeWorkflowLibrary([scenario]);
-    library.demos = [{
-      id: "demo-isolated",
-      workflowId: scenario.workflowId,
-      catalogScenarioId: scenario.id,
-      primaryType: scenario.primaryType,
-      environment: { kind: "isolated_stateful", dataLabel: "synthetic" },
-      title: "隔离演示",
-      environmentLabel: "专用隔离演示系统",
-      before: [],
-      timeline: [],
-      after: [],
-      evidence: [],
-    }];
-    expect(workflowIsolatedDemoFor(library, scenario)).toBe(true);
-    expect(workflowIsolatedDemoFor(library, { ...scenario, readiness: "D0_CURRENT" })).toBeNull();
-  });
 
   it("有受控演示时先展示工作现场，真实接入保留为次动作", () => {
     const scenario = makeWorkflowScenario("presentation", {
@@ -105,4 +68,20 @@ describe("Workflow V3 UI 纯契约", () => {
       secondaryAction: "connector",
     });
   });
+  it("手写 ReplayScript 与 presentation 都显示演示入口，无剧本场景不显示", () => {
+    const handwritten = makeWorkflowScenario("catalog-evidence-backed-communication-create", {
+      readiness: "D1_CONNECTOR",
+      launch: { sampleAvailable: false, startMode: "connector", starterMessage: "接入后启动" },
+      cta: { primary: "接入我的系统", secondary: "查看工作流" },
+    });
+    expect(workflowCta(handwritten).action).toBe("presentation");
+
+    const noReplay = makeWorkflowScenario("no-replay", {
+      readiness: "D1_CONNECTOR",
+      launch: { sampleAvailable: false, startMode: "connector", starterMessage: "接入后启动" },
+      cta: { primary: "接入我的系统", secondary: "查看工作流" },
+    });
+    expect(workflowCta(noReplay).action).toBe("connector");
+  });
+
 });

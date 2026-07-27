@@ -6,7 +6,7 @@
  * 整页面板走 lazy 加载，避免互相拖入对方的 bundle。
  */
 import { lazy, Suspense, useState } from "react";
-import { Activity, Globe, MessageSquareShare, MousePointerClick, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
+import { Globe, MessageSquareShare, MousePointerClick, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -225,11 +225,6 @@ export function WorkflowScenarioCard({
         ) : null}
         <Badge variant="secondary" className="font-normal">{friendlyPrimaryType[scenario.primaryType]}</Badge>
         <Badge variant="outline" className="font-normal">{friendlyReadiness[scenario.readiness]}</Badge>
-        {scenario.demo.evidenceLevel === "workflow_replay" && scenario.demo.sharePath ? (
-          <Badge variant="outline" className="gap-1 font-normal">
-            <Activity className="size-3" aria-hidden="true" />可核验演示
-          </Badge>
-        ) : null}
       </div>
       <h3 className="mt-3 text-base font-semibold leading-snug">
         <button type="button" className="text-left hover:text-brand-600" onClick={() => onOpenDetail(scenario)}>

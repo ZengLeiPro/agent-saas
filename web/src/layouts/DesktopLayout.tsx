@@ -212,18 +212,10 @@ export function DesktopLayout(props: LayoutProps) {
   const handleStartWorkflow = useCallback((
     message: string,
     scenario: WorkflowOnboardingContext["scenario"],
-    options?: { isolatedDemo?: boolean },
   ) => {
     if (!personalAgentEnabled || loading) return;
     setActiveWorkflow({
       scenario,
-      ...(options?.isolatedDemo ? {
-        demoLaunch: {
-          catalogScenarioId: scenario.id,
-          idempotencyKey: crypto.randomUUID?.()
-            ?? `workflow-demo-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        },
-      } : {}),
     });
     newPersonalSession();
     setInput(message);
@@ -741,7 +733,6 @@ export function DesktopLayout(props: LayoutProps) {
             onOpenCronWizard={handleOpenCronWizard}
             onOpenExampleDemo={handleViewAllScenarios}
             onStartWorkflow={(message, context) => handleStartWorkflow(message, context.scenario)}
-            onOpenWorkflowReplay={(sharePath) => window.location.assign(sharePath)}
             onConnectWorkflow={(context) => {
               setActiveWorkflow(context);
               pushActiveTab("capabilities");

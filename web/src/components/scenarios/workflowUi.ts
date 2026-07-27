@@ -145,7 +145,7 @@ export const readinessLabel: Record<CatalogScenarioPublic["readiness"], string> 
   D2_PROJECT: "项目集成",
 };
 
-export type WorkflowPrimaryAction = "chat" | "replay" | "isolated-demo" | "connector" | "diagnosis" | "presentation" | "detail";
+export type WorkflowPrimaryAction = "chat" | "connector" | "diagnosis" | "presentation" | "detail";
 
 export interface WorkflowCta {
   action: WorkflowPrimaryAction;
@@ -155,8 +155,8 @@ export interface WorkflowCta {
 }
 
 /**
- * 服务端给出启动方式，Web 只做保守分发。尤其 replay 缺 sharePath 时只查看详情，
- * 绝不把 planned/design-only Demo 显示成已运行。
+ * 有预定义剧本时优先展示纯回放；没有剧本时按服务端成熟度进入真实接入路径。
+ * 展示能力与执行能力只共享 UI 契约，不共享 Runtime。
  */
 export function workflowCta(scenario: CatalogScenarioPublic): WorkflowCta {
   const operational = workflowOperationalCta(scenario);
@@ -182,9 +182,6 @@ export function workflowOperationalCta(scenario: CatalogScenarioPublic): Workflo
   if (scenario.launch.startMode === "diagnosis") {
     return { action: "diagnosis", label: "预约落地诊断", secondaryLabel: "查看行业演示" };
   }
-  if (scenario.demo.evidenceLevel === "workflow_replay" && scenario.demo.sharePath) {
-    return { action: "replay", label: "用示例数据体验", secondaryLabel: "查看工作流" };
-  }
   return { action: "detail", label: "查看工作流" };
 }
 
@@ -193,14 +190,6 @@ export function workflowById(
   scenario: CatalogScenarioPublic,
 ) {
   return library.workflows.find((workflow) => workflow.id === scenario.workflowId) ?? null;
-}
-
-export function workflowIsolatedDemoFor(
-  _library: WorkflowLibraryPublicV3,
-  scenario: CatalogScenarioPublic,
-) {
-  if (scenario.readiness === "D0_CURRENT") return null;
-  return scenario.launch.isolatedDemoAvailable ? true : null;
 }
 
 export const INTERNAL_UI_FIELD_NAMES = [

@@ -32,7 +32,6 @@ import {
 import type { CronService } from "../cron/service.js";
 import type { CronJobCreate, NotifyConfig } from "../cron/types.js";
 import type { TenantStore } from "../data/tenants/store.js";
-import type { WorkflowDemoStore } from "../data/workflowDemos/store.js";
 import {
   createRetryableWorkflowLibraryLoader,
   findLegacyCompatibility,
@@ -74,7 +73,6 @@ export interface ScenariosRouterOptions {
   cronService?: CronService;
   roleKit?: RoleKitPublicConfig;
   tenantStore?: Pick<TenantStore, "getSettings">;
-  workflowDemoStore?: WorkflowDemoStore;
 }
 
 async function loadScenarioLibraryFile(dataPath: string): Promise<ScenarioLibraryFile> {
@@ -113,41 +111,6 @@ function toPublicLibrary(raw: ScenarioLibraryFile): ScenarioLibraryResponse {
       return report.scenario as ScenarioItem;
     });
   return { roles, scenarios };
-}
-
-async function enrichRuntimeWorkflowReplays(
-  library: WorkflowLibraryPublicV3,
-  store?: WorkflowDemoStore,
-): Promise<WorkflowLibraryPublicV3> {
-  if (!store) return library;
-  const next = structuredClone(library);
-  const publishedByCatalog = new Map(
-    (await Promise.all(next.scenarios.map(async (scenario) => {
-      try {
-        return [scenario.id, await store.getLatestPublishedByCatalog(scenario.id)] as const;
-      } catch {
-        return [scenario.id, null] as const;
-      }
-    }))).filter((entry) => entry[1] !== null),
-  );
-  // 目录接口只负责告诉客户“有可核验示例”和公开回放地址。
-  // 原始 replay 含运行/事件/证据 ID 与机器状态，只能经专用公开回放投影输出，
-  // 不得重新注入目录的宽 demos 容器。
-  next.demos = [];
-  for (const scenario of next.scenarios) {
-    const published = publishedByCatalog.get(scenario.id);
-    if (!published) continue;
-    scenario.demo = {
-      evidenceLevel: "workflow_replay",
-      sharePath: `/workflow-replays/${encodeURIComponent(published.snapshot.replayId)}`,
-    };
-    scenario.launch.sampleAvailable = true;
-    if (scenario.readiness === "D0_CURRENT") {
-      scenario.launch.startMode = "replay";
-      scenario.cta = { primary: "用示例数据体验" };
-    }
-  }
-  return next;
 }
 
 function buildScenarioPromptWithTargets(
@@ -289,7 +252,7 @@ export function createScenariosRouter(
     }
     try {
       const loaded = await getV3Library();
-      res.json(await enrichRuntimeWorkflowReplays(loaded.public, options.workflowDemoStore));
+      res.json(loaded.public);
     } catch (error) {
       logger.error("Workflow v3 目录加载失败", error);
       res.status(500).json({ error: "workflow_catalog_unavailable" });

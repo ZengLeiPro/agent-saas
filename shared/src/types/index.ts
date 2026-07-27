@@ -92,14 +92,11 @@ export { buildScenarioPrompt } from "./scenario";
 export type {
   CatalogScenarioPublic,
   CatalogScenarioRecord,
-  DemoManifestRecord,
-  DemoPublicEvidence,
   WorkflowExecutionType,
   WorkflowTriggerMode,
   WorkflowDefinitionRecord,
   WorkflowLibraryFileV3,
   WorkflowLibraryPublicV3,
-  WorkflowDemoDispatchMetadata,
 } from "./workflowScenario";
 
 export type {

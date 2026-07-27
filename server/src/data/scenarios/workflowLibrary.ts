@@ -371,14 +371,6 @@ export function lintWorkflowLibraryV3(library: WorkflowLibraryFileV3): void {
         );
       }
     }
-    if (scenario.internal.defaultDemoId
-      && !library.demos.some((demo) => demo.id === scenario.internal.defaultDemoId
-        && demo.catalogScenarioId === scenario.id)) {
-      throw new WorkflowLibraryError(
-        "WORKFLOW_LIBRARY_INVALID",
-        `catalog scenario default Demo is invalid: ${scenario.id}`,
-      );
-    }
   }
 
   const compositionGraph = new Map<string, Set<string>>();
@@ -512,46 +504,7 @@ export function lintWorkflowLibraryV3(library: WorkflowLibraryFileV3): void {
       "workflow aliases contain duplicate IDs",
     );
   }
-  for (const demo of library.demos) {
-    const workflow = workflowById.get(demo.workflowId);
-    const scenario = catalogById.get(demo.catalogScenarioId);
-    if (!workflow
-      || !scenario
-      || scenario.workflowId !== workflow.id
-      || demo.definitionVersion !== workflow.definitionVersion
-      || demo.primaryType !== workflow.primaryType
-      || (demo.skinId && skinOwnerById.get(demo.skinId) !== workflow.id)) {
-      throw new WorkflowLibraryError(
-        "WORKFLOW_LIBRARY_INVALID",
-        `Demo contract does not match its workflow/catalog: ${demo.id}`,
-      );
-    }
-    const actionById = new Map(workflow.runtime.act.map((action) => [action.id, action] as const));
-    for (const step of demo.internal.executionPlan ?? []) {
-      if (step.mutation
-        && step.phase !== "approval"
-        && step.phase !== "resume"
-        && !step.workflowActionId) {
-        throw new WorkflowLibraryError(
-          "WORKFLOW_LIBRARY_INVALID",
-          `Demo Agent mutation is not bound to a frozen workflow action: ${demo.id}/${step.eventId}`,
-        );
-      }
-      if (!step.workflowActionId) continue;
-      const action = actionById.get(step.workflowActionId);
-      if (!action
-        || step.operationRef !== action.operationRef
-        || step.permissionRef !== action.permissionRef
-        || step.approvalPolicyRef !== action.approvalRef
-        || step.receiptSchemaRef !== action.receiptSchemaRef
-        || step.workflowIdempotencyPolicyRef !== action.idempotencyRef) {
-        throw new WorkflowLibraryError(
-          "WORKFLOW_LIBRARY_INVALID",
-          `Demo action binding does not match frozen workflow: ${demo.id}/${step.eventId}`,
-        );
-      }
-    }
-  }
+
 }
 
 function projectLegacyScenario(

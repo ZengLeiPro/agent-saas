@@ -37,10 +37,6 @@ function workflowContext(
         starterMessage: "开始测试",
       },
       cta: { primary: "用示例数据体验" },
-      demo: {
-        evidenceLevel: "workflow_replay",
-        sharePath: "/share/workflows/demo-1",
-      },
     },
     ...(schedule
       ? { schedule: { scheduleCapable: true as const, cronScenario: legacyWatch } }
@@ -109,7 +105,7 @@ describe("FirstDayGuideBar", () => {
         onOpenExampleDemo={vi.fn()}
       />,
     );
-    expect(screen.getByText("先看示例成果与核验证据")).toBeTruthy();
+    expect(screen.getByText("先看成果如何生成并核验")).toBeTruthy();
     expect(window.localStorage.getItem(FIRST_DAY_GUIDE_STORAGE_KEY)).toBe("aha");
   });
 
@@ -221,6 +217,6 @@ describe("FirstDayGuideBar", () => {
     );
     act(() => window.dispatchEvent(new CustomEvent("kaiyan:workflow-experience-opened")));
     expect(screen.queryByText("配置常驻监测")).toBeNull();
-    expect(screen.getByText("查看真实回放")).toBeTruthy();
+    expect(screen.getByText("查看工作流")).toBeTruthy();
   });
 });

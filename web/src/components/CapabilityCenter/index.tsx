@@ -46,7 +46,6 @@ export function CapabilityCenter({
   onStartWorkflow?: (
     starterMessage: string,
     scenario: CatalogScenarioPublic,
-    options?: { isolatedDemo?: boolean },
   ) => void;
   onRequestDiagnosis?: (message: string, scenario: CatalogScenarioPublic) => void;
   onWorkflowSelected?: (scenario: CatalogScenarioPublic) => void;

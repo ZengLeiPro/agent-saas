@@ -123,7 +123,6 @@ export interface FirstDayGuideBarProps {
   onOpenCronWizard: () => void;
   onOpenExampleDemo: () => void;
   onStartWorkflow?: (starterMessage: string, context: WorkflowOnboardingContext) => void;
-  onOpenWorkflowReplay?: (sharePath: string, context: WorkflowOnboardingContext) => void;
   onConnectWorkflow?: (context: WorkflowOnboardingContext) => void;
   onRequestDiagnosis?: (context: WorkflowOnboardingContext) => void;
   onViewWorkflow?: (context: WorkflowOnboardingContext) => void;
@@ -139,7 +138,6 @@ export function FirstDayGuideBar({
   onOpenCronWizard,
   onOpenExampleDemo,
   onStartWorkflow,
-  onOpenWorkflowReplay,
   onConnectWorkflow,
   onRequestDiagnosis,
   onViewWorkflow,
@@ -208,12 +206,6 @@ export function FirstDayGuideBar({
         if (onStartWorkflow) onStartWorkflow(workflowContext.scenario.launch.starterMessage, workflowContext);
         else openWorkflowDetail();
         return;
-      case "replay": {
-        const sharePath = workflowContext.scenario.demo.sharePath;
-        if (sharePath && onOpenWorkflowReplay) onOpenWorkflowReplay(sharePath, workflowContext);
-        else openWorkflowDetail();
-        return;
-      }
       case "connector":
         if (onConnectWorkflow) onConnectWorkflow(workflowContext);
         else openWorkflowDetail();

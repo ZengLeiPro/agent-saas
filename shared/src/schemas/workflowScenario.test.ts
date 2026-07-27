@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { projectWorkflowLibraryPublic } from "../security/projectWorkflowPublic.js";
 import {
-  demoManifestRecordSchema,
   workflowDefinitionRecordSchema,
   workflowLibraryFileV3Schema,
   workflowPublicTextSchema,
@@ -210,44 +209,14 @@ function createLibrary() {
         internalNotes: "internal-notes-probe",
       },
     }],
-    demos: [{
-      id: "verified-artifact-demo",
-      workflowId: "verified-artifact-create",
-      catalogScenarioId: "verified-artifact-create",
-      definitionVersion: 1,
-      primaryType: "CREATE",
-      environment: { kind: "current_real", dataLabel: "synthetic" },
-      status: "planned",
-      publication: { status: "private" },
-      public: {
-        title: "成果演示",
-        environmentLabel: "合成数据",
-        before: [],
-        timeline: [],
-        after: [],
-        evidence: [],
-      },
-      internal: {
-        tenantRef: "tenant-probe",
-        accountRef: "account-probe",
-        runIds: ["run-id-probe"],
-        businessObjectRefs: [],
-        idempotencyKeyHashes: [],
-        beforeSnapshotRefs: [],
-        timelineEventRefs: [],
-        afterSnapshotRefs: [],
-        evidenceRefs: [],
-        reviewedBy: [],
-      },
-    }],
+
+    workflowAliases: [],
     scenarioAliases: [{
       legacySlug: "legacy-artifact",
+      legacyCompatRef: "legacy-artifact-compat",
       resolution: "catalog",
       targetCatalogScenarioId: "verified-artifact-create",
-      roleViewId: "sales-view",
-      legacyCompatRef: "legacy-artifact-compat",
     }],
-    workflowAliases: [],
     legacyCompatibility: [{
       id: "legacy-artifact-compat",
       legacySlug: "legacy-artifact",
@@ -314,8 +283,10 @@ describe("Workflow v3 schema", () => {
 
     expect(projected.scenarios).toHaveLength(1);
     expect(projected.scenarios[0]?.actionBadge).toContain("技能");
-    expect(projected.demos).toHaveLength(0);
-    expect(projected.aliases[0]?.roleId).toBe("sales");
+    expect(projected.aliases[0]).toMatchObject({
+      resolution: "catalog",
+      targetCatalogScenarioId: "verified-artifact-create",
+    });
     expect(serialized).not.toContain("internal-source-probe");
     expect(serialized).not.toContain("internal-operation-probe");
     expect(serialized).not.toContain("run-id-probe");
@@ -328,40 +299,5 @@ describe("Workflow v3 schema", () => {
     expect(workflowLibraryFileV3Schema.safeParse(library).success).toBe(false);
   });
 
-  it("允许只读 Workflow action 绑定 operation、permission 与 receipt 而不伪造幂等策略", () => {
-    const base = createLibrary().demos[0]!;
-    const demo = {
-      ...base,
-      public: {
-        ...base.public,
-        timeline: [{
-          id: "resolve-subject",
-          label: "消歧业务对象",
-          summary: "读取稳定标识并确认当前业务对象。",
-          state: "业务对象已确认",
-        }],
-      },
-      internal: {
-        ...base.internal,
-        timelineEventRefs: ["resolve-subject"],
-        executionPlan: [{
-          eventId: "resolve-subject",
-          phase: "judge",
-          actorRole: "workflow-demo-runner",
-          targetObjectId: "subject-bundle",
-          mutation: false,
-          approvalRequired: false,
-          workflowActionId: "resolve-subject",
-          operationRef: "operation:resolve-subject",
-          permissionRef: "permission-resolve-subject",
-          receiptSchemaRef: "receipt:resolve-subject:v1",
-          expectedState: "业务对象已确认",
-        }],
-      },
-    };
 
-    expect(demoManifestRecordSchema.safeParse(demo).success).toBe(true);
-    demo.internal.executionPlan[0]!.mutation = true;
-    expect(demoManifestRecordSchema.safeParse(demo).success).toBe(false);
-  });
 });

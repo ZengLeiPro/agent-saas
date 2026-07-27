@@ -85,6 +85,39 @@ describe("ScenariosPanel V3", () => {
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(2);
   });
 
+  it("presentation 深链刷新后保持演示，退出后回到详情 URL", () => {
+    const guided = makeWorkflowScenario("guided-deep-link", {
+      featured: true,
+      featuredOrder: 1,
+      presentation: {
+        version: 1,
+        dataLabel: "合成场景演示",
+        limitation: "演示数据均为虚构。",
+        chapters: Array.from({ length: 6 }, (_, index) => ({
+          id: `chapter-${index + 1}`,
+          title: `业务步骤 ${index + 1}`,
+          narration: "展示业务动作。",
+          result: "状态已更新。",
+          interaction: { kind: "next" as const, label: "下一步" },
+          surface: {
+            kind: "crm_table" as const,
+            title: "客户关系系统",
+            items: [{ label: "状态", value: "已更新", state: "success" as const }],
+          },
+        })),
+      },
+    });
+    mocked.workflowLibrary = makeWorkflowLibrary([guided]);
+    window.history.replaceState({}, "", `/capabilities/templates?workflow=${guided.id}&intent=presentation`);
+
+    render(<ScenariosPanel onTryScenario={vi.fn()} />);
+
+    expect(screen.getByRole("heading", { name: guided.title })).toBeTruthy();
+    expect(window.location.search).toContain("intent=presentation");
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(window.location.search).toContain("intent=view");
+  });
+
   it("默认只渲染28个唯一 catalog 卡片，skin/role view 不复制卡", () => {
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(28);
@@ -117,30 +150,7 @@ describe("ScenariosPanel V3", () => {
     expect(onStartWorkflow).not.toHaveBeenCalled();
   });
 
-  it("D1 隔离演示入口只登记发送时启动意图，不回落为静态详情", () => {
-    const d1 = makeWorkflowScenario("isolated-demo-scenario", {
-      readiness: "D1_CONNECTOR",
-      launch: {
-        sampleAvailable: false,
-        isolatedDemoAvailable: true,
-        startMode: "connector",
-        starterMessage: "运行受控版本隔离演示",
-      },
-      cta: { primary: "接入我的系统", secondary: "查看工作流" },
-    });
-    mocked.workflowLibrary = makeWorkflowLibrary([d1]);
-    const onStartWorkflow = vi.fn();
-    render(<ScenariosPanel onTryScenario={vi.fn()} onStartWorkflow={onStartWorkflow} />);
 
-    fireEvent.click(screen.getByRole("button", { name: d1.title }));
-    fireEvent.click(screen.getByRole("button", { name: "运行隔离演示" }));
-
-    expect(onStartWorkflow).toHaveBeenCalledWith(
-      d1.launch.starterMessage,
-      d1,
-      { isolatedDemo: true },
-    );
-  });
 
   it("12 个 Hero 按 featuredOrder 优先展示，客户只看到克制徽标", () => {
     const ordinary = makeWorkflowScenario("ordinary");

@@ -18,10 +18,6 @@ import {
   WORKFLOW_LIBRARY_HERO_IDS,
   WorkflowLibraryError,
 } from "../data/scenarios/workflowLibrary.js";
-import type {
-  WorkflowDemoPublishedReplay,
-  WorkflowDemoStore,
-} from "../data/workflowDemos/store.js";
 
 const roleIds = Array.from({ length: 8 }, (_, index) => `role-${index + 1}`);
 
@@ -335,9 +331,6 @@ function buildLibraryFixture(): Record<string, unknown> {
     internal: {
       enabled: true,
       source: `catalog-source-${suffix(index)}`,
-      defaultDemoId: index === 0
-        ? "demo-planned"
-        : (index === 1 ? "demo-private" : undefined),
       ...(index < 12
         ? {
             hero: {
@@ -486,9 +479,6 @@ function buildLibraryFixture(): Record<string, unknown> {
         : {}),
     },
     legacyCronSupported: index === 0,
-    ...(index === 0
-      ? { demoId: "demo-planned" }
-      : (index === 1 ? { demoId: "demo-private" } : {})),
   }));
   return {
     schemaVersion: 3,
@@ -504,7 +494,6 @@ function buildLibraryFixture(): Record<string, unknown> {
     workflows,
     catalogScenarios,
     deferredObjects,
-    demos,
     scenarioAliases,
     workflowAliases: [],
     legacyCompatibility,
@@ -521,7 +510,6 @@ async function startV3Server(
     add(...args: never[]): Promise<never>;
     runNow(...args: never[]): Promise<never>;
   },
-  workflowDemoStore?: WorkflowDemoStore,
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
@@ -533,7 +521,6 @@ async function startV3Server(
     v3Loader: loader,
     roleKit: { libraryVersion: "v3" },
     ...(cronService ? { cronService: cronService as never } : {}),
-    ...(workflowDemoStore ? { workflowDemoStore } : {}),
   }));
   return new Promise((resolve) => {
     const server = app.listen(0, "127.0.0.1", () => {
@@ -815,7 +802,6 @@ describe("Workflow V3 library", () => {
     expect(loaded.public.aliases).toHaveLength(53);
     expect(loaded.legacy.scenarios).toHaveLength(53);
     expect(loaded.legacy.roles[0]?.roleWelcomeMessage).toBe("岗位 1 欢迎语");
-    expect(loaded.public.demos).toEqual([]);
 
     for (const alias of loaded.public.aliases.filter((item) => item.resolution === "catalog")) {
       const resolved = resolveLoadedScenarioSlug(loaded, alias.legacySlug);
@@ -846,8 +832,6 @@ describe("Workflow V3 library", () => {
     const loaded = parseWorkflowLibraryV3(buildLibraryFixture());
     const publicJson = JSON.stringify(loaded.public);
     expect(publicJson).not.toContain("internal-probe");
-    expect(loaded.public.scenarios[0]?.demo).toEqual({ evidenceLevel: "design_only" });
-    expect(loaded.public.demos).toEqual([]);
     expect(publicJson).not.toContain("internal-run");
     expect(loaded.legacy.scenarios[0]).not.toHaveProperty("demoShareToken");
     expect(loaded.legacy.scenarios[1]).not.toHaveProperty("demoShareToken");
@@ -990,96 +974,6 @@ describe("Workflow V3 scenario routes", () => {
     }
   });
 
-  it("enriches the public catalog only from independently published runtime replays", async () => {
-    const loaded = parseWorkflowLibraryV3(buildLibraryFixture());
-    const planned = loaded.internal.demos.find((demo) => demo.id === "demo-planned")!;
-    const replayId = "00000000-0000-4000-8000-000000000002";
-    const published = {
-      snapshot: {
-        replayId,
-        runId: "run-runtime-02",
-        demoId: "demo-runtime-02",
-        workflowId: "workflow-02",
-        catalogScenarioId: "catalog-02",
-        definitionVersion: "1",
-        contentHash: "hash-runtime-02",
-        replay: {
-          id: "demo-runtime-02",
-          workflowId: "workflow-02",
-          catalogScenarioId: "catalog-02",
-          primaryType: "CREATE",
-          environment: planned.environment,
-          title: planned.public.title,
-          environmentLabel: planned.public.environmentLabel,
-          before: planned.public.before,
-          timeline: planned.public.timeline,
-          after: planned.public.after,
-          evidence: planned.public.evidence,
-          replayVersion: 1,
-          status: "passed",
-          startedAt: "2026-07-21T08:00:00.000Z",
-          completedAt: "2026-07-21T08:01:00.000Z",
-          verification: {
-            readBackVerified: true,
-            beforeObjectCount: 1,
-            afterObjectCount: 1,
-            eventCount: 3,
-            receiptCount: 1,
-            verifiedAt: "2026-07-21T08:01:00.000Z",
-            evidenceHash: "evidence-runtime-02",
-          },
-        },
-        createdAt: "2026-07-21T08:01:00.000Z",
-      },
-      review: {
-        replayId,
-        reviewerUserId: "independent-reviewer",
-        decision: "approved",
-        contentHash: "hash-runtime-02",
-        reviewedAt: "2026-07-21T08:02:00.000Z",
-      },
-      publication: {
-        replayId,
-        publisherUserId: "independent-publisher",
-        publishedAt: "2026-07-21T08:03:00.000Z",
-      },
-    } satisfies WorkflowDemoPublishedReplay;
-    const workflowDemoStore = {
-      getLatestPublishedByCatalog: async (catalogScenarioId: string) => (
-        catalogScenarioId === "catalog-02" ? published : null
-      ),
-    } as unknown as WorkflowDemoStore;
-    const { server, baseUrl } = await startV3Server(
-      async () => loaded,
-      undefined,
-      workflowDemoStore,
-    );
-    try {
-      const response = await fetch(`${baseUrl}/api/scenarios/v3`);
-      expect(response.status).toBe(200);
-      const body = await response.json() as {
-        scenarios: Array<{
-          id: string;
-          demo: { evidenceLevel: string; sharePath?: string };
-          launch: { sampleAvailable: boolean };
-        }>;
-        demos: unknown[];
-      };
-      const scenario = body.scenarios.find((item) => item.id === "catalog-02");
-      expect(scenario).toMatchObject({
-        demo: {
-          evidenceLevel: "workflow_replay",
-          sharePath: `/workflow-replays/${replayId}`,
-        },
-        launch: { sampleAvailable: true },
-      });
-      expect(body.demos).toEqual([]);
-      expect(findForbiddenPublicApiValues(body)).toEqual([]);
-      expect(findForbiddenCustomerCopyValues(body)).toEqual([]);
-    } finally {
-      await stopServer(server);
-    }
-  });
 
   it("fails closed without exposing V3 validation details", async () => {
     const { server, baseUrl } = await startV3Server(async () => {

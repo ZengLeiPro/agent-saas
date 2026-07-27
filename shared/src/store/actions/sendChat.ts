@@ -24,7 +24,6 @@ export interface SendChatOptions {
   voiceFile?: { savedPath: string; relativePath: string; duration: number };
   selectedModel?: string | null;
   autoApproveRunShell?: boolean;
-  workflowDemo?: { runId: string; eventId: string };
 }
 
 /**
@@ -39,7 +38,6 @@ export async function sendChatViaWs(opts: SendChatOptions): Promise<boolean> {
     voiceFile,
     selectedModel,
     autoApproveRunShell,
-    workflowDemo,
   } = opts;
   const store = getChatStore();
   const state = store.getState();
@@ -99,7 +97,6 @@ export async function sendChatViaWs(opts: SendChatOptions): Promise<boolean> {
     sessionId: activeSessionId || undefined,
     model: selectedModel || undefined,
     ...(autoApproveRunShell ? { approvalPolicy: { autoApproveTools: true } } : {}),
-    ...(workflowDemo ? { workflowDemo } : {}),
     ...(attachments.length > 0 ? {
       attachments: attachments.map(f => ({
         ...(f.attachmentId ? { attachmentId: f.attachmentId } : {}),

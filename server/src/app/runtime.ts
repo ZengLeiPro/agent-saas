@@ -6,7 +6,6 @@ import type { AppConfig } from '../types/index.js';
 import {
   createRawApprovalResumeDispatch,
   createRawRuntimeRunDispatch,
-  HIDDEN_WORKFLOW_DEMO_CONTINUE_PROMPT,
   wakeRuntimeSession,
 } from '../runtime/rawRuntimeRunDispatch.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
@@ -47,11 +46,6 @@ import {
   PgSessionShareStore,
   type SessionShareStore,
 } from '../data/sessionShares/store.js';
-import {
-  InMemoryWorkflowDemoStore,
-  PgWorkflowDemoStore,
-  type WorkflowDemoStore,
-} from '../data/workflowDemos/store.js';
 import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
 import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from '../runtime/toolInvocationCancelDelivery.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
@@ -324,8 +318,6 @@ export interface AppRuntime {
   artifactService?: ArtifactService;
   /** 会话只读分享存储。 */
   sessionShareStore: SessionShareStore;
-  /** 隔离状态化 Workflow Demo 运行、回读与公开回放存储。 */
-  workflowDemoStore: WorkflowDemoStore;
   /** Artifact GC timer cleanup. */
   artifactShutdown?: () => Promise<void>;
   /** Reverse WebSocket gateway for customer-side client daemon hands. */
@@ -876,7 +868,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let artifactStore: ArtifactStore | undefined;
   let artifactService: ArtifactService | undefined;
   let sessionShareStore: SessionShareStore | undefined;
-  let workflowDemoStore: WorkflowDemoStore | undefined;
   let agentRuntimeProfileStore: AgentRuntimeProfileStore | undefined;
   let artifactShutdown: (() => Promise<void>) | undefined;
   let billingService: BillingService | undefined;
@@ -1006,12 +997,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await pgAgentRuntimeProfileStore.init();
     agentRuntimeProfileStore = pgAgentRuntimeProfileStore;
-    const pgWorkflowDemoStore = new PgWorkflowDemoStore({
-      pool: pgEventStore.pool,
-      tablePrefix: config.runtimeEventStore.tablePrefix,
-    });
-    await pgWorkflowDemoStore.init();
-    workflowDemoStore = pgWorkflowDemoStore;
     try {
       dwsConnectionStore = new PgDwsConnectionStore({
         pool: pgEventStore.pool,
@@ -1329,7 +1314,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
 
   sessionShareStore ??= new InMemorySessionShareStore();
-  workflowDemoStore ??= new InMemoryWorkflowDemoStore();
   if (!agentRuntimeProfileStore) {
     agentRuntimeProfileStore = new InMemoryAgentRuntimeProfileStore();
     await agentRuntimeProfileStore.init();
@@ -1776,7 +1760,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...(pgRunStore ? { runStore: pgRunStore } : {}),
     ...(pgHandStore ? { handStore: pgHandStore } : {}),
     ...(pgToolInvocationStore ? { toolInvocationStore: pgToolInvocationStore } : {}),
-    workflowDemoStore,
     // /compact v2 自动压缩：需要 PG runStore（enqueue 走 scheduler wake 链路）。
     // file backend 无 scheduler，不装配（手动 /compact 不受影响）。
     ...(pgRunStore && tenantStore ? {
@@ -1998,52 +1981,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         return getRuntimeSchedulerCapacitySnapshot();
       },
     };
-    workflowDemoStore.setRuntimeContinuationHandler(async ({
-      run,
-      externalEvent,
-      externalSignalId,
-      nextEventId,
-    }) => {
-      if (!run.runtimeSessionId) throw new Error('Workflow Demo 尚未绑定真实 Agent 会话');
-      const session = await sessionCatalog.get(run.runtimeSessionId);
-      if (!session
-        || session.userId !== run.actorUserId
-        || session.tenantId !== run.tenantId) {
-        throw new Error('Workflow Demo 绑定会话的用户或组织归属不一致');
-      }
-      const continuationKey = createHash('sha256')
-        .update(`${run.runId}:${externalSignalId}:${nextEventId}`)
-        .digest('hex');
-      await runtimeScheduler!.enqueue({
-        runId: `workflow-demo-${continuationKey.slice(0, 40)}`,
-        sessionId: session.sessionId,
-        userId: run.actorUserId,
-        tenantId: run.tenantId,
-        model: session.modelRef,
-        channel: session.channel,
-        idempotencyKey: `workflow-demo:${continuationKey}`,
-        executionTarget: session.executionTarget,
-        workspaceId: session.workspaceId,
-        metadata: {
-          workflowDemoContinuation: true,
-          workflowRunId: run.runId,
-          workflowEventId: nextEventId,
-          externalSignalId,
-          externalEventDigest: externalEvent.eventDigest,
-          wakeMessage: {
-            channel: 'web',
-            chatId: session.sessionId,
-            content: HIDDEN_WORKFLOW_DEMO_CONTINUE_PROMPT,
-            senderId: run.actorUserId,
-            senderName: session.username,
-            metadata: {
-              hiddenContinuation: true,
-              workflowDemo: { runId: run.runId, eventId: nextEventId },
-            },
-          },
-        },
-      });
-    });
   }
 
   // Runtime audit 读 API：
@@ -2780,7 +2717,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentRuntimeProfileStore,
     artifactService,
     sessionShareStore,
-    workflowDemoStore,
     artifactShutdown,
     clientDaemonGateway,
     runtimeEventStoreFor,

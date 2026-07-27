@@ -10,7 +10,6 @@ const mocked = vi.hoisted(() => {
   const sessionsRouter = { id: 'sessions-router' };
   const searchRouter = { id: 'search-router' };
   const scenariosRouter = { id: 'scenarios-router' };
-  const workflowDemosRouter = { id: 'workflow-demos-router' };
   const contentOpsRouter = { id: 'content-ops-router' };
   const dwsRouter = { id: 'dws-router' };
   const feishuRouter = { id: 'feishu-router' };
@@ -42,7 +41,6 @@ const mocked = vi.hoisted(() => {
     sessionsRouter,
     searchRouter,
     scenariosRouter,
-    workflowDemosRouter,
     contentOpsRouter,
     dwsRouter,
     feishuRouter,
@@ -72,7 +70,6 @@ const mocked = vi.hoisted(() => {
     createSessionsRouter: vi.fn(() => sessionsRouter),
     createSearchRouter: vi.fn(() => searchRouter),
     createScenariosRouter: vi.fn(() => scenariosRouter),
-    createWorkflowDemosRouter: vi.fn(() => workflowDemosRouter),
     createContentOpsRouter: vi.fn(() => contentOpsRouter),
     createDwsRouter: vi.fn(() => dwsRouter),
     createFeishuRouter: vi.fn(() => feishuRouter),
@@ -104,7 +101,6 @@ vi.mock('../routes/index.js', () => ({
   createSessionsRouter: mocked.createSessionsRouter,
   createSearchRouter: mocked.createSearchRouter,
   createScenariosRouter: mocked.createScenariosRouter,
-  createWorkflowDemosRouter: mocked.createWorkflowDemosRouter,
   createContentOpsRouter: mocked.createContentOpsRouter,
   createDwsRouter: mocked.createDwsRouter,
   createFeishuRouter: mocked.createFeishuRouter,
@@ -167,7 +163,6 @@ describe('registerRoutes', () => {
     mocked.createSessionsRouter.mockClear();
     mocked.createSearchRouter.mockClear();
     mocked.createScenariosRouter.mockClear();
-    mocked.createWorkflowDemosRouter.mockClear();
     mocked.createContentOpsRouter.mockClear();
     mocked.createDwsRouter.mockClear();
     mocked.createFeishuRouter.mockClear();
@@ -216,7 +211,6 @@ describe('registerRoutes', () => {
       },
       groupStore: {},
       userStore: undefined,
-      workflowDemoStore: {},
     };
 
     registerRoutes(app as any, runtime);
@@ -242,9 +236,6 @@ describe('registerRoutes', () => {
     expect(mocked.createSearchRouter).toHaveBeenCalledWith({
       agentCwd: '/agent',
       userStore: runtime.userStore,
-    });
-    expect(mocked.createWorkflowDemosRouter).toHaveBeenCalledWith({
-      store: runtime.workflowDemoStore,
     });
     expect(mocked.createSessionsRouter).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -278,12 +269,12 @@ describe('registerRoutes', () => {
     //   + 平台管理员分层治理 enforcePlatformWritePolicy（2026-07-18）= 30
     //   + 员工申诉 /api/appeals + /api/tenant/appeals（2026-07-19 装配）= 32
     //   + 飞书官方 CLI 连接器 = 33
-    //   + Workflow Demo 状态化运行/公开回放 + 系统提示语管理 = 35
+    //   + 系统提示语管理 = 34
     //   + 附件用量/清理 guard = 36
     //   + Agent 运行 Profile 平台管理 = 37
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(37);
+    expect(app.use).toHaveBeenCalledTimes(36);
     expect(app.use).toHaveBeenCalledWith('/api/admin/system-prompts', mocked.systemPromptsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/agent-profiles', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api/kb', expect.any(Function), mocked.kbFilesRouter);
@@ -300,7 +291,6 @@ describe('registerRoutes', () => {
     expect(app.use).toHaveBeenCalledWith('/preview', mocked.previewServeRouter);
     expect(app.use).toHaveBeenCalledWith('/api/search', mocked.searchRouter);
     expect(app.use).toHaveBeenCalledWith('/api/scenarios', mocked.scenariosRouter);
-    expect(app.use).toHaveBeenCalledWith('/api', mocked.workflowDemosRouter);
     expect(app.use).toHaveBeenCalledWith('/api/contentops', mocked.contentOpsRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.sessionsRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.groupsRouter);
@@ -347,13 +337,12 @@ describe('registerRoutes', () => {
       },
       groupStore: {},
       userStore: undefined,
-      workflowDemoStore: {},
     };
 
     registerRoutes(app as any, runtime);
 
     expect(mocked.createCronRouter).toHaveBeenCalledWith(cronService, '/runs', runtime.groupStore);
-    // 12 base + 1 cron = 13
+    // base routes + cron
     expect(app.use).toHaveBeenCalledWith('/api/cron', mocked.cronRouter);
   });
 });

@@ -60,7 +60,6 @@ export interface ScenariosPanelProps {
   onStartWorkflow?: (
     starterMessage: string,
     scenario: CatalogScenarioPublic,
-    options?: { isolatedDemo?: boolean },
   ) => void;
   onConnectWorkflow?: (workflowId: string) => void;
   onRequestDiagnosis?: (message: string, scenario: CatalogScenarioPublic) => void;
@@ -111,22 +110,6 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
       else setDetail({ scenario });
       return;
     }
-    if (action === "replay") {
-      if (scenario.demo.sharePath) window.location.assign(scenario.demo.sharePath);
-      else setDetail({ scenario });
-      return;
-    }
-    if (action === "isolated-demo") {
-      if (props.onStartWorkflow) {
-        setDetail(null);
-        props.onStartWorkflow(
-          scenario.launch.starterMessage,
-          scenario,
-          { isolatedDemo: true },
-        );
-      } else setDetail({ scenario });
-      return;
-    }
     if (action === "connector") {
       if (props.onConnectWorkflow) props.onConnectWorkflow(scenario.workflowId);
       else setDetail({ scenario });
@@ -175,7 +158,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     if (skinId) params.set("skinId", skinId);
     if (roleViewId) params.set("roleViewId", roleViewId);
     if (roleId) params.set("roleId", roleId);
-    if (intent === "run" || intent === "connect" || intent === "presentation") params.set("intent", "view");
+    if (intent === "run" || intent === "connect") params.set("intent", "view");
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
     if (intent === "run" && resolved.scenario.launch.startMode === "chat") {
       handleWorkflowAction("chat", resolved.scenario);
@@ -245,7 +228,12 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
 
   // 回放接管整个主区：左侧会话栏在外层布局，不受影响
   if (replay) {
-    return <ScenarioReplayView script={replay} onExit={() => setReplay(null)} />;
+    return <ScenarioReplayView script={replay} onExit={() => {
+      const params = new URLSearchParams(window.location.search);
+      params.set("intent", "view");
+      window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+      setReplay(null);
+    }} />;
   }
 
   return (

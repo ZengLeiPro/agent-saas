@@ -12,25 +12,6 @@ const DATA_PATH = resolve(__dirname, "../src/data/scenarios/workflow-library-v3.
 
 try {
   const loaded = await loadWorkflowLibraryV3(DATA_PATH);
-  const staticEvidenceFields = [
-    "runIds",
-    "idempotencyKeyHashes",
-    "beforeSnapshotRefs",
-    "timelineEventRefs",
-    "afterSnapshotRefs",
-    "evidenceRefs",
-    "reviewedBy",
-  ];
-  const staticEvidenceViolations = loaded.internal.demos.flatMap((manifest) => {
-    if (manifest.status !== "planned" || manifest.publication.status !== "private") return [];
-    const fields = staticEvidenceFields.filter((field) => manifest.internal[field].length > 0);
-    return fields.length > 0 ? [`${manifest.workflowId}: ${fields.join(", ")}`] : [];
-  });
-  if (staticEvidenceViolations.length > 0) {
-    throw new Error(
-      `planned/private 静态 Demo 不得携带已发生证据引用：${staticEvidenceViolations.join("；")}`,
-    );
-  }
   const counts = WORKFLOW_LIBRARY_EXPECTED_COUNTS;
   console.log(
     [
@@ -39,7 +20,6 @@ try {
       `catalog=${counts.catalogScenarios}`,
       `aliases=${counts.scenarioAliases}`,
       `legacy=${counts.legacyCompatibility}`,
-      `publicDemos=${loaded.public.demos.length}`,
       `sha256=${loaded.contentSha256}`,
     ].join(" · "),
   );

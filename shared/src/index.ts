@@ -105,9 +105,6 @@ export type {
   ScenarioLibraryResponse,
   CatalogScenarioPublic,
   CatalogScenarioRecord,
-  DemoManifestRecord,
-  DemoPublicEvidence,
-  WorkflowDemoDispatchMetadata,
   WorkflowExecutionType,
   WorkflowTriggerMode,
   WorkflowDefinitionRecord,
@@ -199,8 +196,6 @@ export {
 export {
   catalogScenarioPublicSchema,
   catalogScenarioRecordSchema,
-  demoManifestRecordSchema,
-  demoPublicEvidenceSchema,
   legacyScenarioAliasRecordSchema,
   legacyScenarioCompatibilityRecordSchema,
   workflowAliasRecordSchema,
@@ -220,11 +215,6 @@ export {
   resolveScenarioSlug,
 } from "./security/projectWorkflowPublic";
 export type { ResolvedScenarioSlug } from "./security/projectWorkflowPublic";
-export {
-  customerWorkflowReplayResponseSchema,
-  projectWorkflowDemoPublic,
-} from "./security/projectWorkflowDemoPublic";
-export type { CustomerWorkflowReplayResponse } from "./security/projectWorkflowDemoPublic";
 export {
   cronWizardSubmitSchema,
   cronWizardResponseSchema,

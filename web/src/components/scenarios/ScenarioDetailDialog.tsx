@@ -13,7 +13,6 @@ import { friendlyPrimaryType, friendlyReadiness } from "./friendlyMappings";
 import {
   workflowById,
   workflowCta,
-  workflowIsolatedDemoFor,
   workflowRoleViewFor,
   workflowSkinFor,
   type BusinessModelFilterValue,
@@ -64,7 +63,6 @@ export function ScenarioDetailDialog({
       ? { action: "connector" as const, label: "接入我的系统", secondaryLabel: "查看工作流" }
       : cta;
   const roleView = workflowRoleViewFor(library, scenario, roleViewId, roleId);
-  const isolatedDemo = workflowIsolatedDemoFor(library, scenario);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -223,38 +221,19 @@ export function ScenarioDetailDialog({
             {capabilities.length > 0 ? (
               <p className="mt-1 text-muted-foreground">需要：{capabilities.map((item) => item.label).join("、")}</p>
             ) : null}
-            {scenario.demo.evidenceLevel === "workflow_replay" && scenario.demo.sharePath ? (
-              <p className="mt-1 text-muted-foreground">已提供通过证据契约的只读状态回放。</p>
-            ) : (
-              <p className="mt-1 text-muted-foreground">当前展示工作流与接入边界，不把设计说明冒充真实运行结果。</p>
-            )}
-            {isolatedDemo ? (
-              <p className="mt-1 text-muted-foreground">可在专用隔离演示系统中运行并回读状态；演示结果不代表已接入你的业务系统。</p>
-            ) : null}
+            <p className="mt-1 text-muted-foreground">演示使用预定义数据回放；正式运行结果以实际接入系统后的工具回执为准。</p>
           </section>
         </div>
 
         <DialogFooter className="gap-2">
-          {isolatedDemo ? (
-            <Button type="button" variant="outline" onClick={() => onPrimaryAction("isolated-demo", scenario)}>
-              运行隔离演示
-            </Button>
-          ) : null}
-          {scenario.demo.evidenceLevel === "workflow_replay" && scenario.demo.sharePath ? (
-            <Button type="button" variant="outline" onClick={() => onPrimaryAction("replay", scenario)}>
-              查看已验收回放
-            </Button>
-          ) : null}
           {effectiveCta.secondaryLabel ? (
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               关闭
             </Button>
           ) : null}
-          {effectiveCta.action !== "replay" ? (
-            <Button type="button" onClick={() => onPrimaryAction(effectiveCta.action, scenario)}>
-              {effectiveCta.label}
-            </Button>
-          ) : null}
+          <Button type="button" onClick={() => onPrimaryAction(effectiveCta.action, scenario)}>
+            {effectiveCta.label}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

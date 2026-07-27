@@ -9,13 +9,10 @@ import {
   type SessionShareSnapshot,
   type UpsertSessionShareInput,
 } from '../data/sessionShares/store.js';
-import {
-  workflowDemoPgSuiteEnabled,
-  workflowDemoTestPgUrl,
-} from './helpers/workflowDemoPgHarness.js';
 
 const { Pool } = pg;
-const describePg = workflowDemoPgSuiteEnabled() ? describe : describe.skip;
+const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
+const describePg = testPgUrl ? describe : describe.skip;
 
 describePg('Session Share Store PostgreSQL 安全契约', () => {
   const prefix = `ssc_${randomUUID().replaceAll('-', '').slice(0, 20)}`;
@@ -24,7 +21,7 @@ describePg('Session Share Store PostgreSQL 安全契约', () => {
 
   beforeAll(async () => {
     pool = new Pool({
-      connectionString: workflowDemoTestPgUrl()!,
+      connectionString: testPgUrl!,
       connectionTimeoutMillis: 5_000,
       max: 24,
     });

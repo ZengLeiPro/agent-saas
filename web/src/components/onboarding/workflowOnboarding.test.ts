@@ -1,12 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ScenarioItem } from "@agent/shared";
-
-const startWorkflowDemoMock = vi.hoisted(() => vi.fn());
-const abandonWorkflowDemoLaunchMock = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/workflowDemoApi", () => ({
-  startWorkflowDemo: startWorkflowDemoMock,
-  abandonWorkflowDemoLaunch: abandonWorkflowDemoLaunchMock,
-}));
 
 import {
   buildWorkflowOnboardingPlan,
@@ -32,9 +25,8 @@ const cronScenario: ScenarioItem = {
 function context(
   primaryType: WorkflowOnboardingContext["scenario"]["primaryType"],
   readiness: WorkflowOnboardingContext["scenario"]["readiness"],
-  options: { replay?: boolean; schedule?: boolean; startMode?: "chat" | "replay" | "connector" | "diagnosis" } = {},
+  options: { schedule?: boolean; startMode?: "chat" | "connector" | "diagnosis" } = {},
 ): WorkflowOnboardingContext {
-  const replay = options.replay === true;
   return {
     scenario: {
       id: `${primaryType.toLowerCase()}-${readiness.toLowerCase()}`,
@@ -43,14 +35,11 @@ function context(
       primaryType,
       readiness,
       launch: {
-        sampleAvailable: replay,
-        startMode: options.startMode ?? (replay ? "replay" : "chat"),
+        sampleAvailable: false,
+        startMode: options.startMode ?? "chat",
         starterMessage: "用示例数据开始",
       },
       cta: { primary: "立即试一试" },
-      demo: replay
-        ? { evidenceLevel: "workflow_replay", sharePath: "/share/workflows/demo-1" }
-        : { evidenceLevel: "design_only" },
     },
     ...(options.schedule
       ? { schedule: { scheduleCapable: true as const, cronScenario } }
@@ -71,8 +60,6 @@ describe("buildWorkflowOnboardingPlan", () => {
 
   it("uses chat or a published replay for D0 according to launch", () => {
     expect(buildWorkflowOnboardingPlan(context("CREATE", "D0_CURRENT")).experience.action).toBe("chat");
-    expect(buildWorkflowOnboardingPlan(context("ACT", "D0_CURRENT", { replay: true })).experience.action).toBe("replay");
-    expect(buildWorkflowOnboardingPlan(context("ACT", "D0_CURRENT", { startMode: "replay" })).experience.action).toBe("detail");
   });
 
   it("only recommends Cron for a D0 WATCH with explicit schedule proof", () => {
@@ -98,91 +85,31 @@ describe("buildWorkflowOnboardingPlan", () => {
 });
 
 describe("sendWorkflowExperience", () => {
-  beforeEach(() => {
-    startWorkflowDemoMock.mockReset();
-    abandonWorkflowDemoLaunchMock.mockReset().mockResolvedValue(undefined);
-  });
-
-  it("只在真实发送成功后发体验事件，预填或失败都不会提前推进", async () => {
-    const dispatched: Event[] = [];
-    const eventTarget = { dispatchEvent: (event: Event) => { dispatched.push(event); return true; } };
-    const workflow = context("CREATE", "D0_CURRENT");
-
-    await sendWorkflowExperience(async () => undefined, workflow.scenario.launch.starterMessage, workflow, eventTarget);
-    expect(dispatched).toHaveLength(1);
-    expect((dispatched[0] as CustomEvent).detail).toEqual({ workflowId: "workflow-create" });
-
-    dispatched.length = 0;
-    await sendWorkflowExperience(async () => undefined, "   ", workflow, eventTarget);
-    expect(dispatched).toHaveLength(0);
-
-    await sendWorkflowExperience(async () => undefined, "另一个普通问题", workflow, eventTarget);
-    expect(dispatched).toHaveLength(0);
-
-    await expect(sendWorkflowExperience(
-      async () => { throw new Error("发送失败"); },
-      workflow.scenario.launch.starterMessage,
-      workflow,
-      eventTarget,
-    )).rejects.toThrow("发送失败");
-    expect(dispatched).toHaveLength(0);
-  });
-
-  it("只在用户发送冻结起手指令时初始化隔离 run 并透传服务端绑定", async () => {
-    const workflow = {
-      ...context("ACT", "D1_CONNECTOR"),
-      demoLaunch: {
-        catalogScenarioId: "catalog-01",
-        idempotencyKey: "stable-key-01",
-      },
-    };
-    startWorkflowDemoMock.mockResolvedValue({
-      runId: "11111111-1111-4111-8111-111111111111",
-      eventId: "event-01",
-    });
+  it("只在真实发送成功后发体验事件，失败不会提前推进", async () => {
+    const workflow = context("LOOP", "D0_CURRENT");
+    const eventTarget = { dispatchEvent: vi.fn(() => true) };
     const send = vi.fn().mockResolvedValue(undefined);
 
-    await sendWorkflowExperience(
-      send,
+    await sendWorkflowExperience(send, workflow.scenario.launch.starterMessage, workflow, eventTarget);
+
+    expect(send).toHaveBeenCalledWith();
+    expect(eventTarget.dispatchEvent).toHaveBeenCalledTimes(1);
+
+    const failedTarget = { dispatchEvent: vi.fn(() => true) };
+    await expect(sendWorkflowExperience(
+      async () => { throw new Error("send failed"); },
       workflow.scenario.launch.starterMessage,
       workflow,
-      { dispatchEvent: () => true },
-    );
-
-    expect(startWorkflowDemoMock).toHaveBeenCalledWith("catalog-01", "stable-key-01");
-    expect(send).toHaveBeenCalledWith({
-      workflowDemo: {
-        runId: "11111111-1111-4111-8111-111111111111",
-        eventId: "event-01",
-      },
-    });
-
-    startWorkflowDemoMock.mockClear();
-    await sendWorkflowExperience(send, "普通问题", workflow, { dispatchEvent: () => true });
-    expect(startWorkflowDemoMock).not.toHaveBeenCalled();
-    expect(send).toHaveBeenLastCalledWith(undefined);
+      failedTarget,
+    )).rejects.toThrow("send failed");
+    expect(failedTarget.dispatchEvent).not.toHaveBeenCalled();
   });
 
-  it("Workflow 首条消息未获 ACK 时回收未绑定 run，且不推进体验事件", async () => {
-    const workflow = {
-      ...context("LOOP", "D0_CURRENT"),
-      demoLaunch: { catalogScenarioId: "catalog-01", idempotencyKey: "stable-key-02" },
-    };
-    const workflowDemo = {
-      runId: "22222222-2222-4222-8222-222222222222",
-      eventId: "event-01",
-    };
-    startWorkflowDemoMock.mockResolvedValue(workflowDemo);
+  it("普通消息不会推进工作流体验事件", async () => {
+    const workflow = context("LOOP", "D0_CURRENT");
     const eventTarget = { dispatchEvent: vi.fn(() => true) };
-
-    await expect(sendWorkflowExperience(
-      async () => { throw new Error("ACK timeout"); },
-      workflow.scenario.launch.starterMessage,
-      workflow,
-      eventTarget,
-    )).rejects.toThrow("ACK timeout");
-
-    expect(abandonWorkflowDemoLaunchMock).toHaveBeenCalledWith(workflowDemo.runId);
+    const send = vi.fn().mockResolvedValue(undefined);
+    await sendWorkflowExperience(send, "普通问题", workflow, eventTarget);
     expect(eventTarget.dispatchEvent).not.toHaveBeenCalled();
   });
 });

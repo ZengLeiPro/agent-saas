@@ -84,7 +84,7 @@ export interface LayoutProps {
   uploadError: string | null;
   dismissUploadError: () => void;
   setInput: (value: string) => void;
-  sendMessage: (options?: { workflowDemo?: { runId: string; eventId: string } }) => Promise<void>;
+  sendMessage: () => Promise<void>;
   sendVoiceMessage: (wavBlob: Blob, durationMs: number) => Promise<void>;
   stopping: boolean;
   stopGeneration: () => void;

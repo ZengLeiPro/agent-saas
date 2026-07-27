@@ -32,14 +32,12 @@ export function makeWorkflowScenario(
     },
     launch: {
       sampleAvailable: false,
-      isolatedDemoAvailable: false,
       startMode: "chat",
       starterMessage: "请启动这个工作流，并先说明需要的资料。",
     },
     primaryType: "LOOP",
     readiness: "D0_CURRENT",
     cta: { primary: "立即试一试" },
-    demo: { evidenceLevel: "design_only" },
     featured: false,
     ...overrides,
   };
@@ -81,7 +79,6 @@ export function makeWorkflowLibrary(scenarios: CatalogScenarioPublic[]): Workflo
     })),
     skins: [],
     roleViews: [],
-    demos: [],
     aliases: [],
   };
 }

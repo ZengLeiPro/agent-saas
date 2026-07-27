@@ -578,15 +578,6 @@ const presentationPublicRawSchema = z.object({
   }).strict()).min(6).max(9),
 }).strict();
 
-const presentationBindingSchema = z.object({
-  demoId: idSchema,
-  workflowDefinitionVersion: z.number().int().min(1),
-  chapters: z.array(z.object({
-    chapterId: idSchema,
-    sourceTimelineRefs: z.array(idSchema).min(1),
-  }).strict()).min(6).max(9),
-}).strict();
-
 const catalogPublicRawSchema = z.object({
   title: rawTextSchema,
   value: rawTextSchema,
@@ -637,8 +628,6 @@ export const catalogScenarioPublicSchema = z.object({
   }).strict(),
   launch: z.object({
     sampleAvailable: z.boolean(),
-    /** N/N+1：旧 Web 可忽略；V3 Server 投影始终显式返回。 */
-    isolatedDemoAvailable: z.boolean().optional(),
     inputHint: workflowPublicTextSchema.optional(),
     startMode: z.enum(["chat", "replay", "connector", "diagnosis"]),
     starterMessage: workflowPublicTextSchema,
@@ -648,10 +637,6 @@ export const catalogScenarioPublicSchema = z.object({
   cta: z.object({
     primary: workflowPublicTextSchema,
     secondary: workflowPublicTextSchema.optional(),
-  }).strict(),
-  demo: z.object({
-    evidenceLevel: z.enum(["design_only", "artifact", "workflow_replay"]),
-    sharePath: z.string().startsWith("/").optional(),
   }).strict(),
   presentation: z.object({
     version: z.literal(1),
@@ -724,11 +709,9 @@ export const catalogScenarioRecordSchema = z.object({
     source: refSchema,
     salesPitch: rawTextSchema.optional(),
     cannotPromise: z.array(rawTextSchema).optional(),
-    defaultDemoId: idSchema.optional(),
     legacyCompatRef: refSchema.optional(),
     internalNotes: rawTextSchema.optional(),
     hero: heroReviewSchema.optional(),
-    presentation: presentationBindingSchema.optional(),
   }).strict(),
 }).strict();
 
@@ -786,209 +769,6 @@ const workflowRoleViewPublicSchema = z.object({
   approvalSummary: workflowPublicTextSchema,
 }).strict();
 
-const demoBusinessSnapshotRawSchema = z.object({
-  id: idSchema,
-  label: rawTextSchema,
-  state: rawTextSchema,
-}).strict();
-
-const demoBusinessEventRawSchema = z.object({
-  id: idSchema,
-  label: rawTextSchema,
-  summary: rawTextSchema,
-  state: rawTextSchema,
-}).strict();
-
-const demoEvidenceSummaryRawSchema = z.object({
-  id: idSchema,
-  kind: z.enum(["agent_run", "artifact", "approval", "receipt", "readback", "cycle", "resume"]),
-  label: rawTextSchema,
-  summary: rawTextSchema,
-}).strict();
-
-const demoExecutionStepSchema = z.object({
-  eventId: idSchema,
-  phase: z.enum([
-    "trigger",
-    "observe",
-    "judge",
-    "approval",
-    "act",
-    "wait",
-    "resume",
-    "verify",
-    "compensate",
-    "handoff",
-  ]),
-  actorRole: refSchema,
-  targetObjectId: idSchema,
-  mutation: z.boolean(),
-  approvalRequired: z.boolean(),
-  approvalEventRef: idSchema.optional(),
-  workflowActionId: idSchema.optional(),
-  operationRef: refSchema.optional(),
-  permissionRef: idSchema.optional(),
-  approvalPolicyRef: idSchema.optional(),
-  receiptSchemaRef: refSchema.optional(),
-  workflowIdempotencyPolicyRef: idSchema.optional(),
-  idempotencyRef: refSchema.optional(),
-  cycleId: refSchema.optional(),
-  observationKind: z.enum(["normal", "exception"]).optional(),
-  resumeSignalRef: refSchema.optional(),
-  externalChanges: z.array(z.object({
-    targetObjectId: idSchema,
-    expectedState: rawTextSchema,
-    operationRef: refSchema,
-    idempotencyRef: refSchema,
-  }).strict()).optional(),
-  expectedState: rawTextSchema,
-}).strict().superRefine((step, ctx) => {
-  if (step.mutation && (!step.idempotencyRef || !step.operationRef)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Demo mutation 必须声明 operationRef 与 idempotencyRef" });
-  }
-  if (step.mutation
-    && step.phase !== "approval"
-    && step.phase !== "resume"
-    && !step.workflowActionId) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Demo Agent 写动作必须绑定 canonical workflowActionId、权限、回执与幂等策略",
-    });
-  }
-  if (step.workflowActionId && (
-    !step.operationRef
-    || !step.permissionRef
-    || !step.receiptSchemaRef
-    || (step.mutation && !step.workflowIdempotencyPolicyRef)
-  )) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Demo Workflow 动作必须绑定 operation、permission 与 receipt；写动作还必须绑定幂等策略" });
-  }
-  if (!step.workflowActionId && (
-    step.permissionRef
-    || step.approvalPolicyRef
-    || step.receiptSchemaRef
-    || step.workflowIdempotencyPolicyRef
-  )) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Demo 策略引用必须绑定 workflowActionId" });
-  }
-  if (step.phase === "act" && step.approvalRequired && !step.approvalEventRef) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "需批准的 Demo 动作必须精确引用 approval event" });
-  }
-  if (step.phase === "observe" && (!step.cycleId || !step.observationKind)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Demo observe 必须声明 cycleId 与 observationKind" });
-  }
-  if (step.phase === "resume" && !step.resumeSignalRef) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Demo resume 必须声明外部恢复信号" });
-  }
-  if (step.externalChanges?.length && step.phase !== "approval" && step.phase !== "resume") {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Demo externalChanges 仅允许绑定批准或恢复事件" });
-  }
-  const externalTargets = step.externalChanges?.map((change) => change.targetObjectId) ?? [];
-  const externalIdempotencyRefs = step.externalChanges?.map((change) => change.idempotencyRef) ?? [];
-  if (new Set(externalTargets).size !== externalTargets.length
-    || new Set(externalIdempotencyRefs).size !== externalIdempotencyRefs.length
-    || (step.mutation && externalTargets.includes(step.targetObjectId))
-    || (step.mutation && step.idempotencyRef && externalIdempotencyRefs.includes(step.idempotencyRef))) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Demo 单个外部信号的目标对象与幂等引用必须唯一" });
-  }
-});
-
-export const demoManifestRecordSchema = z.object({
-  id: idSchema,
-  workflowId: idSchema,
-  catalogScenarioId: idSchema,
-  skinId: idSchema.optional(),
-  definitionVersion: z.number().int().min(1),
-  primaryType: workflowPrimaryTypeSchema,
-  environment: z.object({
-    kind: z.enum(["current_real", "isolated_stateful"]),
-    dataLabel: z.enum(["synthetic", "desensitized", "public"]),
-  }).strict(),
-  /** 静态权威源只保存计划；运行/通过/失败事实只能来自 WorkflowDemoStore。 */
-  status: z.literal("planned"),
-  publication: z.object({
-    status: z.literal("private"),
-  }).strict(),
-  public: z.object({
-    title: rawTextSchema,
-    environmentLabel: rawTextSchema,
-    before: z.array(demoBusinessSnapshotRawSchema),
-    timeline: z.array(demoBusinessEventRawSchema),
-    after: z.array(demoBusinessSnapshotRawSchema),
-    evidence: z.array(demoEvidenceSummaryRawSchema),
-  }).strict(),
-  internal: z.object({
-    tenantRef: refSchema,
-    accountRef: refSchema,
-    runIds: z.array(refSchema),
-    businessObjectRefs: z.array(refSchema),
-    idempotencyKeyHashes: z.array(refSchema),
-    beforeSnapshotRefs: z.array(refSchema),
-    timelineEventRefs: z.array(refSchema),
-    afterSnapshotRefs: z.array(refSchema),
-    evidenceRefs: z.array(refSchema),
-    executionPlan: z.array(demoExecutionStepSchema).optional(),
-    reviewedBy: z.array(refSchema),
-    reviewedAt: z.string().datetime().optional(),
-  }).strict(),
-}).strict().superRefine((demo, ctx) => {
-  if (demo.internal.reviewedBy.length > 0 || demo.internal.reviewedAt) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "静态 Demo 不得携带运行复核事实" });
-  }
-  if (demo.internal.executionPlan) {
-    const timelineIds = demo.public.timeline.map((item) => item.id);
-    const planIds = demo.internal.executionPlan.map((item) => item.eventId);
-    if (new Set(planIds).size !== planIds.length
-      || timelineIds.length !== planIds.length
-      || timelineIds.some((id) => !planIds.includes(id))) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Demo executionPlan 必须与公开时间线事件一一对应" });
-    }
-    for (const [index, step] of demo.internal.executionPlan.entries()) {
-      if (!step.approvalEventRef) continue;
-      const approvalIndex = demo.internal.executionPlan.findIndex((candidate) => (
-        candidate.eventId === step.approvalEventRef && candidate.phase === "approval"
-      ));
-      if (approvalIndex < 0 || approvalIndex >= index) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Demo 动作 ${step.eventId} 引用了无效或尚未发生的批准事件` });
-      }
-    }
-  }
-});
-
-export const demoPublicEvidenceSchema = z.object({
-  id: idSchema,
-  workflowId: idSchema,
-  catalogScenarioId: idSchema,
-  primaryType: workflowPrimaryTypeSchema,
-  environment: z.object({
-    kind: z.enum(["current_real", "isolated_stateful"]),
-    dataLabel: z.enum(["synthetic", "desensitized", "public"]),
-  }).strict(),
-  title: workflowPublicTextSchema,
-  environmentLabel: workflowPublicTextSchema,
-  before: z.array(z.object({
-    id: idSchema,
-    label: workflowPublicTextSchema,
-    state: workflowPublicTextSchema,
-  }).strict()),
-  timeline: z.array(z.object({
-    id: idSchema,
-    label: workflowPublicTextSchema,
-    summary: workflowPublicTextSchema,
-    state: workflowPublicTextSchema,
-  }).strict()),
-  after: z.array(z.object({
-    id: idSchema,
-    label: workflowPublicTextSchema,
-    state: workflowPublicTextSchema,
-  }).strict()),
-  evidence: z.array(z.object({
-    id: idSchema,
-    kind: z.enum(["agent_run", "artifact", "approval", "receipt", "readback", "cycle", "resume"]),
-    label: workflowPublicTextSchema,
-    summary: workflowPublicTextSchema,
-  }).strict()),
-}).strict();
 
 const legacyScenarioAliasBaseSchema = z.object({
   legacySlug: idSchema,
@@ -1019,7 +799,6 @@ const legacyScenarioCompatibilityBaseSchema = z.object({
   /** V1 公开形态的完整快照，保证 N/N+1 期间旧 Web 不丢引导元数据。 */
   legacyScenario: scenarioItemSchema,
   legacyCronSupported: z.boolean(),
-  demoId: idSchema.optional(),
 });
 
 export const legacyScenarioCompatibilityRecordSchema = z.discriminatedUnion("resolution", [
@@ -1050,7 +829,6 @@ export const workflowLibraryFileV3Schema = z.object({
   workflows: z.array(workflowDefinitionRecordSchema).min(1),
   catalogScenarios: z.array(catalogScenarioRecordSchema).min(1),
   deferredObjects: z.array(deferredWorkflowObjectSchema).min(1),
-  demos: z.array(demoManifestRecordSchema),
   scenarioAliases: z.array(legacyScenarioAliasRecordSchema).min(1),
   workflowAliases: z.array(workflowAliasRecordSchema),
   legacyCompatibility: z.array(legacyScenarioCompatibilityRecordSchema).min(1),
@@ -1065,7 +843,6 @@ export const workflowLibraryFileV3Schema = z.object({
   unique(library.workflows.map((item) => item.id), "workflows");
   unique(library.catalogScenarios.map((item) => item.id), "catalogScenarios");
   unique(library.deferredObjects.map((item) => item.id), "deferredObjects");
-  unique(library.demos.map((item) => item.id), "demos");
   unique(library.scenarioAliases.map((item) => item.legacySlug), "scenarioAliases");
   unique(library.legacyCompatibility.map((item) => item.legacySlug), "legacyCompatibility");
 
@@ -1074,7 +851,6 @@ export const workflowLibraryFileV3Schema = z.object({
   const deferredObjectIds = new Set(library.deferredObjects.map((item) => item.id));
   const roleIds = new Set(library.roles.map((item) => item.id));
   const legacyRoleIds = new Set(library.legacyRoles.map((item) => item.id));
-  const demoIds = new Set(library.demos.map((item) => item.id));
   const allSkinIds = library.workflows.flatMap((item) => item.skins.map((skin) => skin.id));
   const allRoleViewIds = library.workflows.flatMap((item) => item.roleViews.map((view) => view.id));
   const skinIds = new Set(allSkinIds);
@@ -1105,37 +881,10 @@ export const workflowLibraryFileV3Schema = z.object({
       }
     }
     const presentation = item.public.presentation;
-    const binding = item.internal.presentation;
-    if (Boolean(presentation) !== Boolean(binding)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示内容与证据绑定必须同时存在` });
-    }
-    if (presentation && binding) {
-      const demo = library.demos.find((candidate) => candidate.id === binding.demoId);
-      if (!demo || demo.workflowId !== item.workflowId || demo.catalogScenarioId !== item.id) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示绑定未指向自己的 Demo` });
-      }
-      if (!workflow || binding.workflowDefinitionVersion !== workflow.definitionVersion) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示绑定未跟随当前 Workflow 版本` });
-      }
-      if (item.internal.defaultDemoId !== binding.demoId) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示绑定必须使用默认 Demo` });
-      }
-      const publicChapterIds = presentation.chapters.map((chapter) => chapter.id);
-      const bindingChapterIds = binding.chapters.map((chapter) => chapter.chapterId);
-      if (new Set(publicChapterIds).size !== publicChapterIds.length
-        || new Set(bindingChapterIds).size !== bindingChapterIds.length
-        || publicChapterIds.length !== bindingChapterIds.length
-        || publicChapterIds.some((id) => !bindingChapterIds.includes(id))) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示章节与证据绑定不一致` });
-      }
-      if (demo) {
-        const timelineIds = demo.public.timeline.map((event) => event.id);
-        const sourceRefs = binding.chapters.flatMap((chapter) => chapter.sourceTimelineRefs);
-        if (new Set(sourceRefs).size !== sourceRefs.length
-          || sourceRefs.length !== timelineIds.length
-          || timelineIds.some((id) => !sourceRefs.includes(id))) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示章节必须完整且不重复地覆盖 Demo 时间线` });
-        }
+    if (presentation) {
+      const chapterIds = presentation.chapters.map((chapter) => chapter.id);
+      if (new Set(chapterIds).size !== chapterIds.length) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 的演示章节 ID 不得重复` });
       }
     }
   }
@@ -1189,20 +938,12 @@ export const workflowLibraryFileV3Schema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Workflow alias ${alias.aliasId} 非单跳或目标无效` });
     }
   }
-  for (const demo of library.demos) {
-    if (!workflowIds.has(demo.workflowId) || !catalogIds.has(demo.catalogScenarioId)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Demo ${demo.id} 引用无效` });
-    }
-  }
   for (const record of library.legacyCompatibility) {
     if (record.resolution === "catalog" && !catalogIds.has(record.targetCatalogScenarioId)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `兼容记录 ${record.legacySlug} 目标无效` });
     }
     if (record.resolution === "deferred" && !deferredObjectIds.has(record.deferredObjectId)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `兼容记录 ${record.legacySlug} 后置目标无效` });
-    }
-    if (record.demoId && !demoIds.has(record.demoId)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `兼容记录 ${record.legacySlug} Demo 无效` });
     }
   }
 });
@@ -1234,7 +975,6 @@ export const workflowLibraryPublicV3Schema = z.object({
   }).strict()),
   skins: z.array(workflowSkinPublicSchema),
   roleViews: z.array(workflowRoleViewPublicSchema),
-  demos: z.array(demoPublicEvidenceSchema),
   aliases: z.array(z.discriminatedUnion("resolution", [
     z.object({
       legacySlug: idSchema,
@@ -1261,5 +1001,3 @@ export type WorkflowTriggerMode = z.infer<typeof workflowTriggerModeSchema>;
 export type WorkflowDefinitionRecord = z.infer<typeof workflowDefinitionRecordSchema>;
 export type CatalogScenarioRecord = z.infer<typeof catalogScenarioRecordSchema>;
 export type CatalogScenarioPublic = z.infer<typeof catalogScenarioPublicSchema>;
-export type DemoManifestRecord = z.infer<typeof demoManifestRecordSchema>;
-export type DemoPublicEvidence = z.infer<typeof demoPublicEvidenceSchema>;

@@ -16,7 +16,6 @@ import { apiUrl } from "@/lib/apiBase";
 import App from "@/App";
 
 const SessionSharePage = lazy(() => import("@/components/SessionSharePage").then(m => ({ default: m.SessionSharePage })));
-const WorkflowReplayPage = lazy(() => import("@/components/WorkflowReplayPage").then(m => ({ default: m.WorkflowReplayPage })));
 
 /**
  * 注册模式判定：支持 path `/signup` 与 query `?signup`（官网 CTA 两种链接形态都兼容；
@@ -32,13 +31,6 @@ function initialSignupMode(): boolean {
 function currentShareToken(): string | null {
   const match = window.location.pathname.match(/^\/share\/([^/?#]+)$/);
   return match ? decodeURIComponent(match[1]) : null;
-}
-
-function currentWorkflowReplayReference(): { kind: "replayId" | "token"; value: string } | null {
-  const replay = window.location.pathname.match(/^\/workflow-replays\/([A-Za-z0-9_-]+)$/);
-  if (replay) return { kind: "replayId", value: decodeURIComponent(replay[1]) };
-  const token = window.location.pathname.match(/^\/workflow-demo-share\/([A-Za-z0-9_-]+)$/);
-  return token ? { kind: "token", value: decodeURIComponent(token[1]) } : null;
 }
 
 function FullscreenSpinner() {
@@ -95,7 +87,6 @@ export function AuthGate() {
   const [signupMode, setSignupMode] = useState(initialSignupMode);
   const [signupEnabled, setSignupEnabled] = useState<boolean | null>(null);
   const shareToken = currentShareToken();
-  const workflowReplayReference = currentWorkflowReplayReference();
 
   const switchToLogin = () => {
     // 清掉 /signup 路径与 utm 参数，回到干净登录页
@@ -104,7 +95,7 @@ export function AuthGate() {
   };
 
   useEffect(() => {
-    if (isLoading || !authEnabled || isAuthenticated || shareToken || workflowReplayReference) return;
+    if (isLoading || !authEnabled || isAuthenticated || shareToken) return;
 
     let cancelled = false;
     fetch(apiUrl("/api/signup/status"))
@@ -118,15 +109,7 @@ export function AuthGate() {
     return () => {
       cancelled = true;
     };
-  }, [authEnabled, isAuthenticated, isLoading, shareToken, workflowReplayReference]);
-
-  if (workflowReplayReference) {
-    return (
-      <Suspense fallback={<FullscreenSpinner />}>
-        <WorkflowReplayPage reference={workflowReplayReference} />
-      </Suspense>
-    );
-  }
+  }, [authEnabled, isAuthenticated, isLoading, shareToken]);
 
   if (shareToken) {
     return (

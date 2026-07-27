@@ -104,18 +104,10 @@ export function MobileLayout(props: LayoutProps) {
   const handleStartWorkflow = useCallback((
     message: string,
     scenario: WorkflowOnboardingContext["scenario"],
-    options?: { isolatedDemo?: boolean },
   ) => {
     if (loading) return;
     setActiveWorkflow({
       scenario,
-      ...(options?.isolatedDemo ? {
-        demoLaunch: {
-          catalogScenarioId: scenario.id,
-          idempotencyKey: crypto.randomUUID?.()
-            ?? `workflow-demo-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        },
-      } : {}),
     });
     newPersonalSession();
     setInput(message);
@@ -478,7 +470,6 @@ export function MobileLayout(props: LayoutProps) {
             onOpenCronWizard={() => { setActiveTab("cron"); setSheetOpen(true); }}
             onOpenExampleDemo={() => { setActiveTab("capabilities"); setSheetOpen(true); }}
             onStartWorkflow={(message, context) => handleStartWorkflow(message, context.scenario)}
-            onOpenWorkflowReplay={(sharePath) => window.location.assign(sharePath)}
             onConnectWorkflow={(context) => {
               setActiveWorkflow(context);
               setActiveTab("capabilities");

@@ -7,10 +7,9 @@ import {
 
 function ctaFor(
   readiness: CatalogScenarioPublic["readiness"],
-  hasPublishedDemo: boolean,
 ): CatalogScenarioPublic["cta"] {
   if (readiness === "D0_CURRENT") {
-    return { primary: hasPublishedDemo ? "用示例数据体验" : "立即试一试" };
+    return { primary: "立即试一试" };
   }
   if (readiness === "D1_CONNECTOR") {
     return { primary: "接入我的系统", secondary: "查看工作流" };
@@ -20,9 +19,8 @@ function ctaFor(
 
 function startModeFor(
   readiness: CatalogScenarioPublic["readiness"],
-  hasPublishedDemo: boolean,
 ): CatalogScenarioPublic["launch"]["startMode"] {
-  if (readiness === "D0_CURRENT") return hasPublishedDemo ? "replay" : "chat";
+  if (readiness === "D0_CURRENT") return "chat";
   if (readiness === "D1_CONNECTOR") return "connector";
   return "diagnosis";
 }
@@ -69,12 +67,7 @@ export function projectWorkflowLibraryPublic(
       }
       const launch: CatalogScenarioPublic["launch"] = {
         sampleAvailable: false,
-        isolatedDemoAvailable: workflow.readiness !== "D0_CURRENT"
-          && library.demos.some((demo) => (
-            demo.id === scenario.internal.defaultDemoId
-            && demo.environment.kind === "isolated_stateful"
-          )),
-        startMode: startModeFor(workflow.readiness, false),
+        startMode: startModeFor(workflow.readiness),
         starterMessage: `请启动「${scenario.public.title}」。先说明当前可直接完成的范围，以及需要我提供哪些资料；不要假设已经连接未配置的系统。`,
       };
       if (scenario.public.launch.inputHint) launch.inputHint = scenario.public.launch.inputHint;
@@ -108,10 +101,7 @@ export function projectWorkflowLibraryPublic(
         launch,
         primaryType: workflow.primaryType,
         readiness: workflow.readiness,
-        cta: ctaFor(workflow.readiness, false),
-        demo: {
-          evidenceLevel: "design_only",
-        },
+        cta: ctaFor(workflow.readiness),
         ...(scenario.public.presentation ? {
           presentation: {
             version: scenario.public.presentation.version,
@@ -257,8 +247,6 @@ export function projectWorkflowLibraryPublic(
             : "本岗位以查看和协作为主",
         }));
       }),
-    // 公开运行事实只由 Server 在查询时从不可变 WorkflowDemoStore 动态注入。
-    demos: [],
     aliases: library.scenarioAliases.map((alias) => {
       const roleId = alias.roleViewId ? roleIdByRoleViewId.get(alias.roleViewId) : undefined;
       if (alias.roleViewId && !roleId) throw new Error(`旧入口 ${alias.legacySlug} 角色视图无效`);

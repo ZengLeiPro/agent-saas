@@ -1,12 +1,7 @@
 import type { CatalogScenarioPublic, ScenarioItem } from "@agent/shared";
-import {
-  abandonWorkflowDemoLaunch,
-  startWorkflowDemo,
-} from "@/lib/workflowDemoApi";
 
 export type WorkflowOnboardingAction =
   | "chat"
-  | "replay"
   | "connector"
   | "diagnosis"
   | "cron"
@@ -22,14 +17,9 @@ export interface WorkflowScheduleProof {
 export interface WorkflowOnboardingContext {
   scenario: Pick<
     CatalogScenarioPublic,
-    "id" | "workflowId" | "title" | "primaryType" | "readiness" | "launch" | "cta" | "demo"
+    "id" | "workflowId" | "title" | "primaryType" | "readiness" | "launch" | "cta"
   >;
   schedule?: WorkflowScheduleProof;
-  /** 用户真正发送起手指令时才初始化，避免仅浏览目录就留下孤儿 run。 */
-  demoLaunch?: {
-    catalogScenarioId: string;
-    idempotencyKey: string;
-  };
 }
 
 export interface WorkflowOnboardingStep {
@@ -47,55 +37,16 @@ export interface WorkflowOnboardingPlan {
 
 /** 只有发送动作真实成功后才推进首日引导；预填、点 CTA 或失败都不记作已体验。 */
 export async function sendWorkflowExperience(
-  sendMessage: (options?: {
-    workflowDemo?: { runId: string; eventId: string };
-  }) => Promise<void>,
+  sendMessage: () => Promise<void>,
   input: string,
   context: WorkflowOnboardingContext | null,
   eventTarget: Pick<Window, "dispatchEvent"> = window,
 ): Promise<void> {
-  const isSelectedWorkflowStart = context !== null
-    && input.trim() === context.scenario.launch.starterMessage.trim();
-  const workflowDemo = isSelectedWorkflowStart && context?.demoLaunch
-    ? await startWorkflowDemo(
-      context.demoLaunch.catalogScenarioId,
-      context.demoLaunch.idempotencyKey,
-    )
-    : undefined;
-  try {
-    await sendMessage(workflowDemo ? { workflowDemo } : undefined);
-  } catch (error) {
-    if (workflowDemo) {
-      await abandonWorkflowDemoLaunch(workflowDemo.runId).catch(() => undefined);
-    }
-    throw error;
-  }
-  if (!context || !isSelectedWorkflowStart) return;
+  await sendMessage();
+  if (!context || input.trim() !== context.scenario.launch.starterMessage.trim()) return;
   eventTarget.dispatchEvent(new CustomEvent("kaiyan:workflow-experience-opened", {
     detail: { workflowId: context.scenario.workflowId },
   }));
-}
-
-function publishedReplay(
-  scenario: WorkflowOnboardingContext["scenario"],
-): WorkflowOnboardingStep | null {
-  if (
-    scenario.demo.evidenceLevel !== "workflow_replay"
-    || !scenario.demo.sharePath
-  ) {
-    return null;
-  }
-  return {
-    action: "replay",
-    title: scenario.primaryType === "WATCH"
-      ? "先看正常与异常两个巡检周期"
-      : scenario.primaryType === "ACT"
-        ? "先看系统写入与动作后回读"
-        : scenario.primaryType === "LOOP"
-          ? "先看等待、恢复与业务终态"
-          : "先看示例成果与核验证据",
-    cta: "查看真实回放",
-  };
 }
 
 function detailStep(
@@ -122,12 +73,12 @@ function d0LaunchStep(
       action: "chat",
       title: scenario.primaryType === "CREATE"
         ? "用示例数据产出并核验一份成果"
-        : "用示例数据启动这条工作流",
+        : "用示例数据了解这条工作流",
       cta: scenario.cta.primary,
     };
   }
   if (scenario.launch.startMode === "replay") {
-    return publishedReplay(scenario) ?? detailStep(scenario);
+    return detailStep(scenario);
   }
   // D0 与 connector/diagnosis 组合代表数据契约不一致，保守退回详情，不扩大承诺。
   return detailStep(scenario);
@@ -150,12 +101,11 @@ export function buildWorkflowOnboardingPlan(
   context: WorkflowOnboardingContext,
 ): WorkflowOnboardingPlan {
   const { scenario } = context;
-  const replay = publishedReplay(scenario);
   const detail = detailStep(scenario);
 
   if (scenario.readiness === "D2_PROJECT") {
     return {
-      experience: replay ?? detail,
+      experience: detail,
       activate: {
         action: "diagnosis",
         title: "确认现场系统、权限和项目集成边界",
@@ -172,7 +122,7 @@ export function buildWorkflowOnboardingPlan(
 
   if (scenario.readiness === "D1_CONNECTOR") {
     return {
-      experience: replay ?? detail,
+      experience: detail,
       activate: {
         action: "connector",
         title: "接入账号并确认最小权限范围",
@@ -212,10 +162,10 @@ export function buildWorkflowOnboardingPlan(
           action: "chat",
           title: scenario.primaryType === "CREATE"
             ? "换一个真实对象产出并核验成果"
-            : "换一个隔离业务对象继续试跑",
+            : "换一个真实业务对象继续执行",
           cta: "开始真实任务",
         }
-      : replay ?? detail,
+      : detail,
     verify: {
       action: "detail",
       title: scenario.primaryType === "CREATE"

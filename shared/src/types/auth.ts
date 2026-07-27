@@ -8,6 +8,8 @@ export interface UserPreferences {
   authorizationModeEnabled?: boolean;
   /** 会话列表是否显示头像；false（默认）时列表使用紧凑单行布局。 */
   showSessionListAvatar?: boolean;
+  /** 当前用户新建会话时默认使用的模型引用（group/model）。 */
+  defaultModel?: string;
   /** 当前激活岗位包，用于开箱包推荐与岗位切换器。 */
   activeRoleId?: string;
   /** 用户选择或系统推断的业态偏好，用于推荐排序。 */

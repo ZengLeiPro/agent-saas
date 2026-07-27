@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getPublicModelList,
   getTenantPublicModelList,
+  getUserPublicModelList,
   isModelAllowedForTenant,
   resolveContextAccountingFromModels,
   resolveModelRef,
@@ -361,6 +362,56 @@ describe('OpenAI-only model resolver', () => {
         requireDingtalkBinding: false,
       },
     }, 'openai-agents/doubao')).toBe(false);
+    expect(isModelAllowedForTenant(modelsConfig, {
+      features: {
+        filesEnabled: true,
+        cronEnabled: true,
+        mcpEnabled: true,
+        customSkillsEnabled: true,
+        debugModeAllowed: false,
+        autoCompactEnabled: false,
+      },
+      quotas: {},
+      models: {
+        allowedModels: [],
+        allowUserModelSwitch: true,
+        showGroupNames: false,
+        displayOverrides: { 'openai-agents/doubao': { displayName: '' } },
+      },
+      mcp: {
+        allowTenantServers: true,
+        allowGlobalServers: true,
+        defaultEnabledServerIds: [],
+      },
+      branding: {},
+      personalization: DEFAULT_TENANT_SETTINGS.personalization,
+      security: {
+        requireDingtalkBinding: false,
+      },
+    }, 'openai-agents/doubao')).toBe(false);
+  });
+
+  it('applies a valid user default and falls back when the preference is no longer selectable', () => {
+    const tenantSettings = {
+      ...DEFAULT_TENANT_SETTINGS,
+      models: {
+        ...DEFAULT_TENANT_SETTINGS.models,
+        allowedModels: ['openai-agents/doubao', 'openai-agents/kimi'],
+        defaultModel: 'openai-agents/doubao',
+        allowUserModelSwitch: true,
+      },
+    };
+
+    expect(getUserPublicModelList(
+      modelsConfig,
+      tenantSettings,
+      'openai-agents/kimi',
+    ).default).toBe('openai-agents/kimi');
+    expect(getUserPublicModelList(
+      modelsConfig,
+      tenantSettings,
+      'openai-agents/removed',
+    ).default).toBe('openai-agents/doubao');
   });
 
   it('propagates tenant showContextTokens policy to public model list', () => {

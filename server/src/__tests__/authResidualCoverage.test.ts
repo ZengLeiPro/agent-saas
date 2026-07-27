@@ -38,6 +38,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { JwtPayload } from '../auth/types.js';
+import type { ModelsConfig } from '../app/config.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { TenantStore } from '../data/tenants/store.js';
 import { UserStore } from '../data/users/store.js';
@@ -65,6 +66,20 @@ class CaptureSender implements SmsSender {
   }
 }
 
+const MODELS_CONFIG: ModelsConfig = {
+  default: 'openai-agents/doubao',
+  allowCrossGroupSwitch: true,
+  groups: [{
+    id: 'openai-agents',
+    name: 'OpenAI Agents',
+    apiKey: 'sk-test',
+    models: [
+      { id: 'doubao', name: 'Doubao', value: 'doubao' },
+      { id: 'kimi', name: 'Kimi', value: 'kimi' },
+    ],
+  }],
+};
+
 interface RigOptions {
   /**
    * 短信验证码服务配置：
@@ -86,6 +101,7 @@ interface TestRig {
     wainUser: UserInfo;
   };
   userStore: UserStore;
+  tenantStore: TenantStore;
   sender: CaptureSender;
   loginLogFilePath: string;
   avatarsDir: string;
@@ -147,6 +163,7 @@ async function makeRig(options: RigOptions = {}): Promise<TestRig> {
     loginLogFilePath,
     agentCwd: join(tmpRoot, 'workspaces'),
     sharedDir: join(tmpRoot, 'shared'),
+    modelsConfig: MODELS_CONFIG,
     ...(options.sms === false
       ? {}
       : {
@@ -169,6 +186,7 @@ async function makeRig(options: RigOptions = {}): Promise<TestRig> {
   return {
     users: { superAdmin, pantheonStaff, wainAdmin, wainUser },
     userStore,
+    tenantStore,
     sender,
     loginLogFilePath,
     avatarsDir,
@@ -513,6 +531,34 @@ describe('PATCH /me/preferences', () => {
     expect(emptyRole.status).toBe(400);
     // 副作用断言：非法请求未写库
     expect(h.userStore.findById(h.users.wainUser.id)?.preferences?.activeRoleId).toBeUndefined();
+  });
+
+  it('默认模型必须在当前组织可选范围内', async () => {
+    h.setCaller(h.users.wainUser);
+    await h.tenantStore.updateSettings('wain', {
+      models: {
+        allowedModels: ['openai-agents/kimi'],
+        defaultModel: 'openai-agents/kimi',
+        allowUserModelSwitch: true,
+      },
+    });
+
+    const rejected = await h.request('/api/auth/me/preferences',
+      jsonInit('PATCH', { defaultModel: 'openai-agents/doubao' }));
+    expect(rejected.status).toBe(400);
+    await expect(rejected.json()).resolves.toMatchObject({
+      error: '默认模型不在当前用户可选模型范围内',
+    });
+    expect(h.userStore.findById(h.users.wainUser.id)?.preferences?.defaultModel).toBeUndefined();
+
+    const accepted = await h.request('/api/auth/me/preferences',
+      jsonInit('PATCH', { defaultModel: 'openai-agents/kimi' }));
+    expect(accepted.status).toBe(200);
+    await expect(accepted.json()).resolves.toMatchObject({
+      preferences: { defaultModel: 'openai-agents/kimi' },
+    });
+    expect(h.userStore.findById(h.users.wainUser.id)?.preferences?.defaultModel)
+      .toBe('openai-agents/kimi');
   });
 
   it('200：增量合并落盘；未知键被 zod 剥离不落库', async () => {

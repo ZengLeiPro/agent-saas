@@ -16,6 +16,7 @@ import { EntityIcons } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import {
   Dialog,
@@ -35,7 +36,7 @@ import { authFetch } from "@/lib/authFetch";
 import { TOKEN_KEY } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { fetchAgentProfile, saveUserPreferences, updateAgentProfile, uploadAgentAvatar } from "@agent/shared";
-import type { AgentProfileDetail, SidebarLayoutPref } from "@agent/shared";
+import type { AgentProfileDetail, ModelList, SidebarLayoutPref } from "@agent/shared";
 import type { SettingsSectionConfig, SettingsSectionGroup, SettingsSectionId } from "@/types/settings";
 
 export const SETTINGS_SECTIONS: SettingsSectionConfig[] = [
@@ -183,17 +184,46 @@ function GeneralSection() {
   // 授权模式对所有用户开放（2026-07-02 起），每个用户自行切换。
   const { user, updatePreferences } = useAuth();
   const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
+  const preferredDefaultModel = user?.preferences?.defaultModel;
+  const [modelList, setModelList] = useState<ModelList | null>(null);
   const [draftAuthorizationMode, setDraftAuthorizationMode] = useState(authorizationModeEnabled);
+  const [draftDefaultModel, setDraftDefaultModel] = useState(preferredDefaultModel ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    authFetch("/api/models")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("加载可选模型失败");
+        return response.json() as Promise<ModelList>;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        setModelList(data);
+        setDraftDefaultModel(data.default);
+      })
+      .catch(() => {
+        if (!cancelled) setModelList(null);
+      });
+    return () => { cancelled = true; };
+  }, [preferredDefaultModel]);
+
+  useEffect(() => {
     setDraftAuthorizationMode(authorizationModeEnabled);
+    setDraftDefaultModel(modelList?.default ?? "");
     setSaved(false);
-  }, [authorizationModeEnabled]);
+  }, [authorizationModeEnabled, modelList?.default]);
+
+  const currentDefaultModel = modelList?.default ?? "";
+  const hasChanges = draftAuthorizationMode !== authorizationModeEnabled
+    || (!!draftDefaultModel && draftDefaultModel !== currentDefaultModel);
 
   const handleSave = useCallback(async () => {
-    const next = { authorizationModeEnabled: draftAuthorizationMode };
+    const next = {
+      authorizationModeEnabled: draftAuthorizationMode,
+      ...(draftDefaultModel ? { defaultModel: draftDefaultModel } : {}),
+    };
     setSaving(true);
     setSaved(false);
     updatePreferences(next);
@@ -203,15 +233,21 @@ function GeneralSection() {
       if (!savedPreferences) throw new Error("保存失败");
       updatePreferences(savedPreferences);
       if (savedPreferences.authorizationModeEnabled !== true) clearRunShellApprovalStorage();
+      if (savedPreferences.defaultModel) {
+        window.dispatchEvent(new CustomEvent("agent:default-model-changed", {
+          detail: { model: savedPreferences.defaultModel },
+        }));
+      }
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (error) {
-      updatePreferences({ authorizationModeEnabled });
+      updatePreferences({ authorizationModeEnabled, defaultModel: preferredDefaultModel });
+      setDraftDefaultModel(modelList?.default ?? "");
       window.alert(error instanceof Error ? error.message : "保存失败");
     } finally {
       setSaving(false);
     }
-  }, [authorizationModeEnabled, draftAuthorizationMode, updatePreferences]);
+  }, [authorizationModeEnabled, draftAuthorizationMode, draftDefaultModel, modelList?.default, preferredDefaultModel, updatePreferences]);
 
   return (
     <PlaceholderSection
@@ -220,7 +256,7 @@ function GeneralSection() {
       actions={(
         <>
           {saved && <span className="text-sm text-success">已保存</span>}
-          <Button onClick={() => { void handleSave(); }} disabled={saving || draftAuthorizationMode === authorizationModeEnabled}>
+          <Button onClick={() => { void handleSave(); }} disabled={saving || !hasChanges}>
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             保存
           </Button>
@@ -229,6 +265,29 @@ function GeneralSection() {
     >
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-foreground">新建会话默认模型</div>
+            <div className="mt-1 text-sm leading-6 text-muted-foreground">
+              仅可选择当前组织允许你使用的模型；已存在会话仍保留各自的模型设置。
+            </div>
+          </div>
+          <Select value={draftDefaultModel} onValueChange={(value) => { setDraftDefaultModel(value); setSaved(false); }} disabled={saving || !modelList}>
+            <SelectTrigger className="w-[260px] max-w-full" aria-label="新建会话默认模型">
+              <SelectValue placeholder={modelList ? "请选择模型" : "加载中..."} />
+            </SelectTrigger>
+            <SelectContent>
+              {modelList?.groups.flatMap((group) => group.models.map((model) => {
+                const ref = `${group.id}/${model.id}`;
+                return (
+                  <SelectItem key={ref} value={ref}>
+                    {modelList.showGroupNames ? `${group.name} / ${model.name}` : model.name}
+                  </SelectItem>
+                );
+              }))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center justify-between gap-4 border-t pt-4">
           <div className="min-w-0">
             <div className="text-sm font-semibold text-foreground">授权模式</div>
             <div className="mt-1 text-sm leading-6 text-muted-foreground">

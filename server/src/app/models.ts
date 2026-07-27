@@ -192,6 +192,18 @@ export function getTenantPublicModelList(
   };
 }
 
+export function getUserPublicModelList(
+  modelsConfig: ModelsConfig,
+  tenantSettings: TenantSettings | undefined,
+  preferredDefault?: string,
+): PublicModelList {
+  const modelList = getTenantPublicModelList(modelsConfig, tenantSettings);
+  if (preferredDefault && isModelAllowedForTenant(modelsConfig, tenantSettings, preferredDefault)) {
+    modelList.default = preferredDefault;
+  }
+  return modelList;
+}
+
 export function isModelAllowedForTenant(
   modelsConfig: ModelsConfig,
   tenantSettings: TenantSettings | undefined,
@@ -204,13 +216,10 @@ export function isModelAllowedForTenant(
   const exists = modelsConfig.groups.some((g) => g.id === groupId && g.models.some((m) => m.id === modelId));
   if (!exists) return false;
   if (!tenantSettings) return true;
-  const allowed = tenantSettings.models.allowedModels;
-  if (allowed.length > 0 && !allowed.includes(ref)) return false;
-  if (!tenantSettings.models.allowUserModelSwitch) {
-    const tenantList = getTenantPublicModelList(modelsConfig, tenantSettings);
-    return ref === tenantList.default;
-  }
-  return true;
+  const selectableModels = getTenantPublicModelList(modelsConfig, tenantSettings);
+  return selectableModels.groups.some((group) =>
+    group.models.some((model) => `${group.id}/${model.id}` === ref),
+  );
 }
 
 /**

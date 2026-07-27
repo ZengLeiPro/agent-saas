@@ -36,7 +36,7 @@ describe('preferencesApi.saveUserPreferences', () => {
   });
 
   it('PATCH /api/auth/me/preferences，body 为 preferences，返回 data.preferences', async () => {
-    const prefs = { theme: 'dark' } as never;
+    const prefs = { defaultModel: 'openai-agents/kimi' };
     mockAuthFetch.mockResolvedValue(ok({ preferences: prefs }));
     await expect(saveUserPreferences(prefs)).resolves.toEqual(prefs);
 

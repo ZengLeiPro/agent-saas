@@ -8,7 +8,7 @@ import type { TitleGeneratorConfig } from "../agent/titleGenerator.js";
 import type { GuardrailModelConfig } from "../agent/guardrail.js";
 import {
   getPublicModelList,
-  getTenantPublicModelList,
+  getUserPublicModelList,
   resolveContextAccountingFromModels,
   resolveModelRef,
 } from "./models.js";
@@ -293,7 +293,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       const tenantSettings = req.user?.tenantId
         ? runtime.tenantStore?.getSettings(req.user.tenantId)
         : undefined;
-      res.json(getTenantPublicModelList(config.models!, tenantSettings));
+      const preferredDefault = req.user && runtime.userStore
+        ? runtime.userStore.findById(req.user.sub)?.preferences?.defaultModel
+        : undefined;
+      res.json(getUserPublicModelList(config.models!, tenantSettings, preferredDefault));
     });
     app.use(
       "/api/admin/models",
@@ -613,6 +616,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         mcpOAuthService: runtime.mcpOAuthService,
         signupConfigStore: runtime.signupConfigStore,
         secretVault: runtime.secretVault,
+        modelsConfig: config.models,
       }),
     );
     // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES

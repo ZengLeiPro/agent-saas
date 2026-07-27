@@ -17,6 +17,8 @@ import {
   requireSuperAdmin,
 } from "../auth/platformGovernance.js";
 import type { JwtPayload } from "../auth/types.js";
+import { isModelAllowedForTenant } from "../app/models.js";
+import type { ModelsConfig } from "../types/index.js";
 import type { UserStore } from "../data/users/store.js";
 import type { UserRecord } from "../data/users/types.js";
 import type { TenantStore } from "../data/tenants/store.js";
@@ -143,6 +145,7 @@ const updatePreferencesSchema = z.object({
   sidebarLayout: z.enum(["double", "single"]).optional(),
   authorizationModeEnabled: z.boolean().optional(),
   showSessionListAvatar: z.boolean().optional(),
+  defaultModel: z.string().min(1).optional(),
   activeRoleId: z.string().min(1).optional(),
   industryHint: z.enum(["manufacturing", "trade", "retail", "service", "export", "ecommerce"]).optional(),
 });
@@ -336,6 +339,8 @@ export interface AuthRouterDeps {
   secretVault?: SecretVault;
   /** 测试注入：覆盖按配置构建的验证码服务。 */
   loginCodeService?: VerificationCodeService;
+  /** 平台模型配置；用于校验用户默认模型不能越过组织可选模型硬约束。 */
+  modelsConfig?: ModelsConfig;
 }
 
 function avatarUrl(
@@ -366,6 +371,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     signupConfigStore,
     secretVault,
     loginCodeService,
+    modelsConfig,
   } = deps;
   const router = Router();
 
@@ -1586,6 +1592,13 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       if (!parsed.success) {
         res.status(400).json({ error: parsed.error.issues[0].message });
         return;
+      }
+      if (parsed.data.defaultModel !== undefined) {
+        const tenantSettings = tenantStore?.getSettings(req.user.tenantId);
+        if (!modelsConfig || !isModelAllowedForTenant(modelsConfig, tenantSettings, parsed.data.defaultModel)) {
+          res.status(400).json({ error: "默认模型不在当前用户可选模型范围内" });
+          return;
+        }
       }
       const updated = await userStore.updatePreferences(
         req.user.sub,

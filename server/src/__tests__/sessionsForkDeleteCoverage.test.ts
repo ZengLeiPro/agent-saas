@@ -420,6 +420,52 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
     expect(otherCalls).toEqual([]);
   });
 
+  it('active-streams：批量查询去重并隐藏无权会话，非法参数返回 400', async () => {
+    const ownedActive = await writeSession(OWNER);
+    const ownedInactive = await writeSession(OWNER);
+    const foreign = await writeSession(OTHER);
+    const calls: string[] = [];
+    const { baseUrl } = await startServer(OWNER, {
+      getStreamStatus: async (id) => {
+        calls.push(id);
+        return id === ownedActive.sessionId
+          ? { active: true, streamId: 'stream-batch', runId: 'run-batch' }
+          : { active: false };
+      },
+    });
+
+    const response = await fetch(`${baseUrl}/api/sessions/active-streams`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionIds: [ownedActive.sessionId, ownedInactive.sessionId, foreign.sessionId, ownedActive.sessionId],
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      sessions: [
+        { sessionId: ownedActive.sessionId, active: true, streamId: 'stream-batch', runId: 'run-batch' },
+        { sessionId: ownedInactive.sessionId, active: false },
+        { sessionId: foreign.sessionId, active: false },
+      ],
+    });
+    expect(calls).toEqual([ownedActive.sessionId, ownedInactive.sessionId]);
+
+    for (const body of [
+      undefined,
+      { sessionIds: [] },
+      { sessionIds: ['not-a-uuid'] },
+      { sessionIds: Array.from({ length: 101 }, () => randomUUID()) },
+    ]) {
+      const invalid = await fetch(`${baseUrl}/api/sessions/active-streams`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      expect(invalid.status).toBe(400);
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // buildDingtalkSessionIndex（经 GET /sessions 触达）
   // ---------------------------------------------------------------------------

@@ -33,6 +33,8 @@ export interface SessionCallbacks {
   ) => void;
   /** 返回当前本地消息列表引用（用于 refresh 时保留本地流式尾部，见 mergeServerMessagesWithLocalTail） */
   getMessages?: () => MessageItem[];
+  /** 会话列表加载后，用服务端权威快照恢复所有可见会话的运行态。 */
+  onSessionsLoaded?: (sessions: ApiSessionListItem[]) => void;
   triggerScroll: () => void;
   cancelActiveStream: () => void;
   onLastRunState?: (
@@ -218,6 +220,7 @@ export function useSession(
 
           setSessions(merged);
           setHasMore(finalHasMore);
+          cbRef.current.onSessionsLoaded?.(merged);
         }
       } catch (err) {
         console.error("加载会话列表失败:", err);
@@ -244,6 +247,7 @@ export function useSession(
         const updated = [...sessionsRef.current, ...newSessions];
         setSessions(updated);
         setHasMore(data.hasMore ?? false);
+        cbRef.current.onSessionsLoaded?.(updated);
       }
     } catch (err) {
       console.error("加载更多会话失败:", err);

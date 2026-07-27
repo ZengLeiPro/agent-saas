@@ -25,12 +25,32 @@ export function mergeServerMessagesWithLocalTail(
 
   const anchor = local[anchorIdx];
   if (anchor.type !== 'text') return server;
+  const localTailAfterAnchor = local.slice(anchorIdx + 1);
   const anchorContent = anchor.content;
 
-  const serverHasAnchor = server.some(
-    (m) => m.type === 'text' && m.content === anchorContent,
-  );
-  if (serverHasAnchor) return server;
+  // 空流式占位不应作为消息追加，但仍需保留其后的 tool/subagent 等本地尾部。
+  if (anchorContent.trim().length === 0) {
+    return localTailAfterAnchor.length === 0
+      ? server
+      : [...server, ...localTailAfterAnchor];
+  }
+
+  // 只检查服务端最后一条 text，避免历史中的同文消息误吞当前回复。
+  let lastServerTextContent: string | undefined;
+  for (let i = server.length - 1; i >= 0; i--) {
+    const message = server[i];
+    if (message.type === 'text') {
+      lastServerTextContent = message.content;
+      break;
+    }
+  }
+
+  // startsWith 同时覆盖全文相等；不做 trim/模糊匹配，避免误吞不同消息。
+  if (lastServerTextContent?.startsWith(anchorContent)) {
+    return localTailAfterAnchor.length === 0
+      ? server
+      : [...server, ...localTailAfterAnchor];
+  }
 
   return [...server, ...local.slice(anchorIdx)];
 }

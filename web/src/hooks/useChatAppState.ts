@@ -495,6 +495,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     lastEventCursor?: string | null;
   };
   const activeRunsBySession = useRef<Map<string, SessionRuntime>>(new Map());
+  /** 每次实时 runtime 事件递增；批量 HTTP 快照不得覆盖请求发出后的新事件。 */
+  const runtimeVersionBySessionRef = useRef<Map<string, number>>(new Map());
   const [runningSessionIds, setRunningSessionIds] = useState<ReadonlySet<string>>(() => new Set());
 
   // ─── 消息可靠性：outbox 队列 + ACK 超时跟踪（2026-04-18）───
@@ -653,6 +655,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   /** Partial patch Map.get(sid)；若 sid === current,同步 ref（不动 setState 状态） */
   const patchSessionRuntime = useCallback((sid: string, patch: SessionRuntimePatch) => {
+    runtimeVersionBySessionRef.current.set(
+      sid,
+      (runtimeVersionBySessionRef.current.get(sid) ?? 0) + 1,
+    );
     const existing = activeRunsBySession.current.get(sid) ?? { status: 'idle' as const, attached: false };
     const next: SessionRuntime = { ...existing };
     if (patch.status !== undefined) next.status = patch.status;
@@ -690,6 +696,70 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (patch.attached !== undefined) wsAttachedRef.current = patch.attached;
     }
     return next;
+  }, []);
+
+  const runtimeHydrationNonceRef = useRef(0);
+  const hydrateSessionRuntimeSnapshot = useCallback(async (sessions: ApiSessionListItem[]) => {
+    const nonce = ++runtimeHydrationNonceRef.current;
+    const sessionIds = [...new Set(sessions.map((item) => item.sessionId).filter(Boolean))];
+    const requestedVersions = new Map(
+      sessionIds.map((sessionId) => [sessionId, runtimeVersionBySessionRef.current.get(sessionId) ?? 0]),
+    );
+    if (sessionIds.length === 0) {
+      setRunningSessionIds(new Set());
+      return;
+    }
+
+    try {
+      const batches: string[][] = [];
+      for (let offset = 0; offset < sessionIds.length; offset += 100) {
+        batches.push(sessionIds.slice(offset, offset + 100));
+      }
+      const responses = await Promise.all(batches.map(async (batch) => {
+        const response = await authFetch('/api/sessions/active-streams', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionIds: batch }),
+        });
+        if (!response.ok) throw new Error(`active-streams ${response.status}`);
+        return response.json() as Promise<{
+          sessions?: Array<{ sessionId: string; active: boolean; streamId?: string; runId?: string }>;
+        }>;
+      }));
+      if (runtimeHydrationNonceRef.current !== nonce) return;
+
+      const snapshotStatus = new Map<string, boolean>();
+      for (const data of responses) {
+        for (const item of data.sessions ?? []) {
+          if ((runtimeVersionBySessionRef.current.get(item.sessionId) ?? 0) !== requestedVersions.get(item.sessionId)) {
+            continue;
+          }
+          snapshotStatus.set(item.sessionId, item.active);
+          if (!item.active) {
+            activeRunsBySession.current.delete(item.sessionId);
+            continue;
+          }
+          const existing = activeRunsBySession.current.get(item.sessionId);
+          activeRunsBySession.current.set(item.sessionId, {
+            ...(existing ?? { attached: false }),
+            status: 'running',
+            streamId: item.streamId ?? existing?.streamId,
+            runId: item.runId ?? existing?.runId,
+            attached: existing?.attached ?? false,
+          });
+        }
+      }
+      setRunningSessionIds((current) => {
+        const next = new Set(current);
+        for (const [sessionId, active] of snapshotStatus) {
+          if (active) next.add(sessionId);
+          else next.delete(sessionId);
+        }
+        return next;
+      });
+    } catch {
+      // 会话列表仍可正常展示；WS session_status 与当前会话探活继续兜底。
+    }
   }, []);
 
   /** 用户点击"停止"按钮：发送 abort，等 done 到达后才恢复 UI */
@@ -806,12 +876,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     resetMessages: msg.resetMessages,
     setMessages: msg.setMessages,
     getMessages: () => msg.messagesRef.current,
+    onSessionsLoaded: hydrateSessionRuntimeSnapshot,
     triggerScroll: msg.triggerScroll,
     cancelActiveStream: detachFromStream,
     onLastRunState: (sessionId: string, lastRunState: LastRunState) => {
       reconcileLastRunStateRef.current(sessionId, lastRunState);
     },
-  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream]);
+  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot]);
 
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId });
   const sessionRef = useRef(session); sessionRef.current = session;
@@ -1551,27 +1622,29 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const data = envelope.data as WsEvent;
       if (!data || !data.type) return;
 
-      // 追踪 eventId / cursor —— 同步写 ref 和 Map（Map 是切会话后 resume 的增量起点）
-      if (envelope.eventId != null) {
-        lastEventIdRef.current = envelope.eventId;
-        const currentSid = sessionIdRef.current;
-        if (currentSid) {
-          const existing = activeRunsBySession.current.get(currentSid);
-          activeRunsBySession.current.set(currentSid, {
-            ...(existing ?? { status: 'idle' as const, attached: false }),
-            lastEventId: envelope.eventId,
-          });
+      // 追踪 eventId / cursor。元数据事件可能属于后台会话，不能写进当前 UI 会话；
+      // 无 sessionId 的流事件则归属当前已 attach 的会话。
+      const eventSessionId = 'sessionId' in data && typeof data.sessionId === 'string'
+        ? data.sessionId
+        : wsLatestSessionIdRef.current.value ?? sessionIdRef.current;
+      if (envelope.eventId != null && eventSessionId) {
+        const existing = activeRunsBySession.current.get(eventSessionId);
+        activeRunsBySession.current.set(eventSessionId, {
+          ...(existing ?? { status: 'idle' as const, attached: false }),
+          lastEventId: envelope.eventId,
+        });
+        if (eventSessionId === sessionIdRef.current) {
+          lastEventIdRef.current = envelope.eventId;
         }
       }
-      if (envelope.eventCursor) {
-        lastEventCursorRef.current = envelope.eventCursor;
-        const currentSid = sessionIdRef.current;
-        if (currentSid) {
-          const existing = activeRunsBySession.current.get(currentSid);
-          activeRunsBySession.current.set(currentSid, {
-            ...(existing ?? { status: 'idle' as const, attached: false }),
-            lastEventCursor: envelope.eventCursor,
-          });
+      if (envelope.eventCursor && eventSessionId) {
+        const existing = activeRunsBySession.current.get(eventSessionId);
+        activeRunsBySession.current.set(eventSessionId, {
+          ...(existing ?? { status: 'idle' as const, attached: false }),
+          lastEventCursor: envelope.eventCursor,
+        });
+        if (eventSessionId === sessionIdRef.current) {
+          lastEventCursorRef.current = envelope.eventCursor;
         }
       }
 
@@ -2461,7 +2534,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // 3. shouldSkipReplay 改成基于 cursor 是否存在：有 cursor → 走增量 replay（skipReplay:false）,
   //    没 cursor（首次进入,只有 transcript）→ skipReplay:true。
   //    原实现固定看 lastEventIdRef===null,在 cursor 被切走清掉时永远走 skipReplay 那条死路。
-  const subscribeToActiveStream = useCallback(async (targetSessionId: string) => {
+  const subscribeToActiveStream = useCallback(async (
+    targetSessionId: string,
+    options?: { skipReplay?: boolean },
+  ) => {
     await sessionRef.current.loadDetailPromiseRef.current;
     if (sessionIdRef.current !== targetSessionId) return;
 
@@ -2503,8 +2579,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
     wsUserMsgIndexRef.current = -1;
 
-    // 有 cursor → 走增量 replay; 无 cursor → 跳过 replay（transcript 已覆盖历史）
-    const shouldSkipReplay = lastEventIdRef.current === null && !lastEventCursorRef.current;
+    // 刚加载过完整 transcript 时必须跳过旧 cursor replay；否则 snapshot 与 replay 会重叠。
+    // 纯 WS 断线重连不刷新 transcript，仍从 cursor 增量追帧。
+    const shouldSkipReplay = options?.skipReplay === true
+      || (lastEventIdRef.current === null && !lastEventCursorRef.current);
 
     // 不论 HTTP active 真假都发 resume：
     //   - 让服务端清理旧订阅,绑定新 ws → 当前 stream
@@ -2557,7 +2635,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     const targetId = session.sessionId;
 
     const checkActiveStream = () => {
-      void subscribeToActiveStreamRef.current(targetId);
+      void subscribeToActiveStreamRef.current(targetId, { skipReplay: true });
     };
 
     // 如果当前已经是 connected 状态，立即检测

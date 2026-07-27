@@ -2427,6 +2427,64 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     },
   );
 
+  const getAuthorizedStreamStatus = async (
+    req: Request,
+    sessionId: string,
+  ): Promise<{ active: boolean; streamId?: string; runId?: string }> => {
+    // stream-status 是探活接口：无权、不存在或隐藏的系统会话统一返回 inactive，
+    // 不泄露会话是否存在，也绝不查询底层运行态。
+    if (req.user) {
+      const userCwd = resolveUserCwd(agentCwd, {
+        id: req.user.sub,
+        username: req.user.username,
+        role: req.user.role,
+        tenantId: req.user.tenantId,
+      });
+      const transcriptPath = getTranscriptPath(userCwd, sessionId, reqTranscriptOwner(req.user));
+      const meta = await readSessionMeta(transcriptPath);
+      if (!canAccessSession(req.user, meta, options.userStore) || hidesMemoryPollFrom(req.user, meta)) {
+        return { active: false };
+      }
+    }
+
+    return options.getStreamStatus
+      ? options.getStreamStatus(sessionId)
+      : { active: false };
+  };
+
+  /**
+   * POST /api/sessions/active-streams
+   *
+   * 批量查询会话是否有活跃 Agent 流。用于刷新后恢复整个会话列表的运行态，
+   * 避免逐条请求；最多 100 个，会话归属口径与单会话接口一致。
+   */
+  router.post(
+    "/sessions/active-streams",
+    async (req: Request, res: Response) => {
+      try {
+        const rawSessionIds = (req.body as { sessionIds?: unknown } | undefined)?.sessionIds;
+        if (
+          !Array.isArray(rawSessionIds)
+          || rawSessionIds.length === 0
+          || rawSessionIds.length > 100
+          || rawSessionIds.some((sessionId) => typeof sessionId !== "string" || !isValidSessionId(sessionId))
+        ) {
+          res.status(400).json({ error: "sessionIds must contain 1 to 100 valid session IDs" });
+          return;
+        }
+
+        const sessionIds = [...new Set(rawSessionIds as string[])];
+        const sessions = await Promise.all(sessionIds.map(async (sessionId) => ({
+          sessionId,
+          ...await getAuthorizedStreamStatus(req, sessionId),
+        })));
+        res.json({ sessions });
+      } catch {
+        res.status(500).json({ error: "Internal server error" });
+      }
+    },
+  );
+
   /**
    * GET /api/sessions/:sessionId/stream-status
    *
@@ -2442,34 +2500,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
 
-        // 会话归属校验
-        // PR 7 P0-3 残余：admin 跨组织也被挡，但 stream-status 是探活轻量接口，
-        // 不暴露 403 区分 — 直接返回 active:false（与原非 admin 路径策略一致）
-        if (req.user) {
-          const userCwd = resolveUserCwd(agentCwd, {
-            id: req.user.sub,
-            username: req.user.username,
-            role: req.user.role,
-            tenantId: req.user.tenantId,
-          });
-          const transcriptPath = getTranscriptPath(userCwd, sessionId, reqTranscriptOwner(req.user));
-          const meta = await readSessionMeta(transcriptPath);
-          if (!canAccessSession(req.user, meta, options.userStore)) {
-            res.json({ active: false });
-            return;
-          }
-          if (
-            hidesMemoryPollFrom(req.user, meta)
-          ) {
-            res.json({ active: false });
-            return;
-          }
-        }
-
-        const status = options.getStreamStatus
-          ? await options.getStreamStatus(sessionId)
-          : { active: false };
-        res.json(status);
+        res.json(await getAuthorizedStreamStatus(req, sessionId));
       } catch {
         res.status(500).json({ error: "Internal server error" });
       }

@@ -31,6 +31,21 @@ describe('mergeServerMessagesWithLocalTail', () => {
     expect(mergeServerMessagesWithLocalTail(server, local)).toBe(server);
   });
 
+  it('server 最后一条 text 扩展了本地流式前缀时不重复追加本地 text', () => {
+    const server = [user('s0', 'q'), text('line-1', 'abcdef')];
+    const local = [user('u0', 'q'), text('msg-1', 'abc')];
+    expect(mergeServerMessagesWithLocalTail(server, local)).toBe(server);
+  });
+
+  it('仅较早的 server text 匹配时仍保留本地尾部', () => {
+    const server = [text('line-1', 'abc'), text('line-2', '另一条回复')];
+    const local = [text('msg-1', 'abc')];
+    expect(mergeServerMessagesWithLocalTail(server, local)).toEqual([
+      ...server,
+      local[0],
+    ]);
+  });
+
   it('server 缺失本地尾部时，把锚点起的本地尾部追加到 server 末尾', () => {
     const server = [user('s0', 'q')];
     const local = [user('u0', 'q'), text('msg-1', '最后一句还没落盘')];
@@ -41,6 +56,29 @@ describe('mergeServerMessagesWithLocalTail', () => {
     ]);
     // 保留本地 id，不修改原数组
     expect(merged).not.toBe(server);
+  });
+
+  it.each(['', '   \n'])('空或纯空白流式 text（%j）不追加', (content) => {
+    const server = [user('s0', 'q')];
+    const local: MessageItem[] = [
+      user('u0', 'q'),
+      text('msg-1', content),
+    ];
+    expect(mergeServerMessagesWithLocalTail(server, local)).toBe(server);
+  });
+
+  it('server 覆盖本地 text 时仍保留锚点后的其他本地尾部 item', () => {
+    const server = [user('s0', 'q'), text('line-1', 'abcdef')];
+    const local = [
+      user('u0', 'q'),
+      text('msg-1', 'abc'),
+      file('msg-file'),
+    ];
+    expect(mergeServerMessagesWithLocalTail(server, local)).toEqual([
+      server[0],
+      server[1],
+      local[2],
+    ]);
   });
 
   it('锚点选取本地最后一条 text，其后的非 text 尾部也一并保留', () => {

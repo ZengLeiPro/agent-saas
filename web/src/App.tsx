@@ -78,7 +78,7 @@ function App() {
     handleDragOver, handleDragLeave, handleDrop,
     handlePermissionResponse, handleAskUserResponse,
     modelList, selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell,
-    tokenUsage, contextUsage, connectionState, refreshCurrentSession, resumeCurrentStream,
+    tokenUsage, contextUsage, connectionState, resumeCurrentStream,
     notifications, dismissNotification,
     lastMemoryRecall, dismissMemoryRecall, pluginInstallStatus,
     unreadAiReplySessionIds, runningSessionIds,
@@ -146,14 +146,14 @@ function App() {
 
   // iOS PWA 生命周期：后台恢复时刷新数据，进入后台时保存状态
   const onResume = useCallback(() => {
-    void refreshAll();
-    if (sessionId) {
+    // 运行中的会话只走 cursor replay；空闲会话由 refreshAll 的 session refresh 拉取 snapshot。
+    // 禁止同一时刻既刷新 transcript 又从旧 cursor replay，否则会重复追加同一批内容。
+    if (loading && sessionId) {
       void resumeCurrentStream();
+      return;
     }
-    if (!loading) {
-      refreshCurrentSession();
-    }
-  }, [loading, refreshCurrentSession, resumeCurrentStream, sessionId]);
+    void refreshAll();
+  }, [loading, resumeCurrentStream, sessionId]);
 
   const onSuspend = useCallback(() => {
     if (sessionId && messages.length > 0) {

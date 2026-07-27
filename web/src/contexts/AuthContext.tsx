@@ -5,7 +5,7 @@ import type { PlatformCapability, UserPreferences } from "@agent/shared";
 import { DEFAULT_TENANT_ID, clearGroupsCache } from "@agent/shared";
 import { setOnUnauthorized } from "@/lib/authFetch";
 import { wsClient } from "@/lib/wsClient";
-import { TOKEN_KEY, SESSION_STORAGE_KEY, INPUT_DRAFT_KEY } from "@/lib/constants";
+import { TOKEN_KEY, SESSION_STORAGE_KEY } from "@/lib/constants";
 import { authPreload } from "@/lib/preload";
 import { clearSessionListCache } from "@/lib/sessionListCache";
 import { clearAllMessageCache } from "@/lib/messageCache";
@@ -67,7 +67,6 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 function clearAccountScopedState(): void {
   localStorage.removeItem(SESSION_STORAGE_KEY);
-  localStorage.removeItem(INPUT_DRAFT_KEY);
   clearSessionListCache();
   clearUnreadAiReplyCache();
   void clearAllMessageCache();

@@ -35,7 +35,6 @@ export interface SessionCallbacks {
   getMessages?: () => MessageItem[];
   triggerScroll: () => void;
   cancelActiveStream: () => void;
-  clearComposer: () => void;
   onLastRunState?: (
     sessionId: string,
     lastRunState: NonNullable<ApiSessionDetail["lastRunState"]>,
@@ -759,7 +758,6 @@ export function useSession(
 
   const newSession = useCallback(() => {
     cbRef.current.cancelActiveStream();
-    cbRef.current.clearComposer();
     cbRef.current.resetMessages();
     isNewSessionRef.current = true;
     setSessionId(null);
@@ -777,7 +775,6 @@ export function useSession(
       }
 
       cbRef.current.cancelActiveStream();
-      cbRef.current.clearComposer();
       // 立即清空旧消息并切换 sessionId，避免短暂显示前一个会话的内容
       cbRef.current.resetMessages();
       setSessionId(id);

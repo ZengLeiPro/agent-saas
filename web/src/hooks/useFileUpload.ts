@@ -35,6 +35,7 @@ export interface FileUploadState {
   uploadError: string | null;
   dismissUploadError: () => void;
   isDragging: boolean;
+  replaceFiles: (files: UploadedFile[]) => void;
   removeFile: (index: number) => void;
   handleFileSelect: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
   handleDragOver: (event: DragEvent) => void;
@@ -57,6 +58,15 @@ export function useFileUpload(
 
   const dismissUploadError = useCallback(() => {
     setUploadError(null);
+  }, []);
+
+  const replaceFiles = useCallback((files: UploadedFile[]) => {
+    setUploadedFiles((previous) => {
+      revokeFilePreviews(previous);
+      return files;
+    });
+    setUploadError(null);
+    setIsDragging(false);
   }, []);
 
   const uploadedFilesRef = useRef<UploadedFile[]>([]);
@@ -261,6 +271,7 @@ export function useFileUpload(
     uploadError,
     dismissUploadError,
     isDragging,
+    replaceFiles,
     removeFile,
     handleFileSelect,
     handlePaste,

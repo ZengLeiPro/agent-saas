@@ -14,7 +14,13 @@ import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import { fetchAgentProfile, reportActivity } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
 import { saveSessionMessages } from "@/lib/messageCache";
-import { INPUT_DRAFT_KEY } from "@/lib/constants";
+import {
+  getComposerDraftScope,
+  loadComposerAttachments,
+  loadComposerText,
+  saveComposerAttachments,
+  saveComposerText,
+} from "@/lib/composerDraftStorage";
 import {
   getUnreadAiRepliesStorageKey,
   loadUnreadAiReplySessionIds,
@@ -302,22 +308,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const [trashPreviewSessionId, setTrashPreviewSessionId] = useState<string | null>(null);
   const isTrashPreview = trashPreviewSessionId !== null;
 
-  // ---- Input state with draft persistence ----
-  const [input, setInputRaw] = useState(() => localStorage.getItem(INPUT_DRAFT_KEY) || "");
+  // ---- Input state（按用户 + 会话保存浏览器本地草稿）----
+  const initialComposerScope = getComposerDraftScope(user?.id, urlState.sessionId);
+  const composerScopeRef = useRef(initialComposerScope);
+  const [input, setInputRaw] = useState(() => loadComposerText(initialComposerScope, true));
   const draftTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const setInput = useCallback((value: string) => {
     setInputRaw(value);
     clearTimeout(draftTimerRef.current);
+    const scope = composerScopeRef.current;
     if (value) {
-      draftTimerRef.current = setTimeout(() => {
-        try {
-          localStorage.setItem(INPUT_DRAFT_KEY, value);
-        } catch {
-          // QuotaExceededError — 存储满时静默失败
-        }
-      }, 2000);
+      draftTimerRef.current = setTimeout(() => saveComposerText(scope, value), 500);
     } else {
-      localStorage.removeItem(INPUT_DRAFT_KEY);
+      saveComposerText(scope, "");
     }
   }, []);
 
@@ -550,7 +553,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       .then((data: ModelList | null) => {
         if (data) {
           setModelList(data);
-          setSelectedModel((prev) => prev || data.default);
+          setSelectedModel((prev) => sessionIdRef.current ? (prev || data.default) : data.default);
         }
       })
       .catch(() => { });
@@ -558,6 +561,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   useEffect(() => {
     fetchModelList();
+  }, [fetchModelList]);
+
+  useEffect(() => {
+    const handleDefaultModelChanged = () => { fetchModelList(); };
+    window.addEventListener("agent:default-model-changed", handleDefaultModelChanged);
+    return () => window.removeEventListener("agent:default-model-changed", handleDefaultModelChanged);
   }, [fetchModelList]);
 
   useEffect(() => {
@@ -607,14 +616,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       }
       return false;
     });
-    // 刷新前同步 flush 草稿：2s debounce 窗口内的输入不丢
+    // 刷新前同步 flush 当前会话草稿：debounce 窗口内的输入不丢
     const unregisterHook = registerBeforeReloadHook(() => {
       clearTimeout(draftTimerRef.current);
-      try {
-        if (inputRef.current) localStorage.setItem(INPUT_DRAFT_KEY, inputRef.current);
-      } catch {
-        // 存储满时静默失败
-      }
+      saveComposerText(composerScopeRef.current, inputRef.current);
     });
     return () => {
       unregisterGuard();
@@ -797,26 +802,60 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsClient.send({ action: 'detach' });
   }, [dumpCurrentSessionRuntime]);
 
-  const clearComposer = useCallback(() => {
-    setInput("");
-    fileUpload.setIsDragging(false);
-    fileUpload.clearFiles();
-  }, [setInput, fileUpload]);
-
   const sessionCallbacks = useMemo(() => ({
     resetMessages: msg.resetMessages,
     setMessages: msg.setMessages,
     getMessages: () => msg.messagesRef.current,
     triggerScroll: msg.triggerScroll,
     cancelActiveStream: detachFromStream,
-    clearComposer,
     onLastRunState: (sessionId: string, lastRunState: LastRunState) => {
       reconcileLastRunStateRef.current(sessionId, lastRunState);
     },
-  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, clearComposer]);
+  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream]);
 
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId });
   const sessionRef = useRef(session); sessionRef.current = session;
+  const attachmentsHydratedRef = useRef(false);
+  const attachmentScopeRef = useRef<string | null>(null);
+  const composerScopeInitializedRef = useRef(false);
+
+  // 会话切换时先保存旧草稿，再恢复目标会话的文字和附件。
+  useEffect(() => {
+    const previousScope = composerScopeRef.current;
+    clearTimeout(draftTimerRef.current);
+    if (composerScopeInitializedRef.current) {
+      saveComposerText(previousScope, inputRef.current);
+      if (attachmentsHydratedRef.current && attachmentScopeRef.current === previousScope) {
+        void saveComposerAttachments(previousScope, uploadedFilesRef.current);
+      }
+    } else {
+      composerScopeInitializedRef.current = true;
+    }
+
+    const nextScope = getComposerDraftScope(user?.id, session.sessionId);
+    composerScopeRef.current = nextScope;
+    attachmentsHydratedRef.current = false;
+    attachmentScopeRef.current = null;
+    setInputRaw(loadComposerText(nextScope));
+    fileUpload.replaceFiles([]);
+
+    let cancelled = false;
+    void loadComposerAttachments(nextScope).then((files) => {
+      if (!cancelled && composerScopeRef.current === nextScope) {
+        attachmentScopeRef.current = nextScope;
+        attachmentsHydratedRef.current = true;
+        fileUpload.replaceFiles(files);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [session.sessionId, user?.id, fileUpload.replaceFiles]);
+
+  useEffect(() => {
+    const scope = composerScopeRef.current;
+    if (!attachmentsHydratedRef.current || attachmentScopeRef.current !== scope) return;
+    void saveComposerAttachments(scope, fileUpload.uploadedFiles);
+  }, [fileUpload.uploadedFiles]);
+
   const previewFileOwner = useMemo(() => {
     if (explicitPreviewOwner) return explicitPreviewOwner;
     if (!session.sessionId) return undefined;

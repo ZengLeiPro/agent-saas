@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -67,7 +67,7 @@ describe("RuntimeOperationsManager", () => {
 
     expect(await screen.findByText("顶层任务调度并发")).toBeTruthy();
     const input = screen.getByLabelText("期望并发") as HTMLInputElement;
-    expect(input.value).toBe("16");
+    await waitFor(() => expect(input.value).toBe("16"));
 
     await user.clear(input);
     await user.type(input, "24");

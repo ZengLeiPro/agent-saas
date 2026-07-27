@@ -47,7 +47,7 @@ import * as Clipboard from 'expo-clipboard';
 import { DropdownMenu, type DropdownSection } from '../overlays/DropdownMenu';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import type { AskUserAnswers, MessageItem, RenderItem, ActivityGroup } from '@agent/shared';
-import { truncateContent, formatJson, formatFileSize, authFetch, parseToolResult, getPreviewFileType, getToolDisplayLabel, getToolDisplayInfo, getFileTypeVisual } from '@agent/shared';
+import { truncateContent, formatJson, formatFileSize, formatTokenCount, authFetch, parseToolResult, getPreviewFileType, getToolDisplayLabel, getToolDisplayInfo, getFileTypeVisual } from '@agent/shared';
 import type { FileTypeCategory } from '@agent/shared';
 import { fileCacheService } from '../../services/fileCacheService';
 import Markdown from 'react-native-markdown-display';
@@ -59,6 +59,7 @@ import { TextSelectModal } from './TextSelectModal';
 import { createMarkdownStyles } from './markdownStyles';
 import { createMarkdownRules } from './markdownRules';
 import { hapticLight } from '../../lib/haptics';
+import { AgentActivityShell, type AgentActivityState } from './AgentActivityShell';
 
 const CATEGORY_ICON: Record<FileTypeCategory, LucideIcon> = {
   pdf: BookOpen, word: FileText, ppt: Presentation,
@@ -1221,33 +1222,47 @@ function AskUserBlock({ message, onResponse }: {
 // --- Subagent Block ---
 function SubagentBlock({ message }: { message: MessageItem & { type: 'subagent' } }) {
   const colors = useColors();
-  const typo = useChatTypography();
-  const styles = useMessageStyles(colors, typo);
-
-  const hasIssue = message.status === 'failed' || message.status === 'timeout';
-  const iconColor = hasIssue ? colors.warning : colors.mutedForeground;
-  const statusIcon = message.status === 'running'
-    ? <Clock size={14} color={iconColor} strokeWidth={2} />
-    : hasIssue
-      ? <TriangleAlert size={14} color={iconColor} strokeWidth={2} />
+  const [expanded, setExpanded] = useState(false);
+  const state: AgentActivityState = message.status === 'running'
+    ? 'running'
+    : message.status === 'completed'
+      ? 'completed'
       : message.status === 'cancelled'
-        ? <Circle size={14} color={iconColor} strokeWidth={2} />
-        : <Check size={14} color={iconColor} strokeWidth={2} />;
-  const statusText = message.status === 'running'
-    ? `子任务: ${message.agentType}`
-    : message.status === 'failed'
-      ? `子任务未完成: ${message.agentType}`
-      : message.status === 'timeout'
-        ? `子任务超时: ${message.agentType}`
-        : message.status === 'cancelled'
-          ? `子任务已取消: ${message.agentType}`
-          : `子任务: ${message.agentType}`;
+        ? 'cancelled'
+        : 'failed';
+  const meta = [
+    message.model,
+    typeof message.durationMs === 'number' ? `${(message.durationMs / 1000).toFixed(1)}s` : undefined,
+    typeof message.totalTokens === 'number' ? `${formatTokenCount(message.totalTokens)} tokens` : undefined,
+  ].filter(Boolean).join(' · ');
 
   return (
-    <View style={[styles.subagentBlock, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
-      {statusIcon}
-      <Text style={[styles.subagentText, hasIssue && { color: colors.warning }]}>{statusText}</Text>
-    </View>
+    <AgentActivityShell
+      state={state}
+      title={`子任务 ${message.agentType}`}
+      subtitle={message.resultPreview || message.errorMessage}
+      meta={meta || undefined}
+      expanded={expanded}
+      onToggle={() => setExpanded((value) => !value)}
+    >
+      <View style={{ gap: spacing.xs }}>
+        <Text style={{ ...typography.caption, color: colors.mutedForeground }}>
+          {[
+            message.model ? `模型 ${message.model}` : undefined,
+            typeof message.turnCount === 'number' ? `${message.turnCount} turns` : undefined,
+            typeof message.toolUseCount === 'number' ? `${message.toolUseCount} 次工具` : undefined,
+          ].filter(Boolean).join(' · ')}
+        </Text>
+        {message.errorMessage ? (
+          <Text style={{ ...typography.caption, color: colors.destructive }}>{message.errorMessage}</Text>
+        ) : null}
+        {message.resultPreview ? (
+          <Text style={{ ...typography.caption, color: colors.foreground }} numberOfLines={6}>
+            {message.resultPreview}
+          </Text>
+        ) : null}
+      </View>
+    </AgentActivityShell>
   );
 }
 
@@ -1422,41 +1437,27 @@ function renderActivityItem(item: MessageItem) {
 }
 
 function ActivityGroupView({ group }: { group: ActivityGroup; isLast?: boolean }) {
-  const colors = useColors();
-  const typo = useChatTypography();
-  const styles = useMessageStyles(colors, typo);
   const [expanded, setExpanded] = useState(false);
-
-  // Single item group: render directly without wrapper
-  if (group.items.length === 1) {
-    return <>{renderActivityItem(group.items[0])}</>;
-  }
-
-  // Multi-item group
   const lastItem = group.items[group.items.length - 1];
   const summary = getSummary(lastItem);
+  const hasFailure = group.items.some((item) => (
+    (item.type === 'tool_result' && /^Error:|^错误[:：]/i.test(item.result.trim()))
+    || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
+  ));
+  const state: AgentActivityState = group.isActive ? 'running' : hasFailure ? 'warning' : 'completed';
 
   return (
-    <View style={styles.activityGroup}>
-      <TouchableOpacity onPress={() => setExpanded(!expanded)} style={styles.activityHeaderRow} activeOpacity={0.7}>
-        {group.isActive
-          ? <ActivityIndicator size={16} color={colors.primary} />
-          : <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} style={{ opacity: 0.6 }} />
-        }
-        <Text style={[styles.activitySummaryText, { maxWidth: 384 }]} numberOfLines={1} ellipsizeMode={summary.ellipsizeMode}>{summary.text}</Text>
-        <Text style={styles.activityCount}>({group.items.length})</Text>
-        <ChevronRight
-          size={16}
-          color={colors.mutedForeground}
-          strokeWidth={2}
-          style={expanded ? { transform: [{ rotate: '90deg' }] } : undefined}
-        />
-      </TouchableOpacity>
-      {expanded && (
-        <View style={styles.activityContent}>
-          {group.items.map(item => renderActivityItem(item))}
-        </View>
-      )}
-    </View>
+    <AgentActivityShell
+      state={state}
+      title="Agent 活动"
+      subtitle={summary.text}
+      meta={`${group.items.length} 项`}
+      expanded={expanded}
+      onToggle={() => setExpanded((value) => !value)}
+    >
+      <View style={{ gap: spacing.xs }}>
+        {group.items.map(item => renderActivityItem(item))}
+      </View>
+    </AgentActivityShell>
   );
 }

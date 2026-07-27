@@ -5,6 +5,8 @@ import {
   formatTokenCount,
   type ContextUsageCategory,
   type ContextUsageData,
+  type MessageItem,
+  type SubagentStatus,
   type TokenUsage,
 } from '@agent/shared';
 import { useColors, spacing, typography, radius, type ThemeColors } from '../../theme';
@@ -12,6 +14,8 @@ import { useColors, spacing, typography, radius, type ThemeColors } from '../../
 interface TokenDetailProps {
   tokenUsage: TokenUsage;
   contextUsage?: ContextUsageData | null;
+  messages?: MessageItem[];
+  onOpenChildSession?: (sessionId: string) => void;
   sessionId: string;
 }
 
@@ -30,12 +34,21 @@ export function TokenDetailTrigger({ tokenUsage, contextUsage, onPress }: {
   );
 }
 
-export function TokenDetailOverlay({ tokenUsage, contextUsage, sessionId, topOffset, onDismiss }: TokenDetailProps & {
+export function TokenDetailOverlay({
+  tokenUsage,
+  contextUsage,
+  messages,
+  onOpenChildSession,
+  sessionId,
+  topOffset,
+  onDismiss,
+}: TokenDetailProps & {
   topOffset: number;
   onDismiss: () => void;
 }) {
   const colors = useColors();
   const styles = useStyles(colors);
+  const childAgents = collectChildAgentResources(messages);
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
@@ -67,8 +80,37 @@ export function TokenDetailOverlay({ tokenUsage, contextUsage, sessionId, topOff
           {(contextUsage?.usageTotals?.reasoningTokens ?? 0) > 0 && (
             <TokenRow label="思考" value={contextUsage!.usageTotals!.reasoningTokens} colors={colors} />
           )}
-          {tokenUsage.subagentTotalTokens > 0 && (
-            <TokenRow label="子 Agent" value={tokenUsage.subagentTotalTokens} colors={colors} />
+          {(tokenUsage.subagentTotalTokens > 0 || childAgents.length > 0) && (
+            <>
+              {tokenUsage.subagentTotalTokens > 0 && (
+                <TokenRow label="子 Agent" value={tokenUsage.subagentTotalTokens} colors={colors} />
+              )}
+              {childAgents.length > 0 && (
+                <View style={styles.childResources}>
+                  <Text style={styles.hint}>子任务资源</Text>
+                  {childAgents.map((child) => (
+                    <Pressable
+                      key={child.childSessionId}
+                      disabled={!onOpenChildSession}
+                      onPress={() => onOpenChildSession?.(child.childSessionId)}
+                      style={styles.childResourceRow}
+                    >
+                      <View style={styles.childResourceText}>
+                        <Text style={[rowStyles.label, { color: colors.foreground }]} numberOfLines={1}>
+                          {child.agentType}
+                        </Text>
+                        <Text style={styles.hint} numberOfLines={1}>
+                          {childStatusLabel(child.status)}{child.model ? ` · ${child.model}` : ''}
+                        </Text>
+                      </View>
+                      <Text style={[rowStyles.value, { color: colors.foreground }]}>
+                        {typeof child.totalTokens === 'number' ? formatTokenCount(child.totalTokens) : '—'}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </>
           )}
           {tokenUsage.totalCostUsd != null && tokenUsage.totalCostUsd > 0 && (
             <View style={rowStyles.row}>
@@ -87,6 +129,37 @@ export function TokenDetailOverlay({ tokenUsage, contextUsage, sessionId, topOff
       </View>
     </View>
   );
+}
+
+interface ChildAgentResource {
+  childSessionId: string;
+  agentType: string;
+  status: SubagentStatus;
+  model?: string;
+  totalTokens?: number;
+}
+
+function collectChildAgentResources(messages: MessageItem[] | undefined): ChildAgentResource[] {
+  const bySession = new Map<string, ChildAgentResource>();
+  for (const message of messages ?? []) {
+    if (message.type !== 'subagent' || !message.childSessionId) continue;
+    bySession.set(message.childSessionId, {
+      childSessionId: message.childSessionId,
+      agentType: message.agentType,
+      status: message.status,
+      model: message.model,
+      totalTokens: message.totalTokens,
+    });
+  }
+  return [...bySession.values()];
+}
+
+function childStatusLabel(status: SubagentStatus): string {
+  if (status === 'running') return '运行中';
+  if (status === 'completed') return '已完成';
+  if (status === 'cancelled') return '已取消';
+  if (status === 'timeout') return '超时';
+  return '失败';
 }
 
 function CategoryList({ categories, colors, depth = 0 }: {
@@ -191,6 +264,24 @@ function useStyles(colors: ThemeColors) {
       fontSize: 10,
       lineHeight: 14,
       color: colors.mutedForeground,
+    },
+    childResources: {
+      marginTop: spacing.xs,
+      padding: spacing.sm,
+      borderRadius: radius.sm,
+      backgroundColor: colors.muted,
+      gap: spacing.xs,
+    },
+    childResourceRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
+      paddingVertical: 2,
+    },
+    childResourceText: {
+      flex: 1,
+      minWidth: 0,
     },
     divider: {
       height: 1,

@@ -1,14 +1,13 @@
 import { useState, memo } from 'react';
-import { ChevronRight } from 'lucide-react';
 import { StatusIcons } from '@/lib/icons';
-import { cn } from '@/lib/utils';
 import { getToolDisplayInfo } from '@agent/shared';
 import type { MessageItem } from './types';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolBlock, ToolResultBlock } from './ToolBlock';
 import { SubagentBlock } from './SubagentBlock';
 import { RuntimeStatusBlock } from './RuntimeStatusBlock';
-import { activityStatusBadgeClass, activityStatusIconClass, activityStatusTextClass, formatActivityDuration, type ActivityStatusTone } from './activityStatusStyles';
+import { AgentActivityShell, type AgentActivityState } from './AgentActivityShell';
+import { activityStatusIconClass, activityStatusTextClass, formatActivityDuration, type ActivityStatusTone } from './activityStatusStyles';
 
 interface SummaryInfo {
   text: string;
@@ -126,13 +125,6 @@ function getActivityDurationMs(items: MessageItem[]): number | undefined {
     }
   }
   return hasDuration ? total : undefined;
-}
-
-function hasActivityIssue(items: MessageItem[]): boolean {
-  return items.some(item => (
-    (item.type === 'tool_use' && item.executionStatus === 'failed')
-    || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
-  ));
 }
 
 function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
@@ -267,31 +259,6 @@ function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryI
   };
 }
 
-function GroupStatusIcon({ summary }: { summary: GroupSummaryInfo }) {
-  const className = "size-3.5 shrink-0";
-  if (summary.active) {
-    return <StatusIcons.running className={activityStatusIconClass("active", `${className} animate-spin`)} />;
-  }
-  if (summary.tone === 'danger') {
-    return <StatusIcons.error className={activityStatusIconClass("danger", className)} />;
-  }
-  if (summary.tone === 'warning') {
-    return <StatusIcons.error className={activityStatusIconClass("warning", className)} />;
-  }
-  if (summary.tone === 'neutral') {
-    return <StatusIcons.cancelled className={activityStatusIconClass("neutral", className)} />;
-  }
-  if (summary.tone === 'pending') {
-    return <StatusIcons.pending className={activityStatusIconClass("pending", className)} />;
-  }
-  return <StatusIcons.success className={activityStatusIconClass("success", className)} />;
-}
-
-/** 该项是否带「给人看」摘要——带摘要的项在非 debug 视图下也应呈现 */
-function hasPresentation(item: MessageItem): boolean {
-  return (item.type === 'tool_use' || item.type === 'tool_result' || item.type === 'subagent') && !!item.presentation;
-}
-
 function ActivityItem({ item, debugMode = true }: { item: MessageItem; debugMode?: boolean }) {
   switch (item.type) {
     case 'runtime_status':
@@ -343,46 +310,36 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
   // 折叠行已提供分组摘要，具体工具详情由用户按需展开，避免长会话默认铺满执行细节。
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // 非 debug 且整组无摘要：折叠成一行占位（原行为）。
-  // 组内一旦有「给人看」摘要，就必须逐项渲染——否则摘要会被整组吞掉，
-  // 普通客户永远看不到，那正是本批次要消灭的「只有演示看得到」的视图。
-  if (!debugMode && !items.some(hasPresentation)) {
-    return <ExecutionHiddenPlaceholder isActive={isActive} durationMs={getActivityDurationMs(items)} hasIssue={items.length === 1 && hasActivityIssue(items)} />;
-  }
-
-  // 单项分组：直接渲染子项本身（单层展开），不套分组壳
-  if (items.length === 1) {
-    return <ActivityItem item={items[0]} debugMode={debugMode} />;
-  }
-
   const summary = getGroupSummary(items, isActive);
-  const summaryDuration = !summary.active ? formatActivityDuration(summary.durationMs) : null;
+  const state: AgentActivityState = summary.tone === 'active'
+    ? 'running'
+    : summary.tone === 'warning'
+      ? 'warning'
+      : summary.tone === 'pending'
+        ? 'waiting'
+        : summary.tone === 'neutral'
+          ? 'cancelled'
+          : 'completed';
+  const meta = [
+    !summary.active ? formatActivityDuration(summary.durationMs) : undefined,
+    summary.progress,
+    `${items.length} 项`,
+  ].filter(Boolean).join(' · ');
 
   return (
-    <div className="my-0.5">
-      <button
-        onClick={() => setIsExpanded(v => !v)}
-        className="flex max-w-full items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <GroupStatusIcon summary={summary} />
-        <span
-          className="min-w-0 max-w-sm truncate"
-          style={summary.truncateStart ? { direction: 'rtl', textAlign: 'left' } : undefined}
-        >{summary.text}</span>
-        <span className={activityStatusBadgeClass(summary.tone)}>{summaryDuration ? `${summary.badge} ${summaryDuration}` : summary.badge}</span>
-        {summary.progress && <span className="shrink-0 text-muted-foreground/60">({summary.progress})</span>}
-        <ChevronRight className={cn(
-          "size-3.5 shrink-0 transition-transform",
-          isExpanded && "rotate-90",
-        )} />
-      </button>
-      {isExpanded && (
-        <div className="ml-5 flex flex-col border-l border-border pl-2 [&>*]:my-0" style={{ gap: 10, paddingTop: 10 }}>
-          {items.map(item => (
-            <ActivityItem key={item.id} item={item} debugMode={debugMode} />
-          ))}
-        </div>
-      )}
-    </div>
+    <AgentActivityShell
+      state={state}
+      title="Agent 活动"
+      subtitle={summary.text}
+      meta={meta}
+      expanded={isExpanded}
+      onToggle={() => setIsExpanded((value) => !value)}
+    >
+      <div className="flex flex-col [&>*]:my-0" style={{ gap: 10 }}>
+        {items.map(item => (
+          <ActivityItem key={item.id} item={item} debugMode={debugMode} />
+        ))}
+      </div>
+    </AgentActivityShell>
   );
 });

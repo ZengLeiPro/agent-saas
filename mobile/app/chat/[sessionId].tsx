@@ -476,6 +476,11 @@ export default function ChatDetailScreen() {
         <TokenDetailOverlay
           tokenUsage={chat.tokenUsage}
           contextUsage={chat.contextUsage}
+          messages={chat.messages}
+          onOpenChildSession={(childSessionId) => {
+            setShowTokenDetail(false);
+            router.push({ pathname: '/chat/[sessionId]' as any, params: { sessionId: childSessionId } });
+          }}
           sessionId={sessionId || ''}
           topOffset={0}
           onDismiss={() => setShowTokenDetail(false)}

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { TokenUsage } from "@/lib/sessionsApi";
-import type { ContextUsageCategory, ContextUsageData } from "@agent/shared";
+import type { ContextUsageCategory, ContextUsageData, MessageItem, SubagentStatus } from "@agent/shared";
 import { formatTokenCount } from "@/lib/sessionsApi";
 
 interface TokenUsageDisplayProps {
@@ -9,6 +9,8 @@ interface TokenUsageDisplayProps {
   contextUsage?: ContextUsageData | null;
   /** 租户模型策略：是否允许点击展开 Token 明细。 */
   allowDetails?: boolean;
+  messages?: MessageItem[];
+  onOpenChildSession?: (sessionId: string) => void;
 }
 
 function DetailRow({ label, value }: { label: string; value: number | string }) {
@@ -35,6 +37,40 @@ function AccuracyBadge({ accuracy }: { accuracy: ContextUsageCategory['accuracy'
   );
 }
 
+interface ChildAgentResource {
+  childSessionId: string;
+  agentType: string;
+  status: SubagentStatus;
+  model?: string;
+  durationMs?: number;
+  totalTokens?: number;
+}
+
+function collectChildAgentResources(messages: MessageItem[] | undefined): ChildAgentResource[] {
+  if (!messages?.length) return [];
+  const bySession = new Map<string, ChildAgentResource>();
+  for (const message of messages) {
+    if (message.type !== 'subagent' || !message.childSessionId) continue;
+    bySession.set(message.childSessionId, {
+      childSessionId: message.childSessionId,
+      agentType: message.agentType,
+      status: message.status,
+      model: message.model,
+      durationMs: message.durationMs,
+      totalTokens: message.totalTokens,
+    });
+  }
+  return [...bySession.values()];
+}
+
+function childStatusLabel(status: SubagentStatus): string {
+  if (status === 'running') return '运行中';
+  if (status === 'completed') return '已完成';
+  if (status === 'cancelled') return '已取消';
+  if (status === 'timeout') return '超时';
+  return '失败';
+}
+
 function CategoryTree({ categories, depth = 0 }: { categories: ContextUsageCategory[]; depth?: number }) {
   return (
     <div className={depth > 0 ? "ml-3 border-l pl-2" : ""}>
@@ -56,8 +92,15 @@ function CategoryTree({ categories, depth = 0 }: { categories: ContextUsageCateg
   );
 }
 
-export function TokenUsageDisplay({ tokenUsage, contextUsage, allowDetails = false }: TokenUsageDisplayProps) {
+export function TokenUsageDisplay({
+  tokenUsage,
+  contextUsage,
+  allowDetails = false,
+  messages,
+  onOpenChildSession,
+}: TokenUsageDisplayProps) {
   const [open, setOpen] = useState(false);
+  const childAgents = collectChildAgentResources(messages);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -313,6 +356,32 @@ export function TokenUsageDisplay({ tokenUsage, contextUsage, allowDetails = fal
           <div className="space-y-1.5">
             {tokenUsage && (
               <>
+                {childAgents.length > 0 && (
+                  <div className="mb-2 space-y-1 rounded-md border bg-muted/20 p-2">
+                    <div className="text-[10px] font-medium text-muted-foreground">子任务资源</div>
+                    {childAgents.map((child) => (
+                      <button
+                        type="button"
+                        key={child.childSessionId}
+                        onClick={() => onOpenChildSession?.(child.childSessionId)}
+                        disabled={!onOpenChildSession}
+                        className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left text-[11px] transition-colors enabled:hover:bg-muted"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{child.agentType}</span>
+                          <span className="block truncate text-[10px] text-muted-foreground">
+                            {childStatusLabel(child.status)}
+                            {child.model ? ` · ${child.model}` : ''}
+                            {typeof child.durationMs === 'number' ? ` · ${(child.durationMs / 1000).toFixed(1)}s` : ''}
+                          </span>
+                        </span>
+                        <span className="shrink-0 font-mono tabular-nums">
+                          {typeof child.totalTokens === 'number' ? formatTokenCount(child.totalTokens) : '—'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="mb-1 font-medium">父 Agent</div>
                 <DetailRow label="上下文" value={formatTokenCount(displayTokens)} />
                 <DetailRow label="累计消耗" value={formatTokenCount(parentCumulativeTokens)} />

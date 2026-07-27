@@ -34,6 +34,9 @@ describe('SubagentBlock', () => {
       />,
     );
 
+    expect(screen.getByText('失败')).toBeTruthy();
+    expect(screen.getByText('gpt-5.6 · 10m · 123.5k tokens')).toBeTruthy();
+
     await user.click(screen.getByRole('button', { name: /子任务 调研金球奖/ }));
     expect(screen.getByText('42 turns')).toBeTruthy();
     expect(screen.getByText('67 次工具')).toBeTruthy();

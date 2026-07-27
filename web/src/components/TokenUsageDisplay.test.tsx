@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { TokenUsageDisplay } from "./TokenUsageDisplay";
 
@@ -116,6 +116,51 @@ describe("TokenUsageDisplay", () => {
     expect(screen.getByText("协议及未归因开销")).toBeTruthy();
     expect(screen.getByText("累计模型用量")).toBeTruthy();
     expect(screen.getByText("思考 Token")).toBeTruthy();
+  });
+
+  it("renders per-child resource entries and opens child session", async () => {
+    const onOpenChildSession = vi.fn();
+    render(
+      <TokenUsageDisplay
+        allowDetails
+        tokenUsage={{
+          contextTokens: 10_000,
+          totalInputTokens: 8_000,
+          totalCacheReadTokens: 0,
+          totalCacheCreationTokens: 0,
+          totalOutputTokens: 2_000,
+          subagentTotalTokens: 12_000,
+          subagentUsage: {
+            childCount: 1,
+            requestCount: 2,
+            inputTokens: 10_000,
+            uncachedInputTokens: 10_000,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            outputTokens: 2_000,
+            totalTokens: 12_000,
+            cacheHitDenominatorTokens: 10_000,
+            cacheHitRatio: 0,
+          },
+        }}
+        messages={[{
+          id: 'sub-1',
+          type: 'subagent',
+          agentType: 'explore',
+          status: 'completed',
+          childSessionId: 'child-session',
+          model: 'gpt-5.6',
+          durationMs: 2_000,
+          totalTokens: 12_000,
+        }]}
+        onOpenChildSession={onOpenChildSession}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /累计 22\.0k/ }));
+    expect(screen.getByText('子任务资源')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /explore/ }));
+    expect(onOpenChildSession).toHaveBeenCalledWith('child-session');
   });
 
   it("renders a non-interactive value when tenant policy disables details", () => {

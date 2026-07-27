@@ -1135,26 +1135,40 @@ const runtimeHandHealthScannerConfigSchema = z.object({
 });
 
 const runtimeEventRetentionConfigSchema = z.object({
-  /** 默认 false：PG runtime 下显式开启后每日低峰清理 runtime_events 膨胀事件。 */
+  /** 默认 false：PG runtime 下显式开启后清理 runtime_events 短期过程事件。 */
   enabled: z.boolean().optional(),
-  /** 本机时区每日执行小时，默认 3。 */
-  dailyAtHour: z.number().int().min(0).max(23).optional(),
-  /** 本机时区每日执行分钟，默认 10。 */
-  dailyAtMinute: z.number().int().min(0).max(59).optional(),
-  /** 归档 csv.gz 目录，默认 ./data/runtime-event-archives。 */
-  archiveDir: z.string().min(1).optional(),
-  /** 单批 select/delete 上限，默认 10000。 */
+  /** 清理周期分钟数，默认 10。 */
+  sweepIntervalMinutes: z.number().int().min(1).max(24 * 60).optional(),
+  /** 单批原子 DELETE 上限，默认 10000。 */
   batchLimit: z.number().int().min(1).max(100_000).optional(),
-  /** tool_output_delta/tool_progress 基础保留天数，默认 1。 */
-  toolDeltaRetentionDays: z.number().int().min(1).max(3650).optional(),
-  /** 失败 invocation 的 tool 输出保留天数，默认 7。 */
-  failedInvocationRetentionDays: z.number().int().min(1).max(3650).optional(),
+  /** 工具终态且 tool_result 已落库后，原始 delta 的断线重放宽限分钟数，默认 10。 */
+  terminalDeltaGraceMinutes: z.number().int().min(1).max(24 * 60).optional(),
+  /** 成功工具 stream summary 保留小时数，默认 24。 */
+  successfulSummaryRetentionHours: z.number().int().min(1).max(365 * 24).optional(),
+  /** 失败/取消工具 stream summary 保留天数，默认 7。 */
+  failedSummaryRetentionDays: z.number().int().min(1).max(3650).optional(),
+  /** model_request_started/checkpoint 保留天数，默认 7。 */
+  modelDiagnosticRetentionDays: z.number().int().min(1).max(3650).optional(),
+  /** model_request_finished 保留天数，默认 30，且不得短于普通模型诊断。 */
+  modelRequestFinishedRetentionDays: z.number().int().min(1).max(3650).optional(),
   /** hand_provisioning_log/hand_health_changed/hand_failure 保留天数，默认 30。 */
   handEventRetentionDays: z.number().int().min(1).max(3650).optional(),
-  /** 删除前补齐 billing projection 的单批扫描上限，默认 10000。 */
+  /** 清理前推进 billing projection 的单批扫描上限，默认 10000。 */
   billingCatchupBatchLimit: z.number().int().min(1).max(100_000).optional(),
-  /** 删除前最多补齐 billing projection 批数，默认 100。 */
+  /** 清理前最多推进 billing projection 批数，默认 100。 */
   billingCatchupMaxBatches: z.number().int().min(1).max(10_000).optional(),
+}).superRefine((value, ctx) => {
+  if (
+    value.modelDiagnosticRetentionDays !== undefined
+    && value.modelRequestFinishedRetentionDays !== undefined
+    && value.modelRequestFinishedRetentionDays < value.modelDiagnosticRetentionDays
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['modelRequestFinishedRetentionDays'],
+      message: 'modelRequestFinishedRetentionDays 不得短于 modelDiagnosticRetentionDays',
+    });
+  }
 });
 
 /**

@@ -1,23 +1,18 @@
-import { once } from 'node:events';
-import { createWriteStream } from 'node:fs';
-import type { WriteStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import { finished } from 'node:stream/promises';
-import { createGzip } from 'node:zlib';
 import type pg from 'pg';
 
 export interface RuntimeEventRetentionOptions {
   pool: pg.Pool;
   eventsTable: string;
+  toolInvocationsTable: string;
   billingProjectionStateTable: string;
-  archiveDir: string;
   enabled?: boolean;
-  dailyAtHour?: number;
-  dailyAtMinute?: number;
+  sweepIntervalMinutes?: number;
   batchLimit?: number;
-  toolDeltaRetentionDays?: number;
-  failedInvocationRetentionDays?: number;
+  terminalDeltaGraceMinutes?: number;
+  successfulSummaryRetentionHours?: number;
+  failedSummaryRetentionDays?: number;
+  modelDiagnosticRetentionDays?: number;
+  modelRequestFinishedRetentionDays?: number;
   handEventRetentionDays?: number;
   billingCatchupBatchLimit?: number;
   billingCatchupMaxBatches?: number;
@@ -30,74 +25,65 @@ export interface RuntimeEventRetentionOptions {
 }
 
 export interface RuntimeEventRetentionResult {
-  archived: number;
   deleted: number;
-  archiveFiles: string[];
+  deletedByCategory: Record<string, number>;
   billingWatermark: string;
   maxGlobalSequence: string;
-  vacuumed: boolean;
 }
-
-type RuntimeEventArchiveRow = {
-  global_sequence: string;
-  event_id: string;
-  session_id: string;
-  session_sequence: string;
-  run_id: string | null;
-  tenant_id: string;
-  event_type: string;
-  timestamp: string | Date;
-  event_json: unknown;
-};
 
 interface RetentionCategory {
   name: string;
-  selectSql: string;
+  deleteSql: string;
   params: unknown[];
 }
 
 const TOOL_DELTA_TYPES = ['tool_output_delta', 'tool_progress'] as const;
+const MODEL_DIAGNOSTIC_TYPES = ['model_request_started', 'model_request_checkpoint'] as const;
 const HAND_RETENTION_TYPES = ['hand_provisioning_log', 'hand_health_changed', 'hand_failure'] as const;
-const ARCHIVE_HEADERS = [
-  'global_sequence',
-  'event_id',
-  'session_id',
-  'session_sequence',
-  'run_id',
-  'tenant_id',
-  'event_type',
-  'timestamp',
-  'event_json',
-];
 
+/**
+ * 清理 runtime_events 中只服务于短期重放/排障的过程事件。
+ *
+ * 永久事件（消息、tool_result、工具生命周期、审计、计费事实）不在任何类别中。
+ * 所有 DELETE 都受 billing projection 水位约束，并以单条 CTE 原子锁定、删除，
+ * 避免蓝绿实例并发清理同一批记录。
+ */
 export class RuntimeEventRetention {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private stopped = true;
   private inFlight = false;
   private readonly eventsTable: string;
+  private readonly toolInvocationsTable: string;
   private readonly billingProjectionStateTable: string;
-  private readonly archiveDir: string;
+  private readonly sweepIntervalMinutes: number;
   private readonly batchLimit: number;
-  private readonly toolDeltaRetentionDays: number;
-  private readonly failedInvocationRetentionDays: number;
+  private readonly terminalDeltaGraceMinutes: number;
+  private readonly successfulSummaryRetentionHours: number;
+  private readonly failedSummaryRetentionDays: number;
+  private readonly modelDiagnosticRetentionDays: number;
+  private readonly modelRequestFinishedRetentionDays: number;
   private readonly handEventRetentionDays: number;
   private readonly billingCatchupBatchLimit: number;
   private readonly billingCatchupMaxBatches: number;
-  private readonly dailyAtHour: number;
-  private readonly dailyAtMinute: number;
 
   constructor(private readonly options: RuntimeEventRetentionOptions) {
     this.eventsTable = sanitizeIdentifier(options.eventsTable);
+    this.toolInvocationsTable = sanitizeIdentifier(options.toolInvocationsTable);
     this.billingProjectionStateTable = sanitizeIdentifier(options.billingProjectionStateTable);
-    this.archiveDir = options.archiveDir;
+    this.sweepIntervalMinutes = clampInt(options.sweepIntervalMinutes ?? 10, 1, 24 * 60);
     this.batchLimit = clampInt(options.batchLimit ?? 10_000, 1, 100_000);
-    this.toolDeltaRetentionDays = clampInt(options.toolDeltaRetentionDays ?? 1, 1, 3650);
-    this.failedInvocationRetentionDays = clampInt(options.failedInvocationRetentionDays ?? 7, this.toolDeltaRetentionDays, 3650);
+    this.terminalDeltaGraceMinutes = clampInt(options.terminalDeltaGraceMinutes ?? 10, 1, 24 * 60);
+    this.successfulSummaryRetentionHours = clampInt(options.successfulSummaryRetentionHours ?? 24, 1, 365 * 24);
+    this.failedSummaryRetentionDays = clampInt(options.failedSummaryRetentionDays ?? 7, 1, 3650);
+    this.modelDiagnosticRetentionDays = clampInt(options.modelDiagnosticRetentionDays ?? 7, 1, 3650);
+    this.modelRequestFinishedRetentionDays = clampInt(
+      options.modelRequestFinishedRetentionDays ?? 30,
+      this.modelDiagnosticRetentionDays,
+      3650,
+    );
     this.handEventRetentionDays = clampInt(options.handEventRetentionDays ?? 30, 1, 3650);
     this.billingCatchupBatchLimit = clampInt(options.billingCatchupBatchLimit ?? 10_000, 1, 100_000);
     this.billingCatchupMaxBatches = clampInt(options.billingCatchupMaxBatches ?? 100, 1, 10_000);
-    this.dailyAtHour = clampInt(options.dailyAtHour ?? 3, 0, 23);
-    this.dailyAtMinute = clampInt(options.dailyAtMinute ?? 10, 0, 59);
   }
 
   start(): void {
@@ -105,7 +91,7 @@ export class RuntimeEventRetention {
     this.stopped = false;
     this.scheduleNext();
     this.options.logger?.info?.(
-      `RuntimeEventRetention started: dailyAt=${String(this.dailyAtHour).padStart(2, '0')}:${String(this.dailyAtMinute).padStart(2, '0')} batchLimit=${this.batchLimit}`,
+      `RuntimeEventRetention started: interval=${this.sweepIntervalMinutes}m batchLimit=${this.batchLimit}`,
     );
   }
 
@@ -123,35 +109,25 @@ export class RuntimeEventRetention {
     }
     this.inFlight = true;
     try {
-      await mkdir(this.archiveDir, { recursive: true });
-      const caughtUp = await this.ensureBillingProjectionCaughtUp();
-      let archived = 0;
+      const projection = await this.advanceBillingProjection();
+      const deletedByCategory: Record<string, number> = {};
       let deleted = 0;
-      const archiveFiles: string[] = [];
 
-      for (const category of this.buildCategories()) {
-        const result = await this.processCategory(category);
-        archived += result.archived;
-        deleted += result.deleted;
-        archiveFiles.push(...result.archiveFiles);
-      }
-
-      let vacuumed = false;
-      if (deleted > 0) {
-        await this.options.pool.query(`VACUUM (ANALYZE) ${this.eventsTable}`);
-        vacuumed = true;
+      for (const category of this.buildCategories(projection.billingWatermark)) {
+        const categoryDeleted = await this.deleteCategory(category);
+        deletedByCategory[category.name] = categoryDeleted;
+        deleted += categoryDeleted;
       }
 
       const result: RuntimeEventRetentionResult = {
-        archived,
         deleted,
-        archiveFiles,
-        billingWatermark: caughtUp.billingWatermark,
-        maxGlobalSequence: caughtUp.maxGlobalSequence,
-        vacuumed,
+        deletedByCategory,
+        billingWatermark: projection.billingWatermark.toString(),
+        maxGlobalSequence: projection.maxGlobalSequence.toString(),
       };
       this.options.logger?.info?.(
-        `RuntimeEventRetention finished: archived=${archived} deleted=${deleted} vacuumed=${vacuumed}`,
+        `RuntimeEventRetention finished: deleted=${deleted} categories=${JSON.stringify(deletedByCategory)} `
+        + `billingWatermark=${result.billingWatermark} maxGlobalSequence=${result.maxGlobalSequence}`,
       );
       return result;
     } finally {
@@ -161,7 +137,6 @@ export class RuntimeEventRetention {
 
   private scheduleNext(): void {
     if (this.stopped) return;
-    const delayMs = msUntilNextLocalTime(this.dailyAtHour, this.dailyAtMinute);
     this.timer = setTimeout(() => {
       this.timer = undefined;
       void this.runOnce()
@@ -169,86 +144,155 @@ export class RuntimeEventRetention {
           this.options.logger?.warn?.(`RuntimeEventRetention failed: ${err instanceof Error ? err.message : String(err)}`);
         })
         .finally(() => this.scheduleNext());
-    }, delayMs);
+    }, this.sweepIntervalMinutes * 60_000);
     this.timer.unref?.();
   }
 
-  private buildCategories(): RetentionCategory[] {
+  private buildCategories(billingWatermark: bigint): RetentionCategory[] {
+    const watermark = billingWatermark.toString();
     return [
       {
         name: 'tool-delta',
-        selectSql: `
-          SELECT global_sequence, event_id, session_id, session_sequence, run_id, tenant_id, event_type, timestamp, event_json
-          FROM ${this.eventsTable} e
-          WHERE event_type = ANY($1::text[])
-            AND timestamp < NOW() - ($2::int * INTERVAL '1 day')
-            AND (
-              timestamp < NOW() - ($3::int * INTERVAL '1 day')
-              OR NOT EXISTS (
+        deleteSql: `
+          /* retention:tool-delta */
+          WITH candidates AS (
+            SELECT e.global_sequence
+            FROM ${this.eventsTable} e
+            INNER JOIN ${this.toolInvocationsTable} invocation
+              ON invocation.invocation_id = e.event_json->>'invocationId'
+            WHERE e.event_type = ANY($1::text[])
+              AND e.global_sequence <= $2::bigint
+              AND invocation.status IN ('completed', 'failed', 'cancelled')
+              AND invocation.completed_at IS NOT NULL
+              AND invocation.completed_at < NOW() - ($3::int * INTERVAL '1 minute')
+              AND EXISTS (
                 SELECT 1
-                FROM ${this.eventsTable} completed
-                WHERE completed.session_id = e.session_id
-                  AND completed.event_type = 'tool_invocation_completed'
-                  AND completed.event_json->>'invocationId' = e.event_json->>'invocationId'
-                  AND completed.event_json->>'status' = 'error'
+                FROM ${this.eventsTable} result
+                WHERE result.session_id = e.session_id
+                  AND result.run_id IS NOT DISTINCT FROM e.run_id
+                  AND result.event_type = 'tool_result'
+                  AND result.event_json ? 'toolCallId'
+                  AND result.event_json->>'toolCallId' = e.event_json->>'toolCallId'
+                  AND result.timestamp < NOW() - ($3::int * INTERVAL '1 minute')
               )
-            )
-          ORDER BY timestamp ASC, global_sequence ASC
-          LIMIT $4
+            ORDER BY e.global_sequence ASC
+            FOR UPDATE OF e SKIP LOCKED
+            LIMIT $4
+          )
+          DELETE FROM ${this.eventsTable} e
+          USING candidates
+          WHERE e.global_sequence = candidates.global_sequence
         `,
-        params: [[...TOOL_DELTA_TYPES], this.toolDeltaRetentionDays, this.failedInvocationRetentionDays, this.batchLimit],
+        params: [[...TOOL_DELTA_TYPES], watermark, this.terminalDeltaGraceMinutes, this.batchLimit],
+      },
+      {
+        name: 'tool-stream-summary',
+        deleteSql: `
+          /* retention:tool-stream-summary */
+          WITH candidates AS (
+            SELECT e.global_sequence
+            FROM ${this.eventsTable} e
+            WHERE e.event_type = 'tool_stream_summary'
+              AND e.global_sequence <= $1::bigint
+              AND (
+                (
+                  e.event_json->>'status' = 'success'
+                  AND e.timestamp < NOW() - ($2::int * INTERVAL '1 hour')
+                )
+                OR (
+                  COALESCE(e.event_json->>'status', '') <> 'success'
+                  AND e.timestamp < NOW() - ($3::int * INTERVAL '1 day')
+                )
+              )
+            ORDER BY e.global_sequence ASC
+            FOR UPDATE OF e SKIP LOCKED
+            LIMIT $4
+          )
+          DELETE FROM ${this.eventsTable} e
+          USING candidates
+          WHERE e.global_sequence = candidates.global_sequence
+        `,
+        params: [watermark, this.successfulSummaryRetentionHours, this.failedSummaryRetentionDays, this.batchLimit],
+      },
+      {
+        name: 'model-diagnostics',
+        deleteSql: `
+          /* retention:model-diagnostics */
+          WITH candidates AS (
+            SELECT e.global_sequence
+            FROM ${this.eventsTable} e
+            WHERE e.event_type = ANY($1::text[])
+              AND e.global_sequence <= $2::bigint
+              AND e.timestamp < NOW() - ($3::int * INTERVAL '1 day')
+            ORDER BY e.global_sequence ASC
+            FOR UPDATE OF e SKIP LOCKED
+            LIMIT $4
+          )
+          DELETE FROM ${this.eventsTable} e
+          USING candidates
+          WHERE e.global_sequence = candidates.global_sequence
+        `,
+        params: [[...MODEL_DIAGNOSTIC_TYPES], watermark, this.modelDiagnosticRetentionDays, this.batchLimit],
+      },
+      {
+        name: 'model-request-finished',
+        deleteSql: `
+          /* retention:model-request-finished */
+          WITH candidates AS (
+            SELECT e.global_sequence
+            FROM ${this.eventsTable} e
+            WHERE e.event_type = 'model_request_finished'
+              AND e.global_sequence <= $1::bigint
+              AND e.timestamp < NOW() - ($2::int * INTERVAL '1 day')
+            ORDER BY e.global_sequence ASC
+            FOR UPDATE OF e SKIP LOCKED
+            LIMIT $3
+          )
+          DELETE FROM ${this.eventsTable} e
+          USING candidates
+          WHERE e.global_sequence = candidates.global_sequence
+        `,
+        params: [watermark, this.modelRequestFinishedRetentionDays, this.batchLimit],
       },
       {
         name: 'hand-events',
-        selectSql: `
-          SELECT global_sequence, event_id, session_id, session_sequence, run_id, tenant_id, event_type, timestamp, event_json
-          FROM ${this.eventsTable}
-          WHERE event_type = ANY($1::text[])
-            AND timestamp < NOW() - ($2::int * INTERVAL '1 day')
-          ORDER BY timestamp ASC, global_sequence ASC
-          LIMIT $3
+        deleteSql: `
+          /* retention:hand-events */
+          WITH candidates AS (
+            SELECT e.global_sequence
+            FROM ${this.eventsTable} e
+            WHERE e.event_type = ANY($1::text[])
+              AND e.global_sequence <= $2::bigint
+              AND e.timestamp < NOW() - ($3::int * INTERVAL '1 day')
+            ORDER BY e.global_sequence ASC
+            FOR UPDATE OF e SKIP LOCKED
+            LIMIT $4
+          )
+          DELETE FROM ${this.eventsTable} e
+          USING candidates
+          WHERE e.global_sequence = candidates.global_sequence
         `,
-        params: [[...HAND_RETENTION_TYPES], this.handEventRetentionDays, this.batchLimit],
+        params: [[...HAND_RETENTION_TYPES], watermark, this.handEventRetentionDays, this.batchLimit],
       },
     ];
   }
 
-  private async processCategory(category: RetentionCategory): Promise<{ archived: number; deleted: number; archiveFiles: string[] }> {
-    let writer: CsvGzipArchiveWriter | undefined;
-    let archived = 0;
+  private async deleteCategory(category: RetentionCategory): Promise<number> {
     let deleted = 0;
-    const archiveFiles: string[] = [];
-    try {
-      while (true) {
-        const batch = await this.options.pool.query<RuntimeEventArchiveRow>(category.selectSql, category.params);
-        if (batch.rows.length === 0) break;
-        if (!writer) {
-          const filePath = join(this.archiveDir, `${formatTimestampForFile(new Date())}-${category.name}.csv.gz`);
-          writer = new CsvGzipArchiveWriter(filePath);
-          archiveFiles.push(filePath);
-        }
-        await writer.writeRows(batch.rows);
-        archived += batch.rows.length;
-        const sequences = batch.rows.map((row) => row.global_sequence);
-        const deletedBatch = await this.options.pool.query(
-          `DELETE FROM ${this.eventsTable}
-           WHERE global_sequence = ANY($1::bigint[])`,
-          [sequences],
-        );
-        deleted += deletedBatch.rowCount ?? 0;
-        if ((deletedBatch.rowCount ?? 0) !== batch.rows.length) {
-          this.options.logger?.warn?.(
-            `RuntimeEventRetention delete count mismatch category=${category.name} selected=${batch.rows.length} deleted=${deletedBatch.rowCount ?? 0}`,
-          );
-        }
-      }
-    } finally {
-      if (writer) await writer.close();
+    while (true) {
+      const batch = await this.options.pool.query(category.deleteSql, category.params);
+      const batchDeleted = batch.rowCount ?? 0;
+      deleted += batchDeleted;
+      if (batchDeleted < this.batchLimit) break;
     }
-    return { archived, deleted, archiveFiles };
+    return deleted;
   }
 
-  private async ensureBillingProjectionCaughtUp(): Promise<{ billingWatermark: string; maxGlobalSequence: string }> {
+  /**
+   * 尽力推进计费投影，但不要求追上一个持续增长的 moving target。
+   * DELETE 只处理最终读取到的 watermark 以内事件；水位之后的记录留待下轮。
+   */
+  private async advanceBillingProjection(): Promise<{ billingWatermark: bigint; maxGlobalSequence: bigint }> {
     let lag = await this.readBillingProjectionLag();
     if (lag.billingWatermark < lag.maxGlobalSequence && this.options.projectBillingRuntimeEvents) {
       for (let i = 0; i < this.billingCatchupMaxBatches && lag.billingWatermark < lag.maxGlobalSequence; i++) {
@@ -259,14 +303,12 @@ export class RuntimeEventRetention {
       }
     }
     if (lag.billingWatermark < lag.maxGlobalSequence) {
-      throw new Error(
-        `billing projection is behind runtime_events: watermark=${lag.billingWatermark.toString()} max_global_sequence=${lag.maxGlobalSequence.toString()}; skip retention delete`,
+      this.options.logger?.info?.(
+        `RuntimeEventRetention billing projection remains behind: watermark=${lag.billingWatermark.toString()} `
+        + `maxGlobalSequence=${lag.maxGlobalSequence.toString()}; cleanup is bounded by watermark`,
       );
     }
-    return {
-      billingWatermark: lag.billingWatermark.toString(),
-      maxGlobalSequence: lag.maxGlobalSequence.toString(),
-    };
+    return lag;
   }
 
   private async readBillingProjectionLag(): Promise<{ billingWatermark: bigint; maxGlobalSequence: bigint }> {
@@ -289,53 +331,6 @@ export class RuntimeEventRetention {
   }
 }
 
-class CsvGzipArchiveWriter {
-  private readonly gzip = createGzip();
-  private readonly output: WriteStream;
-  private wroteHeader = false;
-
-  constructor(readonly filePath: string) {
-    this.output = createWriteStream(filePath);
-    this.gzip.pipe(this.output);
-  }
-
-  async writeRows(rows: RuntimeEventArchiveRow[]): Promise<void> {
-    if (!this.wroteHeader) {
-      await this.writeLine(ARCHIVE_HEADERS.join(','));
-      this.wroteHeader = true;
-    }
-    for (const row of rows) {
-      await this.writeLine([
-        row.global_sequence,
-        row.event_id,
-        row.session_id,
-        row.session_sequence,
-        row.run_id ?? '',
-        row.tenant_id,
-        row.event_type,
-        row.timestamp instanceof Date ? row.timestamp.toISOString() : row.timestamp,
-        JSON.stringify(row.event_json) ?? '',
-      ].map(csvField).join(','));
-    }
-  }
-
-  async close(): Promise<void> {
-    this.gzip.end();
-    await Promise.all([finished(this.gzip), finished(this.output)]);
-  }
-
-  private async writeLine(line: string): Promise<void> {
-    if (!this.gzip.write(`${line}\n`, 'utf-8')) {
-      await once(this.gzip, 'drain');
-    }
-  }
-}
-
-export function csvField(value: string): string {
-  if (!/[",\n\r]/.test(value)) return value;
-  return `"${value.replaceAll('"', '""')}"`;
-}
-
 function sanitizeIdentifier(value: string): string {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
     throw new Error(`非法 PG identifier: ${value}`);
@@ -346,27 +341,4 @@ function sanitizeIdentifier(value: string): string {
 function clampInt(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(Math.max(Math.trunc(value), min), max);
-}
-
-function msUntilNextLocalTime(hour: number, minute: number): number {
-  const now = new Date();
-  const next = new Date(now);
-  next.setHours(hour, minute, 0, 0);
-  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
-  return next.getTime() - now.getTime();
-}
-
-function formatTimestampForFile(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return [
-    date.getFullYear(),
-    pad(date.getMonth() + 1),
-    pad(date.getDate()),
-    '-',
-    pad(date.getHours()),
-    pad(date.getMinutes()),
-    pad(date.getSeconds()),
-    '-',
-    process.pid.toString(),
-  ].join('');
 }

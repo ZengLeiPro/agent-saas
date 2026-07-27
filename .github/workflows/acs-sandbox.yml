@@ -337,19 +337,49 @@ jobs:
           sudo mv aliyun /usr/local/bin/
           aliyun version
 
+      - name: Checkout exact dispatch commit
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify dispatch still targets latest main
+        run: |
+          set -euo pipefail
+          git fetch --quiet --no-tags origin main
+          latest_main_sha=$(git rev-parse refs/remotes/origin/main)
+          if [ "$latest_main_sha" != "$GITHUB_SHA" ]; then
+            echo "::error title=Stale ACS deploy dispatch::This run targets $GITHUB_SHA, but origin/main is now $latest_main_sha. Dispatch ACS CI / Deploy again from the latest main commit."
+            exit 1
+          fi
+          echo "Dispatch target is current main: $GITHUB_SHA"
+
       # 不主动触发构建: build rule 的 tag 变量 ${GIT_PUSH_DATE}/${GIT_COMMIT_ID}
       # 只在 push 事件自动构建时有值, API 手动触发会解析为空 tag "-"（2026-07-04
       # 首次实测踩坑）。因此 ACR 侧开启「代码变更自动构建」, push main 即自动
-      # build; 本 job 只按当前 HEAD sha 查找对应构建记录并等它 SUCCESS。
-      # 附带收益: dispatch deploy 时镜像通常已 ready, deploy 全程 2-3min。
+      # build; 本 job 只接受当前 main 的 exact SHA 镜像，禁止用后继镜像替代，
+      # 避免 orchestrator 源码与 sandbox image 版本错配。ACR 若没有为本 SHA
+      # 创建记录，3 分钟内快速失败；记录已存在但仍在构建时最多等待 20 分钟。
       - name: Wait for ACR auto-build of HEAD (poll every 30s)
         id: wait
         run: |
+          set -euo pipefail
           : "${ALIYUN_AK:?Missing secret ALIYUN_ACCESS_KEY_ID}"
           : "${ALIYUN_SK:?Missing secret ALIYUN_ACCESS_KEY_SECRET}"
           SHA6="${GITHUB_SHA:0:6}"
+          MAX_POLLS=40
+          MAX_MISSING_POLLS=6
+          MAX_QUERY_ERRORS=3
+          missing_polls=0
+          query_errors=0
           echo "Looking for ACR build record with tag suffix -$SHA6 (HEAD $GITHUB_SHA) ..."
-          for i in $(seq 1 60); do
+          for i in $(seq 1 "$MAX_POLLS"); do
+            git fetch --quiet --no-tags origin main
+            latest_main_sha=$(git rev-parse refs/remotes/origin/main)
+            if [ "$latest_main_sha" != "$GITHUB_SHA" ]; then
+              echo "::error title=Stale ACS deploy dispatch::main advanced to $latest_main_sha while this run was waiting for image $SHA6. Dispatch again from latest main."
+              exit 1
+            fi
+
             aliyun cr ListRepoBuildRecord \
               --mode AK --access-key-id "$ALIYUN_AK" --access-key-secret "$ALIYUN_SK" \
               --region "$ACR_REGION_ID" \
@@ -384,14 +414,32 @@ jobs:
                 echo "ACR build $bstatus — 构建日志: https://cr.console.aliyun.com/repository/cn-shenzhen/$ACR_INSTANCE_ID/agent-saas/acs-sandbox/build" >&2
                 exit 1
                 ;;
+              NOT_FOUND)
+                query_errors=0
+                missing_polls=$((missing_polls + 1))
+                if [ "$missing_polls" -ge "$MAX_MISSING_POLLS" ]; then
+                  echo "::error title=ACR build record missing::No ACR build record for current main $GITHUB_SHA appeared after $missing_polls checks. Verify the ACR source webhook/build rule, then dispatch again; a later image will not be substituted."
+                  exit 1
+                fi
+                ;;
+              PARSE_ERROR)
+                query_errors=$((query_errors + 1))
+                if [ "$query_errors" -ge "$MAX_QUERY_ERRORS" ]; then
+                  echo "::error title=ACR query failed::Unable to parse ACR build records for $query_errors consecutive checks."
+                  exit 1
+                fi
+                ;;
+              *)
+                # BUILDING/PENDING 等真实记录已出现后，不再受 discovery 窗口限制；
+                # 继续等它进入 SUCCESS/FAILED/CANCELED。
+                missing_polls=0
+                query_errors=0
+                ;;
             esac
             sleep 30
           done
-          echo "no SUCCESS build record for HEAD within 30min — 确认 push 是否触发了 ACR 自动构建" >&2
+          echo "no SUCCESS build record for HEAD within 20min — 检查 ACR 构建日志" >&2
           exit 1
-
-      - name: Checkout code
-        uses: actions/checkout@v5
 
       - name: Pack orchestrator release
         run: |

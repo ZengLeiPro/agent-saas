@@ -13,6 +13,7 @@ const DEFAULT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const STALE_APPROVAL_REASON = 'stale_waiting_approval_timeout';
 const STALE_APPROVAL_BATCH_SIZE = 50;
 const BACKGROUND_COMMAND_START_TIMEOUT_MS = 2 * 60_000;
+const DEFAULT_MAX_CONCURRENT_RUNS = 16;
 
 export interface RunLease {
   runId: string;
@@ -29,6 +30,8 @@ export interface RuntimeSchedulerOptions {
   pollIntervalMs?: number;
   leaseMs?: number;
   maxConcurrentRuns?: number;
+  /** 从共享配置源刷新顶层并发；失败时保留当前值，不阻断调度。 */
+  resolveMaxConcurrentRuns?: () => Promise<number>;
   /** 后台 Agent 独占上限；默认 2，始终不超过 maxConcurrentRuns。 */
   maxConcurrentBackgroundRuns?: number;
   approvalTimeoutMs?: number;
@@ -55,8 +58,8 @@ export class RuntimeScheduler {
   private readonly workerId: string;
   private readonly pollIntervalMs: number;
   private readonly leaseMs: number;
-  private readonly maxConcurrentRuns: number;
-  private readonly maxConcurrentBackgroundRuns: number;
+  private maxConcurrentRuns: number;
+  private readonly configuredMaxConcurrentBackgroundRuns: number;
   private readonly approvalTimeoutMs: number;
   private timer: NodeJS.Timeout | null = null;
   private stopped = true;
@@ -72,12 +75,43 @@ export class RuntimeScheduler {
     this.workerId = options.workerId ?? `worker-${process.pid}-${randomUUID()}`;
     this.pollIntervalMs = options.pollIntervalMs ?? 10_000;
     this.leaseMs = options.leaseMs ?? 60_000;
-    this.maxConcurrentRuns = Math.max(1, Math.floor(options.maxConcurrentRuns ?? 4));
-    this.maxConcurrentBackgroundRuns = Math.min(
-      this.maxConcurrentRuns,
-      Math.max(1, Math.floor(options.maxConcurrentBackgroundRuns ?? 2)),
+    this.maxConcurrentRuns = Math.max(
+      1,
+      Math.floor(options.maxConcurrentRuns ?? DEFAULT_MAX_CONCURRENT_RUNS),
+    );
+    this.configuredMaxConcurrentBackgroundRuns = Math.max(
+      1,
+      Math.floor(options.maxConcurrentBackgroundRuns ?? 2),
     );
     this.approvalTimeoutMs = Math.max(0, Math.floor(options.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS));
+  }
+
+  getCapacitySnapshot(): {
+    maxConcurrentRuns: number;
+    maxConcurrentBackgroundRuns: number;
+    inFlightRuns: number;
+    inFlightBackgroundRuns: number;
+  } {
+    return {
+      maxConcurrentRuns: this.maxConcurrentRuns,
+      maxConcurrentBackgroundRuns: Math.min(
+        this.maxConcurrentRuns,
+        this.configuredMaxConcurrentBackgroundRuns,
+      ),
+      inFlightRuns: this.inFlightRuns.size,
+      inFlightBackgroundRuns: [...this.inFlightRunRecords.values()]
+        .filter((record) => isBackgroundTaskRun(record)).length,
+    };
+  }
+
+  updateMaxConcurrentRuns(value: number): void {
+    if (!Number.isInteger(value) || value < 1) {
+      throw new Error('maxConcurrentRuns 必须是正整数');
+    }
+    if (value === this.maxConcurrentRuns) return;
+    this.maxConcurrentRuns = value;
+    this.options.logger?.info(`Runtime scheduler concurrency updated: maxConcurrentRuns=${value}`);
+    this.scheduleImmediateTick('capacity-updated');
   }
 
   async enqueue(input: Parameters<RunStore['upsertPending']>[0]): Promise<RunRecord> {
@@ -148,6 +182,13 @@ export class RuntimeScheduler {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.options.logger?.error(`Runtime scheduler beforeTick failed: ${message}`);
+      }
+      try {
+        const nextMaxConcurrentRuns = await this.options.resolveMaxConcurrentRuns?.();
+        if (nextMaxConcurrentRuns !== undefined) this.updateMaxConcurrentRuns(nextMaxConcurrentRuns);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.options.logger?.warn(`Runtime scheduler capacity refresh failed; keeping current value: ${message}`);
       }
 
       const recoverable = await this.options.runStore.listRecoverable();
@@ -222,13 +263,17 @@ export class RuntimeScheduler {
       const selectedSessions = new Set<string>();
       const inFlightBackground = [...this.inFlightRunRecords.values()]
         .filter((record) => isBackgroundTaskRun(record)).length;
+      const maxConcurrentBackgroundRuns = Math.min(
+        this.maxConcurrentRuns,
+        this.configuredMaxConcurrentBackgroundRuns,
+      );
       let selectedBackground = 0;
       for (const record of pendingRecoverable) {
         if (selected.length >= availableSlots) break;
         if (this.inFlightSessions.has(record.sessionId)) continue;
         if (selectedSessions.has(record.sessionId)) continue;
         if (isBackgroundTaskRun(record)
-          && inFlightBackground + selectedBackground >= this.maxConcurrentBackgroundRuns) continue;
+          && inFlightBackground + selectedBackground >= maxConcurrentBackgroundRuns) continue;
         selected.push(record);
         selectedSessions.add(record.sessionId);
         if (isBackgroundTaskRun(record)) selectedBackground += 1;
@@ -335,8 +380,17 @@ export class RuntimeScheduler {
       return;
     }
 
-    const acquired = await this.options.runStore.acquireLease?.(record.runId, this.workerId, this.leaseMs);
-    if (!acquired) return;
+    const acquired = await this.options.runStore.acquireLease?.(
+      record.runId,
+      this.workerId,
+      this.leaseMs,
+      new Date(),
+      this.maxConcurrentRuns,
+    );
+    if (!acquired) {
+      this.deferRun(record.runId);
+      return;
+    }
     const lease = this.createLease(acquired);
     await this.options.eventStore.append({
       type: 'run_lease_acquired',

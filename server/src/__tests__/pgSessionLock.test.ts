@@ -1,0 +1,172 @@
+import type pg from 'pg';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { PgSessionLock } from '../runtime/pgSessionLock.js';
+
+interface LeaseState {
+  ownerToken: string;
+  expiresAt: number;
+}
+
+class FakePool {
+  readonly leases = new Map<string, LeaseState>();
+  connectCalls = 0;
+  clientReleaseCalls = 0;
+  advisoryUnlockCalls = 0;
+  clientQueries: string[] = [];
+  failRenewFor = new Set<string>();
+
+  async connect(): Promise<pg.PoolClient> {
+    this.connectCalls += 1;
+    const client = {
+      query: async <T>(sql: string) => {
+        this.clientQueries.push(sql);
+        if (sql.includes('pg_try_advisory_lock')) {
+          return { rows: [{ acquired: true }] as T[] };
+        }
+        if (sql.includes('pg_advisory_unlock')) {
+          this.advisoryUnlockCalls += 1;
+        }
+        return { rows: [] as T[] };
+      },
+      release: () => {
+        this.clientReleaseCalls += 1;
+      },
+    };
+    return client as unknown as pg.PoolClient;
+  }
+
+  async query<T>(sql: string, params: unknown[] = []): Promise<{ rows: T[] }> {
+    if (sql.includes('INSERT INTO') && sql.includes('_session_leases')) {
+      const [sessionId, ownerToken, leaseMs] = params as [string, string, number];
+      const now = Date.now();
+      const current = this.leases.get(sessionId);
+      if (current && current.expiresAt > now) return { rows: [] };
+      const expiresAt = now + leaseMs;
+      this.leases.set(sessionId, { ownerToken, expiresAt });
+      return { rows: [{ lease_expires_at: new Date(expiresAt) }] as T[] };
+    }
+
+    if (sql.includes('UPDATE') && sql.includes('_session_leases')) {
+      const [sessionId, ownerToken, leaseMs] = params as [string, string, number];
+      const current = this.leases.get(sessionId);
+      if (
+        this.failRenewFor.has(sessionId)
+        || !current
+        || current.ownerToken !== ownerToken
+        || current.expiresAt <= Date.now()
+      ) {
+        return { rows: [] };
+      }
+      const expiresAt = Date.now() + leaseMs;
+      this.leases.set(sessionId, { ownerToken, expiresAt });
+      return { rows: [{ lease_expires_at: new Date(expiresAt) }] as T[] };
+    }
+
+    if (sql.includes('DELETE FROM') && sql.includes('_session_leases')) {
+      const [sessionId, ownerToken] = params as [string, string];
+      const current = this.leases.get(sessionId);
+      if (current?.ownerToken === ownerToken) this.leases.delete(sessionId);
+    }
+    return { rows: [] };
+  }
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('PgSessionLock', () => {
+  it('初始化受 tablePrefix 约束的 durable lease 表', async () => {
+    const pool = new FakePool();
+    const lock = new PgSessionLock({
+      pool: pool as unknown as pg.Pool,
+      tablePrefix: 'tenant_runtime',
+      mode: 'lease',
+    });
+
+    await lock.init();
+
+    expect(pool.clientQueries.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS tenant_runtime_session_leases'))).toBe(true);
+    expect(pool.advisoryUnlockCalls).toBe(1);
+    expect(pool.clientReleaseCalls).toBe(1);
+  });
+
+  it('lease 模式下并发会话只做短查询，不占用 pool client', async () => {
+    const pool = new FakePool();
+    const lock = new PgSessionLock({
+      pool: pool as unknown as pg.Pool,
+      mode: 'lease',
+    });
+
+    const handles = await Promise.all(
+      Array.from({ length: 20 }, (_, index) => lock.tryAcquire(`session-${index}`)),
+    );
+
+    expect(handles.every(Boolean)).toBe(true);
+    expect(pool.connectCalls).toBe(0);
+    expect(pool.leases.size).toBe(20);
+
+    await Promise.all(handles.map((handle) => handle?.release()));
+    expect(pool.leases.size).toBe(0);
+    expect(pool.connectCalls).toBe(0);
+  });
+
+  it('同一 session 在租约释放前只有一个 owner', async () => {
+    const pool = new FakePool();
+    const lock = new PgSessionLock({
+      pool: pool as unknown as pg.Pool,
+      mode: 'lease',
+    });
+
+    const first = await lock.tryAcquire('session-one');
+    const blocked = await lock.tryAcquire('session-one');
+
+    expect(first).not.toBeNull();
+    expect(blocked).toBeNull();
+
+    await first?.release();
+    const next = await lock.tryAcquire('session-one');
+    expect(next).not.toBeNull();
+    await next?.release();
+  });
+
+  it('续约确认 owner 丢失时通知 dispatch abort', async () => {
+    vi.useFakeTimers();
+    const pool = new FakePool();
+    const onLost = vi.fn();
+    const lock = new PgSessionLock({
+      pool: pool as unknown as pg.Pool,
+      mode: 'lease',
+      leaseMs: 10_000,
+      renewIntervalMs: 1_000,
+    });
+    const handle = await lock.tryAcquire('session-lost', { onLost });
+    pool.failRenewFor.add('session-lost');
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(onLost).toHaveBeenCalledTimes(1);
+    expect(onLost.mock.calls[0]?.[0]).toBeInstanceOf(Error);
+    await handle?.release();
+  });
+
+  it('dual 模式同时持旧 advisory lock 和新租约，供两阶段蓝绿迁移', async () => {
+    const pool = new FakePool();
+    const lock = new PgSessionLock({
+      pool: pool as unknown as pg.Pool,
+      mode: 'dual',
+    });
+
+    const handle = await lock.tryAcquire('session-dual');
+
+    expect(handle).not.toBeNull();
+    expect(pool.connectCalls).toBe(1);
+    expect(pool.leases.has('session-dual')).toBe(true);
+
+    await handle?.release();
+    expect(pool.advisoryUnlockCalls).toBe(1);
+    expect(pool.clientReleaseCalls).toBe(1);
+    expect(pool.leases.has('session-dual')).toBe(false);
+  });
+});

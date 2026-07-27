@@ -165,7 +165,13 @@ export interface RunStore {
   ): Promise<RunRecord | null>;
   listStaleWaitingApproval?(cutoff: Date, limit?: number): Promise<RunRecord[]>;
   cancelStaleWaitingApproval?(runId: string, cutoff: Date, reason: string, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null>;
-  acquireLease?(runId: string, workerId: string, leaseMs: number, now?: Date): Promise<RunRecord | null>;
+  acquireLease?(
+    runId: string,
+    workerId: string,
+    leaseMs: number,
+    now?: Date,
+    maxConcurrentRuns?: number,
+  ): Promise<RunRecord | null>;
   renewLease?(runId: string, workerId: string, leaseMs: number, now?: Date): Promise<RunRecord | null>;
   releaseLease?(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string): Promise<RunRecord | null>;
   /**
@@ -639,9 +645,15 @@ export class PgRunStore implements RunStore {
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 
-  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
+  async acquireLease(
+    runId: string,
+    workerId: string,
+    leaseMs: number,
+    now = new Date(),
+    maxConcurrentRuns?: number,
+  ): Promise<RunRecord | null> {
     const leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString();
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
+    const updateSql = `
       UPDATE ${this.runsTable}
       SET status = 'running',
           worker_id = $2,
@@ -654,8 +666,44 @@ export class PgRunStore implements RunStore {
           OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < $4))
         )
       RETURNING row_to_json(${this.runsTable}.*) AS row_json
-    `, [runId, workerId, leaseExpiresAt, now.toISOString()]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+    `;
+    const params = [runId, workerId, leaseExpiresAt, now.toISOString()];
+    if (maxConcurrentRuns === undefined) {
+      const result = await this.pool.query<{ row_json: RunRecord }>(updateSql, params);
+      return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+    }
+    if (!Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1) {
+      throw new Error('maxConcurrentRuns must be a positive integer');
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // 跨蓝绿实例的全局容量闸门：串行化“读取当前有效 lease 数 + 新 lease CAS”。
+      // Scheduler 本地 inFlight 只负责单进程快速筛选，真正的全局上限由这里保证。
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+        [`${this.runsTable}:scheduler-capacity`],
+      );
+      const countResult = await client.query<{ active_count: string | number }>(`
+        SELECT COUNT(*) AS active_count
+        FROM ${this.runsTable}
+        WHERE status = 'running'
+          AND lease_expires_at > $1::timestamptz
+      `, [now.toISOString()]);
+      if (parseCount(countResult.rows[0]?.active_count) >= maxConcurrentRuns) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const result = await client.query<{ row_json: RunRecord }>(updateSql, params);
+      await client.query('COMMIT');
+      return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {

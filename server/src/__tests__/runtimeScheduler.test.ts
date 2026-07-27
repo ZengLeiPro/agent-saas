@@ -474,6 +474,93 @@ describe('RuntimeScheduler', () => {
     await scheduler.stop();
   });
 
+  it('defaults to sixteen concurrent top-level runs', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    for (let index = 1; index <= 17; index += 1) {
+      await runStore.upsertPending({
+        runId: `run-default-${index}`,
+        sessionId: `session-default-${index}`,
+      });
+    }
+    const gate = deferred();
+    const started: string[] = [];
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-default-capacity',
+      autoWake: true,
+      wake: async (record, lease) => {
+        started.push(record.runId);
+        await gate.promise;
+        await lease.release('completed', 'done');
+      },
+    });
+
+    await scheduler.tick();
+    await flushSchedulerMicrotasks();
+
+    expect(started).toHaveLength(16);
+    expect(started).not.toContain('run-default-17');
+
+    gate.resolve();
+    await scheduler.stop();
+  });
+
+  it('hot-applies shared capacity without interrupting in-flight runs', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    await runStore.upsertPending({ runId: 'run-hot-1', sessionId: 'session-hot-1' });
+    await runStore.upsertPending({ runId: 'run-hot-2', sessionId: 'session-hot-2' });
+    await runStore.upsertPending({ runId: 'run-hot-3', sessionId: 'session-hot-3' });
+    const gates = new Map<string, ReturnType<typeof deferred>>();
+    const started: string[] = [];
+    let desiredMaxConcurrentRuns = 1;
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-hot-capacity',
+      autoWake: true,
+      maxConcurrentRuns: 1,
+      resolveMaxConcurrentRuns: async () => desiredMaxConcurrentRuns,
+      wake: async (record, lease) => {
+        started.push(record.runId);
+        const gate = deferred();
+        gates.set(record.runId, gate);
+        await gate.promise;
+        await lease.release('completed', 'done');
+      },
+    });
+
+    await scheduler.tick();
+    await flushSchedulerMicrotasks();
+    expect(started).toEqual(['run-hot-1']);
+    expect(scheduler.getCapacitySnapshot()).toMatchObject({
+      maxConcurrentRuns: 1,
+      inFlightRuns: 1,
+    });
+
+    desiredMaxConcurrentRuns = 2;
+    await scheduler.tick();
+    await flushSchedulerMicrotasks();
+    expect(started).toEqual(['run-hot-1', 'run-hot-2']);
+    expect(scheduler.getCapacitySnapshot()).toMatchObject({
+      maxConcurrentRuns: 2,
+      inFlightRuns: 2,
+    });
+
+    desiredMaxConcurrentRuns = 1;
+    await scheduler.tick();
+    expect(scheduler.getCapacitySnapshot()).toMatchObject({
+      maxConcurrentRuns: 1,
+      inFlightRuns: 2,
+    });
+    expect(started).toHaveLength(2);
+
+    gates.forEach((gate) => gate.resolve());
+    await scheduler.stop();
+  });
+
   it('does not let a long run in one session block another session', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();

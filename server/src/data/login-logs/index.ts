@@ -57,6 +57,8 @@ const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
   'tool_controls_updated',
   // 网络出口配置改变出站路径（代理/镜像源），同样只有平台管理员能做
   'egress_config_updated',
+  // 顶层 Agent 调度并发改变全平台瞬时负载，必须记录 before/after
+  'runtime_scheduler_capacity_updated',
 ]);
 
 /** 从 Express Request 构建并追加一条审计日志（fire-and-forget） */

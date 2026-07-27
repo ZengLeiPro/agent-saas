@@ -118,6 +118,11 @@ describe("enforcePlatformWritePolicy", () => {
     expect((await rig.request("POST", "/api/admin/billing/accounts/wain/adjust", {})).status).toBe(403);
     expect((await rig.request("POST", "/api/admin/system/storage/delete", {})).status).toBe(403);
     expect((await rig.request("PUT", "/api/admin/tool-controls", {})).status).toBe(403);
+    expect(
+      (await rig.request("PATCH", "/api/admin/runtime-operations/scheduler/runtime-config", {
+        maxConcurrentRuns: 24,
+      })).status,
+    ).toBe(403);
     expect((await rig.request("POST", "/api/auth/users", {})).status).toBe(200);
     expect((await rig.request("DELETE", "/api/auth/login-logs")).status).toBe(403);
     expect((await rig.request("PUT", "/api/mcp/admin/servers/x", {})).status).toBe(403);
@@ -268,6 +273,11 @@ describe("enforcePlatformWritePolicy", () => {
     expect((await rig.request("GET", "/api/admin/qa/sessions/s1/messages")).status).toBe(200);
     expect(
       (await rig.request("GET", "/api/admin/runtime/trace/runs/r1/events")).status,
+    ).toBe(200);
+    expect(
+      (await rig.request("PATCH", "/api/admin/runtime-operations/scheduler/runtime-config", {
+        maxConcurrentRuns: 24,
+      })).status,
     ).toBe(200);
   });
 

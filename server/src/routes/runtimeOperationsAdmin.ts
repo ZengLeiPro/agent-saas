@@ -2,8 +2,11 @@ import { Router } from 'express';
 import pg from 'pg';
 
 import { requirePlatformAdmin } from '../auth/middleware.js';
+import { isSuperAdmin, requireSuperAdmin } from '../auth/platformGovernance.js';
 import type { AppConfig } from '../app/config.js';
+import { auditLog } from '../data/login-logs/index.js';
 import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
+import type { RuntimeSchedulerCapacityController } from '../runtime/runtimeSchedulerConfigStore.js';
 import type { SecretVault } from '../security/secretVault.js';
 import {
   probeTenantRemoteHandHealth,
@@ -21,6 +24,7 @@ export interface CreateRuntimeOperationsAdminRouterOptions {
   healthTimeoutMs?: number;
   processRole?: string;
   userStore?: UserStore;
+  runtimeSchedulerCapacity?: RuntimeSchedulerCapacityController;
 }
 
 type RuntimeEventStoreResponse =
@@ -271,7 +275,7 @@ export function createRuntimeOperationsAdminRouter(
 
   router.use(requirePlatformAdmin);
 
-  router.get('/', async (_req, res) => {
+  router.get('/', async (req, res) => {
     const safeHands = sanitizeTenantRemoteHands(options.config.tenantRemoteHands).hands;
     const handHealth = await Promise.all((options.config.tenantRemoteHands?.hands ?? []).map(async (hand) => ({
       id: hand.id,
@@ -294,15 +298,66 @@ export function createRuntimeOperationsAdminRouter(
       } as const;
     }
 
+    let runtimeScheduler: unknown = { status: 'disabled' };
+    if (options.runtimeSchedulerCapacity) {
+      try {
+        const snapshot = await options.runtimeSchedulerCapacity.getSnapshot();
+        runtimeScheduler = {
+          ...snapshot,
+          editable: snapshot.editable && isSuperAdmin(req.user),
+        };
+      } catch (error) {
+        runtimeScheduler = {
+          status: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+
     res.json({
       generatedAt: new Date().toISOString(),
       processRole: options.processRole ?? null,
+      runtimeScheduler,
       tenantRemoteHands: {
         hands: safeHands,
         health: handHealth,
       },
       runtimeEventStore,
     });
+  });
+
+  router.patch('/scheduler/runtime-config', requireSuperAdmin, async (req, res) => {
+    if (!options.runtimeSchedulerCapacity) {
+      res.status(503).json({ error: 'Runtime scheduler capacity control is unavailable' });
+      return;
+    }
+    const before = await options.runtimeSchedulerCapacity.getSnapshot().catch(() => null);
+    if (before && !before.editable) {
+      res.status(409).json({
+        error: 'dual 迁移阶段固定为 4；切换到 lease 后才能修改并发',
+        runtimeScheduler: before,
+      });
+      return;
+    }
+    const value = req.body?.maxConcurrentRuns;
+    if (!Number.isInteger(value) || value < 1) {
+      res.status(400).json({ error: 'maxConcurrentRuns 必须是正整数' });
+      return;
+    }
+    try {
+      const actor = req.user?.username || req.user?.sub || 'unknown';
+      const runtimeScheduler = await options.runtimeSchedulerCapacity.updateMaxConcurrentRuns(value, actor);
+      auditLog(req, 'runtime_scheduler_capacity_updated', JSON.stringify({
+        before: before?.maxConcurrentRuns,
+        after: runtimeScheduler.maxConcurrentRuns,
+        effective: runtimeScheduler.effectiveMaxConcurrentRuns,
+      }));
+      res.json({ status: 'ok', runtimeScheduler });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = /正整数|安全上限|不能超过/.test(message) ? 400 : /dual 迁移阶段/.test(message) ? 409 : 500;
+      res.status(status).json({ error: message });
+    }
   });
 
   router.get('/acs/runtime-config', async (_req, res) => {

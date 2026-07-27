@@ -67,6 +67,21 @@ interface SnatStatus {
 interface RuntimeOperationsResponse {
   generatedAt: string;
   processRole: string | null;
+  runtimeScheduler:
+    | {
+        status: "ok";
+        sessionLockMode: "dual" | "lease";
+        maxConcurrentRuns: number;
+        effectiveMaxConcurrentRuns: number;
+        maxConfigurableConcurrentRuns: number;
+        editable: boolean;
+        inFlightRuns: number;
+        inFlightBackgroundRuns: number;
+        updatedAt: string;
+        updatedBy?: string;
+      }
+    | { status: "disabled" }
+    | { status: "error"; error: string };
   tenantRemoteHands: {
     hands: Array<{
       id: string;
@@ -286,6 +301,16 @@ function parseLimitInput(label: string, value: string): number {
   return parsed;
 }
 
+function parsePositiveLimitInput(label: string, value: string, max: number): number {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) throw new Error(`${label} 必须是 1-${max} 的整数`);
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > max) {
+    throw new Error(`${label} 必须是 1-${max} 的整数`);
+  }
+  return parsed;
+}
+
 function parseDurationMsInput(label: string, value: string): number {
   const trimmed = value.trim();
   if (!/^\d+$/.test(trimmed)) throw new Error(`${label} 必须是毫秒整数`);
@@ -331,6 +356,7 @@ export function RuntimeOperationsManager() {
   const [maxRunningText, setMaxRunningText] = useState("");
   const [warnRunningText, setWarnRunningText] = useState("");
   const [drainDeadlineText, setDrainDeadlineText] = useState("");
+  const [schedulerMaxText, setSchedulerMaxText] = useState("");
 
   const load = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
     if (mode === "initial") setLoading(true);
@@ -373,6 +399,7 @@ export function RuntimeOperationsManager() {
   const allHandsHealthy = (data?.tenantRemoteHands.health ?? []).every((item) => item.status === "ok");
   const runningSandboxes = acsMeta?.sandboxes?.runningCount ?? 0;
   const snat = acsMeta?.snat;
+  const schedulerCapacity = data?.runtimeScheduler.status === "ok" ? data.runtimeScheduler : null;
 
   useEffect(() => {
     if (!acsMeta?.lifecycle) return;
@@ -384,6 +411,11 @@ export function RuntimeOperationsManager() {
     acsMeta?.lifecycle?.warnRunningSandboxes,
     acsMeta?.lifecycle?.drainDeadlineMs,
   ]);
+
+  useEffect(() => {
+    if (!schedulerCapacity) return;
+    setSchedulerMaxText(String(schedulerCapacity.maxConcurrentRuns));
+  }, [schedulerCapacity?.maxConcurrentRuns]);
 
   const saveTenantRemoteHands = useCallback(async (nextHands: TenantRemoteHandConfig[], label: string) => {
     if (!data) return;
@@ -459,6 +491,36 @@ export function RuntimeOperationsManager() {
       setApplyingAction(null);
     }
   }, [drainDeadlineText, load, maxRunningText, warnRunningText]);
+
+  const saveSchedulerRuntimeConfig = useCallback(async () => {
+    if (!schedulerCapacity) return;
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const maxConcurrentRuns = parsePositiveLimitInput(
+        "顶层任务并发",
+        schedulerMaxText,
+        schedulerCapacity.maxConfigurableConcurrentRuns,
+      );
+      if (!window.confirm(
+        `修改顶层任务并发？\n\n当前期望值：${schedulerCapacity.maxConcurrentRuns}\n变更后：${maxConcurrentRuns}\n\n只影响后续调度，不会中断正在运行的任务。`,
+      )) return;
+      setApplyingAction("保存调度并发");
+      const res = await authFetch(`${API_URL}/scheduler/runtime-config`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxConcurrentRuns }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setActionMessage(`顶层任务并发已调整为 ${maxConcurrentRuns}`);
+      await load();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setApplyingAction(null);
+    }
+  }, [load, schedulerCapacity, schedulerMaxText]);
 
   const runLifecycleCleanup = useCallback(async () => {
     if (!window.confirm("立即触发 ACS lifecycle cleanup？这只会按现有 idle/TTL 策略 pause/delete Sandbox CR，不会物理删除 NAS workspace。")) return;
@@ -585,6 +647,80 @@ export function RuntimeOperationsManager() {
               {actionError || actionMessage}
             </div>
           )}
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <SlidersHorizontal className="size-4" />
+                顶层任务调度并发
+              </CardTitle>
+              <div className="text-xs text-muted-foreground">
+                PG 保存期望值并同步到蓝绿实例；降低并发只会暂停接收新任务，不会中断运行中的任务。
+              </div>
+            </CardHeader>
+            <CardContent>
+              {schedulerCapacity ? (
+                <div className="grid gap-4 xl:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.2fr)]">
+                  <div className="space-y-3">
+                    <label className="space-y-1.5 text-sm">
+                      <span className="text-xs font-medium text-muted-foreground">期望并发</span>
+                      <Input
+                        inputMode="numeric"
+                        value={schedulerMaxText}
+                        onChange={(event) => setSchedulerMaxText(event.target.value)}
+                        disabled={!schedulerCapacity.editable || !!applyingAction}
+                      />
+                    </label>
+                    <Button
+                      size="sm"
+                      onClick={() => { void saveSchedulerRuntimeConfig(); }}
+                      disabled={!schedulerCapacity.editable || !!applyingAction || !schedulerMaxText}
+                    >
+                      {applyingAction === "保存调度并发" ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                      保存并热生效
+                    </Button>
+                    <div className="text-xs leading-5 text-muted-foreground">
+                      {schedulerCapacity.sessionLockMode === "dual"
+                        ? "当前处于 dual 迁移阶段，有效并发固定为 4；切换到 lease 后开放修改。"
+                        : schedulerCapacity.editable
+                          ? `可配置范围 1-${schedulerCapacity.maxConfigurableConcurrentRuns}。`
+                          : "仅平台超级管理员可以修改。"}
+                    </div>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <MetricCard
+                      title="当前有效上限"
+                      value={schedulerCapacity.effectiveMaxConcurrentRuns}
+                      description={`期望 ${schedulerCapacity.maxConcurrentRuns}`}
+                      tone="good"
+                    />
+                    <MetricCard
+                      title="本实例执行中"
+                      value={schedulerCapacity.inFlightRuns}
+                      description={`其中后台任务 ${schedulerCapacity.inFlightBackgroundRuns}`}
+                      tone={schedulerCapacity.inFlightRuns >= schedulerCapacity.effectiveMaxConcurrentRuns ? "warn" : "default"}
+                    />
+                    <MetricCard
+                      title="会话锁模式"
+                      value={schedulerCapacity.sessionLockMode}
+                      description={schedulerCapacity.sessionLockMode === "lease" ? "短查询租约" : "迁移兼容态"}
+                    />
+                    <MetricCard
+                      title="部署安全上限"
+                      value={schedulerCapacity.maxConfigurableConcurrentRuns}
+                      description={schedulerCapacity.updatedBy ? `最近由 ${schedulerCapacity.updatedBy} 修改` : "尚无人工修改"}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  {data?.runtimeScheduler.status === "error"
+                    ? `调度配置读取失败：${data.runtimeScheduler.error}`
+                    : "当前运行后端未启用 PG 调度配置。"}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
             <Card>

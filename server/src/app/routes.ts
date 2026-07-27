@@ -361,6 +361,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       secretVault: runtime.secretVault,
       processRole: runtime.processRole,
       userStore: runtime.userStore,
+      runtimeSchedulerCapacity: runtime.runtimeSchedulerCapacity,
     }),
   );
   app.use(

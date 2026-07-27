@@ -32,7 +32,9 @@ export type LoginEvent =
   // 工具启停与描述覆盖：直接改变模型可见的工具契约，必须留痕
   | 'tool_controls_updated'
   // 网络出口：改变平台与容器的出站路径，属高敏配置
-  | 'egress_config_updated';
+  | 'egress_config_updated'
+  // 顶层 Agent 调度并发：直接改变全平台瞬时负载与排队行为
+  | 'runtime_scheduler_capacity_updated';
 
 export interface LoginLogEntry {
   timestamp: string;

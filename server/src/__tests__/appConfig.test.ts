@@ -52,6 +52,35 @@ describe('parseAppConfig', () => {
     })).toThrow();
   });
 
+  it('accepts only the two safe session lock migration modes', () => {
+    const config = parseAppConfig({
+      ...baseConfig,
+      runtimeScheduler: {
+        maxConcurrentRuns: 16,
+        maxConfigurableConcurrentRuns: 64,
+        sessionLockMode: 'lease',
+      },
+    });
+
+    expect(config.runtimeScheduler).toMatchObject({
+      maxConcurrentRuns: 16,
+      maxConfigurableConcurrentRuns: 64,
+      sessionLockMode: 'lease',
+    });
+    expect(() => parseAppConfig({
+      ...baseConfig,
+      runtimeScheduler: {
+        sessionLockMode: 'legacy',
+      },
+    })).toThrow();
+    expect(() => parseAppConfig({
+      ...baseConfig,
+      runtimeScheduler: {
+        maxConfigurableConcurrentRuns: 10_001,
+      },
+    })).toThrow();
+  });
+
   it('accepts platform tool controls', () => {
     const config = parseAppConfig({
       ...baseConfig,

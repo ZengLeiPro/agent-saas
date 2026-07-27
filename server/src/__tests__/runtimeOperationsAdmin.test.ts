@@ -97,6 +97,97 @@ describe('runtime operations admin router', () => {
     }, { fetchImpl });
   });
 
+  it('returns scheduler capacity and hot-updates the PG-backed desired value', async () => {
+    const snapshot = {
+      status: 'ok' as const,
+      sessionLockMode: 'lease' as const,
+      maxConcurrentRuns: 16,
+      effectiveMaxConcurrentRuns: 16,
+      maxConfigurableConcurrentRuns: 64,
+      editable: true,
+      inFlightRuns: 3,
+      inFlightBackgroundRuns: 1,
+      updatedAt: '2026-07-27T14:00:00.000Z',
+      updatedBy: 'bootstrap',
+    };
+    const runtimeSchedulerCapacity = {
+      getSnapshot: vi.fn(async () => snapshot),
+      updateMaxConcurrentRuns: vi.fn(async (value: number, actor: string) => ({
+        ...snapshot,
+        maxConcurrentRuns: value,
+        effectiveMaxConcurrentRuns: value,
+        updatedBy: actor,
+      })),
+    };
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+
+    await withApp(async ({ baseUrl }) => {
+      const summary = await fetch(`${baseUrl}/api/admin/runtime-operations`);
+      expect(summary.status).toBe(200);
+      await expect(readJson(summary)).resolves.toMatchObject({
+        runtimeScheduler: {
+          status: 'ok',
+          maxConcurrentRuns: 16,
+          effectiveMaxConcurrentRuns: 16,
+          editable: true,
+          inFlightRuns: 3,
+        },
+      });
+
+      const update = await fetch(`${baseUrl}/api/admin/runtime-operations/scheduler/runtime-config`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ maxConcurrentRuns: 24 }),
+      });
+      expect(update.status).toBe(200);
+      await expect(readJson(update)).resolves.toMatchObject({
+        status: 'ok',
+        runtimeScheduler: {
+          maxConcurrentRuns: 24,
+          effectiveMaxConcurrentRuns: 24,
+          updatedBy: 'admin',
+        },
+      });
+      expect(runtimeSchedulerCapacity.updateMaxConcurrentRuns).toHaveBeenCalledWith(24, 'admin');
+    }, { fetchImpl, runtimeSchedulerCapacity });
+  });
+
+  it('keeps scheduler capacity read-only during dual migration', async () => {
+    const runtimeSchedulerCapacity = {
+      getSnapshot: vi.fn(async () => ({
+        status: 'ok' as const,
+        sessionLockMode: 'dual' as const,
+        maxConcurrentRuns: 16,
+        effectiveMaxConcurrentRuns: 4,
+        maxConfigurableConcurrentRuns: 64,
+        editable: false,
+        inFlightRuns: 4,
+        inFlightBackgroundRuns: 0,
+        updatedAt: '2026-07-27T14:00:00.000Z',
+      })),
+      updateMaxConcurrentRuns: vi.fn(),
+    };
+
+    await withApp(async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/api/admin/runtime-operations/scheduler/runtime-config`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ maxConcurrentRuns: 24 }),
+      });
+      expect(response.status).toBe(409);
+      await expect(readJson(response)).resolves.toMatchObject({
+        runtimeScheduler: {
+          sessionLockMode: 'dual',
+          effectiveMaxConcurrentRuns: 4,
+        },
+      });
+      expect(runtimeSchedulerCapacity.updateMaxConcurrentRuns).not.toHaveBeenCalled();
+    }, { runtimeSchedulerCapacity });
+  });
+
   it('proxies ACS runtime config updates without exposing hand token to the browser', async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe('http://acs-hand:3400/runtime-config');

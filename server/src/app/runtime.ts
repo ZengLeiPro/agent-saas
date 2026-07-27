@@ -50,6 +50,11 @@ import {
 import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
 import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from '../runtime/toolInvocationCancelDelivery.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
+import {
+  effectiveMaxConcurrentRuns,
+  PgRuntimeSchedulerConfigStore,
+  type RuntimeSchedulerCapacityController,
+} from '../runtime/runtimeSchedulerConfigStore.js';
 import { DurableBackgroundTaskService } from '../runtime/background/backgroundTaskService.js';
 import { isBackgroundCommandTaskRun } from '../runtime/background/backgroundTaskRuntime.js';
 import { AutoCompactionService } from '../runtime/autoCompaction.js';
@@ -271,6 +276,8 @@ export interface AppRuntime {
    * 运行监测读 API（/api/admin/runtime/trace）用它查 RunRecord 并取 runsTable 表名。
    */
   runtimeRunStore?: PgRunStore;
+  /** PG 统一持久化的顶层 run 并发控制；平台运行态页读取并热更新。 */
+  runtimeSchedulerCapacity?: RuntimeSchedulerCapacityController;
   /** PG runtime session projection store（平台观测会话列表用；file backend 为 undefined）。 */
   runtimeSessionProjectionStore?: PgSessionProjectionStore;
   /** PG runtime tool invocation store（组织删除清理用；file backend 为 undefined）。 */
@@ -473,6 +480,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const processRole = options.processRole ?? 'all';
   const enableSchedulerWorker = processRole !== 'ws-only';
   const config = loadAppConfig(processCwd);
+  const sessionLockMode = config.runtimeScheduler?.sessionLockMode ?? 'dual';
   // 非 production 进程禁止连远程 PG（2026-07-26 本地 dev 接管生产库事故）
   assertDevDatabaseSafety(config);
 
@@ -835,6 +843,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const sessionCatalog = new FileSessionCatalog({ agentCwd });
   let runtimeEventStoreShutdown: (() => Promise<void>) | undefined;
   let pgEventStore: PgEventStore | undefined;
+  let sessionLock: PgSessionLock | undefined;
   let pgRunStore: PgRunStore | undefined;
   let pgSessionProjectionStore: PgSessionProjectionStore | undefined;
   let pgHandStore: PgHandStore | undefined;
@@ -866,6 +875,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let billingAuditTimer: NodeJS.Timeout | undefined;
   let runtimeEventRetention: RuntimeEventRetention | undefined;
   let runtimeScheduler: RuntimeScheduler | undefined;
+  let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined;
+  let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
   let runtimeEventSubscriptionShutdown: (() => Promise<void>) | undefined;
   let cancelDeliveryRetryTimer: NodeJS.Timeout | undefined;
   let runtimeSchedulerAutoWake = false;
@@ -1042,6 +1053,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await pgRunStore.init();
+    const defaultMaxConcurrentRuns = config.runtimeScheduler?.maxConcurrentRuns ?? 16;
+    runtimeSchedulerConfigStore = new PgRuntimeSchedulerConfigStore(pgEventStore.pool, {
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+      maxConfigurableConcurrentRuns: Math.max(
+        defaultMaxConcurrentRuns,
+        config.runtimeScheduler?.maxConfigurableConcurrentRuns ?? 64,
+      ),
+    });
+    await runtimeSchedulerConfigStore.init(defaultMaxConcurrentRuns);
     pgSessionProjectionStore = new PgSessionProjectionStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,
@@ -1260,6 +1280,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       if (billingAuditTimer) clearInterval(billingAuditTimer);
       runtimeEventRetention?.stop();
       await runtimeEventSubscriptionShutdown?.();
+      await sessionLock?.close();
       await pgEventStore!.close();
     };
     serverLogger.info('Runtime EventStore initialized: backend=pg; durable RunStore + HandStore + RuntimeScheduler initialized');
@@ -1355,9 +1376,19 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     allowAdminOverride: true,
     allowUserOverride: false,
   });
-  // PG backend 时：用同一 pool 启动 PgSessionLock 给两条 dispatch 防多 brain
-  // 并发 wake；file backend 时不启用 lock（单 brain 场景）。
-  const sessionLock = pgEventStore ? new PgSessionLock({ pool: pgEventStore.pool }) : undefined;
+  // PG backend：session single-writer 从常驻 advisory connection 迁到短查询表租约。
+  // dual 是滚动升级兼容态；全量跑过 dual 后，生产配置切 lease 才真正去掉旧连接。
+  if (pgEventStore) {
+    sessionLock = new PgSessionLock({
+      pool: pgEventStore.pool,
+      tablePrefix: config.runtimeEventStore?.backend === 'pg'
+        ? config.runtimeEventStore.tablePrefix
+        : undefined,
+      mode: sessionLockMode,
+      logger: serverLogger.child('PgSessionLock'),
+    });
+    await sessionLock.init();
+  }
 
   // Skills wiring：把 SkillConfigStore + sharedDir 缝成 raw runtime 的 SkillsDispatchConfig，
   // 让 dispatch 不直接依赖 store 实现。
@@ -1849,13 +1880,23 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
   if (pgRunStore && pgEventStore) {
     runtimeSchedulerAutoWake = enableSchedulerWorker && (config.runtimeScheduler?.autoWake ?? true);
+    const schedulerConfig = await runtimeSchedulerConfigStore!.get();
     runtimeScheduler = new RuntimeScheduler({
       runStore: pgRunStore,
       eventStore: pgEventStore,
       autoWake: runtimeSchedulerAutoWake,
       pollIntervalMs: config.runtimeScheduler?.pollIntervalMs,
       leaseMs: config.runtimeScheduler?.leaseMs,
-      maxConcurrentRuns: config.runtimeScheduler?.maxConcurrentRuns,
+      // dual 仍为每个 active session 占一条旧 advisory connection，迁移首版必须
+      // 保持历史 4 槽；PG 中保存的是期望值，切到 lease 后自动解除迁移钳制。
+      maxConcurrentRuns: effectiveMaxConcurrentRuns(
+        schedulerConfig.maxConcurrentRuns,
+        sessionLockMode,
+      ),
+      resolveMaxConcurrentRuns: async () => effectiveMaxConcurrentRuns(
+        (await runtimeSchedulerConfigStore!.get()).maxConcurrentRuns,
+        sessionLockMode,
+      ),
       maxConcurrentBackgroundRuns: config.runtimeScheduler?.maxConcurrentBackgroundRuns,
       approvalTimeoutMs: config.runtimeScheduler?.approvalTimeoutMs,
       canWake: sessionLock
@@ -1905,6 +1946,37 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
       logger: serverLogger.child('RuntimeScheduler'),
     });
+    const getRuntimeSchedulerCapacitySnapshot = async () => {
+      const persisted = await runtimeSchedulerConfigStore!.get();
+      const effective = effectiveMaxConcurrentRuns(
+        persisted.maxConcurrentRuns,
+        sessionLockMode,
+      );
+      // 读取管理页时也同步当前 HTTP 实例；其他蓝绿实例在下一次 scheduler tick 拉取。
+      runtimeScheduler!.updateMaxConcurrentRuns(effective);
+      const local = runtimeScheduler!.getCapacitySnapshot();
+      return {
+        status: 'ok' as const,
+        ...persisted,
+        sessionLockMode,
+        effectiveMaxConcurrentRuns: effective,
+        maxConfigurableConcurrentRuns: runtimeSchedulerConfigStore!.maxConfigurableConcurrentRuns,
+        editable: sessionLockMode === 'lease',
+        inFlightRuns: local.inFlightRuns,
+        inFlightBackgroundRuns: local.inFlightBackgroundRuns,
+      };
+    };
+    runtimeSchedulerCapacity = {
+      getSnapshot: getRuntimeSchedulerCapacitySnapshot,
+      updateMaxConcurrentRuns: async (value, actor) => {
+        if (sessionLockMode !== 'lease') {
+          throw new Error('dual 迁移阶段固定为 4；切换到 lease 后才能修改并发');
+        }
+        const persisted = await runtimeSchedulerConfigStore!.update(value, actor);
+        runtimeScheduler!.updateMaxConcurrentRuns(persisted.maxConcurrentRuns);
+        return getRuntimeSchedulerCapacitySnapshot();
+      },
+    };
     workflowDemoStore.setRuntimeContinuationHandler(async ({
       run,
       externalEvent,
@@ -2666,6 +2738,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     billingService,
     runtimeAuditQuery,
     runtimeRunStore: pgRunStore,
+    runtimeSchedulerCapacity,
     runtimeSessionProjectionStore: pgSessionProjectionStore,
     runtimeToolInvocationStore: pgToolInvocationStore,
     runtimeHandStore: pgHandStore,

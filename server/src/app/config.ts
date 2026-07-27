@@ -921,7 +921,7 @@ const runtimeEventStoreConfigSchema = z.discriminatedUnion('backend', [
     backend: z.literal('pg'),
     connectionString: z.string().min(1),
     tablePrefix: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/).optional(),
-    /** 共享查询池上限；默认 4，为蓝绿双实例、LISTEN/leadership 及运维连接预留余量。 */
+    /** 共享查询池上限；默认 6，为并发事件写入保留短连接余量。 */
     poolMax: z.number().int().min(1).max(50).optional(),
   }),
 ]);
@@ -1111,9 +1111,17 @@ const runtimeSchedulerConfigSchema = z.object({
   pollIntervalMs: z.number().int().positive().optional(),
   leaseMs: z.number().int().positive().optional(),
   renewIntervalMs: z.number().int().positive().optional(),
+  /** 顶层 run 全局并发；lease 模式默认 16，dual 迁移态强制不超过 4。 */
   maxConcurrentRuns: z.number().int().positive().optional(),
+  /** 平台管理员热调并发的部署级安全上限；默认 64，提升需显式改部署配置。 */
+  maxConfigurableConcurrentRuns: z.number().int().positive().max(10_000).optional(),
   /** 后台 Agent 并发槽；默认 2，保留普通交互容量。 */
   maxConcurrentBackgroundRuns: z.number().int().positive().optional(),
+  /**
+   * session single-writer 迁移模式。首次发布保持 dual 兼容旧 advisory-lock
+   * 实例；确认全量升级后切 lease，取消每个活跃会话的常驻 PG connection。
+   */
+  sessionLockMode: z.enum(['dual', 'lease']).optional(),
   /** waiting_approval 超过该时间自动 rejected + cancelled。默认 24h；设 0 关闭。 */
   approvalTimeoutMs: z.number().int().nonnegative().optional(),
 });

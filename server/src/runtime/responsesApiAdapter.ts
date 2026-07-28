@@ -745,7 +745,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
         errorMessage,
         hasDeliveredOutput,
         canResetDeliveredOutput,
-      ) && !requestSignal?.aborted;
+      )
+        && !requestSignal?.aborted
+        && !(hasDeliveredOutput && (
+          retryState?.replaceableDraftRetryUsed === true
+          || context.replaceableDraftRetryUsed === true
+        ));
       const regularRetryDelayMs = retryableTerminal
         ? retryDelaysMs[transientRetryIndex]
         : undefined;

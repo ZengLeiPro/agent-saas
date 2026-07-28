@@ -115,18 +115,19 @@ describe('handleReconnected', () => {
     expect(refreshCurrentMock).toHaveBeenCalled();
   });
 
-  it('有活跃流：清理半截 streaming 消息、发 resume、注册 active_stream 监听', async () => {
+  it('有活跃流：清理半截 streaming 与未提交草稿、发 resume、注册 active_stream 监听', async () => {
     const store = getChatStore();
     store.setState({ loading: true, activeSessionId: 's1', lastEventId: 7, lastEventCursor: 'c' });
-    // 预置一条半截 streaming 消息 + 一条正常消息
+    // thinking 可能已经 block_end（streaming=false），但 draftId 表示仍未提交。
     store.getState().setMessages([
       { id: 'm1', type: 'text', content: '半截', streaming: true },
+      { id: 'm-draft', type: 'thinking', content: '未提交思考', streaming: false, draftId: 'draft-1' },
       { id: 'm2', type: 'text', content: '完整' },
     ]);
 
     await handleReconnected();
 
-    // 半截消息被过滤
+    // 半截流和未提交草稿都被过滤，正式消息保留。
     expect(store.getState().getMessagesRef().map(m => m.id)).toEqual(['m2']);
     // block 状态重置
     expect(store.getState().userMsgIndex).toBe(-1);

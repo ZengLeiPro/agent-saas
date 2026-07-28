@@ -91,9 +91,13 @@ export async function handleReconnected(): Promise<void> {
   if (state.loading && state.activeSessionId) {
     const targetSid = state.activeSessionId;
 
-    // 清理半截的流式消息
+    // 清理半截流与所有未 commit 的可撤销草稿；thinking 可能已 block_end，
+    // 但只要 draftId 仍在，就不能在进程恢复后与替换回答并存。
     const msgs = state.getMessagesRef();
-    const cleanedMsgs = msgs.filter(m => !('streaming' in m && m.streaming));
+    const cleanedMsgs = msgs.filter(m => (
+      !('streaming' in m && m.streaming)
+      && !(('type' in m && (m.type === 'text' || m.type === 'thinking')) && m.draftId)
+    ));
     if (cleanedMsgs.length !== msgs.length) {
       state.setMessages(cleanedMsgs);
     }

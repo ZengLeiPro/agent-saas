@@ -38,6 +38,8 @@ export interface RunContext {
    * 写入失败不得反向打断模型请求。
    */
   recordModelRequestDiagnostic?: (event: ModelRequestDiagnostic) => Promise<boolean | void>;
+  /** 当前逻辑模型轮是否已经用过 Web 部分草稿恢复机会。 */
+  replaceableDraftRetryUsed?: boolean;
 }
 
 export interface RunInput {

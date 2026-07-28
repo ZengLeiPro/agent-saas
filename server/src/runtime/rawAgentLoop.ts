@@ -90,6 +90,28 @@ const CONTEXT_SYNTHESIS_PROMPT = [
   '请立即基于当前上下文中已经取得的材料完成任务；明确区分已核实事实、证据不足项与未完成项。',
 ].join('\n');
 
+interface ReplaceableDraftRunState {
+  draftId: string;
+  recoveryUsed: boolean;
+  startedAt: string;
+}
+
+function parseReplaceableDraftRunState(value: unknown): ReplaceableDraftRunState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const state = value as Record<string, unknown>;
+  if (
+    typeof state.draftId !== 'string'
+    || !state.draftId
+    || typeof state.startedAt !== 'string'
+    || !Number.isFinite(Date.parse(state.startedAt))
+  ) return null;
+  return {
+    draftId: state.draftId,
+    recoveryUsed: state.recoveryUsed === true,
+    startedAt: state.startedAt,
+  };
+}
+
 function resolveRunTenantId(context: RunContext): string {
   return context.tenantId
     ?? context.channelContext.sessionOwner?.tenantId
@@ -516,6 +538,35 @@ export class RawAgentLoop implements AgentLoop {
     }
   }
 
+  private async loadReplaceableDraftState(context: RunContext): Promise<ReplaceableDraftRunState | null> {
+    if (!context.channelContext.replaceableDrafts || !this.runStore) return null;
+    try {
+      const run = await this.runStore.get(context.runId);
+      return parseReplaceableDraftRunState(run?.metadata?.replaceableDraftState);
+    } catch (err) {
+      logger.warn(
+        `[web-draft] restore state failed session=${context.sessionId} run=${context.runId}: `
+        + `${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  private async persistReplaceableDraftState(
+    context: RunContext,
+    state: ReplaceableDraftRunState | null,
+  ): Promise<void> {
+    if (!context.channelContext.replaceableDrafts || !this.runStore?.patchMetadata) return;
+    try {
+      await this.runStore.patchMetadata(context.runId, { replaceableDraftState: state });
+    } catch (err) {
+      logger.warn(
+        `[web-draft] persist state failed session=${context.sessionId} run=${context.runId}: `
+        + `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   private forceWebFetchSynthesis(reason: string, context: RunContext): void {
     if (!this.webFetchSynthesisReason) this.webFetchSynthesisReason = reason;
     this.forceSynthesis(reason, context, WEB_FETCH_SYNTHESIS_PROMPT);
@@ -693,6 +744,21 @@ export class RawAgentLoop implements AgentLoop {
         excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
       })
       : priorEvents;
+    const restoredDraftState = await this.loadReplaceableDraftState(context);
+    let restoredDraftRecoveryUsed = false;
+    if (restoredDraftState) {
+      const draftStartedAt = Date.parse(restoredDraftState.startedAt);
+      const canonicalCommitted = recoveredEvents.some((event) => (
+        (event.type === 'assistant_message' || event.type === 'assistant_tool_calls')
+        && event.runId === context.runId
+        && Date.parse(event.timestamp) >= draftStartedAt
+      ));
+      yield canonicalCommitted
+        ? { type: 'draft_commit', draftId: restoredDraftState.draftId }
+        : { type: 'draft_reset', draftId: restoredDraftState.draftId };
+      restoredDraftRecoveryUsed = !canonicalCommitted;
+      await this.persistReplaceableDraftState(context, null);
+    }
     const contextUsageTracker = new RuntimeContextUsageTracker(context.model, recoveredEvents);
     const contextProjection = buildContextProjection(recoveredEvents, {
       sessionId: context.sessionId,
@@ -758,12 +824,24 @@ export class RawAgentLoop implements AgentLoop {
 
     try {
       for (turn = 1; turn <= input.maxTurns; turn++) {
+        context.replaceableDraftRetryUsed = turn === 1 && restoredDraftRecoveryUsed;
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
         let turnContextUsage: OutboundEvent['contextUsage'] | null = null;
         let turnText = '';
         let turnThinking = '';
         const turnFinalTextStart = finalText.length;
         const draftId = context.channelContext.replaceableDrafts ? randomUUID() : undefined;
+        const draftStartedAt = new Date().toISOString();
+        let draftStatePersisted = false;
+        const ensureDraftStatePersisted = async () => {
+          if (!draftId || draftStatePersisted) return;
+          await this.persistReplaceableDraftState(context, {
+            draftId,
+            recoveryUsed: context.replaceableDraftRetryUsed === true,
+            startedAt: draftStartedAt,
+          });
+          draftStatePersisted = true;
+        };
         // 2026-07-03 起 assistant_stream_event delta 不再落库；UI 的"思考 Xs"
         // 时长改由 assistant_thinking 聚合行的 durationMs 携带。
         let turnThinkingMs = 0;
@@ -800,6 +878,7 @@ export class RawAgentLoop implements AgentLoop {
             if (!thinkingStarted) {
               thinkingStarted = true;
               thinkingSegmentStartedAt = Date.now();
+              await ensureDraftStatePersisted();
               yield { type: 'thinking_start', ...(draftId ? { draftId } : {}) };
             }
             turnThinking += event.content;
@@ -815,6 +894,7 @@ export class RawAgentLoop implements AgentLoop {
             }
             if (!textStarted) {
               textStarted = true;
+              await ensureDraftStatePersisted();
               yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
             }
             turnText += event.content;
@@ -831,6 +911,12 @@ export class RawAgentLoop implements AgentLoop {
             pendingTurnText = '';
             finalText = finalText.slice(0, turnFinalTextStart);
             if (draftId) {
+              context.replaceableDraftRetryUsed = true;
+              await this.persistReplaceableDraftState(context, {
+                draftId,
+                recoveryUsed: true,
+                startedAt: draftStartedAt,
+              });
               yield { type: 'draft_reset', draftId, attempt: event.attempt };
             }
           } else {
@@ -882,6 +968,7 @@ export class RawAgentLoop implements AgentLoop {
           if (completed.content && completed.content !== turnText) {
             if (!textStarted) {
               textStarted = true;
+              await ensureDraftStatePersisted();
               yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
             }
             finalText += completed.content;
@@ -892,6 +979,10 @@ export class RawAgentLoop implements AgentLoop {
             if (turnThinking && !thinkingOnlyContinuationUsed) {
               thinkingOnlyContinuationUsed = true;
               messages.push({ role: 'user', content: THINKING_ONLY_CONTINUATION_PROMPT });
+              if (draftId) {
+                await this.persistReplaceableDraftState(context, null);
+                yield { type: 'draft_commit', draftId };
+              }
               if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
               logger.warn(`[run] thinking-only empty turn recovered session=${context.sessionId} turn=${turn}`);
               continue;
@@ -926,6 +1017,7 @@ export class RawAgentLoop implements AgentLoop {
             yield { type: 'text_end' };
           }
           if (draftId) {
+            await this.persistReplaceableDraftState(context, null);
             yield { type: 'draft_commit', draftId };
           }
           if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
@@ -952,6 +1044,7 @@ export class RawAgentLoop implements AgentLoop {
         if (completed.content && completed.content !== turnText) {
           if (!textStarted) {
             textStarted = true;
+            await ensureDraftStatePersisted();
             yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
           }
           finalText += completed.content;
@@ -985,6 +1078,7 @@ export class RawAgentLoop implements AgentLoop {
         });
         pendingTurnText = '';
         if (draftId) {
+          await this.persistReplaceableDraftState(context, null);
           yield { type: 'draft_commit', draftId };
         }
         if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
@@ -2275,6 +2369,21 @@ export class RawAgentLoop implements AgentLoop {
         break;
       }
     }
+    const restoredDraftState = await this.loadReplaceableDraftState(args.context);
+    let restoredDraftRecoveryUsed = false;
+    if (restoredDraftState) {
+      const draftStartedAt = Date.parse(restoredDraftState.startedAt);
+      const canonicalCommitted = args.priorEvents.some((event) => (
+        (event.type === 'assistant_message' || event.type === 'assistant_tool_calls')
+        && event.runId === args.context.runId
+        && Date.parse(event.timestamp) >= draftStartedAt
+      ));
+      yield canonicalCommitted
+        ? { type: 'draft_commit', draftId: restoredDraftState.draftId }
+        : { type: 'draft_reset', draftId: restoredDraftState.draftId };
+      restoredDraftRecoveryUsed = !canonicalCommitted;
+      await this.persistReplaceableDraftState(args.context, null);
+    }
     const contextUsageTracker = new RuntimeContextUsageTracker(args.context.model, args.priorEvents);
 
     // RFC v1 P0.4：resume 路径同样接力 Responses API session state。
@@ -2286,12 +2395,24 @@ export class RawAgentLoop implements AgentLoop {
 
     try {
       for (turn = 1; turn <= args.maxTurns; turn++) {
+        args.context.replaceableDraftRetryUsed = turn === 1 && restoredDraftRecoveryUsed;
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
         let turnContextUsage: OutboundEvent['contextUsage'] | null = null;
         let turnText = '';
         let turnThinking = '';
         const turnFinalTextStart = finalText.length;
         const draftId = args.context.channelContext.replaceableDrafts ? randomUUID() : undefined;
+        const draftStartedAt = new Date().toISOString();
+        let draftStatePersisted = false;
+        const ensureDraftStatePersisted = async () => {
+          if (!draftId || draftStatePersisted) return;
+          await this.persistReplaceableDraftState(args.context, {
+            draftId,
+            recoveryUsed: args.context.replaceableDraftRetryUsed === true,
+            startedAt: draftStartedAt,
+          });
+          draftStatePersisted = true;
+        };
         // 2026-07-03 起 assistant_stream_event delta 不再落库；UI 的"思考 Xs"
         // 时长改由 assistant_thinking 聚合行的 durationMs 携带。
         let turnThinkingMs = 0;
@@ -2326,6 +2447,7 @@ export class RawAgentLoop implements AgentLoop {
             if (!thinkingStarted) {
               thinkingStarted = true;
               thinkingSegmentStartedAt = Date.now();
+              await ensureDraftStatePersisted();
               yield { type: 'thinking_start', ...(draftId ? { draftId } : {}) };
             }
             turnThinking += event.content;
@@ -2341,6 +2463,7 @@ export class RawAgentLoop implements AgentLoop {
             }
             if (!textStarted) {
               textStarted = true;
+              await ensureDraftStatePersisted();
               yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
             }
             turnText += event.content;
@@ -2357,6 +2480,12 @@ export class RawAgentLoop implements AgentLoop {
             pendingTurnText = '';
             finalText = finalText.slice(0, turnFinalTextStart);
             if (draftId) {
+              args.context.replaceableDraftRetryUsed = true;
+              await this.persistReplaceableDraftState(args.context, {
+                draftId,
+                recoveryUsed: true,
+                startedAt: draftStartedAt,
+              });
               yield { type: 'draft_reset', draftId, attempt: event.attempt };
             }
           } else {
@@ -2412,6 +2541,7 @@ export class RawAgentLoop implements AgentLoop {
           if (completed.content && completed.content !== turnText) {
             if (!textStarted) {
               textStarted = true;
+              await ensureDraftStatePersisted();
               yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
             }
             finalText += completed.content;
@@ -2422,6 +2552,10 @@ export class RawAgentLoop implements AgentLoop {
             if (turnThinking && !thinkingOnlyContinuationUsed) {
               thinkingOnlyContinuationUsed = true;
               args.messages.push({ role: 'user', content: THINKING_ONLY_CONTINUATION_PROMPT });
+              if (draftId) {
+                await this.persistReplaceableDraftState(args.context, null);
+                yield { type: 'draft_commit', draftId };
+              }
               if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
               logger.warn(`[resume] thinking-only empty turn recovered session=${args.context.sessionId} turn=${turn}`);
               continue;
@@ -2456,6 +2590,7 @@ export class RawAgentLoop implements AgentLoop {
             yield { type: 'text_end' };
           }
           if (draftId) {
+            await this.persistReplaceableDraftState(args.context, null);
             yield { type: 'draft_commit', draftId };
           }
           if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
@@ -2482,6 +2617,7 @@ export class RawAgentLoop implements AgentLoop {
         if (completed.content && completed.content !== turnText) {
           if (!textStarted) {
             textStarted = true;
+            await ensureDraftStatePersisted();
             yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
           }
           finalText += completed.content;
@@ -2515,6 +2651,7 @@ export class RawAgentLoop implements AgentLoop {
         });
         pendingTurnText = '';
         if (draftId) {
+          await this.persistReplaceableDraftState(args.context, null);
           yield { type: 'draft_commit', draftId };
         }
         if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };

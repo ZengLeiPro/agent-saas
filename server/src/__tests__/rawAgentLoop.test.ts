@@ -377,6 +377,21 @@ class ReplaceableDraftAdapter implements ModelAdapter {
   }
 }
 
+class RestartedDraftAdapter implements ModelAdapter {
+  retryUsed: boolean[] = [];
+
+  async *stream(_request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent> {
+    this.retryUsed.push(context.replaceableDraftRetryUsed === true);
+    yield { type: 'text_delta', content: '重启后答案' };
+    yield {
+      type: 'completed',
+      content: '重启后答案',
+      toolCalls: [],
+      terminalStatus: 'completed',
+    };
+  }
+}
+
 class ThinkingOnlyThenTextAdapter implements ModelAdapter {
   calls = 0;
   requests: ModelRequest[] = [];
@@ -1326,6 +1341,72 @@ describe('RawAgentLoop', () => {
     const transcript = await readFile(transcriptPath, 'utf-8');
     expect(transcript).not.toContain('失败轮');
     expect(transcript).toContain('最终答案');
+  });
+
+  it('restores an uncommitted draft from durable run metadata and consumes the single recovery chance', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-restored-draft-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new RestartedDraftAdapter();
+    let metadata: Record<string, unknown> = {
+      replaceableDraftState: {
+        draftId: 'draft-before-restart',
+        recoveryUsed: false,
+        startedAt: new Date(Date.now() - 1_000).toISOString(),
+      },
+    };
+    const metadataPatches: Record<string, unknown>[] = [];
+    const runStore = {
+      get: async () => ({ metadata }),
+      patchMetadata: async (_runId: string, patch: Record<string, unknown>) => {
+        metadataPatches.push(patch);
+        metadata = { ...metadata, ...patch };
+        return { metadata };
+      },
+      findLatestResponseSessionStateBySession: async () => null,
+    } as unknown as RunStore;
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-restored-draft'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '执行' },
+        prompt: '执行',
+        instructions: '正常回答。',
+        maxTurns: 1,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-restored-draft',
+        sessionId: 'session-restored-draft',
+        model: 'gpt-5.6-sol',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          replaceableDrafts: true,
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+      },
+    ));
+
+    expect(events[0]).toEqual({ type: 'draft_reset', draftId: 'draft-before-restart' });
+    expect(adapter.retryUsed).toEqual([true]);
+    expect(metadataPatches).toHaveLength(3);
+    expect(metadataPatches[0]).toEqual({ replaceableDraftState: null });
+    expect(metadataPatches[1]).toEqual({
+      replaceableDraftState: expect.objectContaining({
+        recoveryUsed: true,
+        draftId: expect.any(String),
+      }),
+    });
+    expect(metadataPatches[2]).toEqual({ replaceableDraftState: null });
+    expect(events.at(-1)).toEqual({ type: 'done' });
   });
 
   it('recovers one thinking-only empty turn with a hidden continuation prompt', async () => {

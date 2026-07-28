@@ -140,6 +140,7 @@ export interface RunStore {
   init?(): Promise<void>;
   upsertPending(input: UpsertRunInput): Promise<RunRecord>;
   markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null>;
+  patchMetadata?(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null>;
   get(runId: string): Promise<RunRecord | null>;
   findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
   getActiveBySession?(sessionId: string): Promise<RunRecord | null>;
@@ -505,6 +506,18 @@ export class PgRunStore implements RunStore {
       FROM ${this.runsTable}
       WHERE run_id = $1 AND NOT EXISTS (SELECT 1 FROM updated)
     `, [runId, status, reason ?? null, now, JSON.stringify(metadataPatch)]);
+    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+  }
+
+  async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> {
+    const now = new Date().toISOString();
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      UPDATE ${this.runsTable}
+      SET metadata = metadata || $2::jsonb,
+          updated_at = $3
+      WHERE run_id = $1
+      RETURNING row_to_json(${this.runsTable}.*) AS row_json
+    `, [runId, JSON.stringify(metadataPatch), now]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 

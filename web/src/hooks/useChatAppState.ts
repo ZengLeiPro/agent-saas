@@ -1710,7 +1710,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         && !trashPreviewSessionIdRef.current
         && immediateSessionIdRef.current === data.sessionId
       ) {
+        // 当前正在查看的会话不应显示未读。这里必须直接消费事件：若继续交给
+        // processWsEvent，它会在 markSessionRead 的乐观更新之后又把红点写回 true；
+        // 服务端状态已是 read 时不会再广播 false，红点就会一直残留。
         markSessionRead(data.sessionId);
+        return;
       }
 
       // ── session_status（Agent/run 生命周期）──

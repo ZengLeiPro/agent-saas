@@ -449,7 +449,10 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
         { sessionId: foreign.sessionId, active: false },
       ],
     });
-    expect(calls).toEqual([ownedActive.sessionId, ownedInactive.sessionId]);
+    // 路由用 Promise.all 并发查询，calls 的 push 顺序由各自异步权限校验的完成时机决定，
+    // 与入参顺序无关（CI 上曾因此偶发失败）。这里只断言「查了哪些」：长度 2 证明去重生效
+    // （ownedActive 传了两次只查一次），内容证明无权的 foreign 从未被查询。
+    expect([...calls].sort()).toEqual([ownedActive.sessionId, ownedInactive.sessionId].sort());
 
     for (const body of [
       undefined,

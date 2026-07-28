@@ -1,5 +1,5 @@
 ---
-name: wain-invoice
+name: wy-invoice
 description: 唯恩电气 T100→施耐德 Vendor Portal 发票录入技能。用户提到唯恩发票、施耐德发票、T100 待开票、对账单、寄售/非寄售录入、客户系统最终确认或发票 POC 联调时必须使用。本技能在 Agent SaaS 的 ACS Linux Sandbox 中完成接口取数、Excel 处理、浏览器操作、人工验证码接力和最终确认，不依赖客户 Windows 或本地 Hand。
 ---
 
@@ -24,30 +24,38 @@ description: 唯恩电气 T100→施耐德 Vendor Portal 发票录入技能。�
 技能文件会同步到用户 workspace。先解析当前技能目录，不要假设 cwd：
 
 ```bash
-SKILL_DIR=".ky-agent/skills/wain-invoice"
+SKILL_DIR=".ky-agent/skills/wy-invoice"
 ```
 
 若该目录不存在，说明技能尚未同步到当前 workspace，应报告平台技能同步问题，不要从 GitHub 临时下载另一份代码冒充已安装技能。
 
-首次运行或依赖异常时：
+首次运行或依赖异常时，**每条命令直接交给 Shell 执行**：
 
 ```bash
 python3 "$SKILL_DIR/scripts/wain_invoice.py" doctor
 python3 -m pip install -r "$SKILL_DIR/requirements.txt"
+python3 "$SKILL_DIR/scripts/wain_invoice.py" doctor
 ```
 
 依赖只能安装到当前 workspace 已提供的 Python 环境；不要使用 `sudo`、系统包管理器、`pip install --user`，也不要自行创建新 venv。
 
+### Python 环境硬规则
+
+- **禁止用 `bash -lc 'python3 ...'` 包裹技能命令。** 登录 shell 可能重置 workspace 已提供的 `PATH`，误用系统 Python，表现为“刚安装完依赖，脚本仍报告所有模块缺失”。
+- 不要用 `command -v python3` 的另一个 shell 结果推断实际执行环境；以直接执行 `python3 ... doctor` 的结果为准。
+- 安装依赖后必须直接重跑 `doctor`。只有 `missingModules=[]` 且 `runtimeReady=true`，才能继续。
+- 如果必须串联命令，优先拆成多次 Shell 调用；不要为了 `pipefail` 引入登录 shell。业务原始输出需要留证时，优先用 Shell 工具自身输出或重定向到 workspace 文件。
+
 ## 网络配置
 
-所有业务动作都在 ACS 容器中完成。T100 当前文档里的 `10.9.15.62:8000` 是唯恩内网地址，生产联调时由平台管理员通过受控环境变量注入客户开放后的地址：
+所有业务动作都在 ACS 容器中完成。客户已于 2026-07-28 提供两个无需鉴权的公网只读映射，默认地址保存在客户专属配置中。若客户后续更换地址，平台管理员可通过受控环境变量覆盖：
 
 ```bash
 WAIN_T100_ORDER_URL="<ACS 可访问的订单查询 URL>"
 WAIN_T100_EXCEL_URL="<ACS 可访问的 Excel 下载 URL>"
 ```
 
-客户开放公网端口时，应至少限制为 ACS 固定 SNAT 出口 IP，并优先使用 HTTPS 或客户提供的鉴权方式；不要把无鉴权接口直接暴露给整个公网。不要在 Skill、Git 或对话日志中写接口密钥。
+当前公网地址没有鉴权，POC 可直接联调；正式运行前仍建议客户只对白名单 ACS 固定 SNAT 出口 IP 开放，并优先升级为 HTTPS。不要在 Skill、Git 或对话日志中写未来新增的接口密钥。
 
 配置后执行真实连通性检查：
 
@@ -55,7 +63,12 @@ WAIN_T100_EXCEL_URL="<ACS 可访问的 Excel 下载 URL>"
 python3 "$SKILL_DIR/scripts/wain_invoice.py" doctor --probe-network
 ```
 
-只有 `runtimeReady=true`、`t100OrderReachable=true`、`schneiderPortalReachable=true` 才进入真实联调。Excel 接口会在 `preflight` 中实际验证。
+按用户请求的安全边界决定探测范围：
+
+- 只做 `list` / `preflight` 时，不要求探测施耐德门户，也不要为了“完整 doctor”额外访问门户；直接执行相应只读命令，T100 查询与 Excel 接口会在流程中实际验证。
+- 要执行 `captcha` / `run` / `commit` 时，才运行 `doctor --probe-network`，并要求 `runtimeReady=true`、`t100OrderReachable=true`、`schneiderPortalReachable=true`。
+
+不要把门户 URL 出现在配置或日志中误解为已经登录或访问门户；是否访问以运行动作和证据为准。
 
 ## 1. 查询待办
 
@@ -63,7 +76,9 @@ python3 "$SKILL_DIR/scripts/wain_invoice.py" doctor --probe-network
 python3 "$SKILL_DIR/scripts/wain_invoice.py" list --mode real
 ```
 
-返回多条时，把对账单号、客户简称、发票号和业务类型列给用户选择。不要默认取第一条。返回空数组时，直接说明客户已告知“业务部门可能已经处理”，需要在客户群请对方补一条新数据。
+返回多条时，把对账单号、客户简称、发票号和业务类型列给用户选择。不要默认取第一条。
+
+`list` 是“查询清单”动作，因此空数组可以保持 `status=ok, count=0`；这只表示查询成功且当前无待办，**不表示任何指定对账单预检成功**。不要自行联系客户群或发消息，只向用户说明需要业务侧补数据。
 
 ## 2. 业务预检
 
@@ -76,6 +91,29 @@ python3 "$SKILL_DIR/scripts/wain_invoice.py" preflight \
 ```
 
 这一步完成 T100 取数、Excel 下载、发票备注严格匹配、订单号+行号唯一性、寄售日期和金额规则检查，不启动施耐德网站。证据默认保存到 `assets/yyyymmdd/唯恩施耐德发票/`。
+
+### 预检成功判定（必须同时满足）
+
+只有命令结构化输出同时满足以下条件，才能对用户说“预检通过”：
+
+- 退出码为 `0`；
+- `status="ok"`；
+- `outcome="preflight_passed"`；
+- `preflightPassed=true`；
+- `excelDownloaded=true`；
+- `excelPath` 指向实际存在的 Excel 文件；
+- 运行日志包含 `[PREFLIGHT] 业务预检通过`。
+
+以下情况都必须报告为**预检阻塞/失败**，绝不能写“流程已完成”或“核对通过”：
+
+- `status="blocked"` 或退出码非零；
+- `reason="no_pending_data"`；
+- T100 没有找到指定对账单；
+- Excel 未下载、路径不存在或接口返回 JSON/HTML 错误内容；
+- 备注、订单号+行号、日期或金额规则任一未通过；
+- runtime 没有返回可核验的结构化结果。
+
+特别注意：`actions=0` 只证明没有网页写动作，**不能证明预检成功**。空数据时应明确写出“Excel 未下载、内容核对未执行”。
 
 ## 3. 人工验证码接力
 
@@ -128,7 +166,7 @@ python3 "$SKILL_DIR/scripts/wain_invoice.py" commit \
   --challenge-file "<captcha 返回的 challengeFile>"
 ```
 
-脚本会在点击前再次复核发票号、日期、含税金额和税额，点击后必须观察到明确成功状态。不能因为工具退出码为 0 就自行推断成功，要同时检查运行日志的“最终确认”记录和证据目录。
+脚本会在点击前再次复核发票号、日期、含税金额和税额，点击后必须观察到明确成功状态。只有结构化输出明确为 `outcome="website_committed"` 且 `websiteCommitted=true`，并且运行日志与证据目录相互印证，才能报告已提交。不能根据“调用的是 `commit` 命令”、工具退出码或 wrapper 自述自行推断成功。
 
 ## 执行环境边界
 

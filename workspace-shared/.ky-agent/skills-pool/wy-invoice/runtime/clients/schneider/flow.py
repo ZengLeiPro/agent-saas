@@ -20,6 +20,11 @@ from clients.schneider.portal_playwright import (
 from core.audit import redact_sensitive
 
 
+def _evidence_dir(audit) -> str | None:
+    value = getattr(audit, "dir", None)
+    return str(value) if value is not None else None
+
+
 async def run_workflow(
     cfg: dict,
     t100,
@@ -35,11 +40,22 @@ async def run_workflow(
     tasks = await t100.fetch_pending_invoices()
     pending = [task for task in tasks if str(task.get("uploaded") or "").upper() != "Y"]
     if not pending:
-        audit.warn(
-            "[1.1] 查询接口当前没有待联调数据。客户已说明这代表业务部门可能已处理，"
+        message = (
+            "查询接口当前没有待联调数据。客户已说明这代表业务部门可能已处理，"
             "请在群里联系客户重新创建一条数据。"
         )
-        return
+        audit.warn(f"[1.1] {message}")
+        return {
+            "outcome": "no_pending_data",
+            "message": message,
+            "taskReference": task_reference or commit_reference,
+            "preflightPassed": False,
+            "excelDownloaded": False,
+            "websiteReached": False,
+            "websiteCommitted": False,
+            "t100WrittenBack": False,
+            "evidenceDir": _evidence_dir(audit),
+        }
 
     selection_reference = task_reference or commit_reference
     if not selection_reference and len(pending) > 1 and interactive:
@@ -75,7 +91,18 @@ async def run_workflow(
     )
     if preflight_only:
         audit.info("[PREFLIGHT] 业务预检通过，按要求未启动施耐德客户网站")
-        return
+        return {
+            "outcome": "preflight_passed",
+            "message": "T100 数据、对账 Excel 和业务规则核对通过；未启动施耐德网站。",
+            "taskReference": task.get("statement_no") or task.get("billing_no"),
+            "preflightPassed": True,
+            "excelDownloaded": True,
+            "excelPath": str(excel_path),
+            "websiteReached": False,
+            "websiteCommitted": False,
+            "t100WrittenBack": False,
+            "evidenceDir": _evidence_dir(audit),
+        }
 
     result = await asyncio.to_thread(
         run_portal_workflow,
@@ -90,9 +117,11 @@ async def run_workflow(
         challenge_file,
     )
 
+    t100_written_back = False
     if result.committed:
         if has_t100_writeback:
             await t100.mark_uploaded(task)
+            t100_written_back = True
             audit.info(f"[T100] 已回写客户系统发票已录：{task['statement_no']}")
         elif allow_poc_without_writeback:
             audit.warn(
@@ -111,6 +140,23 @@ async def run_workflow(
                 _invoice_date(task),
             )
             audit.info(f"[结果报表] 已合并 {appended} 行 → {target}")
+
+    return {
+        "outcome": "website_committed" if result.committed else "confirmation_reached",
+        "message": (
+            "施耐德网页最终确认成功。"
+            if result.committed
+            else "已到达施耐德最终确认页，按要求未点击最终确认。"
+        ),
+        "taskReference": task.get("statement_no") or task.get("billing_no"),
+        "preflightPassed": True,
+        "excelDownloaded": True,
+        "excelPath": str(excel_path),
+        "websiteReached": result.reached_confirmation,
+        "websiteCommitted": result.committed,
+        "t100WrittenBack": t100_written_back,
+        "evidenceDir": _evidence_dir(audit),
+    }
 
 
 async def prepare_captcha(

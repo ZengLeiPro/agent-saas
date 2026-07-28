@@ -96,7 +96,7 @@ async def run(
     # 最终不可逆动作必须同时满足：客户模块显式支持 + 精确 commit_reference。
     if hasattr(client_flow, "run_workflow"):
         try:
-            await client_flow.run_workflow(
+            result = await client_flow.run_workflow(
                 cfg=cfg,
                 t100=t100,
                 share=share,
@@ -114,7 +114,7 @@ async def run(
             raise
         finally:
             await audit.close()
-        return
+        return result
 
     sel = SelectorResolver(client, audit=audit)
     repair = SelfRepair(audit=audit)  # vision_client=None → POC stub

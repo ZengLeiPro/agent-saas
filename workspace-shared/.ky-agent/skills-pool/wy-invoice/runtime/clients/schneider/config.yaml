@@ -13,7 +13,8 @@ verify_tolerance: 0
 poc_allow_website_commit_without_t100_writeback: true
 
 t100:
-  order_url: http://10.9.15.62:8000/ipaas/aiservice/erp/order/shinaide/list
-  excel_url: http://10.9.15.62:8000/ipaas/aiservice/erp/file/result-excel
+  # 2026-07-28 客户提供的公网只读映射；请求参数沿用原接口，不需要鉴权。
+  order_url: http://guest.wainconnector.com:8888/outesb/xm/AiService/erp/order/shinaide/list
+  excel_url: http://guest.wainconnector.com:8888/outesb/xm/AiService/erp/file/result-excel
   mark_uploaded_url:
   timeout_seconds: 30

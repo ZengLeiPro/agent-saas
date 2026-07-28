@@ -5,7 +5,7 @@
 唯恩发票 POC 的权威链路是：
 
 1. 用户在 Agent SaaS 对话；
-2. Agent 调用 `wain-invoice`；
+2. Agent 调用 `wy-invoice`；
 3. T100 查询、Excel 下载与解析都在用户专属 ACS Linux Sandbox 中执行；
 4. 施耐德登录使用 HTTP 会话保存验证码对应的 `JSESSIONID`；
 5. 用户人工读取验证码；
@@ -22,15 +22,22 @@
 https://vendor.schneider-electric.cn/
 ```
 
-T100 文档当前给出的是唯恩内网地址：
+T100 原文档给出的是唯恩内网地址：
 
 ```text
 http://10.9.15.62:8000/
 ```
 
-客户需要将两个只读接口映射为 ACS 可访问地址，或提供等价网络通道。平台通过 `WAIN_T100_ORDER_URL` 和 `WAIN_T100_EXCEL_URL` 注入实际地址，不把地址、口令或 token 写入技能仓库。
+客户已于 2026-07-28 提供两个无需鉴权的公网只读映射：
 
-公网映射至少应满足：
+```text
+POST http://guest.wainconnector.com:8888/outesb/xm/AiService/erp/order/shinaide/list
+POST http://guest.wainconnector.com:8888/outesb/xm/AiService/erp/file/result-excel?dh=<对账单号>
+```
+
+公网地址保存在该客户专属 Skill 的配置中；客户后续换地址时，平台通过 `WAIN_T100_ORDER_URL` 和 `WAIN_T100_EXCEL_URL` 覆盖，不把口令或 token 写入技能仓库。
+
+当前接口已可用于 POC。正式运行前建议公网映射至少满足：
 
 - 只允许 ACS 固定 SNAT 出口 IP；
 - 优先 HTTPS；
@@ -61,7 +68,7 @@ veryCode=...
 
 | 验收层 | 当前执行位置 | 成功条件 |
 |---|---|---|
-| 查询与 Excel 预检 | ACS | 两个 T100 接口可达，严格业务规则通过 |
+| 查询与 Excel 预检 | ACS | 两个 T100 接口可达，严格业务规则通过；空待办或 Excel 未下载均为阻塞，不是成功 |
 | 登录接力 | ACS + 用户对话 | 验证码图片可展示，同一 JSESSIONID 登录成功 |
 | 到最终确认页 | ACS Chromium | 四个发票字段逐标签一致 |
 | 施耐德最终确认 | ACS Chromium/HTTP | 页面或响应出现明确成功证据 |

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from clients.schneider.flow import (
@@ -74,6 +76,41 @@ def test_double_click_prepares_schneider_interactive_args():
 def test_required_t100_fields_are_checked():
     with pytest.raises(RuntimeError, match="客户系统密码"):
         _validate_task({**TASK, "portal_password": ""})
+
+
+@pytest.mark.asyncio
+async def test_empty_pending_data_returns_blocked_result_without_excel_or_website():
+    class EmptyT100:
+        async def fetch_pending_invoices(self):
+            return []
+
+        async def get_match_excel(self, _):
+            raise AssertionError("空数据时不应下载 Excel")
+
+    class Audit:
+        dir = Path("evidence")
+
+        def __init__(self):
+            self.messages = []
+
+        def warn(self, message):
+            self.messages.append(message)
+
+    audit = Audit()
+    result = await run_workflow(
+        cfg={},
+        t100=EmptyT100(),
+        audit=audit,
+        task_reference="STATEMENT001",
+        preflight_only=True,
+    )
+
+    assert result["outcome"] == "no_pending_data"
+    assert result["preflightPassed"] is False
+    assert result["excelDownloaded"] is False
+    assert result["websiteReached"] is False
+    assert result["websiteCommitted"] is False
+    assert any("没有待联调数据" in message for message in audit.messages)
 
 
 def test_downloaded_report_format_is_verified_by_magic_bytes():
@@ -190,11 +227,18 @@ async def test_customer_authorized_poc_submit_skips_t100_writeback(
         lambda *args: WebsiteResult(reached_confirmation=True, committed=True),
     )
     audit = Audit()
-    await run_workflow(
+    result = await run_workflow(
         cfg={"poc_allow_website_commit_without_t100_writeback": True},
         t100=T100WithoutWriteback(),
         audit=audit,
         commit_reference="STATEMENT001",
     )
 
+    assert result["outcome"] == "website_committed"
+    assert result["preflightPassed"] is True
+    assert result["excelDownloaded"] is True
+    assert Path(result["excelPath"]).exists()
+    assert result["websiteReached"] is True
+    assert result["websiteCommitted"] is True
+    assert result["t100WrittenBack"] is False
     assert any("暂不回写 T100" in message for message in audit.messages)

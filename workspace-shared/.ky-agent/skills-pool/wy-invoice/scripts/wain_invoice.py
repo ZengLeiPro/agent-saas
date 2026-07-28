@@ -45,8 +45,8 @@ def fail(message: str, *, code: int = 1, **extra) -> int:
     return code
 
 
-def missing_modules() -> list[str]:
-    return [name for name in REQUIRED_MODULES if importlib.util.find_spec(name) is None]
+def missing_modules(required_modules=REQUIRED_MODULES) -> list[str]:
+    return [name for name in required_modules if importlib.util.find_spec(name) is None]
 
 
 def default_output_root() -> Path:
@@ -104,6 +104,10 @@ def playwright_executable() -> tuple[str | None, str | None]:
         return None, f"{type(exc).__name__}: {exc}"
 
 
+def is_acs_environment() -> bool:
+    return platform.system() == "Linux" and Path("/workspace").is_dir()
+
+
 def doctor(probe_network: bool = False) -> int:
     missing = missing_modules()
     blockers = []
@@ -136,8 +140,12 @@ def doctor(probe_network: bool = False) -> int:
         blockers.append("尚未执行网络探测；请运行 doctor --probe-network")
 
     runtime_ready = not missing and not browser_error
+    acs_environment = is_acs_environment()
+    if not acs_environment:
+        blockers.append("当前不是 Agent SaaS ACS Linux Sandbox；仅完成本地兼容性验证")
     real_submit_ready = (
         runtime_ready
+        and acs_environment
         and order_reachable is True
         and portal_reachable is True
     )
@@ -149,7 +157,11 @@ def doctor(probe_network: bool = False) -> int:
             "python": sys.version.split()[0],
             "runtimeExists": (RUNTIME_DIR / "core" / "skill.py").exists(),
             "missingModules": missing,
-            "executionEnvironment": "ACS Linux Sandbox",
+            "executionEnvironment": (
+                "ACS Linux Sandbox"
+                if acs_environment
+                else f"本地验证（{platform.system()}，非权威执行环境）"
+            ),
             "browserBackend": "Playwright Chromium",
             "browserExecutable": browser_path,
             "runtimeReady": runtime_ready,
@@ -165,8 +177,10 @@ def doctor(probe_network: bool = False) -> int:
     return 0
 
 
-def require_dependencies() -> int | None:
-    missing = missing_modules()
+def require_dependencies(command: str) -> int | None:
+    # 查询清单只依赖 YAML 和标准库，不应因尚未使用的 Excel/浏览器模块阻断。
+    required_modules = ("yaml",) if command == "list" else REQUIRED_MODULES
+    missing = missing_modules(required_modules)
     if not missing:
         return None
     return fail(
@@ -281,7 +295,7 @@ async def execute(args: argparse.Namespace) -> int:
             )
         commit_reference = args.commit_reference
 
-    await run(
+    result = await run(
         "schneider",
         args.mode,
         task_reference=args.task_reference,
@@ -291,19 +305,95 @@ async def execute(args: argparse.Namespace) -> int:
         captcha_value=getattr(args, "captcha", None),
         challenge_file=getattr(args, "challenge_file", None),
     )
+    if not isinstance(result, dict):
+        return fail(
+            "流程没有返回可核验的结构化结果，禁止推断成功。",
+            code=30,
+            command=command,
+            taskReference=args.task_reference,
+            evidenceRoot=str(output_root),
+        )
+
+    outcome = result.get("outcome")
+    if outcome == "no_pending_data":
+        return fail(
+            result.get("message") or "T100 当前没有待联调数据。",
+            code=21,
+            reason="no_pending_data",
+            command=command,
+            taskReference=args.task_reference,
+            preflightPassed=False,
+            excelDownloaded=False,
+            websiteReached=False,
+            websiteCommitted=False,
+            t100WrittenBack=False,
+            evidenceRoot=str(output_root),
+            evidenceDir=result.get("evidenceDir"),
+        )
+
+    expected_outcomes = {
+        "preflight": "preflight_passed",
+        "run": "confirmation_reached",
+        "commit": "website_committed",
+    }
+    expected = expected_outcomes[command]
+    if outcome != expected:
+        return fail(
+            f"流程结果与命令不一致：command={command}, outcome={outcome!r}。禁止推断成功。",
+            code=31,
+            command=command,
+            taskReference=args.task_reference,
+            evidenceRoot=str(output_root),
+            result=result,
+        )
+
+    excel_path = result.get("excelPath")
+    invariants = [
+        (bool(result.get("preflightPassed")), "preflightPassed 必须为 true"),
+        (bool(result.get("excelDownloaded")), "excelDownloaded 必须为 true"),
+        (bool(excel_path) and Path(excel_path).is_file(), "excelPath 必须指向实际文件"),
+    ]
+    if command == "run":
+        invariants.extend(
+            [
+                (bool(result.get("websiteReached")), "run 必须实际到达最终确认页"),
+                (not bool(result.get("websiteCommitted")), "run 不得执行最终确认"),
+            ]
+        )
+    elif command == "commit":
+        invariants.extend(
+            [
+                (bool(result.get("websiteReached")), "commit 必须实际到达最终确认页"),
+                (bool(result.get("websiteCommitted")), "commit 必须观察到最终确认成功"),
+            ]
+        )
+    violations = [message for ok, message in invariants if not ok]
+    if violations:
+        return fail(
+            "流程结果缺少成功所需证据，禁止推断成功。",
+            code=32,
+            command=command,
+            taskReference=args.task_reference,
+            evidenceRoot=str(output_root),
+            violations=violations,
+            result=result,
+        )
+
     emit(
         {
             "status": "ok",
             "command": command,
-            "taskReference": args.task_reference,
-            "websiteCommitted": command == "commit",
-            "t100WrittenBack": False,
+            "outcome": outcome,
+            "taskReference": result.get("taskReference") or args.task_reference,
+            "preflightPassed": bool(result.get("preflightPassed")),
+            "excelDownloaded": bool(result.get("excelDownloaded")),
+            "excelPath": result.get("excelPath"),
+            "websiteReached": bool(result.get("websiteReached")),
+            "websiteCommitted": bool(result.get("websiteCommitted")),
+            "t100WrittenBack": bool(result.get("t100WrittenBack")),
             "evidenceRoot": str(output_root),
-            "message": (
-                "施耐德网页已确认；按客户当前阶段安排，T100 尚未回写。"
-                if command == "commit"
-                else "流程已完成到请求的安全边界。"
-            ),
+            "evidenceDir": result.get("evidenceDir"),
+            "message": result.get("message"),
         }
     )
     return 0
@@ -351,7 +441,7 @@ def main() -> int:
     args = build_parser().parse_args()
     if args.command == "doctor":
         return doctor(args.probe_network)
-    dependency_error = require_dependencies()
+    dependency_error = require_dependencies(args.command)
     if dependency_error is not None:
         return dependency_error
     if args.command == "list":

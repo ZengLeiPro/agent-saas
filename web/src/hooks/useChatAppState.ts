@@ -828,7 +828,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (!targetSessionId || markingReadSessionIdsRef.current.has(targetSessionId)) return;
     markingReadSessionIdsRef.current.add(targetSessionId);
     session.updateSessionMeta(targetSessionId, { hasUnreadAiReply: false });
-    void fetch(`/api/sessions/${encodeURIComponent(targetSessionId)}/read`, {
+    void authFetch(`/api/sessions/${encodeURIComponent(targetSessionId)}/read`, {
       method: 'PUT',
       credentials: 'include',
     }).then((response) => {

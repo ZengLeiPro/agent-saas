@@ -10,4 +10,8 @@ describe("当前会话未读事件守卫", () => {
       /data\.type === 'session_read_state_changed'[\s\S]*?immediateSessionIdRef\.current === data\.sessionId[\s\S]*?markSessionRead\(data\.sessionId\);\s*return;[\s\S]*?processWsEvent\(/,
     );
   });
+
+  it("已读请求禁止携带 credentials: 'include'（authFetch 走 Authorization header；分域部署下 credentialed CORS preflight 会被浏览器拦截）", () => {
+    expect(SOURCE).not.toMatch(/credentials:\s*['"]include['"]/);
+  });
 });

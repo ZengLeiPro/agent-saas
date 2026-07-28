@@ -828,9 +828,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (!targetSessionId || markingReadSessionIdsRef.current.has(targetSessionId)) return;
     markingReadSessionIdsRef.current.add(targetSessionId);
     session.updateSessionMeta(targetSessionId, { hasUnreadAiReply: false });
+    // 注意：authFetch 走 Authorization header，绝不能给该请求加 include 级 credentials——
+    // 分域部署下会触发 credentialed CORS 检查，而 API 侧不返回
+    // Access-Control-Allow-Credentials，preflight 直接被浏览器拦截，已读请求永远到不了服务端。
     void authFetch(`/api/sessions/${encodeURIComponent(targetSessionId)}/read`, {
       method: 'PUT',
-      credentials: 'include',
     }).then((response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
     }).catch((err) => {

@@ -230,6 +230,16 @@ export function resolveRuntimeModelOptions(
   return { model: requestedModel || DEFAULT_MODEL };
 }
 
+export function resolveWakeModelRef(
+  run: Pick<RunRecord, 'model' | 'metadata'>,
+  session: Pick<RuntimeSessionRecord, 'modelRef'>,
+): string | undefined {
+  const persistedRef = typeof run.metadata?.modelRef === 'string'
+    ? run.metadata.modelRef.trim()
+    : '';
+  return persistedRef || session.modelRef || run.model;
+}
+
 /**
  * Skills wiring：dispatch 不知道 SkillConfigStore，只知道"给我 username/skill 名字，
  * 我返回有效 skill 集合或物理路径"。runtime.ts 在装配时把 SkillConfigStore + sharedDir
@@ -1969,6 +1979,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       metadata: {
         cwd,
         transcriptPath,
+        modelRef: sessionModelRef,
         sandboxScopeId,
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
@@ -2489,7 +2500,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       sandboxScopeId,
-      metadata: { cwd, transcriptPath, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
+      metadata: { cwd, transcriptPath, modelRef: sessionModelRef, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
     });
     directRuntimeLease = await acquireDirectRuntimeRunLease({
       runStore: config.runStore,
@@ -2870,7 +2881,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       sandboxScopeId,
-      metadata: { cwd, transcriptPath, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
+      metadata: { cwd, transcriptPath, modelRef: sessionModelRef, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
     });
     directRuntimeLease = await acquireDirectRuntimeRunLease({
       runStore: config.runStore,
@@ -3201,7 +3212,7 @@ export async function wakeRuntimeSession(
           sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
           targetCwd: session.cwd,
         },
-        model: run.model ?? session.modelRef,
+        model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
         ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
@@ -3211,11 +3222,11 @@ export async function wakeRuntimeSession(
         await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
         if (event.type === 'error') outboundError = event.error ?? 'approval resume wake failed';
       }
+      if (outboundError) throw new Error(outboundError);
       const current = await config.runStore?.get(run.runId);
       if (current) {
         await options.lease?.release(current.status, current.statusReason ?? 'approval_resume_wake_completed');
       }
-      if (outboundError) throw new Error(outboundError);
     } finally {
       if (renewTimer) clearInterval(renewTimer);
       runtimeRunController.unregister(run.runId);
@@ -3258,7 +3269,7 @@ export async function wakeRuntimeSession(
           sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
           targetCwd: session.cwd,
         },
-        model: run.model ?? session.modelRef,
+        model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
         ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
@@ -3268,11 +3279,11 @@ export async function wakeRuntimeSession(
         await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
         if (event.type === 'error') outboundError = event.error ?? 'interaction resume wake failed';
       }
+      if (outboundError) throw new Error(outboundError);
       const current = await config.runStore?.get(run.runId);
       if (current) {
         await options.lease?.release(current.status, current.statusReason ?? 'interaction_resume_wake_completed');
       }
-      if (outboundError) throw new Error(outboundError);
     } finally {
       if (renewTimer) clearInterval(renewTimer);
       runtimeRunController.unregister(run.runId);
@@ -3307,7 +3318,7 @@ export async function wakeRuntimeSession(
         runtimeRunId: run.runId,
         resumeSessionId: run.sessionId,
         cwd: session.cwd,
-        model: run.model ?? session.modelRef,
+        model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
         ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
@@ -3319,11 +3330,11 @@ export async function wakeRuntimeSession(
       await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
       if (event.type === 'error') outboundError = event.error ?? 'wake dispatch failed';
     }
+    if (outboundError) throw new Error(outboundError);
     const current = await config.runStore?.get(run.runId);
     if (current) {
       await options.lease?.release(current.status, current.statusReason ?? 'wake_completed');
     }
-    if (outboundError) throw new Error(outboundError);
   } finally {
     if (renewTimer) clearInterval(renewTimer);
     runtimeRunController.unregister(run.runId);

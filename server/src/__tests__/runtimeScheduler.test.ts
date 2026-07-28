@@ -367,6 +367,38 @@ describe('RuntimeScheduler', () => {
     expect(eventStore.events.map((event) => event.type)).toEqual(['run_lease_acquired', 'run_state_changed']);
   });
 
+  it('does not emit a fake failed event when lease terminalization loses ownership', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    await runStore.upsertPending({ runId: 'run-release-lost', sessionId: 'session-release-lost' });
+    vi.spyOn(runStore, 'releaseLease').mockResolvedValue(null);
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      autoWake: true,
+      wake: async () => {
+        throw new Error('model resolution failed');
+      },
+      logger,
+    });
+
+    await scheduler.tick();
+    await scheduler.stop();
+
+    await expect(runStore.get('run-release-lost')).resolves.toMatchObject({ status: 'running' });
+    expect(eventStore.events.map((event) => event.type)).toEqual(['run_lease_acquired']);
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining(
+      'Runtime scheduler wake terminalization failed for run-release-lost: current=running',
+    ));
+  });
+
   it('defers recoverable runs before leasing while another brain holds the session', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();

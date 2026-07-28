@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { resolveRuntimeModelOptions } from '../runtime/rawRuntimeRunDispatch.js';
+import { resolveRuntimeModelOptions, resolveWakeModelRef } from '../runtime/rawRuntimeRunDispatch.js';
 
 describe('resolveRuntimeModelOptions', () => {
   it('resolves a stored UI model ref into runtime model connection', () => {
@@ -44,5 +44,21 @@ describe('resolveRuntimeModelOptions', () => {
       modelProviderOptions: { thinking: { type: 'enabled' } },
     });
     expect(modelResolver).not.toHaveBeenCalled();
+  });
+
+  it('restores the stable model ref instead of the provider model value', () => {
+    expect(resolveWakeModelRef({
+      model: 'gpt-5.6-sol',
+      metadata: { modelRef: 'kaiyan-llm/gpt-5.6-sol-high' },
+    }, {
+      modelRef: 'kaiyan-llm/gpt56-sol-medium',
+    })).toBe('kaiyan-llm/gpt-5.6-sol-high');
+
+    expect(resolveWakeModelRef({
+      model: 'gpt-5.6-sol',
+      metadata: {},
+    }, {
+      modelRef: 'kaiyan-llm/gpt56-sol-medium',
+    })).toBe('kaiyan-llm/gpt56-sol-medium');
   });
 });

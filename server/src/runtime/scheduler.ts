@@ -434,6 +434,16 @@ export class RuntimeScheduler {
         });
       }
       await lease.release('failed', message);
+      const terminalized = await this.options.runStore.get(acquired.runId);
+      if (terminalized?.status !== 'failed') {
+        if (terminalized && !['completed', 'cancelled', 'orphaned'].includes(terminalized.status)) {
+          this.deferRun(acquired.runId, Math.max(30_000, this.pollIntervalMs * 5));
+        }
+        this.options.logger?.error(
+          `Runtime scheduler wake terminalization failed for ${acquired.runId}: current=${terminalized?.status ?? 'missing'} reason=${message}`,
+        );
+        return;
+      }
       await this.options.eventStore.append({
         type: 'run_state_changed',
         runId: acquired.runId,
@@ -447,8 +457,8 @@ export class RuntimeScheduler {
     }
   }
 
-  private deferRun(runId: string): void {
-    this.deferredUntilByRun.set(runId, Date.now() + Math.max(1_000, this.pollIntervalMs));
+  private deferRun(runId: string, delayMs = this.pollIntervalMs): void {
+    this.deferredUntilByRun.set(runId, Date.now() + Math.max(1_000, delayMs));
   }
 
   private createLease(record: RunRecord): RunLease {

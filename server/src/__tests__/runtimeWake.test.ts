@@ -9,7 +9,7 @@ import {
   type RawRuntimeRunDispatchConfig,
   type RuntimeWakeLease,
 } from '../runtime/rawRuntimeRunDispatch.js';
-import type { RunRecord, RunStatus } from '../runtime/runStore.js';
+import type { RunRecord, RunStatus, RunStore } from '../runtime/runStore.js';
 import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 
@@ -457,6 +457,73 @@ describe('wakeRuntimeSession', () => {
         sessionCatalog: new MemorySessionCatalog(session),
         eventStoreFactory: () => eventStore,
       }, run, { lease })).rejects.toThrow(/Raw approval resume 缺少 OPENAI_API_KEY/);
+    } finally {
+      if (oldApiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = oldApiKey;
+    }
+
+    expect(releases).toEqual([]);
+  });
+
+  it('keeps the lease held when the normal wake dispatch reports an error', async () => {
+    const session: RuntimeSessionRecord = {
+      sessionId: 'session-wake-error',
+      userId: 'user-1',
+      username: 'alice',
+      tenantId: 'kaiyan',
+      channel: 'cron',
+      cwd: '/tmp/alice',
+      transcriptPath: '/tmp/alice/session.jsonl',
+      modelRef: 'kaiyan-llm/gpt56-sol-medium',
+      executionTarget: 'server-container',
+      workspaceId: 'workspace-1',
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const run: RunRecord = {
+      runId: 'run-wake-error',
+      sessionId: session.sessionId,
+      userId: session.userId,
+      tenantId: session.tenantId,
+      status: 'running',
+      model: 'gpt-5.6-sol',
+      channel: 'cron',
+      requestedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      executionTarget: session.executionTarget,
+      workspaceId: session.workspaceId,
+      metadata: {
+        wakeMessage: {
+          channel: 'cron',
+          chatId: session.sessionId,
+          content: '继续执行定时任务',
+        },
+      },
+    };
+    const eventStore = new MemoryEventStore();
+    const releases: Array<{ status?: RunStatus; reason?: string }> = [];
+    const lease: RuntimeWakeLease = {
+      runId: run.runId,
+      renew: async () => {},
+      release: async (status, reason) => {
+        releases.push({ status, reason });
+      },
+    };
+    const runStore = {
+      get: async () => run,
+    } as unknown as RunStore;
+
+    const oldApiKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      await expect(wakeRuntimeSession({
+        agentCwd: '/tmp',
+        sharedDir: '/tmp',
+        sessionCatalog: new MemorySessionCatalog(session),
+        eventStoreFactory: () => eventStore,
+        runStore,
+      }, run, { lease })).rejects.toThrow(/Raw runtime 缺少 OPENAI_API_KEY/);
     } finally {
       if (oldApiKey === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = oldApiKey;

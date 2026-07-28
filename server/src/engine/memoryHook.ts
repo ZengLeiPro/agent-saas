@@ -254,10 +254,20 @@ export function withMemoryMaintenance(
     let finalText = '';
     let hasError = false;
     let hasTools = false;
+    const draftTextStarts = new Map<string, number>();
 
     for await (const event of upstream(message, context, options, hooks)) {
       // 追踪状态
+      if (event.type === 'text_start' && event.draftId && !draftTextStarts.has(event.draftId)) {
+        draftTextStarts.set(event.draftId, finalText.length);
+      }
       if (event.type === 'text_delta') finalText += event.content || '';
+      if (event.type === 'draft_reset' && event.draftId) {
+        finalText = finalText.slice(0, draftTextStarts.get(event.draftId) ?? finalText.length);
+      }
+      if (event.type === 'draft_commit' && event.draftId) {
+        draftTextStarts.delete(event.draftId);
+      }
       if (event.type === 'error') hasError = true;
       if (event.type === 'tool_start') hasTools = true;
 

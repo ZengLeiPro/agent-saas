@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   InteractionEvent,
   InteractionResponse,
@@ -761,6 +762,8 @@ export class RawAgentLoop implements AgentLoop {
         let turnContextUsage: OutboundEvent['contextUsage'] | null = null;
         let turnText = '';
         let turnThinking = '';
+        const turnFinalTextStart = finalText.length;
+        const draftId = context.channelContext.replaceableDrafts ? randomUUID() : undefined;
         // 2026-07-03 起 assistant_stream_event delta 不再落库；UI 的"思考 Xs"
         // 时长改由 assistant_thinking 聚合行的 durationMs 携带。
         let turnThinkingMs = 0;
@@ -797,7 +800,7 @@ export class RawAgentLoop implements AgentLoop {
             if (!thinkingStarted) {
               thinkingStarted = true;
               thinkingSegmentStartedAt = Date.now();
-              yield { type: 'thinking_start' };
+              yield { type: 'thinking_start', ...(draftId ? { draftId } : {}) };
             }
             turnThinking += event.content;
             yield { type: 'thinking_delta', content: event.content };
@@ -812,12 +815,24 @@ export class RawAgentLoop implements AgentLoop {
             }
             if (!textStarted) {
               textStarted = true;
-              yield { type: 'text_start' };
+              yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
             }
             turnText += event.content;
             pendingTurnText += event.content;
             finalText += event.content;
             yield { type: 'text_delta', content: event.content };
+          } else if (event.type === 'draft_reset') {
+            thinkingStarted = false;
+            textStarted = false;
+            thinkingSegmentStartedAt = undefined;
+            turnThinkingMs = 0;
+            turnThinking = '';
+            turnText = '';
+            pendingTurnText = '';
+            finalText = finalText.slice(0, turnFinalTextStart);
+            if (draftId) {
+              yield { type: 'draft_reset', draftId, attempt: event.attempt };
+            }
           } else {
             completed = event;
           }
@@ -867,7 +882,7 @@ export class RawAgentLoop implements AgentLoop {
           if (completed.content && completed.content !== turnText) {
             if (!textStarted) {
               textStarted = true;
-              yield { type: 'text_start' };
+              yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
             }
             finalText += completed.content;
             yield { type: 'text_delta', content: completed.content };
@@ -910,6 +925,9 @@ export class RawAgentLoop implements AgentLoop {
           if (textStarted) {
             yield { type: 'text_end' };
           }
+          if (draftId) {
+            yield { type: 'draft_commit', draftId };
+          }
           if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
           const modelUsage = buildModelUsage(context.model, totalUsage);
           await this.append({
@@ -934,7 +952,7 @@ export class RawAgentLoop implements AgentLoop {
         if (completed.content && completed.content !== turnText) {
           if (!textStarted) {
             textStarted = true;
-            yield { type: 'text_start' };
+            yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
           }
           finalText += completed.content;
           yield { type: 'text_delta', content: completed.content };
@@ -966,6 +984,9 @@ export class RawAgentLoop implements AgentLoop {
           toolCalls: completed.toolCalls,
         });
         pendingTurnText = '';
+        if (draftId) {
+          yield { type: 'draft_commit', draftId };
+        }
         if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
         messages.push({
           role: 'assistant',
@@ -1153,6 +1174,8 @@ export class RawAgentLoop implements AgentLoop {
       }, this.withModelRequestDiagnostics(context))) {
         if (event.type === 'text_delta') {
           summaryText += event.content;
+        } else if (event.type === 'draft_reset') {
+          summaryText = '';
         } else if (event.type !== 'thinking_delta') {
           completed = event;
         }
@@ -2267,6 +2290,8 @@ export class RawAgentLoop implements AgentLoop {
         let turnContextUsage: OutboundEvent['contextUsage'] | null = null;
         let turnText = '';
         let turnThinking = '';
+        const turnFinalTextStart = finalText.length;
+        const draftId = args.context.channelContext.replaceableDrafts ? randomUUID() : undefined;
         // 2026-07-03 起 assistant_stream_event delta 不再落库；UI 的"思考 Xs"
         // 时长改由 assistant_thinking 聚合行的 durationMs 携带。
         let turnThinkingMs = 0;
@@ -2301,7 +2326,7 @@ export class RawAgentLoop implements AgentLoop {
             if (!thinkingStarted) {
               thinkingStarted = true;
               thinkingSegmentStartedAt = Date.now();
-              yield { type: 'thinking_start' };
+              yield { type: 'thinking_start', ...(draftId ? { draftId } : {}) };
             }
             turnThinking += event.content;
             yield { type: 'thinking_delta', content: event.content };
@@ -2316,12 +2341,24 @@ export class RawAgentLoop implements AgentLoop {
             }
             if (!textStarted) {
               textStarted = true;
-              yield { type: 'text_start' };
+              yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
             }
             turnText += event.content;
             pendingTurnText += event.content;
             finalText += event.content;
             yield { type: 'text_delta', content: event.content };
+          } else if (event.type === 'draft_reset') {
+            thinkingStarted = false;
+            textStarted = false;
+            thinkingSegmentStartedAt = undefined;
+            turnThinkingMs = 0;
+            turnThinking = '';
+            turnText = '';
+            pendingTurnText = '';
+            finalText = finalText.slice(0, turnFinalTextStart);
+            if (draftId) {
+              yield { type: 'draft_reset', draftId, attempt: event.attempt };
+            }
           } else {
             completed = event;
           }
@@ -2375,7 +2412,7 @@ export class RawAgentLoop implements AgentLoop {
           if (completed.content && completed.content !== turnText) {
             if (!textStarted) {
               textStarted = true;
-              yield { type: 'text_start' };
+              yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
             }
             finalText += completed.content;
             yield { type: 'text_delta', content: completed.content };
@@ -2418,6 +2455,9 @@ export class RawAgentLoop implements AgentLoop {
           if (textStarted) {
             yield { type: 'text_end' };
           }
+          if (draftId) {
+            yield { type: 'draft_commit', draftId };
+          }
           if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
           const modelUsage = buildModelUsage(args.context.model, totalUsage);
           await this.append({
@@ -2442,7 +2482,7 @@ export class RawAgentLoop implements AgentLoop {
         if (completed.content && completed.content !== turnText) {
           if (!textStarted) {
             textStarted = true;
-            yield { type: 'text_start' };
+            yield { type: 'text_start', ...(draftId ? { draftId } : {}) };
           }
           finalText += completed.content;
           yield { type: 'text_delta', content: completed.content };
@@ -2474,6 +2514,9 @@ export class RawAgentLoop implements AgentLoop {
           toolCalls: completed.toolCalls,
         });
         pendingTurnText = '';
+        if (draftId) {
+          yield { type: 'draft_commit', draftId };
+        }
         if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
         args.messages.push({
           role: 'assistant',

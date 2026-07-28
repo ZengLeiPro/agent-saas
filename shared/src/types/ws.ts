@@ -35,7 +35,9 @@ export type WsEvent =
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
     | { type: 'session'; sessionId: string; client_msg_id?: string }
-    | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string }
+    | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string }
+    | { type: 'draft_reset'; draftId: string; attempt?: number }
+    | { type: 'draft_commit'; draftId: string }
     | { type: 'thinking'; content: string }
     | { type: 'text'; content: string; guardrailEventId?: string }
     | { type: 'tool_input'; content: string; toolName?: string; toolId?: string }

@@ -513,6 +513,7 @@ describe('WebChannel executionTarget gating', () => {
 
       await (channel as any).processChatMessage(client, chatMessage({
         message: 'enqueue me',
+        clientCapabilities: ['replaceable_drafts'],
         approvalPolicy: { autoApproveTools: true },
         workflowDemo: {
           runId: '11111111-1111-4111-8111-111111111111',
@@ -538,6 +539,7 @@ describe('WebChannel executionTarget gating', () => {
         },
       });
       expect(enqueued[0]?.metadata?.approvalPolicy).toEqual({ autoApproveTools: true });
+      expect(enqueued[0]?.metadata?.replaceableDrafts).toBe(true);
       expect(ws.sent.find((m) => m.data?.type === 'stream_id')?.data).toMatchObject({
         runId: enqueued[0]?.runId,
       });

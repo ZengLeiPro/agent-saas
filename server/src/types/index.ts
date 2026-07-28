@@ -42,6 +42,8 @@ export type OutboundEventType =
   | "thinking_start"
   | "thinking_delta"
   | "thinking_end"
+  | "draft_reset"
+  | "draft_commit"
   | "text_start"
   | "text_delta"
   | "text_end"
@@ -205,6 +207,10 @@ export interface OutboundEvent {
   type: OutboundEventType;
   sessionId?: string;
   content?: string;
+  /** Web 可撤销草稿的稳定标识；旧客户端不声明能力时服务端不会发出。 */
+  draftId?: string;
+  /** draft_reset 对应的已失败模型请求 attempt。 */
+  attempt?: number;
   toolName?: string;
   toolId?: string;
   partialJson?: string;
@@ -251,6 +257,11 @@ export interface UserIdentity {
 
 export interface ChannelContext {
   channel: ChannelType;
+  /**
+   * Web 客户端明确声明支持可撤销草稿协议后才启用。
+   * 旧页面缺省 false，避免蓝绿交叉版本把重试正文直接追加成重复回答。
+   */
+  replaceableDrafts?: boolean;
   resumeSessionId?: string;
   systemContext?: string;
   timezone?: string;

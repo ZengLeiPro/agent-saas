@@ -3257,6 +3257,7 @@ export async function wakeRuntimeSession(
         cwd: session.cwd,
         context: {
           channel: 'web',
+          replaceableDrafts: run.metadata?.replaceableDrafts === true,
           resumeSessionId: run.sessionId,
           sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
           targetCwd: session.cwd,
@@ -3313,6 +3314,7 @@ export async function wakeRuntimeSession(
         cwd: session.cwd,
         context: {
           channel: 'web',
+          replaceableDrafts: run.metadata?.replaceableDrafts === true,
           resumeSessionId: run.sessionId,
           sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
           targetCwd: session.cwd,
@@ -3342,6 +3344,7 @@ export async function wakeRuntimeSession(
   const wakePrompt = resolveWakePrompt(run, events, session);
   const context: ChannelContext = {
     channel: 'web',
+    replaceableDrafts: run.metadata?.replaceableDrafts === true,
     resumeSessionId: run.sessionId,
     sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
     targetCwd: session.cwd,

@@ -389,6 +389,47 @@ describe('processWsEvent - 流式块（block/thinking/text/tool_input）', () =>
     expect((ctrl.messages[0] as Extract<MessageItem, { type: 'text' }>).content).toBe('Hello World');
   });
 
+  it('draft_reset：按 draftId 撤回思考与正文，替换成功后 commit 固化且不误删旧回答', () => {
+    const ctrl = makeController();
+    const { ctx } = makeCtx(ctrl);
+    const block = freshBlock();
+
+    dispatch({ type: 'block_start', blockType: 'thinking', draftId: 'draft-1' }, ctx, block);
+    dispatch({ type: 'thinking', content: '失败轮思考' }, ctx, block);
+    dispatch({ type: 'block_end', blockType: 'thinking' }, ctx, block);
+    dispatch({ type: 'block_start', blockType: 'text', draftId: 'draft-1' }, ctx, block);
+    dispatch({ type: 'text', content: '失败轮正文' }, ctx, block);
+
+    dispatch({ type: 'draft_reset', draftId: 'draft-1', attempt: 1 }, ctx, block);
+    expect(ctrl.messages).toEqual([
+      expect.objectContaining({
+        type: 'runtime_status',
+        status: 'reconnecting',
+        content: '连接波动，正在恢复',
+      }),
+    ]);
+    expect(block).toEqual({ currentBlockIndex: -1, currentBlockType: null });
+
+    dispatch({ type: 'block_start', blockType: 'text', draftId: 'draft-1' }, ctx, block);
+    dispatch({ type: 'text', content: '最终答案' }, ctx, block);
+    dispatch({ type: 'block_end', blockType: 'text' }, ctx, block);
+    dispatch({ type: 'draft_commit', draftId: 'draft-1' }, ctx, block);
+
+    expect(ctrl.messages).toHaveLength(1);
+    expect(ctrl.messages[0]).toMatchObject({
+      type: 'text',
+      content: '最终答案',
+      streaming: false,
+      draftId: undefined,
+    });
+
+    dispatch({ type: 'block_start', blockType: 'text', draftId: 'draft-2' }, ctx, block);
+    dispatch({ type: 'text', content: '另一轮失败草稿' }, ctx, block);
+    dispatch({ type: 'draft_reset', draftId: 'draft-2' }, ctx, block);
+    expect(ctrl.messages.some((message) => message.type === 'text' && message.content === '最终答案')).toBe(true);
+    expect(ctrl.messages.some((message) => message.type === 'text' && message.content === '另一轮失败草稿')).toBe(false);
+  });
+
   it('block_start(tool_use) → tool_input → block_end：创建骨架、累积输入、收尾', () => {
     const ctrl = makeController();
     const { ctx } = makeCtx(ctrl);

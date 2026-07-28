@@ -359,6 +359,24 @@ class ThinkingTextAdapter implements ModelAdapter {
   }
 }
 
+class ReplaceableDraftAdapter implements ModelAdapter {
+  async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    yield { type: 'thinking_delta', content: '失败轮思考' };
+    yield { type: 'text_delta', content: '失败轮正文' };
+    yield { type: 'draft_reset', attempt: 1 };
+    yield { type: 'thinking_delta', content: '成功轮思考' };
+    yield { type: 'text_delta', content: '最终答案' };
+    yield {
+      type: 'completed',
+      content: '最终答案',
+      toolCalls: [],
+      terminalStatus: 'completed',
+      modelRequestAttemptCount: 2,
+      usage: { inputTokens: 4, outputTokens: 3 },
+    };
+  }
+}
+
 class ThinkingOnlyThenTextAdapter implements ModelAdapter {
   calls = 0;
   requests: ModelRequest[] = [];
@@ -1225,6 +1243,89 @@ describe('RawAgentLoop', () => {
     expect(transcript).toContain('"type":"thinking"');
     expect(transcript).toContain('"thinking":"先判断需求。再给结论。"');
     expect(transcript).toContain('"text":"完成"');
+  });
+
+  it('replaces a failed Web draft in-place and persists only the successful attempt', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-replaceable-draft-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const transcriptPath = join(cwd, 'session.jsonl');
+    const loop = new RawAgentLoop({
+      modelAdapter: new ReplaceableDraftAdapter(),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-replaceable-draft'),
+      transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
+      toolRuntime: new PlatformToolRuntime(),
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '执行' },
+        prompt: '执行',
+        instructions: '正常回答。',
+        maxTurns: 2,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-replaceable-draft',
+        sessionId: 'session-replaceable-draft',
+        model: 'gpt-5.6-sol',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          replaceableDrafts: true,
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+      },
+    ));
+
+    const draftStarts = events.filter((event) => (
+      (event.type === 'thinking_start' || event.type === 'text_start') && event.draftId
+    ));
+    const draftIds = new Set(draftStarts.map((event) => event.draftId));
+    expect(draftIds.size).toBe(1);
+    const draftId = [...draftIds][0]!;
+    expect(events.map((event) => event.type)).toEqual([
+      'thinking_start',
+      'thinking_delta',
+      'thinking_end',
+      'text_start',
+      'text_delta',
+      'draft_reset',
+      'thinking_start',
+      'thinking_delta',
+      'thinking_end',
+      'text_start',
+      'text_delta',
+      'text_end',
+      'draft_commit',
+      'context_usage',
+      'done',
+    ]);
+    expect(events.find((event) => event.type === 'draft_reset')).toEqual({
+      type: 'draft_reset',
+      draftId,
+      attempt: 1,
+    });
+    expect(events.find((event) => event.type === 'draft_commit')).toEqual({
+      type: 'draft_commit',
+      draftId,
+    });
+
+    const runtimeEvents = await eventStore.list('session-replaceable-draft');
+    expect(runtimeEvents.filter((event) => event.type === 'assistant_thinking')).toEqual([
+      expect.objectContaining({ content: '成功轮思考', streamed: true }),
+    ]);
+    expect(runtimeEvents.filter((event) => event.type === 'assistant_message')).toEqual([
+      expect.objectContaining({
+        content: '最终答案',
+        streamed: true,
+        modelRequestAttemptCount: 2,
+      }),
+    ]);
+    const transcript = await readFile(transcriptPath, 'utf-8');
+    expect(transcript).not.toContain('失败轮');
+    expect(transcript).toContain('最终答案');
   });
 
   it('recovers one thinking-only empty turn with a hidden continuation prompt', async () => {

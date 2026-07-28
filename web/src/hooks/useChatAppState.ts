@@ -2320,6 +2320,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       : undefined;
     const ok = await wsClient.ensureConnectedSend({
       action: 'chat',
+      clientCapabilities: ['replaceable_drafts'],
       client_msg_id: clientMsgId,
       message: inputText || "Please check the attachments I uploaded",
       sessionId: activeSessionId || undefined,
@@ -2390,6 +2391,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
     const ok = await wsClient.ensureConnectedSend({
       action: 'chat',
+      clientCapabilities: ['replaceable_drafts'],
       message: '/compact',
       sessionId: activeSessionId,
     });

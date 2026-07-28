@@ -1190,6 +1190,121 @@ describe('ResponsesApiAdapter', () => {
     expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
   });
 
+  it('普通重试额度耗尽后，Web 仍用专属机会重置部分草稿并沿用同一 modelRequestId 恢复', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { code: 'internal_server_error', message: 'unexpected EOF' },
+      }), { status: 500 }))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_web_partial' } }),
+        sse('response.reasoning_summary_text.delta', {
+          type: 'response.reasoning_summary_text.delta',
+          delta: '失败轮思考',
+        }),
+        sse('response.output_text.delta', {
+          type: 'response.output_text.delta',
+          delta: '失败轮正文',
+        }),
+        sse('error', {
+          type: 'error',
+          code: 'internal_server_error',
+          message: 'unexpected EOF',
+        }),
+      ]))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_web_recovered' } }),
+        sse('response.output_text.delta', {
+          type: 'response.output_text.delta',
+          delta: '最终成功',
+        }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: {
+            id: 'resp_web_recovered',
+            status: 'completed',
+            usage: { input_tokens: 8, output_tokens: 2 },
+          },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      channelContext: { channel: 'web', replaceableDrafts: true },
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(events).toEqual([
+      { type: 'thinking_delta', content: '失败轮思考' },
+      { type: 'text_delta', content: '失败轮正文' },
+      { type: 'draft_reset', attempt: 2 },
+      { type: 'text_delta', content: '最终成功' },
+      expect.objectContaining({
+        type: 'completed',
+        content: '最终成功',
+        terminalStatus: 'completed',
+        modelRequestAttemptCount: 3,
+      }),
+    ]);
+    const started = diagnostics.filter((event) => event.type === 'started');
+    expect(new Set(started.map((event) => event.modelRequestId)).size).toBe(1);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      { attempt: 1, outcome: 'http_error', errorCode: 'internal_server_error', willRetry: true },
+      { attempt: 2, errorCode: 'internal_server_error', willRetry: true },
+      { attempt: 3, outcome: 'completed' },
+    ]);
+  });
+
+  it('可撤销草稿重试耗尽时保留最后一次部分正文，不重置最终失败 attempt', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStream([
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '第一轮草稿' }),
+        sse('error', { type: 'error', code: 'server_error', message: 'retryable' }),
+      ]))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '最后保留草稿' }),
+        sse('error', { type: 'error', code: 'server_error', message: 'retryable' }),
+      ]));
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      channelContext: { channel: 'web', replaceableDrafts: true },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([
+      { type: 'text_delta', content: '第一轮草稿' },
+      { type: 'draft_reset', attempt: 1 },
+      { type: 'text_delta', content: '最后保留草稿' },
+      expect.objectContaining({
+        type: 'completed',
+        content: '最后保留草稿',
+        terminalStatus: 'failed',
+        errorCode: 'server_error',
+        modelRequestAttemptCount: 2,
+      }),
+    ]);
+  });
+
   it('Cron 缓冲未完成 attempt 的正文与思考，并在流内 internal_server_error 后安全重试', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.spyOn(globalThis, 'fetch')

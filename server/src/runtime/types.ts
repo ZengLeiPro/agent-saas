@@ -273,6 +273,12 @@ export type ModelEvent =
   | { type: 'text_delta'; content: string }
   | { type: 'thinking_delta'; content: string }
   | {
+    /** Web 可撤销草稿：丢弃当前未完成 attempt 的可见输出，再由同一请求重试替换。 */
+    type: 'draft_reset';
+    /** 已失败的模型请求 attempt（从 1 开始）。 */
+    attempt: number;
+  }
+  | {
     type: 'completed';
     content: string;
     toolCalls: ModelToolCall[];

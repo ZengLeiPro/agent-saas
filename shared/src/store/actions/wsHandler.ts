@@ -160,6 +160,7 @@ export function setupWsHandler(): () => void {
         messagesRef: { current: state.getMessagesRef() },
         addMessage: state.addMessage,
         updateMessageAt: state.updateMessageAt,
+        setMessages: state.setMessages,
         triggerScroll: state.triggerScroll,
       },
       session: {

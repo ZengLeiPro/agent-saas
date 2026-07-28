@@ -664,7 +664,11 @@ export class WebChannel implements BaseChannel {
         }
         break;
       case 'text_start':
-        emitSession({ type: 'block_start', blockType: 'text' });
+        emitSession({
+          type: 'block_start',
+          blockType: 'text',
+          ...(input.event.draftId ? { draftId: input.event.draftId } : {}),
+        });
         break;
       case 'text_delta':
         emitSession({ type: 'text', content: input.event.content ?? '' });
@@ -673,13 +677,31 @@ export class WebChannel implements BaseChannel {
         emitSession({ type: 'block_end', blockType: 'text' });
         break;
       case 'thinking_start':
-        emitSession({ type: 'block_start', blockType: 'thinking' });
+        emitSession({
+          type: 'block_start',
+          blockType: 'thinking',
+          ...(input.event.draftId ? { draftId: input.event.draftId } : {}),
+        });
         break;
       case 'thinking_delta':
         emitSession({ type: 'thinking', content: input.event.content ?? '' });
         break;
       case 'thinking_end':
         emitSession({ type: 'block_end', blockType: 'thinking' });
+        break;
+      case 'draft_reset':
+        if (input.event.draftId) {
+          emitSession({
+            type: 'draft_reset',
+            draftId: input.event.draftId,
+            ...(input.event.attempt !== undefined ? { attempt: input.event.attempt } : {}),
+          });
+        }
+        break;
+      case 'draft_commit':
+        if (input.event.draftId) {
+          emitSession({ type: 'draft_commit', draftId: input.event.draftId });
+        }
         break;
       case 'tool_start':
         if (isDedicatedWebTool(input.event.toolName)) break;
@@ -2113,6 +2135,7 @@ export class WebChannel implements BaseChannel {
 
     const context: ChannelContext = {
       channel: 'web',
+      replaceableDrafts: msg.clientCapabilities?.includes('replaceable_drafts') === true,
       resumeSessionId: validSessionId,
       timezone: this.config.timezone,
       ...(userIdentity ? { user: userIdentity } : {}),
@@ -2441,6 +2464,7 @@ export class WebChannel implements BaseChannel {
             clientMsgId,
             ...(approvalPolicy ? { approvalPolicy } : {}),
             ...(guardrailMark ? { guardrail: guardrailMark } : {}),
+            ...(context.replaceableDrafts ? { replaceableDrafts: true } : {}),
             wakeMessage: {
               channel: inbound.channel,
               chatId: enqueueSessionId,
@@ -3437,10 +3461,15 @@ export class WebChannel implements BaseChannel {
     let textAccumulated = '';
     let isBuffering = true;
     let textBlockStartSent = false;
+    let textDraftId: string | undefined;
 
     const flushTextBuffer = () => {
       if (!textBlockStartSent) {
-        send({ type: 'block_start', blockType: 'text' });
+        send({
+          type: 'block_start',
+          blockType: 'text',
+          ...(textDraftId ? { draftId: textDraftId } : {}),
+        });
         textBlockStartSent = true;
       }
       for (const chunk of textBuffer) {
@@ -3455,9 +3484,11 @@ export class WebChannel implements BaseChannel {
       textAccumulated = '';
       isBuffering = true;
       textBlockStartSent = false;
+      textDraftId = undefined;
     };
 
     let collectedAssistantText = '';
+    const draftCollectedTextStarts = new Map<string, number>();
     // SDK 错误透传：onError 记录，onDone 合并进 done 事件
     let lastError: string | undefined;
 
@@ -3557,10 +3588,17 @@ export class WebChannel implements BaseChannel {
         }
       },
 
-      onThinkingStart() {
+      onThinkingStart(draftId) {
         markRealContent();
+        if (draftId && !draftCollectedTextStarts.has(draftId)) {
+          draftCollectedTextStarts.set(draftId, collectedAssistantText.length);
+        }
         if (shouldSendWebBlock('thinking', undefined, config)) {
-          send({ type: 'block_start', blockType: 'thinking' });
+          send({
+            type: 'block_start',
+            blockType: 'thinking',
+            ...(draftId ? { draftId } : {}),
+          });
         }
       },
       onThinkingDelta(content) {
@@ -3574,9 +3612,13 @@ export class WebChannel implements BaseChannel {
         }
       },
 
-      onTextStart() {
+      onTextStart(draftId) {
         markRealContent();
         resetTextBlockState();
+        textDraftId = draftId;
+        if (draftId && !draftCollectedTextStarts.has(draftId)) {
+          draftCollectedTextStarts.set(draftId, collectedAssistantText.length);
+        }
       },
 
       onTextDelta(content) {
@@ -3615,12 +3657,20 @@ export class WebChannel implements BaseChannel {
           if (hasVoice && !hasText) {
             sendVoiceMarkers(blockText, true);
           } else if (hasVoice && hasText) {
-            send({ type: 'block_start', blockType: 'text' });
+            send({
+              type: 'block_start',
+              blockType: 'text',
+              ...(textDraftId ? { draftId: textDraftId } : {}),
+            });
             send({ type: 'text', content: cleanedText });
             send({ type: 'block_end', blockType: 'text' });
             sendVoiceMarkers(blockText, false);
           } else if (hasText) {
-            send({ type: 'block_start', blockType: 'text' });
+            send({
+              type: 'block_start',
+              blockType: 'text',
+              ...(textDraftId ? { draftId: textDraftId } : {}),
+            });
             send({ type: 'text', content: cleanedText });
             send({ type: 'block_end', blockType: 'text' });
           }
@@ -3664,6 +3714,24 @@ export class WebChannel implements BaseChannel {
         }
 
         resetTextBlockState();
+      },
+
+      onDraftReset(draftId, attempt) {
+        const start = draftCollectedTextStarts.get(draftId);
+        if (start !== undefined) {
+          collectedAssistantText = collectedAssistantText.slice(0, start);
+        }
+        resetTextBlockState();
+        send({
+          type: 'draft_reset',
+          draftId,
+          ...(attempt !== undefined ? { attempt } : {}),
+        });
+      },
+
+      onDraftCommit(draftId) {
+        draftCollectedTextStarts.delete(draftId);
+        send({ type: 'draft_commit', draftId });
       },
 
       onToolStart(toolId, toolName) {

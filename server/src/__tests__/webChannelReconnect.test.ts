@@ -348,6 +348,33 @@ describe('WebChannel active stream reconnect', () => {
     expect(emitted.some((d: { type: string }) => d.type === 'artifact_created')).toBe(false);
   });
 
+  it('projects replaceable draft outbound events into the WebSocket protocol', () => {
+    const channel = createChannel();
+    const emitted: any[] = [];
+    (channel as any).eventBus = {
+      ...fakeEventBus(),
+      emitSession: (_ctx: unknown, data: unknown) => emitted.push(data),
+    };
+
+    for (const event of [
+      { type: 'text_start', draftId: 'draft-1' },
+      { type: 'draft_reset', draftId: 'draft-1', attempt: 2 },
+      { type: 'draft_commit', draftId: 'draft-1' },
+    ] as const) {
+      channel.publishRuntimeOutboundEvent({
+        sessionId: 'session-draft-1',
+        runId: 'run-draft-1',
+        event,
+      });
+    }
+
+    expect(emitted).toEqual([
+      { type: 'block_start', blockType: 'text', draftId: 'draft-1' },
+      { type: 'draft_reset', draftId: 'draft-1', attempt: 2 },
+      { type: 'draft_commit', draftId: 'draft-1' },
+    ]);
+  });
+
   it('does not emit artifact_created for failed CreateArtifact (non-JSON tool error)', () => {
     const channel = createChannel();
     const emitted: any[] = [];

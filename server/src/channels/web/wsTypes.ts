@@ -34,6 +34,8 @@ export type ChatRejectReasonCode =
 
 export interface WsChatMessage {
     action: 'chat';
+    /** 客户端明确支持的向后兼容能力；服务端只启用已声明的协议。 */
+    clientCapabilities?: Array<'replaceable_drafts'>;
     /** 客户端生成的 UUID，贯穿全链路；老客户端可缺省，服务端生成占位 */
     client_msg_id?: string;
     message: string;
@@ -157,7 +159,9 @@ export type WsDownstreamEvent =
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
     | { type: 'session'; sessionId: string; client_msg_id?: string }
-    | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string }
+    | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string }
+    | { type: 'draft_reset'; draftId: string; attempt?: number }
+    | { type: 'draft_commit'; draftId: string }
     | { type: 'thinking'; content: string }
     | { type: 'text'; content: string }
     | { type: 'tool_input'; content: string; toolName?: string; toolId?: string }

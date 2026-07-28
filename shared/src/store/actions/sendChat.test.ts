@@ -71,7 +71,10 @@ describe('sendChatViaWs — 成功路径', () => {
     expect(s.sessions[0].preview).toBe('问题内容');
     // 发送内容正确
     expect(wsEnsureSend).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'chat', message: '问题内容', sessionId: 's1',
+      action: 'chat',
+      clientCapabilities: ['replaceable_drafts'],
+      message: '问题内容',
+      sessionId: 's1',
     }));
   });
 

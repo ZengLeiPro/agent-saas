@@ -89,6 +89,9 @@ const MAX_SSE_BUFFER_BYTES = 2 * 1024 * 1024;
 /** usage 兜底查询不能拖住已经完成的模型轮次。 */
 const USAGE_FETCH_TIMEOUT_MS = 2_000;
 
+/** 普通瞬时重试耗尽后，Web 可撤销草稿仍保留一次独立恢复机会。 */
+const WEB_REPLACEABLE_DRAFT_RETRY_DELAY_MS = 500;
+
 /** 诊断字段是 provider 输入，限制基数和长度，避免异常流放大 PG 事件。 */
 const MAX_DIAGNOSTIC_EVENT_TYPES = 64;
 const MAX_UNKNOWN_EVENT_TYPES = 20;
@@ -149,6 +152,7 @@ interface ResponsesRetryState {
   modelRequestId: string;
   lastAttempt: number;
   transientRetryIndex: number;
+  replaceableDraftRetryUsed: boolean;
   maxAttempts: number;
   body: Record<string, unknown>;
   usePrevious: boolean;
@@ -401,9 +405,11 @@ export class ResponsesApiAdapter implements ModelAdapter {
     let refusal = '';
     let toolSearchResults: ModelToolSearchResult[] = [];
     // Cron 是无人值守通道，不需要把未完成 attempt 的正文/思考实时暴露给上层。
-    // 先缓冲到官方 completed 终态，可在流内瞬时故障时安全丢弃并重试；工具调用
-    // 本来就只在 completed 后由 RawAgentLoop 执行，不会因此重复副作用。
+    // 先缓冲到官方 completed 终态，可在流内瞬时故障时安全丢弃并重试。Web
+    // 只有在客户端明确支持可撤销草稿时，才允许已交付输出后发 reset 并重试。
     const commitOutputOnTerminal = context.channelContext.channel === 'cron';
+    const canResetDeliveredOutput = context.channelContext.channel === 'web'
+      && context.channelContext.replaceableDrafts === true;
     const bufferedOutputEvents: Array<{
       type: 'text_delta' | 'thinking_delta';
       content: string;
@@ -732,15 +738,23 @@ export class ResponsesApiAdapter implements ModelAdapter {
         : terminalStatus === 'incomplete'
           ? `Responses API response incomplete: reason=${incompleteReason ?? 'unknown'}`
           : providerErrorMessage ?? 'Responses API response failed';
-      const retryDelayMs = isRetryableUndeliveredStreamTerminalError(
+      const retryableTerminal = isRetryableStreamTerminalError(
         terminalEventType,
         terminalStatus,
         errorCode,
         errorMessage,
         hasDeliveredOutput,
-      ) && !requestSignal?.aborted
+        canResetDeliveredOutput,
+      ) && !requestSignal?.aborted;
+      const regularRetryDelayMs = retryableTerminal
         ? retryDelaysMs[transientRetryIndex]
         : undefined;
+      const useReplaceableDraftRetry = retryableTerminal
+        && hasDeliveredOutput
+        && retryState?.replaceableDraftRetryUsed !== true
+        && regularRetryDelayMs === undefined;
+      const retryDelayMs = regularRetryDelayMs
+        ?? (useReplaceableDraftRetry ? WEB_REPLACEABLE_DRAFT_RETRY_DELAY_MS : undefined);
       if (retryDelayMs !== undefined) {
         await activeAttempt.finished(outcome, {
           errorCode,
@@ -748,17 +762,29 @@ export class ResponsesApiAdapter implements ModelAdapter {
           usage,
           willRetry: true,
         });
-        transientRetryIndex += 1;
+        if (regularRetryDelayMs !== undefined) {
+          transientRetryIndex += 1;
+        }
         logger.warn(
-          `Responses API 流内 ${terminalEventType} ${errorCode} 且未交付输出，${retryDelayMs}ms 后重试 `
-          + `(${transientRetryIndex}/${retryDelaysMs.length})：${errorMessage}`,
+          `Responses API 流内 ${terminalEventType} ${errorCode}`
+          + `${hasDeliveredOutput ? '，撤销 Web 草稿后，' : ' 且未交付输出，'}${retryDelayMs}ms 后重试 `
+          + `${useReplaceableDraftRetry
+            ? '(Web 草稿专用 1/1)'
+            : `(${transientRetryIndex}/${retryDelaysMs.length})`}：${errorMessage}`,
         );
+        if (hasDeliveredOutput) {
+          yield { type: 'draft_reset', attempt: modelRequestAttemptCount };
+        }
         await waitForRetry(retryDelayMs, requestSignal);
         yield* this.streamWithRetry(request, context, {
           modelRequestId,
           lastAttempt: modelRequestAttemptCount,
           transientRetryIndex,
-          maxAttempts,
+          replaceableDraftRetryUsed: hasDeliveredOutput
+            || retryState?.replaceableDraftRetryUsed === true,
+          maxAttempts: useReplaceableDraftRetry
+            ? Math.max(maxAttempts, modelRequestAttemptCount + 1)
+            : maxAttempts,
           body,
           usePrevious,
           responseMode,
@@ -1607,14 +1633,15 @@ function isRetryablePreStreamHttpError(status: number, message: string): boolean
     || /stream error:\s*stream ID \d+;\s*PROTOCOL_ERROR;\s*received from peer/i.test(message);
 }
 
-function isRetryableUndeliveredStreamTerminalError(
+function isRetryableStreamTerminalError(
   terminalEventType: string | undefined,
   terminalStatus: ModelTerminalStatus | undefined,
   errorCode: string,
   errorMessage: string,
   hasDeliveredOutput: boolean,
+  canResetDeliveredOutput: boolean,
 ): boolean {
-  if (hasDeliveredOutput || terminalStatus !== 'failed') return false;
+  if ((hasDeliveredOutput && !canResetDeliveredOutput) || terminalStatus !== 'failed') return false;
   if (!['error', 'response.error', 'response.failed'].includes(terminalEventType ?? '')) return false;
   const normalizedCode = errorCode.trim().toLowerCase();
   if (['internal_server_error', 'server_error', 'server_is_overloaded'].includes(normalizedCode)) return true;

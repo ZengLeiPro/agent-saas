@@ -816,6 +816,57 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent[0].data).toMatchObject({ reason_code: 'duplicate_inflight' });
     });
 
+    it('可撤销草稿：失败 attempt 被 reset 替换，预览只保留成功正文', async () => {
+      const tmp = await makeTmp('cov-draft-recovery-');
+      const sessionId = randomUUID();
+      const rig = makeRig({ agentCwd: tmp }, scripted([
+        { type: 'session_init', sessionId },
+        { type: 'text_start', draftId: 'draft-1' },
+        { type: 'text_delta', content: '失败轮正文' },
+        { type: 'draft_reset', draftId: 'draft-1', attempt: 1 },
+        { type: 'text_start', draftId: 'draft-1' },
+        { type: 'text_delta', content: '最终答案' },
+        { type: 'text_end' },
+        { type: 'draft_commit', draftId: 'draft-1' },
+        { type: 'done' },
+      ]));
+
+      await rig.send(USER, {
+        client_msg_id: 'cm-draft-1',
+        clientCapabilities: ['replaceable_drafts'],
+        message: '恢复测试',
+      });
+
+      expect(rig.ws.sent.map((m) => m.data.type)).toEqual([
+        'chat_ack',
+        'stream_id',
+        'session',
+        'block_start',
+        'text',
+        'draft_reset',
+        'block_start',
+        'text',
+        'block_end',
+        'draft_commit',
+        'done',
+      ]);
+      expect(rig.ws.sent[3].data).toEqual({
+        type: 'block_start',
+        blockType: 'text',
+        draftId: 'draft-1',
+      });
+      expect(rig.ws.sent[5].data).toEqual({
+        type: 'draft_reset',
+        draftId: 'draft-1',
+        attempt: 1,
+      });
+      expect(rig.userEvents).toContainEqual(expect.objectContaining({
+        type: 'session_updated',
+        sessionId,
+        preview: '最终答案',
+      }));
+    });
+
     it('纯 VOICE 块：只发 standalone voice 事件，不发文本块', async () => {
       const tmp = await makeTmp('cov-voice-pure-');
       const rig = makeRig({ agentCwd: tmp }, scripted([

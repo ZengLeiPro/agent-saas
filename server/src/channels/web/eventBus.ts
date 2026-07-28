@@ -36,6 +36,8 @@ export const EVENT_SCOPE: Record<string, EventScope> = {
   block_start: 'session',
   thinking: 'session',
   text: 'session',
+  draft_reset: 'session',
+  draft_commit: 'session',
   tool_input: 'session',
   block_end: 'session',
   tool_result: 'session',

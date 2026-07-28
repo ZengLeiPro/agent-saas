@@ -47,12 +47,14 @@ export interface EventConsumerOptions {
 /** 通道实现的回调接口（全部可选） */
 export interface EventHandler {
   onSessionInit?(sessionId: string): void | Promise<void>;
-  onThinkingStart?(): void | Promise<void>;
+  onThinkingStart?(draftId?: string): void | Promise<void>;
   onThinkingDelta?(content: string): void | Promise<void>;
   onThinkingEnd?(): void | Promise<void>;
-  onTextStart?(): void | Promise<void>;
+  onTextStart?(draftId?: string): void | Promise<void>;
   onTextDelta?(content: string, accumulatedText: string): void | Promise<void>;
   onTextEnd?(blockText: string): void | Promise<void>;
+  onDraftReset?(draftId: string, attempt?: number): void | Promise<void>;
+  onDraftCommit?(draftId: string): void | Promise<void>;
   onToolStart?(toolId: string, toolName: string, tracker: ToolTracker): void | Promise<void>;
   onToolInputDelta?(partialJson: string, toolId: string, toolName: string): void | Promise<void>;
   onToolEnd?(toolId: string, resolvedToolName: string, toolInput: string): void | Promise<void>;
@@ -82,6 +84,7 @@ export class EventConsumer implements ToolTracker {
   private finalText = '';
   private currentTextBlock = '';
   private hasError = false;
+  private draftTextStarts = new Map<string, number>();
 
   // 工具追踪状态（实现 ToolTracker 接口）
   private _toolNameMap = new Map<string, string>();
@@ -134,7 +137,10 @@ export class EventConsumer implements ToolTracker {
             break;
 
           case 'thinking_start':
-            await handler.onThinkingStart?.();
+            if (event.draftId && !this.draftTextStarts.has(event.draftId)) {
+              this.draftTextStarts.set(event.draftId, this.finalText.length);
+            }
+            await handler.onThinkingStart?.(event.draftId);
             break;
 
           case 'thinking_delta':
@@ -147,7 +153,10 @@ export class EventConsumer implements ToolTracker {
 
           case 'text_start':
             this.currentTextBlock = '';
-            await handler.onTextStart?.();
+            if (event.draftId && !this.draftTextStarts.has(event.draftId)) {
+              this.draftTextStarts.set(event.draftId, this.finalText.length);
+            }
+            await handler.onTextStart?.(event.draftId);
             break;
 
           case 'text_delta': {
@@ -164,6 +173,23 @@ export class EventConsumer implements ToolTracker {
             await handler.onTextEnd?.(blockText);
             break;
           }
+
+          case 'draft_reset': {
+            const draftId = event.draftId;
+            if (draftId) {
+              this.finalText = this.finalText.slice(0, this.draftTextStarts.get(draftId) ?? this.finalText.length);
+              this.currentTextBlock = '';
+              await handler.onDraftReset?.(draftId, event.attempt);
+            }
+            break;
+          }
+
+          case 'draft_commit':
+            if (event.draftId) {
+              this.draftTextStarts.delete(event.draftId);
+              await handler.onDraftCommit?.(event.draftId);
+            }
+            break;
 
           case 'tool_start':
             if (event.toolId && event.toolName) {

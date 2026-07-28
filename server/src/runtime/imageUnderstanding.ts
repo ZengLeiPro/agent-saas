@@ -86,6 +86,7 @@ export async function analyzeImagesWithFallback(
         signal: controller.signal,
       })) {
         if (event.type === 'text_delta') content += event.content;
+        if (event.type === 'draft_reset') content = '';
         if (event.type === 'completed') {
           if (!content) content = event.content;
           usage = event.usage;

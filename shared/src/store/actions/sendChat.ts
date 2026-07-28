@@ -94,6 +94,7 @@ export async function sendChatViaWs(opts: SendChatOptions): Promise<boolean> {
   // 构造 WS 消息
   const wsMsg: WsChatMessage = {
     action: 'chat',
+    clientCapabilities: ['replaceable_drafts'],
     message: inputText || 'Please check the attachments I uploaded',
     sessionId: activeSessionId || undefined,
     model: selectedModel || undefined,

@@ -323,6 +323,42 @@ export function processWsEvent(
     return;
   }
 
+  if (data.type === "draft_reset") {
+    removeRuntimeStatusMessages(msg);
+    const remaining = msg.messagesRef.current.filter((message) => (
+      !((message.type === "text" || message.type === "thinking") && message.draftId === data.draftId)
+    ));
+    if (msg.setMessages) {
+      msg.setMessages(remaining, { scrollToBottom: false });
+    } else {
+      for (let i = 0; i < msg.messagesRef.current.length; i++) {
+        msg.updateMessageAt(i, (message) => {
+          if ((message.type === "text" || message.type === "thinking") && message.draftId === data.draftId) {
+            return { ...message, content: "", streaming: false, draftId: undefined };
+          }
+          return message;
+        });
+      }
+    }
+    block.currentBlockIndex = -1;
+    block.currentBlockType = null;
+    upsertRuntimeStatusMessage(msg, "reconnecting", { content: "连接波动，正在恢复" });
+    msg.triggerScroll();
+    return;
+  }
+
+  if (data.type === "draft_commit") {
+    for (let i = 0; i < msg.messagesRef.current.length; i++) {
+      msg.updateMessageAt(i, (message) => {
+        if ((message.type === "text" || message.type === "thinking") && message.draftId === data.draftId) {
+          return { ...message, draftId: undefined };
+        }
+        return message;
+      });
+    }
+    return;
+  }
+
   if (data.type === "block_start") {
     removeRuntimeStatusMessages(msg);
     if (block.currentBlockIndex >= 0) {
@@ -335,10 +371,23 @@ export function processWsEvent(
     }
     block.currentBlockType = data.blockType;
     if (data.blockType === "thinking") {
-      block.currentBlockIndex = msg.addMessage({ type: "thinking", content: "", streaming: true, startedAt: Date.now() });
+      block.currentBlockIndex = msg.addMessage({
+        type: "thinking",
+        content: "",
+        streaming: true,
+        startedAt: Date.now(),
+        ...(data.draftId ? { draftId: data.draftId } : {}),
+      });
     } else if (data.blockType === "text") {
       const owner = ctx.sessionOwnerRef?.current;
-      block.currentBlockIndex = msg.addMessage({ type: "text", content: "", streaming: true, ...(owner ? { owner } : {}), timestamp: Date.now() });
+      block.currentBlockIndex = msg.addMessage({
+        type: "text",
+        content: "",
+        streaming: true,
+        ...(data.draftId ? { draftId: data.draftId } : {}),
+        ...(owner ? { owner } : {}),
+        timestamp: Date.now(),
+      });
     } else if (data.blockType === "tool_use") {
       // 独立卡片工具不产生通用 tool_use 骨架。currentBlockIndex 保持 -1，
       // 让 tool_input / block_end 也自动跳过。

@@ -46,6 +46,17 @@ async function startServer(
       markRead(input: { tenantId: string; userId: string; sessionId: string }): Promise<boolean>;
       listUnreadSessionIds(input: { tenantId: string; userId: string; sessionIds: readonly string[] }): Promise<Set<string>>;
     };
+    sessionProjectionStore?: {
+      get?(sessionId: string, options?: { tenantId?: string; includeDeleted?: boolean }): Promise<{
+        sessionId: string;
+        tenantId: string;
+        userId?: string;
+        kind: 'user' | 'subagent';
+        updatedAt: string;
+        metaJson: SessionMeta;
+      } | null>;
+      list(): Promise<{ items: [] }>;
+    };
   } = {},
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
@@ -58,6 +69,7 @@ async function startServer(
     agentCwd,
     ...(opts.withShareStore ? { sessionShareStore: opts.shareStore ?? new InMemorySessionShareStore() } : {}),
     ...(opts.sessionReadStateStore ? { sessionReadStateStore: opts.sessionReadStateStore } : {}),
+    ...(opts.sessionProjectionStore ? { sessionProjectionStore: opts.sessionProjectionStore } : {}),
   }));
 
   return new Promise((resolve) => {
@@ -171,6 +183,106 @@ describe('sessions routes lifecycle coverage', () => {
 
     const missing = await fetch(`${baseUrl}/api/sessions/${randomUUID()}/read`, { method: 'PUT' });
     expect(missing.status).toBe(404);
+  });
+
+  it('PUT /sessions/:id/read：PG 投影存在时不依赖当前实例本地 transcript', async () => {
+    const sessionId = randomUUID();
+    const markRead = vi.fn(async () => true);
+    const broadcastToUser = vi.fn();
+    const store = {
+      init: async () => {},
+      markUnread: async () => true,
+      markRead,
+      listUnreadSessionIds: async () => new Set<string>(),
+    };
+    const projection = {
+      get: vi.fn(async () => ({
+        sessionId,
+        tenantId: OWNER.tenantId,
+        userId: OWNER.id,
+        kind: 'user' as const,
+        updatedAt: new Date().toISOString(),
+        metaJson: {
+          userId: OWNER.id,
+          username: OWNER.username,
+          tenantId: OWNER.tenantId,
+          channel: 'web',
+          createdAt: new Date().toISOString(),
+        },
+      })),
+      list: async () => ({ items: [] as [] }),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.user = { sub: OWNER.id, username: OWNER.username, role: OWNER.role, tenantId: OWNER.tenantId };
+      next();
+    });
+    app.use('/api', createSessionsRouter({
+      agentCwd,
+      sessionReadStateStore: store,
+      sessionProjectionStore: projection,
+      broadcastToUser,
+    }));
+    const { server, baseUrl } = await new Promise<{ server: Server; baseUrl: string }>((resolve) => {
+      const server = app.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        const port = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve({ server, baseUrl: `http://127.0.0.1:${port}` });
+      });
+    });
+    servers.push(server);
+
+    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/read`, { method: 'PUT' });
+    expect(res.status).toBe(200);
+    expect(markRead).toHaveBeenCalledWith({
+      tenantId: OWNER.tenantId,
+      userId: OWNER.id,
+      sessionId,
+    });
+    expect(broadcastToUser).toHaveBeenCalledWith(OWNER.id, {
+      type: 'session_read_state_changed',
+      sessionId,
+      hasUnreadAiReply: false,
+    });
+  });
+
+  it('PUT /sessions/:id/read：拒绝同租户其他用户的投影会话', async () => {
+    const sessionId = randomUUID();
+    const markRead = vi.fn(async () => true);
+    const store = {
+      init: async () => {},
+      markUnread: async () => true,
+      markRead,
+      listUnreadSessionIds: async () => new Set<string>(),
+    };
+    const projection = {
+      get: vi.fn(async () => ({
+        sessionId,
+        tenantId: OWNER.tenantId,
+        userId: OTHER.id,
+        kind: 'user' as const,
+        updatedAt: new Date().toISOString(),
+        metaJson: {
+          userId: OTHER.id,
+          username: OTHER.username,
+          tenantId: OTHER.tenantId,
+          channel: 'web',
+          createdAt: new Date().toISOString(),
+        },
+      })),
+      list: async () => ({ items: [] as [] }),
+    };
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      sessionReadStateStore: store,
+      sessionProjectionStore: projection,
+    });
+    servers.push(server);
+
+    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/read`, { method: 'PUT' });
+    expect(res.status).toBe(403);
+    expect(markRead).not.toHaveBeenCalled();
   });
 
   it('PATCH /sessions/:id：本人改名成功并写入 customTitle', async () => {

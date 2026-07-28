@@ -365,6 +365,10 @@ export interface SessionsRouterOptions {
   sessionShareStore?: SessionShareStore;
   /** PG 会话元数据投影；在线列表优先走索引，无 PG 的测试/开发环境回退文件扫描。 */
   sessionProjectionStore?: {
+    get?(
+      sessionId: string,
+      options?: { tenantId?: string; includeDeleted?: boolean },
+    ): Promise<RuntimeSessionProjectionRecord | null>;
     list(query?: RuntimeSessionListQuery): Promise<RuntimeSessionListResult>;
   };
   /** 用户维度会话未读状态真源。 */
@@ -1972,20 +1976,45 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
 
-      const userCwd = resolveUserCwd(agentCwd, {
-        id: req.user.sub,
-        username: req.user.username,
-        role: req.user.role,
+      let resolved: ResolvedSessionPath | null = null;
+      const projectedSession = await options.sessionProjectionStore?.get?.(sessionId, {
         tenantId: req.user.tenantId,
       });
-      const resolved = await resolveSessionPathForRead(
-        userCwd,
-        sessionId,
-        reqTranscriptOwner(req.user),
-      );
-      if (!resolved) {
+      if (projectedSession) {
+        if (projectedSession.userId && projectedSession.userId !== req.user.sub) {
+          res.status(403).json({ error: "Access denied" });
+          return;
+        }
+        const userCwd = resolveUserCwd(agentCwd, {
+          id: req.user.sub,
+          username: req.user.username,
+          role: req.user.role,
+          tenantId: req.user.tenantId,
+        });
+        resolved = await resolveSessionPathForRead(
+          userCwd,
+          sessionId,
+          reqTranscriptOwner(req.user),
+        );
+      } else if (options.sessionProjectionStore?.get) {
         res.status(404).json({ error: "Session not found" });
         return;
+      } else {
+        const userCwd = resolveUserCwd(agentCwd, {
+          id: req.user.sub,
+          username: req.user.username,
+          role: req.user.role,
+          tenantId: req.user.tenantId,
+        });
+        resolved = await resolveSessionPathForRead(
+          userCwd,
+          sessionId,
+          reqTranscriptOwner(req.user),
+        );
+        if (!resolved) {
+          res.status(404).json({ error: "Session not found" });
+          return;
+        }
       }
 
       const changed = await options.sessionReadStateStore.markRead({
@@ -1994,7 +2023,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         sessionId,
       });
       if (changed) {
-        const store = options.runtimeEventStoreFor?.(resolved.transcriptPath);
+        const store = resolved
+          ? options.runtimeEventStoreFor?.(resolved.transcriptPath)
+          : undefined;
         if (store) {
           await store.append({
             type: "session_read_state_changed",
@@ -2003,11 +2034,17 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             hasUnreadAiReply: false,
           }, { tenantId: req.user.tenantId });
         } else {
-          options.getEventBus?.()?.emitUser(req.user.sub, {
+          const readEvent = {
             type: "session_read_state_changed",
             sessionId,
             hasUnreadAiReply: false,
-          });
+          } as const;
+          const eventBus = options.getEventBus?.();
+          if (eventBus) {
+            eventBus.emitUser(req.user.sub, readEvent);
+          } else {
+            options.broadcastToUser?.(req.user.sub, readEvent);
+          }
         }
       }
       res.json({ ok: true, sessionId, hasUnreadAiReply: false });

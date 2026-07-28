@@ -334,6 +334,8 @@ const capabilityFeatureFields: Array<{ key: keyof TenantSettings["features"]; la
   { key: "autoCompactEnabled", label: "自动压缩", description: "会话上下文达到各模型配置的触发线时，回合结束后自动压缩。" },
   { key: "memoryPollingEnabled", label: "每日记忆轮询", description: "为每个有效用户自动预置每日记忆整理任务（对用户隐藏；48 小时无活动自动跳过）。" },
   { key: "memoryPollChargesCredits", label: "记忆轮询扣积分", description: "开启后记忆轮询的模型消耗计入租户积分；默认不扣（用量照记，仅平台内部可见）。" },
+  { key: "memoryConsolidationEnabled", label: "会话记忆整合", description: "会话安静约 10 分钟后由后台进程自动提炼当日记忆（对用户隐藏；默认不扣积分，用量照记）。开启后替代旧的会后即时捕获。" },
+  { key: "memoryWriteDelegationEnabled", label: "记忆写入剥离 v2", description: "新会话的 AI 不再自行写记忆文件；用户明确「记住/忘记」走专用指令，其余交给后台整合。需先开启「会话记忆整合」。已有会话不受影响。" },
   { key: "imageGenEnabled", label: "AI 生图", description: "授予该组织使用平台托管 AI 生图的权限；默认关闭，按平台当前引擎定价扣积分。" },
 ];
 

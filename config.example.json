@@ -288,6 +288,19 @@
       "timeoutSeconds": 900
       // "model": "volcengine/glm-5.2"  // 可选覆盖；缺省跟随各租户默认模型
     },
+    // L2 会话级记忆整合（2026-07-29 记忆写入职责剥离批次）。
+    // 平台总开关；租户级再走「平台管理 → 组织 → 会话记忆整合 / 记忆写入剥离 v2」。
+    // 仅 PG runtimeEventStore 后端可用。参数默认值见 memory/consolidation/types.ts。
+    "consolidation": {
+      "enabled": false,
+      "debounceMinutes": 10,
+      "maxDeferralMinutes": 60,
+      "maxInputTokens": 12000,
+      "maxConsolidationsPerUserPerDay": 12,
+      "maxInputTokensPerUserPerDay": 100000
+      // "model": "kaiyan-llm/gpt56terra",   // 2026-07-29 拍板：gpt-5.6-terra（按生产模型注册名填写）
+      // "reasoningEffort": "high"
+    },
     // 记忆索引（SQLite + FTS5 + sqlite-vec 向量混合检索）
     // 启用后替代纯关键词搜索，提供语义理解能力
     "index": {

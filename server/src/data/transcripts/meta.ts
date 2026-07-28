@@ -54,6 +54,11 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
    * 保留，平台 admin Run Trace 可按 parentRunId 关联查看。
    */
   kind?: 'subagent';
+  /**
+   * 记忆写入策略版本（2026-07-29 记忆写入职责剥离批次）。'v2' = 该会话主 Agent
+   * 不自由写记忆、启用 MemoryCommand；首次 run 固定后不变。缺省 = v1。
+   */
+  memoryPolicyVersion?: 'v2';
 }
 
 export function getMetaPath(transcriptPath: string): string {

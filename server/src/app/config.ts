@@ -351,11 +351,47 @@ const memoryPollingSchema = z.object({
   model: z.string().min(1).optional(),
 });
 
+/**
+ * L2 会话级记忆整合（2026-07-29 记忆写入职责剥离批次）。平台级总开关 + 执行
+ * 参数；租户级开关走 TenantSettings.features.memoryConsolidationEnabled（默认关）。
+ * 参数默认值见 memory/consolidation/types.ts MEMORY_CONSOLIDATION_DEFAULTS。
+ */
+const memoryConsolidationSchema = z.object({
+  enabled: z.boolean().optional(),
+  /** 静默期（分钟）：run_finished 后无新 run 达此时长才提取，默认 10 */
+  debounceMinutes: z.number().int().min(1).max(120).optional(),
+  /** 连续对话最长推迟（分钟），默认 60：到期即处理已完成部分 */
+  maxDeferralMinutes: z.number().int().min(5).max(720).optional(),
+  /** 单次投影输入 token 上限，默认 12000 */
+  maxInputTokens: z.number().int().min(2_000).max(64_000).optional(),
+  maxOutputTokens: z.number().int().min(256).max(4_096).optional(),
+  /** 单次最多候选数，默认 20 */
+  maxCandidates: z.number().int().min(1).max(100).optional(),
+  /** 单用户每日提取次数上限，默认 12（防 debounce 退化为逐轮） */
+  maxConsolidationsPerUserPerDay: z.number().int().min(1).max(100).optional(),
+  /** 单用户每日输入 token 上限，默认 100000 */
+  maxInputTokensPerUserPerDay: z.number().int().min(10_000).max(1_000_000).optional(),
+  scanIntervalMs: z.number().int().min(1_000).max(60_000).optional(),
+  scanBatchSize: z.number().int().min(10).max(5_000).optional(),
+  workerConcurrency: z.number().int().min(1).max(16).optional(),
+  leaseSeconds: z.number().int().min(60).max(3_600).optional(),
+  timeoutSeconds: z.number().int().min(30).max(1_800).optional(),
+  maxRetries: z.number().int().min(0).max(20).optional(),
+  maxTurns: z.number().int().min(1).max(30).optional(),
+  includeInterrupted: z.boolean().optional(),
+  includeError: z.boolean().optional(),
+  /** 提取模型（group/model）；缺省依次回退 polling.model → 租户默认模型 */
+  model: z.string().min(1).optional(),
+  /** 提取模型 reasoning effort（2026-07-29 曾磊拍板：gpt-5.6-terra + high） */
+  reasoningEffort: z.string().min(1).optional(),
+});
+
 const memoryConfigSchema = z.object({
   enabled: z.boolean().optional(),
   injectContext: memoryInjectContextSchema.optional(),
   maintenance: memoryMaintenanceSchema.optional(),
   polling: memoryPollingSchema.optional(),
+  consolidation: memoryConsolidationSchema.optional(),
   index: memoryIndexSchema.optional(),
 });
 

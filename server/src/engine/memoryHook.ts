@@ -54,6 +54,11 @@ export interface CreateMemoryHookOptions {
   config: MemoryMaintenanceOptions;
   /** 用于维护调用的 dispatch（应为中间件包装后的版本，但不含 memory hook 自身） */
   maintenanceDispatch: AgentRunDispatch;
+  /**
+   * L2 会话级整合已接管该租户时旁路本 hook（2026-07-29 职责剥离批次）：
+   * 同一会话绝不能同时由旧 hook 和 L2 写入（双写会把记忆搅成粥）。
+   */
+  isTenantConsolidationEnabled?: (tenantId: string | undefined) => boolean;
   logger?: Logger;
 }
 
@@ -135,6 +140,9 @@ export function createMemoryMaintenanceHook(options: CreateMemoryHookOptions) {
       // 身份必须存在：raw runtime 拒绝匿名访问，无身份时维护调用必然失败
       const identity = context.user ?? context.sessionOwner;
       if (!identity?.id) return;
+
+      // L2 已接管该租户 → 旧 hook 旁路（互斥，防双写）
+      if (options.isTenantConsolidationEnabled?.(identity.tenantId) === true) return;
 
       const cooldownKey = `${identity.tenantId ?? '__none'}:${identity.id}`;
       const now = Date.now();

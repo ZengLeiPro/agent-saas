@@ -310,6 +310,85 @@ export class PgEventStore implements EventStore {
     return result.rows.map((row) => normalizeEventJson(row.event_json));
   }
 
+  /**
+   * 全局游标分页（2026-07-29 L2 记忆整合批次）：按 global_sequence 升序读取
+   * run 边界事件，供 consolidation scanner 做 durable 消费。只在 PG 后端提供
+   * （EventStore 接口不强制其他实现）。envelope 携带行级 tenant_id /
+   * session_sequence / global_sequence——PlatformEvent 自身不含这些字段。
+   */
+  async listGlobalPage(options: {
+    afterGlobalSequence: number;
+    types: ReadonlyArray<PlatformEvent['type']>;
+    limit?: number;
+  }): Promise<{
+    events: Array<{
+      globalSequence: number;
+      sessionSequence: number;
+      tenantId: string;
+      sessionId: string;
+      event: PlatformEvent;
+    }>;
+    hasMore: boolean;
+  }> {
+    const limit = options.limit && options.limit > 0 ? options.limit : 500;
+    const result = await this.pool.query<{
+      global_sequence: string;
+      session_sequence: string;
+      tenant_id: string;
+      session_id: string;
+      event_json: PlatformEvent;
+    }>(
+      `SELECT global_sequence, session_sequence, tenant_id, session_id, event_json
+       FROM ${this.eventsTable}
+       WHERE global_sequence > $1
+         AND event_type = ANY($2::text[])
+       ORDER BY global_sequence ASC
+       LIMIT $3`,
+      [options.afterGlobalSequence, [...options.types], limit + 1],
+    );
+    const rows = result.rows.slice(0, limit);
+    return {
+      events: rows.map((row) => ({
+        globalSequence: Number(row.global_sequence),
+        sessionSequence: Number(row.session_sequence),
+        tenantId: row.tenant_id,
+        sessionId: row.session_id,
+        event: normalizeEventJson(row.event_json),
+      })),
+      hasMore: result.rows.length > limit,
+    };
+  }
+
+  /**
+   * 会话内 (fromExclusive, toInclusive] 范围查询，返回行级 session_sequence
+   * （2026-07-29 L2 记忆整合批次：digest 证据链需要精确 sequence，listPage 不
+   * 暴露逐行序号）。
+   */
+  async listSessionRange(sessionId: string, options: {
+    fromExclusive: number;
+    toInclusive: number;
+    excludeTypes?: ReadonlyArray<PlatformEvent['type']>;
+    limit?: number;
+  }): Promise<Array<{ sessionSequence: number; event: PlatformEvent }>> {
+    const excludeTypes = [...new Set(options.excludeTypes ?? [])];
+    const limit = options.limit && options.limit > 0 ? options.limit : 2_000;
+    const result = await this.pool.query<{ session_sequence: string; event_json: PlatformEvent }>(
+      `SELECT session_sequence, event_json
+       FROM ${this.eventsTable}
+       WHERE session_id = $1
+         AND session_sequence > $2
+         AND session_sequence <= $3
+         AND event_type <> ALL($4::text[])
+       ORDER BY session_sequence ASC
+       LIMIT $5`,
+      [sessionId, options.fromExclusive, options.toInclusive, excludeTypes, limit],
+    );
+    return result.rows.map((row) => ({
+      sessionSequence: Number(row.session_sequence),
+      event: normalizeEventJson(row.event_json),
+    }));
+  }
+
   async listByRun(sessionId: string, runId: string): Promise<PlatformEvent[]> {
     const result = await this.pool.query<{ event_json: PlatformEvent }>(
       `SELECT event_json

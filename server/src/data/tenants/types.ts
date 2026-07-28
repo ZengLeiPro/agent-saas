@@ -68,6 +68,18 @@ export interface TenantSettings {
      */
     memoryPollChargesCredits?: boolean;
     /**
+     * L2 会话级记忆整合（2026-07-29 记忆写入职责剥离批次）。默认关闭；
+     * 开启后该租户用户会话在静默期由后台进程提取记忆写当日文件。
+     * 关闭不丢 backlog（consolidation state 保留，重开继续）。
+     */
+    memoryConsolidationEnabled?: boolean;
+    /**
+     * 记忆写入职责剥离 v2（2026-07-29 批次）。默认关闭；开启后该租户**新会话**
+     * 固定 memoryPolicyVersion=v2：主 Agent 不再自由写记忆文件、启用
+     * MemoryCommand，static 提示语用 v2 版。已有会话不受影响（会话级 pin）。
+     */
+    memoryWriteDelegationEnabled?: boolean;
+    /**
      * GenerateImage 平台生图工具（2026-07-15 批次）。默认关闭，由平台管理员
      * 按租户开放（可单独售卖的收费点）；关闭时模型看不到该工具、invoke 二次拦截。
      * 扣费口径独立于本开关：internal / 未开计费租户开了也不产生 debit。
@@ -132,6 +144,8 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     kbEnabled: false,
     memoryPollingEnabled: false,
     memoryPollChargesCredits: false,
+    memoryConsolidationEnabled: false,
+    memoryWriteDelegationEnabled: false,
     imageGenEnabled: false,
   },
   quotas: {},

@@ -45,6 +45,13 @@ const DEFINITIONS_META: ReadonlyArray<Omit<SystemPromptDefinition, 'defaultConte
     variables: [],
   },
   {
+    id: 'main.staticV2',
+    category: 'main',
+    label: '主 Agent · 平台静态规则（记忆剥离 v2）',
+    description: '记忆写入职责剥离后的静态规则：仅记忆节与 main.static 不同（MemoryCommand + 后台写入）。修改非记忆节时必须与 main.static 同步维护。',
+    variables: [],
+  },
+  {
     id: 'main.dynamicShared',
     category: 'main',
     label: '主 Agent · 组织上下文模板',
@@ -161,6 +168,7 @@ export class SystemPromptRegistry {
   private getDefault(id: SystemPromptId): string {
     switch (id) {
       case 'main.static': return loadPrompt(this.sharedDir, 'static');
+      case 'main.staticV2': return loadPrompt(this.sharedDir, 'static-v2');
       case 'main.dynamicShared': return loadPrompt(this.sharedDir, 'dynamic-shared');
       case 'main.dynamicTenant': return loadPrompt(this.sharedDir, 'dynamic-tenant');
       case 'main.runtimeMemory': return loadPrompt(this.sharedDir, 'runtime-memory');

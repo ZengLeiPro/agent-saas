@@ -25,6 +25,12 @@ export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding
   kind?: 'subagent';
   /** 公司级专职 Agent 绑定（2026-07 唯恩批次）。缺省 = 个人 Agent 会话。 */
   orgAgentId?: string;
+  /**
+   * 记忆写入策略版本（2026-07-29 记忆写入职责剥离批次）。'v2' = 主 Agent 不再
+   * 自由写记忆、启用 MemoryCommand。会话首次 run 固定，之后不随租户开关变化
+   * （prompt prefix 稳定性要求）。缺省 = v1（历史行为）。
+   */
+  memoryPolicyVersion?: 'v2';
   createdAt: string;
   updatedAt: string;
 }
@@ -67,6 +73,8 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(record.kind ? { kind: record.kind } : {}),
       // orgAgentId 缺省时保留 existing 值（resume 路径 record 可能不带），不清除既有绑定
       ...(record.orgAgentId ? { orgAgentId: record.orgAgentId } : {}),
+      // memoryPolicyVersion 同理：会话级 pin，缺省保留 existing，绝不清除
+      ...(record.memoryPolicyVersion ? { memoryPolicyVersion: record.memoryPolicyVersion } : {}),
       ...(record.profileId ? { profileId: record.profileId } : {}),
       ...(record.profileKey ? { profileKey: record.profileKey } : {}),
       ...(record.profileVersionId ? { profileVersionId: record.profileVersionId } : {}),
@@ -116,6 +124,7 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(isRuntimeSessionStatus(meta.runtimeStatus) ? { status: meta.runtimeStatus } : {}),
       ...(meta.kind === 'subagent' ? { kind: 'subagent' as const } : {}),
       ...(meta.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
+      ...(meta.memoryPolicyVersion === 'v2' ? { memoryPolicyVersion: 'v2' as const } : {}),
       ...(meta.profileId ? { profileId: meta.profileId } : {}),
       ...(meta.profileKey ? { profileKey: meta.profileKey } : {}),
       ...(meta.profileVersionId ? { profileVersionId: meta.profileVersionId } : {}),

@@ -54,7 +54,7 @@ import { CronToolProvider } from '../agent/cronToolProvider.js';
 import { TenantCompanyInfoToolProvider } from '../agent/tenantCompanyInfoToolProvider.js';
 import { UserActivityToolProvider } from '../agent/userActivityToolProvider.js';
 import type { UserActivityService } from './userActivityService.js';
-import { applyToolProfile, normalizeToolProfile } from './toolProfiles.js';
+import { applyToolProfile, normalizeToolProfile, type MemoryWritePolicyVersion } from './toolProfiles.js';
 import {
   AgentRuntimeProfileResolver,
   applyAgentRuntimeProfile,
@@ -264,6 +264,18 @@ export interface RawRuntimeRunDispatchConfig {
   agentRuntimeProfileResolver?: AgentRuntimeProfileResolver;
   memory?: { enabled?: boolean; maxLines?: number };
   memoryIndexService?: MemoryIndexService | null;
+  /**
+   * 记忆写入职责剥离（2026-07-29 批次）：租户是否对**新会话**启用 v2 策略
+   * （MemoryCommand + 委托后台写入）。已固定 pin 的会话不受开关变化影响。
+   * 缺省 = 全部 v1（历史行为，工具面零变化）。
+   */
+  memoryWriteDelegationEnabled?: (tenantId: string | undefined) => boolean;
+  /**
+   * 记忆控制工具 provider（MemoryCommand/MemoryCommit，2026-07-29 批次）。
+   * 注册进所有 run 的 PlatformToolRuntime，但可见性由 profile 白名单与
+   * memoryPolicyVersion 过滤控制：v1 主会话两者都不可见。
+   */
+  memoryControlProviders?: import('../agent/toolRuntime.js').ToolProvider[];
   agentStore?: AgentStore;
   /** 公司级专职 Agent store。orgAgentId 会话解析限定提示语 + skill 白名单用；未配置时 orgAgentId 会话 fail-closed。 */
   orgAgentStore?: OrgAgentStore;
@@ -491,7 +503,7 @@ export interface RawApprovalResumeRequest {
   executionTarget?: ExecutionTargetKind;
   approvalPolicy?: ToolApprovalPolicyOptions;
   /** run.metadata.toolProfile 恢复（wake 路径传入；resume 后维持受限工具集）。 */
-  toolProfile?: 'memory_poll';
+  toolProfile?: 'memory_poll' | 'memory_consolidate';
   hooks?: AgentRunHooks;
   abortController?: AbortController;
   maxTurns?: number;
@@ -511,7 +523,7 @@ export interface RawInteractionResumeRequest {
   executionTarget?: ExecutionTargetKind;
   approvalPolicy?: ToolApprovalPolicyOptions;
   /** run.metadata.toolProfile 恢复（wake 路径传入；resume 后维持受限工具集）。 */
-  toolProfile?: 'memory_poll';
+  toolProfile?: 'memory_poll' | 'memory_consolidate';
   hooks?: AgentRunHooks;
   abortController?: AbortController;
   maxTurns?: number;
@@ -1559,6 +1571,8 @@ export function buildInstructionSections(params: {
   executionTarget: ExecutionTargetKind;
   memorySearchEnabled: boolean;
   isPlatformAdmin: boolean;
+  /** 记忆写入策略（2026-07-29）：v2 时 platform_rules 用 static-v2 模板。缺省 v1。 */
+  memoryPolicyVersion?: MemoryWritePolicyVersion;
   /** 平台系统提示语注册表 getter；缺省走随版本发布的模板。 */
   getSystemPrompt?: (id: SystemPromptId) => string;
   /** 专职 Agent 覆盖：注入 {{ORG_AGENT_INSTRUCTIONS}}，IF_PERSONA/IF_NO_PERSONA 强制 false，AGENT_NAME 用 org 名。 */
@@ -1591,7 +1605,9 @@ export function buildInstructionSections(params: {
   const sections: Array<{ key: string; name: string; content: string }> = [{
     key: 'platform_rules',
     name: '平台基础规则',
-    content: params.getSystemPrompt?.('main.static') ?? loadPrompt(params.sharedDir, 'static'),
+    content: params.memoryPolicyVersion === 'v2'
+      ? (params.getSystemPrompt?.('main.staticV2') ?? loadPrompt(params.sharedDir, 'static-v2'))
+      : (params.getSystemPrompt?.('main.static') ?? loadPrompt(params.sharedDir, 'static')),
   }];
   if (params.profileSystemInstructions?.trim()) {
     sections.push({
@@ -1912,6 +1928,18 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const sessionModelRef = boundProfile?.version.config.model.strategy === 'fixed'
       ? boundProfile.version.config.model.modelRef
       : existingSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
+    // 记忆写入策略（2026-07-29 职责剥离批次）：新会话按租户开关定版并 pin 进
+    // session meta；resume 读 pin；后台 profile run、专职 org Agent、非真实用户
+    // 通道（subagent/cron）固定 v1 语义。会话内不再变化（prompt prefix 稳定性）。
+    const memoryPolicyVersion: MemoryWritePolicyVersion = (
+      toolProfile
+      || orgAgentId
+      || (context.channel !== 'web' && context.channel !== 'dingtalk')
+    )
+      ? 'v1'
+      : existingSession
+        ? (existingSession.memoryPolicyVersion === 'v2' ? 'v2' : 'v1')
+        : (config.memoryWriteDelegationEnabled?.(effectiveTenantId) === true ? 'v2' : 'v1');
     const workspaceId = deriveRuntimeWorkspaceId({
       existingSession,
       fallbackSessionId: sessionId,
@@ -1949,6 +1977,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       workspaceId,
       status: 'running',
       ...(orgAgentId ? { orgAgentId } : {}),
+      ...(memoryPolicyVersion === 'v2' ? { memoryPolicyVersion: 'v2' as const } : {}),
       updatedAt: new Date().toISOString(),
     };
     if (boundProfile && config.agentRuntimeProfileResolver) {
@@ -2055,6 +2084,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           executionTarget,
           memorySearchEnabled,
           isPlatformAdmin,
+          memoryPolicyVersion,
           getSystemPrompt: config.getSystemPrompt,
           ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
           ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
@@ -2077,10 +2107,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
             resolveWireEnv: buildTenantRemoteHandWireEnv,
             artifactService: config.artifactService,
-            providers: [...tooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
+            providers: [...tooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
             toolControls: config.toolControls,
             backgroundTasks: config.backgroundTasks,
-          }), toolProfile), boundProfile)
+          }), toolProfile, memoryPolicyVersion), boundProfile)
         : applyToolProfile(new PlatformToolRuntime({
         memoryIndexService: config.memoryIndexService,
         executionTransportRegistry,
@@ -2088,10 +2118,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
         resolveWireEnv: buildTenantRemoteHandWireEnv,
         artifactService: config.artifactService,
-        providers: [...tooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
+        providers: [...tooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,
         backgroundTasks: config.backgroundTasks,
-      }), toolProfile),
+      }), toolProfile, memoryPolicyVersion),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -2552,6 +2582,10 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       { executionTransportRegistry, tenantHandResolver },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
     );
+    // 记忆写入策略：resume 只读会话 pin（v2 pin 仅真实用户新会话写入）。
+    const memoryPolicyVersion: MemoryWritePolicyVersion = (resumeToolProfile || orgAgentId)
+      ? 'v1'
+      : (existingSession?.memoryPolicyVersion === 'v2' ? 'v2' : 'v1');
     const instructions = buildInstructions({
       sharedDir: config.sharedDir,
       tenantId: sessionRecord.tenantId,
@@ -2562,6 +2596,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTarget,
       memorySearchEnabled,
       isPlatformAdmin: resumeIsPlatformAdmin,
+      memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
@@ -2582,10 +2617,10 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
             resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
             resolveWireEnv: buildTenantRemoteHandWireEnv,
             artifactService: config.artifactService,
-            providers: [...resumeTooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
+            providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
             toolControls: config.toolControls,
             backgroundTasks: config.backgroundTasks,
-          }), resumeToolProfile), boundProfile)
+          }), resumeToolProfile, memoryPolicyVersion), boundProfile)
         : applyToolProfile(new PlatformToolRuntime({
         memoryIndexService: config.memoryIndexService,
         executionTransportRegistry,
@@ -2593,10 +2628,10 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
         resolveWireEnv: buildTenantRemoteHandWireEnv,
         artifactService: config.artifactService,
-        providers: [...resumeTooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
+        providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,
         backgroundTasks: config.backgroundTasks,
-      }), resumeToolProfile),
+      }), resumeToolProfile, memoryPolicyVersion),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -2933,6 +2968,10 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       { executionTransportRegistry, tenantHandResolver },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
     );
+    // 记忆写入策略：resume 只读会话 pin（v2 pin 仅真实用户新会话写入）。
+    const memoryPolicyVersion: MemoryWritePolicyVersion = (resumeToolProfile || orgAgentId)
+      ? 'v1'
+      : (existingSession?.memoryPolicyVersion === 'v2' ? 'v2' : 'v1');
     const instructions = buildInstructions({
       sharedDir: config.sharedDir,
       tenantId: sessionRecord.tenantId,
@@ -2943,6 +2982,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTarget,
       memorySearchEnabled,
       isPlatformAdmin: resumeIsPlatformAdmin,
+      memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
@@ -2963,10 +3003,10 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
             resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
             resolveWireEnv: buildTenantRemoteHandWireEnv,
             artifactService: config.artifactService,
-            providers: [...resumeTooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
+            providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
             toolControls: config.toolControls,
             backgroundTasks: config.backgroundTasks,
-          }), resumeToolProfile), boundProfile)
+          }), resumeToolProfile, memoryPolicyVersion), boundProfile)
         : applyToolProfile(new PlatformToolRuntime({
         memoryIndexService: config.memoryIndexService,
         executionTransportRegistry,
@@ -2974,10 +3014,10 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
         resolveWireEnv: buildTenantRemoteHandWireEnv,
         artifactService: config.artifactService,
-        providers: [...resumeTooling.providers, new SessionToolProvider(new SessionContextService(eventStore))],
+        providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
         toolControls: config.toolControls,
         backgroundTasks: config.backgroundTasks,
-      }), resumeToolProfile),
+      }), resumeToolProfile, memoryPolicyVersion),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,

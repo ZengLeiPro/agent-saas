@@ -25,6 +25,11 @@ import { PgSessionLock } from '../runtime/pgSessionLock.js';
 import { PgRunStore } from '../runtime/runStore.js';
 import { PgHandStore } from '../runtime/handStore.js';
 import { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
+import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
+import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
+import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
+import { MemoryCommandToolProvider } from '../agent/memoryCommandToolProvider.js';
+import { MemoryCommitToolProvider } from '../agent/memoryCommitToolProvider.js';
 import {
   FileSessionReadStateStore,
   PgSessionReadStateStore,
@@ -843,6 +848,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const sessionCatalog = new FileSessionCatalog({ agentCwd });
   let runtimeEventStoreShutdown: (() => Promise<void>) | undefined;
   let pgEventStore: PgEventStore | undefined;
+  let memoryConsolidationStore: PgMemoryConsolidationStore | undefined;
+  let memoryConsolidationEngine: MemoryConsolidationEngine | undefined;
   let sessionLock: PgSessionLock | undefined;
   let pgRunStore: PgRunStore | undefined;
   let pgSessionProjectionStore: PgSessionProjectionStore | undefined;
@@ -1670,6 +1677,24 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('UserActivity'),
   });
 
+  // ── L2 记忆整合 store（2026-07-29 记忆写入职责剥离批次）──────────
+  // 先于 dispatch config 构造：MemoryCommand/MemoryCommit provider 依赖它。
+  // 仅 PG 后端可用；file 后端（单机开发形态）不启用整套 L2/v2 能力。
+  if (config.runtimeEventStore?.backend === 'pg') {
+    memoryConsolidationStore = new PgMemoryConsolidationStore({
+      connectionString: config.runtimeEventStore.connectionString,
+      tablePrefix: config.runtimeEventStore.tablePrefix ?? 'agent_runtime',
+      logger: { warn: (msg) => serverLogger.warn(msg) },
+    });
+  }
+  const resolveMemoryConsolidationConfig = (): MemoryConsolidationResolvedConfig => ({
+    ...MEMORY_CONSOLIDATION_DEFAULTS,
+    enabled: config.memory?.consolidation?.enabled === true,
+    ...Object.fromEntries(
+      Object.entries(config.memory?.consolidation ?? {}).filter(([key, value]) => key !== 'enabled' && value !== undefined),
+    ),
+  });
+
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd,
     sharedDir,
@@ -1681,6 +1706,32 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       maxLines: config.memory?.injectContext?.maxLines,
     },
     memoryIndexService: memoryIndexServiceRef.current,
+    // 记忆写入职责剥离（2026-07-29）：租户开关决定新会话是否 pin v2。
+    // 平台级 memory.consolidation.enabled 未开时全量 v1（后台没人接管写入，
+    // 绝不能先剥离主 Agent 的写入能力）。
+    memoryWriteDelegationEnabled: (tenantId) => {
+      if (!memoryConsolidationStore) return false;
+      if (config.memory?.consolidation?.enabled !== true) return false;
+      try {
+        return !!tenantId && tenantStore?.getSettings(tenantId)?.features?.memoryWriteDelegationEnabled === true;
+      } catch {
+        return false;
+      }
+    },
+    ...(memoryConsolidationStore ? {
+      memoryControlProviders: [
+        new MemoryCommandToolProvider({
+          store: memoryConsolidationStore,
+          memoryIndexService: memoryIndexServiceRef.current,
+          logger: { info: (msg) => serverLogger.info(msg), warn: (msg) => serverLogger.warn(msg) },
+        }),
+        new MemoryCommitToolProvider({
+          store: memoryConsolidationStore,
+          memoryIndexService: memoryIndexServiceRef.current,
+          logger: { info: (msg) => serverLogger.info(msg), warn: (msg) => serverLogger.warn(msg) },
+        }),
+      ],
+    } : {}),
     agentStore,
     orgAgentStore,
     tenantStore,
@@ -2120,6 +2171,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           cooldownMinutes: config.memory?.maintenance?.cooldownMinutes ?? 60,
         },
         maintenanceDispatch: billedRunDispatch,
+        // L2 整合开启的租户旁路旧 hook（2026-07-29 职责剥离批次，防双写）
+        isTenantConsolidationEnabled: (tenantId) => {
+          if (config.memory?.consolidation?.enabled !== true) return false;
+          try {
+            return !!tenantId && tenantStore?.getSettings(tenantId)?.features?.memoryConsolidationEnabled === true;
+          } catch {
+            return false;
+          }
+        },
         logger: serverLogger.child('Memory'),
       }),
     )
@@ -2263,6 +2323,40 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 记忆轮询每用户任务对账（2026-07-14 批次）：leader 上任时补齐 + 每 6h 复核。
   // 仅 processRole=all 执行（ws-only/scheduler-only 不动 cron store）；
   // 平台开关 config.memory.polling.enabled 关闭时也跑对账——负责把存量系统任务禁用。
+  // ── L2 记忆整合引擎（2026-07-29）：随 cron leadership 启停（蓝绿单实例）──
+  if (processRole === 'all' && pgEventStore && pgSessionProjectionStore && memoryConsolidationStore && userStore) {
+    const consolidationLogger = serverLogger.child('MemoryConsolidation');
+    const engineUserStore = userStore;
+    memoryConsolidationEngine = new MemoryConsolidationEngine({
+      store: memoryConsolidationStore,
+      eventStore: pgEventStore,
+      projectionStore: pgSessionProjectionStore,
+      userStore: {
+        findById: (id) => {
+          const user = engineUserStore.findById(id);
+          return user
+            ? { id: user.id, username: user.username, role: user.role, tenantId: user.tenantId, disabled: user.disabled }
+            : undefined;
+        },
+      },
+      isTenantEnabled: (tenantId) => {
+        if (config.memory?.consolidation?.enabled !== true) return false;
+        try {
+          return !!tenantId && tenantStore?.getSettings(tenantId)?.features?.memoryConsolidationEnabled === true;
+        } catch {
+          return false;
+        }
+      },
+      dispatch: billedRunDispatch,
+      agentCwd,
+      getConfig: resolveMemoryConsolidationConfig,
+      logger: {
+        info: (msg) => consolidationLogger.info(msg),
+        warn: (msg) => consolidationLogger.warn(msg),
+      },
+    });
+  }
+
   let cronLeadership: CronLeadership | undefined;
   let memoryPollReconcileTimer: ReturnType<typeof setInterval> | undefined;
   let runMemoryPollReconcile: (() => Promise<void>) | undefined;
@@ -2306,6 +2400,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       lockName: `${config.runtimeEventStore?.backend === 'pg' ? (config.runtimeEventStore.tablePrefix ?? 'agent_saas') : 'agent_saas'}:cron-leader`,
       onAcquired: async () => {
         await cronService.start();
+        if (memoryConsolidationEngine) {
+          await memoryConsolidationEngine.start().catch((err) => {
+            serverLogger.warn(`MemoryConsolidationEngine start failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }
         if (runMemoryPollReconcile) {
           void runMemoryPollReconcile();
           if (!memoryPollReconcileTimer) {
@@ -2317,6 +2416,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       onLost: (reason) => {
         serverLogger.warn(`Cron leadership lost (${reason}); stopping local cron scheduling`);
         cronService.stop();
+        memoryConsolidationEngine?.stop();
         if (memoryPollReconcileTimer) {
           clearInterval(memoryPollReconcileTimer);
           memoryPollReconcileTimer = undefined;
@@ -2483,6 +2583,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           logger: serverLogger.child('ToolCancelDispatcher'),
         });
         runtimeRunController.abort(event.runId, event.reason ?? 'tool_invocation_cancel_requested');
+      }
+      if (event.type === 'run_finished' || event.type === 'run_started') {
+        // L2 记忆整合低延迟唤醒；正确性不依赖此调用（durable cursor 扫描兜底）
+        memoryConsolidationEngine?.wake();
       }
       webChannel.publishRuntimePlatformEvent(event);
     });

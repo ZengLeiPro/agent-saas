@@ -325,8 +325,9 @@ export class BillingService {
     const runId = typeof event.runId === 'string' ? event.runId : undefined;
     const sessionId = typeof event.sessionId === 'string' ? event.sessionId : undefined;
     const user = row.runUserId ? this.options.userStore?.findById(row.runUserId) : undefined;
-    // memory_poll 计费豁免（2026-07-14）：租户未显式开启扣费时 billable=false
-    const memoryPollExempt = row.runToolProfile === 'memory_poll'
+    // 后台记忆 profile 计费豁免（2026-07-14 memory_poll；2026-07-29 扩展
+    // memory_consolidate）：租户未显式开启扣费时 billable=false。
+    const memoryPollExempt = (row.runToolProfile === 'memory_poll' || row.runToolProfile === 'memory_consolidate')
       && this.options.isMemoryPollBillable?.(row.tenantId) !== true;
     const input: ProjectedRuntimeUsageInput = {
       idempotencyKey: inputFields.idempotencyKey,

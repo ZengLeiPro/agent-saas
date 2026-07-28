@@ -166,10 +166,13 @@ export function profileRunMetadata(bound: BoundAgentRuntimeProfile): Record<stri
 }
 
 export function resolveAgentProfileBindingKey(args: {
-  toolProfile?: 'memory_poll';
+  toolProfile?: 'memory_poll' | 'memory_consolidate';
   orgAgentId?: string;
 }): AgentProfileBindingKey {
-  if (args.toolProfile === 'memory_poll') return 'memory_poll';
+  // memory_consolidate（2026-07-29 L2 批次）复用 memory_poll 的 profile 绑定：
+  // 同为受限后台记忆任务（server-remote、无 persona、memory scope maintenance）；
+  // 真正的工具面差异由 toolProfiles.ts 白名单决定（L2 白名单比 profile 更窄）。
+  if (args.toolProfile === 'memory_poll' || args.toolProfile === 'memory_consolidate') return 'memory_poll';
   if (args.orgAgentId) return 'org_agent';
   return 'main';
 }

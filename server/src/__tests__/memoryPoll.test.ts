@@ -86,9 +86,19 @@ function toolContext(root = '/ws/tenant/user'): ToolCallContext {
 // ============================================
 
 describe('memory_poll tool profile', () => {
-  it('无 profile 时原样返回 runtime', () => {
+  it('无 profile 时返回 v1 记忆策略包装：隐藏 MemoryCommand/MemoryCommit，其余工具面与改造前一致', () => {
+    // 2026-07-29 记忆写入职责剥离批次：无 profile 的 run（主会话/子 agent）默认
+    // 套 v1 过滤——两个新工具不可见（存量会话 prompt prefix 零变化），其余透传。
     const inner = fakeToolRuntime();
-    expect(applyToolProfile(inner, undefined)).toBe(inner);
+    const withNewTools: ToolRuntime = {
+      list: () => [...ALL_TOOLS, descriptor('MemoryCommand', 'workspace_write'), descriptor('MemoryCommit', 'workspace_write')],
+      invoke: inner.invoke,
+    };
+    const wrapped = applyToolProfile(withNewTools, undefined);
+    const names = wrapped.list(toolContext()).map((d) => d.name);
+    expect(names).not.toContain('MemoryCommand');
+    expect(names).not.toContain('MemoryCommit');
+    expect(names).toEqual(ALL_TOOLS.map((d) => d.name));
   });
 
   it('白名单过滤：模型只看得到受限工具集', () => {

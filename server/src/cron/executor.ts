@@ -115,8 +115,9 @@ export async function executeJob(
  *   - 起 run 前先查最近 lookbackHours 有无用户主动消息，没有直接 skipped
  *     （多租户下大量不活跃用户每天空跑一次 LLM 是纯烧钱）
  *   - 套 memory_poll 受限工具白名单 + autoApprove（可写范围已被路径 guard 收窄）
- *   - 强制 server-local：白名单无 Shell，文件工具在 server 侧 fs 执行，
- *     不付容器/ACS 沙箱冷启动成本
+ *   - 强制 server-remote：白名单含 Shell（prompt v2 起用 rg 扫 assets），guard
+ *     不是硬边界，必须在隔离的 ACS 沙箱执行（2026-07-29 修正注释漂移，与
+ *     toolProfiles.ts 安全模型及实际 executionTarget 一致）
  */
 async function executeMemoryPollJob(
   job: CronJob,

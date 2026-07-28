@@ -50,6 +50,10 @@ export interface TenantSettings {
     memoryPollingEnabled?: boolean;
     /** 记忆轮询是否扣租户积分（默认不扣：用量照记但不产生 debit）。 */
     memoryPollChargesCredits?: boolean;
+    /** L2 会话级记忆整合（2026-07-29 记忆写入职责剥离批次）。默认关闭。 */
+    memoryConsolidationEnabled?: boolean;
+    /** 记忆写入职责剥离 v2：新会话主 Agent 不自由写记忆、启用 MemoryCommand。默认关闭。 */
+    memoryWriteDelegationEnabled?: boolean;
     /** 平台托管 AI 生图租户授权。默认关闭，仅平台管理员可配置。 */
     imageGenEnabled?: boolean;
   };
@@ -112,6 +116,8 @@ export const DEFAULT_TENANT_SETTINGS: TenantSettings = {
     autoCompactEnabled: false,
     memoryPollingEnabled: false,
     memoryPollChargesCredits: false,
+    memoryConsolidationEnabled: false,
+    memoryWriteDelegationEnabled: false,
     imageGenEnabled: false,
   },
   quotas: {},

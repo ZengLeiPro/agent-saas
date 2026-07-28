@@ -149,7 +149,7 @@ export interface AgentRunOptions {
    * memoryHook）设置，随 run.metadata 持久化供 resume/wake 恢复；用户不能经
    * API 指定。见 runtime/toolProfiles.ts。
    */
-  toolProfile?: 'memory_poll';
+  toolProfile?: 'memory_poll' | 'memory_consolidate';
   /**
    * RuntimeScheduler auto-wake 内部入口：复用已 acquire lease 的 durable runId，
    * 避免恢复执行时再创建一个新的 run record。

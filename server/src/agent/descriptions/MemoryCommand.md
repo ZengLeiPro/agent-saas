@@ -1,0 +1,1 @@
+执行用户的显式记忆指令（记住/忘记/纠正/提问闭环）。仅当用户在当前消息中明确要求记住、忘记或更正某信息时调用；不要因自行判断「值得记住」而调用。subject/value 优先逐字摘录用户表达，userQuote 必须是用户当前消息的原话片段。返回 needs_clarification 且附 candidates 时：与用户确认选哪一条，然后带 candidateChoice 重新调用。只有返回 applied/removed/corrected 后才能向用户确认操作完成；返回 busy/error/needs_clarification 时如实说明，不得声称已完成。

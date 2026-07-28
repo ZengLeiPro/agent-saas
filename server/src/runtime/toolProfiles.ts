@@ -26,7 +26,7 @@ import type {
   ToolRuntime,
 } from '../agent/toolRuntime.js';
 
-export type ToolProfileId = 'memory_poll';
+export type ToolProfileId = 'memory_poll' | 'memory_consolidate';
 
 const MEMORY_POLL_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
   'Read',
@@ -39,6 +39,19 @@ const MEMORY_POLL_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
   'WaitForWorkspaceReady',
 ]);
 
+/**
+ * L2 记忆整合 profile（2026-07-29 记忆写入职责剥离批次）：比 memory_poll 更窄——
+ * 无通用 Read/Shell/Write/Edit。digest 由服务端投影提供，模型不需要探索工作区；
+ * 写入只经 MemoryCommit（服务端证据校验 + 固定序列化 + PG commit lock）。
+ * 这是记忆投毒风险（R1/R8/R8b）的核心缓解：模型没有任何自由文件/命令能力。
+ */
+const MEMORY_CONSOLIDATE_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
+  'MemorySearch',
+  'MemoryList',
+  'MemoryCommit',
+  'WaitForWorkspaceReady',
+]);
+
 /** Write 的路径参数是 `path`，Edit 是 `file_path`（两个 descriptor 的既有 schema）。 */
 const WRITE_PATH_PARAM: Record<string, string> = {
   Write: 'path',
@@ -46,16 +59,82 @@ const WRITE_PATH_PARAM: Record<string, string> = {
 };
 
 export function normalizeToolProfile(value: unknown): ToolProfileId | undefined {
-  return value === 'memory_poll' ? 'memory_poll' : undefined;
+  if (value === 'memory_poll' || value === 'memory_consolidate') return value;
+  return undefined;
 }
 
-export function applyToolProfile(runtime: ToolRuntime, profile: ToolProfileId | undefined): ToolRuntime {
-  if (profile !== 'memory_poll') return runtime;
+export function applyToolProfile(
+  runtime: ToolRuntime,
+  profile: ToolProfileId | undefined,
+  memoryPolicy?: MemoryWritePolicyVersion,
+): ToolRuntime {
+  if (profile === 'memory_poll') {
+    return new ProfileFilteredToolRuntime(runtime, {
+      isAllowed: (descriptor) =>
+        MEMORY_POLL_TOOL_ALLOWLIST.has(descriptor.name) || MEMORY_POLL_TOOL_ALLOWLIST.has(descriptor.id),
+      guardInvoke: guardMemoryPollWritePath,
+      profileLabel: 'memory_poll',
+    });
+  }
+  if (profile === 'memory_consolidate') {
+    return new ProfileFilteredToolRuntime(runtime, {
+      isAllowed: (descriptor) =>
+        MEMORY_CONSOLIDATE_TOOL_ALLOWLIST.has(descriptor.name) || MEMORY_CONSOLIDATE_TOOL_ALLOWLIST.has(descriptor.id),
+      profileLabel: 'memory_consolidate',
+    });
+  }
+  // 无后台 profile 的 run（主会话/子 agent/后台命令等）一律套记忆策略过滤：
+  // 默认 v1 = 隐藏 MemoryCommand/MemoryCommit，工具面与改造前完全一致。
+  return applyMemoryPolicyFilter(runtime, memoryPolicy ?? 'v1');
+}
+
+/**
+ * 主会话记忆写入策略过滤（2026-07-29 记忆写入职责剥离批次）。
+ *
+ * - v1（默认，现状行为）：隐藏 MemoryCommand/MemoryCommit 两个新工具——
+ *   工具面与改造前完全一致，存量会话 prompt prefix 零变化。
+ * - v2（memoryPolicyVersion=v2，租户 memoryWriteDelegationEnabled 的新会话）：
+ *   暴露 MemoryCommand、隐藏 MemoryCommit，并对 Write/Edit 加记忆路径 deny
+ *   guard（授权级封锁）。注意这不是硬隔离（Shell 旁路仍存在，R8c，靠审计与
+ *   完整性监控兜底）；v2 会话的工具面/系统提示语在首次 run 固定，之后不变。
+ *
+ * 后台 profile run（memory_poll/memory_consolidate）不经此函数——白名单本身
+ * 已决定可见工具集。
+ */
+export type MemoryWritePolicyVersion = 'v1' | 'v2';
+
+const MEMORY_POLICY_HIDDEN_TOOLS_V1: ReadonlySet<string> = new Set(['MemoryCommand', 'MemoryCommit']);
+const MEMORY_POLICY_HIDDEN_TOOLS_V2: ReadonlySet<string> = new Set(['MemoryCommit']);
+
+export function applyMemoryPolicyFilter(runtime: ToolRuntime, policy: MemoryWritePolicyVersion): ToolRuntime {
+  if (policy === 'v1') {
+    return new ProfileFilteredToolRuntime(runtime, {
+      isAllowed: (descriptor) =>
+        !MEMORY_POLICY_HIDDEN_TOOLS_V1.has(descriptor.name) && !MEMORY_POLICY_HIDDEN_TOOLS_V1.has(descriptor.id),
+      profileLabel: 'memory_policy_v1',
+    });
+  }
   return new ProfileFilteredToolRuntime(runtime, {
     isAllowed: (descriptor) =>
-      MEMORY_POLL_TOOL_ALLOWLIST.has(descriptor.name) || MEMORY_POLL_TOOL_ALLOWLIST.has(descriptor.id),
-    guardInvoke: guardMemoryPollWritePath,
-    profileLabel: 'memory_poll',
+      !MEMORY_POLICY_HIDDEN_TOOLS_V2.has(descriptor.name) && !MEMORY_POLICY_HIDDEN_TOOLS_V2.has(descriptor.id),
+    guardInvoke: (call, context) => {
+      const paramName = WRITE_PATH_PARAM[call.toolId];
+      if (!paramName) return;
+      const input = call.input as Record<string, unknown> | undefined;
+      const rawPath = typeof input?.[paramName] === 'string' ? (input[paramName] as string).trim() : '';
+      if (!rawPath) return;
+      const root = resolve(context.workspace.root);
+      const target = isAbsolute(rawPath) ? resolve(rawPath) : resolve(join(root, rawPath));
+      const rel = relative(root, target).split('\\').join('/');
+      if (rel.startsWith('..') || isAbsolute(rel)) return; // 越界与否交由原有工具安全层处理
+      const isMemoryPath = rel === 'MEMORY.md' || (rel.startsWith('memory/') && rel.endsWith('.md'));
+      if (isMemoryPath) {
+        throw new Error(
+          `记忆写入职责已剥离：不要直接用 ${call.toolId} 修改 ${rel}。用户明确要求记住/忘记时改用 MemoryCommand 工具；其余记忆整理由平台后台自动进行。`,
+        );
+      }
+    },
+    profileLabel: 'memory_policy_v2',
   });
 }
 

@@ -3,32 +3,37 @@ import { describe, expect, it } from 'vitest';
 import { HAND_ENV_ALLOWLIST, isHandEnvAllowed, pickHandEnv } from '../runtime/handEnvAllowlist.js';
 
 describe('handEnvAllowlist', () => {
-  it('AZEROTH_TOKEN + AZEROTH_API_URL 在 allowlist 内', () => {
+  it('历史变量与连接器标准 env 均允许透传', () => {
     expect(HAND_ENV_ALLOWLIST).toContain('AZEROTH_TOKEN');
     expect(HAND_ENV_ALLOWLIST).toContain('AZEROTH_API_URL');
-    expect(isHandEnvAllowed('AZEROTH_TOKEN')).toBe(true);
-    expect(isHandEnvAllowed('AZEROTH_API_URL')).toBe(true);
+    for (const key of [
+      'AZEROTH_TOKEN', 'AZEROTH_API_URL', 'GH_TOKEN', 'GITHUB_TOKEN',
+      'NOTION_TOKEN', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
+    ]) {
+      expect(isHandEnvAllowed(key)).toBe(true);
+    }
   });
 
-  it('拒绝其他敏感 env（防止 API key/TOKEN 走 wire 泄漏）', () => {
+  it('拒绝非法名称与能改变进程加载行为的保留 env', () => {
     for (const key of [
-      'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY',
-      'DASHSCOPE_API_KEY', 'ARK_API_KEY', 'GH_TOKEN', 'GITHUB_TOKEN',
-      'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'FOO_TOKEN',
+      'PATH', 'HOME', 'NODE_OPTIONS', 'NODE_PATH', 'LD_PRELOAD',
+      'PYTHONPATH', 'lowercase', 'BAD-NAME',
     ]) {
       expect(isHandEnvAllowed(key)).toBe(false);
     }
   });
 
-  it('pickHandEnv 只保留 allowlist 内的 key', () => {
+  it('pickHandEnv 保留标准连接器 env 并剔除保留 key', () => {
     expect(pickHandEnv({
       AZEROTH_TOKEN: 'pat_x',
-      AZEROTH_API_URL: 'https://a',
-      ANTHROPIC_API_KEY: 'sk-ant',
-      RANDOM_ENV: 'noise',
+      GH_TOKEN: 'gh_x',
+      NOTION_TOKEN: 'notion_x',
+      PATH: '/tmp/evil',
+      NODE_OPTIONS: '--require /tmp/evil.js',
     })).toEqual({
       AZEROTH_TOKEN: 'pat_x',
-      AZEROTH_API_URL: 'https://a',
+      GH_TOKEN: 'gh_x',
+      NOTION_TOKEN: 'notion_x',
     });
   });
 

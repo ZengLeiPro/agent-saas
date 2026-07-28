@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { HttpSecretVault } from '../security/secretVault.js';
+import { HttpSecretVault, type VaultCaller } from '../security/secretVault.js';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -91,6 +91,27 @@ describe('HttpSecretVault cache (A3)', () => {
     await vault.rotateSecret('ref-a', 'new-plaintext', caller);
     expect(await vault.getSecret('ref-a', caller)).toBe('v2');
     expect(resolveCount).toBe(2);
+  });
+
+  it('different caller authorization contexts do not share secret cache entries', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ value: 'tenant-a-secret' }))
+      .mockResolvedValueOnce(jsonResponse({ value: 'tenant-b-secret' }));
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.internal',
+      authToken: 'service-token',
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+
+    const tenantACaller: VaultCaller = {
+      actor: 'mcp_proxy', userId: 'alice', tenantId: 'tenant-a', scopes: ['secret:mcp:read'],
+    };
+    const tenantBCaller: VaultCaller = {
+      actor: 'mcp_proxy', userId: 'bob', tenantId: 'tenant-b', scopes: ['secret:mcp:read'],
+    };
+    await expect(vault.getSecret('sec_shared', tenantACaller)).resolves.toBe('tenant-a-secret');
+    await expect(vault.getSecret('sec_shared', tenantBCaller)).resolves.toBe('tenant-b-secret');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it('revokeSecret invalidates the cache for that ref', async () => {

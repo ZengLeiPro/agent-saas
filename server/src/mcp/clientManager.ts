@@ -67,6 +67,8 @@ export interface McpOAuthServerConfig {
   provider: 'github' | 'notion' | 'google-workspace' | 'generic';
   beta?: boolean;
   scopes?: string[];
+  /** 将 OAuth access token 注入用户运行态的标准环境变量。 */
+  runtimeEnv?: string[];
   /** 静态 OAuth client（Google Workspace）由平台环境变量提供；不写入 catalog。 */
   clientIdEnv?: string;
   clientSecretEnv?: string;

@@ -96,6 +96,42 @@ describe('run dispatch lifecycle', () => {
     expect(snapshot.lastRun?.eventCount).toBe(2);
   });
 
+  it('injects connector runtime env for the current user without requiring userOverrides', async () => {
+    const processCwd = await mkdtemp(join(tmpdir(), 'dispatch-connector-env-'));
+    cleanupDirs.add(processCwd);
+    let capturedEnv: Record<string, string> | undefined;
+
+    const baseRun: AgentRunDispatch = async function* (_message, _context, options) {
+      capturedEnv = options?.env;
+      yield { type: 'done' };
+    };
+    const resolveConnectorRuntimeEnv = async () => ({
+      GH_TOKEN: 'user-token',
+      GITHUB_TOKEN: 'user-token',
+    });
+    const runDispatch = createMiddlewareRunDispatch(baseRun, {
+      processCwd,
+      observability: { enabled: false },
+      dispatch: {},
+      resolveConnectorRuntimeEnv,
+    });
+
+    await collect(runDispatch(
+      { channel: 'web', chatId: 'chat-1', content: 'run' },
+      {
+        channel: 'web',
+        user: { id: 'user-1', username: 'alice', role: 'user', tenantId: 'tenant-a' },
+      },
+      { env: { GH_TOKEN: 'platform-token', EXISTING_ENV: 'kept' } },
+    ));
+
+    expect(capturedEnv).toMatchObject({
+      GH_TOKEN: 'user-token',
+      GITHUB_TOKEN: 'user-token',
+      EXISTING_ENV: 'kept',
+    });
+  });
+
   it('writes redacted audit records when audit is enabled', async () => {
     const processCwd = await mkdtemp(join(tmpdir(), 'dispatch-audit-'));
     cleanupDirs.add(processCwd);

@@ -127,6 +127,8 @@ export interface WorkspaceRef {
 export interface ToolCallContext {
   channelContext: ChannelContext;
   workspace: WorkspaceRef;
+  /** 当前任务从能力中心连接器注入的运行态环境变量。 */
+  env?: Record<string, string>;
   sessionId?: string;
   runId?: string;
   toolCallId?: string;
@@ -589,7 +591,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
         }
         case 'Shell': {
           const args = input as { command: string; timeoutMs?: number };
-          const content = await this._runShell(workspace, args.command, args.timeoutMs, signal, context.invocationId);
+          const content = await this._runShell(workspace, args.command, args.timeoutMs, signal, context.invocationId, context.env);
           return { status: 'success', content };
         }
         case 'Edit': {
@@ -630,7 +632,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     let done = false;
     let notify: (() => void) | undefined;
     const wake = () => { notify?.(); notify = undefined; };
-    this._runShellStreaming(workspace, args.command, args.timeoutMs, signal, (chunk) => { queue.push(chunk); wake(); }, request.context.invocationId)
+    this._runShellStreaming(workspace, args.command, args.timeoutMs, signal, (chunk) => { queue.push(chunk); wake(); }, request.context.invocationId, request.context.env)
       .then((response) => queue.push({ type: 'completed', response }))
       .catch((err) => queue.push({ type: 'completed', response: { status: 'error', error: err instanceof Error ? err.message : String(err) } }))
       .finally(() => { done = true; wake(); });
@@ -710,8 +712,9 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     timeoutMs: number | undefined,
     signal: AbortSignal | undefined,
     invocationId?: string,
+    runtimeEnv?: Record<string, string>,
   ): Promise<string> {
-    const response = await this._runShellStreaming(workspace, command, timeoutMs, signal, undefined, invocationId);
+    const response = await this._runShellStreaming(workspace, command, timeoutMs, signal, undefined, invocationId, runtimeEnv);
     if (response.status === 'error') throw new Error(response.error);
     return response.content;
   }
@@ -723,6 +726,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     signal: AbortSignal | undefined,
     onChunk?: (chunk: import('../runtime/handProtocol.js').ToolInvocationStreamChunk) => void | Promise<void>,
     invocationId?: string,
+    runtimeEnv?: Record<string, string>,
   ): Promise<ToolInvocationResponse> {
     return await new Promise<ToolInvocationResponse>((resolvePromise) => {
       const deniedPath = findDeniedPathMention(workspace, command);
@@ -738,9 +742,12 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
       // envBuilder 未注入时（旧测试 / 内部直调 ServerLocalExecutionProvider）保持 process.env
       // 旧行为，避免破坏向后兼容；生产路径通过 createDefaultExecutionTransportRegistry({ envBuilder })
       // 在 app/runtime.ts 装配时强制注入。
-      const childEnv = this.envBuilder
-        ? this.envBuilder(workspace)
-        : (process.env as Record<string, string>);
+      const childEnv = {
+        ...(this.envBuilder
+          ? this.envBuilder(workspace)
+          : (process.env as Record<string, string>)),
+        ...(runtimeEnv ?? {}),
+      };
       const child = spawn(command, {
         cwd: workspace.root,
         env: childEnv,
@@ -1155,6 +1162,7 @@ class WorkspaceToolProvider implements ToolProvider {
         ...(context.invocationId ? { invocationId: context.invocationId } : {}),
         ...(handId ? { handId } : {}),
         workspace: workspaceForHand,
+        env: context.env,
         signal: context.signal,
       },
     };

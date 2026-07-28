@@ -12,6 +12,8 @@ export interface McpSecretRequirement {
   required?: boolean;
   prefix?: string;
   instructions?: string;
+  /** 将连接器凭据同步注入用户运行态的标准环境变量。 */
+  runtimeEnv?: string[];
 }
 
 export interface McpSecretStatus extends McpSecretRequirement {

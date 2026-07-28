@@ -111,6 +111,7 @@ import type { SkillEntry } from '../agent/skillToolProvider.js';
 import { McpClientManager } from '../mcp/clientManager.js';
 import { McpProxy } from '../mcp/proxy.js';
 import { McpOAuthService } from '../mcp/oauthService.js';
+import { resolveConnectorRuntimeEnv } from '../mcp/connectorRuntimeEnv.js';
 import { CapabilityTokenService } from '../security/capabilityToken.js';
 import { EncryptedFileSecretVault, HttpSecretVault, InMemorySecretVault, type SecretVault } from '../security/secretVault.js';
 import {
@@ -1799,6 +1800,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // PR 8 enqueue-only + scheduler wake 路径绕过了 engine/dispatch.ts 的
     // ensureUserWorkspace 调用，导致新 tenant / 新用户首跑 cwd 物理目录不存在
     // → hand-server spawn ENOENT。这里在 wake 时按 session.userId/username
+    resolveConnectorRuntimeEnv: (context: { username: string; tenantId: string }) => resolveConnectorRuntimeEnv({
+      store: mcpConfigStore,
+      vault: secretVault,
+      oauthService: mcpOAuthService,
+      onError: (error, meta) => serverLogger.warn(
+        `Connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
+      ),
+    }, context),
     // 反查 UserStore 得到完整 WorkspaceUser（含 tenantId / realName），调用
     // ensureUserWorkspace（含 PR 4 扁平→tenant 层 mkdir + 迁移、首次 skills 同步）。
     // 幂等：目录已存在直接 return；底层 mkdir 与 rename 都是无副作用重入安全的。
@@ -2046,6 +2055,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     skillConfigStore,
     mcpConfigStore,
     userOverrides: config.agent.userOverrides,
+    resolveConnectorRuntimeEnv: (context: { username: string; tenantId: string }) => resolveConnectorRuntimeEnv({
+      store: mcpConfigStore,
+      vault: secretVault,
+      oauthService: mcpOAuthService,
+      onError: (error, meta) => serverLogger.warn(
+        `Connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
+      ),
+    }, context),
   };
   const runDispatch = dispatchPipelineEnabled === false
     ? baseRunDispatch

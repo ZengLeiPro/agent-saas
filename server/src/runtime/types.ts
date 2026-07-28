@@ -22,6 +22,8 @@ export interface RunContext {
   mountSubPath?: string;
   tenantId?: string;
   executionTarget?: ExecutionTargetKind;
+  /** 当前任务从能力中心已启用连接器解析出的运行态凭据环境变量。 */
+  env?: Record<string, string>;
   sandboxPolicy?: {
     denyRead: string[];
   };

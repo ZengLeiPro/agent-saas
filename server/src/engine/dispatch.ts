@@ -37,7 +37,7 @@ import { rotateIfNeeded } from '../utils/fileRotation.js';
 import { resolveUserCwd, ensureUserWorkspace, refreshUserWorkspace } from '../workspace/resolver.js';
 import { agentPath, resolveAgentPath } from '../workspace/namespace.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
-import { getUserAllowGhCli, getUserExtraDirs, type UserOverrides } from '../security/extraDirs.js';
+import { getUserExtraDirs, type UserOverrides } from '../security/extraDirs.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
 import { assertGitCredentialEnvHasNoPlaintextSecret, buildIsolatedGitCredentialEnv } from '../security/gitCredentialIsolation.js';
@@ -100,6 +100,10 @@ export interface CreateRunDispatchOptions {
   logger?: Logger;
   skillConfigStore?: SkillConfigStore;
   userOverrides?: UserOverrides;
+  resolveConnectorRuntimeEnv?: (context: {
+    username: string;
+    tenantId: string;
+  }) => Promise<Record<string, string>>;
 }
 
 interface RateLimitState {
@@ -362,7 +366,7 @@ export function createMiddlewareRunDispatch(
           // 只对非 admin 生效，但非 admin 又没 Shell（"only enabled for admin"）→
           // sandbox 跨组织保护实际覆盖范围为零。
           //
-          // 修法：sandbox / sharedDirs / extraDirs / allowGhCli 四处全部从 role==='admin'
+          // 修法：sandbox / sharedDirs / extraDirs 三处全部从 role==='admin'
           // 收紧到 isPlatformAdmin（role==='admin' && tenantId===DEFAULT_TENANT_ID）。
           // 组织 admin 跟普通 user 一样走 sandbox + userOverrides，且不能动 skills-pool
           // （skills-pool 是平台资源）。组织 admin 的业务能力（同组织 CRUD 等）由路由层
@@ -378,9 +382,6 @@ export function createMiddlewareRunDispatch(
           const extraDirs = isPlatformAdmin
             ? []
             : getUserExtraDirs(options.userOverrides, context.user.username);
-          const allowGhCli = isPlatformAdmin
-            ? false
-            : getUserAllowGhCli(options.userOverrides, context.user.username);
           effectiveOptions = {
             ...effectiveOptions,
             additionalDirectories: [
@@ -528,7 +529,6 @@ export function createMiddlewareRunDispatch(
             // ~/Library/pnpm/pnpm 是独立安装的 pnpm，不走 corepack，PATH 前置即可绕过。
             const pnpmStandalone = resolve('/Users/admin/Library/pnpm');
             const currentPath = effectiveOptions.env?.PATH || process.env.PATH || '';
-            const ghConfigDir = resolve('/tmp', `gh-${context.user.username}`);
             effectiveOptions = {
               ...effectiveOptions,
               env: {
@@ -538,14 +538,6 @@ export function createMiddlewareRunDispatch(
                 npm_config_userconfig: resolve(userCwd, '.npmrc'),
                 PIP_CACHE_DIR: agentPath(userCwd, 'runtime', 'cache', 'pip'),
                 PIP_USER: '0',
-                // Git 凭证：不再把 GH_TOKEN/GITHUB_TOKEN 注入 sandbox env，也不把 token
-                // 写入 .git/config。git credential.helper 按需调用 host-side gh token
-                // 命令取 credential；helper 字符串只包含命令路径，不包含明文 secret。
-                ...buildIsolatedGitCredentialEnv({
-                  tokenCommand: '/opt/homebrew/bin/gh auth token',
-                  allowGhCli,
-                  ghConfigDir,
-                }),
               },
             };
           }
@@ -620,7 +612,31 @@ export function createMiddlewareRunDispatch(
             };
           }
 
+          // Git helper 本身不含凭据，所有已登录用户统一启用；连接器 token 在下方注入。
+          effectiveOptions = {
+            ...effectiveOptions,
+            env: {
+              ...effectiveOptions.env,
+              ...buildIsolatedGitCredentialEnv({
+                tokenCommand: `printf '%s' "\${GH_TOKEN:-\${GITHUB_TOKEN:-}}"`,
+                allowGhCli: true,
+                ghConfigDir: resolve('/tmp', `gh-${context.user.username}`),
+              }),
+            },
+          };
+
           assertGitCredentialEnvHasNoPlaintextSecret(effectiveOptions.env ?? {});
+        }
+
+        if (options.resolveConnectorRuntimeEnv && context.user) {
+          const connectorEnv = await options.resolveConnectorRuntimeEnv({
+            username: context.user.username,
+            tenantId: context.user.tenantId ?? DEFAULT_TENANT_ID,
+          });
+          effectiveOptions = {
+            ...effectiveOptions,
+            env: { ...(effectiveOptions.env ?? {}), ...connectorEnv },
+          };
         }
 
         for await (const event of baseRun(message, context, effectiveOptions, hooks)) {

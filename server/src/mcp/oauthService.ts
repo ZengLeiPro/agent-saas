@@ -275,6 +275,22 @@ export class McpOAuthService {
     });
   }
 
+  async runtimeAccessToken(args: {
+    username: string;
+    tenantId: string;
+    serverId: string;
+  }): Promise<string | undefined> {
+    const provider = await this.runtimeProvider({
+      username: args.username,
+      tenantId: args.tenantId,
+      serverName: args.serverId,
+    });
+    const tokens = await provider?.tokens();
+    return typeof tokens?.access_token === 'string' && tokens.access_token.trim()
+      ? tokens.access_token
+      : undefined;
+  }
+
   clientMetadata(redirectUrl: string): OAuthClientMetadata & { client_id: string } {
     const clientId = clientMetadataUrl(redirectUrl);
     if (!clientId) throw new Error('OAuth Client ID Metadata Document requires an HTTPS callback URL');

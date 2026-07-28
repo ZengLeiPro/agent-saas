@@ -195,9 +195,34 @@ describe('McpOAuthService', () => {
     const store2 = new McpConfigStore(join(root, 'mcp-config.json'));
     await store2.installBuiltinOAuthServers();
     const upgraded = store2.getServer('github')!;
-    expect(upgraded.createdFromTemplateVersion).toBe(3);
+    expect(upgraded.createdFromTemplateVersion).toBe(4);
     expect(upgraded.tenantId).toBe('*');
     expect('oauth' in upgraded.config && upgraded.config.oauth).toBeFalsy();
-    expect(upgraded.secretRequirements?.[0]).toMatchObject({ key: 'token', target: 'header', name: 'Authorization', scope: 'user' });
+    expect(upgraded.secretRequirements?.[0]).toMatchObject({
+      key: 'token',
+      target: 'header',
+      name: 'Authorization',
+      scope: 'user',
+      runtimeEnv: ['GH_TOKEN', 'GITHUB_TOKEN'],
+    });
+  });
+
+  it('presets v3：为存量内置 OAuth 连接器补运行态 env 映射', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mcp-preset-v3-'));
+    roots.push(root);
+    const file = join(root, 'mcp-config.json');
+    const store = new McpConfigStore(file);
+    await store.installBuiltinOAuthServers();
+    const raw = JSON.parse(await readFile(file, 'utf-8')) as any;
+    raw.builtinPresetsVersion = 2;
+    delete raw.servers.notion.config.oauth.runtimeEnv;
+    delete raw.servers.google_gmail.config.oauth.runtimeEnv;
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(file, JSON.stringify(raw));
+
+    const upgradedStore = new McpConfigStore(file);
+    await upgradedStore.installBuiltinOAuthServers();
+    expect((upgradedStore.getServer('notion')?.config as any).oauth.runtimeEnv).toEqual(['NOTION_TOKEN']);
+    expect((upgradedStore.getServer('google_gmail')?.config as any).oauth.runtimeEnv).toEqual(['GOOGLE_GMAIL_ACCESS_TOKEN']);
   });
 });

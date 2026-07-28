@@ -179,6 +179,7 @@ export class ContainerExecutionProvider implements ExecutionProvider {
             stderrLimit: MAX_SHELL_CAPTURE_BYTES,
             signal,
             allowNonZeroExit: true,
+            runtimeEnv: context.env,
           }, audit);
           const { outputFiles, outputFileError } = await this.persistShellOutput(workspace, context.invocationId, result.stdout, result.stderr);
           const content = formatShellOutput({
@@ -369,6 +370,7 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       signal?: AbortSignal;
       allowNonZeroExit?: boolean;
       onOutput?: (channel: 'stdout' | 'stderr', content: string, byteLength: number) => void;
+      runtimeEnv?: Record<string, string>;
     },
     audit: ExecutionInvocationAudit[],
   ): Promise<{
@@ -411,7 +413,10 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     // P4 防御纵深：优先 envBuilder（按 workspace.tenantId 装配 per-tenant env），
     // 缺省 fallback this.env 静态默认；保证当注入 envBuilder 后旧的 options.env 不会
     // 越过 tenant 装配漏密钥。
-    const computedEnv = this.envBuilder ? this.envBuilder(workspace) : this.env;
+    const computedEnv = {
+      ...(this.envBuilder ? this.envBuilder(workspace) : this.env),
+      ...(options.runtimeEnv ?? {}),
+    };
     for (const [key, value] of Object.entries(computedEnv)) {
       dockerArgs.push('--env', `${key}=${value}`);
     }

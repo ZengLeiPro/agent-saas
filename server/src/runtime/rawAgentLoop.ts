@@ -723,6 +723,7 @@ export class RawAgentLoop implements AgentLoop {
     const baseToolContext: ToolCallContext = {
       channelContext: context.channelContext,
       workspace,
+      env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
       hooks: context.hooks,
@@ -1743,6 +1744,7 @@ export class RawAgentLoop implements AgentLoop {
     const baseToolContext: ToolCallContext = {
       channelContext: resumeContext.channelContext,
       workspace,
+      env: resumeContext.env,
       sessionId: resumeContext.sessionId,
       runId: resumeContext.runId,
       hooks: resumeContext.hooks,
@@ -1880,6 +1882,7 @@ export class RawAgentLoop implements AgentLoop {
     const baseToolContext: ToolCallContext = {
       channelContext: context.channelContext,
       workspace,
+      env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
       hooks: context.hooks,

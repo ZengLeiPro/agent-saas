@@ -23,6 +23,7 @@ import { readTenantInstructionsSync } from '../data/tenants/instructions.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import type { UserOverrides } from '../security/extraDirs.js';
+import { buildIsolatedGitCredentialEnv } from '../security/gitCredentialIsolation.js';
 import type { DispatchConfig } from '../app/config.js';
 import type { ArtifactService } from './artifactService.js';
 import type { ChannelContext, InboundMessage, ModelProviderOptions, OutboundEvent } from '../types/index.js';
@@ -417,6 +418,11 @@ export interface RawRuntimeRunDispatchConfig {
    * 未配置时跳过 provisioning，适合 file backend / 测试 fixture 场景。
    */
   workspaceProvisioner?: (input: { userId?: string; username?: string }) => Promise<void>;
+  /** 当前用户已启用连接器的运行态环境变量解析器。 */
+  resolveConnectorRuntimeEnv?: (context: {
+    username: string;
+    tenantId: string;
+  }) => Promise<Record<string, string>>;
   logger?: {
     info: (msg: string) => void;
     warn: (msg: string) => void;
@@ -1695,6 +1701,27 @@ export function buildTenantRemoteHandWireEnv(workspace: WorkspaceRef): Record<st
   };
 }
 
+async function buildConnectorRunEnv(
+  config: RawRuntimeRunDispatchConfig,
+  identity: { username?: string; tenantId?: string },
+): Promise<Record<string, string>> {
+  if (!identity.username) return {};
+  const connectorEnv = config.resolveConnectorRuntimeEnv
+    ? await config.resolveConnectorRuntimeEnv({
+        username: identity.username,
+        tenantId: identity.tenantId ?? DEFAULT_TENANT_ID,
+      })
+    : {};
+  return {
+    ...buildIsolatedGitCredentialEnv({
+      tokenCommand: `printf '%s' "\${GH_TOKEN:-\${GITHUB_TOKEN:-}}"`,
+      allowGhCli: true,
+      ghConfigDir: resolve('/tmp', `gh-${identity.username}`),
+    }),
+    ...connectorEnv,
+  };
+}
+
 export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig): AgentRunDispatch {
   const logger = config.logger ?? noopLogger;
   const sessionCatalog = resolveSessionCatalog(config);
@@ -2073,6 +2100,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         mountSubPath: workspaceMountSubPath,
         tenantId: sessionRecord.tenantId,
         executionTarget,
+        env: options.env,
         sandboxPolicy,
         workerId: options.runtimeWorkerId,
         channelContext: context,
@@ -2566,6 +2594,11 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 
+    const resumeEnv = await buildConnectorRunEnv(config, {
+      username: resumeUsername,
+      tenantId: sessionRecord.tenantId,
+    });
+
     try {
       let loopError: string | undefined;
       for await (const event of loop.resumeApproval(
@@ -2593,6 +2626,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
           executionTarget,
+          env: resumeEnv,
           sandboxPolicy,
           workerId: request.runtimeWorkerId,
           channelContext: request.context,
@@ -2941,6 +2975,11 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 
+    const resumeEnv = await buildConnectorRunEnv(config, {
+      username: resumeUsername,
+      tenantId: sessionRecord.tenantId,
+    });
+
     try {
       let loopError: string | undefined;
       for await (const event of loop.resumeInteraction(
@@ -2968,6 +3007,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
           executionTarget,
+          env: resumeEnv,
           sandboxPolicy,
           workerId: request.runtimeWorkerId,
           channelContext: request.context,

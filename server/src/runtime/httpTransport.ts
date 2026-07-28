@@ -370,8 +370,11 @@ export class HttpTransport implements ExecutionTransport {
    */
   private buildWireRequest(request: ToolInvocationRequest): WireToolInvocationRequest {
     const base = serializeRequest(request);
-    const env = this.resolveWireEnv(request.context.workspace);
-    if (!env) return base;
+    const env = pickHandEnv({
+      ...(this.resolveWireEnv(request.context.workspace) ?? {}),
+      ...(request.context.env ?? {}),
+    });
+    if (Object.keys(env).length === 0) return base;
     return {
       ...base,
       context: {

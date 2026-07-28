@@ -34,6 +34,8 @@ export interface ToolInvocationContext {
    * （§7.2），这里会替换为 `workspaceId`（brain 侧元数据）+ hand 端自己的解析器。
    */
   workspace: WorkspaceRef;
+  /** 当前任务从能力中心连接器注入的运行态环境变量。 */
+  env?: Record<string, string>;
   /**
    * AbortSignal。
    * InProcessTransport 直接透传给底层 ExecutionProvider；HttpTransport（PR 1.4）落地时需要单独的

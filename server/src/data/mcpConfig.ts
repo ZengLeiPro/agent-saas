@@ -25,6 +25,8 @@ export interface McpSecretRequirement {
   required?: boolean;
   prefix?: string;
   instructions?: string;
+  /** 将连接器凭据同步注入用户运行态的标准环境变量。 */
+  runtimeEnv?: string[];
 }
 
 export interface ManagedMcpServer {
@@ -128,7 +130,7 @@ export const MCP_TEMPLATES: McpTemplate[] = [
     // 对第三方 MCP 客户端不可用（VS Code/Claude Code/OpenCode 同样受影响），
     // 改为每位用户绑定自己的 Personal Access Token（Bearer header）。
     id: 'github',
-    templateVersion: 3,
+    templateVersion: 4,
     name: 'GitHub',
     description: 'GitHub 官方 remote MCP。每位用户绑定自己的 GitHub Personal Access Token。',
     riskLevel: 'credentialed_external_write',
@@ -140,7 +142,7 @@ export const MCP_TEMPLATES: McpTemplate[] = [
       enabledByDefault: false,
       riskLevel: 'credentialed_external_write',
       createdFromTemplateId: 'github',
-      createdFromTemplateVersion: 3,
+      createdFromTemplateVersion: 4,
       tenantId: GLOBAL_TENANT_ID,
       config: {
         type: 'streamable-http',
@@ -156,6 +158,7 @@ export const MCP_TEMPLATES: McpTemplate[] = [
           scope: 'user',
           required: true,
           instructions: '打开 GitHub「Settings → Developer settings → Personal access tokens → Tokens (classic)」创建 Token（建议勾选 repo、read:org 权限），生成后复制粘贴到这里。Token 只保存在你的个人加密存储中，可随时在 GitHub 撤销。创建地址：https://github.com/settings/tokens/new',
+          runtimeEnv: ['GH_TOKEN', 'GITHUB_TOKEN'],
         },
       ],
     },
@@ -176,7 +179,11 @@ export const MCP_TEMPLATES: McpTemplate[] = [
       createdFromTemplateId: 'notion',
       createdFromTemplateVersion: 1,
       tenantId: GLOBAL_TENANT_ID,
-      config: { type: 'streamable-http', url: 'https://mcp.notion.com/mcp', oauth: { provider: 'notion' } },
+      config: {
+        type: 'streamable-http',
+        url: 'https://mcp.notion.com/mcp',
+        oauth: { provider: 'notion', runtimeEnv: ['NOTION_TOKEN'] },
+      },
       secretRequirements: [],
     },
   },
@@ -196,7 +203,11 @@ export const MCP_TEMPLATES: McpTemplate[] = [
       createdFromTemplateId: id,
       createdFromTemplateVersion: 1,
       tenantId: GLOBAL_TENANT_ID,
-      config: { type: 'streamable-http', url, oauth: GOOGLE_OAUTH },
+      config: {
+        type: 'streamable-http',
+        url,
+        oauth: { ...GOOGLE_OAUTH, runtimeEnv: [`${id.toUpperCase()}_ACCESS_TOKEN`] },
+      },
       secretRequirements: [],
     },
   })),
@@ -305,7 +316,7 @@ export class McpConfigStore {
 
   /** 首次启动安装官方推荐连接器；已有同 id 配置不覆盖（模板升级除外，见 v2 步骤）。 */
   async installBuiltinOAuthServers(): Promise<number> {
-    const targetVersion = 2;
+    const targetVersion = 3;
     if ((this.data.builtinPresetsVersion ?? 0) >= targetVersion) return 0;
     return this.serialize(async () => {
       if ((this.data.builtinPresetsVersion ?? 0) >= targetVersion) return 0;
@@ -332,6 +343,30 @@ export class McpConfigStore {
           enabledByDefault: existingGithub.enabledByDefault,
         });
         installed++;
+      }
+      // v3：内置连接器声明运行态 env 映射。只补字段，不覆盖管理员修改的 URL、风险级别或启用状态。
+      for (const templateId of ['github', 'notion', ...GOOGLE_MCP_PRESETS.map(([id]) => id)]) {
+        const server = this.data.servers[templateId];
+        const template = MCP_TEMPLATES.find(item => item.id === templateId);
+        if (!server || !template || server.createdFromTemplateId !== templateId) continue;
+        if ('url' in server.config && 'url' in template.server.config) {
+          const runtimeEnv = template.server.config.oauth?.runtimeEnv;
+          if (runtimeEnv?.length && template.server.config.oauth) {
+            server.config.oauth = {
+              ...(server.config.oauth ?? template.server.config.oauth),
+              provider: (server.config.oauth ?? template.server.config.oauth).provider,
+              runtimeEnv: [...runtimeEnv],
+            };
+          }
+        }
+        const templateRequirements = new Map(
+          (template.server.secretRequirements ?? []).map(requirement => [requirement.key, requirement]),
+        );
+        server.secretRequirements = (server.secretRequirements ?? []).map(requirement => {
+          const runtimeEnv = templateRequirements.get(requirement.key)?.runtimeEnv;
+          return runtimeEnv?.length ? { ...requirement, runtimeEnv: [...runtimeEnv] } : requirement;
+        });
+        server.createdFromTemplateVersion = template.templateVersion;
       }
       this.data.builtinPresetsVersion = targetVersion;
       this.bumpVersion();

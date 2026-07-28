@@ -12,10 +12,9 @@ export interface IsolatedGitCredentialEnvInput {
 }
 
 /**
- * Builds git credential env without placing the token itself in the sandbox env
- * or in .git/config. The helper command is evaluated by git on demand and should
- * fetch credentials from a host-side vault/CLI path that is outside workspace
- * readable roots.
+ * Builds git credential env without writing the token into .git/config or workspace files.
+ * The helper command reads the connector-provided GH_TOKEN/GITHUB_TOKEN only when git asks
+ * for credentials.
  */
 export function buildIsolatedGitCredentialEnv(input: IsolatedGitCredentialEnvInput): Record<string, string> {
   const env: Record<string, string> = {
@@ -44,7 +43,7 @@ export function redactGitSecretText(text: string): string {
 
 export function assertGitCredentialEnvHasNoPlaintextSecret(env: Record<string, string>): void {
   for (const [key, value] of Object.entries(env)) {
-    if (key === 'GH_TOKEN' || key === 'GITHUB_TOKEN') throw new Error(`${key} must not be injected into sandbox env`);
+    if (key === 'GH_TOKEN' || key === 'GITHUB_TOKEN') continue;
     const redacted = redactGitSecretText(value);
     if (redacted !== value) throw new Error(`git credential env contains plaintext secret in ${key}`);
   }

@@ -36,6 +36,7 @@ const secretRequirementSchema = z.object({
   required: z.boolean().optional(),
   prefix: z.string().max(80).optional(),
   instructions: z.string().max(1000).optional(),
+  runtimeEnv: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/)).max(16).optional(),
 }).strict();
 
 const stdioSchema = z.object({
@@ -58,6 +59,7 @@ const httpSchema = z.object({
     provider: z.enum(['github', 'notion', 'google-workspace', 'generic']),
     beta: z.boolean().optional(),
     scopes: z.array(z.string().min(1).max(300)).max(30).optional(),
+    runtimeEnv: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/)).max(16).optional(),
     clientIdEnv: z.literal('GOOGLE_MCP_OAUTH_CLIENT_ID').optional(),
     clientSecretEnv: z.literal('GOOGLE_MCP_OAUTH_CLIENT_SECRET').optional(),
   }).strict().optional(),

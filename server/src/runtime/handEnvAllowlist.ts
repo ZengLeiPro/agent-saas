@@ -1,56 +1,54 @@
 /**
- * Wire env allowlist —— brain（agent-saas server）与远端 hand（acs-orchestrator /
- * hand-server）之间通过 wire.context.env 显式透传的 env 变量白名单。
+ * Wire env filter —— brain 与远端 hand 之间显式透传的运行态环境变量边界。
  *
- * 背景（07-05）：
- *   tenantRemoteHands.rollout=all 生效后，所有租户走 ACS Sandbox（远端 pod）路径。
- *   dispatch.ts:603 按 (tenantId, username) 查 tokens.json 得到的 AZEROTH_TOKEN
- *   只塞进本地 SDK spawn 的 effectiveOptions.env，**wire 协议不带 env** →
- *   远端 pod 里 `env | grep AZEROTH` 恒为空 → ky-data-query skill 拿不到 PAT。
- *   见 memory/topics/tech-agent-saas-debug.md 相关章节。
+ * 能力中心连接器的凭据由 brain 从 Vault 解析后放入单次 Run 上下文。远端 hand
+ * 必须接收这些标准 env，不能再为每个连接器维护静态名单；否则新增连接器会出现
+ * 本地可用、远端失效的隐性分叉。
  *
- * 设计原则：
- *   - **只允许显式命名的 env 上 wire**：任何 *_TOKEN / *_KEY / *_SECRET 通配都拒；
- *     必须逐一登记，防止上游误把 API key 塞进 wire 泄给 pod 内子进程 / 外泄。
- *   - **服务端（hand-server / acs-orchestrator）二次过滤**（防御纵深）：
- *     即使 client 传了 allowlist 之外的 key，服务端 parseWireRequest 也会剥掉。
- *   - 当前只覆盖 ky-azeroth CLI 的两个 env；未来加新 env 时同步 client + server 两侧
- *     (server/src/runtime/handEnvAllowlist.ts 与 acs-orchestrator/src/protocol.ts 里
- *     的 pickHandEnv 引用要保持一致 —— 后者从本文件导入)。
- *
- * 反面禁止事项：
- *   - GH_TOKEN / GITHUB_TOKEN：dispatch.ts 明确不注入远端沙箱（走 credential.helper
- *     调 host-side gh auth token），本 allowlist 也不加。
- *   - ANTHROPIC_API_KEY / OPENAI_API_KEY / DASHSCOPE_API_KEY 等模型 key：这些从
- *     config.dispatch.env 走远端 pod K8s spec 层（sandboxManager.ts），不经 wire。
+ * 这里允许标准大写 env 名，但拒绝能改变进程加载、模块解析或代理行为的保留变量。
+ * 外部请求不能直接提交 Run env；服务端反序列化仍会再次调用本过滤器。
  */
 
+const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
+
+/** 向后兼容：历史固定变量仍明确列出，但实际允许范围由 isHandEnvAllowed 判定。 */
 export const HAND_ENV_ALLOWLIST: readonly string[] = [
   'AZEROTH_TOKEN',
   'AZEROTH_API_URL',
 ] as const;
 
-const HAND_ENV_ALLOWLIST_SET = new Set<string>(HAND_ENV_ALLOWLIST);
+export const HAND_ENV_DENYLIST: readonly string[] = [
+  'BASH_ENV',
+  'ENV',
+  'HOME',
+  'IFS',
+  'LD_AUDIT',
+  'LD_LIBRARY_PATH',
+  'LD_PRELOAD',
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'PATH',
+  'PYTHONHOME',
+  'PYTHONPATH',
+  'RUBYOPT',
+  'SHELLOPTS',
+] as const;
 
-/**
- * 从任意 env 对象里挑出 allowlist 内的 key。undefined/空值全部剔除。
- * client（brain）序列化 wireRequest 前用，server（hand）反序列化后也用（防御纵深）。
- */
+const HAND_ENV_DENYLIST_SET = new Set<string>(HAND_ENV_DENYLIST);
+
 export function pickHandEnv(
   env: Record<string, string | undefined> | undefined | null,
 ): Record<string, string> {
   if (!env) return {};
   const result: Record<string, string> = {};
-  for (const key of HAND_ENV_ALLOWLIST) {
-    const v = env[key];
-    if (typeof v === 'string' && v.length > 0) {
-      result[key] = v;
-    }
+  for (const [key, value] of Object.entries(env)) {
+    if (!isHandEnvAllowed(key)) continue;
+    if (typeof value !== 'string' || value.length === 0) continue;
+    result[key] = value;
   }
   return result;
 }
 
-/** 判定某个 key 是否在 wire env allowlist 内。给测试与 debug 用。 */
 export function isHandEnvAllowed(key: string): boolean {
-  return HAND_ENV_ALLOWLIST_SET.has(key);
+  return ENV_NAME_RE.test(key) && !HAND_ENV_DENYLIST_SET.has(key);
 }

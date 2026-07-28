@@ -297,10 +297,11 @@ export class HttpSecretVault implements SecretVault {
 
   async getSecret(ref: SecretRef | string, caller: VaultCaller): Promise<string> {
     const id = refId(ref);
-    const cached = this.readCache(id);
+    const cacheKey = this.cacheKey(id, caller);
+    const cached = this.readCache(cacheKey);
     if (cached !== undefined) return cached;
     const result = await this.post<{ value: string }>('/secrets/resolve', { ref: id, caller });
-    this.writeCache(id, result.value);
+    this.writeCache(cacheKey, result.value);
     return result.value;
   }
 
@@ -322,8 +323,24 @@ export class HttpSecretVault implements SecretVault {
    * revoke 后可调本方法，避免本地 cache 命中 stale plaintext。无 entry 时静默。
    */
   invalidate(ref: SecretRef | string): void {
-    const id = refId(ref);
-    this.cache.delete(id);
+    this.invalidateCache(refId(ref));
+  }
+
+  private cacheKey(id: string, caller: VaultCaller): string {
+    return [
+      id,
+      caller.actor,
+      caller.userId ?? '',
+      caller.tenantId ?? '',
+      [...(caller.scopes ?? [])].sort().join(','),
+    ].join('\u0000');
+  }
+
+  private invalidateCache(id: string): void {
+    const prefix = `${id}\u0000`;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) this.cache.delete(key);
+    }
   }
 
   private readCache(id: string): string | undefined {

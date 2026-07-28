@@ -325,7 +325,7 @@ describe('HttpTransport.invoke', () => {
     });
   });
 
-  it('strips non-allowlist keys returned by envResolver', async () => {
+  it('forwards standard connector env and strips process-loading keys', async () => {
     let captured: string = '';
     const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
       captured = init?.body as string;
@@ -337,20 +337,26 @@ describe('HttpTransport.invoke', () => {
       baseUrl: 'http://h',
       authToken: 'secret-token-12345',
       fetchImpl,
-      envResolver: () => ({
-        AZEROTH_TOKEN: 'pat_x',
-        // 这些不在 allowlist 里，必须被剥除
-        ANTHROPIC_API_KEY: 'sk-ant-xxx',
-        GH_TOKEN: 'ghp-xxx',
-        FOO_BAR: 'baz',
-      }),
+      envResolver: () => ({ AZEROTH_TOKEN: 'pat_x' }),
     });
-    await transport.invoke(buildRequest());
+    const request = buildRequest();
+    request.context.env = {
+      ANTHROPIC_API_KEY: 'sk-ant-xxx',
+      GH_TOKEN: 'ghp-xxx',
+      FOO_BAR: 'baz',
+      PATH: '/tmp/evil',
+      NODE_OPTIONS: '--require /tmp/evil.js',
+    };
+    await transport.invoke(request);
     const body = JSON.parse(captured) as WireToolInvocationRequest;
-    expect(body.context.env).toEqual({ AZEROTH_TOKEN: 'pat_x' });
-    expect(body.context.env).not.toHaveProperty('ANTHROPIC_API_KEY');
-    expect(body.context.env).not.toHaveProperty('GH_TOKEN');
-    expect(body.context.env).not.toHaveProperty('FOO_BAR');
+    expect(body.context.env).toEqual({
+      AZEROTH_TOKEN: 'pat_x',
+      ANTHROPIC_API_KEY: 'sk-ant-xxx',
+      GH_TOKEN: 'ghp-xxx',
+      FOO_BAR: 'baz',
+    });
+    expect(body.context.env).not.toHaveProperty('PATH');
+    expect(body.context.env).not.toHaveProperty('NODE_OPTIONS');
   });
 
   it('omits context.env entirely when envResolver returns empty / undefined', async () => {

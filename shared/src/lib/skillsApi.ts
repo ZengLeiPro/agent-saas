@@ -152,12 +152,52 @@ export async function deleteCustomSkill(username: string, skillId: string): Prom
   if (!res.ok) throw new Error(`删除自定义技能失败：${res.status}`);
 }
 
-export async function syncSkills(username?: string): Promise<void> {
+export interface SkillSyncBatch {
+  id: string;
+  tenantIds: string[];
+  status: 'queued' | 'running' | 'succeeded' | 'partial' | 'failed';
+  total: number;
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  changedSkills: number;
+  skippedSkills: number;
+  removedSkills: number;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+  discovered?: number;
+  pruned?: number;
+}
+
+export async function fetchSkillSyncJob(jobId: string): Promise<SkillSyncBatch> {
+  const res = await authFetch(`/api/skills/sync-jobs/${encodeURIComponent(jobId)}`);
+  if (!res.ok) throw new Error(`获取技能同步进度失败：${res.status}`);
+  return res.json() as Promise<SkillSyncBatch>;
+}
+
+export async function syncSkills(
+  username?: string,
+  onProgress?: (batch: SkillSyncBatch) => void,
+): Promise<SkillSyncBatch> {
   const url = username
     ? `/api/skills/sync?username=${encodeURIComponent(username)}`
     : '/api/skills/sync';
   const res = await authFetch(url, { method: 'POST' });
   if (!res.ok) throw new Error(`同步技能失败：${res.status}`);
+  let batch = await res.json() as SkillSyncBatch;
+  onProgress?.(batch);
+  while (batch.status === 'queued' || batch.status === 'running') {
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+    batch = await fetchSkillSyncJob(batch.id);
+    onProgress?.(batch);
+  }
+  if (batch.status !== 'succeeded') {
+    throw new Error(batch.error || `技能同步失败：${batch.failed}/${batch.total}`);
+  }
+  return batch;
 }
 
 async function importSkillTo(url: string, files: File[]): Promise<SkillImportResponse> {

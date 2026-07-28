@@ -34,7 +34,7 @@ import { dirname, isAbsolute, resolve } from 'path';
 import { createLogger, type Logger } from '../utils/logger.js';
 import { requestContextStorage } from '../utils/requestContext.js';
 import { rotateIfNeeded } from '../utils/fileRotation.js';
-import { resolveUserCwd, ensureUserWorkspace, refreshUserWorkspace } from '../workspace/resolver.js';
+import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentPath, resolveAgentPath } from '../workspace/namespace.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import { getUserExtraDirs, type UserOverrides } from '../security/extraDirs.js';
@@ -335,26 +335,8 @@ export function createMiddlewareRunDispatch(
             tenantId: context.user.tenantId,
           }, undefined, options.skillConfigStore, options.tenantSkillsRootDir);
 
-          // 迁移已有用户：确保 symlink 与模板同步 + 版本驱动的 skill 同步
-          // 注：refreshUserWorkspace 第 4 参数已废弃（writeMemory 内部 _isAdmin 未使用），
-          // 但为了语义清晰仍传 isPlatformAdmin。
           const isPlatformAdmin = context.user.role === 'admin'
             && context.user.tenantId === DEFAULT_TENANT_ID;
-          refreshUserWorkspace(
-            userCwd,
-            options.globalAgentCwd,
-            options.sharedDir!,
-            isPlatformAdmin,
-            {
-              id: context.user.id,
-              username: context.user.username,
-              role: context.user.role as 'admin' | 'user',
-              tenantId: context.user.tenantId,
-            },
-            { realName: context.user.realName },
-            options.skillConfigStore,
-            options.tenantSkillsRootDir,
-          );
 
           effectiveOptions = { ...effectiveOptions, cwd: userCwd };
 
@@ -371,7 +353,7 @@ export function createMiddlewareRunDispatch(
           // 组织 admin 跟普通 user 一样走 sandbox + userOverrides，且不能动 skills-pool
           // （skills-pool 是平台资源）。组织 admin 的业务能力（同组织 CRUD 等）由路由层
           // requireAdmin / requirePlatformAdmin 中间件独立管控，不受此处变更影响。
-          // 兼容：isPlatformAdmin 已在上方为 refreshUserWorkspace 计算，此处复用。
+          // isPlatformAdmin 仅用于 filesystem sandbox 与共享目录边界。
 
           // additionalDirectories 授予共享目录的访问权限
           // 平台 admin：skills-pool（直接操作 pool）+ scripts

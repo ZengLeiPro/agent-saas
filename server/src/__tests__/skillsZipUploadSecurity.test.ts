@@ -9,7 +9,7 @@
  *
  * 本文件覆盖两块此前零测试的逻辑：
  *   K2 —— zip 上传安全过滤（symlink 旁路 / 字面 ../ 家族 / 绝对路径 / 合法 zip）
- *   K1 —— moveSkillIntoPlace 的 EXDEV 降级复制与失败清理（renameSync 抛 EXDEV）
+ *   K1 —— moveSkillIntoPlace 的 EXDEV 异步降级复制与失败隔离（rename 抛 EXDEV）
  *
  * 与邻近 skillsRoutesCoverage.test.ts / skillsRouterTenantIsolation.test.ts 同范式：
  * 真 express + 真 fetch + 真文件系统 pool + in-memory store。
@@ -19,29 +19,29 @@ import express from 'express';
 import type { Server } from 'node:http';
 import { crc32 } from 'node:zlib';
 
-// ── K1 需要拦截 skills.ts 内 `import { renameSync, cpSync } from 'node:fs'` ──
+// ── K1 需要拦截 skills.ts 内 `import { rename, cp } from 'node:fs/promises'` ──
 // 用 importOriginal 保留所有真实 fs 函数（rig / mkdtemp / writeFile 等仍走真实实现），
 // 仅在 per-test 标志置位时让 renameSync 抛 EXDEV / cpSync 抛错，模拟跨文件系统场景。
 let renameShouldThrowExdev = false;
 let cpShouldThrow = false;
-const cpSyncSpy = vi.fn();
-vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
+const cpSpy = vi.fn();
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...actual,
-    renameSync: (...args: Parameters<typeof actual.renameSync>) => {
+    rename: async (...args: Parameters<typeof actual.rename>) => {
       if (renameShouldThrowExdev) {
         throw Object.assign(new Error('EXDEV: cross-device link not permitted'), { code: 'EXDEV' });
       }
-      return actual.renameSync(...args);
+      return actual.rename(...args);
     },
-    cpSync: ((...args: Parameters<typeof actual.cpSync>) => {
-      cpSyncSpy(...args);
+    cp: (async (...args: Parameters<typeof actual.cp>) => {
+      cpSpy(...args);
       if (cpShouldThrow) {
         throw Object.assign(new Error('ENOSPC: no space left'), { code: 'ENOSPC' });
       }
-      return actual.cpSync(...args);
-    }) as typeof actual.cpSync,
+      return actual.cp(...args);
+    }) as typeof actual.cp,
   };
 });
 
@@ -218,7 +218,7 @@ describe('skills zip 上传安全（K2 symlink 旁路 + 路径过滤）', () => 
   beforeEach(async () => {
     renameShouldThrowExdev = false;
     cpShouldThrow = false;
-    cpSyncSpy.mockClear();
+    cpSpy.mockClear();
     h = await makeRig();
     h.setCaller(KAIYAN_USER);
   });
@@ -288,7 +288,7 @@ describe('moveSkillIntoPlace EXDEV 降级（K1）', () => {
   beforeEach(async () => {
     renameShouldThrowExdev = false;
     cpShouldThrow = false;
-    cpSyncSpy.mockClear();
+    cpSpy.mockClear();
     h = await makeRig();
     h.setCaller(KAIYAN_USER);
   });
@@ -304,22 +304,22 @@ describe('moveSkillIntoPlace EXDEV 降级（K1）', () => {
     return form;
   }
 
-  it('renameSync 抛 EXDEV → 降级 cpSync 成功，skill 正常落盘 200', async () => {
+  it('rename 抛 EXDEV → 降级异步 cp 成功，skill 正常落盘 200', async () => {
     renameShouldThrowExdev = true;
     const res = await h.request('/api/skills/me/import', { method: 'POST', body: legitMultipartForm('xdevok') });
     expect(res.status).toBe(200);
-    expect(cpSyncSpy).toHaveBeenCalled();
+    expect(cpSpy).toHaveBeenCalled();
     const installed = join(h.userSkillsDir, 'xdevok');
     expect(existsSync(join(installed, 'SKILL.md'))).toBe(true);
   });
 
-  it('EXDEV 后 cpSync 抛错 → 清理半份 targetDir 并 500（不误报 200/409）', async () => {
+  it('EXDEV 后 cp 抛错 → targetDir 不占位并 500（不误报 200/409）', async () => {
     renameShouldThrowExdev = true;
     cpShouldThrow = true;
     const res = await h.request('/api/skills/me/import', { method: 'POST', body: legitMultipartForm('xdevfail') });
     expect(res.status).toBe(500);
     expect((await res.json() as { error: string }).error).toBe('导入技能失败');
-    // 半份目录必须被 rmSync 清掉，避免重传时误报 409
+    // 半份目录必须离开正式路径，避免重传时误报 409
     const installed = join(h.userSkillsDir, 'xdevfail');
     expect(existsSync(installed)).toBe(false);
   });

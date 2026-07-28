@@ -326,15 +326,30 @@ describe('skillsApi', () => {
   });
 
   describe('syncSkills', () => {
+    const completedBatch = {
+      id: 'job-1',
+      tenantIds: ['kaiyan'],
+      status: 'succeeded',
+      total: 1,
+      queued: 0,
+      running: 0,
+      succeeded: 1,
+      failed: 0,
+      changedSkills: 1,
+      skippedSkills: 0,
+      removedSkills: 0,
+      createdAt: '2026-07-29T00:00:00.000Z',
+    };
+
     it('无 username 时 POST /api/skills/sync', async () => {
-      mockAuthFetch.mockResolvedValue(ok());
+      mockAuthFetch.mockResolvedValue(ok(completedBatch));
       await syncSkills();
       expect(lastCall().url).toBe('/api/skills/sync');
       expect(lastCall().init.method).toBe('POST');
     });
 
     it('带 username 时拼 query（encode）', async () => {
-      mockAuthFetch.mockResolvedValue(ok());
+      mockAuthFetch.mockResolvedValue(ok(completedBatch));
       await syncSkills('bob smith');
       expect(lastCall().url).toBe('/api/skills/sync?username=bob%20smith');
     });

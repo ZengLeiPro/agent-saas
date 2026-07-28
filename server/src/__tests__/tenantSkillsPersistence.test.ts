@@ -5,7 +5,8 @@ import { join } from 'node:path';
 
 import { SkillConfigStore } from '../data/skills/store.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
-import { resolveUserCwd, syncSkills } from '../workspace/resolver.js';
+import { resolveUserCwd } from '../workspace/resolver.js';
+import { SkillWorkspaceMaterializer } from '../workspace/materialization/materializer.js';
 
 describe('tenant-owned skills persistence root', () => {
   let tmpRoot: string;
@@ -13,6 +14,24 @@ describe('tenant-owned skills persistence root', () => {
   let tenantSkillsRootDir: string;
   let agentCwd: string;
   let store: SkillConfigStore;
+
+  const materialize = async (
+    user: { id: string; username: string; role: 'user'; tenantId: string },
+    requiredSkillIds: readonly string[] = [],
+  ) => {
+    const userCwd = resolveUserCwd(agentCwd, user);
+    await new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      tenantSkillsRootDir,
+      skillConfigStore: store,
+    }).materialize({
+      taskId: `task-${Math.random()}`,
+      user,
+      userCwd,
+      requiredSkillIds,
+    });
+  };
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'tenant-skills-persist-'));
@@ -45,7 +64,7 @@ describe('tenant-owned skills persistence root', () => {
     );
 
     await store.setUserSelectedSkills('demo', ['daily-follow-up-plan']);
-    syncSkills(userCwd, sharedDir, user, store, tenantSkillsRootDir);
+    await materialize(user);
 
     const copied = join(userCwd, '.ky-agent', 'skills', 'daily-follow-up-plan', 'SKILL.md');
     expect(existsSync(copied)).toBe(true);
@@ -64,7 +83,7 @@ describe('tenant-owned skills persistence root', () => {
     );
 
     await store.setUserSelectedSkills('demo', ['release-only']);
-    syncSkills(userCwd, sharedDir, user, store, tenantSkillsRootDir);
+    await materialize(user);
 
     expect(existsSync(join(userCwd, '.ky-agent', 'skills', 'release-only'))).toBe(false);
   });
@@ -87,7 +106,7 @@ describe('tenant-owned skills persistence root', () => {
     });
     await store.setUserSelectedSkills('demo', []);
 
-    syncSkills(userCwd, sharedDir, user, store, tenantSkillsRootDir, ['browser', 'wain-kb']);
+    await materialize(user, ['browser', 'wain-kb']);
 
     expect(existsSync(join(userCwd, '.ky-agent', 'skills', 'browser', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(userCwd, '.ky-agent', 'skills', 'wain-kb', 'SKILL.md'))).toBe(true);

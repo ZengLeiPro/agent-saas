@@ -4,9 +4,10 @@
 import * as fs from "node:fs/promises";
 import { getTranscriptPath } from "../data/transcripts/store.js";
 import { updateSessionMeta } from "../data/transcripts/meta.js";
-import { resolveUserCwd, ensureUserWorkspace, refreshUserWorkspace } from "../workspace/resolver.js";
+import { resolveUserCwd, ensureUserWorkspace } from "../workspace/resolver.js";
 import type { ResolvedModel } from "../app/models.js";
 import type { SkillConfigStore } from "../data/skills/store.js";
+import type { SkillMaterializationCoordinator } from "../workspace/materialization/types.js";
 import type { UserPreferences } from "../data/users/types.js";
 import type {
   InboundMessage,
@@ -67,6 +68,8 @@ export interface ExecutorOptions {
   tokenUsageStore?: TokenUsageStore;
   /** Skill 配置 store（用于 cron owner workspace 同步用户/组织 skill） */
   skillConfigStore?: SkillConfigStore;
+  /** cron dispatch 前保证 owner workspace 的技能与脚本已完成异步物化。 */
+  skillMaterialization?: Pick<SkillMaterializationCoordinator, "ensureReady">;
   /** 线上上传的组织自有 skill 持久化根目录 */
   tenantSkillsRootDir?: string;
   /** 用户活动聚合服务（memory_poll 系统任务的「无活动跳过」预检；未配置时预检跳过任务） */
@@ -239,18 +242,7 @@ async function executeAgentTurn(
       opts.skillConfigStore,
       opts.tenantSkillsRootDir,
     );
-    if (opts.skillConfigStore) {
-      refreshUserWorkspace(
-        effectiveAgentCwd,
-        opts.agentCwd,
-        opts.sharedDir,
-        false,
-        workspaceUser,
-        undefined,
-        opts.skillConfigStore,
-        opts.tenantSkillsRootDir,
-      );
-    }
+    await opts.skillMaterialization?.ensureReady(owner.username, [], "cron");
   }
 
   let output = "";

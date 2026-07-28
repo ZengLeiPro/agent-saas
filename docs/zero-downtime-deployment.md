@@ -220,36 +220,34 @@ drain 进行中收到 SIGTERM（例如部署脚本降级路径的 `systemctl sto
 
 ## 7. skills 同步机制
 
-旧的「启动无条件全量 syncSkills」（16 用户实测约 165s，阻塞 listen）已拆掉，
-替代方案是**内容指纹 → configVersion → 版本化同步**
-（`server/src/data/skills/contentFingerprint.ts`、`server/src/app/runtime.ts`）：
+旧的同步 `syncSkills` 已从生产路径和 resolver 中删除。当前链路是
+**异步内容指纹 → PG 持久队列 → 逐技能摘要增量物化**：
 
-1. **启动同步段（快，配置级）**：`syncWithPool` 补全配置 +
-   `computeSkillsContentFingerprint` 比对指纹。指纹变化（通常随新 release 携带
-   skill 内容变更）→ `setPoolContentHashSync` 落盘新指纹并 bump
-   `configVersion`。指纹基于文件内容而非 mtime，所以 no-op 部署/重启不触发
-   全用户复制风暴。两类来源不同取证策略：
-   - pool（随 release 打包，tar 后 mtime 必变）：相对路径 + 文件内容 sha256，
-     同内容跨 release 稳定；pool 都是小文件且在本地盘，全量读代价可忽略；
-   - 租户自有 skill 目录（共享数据盘，不随 release 重建，可能含大参考文件）：
-     相对路径 + size + mtimeMs，避免每次启动在 NAS 上全量读大文件。
-2. **物化：三条版本化同步路径**，都以「用户 workspace 的 `.skills-version` <
-   `configVersion`」为触发条件：
-   - **启动后台 warmup**（listen 后经 `runDeferredStartupTasks` 执行的
-     `skills-warmup` 任务）：逐用户版本检查物化 + prune 幽灵条目 + 写版本标记，
-     逐用户 yield 事件循环避免饿死在线请求；进度经 `/api/healthz/ready` 的
-     `warmup` 字段暴露，部署门禁软等 `done`；
-   - **dispatch 时 `refreshUserWorkspace`**（`server/src/engine/dispatch.ts`）：
-     用户发起会话时版本检查兜底——正确性不依赖 warmup 完成，这就是 warmup
-     只是软门禁的原因；
-   - **cron 执行时 `refreshUserWorkspace`**（`server/src/cron/executor.ts`）：
-     定时任务触发前同样做版本检查。
+1. **启动配置段**只执行 `syncWithPool`。listen 后的 deferred warmup 使用
+   `computeSkillsContentFingerprintAsync`；指纹变化才 bump `configVersion`。
+   no-op 发布沿用原 manifest，不创建全用户物化任务。
+2. **统一入口**为 `SkillMaterializationService.ensureReady()`：
+   - startup reconcile 只把未就绪 workspace 入队；
+   - Agent 在工具清单装配前等待当前用户的高优任务；
+   - Cron 在 owner workspace 初始化后执行同一 preflight；
+   - 管理端 `POST /api/skills/sync` 立即返回 202，Web 轮询批次状态。
+3. **物化语义**：
+   - 每个来源技能计算独立 SHA-256，workspace 记录
+     `.ky-agent/skills-state.json`；
+   - 只复制 digest 变化的技能，未变化目录不重写；
+   - 新目录先在同一 workspace staging 完整复制、验摘要、异步修权限，再以
+     backup/rename 提交；撤销和失败副本移入可恢复区，不做 delete-first；
+   - skills 与 scripts 的复制、递归扫描和权限修复全部使用 `fs/promises`，
+     worker 全局串行，不能阻塞 HTTP/WS 事件循环。
+4. **蓝绿并发**：
+   - 队列任务带 `sourceRevision`，每个 release 只领取自己的任务；
+   - 两个 release 写同一 workspace 前必须取得 PG advisory lock；
+   - 取得锁后重新读取 manifest，旧 `configVersion` 不得覆盖新版本；
+   - worker claim 使用 `FOR UPDATE SKIP LOCKED` 和租约，异常退出后可恢复。
 
-跨实例窄竞态：`skills-config.json` 与用户 workspace 都在共享盘上，但
-`SkillConfigStore` 的 mutation 串行化只在**进程内**（`store.ts` 的
-mutationChain）。蓝绿并存期两实例各持一份内存态，可能并发读写同一份
-skills-config.json / 并发对同一用户 `syncSkills`，存在短暂的版本感知不一致。
-窗口只在部署重叠的几分钟内，且任何一次后续 dispatch 的版本检查都会收敛，接受。
+新表只做 `CREATE TABLE/ADD COLUMN/CREATE INDEX IF NOT EXISTS`，旧 release
+完全忽略，符合 N/N+1 expand 纪律。首轮 backup 不自动清理；如需回收必须按
+批量删除红线另行列清单确认。
 
 ## 8. 数据库迁移纪律（红线）
 

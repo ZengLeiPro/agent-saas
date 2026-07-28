@@ -2,7 +2,10 @@ import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { computeSkillsContentFingerprint } from '../data/skills/contentFingerprint.js';
+import {
+  computeSkillsContentFingerprint,
+  computeSkillsContentFingerprintAsync,
+} from '../data/skills/contentFingerprint.js';
 
 /**
  * skills 内容指纹单测（2026-07-15 零停机部署批次）。
@@ -98,8 +101,39 @@ describe('computeSkillsContentFingerprint', () => {
     expect(computeSkillsContentFingerprint(poolDir, tenantsRoot)).not.toBe(withTenant);
   });
 
+  it('共享 scripts 使用内容摘要，内容变化触发指纹而单纯 mtime 变化不触发', () => {
+    const root = makeTmp();
+    const poolDir = seedPool(root);
+    const scriptsDir = join(root, 'scripts');
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, 'helper.sh'), '#!/bin/sh\n');
+    const before = computeSkillsContentFingerprint(poolDir, undefined, scriptsDir);
+
+    utimesSync(join(scriptsDir, 'helper.sh'), new Date(), new Date(Date.now() + 60_000));
+    expect(computeSkillsContentFingerprint(poolDir, undefined, scriptsDir)).toBe(before);
+
+    writeFileSync(join(scriptsDir, 'helper.sh'), '#!/bin/sh\necho changed\n');
+    expect(computeSkillsContentFingerprint(poolDir, undefined, scriptsDir)).not.toBe(before);
+  });
+
   it('handles missing directories without throwing', () => {
     const root = makeTmp();
     expect(() => computeSkillsContentFingerprint(join(root, 'nope'), join(root, 'nope2'))).not.toThrow();
+  });
+
+  it('异步生产实现与原同步口径完全一致', async () => {
+    const root = makeTmp();
+    const poolDir = seedPool(root);
+    const tenantsRoot = join(root, 'tenant-skills');
+    const scriptsDir = join(root, 'scripts');
+    mkdirSync(join(tenantsRoot, 'wain', 'wain-kb'), { recursive: true });
+    writeFileSync(join(tenantsRoot, 'wain', 'wain-kb', 'SKILL.md'), '# kb\n');
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, 'helper.sh'), '#!/bin/sh\n');
+
+    await expect(computeSkillsContentFingerprintAsync(poolDir, tenantsRoot, scriptsDir))
+      .resolves.toBe(computeSkillsContentFingerprint(poolDir, tenantsRoot, scriptsDir));
+    await expect(computeSkillsContentFingerprintAsync(join(root, 'missing')))
+      .resolves.toBe(computeSkillsContentFingerprint(join(root, 'missing')));
   });
 });

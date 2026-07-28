@@ -6,23 +6,22 @@
  */
 
 import { createHash } from 'crypto';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, lstatSync, renameSync, readdirSync, cpSync, rmSync, unlinkSync, statSync } from 'fs';
-import { join, basename, resolve } from 'path';
-import { execSync } from 'child_process';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, renameSync } from 'fs';
+import { cp, lstat, mkdir } from 'node:fs/promises';
+import { join, resolve } from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'node:util';
 import { serverLogger } from '../utils/logger.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
-import { scanTenantOwnSkillIds } from '../data/skills/scanner.js';
 import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
-import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import {
   agentDir,
   agentPath,
-  agentScriptsDir,
-  agentSkillsDir,
-  resolveAgentPath,
   WORKSPACE_META_FILE,
 } from './namespace.js';
-import { ensureWorkspaceRuntimeLayout, repairWorkspacePath, repairWorkspaceTree } from './permissions.js';
+import { ensureWorkspaceRuntimeLayout, repairWorkspacePath } from './permissions.js';
+
+const execFileAsync = promisify(execFile);
 
 export interface WorkspaceUser {
   id: string;
@@ -76,7 +75,8 @@ export function resolveTenantCwd(globalAgentCwd: string, tenantSlug: string): st
 /**
  * 首次使用时初始化用户工作目录结构
  *
- * 创建目录、同步 skills、建立 scripts symlink、生成配置文件。
+ * 创建目录并生成用户文件。skills/scripts 由独立异步物化 worker 在首次 dispatch
+ * 前补齐，避免注册、登录或普通会话路径阻塞 Node 事件循环。
  * 幂等操作——目录已存在则跳过。
  */
 export async function ensureUserWorkspace(
@@ -111,11 +111,18 @@ export async function ensureUserWorkspace(
     }
   }
 
-  // 如果用户目录已存在，仍要修复 runtime layout / owner，避免历史 root-owned 目录阻断 ACS。
+  // 已存在 workspace 的热路径只做浅层目录/owner 校验。递归修复由显式迁移和
+  // 异步物化负责，不能在每次 dispatch 上扫 memory/skills/scripts 全树。
   if (existsSync(agentDir(userCwd))) {
     writeWorkspaceMeta(userCwd, user);
-    syncScripts(userCwd, sharedDir);
-    ensureWorkspaceRuntimeLayout(userCwd);
+    ensureWorkspaceRuntimeLayout(userCwd, { deepRepair: false });
+    // 历史 workspace 的轻量一次性补全仍需保留；重型浏览器种子复制和 venv
+    // 创建改用异步 I/O，不能为了移除技能同步顺带丢掉既有迁移职责。
+    writePersona(userCwd, sharedDir, user, meta);
+    writeQuestions(userCwd, sharedDir);
+    writePackageJson(userCwd);
+    await ensureBrowserProfile(userCwd, sharedDir);
+    await ensureVenv(userCwd);
     return;
   }
 
@@ -131,22 +138,13 @@ export async function ensureUserWorkspace(
   // 浏览器 profile 隔离目录（权限 700）
   // CDP 模式下 browser.ts 会用 --user-data-dir 指向此目录
   // 首次创建时从种子模板复制初始指纹（语言、窗口大小、First Run 标记等），避免空白 profile 被反爬拦截
-  const browserProfile = agentPath(userCwd, 'runtime', 'browser-profile');
-  if (!existsSync(browserProfile)) {
-    const seedDir = join(sharedDir, '.browser-profile-seed');
-    if (existsSync(seedDir)) {
-      cpSync(seedDir, browserProfile, { recursive: true });
-    } else {
-      mkdirSync(browserProfile, { recursive: true });
-    }
-  }
-  repairWorkspacePath(browserProfile, 0o700);
+  await ensureBrowserProfile(userCwd, sharedDir);
 
   // 放置空 package.json 防止 npm install 向上逃逸到项目根目录
   writePackageJson(userCwd);
 
   // Python venv（所有用户共用同一套规范）
-  ensureVenv(userCwd);
+  await ensureVenv(userCwd);
 
   // 新用户：自动继承所有当前可见的 pool skills
   if (skillConfigStore && user) {
@@ -160,16 +158,6 @@ export async function ensureUserWorkspace(
         await skillConfigStore.setUserSelectedSkills(user.username, tenantSkills);
       }
     }
-  }
-
-  // 同步 skills（从 pool 按配置分配）+ scripts
-  syncSkills(userCwd, sharedDir, user, skillConfigStore, tenantSkillsRootDir);
-  syncScripts(userCwd, sharedDir);
-
-  // 写入初始版本标记
-  if (skillConfigStore) {
-    const versionFile = agentPath(userCwd, '.skills-version');
-    writeFileSync(versionFile, String(skillConfigStore.getConfigVersion()), 'utf-8');
   }
 
   // MEMORY.md：创建初始内容
@@ -187,205 +175,6 @@ export async function ensureUserWorkspace(
 // ============================================
 // Internal helpers
 // ============================================
-
-/**
- * 从 skills-pool 按用户角色同步 skill 到用户目录。
- * 系统 skill 全量覆盖，用户自建 skill 和 .system/ 不触碰。
- */
-export function syncSkills(
-  userCwd: string,
-  sharedDir: string,
-  user?: WorkspaceUser,
-  skillConfigStore?: SkillConfigStore,
-  tenantSkillsRootDir?: string,
-  orgAgentSkills: readonly string[] = [],
-): void {
-  const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
-  const userSkillsDir = agentSkillsDir(userCwd);
-
-  if (!existsSync(poolDir)) {
-    serverLogger.warn(`Skills pool not found: ${poolDir}`);
-    return;
-  }
-
-  // 确保用户 skills 目录存在（可能是首次创建，也可能已是真实目录）
-  mkdirSync(userSkillsDir, { recursive: true });
-
-  const username = user?.username || basename(userCwd);
-
-  // 获取 pool 中所有 skill 名（排除 _ 开头的文件如 _manifest.json）
-  const poolSkills = new Set(
-    readdirSync(poolDir).filter(d => {
-      if (d.startsWith('_') || d.startsWith('.')) return false;
-      try { return statSync(join(poolDir, d)).isDirectory(); } catch { return false; }
-    })
-  );
-
-  // 租户自有 skill 源目录与现存 ids（与 pool 同名的被 shadow，pool 优先）
-  let tenantSkillsSrcDir: string | null = null;
-  let tenantOwnIds = new Set<string>();
-  if (skillConfigStore && user?.tenantId) {
-    try {
-      tenantSkillsSrcDir = tenantSkillsRootDir
-        ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, user.tenantId)
-        : resolveTenantSkillsDir(sharedDir, user.tenantId);
-      tenantOwnIds = scanTenantOwnSkillIds(tenantSkillsSrcDir, poolSkills);
-    } catch {
-      // 非法 tenantId → 视为无租户层
-    }
-  }
-
-  // 计算该用户应有的 skill 集合
-  const targetSkills = new Set<string>();
-
-  if (skillConfigStore) {
-    // 新模式：从 SkillConfigStore 读取（pool + 租户自有两层）
-    for (const id of skillConfigStore.getUserEffectivePoolSkills(username, user?.tenantId)) {
-      targetSkills.add(id);
-    }
-    for (const id of skillConfigStore.getUserEffectiveTenantOwnSkills(username, user?.tenantId, tenantOwnIds)) {
-      targetSkills.add(id);
-    }
-    // 专职 Agent 绑定的 skill 是该 Agent 的固有能力，不依赖成员个人勾选。
-    // 这里仅做 workspace 物化，不写回 selectedSkills，避免污染个人 Agent 能力。
-    if (orgAgentSkills.length > 0) {
-      for (const id of skillConfigStore.getOrgAgentEffectivePoolSkills(user?.tenantId, orgAgentSkills)) {
-        if (poolSkills.has(id)) targetSkills.add(id);
-      }
-      for (const id of skillConfigStore.getOrgAgentEffectiveTenantOwnSkills(user?.tenantId, tenantOwnIds, orgAgentSkills)) {
-        targetSkills.add(id);
-      }
-    }
-  } else {
-    // 兼容回退：从旧 _manifest.json 读取
-    const manifestPath = join(poolDir, '_manifest.json');
-    if (!existsSync(manifestPath)) {
-      serverLogger.warn(`Skills manifest not found: ${manifestPath}`);
-      return;
-    }
-    let manifest: any;
-    try {
-      manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-    } catch (err) {
-      serverLogger.warn(`Failed to parse skills manifest: ${err}`);
-      return;
-    }
-    const userConfig = manifest.users[username];
-    const userRoles: string[] = userConfig?.roles || ['core'];
-    for (const role of userRoles) {
-      const skills = manifest.roles[role];
-      if (skills) {
-        for (const s of skills) targetSkills.add(s);
-      }
-    }
-  }
-
-  // 扫描用户当前 skills 目录
-  const existingDirs = readdirSync(userSkillsDir).filter(d => {
-    const p = join(userSkillsDir, d);
-    try { return statSync(p).isDirectory(); } catch { return false; }
-  });
-
-  // 已知的系统 skill ID 集合（pool 中存在的 + 曾经在配置中注册过的 + 本租户自有的）
-  const knownSystemSkills = new Set(poolSkills);
-  if (skillConfigStore) {
-    for (const id of Object.keys(skillConfigStore.getPoolVisibility())) {
-      knownSystemSkills.add(id);
-    }
-    for (const id of tenantOwnIds) knownSystemSkills.add(id);
-    if (user?.tenantId) {
-      // 已删除但规则条目尚未 prune 的租户自有 skill，也要清理用户残留副本
-      for (const id of Object.keys(skillConfigStore.getTenantOwnSkillRules(user.tenantId))) {
-        knownSystemSkills.add(id);
-      }
-    }
-  }
-
-  // 1. 删除多余的系统 skill：
-  //    - 在 pool 中存在但用户不该有的（角色/选择变更）
-  //    - pool 中已删除但用户残留的（通过 poolVisibility 历史记录识别）
-  for (const dir of existingDirs) {
-    if (knownSystemSkills.has(dir) && !targetSkills.has(dir)) {
-      rmSync(join(userSkillsDir, dir), { recursive: true, force: true });
-      serverLogger.info(`Removed skill '${dir}' from ${username} (not in target set)`);
-    }
-  }
-
-  // 2. 复制/覆盖系统 skill（源查找 pool 优先，其次租户自有目录）
-  for (const skill of targetSkills) {
-    const poolSrc = join(poolDir, skill);
-    const tenantSrc = tenantSkillsSrcDir ? join(tenantSkillsSrcDir, skill) : null;
-    const src = existsSync(poolSrc) ? poolSrc : (tenantSrc && existsSync(tenantSrc) ? tenantSrc : null);
-    const dst = join(userSkillsDir, skill);
-    if (!src) {
-      // pool 与租户目录都已不存在，删除用户残留副本
-      if (existsSync(dst)) {
-        rmSync(dst, { recursive: true, force: true });
-        serverLogger.info(`Removed stale skill '${skill}' from ${username} (no longer in pool/tenant dir)`);
-      }
-      continue;
-    }
-    // 删除旧的再复制（确保干净覆盖）
-    if (existsSync(dst)) {
-      rmSync(dst, { recursive: true, force: true });
-    }
-    cpSync(src, dst, {
-      recursive: true,
-      filter: (source) => {
-        const name = basename(source);
-        return name !== '__pycache__' && name !== '.DS_Store' && name !== 'node_modules';
-      },
-    });
-    repairWorkspaceTree(dst);
-  }
-
-  serverLogger.info(`Synced ${targetSkills.size} skills for ${username}`);
-}
-
-/**
- * 如果用户的 .ky-agent/skills 仍是软链接，迁移为真实目录。
- * 返回 true 表示发生了迁移（调用方应执行 syncSkills）。
- */
-function migrateSkillsSymlink(userCwd: string): boolean {
-  const skillsPath = agentSkillsDir(userCwd);
-  try {
-    if (existsSync(skillsPath) && lstatSync(skillsPath).isSymbolicLink()) {
-      unlinkSync(skillsPath); // 删除软链接
-      mkdirSync(skillsPath, { recursive: true }); // 创建真实目录
-      serverLogger.info(`Migrated skills symlink to real directory: ${skillsPath}`);
-      return true;
-    }
-  } catch (err) {
-    serverLogger.warn(`Failed to migrate skills symlink: ${err}`);
-  }
-  return false;
-}
-
-function syncScripts(userCwd: string, sharedDir: string): void {
-  const targetDir = resolveAgentPath(sharedDir, 'scripts');
-  const scriptsPath = agentScriptsDir(userCwd);
-
-  if (!existsSync(targetDir)) return;
-
-  try {
-    const existing = lstatSync(scriptsPath);
-    if (existing.isSymbolicLink()) {
-      unlinkSync(scriptsPath);
-    } else if (!existing.isDirectory()) {
-      serverLogger.warn(`Skip syncing scripts because path is not a directory: ${scriptsPath}`);
-      return;
-    }
-  } catch {
-    // scriptsPath 不存在，继续复制
-  }
-
-  try {
-    cpSync(targetDir, scriptsPath, { recursive: true, force: true });
-    repairWorkspaceTree(scriptsPath);
-  } catch (err) {
-    serverLogger.warn(`Failed to sync scripts: ${err}`);
-  }
-}
 
 function writeMemory(
   userCwd: string,
@@ -471,7 +260,7 @@ function writeWorkspaceMeta(userCwd: string, user?: WorkspaceUser): void {
  * 确保用户 workspace 内有可用的 Python venv。
  * 幂等——venv 已存在则跳过。
  */
-function ensureVenv(userCwd: string): void {
+async function ensureVenv(userCwd: string): Promise<void> {
   if (process.env.AGENT_SAAS_CREATE_WORKSPACE_VENV !== '1') return;
   const venvPath = agentPath(userCwd, 'runtime', 'venv');
   if (existsSync(join(venvPath, 'bin', 'python3'))) return;
@@ -483,11 +272,25 @@ function ensureVenv(userCwd: string): void {
   }
 
   try {
-    execSync(`"${pythonBin}" -m venv "${venvPath}"`, { timeout: 30_000 });
+    await execFileAsync(pythonBin, ['-m', 'venv', venvPath], { timeout: 30_000 });
     serverLogger.info(`Created Python venv at ${venvPath}`);
   } catch (err) {
     serverLogger.warn(`Failed to create Python venv at ${venvPath}: ${err}`);
   }
+}
+
+async function ensureBrowserProfile(userCwd: string, sharedDir: string): Promise<void> {
+  const browserProfile = agentPath(userCwd, 'runtime', 'browser-profile');
+  if (!await lstat(browserProfile).then(() => true).catch(() => false)) {
+    await mkdir(agentPath(userCwd, 'runtime'), { recursive: true });
+    const seedDir = join(sharedDir, '.browser-profile-seed');
+    if (await lstat(seedDir).then((info) => info.isDirectory()).catch(() => false)) {
+      await cp(seedDir, browserProfile, { recursive: true });
+    } else {
+      await mkdir(browserProfile, { recursive: true });
+    }
+  }
+  repairWorkspacePath(browserProfile, 0o700);
 }
 
 function writePackageJson(userCwd: string): void {
@@ -509,59 +312,4 @@ function safeUserPathSegment(userId: string): string {
   }
   const digest = createHash('sha256').update(userId).digest('base64url').slice(0, 20);
   return `u_${digest}`;
-}
-
-/**
- * 迁移已有用户工作目录：确保 symlink 与最新模板同步。
- */
-export function refreshUserWorkspace(
-  userCwd: string,
-  _globalAgentCwd: string,
-  sharedDir: string,
-  _isAdmin: boolean,
-  user?: WorkspaceUser,
-  meta?: WorkspaceUserMeta,
-  skillConfigStore?: SkillConfigStore,
-  tenantSkillsRootDir?: string,
-): void {
-  ensureWorkspaceRuntimeLayout(userCwd);
-
-  // 迁移旧的 skills 软链接为真实目录
-  const migrated = migrateSkillsSymlink(userCwd);
-
-  if (skillConfigStore) {
-    // 版本检查驱动的 skill 同步
-    const versionFile = agentPath(userCwd, '.skills-version');
-    const currentVersion = skillConfigStore.getConfigVersion();
-    let localVersion = 0;
-    try {
-      localVersion = parseInt(readFileSync(versionFile, 'utf-8').trim(), 10) || 0;
-    } catch { /* file not found or unreadable */ }
-
-    if (migrated || localVersion < currentVersion) {
-      syncSkills(userCwd, sharedDir, user, skillConfigStore, tenantSkillsRootDir);
-      writeFileSync(versionFile, String(currentVersion), 'utf-8');
-    }
-  } else if (migrated) {
-    // 兼容回退
-    syncSkills(userCwd, sharedDir, user);
-  }
-  syncScripts(userCwd, sharedDir);
-  writePersona(userCwd, sharedDir, user, meta);
-  writeQuestions(userCwd, sharedDir);
-  // 补全浏览器 profile 目录（老用户迁移：目录不存在时从种子模板复制）
-  const browserProfile = agentPath(userCwd, 'runtime', 'browser-profile');
-  if (!existsSync(browserProfile)) {
-    const seedDir = join(sharedDir, '.browser-profile-seed');
-    if (existsSync(seedDir)) {
-      cpSync(seedDir, browserProfile, { recursive: true });
-    } else {
-      mkdirSync(browserProfile, { recursive: true });
-    }
-    repairWorkspacePath(browserProfile, 0o700);
-  }
-  // Python venv（已有则跳过，existsSync 开销可忽略）
-  ensureVenv(userCwd);
-  writeWorkspaceMeta(userCwd, user);
-  ensureWorkspaceRuntimeLayout(userCwd);
 }

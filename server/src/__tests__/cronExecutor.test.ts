@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CronJob } from '../cron/types.js';
 import { SkillConfigStore } from '../data/skills/store.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
+import { SkillWorkspaceMaterializer } from '../workspace/materialization/materializer.js';
 
 const runAgentMock = vi.fn();
 
@@ -237,6 +238,19 @@ describe('cron executor', () => {
     );
     await writeFile(join(tenantSkillDir, 'scripts', 'run.md'), 'script body', 'utf-8');
     await skillConfigStore.setUserSelectedSkills('wain_user', ['daily-follow-up-plan']);
+    const workspaceUser = {
+      id: 'u-wain',
+      username: 'wain_user',
+      role: 'user' as const,
+      tenantId: 'wain',
+    };
+    const userCwd = join(agentCwd, 'wain', 'u-wain');
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      tenantSkillsRootDir,
+      skillConfigStore,
+    });
 
     runAgentMock.mockImplementation((_message: any, _context: any, _options: any, hooks: any) => (async function* () {
       await hooks?.onSessionStart?.('session-owned-skill', join(tmpRoot, 'session-owned-skill.jsonl'));
@@ -249,14 +263,18 @@ describe('cron executor', () => {
       agentCwd,
       sharedDir,
       userStore: {
-        findById: vi.fn(() => ({
-          id: 'u-wain',
-          username: 'wain_user',
-          role: 'user' as const,
-          tenantId: 'wain',
-        })),
+        findById: vi.fn(() => workspaceUser),
       },
       skillConfigStore,
+      skillMaterialization: {
+        ensureReady: vi.fn(async () => {
+          await materializer.materialize({
+            taskId: 'cron-test',
+            user: workspaceUser,
+            userCwd,
+          });
+        }),
+      },
       tenantSkillsRootDir,
     });
 

@@ -6,8 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   parseSkillFrontmatter,
   scanPoolSkills,
+  scanPoolSkillsAsync,
   scanTenantOwnSkillIds,
+  scanTenantOwnSkillIdsAsync,
   scanUserCustomSkills,
+  scanUserCustomSkillsAsync,
 } from '../data/skills/scanner.js';
 import { migrateFromManifest } from '../data/skills/migrate.js';
 import { SkillConfigStore } from '../data/skills/store.js';
@@ -131,6 +134,42 @@ describe('scanUserCustomSkills', () => {
     const metas = scanUserCustomSkills(dir, new Set(['poolskill']));
     expect(metas.map((m) => m.id)).toEqual(['valid']);
     expect(metas[0]).toEqual({ id: 'valid', name: 'Valid', description: 'v' });
+  });
+});
+
+describe('异步 scanner 与历史同步语义一致', () => {
+  it('pool、租户和用户三层扫描结果完全一致', async () => {
+    const root = makeTmp();
+    const pool = join(root, 'pool');
+    mkdirSync(join(pool, 'alpha'), { recursive: true });
+    writeFileSync(
+      join(pool, 'alpha', 'SKILL.md'),
+      '---\nname: Alpha\ndescription: a\n---',
+    );
+
+    const tenant = join(root, 'tenant');
+    mkdirSync(join(tenant, 'own'), { recursive: true });
+    mkdirSync(join(tenant, 'alpha'), { recursive: true });
+
+    const user = join(root, 'user');
+    mkdirSync(join(user, 'custom'), { recursive: true });
+    writeFileSync(
+      join(user, 'custom', 'SKILL.md'),
+      '---\nname: Custom\ndescription: c\n---',
+    );
+    mkdirSync(join(user, 'alpha'), { recursive: true });
+
+    expect(await scanPoolSkillsAsync(pool)).toEqual(scanPoolSkills(pool));
+    expect([
+      ...await scanTenantOwnSkillIdsAsync(tenant, new Set(['alpha'])),
+    ]).toEqual([
+      ...scanTenantOwnSkillIds(tenant, new Set(['alpha'])),
+    ]);
+    expect(
+      await scanUserCustomSkillsAsync(user, new Set(['alpha'])),
+    ).toEqual(
+      scanUserCustomSkills(user, new Set(['alpha'])),
+    );
   });
 });
 

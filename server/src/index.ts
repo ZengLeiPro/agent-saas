@@ -57,6 +57,9 @@ async function startServer(): Promise<void> {
   writePidFile();
   runtime = await createRuntime({ processCwd: process.cwd(), processRole });
   serverLogger.info(`Process role: ${processRole}`);
+  // 技能物化与 HTTP/WS/cron 解耦；PG 按 release 隔离消费者，并用 workspace
+  // advisory lock 防止蓝绿并发写同一用户目录。
+  runtime.startSkillMaterializationCoordinator();
   if (processRole === 'scheduler-only') {
     serverLogger.info('Scheduler-only process started; HTTP/WebSocket listeners are disabled');
     void runtime.runDeferredStartupTasks();

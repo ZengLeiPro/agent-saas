@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { serverLogger } from '../../utils/logger.js';
 import type { PoolSkillMeta } from './types.js';
@@ -68,6 +69,38 @@ function readSkillMeta(skillDir: string, dirName: string, strict = false): { nam
   return { name: dirName, description: '' };
 }
 
+async function readSkillMetaAsync(
+  skillDir: string,
+  dirName: string,
+  strict = false,
+): Promise<{ name: string; description: string } | null> {
+  for (const fileName of ['SKILL.md', `${dirName}.md`]) {
+    try {
+      const parsed = parseSkillFrontmatter(await readFile(join(skillDir, fileName), 'utf-8'));
+      if (parsed) return parsed;
+    } catch {
+      // 继续尝试下一种历史文档命名。
+    }
+  }
+  try {
+    const mdFiles = (await readdir(skillDir))
+      .filter((file) => file.endsWith('.md') && !file.startsWith('.'));
+    if (mdFiles.length === 1) {
+      const parsed = parseSkillFrontmatter(
+        await readFile(join(skillDir, mdFiles[0]), 'utf-8'),
+      );
+      if (parsed) return parsed;
+    }
+  } catch {
+    // 由 strict/fallback 规则统一收口。
+  }
+  if (strict) {
+    serverLogger.debug(`Skipping directory '${dirName}': no valid SKILL.md frontmatter found`);
+    return null;
+  }
+  return { name: dirName, description: '' };
+}
+
 /**
  * 扫描 skills-pool 目录，返回所有 pool skill 的元数据。
  */
@@ -88,6 +121,28 @@ export function scanPoolSkills(poolDir: string): PoolSkillMeta[] {
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/** 请求/后台路径使用的非阻塞版本；语义与 scanPoolSkills 完全一致。 */
+export async function scanPoolSkillsAsync(poolDir: string): Promise<PoolSkillMeta[]> {
+  let entries;
+  try {
+    entries = await readdir(poolDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const directories = entries
+    .filter((entry) => (
+      entry.isDirectory()
+      && !entry.name.startsWith('_')
+      && !entry.name.startsWith('.')
+    ))
+    .map((entry) => entry.name);
+  const skills = await Promise.all(directories.map(async (dirName) => ({
+    id: dirName,
+    ...(await readSkillMetaAsync(join(poolDir, dirName), dirName))!,
+  })));
+  return skills.sort((a, b) => a.id.localeCompare(b.id));
+}
+
 /**
  * 扫描租户自有 skill 目录（tenants/<tenantId>/skills/），返回现存 skill ID 集合。
  * 与 pool 同名的目录被 shadow（pool 优先），不返回。
@@ -100,6 +155,27 @@ export function scanTenantOwnSkillIds(tenantSkillsDir: string, poolSkillIds: Set
     if (poolSkillIds.has(d)) return false;
     try { return statSync(join(tenantSkillsDir, d)).isDirectory(); } catch { return false; }
   }));
+}
+
+/** 请求/后台路径使用的非阻塞版本；只扫描一级目录。 */
+export async function scanTenantOwnSkillIdsAsync(
+  tenantSkillsDir: string,
+  poolSkillIds: Set<string>,
+): Promise<Set<string>> {
+  let entries;
+  try {
+    entries = await readdir(tenantSkillsDir, { withFileTypes: true });
+  } catch {
+    return new Set();
+  }
+  return new Set(entries
+    .filter((entry) => (
+      entry.isDirectory()
+      && !entry.name.startsWith('.')
+      && !entry.name.startsWith('_')
+      && !poolSkillIds.has(entry.name)
+    ))
+    .map((entry) => entry.name));
 }
 
 /**
@@ -124,6 +200,33 @@ export function scanUserCustomSkills(
       if (!meta) return null;
       return { id: dirName, ...meta };
     })
+    .filter((item): item is PoolSkillMeta => item !== null)
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** 请求路径使用的非阻塞版本；严格 frontmatter 规则与同步版本一致。 */
+export async function scanUserCustomSkillsAsync(
+  userSkillsDir: string,
+  poolSkillIds: Set<string>,
+): Promise<PoolSkillMeta[]> {
+  let entries;
+  try {
+    entries = await readdir(userSkillsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const directories = entries
+    .filter((entry) => (
+      entry.isDirectory()
+      && !entry.name.startsWith('.')
+      && !poolSkillIds.has(entry.name)
+    ))
+    .map((entry) => entry.name);
+  const skills = await Promise.all(directories.map(async (dirName) => {
+    const meta = await readSkillMetaAsync(join(userSkillsDir, dirName), dirName, true);
+    return meta ? { id: dirName, ...meta } : null;
+  }));
+  return skills
     .filter((item): item is PoolSkillMeta => item !== null)
     .sort((a, b) => a.id.localeCompare(b.id));
 }

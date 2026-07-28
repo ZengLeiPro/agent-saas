@@ -21,6 +21,7 @@ export function useSkillAdmin() {
   const [customData, setCustomData] = useState<CustomSkillsResponse | null>(cachedCustom);
   const [loading, setLoading] = useState(cachedPool === null);
   const [error, setError] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<{ completed: number; total: number } | null>(null);
 
   const refreshPool = useCallback(async () => {
     try {
@@ -88,8 +89,17 @@ export function useSkillAdmin() {
   }, [refreshCustom]);
 
   const handleSync = useCallback(async (username?: string) => {
-    await syncSkillsApi(username);
-    await refresh();
+    try {
+      await syncSkillsApi(username, (batch) => {
+        setSyncProgress({
+          completed: batch.succeeded + batch.failed,
+          total: batch.total,
+        });
+      });
+      await refresh();
+    } finally {
+      setSyncProgress(null);
+    }
   }, [refresh]);
 
   return {
@@ -97,6 +107,7 @@ export function useSkillAdmin() {
     customData,
     loading,
     error,
+    syncProgress,
     refresh,
     updatePlatformSettings,
     promoteSkill: handlePromote,

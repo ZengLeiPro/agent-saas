@@ -55,6 +55,27 @@ function makeSession(overrides: Partial<RuntimeSessionRecord> = {}): RuntimeSess
   };
 }
 
+describe('collectRuntimeTooling 技能物化前置', () => {
+  it('即使 Skill 工具关闭，也先保证工作区技能与脚本已物化', async () => {
+    const calls: Array<{ username: string | undefined; requiredSkillIds: readonly string[] }> = [];
+    await collectRuntimeTooling(makeConfig({
+      toolControls: { tools: { Skill: { enabled: false } } },
+      skills: {
+        ensureReady: async (username, requiredSkillIds = []) => {
+          calls.push({ username, requiredSkillIds });
+        },
+        listForUser: () => [],
+        resolveSkillDir: () => null,
+      },
+    }), 'alice', undefined, ['required-skill']);
+
+    expect(calls).toEqual([{
+      username: 'alice',
+      requiredSkillIds: ['required-skill'],
+    }]);
+  });
+});
+
 
 describe('visibleWorkspaceCwd', () => {
   it('把 server-remote / server-container 的宿主 cwd 折叠成容器内固定 /workspace', () => {

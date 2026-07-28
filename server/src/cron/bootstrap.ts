@@ -37,6 +37,7 @@ export interface CreateCronRuntimeOptions {
   tenantStore?: TenantStore;
   tokenUsageStore?: TokenUsageStore;
   skillConfigStore?: SkillConfigStore;
+  skillMaterialization?: ExecutorOptions['skillMaterialization'];
   tenantSkillsRootDir?: string;
   /** memory_poll 系统任务（2026-07-14 批次）：活动预检 + 执行参数 */
   userActivityService?: ExecutorOptions['userActivityService'];
@@ -90,6 +91,7 @@ export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntim
       onSessionId: hooks?.onSessionId,
       tokenUsageStore: options.tokenUsageStore,
       skillConfigStore: options.skillConfigStore,
+      skillMaterialization: options.skillMaterialization,
       tenantSkillsRootDir: options.tenantSkillsRootDir,
       userActivityService: options.userActivityService,
       memoryPoll: options.memoryPoll,

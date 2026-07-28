@@ -33,6 +33,8 @@ import {
 
 export interface OrgAgentsRouterDeps {
   orgAgentStore: OrgAgentStore;
+  /** allowedSkills/audience/enabled 变化后使 workspace manifest 失效。 */
+  onSkillAssignmentsChanged?: () => Promise<void>;
   /** 图片头像落盘目录（缺省 ./data/org-agent-avatars，测试可不传） */
   orgAgentAvatarsDir?: string;
   /** 门禁模型链（reuse WebChannel 用的 getter；未装配 → gate-preview 503） */
@@ -344,6 +346,7 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
         guardrail: parsed.data.guardrail,
         enabled: parsed.data.enabled,
       }, user.username);
+      await deps.onSkillAssignmentsChanged?.();
       auditLog(req, 'org_agent_created', `${record.name}（${record.id}, tenant=${record.tenantId}）`);
       res.status(201).json(record);
     } catch (err) {
@@ -396,6 +399,13 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
         res.status(404).json({ error: '企业专家不存在' });
         return;
       }
+      if (
+        parsed.data.allowedSkills !== undefined
+        || parsed.data.audience !== undefined
+        || parsed.data.enabled !== undefined
+      ) {
+        await deps.onSkillAssignmentsChanged?.();
+      }
       const changed = Object.keys(parsed.data).join(', ');
       auditLog(req, 'org_agent_updated', `${updated.name}（${updated.id}${changed ? `, ${changed}` : ''}）`);
       res.json(updated);
@@ -410,6 +420,7 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
     if (!record) return;
     try {
       await orgAgentStore.remove(record.id);
+      await deps.onSkillAssignmentsChanged?.();
       removeAvatarFiles(record.id);
       auditLog(req, 'org_agent_deleted', `${record.name}（${record.id}）`);
       res.json({ ok: true });

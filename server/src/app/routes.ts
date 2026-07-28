@@ -695,6 +695,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           agentCwd,
           sharedDir,
           tenantSkillsRootDir: runtime.tenantSkillsRootDir,
+          skillMaterialization: runtime.skillMaterialization,
         }),
       );
     }
@@ -741,6 +742,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         createOrgAgentsRouter({
           orgAgentStore: runtime.orgAgentStore,
           orgAgentAvatarsDir: resolve(processCwd, "./data/org-agent-avatars"),
+          onSkillAssignmentsChanged: runtime.skillConfigStore
+            ? () => runtime.skillConfigStore!.touchConfigVersion()
+            : undefined,
         }),
       );
     }

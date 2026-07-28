@@ -249,6 +249,8 @@ export interface SkillsDispatchConfig {
   /** requiredSkillIds 由专职 Agent 提供，是独立于成员个人勾选的固有能力。 */
   listForUser(username: string | undefined, requiredSkillIds?: readonly string[]): SkillEntry[];
   resolveSkillDir(username: string | undefined, skill: string, requiredSkillIds?: readonly string[]): string | null;
+  /** 工具清单装配前完成该用户的增量物化；所有磁盘 I/O 在专用 async worker。 */
+  ensureReady?: (username: string | undefined, requiredSkillIds?: readonly string[]) => Promise<void>;
 }
 
 export interface RawRuntimeRunDispatchConfig {
@@ -1211,6 +1213,7 @@ export async function collectRuntimeTooling(
   // Skill 工具：注入 EffectiveSkillsResolver，SkillToolProvider.list(context) 会用它
   // 派生用户实际可用清单并拼进工具 description（模型注意力最集中的位置）。原
   // <available-skills> xml section 已废弃（2026-07-03）。
+  await config.skills?.ensureReady?.(username, requiredSkillIds);
   if (config.skills && isToolEnabled(config.toolControls, 'Skill')) {
     providers.push(new SkillToolProvider(buildRuntimeSkillsResolver(
       config.skills,

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { readdir as readdirAsync } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'path';
 import { serverLogger, configureLogger } from '../utils/logger.js';
 import type { AppConfig } from '../types/index.js';
 import {
@@ -85,7 +86,7 @@ import type { AgentOptionsConfig } from '../agent/options.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { ImageUnderstandingModelConfig } from '../runtime/imageUnderstanding.js';
-import { OrgAgentStore } from '../data/orgAgents/store.js';
+import { isAssignedToOrgAgent, OrgAgentStore } from '../data/orgAgents/store.js';
 import { PgGuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
 import { PgMessageFeedbackStore } from '../data/feedback/store.js';
 import { PgAppealStore } from '../data/appeals/index.js';
@@ -95,7 +96,7 @@ import type { MemoryIndexConfig } from '../memory/index/types.js';
 import { UserStore } from '../data/users/store.js';
 import type { UserInfo } from '../data/users/types.js';
 import { TenantStore } from '../data/tenants/store.js';
-import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
+import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
 import { tenantAccessErrorMessage, wrapDispatchWithTenantAccess } from '../data/tenants/access.js';
 import { AgentStore } from '../data/agents/store.js';
 import { GroupStore } from '../data/groups/store.js';
@@ -107,10 +108,20 @@ import { EgressDispatcherRegistry, createEgressFetch } from '../runtime/egressDi
 import type { EgressConfig } from '../runtime/egressPolicy.js';
 import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds, scanUserCustomSkills } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
-import { syncSkills, resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
+import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, agentPath, resolveAgentPath } from '../workspace/namespace.js';
 import { CronLeadership } from '../runtime/cronLeadership.js';
-import { computeSkillsContentFingerprint } from '../data/skills/contentFingerprint.js';
+import { computeSkillsContentFingerprintAsync } from '../data/skills/contentFingerprint.js';
+import { SkillWorkspaceMaterializer } from '../workspace/materialization/materializer.js';
+import { SkillMaterializationService } from '../workspace/materialization/service.js';
+import {
+  InMemorySkillMaterializationStore,
+  PgSkillMaterializationStore,
+} from '../workspace/materialization/store.js';
+import type {
+  SkillMaterializationCoordinator,
+  SkillMaterializationRequest,
+} from '../workspace/materialization/types.js';
 import type { RawRuntimeRunDispatchConfig, SkillsDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
 import type { SkillEntry } from '../agent/skillToolProvider.js';
 import { McpClientManager } from '../mcp/clientManager.js';
@@ -343,6 +354,10 @@ export interface AppRuntime {
   runDeferredStartupTasks: () => Promise<void>;
   /** skills 后台物化状态（/api/healthz/ready 载荷；部署门禁等待 done 再切流） */
   getSkillsWarmupStatus: () => SkillsWarmupStatus;
+  /** 技能物化协调器；路由、dispatch、cron 统一经此入口，不再直接递归复制。 */
+  skillMaterialization?: SkillMaterializationCoordinator;
+  /** 启动技能物化 worker；PG 按 release 选主，并以 workspace advisory lock 串行跨 release 写入。 */
+  startSkillMaterializationCoordinator: () => void;
   /**
    * 启动 cron leader 协调器（PG advisory lock 单例守护，防蓝绿并存期双跑）。
    * 仅 processRole=all 且 cron 启用时有实际效果；替代旧的 cronService.start() 直调。
@@ -504,6 +519,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const agentCwd = config.agent.cwd ? resolve(processCwd, config.agent.cwd) : processCwd;
   ensureDirectory(agentCwd, 'agent cwd directory');
   const projectRoot = resolve(processCwd, '..');
+  const skillSourceRevision = process.env.AGENT_SAAS_RELEASE_ID?.trim()
+    || basename(realpathSync(projectRoot));
   const sharedDir = config.agent.sharedDir
     ? resolve(projectRoot, config.agent.sharedDir)
     : join(agentCwd, '.shared');  // 向后兼容
@@ -702,6 +719,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 启动关键路径只保留轻量配置级操作 → healthz-ready 秒级。
   const deferredStartupTasks: Array<{ name: string; run: () => Promise<void> }> = [];
   const skillsWarmup: SkillsWarmupStatus = { state: 'pending' };
+  let skillMaterializationService: SkillMaterializationService | undefined;
+  let skillMaterializationLeadership: CronLeadership | undefined;
 
   // Skills config store
   let skillConfigStore: SkillConfigStore | undefined;
@@ -722,14 +741,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // 启动时：发现新 skill → 内容指纹比对 → 后台版本化物化 → 清理幽灵条目
     // 2026-07-15 零停机部署批次：旧「启动无条件全量 syncSkills」（16 用户实测
     // 约 165s，阻塞 listen）拆为两段——
-    //   同步段（快，配置级）：syncWithPool 补全配置 + 内容指纹比对（指纹变化
-    //     → bump configVersion，驱动版本化同步）；
-    //   后台段（listen 后 deferredStartupTasks 执行）：逐用户版本检查物化 +
-    //     prune 幽灵条目 + 写版本标记。用户在后台段完成前发起会话时，由
-    //     dispatch 路径的 refreshUserWorkspace 版本检查兜底，正确性不依赖后台段。
+    //   同步段（快，配置级）：syncWithPool 仅补全 pool 注册表；
+    //   后台段（listen 后 deferredStartupTasks 执行）：异步内容指纹、逐用户版本
+    //     检查物化、prune 幽灵条目与 manifest 收口。用户在后台段完成前发起会话
+    //     时，由 dispatch 的 ensureReady 入队并等待，正确性不依赖 warmup 先跑完。
     const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
-    // δ: scanPoolSkills 已经在文件顶部静态 import 为 scanPoolSkillsForDispatch；
-    //     不需要再 dynamic import。syncSkills 同理用静态 import。
+    // scanPoolSkills 已经在文件顶部静态 import 为 scanPoolSkillsForDispatch。
     const currentPoolIds = new Set(scanPoolSkillsForDispatch(poolDir).map(s => s.id));
 
     // 安全检查：pool 为空（目录不存在或内容被清空）或配置损坏时跳过全量同步
@@ -748,20 +765,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       serverLogger.info(`Skills config: discovered ${discovered} new pool skills`);
     }
 
-    // 2. 内容指纹：skill 文件内容变化（通常随新 release 携带）→ bump
-    //    configVersion，让版本驱动同步（后台 warmup + dispatch refresh）物化。
-    //    指纹基于文件内容而非 mtime → no-op 部署/重启不触发全用户复制。
-    try {
-      const fingerprint = computeSkillsContentFingerprint(poolDir, tenantSkillsRootDir);
-      if (fingerprint !== skillConfigStore.getPoolContentHash()) {
-        skillConfigStore.setPoolContentHashSync(fingerprint);
-        serverLogger.info('Skills content fingerprint changed; configVersion bumped for versioned sync');
-      }
-    } catch (err) {
-      serverLogger.warn(`Skills content fingerprint failed (versioned sync falls back to config-only changes): ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    // 3. 逐用户物化 + prune + 版本标记 → 后台任务（listen 后执行）
+    // 2. 来源指纹 + 逐用户物化 + prune → 后台任务（listen 后执行）。
+    // 指纹扫描和物化都只用 fs/promises；此 deferred task 只 enqueue + 观察，
+    // 不再在 HTTP 进程主线程里同步读 NAS、cpSync/rmSync 或递归 chown。
     const store = skillConfigStore;
     const warmupUserStore = userStore;
     deferredStartupTasks.push({
@@ -770,42 +776,73 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         skillsWarmup.state = 'running';
         skillsWarmup.startedAtMs = Date.now();
         try {
-          // 3a. 逐用户版本检查物化。
-          // PR 5 修 P0-7：PR 4 后 workspace 路径变为 <cwd>/<tenant>/<user>/，必须用
-          // resolveUserCwd 才能命中正确路径；之前 join(agentCwd, u.username) 全部 ENOENT。
+          if (!skillMaterializationService) {
+            throw new Error('技能物化服务未初始化');
+          }
+          try {
+            const fingerprint = await computeSkillsContentFingerprintAsync(
+              poolDir,
+              tenantSkillsRootDir,
+              resolveAgentPath(sharedDir, 'scripts'),
+            );
+            if (fingerprint !== store.getPoolContentHash()) {
+              store.setPoolContentHashSync(fingerprint);
+              serverLogger.info('Skills content fingerprint changed; configVersion bumped for versioned sync');
+            }
+          } catch (err) {
+            serverLogger.warn(`Skills content fingerprint failed (versioned sync falls back to config-only changes): ${err instanceof Error ? err.message : String(err)}`);
+          }
           const allUsers = warmupUserStore.listAll();
-          skillsWarmup.totalUsers = allUsers.length;
           skillsWarmup.processedUsers = 0;
-          let synced = 0;
+          const requests: SkillMaterializationRequest[] = [];
           for (const u of allUsers) {
             const workspaceUser = { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId };
             const userCwd = resolveUserCwd(agentCwd, workspaceUser);
             if (existsSync(agentDir(userCwd))) {
-              let localVersion = 0;
-              try {
-                localVersion = parseInt(readFileSync(agentPath(userCwd, '.skills-version'), 'utf-8').trim(), 10) || 0;
-              } catch { /* 标记缺失 → 视为 0，触发同步 */ }
-              if (localVersion < store.getConfigVersion()) {
-                // syncSkills 是同步 fs 重操作（共享盘上逐用户秒级）；本任务在
-                // listen 后运行，逐用户 yield 一次事件循环，避免长时间饿死在线请求。
-                syncSkills(userCwd, sharedDir, workspaceUser, store, tenantSkillsRootDir);
-                synced++;
-              }
+              requests.push({
+                user: workspaceUser,
+                userCwd,
+                reason: 'startup',
+                priority: 10,
+              });
             }
-            skillsWarmup.processedUsers++;
-            await new Promise<void>((r) => setImmediate(r));
           }
-          skillsWarmup.syncedUsers = synced;
+          skillsWarmup.totalUsers = requests.length;
+          const batch = await skillMaterializationService.enqueue(requests);
+          for (;;) {
+            const status = await skillMaterializationService.getBatch(batch.id);
+            if (!status) throw new Error(`技能 warmup 批次丢失：${batch.id}`);
+            skillsWarmup.processedUsers = status.succeeded + status.failed;
+            skillsWarmup.syncedUsers = status.succeeded;
+            if (status.status === 'succeeded') break;
+            if (status.status === 'partial' || status.status === 'failed') {
+              throw new Error(status.error || `技能 warmup 失败：${status.failed}/${status.total}`);
+            }
+            await new Promise<void>((resolveWait) => setTimeout(resolveWait, 250));
+          }
 
-          // 3b. 清理配置中的幽灵条目（全部用户 sync 完成后再清理，避免 syncSkills
-          //     清理用户残留副本时读不到 poolVisibility 历史记录）
+          // 3b. 全部 workspace 先按旧注册表完成撤销，再清理幽灵条目，避免首次
+          // manifest 迁移时失去“该目录曾是系统技能”的识别依据。
           const tenantOwnIdsByTenant: Record<string, Set<string>> = {};
           const tenantsRoot = tenantSkillsRootDir;
           if (existsSync(tenantsRoot)) {
-            for (const entry of readdirSync(tenantsRoot)) {
+            for (const entry of await readdirAsync(tenantsRoot, { withFileTypes: true })) {
               try {
-                if (!statSync(join(tenantsRoot, entry)).isDirectory()) continue;
-                tenantOwnIdsByTenant[entry] = scanTenantOwnSkillIds(resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, entry), currentPoolIds);
+                if (!entry.isDirectory() || !TENANT_SLUG_PATTERN.test(entry.name)) continue;
+                const tenantSkillDir = resolveTenantSkillsDirFromRoot(
+                  tenantSkillsRootDir,
+                  entry.name,
+                );
+                const ownIds = new Set(
+                  (await readdirAsync(tenantSkillDir, { withFileTypes: true }))
+                    .filter((skill) => (
+                      skill.isDirectory()
+                      && SAFE_SKILL_NAME_RE.test(skill.name)
+                      && !currentPoolIds.has(skill.name)
+                    ))
+                    .map((skill) => skill.name),
+                );
+                tenantOwnIdsByTenant[entry.name] = ownIds;
               } catch {
                 // 非法目录名或读取失败，跳过
               }
@@ -814,21 +851,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           const pruned = store.pruneStaleSkills(currentPoolIds, tenantOwnIdsByTenant);
           if (pruned > 0) {
             serverLogger.info(`Skills config: pruned ${pruned} stale entries`);
-          }
-
-          // 3c. 更新版本标记（写入 prune 后的最新 configVersion，避免 dispatch 时冗余同步）
-          for (const u of allUsers) {
-            const workspaceUser = { id: u.id, username: u.username, role: u.role as 'admin' | 'user', tenantId: u.tenantId };
-            const userCwd = resolveUserCwd(agentCwd, workspaceUser);
-            const versionFile = agentPath(userCwd, '.skills-version');
-            if (existsSync(agentDir(userCwd))) {
-              writeFileSync(versionFile, String(store.getConfigVersion()), 'utf-8');
+            // prune 会 bump configVersion；再跑一轮精确 diff 只更新 manifest 版本，
+            // 内容摘要不变的技能不会重拷。
+            const finalize = await skillMaterializationService.enqueue(requests);
+            const finalized = await skillMaterializationService.waitForBatch(finalize.id);
+            if (finalized.status !== 'succeeded') {
+              throw new Error(finalized.error || '技能 prune 后 manifest 收口失败');
             }
           }
 
           skillsWarmup.state = 'done';
           skillsWarmup.finishedAtMs = Date.now();
-          serverLogger.info(`Skills warmup done: synced=${synced}/${allUsers.length} users in ${skillsWarmup.finishedAtMs - (skillsWarmup.startedAtMs ?? skillsWarmup.finishedAtMs)}ms`);
+          serverLogger.info(`Skills warmup done: ready=${skillsWarmup.syncedUsers ?? 0}/${allUsers.length} users in ${skillsWarmup.finishedAtMs - (skillsWarmup.startedAtMs ?? skillsWarmup.finishedAtMs)}ms`);
         } catch (err) {
           skillsWarmup.state = 'failed';
           skillsWarmup.finishedAtMs = Date.now();
@@ -1314,6 +1348,68 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ? (_transcriptPath) => pgEventStore!  // PG backend：共享 pool，按 session_id 过滤
     : (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath));
 
+  if (skillConfigStore && userStore) {
+    const materializationStore = pgEventStore
+      ? new PgSkillMaterializationStore({
+          pool: pgEventStore.pool,
+          tablePrefix: config.runtimeEventStore?.backend === 'pg'
+            ? config.runtimeEventStore.tablePrefix
+            : undefined,
+        })
+      : new InMemorySkillMaterializationStore();
+    await materializationStore.init();
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: skillSourceRevision,
+      tenantSkillsRootDir,
+      skillConfigStore,
+      resolveAssignedOrgAgentSkillIds: (workspaceUser) => {
+        if (!workspaceUser.tenantId || !orgAgentStore) return [];
+        return orgAgentStore.listByTenant(workspaceUser.tenantId)
+          .filter((agent) => (
+            agent.enabled
+            && isAssignedToOrgAgent(agent, workspaceUser.username)
+          ))
+          .flatMap((agent) => agent.allowedSkills);
+      },
+    });
+    skillMaterializationService = new SkillMaterializationService({
+      store: materializationStore,
+      materializer,
+      skillConfigStore,
+      sourceRevision: skillSourceRevision,
+      resolveTargetByUsername: (username) => {
+        const user = userStore!.findByUsername(username);
+        if (!user) return undefined;
+        const workspaceUser = {
+          id: user.id,
+          username: user.username,
+          role: user.role as 'admin' | 'user',
+          tenantId: user.tenantId,
+        };
+        return {
+          user: workspaceUser,
+          userCwd: resolveUserCwd(agentCwd, workspaceUser),
+        };
+      },
+    });
+    skillMaterializationLeadership = new CronLeadership({
+      connectionString: config.runtimeEventStore?.backend === 'pg'
+        ? config.runtimeEventStore.connectionString
+        : undefined,
+      lockName: `${config.runtimeEventStore?.backend === 'pg'
+        ? (config.runtimeEventStore.tablePrefix ?? 'agent_saas')
+        : 'agent_saas'}:skill-materialization-leader:${skillSourceRevision}`,
+      onAcquired: () => {
+        skillMaterializationService!.start();
+      },
+      onLost: async (reason) => {
+        serverLogger.warn(`Skill materialization leadership lost (${reason}); stopping local worker`);
+        await skillMaterializationService!.stop();
+      },
+    });
+  }
+
   if (!sessionReadStateStore) {
     sessionReadStateStore = new FileSessionReadStateStore(
       resolve(processCwd, './data/session-read-states.json'),
@@ -1425,6 +1521,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       return scanned;
     }
     return {
+      ensureReady(username: string | undefined, requiredSkillIds: readonly string[] = []): Promise<void> {
+        return skillMaterializationService?.ensureReady(username, requiredSkillIds, 'dispatch')
+          ?? Promise.resolve();
+      },
       listForUser(username: string | undefined, requiredSkillIds: readonly string[] = []): SkillEntry[] {
         if (!username) return [];
         const all = getAllPoolEntries();
@@ -1495,21 +1595,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           : join(agentCwd, username); // 用户不存在时的兼容兜底
         const userDir = resolveAgentPath(userCwd, 'skills', skill);
         if (existsSync(userDir)) return userDir;
-        if (u) {
-          try {
-            syncSkills(
-              userCwd,
-              sharedDir,
-              { id: u.id, username: u.username, role: u.role, tenantId: u.tenantId },
-              store,
-              tenantSkillsRootDir,
-              requiredSkillIds,
-            );
-          } catch (err) {
-            serverLogger.warn(`Skill sync before invoke failed for ${username}/${skill}: ${err instanceof Error ? err.message : String(err)}`);
-          }
-          if (existsSync(userDir)) return userDir;
-        }
         return null;
       },
     };
@@ -2259,6 +2344,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantStore,
     tokenUsageStore,
     skillConfigStore,
+    skillMaterialization: skillMaterializationService,
     tenantSkillsRootDir,
     userActivityService,
     memoryPoll: memoryPollRuntimeConfig,
@@ -2448,6 +2534,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       clearInterval(memoryPollReconcileTimer);
       memoryPollReconcileTimer = undefined;
     }
+    // 技能物化先停止 claim，并等待当前目录原子提交完成，再释放 leader。
+    await skillMaterializationService?.stop();
+    await skillMaterializationLeadership?.stop();
     // 2. 停 cron 触发（不打断执行中的 cron job）
     cronRuntime.service?.stop();
     // 3. 等 in-flight cron job 结清后再释放 leadership：新 leader 从 jobs.json
@@ -2841,6 +2930,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     artifactShutdown,
     clientDaemonGateway,
     runtimeEventStoreFor,
+    skillMaterialization: skillMaterializationService,
     runDeferredStartupTasks: async () => {
       for (const task of deferredStartupTasks) {
         try {
@@ -2851,6 +2941,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }
     },
     getSkillsWarmupStatus: () => ({ ...skillsWarmup }),
+    startSkillMaterializationCoordinator: () => {
+      skillMaterializationLeadership?.start();
+    },
     startCronCoordinator: () => {
       cronLeadership?.start();
     },

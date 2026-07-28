@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ensureUserWorkspace, resolveUserCwd } from '../workspace/resolver.js';
+import type { SkillConfigStore } from '../data/skills/store.js';
+import { SkillWorkspaceMaterializer } from '../workspace/materialization/materializer.js';
 
 describe('workspace scripts migration', () => {
   const previousChown = process.env.KY_AGENT_WORKSPACE_CHOWN;
@@ -19,6 +21,12 @@ describe('workspace scripts migration', () => {
     mkdirSync(agentCwd, { recursive: true });
     mkdirSync(join(sharedDir, '.ky-agent', 'scripts', 'tools'), { recursive: true });
     writeFileSync(join(sharedDir, '.ky-agent', 'scripts', 'tools', 'hello.txt'), 'ok', 'utf-8');
+    mkdirSync(join(sharedDir, '.ky-agent', 'skills-pool', 'placeholder'), { recursive: true });
+    writeFileSync(
+      join(sharedDir, '.ky-agent', 'skills-pool', 'placeholder', 'SKILL.md'),
+      '---\nname: placeholder\ndescription: placeholder\n---\n',
+      'utf-8',
+    );
   });
 
   afterEach(() => {
@@ -37,6 +45,24 @@ describe('workspace scripts migration', () => {
     symlinkSync(join(sharedDir, '.claude', 'scripts'), join(userCwd, '.ky-agent', 'scripts'), 'dir');
 
     await ensureUserWorkspace(userCwd, agentCwd, sharedDir, user);
+    const skillConfigStore = {
+      getConfigVersion: () => 1,
+      getPoolVisibility: () => ({ placeholder: true }),
+      getTenantOwnSkillRules: () => ({}),
+      getUserEffectivePoolSkills: () => [],
+      getUserEffectiveTenantOwnSkills: () => [],
+      getOrgAgentEffectivePoolSkills: () => [],
+      getOrgAgentEffectiveTenantOwnSkills: () => [],
+    } as unknown as SkillConfigStore;
+    await new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore,
+    }).materialize({
+      taskId: 'scripts-migration',
+      user,
+      userCwd,
+    });
 
     expect(lstatSync(join(userCwd, '.ky-agent', 'scripts')).isSymbolicLink()).toBe(false);
     expect(readFileSync(join(userCwd, '.ky-agent', 'scripts', 'tools', 'hello.txt'), 'utf-8')).toBe('ok');

@@ -372,8 +372,10 @@ export {
   deleteTenantOwnSkill,
   promoteSkillToTenant,
   promoteTenantSkillToPool,
+  fetchSkillSyncJob,
   syncSkills as syncSkillsApi,
 } from "./lib/skillsApi";
+export type { SkillSyncBatch } from "./lib/skillsApi";
 
 // Lib - platform tool controls API
 export {

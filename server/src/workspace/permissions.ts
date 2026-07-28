@@ -4,10 +4,19 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   renameSync,
   statSync,
+  writeFileSync,
 } from 'fs';
+import {
+  chmod,
+  chown,
+  lstat,
+  readdir,
+  stat,
+} from 'node:fs/promises';
 import { dirname, join } from 'path';
 
 import { serverLogger } from '../utils/logger.js';
@@ -115,13 +124,97 @@ export function repairWorkspaceTree(path: string, mode?: number, ownership = get
   }
 }
 
-export function ensureWorkspaceRuntimeLayout(userCwd: string): void {
+async function applyPathModeAndOwnerAsync(
+  path: string,
+  mode?: number,
+  ownership = getWorkspaceOwnership(),
+): Promise<void> {
+  let link;
+  let current;
+  try {
+    link = await lstat(path);
+    if (link.isSymbolicLink()) return;
+    current = await stat(path);
+  } catch (err) {
+    serverLogger.warn(`workspace permission stat failed: ${path}: ${err}`);
+    return;
+  }
+
+  try {
+    if (ownership.uid !== undefined || ownership.gid !== undefined) {
+      await chown(path, ownership.uid ?? current.uid, ownership.gid ?? current.gid);
+    }
+  } catch (err) {
+    serverLogger.warn(`workspace chown failed: ${path}: ${err}`);
+  }
+
+  if (mode !== undefined) {
+    try {
+      await chmod(path, mode);
+    } catch (err) {
+      serverLogger.warn(`workspace chmod failed: ${path}: ${err}`);
+    }
+  }
+}
+
+/**
+ * 物化 worker 专用的异步权限修复。所有 stat/chown/chmod/readdir 都走
+ * fs/promises，避免 NAS 递归元数据操作阻塞 Node 主事件循环。
+ */
+export async function repairWorkspaceTreeAsync(
+  path: string,
+  mode?: number,
+  ownership = getWorkspaceOwnership(),
+): Promise<void> {
+  await applyPathModeAndOwnerAsync(path, mode, ownership);
+  let current;
+  try {
+    const link = await lstat(path);
+    if (link.isSymbolicLink()) return;
+    current = await stat(path);
+  } catch {
+    return;
+  }
+  if (!current.isDirectory()) return;
+  let entries: string[];
+  try {
+    entries = await readdir(path);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    await repairWorkspaceTreeAsync(join(path, entry), mode, ownership);
+  }
+}
+
+export function ensureWorkspaceRuntimeLayout(
+  userCwd: string,
+  options: { deepRepair?: boolean } = {},
+): void {
   const ownership = getWorkspaceOwnership();
   const rootMode = parseModeEnv('KY_AGENT_WORKSPACE_ROOT_MODE', 0o775);
   const dataMode = parseModeEnv('KY_AGENT_WORKSPACE_DATA_MODE', 0o775);
   const privateMode = parseModeEnv('KY_AGENT_WORKSPACE_PRIVATE_MODE', 0o700);
   const runtimeMode = parseModeEnv('KY_AGENT_WORKSPACE_RUNTIME_MODE', 0o770);
   const fileMode = parseModeEnv('KY_AGENT_WORKSPACE_FILE_MODE', 0o664);
+  const layoutSignature = [
+    'v2',
+    ownership.uid ?? '-',
+    ownership.gid ?? '-',
+    rootMode,
+    dataMode,
+    privateMode,
+    runtimeMode,
+    fileMode,
+  ].join(':');
+  const layoutMarker = agentPath(userCwd, '.layout-version');
+  if (options.deepRepair === false) {
+    try {
+      if (readFileSync(layoutMarker, 'utf-8').trim() === layoutSignature) return;
+    } catch {
+      // 首次升级或 marker 损坏：执行一次浅层 reconcile 后重写。
+    }
+  }
 
   ensureWorkspaceDir(userCwd, rootMode, ownership);
 
@@ -144,12 +237,14 @@ export function ensureWorkspaceRuntimeLayout(userCwd: string): void {
   ensureWorkspaceDir(agentPath(userCwd, 'runtime', 'provision'), runtimeMode, ownership);
   ensureWorkspaceDir(agentPath(userCwd, 'runtime', 'venv-archive'), runtimeMode, ownership);
 
-  for (const tree of [
-    join(userCwd, 'memory'),
-    agentPath(userCwd, 'skills'),
-    agentPath(userCwd, 'scripts'),
-  ]) {
-    repairWorkspaceTree(tree, undefined, ownership);
+  if (options.deepRepair !== false) {
+    for (const tree of [
+      join(userCwd, 'memory'),
+      agentPath(userCwd, 'skills'),
+      agentPath(userCwd, 'scripts'),
+    ]) {
+      repairWorkspaceTree(tree, undefined, ownership);
+    }
   }
   if (migratedRuntimeArtifacts || process.env.KY_AGENT_WORKSPACE_DEEP_REPAIR === '1') {
     repairWorkspaceTree(agentPath(userCwd, 'runtime', 'browser-profile'), undefined, ownership);
@@ -166,6 +261,12 @@ export function ensureWorkspaceRuntimeLayout(userCwd: string): void {
   }
 
   repairLegacyRuntimeLayout(userCwd, ownership, { dataMode, privateMode, runtimeMode, fileMode });
+  try {
+    writeFileSync(layoutMarker, layoutSignature, 'utf-8');
+    repairWorkspacePath(layoutMarker, fileMode, ownership);
+  } catch (err) {
+    serverLogger.warn(`workspace layout marker write failed: ${layoutMarker}: ${err}`);
+  }
 }
 
 function migrateLegacyRuntimeArtifacts(userCwd: string): boolean {

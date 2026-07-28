@@ -57,6 +57,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     fetchCustomSkillDocument,
     updateCustomSkillDocument,
     syncSkills,
+    syncProgress,
   } = useSkillAdmin();
   const { users, loading: usersLoading } = useUsers();
   const { tenants, loading: tenantsLoading } = useTenants();
@@ -322,7 +323,9 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                 ) : (
                   <Zap className="size-3.5" />
                 )}
-                强制同步
+                {syncing && syncProgress
+                  ? `同步 ${syncProgress.completed}/${syncProgress.total}`
+                  : "强制同步"}
               </Button>
             )}
             <Button

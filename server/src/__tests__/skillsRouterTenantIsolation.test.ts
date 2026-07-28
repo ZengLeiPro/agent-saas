@@ -26,6 +26,9 @@ import type { UserRecord } from '../data/users/types.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import type { JwtPayload } from '../auth/types.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { SkillWorkspaceMaterializer } from '../workspace/materialization/materializer.js';
+import { SkillMaterializationService } from '../workspace/materialization/service.js';
+import { InMemorySkillMaterializationStore } from '../workspace/materialization/store.js';
 
 const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID };
 const KAIYAN_USER: JwtPayload = { sub: 'u-ku', username: 'alice', role: 'user', tenantId: 'kaiyan' };
@@ -39,6 +42,11 @@ interface TestRig {
   tenantSkillsRootDir: string;
   poolDir: string;
   skillConfigStore: SkillConfigStore;
+  waitSync(res: Response): Promise<{
+    total: number;
+    tenantIds: string[];
+    pruned?: number;
+  }>;
   setCaller(caller: JwtPayload): void;
   request(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
@@ -172,6 +180,8 @@ function fakeSkillConfigStore(): SkillConfigStore {
     getUserEffectivePoolSkills: (u: string, tenantId?: string) => {
       return (userSelections.get(u) ?? []).filter(id => isTenantSkillAvailableToUser(id, tenantId, u));
     },
+    getOrgAgentEffectivePoolSkills: () => [],
+    getOrgAgentEffectiveTenantOwnSkills: () => [],
     syncWithPool: (currentPoolIds: Set<string>) => {
       let added = 0;
       for (const id of currentPoolIds) {
@@ -235,13 +245,45 @@ async function makeTestRig(): Promise<TestRig> {
   app.use(express.json());
   let currentCaller: JwtPayload = PLATFORM_ADMIN;
   const skillConfigStore = fakeSkillConfigStore();
+  const userStore = fakeUserStore();
+  const materializer = new SkillWorkspaceMaterializer({
+    sharedDir,
+    sourceRevision: 'test-release',
+    tenantSkillsRootDir,
+    skillConfigStore,
+  });
+  const materializationStore = new InMemorySkillMaterializationStore();
+  await materializationStore.init();
+  const skillMaterialization = new SkillMaterializationService({
+    store: materializationStore,
+    materializer,
+    skillConfigStore,
+    sourceRevision: 'test-release',
+    pollIntervalMs: 10,
+    resolveTargetByUsername: (username) => {
+      const user = userStore.findByUsername(username);
+      if (!user) return undefined;
+      const workspaceUser = {
+        id: user.id,
+        username: user.username,
+        role: user.role as 'admin' | 'user',
+        tenantId: user.tenantId,
+      };
+      return {
+        user: workspaceUser,
+        userCwd: join(agentCwd, user.tenantId, user.id),
+      };
+    },
+  });
+  skillMaterialization.start();
   app.use((req, _res, next) => { req.user = currentCaller; next(); });
   app.use('/api/skills', createSkillsRouter({
       skillConfigStore,
-      userStore: fakeUserStore(),
+      userStore,
       agentCwd,
       sharedDir,
       tenantSkillsRootDir,
+      skillMaterialization,
     }));
   // 跑 requireAdmin error 路径需要中间件链；这里整链已挂
   void requireAdmin;
@@ -259,7 +301,32 @@ async function makeTestRig(): Promise<TestRig> {
     skillConfigStore,
     setCaller(c) { currentCaller = c; },
     request: (path, init) => fetch(`${baseUrl}${path}`, init),
+    waitSync: async (res) => {
+      expect(res.status).toBe(202);
+      const started = await res.json() as {
+        id: string;
+        total: number;
+        tenantIds: string[];
+        pruned?: number;
+      };
+      for (;;) {
+        const progress = await fetch(`${baseUrl}/api/skills/sync-jobs/${started.id}`);
+        expect(progress.status).toBe(200);
+        const body = await progress.json() as {
+          status: string;
+          total: number;
+          tenantIds: string[];
+          error?: string;
+        };
+        if (body.status === 'succeeded') return { ...body, pruned: started.pruned };
+        if (body.status === 'partial' || body.status === 'failed') {
+          throw new Error(body.error || 'sync failed');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    },
     close: async () => {
+      await skillMaterialization.stop();
       await new Promise<void>(resolve => server.close(() => resolve()));
       rmSync(tmpRoot, { recursive: true, force: true });
     },
@@ -580,21 +647,20 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
     it('组织 admin (wain) 全量 POST /sync → 仅 sync 本组织', async () => {
       h.setCaller(WAIN_ADMIN);
       const res = await h.request('/api/skills/sync', { method: 'POST' });
-      expect(res.status).toBe(200);
-      const body = await res.json() as { synced: string[] };
-      expect(body.synced).toContain('wain_user');
-      expect(body.synced).not.toContain('alice');
+      const body = await h.waitSync(res);
+      expect(body.total).toBe(1);
+      expect(body.tenantIds).toEqual(['wain']);
     });
 
     it('platform admin 全量 POST /sync → 同步所有有 .ky-agent 的用户', async () => {
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request('/api/skills/sync', { method: 'POST' });
-      expect(res.status).toBe(200);
-      const body = await res.json() as { synced: string[] };
-      expect(body.synced.sort()).toEqual(['alice', 'wain_user']);
+      const body = await h.waitSync(res);
+      expect(body.total).toBe(2);
+      expect(body.tenantIds.sort()).toEqual(['kaiyan', 'wain']);
     });
 
-    it('platform admin 全量 POST /sync → 先删除旧系统副本，再 prune stale 配置', async () => {
+    it('platform admin 全量 POST /sync → 旧系统副本移出热目录，prune 留给全员 warmup', async () => {
       await h.skillConfigStore.setPoolVisibility({ old_system: true });
       const staleDir = join(h.agentCwd, 'kaiyan', 'u-ku', '.ky-agent', 'skills', 'old_system');
       mkdirSync(staleDir, { recursive: true });
@@ -602,11 +668,10 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
 
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request('/api/skills/sync', { method: 'POST' });
-      expect(res.status).toBe(200);
-      const body = await res.json() as { pruned: number };
-      expect(body.pruned).toBeGreaterThan(0);
+      const body = await h.waitSync(res);
+      expect(body.pruned).toBe(0);
       expect(existsSync(staleDir)).toBe(false);
-      expect(h.skillConfigStore.getPoolVisibility()).not.toHaveProperty('old_system');
+      expect(h.skillConfigStore.getPoolVisibility()).toHaveProperty('old_system');
     });
   });
 

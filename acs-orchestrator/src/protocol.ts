@@ -22,9 +22,9 @@ export interface WireToolInvocationRequest {
     invocationId?: string;
     workspace: WireWorkspaceRef;
     /**
-     * 07-05：显式透传给远端 pod 的 env（仅 HAND_ENV_ALLOWLIST 内的 key，例如
-     * AZEROTH_TOKEN / AZEROTH_API_URL）。上游 brain 侧 HttpTransport.envResolver
-     * 生成；本 protocol 层 parseWireRequest 再走 pickHandEnv 二次剥离。
+     * 显式透传给远端 pod 的运行态 env。仅允许标准大写 env 名，并拒绝会改变
+     * 进程加载、模块解析或代理行为的保留变量。上游生成后，本 protocol 层
+     * parseWireRequest 再走 pickHandEnv 二次剥离。
      */
     env?: Record<string, string>;
   };
@@ -116,8 +116,8 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
     : undefined;
   const sandboxScope = parseSandboxScopeId(sandboxScopeId);
   if (sandboxScope.error) return { ok: false, error: sandboxScope.error };
-  // 07-05：wire env 双重防线——上游 HttpTransport 只 pick allowlist，服务端反序列化
-  // 再 pick 一次，即使 client 塞了别的 key 也会被 pickHandEnv 剥掉。空对象则不写字段。
+  // wire env 双重防线：上游 HttpTransport 已过滤，服务端反序列化仍需再走
+  // pickHandEnv，剥离危险或非法 key。空对象则不写字段。
   const rawEnv = context?.env;
   const env = rawEnv && typeof rawEnv === 'object' && !Array.isArray(rawEnv)
     ? pickHandEnv(rawEnv as Record<string, string | undefined>)

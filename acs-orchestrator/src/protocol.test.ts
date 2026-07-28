@@ -44,7 +44,7 @@ describe('parseWireRequest', () => {
     }
   });
 
-  it('剥离 wire.context.env 中不在 allowlist 内的敏感 key（防御纵深）', () => {
+  it('保留标准连接器 env，并剥离危险或非法 key（防御纵深）', () => {
     const parsed = parseWireRequest({
       toolName: 'Shell',
       input: { command: 'env' },
@@ -52,15 +52,22 @@ describe('parseWireRequest', () => {
         workspace: { id: 'ws_1', sessionId: 'session-1' },
         env: {
           AZEROTH_TOKEN: 'pat_x',
-          ANTHROPIC_API_KEY: 'sk-ant-should-not-leak',
-          GH_TOKEN: 'ghp-should-not-leak',
-          RANDOM: 'noise',
+          GH_TOKEN: 'ghp_x',
+          NOTION_TOKEN: 'notion_x',
+          PATH: '/tmp/evil',
+          NODE_OPTIONS: '--require /tmp/evil.js',
+          lowercase: 'invalid-name',
+          'BAD-NAME': 'invalid-name',
         },
       },
     });
     expect(parsed.ok).toBe(true);
     if (parsed.ok) {
-      expect(parsed.value.context.env).toEqual({ AZEROTH_TOKEN: 'pat_x' });
+      expect(parsed.value.context.env).toEqual({
+        AZEROTH_TOKEN: 'pat_x',
+        GH_TOKEN: 'ghp_x',
+        NOTION_TOKEN: 'notion_x',
+      });
     }
   });
 

@@ -42,7 +42,7 @@ describe('SubagentBlock', () => {
     expect(screen.getByText('67 次工具')).toBeTruthy();
     expect(screen.getByText('upstream EOF')).toBeTruthy();
 
-    await user.click(screen.getByRole('button', { name: '查看完整过程' }));
+    await user.click(screen.getAllByRole('button', { name: '查看完整过程' })[0]);
     expect(await screen.findByRole('dialog', { name: '调研金球奖完整过程' })).toBeTruthy();
     expect(await screen.findByText('终止原因：upstream EOF')).toBeTruthy();
     expect(screen.getByText('调研任务')).toBeTruthy();

@@ -146,6 +146,7 @@ describe("TokenUsageDisplay", () => {
         messages={[{
           id: 'sub-1',
           type: 'subagent',
+          toolId: 'tool-sub-1',
           agentType: 'explore',
           status: 'completed',
           childSessionId: 'child-session',

@@ -54,5 +54,13 @@ export function activityStatusBadgeClass(tone: ActivityStatusTone, className?: s
 export function formatActivityDuration(ms?: number): string | null {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
   if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(ms < 10_000 ? 1 : 0)}s`;
+
+  const minutes = seconds / 60;
+  if (minutes < 60) return `${minutes.toFixed(minutes < 10 ? 1 : 0).replace(/\.0$/, "")}m`;
+
+  const hours = minutes / 60;
+  return `${hours.toFixed(hours < 10 ? 1 : 0).replace(/\.0$/, "")}h`;
 }

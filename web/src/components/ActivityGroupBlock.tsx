@@ -127,6 +127,17 @@ function getActivityDurationMs(items: MessageItem[]): number | undefined {
   return hasDuration ? total : undefined;
 }
 
+function hasActivityIssue(items: MessageItem[]): boolean {
+  return items.some(item => (
+    (item.type === 'tool_use' && item.executionStatus === 'failed')
+    || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
+  ));
+}
+
+function hasPresentation(item: MessageItem): boolean {
+  return (item.type === 'tool_use' || item.type === 'tool_result' || item.type === 'subagent') && !!item.presentation;
+}
+
 function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
   const index = getActiveItemIndex(items);
   const item = items[index];
@@ -249,6 +260,17 @@ function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryI
     };
   }
 
+  if (hasActivityIssue(items)) {
+    return {
+      text: getCompletedBreakdown(items).replace(/^已完成/, '已处理'),
+      truncateStart: false,
+      tone: 'warning',
+      badge: '有异常',
+      durationMs: getActivityDurationMs(items),
+      active: false,
+    };
+  }
+
   return {
     text: getCompletedBreakdown(items),
     truncateStart: false,
@@ -309,6 +331,12 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
 export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true }: ActivityGroupBlockProps) {
   // 折叠行已提供分组摘要，具体工具详情由用户按需展开，避免长会话默认铺满执行细节。
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // 带业务摘要的单项本身已经是面向客户的活动卡，不能再套一层泛化的“Agent 活动”，
+  // 否则场景回放和真实会话都会把关键业务动作标题折叠掉。
+  if (items.length === 1 && hasPresentation(items[0])) {
+    return <ActivityItem item={items[0]} debugMode={debugMode} />;
+  }
 
   const summary = getGroupSummary(items, isActive);
   const state: AgentActivityState = summary.tone === 'active'

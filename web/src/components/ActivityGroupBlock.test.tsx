@@ -22,10 +22,10 @@ describe('ActivityGroupBlock 统一活动卡', () => {
     expect(screen.getByText('有异常')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { expanded: false }));
-    expect(screen.getByText('有异常')).toBeTruthy();
+    expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(2);
   });
 
-  it('分组折叠时按正常完成显示，展开后才显示具体异常', () => {
+  it('分组折叠时保留异常状态，展开后显示具体异常', () => {
     const failedToolWithDuration = { ...failedTool, durationMs: 1200 };
     render(<ActivityGroupBlock
       items={[
@@ -36,14 +36,13 @@ describe('ActivityGroupBlock 统一活动卡', () => {
       debugMode
     />);
 
-    const summary = screen.getByText('已完成 2 条：1 次思考 · 1 个工具');
-    expect(screen.getByText('已完成')).toBeTruthy();
+    const summary = screen.getByText('已处理 2 条：1 次思考 · 1 个工具');
+    expect(screen.getByText('有异常')).toBeTruthy();
     expect(screen.getByText(/1\.2s.*2 项/)).toBeTruthy();
-    expect(screen.queryByText('有异常')).toBeNull();
 
     fireEvent.click(summary.closest('button')!);
 
-    expect(screen.getByText(/^有异常(?:\s|$)/).className).toContain('text-warning');
+    expect(screen.getAllByText(/^有异常(?:\s|$)/).some((node) => node.className.includes('text-warning'))).toBe(true);
   });
 
   it('分组仍在运行时也不在折叠行暴露内部异常', () => {
@@ -68,7 +67,7 @@ describe('ActivityGroupBlock 统一活动卡', () => {
     expect(screen.getByText('有异常')).toBeTruthy();
   });
 
-  it('关闭调试模式后分组异常不污染汇总状态', () => {
+  it('关闭调试模式后分组仍保留异常汇总，但不泄露内部细节', () => {
     render(<ActivityGroupBlock
       items={[
         { id: 'thinking', type: 'thinking', content: '换一种方法', streaming: false },
@@ -78,7 +77,8 @@ describe('ActivityGroupBlock 统一活动卡', () => {
       debugMode={false}
     />);
 
-    expect(screen.getByText('已完成')).toBeTruthy();
-    expect(screen.queryByText(/异常/)).toBeNull();
+    expect(screen.getByText('有异常')).toBeTruthy();
+    expect(screen.getByText('已处理 2 条：1 次思考 · 1 个工具')).toBeTruthy();
+    expect(screen.queryByText(/exit 1/)).toBeNull();
   });
 });

@@ -100,10 +100,11 @@ describe('ActivityGroupBlock 摘要不被整组吞掉', () => {
   const plainTool = { ...toolMessage(), id: 'tool-plain' } as MessageItemType;
   const richTool = { ...toolMessage(PRESENTATION), id: 'tool-rich' } as MessageItemType;
 
-  it('整组无摘要 + 非 debug：折叠成一行占位（原行为）', () => {
+  it('整组无摘要 + 非 debug：使用统一活动摘要且不泄露原始 payload', () => {
     render(<ActivityGroupBlock items={[plainTool, { ...plainTool, id: 'tool-plain-2' }]} isActive={false} debugMode={false} />);
     expect(screen.queryByText('核对魏德米勒选型表')).toBeNull();
-    expect(screen.getByText(/已执行/)).toBeTruthy();
+    expect(screen.getByText('已完成 2 条：2 个工具')).toBeTruthy();
+    expect(screen.queryByText(/rg -n selection/)).toBeNull();
   });
 
   it('组内有摘要 + 非 debug：分组和工具详情均默认折叠', () => {

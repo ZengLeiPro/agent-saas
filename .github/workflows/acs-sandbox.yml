@@ -24,7 +24,13 @@ on:
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - '.github/workflows/acs-sandbox.yml'
+      - '.github/scripts/acs-classify.sh'
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force deploy even when no ACS-relevant change since the production SHA'
+        type: boolean
+        default: false
 
 env:
   NODE_VERSION: "22"
@@ -52,6 +58,8 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 分类逻辑与 build-deploy 的部署必要性门禁共用 .github/scripts/acs-classify.sh，
+      # 避免两处判定漂移。
       - name: Classify changed files
         id: filter
         env:
@@ -59,171 +67,47 @@ jobs:
         run: |
           set -euo pipefail
 
-          publish=false
-          contract_check=false
-          reasons=()
-          skipped=()
-          changed_files="$RUNNER_TEMP/acs-changed-files.txt"
-
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            publish=true
-            reasons+=("manual workflow_dispatch")
-            : > "$changed_files"
-          else
-            before="${BEFORE_SHA:-}"
-            zero_sha="0000000000000000000000000000000000000000"
-            if [ -n "$before" ] && [ "$before" != "$zero_sha" ] && git cat-file -e "$before^{commit}" 2>/dev/null; then
-              git diff --name-only "$before" "$GITHUB_SHA" > "$changed_files"
-              base_sha="$before"
-            else
-              git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" > "$changed_files"
-              base_sha="$(git rev-parse "$GITHUB_SHA^" 2>/dev/null || true)"
-            fi
-
-            package_json_affects_acs() {
-              if [ -z "${base_sha:-}" ] || ! git cat-file -e "$base_sha:package.json" 2>/dev/null; then
-                return 0
-              fi
-
-              BASE_SHA="$base_sha" node <<'NODE'
-          const { execFileSync } = require('node:child_process');
-          const fs = require('node:fs');
-
-          const baseSha = process.env.BASE_SHA;
-
-          function readJsonAt(ref, file) {
-            return JSON.parse(execFileSync('git', ['show', `${ref}:${file}`], { encoding: 'utf8' }));
-          }
-
-          function pickRuntimeFields(pkg) {
-            return {
-              packageManager: pkg.packageManager,
-              postinstall: pkg.scripts?.postinstall,
-              dependencies: pkg.dependencies,
-              devDependencies: pkg.devDependencies,
-              optionalDependencies: pkg.optionalDependencies,
-              peerDependencies: pkg.peerDependencies,
-              pnpm: pkg.pnpm,
-              overrides: pkg.overrides,
-              resolutions: pkg.resolutions,
-              patchedDependencies: pkg.patchedDependencies,
-            };
-          }
-
-          try {
-            const before = pickRuntimeFields(readJsonAt(baseSha, 'package.json'));
-            const after = pickRuntimeFields(JSON.parse(fs.readFileSync('package.json', 'utf8')));
-            process.exit(JSON.stringify(before) === JSON.stringify(after) ? 1 : 0);
-          } catch (err) {
-            console.error(err instanceof Error ? err.message : String(err));
-            process.exit(0);
-          }
-          NODE
-            }
-
-            is_publish_path() {
-              case "$1" in
-                Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml)
-                  return 0
-                  ;;
-                acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)
-                  return 0
-                  ;;
-                server/src/agent/toolRuntime.ts|server/src/agent/workspaceHandTools.ts|server/src/agent/toolOutput.ts|server/src/agent/shellOutputFiles.ts|server/src/agent/containerExecutionProvider.ts|server/src/agent/memorySearchToolProvider.ts|server/src/agent/tools/descriptionLoader.ts)
-                  return 0
-                  ;;
-                server/src/agent/descriptions/Read.md|server/src/agent/descriptions/Write.md|server/src/agent/descriptions/List.md|server/src/agent/descriptions/Shell.md|server/src/agent/descriptions/WaitForWorkspaceReady.md|server/src/agent/descriptions/Edit.md|server/src/agent/descriptions/Glob.md|server/src/agent/descriptions/Grep.md|server/src/agent/descriptions/CreateArtifact.md|server/src/agent/descriptions/MemorySearch.md|server/src/agent/descriptions/MemoryList.md)
-                  return 0
-                  ;;
-                server/src/runtime/handProtocol.ts|server/src/runtime/httpTransport.ts|server/src/runtime/inProcessTransport.ts|server/src/runtime/clientDaemonTransport.ts|server/src/runtime/handStore.ts|server/src/runtime/networkPolicy.ts)
-                  return 0
-                  ;;
-              esac
-              return 1
-            }
-
-            is_contract_check_path() {
-              case "$1" in
-                server/src/runtime/rawAgentLoop.ts|server/src/runtime/rawRuntimeRunDispatch.ts)
-                  return 0
-                  ;;
-              esac
-              return 1
-            }
-
-            lock_changed=false
-            while IFS= read -r file; do
-              [ -n "$file" ] || continue
-
-              if [ "$file" = "package.json" ]; then
-                if package_json_affects_acs; then
-                  publish=true
-                  reasons+=("package.json runtime fields")
-                else
-                  skipped+=("package.json scripts/non-runtime fields")
-                fi
-                continue
-              fi
-
-              if [ "$file" = "pnpm-lock.yaml" ]; then
-                lock_changed=true
-                continue
-              fi
-
-              if is_publish_path "$file"; then
-                publish=true
-                reasons+=("$file")
-                continue
-              fi
-
-              if is_contract_check_path "$file"; then
-                contract_check=true
-                reasons+=("$file contract check")
-                continue
-              fi
-
-              skipped+=("$file")
-            done < "$changed_files"
-
-            if [ "$lock_changed" = true ]; then
-              if [ "$publish" = true ]; then
-                reasons+=("pnpm-lock.yaml paired with ACS publish path")
-              else
-                skipped+=("pnpm-lock.yaml without ACS package/source change")
-              fi
-            fi
+            {
+              echo "publish=true"
+              echo "contract_check=false"
+              echo "reason=manual workflow_dispatch"
+            } >> "$GITHUB_OUTPUT"
+            {
+              echo "### ACS impact classification"
+              echo
+              echo "- publish: \`true\`"
+              echo "- publish reasons: manual workflow_dispatch"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "ACS publish=true reason=manual workflow_dispatch"
+            exit 0
           fi
 
-          join_items() {
-            if [ "$#" -eq 0 ]; then
-              printf 'none'
-              return 0
-            fi
-            local first=true
-            for item in "$@"; do
-              if [ "$first" = true ]; then
-                printf '%s' "$item"
-                first=false
-              else
-                printf '; %s' "$item"
-              fi
-            done
-          }
-
-          if [ "${#reasons[@]}" -gt 0 ]; then
-            reason="$(join_items "${reasons[@]}")"
+          changed_files="$RUNNER_TEMP/acs-changed-files.txt"
+          before="${BEFORE_SHA:-}"
+          zero_sha="0000000000000000000000000000000000000000"
+          if [ -n "$before" ] && [ "$before" != "$zero_sha" ] && git cat-file -e "$before^{commit}" 2>/dev/null; then
+            git diff --name-only "$before" "$GITHUB_SHA" > "$changed_files"
+            base_sha="$before"
           else
-            reason="none"
-          fi
-          if [ "${#skipped[@]}" -gt 0 ]; then
-            skipped_reason="$(join_items "${skipped[@]}")"
-          else
-            skipped_reason="none"
+            git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" > "$changed_files"
+            base_sha="$(git rev-parse "$GITHUB_SHA^" 2>/dev/null || true)"
           fi
 
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "contract_check=$contract_check" >> "$GITHUB_OUTPUT"
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          out="$RUNNER_TEMP/acs-classify.out"
+          bash .github/scripts/acs-classify.sh "$changed_files" "$base_sha" > "$out"
+          cat "$out"
+
+          publish="$(sed -n 's/^publish=//p' "$out")"
+          contract_check="$(sed -n 's/^contract_check=//p' "$out")"
+          reason="$(sed -n 's/^reason=//p' "$out")"
+          skipped_reason="$(sed -n 's/^skipped=//p' "$out")"
+
+          {
+            echo "publish=$publish"
+            echo "contract_check=$contract_check"
+            echo "reason=$reason"
+          } >> "$GITHUB_OUTPUT"
 
           {
             echo "### ACS impact classification"
@@ -233,8 +117,6 @@ jobs:
             echo "- publish reasons: $reason"
             echo "- skipped inputs: $skipped_reason"
           } >> "$GITHUB_STEP_SUMMARY"
-
-          echo "ACS publish=$publish contract_check=$contract_check reason=$reason"
 
   contract-check:
     name: ACS Contract Check
@@ -330,13 +212,6 @@ jobs:
       ACR_REGION_ID: cn-shenzhen
 
     steps:
-      - name: Install aliyun CLI
-        run: |
-          curl -fsSL "https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz" -o aliyun.tgz
-          tar xzf aliyun.tgz
-          sudo mv aliyun /usr/local/bin/
-          aliyun version
-
       - name: Checkout exact dispatch commit
         uses: actions/checkout@v5
         with:
@@ -353,6 +228,127 @@ jobs:
           fi
           echo "Dispatch target is current main: $GITHUB_SHA"
 
+      - name: Configure SSH
+        run: |
+          : "${ECS_HOST:?Missing secret ECS_HOST}"
+          : "${ECS_USER:?Missing secret ECS_USER}"
+          : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_deploy_key
+          chmod 600 ~/.ssh/ecs_deploy_key
+          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
+
+      # ── 部署必要性门禁（2026-07-30 曾磊拍板）─────────────────────
+      # 全量部署 = orchestrator drain-restart + 换 ACS_SANDBOX_IMAGE env +
+      # 所有旧镜像 Paused sandbox 全量 prewarm 重建。镜像 tag 含构建时间戳,
+      # 即使内容未变 tag 也必变 → 每次部署必然全量 prewarm。因此 dispatch
+      # 时先读生产在跑镜像的 SHA: 若生产以来的全部变更都不是 ACS publish
+      # 路径, 明确 skip（不部署、不 prewarm）。任何读取/解析失败一律
+      # fail-open 继续部署——门禁失效不得阻塞发布。
+      # 强制部署: gh workflow run acs-sandbox.yml -f force=true
+      - name: Deploy necessity gate
+        id: necessity
+        env:
+          FORCE_DEPLOY: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          if [ "${FORCE_DEPLOY:-false}" = "true" ]; then
+            echo "deploy_needed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### ACS deploy necessity gate"
+              echo
+              echo "- \`force=true\` — deploying unconditionally"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "force=true — deploying unconditionally"
+            exit 0
+          fi
+
+          fail_open() {
+            echo "::warning title=ACS necessity gate inconclusive::$1 — proceeding with deploy (fail-open)."
+            echo "deploy_needed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### ACS deploy necessity gate"
+              echo
+              echo "- inconclusive: $1 — proceeded with deploy (fail-open)"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+
+          prod_env_line="$(ssh -i ~/.ssh/ecs_deploy_key \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$ECS_USER@$ECS_HOST" \
+            "grep '^ACS_SANDBOX_IMAGE=' /etc/agent-saas/acs-orchestrator.env" 2>/dev/null | head -n1 || true)"
+          [ -n "$prod_env_line" ] || fail_open "cannot read ACS_SANDBOX_IMAGE from production env file"
+
+          prod_image="${prod_env_line#ACS_SANDBOX_IMAGE=}"
+          prod_tag="${prod_image##*:}"
+          prod_sha6="${prod_tag##*-}"
+          case "$prod_sha6" in
+            "") fail_open "unexpected production image tag: $prod_tag" ;;
+            *[!0-9a-f]*) fail_open "unexpected production image tag: $prod_tag" ;;
+          esac
+
+          prod_sha="$(git rev-parse --verify --quiet "${prod_sha6}^{commit}" || true)"
+          [ -n "$prod_sha" ] || fail_open "cannot resolve production SHA6 $prod_sha6 to a commit"
+          git merge-base --is-ancestor "$prod_sha" "$GITHUB_SHA" \
+            || fail_open "production commit $prod_sha is not an ancestor of HEAD"
+
+          if [ "$prod_sha" = "$GITHUB_SHA" ]; then
+            echo "deploy_needed=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### ACS deploy necessity gate"
+              echo
+              echo "- **deploy skipped**: production already runs HEAD (\`$prod_sha6\`)"
+              echo "- override: \`gh workflow run acs-sandbox.yml -f force=true\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "deploy skipped: production already runs HEAD ($prod_sha6)"
+            exit 0
+          fi
+
+          changed_files="$RUNNER_TEMP/acs-prod-diff.txt"
+          git diff --name-only "$prod_sha" "$GITHUB_SHA" > "$changed_files"
+          out="$RUNNER_TEMP/acs-necessity.out"
+          bash .github/scripts/acs-classify.sh "$changed_files" "$prod_sha" > "$out" \
+            || fail_open "acs-classify.sh failed"
+          cat "$out"
+
+          publish="$(sed -n 's/^publish=//p' "$out")"
+          reason="$(sed -n 's/^reason=//p' "$out")"
+          skipped="$(sed -n 's/^skipped=//p' "$out")"
+
+          if [ "$publish" = "true" ]; then
+            echo "deploy_needed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### ACS deploy necessity gate"
+              echo
+              echo "- deploy needed: ACS publish paths changed since production \`$prod_sha6\`"
+              echo "- reasons: $reason"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "deploy needed since $prod_sha6: $reason"
+          else
+            echo "deploy_needed=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### ACS deploy necessity gate"
+              echo
+              echo "- **deploy skipped**: no ACS publish path changed since production \`$prod_sha6\`"
+              echo "- non-ACS changes: $skipped"
+              echo "- override: \`gh workflow run acs-sandbox.yml -f force=true\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "deploy skipped: no ACS-relevant change since $prod_sha6"
+          fi
+
+      - name: Install aliyun CLI
+        if: steps.necessity.outputs.deploy_needed == 'true'
+        run: |
+          # 下载/解包放 RUNNER_TEMP: 本 step 已在 checkout 之后, 落在工作目录
+          # 会被 Pack 打进 release 包
+          curl -fsSL "https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz" -o "$RUNNER_TEMP/aliyun.tgz"
+          tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
+          sudo mv "$RUNNER_TEMP/aliyun" /usr/local/bin/
+          aliyun version
+
       # 不主动触发构建: build rule 的 tag 变量 ${GIT_PUSH_DATE}/${GIT_COMMIT_ID}
       # 只在 push 事件自动构建时有值, API 手动触发会解析为空 tag "-"（2026-07-04
       # 首次实测踩坑）。因此 ACR 侧开启「代码变更自动构建」, push main 即自动
@@ -361,6 +357,7 @@ jobs:
       # 创建记录，3 分钟内快速失败；记录已存在但仍在构建时最多等待 20 分钟。
       - name: Wait for ACR auto-build of HEAD (poll every 30s)
         id: wait
+        if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
           set -euo pipefail
           : "${ALIYUN_AK:?Missing secret ALIYUN_ACCESS_KEY_ID}"
@@ -442,6 +439,7 @@ jobs:
           exit 1
 
       - name: Pack orchestrator release
+        if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
           tar \
             --exclude='./.git' \
@@ -459,24 +457,15 @@ jobs:
           # 输出必须放 RUNNER_TEMP：写进 checkout 目录会让 tar 读到 "." 目录
           # mtime 变化，报 "file changed as we read it" 并 exit 1（2026-07-04 首跑实测）
 
-      - name: Configure SSH
-        run: |
-          : "${ECS_HOST:?Missing secret ECS_HOST}"
-          : "${ECS_USER:?Missing secret ECS_USER}"
-          : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_deploy_key
-          chmod 600 ~/.ssh/ecs_deploy_key
-          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
-
       - name: Upload orchestrator release
+        if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
           scp -i ~/.ssh/ecs_deploy_key \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$RUNNER_TEMP/agent-saas-acs-release.tgz" "$ECS_USER@$ECS_HOST:/tmp/"
 
       - name: Deploy orchestrator with drain and smoke
+        if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
           IMAGE_TAG='${{ steps.wait.outputs.image_tag }}'
           IMAGE="agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/agent-saas/acs-sandbox:${IMAGE_TAG}"

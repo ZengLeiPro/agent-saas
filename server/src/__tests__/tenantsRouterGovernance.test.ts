@@ -291,6 +291,55 @@ describe('tenants 路由治理（settings 越权守卫 + CRUD 权限矩阵）', 
   });
 
   // -------------------------------------------------------------------------
+  // 记忆写入职责剥离开关（2026-07-29 P0 修复回归）
+  // -------------------------------------------------------------------------
+  describe('记忆整合/剥离开关 round-trip 与依赖校验', () => {
+    it('两个新开关保存后真实落库（修复前被 zod 静默剥离）', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await patchSettings(h, 'wain', {
+        features: { ...BASE_FEATURES, memoryConsolidationEnabled: true, memoryWriteDelegationEnabled: true },
+      });
+      expect(res.status).toBe(200);
+      const after = h.tenantStore.getSettings('wain')!;
+      expect(after.features.memoryConsolidationEnabled).toBe(true);
+      expect(after.features.memoryWriteDelegationEnabled).toBe(true);
+    });
+
+    it('delegation 依赖 consolidation：只开 delegation → 400 且不落库', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await patchSettings(h, 'acme', {
+        features: { ...BASE_FEATURES, memoryWriteDelegationEnabled: true },
+      });
+      expect(res.status).toBe(400);
+      const after = h.tenantStore.getSettings('acme')!;
+      expect(after.features.memoryWriteDelegationEnabled).not.toBe(true);
+    });
+
+    it('部分提交不能绕过依赖：先合法开双开关，再单独关 consolidation → 400', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      await patchSettings(h, 'wain', {
+        features: { ...BASE_FEATURES, memoryConsolidationEnabled: true, memoryWriteDelegationEnabled: true },
+      });
+      const res = await patchSettings(h, 'wain', {
+        features: { ...BASE_FEATURES, memoryConsolidationEnabled: false, memoryWriteDelegationEnabled: true },
+      });
+      expect(res.status).toBe(400);
+      expect(h.tenantStore.getSettings('wain')!.features.memoryConsolidationEnabled).toBe(true);
+    });
+
+    it('合法关闭：两个一起关 → 200', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await patchSettings(h, 'wain', {
+        features: { ...BASE_FEATURES, memoryConsolidationEnabled: false, memoryWriteDelegationEnabled: false },
+      });
+      expect(res.status).toBe(200);
+      const after = h.tenantStore.getSettings('wain')!;
+      expect(after.features.memoryConsolidationEnabled).toBe(false);
+      expect(after.features.memoryWriteDelegationEnabled).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // 跨租户隔离：wain 组织 admin → acme
   // -------------------------------------------------------------------------
   describe('跨租户隔离（wain admin → acme）', () => {

@@ -13,14 +13,14 @@
  *   - 提交期持 per-user PG advisory lock（与 L1/L3 共用），原子 tmp+rename。
  */
 
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { z } from 'zod';
 
 import { getConsolidationExecutionContext } from '../memory/consolidation/engine.js';
-import { normalizeFingerprint, redactSecrets } from '../memory/consolidation/digest.js';
+import { checkMemoryTextSafety, normalizeFingerprint } from '../memory/consolidation/digest.js';
+import { buildDailyFileNext, formatMemoryDate, materializeDailyOperations, sha256Text } from '../memory/consolidation/materialize.js';
 import type { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import type { MemoryCandidateOperation } from '../memory/consolidation/types.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
@@ -30,15 +30,6 @@ import type { AuthorizedToolCall, ToolCallContext, ToolDescriptor, ToolProvider,
 const MAX_TEXT_CHARS = 500;
 const MAX_QUOTE_CHARS = 200;
 const MAX_OPERATIONS = 20;
-
-/** 命令性/越权文本粗检：命中即拒绝（宁可漏记，不可放行注入）。 */
-const COMMAND_INJECTION_PATTERNS: RegExp[] = [
-  /忽略(上述|之前|以上|所有)?(的)?(规则|指令|系统提示)/,
-  /(必须|请|立即)?(执行|运行|调用)[^。]{0,20}(命令|工具|shell|脚本)/i,
-  /上传[^。]{0,30}(MEMORY|记忆|文件)[^。]{0,20}(到|至)/i,
-  /\bignore (all |previous |above )?(instructions|rules)\b/i,
-  /<\/?(?:system|developer|assistant)>/i,
-];
 
 const evidenceSchema = z.object({
   eventId: z.string().min(1),
@@ -156,38 +147,45 @@ export class MemoryCommitToolProvider implements ToolProvider {
       return { content: JSON.stringify({ status: 'busy', reason: 'memory write lock timeout' }) };
     }
     try {
-      const date = formatDate();
+      const date = formatMemoryDate();
       const filePath = join(context.workspace.root, 'memory', `${date}.md`);
       const existing = await readFile(filePath, 'utf8').catch(() => '');
-      const baseHash = sha256(existing);
+      const baseHash = sha256Text(existing);
+      const postimageHash = sha256Text(buildDailyFileNext(existing, accepted, date));
 
-      const lines = accepted.map((op) => serializeCandidate(op, date));
-      const next = existing.length > 0
-        ? `${existing.replace(/\n*$/, '\n')}${lines.join('\n')}\n`
-        : `# ${date}\n\n${lines.join('\n')}\n`;
-      const postimageHash = sha256(next);
+      // 崩溃幂等（2026-07-29 P1 修复）：写文件**之前**先把 proposal + base/
+      // postimage hash 持久化为 prepared——进程在写文件与标记 applied 之间
+      // 崩溃时，恢复流程按当前文件 hash 判定（见 engine.recoverPreparedRun）：
+      // 已是 postimage → 补账不重写；仍是 base → 服务端重放 accepted。
+      await this.options.store.updateRun({
+        idempotencyKey: execution.idempotencyKey,
+        status: 'prepared',
+        baseMemoryHash: baseHash,
+        plannedPostimageHash: postimageHash,
+        proposalJson: { date, operations: input.operations, accepted, rejected },
+      });
 
-      await mkdir(dirname(filePath), { recursive: true });
-      const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-      await writeFile(tmpPath, next, 'utf8');
-      await rename(tmpPath, filePath);
+      const materialized = await materializeDailyOperations({
+        workspaceRoot: context.workspace.root,
+        operations: accepted,
+        date,
+      });
 
       this.options.memoryIndexService?.enqueueSync(context.workspace.root, 'memory-commit');
 
       await this.options.store.updateRun({
         idempotencyKey: execution.idempotencyKey,
         status: 'applied',
-        baseMemoryHash: baseHash,
-        plannedPostimageHash: postimageHash,
-        proposalJson: { operations: input.operations, rejected },
+        plannedPostimageHash: materialized.postimageHash,
         applied: true,
         finished: true,
       });
+      const finalPostimageHash = materialized.postimageHash;
       execution.commitResult = {
         status: 'applied',
         appliedCount: accepted.length,
         rejectedCount: rejected.length,
-        postimageHash,
+        postimageHash: finalPostimageHash,
       };
       this.options.logger?.info?.(
         `[memory-commit] applied=${accepted.length} rejected=${rejected.length} user=${execution.userId} range=(${execution.fromSessionSequence},${execution.toSessionSequence}]`,
@@ -229,12 +227,9 @@ export class MemoryCommitToolProvider implements ToolProvider {
     if (op.attribution === 'external_source' && !op.text.includes('外部资料')) {
       return 'external_source 的 text 缺少「外部资料结论」标注';
     }
-    // 3. 敏感值：脱敏后与原文不同 = 含秘密
-    if (redactSecrets(op.text) !== op.text) return 'text 含疑似密钥/凭据';
-    // 4. 命令性/注入文本
-    for (const pattern of COMMAND_INJECTION_PATTERNS) {
-      if (pattern.test(op.text)) return 'text 含命令性/注入性内容';
-    }
+    // 3/4. 敏感值与命令性/注入文本（与 L1 MemoryCommand 共用同一规则）
+    const safety = checkMemoryTextSafety(op.text);
+    if (safety) return safety;
     // 5. tombstone：防「忘记后复活」
     const fingerprint = normalizeFingerprint(op.text);
     for (const tombstone of tombstones) {
@@ -250,18 +245,6 @@ export class MemoryCommitToolProvider implements ToolProvider {
   }
 }
 
-function serializeCandidate(op: MemoryCandidateOperation, date: string): string {
-  const keyShort = createHash('sha256').update(op.memoryKey).digest('hex').slice(0, 8);
-  const attributionLabel = op.attribution === 'user_statement'
-    ? '用户原话'
-    : op.attribution === 'agent_inference' ? 'Agent推论' : '外部资料';
-  const supersedes = op.supersedesMemoryKey ? `（更正先前条目 ${op.supersedesMemoryKey.slice(0, 8)}）` : '';
-  const evidenceRef = op.evidence
-    .map((item) => `seq=${item.sessionSequence}`)
-    .join(',');
-  return `- [mem:${keyShort}] ${date}｜${attributionLabel}：${op.text}${supersedes}（证据 ${evidenceRef}）`;
-}
-
 /** quote 匹配：归一化空白后子串包含。 */
 function quoteMatches(sourceText: string, quote: string): boolean {
   const normalize = (text: string): string => text.replace(/\s+/g, ' ').trim();
@@ -271,14 +254,4 @@ function quoteMatches(sourceText: string, quote: string): boolean {
   return source.includes(target);
 }
 
-function sha256(text: string): string {
-  return createHash('sha256').update(text).digest('hex');
-}
 
-function formatDate(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}

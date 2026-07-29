@@ -1798,7 +1798,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       if (!memoryConsolidationStore) return false;
       if (config.memory?.consolidation?.enabled !== true) return false;
       try {
-        return !!tenantId && tenantStore?.getSettings(tenantId)?.features?.memoryWriteDelegationEnabled === true;
+        if (!tenantId) return false;
+        const features = tenantStore?.getSettings(tenantId)?.features;
+        // 运行时双保险（2026-07-29 P0 修复）：即使存量配置里出现非法组合
+        // （delegation 开而 consolidation 关），也不 pin v2——剥离主 Agent
+        // 写入的前提是 L2 确实在接管。
+        return features?.memoryWriteDelegationEnabled === true
+          && features?.memoryConsolidationEnabled === true;
       } catch {
         return false;
       }

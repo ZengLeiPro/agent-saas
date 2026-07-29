@@ -17,7 +17,8 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { z } from 'zod';
 
-import { normalizeFingerprint } from '../memory/consolidation/digest.js';
+import { checkMemoryTextSafety, normalizeFingerprint } from '../memory/consolidation/digest.js';
+import { sha256Text } from '../memory/consolidation/materialize.js';
 import type { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
@@ -54,6 +55,8 @@ interface MatchCandidate {
   endLine: number;
   score: number;
   snippet: string;
+  /** 候选行区间原文 hash（缓存时计算；执行删除前持锁重读复核，防行号漂移误删）。 */
+  lineContentHash: string;
 }
 
 export class MemoryCommandToolProvider implements ToolProvider {
@@ -92,6 +95,14 @@ export class MemoryCommandToolProvider implements ToolProvider {
     const tenantId = identity.tenantId;
     const userId = identity.id;
     const userKey = `${tenantId ?? '__none'}:${userId}`;
+
+    // 写入内容安全（2026-07-29 P1 修复）：显式指令与 L2 共用同一规则——
+    // 用户要求记住的内容若含密钥/凭据或命令性文本，明确拒绝并说明原因，
+    // 不写入可被索引与未来会话注入的记忆文件。
+    if (input.action === 'remember' || input.action === 'correct' || input.action === 'question_answered') {
+      const unsafe = checkMemoryTextSafety(input.value ?? input.subject);
+      if (unsafe) return reply({ status: 'rejected', reason: unsafe }, true);
+    }
 
     try {
       switch (input.action) {
@@ -157,6 +168,11 @@ export class MemoryCommandToolProvider implements ToolProvider {
       if (!pending || pending.expiresAtMs < Date.now()) {
         return reply({ status: 'needs_clarification', reason: '候选已过期，请重新发起' }, true);
       }
+      // P2 修复：并行会话可能覆盖候选缓存——二次调用必须与缓存的意图一致
+      if (pending.action !== input.action || pending.subject !== input.subject) {
+        this.pendingChoices.delete(userKey);
+        return reply({ status: 'needs_clarification', reason: '候选与当前请求不匹配（可能有并行操作），请重新发起' }, true);
+      }
       target = pending.candidates[input.candidateChoice - 1];
       if (!target) return reply({ status: 'rejected', reason: `候选编号 ${input.candidateChoice} 不存在` }, true);
       this.pendingChoices.delete(userKey);
@@ -213,6 +229,16 @@ export class MemoryCommandToolProvider implements ToolProvider {
     const lock = await this.options.store.acquireCommitLock(tenantId ?? '__none', userId);
     if (!lock) return reply({ status: 'busy', reason: '记忆写入锁忙' }, true);
     try {
+      // P2 修复：持锁后重读文件复核候选行区间 hash——候选产生到用户确认之间
+      // 文件可能被 L2/L3/其他会话改写，行号漂移时绝不按旧行号硬删。
+      const current = await readLineRange(context.workspace.root, target!);
+      if (current === null || sha256Text(current) !== target!.lineContentHash) {
+        this.pendingChoices.delete(userKey);
+        return reply({
+          status: 'needs_clarification',
+          reason: '记忆文件在确认期间发生了变化，为避免误删已中止；请重新发起本次操作',
+        }, true);
+      }
       const removedText = await removeLineRange(context.workspace.root, target!);
       await this.options.store.insertTombstone({
         tenantId: tenantId ?? '__none', userId,
@@ -273,13 +299,22 @@ export class MemoryCommandToolProvider implements ToolProvider {
     const indexer = service.getIndexer(workspaceRoot);
     await indexer.syncIfStale({ maxWaitMs: 1_500, emptyIndexMaxWaitMs: 3_000, manifestCheckIntervalMs: 60_000 });
     const response = await indexer.search(subject, { maxResults: 5, keywords: subject });
-    return response.results.map((result) => ({
-      path: result.path,
-      startLine: result.startLine,
-      endLine: result.endLine,
-      score: result.score,
-      snippet: result.snippet,
-    }));
+    const candidates: MatchCandidate[] = [];
+    for (const result of response.results) {
+      const lineText = await readLineRange(workspaceRoot, {
+        path: result.path, startLine: result.startLine, endLine: result.endLine,
+      });
+      if (lineText === null) continue; // 索引指向的文件/区间已不存在，跳过
+      candidates.push({
+        path: result.path,
+        startLine: result.startLine,
+        endLine: result.endLine,
+        score: result.score,
+        snippet: result.snippet,
+        lineContentHash: sha256Text(lineText),
+      });
+    }
+    return candidates;
   }
 }
 
@@ -303,6 +338,26 @@ async function appendToDailyFile(workspaceRoot: string, date: string, line: stri
     ? `${existing.replace(/\n*$/, '\n')}${line}\n`
     : `# ${date}\n\n${line}\n`;
   await atomicWrite(filePath, next);
+}
+
+/** 读候选行区间原文；文件不存在或区间越界返回 null。 */
+async function readLineRange(
+  workspaceRoot: string,
+  candidate: { path: string; startLine: number; endLine: number },
+): Promise<string | null> {
+  let filePath: string;
+  try {
+    filePath = assertMemoryPath(workspaceRoot, candidate.path);
+  } catch {
+    return null;
+  }
+  const existing = await readFile(filePath, 'utf8').catch(() => null);
+  if (existing === null) return null;
+  const lines = existing.split('\n');
+  const start = Math.max(0, candidate.startLine - 1);
+  const end = Math.min(lines.length, candidate.endLine);
+  if (start >= end) return null;
+  return lines.slice(start, end).join('\n');
 }
 
 /** 删除候选的行区间；返回被删除的文本（tombstone 指纹用）。 */

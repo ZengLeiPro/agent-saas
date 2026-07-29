@@ -75,6 +75,11 @@ const tenantSettingsSchema = z.object({
     memoryPollChargesCredits: z.boolean().optional(),
     // GenerateImage 生图批次（2026-07-15）：默认关，平台管理员按租户开放
     imageGenEnabled: z.boolean().optional(),
+    // 记忆写入职责剥离批次（2026-07-29）：默认关；delegation 依赖 consolidation
+    // （服务端强制，见 assertMemoryFeatureDependency——v2 剥离主 Agent 写入后
+    // 必须有 L2 接管，否则记忆静默停更）
+    memoryConsolidationEnabled: z.boolean().optional(),
+    memoryWriteDelegationEnabled: z.boolean().optional(),
   }).optional(),
   quotas: z.object({
     maxUsers: optionalNumber,
@@ -362,6 +367,20 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
         }
       }
       parsed.data.quotas = { ...current.quotas };
+    }
+    // 记忆开关依赖校验（2026-07-29 P0 修复）：v2 剥离主 Agent 写入后必须有
+    // L2 接管，否则该租户记忆静默停更。以「合并后的最终态」校验，防止只提交
+    // 部分字段绕过（如仅关 consolidation 而 delegation 保持开启）。
+    {
+      const currentSettings = tenantStore.getSettings(req.params.id);
+      const finalConsolidation = parsed.data.features?.memoryConsolidationEnabled
+        ?? (currentSettings?.features.memoryConsolidationEnabled === true);
+      const finalDelegation = parsed.data.features?.memoryWriteDelegationEnabled
+        ?? (currentSettings?.features.memoryWriteDelegationEnabled === true);
+      if (finalDelegation && !finalConsolidation) {
+        res.status(400).json({ error: '「记忆写入剥离 v2」依赖「会话记忆整合」：请先开启会话记忆整合，或同时关闭两者' });
+        return;
+      }
     }
     try {
       const settings = await tenantStore.updateSettings(req.params.id, parsed.data);

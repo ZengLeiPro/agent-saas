@@ -49,6 +49,24 @@ const SECRET_TEXT_PATTERNS: RegExp[] = [
   /\bLTAI[A-Za-z0-9]{12,}\b/g,
 ];
 
+/** 命令性/越权文本粗检（记忆内容安全公共规则）：命中即拒绝写入。 */
+export const MEMORY_COMMAND_INJECTION_PATTERNS: ReadonlyArray<RegExp> = [
+  /忽略(上述|之前|以上|所有)?(的)?(规则|指令|系统提示)/,
+  /(必须|请|立即)?(执行|运行|调用)[^。]{0,20}(命令|工具|shell|脚本)/i,
+  /上传[^。]{0,30}(MEMORY|记忆|文件)[^。]{0,20}(到|至)/i,
+  /\bignore (all |previous |above )?(instructions|rules)\b/i,
+  /<\/?(?:system|developer|assistant)>/i,
+];
+
+/** 记忆写入内容安全检查：返回 null=通过；字符串=拒绝原因。L1/L2 共用。 */
+export function checkMemoryTextSafety(text: string): string | null {
+  if (redactSecrets(text) !== text) return '内容疑似包含密钥/凭据，不会写入记忆';
+  for (const pattern of MEMORY_COMMAND_INJECTION_PATTERNS) {
+    if (pattern.test(text)) return '内容含命令性/注入性文本，不会写入记忆';
+  }
+  return null;
+}
+
 export function redactSecrets(text: string): string {
   let out = text;
   for (const pattern of SECRET_TEXT_PATTERNS) {

@@ -21,7 +21,21 @@ describe('ACS deploy workflow contract', () => {
     expect(packIndex).toBeGreaterThan(waitIndex);
     expect(workflow).toContain('git fetch --quiet --no-tags origin main');
     expect(workflow).toContain('This run targets $GITHUB_SHA, but origin/main is now $latest_main_sha');
-    expect(workflow).toContain('main advanced to $latest_main_sha while this run was waiting');
+    expect(workflow).toContain('main advanced to $latest_main_sha before an ACR build record appeared');
+  });
+
+  it('发现 exact SHA 构建记录后不因 main 推进中断等待', () => {
+    expect(workflow).toContain('build_record_found=false');
+    expect(workflow).toContain('if [ "$build_record_found" = "true" ]; then');
+    expect(workflow).toContain('ACR build record disappeared');
+    expect(workflow).toContain('build_record_found=true');
+    expect(workflow).toContain('后续 main 推进不影响本次代码与镜像仍使用同一个 GITHUB_SHA');
+    expect(workflow).not.toContain('while this run was waiting for image');
+  });
+
+  it('串行化生产部署且不取消正在进行的发布', () => {
+    expect(workflow).toContain('group: acs-production-deploy');
+    expect(workflow).toContain('cancel-in-progress: false');
   });
 
   it('只接受 exact SHA 镜像并对缺失构建记录快速失败', () => {

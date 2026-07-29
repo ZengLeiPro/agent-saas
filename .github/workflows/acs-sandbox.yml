@@ -197,6 +197,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [changes, gate]
+    concurrency:
+      group: acs-production-deploy
+      cancel-in-progress: false
     # 生产部署只走手动 dispatch（与主服务 ci.yml 同一纪律: push 归 push, 部署归部署）
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.gate.result == 'success'
 
@@ -368,15 +371,9 @@ jobs:
           MAX_QUERY_ERRORS=3
           missing_polls=0
           query_errors=0
+          build_record_found=false
           echo "Looking for ACR build record with tag suffix -$SHA6 (HEAD $GITHUB_SHA) ..."
           for i in $(seq 1 "$MAX_POLLS"); do
-            git fetch --quiet --no-tags origin main
-            latest_main_sha=$(git rev-parse refs/remotes/origin/main)
-            if [ "$latest_main_sha" != "$GITHUB_SHA" ]; then
-              echo "::error title=Stale ACS deploy dispatch::main advanced to $latest_main_sha while this run was waiting for image $SHA6. Dispatch again from latest main."
-              exit 1
-            fi
-
             aliyun cr ListRepoBuildRecord \
               --mode AK --access-key-id "$ALIYUN_AK" --access-key-secret "$ALIYUN_SK" \
               --region "$ACR_REGION_ID" \
@@ -413,6 +410,16 @@ jobs:
                 ;;
               NOT_FOUND)
                 query_errors=0
+                if [ "$build_record_found" = "true" ]; then
+                  echo "::error title=ACR build record disappeared::The exact SHA build record for $GITHUB_SHA disappeared after it was discovered. Refusing to substitute another image."
+                  exit 1
+                fi
+                git fetch --quiet --no-tags origin main
+                latest_main_sha=$(git rev-parse refs/remotes/origin/main)
+                if [ "$latest_main_sha" != "$GITHUB_SHA" ]; then
+                  echo "::error title=Stale ACS deploy dispatch::main advanced to $latest_main_sha before an ACR build record appeared for image $SHA6. Dispatch again from latest main."
+                  exit 1
+                fi
                 missing_polls=$((missing_polls + 1))
                 if [ "$missing_polls" -ge "$MAX_MISSING_POLLS" ]; then
                   echo "::error title=ACR build record missing::No ACR build record for current main $GITHUB_SHA appeared after $missing_polls checks. Verify the ACR source webhook/build rule, then dispatch again; a later image will not be substituted."
@@ -427,8 +434,9 @@ jobs:
                 fi
                 ;;
               *)
-                # BUILDING/PENDING 等真实记录已出现后，不再受 discovery 窗口限制；
-                # 继续等它进入 SUCCESS/FAILED/CANCELED。
+                # BUILDING/PENDING 等真实记录已出现后，锁定 exact SHA 构建继续等待；
+                # 后续 main 推进不影响本次代码与镜像仍使用同一个 GITHUB_SHA。
+                build_record_found=true
                 missing_polls=0
                 query_errors=0
                 ;;

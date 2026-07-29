@@ -15,17 +15,18 @@ const failedTool: Extract<MessageItem, { type: 'tool_use' }> = {
 };
 
 describe('ActivityGroupBlock 统一活动卡', () => {
-  it('单条活动也使用统一外壳，展开后显示具体异常', () => {
+  it('单条异常不再让整个分组显示异常，展开后才能看到具体异常', () => {
     render(<ActivityGroupBlock items={[failedTool]} isActive={false} debugMode />);
 
     expect(screen.getByText('Agent 活动')).toBeTruthy();
-    expect(screen.getByText('有异常')).toBeTruthy();
+    expect(screen.getByText('已完成')).toBeTruthy();
+    expect(screen.queryByText('有异常')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { expanded: false }));
-    expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('分组折叠时保留异常状态，展开后显示具体异常', () => {
+  it('分组内一条失败不影响折叠行的正常完成展示，展开后显示具体异常', () => {
     const failedToolWithDuration = { ...failedTool, durationMs: 1200 };
     render(<ActivityGroupBlock
       items={[
@@ -36,8 +37,9 @@ describe('ActivityGroupBlock 统一活动卡', () => {
       debugMode
     />);
 
-    const summary = screen.getByText('已处理 2 条：1 次思考 · 1 个工具');
-    expect(screen.getByText('有异常')).toBeTruthy();
+    const summary = screen.getByText('已完成 2 条：1 次思考 · 1 个工具');
+    expect(screen.getByText('已完成')).toBeTruthy();
+    expect(screen.queryByText('有异常')).toBeNull();
     expect(screen.getByText(/1\.2s.*2 项/)).toBeTruthy();
 
     fireEvent.click(summary.closest('button')!);
@@ -60,14 +62,18 @@ describe('ActivityGroupBlock 统一活动卡', () => {
     expect(screen.queryByText(/异常/)).toBeNull();
   });
 
-  it('关闭调试模式后仍使用统一外壳', () => {
+  it('关闭调试模式后仍使用统一外壳，折叠行不显示异常', () => {
     render(<ActivityGroupBlock items={[failedTool]} isActive={false} debugMode={false} />);
 
     expect(screen.getByText('Agent 活动')).toBeTruthy();
-    expect(screen.getByText('有异常')).toBeTruthy();
+    expect(screen.getByText('已完成')).toBeTruthy();
+    expect(screen.queryByText('有异常')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    expect(screen.getByText(/已执行，有异常/)).toBeTruthy();
   });
 
-  it('关闭调试模式后分组仍保留异常汇总，但不泄露内部细节', () => {
+  it('关闭调试模式后分组折叠行保持正常完成展示，且不泄露内部细节', () => {
     render(<ActivityGroupBlock
       items={[
         { id: 'thinking', type: 'thinking', content: '换一种方法', streaming: false },
@@ -77,8 +83,8 @@ describe('ActivityGroupBlock 统一活动卡', () => {
       debugMode={false}
     />);
 
-    expect(screen.getByText('有异常')).toBeTruthy();
-    expect(screen.getByText('已处理 2 条：1 次思考 · 1 个工具')).toBeTruthy();
+    expect(screen.queryByText('有异常')).toBeNull();
+    expect(screen.getByText('已完成 2 条：1 次思考 · 1 个工具')).toBeTruthy();
     expect(screen.queryByText(/exit 1/)).toBeNull();
   });
 });

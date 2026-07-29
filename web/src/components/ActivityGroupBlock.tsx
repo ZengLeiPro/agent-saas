@@ -127,13 +127,6 @@ function getActivityDurationMs(items: MessageItem[]): number | undefined {
   return hasDuration ? total : undefined;
 }
 
-function hasActivityIssue(items: MessageItem[]): boolean {
-  return items.some(item => (
-    (item.type === 'tool_use' && item.executionStatus === 'failed')
-    || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
-  ));
-}
-
 function hasPresentation(item: MessageItem): boolean {
   return (item.type === 'tool_use' || item.type === 'tool_result' || item.type === 'subagent') && !!item.presentation;
 }
@@ -260,17 +253,8 @@ function getGroupSummary(items: MessageItem[], isActive: boolean): GroupSummaryI
     };
   }
 
-  if (hasActivityIssue(items)) {
-    return {
-      text: getCompletedBreakdown(items).replace(/^已完成/, '已处理'),
-      truncateStart: false,
-      tone: 'warning',
-      badge: '有异常',
-      durationMs: getActivityDurationMs(items),
-      active: false,
-    };
-  }
-
+  // 单条异常不再让整个分组显示为「有异常」：分组外层按正常完成展示，
+  // 具体失败项在展开后的列表里各自标红，避免一条失败淹没其余正常记录。
   return {
     text: getCompletedBreakdown(items),
     truncateStart: false,

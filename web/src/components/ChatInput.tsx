@@ -76,7 +76,6 @@ export function ChatInput({
   topSlot,
 }: ChatInputProps) {
   const isDisabled = disabled === true;
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [tooShortTip, setTooShortTip] = useState(false);
@@ -314,16 +313,6 @@ export function ChatInput({
 
   return (
     <>
-      <input
-        type="file"
-        ref={fileInputRef}
-        multiple
-        style={{ display: 'none' }}
-        onChange={onFileSelect}
-        accept="*/*"
-        disabled={isDisabled}
-      />
-
       {topSlot && (
         <div className="bg-background">
           <div className="content-container pt-3">
@@ -394,19 +383,28 @@ export function ChatInput({
             {/* 底部工具栏 */}
             <div className="flex items-center justify-between px-2 pb-2 pt-1">
               <div className="flex items-center gap-0.5">
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={disableAttach || voiceRecorder.isRecording}
+                <label
                   className={cn(
-                    "flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors",
+                    "relative flex size-8 items-center justify-center overflow-hidden rounded-full text-muted-foreground transition-colors",
                     "hover:bg-muted-foreground/10 active:bg-muted-foreground/20",
-                    "disabled:pointer-events-none disabled:opacity-40",
+                    disableAttach || voiceRecorder.isRecording
+                      ? "cursor-not-allowed opacity-40"
+                      : "cursor-pointer",
                   )}
                   title="添加附件"
+                  onClick={(event) => event.stopPropagation()}
                 >
                   <Plus className="size-5" />
-                </button>
+                  <input
+                    type="file"
+                    multiple
+                    className="absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                    onChange={onFileSelect}
+                    accept="*/*"
+                    disabled={disableAttach || voiceRecorder.isRecording}
+                    aria-label="添加附件"
+                  />
+                </label>
               </div>
 
               <div className="flex items-center gap-1">

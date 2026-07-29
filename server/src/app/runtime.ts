@@ -27,6 +27,7 @@ import { PgEventStore } from '../runtime/pgEventStore.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
 import type { EventStore } from '../runtime/types.js';
 import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
+import { resolveSttRuntimeConfig } from '../runtime/sttRuntimeConfig.js';
 import { PgRuntimeAuditQuery } from '../runtime/pgAuditQuery.js';
 import { PgSessionLock } from '../runtime/pgSessionLock.js';
 import { PgRunStore } from '../runtime/runStore.js';
@@ -960,6 +961,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     }
     return new HttpSecretVault({ baseUrl: vc.baseUrl, authToken: token });
   })();
+  const resolvedSttRuntimeConfig = await resolveSttRuntimeConfig(config.stt, secretVault);
 
   // A5: clientDaemon 的 bearer 在装配阶段解析为 plaintext。`authTokenRef` 走 vault
   // (actor:'system', scope:'secret:client_daemon:read')，`authToken` inline 透传。
@@ -1701,6 +1703,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('McpProxy'),
   });
   const mcpClientShutdown = () => mcpClientManager.shutdown();
+  const resolveRunScopedEnv = async (context: { username: string; tenantId: string }) => {
+    const connectorEnv = await resolveConnectorRuntimeEnv({
+      store: mcpConfigStore,
+      vault: secretVault,
+      oauthService: mcpOAuthService,
+      onError: (error, meta) => serverLogger.warn(
+        `Connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
+      ),
+    }, context);
+    return {
+      ...connectorEnv,
+      ...(resolvedSttRuntimeConfig.audioTranscribeEnvByTenant.get(context.tenantId) ?? {}),
+    };
+  };
 
   const tenantRemoteHandResolver = createTenantRemoteHandAuthTokenResolver({
     tenantRemoteHands: () => config.tenantRemoteHands?.hands,
@@ -1963,14 +1979,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // PR 8 enqueue-only + scheduler wake 路径绕过了 engine/dispatch.ts 的
     // ensureUserWorkspace 调用，导致新 tenant / 新用户首跑 cwd 物理目录不存在
     // → hand-server spawn ENOENT。这里在 wake 时按 session.userId/username
-    resolveConnectorRuntimeEnv: (context: { username: string; tenantId: string }) => resolveConnectorRuntimeEnv({
-      store: mcpConfigStore,
-      vault: secretVault,
-      oauthService: mcpOAuthService,
-      onError: (error, meta) => serverLogger.warn(
-        `Connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
-      ),
-    }, context),
+    resolveConnectorRuntimeEnv: resolveRunScopedEnv,
     // 反查 UserStore 得到完整 WorkspaceUser（含 tenantId / realName），调用
     // ensureUserWorkspace（含 PR 4 扁平→tenant 层 mkdir + 迁移、首次 skills 同步）。
     // 幂等：目录已存在直接 return；底层 mkdir 与 rename 都是无副作用重入安全的。
@@ -2218,14 +2227,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     skillConfigStore,
     mcpConfigStore,
     userOverrides: config.agent.userOverrides,
-    resolveConnectorRuntimeEnv: (context: { username: string; tenantId: string }) => resolveConnectorRuntimeEnv({
-      store: mcpConfigStore,
-      vault: secretVault,
-      oauthService: mcpOAuthService,
-      onError: (error, meta) => serverLogger.warn(
-        `Connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
-      ),
-    }, context),
+    resolveConnectorRuntimeEnv: resolveRunScopedEnv,
   };
   const runDispatch = dispatchPipelineEnabled === false
     ? baseRunDispatch
@@ -2633,11 +2635,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
   }
 
-  // 构造 STT 配置（阿里云百炼 DashScope）
-  const sttConfig = config.stt?.apiKey && config.stt?.ossAccessKeyId
-    ? config.stt
-    : undefined;
-
   const webChannel = new WebChannel({
     timezone: config.server.timezone,
     displayConfig: config.messageDisplay?.web,
@@ -2648,7 +2645,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     userStore,
     titleGeneratorConfigs,
     getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'),
-    sttConfig,
+    sttConfig: resolvedSttRuntimeConfig.sttConfig,
     jwtSecret: config.auth?.jwtSecret,
     userOverrides: config.agent.userOverrides,
     getIsDraining: () => channelManager.draining,

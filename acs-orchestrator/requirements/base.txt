@@ -26,6 +26,10 @@ psycopg[binary]>=3.1,<4
 python-dotenv>=1,<2
 PyYAML>=6,<7
 jieba>=0.42,<1
+# audio-transcribe skill：DashScope 异步 ASR + 本地音频临时上传 OSS。
+# 固定已验证版本，确保 wheelhouse 构建与 workspace 离线安装可复现。
+dashscope==1.26.4
+oss2==2.19.1
 # Office skills（pptx/docx/xlsx，skills-pool 上游快照）脚本工具链依赖（2026-07-16 生产反馈修复）：
 # defusedxml — unpack/pack/clean/validate/thumbnail 等所有 Office XML 脚本的安全解析层
 # markitdown — pptx/docx 文本提取与 Content QA（extras 对应三个 Office skill 的文件格式）

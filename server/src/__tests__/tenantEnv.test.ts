@@ -177,7 +177,8 @@ describe('buildTenantScopedEnv', () => {
       'AZEROTH_TOKEN', 'AZEROTH_API_URL',
       'GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'NPM_TOKEN',
       'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY',
-      'DASHSCOPE_API_KEY', 'AWS_SECRET_ACCESS_KEY',
+      'DASHSCOPE_API_KEY', 'OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET',
+      'AWS_SECRET_ACCESS_KEY',
     ]) {
       expect(keys).toContain(required);
     }

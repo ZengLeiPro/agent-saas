@@ -213,6 +213,13 @@ const LazyMarkdown = lazy(async () => {
           }
           return <img src={src} alt={alt} {...props} loading="lazy" decoding="async" />;
         }
+        if (filePreview?.shareToken) {
+          const sharedSrc = publicSessionShareFileUrl(filePreview.shareToken, src);
+          if (VIDEO_EXT_RE.test(src)) {
+            return <LazyVideo src={sharedSrc} className="max-h-80 max-w-full rounded-lg border border-border shadow-sm" />;
+          }
+          return <AuthImage src={sharedSrc} alt={alt ?? ''} />;
+        }
         if (VIDEO_EXT_RE.test(src)) {
           return <AuthVideo src={src} owner={filePreview?.owner} />;
         }

@@ -155,6 +155,18 @@ describe('用户消息附件 chip', () => {
 });
 
 describe('会话媒体加载', () => {
+  it('分享页正文图片使用公开快照文件 URL', async () => {
+    renderMessage({
+      id: 'line-shared-image',
+      type: 'text',
+      content: '![效果图](assets/generated/20260716/img-1234abcd.png)',
+    }, vi.fn(), undefined, 'share 1');
+
+    expect((await screen.findByAltText('效果图')).getAttribute('src')).toBe(
+      'https://api.example.com/api/share/sessions/share%201/file?path=assets%2Fgenerated%2F20260716%2Fimg-1234abcd.png',
+    );
+  });
+
   it('图片使用浏览器懒加载，屏外视频接近视口后才挂载 src', async () => {
     let intersectionCallback: IntersectionObserverCallback | undefined;
     class FakeIntersectionObserver implements IntersectionObserver {

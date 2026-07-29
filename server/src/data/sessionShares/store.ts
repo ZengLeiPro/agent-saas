@@ -28,6 +28,7 @@ export interface SessionShareSnapshot {
   allowedFiles?: Array<{
     relativePath: string;
     fileName: string;
+    inlineInBody?: true;
     sha256?: string;
     bytes?: number;
     contentType?: string;

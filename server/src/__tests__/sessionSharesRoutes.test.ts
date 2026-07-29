@@ -116,7 +116,11 @@ describe('session share routes', () => {
     vi.resetModules();
   });
 
-  async function writeSharedSession(options: { includeFileMarkers?: boolean; sensitiveContent?: string } = {}): Promise<{ sessionId: string; transcriptPath: string }> {
+  async function writeSharedSession(options: {
+    includeFileMarkers?: boolean;
+    inlineMediaPath?: string;
+    sensitiveContent?: string;
+  } = {}): Promise<{ sessionId: string; transcriptPath: string }> {
     const sessionId = randomUUID();
     const userCwd = deps.resolveUserCwd(agentCwd, TEST_USER);
     const transcriptPath = deps.getTranscriptPath(userCwd, sessionId, {
@@ -174,7 +178,9 @@ describe('session share routes', () => {
             type: 'text',
             text: options.includeFileMarkers
               ? '订单 A 已完成。\n[FILE]{"filePath":"assets/20260708/demo.html"}[/FILE]\n[FILE]{"filePath":"assets/20260708/demo.pdf"}[/FILE]\n[FILE]{"filePath":"assets/20260708/escape.txt"}[/FILE]'
-              : '订单 A 已完成。',
+              : options.inlineMediaPath
+                ? `订单 A 已完成。\n![效果图](${options.inlineMediaPath})`
+                : '订单 A 已完成。',
           }],
         },
       },
@@ -370,6 +376,54 @@ describe('session share routes', () => {
 
       const publicResponse = await fetch(`${baseUrl}/api/share/sessions/${token}`);
       expect(publicResponse.status).toBe(410);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('正文 Markdown 图片默认随正文公开，并通过冻结快照读取', async () => {
+    const imagePath = 'assets/generated/20260729/result.png';
+    const { sessionId } = await writeSharedSession({ inlineMediaPath: imagePath });
+    const userCwd = deps.resolveUserCwd(agentCwd, TEST_USER);
+    await mkdir(dirname(join(userCwd, imagePath)), { recursive: true });
+    await writeFile(join(userCwd, imagePath), 'PNG_BYTES');
+
+    const { server, baseUrl } = await startServer(agentCwd);
+    try {
+      const preview = await fetch(`${baseUrl}/api/sessions/${sessionId}/share-preview`);
+      expect(preview.status).toBe(200);
+      await expect(preview.json()).resolves.toMatchObject({
+        blockCount: 2,
+        files: [{ relativePath: imagePath, fileName: 'result.png', inlineInBody: true }],
+      });
+
+      const missingInlineMedia = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmPublicText: true, filePaths: [] }),
+      });
+      expect(missingInlineMedia.status).toBe(400);
+
+      const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmPublicText: true, filePaths: [imagePath] }),
+      });
+      expect(created.status).toBe(200);
+      const createdJson = await created.json() as { url: string };
+      const token = createdJson.url.split('/').pop()!;
+
+      const publicShare = await fetch(`${baseUrl}/api/share/sessions/${token}`);
+      const publicShareJson = await publicShare.json() as {
+        detail: { blocks: Array<{ content: string }> };
+      };
+      expect(publicShareJson.detail.blocks.at(-1)?.content).toContain(`![效果图](${imagePath})`);
+
+      const image = await fetch(
+        `${baseUrl}/api/share/sessions/${token}/file?path=${encodeURIComponent(imagePath)}`,
+      );
+      expect(image.status).toBe(200);
+      expect(await image.text()).toBe('PNG_BYTES');
     } finally {
       await stopServer(server);
     }

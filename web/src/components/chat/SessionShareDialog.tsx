@@ -54,8 +54,14 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
         if (cancelled) return;
         if (shareResult.status === "fulfilled") setShare(shareResult.value);
         else setError(shareResult.reason instanceof Error ? shareResult.reason.message : String(shareResult.reason));
-        if (previewResult.status === "fulfilled") setPreview(previewResult.value);
-        else setError((current) => current
+        if (previewResult.status === "fulfilled") {
+          setPreview(previewResult.value);
+          setSelectedFilePaths(new Set(
+            previewResult.value.files
+              .filter((file) => file.inlineInBody)
+              .map((file) => file.relativePath),
+          ));
+        } else setError((current) => current
           ?? (previewResult.reason instanceof Error ? previewResult.reason.message : String(previewResult.reason)));
       })
       .finally(() => {
@@ -167,11 +173,12 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
             </label>
             {(preview?.files.length ?? 0) > 0 ? (
               <div className="space-y-2">
-                <div className="font-medium">选择要公开的成果文件（默认不公开）</div>
+                <div className="font-medium">选择要公开的成果文件（正文图片/视频会随正文公开）</div>
                 {preview!.files.map((file) => (
                   <label key={file.relativePath} className="flex items-center gap-2">
                     <Checkbox
                       checked={selectedFilePaths.has(file.relativePath)}
+                      disabled={file.inlineInBody === true}
                       onCheckedChange={(checked) => {
                         setSelectedFilePaths((current) => {
                           const next = new Set(current);
@@ -181,7 +188,9 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
                         });
                       }}
                     />
-                    <span className="truncate" title={file.relativePath}>{file.fileName}</span>
+                    <span className="truncate" title={file.relativePath}>
+                      {file.fileName}{file.inlineInBody ? "（正文媒体）" : ""}
+                    </span>
                   </label>
                 ))}
               </div>

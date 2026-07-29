@@ -7,6 +7,8 @@ import type { SessionShareSnapshot } from './store.js';
 export interface SessionShareAllowedFile {
   relativePath: string;
   fileName: string;
+  /** 文件由正文 Markdown 直接引用，分享确认页应默认勾选。 */
+  inlineInBody?: true;
   sha256?: string;
   bytes?: number;
   contentType?: string;
@@ -59,6 +61,36 @@ function assertPublicShareTextSafe(text: string): void {
   if (hit) throw new SessionShareProjectionError(`会话包含${hit.label}，请先脱敏后再分享`);
 }
 
+const INLINE_MARKDOWN_MEDIA_RE = /!\[[^\]]*\]\(\s*<?([^\s)>]+)>?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g;
+
+function normalizeMarkdownMediaPath(src: string): string | null {
+  let decoded = src;
+  try {
+    decoded = decodeURIComponent(src);
+  } catch {
+    // 非法 percent-encoding 保持原值，交给路径白名单拒绝。
+  }
+  return normalizeSessionShareFilePath(decoded);
+}
+
+/** 提取正文 Markdown 中直接展示的本地图片/视频路径。 */
+function collectInlineMarkdownMediaPaths(content: string): string[] {
+  const filePaths = new Set<string>();
+  for (const match of content.matchAll(INLINE_MARKDOWN_MEDIA_RE)) {
+    const normalized = normalizeMarkdownMediaPath(match[1]);
+    if (normalized) filePaths.add(normalized);
+  }
+  return [...filePaths];
+}
+
+function filterInlineMarkdownMedia(content: string, selectedPaths: ReadonlySet<string>): string {
+  return content.replace(INLINE_MARKDOWN_MEDIA_RE, (markdown, src: string) => {
+    const normalized = normalizeMarkdownMediaPath(src);
+    if (!normalized || selectedPaths.has(normalized)) return markdown;
+    return '[正文媒体未公开]';
+  });
+}
+
 function filterFileMarkers(content: string, selectedPaths: ReadonlySet<string>): string {
   return content.replace(/\[FILE\]\s*(\{[\s\S]*?\})\s*\[\/FILE\]/g, (marker, rawJson: string) => {
     try {
@@ -89,7 +121,7 @@ function publicBlock(block: TranscriptBlock, selectedPaths: ReadonlySet<string>)
     })
     .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null);
 
-  const content = filterFileMarkers(block.content, selectedPaths);
+  const content = filterInlineMarkdownMedia(filterFileMarkers(block.content, selectedPaths), selectedPaths);
   assertPublicShareTextSafe(`${block.title ?? ''}\n${content}`);
   return {
     id: block.id,
@@ -105,23 +137,34 @@ function publicBlock(block: TranscriptBlock, selectedPaths: ReadonlySet<string>)
 }
 
 export function collectSessionShareCandidateFiles(blocks: TranscriptBlock[]): SessionShareAllowedFile[] {
-  const filePaths = new Set<string>();
+  const files = new Map<string, SessionShareAllowedFile>();
+  const addFile = (relativePath: string, inlineInBody = false) => {
+    const current = files.get(relativePath);
+    files.set(relativePath, {
+      relativePath,
+      fileName: path.basename(relativePath),
+      ...(inlineInBody || current?.inlineInBody ? { inlineInBody: true } : {}),
+    });
+  };
+
   for (const block of blocks) {
     for (const attachment of block.attachments ?? []) {
       const normalized = attachment.relativePath
         ? normalizeSessionShareFilePath(attachment.relativePath)
         : null;
-      if (normalized) filePaths.add(normalized);
+      if (normalized) addFile(normalized);
     }
     for (const segment of splitByMessageMarkers(block.content)) {
       if (segment.type !== 'file') continue;
       const normalized = normalizeSessionShareFilePath(segment.filePath);
-      if (normalized) filePaths.add(normalized);
+      if (normalized) addFile(normalized);
+    }
+    for (const relativePath of collectInlineMarkdownMediaPaths(block.content)) {
+      addFile(relativePath, true);
     }
   }
-  return [...filePaths]
-    .sort((left, right) => left.localeCompare(right))
-    .map((relativePath) => ({ relativePath, fileName: path.basename(relativePath) }));
+  return [...files.values()]
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
 /**
@@ -146,6 +189,7 @@ export function projectSessionShareSnapshot(
       return {
         relativePath: file.relativePath,
         fileName: file.fileName,
+        ...(file.inlineInBody ? { inlineInBody: true as const } : {}),
         // 完整性哈希只保存在冻结快照内供下载时复验，不进入匿名分享 DTO。
         ...(file.bytes !== undefined ? { bytes: file.bytes } : {}),
         ...(file.contentType ? { contentType: file.contentType } : {}),

@@ -1809,10 +1809,14 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         res.status(built.status).json({ error: built.error });
         return;
       }
-      const projected = projectSessionShareSnapshot(built.detail, { selectedFilePaths: [] });
+      const candidates = collectSessionShareCandidateFiles(built.detail.blocks);
+      const inlineFilePaths = candidates
+        .filter((file) => file.inlineInBody)
+        .map((file) => file.relativePath);
+      const projected = projectSessionShareSnapshot(built.detail, { selectedFilePaths: inlineFilePaths });
       res.json({
         blockCount: projected.blocks.length,
-        files: collectSessionShareCandidateFiles(built.detail.blocks),
+        files: candidates,
         defaultExpiresAt: new Date(Date.now() + DEFAULT_SESSION_SHARE_TTL_MS).toISOString(),
       });
     } catch (err) {
@@ -1883,6 +1887,13 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const normalizedSelectedFilePaths = selectedFilePaths as string[];
       const candidates = collectSessionShareCandidateFiles(built.detail.blocks);
       const candidatePaths = new Set(candidates.map((file) => file.relativePath));
+      const missingInlineFile = candidates.find(
+        (file) => file.inlineInBody && !normalizedSelectedFilePaths.includes(file.relativePath),
+      );
+      if (missingInlineFile) {
+        res.status(400).json({ error: "正文内嵌图片和视频必须随正文一并公开" });
+        return;
+      }
       const userCwd = resolveUserCwd(agentCwd, {
         id: built.meta.userId,
         username: built.meta.username,

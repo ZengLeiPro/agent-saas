@@ -31,7 +31,7 @@ export interface PublicSessionShareResponse {
 
 export interface SessionSharePreview {
   blockCount: number;
-  files: Array<{ relativePath: string; fileName: string }>;
+  files: Array<{ relativePath: string; fileName: string; inlineInBody?: true }>;
   defaultExpiresAt: string;
 }
 

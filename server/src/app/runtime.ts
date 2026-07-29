@@ -2354,6 +2354,28 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantSkillsRootDir,
     userActivityService,
     memoryPoll: memoryPollRuntimeConfig,
+    // L2 整合桥（2026-07-29 职责剥离批次）：L3 职责收敛 + 统一 PG commit lock
+    // + tombstone 注入。store 不可用（file 后端）时不传，L3 保持 legacy 行为。
+    ...(memoryConsolidationStore ? {
+      memoryConsolidationBridge: {
+        isTenantConsolidationEnabled: (tenantId: string | undefined) => {
+          if (config.memory?.consolidation?.enabled !== true) return false;
+          try {
+            return !!tenantId && tenantStore?.getSettings(tenantId)?.features?.memoryConsolidationEnabled === true;
+          } catch {
+            return false;
+          }
+        },
+        acquireCommitLock: (tenantId: string, userId: string, timeoutMs?: number) =>
+          memoryConsolidationStore!.acquireCommitLock(tenantId, userId, timeoutMs),
+        listForgottenSubjects: async (tenantId: string, userId: string) => {
+          const tombstones = await memoryConsolidationStore!.listActiveTombstones(tenantId, userId);
+          return tombstones
+            .map((tombstone) => tombstone.subjectText)
+            .filter((subject): subject is string => !!subject && subject.trim().length > 0);
+        },
+      },
+    } : {}),
     notify: createCronNotifier({
       resolveChannels: (notifyConfig) => {
         const channels: NotifyChannel[] = [];

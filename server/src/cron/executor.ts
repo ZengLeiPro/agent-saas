@@ -81,6 +81,16 @@ export interface ExecutorOptions {
     timeoutSeconds?: number;
     model?: string;
   };
+  /**
+   * L2 记忆整合桥（2026-07-29 职责剥离批次）：memory_poll 据此收敛职责——
+   * 租户开 L2 → prompt 走 v3 收敛分支；写入期持统一 PG commit lock（与
+   * L1/L2 共用，蓝绿跨进程正确性）；注入 tombstone 主题清单防复活。
+   */
+  memoryConsolidationBridge?: {
+    isTenantConsolidationEnabled(tenantId: string | undefined): boolean;
+    acquireCommitLock(tenantId: string, userId: string, timeoutMs?: number): Promise<{ release(): Promise<void> } | null>;
+    listForgottenSubjects(tenantId: string, userId: string): Promise<string[]>;
+  };
 }
 
 export interface ExecuteResult {
@@ -153,10 +163,22 @@ async function executeMemoryPollJob(
     };
   }
 
+  // L2 整合桥（2026-07-29 职责剥离批次）：租户开 L2 → prompt 收敛为 v3 分支；
+  // tombstone 主题清单（用户显式忘记）注入 prompt 防复活——store 可用即查，
+  // 不依赖 L2 开关（tombstone 一旦存在就必须被 L3 尊重）。
+  const bridge = opts.memoryConsolidationBridge;
+  const consolidationActive = bridge?.isTenantConsolidationEnabled(owner.tenantId) === true;
+  let forgottenSubjects: string[] = [];
+  if (bridge) {
+    forgottenSubjects = await bridge
+      .listForgottenSubjects(owner.tenantId ?? DEFAULT_TENANT_ID, owner.id)
+      .catch(() => []);
+  }
+
   const basePayload = job.payload.kind === "agentTurn" ? job.payload : undefined;
   const effectivePayload: PayloadAgentTurn = {
     kind: "agentTurn",
-    message: buildMemoryPollPrompt({ lookbackHours }),
+    message: buildMemoryPollPrompt({ lookbackHours, consolidationActive, forgottenSubjects }),
     maxTurns: basePayload?.maxTurns ?? opts.memoryPoll?.maxTurns ?? MEMORY_POLL_DEFAULTS.maxTurns,
     timeoutSeconds: basePayload?.timeoutSeconds ?? opts.memoryPoll?.timeoutSeconds ?? MEMORY_POLL_DEFAULTS.timeoutSeconds,
     ...(basePayload?.model ?? opts.memoryPoll?.model
@@ -170,6 +192,20 @@ async function executeMemoryPollJob(
   if (!tryAcquireMemoryMaintenance(owner.tenantId, owner.id)) {
     return { status: "skipped", output: "该用户已有记忆维护任务在进行，跳过本次轮询" };
   }
+  // 统一 PG commit lock（2026-07-29 P2 修复）：L1/L2/L3 的记忆文件写入共用
+  // 同一把跨进程锁。L3 run 用通用 Write/Edit 跨多轮写文件，无法只锁提交期，
+  // 过渡期整个 run 持锁（GPT 复核报告认可的过渡语义）；拿不到 → skipped，
+  // 由下一次调度重试，绝不无锁裸跑。进程内锁保持为 fast-path。
+  let commitLock: { release(): Promise<void> } | null = null;
+  if (bridge) {
+    commitLock = await bridge
+      .acquireCommitLock(owner.tenantId ?? DEFAULT_TENANT_ID, owner.id, 5_000)
+      .catch(() => null);
+    if (!commitLock) {
+      releaseMemoryMaintenance(owner.tenantId, owner.id);
+      return { status: "skipped", output: "记忆写入锁被其他记忆任务占用，跳过本次轮询" };
+    }
+  }
   try {
     return await executeAgentTurn(job, effectivePayload, opts, {
       toolProfile: "memory_poll",
@@ -177,6 +213,7 @@ async function executeMemoryPollJob(
       executionTarget: "server-remote",
     });
   } finally {
+    if (commitLock) await commitLock.release().catch(() => undefined);
     releaseMemoryMaintenance(owner.tenantId, owner.id);
   }
 }

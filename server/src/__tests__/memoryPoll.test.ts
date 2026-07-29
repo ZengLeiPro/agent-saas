@@ -656,6 +656,102 @@ describe('executor memory_poll', () => {
     });
   });
 
+  // ── L3 职责收敛（2026-07-29 P2-3 批次）─────────────────────────
+
+  const okRunAgent = (capture?: { message?: { content: string } }) =>
+    vi.fn((message: never) => (async function* () {
+      if (capture) capture.message = message as never;
+      yield { type: 'text_delta', content: '本次无记忆增量' };
+      yield { type: 'done' };
+    })());
+
+  const bridgeOf = (overrides: Partial<{
+    enabled: boolean;
+    lock: { release(): Promise<void> } | null;
+    forgotten: string[];
+  }> = {}) => ({
+    isTenantConsolidationEnabled: vi.fn(() => overrides.enabled ?? true),
+    acquireCommitLock: vi.fn(async () => (
+      'lock' in overrides ? overrides.lock : { release: vi.fn(async () => undefined) }
+    )),
+    listForgottenSubjects: vi.fn(async () => overrides.forgotten ?? []),
+  });
+
+  it('租户开 L2 → prompt 走 v3 收敛分支（遗漏审计、不做主提取）', async () => {
+    const capture: { message?: { content: string } } = {};
+    const result = await executeJob(memoryPollJob(), {
+      runAgent: okRunAgent(capture) as never,
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore,
+      userActivityService: activity(true) as never,
+      memoryConsolidationBridge: bridgeOf({ enabled: true }) as never,
+    });
+    expect(result.status).toBe('ok');
+    expect(capture.message!.content).toContain('会话级记忆整合');
+    expect(capture.message!.content).toContain('遗漏审计');
+    expect(capture.message!.content).toContain('不从用户消息重新提取每日事实');
+  });
+
+  it('租户未开 L2 → prompt 保持 legacy 分支（行为零漂移）', async () => {
+    const capture: { message?: { content: string } } = {};
+    const result = await executeJob(memoryPollJob(), {
+      runAgent: okRunAgent(capture) as never,
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore,
+      userActivityService: activity(true) as never,
+      memoryConsolidationBridge: bridgeOf({ enabled: false }) as never,
+    });
+    expect(result.status).toBe('ok');
+    expect(capture.message!.content).toBe(buildMemoryPollPrompt({ lookbackHours: 48 }));
+    expect(capture.message!.content).not.toContain('遗漏审计');
+  });
+
+  it('tombstone 主题注入 prompt（与 L2 开关无关）', async () => {
+    const capture: { message?: { content: string } } = {};
+    await executeJob(memoryPollJob(), {
+      runAgent: okRunAgent(capture) as never,
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore,
+      userActivityService: activity(true) as never,
+      memoryConsolidationBridge: bridgeOf({ enabled: false, forgotten: ['健身教练课安排'] }) as never,
+    });
+    expect(capture.message!.content).toContain('已明确忘记');
+    expect(capture.message!.content).toContain('健身教练课安排');
+  });
+
+  it('PG commit lock 拿不到 → skipped 且释放进程内锁', async () => {
+    const runAgent = vi.fn();
+    const result = await executeJob(memoryPollJob(), {
+      runAgent: runAgent as never,
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore,
+      userActivityService: activity(true) as never,
+      memoryConsolidationBridge: bridgeOf({ lock: null }) as never,
+    });
+    expect(result.status).toBe('skipped');
+    expect(result.output).toMatch(/记忆写入锁/);
+    expect(runAgent).not.toHaveBeenCalled();
+    // 进程内锁必须已释放，否则后续任务全部被卡
+    expect(tryAcquireMemoryMaintenance('kaiyan', 'u1')).toBe(true);
+  });
+
+  it('run 结束后释放 PG commit lock', async () => {
+    const release = vi.fn(async () => undefined);
+    await executeJob(memoryPollJob(), {
+      runAgent: okRunAgent() as never,
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore,
+      userActivityService: activity(true) as never,
+      memoryConsolidationBridge: bridgeOf({ lock: { release } }) as never,
+    });
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it('run 结束后释放维护锁', async () => {
     const runAgent = vi.fn(() => (async function* () {
       yield { type: 'done' };

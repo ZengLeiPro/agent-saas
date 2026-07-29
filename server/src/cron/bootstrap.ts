@@ -42,6 +42,7 @@ export interface CreateCronRuntimeOptions {
   /** memory_poll 系统任务（2026-07-14 批次）：活动预检 + 执行参数 */
   userActivityService?: ExecutorOptions['userActivityService'];
   memoryPoll?: ExecutorOptions['memoryPoll'];
+  memoryConsolidationBridge?: ExecutorOptions['memoryConsolidationBridge'];
 }
 
 export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntime {
@@ -95,6 +96,7 @@ export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntim
       tenantSkillsRootDir: options.tenantSkillsRootDir,
       userActivityService: options.userActivityService,
       memoryPoll: options.memoryPoll,
+      memoryConsolidationBridge: options.memoryConsolidationBridge,
     }),
     appendRunLog: (entry) => appendRunLog(entry, { runsDir: cronRunsDir }),
     notify,

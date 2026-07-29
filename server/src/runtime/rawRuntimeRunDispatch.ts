@@ -221,7 +221,11 @@ export function createModelAdapterForProtocol(
           apiKey: connection.apiKey ?? '',
           baseUrl: connection.baseUrl ?? 'https://chatgpt.com/backend-api/codex',
         },
-        { ...modelProviderOptions, disableResponseChaining: true },
+        {
+          ...modelProviderOptions,
+          disableResponseChaining: true,
+          disablePromptCacheKey: false,
+        },
         new CodexSubscriptionResponsesTransport(
           dependencies.codexCredentialManager,
           dependencies.codexFetch,

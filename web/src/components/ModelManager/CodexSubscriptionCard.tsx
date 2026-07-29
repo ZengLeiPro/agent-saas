@@ -8,6 +8,30 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+type CodexRuntimeStatus = {
+  requestWindow: {
+    limit: number;
+    sampleCount: number;
+    eligibleRequestCount: number;
+    cacheHitRequestCount: number;
+    eligibleInputTokens: number;
+    cachedInputTokens: number;
+    cacheHitRequestRate?: number;
+    cachedInputTokenRate?: number;
+  };
+  lastRequestAt?: string;
+  lastSuccessAt?: string;
+  lastErrorAt?: string;
+  lastError?: string;
+  lastModel?: string;
+  oauth: {
+    lastRefreshAt?: string;
+    lastRefreshGeneration?: number;
+    lastRefreshErrorAt?: string;
+    lastRefreshError?: string;
+  };
+};
+
 type CodexSubscriptionState = {
   config: {
     enabled: boolean;
@@ -25,6 +49,8 @@ type CodexSubscriptionState = {
     generation?: number;
     error?: string;
   };
+  /** 蓝绿 N/N+1：旧 Server 尚未返回该字段时保持兼容。 */
+  runtime?: CodexRuntimeStatus;
   warning?: string;
 };
 
@@ -43,7 +69,6 @@ async function readJson<T>(response: Response): Promise<T & { error?: string }> 
 export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
   const [state, setState] = useState<CodexSubscriptionState | null>(null);
   const [enabled, setEnabled] = useState(false);
-  const [originator, setOriginator] = useState("codex-tui");
   const [deviceSession, setDeviceSession] = useState<DeviceSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -52,7 +77,6 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
   const applyState = useCallback((next: CodexSubscriptionState) => {
     setState(next);
     setEnabled(next.config.enabled);
-    setOriginator(next.config.originator);
     setError(next.warning ?? null);
   }, []);
 
@@ -146,7 +170,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
       const response = await authFetch("/api/admin/codex-subscription", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled, originator }),
+        body: JSON.stringify({ enabled }),
       });
       const data = await readJson<CodexSubscriptionState>(response);
       if (!response.ok || !data.config || !data.credential) {
@@ -158,7 +182,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     } finally {
       setWorking(false);
     }
-  }, [applyState, enabled, originator]);
+  }, [applyState, enabled]);
 
   const disconnect = useCallback(async () => {
     if (!window.confirm("确定断开 Codex 订阅账号并撤销已保存的 OAuth 凭据吗？")) return;
@@ -210,12 +234,8 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                 <Input value={state?.config.endpoint ?? ""} disabled />
               </div>
               <div className="space-y-1.5">
-                <Label>Originator</Label>
-                <Input
-                  value={originator}
-                  disabled={readOnly || working}
-                  onChange={(event) => setOriginator(event.target.value)}
-                />
+                <Label>协议身份</Label>
+                <Input value={state?.config.originator ?? ""} disabled />
               </div>
               <label className="flex items-center gap-2 self-end pb-2 text-sm">
                 <input
@@ -238,6 +258,55 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                     : ""}
                 </div>
                 {state.credential.error && <div className="mt-1 text-destructive">{state.credential.error}</div>}
+              </div>
+            )}
+
+            {state?.runtime && (
+              <div className="rounded-md border bg-muted/20 p-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium">当前实例运行状态</span>
+                  <span className="text-muted-foreground">
+                    最近 {state.runtime.requestWindow.sampleCount}/{state.runtime.requestWindow.limit} 次
+                  </span>
+                </div>
+                <div className="mt-2 grid gap-1 text-muted-foreground md:grid-cols-2">
+                  <div>
+                    缓存请求命中：
+                    {state.runtime.requestWindow.eligibleRequestCount > 0
+                      ? `${state.runtime.requestWindow.cacheHitRequestCount}/${state.runtime.requestWindow.eligibleRequestCount}（${formatRate(state.runtime.requestWindow.cacheHitRequestRate)}）`
+                      : "暂无可判定请求"}
+                  </div>
+                  <div>
+                    缓存 Token 比例：
+                    {state.runtime.requestWindow.eligibleInputTokens > 0
+                      ? `${state.runtime.requestWindow.cachedInputTokens.toLocaleString()}/${state.runtime.requestWindow.eligibleInputTokens.toLocaleString()}（${formatRate(state.runtime.requestWindow.cachedInputTokenRate)}）`
+                      : "暂无可判定请求"}
+                  </div>
+                  <div>
+                    最近成功：{formatTime(state.runtime.lastSuccessAt)}
+                    {state.runtime.lastModel ? ` · ${state.runtime.lastModel}` : ""}
+                  </div>
+                  <div>
+                    OAuth 最近刷新：{formatTime(state.runtime.oauth.lastRefreshAt)}
+                    {state.runtime.oauth.lastRefreshGeneration
+                      ? ` · generation ${state.runtime.oauth.lastRefreshGeneration}`
+                      : ""}
+                  </div>
+                </div>
+                {state.runtime.lastError && (
+                  <div className="mt-2 text-destructive">
+                    最近请求错误（{formatTime(state.runtime.lastErrorAt)}）：{state.runtime.lastError}
+                  </div>
+                )}
+                {state.runtime.oauth.lastRefreshError && (
+                  <div className="mt-1 text-destructive">
+                    OAuth 刷新错误（{formatTime(state.runtime.oauth.lastRefreshErrorAt)}）：
+                    {state.runtime.oauth.lastRefreshError}
+                  </div>
+                )}
+                <p className="mt-2 text-muted-foreground">
+                  此窗口随当前 Server 实例重启清空；跨实例与长期统计以运行事件和用量账本为准。
+                </p>
               </div>
             )}
 
@@ -298,4 +367,12 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
       </CardContent>
     </Card>
   );
+}
+
+function formatRate(value: number | undefined): string {
+  return value === undefined ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatTime(value: string | undefined): string {
+  return value ? new Date(value).toLocaleString() : "尚无";
 }

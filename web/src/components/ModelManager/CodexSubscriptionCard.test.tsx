@@ -29,6 +29,25 @@ const connectedState = {
     expiresAt: "2026-07-30T00:00:00.000Z",
     generation: 1,
   },
+  runtime: {
+    requestWindow: {
+      limit: 50,
+      sampleCount: 3,
+      eligibleRequestCount: 2,
+      cacheHitRequestCount: 2,
+      eligibleInputTokens: 3_000,
+      cachedInputTokens: 2_400,
+      cacheHitRequestRate: 1,
+      cachedInputTokenRate: 0.8,
+    },
+    lastRequestAt: "2026-07-29T15:30:00.000Z",
+    lastSuccessAt: "2026-07-29T15:30:00.000Z",
+    lastModel: "gpt-5.4",
+    oauth: {
+      lastRefreshAt: "2026-07-29T15:00:00.000Z",
+      lastRefreshGeneration: 2,
+    },
+  },
 };
 
 describe("CodexSubscriptionCard", () => {
@@ -53,11 +72,13 @@ describe("CodexSubscriptionCard", () => {
     expect(await screen.findByText("已连接")).toBeTruthy();
     expect(screen.getByText(/admin@example.com/)).toBeTruthy();
     expect(screen.getByText(/binding-hash/)).toBeTruthy();
+    expect(screen.getByText(/2\/2（100.0%）/)).toBeTruthy();
+    expect(screen.getByText(/2,400\/3,000（80.0%）/)).toBeTruthy();
+    expect(screen.getByText(/generation 2/)).toBeTruthy();
     expect(screen.queryByText(/refresh_token/)).toBeNull();
 
-    const originator = screen.getByDisplayValue("kaiyan-agent");
-    await user.clear(originator);
-    await user.type(originator, "kaiyan-runtime");
+    const originator = screen.getByDisplayValue("kaiyan-agent") as HTMLInputElement;
+    expect(originator.disabled).toBe(true);
     await user.click(screen.getByRole("button", { name: "保存设置" }));
 
     await waitFor(() => {
@@ -65,7 +86,6 @@ describe("CodexSubscriptionCard", () => {
       expect(saveCall?.[0]).toBe("/api/admin/codex-subscription");
       expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual({
         enabled: true,
-        originator: "kaiyan-runtime",
       });
     });
   });

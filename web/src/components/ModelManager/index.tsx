@@ -223,6 +223,10 @@ function resolveModelImageInput(group: EditableGroup, model: EditableModel): boo
   return (model.input_modalities ?? group.input_modalities)?.includes("image") === true;
 }
 
+function resolveResponsesTransport(group: EditableGroup, model?: EditableModel): ResponsesTransport {
+  return model?.responses_transport ?? group.responses_transport ?? "openai_compatible";
+}
+
 function formatEffectiveValue(value: string | undefined): string {
   return value || "未指定";
 }
@@ -254,6 +258,13 @@ export function ModelManager() {
     const model = group?.models.find((item) => item.id === selectedPanel.modelId);
     return group && model ? { group, model } : null;
   }, [models, selectedPanel]);
+  const selectedGroupDefaultIsCodex = selectedGroup?.responses_transport === "codex_subscription";
+  const selectedGroupHasOpenAiCompatible = selectedGroup?.models.some(
+    (model) => resolveResponsesTransport(selectedGroup, model) === "openai_compatible",
+  ) ?? false;
+  const selectedModelTransport = selectedModelContext
+    ? resolveResponsesTransport(selectedModelContext.group, selectedModelContext.model)
+    : null;
 
   const hydrateAdvancedText = useCallback((next: EditableModelsConfig) => {
     const entries: typeof advancedText = {};
@@ -319,6 +330,33 @@ export function ModelManager() {
     }));
   }, [updateModels]);
 
+  const updateGroupResponsesTransport = useCallback((
+    groupId: string,
+    responsesTransport: ResponsesTransport,
+  ) => {
+    updateModels((current) => ({
+      ...current,
+      groups: current.groups.map((group) => {
+        if (group.id !== groupId) return group;
+        if (responsesTransport !== "codex_subscription") {
+          return { ...group, responses_transport: responsesTransport };
+        }
+        return {
+          ...group,
+          protocol: "responses",
+          responses_transport: responsesTransport,
+          disable_response_chaining: true,
+          disable_prompt_cache_key: undefined,
+          models: group.models.map((model) => (
+            model.responses_transport === "openai_compatible"
+              ? model
+              : { ...model, protocol: undefined }
+          )),
+        };
+      }),
+    }));
+  }, [updateModels]);
+
   const reorderGroup = useCallback((groupId: string, targetGroupId: string) => {
     if (groupId === targetGroupId) return;
     updateModels((current) => ({
@@ -364,6 +402,40 @@ export function ModelManager() {
       groups: current.groups.map((group) => group.id === groupId
         ? { ...group, models: group.models.map((model) => model.id === modelId ? { ...model, ...patch } : model) }
         : group),
+    }));
+  }, [updateModels]);
+
+  const updateModelResponsesTransport = useCallback((
+    groupId: string,
+    modelId: string,
+    value: "inherit" | ResponsesTransport,
+  ) => {
+    updateModels((current) => ({
+      ...current,
+      groups: current.groups.map((group) => {
+        if (group.id !== groupId) return group;
+        return {
+          ...group,
+          models: group.models.map((model) => {
+            if (model.id !== modelId) return model;
+            if (value === "codex_subscription") {
+              return {
+                ...model,
+                protocol: "responses",
+                responses_transport: "codex_subscription",
+              };
+            }
+            if (value === "inherit") {
+              return {
+                ...model,
+                responses_transport: undefined,
+                protocol: undefined,
+              };
+            }
+            return { ...model, responses_transport: "openai_compatible" };
+          }),
+        };
+      }),
     }));
   }, [updateModels]);
 
@@ -920,13 +992,22 @@ export function ModelManager() {
               <CardContent className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1.5"><Label>ID</Label><Input value={selectedGroup.id} onChange={(e) => updateGroupId(selectedGroup.id, e.target.value)} /></div>
                 <div className="space-y-1.5"><Label>显示名称</Label><Input value={selectedGroup.name} onChange={(e) => updateGroup(selectedGroup.id, { name: e.target.value })} /></div>
-                <div className="space-y-1.5"><Label>API Key</Label><Input type="password" autoComplete="new-password" passwordManager="ignore" value={selectedGroup.apiKey ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { apiKey: e.target.value })} placeholder={selectedGroup.hasApiKey ? "已配置，留空则保留现有 Key" : "未配置"} /></div>
-                <div className="space-y-1.5"><Label>Base URL</Label><Input value={selectedGroup.baseUrl ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { baseUrl: e.target.value })} placeholder="例如 http://127.0.0.1:8317" /></div>
+                {selectedGroupHasOpenAiCompatible ? (
+                  <>
+                    <div className="space-y-1.5"><Label>API Key</Label><Input type="password" autoComplete="new-password" passwordManager="ignore" value={selectedGroup.apiKey ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { apiKey: e.target.value })} placeholder={selectedGroup.hasApiKey ? "已配置，留空则保留现有 Key" : "未配置"} /></div>
+                    <div className="space-y-1.5"><Label>Base URL</Label><Input value={selectedGroup.baseUrl ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { baseUrl: e.target.value })} placeholder="例如 http://127.0.0.1:8317" /></div>
+                  </>
+                ) : (
+                  <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
+                    Codex 订阅分组直接使用上方已授权账号，不读取 API Key 或 Base URL；现有值会保留，切回 API Key transport 时可继续使用。
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label>协议类型 protocol</Label>
                   <select
                     className="h-9 w-full rounded-md border bg-card px-3 text-sm"
-                    value={selectedGroup.protocol ?? DEFAULT_PROTOCOL}
+                    value={selectedGroupDefaultIsCodex ? "responses" : (selectedGroup.protocol ?? DEFAULT_PROTOCOL)}
+                    disabled={selectedGroupDefaultIsCodex}
                     onChange={(e) => updateGroup(selectedGroup.id, { protocol: e.target.value as ModelProtocol })}
                   >
                     <option value="chat_completions">chat_completions</option>
@@ -939,15 +1020,16 @@ export function ModelManager() {
                   <select
                     className="h-9 w-full rounded-md border bg-card px-3 text-sm"
                     value={selectedGroup.responses_transport ?? "openai_compatible"}
-                    onChange={(e) => updateGroup(selectedGroup.id, {
-                      responses_transport: e.target.value as ResponsesTransport,
-                    })}
+                    onChange={(e) => updateGroupResponsesTransport(
+                      selectedGroup.id,
+                      e.target.value as ResponsesTransport,
+                    )}
                   >
                     <option value="openai_compatible">OpenAI-compatible API Key</option>
                     <option value="codex_subscription">Codex subscription OAuth</option>
                   </select>
                   <p className="text-xs text-muted-foreground">
-                    Codex 订阅模式固定为无状态完整历史，不使用 previous_response_id。
+                    选择 Codex 后自动锁定 Responses、完整历史、稳定 cache key 与无状态调用。
                   </p>
                 </div>
                 <div className="space-y-1.5">
@@ -982,8 +1064,16 @@ export function ModelManager() {
                   </select>
                   <p className="text-xs text-muted-foreground">只按真实 endpoint 验证结果配置，不按模型名称猜测。</p>
                 </div>
-                <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_response_chaining} onChange={(e) => updateGroup(selectedGroup.id, { disable_response_chaining: e.target.checked ? undefined : true })} /><span>启用 Responses 有状态接力（previous_response_id）<span className="block text-xs text-muted-foreground">开启后会使用 previous_response_id 连接多轮 Responses 调用。适用于原生 Responses 服务，如火山等。无状态 OpenAI 兼容代理，例如 cli-proxy，请关闭，否则工具调用后可能报 "No tool call found for function call output"。</span></span></label>
-                <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_prompt_cache_key} onChange={(e) => updateGroup(selectedGroup.id, { disable_prompt_cache_key: e.target.checked ? undefined : true })} /><span>启用 prompt_cache_key 内容指纹（Chat Completions + Responses 通用）<span className="block text-xs text-muted-foreground">开启后以 sha256(model + system/instructions + tool 名单) 前 32 hex 作为 prompt_cache_key 传给上游，让相同前缀的请求命中同一缓存分片。07-04 实测 CLIProxyAPI 会为每次请求自动填新 UUID 覆盖 → 缓存永远打散，显式传稳定 key 后 cached_tokens 命中率 76%+。主流 OpenAI 兼容端点 silent ignore 未知字段，默认开启无害；仅在极少数「兼容层会拒绝该字段」的端点上关闭。</span></span></label>
+                {selectedGroupHasOpenAiCompatible ? (
+                  <>
+                    <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_response_chaining} onChange={(e) => updateGroup(selectedGroup.id, { disable_response_chaining: e.target.checked ? undefined : true })} /><span>启用 Responses 有状态接力（previous_response_id）<span className="block text-xs text-muted-foreground">仅作用于 API Key transport。开启后会使用 previous_response_id 连接多轮 Responses 调用；Codex 订阅始终固定为无状态完整历史。</span></span></label>
+                    <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_prompt_cache_key} onChange={(e) => updateGroup(selectedGroup.id, { disable_prompt_cache_key: e.target.checked ? undefined : true })} /><span>启用 prompt_cache_key 内容指纹<span className="block text-xs text-muted-foreground">仅控制 API Key transport 的兼容行为；Codex 订阅始终发送稳定 session cache key，并以真实 cached_tokens 验收。</span></span></label>
+                  </>
+                ) : (
+                  <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
+                    Codex 固定协议：`store:false`、完整历史、禁止 `previous_response_id`、稳定 session cache key、encrypted reasoning replay。上述行为由代码保证，不开放为配置开关。
+                  </div>
+                )}
                 <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={selectedGroup.input_modalities?.includes("image") === true} onChange={(e) => updateGroup(selectedGroup.id, { input_modalities: e.target.checked ? ["text", "image"] : ["text"] })} /><span>分组模型支持图片输入<span className="block text-xs text-muted-foreground">只在已验证 provider 协议确实支持视觉时开启；模型可单独覆盖。</span></span></label>
                 <div className="space-y-1.5"><Label>Group extraBody JSON</Label><Textarea className="min-h-28 font-mono text-xs" value={advancedText[selectedGroup.id]?.groupExtraBody ?? ""} onChange={(e) => setAdvancedText((current) => ({ ...current, [selectedGroup.id]: { ...(current[selectedGroup.id] ?? { modelExtraBody: {}, modelThinking: {}, groupExtraBody: "", groupThinking: "" }), groupExtraBody: e.target.value } }))} /></div>
                 <div className="space-y-1.5"><Label>Group thinking JSON</Label><Textarea className="min-h-28 font-mono text-xs" value={advancedText[selectedGroup.id]?.groupThinking ?? ""} onChange={(e) => setAdvancedText((current) => ({ ...current, [selectedGroup.id]: { ...(current[selectedGroup.id] ?? { modelExtraBody: {}, modelThinking: {}, groupExtraBody: "", groupThinking: "" }), groupThinking: e.target.value } }))} /></div>
@@ -1027,7 +1117,10 @@ export function ModelManager() {
                     <Label>协议类型 protocol</Label>
                     <select
                       className="h-9 w-full rounded-md border bg-card px-3 text-sm"
-                      value={selectedModelContext.model.protocol ?? INHERIT_PROTOCOL}
+                      value={selectedModelTransport === "codex_subscription"
+                        ? "responses"
+                        : (selectedModelContext.model.protocol ?? INHERIT_PROTOCOL)}
+                      disabled={selectedModelTransport === "codex_subscription"}
                       onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, {
                         protocol: e.target.value === INHERIT_PROTOCOL ? undefined : e.target.value as ModelProtocol,
                       })}
@@ -1043,14 +1136,10 @@ export function ModelManager() {
                     <select
                       className="h-9 w-full rounded-md border bg-card px-3 text-sm"
                       value={selectedModelContext.model.responses_transport ?? "inherit"}
-                      onChange={(e) => updateModel(
+                      onChange={(e) => updateModelResponsesTransport(
                         selectedModelContext.group.id,
                         selectedModelContext.model.id,
-                        {
-                          responses_transport: e.target.value === "inherit"
-                            ? undefined
-                            : e.target.value as ResponsesTransport,
-                        },
+                        e.target.value as "inherit" | ResponsesTransport,
                       )}
                     >
                       <option value="inherit">继承分组</option>
@@ -1058,9 +1147,10 @@ export function ModelManager() {
                       <option value="codex_subscription">Codex subscription OAuth</option>
                     </select>
                     <p className="text-xs text-muted-foreground">
-                      当前生效：{selectedModelContext.model.responses_transport
-                        ?? selectedModelContext.group.responses_transport
-                        ?? "openai_compatible"}
+                      当前生效：{selectedModelTransport}
+                      {selectedModelTransport === "codex_subscription"
+                        ? "；协议与缓存语义已锁定"
+                        : ""}
                     </p>
                   </div>
                   <div className="space-y-1.5"><Label>usage accounting</Label><select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedModelContext.model.usage_accounting ?? ""} onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, { usage_accounting: e.target.value ? e.target.value as EditableModel["usage_accounting"] : undefined })}><option value="">auto / inferred</option><option value="input_includes_cache">input includes cache</option><option value="cache_tokens_separate">cache tokens separate</option></select><p className="text-xs text-muted-foreground">auto: claude-* uses separate cache tokens; other models treat cached tokens as part of input.</p></div>

@@ -80,6 +80,14 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     };
   }
 
+  observeResult(input: Parameters<CodexCredentialManager['recordModelResult']>[0]): void {
+    this.credentials.recordModelResult(input);
+  }
+
+  observeFailure(input: { model: string; error: unknown }): void {
+    this.credentials.recordModelFailure(input.model, input.error);
+  }
+
   private async executeWithToken(
     input: ResponsesTransportExecuteInput,
     accessToken: string,

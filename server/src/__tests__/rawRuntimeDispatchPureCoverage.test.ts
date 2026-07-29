@@ -141,6 +141,15 @@ describe('createModelAdapterForProtocol', () => {
     });
     expect(adapter).toBeInstanceOf(ResponsesApiAdapter);
     expect(adapter.capabilities).toEqual({ responseState: 'stateless' });
+    expect((adapter as unknown as {
+      providerOptions: {
+        disableResponseChaining?: boolean;
+        disablePromptCacheKey?: boolean;
+      };
+    }).providerOptions).toMatchObject({
+      disableResponseChaining: true,
+      disablePromptCacheKey: false,
+    });
   });
 });
 

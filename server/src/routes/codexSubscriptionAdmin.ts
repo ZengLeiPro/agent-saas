@@ -52,6 +52,7 @@ async function publicState(options: CreateCodexSubscriptionAdminRouterOptions) {
       originator: configuration.originator,
     },
     credential: await options.credentialManager.getStatus(),
+    runtime: options.credentialManager.getRuntimeStatus(),
   };
 }
 
@@ -77,8 +78,8 @@ export function createCodexSubscriptionAdminRouter(
     try {
       persistConfig(options, {
         enabled,
-        endpoint: typeof body.endpoint === 'string' ? body.endpoint : current.endpoint,
-        originator: typeof body.originator === 'string' ? body.originator : current.originator,
+        endpoint: current.endpoint,
+        originator: current.originator,
         ...(current.credentialRef ? { credentialRef: current.credentialRef } : {}),
       });
       res.json(await publicState(options));

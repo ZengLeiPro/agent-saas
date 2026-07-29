@@ -1,6 +1,8 @@
 import type {
   ModelChatMessage,
+  ModelTerminalStatus,
   ModelToolDefinition,
+  ModelUsage,
   RunContext,
 } from '../types.js';
 
@@ -55,6 +57,15 @@ export interface ResponsesTransport {
   getContinuationBinding?(): Promise<ProviderContinuationBinding>;
 
   execute(input: ResponsesTransportExecuteInput): Promise<ResponsesTransportExecuteResult>;
+
+  observeResult?(input: {
+    model: string;
+    terminalStatus: ModelTerminalStatus;
+    usage?: ModelUsage;
+    cacheEligible?: boolean;
+    errorCode?: string;
+  }): void;
+  observeFailure?(input: { model: string; error: unknown }): void;
 
   getResponse?(responseId: string, signal?: AbortSignal): Promise<Response>;
   deleteResponse?(responseId: string, signal?: AbortSignal): Promise<Response>;

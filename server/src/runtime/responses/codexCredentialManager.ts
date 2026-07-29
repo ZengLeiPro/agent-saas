@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 
 import type { SecretVault, VaultCaller } from '../../security/secretVault.js';
+import {
+  CodexSubscriptionTelemetry,
+  type CodexSubscriptionRuntimeStatus,
+} from './codexSubscriptionTelemetry.js';
 
 export const CODEX_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 export const CODEX_AUTH_BASE_URL = 'https://auth.openai.com';
@@ -82,6 +86,7 @@ export class LocalCodexCredentialLock implements CodexCredentialLock {
 
 export class CodexCredentialManager {
   private readonly refreshInFlight = new Map<string, Promise<CodexTokenBundle>>();
+  private readonly telemetry = new CodexSubscriptionTelemetry();
 
   constructor(private readonly options: {
     vault: SecretVault;
@@ -211,6 +216,18 @@ export class CodexCredentialManager {
     }
   }
 
+  getRuntimeStatus(): CodexSubscriptionRuntimeStatus {
+    return this.telemetry.snapshot();
+  }
+
+  recordModelResult(input: Parameters<CodexSubscriptionTelemetry['recordResult']>[0]): void {
+    this.telemetry.recordResult(input);
+  }
+
+  recordModelFailure(model: string, error: unknown): void {
+    this.telemetry.recordFailure(model, error);
+  }
+
   private async refreshUnderLock(
     credentialRef: string,
     observed: CodexTokenBundle,
@@ -231,28 +248,34 @@ export class CodexCredentialManager {
       if (latest.generation > observed.generation && !isExpiring(latest)) return latest;
       if (!forceRefresh && !isExpiring(latest)) return latest;
 
-      const refreshed = await refreshCodexTokens(
-        latest.refreshToken,
-        this.options.fetchImpl ?? fetch,
-      );
-      const next: CodexTokenBundle = {
-        accessToken: refreshed.accessToken,
-        refreshToken: refreshed.refreshToken || latest.refreshToken,
-        ...(refreshed.idToken ? { idToken: refreshed.idToken } : latest.idToken ? { idToken: latest.idToken } : {}),
-        expiresAt: refreshed.expiresAt,
-        accountId: extractCodexAccountId(
-          refreshed.accessToken,
-          refreshed.idToken ?? latest.idToken,
-          latest.accountId,
-        ),
-        generation: latest.generation + 1,
-      };
-      await this.options.vault.rotateSecret(
-        credentialRef,
-        JSON.stringify(next),
-        SYSTEM_VAULT_CALLER,
-      );
-      return next;
+      try {
+        const refreshed = await refreshCodexTokens(
+          latest.refreshToken,
+          this.options.fetchImpl ?? fetch,
+        );
+        const next: CodexTokenBundle = {
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken || latest.refreshToken,
+          ...(refreshed.idToken ? { idToken: refreshed.idToken } : latest.idToken ? { idToken: latest.idToken } : {}),
+          expiresAt: refreshed.expiresAt,
+          accountId: extractCodexAccountId(
+            refreshed.accessToken,
+            refreshed.idToken ?? latest.idToken,
+            latest.accountId,
+          ),
+          generation: latest.generation + 1,
+        };
+        await this.options.vault.rotateSecret(
+          credentialRef,
+          JSON.stringify(next),
+          SYSTEM_VAULT_CALLER,
+        );
+        this.telemetry.recordRefreshSuccess(next.generation);
+        return next;
+      } catch (error) {
+        this.telemetry.recordRefreshFailure(error);
+        throw error;
+      }
     });
   }
 

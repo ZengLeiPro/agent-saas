@@ -51,6 +51,17 @@ describe("ModelManager 排序", () => {
             originator: "kaiyan-agent",
           },
           credential: { configured: false, connected: false },
+          runtime: {
+            requestWindow: {
+              limit: 50,
+              sampleCount: 0,
+              eligibleRequestCount: 0,
+              cacheHitRequestCount: 0,
+              eligibleInputTokens: 0,
+              cachedInputTokens: 0,
+            },
+            oauth: {},
+          },
         });
       }
       if (init?.method === "PUT") {
@@ -111,6 +122,31 @@ describe("ModelManager 排序", () => {
       expect(modelSave).toBeTruthy();
       const payload = JSON.parse(String(modelSave?.[1]?.body));
       expect(payload.models.groups[0].responses_transport).toBe("codex_subscription");
+      expect(payload.models.groups[0].protocol).toBe("responses");
+      expect(payload.models.groups[0].disable_response_chaining).toBe(true);
+      expect(payload.models.groups[0].disable_prompt_cache_key).toBeUndefined();
     });
+    expect(screen.queryByText("API Key")).toBeNull();
+    expect(screen.getByText(/Codex 固定协议/)).toBeTruthy();
+  });
+
+  it("模型单独选择 Codex 时自动锁定 Responses，切回继承时恢复组级语义", async () => {
+    const user = userEvent.setup();
+    render(<ModelManager />);
+
+    await user.click(await screen.findByText("GPT"));
+    const transportLabel = await screen.findByText("Responses transport");
+    const transportSelect = transportLabel.parentElement?.querySelector("select");
+    expect(transportSelect).toBeTruthy();
+    fireEvent.change(transportSelect!, { target: { value: "codex_subscription" } });
+
+    const protocolLabel = screen.getByText("协议类型 protocol");
+    const protocolSelect = protocolLabel.parentElement?.querySelector("select") as HTMLSelectElement;
+    expect(protocolSelect.disabled).toBe(true);
+    expect(protocolSelect.value).toBe("responses");
+
+    fireEvent.change(transportSelect!, { target: { value: "inherit" } });
+    expect(protocolSelect.disabled).toBe(false);
+    expect(protocolSelect.value).toBe("__inherit__");
   });
 });

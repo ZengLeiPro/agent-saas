@@ -133,6 +133,13 @@ describe('Codex subscription admin router', () => {
         connected: true,
         accountIdHint: expect.any(String),
       },
+      runtime: {
+        requestWindow: {
+          limit: 50,
+          sampleCount: 0,
+        },
+        oauth: {},
+      },
     });
     expect(connected.credential).not.toHaveProperty('accessToken');
     expect(connected.credential).not.toHaveProperty('refreshToken');
@@ -153,14 +160,14 @@ describe('Codex subscription admin router', () => {
     });
     expect(saveResponse.status).toBe(200);
     expect(await saveResponse.json()).toMatchObject({
-      config: { enabled: false, originator: 'kaiyan-runtime' },
+      config: { enabled: false, originator: 'kaiyan-agent' },
       credential: { configured: true },
     });
 
     const disconnectResponse = await fetch(baseUrl, { method: 'DELETE' });
     expect(disconnectResponse.status).toBe(200);
     expect(await disconnectResponse.json()).toMatchObject({
-      config: { enabled: false, originator: 'kaiyan-runtime' },
+      config: { enabled: false, originator: 'kaiyan-agent' },
       credential: { configured: false, connected: false },
     });
     expect(config.codexSubscription?.credentialRef).toBeUndefined();

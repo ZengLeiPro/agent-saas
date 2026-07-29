@@ -181,7 +181,31 @@ export class ResponsesApiAdapter implements ModelAdapter {
   }
 
   async *stream(request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent> {
-    yield* this.streamWithRetry(request, context);
+    try {
+      for await (const event of this.streamWithRetry(request, context)) {
+        if (event.type === 'completed') {
+          try {
+            this.transport.observeResult?.({
+              model: request.model,
+              terminalStatus: event.terminalStatus ?? 'completed',
+              ...(event.usage ? { usage: event.usage } : {}),
+              ...(event.cacheEligible !== undefined ? { cacheEligible: event.cacheEligible } : {}),
+              ...(event.errorCode ? { errorCode: event.errorCode } : {}),
+            });
+          } catch (error) {
+            logger.warn(`Responses transport 结果观测失败（不影响模型结果）: ${compactDiagnosticMessage(error)}`);
+          }
+        }
+        yield event;
+      }
+    } catch (error) {
+      try {
+        this.transport.observeFailure?.({ model: request.model, error });
+      } catch (observeError) {
+        logger.warn(`Responses transport 错误观测失败（保留原始错误）: ${compactDiagnosticMessage(observeError)}`);
+      }
+      throw error;
+    }
   }
 
   private async *streamWithRetry(

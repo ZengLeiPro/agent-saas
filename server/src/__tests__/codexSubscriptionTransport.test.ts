@@ -218,6 +218,17 @@ describe('Codex subscription Responses transport', () => {
         }],
       },
     });
+    expect(manager.getRuntimeStatus()).toMatchObject({
+      requestWindow: {
+        sampleCount: 1,
+        eligibleRequestCount: 1,
+        cacheHitRequestCount: 1,
+        eligibleInputTokens: 2_048,
+        cachedInputTokens: 1_700,
+      },
+      lastModel: 'gpt-5.4',
+      lastSuccessAt: expect.any(String),
+    });
   });
 
   it('只回放同 endpoint、同账号绑定的 encrypted reasoning，账号切换后自动丢弃', async () => {
@@ -286,6 +297,8 @@ describe('Codex subscription Responses transport', () => {
           generation: credentialReads,
         };
       },
+      recordModelResult: () => undefined,
+      recordModelFailure: () => undefined,
     } as unknown as CodexCredentialManager;
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => terminalStream());
     const transport = new CodexSubscriptionResponsesTransport(
@@ -402,6 +415,94 @@ describe('Codex subscription Responses transport', () => {
     expect(result.authRetryCount).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect((await manager.getStatus()).generation).toBe(2);
+    expect(manager.getRuntimeStatus().oauth).toMatchObject({
+      lastRefreshAt: expect.any(String),
+      lastRefreshGeneration: 2,
+    });
+  });
+
+  it('最终请求异常只记录脱敏错误，不把 bearer token 暴露给管理状态', async () => {
+    const { manager } = await createCredentialFixture();
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('network failed Authorization: Bearer secret-token-value'),
+    );
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: '', baseUrl: 'https://chatgpt.com/backend-api/codex' },
+      { protocol: 'responses' },
+      new CodexSubscriptionResponsesTransport(manager),
+    );
+
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.4',
+      messages: [{ role: 'user', content: 'hello' }],
+      tools: [],
+    }, context))).rejects.toThrow('network failed');
+
+    const runtime = manager.getRuntimeStatus();
+    expect(runtime).toMatchObject({
+      requestWindow: { sampleCount: 1 },
+      lastErrorAt: expect.any(String),
+      lastError: expect.stringContaining('Bearer [REDACTED]'),
+    });
+    expect(runtime.lastError).not.toContain('secret-token-value');
+  });
+
+  it('运行健康窗口最多保留 50 次，并只用 cache eligible 请求计算命中率', async () => {
+    const { manager } = await createCredentialFixture();
+    for (let index = 0; index < 55; index += 1) {
+      manager.recordModelResult({
+        model: 'gpt-5.4',
+        terminalStatus: 'completed',
+        usage: {
+          inputTokens: index === 0 ? 500 : 2_000,
+          cacheReadInputTokens: index % 2 === 0 ? 1_000 : 0,
+        },
+        cacheEligible: index > 0,
+      });
+    }
+
+    const runtime = manager.getRuntimeStatus();
+    expect(runtime.requestWindow).toMatchObject({
+      limit: 50,
+      sampleCount: 50,
+      eligibleRequestCount: 50,
+      cacheHitRequestCount: 25,
+      eligibleInputTokens: 100_000,
+      cachedInputTokens: 25_000,
+      cacheHitRequestRate: 0.5,
+      cachedInputTokenRate: 0.25,
+    });
+  });
+
+  it('OAuth 刷新失败状态脱敏，后续刷新成功会清除旧错误', async () => {
+    const refreshFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ error: 'refresh_token refresh-secret rejected' }),
+        { status: 401 },
+      ))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access_token: accessToken('acct-primary'),
+        refresh_token: 'refresh-new',
+        expires_in: 3600,
+      }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const { manager } = await createCredentialFixture({
+      expiresAt: new Date(Date.now() + 30_000).toISOString(),
+      fetchImpl: refreshFetch,
+    });
+
+    await expect(manager.getCredentials()).rejects.toThrow(/OAuth refresh/);
+    expect(manager.getRuntimeStatus().oauth).toMatchObject({
+      lastRefreshErrorAt: expect.any(String),
+      lastRefreshError: expect.not.stringContaining('refresh-secret'),
+    });
+
+    const refreshed = await manager.getCredentials();
+    expect(refreshed.generation).toBe(2);
+    expect(manager.getRuntimeStatus().oauth).toMatchObject({
+      lastRefreshAt: expect.any(String),
+      lastRefreshGeneration: 2,
+    });
+    expect(manager.getRuntimeStatus().oauth.lastRefreshError).toBeUndefined();
   });
 
   it('并发过期检查共享同一个 refresh singleflight', async () => {

@@ -825,7 +825,10 @@ export class RawAgentLoop implements AgentLoop {
     // 启动时查上一已完成 run 的 last_response_id（72h 内未过期），赋给本 run。
     // ChatCompletionsAdapter 收到 previousResponseId 会抛错 — 所以 runStore 只在
     // 模型走 protocol="responses" 时才有意义；dispatcher 已按 protocol 路由 adapter。
-    let currentResponseId = await this.loadInitialResponseId(context.sessionId, context.model, context.profileConfigDigest);
+    const usesStoredResponseState = this.modelAdapter.capabilities?.responseState !== 'stateless';
+    let currentResponseId = usesStoredResponseState
+      ? await this.loadInitialResponseId(context.sessionId, context.model, context.profileConfigDigest)
+      : undefined;
 
     try {
       for (turn = 1; turn <= input.maxTurns; turn++) {
@@ -1005,7 +1008,7 @@ export class RawAgentLoop implements AgentLoop {
 
         // RFC v1 P0.4：每轮持久化 Responses API session state。
         // currentResponseId 用于下一轮 turn 接力（同 run 内）；落库后跨 run 也能查回。
-        if (completed.responseId) {
+        if (usesStoredResponseState && completed.responseId) {
           currentResponseId = completed.responseId;
           await this.persistResponseSessionState(context.runId, completed, context.model, context.profileConfigDigest);
         }
@@ -1056,7 +1059,19 @@ export class RawAgentLoop implements AgentLoop {
             ...(completed.requestInputPrefixHash
               ? { requestInputPrefixHash: completed.requestInputPrefixHash }
               : {}),
+            ...(completed.requestInstructionsHash
+              ? { requestInstructionsHash: completed.requestInstructionsHash }
+              : {}),
+            ...(completed.requestToolsHash ? { requestToolsHash: completed.requestToolsHash } : {}),
+            ...(completed.requestHistoryHash ? { requestHistoryHash: completed.requestHistoryHash } : {}),
+            ...(completed.cacheEligible !== undefined ? { cacheEligible: completed.cacheEligible } : {}),
             ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+            ...(completed.providerContinuation
+              ? { providerContinuation: completed.providerContinuation }
+              : {}),
+            ...(completed.providerContinuationReset
+              ? { providerContinuationReset: true }
+              : {}),
             contextBreakdown: calibratedBreakdown,
             ...(textStarted ? { streamed: true } : {}),
           });
@@ -1120,7 +1135,19 @@ export class RawAgentLoop implements AgentLoop {
           ...(completed.requestInputPrefixHash
             ? { requestInputPrefixHash: completed.requestInputPrefixHash }
             : {}),
+          ...(completed.requestInstructionsHash
+            ? { requestInstructionsHash: completed.requestInstructionsHash }
+            : {}),
+          ...(completed.requestToolsHash ? { requestToolsHash: completed.requestToolsHash } : {}),
+          ...(completed.requestHistoryHash ? { requestHistoryHash: completed.requestHistoryHash } : {}),
+          ...(completed.cacheEligible !== undefined ? { cacheEligible: completed.cacheEligible } : {}),
           ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+          ...(completed.providerContinuation
+            ? { providerContinuation: completed.providerContinuation }
+            : {}),
+          ...(completed.providerContinuationReset
+            ? { providerContinuationReset: true }
+            : {}),
           contextBreakdown: calibratedBreakdown,
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
@@ -1131,6 +1158,7 @@ export class RawAgentLoop implements AgentLoop {
           yield { type: 'draft_commit', draftId };
         }
         if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
+        if (completed.providerContinuationReset) clearProviderContinuations(messages);
         messages.push({
           role: 'assistant',
           content: completed.content || turnText || null,
@@ -1140,6 +1168,9 @@ export class RawAgentLoop implements AgentLoop {
             function: { name: call.name, arguments: call.arguments },
             ...(call.namespace ? { namespace: call.namespace } : {}),
           })),
+          ...(completed.providerContinuation
+            ? { provider_continuation: completed.providerContinuation }
+            : {}),
         });
 
         yield* this.drainToolCalls({
@@ -2441,11 +2472,14 @@ export class RawAgentLoop implements AgentLoop {
     const contextUsageTracker = new RuntimeContextUsageTracker(args.context.model, args.priorEvents);
 
     // RFC v1 P0.4：resume 路径同样接力 Responses API session state。
-    let currentResponseId = await this.loadInitialResponseId(
-      args.context.sessionId,
-      args.context.model,
-      args.context.profileConfigDigest,
-    );
+    const usesStoredResponseState = this.modelAdapter.capabilities?.responseState !== 'stateless';
+    let currentResponseId = usesStoredResponseState
+      ? await this.loadInitialResponseId(
+        args.context.sessionId,
+        args.context.model,
+        args.context.profileConfigDigest,
+      )
+      : undefined;
 
     try {
       for (turn = 1; turn <= args.maxTurns; turn++) {
@@ -2607,7 +2641,7 @@ export class RawAgentLoop implements AgentLoop {
         }
 
         // RFC v1 P0.4：resume 路径同样持久化 last_response_id 等。
-        if (completed.responseId) {
+        if (usesStoredResponseState && completed.responseId) {
           currentResponseId = completed.responseId;
           await this.persistResponseSessionState(
             args.context.runId,
@@ -2663,7 +2697,19 @@ export class RawAgentLoop implements AgentLoop {
             ...(completed.requestInputPrefixHash
               ? { requestInputPrefixHash: completed.requestInputPrefixHash }
               : {}),
+            ...(completed.requestInstructionsHash
+              ? { requestInstructionsHash: completed.requestInstructionsHash }
+              : {}),
+            ...(completed.requestToolsHash ? { requestToolsHash: completed.requestToolsHash } : {}),
+            ...(completed.requestHistoryHash ? { requestHistoryHash: completed.requestHistoryHash } : {}),
+            ...(completed.cacheEligible !== undefined ? { cacheEligible: completed.cacheEligible } : {}),
             ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+            ...(completed.providerContinuation
+              ? { providerContinuation: completed.providerContinuation }
+              : {}),
+            ...(completed.providerContinuationReset
+              ? { providerContinuationReset: true }
+              : {}),
             contextBreakdown: calibratedBreakdown,
             ...(textStarted ? { streamed: true } : {}),
           });
@@ -2727,7 +2773,19 @@ export class RawAgentLoop implements AgentLoop {
           ...(completed.requestInputPrefixHash
             ? { requestInputPrefixHash: completed.requestInputPrefixHash }
             : {}),
+          ...(completed.requestInstructionsHash
+            ? { requestInstructionsHash: completed.requestInstructionsHash }
+            : {}),
+          ...(completed.requestToolsHash ? { requestToolsHash: completed.requestToolsHash } : {}),
+          ...(completed.requestHistoryHash ? { requestHistoryHash: completed.requestHistoryHash } : {}),
+          ...(completed.cacheEligible !== undefined ? { cacheEligible: completed.cacheEligible } : {}),
           ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+          ...(completed.providerContinuation
+            ? { providerContinuation: completed.providerContinuation }
+            : {}),
+          ...(completed.providerContinuationReset
+            ? { providerContinuationReset: true }
+            : {}),
           contextBreakdown: calibratedBreakdown,
           ...(toolCallContentStreamed ? { streamed: true } : {}),
           toolCalls: completed.toolCalls,
@@ -2738,6 +2796,7 @@ export class RawAgentLoop implements AgentLoop {
           yield { type: 'draft_commit', draftId };
         }
         if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
+        if (completed.providerContinuationReset) clearProviderContinuations(args.messages);
         args.messages.push({
           role: 'assistant',
           content: completed.content || turnText || null,
@@ -2747,6 +2806,9 @@ export class RawAgentLoop implements AgentLoop {
             function: { name: call.name, arguments: call.arguments },
             ...(call.namespace ? { namespace: call.namespace } : {}),
           })),
+          ...(completed.providerContinuation
+            ? { provider_continuation: completed.providerContinuation }
+            : {}),
         });
 
         yield* this.drainToolCalls({
@@ -2948,6 +3010,14 @@ function formatAskUserQuestionResult(response: InteractionResponse): string {
 
 function formatMemoryContext(memoryContext: string): string {
   return `<memory-context>\n[长期记忆]\n${memoryContext}\n</memory-context>`;
+}
+
+function clearProviderContinuations(messages: ModelChatMessage[]): void {
+  for (const message of messages) {
+    if (message.role === 'assistant' && message.provider_continuation) {
+      delete message.provider_continuation;
+    }
+  }
 }
 
 function mergeUsage(a: ModelUsage | undefined, b: ModelUsage): ModelUsage {

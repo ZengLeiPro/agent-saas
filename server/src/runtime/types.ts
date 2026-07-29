@@ -101,6 +101,21 @@ export interface ModelToolCall {
   namespace?: string;
 }
 
+/**
+ * Provider-owned opaque state needed for stateless full-history replay.
+ * The platform never decrypts or exposes encrypted_content; it only preserves order.
+ */
+export interface ModelProviderContinuation {
+  provider: 'openai_codex_subscription';
+  issuer: string;
+  accountBindingHash: string;
+  items: Array<{
+    type: 'reasoning';
+    encrypted_content: string;
+    summary?: unknown[];
+  }>;
+}
+
 export interface ModelUsage {
   inputTokens?: number;
   outputTokens?: number;
@@ -260,6 +275,8 @@ export type ModelChatMessage =
      *   端点接入时，跨步推理上下文不被丢
      */
     reasoning_content?: string;
+    /** Opaque provider state replayed only by the matching issuer/account transport. */
+    provider_continuation?: ModelProviderContinuation;
   }
   | { role: 'tool'; tool_call_id: string; content: string }
   | { role: 'additional_tools'; tools: ModelToolDefinition[]; content?: undefined };
@@ -316,13 +333,27 @@ export type ModelEvent =
     promptCacheKey?: string;
     /** 最终请求前 8 个 input item 的内容哈希，用于识别历史前缀被静默改写。 */
     requestInputPrefixHash?: string;
+    /** Stable request prefix components for cache drift diagnosis. */
+    requestInstructionsHash?: string;
+    requestToolsHash?: string;
+    requestHistoryHash?: string;
+    cacheEligible?: boolean;
     /** 最终成功请求的 UTF-8 JSON body 大小。 */
     requestBodyBytes?: number;
     /** 原生 Responses tool_search 的终态事实；为空表示本轮未搜索/加载。 */
     toolSearchResults?: ModelToolSearchResult[];
+    /** Opaque encrypted reasoning items; never projected to client-visible transcript JSONL. */
+    providerContinuation?: ModelProviderContinuation;
+    /** Prior opaque items were rejected and intentionally dropped before the successful retry. */
+    providerContinuationReset?: boolean;
   };
 
+export interface ModelAdapterCapabilities {
+  responseState: 'stored' | 'stateless';
+}
+
 export interface ModelAdapter {
+  readonly capabilities?: ModelAdapterCapabilities;
   stream(request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent>;
 }
 
@@ -462,12 +493,19 @@ export type PlatformEvent =
     modelRequestAttemptCount?: number;
     promptCacheKey?: string;
     requestInputPrefixHash?: string;
+    requestInstructionsHash?: string;
+    requestToolsHash?: string;
+    requestHistoryHash?: string;
+    cacheEligible?: boolean;
     requestBodyBytes?: number;
     contextBreakdown?: ContextUsageBreakdown;
     /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
     /** 模型流在完整终态前失败；正文是已实际产出的可继续片段。 */
     incomplete?: boolean;
+    /** EventStore-only opaque state. Projection and trace APIs must redact ciphertext. */
+    providerContinuation?: ModelProviderContinuation;
+    providerContinuationReset?: boolean;
   }
   | {
     id: string;
@@ -510,11 +548,18 @@ export type PlatformEvent =
     modelRequestAttemptCount?: number;
     promptCacheKey?: string;
     requestInputPrefixHash?: string;
+    requestInstructionsHash?: string;
+    requestToolsHash?: string;
+    requestHistoryHash?: string;
+    cacheEligible?: boolean;
     requestBodyBytes?: number;
     contextBreakdown?: ContextUsageBreakdown;
     /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
     toolCalls: ModelToolCall[];
+    /** EventStore-only opaque state. Projection and trace APIs must redact ciphertext. */
+    providerContinuation?: ModelProviderContinuation;
+    providerContinuationReset?: boolean;
   }
   | {
     id: string;

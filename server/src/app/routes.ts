@@ -54,6 +54,7 @@ import { createMcpRouter } from "../routes/mcp.js";
 import { createTenantsRouter } from "../routes/tenants.js";
 import { deleteTenantResources } from "../data/tenants/cleanup.js";
 import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
+import { createCodexSubscriptionAdminRouter } from "../routes/codexSubscriptionAdmin.js";
 import { createTenantRemoteHandsAdminRouter } from "../routes/tenantRemoteHandsAdmin.js";
 import { createRuntimeOperationsAdminRouter } from "../routes/runtimeOperationsAdmin.js";
 import { createToolControlsAdminRouter } from "../routes/toolControlsAdmin.js";
@@ -338,6 +339,15 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
+  app.use(
+    "/api/admin/codex-subscription",
+    createCodexSubscriptionAdminRouter({
+      processCwd,
+      config,
+      credentialManager: runtime.codexCredentialManager,
+      deviceAuthService: runtime.codexDeviceAuthService,
+    }),
+  );
   app.use(
     "/api/admin/tenant-remote-hands",
     createTenantRemoteHandsAdminRouter({

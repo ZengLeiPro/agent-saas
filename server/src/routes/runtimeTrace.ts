@@ -281,6 +281,31 @@ export function truncateTraceEvent(
       out[key] = value;
       continue;
     }
+    if (key === 'providerContinuation' && value && typeof value === 'object') {
+      const continuation = value as {
+        provider?: unknown;
+        issuer?: unknown;
+        accountBindingHash?: unknown;
+        items?: unknown;
+      };
+      const items = Array.isArray(continuation.items) ? continuation.items : [];
+      out[key] = {
+        provider: continuation.provider,
+        issuer: typeof continuation.issuer === 'string' ? '（已脱敏）' : undefined,
+        accountBindingHash: continuation.accountBindingHash,
+        itemCount: items.length,
+        encryptedBytes: items.reduce((sum, item) => (
+          sum + (
+            item
+            && typeof item === 'object'
+            && typeof (item as { encrypted_content?: unknown }).encrypted_content === 'string'
+              ? Buffer.byteLength((item as { encrypted_content: string }).encrypted_content, 'utf8')
+              : 0
+          )
+        ), 0),
+      };
+      continue;
+    }
     if (key === 'toolCalls' && Array.isArray(value)) {
       out[key] = value.map((call) => {
         if (call && typeof call === 'object' && typeof (call as { arguments?: unknown }).arguments === 'string') {

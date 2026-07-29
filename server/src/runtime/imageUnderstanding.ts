@@ -56,6 +56,9 @@ export async function analyzeImagesWithFallback(
     context.signal?.addEventListener('abort', abortFromParent, { once: true });
     let usage: ModelUsage | undefined;
     try {
+      if (config.providerOptions?.responsesTransport === 'codex_subscription') {
+        throw new Error('MODEL_TRANSPORT_UNSUPPORTED: 图片理解辅助路径不允许使用 Codex subscription');
+      }
       const apiKey = config.connection?.apiKey || process.env.OPENAI_API_KEY;
       const baseUrl = config.connection?.baseUrl || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
       if (!apiKey) throw new Error('图片理解模型缺少 API key');

@@ -18,6 +18,7 @@ import type {
   ModelAdapter,
   ModelChatMessage,
   ModelEvent,
+  ModelProviderContinuation,
   ModelRequest,
   ModelToolCall,
   ModelToolDefinition,
@@ -39,29 +40,11 @@ import {
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
 import { modelSupportsImage, readModelImageDataUrl, toTextOnlyContent } from './imageAttachments.js';
-
-/**
- * prompt_cache_key 内容指纹：与 chatCompletionsAdapter.computePromptCacheKey 语义等价。
- * Responses 路径 system 走 instructions（非 messages 里的 system role），所以从 messages
- * 抽 system 内容用于指纹计算——与 chat 分支保持"相同 system + tools → 相同 key"的行为。
- * 07-04 实测：CLIProxyAPI 会自动为每次请求填新 UUID 覆盖 prompt_cache_key，
- * 显式传稳定 key 后 cached_tokens 命中率从 0 提升到 76%+。
- */
-function computePromptCacheKey(
-  model: string,
-  messages: ModelChatMessage[],
-  tools: ModelToolDefinition[] | undefined,
-): string {
-  const systemContent = messages.find((m) => m.role === 'system')?.content ?? '';
-  const toolSignature = (tools ?? [])
-    .map((tool) => `${tool.mcpServer?.namespace ?? '-'}:${tool.name}:${tool.deferLoading === true ? 'deferred' : 'eager'}`)
-    .sort()
-    .join(',');
-  return createHash('sha256')
-    .update(`${model}\n${systemContent}\n${toolSignature}`)
-    .digest('hex')
-    .slice(0, 32);
-}
+import { OpenAICompatibleResponsesTransport } from './responses/openAICompatibleResponsesTransport.js';
+import type {
+  ProviderContinuationBinding,
+  ResponsesTransport,
+} from './responses/responsesTransport.js';
 
 function computeRequestInputPrefixHash(body: Record<string, unknown>): string {
   const input = Array.isArray(body.input) ? body.input.slice(0, 8) : [];
@@ -70,6 +53,22 @@ function computeRequestInputPrefixHash(body: Record<string, unknown>): string {
     tools: body.tools,
     input,
   })).digest('hex').slice(0, 32);
+}
+
+function computeRequestPrefixDiagnostics(body: Record<string, unknown>): {
+  instructionsHash: string;
+  toolsHash: string;
+  historyHash: string;
+} {
+  const hash = (value: unknown) => createHash('sha256')
+    .update(JSON.stringify(value ?? null))
+    .digest('hex')
+    .slice(0, 32);
+  return {
+    instructionsHash: hash(body.instructions),
+    toolsHash: hash(body.tools),
+    historyHash: hash(body.input),
+  };
 }
 
 const logger = createLogger('ResponsesAdapter');
@@ -107,6 +106,9 @@ const RESERVED_EXTRA_BODY_KEYS = new Set([
   'store',
   'stream',
   'prompt_cache_key',
+  'parallel_tool_calls',
+  'include',
+  'text',
 ]);
 
 /**
@@ -146,6 +148,11 @@ type ResponsesInputItem =
     type: 'additional_tools';
     role: 'developer';
     tools: Array<Record<string, unknown>>;
+  }
+  | {
+    type: 'reasoning';
+    encrypted_content: string;
+    summary?: unknown[];
   };
 
 interface ResponsesRetryState {
@@ -157,13 +164,21 @@ interface ResponsesRetryState {
   body: Record<string, unknown>;
   usePrevious: boolean;
   responseMode: ModelResponseMode;
+  continuationReplayReset: boolean;
 }
 
 export class ResponsesApiAdapter implements ModelAdapter {
+  readonly capabilities: { responseState: 'stored' | 'stateless' };
+  private readonly transport: ResponsesTransport;
+
   constructor(
-    private readonly connection: Required<RuntimeConnection>,
+    connection: Required<RuntimeConnection>,
     private readonly providerOptions: ModelProviderOptions = {},
-  ) {}
+    transport?: ResponsesTransport,
+  ) {
+    this.transport = transport ?? new OpenAICompatibleResponsesTransport(connection);
+    this.capabilities = { responseState: this.transport.capabilities.responseState };
+  }
 
   async *stream(request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent> {
     yield* this.streamWithRetry(request, context);
@@ -198,7 +213,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
     // "No tool call found for function call output with call_id ..."。
     const hasPrevious = typeof request.previousResponseId === 'string'
       && request.previousResponseId.length > 0
-      && !this.providerOptions.disableResponseChaining;
+      && !this.providerOptions.disableResponseChaining
+      && this.transport.capabilities.responseState === 'stored';
 
     const sessionIdShort = context.sessionId ? context.sessionId.slice(0, 8) : undefined;
     // usePrevious 可被降级：上游报 PreviousResponseNotFound（跨模型切换残留 / 服务端已过期）
@@ -207,7 +223,13 @@ export class ResponsesApiAdapter implements ModelAdapter {
     let responseMode: ModelResponseMode = retryState?.responseMode ?? (hasPrevious ? 'relay' : 'full');
     const promptCacheKey = this.providerOptions.disablePromptCacheKey
       ? undefined
-      : computePromptCacheKey(request.model, request.messages, request.tools);
+      : this.transport.computePromptCacheKey({
+        model: request.model,
+        messages: request.messages,
+        tools: request.tools,
+        context,
+      });
+    const expectedContinuationBinding = await this.transport.getContinuationBinding?.();
     const buildRequestBody = async (): Promise<Record<string, unknown>> => {
       const { instructions, input } = usePrevious
         ? { instructions: undefined, input: await this.extractIncrementalInput(request.messages, context.cwd, sessionIdShort) }
@@ -216,6 +238,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
           context.cwd,
           sessionIdShort,
           request.tools.some((tool) => tool.mcpServer && tool.deferLoading === true),
+          expectedContinuationBinding,
         );
 
       if (usePrevious && input.length === 0) {
@@ -225,20 +248,30 @@ export class ResponsesApiAdapter implements ModelAdapter {
         );
       }
 
+      const adaptedTools = this.adaptTools(request.tools);
+      const includeToolConfiguration = adaptedTools.length > 0
+        || !this.transport.capabilities.omitToolConfigurationWhenEmpty;
       const built: Record<string, unknown> = {
         model: request.model,
         input,
         ...(usePrevious ? { previous_response_id: request.previousResponseId } : {}),
         ...(instructions ? { instructions } : {}),
-        tools: this.adaptTools(request.tools),
+        ...(includeToolConfiguration ? { tools: adaptedTools } : {}),
         tool_choice: toolChoice,
-        max_output_tokens: maxOutputTokens,
-        store: true,
+        ...(this.transport.capabilities.parallelToolCalls ? { parallel_tool_calls: true } : {}),
+        ...(this.transport.capabilities.maxOutputTokens ? { max_output_tokens: maxOutputTokens } : {}),
+        store: this.transport.capabilities.responseState === 'stored',
         stream: true,
         // prompt_cache_key（07-04）：内容指纹路由。默认传，让相同 system/instructions + tools
         // 的请求命中同一缓存分片（07-04 实测 CLIProxyAPI 会自动生成新 UUID 覆盖 → 缓存永远打散，
         // 显式传稳定 key 后 cached_tokens 命中率 76%+）。disablePromptCacheKey=true 时跳过。
         ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
+        ...(this.transport.capabilities.encryptedReasoning
+          ? {
+            include: ['reasoning.encrypted_content'],
+            text: { verbosity: 'low' },
+          }
+          : {}),
         ...(this.providerOptions.extraBody ?? {}),
       };
 
@@ -246,18 +279,24 @@ export class ResponsesApiAdapter implements ModelAdapter {
       if (!this.providerOptions.isPseudoReasoning) {
         if (this.providerOptions.thinking !== undefined) built.thinking = this.providerOptions.thinking;
         if (this.providerOptions.reasoningEffort !== undefined) {
-          built.reasoning = { effort: this.providerOptions.reasoningEffort };
+          built.reasoning = {
+            effort: this.providerOptions.reasoningEffort,
+            ...(this.transport.capabilities.encryptedReasoning ? { summary: 'auto' } : {}),
+          };
         }
       }
       return built;
     };
     let body = retryState?.body ?? await buildRequestBody();
+    let continuationReplayReset = retryState?.continuationReplayReset ?? false;
     let requestBodyBytes = 0;
     let requestInputPrefixHash = '';
+    let requestInstructionsHash = '';
+    let requestToolsHash = '';
+    let requestHistoryHash = '';
     let modelRequestAttemptCount = 0;
 
     const requestSignal = request.signal ?? context.signal;
-    const url = responsesUrl(this.connection.baseUrl);
     const modelRequestId = retryState?.modelRequestId ?? randomUUID();
     // 默认仍不重试：网络错误/5xx 不能证明上游未接单、未计费。只有模型组显式配置
     // pre_stream_retry_delays_ms 时才启用有限重试。流内只额外覆盖 provider 官方
@@ -267,8 +306,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
     let transientRetryIndex = retryState?.transientRetryIndex ?? 0;
     // previous_response_id 400/404 的全量降级不占瞬时故障重试次数。
     const maxAttempts = retryState?.maxAttempts
-      ?? 1 + retryDelaysMs.length + (hasPrevious ? 1 : 0);
+      ?? 1
+        + retryDelaysMs.length
+        + (hasPrevious ? 1 : 0)
+        + (bodyContainsEncryptedReasoning(body) ? 1 : 0);
     let response: Response | null = null;
+    let responseContinuationBinding = expectedContinuationBinding;
     let activeAttempt: ResponsesAttemptDiagnostics | null = null;
     const firstAttempt = (retryState?.lastAttempt ?? 0) + 1;
     for (let attempt = firstAttempt; attempt <= maxAttempts; attempt++) {
@@ -276,6 +319,10 @@ export class ResponsesApiAdapter implements ModelAdapter {
       const serializedBody = JSON.stringify(body);
       requestBodyBytes = Buffer.byteLength(serializedBody, 'utf8');
       requestInputPrefixHash = computeRequestInputPrefixHash(body);
+      const prefixDiagnostics = computeRequestPrefixDiagnostics(body);
+      requestInstructionsHash = prefixDiagnostics.instructionsHash;
+      requestToolsHash = prefixDiagnostics.toolsHash;
+      requestHistoryHash = prefixDiagnostics.historyHash;
       const attemptDiagnostics = new ResponsesAttemptDiagnostics(context, {
         modelRequestId,
         attempt,
@@ -289,16 +336,16 @@ export class ResponsesApiAdapter implements ModelAdapter {
       await attemptDiagnostics.started();
       let attemptResponse: Response;
       try {
-        attemptResponse = await fetch(url, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${this.connection.apiKey}`,
-            'content-type': 'application/json',
-            'x-client-request-id': attemptDiagnostics.clientRequestId,
-          },
-          body: serializedBody,
+        const executed = await this.transport.execute({
+          serializedBody,
+          context,
+          clientRequestId: attemptDiagnostics.clientRequestId,
           signal: requestSignal,
+          ...(expectedContinuationBinding ? { expectedContinuationBinding } : {}),
         });
+        attemptResponse = executed.response;
+        responseContinuationBinding = executed.continuationBinding ?? responseContinuationBinding;
+        if (executed.continuationReplayReset) continuationReplayReset = true;
       } catch (err) {
         const aborted = requestSignal?.aborted === true;
         const retryDelayMs = aborted ? undefined : retryDelaysMs[transientRetryIndex];
@@ -346,6 +393,28 @@ export class ResponsesApiAdapter implements ModelAdapter {
         continue;
       }
       const providerError = extractProviderError(text);
+      if (
+        attempt < maxAttempts
+        && !continuationReplayReset
+        && isInvalidEncryptedContent(
+          attemptResponse.status,
+          providerError.code,
+          providerError.message ?? text,
+        )
+      ) {
+        const stripped = stripEncryptedReasoning(body);
+        if (stripped.changed) {
+          await attemptDiagnostics.finished('http_error', {
+            errorCode: providerError.code ?? 'INVALID_ENCRYPTED_CONTENT',
+            errorMessage: 'Codex rejected prior encrypted reasoning; retrying once without opaque items',
+            willRetry: true,
+          });
+          body = stripped.body;
+          continuationReplayReset = true;
+          logger.warn('Codex encrypted reasoning replay 被拒绝；已剥离旧 opaque item 并重试一次');
+          continue;
+        }
+      }
       const retryDelayMs = isRetryablePreStreamHttpError(
         attemptResponse.status,
         providerError.message ?? text,
@@ -425,6 +494,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
       namespace?: string;
     }>();
     const outputTextByPart = new Map<string, string>();
+    const encryptedReasoningItems: ModelProviderContinuation['items'] = [];
+    let pendingToolSearchPaths: string[] = [];
 
     const decoder = new TextDecoder();
     let reader: ReadableStreamDefaultReader<Uint8Array>;
@@ -553,8 +624,30 @@ export class ResponsesApiAdapter implements ModelAdapter {
                     ...(namespace ? { namespace } : {}),
                   });
                 }
+              } else if (
+                item?.type === 'reasoning'
+                && typeof item.encrypted_content === 'string'
+                && item.encrypted_content.length > 0
+              ) {
+                encryptedReasoningItems.push({
+                  type: 'reasoning',
+                  encrypted_content: item.encrypted_content,
+                  ...(Array.isArray(item.summary) ? { summary: item.summary } : {}),
+                });
+              } else if (item?.type === 'tool_search_call') {
+                pendingToolSearchPaths = Array.isArray(item.arguments?.paths)
+                  ? item.arguments.paths.filter((path: unknown): path is string => typeof path === 'string')
+                  : [];
+              } else if (item?.type === 'tool_search_output') {
+                toolSearchResults.push({
+                  execution: item.execution === 'client' ? 'client' : 'server',
+                  ...(typeof item.call_id === 'string' ? { callId: item.call_id } : {}),
+                  paths: pendingToolSearchPaths,
+                  loadedToolNames: extractLoadedToolNames(item.tools),
+                });
+                pendingToolSearchPaths = [];
               }
-            } else if (eventType === 'response.completed') {
+            } else if (eventType === 'response.completed' || eventType === 'response.done') {
               const respObj = event.response;
               assertSingleTerminal(terminalEventType, eventType);
               terminalEventType = eventType;
@@ -571,13 +664,19 @@ export class ResponsesApiAdapter implements ModelAdapter {
               if (typeof respObj?.expire_at === 'number') responseExpireAt = respObj.expire_at;
               actualModel = compactDiagnosticToken(respObj?.model, 200) ?? actualModel;
               activeAttempt.observeTerminal(eventType, terminalStatus, responseId);
-              const canonicalOutputPresent = !!respObj
+              const terminalOutputFieldPresent = !!respObj
                 && typeof respObj === 'object'
                 && Object.hasOwn(respObj, 'output');
+              const canonicalOutputPresent = this.transport.capabilities.terminalOutput === 'canonical'
+                ? terminalOutputFieldPresent
+                : Array.isArray(respObj?.output) && respObj.output.length > 0;
               const snapshot = parseCanonicalOutput(respObj?.output, canonicalOutputPresent);
               canonicalTextSuffix = reconcileTextSnapshot(content, snapshot.text, snapshot.present);
               if (snapshot.refusal) refusal = snapshot.refusal;
-              toolSearchResults = snapshot.toolSearchResults;
+              if (snapshot.present) toolSearchResults = snapshot.toolSearchResults;
+              if (encryptedReasoningItems.length === 0 && snapshot.reasoningItems.length > 0) {
+                encryptedReasoningItems.push(...snapshot.reasoningItems);
+              }
               reconcileToolCallSnapshot(toolCallsByIndex, snapshot.toolCalls, snapshot.present);
               finishReason = mapResponsesStatusToFinish('completed', toolCallsByIndex.size > 0);
               await activeAttempt.checkpoint('terminal_received', {
@@ -793,6 +892,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
           body,
           usePrevious,
           responseMode,
+          continuationReplayReset,
         });
         return;
       }
@@ -811,13 +911,17 @@ export class ResponsesApiAdapter implements ModelAdapter {
         modelRequestAttemptCount,
         ...(promptCacheKey ? { promptCacheKey } : {}),
         requestInputPrefixHash,
+        requestInstructionsHash,
+        requestToolsHash,
+        requestHistoryHash,
+        cacheEligible: (usage?.inputTokens ?? 0) >= 1_024,
         requestBodyBytes,
       };
       return;
     }
 
     // P1.1：stream 末尾 chunk usage 永远 null（RFC §2.4），用 GET /responses/{id} 兜底
-    if (!usage && responseId) {
+    if (!usage && responseId && this.transport.capabilities.usageLookup) {
       const fetched = await this.fetchUsageById(responseId, requestSignal).catch((err) => {
         logger.warn(`fetchUsageById 失败 responseId=${responseId.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);
         return undefined;
@@ -882,6 +986,12 @@ export class ResponsesApiAdapter implements ModelAdapter {
     const toolCalls = this.providerOptions.applyDeepseekArgumentUnescape
       ? toolCallsRaw.map((c) => ({ ...c, arguments: unescapeDeepseekArguments(c.arguments) }))
       : toolCallsRaw;
+    const providerContinuation = encryptedReasoningItems.length > 0 && responseContinuationBinding
+      ? {
+        ...responseContinuationBinding,
+        items: encryptedReasoningItems,
+      } satisfies ModelProviderContinuation
+      : undefined;
 
     await activeAttempt.finished('completed', { usage });
 
@@ -913,8 +1023,14 @@ export class ResponsesApiAdapter implements ModelAdapter {
       modelRequestAttemptCount,
       ...(promptCacheKey ? { promptCacheKey } : {}),
       requestInputPrefixHash,
+      requestInstructionsHash,
+      requestToolsHash,
+      requestHistoryHash,
+      cacheEligible: (usage?.inputTokens ?? 0) >= 1_024,
       requestBodyBytes,
       ...(toolSearchResults.length > 0 ? { toolSearchResults } : {}),
+      ...(providerContinuation ? { providerContinuation } : {}),
+      ...(continuationReplayReset ? { providerContinuationReset: true } : {}),
     };
     return;
   }
@@ -923,10 +1039,10 @@ export class ResponsesApiAdapter implements ModelAdapter {
    * P1.2：DELETE /responses/{id} — PIPL 合规闭环，删除服务端存储的 reasoning chain。
    */
   async revoke(responseId: string): Promise<void> {
-    const response = await fetch(responsesByIdUrl(this.connection.baseUrl, responseId), {
-      method: 'DELETE',
-      headers: { authorization: `Bearer ${this.connection.apiKey}` },
-    });
+    if (!this.transport.capabilities.responseDelete || !this.transport.deleteResponse) {
+      throw new Error(`Responses transport ${this.transport.id} 不支持 DELETE response`);
+    }
+    const response = await this.transport.deleteResponse(responseId);
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       throw new Error(`Responses DELETE HTTP ${response.status}: ${text.slice(0, 500)}`);
@@ -942,10 +1058,10 @@ export class ResponsesApiAdapter implements ModelAdapter {
     expireAtMs?: number;
     actualModel?: string;
   }> {
-    const response = await fetch(responsesByIdUrl(this.connection.baseUrl, responseId), {
-      method: 'GET',
-      headers: { authorization: `Bearer ${this.connection.apiKey}` },
-    });
+    if (this.transport.capabilities.responseState !== 'stored' || !this.transport.getResponse) {
+      throw new Error(`Responses transport ${this.transport.id} 不支持 GET response`);
+    }
+    const response = await this.transport.getResponse(responseId);
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       throw new Error(`Responses GET HTTP ${response.status}: ${text.slice(0, 500)}`);
@@ -971,11 +1087,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
     parentSignal?.addEventListener('abort', abortFromParent, { once: true });
     const timeout = setTimeout(() => controller.abort(new Error('usage fetch timeout')), USAGE_FETCH_TIMEOUT_MS);
     try {
-      const response = await fetch(responsesByIdUrl(this.connection.baseUrl, responseId), {
-        method: 'GET',
-        headers: { authorization: `Bearer ${this.connection.apiKey}` },
-        signal: controller.signal,
-      });
+      if (!this.transport.capabilities.usageLookup || !this.transport.getResponse) return undefined;
+      const response = await this.transport.getResponse(responseId, controller.signal);
       if (!response.ok) return undefined;
       const data = await response.json() as Record<string, any>;
       return data.usage ? normalizeResponsesUsage(data.usage) : undefined;
@@ -1039,6 +1152,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     cwd: string,
     sessionIdShort?: string,
     allowAdditionalTools = false,
+    expectedContinuationBinding?: ProviderContinuationBinding,
   ): Promise<{
     instructions?: string;
     input: ResponsesInputItem[];
@@ -1055,6 +1169,20 @@ export class ResponsesApiAdapter implements ModelAdapter {
           content: await this.buildUserContent(m.content, cwd, sessionIdShort),
         });
       } else if (m.role === 'assistant') {
+        if (
+          m.provider_continuation
+          && expectedContinuationBinding
+          && continuationMatches(m.provider_continuation, expectedContinuationBinding)
+        ) {
+          for (const item of m.provider_continuation.items) {
+            if (item.type !== 'reasoning' || !item.encrypted_content) continue;
+            items.push({
+              type: 'reasoning',
+              encrypted_content: item.encrypted_content,
+              ...(Array.isArray(item.summary) ? { summary: item.summary } : {}),
+            });
+          }
+        }
         if (m.tool_calls?.length) {
           if (m.content) {
             items.push({
@@ -1455,6 +1583,15 @@ function assertReservedExtraBodyKeys(extraBody: Record<string, unknown> | undefi
   }
 }
 
+function continuationMatches(
+  continuation: ModelProviderContinuation,
+  expected: ProviderContinuationBinding,
+): boolean {
+  return continuation.provider === expected.provider
+    && continuation.issuer === expected.issuer
+    && continuation.accountBindingHash === expected.accountBindingHash;
+}
+
 function assertSingleTerminal(previous: string | undefined, next: string): void {
   if (!previous) return;
   throw new ResponsesStreamError(
@@ -1496,6 +1633,7 @@ function parseCanonicalOutput(raw: unknown, present: boolean): {
   refusal: string;
   toolCalls: Map<number, ModelToolCall>;
   toolSearchResults: ModelToolSearchResult[];
+  reasoningItems: ModelProviderContinuation['items'];
 } {
   const result = {
     present,
@@ -1503,6 +1641,7 @@ function parseCanonicalOutput(raw: unknown, present: boolean): {
     refusal: '',
     toolCalls: new Map<number, ModelToolCall>(),
     toolSearchResults: [] as ModelToolSearchResult[],
+    reasoningItems: [] as ModelProviderContinuation['items'],
   };
   if (!present) return result;
   if (!Array.isArray(raw)) {
@@ -1531,6 +1670,16 @@ function parseCanonicalOutput(raw: unknown, present: boolean): {
         name,
         arguments: args,
         ...(namespace ? { namespace } : {}),
+      });
+    } else if (
+      obj.type === 'reasoning'
+      && typeof obj.encrypted_content === 'string'
+      && obj.encrypted_content.length > 0
+    ) {
+      result.reasoningItems.push({
+        type: 'reasoning',
+        encrypted_content: obj.encrypted_content,
+        ...(Array.isArray(obj.summary) ? { summary: obj.summary } : {}),
       });
     } else if (obj.type === 'tool_search_call') {
       pendingPaths = Array.isArray(obj.arguments?.paths)
@@ -1631,6 +1780,34 @@ function extractProviderError(text: string): { code?: string; message?: string }
   }
 }
 
+function bodyContainsEncryptedReasoning(body: Record<string, unknown>): boolean {
+  return Array.isArray(body.input) && body.input.some((item) => (
+    !!item
+    && typeof item === 'object'
+    && (item as Record<string, unknown>).type === 'reasoning'
+    && typeof (item as Record<string, unknown>).encrypted_content === 'string'
+  ));
+}
+
+function stripEncryptedReasoning(body: Record<string, unknown>): {
+  body: Record<string, unknown>;
+  changed: boolean;
+} {
+  if (!Array.isArray(body.input)) return { body, changed: false };
+  const input = body.input.filter((item) => !(
+    !!item
+    && typeof item === 'object'
+    && (item as Record<string, unknown>).type === 'reasoning'
+  ));
+  if (input.length === body.input.length) return { body, changed: false };
+  return { body: { ...body, input }, changed: true };
+}
+
+function isInvalidEncryptedContent(status: number, code: string | undefined, message: string): boolean {
+  if (status !== 400) return false;
+  return /invalid[_\s-]?encrypted[_\s-]?content/i.test(`${code ?? ''} ${message}`);
+}
+
 function isRetryablePreStreamHttpError(status: number, message: string): boolean {
   if (status === 502 || status === 503 || status === 504) return true;
   if (status !== 500) return false;
@@ -1709,18 +1886,6 @@ function hashOpaqueId(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 32);
 }
 
-function responsesUrl(baseUrl: string): string {
-  const trimmed = baseUrl.replace(/\/+$/, '');
-  if (trimmed.endsWith('/responses')) return trimmed;
-  return `${trimmed}/responses`;
-}
-
-function responsesByIdUrl(baseUrl: string, responseId: string): string {
-  const trimmed = baseUrl.replace(/\/+$/, '');
-  const base = trimmed.endsWith('/responses') ? trimmed : `${trimmed}/responses`;
-  return `${base}/${encodeURIComponent(responseId)}`;
-}
-
 function parseSseFrames(block: string): Array<{ eventName?: string; data: string }> {
   const dataLines: string[] = [];
   let eventName: string | undefined;
@@ -1738,6 +1903,10 @@ function normalizeResponsesUsage(raw: Record<string, any>): ModelUsage {
   const inputTokens = numberOrZero(raw.input_tokens);
   const outputTokens = numberOrZero(raw.output_tokens);
   const cacheReadInputTokens = numberOrZero(raw.input_tokens_details?.cached_tokens);
+  const cacheCreationInputTokens = numberOrZero(
+    raw.input_tokens_details?.cache_write_tokens
+    ?? raw.input_tokens_details?.cache_creation_tokens,
+  );
   // reasoning_tokens 是 output_tokens 的子集（output 单价已覆盖），仅用于观测——展示
   // tool loop 内思考量、诊断是不是在重复思考。上游字段名：OpenAI Responses =
   // output_tokens_details.reasoning_tokens；Chat Completions 走 chatCompletionsAdapter。
@@ -1746,7 +1915,7 @@ function normalizeResponsesUsage(raw: Record<string, any>): ModelUsage {
     inputTokens,
     outputTokens,
     cacheReadInputTokens,
-    cacheCreationInputTokens: 0,
+    cacheCreationInputTokens,
     reasoningTokens,
   };
 }

@@ -42,7 +42,17 @@ function jsonResponse(body: unknown): Response {
 describe("ModelManager 排序", () => {
   beforeEach(() => {
     vi.mocked(authFetch).mockReset();
-    vi.mocked(authFetch).mockImplementation(async (_path, init) => {
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      if (path === "/api/admin/codex-subscription") {
+        return jsonResponse({
+          config: {
+            enabled: false,
+            endpoint: "https://chatgpt.com/backend-api/codex/responses",
+            originator: "kaiyan-agent",
+          },
+          credential: { configured: false, connected: false },
+        });
+      }
       if (init?.method === "PUT") {
         const payload = JSON.parse(String(init.body));
         return jsonResponse({
@@ -81,5 +91,26 @@ describe("ModelManager 排序", () => {
     const payload = JSON.parse(String(putCall?.[1]?.body));
     expect(payload.models.groups.map((group: { id: string }) => group.id)).toEqual(["backup", "main"]);
     expect(payload.models.groups[1].models.map((model: { id: string }) => model.id)).toEqual(["mini", "gpt"]);
+  });
+
+  it("保存分组级 Codex subscription transport 显式选择", async () => {
+    const user = userEvent.setup();
+    render(<ModelManager />);
+
+    await user.click(await screen.findByText("主分组"));
+    const label = await screen.findByText("Responses transport");
+    const select = label.parentElement?.querySelector("select");
+    expect(select).toBeTruthy();
+    fireEvent.change(select!, { target: { value: "codex_subscription" } });
+    await user.click(screen.getByRole("button", { name: "保存并生效" }));
+
+    await waitFor(() => {
+      const modelSave = vi.mocked(authFetch).mock.calls.find(
+        (call) => call[0] === "/api/admin/models" && call[1]?.method === "PUT",
+      );
+      expect(modelSave).toBeTruthy();
+      const payload = JSON.parse(String(modelSave?.[1]?.body));
+      expect(payload.models.groups[0].responses_transport).toBe("codex_subscription");
+    });
   });
 });

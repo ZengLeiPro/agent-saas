@@ -31,6 +31,68 @@ describe('getAppConfigPath', () => {
 });
 
 describe('parseAppConfig', () => {
+  it('accepts an explicitly configured Codex subscription Responses model', () => {
+    const config = parseAppConfig({
+      ...baseConfig,
+      codexSubscription: {
+        enabled: false,
+        endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+        originator: 'kaiyan-agent',
+      },
+      models: {
+        default: 'codex/gpt',
+        allowCrossGroupSwitch: false,
+        groups: [{
+          id: 'codex',
+          name: 'Codex',
+          protocol: 'responses',
+          responses_transport: 'codex_subscription',
+          models: [{ id: 'gpt', name: 'GPT', value: 'gpt-5.4' }],
+        }],
+      },
+    });
+
+    expect(config.models?.groups[0]).toMatchObject({
+      protocol: 'responses',
+      responses_transport: 'codex_subscription',
+    });
+    expect(config.codexSubscription).toMatchObject({
+      enabled: false,
+      originator: 'kaiyan-agent',
+    });
+  });
+
+  it('rejects Codex subscription on Chat Completions or without root transport config', () => {
+    const models = {
+      default: 'codex/gpt',
+      allowCrossGroupSwitch: false,
+      groups: [{
+        id: 'codex',
+        name: 'Codex',
+        responses_transport: 'codex_subscription',
+        models: [{ id: 'gpt', name: 'GPT', value: 'gpt-5.4' }],
+      }],
+    };
+
+    expect(() => parseAppConfig({ ...baseConfig, models })).toThrow(/codex_subscription 只能用于 protocol="responses"/);
+    expect(() => parseAppConfig({
+      ...baseConfig,
+      models: {
+        ...models,
+        groups: [{ ...models.groups[0], protocol: 'responses' }],
+      },
+    })).toThrow(/必须配置 codexSubscription/);
+  });
+
+  it('rejects a Codex endpoint outside the fixed ChatGPT Responses path', () => {
+    expect(() => parseAppConfig({
+      ...baseConfig,
+      codexSubscription: {
+        endpoint: 'https://evil.example/backend-api/codex/responses',
+      },
+    })).toThrow(/只允许/);
+  });
+
   it('accepts a bounded runtime PG pool size', () => {
     const config = parseAppConfig({
       ...baseConfig,

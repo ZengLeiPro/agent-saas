@@ -5,10 +5,16 @@ import { basename, dirname, join, resolve } from 'path';
 import { serverLogger, configureLogger } from '../utils/logger.js';
 import type { AppConfig } from '../types/index.js';
 import {
+  createModelAdapterForProtocol,
   createRawApprovalResumeDispatch,
   createRawRuntimeRunDispatch,
   wakeRuntimeSession,
 } from '../runtime/rawRuntimeRunDispatch.js';
+import {
+  CodexCredentialManager,
+  PgCodexCredentialLock,
+} from '../runtime/responses/codexCredentialManager.js';
+import { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import {
   DuckDBRuntimeAuditQuery,
@@ -217,6 +223,8 @@ export interface AppRuntime {
   mcpClientShutdown?: () => Promise<void>;
   mcpClientManager?: McpClientManager;
   secretVault?: SecretVault;
+  codexCredentialManager: CodexCredentialManager;
+  codexDeviceAuthService: CodexDeviceAuthService;
   userStore?: UserStore;
   /** DWS 连接状态只保存非敏感元数据；token 始终留在用户 workspace 的 .dws。 */
   dwsConnectionStore?: DwsConnectionStore;
@@ -1780,9 +1788,22 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ),
   });
 
+  const codexCredentialManager = new CodexCredentialManager({
+    vault: secretVault,
+    getConfig: () => config.codexSubscription,
+    ...(pgEventStore ? { lock: new PgCodexCredentialLock(pgEventStore.pool) } : {}),
+    fetchImpl: egressFetch,
+  });
+  const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch);
+
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd,
     sharedDir,
+    modelAdapterFactory: (connection, providerOptions) => createModelAdapterForProtocol(
+      connection,
+      providerOptions,
+      { codexCredentialManager, codexFetch: egressFetch },
+    ),
     getSystemPrompt: (id) => systemPromptRegistry.get(id),
     agentRuntimeProfileResolver,
     ...(userActivityService.available ? { userActivityService } : {}),
@@ -2896,6 +2917,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     mcpClientShutdown,
     mcpClientManager,
     secretVault,
+    codexCredentialManager,
+    codexDeviceAuthService,
     userStore,
     dwsConnectionStore,
     dwsAuthFlowService,

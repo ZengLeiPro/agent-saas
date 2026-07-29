@@ -313,10 +313,14 @@ export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatM
         });
         break;
       case 'assistant_message':
+        if (event.providerContinuationReset) clearProviderContinuations(messages);
         messages.push({
           role: 'assistant',
           content: event.content,
           ...(pendingReasoning ? { reasoning_content: pendingReasoning } : {}),
+          ...(event.providerContinuation
+            ? { provider_continuation: event.providerContinuation }
+            : {}),
         });
         pendingReasoning = '';
         break;
@@ -328,6 +332,7 @@ export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatM
         messages.push({ role: 'additional_tools', tools: event.tools });
         break;
       case 'assistant_tool_calls':
+        if (event.providerContinuationReset) clearProviderContinuations(messages);
         messages.push({
           role: 'assistant',
           content: event.content || null,
@@ -341,6 +346,9 @@ export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatM
             ...(call.namespace ? { namespace: call.namespace } : {}),
           })),
           ...(pendingReasoning ? { reasoning_content: pendingReasoning } : {}),
+          ...(event.providerContinuation
+            ? { provider_continuation: event.providerContinuation }
+            : {}),
         });
         pendingReasoning = '';
         break;
@@ -357,4 +365,12 @@ export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatM
     }
   }
   return messages;
+}
+
+function clearProviderContinuations(messages: ModelChatMessage[]): void {
+  for (const message of messages) {
+    if (message.role === 'assistant' && message.provider_continuation) {
+      delete message.provider_continuation;
+    }
+  }
 }

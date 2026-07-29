@@ -430,6 +430,11 @@ const modelResponsesOptionsSchema = z.object({
    */
   protocol: z.enum(['chat_completions', 'responses']).optional(),
   /**
+   * Responses 底层 transport；默认 openai_compatible。
+   * codex_subscription 只改变认证和 wire contract，不接管 Agent/tool loop。
+   */
+  responses_transport: z.enum(['openai_compatible', 'codex_subscription']).optional(),
+  /**
    * Responses API 返回的 response.model 字段实际值（别名展开后）。
    * 用于 adapter 层 actualModelSeen 校验，不一致时告警。
    * 例如 doubao-seed-2.0-pro 实际值是 doubao-seed-2-0-pro-260215。
@@ -535,6 +540,28 @@ const modelsConfigSchema = z.object({
     fallbackModels: z.array(z.string().min(1)).optional(),
     timeoutMs: z.number().int().positive().max(120_000).optional(),
   }).optional(),
+});
+
+const codexSubscriptionConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** SecretVault ref；OAuth access/refresh token 不得直接进入 config.json。 */
+  credentialRef: z.string().min(1).optional(),
+  endpoint: z.string().url().refine((value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:'
+        && !url.username
+        && !url.password
+        && url.hostname === 'chatgpt.com'
+        && url.pathname === '/backend-api/codex/responses';
+    } catch {
+      return false;
+    }
+  }, '只允许 https://chatgpt.com/backend-api/codex/responses').optional(),
+  originator: z.string().regex(
+    /^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/,
+    '必须是 2–64 位字母、数字、点、下划线或连字符',
+  ).optional(),
 });
 
 const titleGeneratorConfigSchema = z.object({
@@ -1273,6 +1300,7 @@ export const appConfigSchema = z.object({
   memory: memoryConfigSchema.optional(),
   auth: authConfigSchema.optional(),
   models: modelsConfigSchema.optional(),
+  codexSubscription: codexSubscriptionConfigSchema.optional(),
   titleGenerator: titleGeneratorConfigSchema.optional(),
   guardrail: guardrailConfigSchema.optional(),
   audit: auditConfigSchema.optional(),
@@ -1296,6 +1324,27 @@ export const appConfigSchema = z.object({
       path: ['tenantRemoteHands'],
       message: 'tenantRemoteHands requires runtimeEventStore.backend="pg" so durable HandStore/RunStore are available',
     });
+  }
+  for (const [groupIndex, group] of (value.models?.groups ?? []).entries()) {
+    for (const [modelIndex, model] of group.models.entries()) {
+      const transport = model.responses_transport ?? group.responses_transport;
+      if (transport !== 'codex_subscription') continue;
+      const protocol = model.protocol ?? group.protocol ?? 'chat_completions';
+      if (protocol !== 'responses') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['models', 'groups', groupIndex, 'models', modelIndex, 'responses_transport'],
+          message: 'codex_subscription 只能用于 protocol="responses"',
+        });
+      }
+      if (!value.codexSubscription) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['codexSubscription'],
+          message: '存在 codex_subscription 模型时必须配置 codexSubscription',
+        });
+      }
+    }
   }
 });
 
@@ -1330,6 +1379,7 @@ export type SelfSignupConfig = z.infer<typeof selfSignupConfigSchema>;
 export type ModelItem = z.infer<typeof modelItemSchema>;
 export type ModelGroup = z.infer<typeof modelGroupSchema>;
 export type ModelsConfig = z.infer<typeof modelsConfigSchema>;
+export type CodexSubscriptionConfig = z.infer<typeof codexSubscriptionConfigSchema>;
 export type TitleGeneratorAppConfig = z.infer<typeof titleGeneratorConfigSchema>;
 export type GuardrailAppConfig = z.infer<typeof guardrailConfigSchema>;
 export type AuditConfig = z.infer<typeof auditConfigSchema>;

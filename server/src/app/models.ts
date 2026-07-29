@@ -80,8 +80,13 @@ export function resolveContextAccountingFromModels(
   }
 
   const protocol = model.protocol ?? group.protocol;
+  const responsesTransport = model.responses_transport ?? group.responses_transport;
   const disableResponseChaining = model.disable_response_chaining ?? group.disable_response_chaining ?? false;
-  if (protocol === 'responses' && !disableResponseChaining) {
+  if (
+    protocol === 'responses'
+    && responsesTransport !== 'codex_subscription'
+    && !disableResponseChaining
+  ) {
     // previous_response_id 接力 + prompt cache 下，上游每 leg usage.input_tokens
     // 只报告本 leg 的 payload（含 cache_read_input_tokens），不是「chain 内累计
     // 历史」——2026-07-05 glm-5.2 实测：6 leg 序列 10421→6816→6929→7029→7132→7243
@@ -300,6 +305,7 @@ type ConfigProviderOptions = {
   pre_stream_retry_delays_ms?: number[];
   // ── Responses API v1（RFC P0.5）配置层字段（snake_case 与 config.json 对齐） ──
   protocol?: 'chat_completions' | 'responses';
+  responses_transport?: 'openai_compatible' | 'codex_subscription';
   alias_actual?: string;
   supports_reasoning_output?: boolean;
   supports_tool_reasoning?: boolean;
@@ -330,6 +336,7 @@ function resolveProviderOptions(
   const preStreamRetryDelaysMs = model.pre_stream_retry_delays_ms ?? group.pre_stream_retry_delays_ms;
   // Responses 字段：model 级覆盖 group 级
   const protocol = model.protocol ?? group.protocol;
+  const responsesTransport = model.responses_transport ?? group.responses_transport;
   const aliasActual = model.alias_actual ?? group.alias_actual;
   const supportsReasoningOutput = model.supports_reasoning_output ?? group.supports_reasoning_output;
   const supportsToolReasoning = model.supports_tool_reasoning ?? group.supports_tool_reasoning;
@@ -348,6 +355,7 @@ function resolveProviderOptions(
   if (maxOutputTokens !== undefined) options.maxOutputTokens = maxOutputTokens;
   if (preStreamRetryDelaysMs !== undefined) options.preStreamRetryDelaysMs = preStreamRetryDelaysMs;
   if (protocol !== undefined) options.protocol = protocol;
+  if (responsesTransport !== undefined) options.responsesTransport = responsesTransport;
   if (aliasActual !== undefined) options.aliasActual = aliasActual;
   if (supportsReasoningOutput !== undefined) options.supportsReasoningOutput = supportsReasoningOutput;
   if (supportsToolReasoning !== undefined) options.supportsToolReasoning = supportsToolReasoning;

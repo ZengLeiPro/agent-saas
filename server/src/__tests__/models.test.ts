@@ -195,6 +195,33 @@ describe('OpenAI-only model resolver', () => {
     });
   });
 
+  it('显式映射 Codex subscription transport，并按无状态全历史核算上下文', () => {
+    const codexModels: ModelsConfig = {
+      default: 'codex/gpt',
+      allowCrossGroupSwitch: false,
+      groups: [{
+        id: 'codex',
+        name: 'Codex',
+        protocol: 'responses',
+        responses_transport: 'codex_subscription',
+        models: [{ id: 'gpt', name: 'GPT', value: 'gpt-5.4' }],
+      }],
+    };
+
+    expect(resolveModelRef(codexModels, 'codex/gpt')).toMatchObject({
+      model: 'gpt-5.4',
+      providerOptions: {
+        protocol: 'responses',
+        responsesTransport: 'codex_subscription',
+      },
+    });
+    expect(resolveContextAccountingFromModels(codexModels, 'codex/gpt')).toMatchObject({
+      exact: true,
+      kind: 'exact_current',
+      source: 'provider_usage',
+    });
+  });
+
   it('falls back to default when a model ref is stale', () => {
     expect(resolveModelRef(modelsConfig, 'openai-agents/removed')).toEqual({
       model: 'doubao-pro',

@@ -139,7 +139,7 @@ export interface RunSubagentParams {
   hardTimeoutMs?: number;
   /** 测试注入口：替换真实 model adapter（默认 createModelAdapterForProtocol，会发真实 HTTP）。 */
   modelAdapterFactory?: (
-    connection: { apiKey: string; baseUrl: string },
+    connection: { apiKey?: string; baseUrl?: string },
     providerOptions?: import('../../types/index.js').ModelProviderOptions,
   ) => import('../types.js').ModelAdapter;
   /** 子 session/run 已建好、即将起跑时回调（AgentToolProvider 用它发 durable subagent_started）。 */
@@ -222,7 +222,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   }
   const apiKey = connection?.apiKey || process.env.OPENAI_API_KEY;
   const baseUrl = connection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
-  if (!apiKey) {
+  if (!apiKey && providerOptions?.responsesTransport !== 'codex_subscription') {
     throw new Error('子 agent 缺少模型 apiKey（模型组未配置连接且环境无 OPENAI_API_KEY）。');
   }
 
@@ -340,7 +340,11 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     });
 
     const loop = new RawAgentLoop({
-      modelAdapter: (params.modelAdapterFactory ?? createModelAdapterForProtocol)({ apiKey, baseUrl }, providerOptions),
+      modelAdapter: (
+        params.modelAdapterFactory
+        ?? config.modelAdapterFactory
+        ?? createModelAdapterForProtocol
+      )({ ...(apiKey ? { apiKey } : {}), baseUrl }, providerOptions),
       eventStore,
       approvalStore: createApprovalStoreForSession(config, childRecord, eventStore),
       transcriptProjection: new LegacyTranscriptProjection(childRecord.transcriptPath),
@@ -427,7 +431,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         maxTurns: boundProfile
           ? resolveAgentProfileMaxTurns(boundProfile.version.config, agentType.maxTurns)!
           : agentType.maxTurns,
-        connection: { apiKey, baseUrl },
+        connection: { apiKey: apiKey ?? '', baseUrl },
       },
       runContext,
     )) {

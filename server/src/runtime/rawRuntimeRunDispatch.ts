@@ -74,6 +74,8 @@ import { EventBackedApprovalStore } from './approvalStore.js';
 import { ChatCompletionsModelAdapter } from './chatCompletionsAdapter.js';
 import { ResponsesApiAdapter } from './responsesApiAdapter.js';
 import type { ModelAdapter } from './types.js';
+import { CodexSubscriptionResponsesTransport } from './responses/codexSubscriptionResponsesTransport.js';
+import type { CodexCredentialManager } from './responses/codexCredentialManager.js';
 import {
   createExecutionConfig,
   resolveExecutionTarget,
@@ -194,14 +196,53 @@ const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
  *
  * 启动时静态决定，运行时不切换；config 改回 chat_completions 即回滚。
  */
+export interface ModelAdapterFactoryDependencies {
+  codexCredentialManager?: CodexCredentialManager;
+  codexFetch?: typeof fetch;
+}
+
+export type ModelAdapterFactory = (
+  connection: { apiKey?: string; baseUrl?: string },
+  modelProviderOptions?: ModelProviderOptions,
+) => ModelAdapter;
+
 export function createModelAdapterForProtocol(
-  connection: { apiKey: string; baseUrl: string },
+  connection: { apiKey?: string; baseUrl?: string },
   modelProviderOptions: ModelProviderOptions | undefined,
+  dependencies: ModelAdapterFactoryDependencies = {},
 ): ModelAdapter {
   if (modelProviderOptions?.protocol === 'responses') {
-    return new ResponsesApiAdapter(connection, modelProviderOptions);
+    if (modelProviderOptions.responsesTransport === 'codex_subscription') {
+      if (!dependencies.codexCredentialManager) {
+        throw new Error('Codex subscription transport 缺少 CodexCredentialManager');
+      }
+      return new ResponsesApiAdapter(
+        {
+          apiKey: connection.apiKey ?? '',
+          baseUrl: connection.baseUrl ?? 'https://chatgpt.com/backend-api/codex',
+        },
+        { ...modelProviderOptions, disableResponseChaining: true },
+        new CodexSubscriptionResponsesTransport(
+          dependencies.codexCredentialManager,
+          dependencies.codexFetch,
+        ),
+      );
+    }
+    if (!connection.apiKey) throw new Error('Responses model 缺少 API Key');
+    return new ResponsesApiAdapter({
+      apiKey: connection.apiKey,
+      baseUrl: connection.baseUrl ?? DEFAULT_BASE_URL,
+    }, modelProviderOptions);
   }
-  return new ChatCompletionsModelAdapter(connection, modelProviderOptions ?? {});
+  if (!connection.apiKey) throw new Error('Chat Completions model 缺少 API Key');
+  return new ChatCompletionsModelAdapter({
+    apiKey: connection.apiKey,
+    baseUrl: connection.baseUrl ?? DEFAULT_BASE_URL,
+  }, modelProviderOptions ?? {});
+}
+
+function modelRequiresApiKey(options: ModelProviderOptions | undefined): boolean {
+  return options?.responsesTransport !== 'codex_subscription';
 }
 
 export function resolveRuntimeModelOptions(
@@ -260,6 +301,8 @@ export interface RawRuntimeRunDispatchConfig {
    * 加载 system prompt 片段；同时 `${sharedDir}/tenants/<tenantId>/company.md` 作为 `{{COMPANY_INFO}}` 注入。
    */
   sharedDir: string;
+  /** Process-level model adapter factory; app runtime injects Codex OAuth transport here. */
+  modelAdapterFactory?: ModelAdapterFactory;
   /** 平台系统提示语注册表 getter；每次运行现取，以支持管理端热更新。 */
   getSystemPrompt?: (id: SystemPromptId) => string;
   /** Stable entity + immutable version resolver. New sessions read current binding once; resumes use the pinned version. */
@@ -1863,7 +1906,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         return;
       }
     }
-    if (!apiKey) {
+    if (!apiKey && modelRequiresApiKey(modelProviderOptions)) {
       yield { type: 'error', error: 'Raw runtime 缺少 OPENAI_API_KEY 或模型组 apiKey' };
       return;
     }
@@ -2096,7 +2139,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const instructions = instructionSections.map((section) => section.content).join('\n\n');
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
     const projection = new LegacyTranscriptProjection(transcriptPath);
-    const modelAdapter = createModelAdapterForProtocol({ apiKey, baseUrl }, modelProviderOptions);
+    const modelAdapter = (config.modelAdapterFactory ?? createModelAdapterForProtocol)(
+      { ...(apiKey ? { apiKey } : {}), baseUrl },
+      modelProviderOptions,
+    );
     const loop = new RawAgentLoop({
       modelAdapter,
       eventStore,
@@ -2248,7 +2294,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
                 userId: context.user?.id ?? context.sessionOwner?.id,
                 username: context.user?.username ?? context.sessionOwner?.username,
               }),
-            connection: { apiKey, baseUrl },
+            connection: { apiKey: apiKey ?? '', baseUrl },
           },
           runContext,
         )) {
@@ -2445,7 +2491,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         return;
       }
     }
-    if (!apiKey) {
+    if (!apiKey && modelRequiresApiKey(modelProviderOptions)) {
       if (lockHandle) await lockHandle.release().catch(() => undefined);
       yield { type: 'error', error: 'Raw approval resume 缺少 OPENAI_API_KEY 或模型组 apiKey' };
       return;
@@ -2606,7 +2652,10 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       ...(orgAgent ? { orgAgent } : {}),
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);
-    const modelAdapter = createModelAdapterForProtocol({ apiKey, baseUrl }, modelProviderOptions);
+    const modelAdapter = (config.modelAdapterFactory ?? createModelAdapterForProtocol)(
+      { ...(apiKey ? { apiKey } : {}), baseUrl },
+      modelProviderOptions,
+    );
     const loop = new RawAgentLoop({
       modelAdapter,
       eventStore,
@@ -2817,7 +2866,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         return;
       }
     }
-    if (!apiKey) {
+    if (!apiKey && modelRequiresApiKey(modelProviderOptions)) {
       if (lockHandle) await lockHandle.release().catch(() => undefined);
       yield { type: 'error', error: 'Raw interaction resume 缺少 OPENAI_API_KEY 或模型组 apiKey' };
       return;
@@ -2992,7 +3041,10 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       ...(orgAgent ? { orgAgent } : {}),
     });
     const projection = new LegacyTranscriptProjection(transcriptPath);
-    const modelAdapter = createModelAdapterForProtocol({ apiKey, baseUrl }, modelProviderOptions);
+    const modelAdapter = (config.modelAdapterFactory ?? createModelAdapterForProtocol)(
+      { ...(apiKey ? { apiKey } : {}), baseUrl },
+      modelProviderOptions,
+    );
     const loop = new RawAgentLoop({
       modelAdapter,
       eventStore,

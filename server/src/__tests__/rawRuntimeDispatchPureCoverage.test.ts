@@ -27,6 +27,7 @@ import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 import type { ApprovalStore, EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
+import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 
 // 最小可用 config（只放本组 helper 真消费的字段）
 function makeConfig(overrides: Partial<RawRuntimeRunDispatchConfig> = {}): RawRuntimeRunDispatchConfig {
@@ -124,6 +125,22 @@ describe('createModelAdapterForProtocol', () => {
     expect(createModelAdapterForProtocol(connection, undefined)).toBeInstanceOf(ChatCompletionsModelAdapter);
     expect(createModelAdapterForProtocol(connection, { protocol: 'chat_completions' }))
       .toBeInstanceOf(ChatCompletionsModelAdapter);
+  });
+
+  it('Codex subscription 无 API Key 时仍路由 stateless Responses adapter，但强制要求凭据管理器', () => {
+    const providerOptions = {
+      protocol: 'responses' as const,
+      responsesTransport: 'codex_subscription' as const,
+    };
+    expect(() => createModelAdapterForProtocol({}, providerOptions))
+      .toThrow(/CodexCredentialManager/);
+
+    const adapter = createModelAdapterForProtocol({}, providerOptions, {
+      codexCredentialManager: {} as CodexCredentialManager,
+      codexFetch: async () => new Response('', { status: 200 }),
+    });
+    expect(adapter).toBeInstanceOf(ResponsesApiAdapter);
+    expect(adapter.capabilities).toEqual({ responseState: 'stateless' });
   });
 });
 

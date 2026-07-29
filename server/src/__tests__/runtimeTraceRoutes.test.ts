@@ -676,6 +676,34 @@ describe('runtimeTrace 纯转换函数', () => {
     expect(out.type).toBe('approval_requested');
   });
 
+  it('truncateTraceEvent：Codex opaque reasoning 只返回元数据，不泄露密文与 issuer', () => {
+    const event = {
+      id: 'e-codex',
+      timestamp: 't',
+      type: 'assistant_message',
+      runId: 'r',
+      sessionId: 's',
+      content: 'done',
+      providerContinuation: {
+        provider: 'openai_codex_subscription',
+        issuer: 'https://chatgpt.com/backend-api/codex/responses',
+        accountBindingHash: 'binding-hash',
+        items: [{ type: 'reasoning', encrypted_content: 'highly-sensitive-opaque-value' }],
+      },
+    } as PlatformEvent;
+
+    const out = truncateTraceEvent(event, 10_000);
+    expect(out.providerContinuation).toEqual({
+      provider: 'openai_codex_subscription',
+      issuer: '（已脱敏）',
+      accountBindingHash: 'binding-hash',
+      itemCount: 1,
+      encryptedBytes: Buffer.byteLength('highly-sensitive-opaque-value', 'utf8'),
+    });
+    expect(JSON.stringify(out)).not.toContain('highly-sensitive-opaque-value');
+    expect(JSON.stringify(out)).not.toContain('chatgpt.com');
+  });
+
   it('sanitizeTraceEvent：保留诊断信封，移除原始内容与工具参数', () => {
     const out = sanitizeTraceEvent(EVENTS[2]!);
     expect(out).toMatchObject({

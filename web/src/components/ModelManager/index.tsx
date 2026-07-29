@@ -13,8 +13,10 @@ import { DescriptionTip, SettingsPanelHeader } from "@/components/SettingsCenter
 import { SettingsTwoColumn } from "@/components/SettingsCenter/SettingsTwoColumn";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
+import { CodexSubscriptionCard } from "./CodexSubscriptionCard";
 
 type ModelProtocol = "chat_completions" | "responses";
+type ResponsesTransport = "openai_compatible" | "codex_subscription";
 type McpLoadingMode = "auto" | "eager" | "deferred";
 type ToolSearchProtocol = "none" | "openai_responses_hosted";
 
@@ -37,6 +39,7 @@ type EditableModel = {
   extraBody?: Record<string, unknown>;
   input_modalities?: Array<"text" | "image">;
   protocol?: ModelProtocol;
+  responses_transport?: ResponsesTransport;
   usage_accounting?: "input_includes_cache" | "cache_tokens_separate";
   alias_actual?: string;
   context_window?: number;
@@ -58,6 +61,7 @@ type EditableGroup = {
   disable_response_chaining?: boolean;
   disable_prompt_cache_key?: boolean;
   protocol?: ModelProtocol;
+  responses_transport?: ResponsesTransport;
   thinking?: unknown;
   reasoning_effort?: string;
   reasoningEffort?: string;
@@ -829,6 +833,8 @@ export function ModelManager() {
                 </CardContent>
               </Card>
 
+              <CodexSubscriptionCard readOnly={platformReadOnly} />
+
               <Card className="h-fit">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-1.5 text-base">
@@ -929,6 +935,22 @@ export function ModelManager() {
                   <p className="text-xs text-muted-foreground">分组内未覆盖的模型将使用该协议。</p>
                 </div>
                 <div className="space-y-1.5">
+                  <Label>Responses transport</Label>
+                  <select
+                    className="h-9 w-full rounded-md border bg-card px-3 text-sm"
+                    value={selectedGroup.responses_transport ?? "openai_compatible"}
+                    onChange={(e) => updateGroup(selectedGroup.id, {
+                      responses_transport: e.target.value as ResponsesTransport,
+                    })}
+                  >
+                    <option value="openai_compatible">OpenAI-compatible API Key</option>
+                    <option value="codex_subscription">Codex subscription OAuth</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    Codex 订阅模式固定为无状态完整历史，不使用 previous_response_id。
+                  </p>
+                </div>
+                <div className="space-y-1.5">
                   <Label>思考深度 reasoning_effort</Label>
                   <select
                     className="h-9 w-full rounded-md border bg-card px-3 text-sm"
@@ -1015,6 +1037,31 @@ export function ModelManager() {
                       <option value="responses">responses</option>
                     </select>
                     <p className="text-xs text-muted-foreground">当前生效：{resolveModelProtocol(selectedModelContext.group, selectedModelContext.model)}</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Responses transport</Label>
+                    <select
+                      className="h-9 w-full rounded-md border bg-card px-3 text-sm"
+                      value={selectedModelContext.model.responses_transport ?? "inherit"}
+                      onChange={(e) => updateModel(
+                        selectedModelContext.group.id,
+                        selectedModelContext.model.id,
+                        {
+                          responses_transport: e.target.value === "inherit"
+                            ? undefined
+                            : e.target.value as ResponsesTransport,
+                        },
+                      )}
+                    >
+                      <option value="inherit">继承分组</option>
+                      <option value="openai_compatible">OpenAI-compatible API Key</option>
+                      <option value="codex_subscription">Codex subscription OAuth</option>
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      当前生效：{selectedModelContext.model.responses_transport
+                        ?? selectedModelContext.group.responses_transport
+                        ?? "openai_compatible"}
+                    </p>
                   </div>
                   <div className="space-y-1.5"><Label>usage accounting</Label><select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedModelContext.model.usage_accounting ?? ""} onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, { usage_accounting: e.target.value ? e.target.value as EditableModel["usage_accounting"] : undefined })}><option value="">auto / inferred</option><option value="input_includes_cache">input includes cache</option><option value="cache_tokens_separate">cache tokens separate</option></select><p className="text-xs text-muted-foreground">auto: claude-* uses separate cache tokens; other models treat cached tokens as part of input.</p></div>
                   <div className="space-y-1.5">

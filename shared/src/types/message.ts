@@ -25,6 +25,12 @@ export type MessageItem =
       error?: string;
       /** 「给人看」摘要；有值时非 debug 视图也渲染，debug 视图额外叠加原始 payload */
       presentation?: ToolPresentation;
+      /**
+       * 默认展开摘要详情（来自 transcript block 的 defaultOpen）。
+       * 真实会话的 tool_use 块 defaultOpen 恒为 false（parse.ts），
+       * 该通道现阶段仅由演示剧本携带高价值执行块时使用。
+       */
+      defaultExpanded?: boolean;
     }
   | { id: string; type: "tool_result"; toolName: string; result: string; toolId: string; presentation?: ToolPresentation }
   | {

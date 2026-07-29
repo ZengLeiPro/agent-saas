@@ -30,6 +30,62 @@ describe('normalizeToolPresentation', () => {
     ]);
   });
 
+  it('保留第二批 7 种 detail 变体（demo 高频块）', () => {
+    const result = normalizeToolPresentation({
+      title: '判定与结论',
+      detail: [
+        { section: '动作 1 · 写入脱敏副本' },
+        { warn: '供电与结构承重未确认' },
+        { insight: '当前状态不能点 Tape-out', label: '结论' },
+        { risk: 'high', text: '跨系统差异率 0.43%', action: '先止损再复验' },
+        { verdict: 'pass', text: '域名与地址一致', note: '两个独立来源' },
+        { quote: '新签的合同一律写七天', source: 'T-0142 [01:08:12]' },
+        { original: 'need CE cert before Q4 delivery', translation: 'Q4 交付前需完成 CE 认证' },
+      ],
+    });
+    expect(result?.detail).toEqual([
+      { section: '动作 1 · 写入脱敏副本' },
+      { warn: '供电与结构承重未确认' },
+      { insight: '当前状态不能点 Tape-out', label: '结论' },
+      { risk: 'high', text: '跨系统差异率 0.43%', action: '先止损再复验' },
+      { verdict: 'pass', text: '域名与地址一致', note: '两个独立来源' },
+      { quote: '新签的合同一律写七天', source: 'T-0142 [01:08:12]' },
+      { original: 'need CE cert before Q4 delivery', translation: 'Q4 交付前需完成 CE 认证' },
+    ]);
+  });
+
+  it('第二批变体的可选字段缺失时不产出该字段', () => {
+    const result = normalizeToolPresentation({
+      title: 'x',
+      detail: [
+        { insight: '只有主句' },
+        { risk: 'medium', text: '事实' },
+        { verdict: 'warn', text: '需注意' },
+        { quote: '原话' },
+        { original: 'plain original' },
+      ],
+    });
+    expect(result?.detail).toEqual([
+      { insight: '只有主句' },
+      { risk: 'medium', text: '事实' },
+      { verdict: 'warn', text: '需注意' },
+      { quote: '原话' },
+      { original: 'plain original' },
+    ]);
+  });
+
+  it('第二批变体的枚举值非法时整行丢弃', () => {
+    const result = normalizeToolPresentation({
+      title: 'x',
+      detail: [
+        { risk: 'catastrophic', text: 'a' },
+        { verdict: 'maybe', text: 'b' },
+        { k: '保留', v: 'v' },
+      ],
+    });
+    expect(result?.detail).toEqual([{ k: '保留', v: 'v' }]);
+  });
+
   it('丢弃无法识别的 detail 行，但不整体失败', () => {
     const result = normalizeToolPresentation({
       title: 'x',

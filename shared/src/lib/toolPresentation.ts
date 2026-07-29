@@ -28,7 +28,23 @@ export type DetailLine =
   /** 编号动作：`① 文本` */
   | { no: number; text: string }
   /** 缩进判定行：按 indent 级别左缩进 */
-  | { indent: number; text: string };
+  | { indent: number; text: string }
+  // —— 以下变体来自三家客户演示稿会话区高频块的第二批反推（B06~B17），
+  //    与首批同一约束：只表达业务语义，禁止 JSON.stringify 产物 ——
+  /** 小节标题：摘要内部的分组条，如「动作 1 · 写入脱敏副本」 */
+  | { section: string }
+  /** 缺口/警告行：AI 主动交出的「我不知道 / 未确认」项（demo B11 缺口区） */
+  | { warn: string }
+  /** 洞察/结论行：AI 的硬结论，品牌色左条强调（demo B08） */
+  | { insight: string; label?: string }
+  /** 风险分级行：事实 + 建议动作（demo B12 巡检类主结论） */
+  | { risk: 'high' | 'medium'; text: string; action?: string }
+  /** 判定行：逐项通过/不通过/需注意/待定（demo B10 判定清单） */
+  | { verdict: 'pass' | 'fail' | 'warn' | 'pending'; text: string; note?: string }
+  /** 引用行：原话/原文 + 出处定位（demo B17 带引用答案） */
+  | { quote: string; source?: string }
+  /** 双语行：外文原文 + 中文摘要（demo B16 双语草稿卡） */
+  | { original: string; translation?: string };
 
 /** 外部系统写操作回执。现阶段恒为 undefined，留给连接器回执批次。 */
 export interface ToolReceipt {
@@ -94,6 +110,54 @@ export function normalizeDetailLine(raw: unknown): DetailLine | null {
     const text = clampText(line.text);
     if (text === null) return null;
     return { indent: Math.max(0, Math.min(6, Math.trunc(line.indent))), text };
+  }
+
+  if (typeof line.section === 'string') {
+    const section = clampText(line.section);
+    return section === null ? null : { section };
+  }
+
+  if (typeof line.warn === 'string') {
+    const warn = clampText(line.warn);
+    return warn === null ? null : { warn };
+  }
+
+  if (typeof line.insight === 'string') {
+    const insight = clampText(line.insight);
+    if (insight === null) return null;
+    const label = clampText(line.label);
+    return label !== null ? { insight, label } : { insight };
+  }
+
+  if (line.risk === 'high' || line.risk === 'medium') {
+    const text = clampText(line.text);
+    if (text === null) return null;
+    const action = clampText(line.action);
+    return action !== null ? { risk: line.risk, text, action } : { risk: line.risk, text };
+  }
+
+  if (
+    line.verdict === 'pass' || line.verdict === 'fail'
+    || line.verdict === 'warn' || line.verdict === 'pending'
+  ) {
+    const text = clampText(line.text);
+    if (text === null) return null;
+    const note = clampText(line.note);
+    return note !== null ? { verdict: line.verdict, text, note } : { verdict: line.verdict, text };
+  }
+
+  if (typeof line.quote === 'string') {
+    const quote = clampText(line.quote);
+    if (quote === null) return null;
+    const source = clampText(line.source);
+    return source !== null ? { quote, source } : { quote };
+  }
+
+  if (typeof line.original === 'string') {
+    const original = clampText(line.original);
+    if (original === null) return null;
+    const translation = clampText(line.translation);
+    return translation !== null ? { original, translation } : { original };
   }
 
   return null;

@@ -413,7 +413,8 @@ function approvedBlocks(chapter: Chapter, index: number): ApiTranscriptBlock[] {
       id: `presentation-step-${index + 1}-approval`,
       kind: "tool_use",
       title: "Approval",
-      defaultOpen: false,
+      // 人工批准是流程里最关键的动作痕迹：独立成行并默认展开
+      defaultOpen: true,
       toolName: "Approval",
       toolId: `approval-${index + 1}`,
       content: JSON.stringify({ chapterId: chapter.id, decision: "approved" }),
@@ -426,6 +427,7 @@ function approvedBlocks(chapter: Chapter, index: number): ApiTranscriptBlock[] {
           { tree: "└", k: "留痕", v: "审批人、依据与业务版本均已记录" },
         ],
         status: "ok",
+        receipt: { id: `APR-2026-${String(index + 1).padStart(2, "0")}`, system: "审批中心", readBack: true },
         panel: approvedPanelPatches(chapter, index),
       },
     },
@@ -439,17 +441,32 @@ function approvedBlocks(chapter: Chapter, index: number): ApiTranscriptBlock[] {
   ];
 }
 
-/** 工具摘要展开后给的是本步真正涉及的业务字段，不是把 result 再说一遍。 */
-function surfaceDetail(chapter: Chapter): DetailLine[] {
-  const items = chapter.surface.items.slice(0, 4);
-  return [
-    chapter.narration,
-    ...items.map((item, slot) => (
-      slot === items.length - 1
-        ? { tree: "└" as const, k: item.label, v: item.value }
-        : { tree: "├" as const, k: item.label, v: item.value }
-    )),
-  ];
+/** 写类系统的回执单号前缀。读类与审批章不产回执，审批回执由批准块携带。 */
+const RECEIPT_PREFIX_BY_SURFACE: Partial<Record<SurfaceKind, string>> = {
+  crm_table: "CRM",
+  erp_table: "ERP",
+  mail_panel: "MAIL",
+  im_thread: "IM",
+  task_list: "TASK",
+  finance_ledger: "FIN",
+};
+
+/**
+ * 单个业务字段 → 摘要行。按 demo 的混排口径：
+ * 缺口用警告行（AI 主动交出「我没确认」）、写入项用键值、
+ * 已核对项用判定行、待确认项用待定判定——不再把 9 种状态压平成同一种树形键值。
+ */
+function itemLine(item: SurfaceItem): DetailLine {
+  if (item.state === "warning") return { warn: `${item.label} · ${item.value}` };
+  if (item.changed) return { k: item.label, v: item.value };
+  if (item.state === "success") return { verdict: "pass", text: item.label, note: item.value };
+  if (item.state === "pending") return { verdict: "pending", text: item.label, note: item.value };
+  return { k: item.label, v: item.value };
+}
+
+/** 本章「真正动了/需要人看」的字段：写入项、缺口、待确认。 */
+function isActionItem(item: SurfaceItem): boolean {
+  return item.changed === true || item.state === "warning" || item.state === "pending";
 }
 
 function buildStep(
@@ -461,6 +478,8 @@ function buildStep(
   prevRowIds: string[],
 ): ReplayStep {
   const toolName = TOOL_BY_SURFACE[chapter.surface.kind];
+  const system = SYSTEM_BY_SURFACE[chapter.surface.kind];
+  const isConfirm = chapter.interaction.kind === "confirm";
   const blocks: ApiTranscriptBlock[] = [];
 
   if (index === 0) {
@@ -473,19 +492,59 @@ function buildStep(
     });
   }
 
+  // 一章拆成「感知 → 行动」两条执行行（demo 的工作过程口径），
+  // 仅当两侧都有内容时才拆——不为拆而拆。
+  const actionItems = chapter.surface.items.filter(isActionItem);
+  const contextItems = chapter.surface.items.filter((item) => !isActionItem(item));
+  const split = actionItems.length > 0 && contextItems.length > 0;
+
+  if (split) {
+    blocks.push({
+      id: `presentation-step-${index + 1}-read`,
+      kind: "tool_use",
+      title: toolName,
+      defaultOpen: false,
+      toolName,
+      toolId: `presentation-${index + 1}-read`,
+      content: JSON.stringify({ scenarioId: scenario.id, chapterId: chapter.id, phase: "inspect" }),
+      executionStatus: "completed",
+      presentation: {
+        title: `核对 ${system} 当前状态`,
+        detail: [
+          chapter.narration,
+          ...contextItems.map(itemLine),
+        ],
+        status: "ok",
+      },
+    });
+  }
+
+  const receiptPrefix = RECEIPT_PREFIX_BY_SURFACE[chapter.surface.kind];
+
   blocks.push({
     id: `presentation-step-${index + 1}-tool`,
     kind: "tool_use",
     title: toolName,
-    defaultOpen: false,
+    // 主行动块是「AI 在动系统」的关键痕迹：独立成行并默认展开
+    defaultOpen: true,
     toolName,
     toolId: `presentation-${index + 1}`,
     content: JSON.stringify({ scenarioId: scenario.id, chapterId: chapter.id }),
-    executionStatus: chapter.interaction.kind === "confirm" ? "pending" : "completed",
+    executionStatus: isConfirm ? "pending" : "completed",
     presentation: {
+      // 标题保持章节的业务语言（demo 口径）；「动了哪个系统」由折叠行的回执徽标承载
       title: chapter.title,
-      detail: surfaceDetail(chapter),
-      status: chapter.interaction.kind === "confirm" ? "waiting" : "ok",
+      detail: [
+        ...(split ? [] : [chapter.narration]),
+        ...(split ? actionItems : chapter.surface.items).map(itemLine),
+        // 行动块以本章硬结论收尾——demo 的洞察行口径
+        ...(isConfirm ? [] : [{ insight: chapter.result, label: "结论" } satisfies DetailLine]),
+      ],
+      status: isConfirm ? "waiting" : "ok",
+      // 写类系统给出可回读的合成回执；审批章的回执由批准块携带
+      ...(receiptPrefix && !isConfirm
+        ? { receipt: { id: `${receiptPrefix}-2026-${String(index + 1).padStart(2, "0")}`, system, readBack: true } }
+        : {}),
       ...(index === 0 ? { panelBase } : {}),
       panel: surfacePatches(chapter, index, total, prevRowIds),
     },
@@ -495,7 +554,7 @@ function buildStep(
   return {
     caption: chapter.title,
     blocks,
-    ...(chapter.interaction.kind === "confirm"
+    ...(isConfirm
       ? {
           approval: {
             title: chapter.title,
@@ -532,11 +591,21 @@ export function presentationToReplayScript(scenario: CatalogScenarioPublic): Rep
     title: scenario.title,
     mode: "hero",
     steps,
-    sources: chapters.map((chapter, index) => ({
-      blockRef: `step${index + 1}.tool.${TOOL_BY_SURFACE[chapter.surface.kind]}`,
-      producer: PRODUCER_BY_SURFACE[chapter.surface.kind],
-      state: "needs-change",
-      gap: `当前为 Workflow V3 合成演示投影；真实会话需由${PRODUCER_BY_SURFACE[chapter.surface.kind]}产出同结构摘要、业务回执与面板变化。`,
-    })),
+    // 逐块登记：一章可能投影为「感知 + 行动」两条执行行，且审批分支块同样登记——
+    // 来源表随块走而不是随章走，治理条款「每个 presentation 都有 producer」才闭合
+    sources: steps.flatMap((step, index) => [
+      ...step.blocks,
+      ...(step.approval?.approvedBlocks ?? []),
+      ...(step.approval?.rejectedBlocks ?? []),
+    ]
+      .filter((block) => block.kind === "tool_use" && block.presentation)
+      .map((block) => ({
+        blockRef: `step${index + 1}.${block.id}`,
+        producer: block.toolName === "Approval"
+          ? "业务审批执行器"
+          : PRODUCER_BY_SURFACE[chapters[index].surface.kind],
+        state: "needs-change" as const,
+        gap: `当前为 Workflow V3 合成演示投影；真实会话需由${PRODUCER_BY_SURFACE[chapters[index].surface.kind]}产出同结构摘要、业务回执与面板变化。`,
+      }))),
   };
 }

@@ -39,6 +39,32 @@ describe('groupMessages', () => {
     expect(groupMessages([], false)).toEqual([]);
   });
 
+  it('defaultExpanded + presentation 的工具行独立成行，不进活动分组', () => {
+    const hero = tool('hero', {
+      presentation: { title: '写入 CRM 商机' },
+      defaultExpanded: true,
+    });
+    const result = groupMessages([thinking('t1'), hero, tool('after')], false);
+    expect(result.map(r => r.type)).toEqual(['activity_group', 'tool_use', 'activity_group']);
+    expect((result[0] as ActivityGroup).items.map(i => i.id)).toEqual(['t1']);
+    expect((result[1] as MessageItem).id).toBe('hero');
+    expect((result[2] as ActivityGroup).items.map(i => i.id)).toEqual(['after']);
+  });
+
+  it('仅有 presentation（无 defaultExpanded）的工具行仍进活动分组——真实会话行为不变', () => {
+    const covered = tool('covered', { presentation: { title: '读取文件' } });
+    const result = groupMessages([thinking('t1'), covered], false);
+    expect(result).toHaveLength(1);
+    expect((result[0] as ActivityGroup).items.map(i => i.id)).toEqual(['t1', 'covered']);
+  });
+
+  it('仅有 defaultExpanded（无 presentation）的工具行仍进活动分组——原始 payload 不上主流', () => {
+    const bare = tool('bare', { defaultExpanded: true });
+    const result = groupMessages([thinking('t1'), bare], false);
+    expect(result).toHaveLength(1);
+    expect((result[0] as ActivityGroup).items.map(i => i.id)).toEqual(['t1', 'bare']);
+  });
+
   it('只有非活动消息时不产生任何 activity_group', () => {
     const result = groupMessages([user('u1'), text('t1')], false);
     expect(result).toEqual([

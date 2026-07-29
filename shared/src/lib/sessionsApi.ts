@@ -389,6 +389,9 @@ function mapBlock(
             : {}),
         ...(resultText !== undefined ? { result: resultText, resultReady: true } : {}),
         ...(presentation ? { presentation } : {}),
+        // 只有「带业务摘要」的块才允许默认展开——原始 payload 不因 defaultOpen 上主流。
+        // 真实会话 parse.ts 对 tool_use 恒写 defaultOpen:false，此通道现阶段仅剧本使用。
+        ...(presentation && block.defaultOpen ? { defaultExpanded: true } : {}),
       };
     }
 

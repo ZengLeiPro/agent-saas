@@ -84,6 +84,28 @@ describe('MessageItem 工具摘要分流', () => {
     expect(screen.getByText(/rg -n selection/)).toBeTruthy();
   });
 
+  it('defaultExpanded + 摘要：首次挂载即展开详情，原始 payload 仍不出现（非 debug）', () => {
+    renderMessage({ ...toolMessage(PRESENTATION), defaultExpanded: true } as MessageItemType, false);
+    expect(screen.getByText('核对魏德米勒选型表')).toBeTruthy();
+    expect(screen.getByText('WDU 2.5')).toBeTruthy();
+    expect(screen.queryByText(/rg -n selection/)).toBeNull();
+  });
+
+  it('defaultExpanded 但无摘要：非 debug 仍是占位符，原始 payload 不因 defaultOpen 上主流', () => {
+    renderMessage({ ...toolMessage(), defaultExpanded: true } as MessageItemType, false);
+    expect(screen.queryByText(/rg -n selection/)).toBeNull();
+  });
+
+  it('receipt 存在时折叠行即显示外部系统回执徽标', () => {
+    renderMessage(
+      toolMessage({ title: '发送报价单', receipt: { id: 'QT-2026-0729', system: '企业邮箱', readBack: true } }),
+      false,
+    );
+    // 未展开也能看到「→ 系统名」——写操作痕迹默认可见
+    expect(screen.getByText('→ 企业邮箱')).toBeTruthy();
+    expect(screen.queryByText('QT-2026-0729')).toBeNull();
+  });
+
   it('无摘要 + 非 debug：维持占位符，不泄露原始 payload（零破坏）', () => {
     renderMessage(toolMessage(), false);
     expect(screen.queryByText(/rg -n selection/)).toBeNull();
@@ -154,6 +176,38 @@ describe('PresentationDetail 排版变体', () => {
     expect(screen.getByText('├')).toBeTruthy();
     expect(screen.getByText('③')).toBeTruthy();
     expect(screen.getByText('⚠ 判定行')).toBeTruthy();
+  });
+
+  it('渲染第二批 7 种 detail 行（demo 高频块）', () => {
+    render(
+      <PresentationDetail
+        data={{
+          title: 't',
+          detail: [
+            { section: '动作 1 · 写入脱敏副本' },
+            { warn: '供电与结构承重未确认' },
+            { insight: '当前状态不能放行', label: '结论' },
+            { risk: 'high', text: '跨系统差异率 0.43%', action: '先止损再复验' },
+            { verdict: 'pass', text: '域名与地址一致', note: '两个独立来源' },
+            { quote: '新签的合同一律写七天', source: 'T-0142 [01:08:12]' },
+            { original: 'need CE cert before Q4', translation: 'Q4 前需完成 CE 认证' },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText('动作 1 · 写入脱敏副本')).toBeTruthy();
+    expect(screen.getByText('供电与结构承重未确认')).toBeTruthy();
+    expect(screen.getByText('结论：')).toBeTruthy();
+    expect(screen.getByText('当前状态不能放行')).toBeTruthy();
+    expect(screen.getByText('跨系统差异率 0.43%')).toBeTruthy();
+    expect(screen.getByText('先止损再复验')).toBeTruthy();
+    expect(screen.getByText(/域名与地址一致/)).toBeTruthy();
+    expect(screen.getByText(/两个独立来源/)).toBeTruthy();
+    expect(screen.getByText('「新签的合同一律写七天」')).toBeTruthy();
+    expect(screen.getByText(/T-0142/)).toBeTruthy();
+    expect(screen.getByText('need CE cert before Q4')).toBeTruthy();
+    expect(screen.getByText('中文摘要')).toBeTruthy();
+    expect(screen.getByText('Q4 前需完成 CE 认证')).toBeTruthy();
   });
 
   it('编号超出圈码范围时退回 "N."', () => {

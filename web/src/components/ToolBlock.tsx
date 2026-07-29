@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { formatJson } from './types';
 import { parseToolResult, getToolDisplayInfo, type ToolPresentation } from '@agent/shared';
 import { PresentationDetail } from './PresentationDetail';
-import { Wrench, ChevronRight, X } from "lucide-react";
+import { Wrench, ChevronRight, CircleCheck, X } from "lucide-react";
 import { StatusIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { activityStatusBadgeClass, activityStatusIconClass, formatActivityDuration, type ActivityStatusTone } from "./activityStatusStyles";
@@ -94,6 +94,11 @@ interface ToolBlockProps {
    * 语义是「看不看得到原始数据」——无 presentation 时恒为真（否则展开将一片空白）。
    */
   debugMode?: boolean;
+  /**
+   * 首次挂载即展开摘要详情（来自 block.defaultOpen）。
+   * 仅对带 presentation 的块生效——原始 payload 不因它上主流。
+   */
+  defaultExpanded?: boolean;
 }
 
 function getExecutionLabel(status?: ToolBlockProps["executionStatus"], resultReady?: boolean): string {
@@ -113,9 +118,10 @@ function getExecutionTone(status?: ToolBlockProps["executionStatus"], resultRead
   return "pending";
 }
 
-export function ToolBlock({ toolName, toolInput, streaming, result, resultReady, executionStatus, durationMs, lastProgress, error, presentation, debugMode = true }: ToolBlockProps) {
-  // 折叠行已展示业务摘要标题，详情由用户按需展开，避免工具调用密集时刷屏。
-  const [isExpanded, setIsExpanded] = useState(false);
+export function ToolBlock({ toolName, toolInput, streaming, result, resultReady, executionStatus, durationMs, lastProgress, error, presentation, debugMode = true, defaultExpanded = false }: ToolBlockProps) {
+  // 折叠行已展示业务摘要标题，详情由用户按需展开，避免工具调用密集时刷屏；
+  // 剧本标记 defaultOpen 的高价值执行块（且带摘要）首次挂载即展开。
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded && !!presentation);
   const showRaw = debugMode || !presentation;
 
   const formatted = useMemo(() => formatJson(toolInput), [toolInput]);
@@ -167,6 +173,13 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
             ? `${statusLabel} ${duration}`
             : statusLabel}
         </span>
+        {presentation?.receipt && (
+          // 外部系统写回执是「AI 在动系统」的关键痕迹，折叠态也要可见
+          <span className={activityStatusBadgeClass(presentation.receipt.readBack ? "success" : "neutral", "inline-flex max-w-40 items-center gap-1")}>
+            <span className="truncate">→ {presentation.receipt.system}</span>
+            {presentation.receipt.readBack && <CircleCheck className="size-3 shrink-0" />}
+          </span>
+        )}
         <ChevronRight className={cn(
           "size-3.5 shrink-0 transition-transform",
           isExpanded && "rotate-90",

@@ -94,16 +94,46 @@ describe("presentationToReplayScript", () => {
     expect(focusOf(2)).toMatchObject({ op: "focus", view: "summary" });
   });
 
-  it("工具摘要展开是本步的业务字段，正文不再重复同一句话", () => {
+  it("工具摘要展开是本步的业务字段与硬结论，正文不再重复同一句话", () => {
     const script = presentationToReplayScript(makeScenarioWithApproval());
     const tool = script?.steps[0].blocks.find((block) => block.kind === "tool_use");
     expect(tool?.presentation?.detail).toEqual([
       "读取客户、产品和历史报价。",
-      { tree: "└", k: "询价状态", v: "资料齐备" },
+      { k: "询价状态", v: "资料齐备" },
+      { insight: "报价所需事实已经齐备。", label: "结论" },
     ]);
     const text = script?.steps[0].blocks.find((block) => block.kind === "text");
     expect(text?.content).toBe("报价所需事实已经齐备。");
     expect(text?.content).not.toContain("这一步完成后");
+  });
+
+  it("写类章的主行动块默认展开、带可回读回执，标题保持章节业务语言", () => {
+    const script = presentationToReplayScript(makeScenarioWithApproval());
+    const tool = script?.steps[0].blocks.find((block) => block.kind === "tool_use");
+    expect(tool?.defaultOpen).toBe(true);
+    expect(tool?.presentation?.receipt).toEqual({ id: "CRM-2026-01", system: "CRM", readBack: true });
+    expect(tool?.presentation?.title).toBe("读取询价");
+  });
+
+  it("感知与行动两侧都有内容时拆成两条执行行", () => {
+    const scenario = makeScenarioWithApproval();
+    const presentation = scenario.presentation!;
+    presentation.chapters[0].surface.items.push(
+      { label: "历史报价", value: "3 份 · 最近 2026-05", state: "active" },
+    );
+    const script = presentationToReplayScript(scenario);
+    const tools = script?.steps[0].blocks.filter((block) => block.kind === "tool_use") ?? [];
+    expect(tools).toHaveLength(2);
+    expect(tools[0].defaultOpen).toBe(false);
+    expect(tools[0].presentation?.title).toBe("核对 CRM 当前状态");
+    expect(tools[1].defaultOpen).toBe(true);
+  });
+
+  it("批准块默认展开并带审批中心回执", () => {
+    const script = presentationToReplayScript(makeScenarioWithApproval());
+    const approvalBlock = script?.steps[1].approval?.approvedBlocks.find((block) => block.toolName === "Approval");
+    expect(approvalBlock?.defaultOpen).toBe(true);
+    expect(approvalBlock?.presentation?.receipt).toMatchObject({ system: "审批中心", readBack: true });
   });
 
   it("终态不使用中文冒号前的加粗定界符（会渲染成字面星号）", () => {
@@ -113,9 +143,10 @@ describe("presentationToReplayScript", () => {
     expect(last).not.toContain("**业务结果：**");
   });
 
-  it("每个演示动作都有诚实的真实产出方与差距登记", () => {
+  it("每个演示动作（含审批分支块）都有诚实的真实产出方与差距登记", () => {
     const script = presentationToReplayScript(makeScenarioWithApproval());
-    expect(script?.sources).toHaveLength(3);
+    // 3 章主块 + 审批章的批准/退回两个分支块 = 5 条
+    expect(script?.sources).toHaveLength(5);
     for (const source of script?.sources ?? []) {
       expect(source.producer.trim().length).toBeGreaterThan(0);
       expect(source.state).toBe("needs-change");

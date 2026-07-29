@@ -184,6 +184,8 @@ export type {
   CustomSkillsResponse,
   SkillImportResponse,
   SkillDocumentResponse,
+  PoolSkillDeleteImpact,
+  PoolSkillDeleteResponse,
 } from "./skill";
 
 export type {

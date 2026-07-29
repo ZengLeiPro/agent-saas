@@ -42,6 +42,7 @@ interface TestRig {
   tenantSkillsRootDir: string;
   poolDir: string;
   skillConfigStore: SkillConfigStore;
+  userSkillsDir(username: string): string;
   waitSync(res: Response): Promise<{
     total: number;
     tenantIds: string[];
@@ -174,7 +175,25 @@ function fakeSkillConfigStore(): SkillConfigStore {
       configVersion++;
     },
     getUserSelectedSkills: (u: string) => userSelections.get(u) ?? [],
+    getAllUserConfigs: () => Object.fromEntries([...userSelections.entries()].map(([username, selectedSkills]) => [username, { selectedSkills }])),
+    getAllTenantConfigs: () => Object.fromEntries([...tenantSelections.entries()].map(([tenantId, enabledSkills]) => [tenantId, { enabledSkills }])),
     setUserSelectedSkills: async (u: string, skills: string[]) => { userSelections.set(u, skills); configVersion++; },
+    removeSkillReferences: async (skillId: string) => {
+      let usersUpdated = 0;
+      let tenantsUpdated = 0;
+      delete visibility[skillId];
+      platformConfig.delete(skillId);
+      for (const [username, skills] of userSelections) {
+        const next = skills.filter(id => id !== skillId);
+        if (next.length !== skills.length) { userSelections.set(username, next); usersUpdated++; }
+      }
+      for (const [tenantId, skills] of tenantSelections) {
+        const next = skills.filter(id => id !== skillId);
+        if (next.length !== skills.length) { tenantSelections.set(tenantId, next); tenantsUpdated++; }
+      }
+      configVersion++;
+      return { usersUpdated, tenantsUpdated };
+    },
     touchConfigVersion: async () => { configVersion++; },
     // syncSkills() 调到的方法：返回该 username 实际应同步的 pool skill ids
     getUserEffectivePoolSkills: (u: string, tenantId?: string) => {
@@ -299,6 +318,10 @@ async function makeTestRig(): Promise<TestRig> {
     tenantSkillsRootDir,
     poolDir,
     skillConfigStore,
+    userSkillsDir(username) {
+      const user = userStore.findByUsername(username)!;
+      return join(agentCwd, user.tenantId, user.id, '.ky-agent', 'skills');
+    },
     setCaller(c) { currentCaller = c; },
     request: (path, init) => fetch(`${baseUrl}${path}`, init),
     waitSync: async (res) => {
@@ -739,6 +762,37 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(h.skillConfigStore.getPoolVisibility()).toHaveProperty('pool-new', true);
     });
 
+    it('平台上传与任一用户自建同名 → 409，避免物化覆盖下层目录', async () => {
+      h.setCaller(WAIN_USER);
+      const created = await h.request('/api/skills/me/import', { method: 'POST', body: skillUploadBody('user-collision') });
+      expect(created.status).toBe(200);
+
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await h.request('/api/skills/pool/import', { method: 'POST', body: skillUploadBody('user-collision') });
+      expect(res.status).toBe(409);
+      expect(existsSync(join(h.userSkillsDir('wain_user'), 'user-collision', 'SKILL.md'))).toBe(true);
+    });
+
+    it('平台技能必须先退役且显式确认，删除后清理选择并进入异步物化', async () => {
+      h.setCaller(PLATFORM_ADMIN);
+      let res = await h.request('/api/skills/pool/shared_skill?confirm=true', { method: 'DELETE' });
+      expect(res.status).toBe(409);
+
+      await h.request('/api/skills/pool/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shared_skill: { enabled: false, exposure: 'all', tenantIds: [] } }),
+      });
+      res = await h.request('/api/skills/pool/shared_skill', { method: 'DELETE' });
+      expect(res.status).toBe(400);
+
+      await h.skillConfigStore.setUserSelectedSkills('wain_user', ['shared_skill']);
+      res = await h.request('/api/skills/pool/shared_skill?confirm=true', { method: 'DELETE' });
+      expect(res.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('wain_user')).not.toContain('shared_skill');
+      expect(existsSync(join(h.poolDir, 'shared_skill'))).toBe(false);
+    });
+
     it('租户上传与 pool 同名 → 409', async () => {
       // SKILL.md name 规则只允许小写/数字/连字符，先经 pool/import 造一个合法名 pool skill
       h.setCaller(PLATFORM_ADMIN);
@@ -818,6 +872,49 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       expect(h.skillConfigStore.getUserSelectedSkills('alice')).not.toContain('selectable');
     });
 
+    it('管理员代改用户选择保留平台、组织与个人三层合法 skill', async () => {
+      h.setCaller(WAIN_ADMIN);
+      await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('team-selected') });
+
+      h.setCaller(WAIN_USER);
+      await h.request('/api/skills/me/import', { method: 'POST', body: skillUploadBody('personal-selected') });
+
+      h.setCaller(WAIN_ADMIN);
+      const res = await h.request('/api/skills/users/wain_user/selections', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedSkills: ['shared_skill', 'team-selected', 'personal-selected'] }),
+      });
+      expect(res.status).toBe(200);
+      expect(h.skillConfigStore.getUserSelectedSkills('wain_user')).toEqual(
+        expect.arrayContaining(['shared_skill', 'team-selected', 'personal-selected']),
+      );
+    });
+
+    it('用户本人可读写自己的 SKILL.md，不能借接口编辑组织 skill', async () => {
+      h.setCaller(WAIN_USER);
+      await h.request('/api/skills/me/import', { method: 'POST', body: skillUploadBody('self-editable') });
+      let res = await h.request('/api/skills/me/skills/self-editable/document');
+      expect(res.status).toBe(200);
+
+      res = await h.request('/api/skills/me/skills/self-editable/document', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: '---\nname: self-editable\ndescription: updated\n---\nnew body' }),
+      });
+      expect(res.status).toBe(200);
+
+      h.setCaller(WAIN_ADMIN);
+      await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('team-protected') });
+      h.setCaller(WAIN_USER);
+      res = await h.request('/api/skills/me/skills/team-protected/document', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: '---\nname: team-protected\ndescription: bad\n---\nbody' }),
+      });
+      expect(res.status).toBe(400);
+    });
+
     it('GET /tenants/:id/skills 列表含治理规则；跨组织 → 403', async () => {
       h.setCaller(WAIN_ADMIN);
       await h.request('/api/skills/tenants/wain/import', { method: 'POST', body: skillUploadBody('listed') });
@@ -859,9 +956,14 @@ describe('skills 路由多组织隔离 (PR 9)', () => {
       const denied = await h.request('/api/skills/tenants/wain/skills/to-pool/promote', { method: 'POST' });
       expect(denied.status).toBe(403);
 
+      // 模拟组织 skill 已被异步物化到成员目录；该系统副本不能被误判为个人自建冲突。
+      const materialized = join(h.userSkillsDir('wain_user'), 'to-pool');
+      mkdirSync(materialized, { recursive: true });
+      writeFileSync(join(materialized, 'SKILL.md'), `---\nname: to-pool\ndescription: materialized copy\n---\nbody`);
+
       h.setCaller(PLATFORM_ADMIN);
       const ok = await h.request('/api/skills/tenants/wain/skills/to-pool/promote', { method: 'POST' });
-      expect(ok.status).toBe(200);
+      expect(ok.status, await ok.clone().text()).toBe(200);
       expect(existsSync(join(h.poolDir, 'to-pool'))).toBe(true);
       expect(h.skillConfigStore.getPoolVisibility()).toHaveProperty('to-pool', true);
     });

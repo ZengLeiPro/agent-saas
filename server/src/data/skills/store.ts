@@ -261,6 +261,52 @@ export class SkillConfigStore {
     });
   }
 
+  /** 删除某个 skill 的平台配置、租户规则与全部用户选择引用。 */
+  async removeSkillReferences(skillId: string): Promise<{ usersUpdated: number; tenantsUpdated: number }> {
+    return await this.serialize(async () => {
+      let changed = false;
+      let usersUpdated = 0;
+      let tenantsUpdated = 0;
+
+      if (skillId in this.data.poolVisibility) {
+        delete this.data.poolVisibility[skillId];
+        changed = true;
+      }
+      if (this.data.platform && skillId in this.data.platform) {
+        delete this.data.platform[skillId];
+        changed = true;
+      }
+      for (const config of Object.values(this.data.users)) {
+        const next = config.selectedSkills.filter(id => id !== skillId);
+        if (next.length !== config.selectedSkills.length) {
+          config.selectedSkills = next;
+          usersUpdated++;
+          changed = true;
+        }
+      }
+      for (const tenant of Object.values(this.data.tenants)) {
+        let tenantChanged = false;
+        if (tenant.enabledSkills?.includes(skillId)) {
+          tenant.enabledSkills = tenant.enabledSkills.filter(id => id !== skillId);
+          tenantChanged = true;
+        }
+        if (tenant.skills && skillId in tenant.skills) {
+          delete tenant.skills[skillId];
+          tenantChanged = true;
+        }
+        if (tenantChanged) {
+          tenantsUpdated++;
+          changed = true;
+        }
+      }
+      if (changed) {
+        this.bumpVersion();
+        await this.persist();
+      }
+      return { usersUpdated, tenantsUpdated };
+    });
+  }
+
   async setTenantEnabledSkills(tenantId: string, skills: string[]): Promise<void> {
     await this.serialize(async () => {
       const current = this.data.tenants[tenantId] ?? {};

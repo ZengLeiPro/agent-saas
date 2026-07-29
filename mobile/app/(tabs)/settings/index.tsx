@@ -62,6 +62,12 @@ export default function SettingsScreen() {
   const tts = useTtsPlayer();
   const router = useRouter();
   const isAdmin = user?.role === "admin";
+  const canManagePlatformSkills = isAdmin
+    && user?.tenantId === "pantheon"
+    && (user.isSuperAdmin || user.platformCapabilities?.includes("skill.platform.manage"));
+  const canManageTenantSkills = isAdmin
+    && user?.tenantId !== "pantheon"
+    && (user?.isSuperAdmin || !user?.platformCapabilities || user.platformCapabilities.includes("skill.tenant.manage"));
   const tenantFeatures =
     user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features;
   const { level: fontSizeLevel, setLevel: setFontSizeLevel } = useFontSize();
@@ -485,13 +491,23 @@ export default function SettingsScreen() {
                   strokeWidth={2}
                 />
               </TouchableOpacity>
-              {tenantFeatures.customSkillsEnabled && (
+              {tenantFeatures.customSkillsEnabled && canManageTenantSkills && (
+                <TouchableOpacity
+                  style={[styles.row, styles.rowBorder]}
+                  onPress={() => router.push("/settings/skills-tenant-admin")}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.rowLabel}>组织技能管理</Text>
+                  <ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} />
+                </TouchableOpacity>
+              )}
+              {tenantFeatures.customSkillsEnabled && canManagePlatformSkills && (
                 <TouchableOpacity
                   style={[styles.row, styles.rowBorder]}
                   onPress={() => router.push("/settings/skills-admin")}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.rowLabel}>技能管理</Text>
+                  <Text style={styles.rowLabel}>平台技能管理</Text>
                   <ChevronRight
                     size={16}
                     color={colors.mutedForeground}

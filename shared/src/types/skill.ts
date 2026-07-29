@@ -85,3 +85,17 @@ export interface SkillDocumentResponse {
   content: string;
   fileName: string;
 }
+
+export interface PoolSkillDeleteImpact {
+  skillId: string;
+  retired: boolean;
+  usersSelected: number;
+  tenantsConfigured: number;
+}
+
+export interface PoolSkillDeleteResponse {
+  ok: true;
+  usersUpdated: number;
+  tenantsUpdated: number;
+  materialization?: unknown;
+}

@@ -10,6 +10,7 @@ import { scheduleIdle } from '../lib/ric';
 
 export function useSkills(username?: string) {
   const [poolSkills, setPoolSkills] = useState<UserSkillInfo[]>([]);
+  const [tenantSkills, setTenantSkills] = useState<UserSkillInfo[]>([]);
   const [customSkills, setCustomSkills] = useState<UserSkillInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -22,15 +23,18 @@ export function useSkills(username?: string) {
         ? await fetchUserSkills(username)
         : await fetchMySkills();
       setPoolSkills(data.poolSkills || []);
+      setTenantSkills(data.tenantSkills || []);
       setCustomSkills(data.customSkills || []);
       const selected = new Set([
         ...(data.poolSkills || []).filter(s => s.selected).map(s => s.id),
+        ...(data.tenantSkills || []).filter(s => s.selected).map(s => s.id),
         ...(data.customSkills || []).filter(s => s.selected).map(s => s.id),
       ]);
       setSelections(selected);
       setInitialSelections(new Set(selected));
     } catch {
       setPoolSkills([]);
+      setTenantSkills([]);
       setCustomSkills([]);
     } finally {
       setLoading(false);
@@ -69,6 +73,7 @@ export function useSkills(username?: string) {
 
   return {
     poolSkills,
+    tenantSkills,
     customSkills,
     loading,
     saving,

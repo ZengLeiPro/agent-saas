@@ -19,12 +19,16 @@ export const DEFAULT_PLATFORM_OPERATOR_CAPABILITIES: readonly PlatformCapability
   "tenant.manage",
   "user.manage",
   "customer_config.manage",
+  "skill.tenant.manage",
 ];
 
 const PLATFORM_CAPABILITY_SET = new Set<PlatformCapability>([
   "tenant.manage",
   "user.manage",
   "customer_config.manage",
+  "skill.platform.manage",
+  "skill.tenant.manage",
+  "skill.user.support",
   "billing.adjust",
   "credential.reset",
   "runtime.operate",
@@ -205,15 +209,28 @@ function requiredWriteCapabilities(req: Request): PlatformCapability[] | null {
   ) {
     return ["customer_config.manage"];
   }
+  if (/^\/skills\/pool(\/|$)/.test(path)) {
+    return ["skill.platform.manage"];
+  }
   const tenantSkillMatch = path.match(/^\/skills\/tenants\/([^/]+)/);
-  if (
-    (method === "POST" || method === "PUT" || method === "PATCH")
-    && tenantSkillMatch
-  ) {
-    return tenantSkillMatch[1] === DEFAULT_TENANT_ID ? null : ["customer_config.manage"];
+  if (tenantSkillMatch) {
+    if (tenantSkillMatch[1] === DEFAULT_TENANT_ID) return null;
+    if (method === "POST" && /^\/skills\/tenants\/[^/]+\/skills\/[^/]+\/promote$/.test(path)) {
+      return ["skill.platform.manage"];
+    }
+    return ["skill.tenant.manage"];
   }
   if (method === "PUT" && /^\/skills\/users\/[^/]+\/selections$/.test(path)) {
-    return ["customer_config.manage"];
+    return ["skill.user.support"];
+  }
+  if (
+    (method === "PUT" && /^\/skills\/custom\/[^/]+\/[^/]+\/document$/.test(path))
+    || (method === "DELETE" && /^\/skills\/custom\/[^/]+\/[^/]+$/.test(path))
+  ) {
+    return ["skill.user.support"];
+  }
+  if (method === "POST" && /^\/skills\/custom\/[^/]+\/promote$/.test(path)) {
+    return ["skill.platform.manage"];
   }
 
   if (method === "POST" && /^\/admin\/billing\/accounts\/[^/]+\/adjust$/.test(path)) {

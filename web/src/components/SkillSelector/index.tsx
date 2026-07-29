@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, Loader2, Plus, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { skillIcon } from "@/lib/skillIcons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { deleteMySkill, importMySkill } from "@agent/shared";
+import { deleteMySkill, fetchMySkillDocument, importMySkill, updateMySkillDocument } from "@agent/shared";
 import type { UserSkillInfo } from "@agent/shared";
 import { useMySkills } from "./hooks";
 import {
@@ -72,6 +72,10 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<{ id: string; name: string } | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [editErr, setEditErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!data) return;
@@ -130,6 +134,36 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
       setPendingSkillId(null);
     }
   }, [localSelections, saveSelections, saving]);
+
+  const openEdit = useCallback(async (skill: UserSkillInfo) => {
+    setEditing(true);
+    setEditErr(null);
+    try {
+      const doc = await fetchMySkillDocument(skill.id);
+      setEditContent(doc.content);
+      setEditTarget({ id: skill.id, name: skill.name });
+    } catch (err) {
+      setEditErr(err instanceof Error ? err.message : "读取失败");
+    } finally {
+      setEditing(false);
+    }
+  }, []);
+
+  const handleEditSave = useCallback(async () => {
+    if (!editTarget) return;
+    setEditing(true);
+    setEditErr(null);
+    try {
+      await updateMySkillDocument(editTarget.id, editContent);
+      setEditTarget(null);
+      setDetailSkill(null);
+      await refresh();
+    } catch (err) {
+      setEditErr(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setEditing(false);
+    }
+  }, [editContent, editTarget, refresh]);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return;
@@ -339,13 +373,18 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
               {localSelections[detailSkill.id] ? "停用技能" : "启用技能"}
             </Button>
             {canDeleteCustom && detailSkill.source === "custom" ? (
-              <Button
-                variant="ghost"
-                className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => { setDeleteErr(null); setDeleteTarget({ id: detailSkill.id, name: detailSkill.name }); }}
-              >
-                <Trash2 className="size-4" />删除自建技能
-              </Button>
+              <>
+                <Button variant="outline" className="w-full" disabled={editing} onClick={() => { void openEdit(detailSkill); }}>
+                  {editing ? <Loader2 className="size-4 animate-spin" /> : <Pencil className="size-4" />}编辑 SKILL.md
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => { setDeleteErr(null); setDeleteTarget({ id: detailSkill.id, name: detailSkill.name }); }}
+                >
+                  <Trash2 className="size-4" />删除自建技能
+                </Button>
+              </>
             ) : null}
           </>
         ) : null}
@@ -373,6 +412,30 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
             </DialogContent>
           </Dialog>
         </>
+      ) : null}
+
+      {canDeleteCustom ? (
+        <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open && !editing) { setEditTarget(null); setEditErr(null); } }}>
+          <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>编辑自建技能“{editTarget?.name}”</DialogTitle>
+              <DialogDescription>修改 SKILL.md；name 必须继续与技能 ID 保持一致。</DialogDescription>
+            </DialogHeader>
+            <textarea
+              className="min-h-[420px] w-full rounded-lg border bg-muted/30 p-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
+              value={editContent}
+              onChange={(event) => setEditContent(event.target.value)}
+              disabled={editing}
+            />
+            {editErr ? <div className="text-sm text-destructive">{editErr}</div> : null}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setEditTarget(null); setEditErr(null); }} disabled={editing}>取消</Button>
+              <Button onClick={() => { void handleEditSave(); }} disabled={editing}>
+                {editing ? <Loader2 className="size-4 animate-spin" /> : null}保存
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       ) : null}
 
       {canDeleteCustom ? (

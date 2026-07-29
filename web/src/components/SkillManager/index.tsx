@@ -12,6 +12,8 @@ import {
   deleteTenantOwnSkill,
   promoteSkillToTenant,
   promoteTenantSkillToPool,
+  fetchPoolSkillDeleteImpact,
+  deletePoolSkill,
   type PlatformSkillSettings,
   type PoolSkillInfo,
   type TenantSkillInfo,
@@ -62,11 +64,10 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const { users, loading: usersLoading } = useUsers();
   const { tenants, loading: tenantsLoading } = useTenants();
 
-  // platformReadOnly：只读平台 admin，platform 态的上传/同步/启停/可见性/发布/删除全部 disabled（组织 admin 恒为 false，tenant 态不受影响）
-  const { isPlatformAdmin, isSuperAdmin, platformReadOnly, canPlatform } = useAuth();
+  const { isPlatformAdmin, canPlatform } = useAuth();
   const [syncing, setSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState<"global" | "user">("global");
-  const [deleteTarget, setDeleteTarget] = useState<{ kind: "custom" | "tenantOwn"; username: string; skillId: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ kind: "custom" | "tenantOwn" | "pool"; username: string; skillId: string; name: string; impact?: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [editTarget, setEditTarget] = useState<{ kind: "custom" | "tenantOwn"; username: string; skillId: string; name: string } | null>(null);
   const [editContent, setEditContent] = useState("");
@@ -88,9 +89,13 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
 
   const isTenantMode = mode === "tenant";
   const writeDisabled = isTenantMode
-    ? isPlatformAdmin && (tenantIdScope === DEFAULT_TENANT_ID || !canPlatform("customer_config.manage"))
-    : platformReadOnly;
-  const destructiveDisabled = isPlatformAdmin && !isSuperAdmin;
+    ? isPlatformAdmin && (tenantIdScope === DEFAULT_TENANT_ID || !canPlatform("skill.tenant.manage"))
+    : isPlatformAdmin && !canPlatform("skill.platform.manage");
+  const destructiveDisabled = isTenantMode
+    ? isPlatformAdmin && !canPlatform("skill.tenant.manage")
+    : isPlatformAdmin && !canPlatform("skill.platform.manage");
+  const userSupportDisabled = isPlatformAdmin && !canPlatform("skill.user.support");
+  const canPromoteToPlatform = isPlatformAdmin && canPlatform("skill.platform.manage");
 
   const refreshTenantSkills = useCallback(async () => {
     if (!isTenantMode || !tenantIdScope) return;
@@ -263,6 +268,25 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     }
   }, [editContent, editTarget, refreshAll, tenantIdScope, updateCustomSkillDocument]);
 
+  const openPoolDelete = useCallback(async (skill: PoolSkillInfo) => {
+    if (skill.enabled) {
+      alert("请先关闭该平台技能，使其进入退役状态，再执行删除");
+      return;
+    }
+    try {
+      const impact = await fetchPoolSkillDeleteImpact(skill.id);
+      setDeleteTarget({
+        kind: "pool",
+        username: "",
+        skillId: skill.id,
+        name: skill.name,
+        impact: `当前有 ${impact.usersSelected} 名用户选择、${impact.tenantsConfigured} 个组织配置引用，删除会清理引用并异步收敛工作区副本。`,
+      });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "获取删除影响失败");
+    }
+  }, []);
+
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -270,16 +294,19 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
       if (deleteTarget.kind === "tenantOwn" && tenantIdScope) {
         await deleteTenantOwnSkill(tenantIdScope, deleteTarget.skillId);
         await refreshTenantSkills();
+      } else if (deleteTarget.kind === "pool") {
+        await deletePoolSkill(deleteTarget.skillId);
+        await refreshAll();
       } else {
         await deleteCustomSkill(deleteTarget.username, deleteTarget.skillId);
       }
       setDeleteTarget(null);
-    } catch {
-      alert("删除失败");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "删除失败");
     } finally {
       setDeleting(false);
     }
-  }, [deleteTarget, deleteCustomSkill, refreshTenantSkills, tenantIdScope]);
+  }, [deleteTarget, deleteCustomSkill, refreshAll, refreshTenantSkills, tenantIdScope]);
 
   const customUsers = customData?.users ?? {};
   const tenantUsernames = tenantIdScope
@@ -412,7 +439,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                           >
                             <Pencil className="size-3.5" />
                           </Button>
-                          {isPlatformAdmin && (
+                          {canPromoteToPlatform && (
                             <Button
                               variant="ghost"
                               size="sm"
@@ -546,6 +573,16 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                        disabled={writeDisabled || skill.enabled}
+                        title={skill.enabled ? "先关闭技能后才能删除" : "删除已退役的平台技能"}
+                        onClick={() => { void openPoolDelete(skill); }}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
                       <Select
                         value={skill.exposure}
                         disabled={writeDisabled}
@@ -625,7 +662,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 size="sm"
                                 className="h-7 px-2 text-xs"
                                 onClick={() => { void openEditor({ kind: "custom", username, skillId: skill.id, name: skill.name }); }}
-                                disabled={destructiveDisabled}
+                                disabled={userSupportDisabled}
                               >
                                 <Pencil className="size-3.5" />
                                 接管编辑
@@ -644,7 +681,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                                disabled={destructiveDisabled || writeDisabled}
+                                disabled={userSupportDisabled}
                                 onClick={() => setDeleteTarget({ kind: "custom", username, skillId: skill.id, name: skill.name })}
                               >
                                 <Trash2 className="size-3.5" />
@@ -703,7 +740,9 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           <DialogHeader>
             <DialogTitle>确认删除</DialogTitle>
             <DialogDescription>
-              确定要删除{deleteTarget?.kind === "tenantOwn" ? "组织" : ` ${deleteTarget?.username} `}的技能“{deleteTarget?.name}”吗？此操作不可撤销。
+              {deleteTarget?.kind === "pool"
+                ? `确定要永久删除已退役的平台技能“${deleteTarget.name}”吗？${deleteTarget.impact ?? ""}`
+                : `确定要删除${deleteTarget?.kind === "tenantOwn" ? "组织" : ` ${deleteTarget?.username} `}的技能“${deleteTarget?.name}”吗？此操作不可撤销。`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -9,6 +9,8 @@ import type {
   SkillDocumentResponse,
   PlatformSkillSettings,
   TenantSkillSettings,
+  PoolSkillDeleteImpact,
+  PoolSkillDeleteResponse,
 } from '../types/skill';
 
 // ── 用户自助 ──────────────────────────────────────────────
@@ -26,6 +28,50 @@ export async function updateMySelections(selectedSkills: string[]): Promise<void
     body: JSON.stringify({ selectedSkills }),
   });
   if (!res.ok) throw new Error(`更新技能选择失败：${res.status}`);
+}
+
+export async function fetchMySkillDocument(skillId: string): Promise<SkillDocumentResponse> {
+  const res = await authFetch(`/api/skills/me/skills/${encodeURIComponent(skillId)}/document`);
+  if (!res.ok) throw new Error(`读取自定义技能文档失败：${res.status}`);
+  return res.json() as Promise<SkillDocumentResponse>;
+}
+
+export async function updateMySkillDocument(skillId: string, content: string): Promise<SkillDocumentResponse> {
+  const res = await authFetch(`/api/skills/me/skills/${encodeURIComponent(skillId)}/document`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) {
+    let message = `写入自定义技能文档失败：${res.status}`;
+    try {
+      const data = await res.json() as { error?: string };
+      if (data.error) message = data.error;
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
+  return res.json() as Promise<SkillDocumentResponse>;
+}
+
+async function importSkillFormDataTo(url: string, formData: FormData): Promise<SkillImportResponse> {
+  const res = await authFetch(url, { method: 'POST', body: formData });
+  if (!res.ok) {
+    let message = `导入自定义技能失败：${res.status}`;
+    try {
+      const data = await res.json() as { error?: string };
+      if (data.error) message = data.error;
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
+  return res.json() as Promise<SkillImportResponse>;
+}
+
+export async function importMySkillFormData(formData: FormData): Promise<SkillImportResponse> {
+  return importSkillFormDataTo('/api/skills/me/import', formData);
+}
+
+export async function importTenantSkillFormData(tenantId: string, formData: FormData): Promise<SkillImportResponse> {
+  return importSkillFormDataTo(`/api/skills/tenants/${encodeURIComponent(tenantId)}/import`, formData);
 }
 
 /** DELETE /api/skills/me/skills/:skillId — 用户自删自建 skill（同时移除 selection） */
@@ -73,6 +119,25 @@ export async function updatePoolVisibility(visibility: Record<string, boolean>):
     body: JSON.stringify(visibility),
   });
   if (!res.ok) throw new Error(`更新技能池可见范围失败：${res.status}`);
+}
+
+export async function fetchPoolSkillDeleteImpact(skillId: string): Promise<PoolSkillDeleteImpact> {
+  const res = await authFetch(`/api/skills/pool/${encodeURIComponent(skillId)}/delete-impact`);
+  if (!res.ok) throw new Error(`获取平台技能删除影响失败：${res.status}`);
+  return res.json() as Promise<PoolSkillDeleteImpact>;
+}
+
+export async function deletePoolSkill(skillId: string): Promise<PoolSkillDeleteResponse> {
+  const res = await authFetch(`/api/skills/pool/${encodeURIComponent(skillId)}?confirm=true`, { method: 'DELETE' });
+  if (!res.ok) {
+    let message = `删除平台技能失败：${res.status}`;
+    try {
+      const data = await res.json() as { error?: string };
+      if (data.error) message = data.error;
+    } catch { /* ignore */ }
+    throw new Error(message);
+  }
+  return res.json() as Promise<PoolSkillDeleteResponse>;
 }
 
 export async function updatePoolSkillSettings(updates: Record<string, PlatformSkillSettings>): Promise<void> {

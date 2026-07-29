@@ -97,6 +97,25 @@ describe('SkillConfigStore ownSkills', () => {
     expect(Object.keys(store.getTenantOwnSkillRules('wain'))).toEqual(['own_alive']);
   });
 
+  it('removeSkillReferences 清理平台、租户规则和全部用户选择引用', async () => {
+    await store.setPoolVisibility({ doomed: true, keep: true });
+    await store.setPlatformSkillConfigs({ doomed: { enabled: false, exposure: 'all', tenantIds: [] } });
+    await store.setTenantEnabledSkills('wain', ['doomed', 'keep']);
+    await store.setTenantSkillRules('wain', { doomed: { enabled: true, exposure: 'all', usernames: [] } });
+    await store.setTenantOwnSkillRules('wain', { doomed: { enabled: true, exposure: 'all', usernames: [] } });
+    await store.setUserSelectedSkills('alice', ['doomed', 'keep']);
+    await store.setUserSelectedSkills('bob', ['doomed']);
+
+    const result = await store.removeSkillReferences('doomed');
+    expect(result).toEqual({ usersUpdated: 2, tenantsUpdated: 1 });
+    expect(store.getUserSelectedSkills('alice')).toEqual(['keep']);
+    expect(store.getUserSelectedSkills('bob')).toEqual([]);
+    expect(store.getPoolVisibility()).not.toHaveProperty('doomed');
+    expect(store.getTenantEnabledSkills('wain')).toEqual(['keep']);
+    expect(store.getTenantSkillRule('wain', 'doomed')).toEqual({ enabled: false, exposure: 'all', usernames: [] });
+    expect(store.getTenantOwnSkillRules('wain')).toHaveProperty('doomed');
+  });
+
   it('pruneStaleSkills 不传租户目录信息时不清 ownSkills 但也不误保留 selectedSkills 之外的 pool 幽灵', async () => {
     await store.setPoolVisibility({ pool_x: true });
     await store.setUserSelectedSkills('bob', ['pool_x', 'own_a']);

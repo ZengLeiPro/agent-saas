@@ -206,7 +206,7 @@ describe("enforcePlatformWritePolicy", () => {
     ).toBe(200);
     expect(
       (await rig.request("PUT", "/api/skills/users/someone/selections", {})).status,
-    ).toBe(200);
+    ).toBe(403);
     expect(
       (await rig.request("PUT", "/api/skills/custom/other/skill1/document", {})).status,
     ).toBe(403);
@@ -228,6 +228,20 @@ describe("enforcePlatformWritePolicy", () => {
     });
     expect((await rig.request("POST", "/api/auth/users", {})).status).toBe(403);
     expect((await rig.request("PUT", "/api/tenants/wain/company-info", {})).status).toBe(403);
+  });
+
+  it("Skill 三级能力可独立授予，平台提升不能借组织配置能力绕过", async () => {
+    const rig = makeRig();
+    rig.setCaller({ ...STAFF, platformCapabilities: ["skill.tenant.manage"] });
+
+    expect((await rig.request("PUT", "/api/skills/tenants/wain/pool/selections", {})).status).toBe(200);
+    expect((await rig.request("POST", "/api/skills/tenants/wain/skills/s1/promote", {})).status).toBe(403);
+    expect((await rig.request("PUT", "/api/skills/custom/other/s1/document", {})).status).toBe(403);
+
+    rig.setCaller({ ...STAFF, platformCapabilities: ["skill.platform.manage", "skill.user.support"] });
+    expect((await rig.request("POST", "/api/skills/tenants/wain/skills/s1/promote", {})).status).toBe(200);
+    expect((await rig.request("PUT", "/api/skills/custom/other/s1/document", {})).status).toBe(200);
+    expect((await rig.request("DELETE", "/api/skills/pool/s1?confirm=true", {})).status).toBe(200);
   });
 
   it("可独立授予流水、运维、财务查看和密码重置能力", async () => {

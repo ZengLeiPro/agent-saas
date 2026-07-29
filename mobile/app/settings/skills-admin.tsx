@@ -24,10 +24,13 @@ export default function SkillsAdminScreen() {
   const { user } = useAuth();
 
   // Admin guard
+  const canManagePlatformSkills = user?.role === 'admin'
+    && user.tenantId === 'pantheon'
+    && (user.isSuperAdmin || user.platformCapabilities?.includes('skill.platform.manage'));
   useEffect(() => {
-    if (user && user.role !== 'admin') router.replace('/(tabs)/settings');
-  }, [user, router]);
-  if (!user || user.role !== 'admin') return null;
+    if (user && !canManagePlatformSkills) router.replace('/(tabs)/settings');
+  }, [user, router, canManagePlatformSkills]);
+  if (!user || !canManagePlatformSkills) return null;
   const pool = useAdminPoolSkills();
   const custom = useAdminCustomSkills();
 

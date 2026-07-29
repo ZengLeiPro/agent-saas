@@ -47,7 +47,10 @@ export interface UserFormData {
 const CAPABILITY_LABELS: Record<PlatformCapability, { title: string; description: string }> = {
   "tenant.manage": { title: "组织运营", description: "创建组织、修改组织名称" },
   "user.manage": { title: "客户账号", description: "创建、编辑、启停非万神殿账号" },
-  "customer_config.manage": { title: "客户配置", description: "维护公司信息、技能、企业专家和组织设置" },
+  "customer_config.manage": { title: "客户配置", description: "维护公司信息、企业专家和组织设置" },
+  "skill.platform.manage": { title: "平台技能", description: "创建、修改、发布平台级技能" },
+  "skill.tenant.manage": { title: "组织技能", description: "管理客户组织的技能配置与组织自有技能" },
+  "skill.user.support": { title: "用户技能支持", description: "代用户调整选择或维护其自建技能" },
   "billing.adjust": { title: "积分流水", description: "在授权额度内写入充值、赠送或退款流水" },
   "credential.reset": { title: "密码重置", description: "为客户账号重置密码" },
   "runtime.operate": { title: "运行恢复", description: "暂停/恢复执行环境、重扫用量与存储" },

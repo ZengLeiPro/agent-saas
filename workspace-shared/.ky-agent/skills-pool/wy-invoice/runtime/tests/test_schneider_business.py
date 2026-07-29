@@ -45,6 +45,23 @@ def test_non_consignment_excel_exact_match(tmp_path):
     assert result.row_keys == {("PO001", "10"), ("PO002", "20")}
 
 
+def test_match_uses_valid_sheet_and_prefers_specific_remark_header(tmp_path):
+    path = tmp_path / "PP-AVXP—实际模板.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "本次开票明细"
+    workbook.active.append(["订单号码", "客户订单号", "客户品号"])
+    sheet = workbook.create_sheet("客户明细")
+    sheet.append(["发票备注栏", "收货日期", "订单号", "行号", "备注"])
+    sheet.append(["非寄售批次A", "2026-07-28", "PO001", 10, "其他备注"])
+    workbook.save(path)
+    workbook.close()
+
+    result = load_match_data(path, "非寄售批次A")
+
+    assert result.row_keys == {("PO001", "10")}
+    assert result.receipt_start == date(2026, 7, 28)
+
+
 def test_duplicate_order_line_is_rejected(tmp_path):
     path = tmp_path / "PP-AVXP—测试.xlsx"
     _write_match_excel(

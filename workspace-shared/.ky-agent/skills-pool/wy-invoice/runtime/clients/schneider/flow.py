@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
-from datetime import date
 from pathlib import Path
 
-from clients.schneider.business import load_match_data, merge_result_report
+from clients.schneider.business import load_match_data
 from clients.schneider.portal_playwright import (
     WebsiteResult,
-    _excel_suffix,
-    _prompt_commit_reference,
     _verify_confirmation_page,
     create_login_challenge,
     run_portal_workflow,
@@ -32,6 +28,7 @@ async def run_workflow(
     task_reference: str | None = None,
     commit_reference: str | None = None,
     preflight_only: bool = False,
+    prepare_only: bool = False,
     interactive: bool = False,
     captcha_value: str | None = None,
     challenge_file: str | None = None,
@@ -64,20 +61,13 @@ async def run_workflow(
     _validate_task(task)
     audit.info_data("[1.1] 当前任务", _public_task(task))
 
-    has_t100_writeback = getattr(t100, "supports_mark_uploaded", False)
-    allow_poc_without_writeback = bool(
-        cfg.get("poc_allow_website_commit_without_t100_writeback")
-    )
-    if commit_reference and not has_t100_writeback and not allow_poc_without_writeback:
+    if prepare_only and commit_reference:
+        raise RuntimeError("prepare 模式禁止携带 commit_reference。")
+    if commit_reference:
         raise RuntimeError(
-            "已请求生产确认，但 T100 尚未提供“客户系统发票已录”回写接口。"
-            "为避免施耐德已入账、T100 未勾选造成双边状态不一致，本次禁止进入确认。"
+            "当前执行环境不具备 Microsoft Edge IE 模式，生产提交已禁用；"
+            "请使用 prepare 自动制单到最终确认页。"
         )
-    if commit_reference and not has_t100_writeback:
-        audit.warn(
-            "[POC阶段授权] 客户已允许施耐德网页最终确认；本轮确认成功后不会回写 T100。"
-        )
-
     excel_path = await t100.get_match_excel(task)
     match = load_match_data(
         excel_path,
@@ -110,44 +100,22 @@ async def run_workflow(
         task,
         match,
         audit,
-        commit_reference,
-        interactive,
-        has_t100_writeback or allow_poc_without_writeback,
+        None,
+        False,
+        False,
         captcha_value,
         challenge_file,
     )
 
     t100_written_back = False
     if result.committed:
-        if has_t100_writeback:
-            await t100.mark_uploaded(task)
-            t100_written_back = True
-            audit.info(f"[T100] 已回写客户系统发票已录：{task['statement_no']}")
-        elif allow_poc_without_writeback:
-            audit.warn(
-                f"[T100] 按客户 POC 阶段安排，施耐德已确认但暂不回写 T100："
-                f"{task['statement_no']}"
-            )
-        else:
-            raise RuntimeError("施耐德已确认，但当前既无 T100 回写能力也无 POC 阶段授权。")
-        if match.invoice_kind == "non_consignment":
-            if not result.downloaded_report:
-                raise RuntimeError("施耐德已确认，但未取得非寄售录入结果报表。")
-            target_dir = _email_download_dir(cfg, audit)
-            target, appended = merge_result_report(
-                result.downloaded_report,
-                target_dir,
-                _invoice_date(task),
-            )
-            audit.info(f"[结果报表] 已合并 {appended} 行 → {target}")
+        raise RuntimeError(
+            "安全边界被突破：提交前制单模式不得确认施耐德页面，也不得回写 T100。"
+        )
 
     return {
-        "outcome": "website_committed" if result.committed else "confirmation_reached",
-        "message": (
-            "施耐德网页最终确认成功。"
-            if result.committed
-            else "已到达施耐德最终确认页，按要求未点击最终确认。"
-        ),
+        "outcome": "confirmation_reached",
+        "message": "已到达施耐德最终确认页，按要求未点击最终确认。",
         "taskReference": task.get("statement_no") or task.get("billing_no"),
         "preflightPassed": True,
         "excelDownloaded": True,
@@ -165,7 +133,7 @@ async def prepare_captcha(
     task_reference: str,
     output_root: Path,
 ) -> dict:
-    """为跨 Agent 轮次的人工验证码接力建立同一份 JSESSIONID。"""
+    """为跨 Agent 轮次的验证码识别接力建立同一份 JSESSIONID。"""
     tasks = await t100.fetch_pending_invoices()
     pending = [task for task in tasks if str(task.get("uploaded") or "").upper() != "Y"]
     task = _select_task(pending, task_reference)
@@ -251,20 +219,3 @@ def _validate_task(task: dict):
     missing = [label for key, label in required.items() if task.get(key) in (None, "")]
     if missing:
         raise RuntimeError(f"T100 订单接口缺少必填字段：{', '.join(missing)}")
-
-
-def _invoice_date(task: dict) -> date:
-    return date.fromisoformat(task["invoice_date"])
-
-
-def _email_download_dir(cfg: dict, audit) -> Path:
-    configured = os.environ.get("WAIN_EMAIL_DOWNLOAD_DIR") or cfg.get(
-        "email_download_dir"
-    )
-    path = Path(configured) if configured else Path(audit.dir) / "邮件下载"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def _safe_reference(value: str) -> str:
-    return re.sub(r"[^0-9A-Za-z._-]+", "_", value).strip("._") or "task"

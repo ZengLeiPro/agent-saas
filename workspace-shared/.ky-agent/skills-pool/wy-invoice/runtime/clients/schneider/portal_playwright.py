@@ -34,7 +34,8 @@ class WebsiteResult:
 def create_login_challenge(cfg: dict, task: dict, output_root: Path) -> dict:
     """获取验证码并持久化同一 HTTP 会话，供下一轮 Agent 继续登录。"""
     reference = task["statement_no"]
-    challenge_dir = output_root / "登录接力" / _safe_name(reference)
+    challenge_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+    challenge_dir = output_root / "登录接力" / _safe_name(reference) / challenge_id
     challenge_dir.mkdir(parents=True, exist_ok=True)
     login_url = task.get("portal_url") or cfg["url"]
 
@@ -93,7 +94,10 @@ def create_login_challenge(cfg: dict, task: dict, output_root: Path) -> dict:
         "captchaPath": str(captcha_path),
         "challengeFile": str(challenge_path),
         "expiresInSeconds": CHALLENGE_MAX_AGE_SECONDS,
-        "message": "请人工查看验证码图片；不要使用 OCR 或第三方打码。",
+        "message": (
+            "验证码图片已保存；由 Agent 直接读取图片自动识别，"
+            "连续失败 3 次再请用户人工读取；禁止上传外部 OCR 或第三方打码平台。"
+        ),
     }
 
 
@@ -111,8 +115,8 @@ def run_portal_workflow(
     """真实网页流程完全运行在 ACS 的 Linux Chromium 中。"""
     if not captcha_value or not challenge_file:
         raise RuntimeError(
-            "缺少人工验证码接力。请先执行 captcha 生成验证码，再把验证码和 "
-            "challengeFile 传给 run/commit。"
+            "缺少验证码接力。请先执行 captcha 生成验证码，再把验证码和 "
+            "challengeFile 传给 prepare。"
         )
     cookies = _login_with_challenge(
         task,
@@ -125,14 +129,33 @@ def run_portal_workflow(
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={"width": 1440, "height": 900},
-            locale="zh-CN",
-            user_agent=IE11_USER_AGENT,
-            accept_downloads=True,
-        )
+        context_kwargs = {
+            "viewport": {"width": 1440, "height": 900},
+            "locale": "zh-CN",
+            "user_agent": IE11_USER_AGENT,
+            "accept_downloads": True,
+        }
+        if not os.environ.get("WAIN_INVOICE_DISABLE_VIDEO"):
+            context_kwargs["record_video_dir"] = str(audit.video_dir)
+            context_kwargs["record_video_size"] = {"width": 1440, "height": 900}
+        context = browser.new_context(**context_kwargs)
         context.add_cookies(cookies)
         page = context.new_page()
+        browser_events: list[dict[str, str]] = []
+        page.on(
+            "console",
+            lambda message: browser_events.append(
+                {"type": f"console:{message.type}", "message": message.text}
+            )
+            if message.type == "error"
+            else None,
+        )
+        page.on(
+            "pageerror",
+            lambda error: browser_events.append(
+                {"type": "pageerror", "message": str(error)}
+            ),
+        )
         try:
             result = _process_invoice(
                 page,
@@ -145,6 +168,12 @@ def run_portal_workflow(
                 website_commit_allowed,
             )
             return result
+        except Exception:
+            try:
+                _capture_portal_state(page, audit, "99-异常现场", browser_events)
+            except Exception as capture_error:
+                audit.warn(f"[证据采集] 异常现场保存失败：{capture_error}")
+            raise
         finally:
             context.close()
             browser.close()
@@ -220,88 +249,139 @@ def _process_invoice(
         wait_until="domcontentloaded",
         timeout=30_000,
     )
-    _wait_text(page, "生成发票信息")
+    _capture_portal_state(page, audit, "01-发票页初始")
+    scope = _wait_invoice_scope(page, match.company_code, match.invoice_kind)
+    audit.info(
+        f"[页面识别] 已找到可交互业务区域：{_scope_description(scope)}"
+    )
 
-    _select_company_and_kind(page, match.company_code, match.invoice_kind)
-    _capture(page, audit, "02-公司与业务类型")
-    _click_if_present(page, "下一步")
+    _select_company_and_kind(scope, match.company_code, match.invoice_kind)
+    _capture(scope, audit, "02-公司与业务类型")
+    existing_basket = _open_existing_basket(scope, task, match, audit)
+    if not existing_basket:
+        if _click_if_present(scope, "下一步"):
+            date_label = (
+                "收货日期"
+                if match.invoice_kind == "non_consignment"
+                else "凭证日期"
+            )
+            scope = _wait_date_scope(_root_page(scope), date_label)
 
-    if match.invoice_kind == "non_consignment":
-        _process_non_consignment_rows(page, match, audit)
-    else:
-        _process_consignment_summary(page, cfg, task, match, audit)
+        if match.invoice_kind == "non_consignment":
+            _process_non_consignment_rows(scope, match, audit)
+        else:
+            _process_consignment_summary(scope, cfg, task, match, audit)
 
-    total = _extract_labeled_amount(page, "货款总额")
+    total = _extract_labeled_amount(scope, "货款总额")
     expected_excl_tax = money(task["amount_excl_tax"])
     if total != expected_excl_tax:
         mismatch = _mismatch_screenshot_path(cfg, audit, task)
-        page.screenshot(path=str(mismatch), full_page=True)
+        _root_page(scope).screenshot(path=str(mismatch), full_page=True)
         raise RuntimeError(
             f"施耐德货款总额 {total} != T100 原币税前 {expected_excl_tax}；"
             f"截图已保存：{mismatch}"
         )
     audit.info(f"[金额核对] 货款总额={total}，与 T100 原币税前一致")
-    _capture(page, audit, "05-金额核对一致")
+    _capture(scope, audit, "05-金额核对一致")
 
-    _fill_invoice_fields(page, task)
-    _capture(page, audit, "06-发票字段已填")
-    _click_text(page, "检查")
+    if _has_visible_click_target(scope, "下一步"):
+        _click_text(scope, "下一步")
+        scope = _wait_invoice_fields_scope(_root_page(scope))
+
+    _fill_invoice_fields(scope, task)
+    _capture(scope, audit, "06-发票字段已填")
+    _click_text(scope, "检查")
     _wait_until(
-        lambda: _check_result_is_zero(page),
+        lambda: _check_result_is_zero(scope),
         timeout=15,
         message="点击检查后结果未变为 0。",
     )
     audit.info("[检查] 结果为 0")
-    _capture(page, audit, "07-检查结果为零")
+    _capture(scope, audit, "07-检查结果为零")
 
-    _click_text(page, "生成")
-    page.wait_for_url(re.compile(r".*generateSubmit\.jsp.*"), timeout=20_000)
-    _verify_confirmation_page(page, task)
-    _capture(page, audit, "08-最终确认页-未提交")
+    _click_text(scope, "生成")
+    _root_page(scope).wait_for_url(
+        re.compile(r".*(?:generateSubmit|submit|confirm).*\.jsp.*"),
+        timeout=20_000,
+    )
+    scope = _root_page(scope)
+    _verify_confirmation_page(scope, task)
+    _capture(scope, audit, "08-最终确认页-未提交")
     audit.info("[生成] 已到最终确认页，四个发票字段复核一致")
 
-    commit_reference = _prompt_commit_reference(task, commit_reference, interactive)
-    if not commit_reference:
-        audit.info("[COMMIT_GATE] 未提供 commit_reference，止步于最终确认页")
-        return WebsiteResult(reached_confirmation=True, committed=False)
-    if not website_commit_allowed:
+    if commit_reference:
         raise RedlineViolation(
-            "[COMMIT_GATE] 当前既无 T100 回写能力，也无客户 POC 阶段网页提交授权。"
+            "[COMMIT_GATE] 当前 Chromium 执行器只允许提交前制单，禁止最终确认；"
+            "生产提交需要 Microsoft Edge IE 模式。"
         )
-    reference = task["statement_no"]
-    if commit_reference not in {reference, task.get("billing_no")}:
-        raise RedlineViolation(
-            f"[COMMIT_GATE] 批准单据 {commit_reference!r} 与当前任务不一致。"
-        )
+    audit.info("[PREPARE_GATE] 已到最终确认页，硬性停止；未提交、未回写 T100")
+    return WebsiteResult(reached_confirmation=True, committed=False)
 
-    audit.info(f"[COMMIT_GATE] 批准最终确认：{commit_reference}")
-    _confirm_and_require_success(page)
-    audit.info("[最终确认] 施耐德页面已执行确认")
-    _capture(page, audit, "09-最终确认后")
 
-    report = None
-    if match.invoice_kind == "non_consignment":
-        report = _download_non_consignment_report(page, cfg, task, audit)
-    return WebsiteResult(
-        reached_confirmation=True,
-        committed=True,
-        downloaded_report=report,
+def _root_page(scope):
+    return scope if hasattr(scope, "context") else scope.page
+
+
+def _portal_scopes(page):
+    scopes = [page]
+    for frame in page.frames:
+        if frame != page.main_frame:
+            scopes.append(frame)
+    return scopes
+
+
+def _scope_description(scope) -> str:
+    if hasattr(scope, "context"):
+        return f"top:{scope.url}"
+    return f"frame:{scope.name or '<unnamed>'}:{scope.url}"
+
+
+def _scope_has_invoice_controls(scope, company_code: str, kind: str) -> bool:
+    has_company = False
+    has_kind_select = False
+    expected_kind = "非寄售" if kind == "non_consignment" else "寄售"
+    selects = scope.locator("select")
+    for index in range(selects.count()):
+        select = selects.nth(index)
+        if not select.is_visible() or not select.is_enabled():
+            continue
+        options = [
+            text.strip() for text in select.locator("option").all_inner_texts()
+        ]
+        has_company = has_company or any(company_code in text for text in options)
+        has_kind_select = has_kind_select or expected_kind in options
+
+    kind_value = "0" if kind == "non_consignment" else "1"
+    kind_control = scope.locator(
+        f"input[name='vmiType'][value='{kind_value}']"
     )
+    has_kind_radio = kind_control.count() > 0
+    if has_kind_radio and hasattr(kind_control, "first"):
+        has_kind_radio = (
+            kind_control.first.is_visible() and kind_control.first.is_enabled()
+        )
+    return has_company and (has_kind_select or has_kind_radio)
 
 
-def _prompt_commit_reference(
-    task: dict,
-    commit_reference: str | None,
-    interactive: bool,
-) -> str | None:
-    if commit_reference or not interactive:
-        return commit_reference
-    reference = task["statement_no"]
-    print("\n已到施耐德最终确认页，四个发票字段已复核一致。")
-    print("客户已授权本阶段可提交，但本次不会回写 T100。")
-    print(f"如确认提交，请完整输入当前对账单号：{reference}")
-    entered = input("对账单号（直接回车则停止，不提交）：").strip()
-    return entered or None
+def _wait_invoice_scope(
+    page, company_code: str, kind: str, timeout: int = 30
+):
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while time.monotonic() < deadline:
+        for scope in _portal_scopes(page):
+            try:
+                if _scope_has_invoice_controls(scope, company_code, kind):
+                    return scope
+            except Exception as exc:
+                last_error = exc
+        page.wait_for_timeout(300)
+    frames = ", ".join(_scope_description(scope) for scope in _portal_scopes(page))
+    suffix = f"；最后错误：{last_error}" if last_error else ""
+    raise RuntimeError(
+        f"页面未出现公司 {company_code} 与业务类型对应的可交互下拉框；"
+        f"已检查：{frames}{suffix}"
+    )
 
 
 def _select_company_and_kind(page, company_code: str, kind: str):
@@ -319,21 +399,49 @@ def _select_company_and_kind(page, company_code: str, kind: str):
         raise RuntimeError(f"公司下拉框没有包含 {company_code!r} 的选项。")
 
     expected = "非寄售" if kind == "non_consignment" else "寄售"
-    for index in range(selects.count()):
-        select = selects.nth(index)
-        options = [text.strip() for text in select.locator("option").all_inner_texts()]
-        if expected in options:
-            select.select_option(label=expected)
-            return
-    raise RuntimeError(f"业务类型下拉框没有 {expected!r}。")
+    kind_value = "0" if kind == "non_consignment" else "1"
+    kind_control = page.locator(
+        f"input[name='vmiType'][value='{kind_value}']"
+    )
+    if not kind_control.count():
+        raise RuntimeError(f"业务类型控件没有 {expected!r}。")
+    kind_control.first.check()
+
+
+def _open_existing_basket(page, task: dict, match: MatchData, audit) -> bool:
+    basket = page.locator("#toCkot")
+    if not basket.count() or not basket.first.is_visible() or basket.first.is_disabled():
+        return False
+    basket.first.click()
+    page.wait_for_url(re.compile(r".*checkOut\.jsp.*"), timeout=20_000)
+    expected_total = money(task["amount_excl_tax"])
+    total = _extract_labeled_amount(page, "货款总额")
+    body = re.sub(r"\s+", " ", _body_text(page))
+    count_match = re.search(r"共有\s*(\d+)\s*条数据", body)
+    count = int(count_match.group(1)) if count_match else None
+    if total == expected_total and count == len(match.row_keys):
+        audit.info(f"[断点续跑] 复用现有发票篮：{count} 行，货款总额={total}")
+        _capture(page, audit, "03-复用现有发票篮")
+        return True
+    raise RuntimeError(
+        "当前发票篮已有其他或不完整数据："
+        f"页面行数={count}、金额={total}；"
+        f"期望行数={len(match.row_keys)}、金额={expected_total}。"
+        "为避免覆盖他人数据，流程已停止。"
+    )
 
 
 def _process_non_consignment_rows(page, match: MatchData, audit):
     start, end = _search_date_inputs(page, "收货日期")
-    start.fill(f"{match.receipt_start:%Y.%m.%d}")
-    end.fill(f"{match.receipt_end:%Y.%m.%d}")
-    _click_text(page, "搜索")
-    _set_page_size_100(page)
+    _set_input_value(start, f"{match.receipt_start:%Y.%m.%d}")
+    _set_input_value(end, f"{match.receipt_end:%Y.%m.%d}")
+    _click_search(page)
+    _wait_order_table(page)
+    if _set_page_size_100(page):
+        _wait_order_table(page)
+        audit.info("[分页] 已切换为每页 100 条")
+    else:
+        audit.info("[分页] 未找到每页 100 控件，按当前页数逐页处理")
 
     remaining = set(match.row_keys)
     matched_on_web = set()
@@ -366,7 +474,19 @@ def _process_non_consignment_rows(page, match: MatchData, audit):
             matched_on_web.add(key)
             selected += 1
         if selected:
+            selected_boxes = [
+                rows.nth(row_index).locator("input[type='checkbox']").last
+                for row_index in range(rows.count())
+                if rows.nth(row_index).locator("input[type='checkbox']").count()
+                and rows.nth(row_index).locator("input[type='checkbox']").last.is_checked()
+                and not rows.nth(row_index).locator("input[type='checkbox']").last.is_disabled()
+            ]
             _click_text(page, "放入发票篮")
+            _wait_until(
+                lambda: all(box.is_disabled() for box in selected_boxes),
+                timeout=15,
+                message="放入发票篮后，所选明细未变为已加入状态。",
+            )
             audit.info(f"[明细匹配] 当前页放入 {selected} 行，剩余 {len(remaining)} 行")
         if not remaining:
             break
@@ -378,7 +498,7 @@ def _process_non_consignment_rows(page, match: MatchData, audit):
         raise RuntimeError(
             f"网页缺少 Excel 指定的 {len(remaining)} 个订单行，示例：{sample}"
         )
-    _click_text(page, "发票篮")
+    _go_to_invoice_basket(page)
     _capture(page, audit, "03-非寄售明细已入发票篮")
 
 
@@ -387,9 +507,9 @@ def _process_consignment_summary(
 ):
     start_date, end_date = parse_consignment_range(task["invoice_remark"])
     start, end = _search_date_inputs(page, "凭证日期")
-    start.fill(f"{start_date:%Y.%m.%d}")
-    end.fill(f"{end_date:%Y.%m.%d}")
-    _click_text(page, "搜索")
+    _set_input_value(start, f"{start_date:%Y.%m.%d}")
+    _set_input_value(end, f"{end_date:%Y.%m.%d}")
+    _click_search(page)
 
     table = _find_table_with_headers(page, {"汇总金额"})
     rows = table.locator("tr").filter(has=page.locator("td"))
@@ -407,45 +527,98 @@ def _process_consignment_summary(
         )
     audit.info(f"[寄售汇总] {start_date}~{end_date} 金额={amount}，核对一致")
     _capture(page, audit, "03-寄售汇总核对一致")
-    _click_text(page, "发票篮")
+    _go_to_invoice_basket(page)
+
+
+def _wait_invoice_fields_scope(page, timeout: int = 20):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for scope in _portal_scopes(page):
+            body = re.sub(r"\s+", " ", _body_text(scope))
+            if "发票号码" in body and (
+                "发票总额" in body or "增值税额" in body
+            ):
+                return scope
+        page.wait_for_timeout(250)
+    raise RuntimeError("点击发票篮下一步后，未进入发票字段填写页。")
 
 
 def _fill_invoice_fields(page, task: dict):
-    values = {
-        "发票号码": task["invoice_no"],
-        "开票日期": f"{_invoice_date(task):%Y.%m.%d}",
-        "发票总额（含税）": task["amount_incl_tax"],
-        "增值税额": task["tax"],
-    }
-    for label, value in values.items():
-        _input_after_label(page, label).fill(str(value))
+    values = (
+        ("#invoiceNumber", "发票号码", task["invoice_no"]),
+        ("#invoiceDate", "开票日期", f"{_invoice_date(task):%Y.%m.%d}"),
+        ("#totalAmount", "发票总额（含税）", task["amount_incl_tax"]),
+        ("#vatAmount", "增值税额", task["tax"]),
+    )
+    for selector, label, value in values:
+        field = page.locator(selector)
+        field = field.first if field.count() else _input_after_label(page, label)
+        if field.get_attribute("readonly") is not None:
+            _set_input_value(field, str(value))
+        else:
+            field.fill(str(value))
 
 
 def _verify_confirmation_page(page, task: dict):
     body = re.sub(r"\s+", " ", _body_text(page).replace(",", ""))
     missing = []
-    invoice_pattern = (
-        rf"发票号码\s*[:：]?\s*{re.escape(str(task['invoice_no']))}(?:\s|$)"
+
+    if not hasattr(page, "locator"):
+        _verify_confirmation_text(body, task)
+        return
+
+    invoice_field = page.locator("#invoiceNumber")
+    invoice_value = (
+        invoice_field.first.input_value().strip()
+        if invoice_field.count()
+        else None
     )
-    if not re.search(invoice_pattern, body):
-        missing.append(f"发票号码={task['invoice_no']}")
+    if invoice_value != str(task["invoice_no"]):
+        invoice_pattern = (
+            rf"发票号码\s*[:：]?\s*{re.escape(str(task['invoice_no']))}(?:\s|$)"
+        )
+        if not re.search(invoice_pattern, body):
+            missing.append(f"发票号码={task['invoice_no']}（页面={invoice_value}）")
 
     date_value = f"{_invoice_date(task):%Y.%m.%d}"
-    date_pattern = (
-        r"(?:开票日期|发票日期)\s*[:：]?\s*"
-        + re.escape(date_value).replace(r"\.", r"[./-]")
-        + r"(?:\s|$)"
-    )
-    if not re.search(date_pattern, body):
-        missing.append(f"开票日期/发票日期={date_value}")
+    date_field = page.locator("#invoiceDate")
+    page_date = date_field.first.input_value().strip() if date_field.count() else None
+    normalized_page_date = page_date.replace("/", ".").replace("-", ".") if page_date else None
+    if normalized_page_date != date_value:
+        date_pattern = (
+            r"(?:开票日期|发票日期)\s*[:：]?\s*"
+            + re.escape(date_value).replace(r"\.", r"[./-]")
+            + r"(?:\s|$)"
+        )
+        if not re.search(date_pattern, body):
+            missing.append(f"开票日期/发票日期={date_value}（页面={page_date}）")
 
-    for labels, expected in (
-        (("发票总额（含税）", "发票总额(含税)"), money(task["amount_incl_tax"])),
-        (("增值税额",), money(task["tax"])),
+    for selector, labels, expected in (
+        ("#totalAmount", ("发票总额（含税）", "发票总额(含税)"), money(task["amount_incl_tax"])),
+        ("#vatAmount", ("增值税额",), money(task["tax"])),
     ):
-        value = _extract_amount_after_any_label(body, labels)
+        field = page.locator(selector)
+        value = money(field.first.input_value()) if field.count() else None
+        if value is None:
+            value = _extract_amount_after_any_label(body, labels)
         if value != expected:
             missing.append(f"{'/'.join(labels)}={expected}（页面={value}）")
+    if missing:
+        raise RuntimeError(f"最终确认页字段未按标签复核通过：{missing}")
+
+
+def _verify_confirmation_text(body: str, task: dict):
+    expected = (
+        ("发票号码", str(task["invoice_no"])),
+        ("开票日期", f"{_invoice_date(task):%Y.%m.%d}"),
+        ("发票总额（含税）", f"{money(task['amount_incl_tax']):.2f}"),
+        ("增值税额", f"{money(task['tax']):.2f}"),
+    )
+    missing = []
+    for label, value in expected:
+        pattern = rf"{re.escape(label)}\s*[:：]?\s*{re.escape(value)}(?:\s|$)"
+        if not re.search(pattern, body):
+            missing.append(f"{label}={value}")
     if missing:
         raise RuntimeError(f"最终确认页字段未按标签复核通过：{missing}")
 
@@ -470,6 +643,10 @@ def _extract_labeled_amount(page, label: str):
 
 
 def _check_result_is_zero(page) -> bool:
+    result = page.locator("#chkAmt")
+    if result.count():
+        value = result.first.input_value().strip()
+        return bool(value) and money(value) == money("0")
     body = _body_text(page).replace("\n", " ")
     return bool(
         re.search(r"(?:检查结果|检查|结果)\s*[:：]?\s*0(?:\.0+)?(?:\s|$)", body)
@@ -500,7 +677,62 @@ def _search_date_inputs(page, label: str):
     raise RuntimeError(f"未找到 {label} 的起止日期输入框。")
 
 
+def _set_input_value(field, value: str):
+    field.evaluate(
+        "(element, nextValue) => {"
+        "element.removeAttribute('readonly');"
+        "element.value = nextValue;"
+        "element.dispatchEvent(new Event('input', {bubbles: true}));"
+        "element.dispatchEvent(new Event('change', {bubbles: true}));"
+        "}",
+        value,
+    )
+
+
+def _click_search(page):
+    try:
+        _click_text(page, "搜索")
+        return
+    except RuntimeError:
+        candidates = page.locator(
+            "xpath=//*[@onclick and contains(translate(@onclick, "
+            "'SEARCH', 'search'), 'search(')]"
+        )
+        for index in range(candidates.count()):
+            candidate = candidates.nth(index)
+            if candidate.is_visible() and candidate.is_enabled():
+                candidate.click()
+                return
+    raise RuntimeError("页面未找到可点击的 '搜索'。")
+
+
+def _go_to_invoice_basket(page):
+    if _click_if_present(page, "发票篮"):
+        page.wait_for_url(re.compile(r".*checkOut\.jsp.*"), timeout=20_000)
+        return
+    basket = page.locator("#toCkot")
+    if basket.count() and basket.first.is_visible() and basket.first.is_enabled():
+        basket.first.click()
+        page.wait_for_url(re.compile(r".*checkOut\.jsp.*"), timeout=20_000)
+        return
+    raise RuntimeError("页面未找到进入发票篮的控件。")
+
+
+def _wait_order_table(page, timeout: int = 20):
+    _wait_until(
+        lambda: page.locator("#dtList tr[name='infoLs']").count() > 0,
+        timeout=timeout,
+        message="日期搜索或分页后，订单明细表未加载完成。",
+    )
+
+
 def _find_order_table(page):
+    table = page.locator("#dtList")
+    if table.count():
+        table = table.first
+        header_map = _header_map(table)
+        if {"订单号", "行号"} <= set(header_map):
+            return table, header_map
     table = _find_table_with_headers(page, {"订单号", "行号"})
     return table, _header_map(table)
 
@@ -543,7 +775,7 @@ def _go_next_page(page) -> bool:
     return False
 
 
-def _set_page_size_100(page):
+def _set_page_size_100(page) -> bool:
     selects = page.locator("select")
     for index in range(selects.count()):
         select = selects.nth(index)
@@ -552,18 +784,38 @@ def _set_page_size_100(page):
         options = {text.strip() for text in select.locator("option").all_inner_texts()}
         if "100" in options and len(options & {"10", "15", "20", "30", "50", "100"}) >= 2:
             select.select_option(label="100")
-            return
-    raise RuntimeError("未找到每页数量下拉框中的 100 选项。")
+            return True
+
+    candidates = page.locator("[onclick]")
+    for index in range(candidates.count()):
+        candidate = candidates.nth(index)
+        onclick = candidate.get_attribute("onclick") or ""
+        if not re.search(r"\breload\s*\(\s*100\s*\)", onclick, re.I):
+            continue
+        if candidate.is_visible() and candidate.is_enabled():
+            candidate.click()
+            page.wait_for_load_state("domcontentloaded")
+            return True
+    return False
 
 
 def _input_after_label(page, label: str):
-    fields = page.locator(
-        f"xpath=//*[normalize-space()='{label}']/following::input[1]"
-    )
-    for index in range(fields.count()):
-        field = fields.nth(index)
-        if field.is_visible() and field.is_enabled():
-            return field
+    labels = [label]
+    if label == "开票日期":
+        labels.append("发票日期")
+    if label == "发票总额（含税）":
+        labels.extend(("发票总额(含税)", "发票总额"))
+
+    for candidate_label in labels:
+        fields = page.locator(
+            "xpath=//*[self::td or self::th or self::label or self::span]"
+            f"[contains(normalize-space(.),'{candidate_label}')]"
+            "/following::input[not(@type='hidden')][1]"
+        )
+        for index in range(fields.count()):
+            field = fields.nth(index)
+            if field.is_visible() and field.is_enabled():
+                return field
     raise RuntimeError(f"未找到字段 {label!r} 的输入框。")
 
 
@@ -599,99 +851,71 @@ def _has_visible_click_target(page, text: str) -> bool:
     )
 
 
-def _confirm_and_require_success(page):
-    dialog_messages: list[str] = []
-
-    def handle_dialog(dialog):
-        dialog_messages.append(dialog.message or "")
-        dialog.accept()
-
-    page.on("dialog", handle_dialog)
-    pages_before = set(page.context.pages)
-    url_before = page.url
-    _click_text(page, "确认")
-
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        for message in dialog_messages:
-            if any(word in message for word in ("失败", "错误", "异常")):
-                raise RuntimeError(f"最终确认弹窗返回失败：{message}")
-            if any(word in message for word in ("成功", "完成")):
-                return
-
-        new_pages = [item for item in page.context.pages if item not in pages_before]
-        if new_pages:
-            popup = new_pages[0]
-            popup.wait_for_load_state("domcontentloaded")
-            body = _body_text(popup)
-            if any(word in body for word in ("失败", "错误", "异常")):
-                raise RuntimeError(f"最终确认结果窗口返回失败：{body[:200]}")
-            if any(word in body for word in ("成功", "完成")):
-                popup.close()
-                return
-            popup.close()
-            raise RuntimeError(f"最终确认结果窗口没有成功标志：{body[:200]}")
-
-        if page.url != url_before and "generateSubmit.jsp" not in page.url:
-            return
-        body = _body_text(page)
-        if any(text in body for text in ("成功", "处理完成", "已生成")):
-            return
-        if not _has_visible_click_target(page, "确认"):
-            return
-        page.wait_for_timeout(300)
-    raise RuntimeError("点击最终确认后 20 秒内没有观察到明确成功结果。")
-
-
-def _download_non_consignment_report(page, cfg: dict, task: dict, audit) -> str:
-    base = _portal_base(task.get("portal_url") or cfg["url"])
-    page.goto(
-        f"{base}/webPortalSystem/apInvoice/index.jsp",
-        wait_until="domcontentloaded",
-        timeout=30_000,
-    )
-    start, end = _search_date_inputs(page, "收货日期")
-    invoice_date = _invoice_date(task)
-    start.fill(f"{invoice_date:%Y.%m.%d}")
-    end.fill(f"{invoice_date:%Y.%m.%d}")
-    _click_text(page, "搜索")
-
-    link = page.get_by_text("下载该报告", exact=True).first
-    target_dir = Path(audit.dir) / "downloads"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    href = link.get_attribute("href")
-    if href and not href.lower().startswith("javascript:"):
-        url = urllib.parse.urljoin(page.url, href)
-        response = page.context.request.get(url, timeout=30_000)
-        if not response.ok:
-            raise RuntimeError(f"下载施耐德报告失败：HTTP {response.status}")
-        payload = response.body()
-        target = target_dir / f"施耐德下载报告{_excel_suffix(payload)}"
-        target.write_bytes(payload)
-        return str(target)
-
-    with page.expect_download(timeout=30_000) as download_info:
-        link.click()
-    download = download_info.value
-    suffix = Path(download.suggested_filename).suffix.lower() or ".xlsx"
-    target = target_dir / f"施耐德下载报告{suffix}"
-    download.save_as(str(target))
-    _excel_suffix(target.read_bytes())
-    return str(target)
-
-
 def _capture(page, audit, name: str):
     safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", name).strip(" .")
     screenshot = Path(audit.screenshot_dir) / f"{safe_name}.png"
     dom = Path(audit.dom_dir) / f"{safe_name}.html"
-    page.screenshot(path=str(screenshot), full_page=True)
+    _root_page(page).screenshot(path=str(screenshot), full_page=True)
     dom.write_text(page.content(), encoding="utf-8")
 
 
-def _wait_text(page, text: str, timeout: int = 20):
-    page.get_by_text(text, exact=False).first.wait_for(
-        state="visible",
-        timeout=timeout * 1000,
+def _wait_date_scope(page, label: str, timeout: int = 30):
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while time.monotonic() < deadline:
+        for scope in _portal_scopes(page):
+            try:
+                _search_date_inputs(scope, label)
+                return scope
+            except Exception as exc:
+                last_error = exc
+        page.wait_for_timeout(300)
+    frames = ", ".join(_scope_description(scope) for scope in _portal_scopes(page))
+    suffix = f"；最后错误：{last_error}" if last_error else ""
+    raise RuntimeError(
+        f"页面未出现 {label} 起止输入框；已检查：{frames}{suffix}"
+    )
+
+
+def _capture_portal_state(
+    page,
+    audit,
+    name: str,
+    browser_events: list[dict[str, str]] | None = None,
+):
+    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", name).strip(" .")
+    screenshot = Path(audit.screenshot_dir) / f"{safe_name}.png"
+    _root_page(page).screenshot(path=str(screenshot), full_page=True)
+
+    frames = []
+    for index, scope in enumerate(_portal_scopes(_root_page(page))):
+        entry = {
+            "index": index,
+            "kind": "top" if hasattr(scope, "context") else "frame",
+            "name": "" if hasattr(scope, "context") else scope.name,
+            "url": scope.url,
+        }
+        try:
+            dom = Path(audit.dom_dir) / f"{safe_name}-{index:02d}.html"
+            dom.write_text(scope.content(), encoding="utf-8")
+            entry["domPath"] = str(dom)
+        except Exception as exc:
+            entry["captureError"] = str(exc)
+        frames.append(entry)
+
+    diagnostics = Path(audit.dom_dir) / f"{safe_name}-诊断.json"
+    diagnostics.write_text(
+        json.dumps(
+            {
+                "pageUrl": _root_page(page).url,
+                "pageTitle": _root_page(page).title(),
+                "frames": frames,
+                "browserEvents": browser_events or [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
     )
 
 

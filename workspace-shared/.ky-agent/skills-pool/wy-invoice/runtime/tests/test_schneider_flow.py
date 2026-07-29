@@ -5,8 +5,6 @@ from pathlib import Path
 import pytest
 
 from clients.schneider.flow import (
-    _excel_suffix,
-    _prompt_commit_reference,
     _prompt_task_reference,
     _select_task,
     _validate_task,
@@ -14,6 +12,7 @@ from clients.schneider.flow import (
     WebsiteResult,
     run_workflow,
 )
+from clients.schneider.portal_playwright import _excel_suffix
 from entrypoint import prepare_interactive_launch
 
 
@@ -52,12 +51,6 @@ def test_interactive_task_selection(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: "2")
 
     assert _prompt_task_reference([TASK, second]) == "STATEMENT002"
-
-
-def test_interactive_commit_requires_typing_current_reference(monkeypatch):
-    monkeypatch.setattr("builtins.input", lambda _: "STATEMENT001")
-    assert _prompt_commit_reference(TASK, None, True) == "STATEMENT001"
-    assert _prompt_commit_reference(TASK, None, False) is None
 
 
 def test_double_click_prepares_schneider_interactive_args():
@@ -169,7 +162,7 @@ async def test_commit_is_blocked_before_browser_without_t100_writeback():
         def warn(self, *_):
             pass
 
-    with pytest.raises(RuntimeError, match="T100.*回写接口"):
+    with pytest.raises(RuntimeError, match="Microsoft Edge IE 模式"):
         await run_workflow(
             cfg={},
             t100=T100WithoutWriteback(),
@@ -179,9 +172,7 @@ async def test_commit_is_blocked_before_browser_without_t100_writeback():
 
 
 @pytest.mark.asyncio
-async def test_customer_authorized_poc_submit_skips_t100_writeback(
-    monkeypatch, tmp_path
-):
+async def test_prepare_rejects_unexpected_website_commit(monkeypatch, tmp_path):
     from openpyxl import Workbook
 
     task = {
@@ -197,9 +188,7 @@ async def test_customer_authorized_poc_submit_skips_t100_writeback(
     workbook.save(excel)
     workbook.close()
 
-    class T100WithoutWriteback:
-        supports_mark_uploaded = False
-
+    class T100:
         async def fetch_pending_invoices(self):
             return [task]
 
@@ -207,38 +196,28 @@ async def test_customer_authorized_poc_submit_skips_t100_writeback(
             return str(excel)
 
         async def mark_uploaded(self, _):
-            raise AssertionError("POC 阶段不应回写 T100")
+            raise AssertionError("prepare 不应回写 T100")
 
     class Audit:
-        def __init__(self):
-            self.messages = []
+        def info_data(self, *_):
+            pass
 
-        def info_data(self, *args):
-            self.messages.append(str(args))
+        def warn(self, *_):
+            pass
 
-        def warn(self, message):
-            self.messages.append(message)
-
-        def info(self, message):
-            self.messages.append(message)
+        def info(self, *_):
+            pass
 
     monkeypatch.setattr(
         "clients.schneider.flow.run_portal_workflow",
         lambda *args: WebsiteResult(reached_confirmation=True, committed=True),
     )
-    audit = Audit()
-    result = await run_workflow(
-        cfg={"poc_allow_website_commit_without_t100_writeback": True},
-        t100=T100WithoutWriteback(),
-        audit=audit,
-        commit_reference="STATEMENT001",
-    )
 
-    assert result["outcome"] == "website_committed"
-    assert result["preflightPassed"] is True
-    assert result["excelDownloaded"] is True
-    assert Path(result["excelPath"]).exists()
-    assert result["websiteReached"] is True
-    assert result["websiteCommitted"] is True
-    assert result["t100WrittenBack"] is False
-    assert any("暂不回写 T100" in message for message in audit.messages)
+    with pytest.raises(RuntimeError, match="安全边界被突破"):
+        await run_workflow(
+            cfg={},
+            t100=T100(),
+            audit=Audit(),
+            task_reference="STATEMENT001",
+            prepare_only=True,
+        )

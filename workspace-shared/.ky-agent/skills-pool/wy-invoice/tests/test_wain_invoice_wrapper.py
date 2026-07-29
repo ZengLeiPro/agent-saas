@@ -81,7 +81,7 @@ def test_run_requires_captcha_and_challenge_file(capsys):
     )
     result = MODULE.asyncio.run(MODULE.execute(args))
     assert result == 20
-    assert "人工验证码接力" in capsys.readouterr().out
+    assert "验证码接力" in capsys.readouterr().out
 
 
 def _install_fake_core_skill(monkeypatch, result):

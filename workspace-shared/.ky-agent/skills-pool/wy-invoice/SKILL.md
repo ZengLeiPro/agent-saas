@@ -1,11 +1,15 @@
 ---
 name: wy-invoice
-description: 唯恩电气 T100→施耐德 Vendor Portal 发票录入技能。用户提到唯恩发票、施耐德发票、T100 待开票、对账单、寄售/非寄售录入、客户系统最终确认或发票 POC 联调时必须使用。本技能在 Agent SaaS 的 ACS Linux Sandbox 中完成接口取数、Excel 处理、浏览器操作、人工验证码接力和最终确认，不依赖客户 Windows 或本地 Hand。
+description: 唯恩电气 T100→施耐德 Vendor Portal 提交前制单技能。用户提到唯恩发票、施耐德发票、T100 待开票、对账单、寄售/非寄售录入，或要求“处理对账单、做到最终确认页、全程录屏、不提交、不回写 T100”时必须使用。本技能完成接口取数、Excel 匹配、验证码接力和浏览器填写，硬性停在最终确认页；当前环境不执行生产提交，也不回写 T100。
 ---
 
-# 唯恩施耐德发票录入
+# 唯恩施耐德发票提交前制单
 
-把唯恩 T100 中的待开票数据与对账 Excel 严格匹配，再在 Agent SaaS 的 ACS 容器中操作施耐德 Vendor Portal。稳定规则由随技能分发的确定性 Python runtime 执行，Agent 负责任务选择、人工验证码接力、最终确认门禁、异常解释和证据交付。
+把唯恩 T100 中的待开票数据与对账 Excel 严格匹配，再操作施耐德 Vendor Portal 完成提交前制单。稳定规则由随技能分发的确定性 Python runtime 执行，Agent 负责任务选择、验证码识别与人工兜底、提交前硬停止、异常解释和录像证据交付。
+
+业务人员推荐提示语：
+
+> 处理对账单 `<对账单号>`，做到施耐德最终确认页后停下，全程录屏，不提交、不回写 T100。
 
 ## 先判断用户要做哪一步
 
@@ -13,11 +17,24 @@ description: 唯恩电气 T100→施耐德 Vendor Portal 发票录入技能。�
 |---|---|---|
 | 查当前有哪些发票、对账单 | `list` | 否 |
 | 检查 T100 数据和 Excel 是否可用 | `preflight` | 否 |
-| 获取施耐德登录验证码 | `captcha` | 否 |
-| 自动操作到施耐德最终确认页，但不确认 | `run` | 登录并填写，但不最终确认 |
-| 明确要求提交某个对账单 | `commit` | 是，施耐德最终确认 |
+| 获取施耐德登录验证码（供自动识别） | `captcha` | 否 |
+| 处理对账单、做到最终确认页、全程录屏 | `prepare` | 只填写并生成确认页，不最终确认 |
+| 要求最终提交 | `commit` | 当前禁用，返回 `ie_mode_required` |
 
-不要把“处理一下发票”“跑一下流程”自动解释成最终提交。只有用户在当前对话中明确确认了具体对账单号，才能执行 `commit`。
+“处理对账单”“录入发票”“跑一下流程”默认解释为 `prepare`，绝不能推断为最终提交。当前 Chromium 执行器无论用户如何措辞都不得点击最终“确认”，也不得回写 T100。
+
+### 正常用户交互保持简洁
+
+不要要求用户在提示语里复述金额、行数、检查项、结构化结果字段或技术步骤。真实使用时，用户通常只需要参与两件事：
+
+1. 指定要处理的对账单；只有一条明确待办时，可直接确认该单；
+2. 自动识别验证码达到失败上限时，人工读取最新验证码。
+
+到达最终确认页后直接停止并交付录像，不再询问是否由当前环境提交。
+
+验证码默认由 Agent 自动识别（见第 3 节），不打断用户；只有自动识别连续失败达到上限时，才请用户人工读取验证码。
+
+T100/Excel 匹配、网页逐行入篮、金额和发票字段复核、结果判定与证据保存都由 runtime 内部强制执行。Agent 默认只回报当前进度、关键结果和需要用户做的下一件事；异常时再展开诊断信息。
 
 ## 运行入口
 
@@ -66,7 +83,7 @@ python3 "$SKILL_DIR/scripts/wain_invoice.py" doctor --probe-network
 按用户请求的安全边界决定探测范围：
 
 - 只做 `list` / `preflight` 时，不要求探测施耐德门户，也不要为了“完整 doctor”额外访问门户；直接执行相应只读命令，T100 查询与 Excel 接口会在流程中实际验证。
-- 要执行 `captcha` / `run` / `commit` 时，才运行 `doctor --probe-network`，并要求 `runtimeReady=true`、`t100OrderReachable=true`、`schneiderPortalReachable=true`。
+- 要执行 `captcha` / `prepare` 时，才运行 `doctor --probe-network`，并要求 `runtimeReady=true`、`t100OrderReachable=true`、`schneiderPortalReachable=true`。
 
 不要把门户 URL 出现在配置或日志中误解为已经登录或访问门户；是否访问以运行动作和证据为准。
 
@@ -115,9 +132,11 @@ python3 "$SKILL_DIR/scripts/wain_invoice.py" preflight \
 
 特别注意：`actions=0` 只证明没有网页写动作，**不能证明预检成功**。空数据时应明确写出“Excel 未下载、内容核对未执行”。
 
-## 3. 人工验证码接力
+## 3. 验证码自动识别与人工兜底
 
-施耐德验证码不能绕过，也不能用 OCR 或第三方打码。先在 ACS 中建立登录会话：
+施耐德验证码不能绕过，也禁止把验证码图片上传到外部 OCR 服务或第三方打码平台。验证码由 Agent 在 workspace 内直接读取 `captchaPath` 图片、用自身视觉能力识别；自动识别连续失败 3 次后才请用户人工读取。
+
+先在 ACS 中建立登录会话：
 
 ```bash
 python3 "$SKILL_DIR/scripts/wain_invoice.py" captcha \
@@ -131,50 +150,58 @@ python3 "$SKILL_DIR/scripts/wain_invoice.py" captcha \
 - `challengeFile`：保存同一个 `JSESSIONID` 的受限会话文件；
 - `expiresInSeconds`：当前为 600 秒。
 
-把 `captchaPath` 对应图片展示给用户，请用户人工读取。下一步必须同时使用该验证码和原样返回的 `challengeFile`，不能重新生成登录页后复用旧验证码。
+然后按以下自动识别流程处理，默认不向用户展示验证码、不等待用户输入：
 
-## 4. 操作到最终确认页
+1. Agent 直接读取 `captchaPath` 图片，识别其中的 4-6 位字母数字字符；只输出图片中实际可见的字符，不猜测、不复用任何历史验证码。
+2. 把识别结果连同本次返回的 `challengeFile` 一起传给 `prepare`。
+3. 若 `prepare` 报错“施耐德登录未成功，可能是验证码或账号密码错误”，视为本次验证码识别失败：重新执行 `captcha` 获取**全新**图片和 `challengeFile`，再次识别并尝试。登录失败后旧验证码和旧 `challengeFile` 一律作废，禁止复用。
+4. 自动识别最多尝试 3 次（即最多 3 轮 captcha → 识别 → prepare）。3 次全部因验证码原因登录失败后，把最新一张 `captchaPath` 图片展示给用户，请用户人工读取，并用用户提供的验证码配最新 `challengeFile` 做最后一次尝试。
+5. 若错误不是验证码原因（网络不可达、会话过期、页面结构异常、账号被锁等），不占用识别重试次数，直接按异常诊断处理并报告停在哪一步；会话超过 `expiresInSeconds` 则重新执行 `captcha` 并重新开始识别计数。
+
+识别失败重试属于正常流程，前两次失败不需要打扰用户，只需在最终进度回报中说明“验证码自动识别第 N 次成功”或“已转人工读取”。
+
+## 4. 提交前制单到最终确认页
 
 ```bash
-python3 "$SKILL_DIR/scripts/wain_invoice.py" run \
+python3 "$SKILL_DIR/scripts/wain_invoice.py" prepare \
   --mode real \
   --task-reference "<对账单号>" \
-  --captcha "<用户人工读取的验证码>" \
+  --captcha "<按第 3 节流程获得的验证码>" \
   --challenge-file "<captcha 返回的 challengeFile>"
 ```
 
-runtime 先用 HTTP 表单复用验证码会话登录，再把同一组 cookies 注入 ACS Playwright Chromium。旧站的 IE 建议提示按 IE11 User-Agent 兼容；业务操作、截图、DOM 和下载均留在当前 workspace。`run` 到达最终确认页并复核四个发票字段后停止，不点击最终“确认”。
+runtime 先用 HTTP 表单复用验证码会话登录，再把同一组 cookies 注入 Playwright Chromium。页面打开后会在顶层页面与所有 frame 中寻找真正可交互的控件，完成明细匹配、金额核对、发票字段填写、检查结果为零和最终确认页四字段复核。
 
-## 5. 最终提交
+`prepare` 强制全程录像，并在最终确认页硬性停止。成功结果必须同时满足：
 
-最终确认是客户生产系统写操作。执行前必须在当前对话中再次向用户展示：
+- `outcome="confirmation_reached"`；
+- `websiteReached=true`；
+- `websiteCommitted=false`；
+- `t100WrittenBack=false`；
+- `videoPaths` 至少包含一个实际存在的 `.webm` 文件。
 
-- 对账单号；
-- 发票号码；
-- 原币税前、税额、含税金额；
-- “本次会确认施耐德页面，但当前不会回写 T100”。
+## 5. 最终提交当前禁用
 
-用户明确确认具体对账单后，三个引用参数必须完全一致：
+施耐德生产提交依赖 Microsoft Edge 的 Internet Explorer 模式，当前 Chromium 执行器不具备该环境。`commit` 命令只返回：
 
-```bash
-python3 "$SKILL_DIR/scripts/wain_invoice.py" commit \
-  --mode real \
-  --task-reference "<对账单号>" \
-  --commit-reference "<同一对账单号>" \
-  --confirm-submit "<同一对账单号>" \
-  --captcha "<用户人工读取的验证码>" \
-  --challenge-file "<captcha 返回的 challengeFile>"
+```json
+{
+  "status": "blocked",
+  "reason": "ie_mode_required",
+  "websiteCommitted": false,
+  "t100WrittenBack": false
+}
 ```
 
-脚本会在点击前再次复核发票号、日期、含税金额和税额，点击后必须观察到明确成功状态。只有结构化输出明确为 `outcome="website_committed"` 且 `websiteCommitted=true`，并且运行日志与证据目录相互印证，才能报告已提交。不能根据“调用的是 `commit` 命令”、工具退出码或 wrapper 自述自行推断成功。
+禁止通过 JavaScript shim、直接提交表单、HTTP 请求或其他旁路绕过该限制。即使用户明确要求提交，当前 Skill 也只能执行 `prepare` 并说明最终确认需要 IE 模式环境。
 
 ## 执行环境边界
 
-- 权威执行环境是 Agent SaaS 的 ACS Linux Sandbox，不使用 Windows Hand。
-- 施耐德旧站公开登录页只是通过 User-Agent 弹出 IE 建议；登录表单本身是标准 HTTP POST。runtime 使用 HTTP 会话解决多轮验证码接力，再由 Playwright Chromium执行后续页面操作。
-- 客户说明“Chrome 无法提交数据”仍是待真实联调验证的事实约束。若最终提交在 Chromium 中失败，应保留当次 DOM、网络结果和表单字段，在 ACS 内补直接 HTTP 表单提交；不能因此把执行环境改回客户 Windows。
-- `doctor --probe-network` 若失败，先解决客户接口公网映射/白名单或 ACS 出口策略，不引入本地执行端。
-- Windows 双击 EXE 只保留为历史现场备份，不是 Agent SaaS 产品链路。
+- 当前执行器使用 Playwright Chromium，只负责提交前制单，不负责生产提交。
+- 施耐德旧站登录表单可通过 HTTP 会话完成验证码接力，后续页面可由 Chromium 操作到最终确认页。
+- 用户现场确认生产提交必须使用 Microsoft Edge 的 Internet Explorer 模式；目标网址加入 IE 模式页面后只有 30 天有效期。
+- 当前 Skill 不连接 Windows IE 模式环境，因此 `commit` 必须硬阻塞，不能用 User-Agent、JavaScript shim、直接 HTTP 表单提交等方式冒充兼容环境。
+- `doctor --probe-network` 失败时只处理当前查询与制单链路的网络问题，不扩展生产提交能力。
 
 ## 业务规则
 
@@ -184,16 +211,17 @@ python3 "$SKILL_DIR/scripts/wain_invoice.py" commit \
 - 非寄售按收货日期、订单号+行号跨页精确匹配，不猜测、不模糊匹配；
 - 寄售日期区间必须只返回一行，且汇总金额等于 T100 原币税前；
 - 最终确认页四字段逐标签核对；
-- 当前客户允许网页提交，但尚未提供 T100 回写接口，成功后必须明确记录“施耐德已确认、T100 未回写”。
+- 到达最终确认页后硬性停止；
+- 当前链路不得确认施耐德页面，也不得回写 T100。
 
 ## 结果回报
 
 向用户报告：
 
 1. 本轮处理的精确对账单号；
-2. 完成到哪一步：查询 / 预检 / 等验证码 / 到确认页 / 已确认；
+2. 完成到哪一步：查询 / 预检 / 验证码识别中 / 等用户读验证码 / 已到最终确认页并停止；
 3. 关键核对结果和是否存在异常；
 4. 证据目录；
 5. T100 是否回写。
 
-若 T100 网络不可达、验证码过期、页面字段不一致或最终确认没有明确成功标志，要报告“停在哪一步、缺什么”，不能使用“完整闭环”“已提交”等表述。
+若 T100 网络不可达、验证码过期、页面字段不一致、未到达最终确认页或录像缺失，要报告“停在哪一步、缺什么”。当前 Skill 在任何情况下都不能使用“已提交”或“已回写 T100”等表述。

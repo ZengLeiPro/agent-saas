@@ -54,12 +54,15 @@ def default_output_root() -> Path:
     return Path.cwd() / "assets" / day / "唯恩施耐德发票"
 
 
-def configure_runtime(output_root: Path) -> None:
+def configure_runtime(output_root: Path, *, record_video: bool = False) -> None:
     if str(RUNTIME_DIR) not in sys.path:
         sys.path.insert(0, str(RUNTIME_DIR))
     output_root.mkdir(parents=True, exist_ok=True)
     os.environ["WAIN_INVOICE_RUNS_DIR"] = str(output_root)
-    os.environ.setdefault("WAIN_INVOICE_DISABLE_VIDEO", "1")
+    if record_video:
+        os.environ.pop("WAIN_INVOICE_DISABLE_VIDEO", None)
+    else:
+        os.environ["WAIN_INVOICE_DISABLE_VIDEO"] = "1"
 
 
 def configured_urls() -> tuple[str | None, str | None]:
@@ -255,11 +258,11 @@ def require_reference(value: str | None, command: str) -> int | None:
 def require_captcha(args: argparse.Namespace) -> int | None:
     if not args.captcha or not args.challenge_file:
         return fail(
-            "施耐德登录需要人工验证码接力。",
+            "施耐德登录需要验证码接力。",
             code=20,
             nextStep=(
                 "先执行 captcha 生成验证码图片和 challenge.json；"
-                "用户人工读取后，把 --captcha 与 --challenge-file 一起传回。"
+                "由 Agent 识别（人工兜底）后，把 --captcha 与 --challenge-file 一起传回。"
             ),
         )
     return None
@@ -267,33 +270,32 @@ def require_captcha(args: argparse.Namespace) -> int | None:
 
 async def execute(args: argparse.Namespace) -> int:
     output_root = Path(args.output_root).resolve() if args.output_root else default_output_root()
-    configure_runtime(output_root)
+    command = args.command
+    configure_runtime(output_root, record_video=command == "prepare")
     from core.skill import run
 
-    command = args.command
-    if command in {"preflight", "run", "commit"}:
+    if command == "commit":
+        return fail(
+            "当前执行环境不具备 Microsoft Edge IE 模式，生产提交已禁用。",
+            code=40,
+            reason="ie_mode_required",
+            taskReference=args.task_reference,
+            websiteCommitted=False,
+            t100WrittenBack=False,
+            nextStep="请使用 prepare 自动制单到最终确认页，再由 IE 模式环境完成提交。",
+        )
+
+    if command in {"preflight", "prepare"}:
         blocked = require_reference(args.task_reference, command)
         if blocked is not None:
             return blocked
 
-    if command in {"run", "commit"}:
+    if command == "prepare":
         blocked = require_captcha(args)
         if blocked is not None:
             return blocked
 
     commit_reference = None
-    if command == "commit":
-        values = {
-            args.task_reference,
-            args.commit_reference,
-            args.confirm_submit,
-        }
-        if None in values or len(values) != 1:
-            return fail(
-                "最终提交的 task/commit/confirm 三个对账单号必须完整且完全一致。",
-                code=12,
-            )
-        commit_reference = args.commit_reference
 
     result = await run(
         "schneider",
@@ -301,6 +303,7 @@ async def execute(args: argparse.Namespace) -> int:
         task_reference=args.task_reference,
         commit_reference=commit_reference,
         preflight_only=command == "preflight",
+        prepare_only=command == "prepare",
         interactive=False,
         captcha_value=getattr(args, "captcha", None),
         challenge_file=getattr(args, "challenge_file", None),
@@ -333,8 +336,7 @@ async def execute(args: argparse.Namespace) -> int:
 
     expected_outcomes = {
         "preflight": "preflight_passed",
-        "run": "confirmation_reached",
-        "commit": "website_committed",
+        "prepare": "confirmation_reached",
     }
     expected = expected_outcomes[command]
     if outcome != expected:
@@ -353,18 +355,12 @@ async def execute(args: argparse.Namespace) -> int:
         (bool(result.get("excelDownloaded")), "excelDownloaded 必须为 true"),
         (bool(excel_path) and Path(excel_path).is_file(), "excelPath 必须指向实际文件"),
     ]
-    if command == "run":
+    if command == "prepare":
         invariants.extend(
             [
-                (bool(result.get("websiteReached")), "run 必须实际到达最终确认页"),
-                (not bool(result.get("websiteCommitted")), "run 不得执行最终确认"),
-            ]
-        )
-    elif command == "commit":
-        invariants.extend(
-            [
-                (bool(result.get("websiteReached")), "commit 必须实际到达最终确认页"),
-                (bool(result.get("websiteCommitted")), "commit 必须观察到最终确认成功"),
+                (bool(result.get("websiteReached")), "prepare 必须实际到达最终确认页"),
+                (not bool(result.get("websiteCommitted")), "prepare 不得执行最终确认"),
+                (not bool(result.get("t100WrittenBack")), "prepare 不得回写 T100"),
             ]
         )
     violations = [message for ok, message in invariants if not ok]
@@ -376,6 +372,22 @@ async def execute(args: argparse.Namespace) -> int:
             taskReference=args.task_reference,
             evidenceRoot=str(output_root),
             violations=violations,
+            result=result,
+        )
+
+    evidence_dir = result.get("evidenceDir")
+    video_paths = []
+    if evidence_dir:
+        video_dir = Path(evidence_dir) / "video"
+        if video_dir.is_dir():
+            video_paths = [str(path) for path in sorted(video_dir.glob("*.webm"))]
+    if command == "prepare" and not video_paths:
+        return fail(
+            "prepare 已到达确认页，但未生成浏览器录像，禁止报告成功。",
+            code=33,
+            command=command,
+            taskReference=args.task_reference,
+            evidenceRoot=str(output_root),
             result=result,
         )
 
@@ -392,7 +404,8 @@ async def execute(args: argparse.Namespace) -> int:
             "websiteCommitted": bool(result.get("websiteCommitted")),
             "t100WrittenBack": bool(result.get("t100WrittenBack")),
             "evidenceRoot": str(output_root),
-            "evidenceDir": result.get("evidenceDir"),
+            "evidenceDir": evidence_dir,
+            "videoPaths": video_paths,
             "message": result.get("message"),
         }
     )
@@ -423,17 +436,14 @@ def build_parser() -> argparse.ArgumentParser:
     captcha_parser.add_argument("--task-reference", required=True)
     captcha_parser.add_argument("--output-root")
 
-    for name in ("preflight", "run", "commit"):
+    for name in ("preflight", "prepare", "commit"):
         child = subparsers.add_parser(name)
         child.add_argument("--mode", choices=("mock", "real"), default="real")
         child.add_argument("--task-reference")
         child.add_argument("--output-root")
-        if name in {"run", "commit"}:
+        if name == "prepare":
             child.add_argument("--captcha")
             child.add_argument("--challenge-file")
-        if name == "commit":
-            child.add_argument("--commit-reference")
-            child.add_argument("--confirm-submit")
     return parser
 
 

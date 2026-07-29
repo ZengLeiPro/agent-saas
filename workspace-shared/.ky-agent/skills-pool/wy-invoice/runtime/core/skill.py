@@ -68,6 +68,7 @@ async def run(
     task_reference: str | None = None,
     commit_reference: str | None = None,
     preflight_only: bool = False,
+    prepare_only: bool = False,
     interactive: bool = False,
     captcha_value: str | None = None,
     challenge_file: str | None = None,
@@ -105,6 +106,7 @@ async def run(
                 task_reference=task_reference,
                 commit_reference=commit_reference,
                 preflight_only=preflight_only,
+                prepare_only=prepare_only,
                 interactive=interactive,
                 captcha_value=captcha_value,
                 challenge_file=challenge_file,
@@ -354,7 +356,7 @@ def main():
     p.add_argument(
         "--captcha",
         default=None,
-        help="人工读取的施耐德登录验证码；必须与 --challenge-file 属于同一会话",
+        help="识别出的施耐德登录验证码（Agent 自动识别，人工兜底）；必须与 --challenge-file 属于同一会话",
     )
     p.add_argument(
         "--challenge-file",

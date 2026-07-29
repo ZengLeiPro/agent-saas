@@ -11,10 +11,10 @@ from pathlib import Path
 
 
 HEADER_ALIASES = {
-    "remark": {"发票备注栏", "发票备注", "备注"},
-    "receipt_date": {"收货日期", "收货日", "收货时间"},
-    "order_no": {"订单号", "采购订单号", "po号", "po"},
-    "line_no": {"行号", "订单行号", "po行号"},
+    "remark": ("发票备注栏", "发票备注", "备注"),
+    "receipt_date": ("收货日期", "收货日", "收货时间"),
+    "order_no": ("订单号", "采购订单号", "po号", "po"),
+    "line_no": ("行号", "订单行号", "po行号"),
 }
 
 
@@ -110,7 +110,7 @@ def load_match_data(
     reconciliation_name: str = "",
 ) -> MatchData:
     path = Path(excel_path)
-    matrix, datemode = _read_matrix(path)
+    matrix, datemode = _read_match_matrix(path)
     header_index, columns = _find_header(matrix)
     expected_remark = normalize_text(invoice_remark)
     matched = []
@@ -172,18 +172,57 @@ def _read_matrix(path: Path) -> tuple[list[list], int | None]:
     raise ValueError(f"只支持 .xlsx/.xls 对账文件：{path}")
 
 
+def _read_match_matrix(path: Path) -> tuple[list[list], int | None]:
+    suffix = path.suffix.lower()
+    if suffix == ".xlsx":
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        try:
+            for sheet in workbook.worksheets:
+                rows = [list(row) for row in sheet.iter_rows(values_only=True)]
+                try:
+                    _find_header(rows)
+                except ValueError:
+                    continue
+                return rows, None
+        finally:
+            workbook.close()
+    elif suffix == ".xls":
+        import xlrd
+
+        workbook = xlrd.open_workbook(path)
+        for sheet in workbook.sheets():
+            rows = [sheet.row_values(index) for index in range(sheet.nrows)]
+            try:
+                _find_header(rows)
+            except ValueError:
+                continue
+            return rows, workbook.datemode
+    else:
+        raise ValueError(f"只支持 .xlsx/.xls 对账文件：{path}")
+    raise ValueError(
+        "对账 Excel 所有工作表的前 30 行均未找到完整表头："
+        "发票备注栏/收货日期/订单号/行号。"
+    )
+
+
 def _find_header(matrix: list[list]) -> tuple[int, dict[str, int]]:
     normalized_aliases = {
-        key: {normalize_text(alias).lower() for alias in aliases}
+        key: tuple(normalize_text(alias).lower() for alias in aliases)
         for key, aliases in HEADER_ALIASES.items()
     }
     for row_index, values in enumerate(matrix[:30]):
         columns = {}
+        ranks = {}
         for column_index, value in enumerate(values):
             header = normalize_text(value).lower()
             for key, aliases in normalized_aliases.items():
                 if header in aliases:
-                    columns[key] = column_index
+                    rank = aliases.index(header)
+                    if key not in ranks or rank < ranks[key]:
+                        columns[key] = column_index
+                        ranks[key] = rank
         if columns.keys() >= HEADER_ALIASES.keys():
             return row_index, columns
     raise ValueError(

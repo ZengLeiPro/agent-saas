@@ -13,8 +13,12 @@ python3 - <<'PY'
 from playwright.sync_api import sync_playwright
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True, args=["--disable-dev-shm-usage"])
-    page = browser.new_page()
+    browser = p.chromium.launch(
+        headless=True,
+        channel="chromium",
+        args=["--disable-dev-shm-usage"],
+    )
+    page = browser.new_page(locale="zh-CN", timezone_id="Asia/Shanghai")
     page.set_content("<h1>ok</h1>")
     assert page.inner_text("body") == "ok"
     browser.close()

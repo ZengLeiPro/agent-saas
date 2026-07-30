@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CircleAlert, CircleCheck, Database, GripVertical, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { CircleAlert, CircleCheck, Copy, Database, GripVertical, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { authFetch } from "@/lib/authFetch";
 import { refreshAll } from "@/lib/refreshBus";
 import { Badge } from "@/components/ui/badge";
@@ -138,6 +138,23 @@ function moveItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   const [moved] = next.splice(fromIndex, 1);
   next.splice(toIndex, 0, moved!);
   return next;
+}
+
+function nextCopyValue(base: string, existingValues: string[]): string {
+  const existing = new Set(existingValues);
+  if (!existing.has(base)) return base;
+  let suffix = 2;
+  while (existing.has(`${base} ${suffix}`)) suffix += 1;
+  return `${base} ${suffix}`;
+}
+
+function nextCopyId(modelId: string, models: EditableModel[]): string {
+  const base = `${modelId.trim() || "model"}-copy`;
+  const existing = new Set(models.map((model) => model.id));
+  if (!existing.has(base)) return base;
+  let suffix = 2;
+  while (existing.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
 }
 
 const emptyModel = (): EditableModel => ({ id: "", name: "", value: "" });
@@ -523,6 +540,47 @@ export function ModelManager() {
     setSelectedPanel({ type: "model", groupId, modelId: id });
   }, [updateModels]);
 
+  const copyModel = useCallback((groupId: string, modelId: string) => {
+    const group = models?.groups.find((item) => item.id === groupId);
+    const modelIndex = group?.models.findIndex((item) => item.id === modelId) ?? -1;
+    const model = group?.models[modelIndex];
+    if (!group || !model) return;
+
+    const id = nextCopyId(model.id, group.models);
+    const nameBase = `${model.name.trim() || model.id.trim() || "新模型"} 副本`;
+    const name = nextCopyValue(nameBase, group.models.map((item) => item.name));
+    const copiedModel: EditableModel = {
+      ...model,
+      id,
+      name,
+      pricing: model.pricing ? { ...model.pricing } : undefined,
+      extraBody: model.extraBody ? { ...model.extraBody } : undefined,
+      input_modalities: model.input_modalities ? [...model.input_modalities] : undefined,
+      tool_choice_modes: model.tool_choice_modes ? [...model.tool_choice_modes] : undefined,
+    };
+
+    updateModels((current) => ({
+      ...current,
+      groups: current.groups.map((item) => item.id === groupId
+        ? { ...item, models: [...item.models.slice(0, modelIndex + 1), copiedModel, ...item.models.slice(modelIndex + 1)] }
+        : item),
+    }));
+    setAdvancedText((current) => {
+      const groupText = current[groupId];
+      const sourceExtraBody = groupText?.modelExtraBody[modelId] ?? (model.extraBody ? stringifyJson(model.extraBody) : "");
+      const sourceThinking = groupText?.modelThinking[modelId] ?? (model.thinking !== undefined ? stringifyJson(model.thinking) : "");
+      return {
+        ...current,
+        [groupId]: {
+          ...(groupText ?? { groupExtraBody: "", groupThinking: "", modelExtraBody: {}, modelThinking: {} }),
+          modelExtraBody: { ...(groupText?.modelExtraBody ?? {}), [id]: sourceExtraBody },
+          modelThinking: { ...(groupText?.modelThinking ?? {}), [id]: sourceThinking },
+        },
+      };
+    });
+    setSelectedPanel({ type: "model", groupId, modelId: id });
+  }, [models, updateModels]);
+
   const removeModel = useCallback((groupId: string, modelId: string) => {
     updateModels((current) => {
       const groups = current.groups.map((group) => {
@@ -807,6 +865,16 @@ export function ModelManager() {
                                         <span className={cn("block truncate", selected && "font-medium")}>{model.name || model.id || "未命名模型"}</span>
                                         <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">{model.value || model.id || "未填写 value"}</span>
                                       </span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => copyModel(group.id, model.id)}
+                                      disabled={platformReadOnly}
+                                      className="mr-1 flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                                      aria-label={`复制模型 ${model.name || model.id || "未命名模型"}`}
+                                      title="在当前分组中复制此模型"
+                                    >
+                                      <Copy className="size-3.5" />
                                     </button>
                                   </div>
                                 );

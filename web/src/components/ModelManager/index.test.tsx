@@ -20,7 +20,16 @@ const initialModels = {
       id: "main",
       name: "主分组",
       models: [
-        { id: "gpt", name: "GPT", value: "gpt" },
+        {
+          id: "gpt",
+          name: "GPT",
+          value: "gpt",
+          pricing: { input: 1, output: 2, cacheCreation: 3, cacheRead: 4 },
+          thinking: { type: "enabled" },
+          extraBody: { temperature: 0.2 },
+          input_modalities: ["text", "image"],
+          context_window: 128000,
+        },
         { id: "mini", name: "Mini", value: "mini" },
       ],
     },
@@ -102,6 +111,25 @@ describe("ModelManager 排序", () => {
     const payload = JSON.parse(String(putCall?.[1]?.body));
     expect(payload.models.groups.map((group: { id: string }) => group.id)).toEqual(["backup", "main"]);
     expect(payload.models.groups[1].models.map((model: { id: string }) => model.id)).toEqual(["mini", "gpt"]);
+  });
+
+  it("在当前分组复制完整模型配置并自动选中新副本", async () => {
+    const user = userEvent.setup();
+    render(<ModelManager />);
+
+    await user.click(await screen.findByRole("button", { name: "复制模型 GPT" }));
+    expect(screen.getByDisplayValue("gpt-copy")).toBeTruthy();
+    expect(screen.getByDisplayValue("GPT 副本")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "保存并生效" }));
+
+    await waitFor(() => {
+      expect(vi.mocked(authFetch).mock.calls.some((call) => call[1]?.method === "PUT")).toBe(true);
+    });
+    const putCall = vi.mocked(authFetch).mock.calls.find((call) => call[1]?.method === "PUT");
+    const payload = JSON.parse(String(putCall?.[1]?.body));
+    const groupModels = payload.models.groups[0].models;
+    expect(groupModels.map((model: { id: string }) => model.id)).toEqual(["gpt", "gpt-copy", "mini"]);
+    expect(groupModels[1]).toEqual({ ...groupModels[0], id: "gpt-copy", name: "GPT 副本" });
   });
 
   it("保存分组级 Codex subscription transport 显式选择", async () => {

@@ -77,6 +77,10 @@ describe("ScenariosPanel V3", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "看它如何完成" }));
     expect(screen.getByRole("heading", { name: guided.title })).toBeTruthy();
+    expect(screen.getByText("0 / 6")).toBeTruthy();
+    expect(screen.getByText("接入后启动")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     expect(screen.getByText("1 / 6")).toBeTruthy();
     expect(screen.getByText("业务步骤 1")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "返回" }));

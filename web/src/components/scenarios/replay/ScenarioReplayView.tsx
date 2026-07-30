@@ -89,8 +89,8 @@ export function ScenarioReplayView({
   /** 测试可缩短间隔；生产默认模拟真实模型流式输出速度。 */
   typewriterIntervalMs?: number;
 }) {
-  // 打开即显示第一步，避免过去 0/N 的空白首屏。
-  const [stepIndex, setStepIndex] = useState(1);
+  // 首屏只显示用户发来的信息；由用户主动推进后，才展示第一步 Agent 输出。
+  const [stepIndex, setStepIndex] = useState(0);
   const [decisions, setDecisions] = useState<Record<number, "approved" | "rejected">>({});
   const [artifact, setArtifact] = useState<{ path: string; fileName: string } | null>(null);
   const [streamedTextLengths, setStreamedTextLengths] = useState<Record<string, number>>({});
@@ -98,16 +98,21 @@ export function ScenarioReplayView({
 
   const total = script.steps.length;
   const atEnd = stepIndex >= total;
-  const currentStepIndex = Math.max(0, stepIndex - 1);
-  const currentStep = script.steps[currentStepIndex];
-  const currentDecision = decisions[currentStepIndex];
+  const currentStepIndex = stepIndex - 1;
+  const currentStep = currentStepIndex >= 0 ? script.steps[currentStepIndex] : undefined;
+  const currentDecision = currentStepIndex >= 0 ? decisions[currentStepIndex] : undefined;
 
-  const visibleBlocks = useMemo(() => script.steps.slice(0, stepIndex).flatMap((step, index) => [
-    ...step.blocks,
-    ...(decisions[index] === "approved" ? step.approval?.approvedBlocks ?? [] : []),
-    // 退回同样有下文：客户要看到"退回之后系统怎么处理"，而不是一个死按钮
-    ...(decisions[index] === "rejected" ? step.approval?.rejectedBlocks ?? [] : []),
-  ]), [decisions, script, stepIndex]);
+  const visibleBlocks = useMemo(() => {
+    if (stepIndex === 0) {
+      return script.steps[0]?.blocks.filter((block) => block.kind === "prompt") ?? [];
+    }
+    return script.steps.slice(0, stepIndex).flatMap((step, index) => [
+      ...step.blocks,
+      ...(decisions[index] === "approved" ? step.approval?.approvedBlocks ?? [] : []),
+      // 退回同样有下文：客户要看到"退回之后系统怎么处理"，而不是一个死按钮
+      ...(decisions[index] === "rejected" ? step.approval?.rejectedBlocks ?? [] : []),
+    ]);
+  }, [decisions, script, stepIndex]);
 
   const typewriterEnabled = typewriterIntervalMs > 0;
   const activeTextBlock = useMemo(() => {
@@ -176,11 +181,11 @@ export function ScenarioReplayView({
     setStepIndex((i) => Math.min(total, i + 1));
   }, [gateBlocked, total]);
   const prev = useCallback(() => {
-    setStepIndex((i) => Math.max(1, i - 1));
+    setStepIndex((i) => Math.max(0, i - 1));
     setArtifact(null);
   }, []);
   const reset = useCallback(() => {
-    setStepIndex(1);
+    setStepIndex(0);
     setDecisions({});
     setArtifact(null);
     setStreamedTextLengths({});
@@ -342,7 +347,7 @@ export function ScenarioReplayView({
                 <div className="grid gap-2 md:grid-cols-[1fr_auto_1fr] md:items-center">
                   <span className="hidden md:block" aria-hidden="true" />
                   <div role="toolbar" aria-label="演示回放控制" className="flex flex-wrap items-center justify-center gap-2">
-                    <Button variant="outline" size="sm" onClick={prev} disabled={stepIndex === 1} className="gap-1">
+                    <Button variant="outline" size="sm" onClick={prev} disabled={stepIndex === 0} className="gap-1">
                       <ChevronLeft className="size-4" />
                       上一步
                     </Button>
@@ -350,7 +355,7 @@ export function ScenarioReplayView({
                       {isStreaming ? "生成中" : gateBlocked ? "需先批准" : "下一步"}
                       <ChevronRight className="size-4" />
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={reset} disabled={stepIndex === 1 && Object.keys(decisions).length === 0} className="gap-1">
+                    <Button variant="ghost" size="sm" onClick={reset} disabled={stepIndex === 0 && Object.keys(decisions).length === 0} className="gap-1">
                       <RotateCcw className="size-4" />
                       重放
                     </Button>

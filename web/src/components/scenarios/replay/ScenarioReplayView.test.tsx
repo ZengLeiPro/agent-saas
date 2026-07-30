@@ -40,10 +40,16 @@ function clickNext(times: number) {
 }
 
 describe('ScenarioReplayView', () => {
-  it('打开即显示第一步，不再出现 0/N 空屏', () => {
+  it('打开时只显示用户消息，点击下一步后才显示第一条 Agent 输出', () => {
     renderReplay();
-    expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+    expect(screen.getByText(`0 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
+    expect(screen.queryByText('确认问题范围与可用资料')).toBeNull();
+    expect(screen.queryByText('企业系统实况')).toBeNull();
+
+    clickNext(1);
+    expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+    expect(screen.getByText('确认问题范围与可用资料')).toBeTruthy();
   });
 
   it('回放控制位于会话列底部，替代输入框而非横跨右侧面板', () => {
@@ -77,9 +83,12 @@ describe('ScenarioReplayView', () => {
     };
 
     render(<ScenarioReplayView script={script} onExit={vi.fn()} typewriterIntervalMs={10} />);
+    expect(screen.getByText('开始')).toBeTruthy();
+    expect(screen.queryByText('逐字输出测试')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /下一步/ }));
+
     const nextButton = screen.getByRole('button', { name: /生成中/ });
     expect(nextButton).toHaveProperty('disabled', true);
-    expect(screen.queryByText('逐字输出测试')).toBeNull();
 
     act(() => vi.advanceTimersByTime(10));
     expect(screen.getByText('逐')).toBeTruthy();
@@ -97,6 +106,8 @@ describe('ScenarioReplayView', () => {
     renderReplay();
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
     clickNext(1);
+    expect(screen.getByText('确认问题范围与可用资料')).toBeTruthy();
+    clickNext(1);
     // 第一步的用户消息仍在；剧本点名的高价值执行行独立成行、不进活动分组。
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
     expect(screen.queryByText(/已完成 .*个工具/)).toBeNull();
@@ -105,7 +116,7 @@ describe('ScenarioReplayView', () => {
 
   it('工具摘要在客户同构视图（debugModeOverride=false）下默认展开可见', () => {
     renderReplay();
-    clickNext(1);
+    clickNext(2);
     // defaultOpen 的执行行首次挂载即展开：业务字段不点击就可见
     // 同一文本也出现在右侧面板工具栏里，说明两处同源；此处只断言会话流里有
     expect(screen.getAllByText('制度中心 · 财务与行政').length).toBeGreaterThan(0);
@@ -122,25 +133,26 @@ describe('ScenarioReplayView', () => {
   it('空格与方向键推进/回退（与客户演示稿一致，禁止自动播放）', () => {
     renderReplay();
     fireEvent.keyDown(window, { key: ' ' });
-    expect(screen.getByText(`2 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+    expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
     fireEvent.keyDown(window, { key: 'ArrowRight' });
-    expect(screen.getByText(`3 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
-    fireEvent.keyDown(window, { key: 'ArrowLeft' });
     expect(screen.getByText(`2 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
   });
 
-  it('走到末步时下一步禁用，重放回到第一步', () => {
+  it('走到末步时下一步禁用，重放回到仅有用户消息的初始态', () => {
     renderReplay();
-    clickNext(knowledgeQaScript.steps.length - 1);
+    clickNext(knowledgeQaScript.steps.length);
     expect(screen.getByRole('button', { name: /下一步/ })).toHaveProperty('disabled', true);
     expect(screen.getByText('演示结束')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /重放/ }));
-    expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+    expect(screen.getByText(`0 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+    expect(screen.queryByText('确认问题范围与可用资料')).toBeNull();
   });
 
   it('末步产物卡走真实 [FILE] 通道，点击后右侧渲染剧本内嵌 HTML', () => {
     renderReplay();
-    clickNext(knowledgeQaScript.steps.length - 1);
+    clickNext(knowledgeQaScript.steps.length);
     // 该文件名同时出现在会话流产物卡与面板留痕卡里，取会话流那个（DOM 在前）
     const card = screen.getByText('制度条款引用.html');
     fireEvent.click(card);
@@ -152,17 +164,17 @@ describe('ScenarioReplayView', () => {
 });
 
 describe('右侧企业系统面板', () => {
-  // 07-26 修订：原断言是「第一步不出现面板」。实机走查发现首屏因此只有一句提问 +
-  // 80% 空白，客户第一眼看不到「它接到了哪些系统」。剧本改为第一步就做一次真实的
-  // 范围确认工具调用——面板依旧跟着工具执行出现，没有凭空冒出来的通道。
-  it('面板跟着第一次工具执行出现，首屏就不是空的', () => {
+  it('初始态不显示面板，第一次工具执行后再出现', () => {
     renderReplay();
+    expect(screen.queryByText('企业系统实况')).toBeNull();
+    clickNext(1);
     expect(screen.getByText('企业系统实况')).toBeTruthy();
     expect(screen.getByText('确认问题范围与可用资料')).toBeTruthy();
   });
 
   it('可拖拽调整宽度，双击恢复默认宽度', () => {
     renderReplay();
+    clickNext(1);
     const divider = screen.getByRole('separator', { name: '调整右侧看板宽度' });
     const panel = document.querySelector('[data-scenario-replay-panel]') as HTMLElement;
     const container = panel.parentElement as HTMLElement;
@@ -199,7 +211,7 @@ describe('右侧企业系统面板', () => {
 
   it('面板随步骤变化：检索命中 → 条款插入 → 档案填充 → 留痕', () => {
     renderReplay();
-    clickNext(1);
+    clickNext(2);
     expect(screen.getAllByText('命中').length).toBeGreaterThan(0);
 
     clickNext(1);
@@ -215,7 +227,7 @@ describe('右侧企业系统面板', () => {
 
   it('后退＝少喂 patch，面板回到上一步状态（无需逆运算）', () => {
     renderReplay();
-    clickNext(3);
+    clickNext(4);
     expect(screen.getByText('600 元/晚')).toBeTruthy();
     fireEvent.keyDown(window, { key: 'ArrowLeft' });
     expect(screen.queryByText('600 元/晚')).toBeNull();
@@ -224,7 +236,7 @@ describe('右侧企业系统面板', () => {
 
   it('面板可切 tab，且切过之后不被后续 focus patch 抢走', () => {
     renderReplay();
-    clickNext(1);
+    clickNext(2);
     fireEvent.click(screen.getByRole('button', { name: '操作留痕' }));
     expect(screen.getByText('本次会话的系统动作')).toBeTruthy();
     clickNext(2);
@@ -234,7 +246,7 @@ describe('右侧企业系统面板', () => {
 
   it('产物预览抢占面板，可一键退回系统实况', () => {
     renderReplay();
-    clickNext(knowledgeQaScript.steps.length - 1);
+    clickNext(knowledgeQaScript.steps.length);
     fireEvent.click(screen.getByText('制度条款引用.html'));
     expect(screen.getByTitle('制度条款引用.html')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /系统实况/ }));
@@ -296,6 +308,8 @@ describe('人工审批门禁', () => {
 
   it('未批准时按钮和键盘都不能越过门禁，批准后自动继续并留痕', () => {
     render(<ScenarioReplayView script={approvalScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
+    expect(screen.getByText('0 / 2')).toBeTruthy();
+    clickNext(1);
     expect(screen.getByText('1 / 2')).toBeTruthy();
     expect(screen.getByRole('button', { name: '需先批准' })).toHaveProperty('disabled', true);
 
@@ -310,6 +324,7 @@ describe('人工审批门禁', () => {
 
   it('退回时明确显示未写入系统，并允许重新提交审核', () => {
     render(<ScenarioReplayView script={approvalScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
+    clickNext(1);
     fireEvent.click(screen.getByRole('button', { name: '退回修改' }));
     expect(screen.getByText('已退回修改，未写入业务系统')).toBeTruthy();
     expect(screen.getByRole('button', { name: '重新提交审核' })).toBeTruthy();
@@ -318,6 +333,7 @@ describe('人工审批门禁', () => {
 
   it('退回不是死路：会话里出现退回后的处理，重新提交后消失', () => {
     render(<ScenarioReplayView script={approvalScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
+    clickNext(1);
     fireEvent.click(screen.getByRole('button', { name: '退回修改' }));
     expect(screen.getByText('已停在审核点：业务系统没有任何写入，退回记录已留痕。')).toBeTruthy();
 

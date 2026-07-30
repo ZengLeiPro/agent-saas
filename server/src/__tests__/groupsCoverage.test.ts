@@ -68,6 +68,7 @@ describe('groups routes coverage', () => {
   let agentCwd = '';
   let groupStore: GroupStore;
   let userStore: UserStore;
+  let ownerRecordId = '';
   const servers: Server[] = [];
   const cleanup = new Set<string>();
 
@@ -77,13 +78,14 @@ describe('groups routes coverage', () => {
     groupStore = new GroupStore(join(agentCwd, 'groups.json'));
     userStore = new UserStore(join(agentCwd, 'users.json'));
     // 直接向 store 注入用户记录（避免 create 触发密码 hash 等副作用无关本测试）
-    await userStore.create({
+    const ownerRecord = await userStore.create({
       username: OWNER.username,
       password: 'password123',
       role: OWNER.role,
       tenantId: OWNER.tenantId,
       createdBy: 'system',
     });
+    ownerRecordId = ownerRecord.id;
   });
 
   afterEach(async () => {
@@ -127,6 +129,62 @@ describe('groups routes coverage', () => {
     });
     return sessionId;
   }
+
+  it('GET/PUT /groups-sorting：默认值、清洗顺序与跨请求持久化', async () => {
+    const caller = { ...OWNER, id: ownerRecordId };
+    const first = await groupStore.create({
+      name: '第一组',
+      kind: 'manual',
+      sessionIds: [],
+      userId: ownerRecordId,
+    });
+    const second = await groupStore.create({
+      name: '第二组',
+      kind: 'manual',
+      sessionIds: [],
+      userId: ownerRecordId,
+    });
+    const { server, baseUrl } = await startServer(agentCwd, groupStore, caller, userStore);
+    servers.push(server);
+
+    const initial = await fetch(`${baseUrl}/api/groups-sorting`);
+    expect(initial.status).toBe(200);
+    await expect(initial.json()).resolves.toEqual({
+      mode: 'recent',
+      order: [first.id, second.id],
+    });
+
+    const invalid = await fetch(`${baseUrl}/api/groups-sorting`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'random', order: [] }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const saved = await fetch(`${baseUrl}/api/groups-sorting`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'custom',
+        order: [second.id, 'stale-group', second.id],
+      }),
+    });
+    expect(saved.status).toBe(200);
+    await expect(saved.json()).resolves.toEqual({
+      mode: 'custom',
+      order: [second.id, first.id],
+    });
+    expect(userStore.findById(ownerRecordId)?.groupSorting).toEqual({
+      mode: 'custom',
+      order: [second.id, first.id],
+    });
+
+    const reloaded = await fetch(`${baseUrl}/api/groups-sorting`);
+    await expect(reloaded.json()).resolves.toEqual({
+      mode: 'custom',
+      order: [second.id, first.id],
+    });
+  });
 
   it('GET /groups 只返回本人分组', async () => {
     const ownerRecord = userStore.findByUsername(OWNER.username)!;

@@ -6,6 +6,7 @@ import type { Request, Response } from "express";
 import * as fs from "node:fs/promises";
 import type { GroupStore } from "../data/groups/index.js";
 import type { UserStore } from "../data/users/store.js";
+import type { GroupSortingPref } from "../data/users/types.js";
 import { resolveUserCwd } from "../workspace/resolver.js";
 import {
   findTranscriptOrMetaPathBySessionId,
@@ -139,6 +140,70 @@ export function createGroupsRouter(options: GroupsRouterOptions): Router {
             group.kind !== "cron" || !isMemoryPollJob({ name: group.name }),
         );
       return res.json({ groups });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  /**
+   * GET /api/groups-sorting
+   * 返回当前用户的跨设备分组排序偏好，并按现有可见分组清洗历史顺序。
+   */
+  router.get("/groups-sorting", (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const validIds = groupStore
+        .listByUserId(userId)
+        .filter(
+          (group) =>
+            group.kind !== "cron" || !isMemoryPollJob({ name: group.name }),
+        )
+        .map((group) => group.id);
+      const stored = userStore?.findById(userId)?.groupSorting;
+      res.json({
+        mode: stored?.mode ?? "recent",
+        order: sanitizeOrder(stored?.order, validIds),
+      });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  /**
+   * PUT /api/groups-sorting
+   * 保存当前用户的跨设备分组排序偏好；未知、重复分组 id 会被清洗。
+   */
+  router.put("/groups-sorting", async (req: Request, res: Response) => {
+    try {
+      const { mode, order } = req.body as {
+        mode?: unknown;
+        order?: unknown;
+      };
+      if (
+        (mode !== "recent" && mode !== "custom") ||
+        !Array.isArray(order) ||
+        !order.every((id) => typeof id === "string")
+      ) {
+        res.status(400).json({ error: "mode 或 order 格式不正确" });
+        return;
+      }
+
+      const userId = getUserId(req);
+      const validIds = groupStore
+        .listByUserId(userId)
+        .filter(
+          (group) =>
+            group.kind !== "cron" || !isMemoryPollJob({ name: group.name }),
+        )
+        .map((group) => group.id);
+      const sorting: GroupSortingPref = {
+        mode,
+        order: sanitizeOrder(order, validIds),
+      };
+      if (userStore) {
+        await userStore.updateGroupSorting(userId, sorting);
+      }
+      res.json(sorting);
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }

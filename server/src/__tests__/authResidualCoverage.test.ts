@@ -102,6 +102,7 @@ interface TestRig {
   };
   userStore: UserStore;
   tenantStore: TenantStore;
+  setModelsConfig(modelsConfig: ModelsConfig): void;
   sender: CaptureSender;
   loginLogFilePath: string;
   avatarsDir: string;
@@ -150,6 +151,7 @@ async function makeRig(options: RigOptions = {}): Promise<TestRig> {
   app.set('trust proxy', true);
   app.use(express.json());
   let currentCaller: JwtPayload | undefined = asCaller(superAdmin);
+  let currentModelsConfig = MODELS_CONFIG;
   app.use((req, _res, next) => {
     req.user = currentCaller;
     next();
@@ -163,7 +165,7 @@ async function makeRig(options: RigOptions = {}): Promise<TestRig> {
     loginLogFilePath,
     agentCwd: join(tmpRoot, 'workspaces'),
     sharedDir: join(tmpRoot, 'shared'),
-    modelsConfig: MODELS_CONFIG,
+    getModelsConfig: () => currentModelsConfig,
     ...(options.sms === false
       ? {}
       : {
@@ -187,6 +189,7 @@ async function makeRig(options: RigOptions = {}): Promise<TestRig> {
     users: { superAdmin, pantheonStaff, wainAdmin, wainUser },
     userStore,
     tenantStore,
+    setModelsConfig(modelsConfig) { currentModelsConfig = modelsConfig; },
     sender,
     loginLogFilePath,
     avatarsDir,
@@ -559,6 +562,38 @@ describe('PATCH /me/preferences', () => {
     });
     expect(h.userStore.findById(h.users.wainUser.id)?.preferences?.defaultModel)
       .toBe('openai-agents/kimi');
+  });
+
+  it('模型配置热更新后可立即保存新分组模型为个人默认模型', async () => {
+    h.setCaller(h.users.wainUser);
+    await h.tenantStore.updateSettings('wain', {
+      models: {
+        allowedModels: [],
+        defaultModel: 'openai-agents/kimi',
+        allowUserModelSwitch: true,
+      },
+    });
+    h.setModelsConfig({
+      ...MODELS_CONFIG,
+      groups: [
+        ...MODELS_CONFIG.groups,
+        {
+          id: 'codex',
+          name: 'Codex',
+          models: [{ id: 'gpt-5.6', name: 'GPT 5.6', value: 'gpt-5.6' }],
+        },
+      ],
+    });
+
+    const response = await h.request('/api/auth/me/preferences',
+      jsonInit('PATCH', { defaultModel: 'codex/gpt-5.6' }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      preferences: { defaultModel: 'codex/gpt-5.6' },
+    });
+    expect(h.userStore.findById(h.users.wainUser.id)?.preferences?.defaultModel)
+      .toBe('codex/gpt-5.6');
   });
 
   it('200：增量合并落盘；未知键被 zod 剥离不落库', async () => {

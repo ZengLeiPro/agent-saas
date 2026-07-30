@@ -619,7 +619,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         mcpOAuthService: runtime.mcpOAuthService,
         signupConfigStore: runtime.signupConfigStore,
         secretVault: runtime.secretVault,
-        modelsConfig: config.models,
+        getModelsConfig: () => config.models,
       }),
     );
     // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES

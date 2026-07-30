@@ -339,8 +339,11 @@ export interface AuthRouterDeps {
   secretVault?: SecretVault;
   /** 测试注入：覆盖按配置构建的验证码服务。 */
   loginCodeService?: VerificationCodeService;
-  /** 平台模型配置；用于校验用户默认模型不能越过组织可选模型硬约束。 */
-  modelsConfig?: ModelsConfig;
+  /**
+   * 动态读取平台模型配置；用于校验用户默认模型不能越过组织可选模型硬约束。
+   * 模型配置支持管理端热更新，不能在 Router 创建时捕获旧对象。
+   */
+  getModelsConfig?: () => ModelsConfig | undefined;
 }
 
 function avatarUrl(
@@ -371,7 +374,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     signupConfigStore,
     secretVault,
     loginCodeService,
-    modelsConfig,
+    getModelsConfig,
   } = deps;
   const router = Router();
 
@@ -1595,6 +1598,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       }
       if (parsed.data.defaultModel !== undefined) {
         const tenantSettings = tenantStore?.getSettings(req.user.tenantId);
+        const modelsConfig = getModelsConfig?.();
         if (!modelsConfig || !isModelAllowedForTenant(modelsConfig, tenantSettings, parsed.data.defaultModel)) {
           res.status(400).json({ error: "默认模型不在当前用户可选模型范围内" });
           return;

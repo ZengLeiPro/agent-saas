@@ -696,6 +696,42 @@ describe('processWsEvent - done 终态', () => {
     dispatch({ type: 'done', error: 'boom' }, ctx);
     expect(ctrl.messages[0]).toMatchObject({ type: 'text', content: 'Agent 开小差了，请发送「继续」' });
   });
+
+  it('同一 run 的失败终态重复到达时只处理一次，不污染更早的 user', () => {
+    const ctrl = makeController([
+      { id: 'old', type: 'user', content: 'old', status: 'sent' },
+      { id: 'current', type: 'user', content: 'current', status: 'sent', clientMsgId: 'c1' },
+    ]);
+    const { ctx, hooks } = makeCtx(ctrl, {
+      userMsgIndex: 1,
+      handledTerminalKeysRef: { current: new Set<string>() },
+    });
+
+    dispatch({ type: 'done', runId: 'run-1', error: 'boom' }, ctx);
+    dispatch({ type: 'done', runId: 'run-1', client_msg_id: 'c1', error: 'boom' }, ctx);
+
+    expect(ctrl.messages).toHaveLength(2);
+    expect(ctrl.messages[0]).toMatchObject({ id: 'old', status: 'sent' });
+    expect(ctrl.messages[1]).toMatchObject({ id: 'current', status: 'failed' });
+    expect(hooks.onChatDone).toHaveBeenCalledTimes(2);
+    expect(hooks.onChatDone).toHaveBeenLastCalledWith('c1', 'boom');
+  });
+
+  it('无 client_msg_id 且无当前发送索引时不回扫历史 user，重复提示保持单条', () => {
+    const ctrl = makeController([
+      { id: 'old-1', type: 'user', content: 'old 1', status: 'sent' },
+      { id: 'old-2', type: 'user', content: 'old 2', status: 'sent' },
+    ]);
+    const { ctx } = makeCtx(ctrl, { userMsgIndex: -1 });
+
+    dispatch({ type: 'done', error: 'boom' }, ctx);
+    dispatch({ type: 'done', error: 'boom' }, ctx);
+
+    expect(ctrl.messages).toHaveLength(3);
+    expect(ctrl.messages[0]).toMatchObject({ id: 'old-1', status: 'sent' });
+    expect(ctrl.messages[1]).toMatchObject({ id: 'old-2', status: 'sent' });
+    expect(ctrl.messages[2]).toMatchObject({ type: 'text', content: 'Agent 开小差了，请发送「继续」' });
+  });
 });
 
 describe('processWsEvent - 会话元数据事件', () => {

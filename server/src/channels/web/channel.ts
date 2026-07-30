@@ -810,7 +810,7 @@ export class WebChannel implements BaseChannel {
         });
         break;
       case 'done':
-        emitSession({ type: 'done', client_msg_id: input.clientMsgId });
+        emitSession({ type: 'done', runId: input.runId, client_msg_id: input.clientMsgId });
         this.eventBufferStore.complete(input.sessionId);
         this.activeStreams.delete(streamId);
         this.inProcessOutboundRuns.delete(input.runId);
@@ -854,7 +854,7 @@ export class WebChannel implements BaseChannel {
         clearSessionsListCache();
         break;
       case 'error':
-        emitSession({ type: 'done', client_msg_id: input.clientMsgId, error: input.event.error });
+        emitSession({ type: 'done', runId: input.runId, client_msg_id: input.clientMsgId, error: input.event.error });
         this.eventBufferStore.complete(input.sessionId);
         this.activeStreams.delete(streamId);
         this.inProcessOutboundRuns.delete(input.runId);
@@ -4160,6 +4160,7 @@ function projectRuntimePlatformEvent(
             },
             {
               type: 'done',
+              runId: event.runId,
               ...(options.clientMsgId ? { client_msg_id: options.clientMsgId } : {}),
               ...(terminalError ? { error: terminalError } : {}),
             },
@@ -4192,6 +4193,7 @@ function projectRuntimePlatformEvent(
         return {
           events: [{
             type: 'done',
+            runId: event.runId,
             ...(options.clientMsgId ? { client_msg_id: options.clientMsgId } : {}),
             error: terminalError,
           }],

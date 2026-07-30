@@ -47,6 +47,7 @@ export function setOnNewSession(cb: typeof _onNewSession): void { _onNewSession 
 /** 安装统一 WS 消息处理器，返回 unsubscribe 函数 */
 /** 上次发送 sync 的时间戳（防抖：2s 内不重复发） */
 let lastSyncRequestAt = 0;
+const handledTerminalKeysRef = { current: new Set<string>() };
 
 export function setupWsHandler(): () => void {
   return wsClient.onMessage((envelope: { eventId?: number; eventCursor?: string; seq?: number; data: unknown }) => {
@@ -178,6 +179,7 @@ export function setupWsHandler(): () => void {
       voiceCallbackRef: { current: _voiceCallback },
       streamIdRef: { current: state.streamId },
       runIdRef: { current: state.runId },
+      handledTerminalKeysRef,
       lastEventIdRef: { current: state.lastEventId },
       userMsgIndex: state.userMsgIndex,
       sessionOwnerRef: { current: state.sessionOwner },

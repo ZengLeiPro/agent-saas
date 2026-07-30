@@ -417,6 +417,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const streamNonceRef = useRef(0);
   const streamIdRef = useRef<string | null>(null);
   const runIdRef = useRef<string | null>(null);
+  const handledTerminalKeysRef = useRef(new Set<string>());
   const lastEventIdRef = useRef<number | null>(null);
   const lastEventCursorRef = useRef<string | null>(null);
 
@@ -1969,6 +1970,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         voiceCallbackRef,
         streamIdRef,
         runIdRef,
+        handledTerminalKeysRef,
         lastEventIdRef,
         userMsgIndex: wsUserMsgIndexRef.current,
         sessionOwnerRef,

@@ -192,6 +192,8 @@ export interface WsProcessingContext {
   voiceCallbackRef: { current: ((key: string, text: string, voice?: string, speed?: number) => void) | undefined };
   streamIdRef: { current: string | null };
   runIdRef?: { current: string | null };
+  /** 已处理的终态键（runId 优先，兼容旧协议时回退 client_msg_id） */
+  handledTerminalKeysRef?: { current: Set<string> };
   lastEventIdRef: { current: number | null };
   userMsgIndex: number;
   /** Platform storage callback for persisting model selection */
@@ -214,6 +216,26 @@ export function findUserMsgIndexByClientId(msgs: MessageItem[], clientMsgId: str
     }
   }
   return -1;
+}
+
+const MAX_HANDLED_TERMINAL_KEYS = 500;
+
+function claimTerminalEvent(data: Extract<WsEvent, { type: 'done' }>, ctx: WsProcessingContext): boolean {
+  const key = data.runId
+    ? `run:${data.runId}`
+    : data.client_msg_id
+      ? `client:${data.client_msg_id}`
+      : null;
+  if (!key || !ctx.handledTerminalKeysRef) return true;
+
+  const handled = ctx.handledTerminalKeysRef.current;
+  if (handled.has(key)) return false;
+  handled.add(key);
+  if (handled.size > MAX_HANDLED_TERMINAL_KEYS) {
+    const oldest = handled.values().next().value;
+    if (oldest) handled.delete(oldest);
+  }
+  return true;
 }
 
 export interface WsBlockState {
@@ -692,21 +714,19 @@ export function processWsEvent(
     block.currentBlockIndex = -1;
     block.currentBlockType = null;
     finalizeRunningSubagents(msg);
-    // 若携带 error（SDK/Runtime 失败路径），把对应 user 气泡翻 failed。
-    // durable runtime 的终态事件可能没有 client_msg_id，回退到当前发送索引 / 最近一条未失败的用户消息，
-    // 避免前端只清 loading 却没有任何失败提示。
+    // outbox 清理保持幂等；即使同一终态先从 durable 投影到达、后从 live 路径补到
+    // client_msg_id，也必须允许上层消费后到的消息标识。
+    ctx.onChatDone?.(data.client_msg_id, data.error);
+    if (!claimTerminalEvent(data, ctx)) return 'done';
+
+    // 若携带 error（SDK/Runtime 失败路径），只允许精准 client_msg_id 或当前发送索引归属。
+    // 绝不能扫描“最近一条未失败”的历史消息：重复终态会把整段历史逐条染红。
     if (data.error) {
       const msgs = msg.messagesRef.current;
       let idx = data.client_msg_id ? findUserMsgIndexByClientId(msgs, data.client_msg_id) : -1;
-      if (idx < 0 && ctx.userMsgIndex >= 0) idx = ctx.userMsgIndex;
-      if (idx < 0) {
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          const m = msgs[i];
-          if ((m.type === "user" || m.type === "user-voice") && m.status !== "failed") {
-            idx = i;
-            break;
-          }
-        }
+      if (idx < 0 && ctx.userMsgIndex >= 0) {
+        const current = msgs[ctx.userMsgIndex];
+        if (current?.type === "user" || current?.type === "user-voice") idx = ctx.userMsgIndex;
       }
       // 用户侧只看通俗文案;原始 error 留在 server.log + PG runtime_events 供排查。
       const userFacing = formatRuntimeFailureMessage(data.error);
@@ -740,11 +760,13 @@ export function processWsEvent(
           return m;
         });
       } else {
-        const owner = ctx.sessionOwnerRef?.current;
-        msg.addMessage({ type: "text", content: userFacing, ...(owner ? { owner } : {}), timestamp: Date.now() });
+        const last = msg.messagesRef.current[msg.messagesRef.current.length - 1];
+        if (!((last?.type === "text" || last?.type === "system-error") && last.content === userFacing)) {
+          const owner = ctx.sessionOwnerRef?.current;
+          msg.addMessage({ type: "text", content: userFacing, ...(owner ? { owner } : {}), timestamp: Date.now() });
+        }
       }
     }
-    ctx.onChatDone?.(data.client_msg_id, data.error);
     return 'done';
   }
 

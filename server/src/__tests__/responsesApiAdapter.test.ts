@@ -23,6 +23,25 @@ function responseStream(chunks: string[], init: ResponseInit = {}): Response {
   );
 }
 
+function responseStreamError(chunks: string[], error: Error, init: ResponseInit = {}): Response {
+  const encoder = new TextEncoder();
+  let index = 0;
+  return new Response(
+    new ReadableStream({
+      pull(controller) {
+        const chunk = chunks[index];
+        if (chunk !== undefined) {
+          index += 1;
+          controller.enqueue(encoder.encode(chunk));
+          return;
+        }
+        controller.error(error);
+      },
+    }),
+    init,
+  );
+}
+
 async function collect(stream: AsyncIterable<ModelEvent>): Promise<ModelEvent[]> {
   const events: ModelEvent[] = [];
   for await (const event of stream) events.push(event);
@@ -1102,6 +1121,97 @@ describe('ResponsesApiAdapter', () => {
       { attempt: 2, outcome: 'provider_error', errorCode: 'internal_server_error', willRetry: true },
       { attempt: 3, outcome: 'completed' },
     ]);
+  });
+
+  it('未交付输出时重试流读取错误，并记录脱敏后的 cause 诊断', async () => {
+    vi.useFakeTimers();
+    const streamError = Object.assign(new TypeError('terminated'), {
+      cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStreamError([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_stream_error' } }),
+        sse('response.in_progress', { type: 'response.in_progress' }),
+      ], streamError))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_recovered' } }),
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '重试成功' }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: {
+            id: 'resp_recovered',
+            status: 'completed',
+            usage: { input_tokens: 8, output_tokens: 2 },
+          },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([
+      { type: 'text_delta', content: '重试成功' },
+      expect.objectContaining({
+        type: 'completed',
+        content: '重试成功',
+        modelRequestAttemptCount: 2,
+      }),
+    ]);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      {
+        attempt: 1,
+        outcome: 'stream_error',
+        errorCode: 'MODEL_STREAM_READ_ERROR',
+        errorMessage: 'terminated (cause=UND_ERR_SOCKET: other side closed)',
+        willRetry: true,
+      },
+      { attempt: 2, outcome: 'completed' },
+    ]);
+  });
+
+  it('已经交付输出后不重试流读取错误', async () => {
+    const streamError = Object.assign(new TypeError('terminated'), {
+      cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStreamError([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_partial_stream_error' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '已经展示' }),
+    ], streamError));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }))).rejects.toThrow('terminated');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      {
+        attempt: 1,
+        outcome: 'stream_error',
+        errorCode: 'MODEL_STREAM_READ_ERROR',
+        errorMessage: 'terminated (cause=UND_ERR_SOCKET: other side closed)',
+      },
+    ]);
+    expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
   });
 
   it.each([

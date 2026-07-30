@@ -323,9 +323,9 @@ export class ResponsesApiAdapter implements ModelAdapter {
     const requestSignal = request.signal ?? context.signal;
     const modelRequestId = retryState?.modelRequestId ?? randomUUID();
     // 默认仍不重试：网络错误/5xx 不能证明上游未接单、未计费。只有模型组显式配置
-    // pre_stream_retry_delays_ms 时才启用有限重试。流内只额外覆盖 provider 官方
-    // 瞬时服务端错误，且本 attempt 尚未向上层交付任何正文/思考；两类故障
-    // 共用同一份次数与退避预算，避免重复工具副作用和重试乘法膨胀。
+    // pre_stream_retry_delays_ms 时才启用有限重试。流内额外覆盖 provider 官方
+    // 瞬时服务端错误和零输出的 reader 异常；三类故障共用同一份次数与退避预算，
+    // 避免重复工具副作用和重试乘法膨胀。
     const retryDelaysMs = this.providerOptions.preStreamRetryDelaysMs ?? [];
     let transientRetryIndex = retryState?.transientRetryIndex ?? 0;
     // previous_response_id 400/404 的全量降级不占瞬时故障重试次数。
@@ -376,14 +376,14 @@ export class ResponsesApiAdapter implements ModelAdapter {
         const willRetry = retryDelayMs !== undefined;
         await attemptDiagnostics.finished(aborted ? 'aborted' : 'network_error', {
           errorCode: aborted ? 'MODEL_REQUEST_ABORTED' : 'MODEL_NETWORK_ERROR',
-          errorMessage: compactDiagnosticMessage(err),
+          errorMessage: compactDiagnosticError(err),
           ...(willRetry ? { willRetry: true } : {}),
         });
         if (!willRetry) throw err;
         transientRetryIndex += 1;
         logger.warn(
           `Responses API 发流前网络错误，${retryDelayMs}ms 后重试 `
-          + `(${transientRetryIndex}/${retryDelaysMs.length})：${compactDiagnosticMessage(err)}`,
+          + `(${transientRetryIndex}/${retryDelaysMs.length})：${compactDiagnosticError(err)}`,
         );
         await waitForRetry(retryDelayMs, requestSignal);
         continue;
@@ -528,13 +528,18 @@ export class ResponsesApiAdapter implements ModelAdapter {
     } catch (err) {
       await activeAttempt.finished('stream_error', {
         errorCode: 'MODEL_STREAM_READER_ACQUIRE_ERROR',
-        errorMessage: compactDiagnosticMessage(err),
+        errorMessage: compactDiagnosticError(err),
       });
       throw err;
     }
     const frames = new SseFrameBuffer(MAX_SSE_BUFFER_BYTES);
     let streamReadSettled = false;
     let canonicalTextSuffix = '';
+    let pendingStreamReadRetry: {
+      delayMs: number;
+      errorCode: string;
+      errorMessage: string;
+    } | undefined;
 
     try {
       readLoop: while (true) {
@@ -820,14 +825,26 @@ export class ResponsesApiAdapter implements ModelAdapter {
       streamReadSettled = true;
     } catch (err) {
       const classified = classifyStreamError(err, requestSignal);
+      const retryDelayMs = classified.code === 'MODEL_STREAM_READ_ERROR'
+        && !hasDeliveredOutput
+        && !requestSignal?.aborted
+        ? retryDelaysMs[transientRetryIndex]
+        : undefined;
+      const willRetry = retryDelayMs !== undefined;
       await reader.cancel().catch(() => undefined);
       await activeAttempt.finished(classified.outcome, {
         errorCode: classified.code,
         errorMessage: classified.message,
         usage,
+        ...(willRetry ? { willRetry: true } : {}),
       });
       streamReadSettled = true;
-      throw err;
+      if (!willRetry) throw err;
+      pendingStreamReadRetry = {
+        delayMs: retryDelayMs,
+        errorCode: classified.code,
+        errorMessage: classified.message,
+      };
     } finally {
       // async generator 的消费者可能在任一 delta 后 return()；该路径不会进入 catch。
       // 补齐 attempt 终态，避免 PG 永久只剩 started/checkpoint。
@@ -840,6 +857,36 @@ export class ResponsesApiAdapter implements ModelAdapter {
         });
       }
       reader.releaseLock();
+    }
+
+    if (pendingStreamReadRetry) {
+      transientRetryIndex += 1;
+      logger.warn(
+        `Responses API 流读取错误 ${pendingStreamReadRetry.errorCode} 且未交付输出，`
+        + `${pendingStreamReadRetry.delayMs}ms 后重试 `
+        + `(${transientRetryIndex}/${retryDelaysMs.length})：${pendingStreamReadRetry.errorMessage}`,
+      );
+      await waitForRetry(pendingStreamReadRetry.delayMs, requestSignal);
+      yield* this.streamWithRetry(request, context, {
+        modelRequestId,
+        lastAttempt: modelRequestAttemptCount,
+        transientRetryIndex,
+        replaceableDraftRetryUsed: retryState?.replaceableDraftRetryUsed ?? false,
+        maxAttempts,
+        body,
+        usePrevious,
+        responseMode,
+        continuationReplayReset,
+      });
+      return;
+    }
+
+    if (!terminalEventType || !terminalStatus) {
+      throw new ResponsesStreamError(
+        'provider_error',
+        'MODEL_SSE_TERMINAL_STATE_MISSING',
+        'Responses SSE terminal state was not recorded',
+      );
     }
 
     if (terminalStatus !== 'completed' || refusal) {
@@ -1786,7 +1833,7 @@ function classifyStreamError(
   return {
     outcome: 'stream_error',
     code: 'MODEL_STREAM_READ_ERROR',
-    message: compactDiagnosticMessage(err),
+    message: compactDiagnosticError(err),
   };
 }
 
@@ -1884,6 +1931,27 @@ function compactDiagnosticMessage(value: unknown): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 500);
+}
+
+function compactDiagnosticError(value: unknown): string {
+  const message = compactDiagnosticMessage(value);
+  if (!(value instanceof Error)) return message;
+  const cause = (value as Error & { cause?: unknown }).cause;
+  if (!cause || (typeof cause !== 'object' && typeof cause !== 'string')) return message;
+
+  const causeRecord = typeof cause === 'object' ? cause as Record<string, unknown> : undefined;
+  const causeCode = compactDiagnosticToken(causeRecord?.code, 100);
+  const causeMessage = compactDiagnosticMessage(
+    cause instanceof Error
+      ? cause
+      : typeof causeRecord?.message === 'string'
+        ? causeRecord.message
+        : typeof cause === 'string'
+          ? cause
+          : '',
+  );
+  const causeDetails = [causeCode, causeMessage].filter(Boolean).join(': ');
+  return causeDetails ? compactDiagnosticMessage(`${message} (cause=${causeDetails})`) : message;
 }
 
 function compactHeader(value: string | null): string | undefined {

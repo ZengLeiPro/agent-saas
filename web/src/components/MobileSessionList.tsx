@@ -287,6 +287,7 @@ export function MobileSessionList({
       children: [],
       latestUpdatedAt: g.updatedAt,
       count: g.count,
+      isRunning: false,
     }));
   }, [groupsHook.groups, groupsHook.sorting, sessions]);
 
@@ -447,9 +448,13 @@ export function MobileSessionList({
                 <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
               )}
             </div>
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
-              {formatShortDate(group.latestUpdatedAt)}
-            </span>
+            {group.isRunning ? (
+              <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-label="运行中" />
+            ) : (
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
+                {formatShortDate(group.latestUpdatedAt)}
+              </span>
+            )}
           </div>
           <div className="mt-1 text-xs text-muted-foreground/60">
             {group.kind === "cron" ? "cron" : "分组"} - {group.count} 个会话

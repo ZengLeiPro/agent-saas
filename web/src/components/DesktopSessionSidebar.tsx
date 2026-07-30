@@ -117,6 +117,11 @@ const USER_MENU_ITEM =
   "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent";
 const USER_MENU_SECTION = "border-t border-border/60 py-1 first:border-t-0";
 
+function compareSessionActivity(a: ChatSessionIndexItem, b: ChatSessionIndexItem): number {
+  if (Boolean(a.isRunning) !== Boolean(b.isRunning)) return a.isRunning ? -1 : 1;
+  return b.updatedAt - a.updatedAt;
+}
+
 /** 左栏视图/分组标签上的聚合未读小红点 */
 function GroupUnreadDot() {
   return (
@@ -1201,6 +1206,16 @@ export function DesktopSessionSidebar({
     }
     return map;
   }, [groupsHook.groups, sessions]);
+  const runningByGroupId = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const g of groupsHook.groups) {
+      map.set(
+        g.id,
+        sessions.some((session) => g.sessionIds.includes(session.id) && session.isRunning),
+      );
+    }
+    return map;
+  }, [groupsHook.groups, sessions]);
   const hasUnreadUngrouped = useMemo(
     () => sessions.some((s) => !groupedIds.has(s.id) && s.hasUnreadAiReply),
     [sessions, groupedIds],
@@ -1217,16 +1232,16 @@ export function DesktopSessionSidebar({
 
   // 当前视图的 sessions 子集
   const currentSessions = useMemo<ChatSessionIndexItem[]>(() => {
-    if (selectedView === "__all__") return sessions;
+    if (selectedView === "__all__") return [...sessions].sort(compareSessionActivity);
     if (selectedView === "__ungrouped__")
-      return sessions.filter((s) => !groupedIds.has(s.id));
+      return sessions.filter((s) => !groupedIds.has(s.id)).sort(compareSessionActivity);
     const sessionMap = new Map(sessions.map((s) => [s.id, s]));
     const grp = groupsHook.groups.find((g) => g.id === selectedView);
     if (!grp) return [];
     return grp.sessionIds
       .map((id) => sessionMap.get(id))
       .filter((s): s is ChatSessionIndexItem => s !== undefined)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+      .sort(compareSessionActivity);
   }, [selectedView, sessions, groupedIds, groupsHook.groups]);
 
   // 当前真实分组对象(给子栏 Header 用)
@@ -1269,7 +1284,7 @@ export function DesktopSessionSidebar({
       const children = group.sessionIds
         .map((sid) => sessionMap.get(sid))
         .filter((session): session is ChatSessionIndexItem => session !== undefined)
-        .sort((a, b) => b.updatedAt - a.updatedAt);
+        .sort(compareSessionActivity);
       for (const child of children) consumed.add(child.id);
       entries.push({
         type: "group",
@@ -1278,8 +1293,11 @@ export function DesktopSessionSidebar({
           name: group.name,
           kind: group.kind,
           children,
-          latestUpdatedAt: children[0]?.updatedAt ?? group.updatedAt,
+          latestUpdatedAt: children.length > 0
+            ? Math.max(...children.map((child) => child.updatedAt))
+            : group.updatedAt,
           count: children.length,
+          isRunning: children.some((child) => child.isRunning),
         },
       });
     }
@@ -1289,6 +1307,9 @@ export function DesktopSessionSidebar({
     }
 
     return entries.sort((a, b) => {
+      const runningA = a.type === "session" ? Boolean(a.session.isRunning) : a.group.isRunning;
+      const runningB = b.type === "session" ? Boolean(b.session.isRunning) : b.group.isRunning;
+      if (runningA !== runningB) return runningA ? -1 : 1;
       const timeA = a.type === "session" ? a.session.updatedAt : a.group.latestUpdatedAt;
       const timeB = b.type === "session" ? b.session.updatedAt : b.group.latestUpdatedAt;
       return timeB - timeA;
@@ -1311,7 +1332,7 @@ export function DesktopSessionSidebar({
   // 左主栏分组列表排序：
   // - 编辑态：按 editing.draft 顺序
   // - custom 模式（非编辑）：按 sorting.order 顺序
-  // - recent 模式：按"分组内最新会话 updatedAt"倒序，fallback group.updatedAt
+  // - recent 模式：运行中的分组优先，再按分组内最新会话 updatedAt 倒序
   const recentSortedGroups = useMemo(() => {
     if (groupsHook.groups.length === 0) return groupsHook.groups;
     const sessionMap = new Map(sessions.map((s) => [s.id, s]));
@@ -1322,11 +1343,18 @@ export function DesktopSessionSidebar({
           const s = sessionMap.get(sid);
           if (s && s.updatedAt > latest) latest = s.updatedAt;
         }
-        return { group: g, latest: latest || g.updatedAt };
+        return {
+          group: g,
+          latest: latest || g.updatedAt,
+          isRunning: runningByGroupId.get(g.id) === true,
+        };
       })
-      .sort((a, b) => b.latest - a.latest)
+      .sort((a, b) => {
+        if (a.isRunning !== b.isRunning) return a.isRunning ? -1 : 1;
+        return b.latest - a.latest;
+      })
       .map((x) => x.group);
-  }, [groupsHook.groups, sessions]);
+  }, [groupsHook.groups, sessions, runningByGroupId]);
 
   const sortedGroups = useMemo(() => {
     if (groupsHook.editing) {
@@ -1557,8 +1585,9 @@ export function DesktopSessionSidebar({
       children: [],
       latestUpdatedAt: g.updatedAt,
       count: g.sessionIds.length,
+      isRunning: runningByGroupId.get(g.id) === true,
     }));
-  }, [sortedGroups]);
+  }, [sortedGroups, runningByGroupId]);
 
   const handleAddToExistingGroup = useCallback(
     async (groupKey: string) => {
@@ -1776,7 +1805,11 @@ export function DesktopSessionSidebar({
                       {entry.group.name}
                       <span className="ml-1 font-normal text-muted-foreground/60">({entry.group.count})</span>
                     </span>
-                    <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground/60">{formatShortDate(entry.group.latestUpdatedAt)}</span>
+                    {entry.group.isRunning ? (
+                      <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-label="运行中" />
+                    ) : (
+                      <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground/60">{formatShortDate(entry.group.latestUpdatedAt)}</span>
+                    )}
                   </button>
                 ) : (
                   <button key={entry.group.groupKey} type="button" className="group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-muted" onClick={() => { setActionMenuId(null); setSingleExpandedGroupKey(entry.group.groupKey); void onLoadGroupSessions?.(entry.group.groupKey); }}>
@@ -1787,7 +1820,11 @@ export function DesktopSessionSidebar({
                     </span>
                     {unreadByGroupId.get(entry.group.groupKey) && <GroupUnreadDot />}
                     <span className="flex shrink-0 flex-col items-end gap-0.5">
-                      <ChevronRight className="size-4 text-muted-foreground/50" />
+                      {entry.group.isRunning ? (
+                        <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="运行中" />
+                      ) : (
+                        <ChevronRight className="size-4 text-muted-foreground/50" />
+                      )}
                       <span className="translate-y-[3px] text-xs tabular-nums text-muted-foreground/60">{formatShortDate(entry.group.latestUpdatedAt)}</span>
                     </span>
                   </button>
@@ -2178,6 +2215,9 @@ export function DesktopSessionSidebar({
                         </span>
                         {!isEditing && unreadByGroupId.get(g.id) && (
                           <GroupUnreadDot />
+                        )}
+                        {!isEditing && runningByGroupId.get(g.id) && (
+                          <Loader2 className="ml-1 size-3.5 shrink-0 animate-spin text-muted-foreground" aria-label="运行中" />
                         )}
                         {isEditing ? (
                           <GripVertical className="ml-1 size-3.5 shrink-0 text-muted-foreground/60" />

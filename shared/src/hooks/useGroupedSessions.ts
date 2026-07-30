@@ -3,6 +3,11 @@ import type { ChatSessionIndexItem } from "../types/sidebar";
 import type { SessionListEntry } from "../types/sessionGroup";
 import type { ApiSessionGroup } from "../lib/groupsApi";
 
+function compareSessionActivity(a: ChatSessionIndexItem, b: ChatSessionIndexItem): number {
+  if (Boolean(a.isRunning) !== Boolean(b.isRunning)) return a.isRunning ? -1 : 1;
+  return b.updatedAt - a.updatedAt;
+}
+
 export function useGroupedSessions(
   sessions: ChatSessionIndexItem[],
   searchQuery: string,
@@ -13,6 +18,7 @@ export function useGroupedSessions(
       const q = searchQuery.trim().toLowerCase();
       return sessions
         .filter((s) => s.title.toLowerCase().includes(q))
+        .sort(compareSessionActivity)
         .map((s): SessionListEntry => ({ type: "session", session: s }));
     }
 
@@ -27,7 +33,7 @@ export function useGroupedSessions(
 
       if (children.length === 0) continue;
 
-      children.sort((a, b) => b.updatedAt - a.updatedAt);
+      children.sort(compareSessionActivity);
       for (const c of children) consumed.add(c.id);
 
       entries.push({
@@ -37,8 +43,9 @@ export function useGroupedSessions(
           name: group.name,
           kind: group.kind,
           children,
-          latestUpdatedAt: children[0].updatedAt,
+          latestUpdatedAt: Math.max(...children.map((child) => child.updatedAt)),
           count: children.length,
+          isRunning: children.some((child) => child.isRunning),
         },
       });
     }
@@ -50,6 +57,9 @@ export function useGroupedSessions(
     }
 
     entries.sort((a, b) => {
+      const runningA = a.type === "session" ? Boolean(a.session.isRunning) : a.group.isRunning;
+      const runningB = b.type === "session" ? Boolean(b.session.isRunning) : b.group.isRunning;
+      if (runningA !== runningB) return runningA ? -1 : 1;
       const timeA = a.type === "session" ? a.session.updatedAt : a.group.latestUpdatedAt;
       const timeB = b.type === "session" ? b.session.updatedAt : b.group.latestUpdatedAt;
       return timeB - timeA;

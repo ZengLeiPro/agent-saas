@@ -8,6 +8,8 @@ export interface SessionGroup {
   children: ChatSessionIndexItem[];
   latestUpdatedAt: number;
   count: number;
+  /** 任一子会话仍在运行时，文件夹同步展示运行态。 */
+  isRunning: boolean;
 }
 
 /** Session list entry: session or group */

@@ -94,7 +94,7 @@ describe("presentationToReplayScript", () => {
     expect(focusOf(2)).toMatchObject({ op: "focus", view: "summary" });
   });
 
-  it("工具摘要展开是本步的业务字段与硬结论，正文不再重复同一句话", () => {
+  it("工具摘要展开是本步的业务字段与硬结论，卡下不再有等价散文", () => {
     const script = presentationToReplayScript(makeScenarioWithApproval());
     const tool = script?.steps[0].blocks.find((block) => block.kind === "tool_use");
     expect(tool?.presentation?.detail).toEqual([
@@ -102,9 +102,51 @@ describe("presentationToReplayScript", () => {
       { k: "询价状态", v: "资料齐备" },
       { insight: "报价所需事实已经齐备。", label: "结论" },
     ]);
-    const text = script?.steps[0].blocks.find((block) => block.kind === "text");
-    expect(text?.content).toBe("报价所需事实已经齐备。");
-    expect(text?.content).not.toContain("这一步完成后");
+    // 结论已由洞察行承载：普通章不再产出重复的 text 块
+    expect(script?.steps[0].blocks.find((block) => block.kind === "text")).toBeUndefined();
+  });
+
+  it("确认章保留审批门禁说明正文（独有信息，非重复）", () => {
+    const script = presentationToReplayScript(makeScenarioWithApproval());
+    const text = script?.steps[1].blocks.find((block) => block.kind === "text");
+    expect(text?.content).toContain("必须由有权人明确确认");
+  });
+
+  it("末章行动块不带洞察行——业务结果由终态卡唯一承载", () => {
+    const script = presentationToReplayScript(makeScenarioWithApproval());
+    const lastStep = script?.steps.at(-1);
+    const tool = lastStep?.blocks.find((block) => block.kind === "tool_use");
+    const hasInsight = (tool?.presentation?.detail ?? []).some(
+      (line) => typeof line === "object" && line !== null && "insight" in line,
+    );
+    expect(hasInsight).toBe(false);
+    expect(lastStep?.blocks.at(-1)?.content).toContain("**业务结果**：报价已送达");
+  });
+
+  it("批准分支只有批准块本身，不再补一段等价散文", () => {
+    const script = presentationToReplayScript(makeScenarioWithApproval());
+    const approvedBlocks = script?.steps[1].approval?.approvedBlocks ?? [];
+    expect(approvedBlocks).toHaveLength(1);
+    expect(approvedBlocks[0].kind).toBe("tool_use");
+  });
+
+  it("写入字段 ≥2 个时升格为字段网格，单个写入字段维持键值行", () => {
+    const scenario = makeScenarioWithApproval();
+    const presentation = scenario.presentation!;
+    presentation.chapters[0].surface.items = [
+      { label: "预算", value: "$120,000", state: "success", changed: true },
+      { label: "交期", value: "2026 Q4", state: "success", changed: true },
+      { label: "认证", value: "CE", state: "success", changed: true },
+    ];
+    const script = presentationToReplayScript(scenario);
+    const tool = script?.steps[0].blocks.find((block) => block.kind === "tool_use");
+    expect(tool?.presentation?.detail).toContainEqual({
+      fields: [
+        { k: "预算", v: "$120,000" },
+        { k: "交期", v: "2026 Q4" },
+        { k: "认证", v: "CE" },
+      ],
+    });
   });
 
   it("写类章的主行动块默认展开、带可回读回执，标题保持章节业务语言", () => {

@@ -210,6 +210,58 @@ describe('PresentationDetail 排版变体', () => {
     expect(screen.getByText('Q4 前需完成 CE 认证')).toBeTruthy();
   });
 
+  it('字段网格渲染 2 列大字段，空值显示占位符', () => {
+    render(
+      <PresentationDetail
+        data={{
+          title: 't',
+          detail: [{ fields: [{ k: '预算', v: '$120,000' }, { k: '交期', v: '2026 Q4' }, { k: '认证', v: '' }] }],
+        }}
+      />,
+    );
+    expect(screen.getByText('预算')).toBeTruthy();
+    expect(screen.getByText('$120,000')).toBeTruthy();
+    expect(screen.getByText('2026 Q4')).toBeTruthy();
+    expect(screen.getByText('—')).toBeTruthy();
+  });
+
+  it('连续 warn 行聚合为橙底色块，默认标题「需要注意」', () => {
+    render(
+      <PresentationDetail
+        data={{
+          title: 't',
+          detail: [
+            { k: '上下文', v: '正常行' },
+            { warn: '名单导入缺少处理依据' },
+            { warn: '退订联系人保持停止触达' },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText('需要注意')).toBeTruthy();
+    expect(screen.getByText('名单导入缺少处理依据')).toBeTruthy();
+    expect(screen.getByText('退订联系人保持停止触达')).toBeTruthy();
+  });
+
+  it('warn 集组吸收紧邻前置 section 作为色块标题，不再另立小节条', () => {
+    render(
+      <PresentationDetail
+        data={{
+          title: 't',
+          detail: [
+            { section: '主动交出的缺口' },
+            { warn: '决议④ 缺责任人' },
+            '后续普通行',
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText('主动交出的缺口')).toBeTruthy();
+    expect(screen.queryByText('需要注意')).toBeNull();
+    expect(screen.getByText('决议④ 缺责任人')).toBeTruthy();
+    expect(screen.getByText('后续普通行')).toBeTruthy();
+  });
+
   it('编号超出圈码范围时退回 "N."', () => {
     render(<PresentationDetail data={{ title: 't', detail: [{ no: 44, text: 'x' }] }} />);
     expect(screen.getByText('44.')).toBeTruthy();

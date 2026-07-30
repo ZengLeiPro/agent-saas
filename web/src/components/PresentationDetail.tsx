@@ -79,14 +79,7 @@ function DetailRow({ line }: { line: DetailLine }) {
       </div>
     );
   }
-  if ("warn" in line) {
-    return (
-      <div className="flex items-start gap-1.5">
-        <TriangleAlert className={activityStatusIconClass("warning", "mt-0.5 size-3 shrink-0")} />
-        <span className={activityStatusTextClass("warning", "break-words")}>{line.warn}</span>
-      </div>
-    );
-  }
+  // warn 行不在此渲染：PresentationDetail 把连续 warn 聚合为 WarnGroup 橙底色块
   if ("insight" in line) {
     return (
       <div className="border-l-2 border-primary pl-2">
@@ -140,7 +133,76 @@ function DetailRow({ line }: { line: DetailLine }) {
       </div>
     );
   }
+  if ("fields" in line) {
+    // 字段网格（demo B11）：客户应当记住的硬字段。值刻意放大加粗、
+    // 脱离 mono 排版——这是整条摘要里唯一允许「大字」的地方。
+    return (
+      <div className="grid grid-cols-2 gap-1.5 py-0.5">
+        {line.fields.map((field, i) => (
+          <div key={i} className="rounded-md border border-border/60 bg-background px-2.5 py-1.5">
+            <div className="text-[11px] leading-4 text-muted-foreground">{field.k}</div>
+            <div className="break-words font-sans text-sm font-semibold leading-5 text-foreground">
+              {field.v || "—"}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return null;
+}
+
+/**
+ * 连续的缺口/警告行聚合为一个橙底色块（demo B11 缺口区的容器形态）。
+ * 紧邻其前的小节标题行被吸收为色块标题；没有则用默认标题。
+ * 只影响 warn 行的排版分组，其他行原样保持顺序。
+ */
+type DetailGroup =
+  | { kind: "line"; line: DetailLine }
+  | { kind: "warnGroup"; header: string; warns: string[] };
+
+const DEFAULT_WARN_HEADER = "需要注意";
+
+function isWarnLine(line: DetailLine | undefined): line is { warn: string } {
+  return typeof line === "object" && line !== null && "warn" in line;
+}
+
+export function groupDetailLines(detail: DetailLine[]): DetailGroup[] {
+  const groups: DetailGroup[] = [];
+  for (let i = 0; i < detail.length; i++) {
+    const line = detail[i];
+    const isSectionHeader = typeof line === "object" && line !== null && "section" in line;
+    if (isSectionHeader && isWarnLine(detail[i + 1])) {
+      const warns: string[] = [];
+      let j = i + 1;
+      for (; isWarnLine(detail[j]); j++) warns.push((detail[j] as { warn: string }).warn);
+      groups.push({ kind: "warnGroup", header: (line as { section: string }).section, warns });
+      i = j - 1;
+    } else if (isWarnLine(line)) {
+      const warns: string[] = [line.warn];
+      let j = i + 1;
+      for (; isWarnLine(detail[j]); j++) warns.push((detail[j] as { warn: string }).warn);
+      groups.push({ kind: "warnGroup", header: DEFAULT_WARN_HEADER, warns });
+      i = j - 1;
+    } else {
+      groups.push({ kind: "line", line });
+    }
+  }
+  return groups;
+}
+
+function WarnGroup({ header, warns }: { header: string; warns: string[] }) {
+  return (
+    <div className="space-y-1 rounded-md border border-warning/25 bg-warning/10 px-2.5 py-2">
+      <div className={activityStatusTextClass("warning", "text-[11px] font-medium leading-4")}>{header}</div>
+      {warns.map((warn, i) => (
+        <div key={i} className="flex items-start gap-1.5">
+          <TriangleAlert className={activityStatusIconClass("warning", "mt-0.5 size-3 shrink-0")} />
+          <span className={activityStatusTextClass("warning", "break-words")}>{warn}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function PresentationDetail({
@@ -171,7 +233,11 @@ export function PresentationDetail({
         </div>
       )}
 
-      {data.detail?.map((line, i) => <DetailRow key={i} line={line} />)}
+      {groupDetailLines(data.detail ?? []).map((group, i) =>
+        group.kind === "warnGroup"
+          ? <WarnGroup key={i} header={group.header} warns={group.warns} />
+          : <DetailRow key={i} line={group.line} />,
+      )}
 
       {data.receipt && (
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-1.5">

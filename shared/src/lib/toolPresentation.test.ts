@@ -54,6 +54,31 @@ describe('normalizeToolPresentation', () => {
     ]);
   });
 
+  it('字段网格：合法字段保留、脏条目丢弃、超过 12 个截断', () => {
+    const result = normalizeToolPresentation({
+      title: '抽取询价字段',
+      detail: [
+        { fields: [{ k: '预算', v: '$120,000' }, { k: '交期', v: '2026 Q4' }, { nope: 1 }, { k: '  ' }, { k: '认证' }] },
+      ],
+    });
+    expect(result?.detail).toEqual([
+      { fields: [{ k: '预算', v: '$120,000' }, { k: '交期', v: '2026 Q4' }, { k: '认证', v: '' }] },
+    ]);
+
+    const overflow = normalizeToolPresentation({
+      title: 'x',
+      detail: [{ fields: Array.from({ length: 20 }, (_, i) => ({ k: `字段${i}`, v: `${i}` })) }],
+    });
+    const grid = overflow?.detail?.[0] as { fields: unknown[] };
+    expect(grid.fields).toHaveLength(12);
+  });
+
+  it('字段网格全部条目非法时整行丢弃', () => {
+    expect(normalizeToolPresentation({ title: 'x', detail: [{ fields: [{ v: '没有键' }, 'nope'] }] })?.detail)
+      .toBeUndefined();
+    expect(normalizeToolPresentation({ title: 'x', detail: [{ fields: [] }] })?.detail).toBeUndefined();
+  });
+
   it('第二批变体的可选字段缺失时不产出该字段', () => {
     const result = normalizeToolPresentation({
       title: 'x',

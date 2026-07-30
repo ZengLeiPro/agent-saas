@@ -44,7 +44,13 @@ export type DetailLine =
   /** 引用行：原话/原文 + 出处定位（demo B17 带引用答案） */
   | { quote: string; source?: string }
   /** 双语行：外文原文 + 中文摘要（demo B16 双语草稿卡） */
-  | { original: string; translation?: string };
+  | { original: string; translation?: string }
+  /**
+   * 字段网格：抽取出的业务字段 2 列大字卡（demo B11 字段抽取区）。
+   * 与逐行键值的分工：网格给「客户应当记住的少数硬字段」（值加大加粗），
+   * 键值行给过程性上下文。一行网格最多 12 个字段。
+   */
+  | { fields: Array<{ k: string; v: string }> };
 
 /** 外部系统写操作回执。现阶段恒为 undefined，留给连接器回执批次。 */
 export interface ToolReceipt {
@@ -76,6 +82,7 @@ export interface ToolPresentation {
 
 const DETAIL_LINE_LIMIT = 200;
 const TEXT_LIMIT = 500;
+const FIELD_GRID_LIMIT = 12;
 
 export function clampText(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -158,6 +165,21 @@ export function normalizeDetailLine(raw: unknown): DetailLine | null {
     if (original === null) return null;
     const translation = clampText(line.translation);
     return translation !== null ? { original, translation } : { original };
+  }
+
+  if (Array.isArray(line.fields)) {
+    const fields = line.fields
+      .slice(0, FIELD_GRID_LIMIT)
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') return null;
+        const field = entry as Record<string, unknown>;
+        const k = clampText(field.k);
+        if (k === null) return null;
+        const v = clampText(field.v) ?? '';
+        return { k, v };
+      })
+      .filter((entry): entry is { k: string; v: string } => entry !== null);
+    return fields.length > 0 ? { fields } : null;
   }
 
   return null;

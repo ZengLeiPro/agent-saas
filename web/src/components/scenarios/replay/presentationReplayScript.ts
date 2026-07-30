@@ -334,31 +334,41 @@ function approvedPanelPatches(chapter: Chapter, index: number): PanelPatch[] {
 }
 
 /**
- * 终态正文。
+ * 章节收尾正文。**只在有增量信息时产出**（demo 口径：同一句话不说两遍）：
+ * - 普通章：结论已由行动块的洞察行承载，不再补一段等价散文 → null；
+ * - 确认章：审批门禁的性质说明是独有信息，保留；
+ * - 末章：终态卡「本次会话改变了什么」是设计好的收尾制品，保留
+ *   （行动块侧对应去掉洞察行，见 buildStep）。
  *
  * 不用 `**xx：**` 这种写法——中文全角冒号紧跟右定界符时 CommonMark 不闭合，
  * 客户会直接看到字面的星号（07-26 实机发现）。
  */
-function stepTextBlock(chapter: Chapter, index: number, isLast: boolean): ApiTranscriptBlock {
-  const content = isLast
-    ? [
+function stepTextBlock(chapter: Chapter, index: number, isLast: boolean): ApiTranscriptBlock | null {
+  if (isLast) {
+    return {
+      id: `presentation-step-${index + 1}-text`,
+      kind: "text",
+      title: "业务进展",
+      defaultOpen: true,
+      content: [
         "### 本次会话改变了什么",
         "",
         ...chapter.surface.items.map((item) => `- ${item.label}：${item.value}`),
         "",
         `**业务结果**：${chapter.result}`,
-      ].join("\n")
-    : chapter.interaction.kind === "confirm"
-      ? "审批材料已经准备完成。下一步必须由有权人明确确认，不会自动越过。"
-      : chapter.result;
-
-  return {
-    id: `presentation-step-${index + 1}-text`,
-    kind: "text",
-    title: "业务进展",
-    defaultOpen: true,
-    content,
-  };
+      ].join("\n"),
+    };
+  }
+  if (chapter.interaction.kind === "confirm") {
+    return {
+      id: `presentation-step-${index + 1}-text`,
+      kind: "text",
+      title: "业务进展",
+      defaultOpen: true,
+      content: "审批材料已经准备完成。下一步必须由有权人明确确认，不会自动越过。",
+    };
+  }
+  return null;
 }
 
 /** 退回分支：不写系统、记账、等重新提交。三家客户演示稿这里都是死路。 */
@@ -421,6 +431,8 @@ function approvedBlocks(chapter: Chapter, index: number): ApiTranscriptBlock[] {
       executionStatus: "completed",
       presentation: {
         title: `${chapter.interaction.label} · 已确认`,
+        // 批准块自身已完整承载审批结果与生效范围，
+        // 后面不再补一段等价散文（demo 口径：同一句话不说两遍）
         detail: [
           { k: "审批结果", v: "已批准" },
           { k: "生效范围", v: chapter.result },
@@ -430,13 +442,6 @@ function approvedBlocks(chapter: Chapter, index: number): ApiTranscriptBlock[] {
         receipt: { id: `APR-2026-${String(index + 1).padStart(2, "0")}`, system: "审批中心", readBack: true },
         panel: approvedPanelPatches(chapter, index),
       },
-    },
-    {
-      id: `presentation-step-${index + 1}-approval-text`,
-      kind: "text",
-      title: "审批结果",
-      defaultOpen: true,
-      content: `人工确认已记录。${chapter.result}`,
     },
   ];
 }
@@ -469,6 +474,20 @@ function isActionItem(item: SurfaceItem): boolean {
   return item.changed === true || item.state === "warning" || item.state === "pending";
 }
 
+/**
+ * 行动块的字段区。写入项 ≥2 个时升格为字段网格（demo B11 的大字段卡形态，
+ * 客户应当记住的硬字段配得上大字），单个写入项维持键值行；
+ * 缺口/待确认项保持逐行（渲染层会把连续 warn 聚合成橙底色块）。
+ */
+function actionDetailLines(items: SurfaceItem[]): DetailLine[] {
+  const changed = items.filter((item) => item.changed === true);
+  const rest = items.filter((item) => item.changed !== true);
+  const changedLines: DetailLine[] = changed.length >= 2
+    ? [{ fields: changed.map((item) => ({ k: item.label, v: item.value })) }]
+    : changed.map(itemLine);
+  return [...changedLines, ...rest.map(itemLine)];
+}
+
 function buildStep(
   scenario: CatalogScenarioPublic,
   chapter: Chapter,
@@ -480,6 +499,7 @@ function buildStep(
   const toolName = TOOL_BY_SURFACE[chapter.surface.kind];
   const system = SYSTEM_BY_SURFACE[chapter.surface.kind];
   const isConfirm = chapter.interaction.kind === "confirm";
+  const isLast = index === total - 1;
   const blocks: ApiTranscriptBlock[] = [];
 
   if (index === 0) {
@@ -536,9 +556,10 @@ function buildStep(
       title: chapter.title,
       detail: [
         ...(split ? [] : [chapter.narration]),
-        ...(split ? actionItems : chapter.surface.items).map(itemLine),
-        // 行动块以本章硬结论收尾——demo 的洞察行口径
-        ...(isConfirm ? [] : [{ insight: chapter.result, label: "结论" } satisfies DetailLine]),
+        ...actionDetailLines(split ? actionItems : chapter.surface.items),
+        // 行动块以本章硬结论收尾——demo 的洞察行口径；
+        // 末章除外：同一句业务结果由紧随其后的终态卡承载，不说两遍
+        ...(isConfirm || isLast ? [] : [{ insight: chapter.result, label: "结论" } satisfies DetailLine]),
       ],
       status: isConfirm ? "waiting" : "ok",
       // 写类系统给出可回读的合成回执；审批章的回执由批准块携带
@@ -549,7 +570,8 @@ function buildStep(
       panel: surfacePatches(chapter, index, total, prevRowIds),
     },
   });
-  blocks.push(stepTextBlock(chapter, index, index === total - 1));
+  const textBlock = stepTextBlock(chapter, index, isLast);
+  if (textBlock) blocks.push(textBlock);
 
   return {
     caption: chapter.title,

@@ -53,6 +53,10 @@ export interface EnsurePythonEnvOptions {
   skipBaseInstall?: boolean;
   installTimeoutMs?: number;
   now?: () => Date;
+  /** rebuild 锁等待上限（默认 300s）；测试注入用。 */
+  rebuildLockWaitMs?: number;
+  /** rebuild 锁 stale 抢占阈值（默认 900s）；持有者进程被杀时防死锁。 */
+  rebuildLockStaleMs?: number;
 }
 
 async function readStdin(): Promise<string> {
@@ -355,23 +359,120 @@ export function ensurePythonEnv(workspaceRoot: string, options: EnsurePythonEnvO
   mkdirSync(dirname(venvPath), { recursive: true });
   mkdirSync(pipCacheDir, { recursive: true });
   if (rebuildReasons.length > 0) {
-    archiveBrokenVenv(workspaceRoot, venvPath, options.maxVenvArchives ?? readMaxVenvArchives());
-    execFileSync('python3', ['-m', 'venv', venvPath], { timeout: 30_000, stdio: 'pipe' });
-    rebuilt = true;
-    configurePythonEnv(venvPath, pipCacheDir);
-    if (!options.skipBaseInstall && process.env.ACS_PYTHON_ENV_SKIP_BASE_INSTALL !== '1') {
-      installBaseRequirements(pythonPath, baseRequirementsPath, options.installTimeoutMs ?? readInstallTimeoutMs());
-    }
-    writeRuntimeManifest(manifestPath, {
-      contractVersion: PYTHON_RUNTIME_CONTRACT_VERSION,
-      pythonMajorMinor: desiredPythonMajorMinor,
-      baseRequirementsHash,
-      ...(imageRef ? { imageRef } : {}),
-      createdAt: (options.now ?? (() => new Date()))().toISOString(),
+    // 2026-08-01 生产事故修复：venv rebuild 必须跨进程互斥。每次 kubectl exec 都是
+    // 独立 runner 进程，发版换镜像（image-ref-changed）后多个并发 runner 同时
+    // rebuild 会互相踩（A archive 旧 venv 时 B 正在 python -m venv → File exists /
+    // ensurepip 半成品 / pip install 中文件被 archive 走），且每次失败留下的残缺
+    // venv 让后续每个 runner 都再触发 rebuild，形成自激循环（2026-08-01 00:59
+    // kaiyan 生产实发，hand 连续 unhealthy）。锁用 mkdir 原子性（NFS 服务端原子），
+    // 等待方拿到机会后先重查健康（多数情况持有者已修好，直接复用零重建）。
+    const recheck = () => venvRebuildReasons({
+      venvPath,
+      pythonPath,
+      manifestPath,
+      desired: {
+        contractVersion: PYTHON_RUNTIME_CONTRACT_VERSION,
+        pythonMajorMinor: desiredPythonMajorMinor,
+        baseRequirementsHash,
+        ...(imageRef ? { imageRef } : {}),
+      },
     });
+    const lock = acquireVenvRebuildLock(workspaceRoot, {
+      waitMs: options.rebuildLockWaitMs ?? 300_000,
+      staleMs: options.rebuildLockStaleMs ?? 900_000,
+      isHealthy: () => recheck().length === 0,
+    });
+    try {
+      const reasonsUnderLock = recheck();
+      if (reasonsUnderLock.length > 0) {
+        if (!lock.acquired) {
+          throw new Error(
+            `venv rebuild lock busy and venv still unhealthy (${reasonsUnderLock.join(',')}); retry shortly`,
+          );
+        }
+        archiveBrokenVenv(workspaceRoot, venvPath, options.maxVenvArchives ?? readMaxVenvArchives());
+        execFileSync('python3', ['-m', 'venv', venvPath], { timeout: 30_000, stdio: 'pipe' });
+        rebuilt = true;
+        configurePythonEnv(venvPath, pipCacheDir);
+        if (!options.skipBaseInstall && process.env.ACS_PYTHON_ENV_SKIP_BASE_INSTALL !== '1') {
+          installBaseRequirements(pythonPath, baseRequirementsPath, options.installTimeoutMs ?? readInstallTimeoutMs());
+        }
+        writeRuntimeManifest(manifestPath, {
+          contractVersion: PYTHON_RUNTIME_CONTRACT_VERSION,
+          pythonMajorMinor: desiredPythonMajorMinor,
+          baseRequirementsHash,
+          ...(imageRef ? { imageRef } : {}),
+          createdAt: (options.now ?? (() => new Date()))().toISOString(),
+        });
+      }
+    } finally {
+      lock.release();
+    }
   }
   configurePythonEnv(venvPath, pipCacheDir);
   return { venvPath, pythonPath, pipCacheDir, manifestPath, rebuilt, rebuildReasons };
+}
+
+interface VenvRebuildLock {
+  acquired: boolean;
+  release(): void;
+}
+
+/**
+ * venv rebuild 跨进程锁（mkdir 原子性，NFS 安全）。
+ * - 抢到：返回 acquired=true，release() 删除锁目录；
+ * - 他人持有：轮询等待。期间 isHealthy() 变 true（持有者修好了）即提前返回
+ *   acquired=false，调用方直接复用；
+ * - stale：锁目录 mtime 超过 staleMs（持有者进程被杀）→ 删除后重抢；
+ * - 等满 waitMs 仍未获得：返回 acquired=false，由调用方决定（仍不健康则报错，
+ *   宁可本次工具失败重试，也不能带病并发 rebuild）。
+ */
+function acquireVenvRebuildLock(
+  workspaceRoot: string,
+  input: { waitMs: number; staleMs: number; isHealthy: () => boolean },
+): VenvRebuildLock {
+  const lockDir = join(workspaceRoot, '.ky-agent', 'runtime', 'venv-rebuild.lock');
+  const deadline = Date.now() + Math.max(0, input.waitMs);
+  const noopRelease = () => {};
+  for (;;) {
+    try {
+      mkdirSync(lockDir);
+      try {
+        writeFileSync(join(lockDir, 'owner.json'), `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`, 'utf-8');
+      } catch {
+        // owner 信息仅诊断用，写失败不影响锁语义。
+      }
+      let released = false;
+      return {
+        acquired: true,
+        release: () => {
+          if (released) return;
+          released = true;
+          rmSync(lockDir, { recursive: true, force: true });
+        },
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+    // 锁被他人持有：健康即可提前退出（持有者已完成 rebuild）。
+    if (input.isHealthy()) return { acquired: false, release: noopRelease };
+    try {
+      const stat = statSync(lockDir);
+      if (Date.now() - stat.mtimeMs > input.staleMs) {
+        rmSync(lockDir, { recursive: true, force: true });
+        continue;
+      }
+    } catch {
+      continue; // 锁刚被释放，立刻重试抢锁。
+    }
+    if (Date.now() >= deadline) return { acquired: false, release: noopRelease };
+    sleepSync(1_000 + Math.floor(Math.random() * 500));
+  }
+}
+
+/** 同步 sleep（runner 是每次 exec 一个的独立进程，同步等待无副作用）。 */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 export function venvRebuildReasons(input: {

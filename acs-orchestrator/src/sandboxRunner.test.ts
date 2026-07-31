@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -134,6 +135,91 @@ describe('ensurePythonEnv', () => {
         imageRef: 'old-image',
       },
     })).toEqual(['venv-not-isolated', 'python-version-changed']);
+  });
+
+  // ── 2026-08-01 生产事故回归：venv rebuild 跨进程锁 ──
+  // 并发 runner 同时 rebuild 互踩（File exists / ensurepip 半成品 / pip 文件被
+  // archive 走），残缺 venv 让每个后续 runner 再触发 rebuild，自激循环。
+
+  it('rebuild 锁被他人持有、等待期间 venv 恢复健康 → 直接复用不重建', () => {
+    const root = mkdtempSync(join(tmpdir(), 'acs-venv-lock-heal-'));
+    const requirementsPath = join(root, 'base.txt');
+    writeFileSync(requirementsPath, '# empty in test\n');
+    const originalEnv = { ...process.env };
+    try {
+      const opts = {
+        baseRequirementsPath: requirementsPath,
+        imageRef: 'registry.example.com/agent-saas/acs-sandbox:test',
+        skipBaseInstall: true,
+      };
+      const first = ensurePythonEnv(root, opts);
+      expect(first.rebuilt).toBe(true);
+      const manifestBackup = readFileSync(first.manifestPath, 'utf-8');
+
+      // 制造「他人正在 rebuild」现场：manifest 缺失 + 锁被持有
+      const lockDir = join(root, '.ky-agent', 'runtime', 'venv-rebuild.lock');
+      mkdirSync(lockDir);
+      writeFileSync(join(root, 'manifest.bak'), manifestBackup);
+      const restorer = spawn('/bin/sh', ['-c', `sleep 1 && cp ${JSON.stringify(join(root, 'manifest.bak'))} ${JSON.stringify(first.manifestPath)} && rm -rf ${JSON.stringify(lockDir)}`], { detached: false, stdio: 'ignore' });
+      try {
+        writeFileSync(first.manifestPath.replace(/\.ky-runtime\.json$/, '.tmp-del'), '');
+        // 删 manifest 触发 rebuild 诱因
+        writeFileSync(first.manifestPath, 'not-json');
+        const result = ensurePythonEnv(root, { ...opts, rebuildLockWaitMs: 15_000 });
+        // 等待期间 restorer 恢复了 manifest → 提前退出、零重建
+        expect(result.rebuilt).toBe(false);
+      } finally {
+        restorer.kill();
+      }
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  it('stale 锁（持有者已死）被抢占，rebuild 正常完成', () => {
+    const root = mkdtempSync(join(tmpdir(), 'acs-venv-lock-stale-'));
+    const requirementsPath = join(root, 'base.txt');
+    writeFileSync(requirementsPath, '# empty in test\n');
+    const originalEnv = { ...process.env };
+    try {
+      const lockDir = join(root, '.ky-agent', 'runtime', 'venv-rebuild.lock');
+      mkdirSync(lockDir, { recursive: true });
+      const staleTime = new Date(Date.now() - 60 * 60_000);
+      utimesSync(lockDir, staleTime, staleTime);
+
+      const result = ensurePythonEnv(root, {
+        baseRequirementsPath: requirementsPath,
+        imageRef: 'registry.example.com/agent-saas/acs-sandbox:test',
+        skipBaseInstall: true,
+        rebuildLockWaitMs: 15_000,
+        rebuildLockStaleMs: 900_000,
+      });
+      expect(result.rebuilt).toBe(true);
+      expect(existsSync(lockDir)).toBe(false);
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  it('锁等待超时且 venv 仍不健康 → 明确报错而非带病并发重建', () => {
+    const root = mkdtempSync(join(tmpdir(), 'acs-venv-lock-busy-'));
+    const requirementsPath = join(root, 'base.txt');
+    writeFileSync(requirementsPath, '# empty in test\n');
+    const originalEnv = { ...process.env };
+    try {
+      const lockDir = join(root, '.ky-agent', 'runtime', 'venv-rebuild.lock');
+      mkdirSync(lockDir, { recursive: true });
+
+      expect(() => ensurePythonEnv(root, {
+        baseRequirementsPath: requirementsPath,
+        imageRef: 'registry.example.com/agent-saas/acs-sandbox:test',
+        skipBaseInstall: true,
+        rebuildLockWaitMs: 1_200,
+        rebuildLockStaleMs: 900_000,
+      })).toThrow(/venv rebuild lock busy/);
+    } finally {
+      process.env = originalEnv;
+    }
   });
 });
 

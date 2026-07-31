@@ -633,7 +633,7 @@ function SidebarUserMenuFooter({
   const currentAccountKey = authUser ? getAccountKey(authUser) : null;
 
   return (
-    <div className="border-t border-black/[0.06] px-1 py-1.5">
+    <div className="px-1 py-1.5">
       <div className="relative" ref={userMenuRef}>
         <button
           type="button"
@@ -1729,7 +1729,7 @@ export function DesktopSessionSidebar({
     return (
       <aside
         className={cn(
-          "relative flex h-full shrink-0 flex-col border-r border-black/[0.08] bg-background",
+          "relative flex h-full shrink-0 flex-col bg-background",
           hidden && "hidden",
           className,
         )}
@@ -1953,7 +1953,7 @@ export function DesktopSessionSidebar({
   return (
     <aside
       className={cn(
-        "relative flex h-full shrink-0 border-r border-black/[0.08] bg-background",
+        "relative flex h-full shrink-0 bg-background",
         hidden && "hidden",
         className,
       )}

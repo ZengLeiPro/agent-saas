@@ -120,6 +120,7 @@ export function DesktopLayout(props: LayoutProps) {
         : fileBrowserOpen ? 'browser'
           : null;
   const rightPanelOpen = rightPanelKind !== null;
+  const showRightPanel = activeTab === "chat" && rightPanelOpen;
   const rightPanelKey = rightPanelKind === 'preview' ? previewFilePath : rightPanelKind;
   const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(0.5, 0.25, 0.75, rightPanelKey);
 
@@ -338,12 +339,24 @@ export function DesktopLayout(props: LayoutProps) {
       />
 
       {/* 右侧内容区 */}
-      <div className={cn(
-        "flex min-h-0 min-w-0 flex-1 flex-col",
-        activeTab === "chat" && "bg-card",
-        chatFontLarge && "chat-font-large",
-        chatWidthWide && "chat-width-wide",
-      )}>
+      <div
+        ref={showRightPanel ? splitContainerRef : undefined}
+        className={cn(
+          "my-2 mr-2 flex min-h-0 min-w-0 flex-1",
+          sidebarCollapsed && "ml-2",
+          chatFontLarge && "chat-font-large",
+          chatWidthWide && "chat-width-wide",
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl",
+            activeTab === "chat" && "bg-card",
+          )}
+          style={showRightPanel
+            ? { flexBasis: `calc(${(1 - splitRatio) * 100}% - 2px)`, flexShrink: 0, flexGrow: 0 }
+            : { flex: 1 }}
+        >
         {/* 内容区 header */}
         <header
           className={cn(
@@ -472,8 +485,8 @@ export function DesktopLayout(props: LayoutProps) {
         )}
 
         {/* Tab 内容 */}
-        <div ref={rightPanelOpen ? splitContainerRef : undefined} className={cn("flex min-h-0 flex-1 overflow-hidden", activeTab !== "chat" && "hidden")}>
-          <div className="flex min-h-0 min-w-0 flex-col overflow-hidden" style={rightPanelOpen ? { flexBasis: `${(1 - splitRatio) * 100}%`, flexShrink: 0, flexGrow: 0 } : { flex: 1 }}>
+        <div className={cn("flex min-h-0 flex-1 overflow-hidden", activeTab !== "chat" && "hidden")}>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <ChatTabContent
               messages={messages}
               loading={loading}
@@ -521,44 +534,6 @@ export function DesktopLayout(props: LayoutProps) {
                 : undefined}
             />
           </div>
-          {rightPanelOpen && (
-            <>
-              <ResizablePanelDivider
-                label="调整右侧面板宽度"
-                onMouseDown={onDividerMouseDown}
-                onDoubleClick={onDividerDoubleClick}
-              />
-              <div className="flex min-w-0 flex-col overflow-hidden" style={{ flexBasis: `${splitRatio * 100}%`, flexShrink: 0, flexGrow: 0 }}>
-                {rightPanelKind === 'preview' && previewFilePath ? (
-                  <FilePreviewPanel
-                    filePath={previewFilePath}
-                    owner={previewFileOwner}
-                    onBack={closeFilePreview}
-                    onExpand={expandFilePreview}
-                  />
-                ) : null}
-                {systemPanel ? (
-                  <div className={cn("flex h-full min-h-0 flex-col", rightPanelKind !== 'system' && "hidden")}>
-                    <SystemPanel
-                      snapshot={systemPanel}
-                      onSelectView={selectSystemPanelView}
-                      onClose={dismissSystemPanel}
-                      className="min-h-0 flex-1"
-                    />
-                  </div>
-                ) : null}
-                <div className={cn("flex h-full flex-col", rightPanelKind !== 'browser' && "hidden")}>
-                  <Suspense fallback={SuspenseFallback}>
-                    <FileBrowserLazy
-                      onClose={closeFileBrowser}
-                      onPreviewFile={openFilePreview}
-                      owner={authUser?.username}
-                    />
-                  </Suspense>
-                </div>
-              </div>
-            </>
-          )}
         </div>
         {capabilitiesMounted && (
           <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "capabilities" && "hidden")}>
@@ -806,6 +781,54 @@ export function DesktopLayout(props: LayoutProps) {
             不切 activeTab；弹窗统一由 settingsOnly shell 承载，关闭后回到原页面。
           */}
         </Suspense>
+        </div>
+
+        {rightPanelOpen && (
+          <>
+            <div className={cn("w-1 shrink-0 items-center justify-center", showRightPanel ? "flex" : "hidden")}>
+              <ResizablePanelDivider
+                label="调整右侧面板宽度"
+                onMouseDown={onDividerMouseDown}
+                onDoubleClick={onDividerDoubleClick}
+              />
+            </div>
+            <div
+              className={cn(
+                "min-w-0 flex-col overflow-hidden rounded-xl bg-card",
+                showRightPanel ? "flex" : "hidden",
+              )}
+              style={{ flexBasis: `calc(${splitRatio * 100}% - 2px)`, flexShrink: 0, flexGrow: 0 }}
+            >
+              {rightPanelKind === 'preview' && previewFilePath ? (
+                <FilePreviewPanel
+                  filePath={previewFilePath}
+                  owner={previewFileOwner}
+                  onBack={closeFilePreview}
+                  onExpand={expandFilePreview}
+                />
+              ) : null}
+              {systemPanel ? (
+                <div className={cn("flex h-full min-h-0 flex-col", rightPanelKind !== 'system' && "hidden")}>
+                  <SystemPanel
+                    snapshot={systemPanel}
+                    onSelectView={selectSystemPanelView}
+                    onClose={dismissSystemPanel}
+                    className="min-h-0 flex-1"
+                  />
+                </div>
+              ) : null}
+              <div className={cn("flex h-full flex-col", rightPanelKind !== 'browser' && "hidden")}>
+                <Suspense fallback={SuspenseFallback}>
+                  <FileBrowserLazy
+                    onClose={closeFileBrowser}
+                    onPreviewFile={openFilePreview}
+                    owner={authUser?.username}
+                  />
+                </Suspense>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

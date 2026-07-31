@@ -195,16 +195,19 @@ describe('McpOAuthService', () => {
     const store2 = new McpConfigStore(join(root, 'mcp-config.json'));
     await store2.installBuiltinOAuthServers();
     const upgraded = store2.getServer('github')!;
-    expect(upgraded.createdFromTemplateVersion).toBe(4);
+    // 断言对齐当前 github 模板版本（GitHub connector 升到 5）；升级逻辑始终写入 template.templateVersion
+    expect(upgraded.createdFromTemplateVersion).toBe(5);
     expect(upgraded.tenantId).toBe('*');
     expect('oauth' in upgraded.config && upgraded.config.oauth).toBeFalsy();
+    // v5 起凭据由 GitHub 原生连接器统一管理（managedByConnectorId），不再直挂 runtimeEnv
     expect(upgraded.secretRequirements?.[0]).toMatchObject({
       key: 'token',
       target: 'header',
       name: 'Authorization',
       scope: 'user',
-      runtimeEnv: ['GH_TOKEN', 'GITHUB_TOKEN'],
     });
+    expect(upgraded.secretRequirements?.[0]?.runtimeEnv).toBeUndefined();
+    expect(upgraded.managedByConnectorId).toBe('github');
   });
 
   it('presets v3：为存量内置 OAuth 连接器补运行态 env 映射', async () => {

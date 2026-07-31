@@ -240,8 +240,15 @@ export class SnatManager {
     if (result.exitCode !== 0) throw new Error(`CreateSnatEntry 失败: ${result.stderr || result.stdout}`);
     this.logger.warn(`snat_created sandbox=${ref.name} sourceCidr=${sourceCidr} snatIp=${this.config.snat.snatIp}`);
     if (this.config.snat.stabilizeAfterCreateMs > 0) {
-      this.logger.info(`snat_stabilizing sandbox=${ref.name} ms=${this.config.snat.stabilizeAfterCreateMs}`);
-      await sleep(this.config.snat.stabilizeAfterCreateMs);
+      // 2026-07-31 方案4：stabilize 传播等待移出关键路径。等待不影响传播完成时
+      // 刻，只影响「返回时是否已稳」；新建 Sandbox 的首个工具调用通常是读文件/
+      // Shell 而非公网请求，8s 硬等待是 100% 确定成本，换成小概率「公网请求撞
+      // 传播窗口失败一次由 Agent 重试」。后台计时结束补记日志便于诊断。
+      const stabilizeMs = this.config.snat.stabilizeAfterCreateMs;
+      this.logger.info(`snat_stabilizing_background sandbox=${ref.name} ms=${stabilizeMs}`);
+      void sleep(stabilizeMs).then(() => {
+        this.logger.info(`snat_stabilized sandbox=${ref.name} ms=${stabilizeMs}`);
+      });
     }
     const created = (await this.listEntries(sourceCidr))
       .find((entry) => entry.sourceCidr === sourceCidr && entry.name === name);

@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import type { AcsOrchestratorConfig } from './config.js';
 import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import type { Kubectl, KubectlResult } from './kubectl.js';
-import { SandboxManager } from './sandboxManager.js';
+import { SandboxManager, brokenSandboxStateReason } from './sandboxManager.js';
 
 describe('SandboxManager egress injection', () => {
   async function applyWithEgress(egress: AcsOrchestratorConfig['egress']) {
@@ -1530,5 +1530,122 @@ describe('SandboxManager ensure fast path & coalescing', () => {
     const [ref1, ref2] = await Promise.all([first, second]);
     expect(ref1.name).toBe(ref2.name);
     expect(sandboxApplies).toBe(1);
+  });
+});
+
+// ─── 2026-07-31 冷启动治理批次 2：broken 判定收窄 + resume 快路径 + Failed fail-fast ───
+
+describe('brokenSandboxStateReason 收窄（recreating 常态化）', () => {
+  function pausedStatus(input: { specPaused: boolean; recreating: boolean; imageChanged?: boolean }) {
+    return {
+      phase: 'Paused',
+      raw: {
+        spec: { paused: input.specPaused },
+        status: {
+          phase: 'Paused',
+          ...(input.imageChanged
+            ? { conditions: [{ type: 'SandboxPaused', status: 'False', reason: 'ImageChanged', message: 'pause is not allowed' }] }
+            : {}),
+          podInfo: { annotations: input.recreating ? { 'ops.alibabacloud.com/recreating': 'true' } : {} },
+        },
+      },
+    };
+  }
+
+  it('正常 pause（spec.paused=true）+ recreating 注记不再判 broken', () => {
+    expect(brokenSandboxStateReason(pausedStatus({ specPaused: true, recreating: true }))).toBeUndefined();
+  });
+
+  it('spec 要求 Running 但 phase 停在 Paused 仍判 requested_running', () => {
+    expect(brokenSandboxStateReason(pausedStatus({ specPaused: false, recreating: true }))).toBe('requested_running');
+    expect(brokenSandboxStateReason(pausedStatus({ specPaused: false, recreating: false }))).toBe('requested_running');
+  });
+
+  it('ImageChanged 半状态仍判 image_changed（07-06 原始故障场景）', () => {
+    expect(brokenSandboxStateReason(pausedStatus({ specPaused: false, recreating: true, imageChanged: true }))).toBe('image_changed');
+  });
+
+  it('Failed 终态判定不受影响', () => {
+    expect(brokenSandboxStateReason({
+      phase: 'Failed',
+      raw: { status: { phase: 'Failed', message: 'Pod Not Found' } },
+    })).toBe('failed_pod_not_found');
+  });
+});
+
+describe('resume 快路径与 Failed fail-fast', () => {
+  const ok = (stdout = ''): KubectlResult => ({ stdout, stderr: '', exitCode: 0, signal: null });
+
+  it('Paused+recreating 走 resume_paused：patch unpause，不删除不重建', async () => {
+    const config = { ...baseConfig(), sandboxWaitTimeoutMs: 5_000, maxRunningSandboxes: 0 };
+    const input = { workspaceId: 'ws-resume2', sessionId: 's-1' };
+    let phase = 'Paused';
+    let specPaused = true;
+    let deletes = 0;
+    let sandboxApplies = 0;
+    let unpausePatches = 0;
+    const sandboxJson = () => JSON.stringify({
+      metadata: { annotations: { 'agent-saas.kaiyan.net/mount-subpath': input.workspaceId } },
+      spec: {
+        paused: specPaused,
+        template: { spec: { containers: [{ name: config.sandboxContainerName, image: config.sandboxImage }] } },
+      },
+      status: {
+        phase,
+        podInfo: { annotations: { 'ops.alibabacloud.com/recreating': 'true' } },
+      },
+    });
+    const kubectl = {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        if (args[0] === 'get' && args.includes('-l')) return ok(JSON.stringify({ items: [] }));
+        if (args[0] === 'get') return ok(sandboxJson());
+        if (args[0] === 'delete') { deletes += 1; return ok(); }
+        if (args[0] === 'apply') {
+          const kind = (JSON.parse(options.input ?? '{}') as { kind?: string }).kind;
+          if (kind === 'Sandbox') sandboxApplies += 1;
+          return ok();
+        }
+        if (args[0] === 'patch') {
+          const body = JSON.parse(args[args.length - 1] ?? '{}') as { spec?: { paused?: boolean } };
+          if (body.spec && body.spec.paused === false) {
+            unpausePatches += 1;
+            phase = 'Running';
+            specPaused = false;
+          }
+          return ok();
+        }
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+    const manager = new SandboxManager(config, kubectl, noopLogger);
+
+    await manager.ensureRunning(input);
+    expect(unpausePatches).toBe(1);
+    expect(deletes).toBe(0);
+    expect(sandboxApplies).toBe(0);
+  });
+
+  it('等待 Running 期间遇到 Failed 终态立即失败，不空转到超时', async () => {
+    const config = { ...baseConfig(), sandboxWaitTimeoutMs: 60_000, maxRunningSandboxes: 0 };
+    const input = { workspaceId: 'ws-failfast', sessionId: 's-1' };
+    let created = false;
+    const kubectl = {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        if (args[0] === 'get' && args.includes('-l')) return ok(JSON.stringify({ items: [] }));
+        if (args[0] === 'get') {
+          if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
+          return ok(JSON.stringify({ status: { phase: 'Failed', message: 'image pull backoff' } }));
+        }
+        if (args[0] === 'apply') { created = true; return ok(); }
+        if (args[0] === 'patch') return ok();
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+    const manager = new SandboxManager(config, kubectl, noopLogger);
+
+    const startedAt = Date.now();
+    await expect(manager.ensureRunning(input)).rejects.toThrow(/Failed 终态/);
+    // 首轮 get 即 Failed → 秒级失败，绝不等满 60s
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
   });
 });

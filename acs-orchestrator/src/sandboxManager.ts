@@ -762,7 +762,17 @@ export class SandboxManager {
         const status = await this.getStatus(name);
         lastPhase = status?.phase ?? 'missing';
         if (lastPhase === expected) return;
+        // 2026-07-31 fail-fast：等 Running 时遇到终态 Failed 立即报错，不再空转到
+        // 超时（生产 env timeout 600s，曾造成用户干等 10 分钟）。下一次 ensure 会
+        // 走既有 broken-recreate 路径自动重建。
+        if (expected === 'Running' && lastPhase === 'Failed') {
+          const message = stringValue((status?.raw?.status as Record<string, unknown> | undefined)?.message);
+          throw new SandboxInvalidStateError(
+            `Sandbox ${name} 进入 Failed 终态，停止等待 ${expected}${message ? `：${message}` : ''}`,
+          );
+        }
       } catch (err) {
+        if (err instanceof SandboxInvalidStateError) throw err;
         lastError = err instanceof Error ? err.message : String(err);
       }
       await new Promise((resolve) => setTimeout(resolve, 2_000));
@@ -1236,7 +1246,13 @@ export function brokenSandboxStateReason(status: SandboxStatus): string | undefi
   if (status.phase !== 'Paused') return undefined;
 
   if (pausedReason === 'ImageChanged' && pausedStatus === 'False') return 'image_changed';
-  if (recreating) return 'recreating';
+  // 2026-07-31 收窄：`ops.alibabacloud.com/recreating=true` 单独不构成 broken。
+  // 生产实测该 annotation 是 ACS 常态标记（全部 8 个 sandbox 包括 Running 中的
+  // 都带着），把它当 broken 导致 resume 快路径 7 天 0 命中、每次唤醒都删除重建
+  // （P50 35.8s）。生产实验证实 Paused+recreating 直接 patch spec.paused=false
+  // 可正常恢复：冷 resume ~20s、热 resume ~2s，exec/workspace 均正常。
+  // 07-06 的真实故障场景（prewarm 后立即 pause 留下的半状态）由上面的
+  // image_changed 与下面的 requested_running 两条判定继续兜住。
   if (requestedRunning) return 'requested_running';
   return undefined;
 }

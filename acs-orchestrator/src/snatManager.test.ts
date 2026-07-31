@@ -119,6 +119,27 @@ describe('SnatManager', () => {
     expect(state.entries.map((entry) => ({ id: entry.SnatEntryId, sourceCidr: entry.SourceCIDR })))
       .toEqual([{ id: 'snat-1', sourceCidr: '172.16.177.139/32' }]);
   });
+
+  it('stabilize 传播等待不阻塞返回（2026-07-31 方案4）', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'acs-snat-stabilize-'));
+    const statePath = join(root, 'state.json');
+    const logPath = join(root, 'calls.log');
+    writeFileSync(statePath, JSON.stringify({ entries: [] }), 'utf-8');
+    const cliPath = writeFakeAliyun(root, statePath, logPath);
+    const base = baseConfig(cliPath);
+    const manager = new SnatManager(
+      { ...base, snat: { ...base.snat, mode: 'probe-only', stabilizeAfterCreateMs: 5_000 } },
+      podKubectl('172.16.177.140'),
+      noopLogger,
+    );
+    const ref = { name: 'as-probe-stab', workspaceId: 'network-probe', sandboxScopeId: 'network-probe', sessionId: 'probe-stab', mountSubPath: 'network-probe' };
+
+    const startedAt = Date.now();
+    const created = await manager.ensureForProbe(ref);
+    expect(created?.sourceCidr).toBe('172.16.177.140/32');
+    // 同步等待版本会 >=5s；异步化后应立即返回
+    expect(Date.now() - startedAt).toBeLessThan(2_500);
+  });
 });
 
 function writeFakeAliyun(root: string, statePath: string, logPath: string): string {

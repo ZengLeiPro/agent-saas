@@ -68,7 +68,7 @@ describe("SkillSelector 能力目录", () => {
     expect(screen.queryByText("平台分析")).toBeNull();
 
     fireEvent.click(within(filters).getByRole("tab", { name: /全部/ }));
-    fireEvent.change(screen.getByRole("textbox", { name: "搜索技能名称或描述" }), { target: { value: "周报" } });
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索技能名称或描述" }), { target: { value: "周报" } });
     expect(screen.getByText("我的周报")).toBeTruthy();
     expect(screen.queryByText("组织 CRM")).toBeNull();
   });

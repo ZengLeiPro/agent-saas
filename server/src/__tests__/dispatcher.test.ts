@@ -129,7 +129,42 @@ describe('run dispatch lifecycle', () => {
       GH_TOKEN: 'user-token',
       GITHUB_TOKEN: 'user-token',
       EXISTING_ENV: 'kept',
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_0: 'credential.helper',
+      GIT_CONFIG_VALUE_0: '',
+      GIT_CONFIG_KEY_1: 'credential.helper',
     });
+  });
+
+  it('resets inherited Git helpers without installing an empty-password helper when connector token is absent', async () => {
+    const processCwd = await mkdtemp(join(tmpdir(), 'dispatch-git-reset-'));
+    cleanupDirs.add(processCwd);
+    let capturedEnv: Record<string, string> | undefined;
+    const baseRun: AgentRunDispatch = async function* (_message, _context, options) {
+      capturedEnv = options?.env;
+      yield { type: 'done' };
+    };
+    const runDispatch = createMiddlewareRunDispatch(baseRun, {
+      processCwd,
+      observability: { enabled: false },
+      dispatch: {},
+      resolveConnectorRuntimeEnv: async () => ({}),
+    });
+
+    await collect(runDispatch(
+      { channel: 'web', chatId: 'chat-1', content: 'run' },
+      {
+        channel: 'web',
+        user: { id: 'user-1', username: 'alice', role: 'user', tenantId: 'tenant-a' },
+      },
+    ));
+
+    expect(capturedEnv).toMatchObject({
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'credential.helper',
+      GIT_CONFIG_VALUE_0: '',
+    });
+    expect(capturedEnv).not.toHaveProperty('GIT_CONFIG_KEY_1');
   });
 
   it('writes redacted audit records when audit is enabled', async () => {

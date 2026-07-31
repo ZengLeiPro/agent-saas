@@ -594,20 +594,6 @@ export function createMiddlewareRunDispatch(
             };
           }
 
-          // Git helper 本身不含凭据，所有已登录用户统一启用；连接器 token 在下方注入。
-          effectiveOptions = {
-            ...effectiveOptions,
-            env: {
-              ...effectiveOptions.env,
-              ...buildIsolatedGitCredentialEnv({
-                tokenCommand: `printf '%s' "\${GH_TOKEN:-\${GITHUB_TOKEN:-}}"`,
-                allowGhCli: true,
-                ghConfigDir: resolve('/tmp', `gh-${context.user.username}`),
-              }),
-            },
-          };
-
-          assertGitCredentialEnvHasNoPlaintextSecret(effectiveOptions.env ?? {});
         }
 
         if (options.resolveConnectorRuntimeEnv && context.user) {
@@ -619,6 +605,25 @@ export function createMiddlewareRunDispatch(
             ...effectiveOptions,
             env: { ...(effectiveOptions.env ?? {}), ...connectorEnv },
           };
+        }
+
+        if (context.user) {
+          const credentialAvailable = Boolean(
+            effectiveOptions.env?.GH_TOKEN || effectiveOptions.env?.GITHUB_TOKEN,
+          );
+          effectiveOptions = {
+            ...effectiveOptions,
+            env: {
+              ...effectiveOptions.env,
+              ...buildIsolatedGitCredentialEnv({
+                tokenCommand: `printf '%s' "\${GH_TOKEN:-\${GITHUB_TOKEN:-}}"`,
+                credentialAvailable,
+                allowGhCli: true,
+                ghConfigDir: resolve('/tmp', `gh-${context.user.username}`),
+              }),
+            },
+          };
+          assertGitCredentialEnvHasNoPlaintextSecret(effectiveOptions.env ?? {});
         }
 
         for await (const event of baseRun(message, context, effectiveOptions, hooks)) {

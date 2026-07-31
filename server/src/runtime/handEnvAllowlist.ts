@@ -42,8 +42,13 @@ export function pickHandEnv(
   if (!env) return {};
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (!isHandEnvAllowed(key)) continue;
-    if (typeof value !== 'string' || value.length === 0) continue;
+    if (!isHandEnvAllowed(key) || typeof value !== 'string') continue;
+    if (value.length === 0) {
+      // Git 需要空 credential.helper 显式清除 system/global/local 继承值。
+      // 只放行这一种控制值，连接器 secret 的空字符串仍会被剔除。
+      const match = /^GIT_CONFIG_VALUE_(\d+)$/.exec(key);
+      if (!match || env[`GIT_CONFIG_KEY_${match[1]}`] !== 'credential.helper') continue;
+    }
     result[key] = value;
   }
   return result;

@@ -13,6 +13,8 @@ export interface ConnectorRuntimeEnvResolverOptions {
   vault: SecretVault;
   oauthService?: McpOAuthService;
   onError?: (error: Error, context: { serverId: string; source: 'secret' | 'oauth' }) => void;
+  /** 凭据已由原生 Connector 接管的 MCP adapter。 */
+  excludedServerIds?: ReadonlySet<string>;
 }
 
 export interface ConnectorRuntimeEnvContext {
@@ -28,6 +30,7 @@ export async function resolveConnectorRuntimeEnv(
   const servers = options.store.getEffectiveServers(context.username, context.tenantId);
 
   for (const server of servers) {
+    if (options.excludedServerIds?.has(server.id)) continue;
     try {
       await applySecretRuntimeEnv(options, context, server, env);
     } catch (error) {

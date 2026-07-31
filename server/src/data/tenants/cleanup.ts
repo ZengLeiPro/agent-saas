@@ -5,6 +5,7 @@ import { basename, extname, isAbsolute, join, relative, resolve } from 'node:pat
 import type { AgentStore } from '../agents/store.js';
 import type { BillingService } from '../billing/service.js';
 import type { GroupStore } from '../groups/store.js';
+import type { ConnectorConnectionStore } from '../../connectors/connectionStore.js';
 import type { McpConfigStore } from '../mcpConfig.js';
 import type { SkillConfigStore } from '../skills/store.js';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT, isValidSessionId } from '../transcripts/projectKey.js';
@@ -73,6 +74,7 @@ export interface DeleteTenantResourcesOptions {
   agentStore?: AgentStore;
   skillConfigStore?: SkillConfigStore;
   mcpConfigStore?: McpConfigStore;
+  connectorConnectionStore?: ConnectorConnectionStore;
   mcpOAuthService?: McpOAuthService;
   groupStore?: GroupStore;
   cronService?: CronService | null;
@@ -198,6 +200,9 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
   const mcp = options.mcpConfigStore
     ? await options.mcpConfigStore.removeTenantData(tenantId, usernames)
     : { serversRemoved: 0, usersRemoved: 0 };
+  if (options.connectorConnectionStore) {
+    await Promise.all(usernames.map(username => options.connectorConnectionStore!.removeUserData(username)));
+  }
   const tokenUsageRowsDeleted = options.tokenUsageStore?.deleteTenant(tenantId) ?? 0;
   const billing = options.billingService
     ? await options.billingService.deleteTenantData(tenantId)

@@ -561,6 +561,7 @@ async function prepareToolInvocation(
     context: {
       ...(invocationId ? { invocationId } : {}),
       workspace,
+      ...(wire.context.env ? { env: wire.context.env } : {}),
       ...(controller ? { signal: controller.signal } : {}),
     },
   };

@@ -55,6 +55,7 @@ import {
   feishuMatchesCatalog,
   useFeishuConnections,
 } from "@/components/CapabilityCenter/FeishuConnector";
+import { GithubConnector } from "@/components/CapabilityCenter/GithubConnector";
 
 const SCOPE_BADGE: Record<McpSecretScope, { label: string; className: string }> = {
   user: { label: "用户私有", className: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100" },
@@ -151,7 +152,8 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const [detailServerId, setDetailServerId] = useState<string | null>(null);
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [pendingServerId, setPendingServerId] = useState<string | null>(null);
-  // 钉钉/飞书是平台内置 CLI 连接，与 MCP 同 grid 展示但数据流独立。
+  // 原生连接器与 MCP 同 grid 展示，但账号和凭据数据流独立。
+  const [githubConnected, setGithubConnected] = useState(false);
   const dws = useDwsConnections(mode === "personal");
   const feishu = useFeishuConnections(mode === "personal");
   const [dingtalkDetailOpen, setDingtalkDetailOpen] = useState(false);
@@ -448,7 +450,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
     }
   }, [refresh]);
 
-  const connectorServers = myData?.servers ?? [];
+  const connectorServers = (myData?.servers ?? []).filter((server) => !server.managedByConnectorId);
   const enabledCount = connectorServers.filter((server) => server.enabled).length;
   const filteredServers = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -462,14 +464,21 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
       return matchesFilter && matchesQuery;
     });
   }, [activeFilter, connectorServers, query]);
-  // 两个内置协同办公连接计入「全部 / 已启用 / 平台提供」的计数。
+  // 三个原生连接器计入「全部 / 已启用 / 平台提供」的计数。
   const connectorFilters = useMemo(() => [
-    { value: "all" as const, label: "全部", count: connectorServers.length + 2 },
-    { value: "enabled" as const, label: "已启用", count: enabledCount + (dws.hasConnected ? 1 : 0) + (feishu.hasConnected ? 1 : 0) },
-    { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length + 2 },
+    { value: "all" as const, label: "全部", count: connectorServers.length + 3 },
+    { value: "enabled" as const, label: "已启用", count: enabledCount + (githubConnected ? 1 : 0) + (dws.hasConnected ? 1 : 0) + (feishu.hasConnected ? 1 : 0) },
+    { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length + 3 },
     { value: "organization" as const, label: "组织提供", count: connectorServers.filter((server) => connectorSource(server) === "organization").length },
     { value: "personal" as const, label: "我创建的", count: connectorServers.filter((server) => connectorSource(server) === "personal").length },
-  ], [connectorServers, dws.hasConnected, enabledCount, feishu.hasConnected]);
+  ], [connectorServers, dws.hasConnected, enabledCount, feishu.hasConnected, githubConnected]);
+  const githubMatchesQuery = !query.trim()
+    || "github git gh sdk 仓库 issue pull request".includes(query.trim().toLocaleLowerCase());
+  const showGithubCard = githubMatchesQuery && (
+    activeFilter === "all"
+    || activeFilter === "platform"
+    || (activeFilter === "enabled" && githubConnected)
+  );
   const showDingtalkCard = dingtalkMatchesCatalog(query, activeFilter, dws);
   const showFeishuCard = feishuMatchesCatalog(query, activeFilter, feishu);
   const detailServer = detailServerId ? connectorServers.find((server) => server.id === detailServerId) ?? null : null;
@@ -533,12 +542,15 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
 
         <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
           {error ? <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
-          {filteredServers.length === 0 && !showDingtalkCard && !showFeishuCard ? (
+          {filteredServers.length === 0 && !showGithubCard && !showDingtalkCard && !showFeishuCard ? (
             <div className="rounded-2xl border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
               没有找到匹配的连接器
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {showGithubCard ? (
+                <GithubConnector onConnectionChange={setGithubConnected} />
+              ) : null}
               {showDingtalkCard ? (
                 <DingtalkConnectorCard dws={dws} onOpenDetail={() => setDingtalkDetailOpen(true)} />
               ) : null}
@@ -892,7 +904,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
             <Textarea className="min-h-24 font-mono text-xs" value={JSON.stringify(form.secretRequirements ?? [], null, 2)} onChange={e => { try { setForm(prev => ({ ...prev, secretRequirements: JSON.parse(e.target.value) })); } catch { /* keep typing */ } }} placeholder="secretRequirements JSON" />
 
             <div className="space-y-2">
-              {(adminData?.servers ?? []).map(server => {
+              {(adminData?.servers ?? []).filter(server => !server.managedByConnectorId).map(server => {
                 const tenantBadge = server.tenantId === GLOBAL_TENANT_ID
                   ? { label: "全局", className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100" }
                   : server.tenantId === user?.tenantId

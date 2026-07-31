@@ -10,9 +10,10 @@
 
 ```text
 能力中心绑定连接器
-  → SecretVault 持久化
-  → 连接器声明 runtimeEnv
-  → 每次任务开始解析当前用户已启用连接器
+  → ConnectorConnectionStore 保存账号状态与 SecretVault ref
+  → SecretVault 持久化凭据
+  → 原生 Connector adapter 声明运行态 env
+  → 每次任务开始解析当前用户已连接账号
   → AgentRunOptions.env
   → SDK / 本地 Shell / 容器 Shell / 远端 hand
 ```
@@ -44,7 +45,7 @@
   "target": "header",
   "name": "Authorization",
   "scope": "user",
-  "runtimeEnv": ["GH_TOKEN", "GITHUB_TOKEN"]
+  "runtimeEnv": ["EXAMPLE_API_TOKEN"]
 }
 ```
 
@@ -80,7 +81,13 @@ OAuth 连接器可在 `config.oauth.runtimeEnv` 声明 access token 的环境变
 
 ## GitHub
 
-内置 GitHub 连接器将 PAT 注入：
+GitHub 是原生 Connector：账号、PAT、连接状态与能力开关不再归属 `McpConfigStore`。同一个 Connection 可被三类 adapter 消费：
+
+- Runtime Env adapter：向 CLI/SDK 注入标准环境变量；
+- Git Credential adapter：为原生 Git 提供隔离 helper；
+- MCP adapter：用户按需启用 GitHub remote MCP 工具，开关不影响 Git/gh/SDK。
+
+内置 GitHub Connector 将 PAT 注入：
 
 ```text
 GH_TOKEN

@@ -32,6 +32,8 @@ export interface McpSecretRequirement {
 export interface ManagedMcpServer {
   id: string;
   name: string;
+  /** 由原生 Connector 管理账号与凭据；该 MCP server 仅作为可选工具适配器。 */
+  managedByConnectorId?: string;
   description?: string;
   config: McpServerConfig;
   enabledByDefault?: boolean;
@@ -130,19 +132,20 @@ export const MCP_TEMPLATES: McpTemplate[] = [
     // 对第三方 MCP 客户端不可用（VS Code/Claude Code/OpenCode 同样受影响），
     // 改为每位用户绑定自己的 Personal Access Token（Bearer header）。
     id: 'github',
-    templateVersion: 4,
-    name: 'GitHub',
-    description: 'GitHub 官方 remote MCP。每位用户绑定自己的 GitHub Personal Access Token。',
+    templateVersion: 5,
+    name: 'GitHub MCP 工具',
+    description: 'GitHub 原生连接器的可选 remote MCP 工具适配器。',
     riskLevel: 'credentialed_external_write',
     recommendedDefault: false,
     server: {
       id: 'github',
-      name: 'GitHub',
-      description: '访问仓库、Issue 和 Pull Request；每位用户绑定自己的 Token，独立撤销。',
+      name: 'GitHub MCP 工具',
+      description: '使用 GitHub 原生连接器中的账号访问仓库、Issue 和 Pull Request。',
+      managedByConnectorId: 'github',
       enabledByDefault: false,
       riskLevel: 'credentialed_external_write',
       createdFromTemplateId: 'github',
-      createdFromTemplateVersion: 4,
+      createdFromTemplateVersion: 5,
       tenantId: GLOBAL_TENANT_ID,
       config: {
         type: 'streamable-http',
@@ -157,8 +160,7 @@ export const MCP_TEMPLATES: McpTemplate[] = [
           prefix: 'Bearer ',
           scope: 'user',
           required: true,
-          instructions: '打开 GitHub「Settings → Developer settings → Personal access tokens → Tokens (classic)」创建 Token（建议勾选 repo、read:org 权限），生成后复制粘贴到这里。Token 只保存在你的个人加密存储中，可随时在 GitHub 撤销。创建地址：https://github.com/settings/tokens/new',
-          runtimeEnv: ['GH_TOKEN', 'GITHUB_TOKEN'],
+          instructions: '凭据由能力中心的 GitHub 原生连接器统一管理。',
         },
       ],
     },
@@ -316,7 +318,7 @@ export class McpConfigStore {
 
   /** 首次启动安装官方推荐连接器；已有同 id 配置不覆盖（模板升级除外，见 v2 步骤）。 */
   async installBuiltinOAuthServers(): Promise<number> {
-    const targetVersion = 3;
+    const targetVersion = 4;
     if ((this.data.builtinPresetsVersion ?? 0) >= targetVersion) return 0;
     return this.serialize(async () => {
       if ((this.data.builtinPresetsVersion ?? 0) >= targetVersion) return 0;
@@ -367,6 +369,16 @@ export class McpConfigStore {
           return runtimeEnv?.length ? { ...requirement, runtimeEnv: [...runtimeEnv] } : requirement;
         });
         server.createdFromTemplateVersion = template.templateVersion;
+      }
+      // v4：GitHub 账号与凭据提升为原生 Connector；这里仅保留隐藏的 MCP 工具适配器。
+      const githubAdapter = this.data.servers.github;
+      if (githubAdapter?.createdFromTemplateId === 'github') {
+        const template = MCP_TEMPLATES.find(item => item.id === 'github')!;
+        githubAdapter.name = template.server.name;
+        githubAdapter.description = template.server.description;
+        githubAdapter.managedByConnectorId = 'github';
+        githubAdapter.secretRequirements = clone(template.server.secretRequirements ?? []);
+        githubAdapter.createdFromTemplateVersion = template.templateVersion;
       }
       this.data.builtinPresetsVersion = targetVersion;
       this.bumpVersion();
@@ -574,6 +586,14 @@ export class McpConfigStore {
     });
   }
 
+  getUserSecretRef(username: string, serverId: string, key: string): string | undefined {
+    return this.data.users[username]?.secretRefs?.[serverId]?.[key];
+  }
+
+  listUsernames(): string[] {
+    return Object.keys(this.data.users);
+  }
+
   async setUserSecretRef(username: string, serverId: string, key: string, refId: string, tenantId?: string): Promise<void> {
     await this.serialize(async () => {
       const server = this.data.servers[serverId];
@@ -584,6 +604,21 @@ export class McpConfigStore {
       const current = this.data.users[username] ?? { enabledServers: this.defaultEnabledServerIds(tenantId), secretRefs: {} };
       const secretRefs = clone(current.secretRefs ?? {});
       secretRefs[serverId] = { ...(secretRefs[serverId] ?? {}), [key]: refId };
+      this.data.users[username] = { ...current, secretRefs };
+      this.bumpVersion();
+      await this.persist();
+    });
+  }
+
+  async clearUserSecretRef(username: string, serverId: string, key: string): Promise<void> {
+    await this.serialize(async () => {
+      const current = this.data.users[username];
+      if (!current?.secretRefs?.[serverId]?.[key]) return;
+      const secretRefs = clone(current.secretRefs);
+      const serverRefs = { ...secretRefs[serverId] };
+      delete serverRefs[key];
+      if (Object.keys(serverRefs).length === 0) delete secretRefs[serverId];
+      else secretRefs[serverId] = serverRefs;
       this.data.users[username] = { ...current, secretRefs };
       this.bumpVersion();
       await this.persist();
@@ -609,11 +644,16 @@ export class McpConfigStore {
     });
   }
 
-  async buildUserMcpServers(username: string, workspaceRoot: string, tenantId?: string): Promise<McpServersFileShape> {
+  async buildUserMcpServers(
+    username: string,
+    workspaceRoot: string,
+    tenantId?: string,
+    credentialOverrides: Record<string, Record<string, string>> = {},
+  ): Promise<McpServersFileShape> {
     const managed: Record<string, McpServerConfig> = {};
     const managedMetadata: NonNullable<McpServersFileShape['serverMetadata']> = {};
     for (const server of this.getEffectiveServers(username, tenantId)) {
-      managed[server.id] = this.materializeSecrets(username, server);
+      managed[server.id] = this.materializeSecrets(username, server, credentialOverrides[server.id]);
       managedMetadata[server.id] = {
         name: server.name,
         ...(server.description ? { description: server.description } : {}),
@@ -631,9 +671,16 @@ export class McpConfigStore {
     };
   }
 
-  private materializeSecrets(username: string, server: ManagedMcpServer): McpServerConfig {
+  private materializeSecrets(
+    username: string,
+    server: ManagedMcpServer,
+    credentialOverrides: Record<string, string> = {},
+  ): McpServerConfig {
     const config = clone(server.config);
-    const userRefs = this.data.users[username]?.secretRefs?.[server.id] ?? {};
+    const userRefs = {
+      ...(this.data.users[username]?.secretRefs?.[server.id] ?? {}),
+      ...credentialOverrides,
+    };
     const serverRefs = server.secretRefs ?? {};
     for (const req of server.secretRequirements ?? []) {
       // PR 11 多 scope secret 取址：scope='user' 走 user 配置；'tenant'/'global'
@@ -731,6 +778,7 @@ function normalizeServer(input: ManagedMcpServer): ManagedMcpServer {
     secretRequirements: (input.secretRequirements ?? []).map(req => ({ ...req, required: req.required !== false })),
     createdFromTemplateId: input.createdFromTemplateId,
     createdFromTemplateVersion: input.createdFromTemplateVersion,
+    managedByConnectorId: input.managedByConnectorId,
     // 多组织改造：缺失 tenantId 的输入（旧 record / 单元测试 fixture）
     // 回填 LEGACY_TENANT_ID。GLOBAL_TENANT_ID ('*') 不做默认回填，
     // 避免把现有 server 意外提权到全局。

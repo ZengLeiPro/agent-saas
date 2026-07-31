@@ -7,6 +7,8 @@ const SECRET_PATTERNS = [
 
 export interface IsolatedGitCredentialEnvInput {
   tokenCommand: string;
+  /** false 时只清空继承 helper，避免空密码 helper 覆盖错误并保持租户隔离。 */
+  credentialAvailable: boolean;
   allowGhCli: boolean;
   ghConfigDir: string;
 }
@@ -18,13 +20,15 @@ export interface IsolatedGitCredentialEnvInput {
  */
 export function buildIsolatedGitCredentialEnv(input: IsolatedGitCredentialEnvInput): Record<string, string> {
   const env: Record<string, string> = {
-    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_COUNT: input.credentialAvailable ? '2' : '1',
     GIT_CONFIG_KEY_0: 'credential.helper',
     GIT_CONFIG_VALUE_0: '',
-    GIT_CONFIG_KEY_1: 'credential.helper',
-    GIT_CONFIG_VALUE_1: `!f() { test "$1" = get || exit 0; echo "username=x-access-token"; echo "password=$(${input.tokenCommand})"; }; f`,
   };
-  if (input.allowGhCli) {
+  if (input.credentialAvailable) {
+    env.GIT_CONFIG_KEY_1 = 'credential.helper';
+    env.GIT_CONFIG_VALUE_1 = `!f() { test "$1" = get || exit 0; echo "username=x-access-token"; echo "password=$(${input.tokenCommand})"; }; f`;
+  }
+  if (input.allowGhCli && input.credentialAvailable) {
     env.GH_CONFIG_DIR = input.ghConfigDir;
     env.GH_NO_UPDATE_NOTIFIER = '1';
     env.GH_NO_EXTENSION_UPDATE_NOTIFIER = '1';

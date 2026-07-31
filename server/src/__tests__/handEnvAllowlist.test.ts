@@ -44,6 +44,22 @@ describe('handEnvAllowlist', () => {
     })).toEqual({});
   });
 
+  it('只为 Git credential.helper 控制项保留必要空值', () => {
+    expect(pickHandEnv({
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'credential.helper',
+      GIT_CONFIG_VALUE_0: '',
+      GH_TOKEN: '',
+      GIT_CONFIG_KEY_1: 'user.name',
+      GIT_CONFIG_VALUE_1: '',
+    })).toEqual({
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'credential.helper',
+      GIT_CONFIG_VALUE_0: '',
+      GIT_CONFIG_KEY_1: 'user.name',
+    });
+  });
+
   it('pickHandEnv 输入为空 / null / undefined 返回空对象', () => {
     expect(pickHandEnv(null)).toEqual({});
     expect(pickHandEnv(undefined)).toEqual({});

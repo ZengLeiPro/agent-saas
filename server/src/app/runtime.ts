@@ -109,6 +109,14 @@ import { AgentStore } from '../data/agents/store.js';
 import { GroupStore } from '../data/groups/store.js';
 import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { McpConfigStore } from '../data/mcpConfig.js';
+import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
+import {
+  GITHUB_CONNECTOR_ID,
+  githubMcpCredentialOverrides,
+  migrateLegacyGithubConnections,
+  revokePendingGithubCredentials,
+  resolveGithubRuntimeEnv,
+} from '../connectors/github.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
 import { EgressConfigStore } from '../data/egressConfig.js';
 import { EgressDispatcherRegistry, createEgressFetch } from '../runtime/egressDispatcher.js';
@@ -247,6 +255,8 @@ export interface AppRuntime {
   agentStore?: AgentStore;
   skillConfigStore?: SkillConfigStore;
   mcpConfigStore?: McpConfigStore;
+  /** 通用连接器账号、SecretVault ref 与能力开关；不依赖 MCP 生命周期。 */
+  connectorConnectionStore?: ConnectorConnectionStore;
   mcpOAuthService?: McpOAuthService;
   /** 自助注册动态配置（platform-admin 配置页写入，signup router 按 version 懒重建） */
   signupConfigStore?: SignupConfigStore;
@@ -1617,6 +1627,22 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   if (installedMcpPresets > 0) {
     serverLogger.info(`Installed ${installedMcpPresets} built-in OAuth MCP connector preset(s)`);
   }
+  const connectorConnectionStore = new ConnectorConnectionStore(
+    join(processCwd, 'data', 'connector-connections.json'),
+  );
+  const migratedGithubConnections = await migrateLegacyGithubConnections({
+    connectionStore: connectorConnectionStore,
+    mcpConfigStore,
+    userStore,
+  });
+  if (migratedGithubConnections > 0) {
+    serverLogger.info(`Migrated ${migratedGithubConnections} GitHub connection(s) from MCP config`);
+  }
+  await revokePendingGithubCredentials({
+    connectionStore: connectorConnectionStore,
+    vault: secretVault,
+    onError: error => serverLogger.warn(`Pending GitHub credential revoke skipped: ${error.message}`),
+  });
   const mcpOAuthService = new McpOAuthService({
     store: mcpConfigStore,
     vault: secretVault,
@@ -1680,6 +1706,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       username,
       workspaceRoot,
       userStore?.findByUsername(username)?.tenantId,
+      githubMcpCredentialOverrides(connectorConnectionStore, username),
     ),
     workspaceResolver: (username) => {
       const u = userStore?.findByUsername(username);
@@ -1704,16 +1731,25 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   });
   const mcpClientShutdown = () => mcpClientManager.shutdown();
   const resolveRunScopedEnv = async (context: { username: string; tenantId: string }) => {
-    const connectorEnv = await resolveConnectorRuntimeEnv({
+    const githubEnv = await resolveGithubRuntimeEnv({
+      connectionStore: connectorConnectionStore,
+      vault: secretVault,
+      onError: error => serverLogger.warn(
+        `Native connector runtime env skipped: connector=${GITHUB_CONNECTOR_ID} reason=${error.message}`,
+      ),
+    }, context);
+    const mcpConnectorEnv = await resolveConnectorRuntimeEnv({
       store: mcpConfigStore,
       vault: secretVault,
       oauthService: mcpOAuthService,
+      excludedServerIds: new Set([GITHUB_CONNECTOR_ID]),
       onError: (error, meta) => serverLogger.warn(
-        `Connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
+        `MCP connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
       ),
     }, context);
     return {
-      ...connectorEnv,
+      ...mcpConnectorEnv,
+      ...githubEnv,
       ...(resolvedSttRuntimeConfig.audioTranscribeEnvByTenant.get(context.tenantId) ?? {}),
     };
   };
@@ -2937,6 +2973,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentStore,
     skillConfigStore,
     mcpConfigStore,
+    connectorConnectionStore,
     mcpOAuthService,
     signupConfigStore,
     egressConfigStore,

@@ -181,6 +181,8 @@ export type {
   McpAdminServersResponse,
   McpDiagnosticTool,
   McpDiagnosticResponse,
+  GithubConnection,
+  GithubConnectionResponse,
 } from "./types/index";
 export { FILE_SORT_LABELS, PLATFORM_CAPABILITIES, buildScenarioPrompt } from "./types/index";
 export { saveUserPreferences } from "./lib/preferencesApi";
@@ -644,3 +646,10 @@ export {
   startMyMcpOAuth,
   disconnectMyMcpOAuth,
 } from "./lib/mcpApi";
+
+export {
+  fetchGithubConnection,
+  connectGithub,
+  updateGithubCapabilities,
+  disconnectGithub,
+} from "./lib/connectorsApi";

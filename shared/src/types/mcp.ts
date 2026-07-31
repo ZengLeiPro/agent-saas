@@ -49,6 +49,8 @@ export interface McpServerSummary {
   secretRequirements?: McpSecretStatus[];
   createdFromTemplateId?: string;
   createdFromTemplateVersion?: number;
+  /** 由原生 Connector 管理的隐藏 MCP 工具适配器。 */
+  managedByConnectorId?: string;
   ownerUsername?: string;
   personal?: boolean;
   /** '*' = 平台全局；具体 tenantId = 组织提供；个人连接器仍以 personal 为准。 */
@@ -84,6 +86,8 @@ export interface ManagedMcpServer {
   secretRequirements?: McpSecretRequirement[];
   createdFromTemplateId?: string;
   createdFromTemplateVersion?: number;
+  /** 由原生 Connector 管理账号与凭据；本记录仅作为 MCP 工具适配器。 */
+  managedByConnectorId?: string;
   config: Record<string, unknown>;
   /**
    * 组织归属。wire format：客户端可不传，由后端按 caller 身份决定：

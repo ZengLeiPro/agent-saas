@@ -1789,12 +1789,13 @@ async function buildConnectorRunEnv(
       })
     : {};
   return {
+    ...connectorEnv,
     ...buildIsolatedGitCredentialEnv({
       tokenCommand: `printf '%s' "\${GH_TOKEN:-\${GITHUB_TOKEN:-}}"`,
+      credentialAvailable: Boolean(connectorEnv.GH_TOKEN || connectorEnv.GITHUB_TOKEN),
       allowGhCli: true,
       ghConfigDir: resolve('/tmp', `gh-${identity.username}`),
     }),
-    ...connectorEnv,
   };
 }
 

@@ -153,6 +153,7 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
         secretRequirements: store.getUserSecretStatuses(username, s.id),
         createdFromTemplateId: s.createdFromTemplateId,
         createdFromTemplateVersion: s.createdFromTemplateVersion,
+        managedByConnectorId: s.managedByConnectorId,
         tenantId: s.tenantId,
         ownerUsername: s.ownerUsername,
         personal: s.ownerUsername === username,
@@ -258,7 +259,7 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
   }
 
   router.get('/templates', (_req, res) => {
-    res.json({ templates: store.listTemplates() });
+    res.json({ templates: store.listTemplates().filter(template => !template.server.managedByConnectorId) });
   });
 
   /** SEP-991 URL-based Client ID 文档；remote MCP server 会从该公开 URL 读取。 */
@@ -392,9 +393,12 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     if (!username || !tenantId) return res.status(401).json({ error: 'Authentication required' });
     const parsed = selectionsSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid selections', details: parsed.error.format() });
-    // setUserEnabledServers 内部按 tenantId 过滤掉不可见 server——
-    // 即使前端绕过 UI 直发 API 也无法启用其他组织的 server。
-    await store.setUserEnabledServers(username, parsed.data.enabledServers, tenantId);
+    // 原生 Connector 管理的 adapter 开关不能从 MCP API 绕过。
+    const managedEnabled = store.getUserConfig(username).enabledServers.filter(
+      id => store.getServer(id)?.managedByConnectorId,
+    );
+    const requested = parsed.data.enabledServers.filter(id => !store.getServer(id)?.managedByConnectorId);
+    await store.setUserEnabledServers(username, [...requested, ...managedEnabled], tenantId);
     await manager.invalidateUser(username);
     auditLog(req, 'mcp_user_selections_updated', username);
     res.json({ ok: true });
@@ -411,6 +415,9 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     const key = req.params.key;
     // 跨组织可见性防御：绑 secret 前确认 server 对当前 user 可见
     const server = store.getServer(serverId);
+    if (server?.managedByConnectorId) {
+      return res.status(409).json({ error: '该凭据由原生连接器管理' });
+    }
     if (!server || !isServerVisibleToUser(server, username, tenantId)) {
       return res.status(404).json({ error: 'MCP server not found' });
     }
@@ -517,6 +524,9 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
       return res.status(403).json({ error: '仅平台 admin 可配置 OAuth MCP server' });
     }
     const existing = store.getServer(id);
+    if (existing?.managedByConnectorId) {
+      return res.status(409).json({ error: '该 MCP adapter 由原生连接器管理' });
+    }
     const decision = resolveTenantIdForUpsert(req, existing, parsed.data.tenantId);
     if (!decision.ok) return res.status(decision.status).json({ error: decision.error });
     try {
@@ -535,6 +545,9 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
   router.delete('/admin/servers/:id', requireAdmin, async (req, res) => {
     const existing = store.getServer(req.params.id);
     if (!existing) return res.status(404).json({ error: 'MCP server not found' });
+    if (existing.managedByConnectorId) {
+      return res.status(409).json({ error: '该 MCP adapter 由原生连接器管理' });
+    }
     if (!canWriteServerForTenant(req, existing.tenantId)) {
       return res.status(403).json({ error: '跨组织访问被拒绝' });
     }
@@ -556,8 +569,11 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     if (!user) return;
     const parsed = selectionsSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid selections', details: parsed.error.format() });
-    // 按 target user 的组织过滤 enabledServers——admin 不能给目标用户启用跨组织 server
-    await store.setUserEnabledServers(user.username, parsed.data.enabledServers, user.tenantId);
+    const managedEnabled = store.getUserConfig(user.username).enabledServers.filter(
+      id => store.getServer(id)?.managedByConnectorId,
+    );
+    const requested = parsed.data.enabledServers.filter(id => !store.getServer(id)?.managedByConnectorId);
+    await store.setUserEnabledServers(user.username, [...requested, ...managedEnabled], user.tenantId);
     await manager.invalidateUser(user.username);
     auditLog(req, 'mcp_admin_user_selections_updated', user.username);
     res.json({ ok: true });

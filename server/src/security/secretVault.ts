@@ -13,12 +13,12 @@ export interface SecretRef {
 }
 
 export interface VaultCaller {
-  actor: 'system' | 'mcp_proxy' | 'git_proxy' | 'admin';
+  actor: 'system' | 'mcp_proxy' | 'connector_proxy' | 'git_proxy' | 'admin';
   userId?: string;
   /**
    * 调用方所属组织。用于 tenant-scope secret 的 ACL 校验：
    *   - secret.ownerId === `tenant:<id>` → 要求 caller.tenantId === `<id>`
-   *   - secret.ownerId === 'global'      → 任意 caller 可读（仅 mcp_proxy/git_proxy
+   *   - secret.ownerId === 'global'      → 任意 caller 可读（仅 connector/mcp/git proxy
    *     actor 通过，admin/system 本就放行；防止匿名 caller 越权读 global secret）
    *   - 其他（user scope）              → 维持 caller.userId === secret.ownerId
    */

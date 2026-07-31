@@ -51,6 +51,7 @@ import { createInternalAcsAlertsRouter } from "../routes/internalAcsAlerts.js";
 import { RuntimeEfficiencyQuery } from "../runtime/efficiencyQuery.js";
 import { createSkillsRouter } from "../routes/skills.js";
 import { createMcpRouter } from "../routes/mcp.js";
+import { createConnectorsRouter } from "../routes/connectors.js";
 import { createTenantsRouter } from "../routes/tenants.js";
 import { deleteTenantResources } from "../data/tenants/cleanup.js";
 import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
@@ -666,6 +667,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
               agentStore: runtime.agentStore,
               skillConfigStore: runtime.skillConfigStore,
               mcpConfigStore: runtime.mcpConfigStore,
+              connectorConnectionStore: runtime.connectorConnectionStore,
               mcpOAuthService: runtime.mcpOAuthService,
               groupStore: runtime.groupStore,
               cronService: runtime.cronRuntime.service,
@@ -706,6 +708,23 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           sharedDir,
           tenantSkillsRootDir: runtime.tenantSkillsRootDir,
           skillMaterialization: runtime.skillMaterialization,
+        }),
+      );
+    }
+    // 原生连接器账号与凭据；独立于 MCP feature gate。
+    if (
+      runtime.connectorConnectionStore
+      && runtime.mcpConfigStore
+      && runtime.mcpClientManager
+      && runtime.secretVault
+    ) {
+      app.use(
+        "/api/connectors",
+        createConnectorsRouter({
+          connectionStore: runtime.connectorConnectionStore,
+          mcpConfigStore: runtime.mcpConfigStore,
+          mcpClientManager: runtime.mcpClientManager,
+          secretVault: runtime.secretVault,
         }),
       );
     }

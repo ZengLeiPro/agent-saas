@@ -10,6 +10,7 @@ import {
   FeishuConnectorDrawer,
   useFeishuConnections,
 } from "./FeishuConnector";
+import { GithubConnector } from "./GithubConnector";
 
 /** 组织关闭个人通用 Agent 时仍可连接的用户级协同办公账号。 */
 export function BuiltInConnectors() {
@@ -24,6 +25,7 @@ export function BuiltInConnectors() {
         description="连接常用账号，让 Agent 在你的权限范围内使用数据和工具。"
       />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <GithubConnector />
         <DingtalkConnectorCard dws={dws} onOpenDetail={() => setDingtalkOpen(true)} />
         <FeishuConnectorCard state={feishu} onOpenDetail={() => setFeishuOpen(true)} />
       </div>

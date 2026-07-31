@@ -504,20 +504,20 @@ interface SidebarBrandHeaderProps {
 
 function SidebarBrandHeader({ className, onCollapse }: SidebarBrandHeaderProps) {
   return (
-    <div className={cn("flex items-center justify-between gap-2 px-3 py-3", className)}>
+    <div className={cn("flex items-center justify-between gap-2 px-4 py-3", className)}>
       <div className="flex min-w-0 items-center">
         <span className="truncate text-sm font-semibold tracking-tight text-foreground">
-          KY Agent
+          开沿 Agent
         </span>
       </div>
       {onCollapse && (
         <button
           type="button"
-          className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           onClick={onCollapse}
           title="收起侧边栏"
         >
-          <PanelLeft className="size-4" />
+          <PanelLeft className="size-7" strokeWidth={2} />
         </button>
       )}
     </div>
@@ -527,6 +527,7 @@ function SidebarBrandHeader({ className, onCollapse }: SidebarBrandHeaderProps) 
 interface SidebarNavProps {
   navItems: Array<{ tab: AppTab; label: string }>;
   activeTab: AppTab;
+  isNewSessionActive: boolean;
   isLoading: boolean;
   onNew: () => void;
   onTabChange?: (tab: AppTab) => void;
@@ -543,7 +544,7 @@ function getNavIcon(tab: AppTab) {
   return null;
 }
 
-function SidebarNav({ navItems, activeTab, isLoading, onNew, onTabChange, beforeNavigate, constrainNewButton = true }: SidebarNavProps) {
+function SidebarNav({ navItems, activeTab, isNewSessionActive, isLoading, onNew, onTabChange, beforeNavigate, constrainNewButton = true }: SidebarNavProps) {
   if (!onTabChange) return null;
   return (
     <nav className="flex flex-col gap-1 px-2 pb-3">
@@ -557,7 +558,7 @@ function SidebarNav({ navItems, activeTab, isLoading, onNew, onTabChange, before
         disabled={isLoading}
         className={cn(
           "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors",
-          NAV_ITEM_UNSELECTED,
+          isNewSessionActive ? NAV_ITEM_SELECTED : NAV_ITEM_UNSELECTED,
           "disabled:pointer-events-none disabled:opacity-50",
           constrainNewButton && "max-w-[200px]",
         )}
@@ -1742,6 +1743,7 @@ export function DesktopSessionSidebar({
         <SidebarNav
           navItems={navItems}
           activeTab={activeTab}
+          isNewSessionActive={activeTab === "chat" && activeSessionId === null}
           isLoading={isLoading}
           onNew={onNew}
           onTabChange={onTabChange}
@@ -1751,7 +1753,7 @@ export function DesktopSessionSidebar({
         {renderSessionSearchBox("inline")}
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <div className="absolute inset-0 flex flex-col bg-background" style={{ transform: singleExpandedGroup ? "translateX(-100%)" : "translateX(0)", transition: "transform 233ms cubic-bezier(.25,.1,.25,1)" }}>
-            <div className="relative flex h-12 items-center justify-between border-b px-3">
+            <div className="relative flex h-12 items-center justify-between px-3">
               <div className="pointer-events-none min-w-0 flex-1 pr-3">
                 <div className="truncate text-sm font-semibold">全部会话<span className="ml-1 font-normal text-muted-foreground">({singleColumnEntries.length})</span></div>
               </div>
@@ -1979,6 +1981,7 @@ export function DesktopSessionSidebar({
           <SidebarNav
             navItems={navItems}
             activeTab={activeTab}
+            isNewSessionActive={activeTab === "chat" && activeSessionId === null}
             isLoading={isLoading}
             onNew={onNew}
             onTabChange={onTabChange}

@@ -373,11 +373,11 @@ export function DesktopLayout(props: LayoutProps) {
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-8 shrink-0"
+                className="size-9 shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
                 onClick={(e) => { e.stopPropagation(); toggleSidebar(); }}
                 title="展开侧边栏"
               >
-                <PanelLeft className="size-4" />
+                <PanelLeft className="size-7" strokeWidth={2} />
               </Button>
             )}
             {activeTab === "capabilities" ? (

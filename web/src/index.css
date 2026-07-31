@@ -352,11 +352,11 @@
 
   /* 大字体模式 */
   .chat-font-large .prose-chat {
-    font-size: 1rem;
+    font-size: 0.875rem;
     line-height: 1.75;
   }
   .chat-font-large .msg-user-text {
-    font-size: 1rem;
+    font-size: 0.875rem;
     line-height: 1.5rem;
   }
 

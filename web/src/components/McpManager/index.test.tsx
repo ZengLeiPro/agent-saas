@@ -87,6 +87,10 @@ describe("McpManager 连接器目录", () => {
     render(<McpManager />);
 
     expect(await screen.findByText("通达信")).toBeTruthy();
+    const searchInput = screen.getByRole("searchbox", { name: "搜索连接器名称或描述" });
+    expect(searchInput.getAttribute("name")).toBe("capability-catalog-search");
+    expect(searchInput.getAttribute("autocomplete")).toBe("off");
+    expect(searchInput.getAttribute("data-lpignore")).toBe("true");
     expect(screen.getByText("开沿 CRM")).toBeTruthy();
     expect(screen.getByText("我的服务")).toBeTruthy();
     expect(screen.getAllByText("平台提供").length).toBeGreaterThan(0);

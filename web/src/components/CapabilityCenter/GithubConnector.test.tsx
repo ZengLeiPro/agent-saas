@@ -42,6 +42,22 @@ describe("GithubConnector", () => {
     expect(await screen.findByText("已连接")).toBeTruthy();
   });
 
+  it("更新凭据时把 Token 标记为新密码，避免浏览器联动填充目录搜索框", async () => {
+    api.fetchGithubConnection.mockResolvedValue({
+      connection: { connectorId: "github", status: "connected", mcpEnabled: true },
+    });
+
+    render(<GithubConnector />);
+    fireEvent.click(await screen.findByRole("button", { name: "更新凭据" }));
+
+    const tokenInput = screen.getByLabelText("Personal Access Token");
+    expect(tokenInput.getAttribute("name")).toBe("github-personal-access-token");
+    expect(tokenInput.getAttribute("autocomplete")).toBe("new-password");
+    expect(tokenInput.getAttribute("data-1p-ignore")).toBe("true");
+    expect(tokenInput.getAttribute("data-bwignore")).toBe("true");
+    expect(tokenInput.getAttribute("data-lpignore")).toBe("true");
+  });
+
   it("连接状态与 MCP 工具开关相互独立", async () => {
     api.fetchGithubConnection.mockResolvedValue({
       connection: { connectorId: "github", status: "connected", mcpEnabled: true },

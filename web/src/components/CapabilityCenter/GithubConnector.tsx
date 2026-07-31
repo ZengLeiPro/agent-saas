@@ -143,8 +143,10 @@ export function GithubConnector({
             </div>
             <Input
               id="github-token"
+              name="github-personal-access-token"
               type="password"
-              autoComplete="off"
+              autoComplete="new-password"
+              passwordManager="ignore"
               value={token}
               onChange={(event) => setToken(event.target.value)}
               placeholder="github_pat_… 或 ghp_…"

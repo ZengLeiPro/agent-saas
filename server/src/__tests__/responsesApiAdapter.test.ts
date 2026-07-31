@@ -1214,6 +1214,214 @@ describe('ResponsesApiAdapter', () => {
     expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
   });
 
+  it('零输出 EOF 无终态时重试', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_eof' } }),
+        sse('response.in_progress', { type: 'response.in_progress' }),
+      ]))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_eof_recovered' } }),
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '恢复成功' }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: {
+            id: 'resp_eof_recovered',
+            status: 'completed',
+            usage: { input_tokens: 8, output_tokens: 2 },
+          },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events.at(-1)).toMatchObject({ type: 'completed', content: '恢复成功' });
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      {
+        attempt: 1,
+        outcome: 'eof_without_terminal',
+        errorCode: 'MODEL_SSE_EOF_WITHOUT_TERMINAL',
+        willRetry: true,
+      },
+      { attempt: 2, outcome: 'completed' },
+    ]);
+  });
+
+  it('半截 function_call 参数中断后重试，工具调用完整交付', async () => {
+    // 复刻生产会话 e77bf799 故障形态：流只吐了 output_item.added + 参数 delta 就被掐断。
+    vi.useFakeTimers();
+    const streamError = Object.assign(new TypeError('terminated'), {
+      cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStreamError([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_partial_call' } }),
+        sse('response.output_item.added', {
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: { type: 'function_call', call_id: 'call_partial', name: 'Shell' },
+        }),
+        sse('response.function_call_arguments.delta', {
+          type: 'response.function_call_arguments.delta',
+          output_index: 0,
+          delta: '{"comm',
+        }),
+      ], streamError))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_call_recovered' } }),
+        sse('response.output_item.added', {
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: { type: 'function_call', call_id: 'call_ok', name: 'Shell' },
+        }),
+        sse('response.output_item.done', {
+          type: 'response.output_item.done',
+          output_index: 0,
+          item: { type: 'function_call', call_id: 'call_ok', name: 'Shell', arguments: '{"command":"ls"}' },
+        }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: {
+            id: 'resp_call_recovered',
+            status: 'completed',
+            usage: { input_tokens: 8, output_tokens: 4 },
+          },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events.at(-1)).toMatchObject({
+      type: 'completed',
+      toolCalls: [{ id: 'call_ok', name: 'Shell', arguments: '{"command":"ls"}' }],
+      modelRequestAttemptCount: 2,
+    });
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      {
+        attempt: 1,
+        outcome: 'stream_error',
+        errorCode: 'MODEL_STREAM_READ_ERROR',
+        willRetry: true,
+      },
+      { attempt: 2, outcome: 'completed' },
+    ]);
+  });
+
+  it('已交付正文后流读取错误，Web 撤销草稿并用专属机会恢复', async () => {
+    vi.useFakeTimers();
+    const streamError = Object.assign(new TypeError('terminated'), {
+      cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(responseStreamError([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_draft_stream' } }),
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '部分正文' }),
+      ], streamError))
+      .mockResolvedValueOnce(responseStream([
+        sse('response.created', { type: 'response.created', response: { id: 'resp_draft_recovered' } }),
+        sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '完整回复' }),
+        sse('response.completed', {
+          type: 'response.completed',
+          response: {
+            id: 'resp_draft_recovered',
+            status: 'completed',
+            usage: { input_tokens: 8, output_tokens: 2 },
+          },
+        }),
+      ]));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    const resultPromise = collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      channelContext: { channel: 'web', replaceableDrafts: true },
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+    await vi.runAllTimersAsync();
+    const events = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([
+      { type: 'text_delta', content: '部分正文' },
+      { type: 'draft_reset', attempt: 1 },
+      { type: 'text_delta', content: '完整回复' },
+      expect.objectContaining({
+        type: 'completed',
+        content: '完整回复',
+        terminalStatus: 'completed',
+        modelRequestAttemptCount: 2,
+      }),
+    ]);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([
+      {
+        attempt: 1,
+        outcome: 'stream_error',
+        errorCode: 'MODEL_STREAM_READ_ERROR',
+        willRetry: true,
+      },
+      { attempt: 2, outcome: 'completed' },
+    ]);
+  });
+
+  it('草稿恢复机会已用过时，已交付正文的流读取错误不再重试', async () => {
+    const streamError = Object.assign(new TypeError('terminated'), {
+      cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(responseStreamError([
+      sse('response.created', { type: 'response.created', response: { id: 'resp_draft_used' } }),
+      sse('response.output_text.delta', { type: 'response.output_text.delta', delta: '部分正文' }),
+    ], streamError));
+    const diagnostics: ModelRequestDiagnostic[] = [];
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: 'sk', baseUrl: 'https://llm.kaiyan.net/v1' },
+      { protocol: 'responses', preStreamRetryDelaysMs: [500] },
+    );
+
+    await expect(collect(adapter.stream({
+      model: 'gpt-5.6-sol', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      ...baseContext,
+      channelContext: { channel: 'web', replaceableDrafts: true },
+      replaceableDraftRetryUsed: true,
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }))).rejects.toThrow('terminated');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(diagnostics.some((event) => event.type === 'finished' && event.willRetry)).toBe(false);
+  });
+
   it.each([
     [
       '正文',

@@ -91,6 +91,16 @@ const USAGE_FETCH_TIMEOUT_MS = 2_000;
 /** 普通瞬时重试耗尽后，Web 可撤销草稿仍保留一次独立恢复机会。 */
 const WEB_REPLACEABLE_DRAFT_RETRY_DELAY_MS = 500;
 
+/**
+ * 流传输中断类错误：官方终态从未出现，toolCalls 不会交付上层、工具必然未执行，
+ * 半截 function_call 参数只存在于本次调用的局部 buffer，重试无副作用。
+ */
+const STREAM_TRANSPORT_INTERRUPT_CODES = new Set([
+  'MODEL_STREAM_READ_ERROR',
+  'MODEL_SSE_EOF_WITHOUT_TERMINAL',
+  'MODEL_SSE_UNTERMINATED_TAIL',
+]);
+
 /** 诊断字段是 provider 输入，限制基数和长度，避免异常流放大 PG 事件。 */
 const MAX_DIAGNOSTIC_EVENT_TYPES = 64;
 const MAX_UNKNOWN_EVENT_TYPES = 20;
@@ -539,6 +549,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       delayMs: number;
       errorCode: string;
       errorMessage: string;
+      useDraftRetry: boolean;
     } | undefined;
 
     try {
@@ -825,11 +836,21 @@ export class ResponsesApiAdapter implements ModelAdapter {
       streamReadSettled = true;
     } catch (err) {
       const classified = classifyStreamError(err, requestSignal);
-      const retryDelayMs = classified.code === 'MODEL_STREAM_READ_ERROR'
-        && !hasDeliveredOutput
-        && !requestSignal?.aborted
+      const transportInterrupted = STREAM_TRANSPORT_INTERRUPT_CODES.has(classified.code)
+        && !requestSignal?.aborted;
+      const regularRetryDelayMs = transportInterrupted && !hasDeliveredOutput
         ? retryDelaysMs[transientRetryIndex]
         : undefined;
+      // 已交付部分正文/思考时不能原样重发（前端会出现重复输出）；
+      // 复用 Web 可撤销草稿的同一逻辑请求一次性恢复。
+      const useDraftRetry = regularRetryDelayMs === undefined
+        && transportInterrupted
+        && hasDeliveredOutput
+        && canResetDeliveredOutput
+        && retryState?.replaceableDraftRetryUsed !== true
+        && context.replaceableDraftRetryUsed !== true;
+      const retryDelayMs = regularRetryDelayMs
+        ?? (useDraftRetry ? WEB_REPLACEABLE_DRAFT_RETRY_DELAY_MS : undefined);
       const willRetry = retryDelayMs !== undefined;
       await reader.cancel().catch(() => undefined);
       await activeAttempt.finished(classified.outcome, {
@@ -844,6 +865,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         delayMs: retryDelayMs,
         errorCode: classified.code,
         errorMessage: classified.message,
+        useDraftRetry,
       };
     } finally {
       // async generator 的消费者可能在任一 delta 后 return()；该路径不会进入 catch。
@@ -860,19 +882,28 @@ export class ResponsesApiAdapter implements ModelAdapter {
     }
 
     if (pendingStreamReadRetry) {
-      transientRetryIndex += 1;
+      if (!pendingStreamReadRetry.useDraftRetry) transientRetryIndex += 1;
       logger.warn(
-        `Responses API 流读取错误 ${pendingStreamReadRetry.errorCode} 且未交付输出，`
+        `Responses API 流传输中断 ${pendingStreamReadRetry.errorCode}`
+        + `${pendingStreamReadRetry.useDraftRetry ? '，撤销 Web 草稿后 ' : ' 且未交付输出，'}`
         + `${pendingStreamReadRetry.delayMs}ms 后重试 `
-        + `(${transientRetryIndex}/${retryDelaysMs.length})：${pendingStreamReadRetry.errorMessage}`,
+        + `${pendingStreamReadRetry.useDraftRetry
+          ? '(Web 草稿专用 1/1)'
+          : `(${transientRetryIndex}/${retryDelaysMs.length})`}：${pendingStreamReadRetry.errorMessage}`,
       );
+      if (pendingStreamReadRetry.useDraftRetry) {
+        yield { type: 'draft_reset', attempt: modelRequestAttemptCount };
+      }
       await waitForRetry(pendingStreamReadRetry.delayMs, requestSignal);
       yield* this.streamWithRetry(request, context, {
         modelRequestId,
         lastAttempt: modelRequestAttemptCount,
         transientRetryIndex,
-        replaceableDraftRetryUsed: retryState?.replaceableDraftRetryUsed ?? false,
-        maxAttempts,
+        replaceableDraftRetryUsed: pendingStreamReadRetry.useDraftRetry
+          || retryState?.replaceableDraftRetryUsed === true,
+        maxAttempts: pendingStreamReadRetry.useDraftRetry
+          ? Math.max(maxAttempts, modelRequestAttemptCount + 1)
+          : maxAttempts,
         body,
         usePrevious,
         responseMode,

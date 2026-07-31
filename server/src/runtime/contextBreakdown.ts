@@ -232,6 +232,46 @@ export function buildContextBreakdownSnapshot(params: {
   };
 }
 
+function allocateProportionalTokens(weights: number[], targetTotal: number): number[] {
+  const normalizedWeights = weights.map((weight) => Math.max(0, Math.floor(weight)));
+  const weightTotal = normalizedWeights.reduce((sum, weight) => sum + weight, 0);
+  const target = Math.max(0, Math.floor(targetTotal));
+  if (weightTotal === 0 || target === 0) return normalizedWeights.map(() => 0);
+
+  const exactValues = normalizedWeights.map((weight) => (weight / weightTotal) * target);
+  const allocated = exactValues.map((value) => Math.floor(value));
+  const remainder = target - allocated.reduce((sum, value) => sum + value, 0);
+  const remainderOrder = exactValues
+    .map((value, index) => ({ index, fraction: value - allocated[index] }))
+    .sort((left, right) => right.fraction - left.fraction || left.index - right.index);
+  for (let index = 0; index < remainder; index++) {
+    allocated[remainderOrder[index].index] += 1;
+  }
+  return allocated;
+}
+
+function calibrateCategories(
+  categories: ContextUsageCategory[],
+  targetTotal: number,
+): ContextUsageCategory[] {
+  const allocated = allocateProportionalTokens(
+    categories.map((item) => item.tokens),
+    targetTotal,
+  );
+  return categories.map((item, index) => ({
+    ...item,
+    tokens: allocated[index],
+    ...(item.children?.length
+      ? { children: calibrateCategories(item.children, allocated[index]) }
+      : {}),
+  }));
+}
+
+function calibrateTokenItems<T extends { tokens: number }>(items: T[], targetTotal: number): T[] {
+  const allocated = allocateProportionalTokens(items.map((item) => item.tokens), targetTotal);
+  return items.map((item, index) => ({ ...item, tokens: allocated[index] }));
+}
+
 export function calibrateContextBreakdown(
   breakdown: ContextUsageBreakdown,
   usage: ModelUsage | undefined,
@@ -242,17 +282,23 @@ export function calibrateContextBreakdown(
     return breakdown;
   }
   const providerUncachedInputTokens = Math.max(0, providerInputTokens - (usage?.cacheReadInputTokens ?? 0));
-  const providerContextTokens = typeof currentContextTokens === 'number'
+  const providerContextTokens = Math.max(0, Math.floor(typeof currentContextTokens === 'number'
     ? currentContextTokens
     : providerUncachedInputTokens
       + (usage?.cacheReadInputTokens ?? 0)
       + (usage?.cacheCreationInputTokens ?? 0)
-      + (usage?.outputTokens ?? 0);
-  const outputTokens = Math.max(0, usage?.outputTokens ?? 0);
-  const unattributedTokens = Math.max(0, providerContextTokens - breakdown.estimatedTokens - outputTokens);
-  const categories = breakdown.categories.filter((item) => (
+      + (usage?.outputTokens ?? 0)));
+  const outputTokens = Math.max(0, Math.floor(usage?.outputTokens ?? 0));
+  const providerContextInputTokens = Math.max(0, providerContextTokens - outputTokens);
+  const estimatedCategories = breakdown.categories.filter((item) => (
     item.key !== 'current_assistant_output' && item.key !== 'unattributed'
   ));
+  const estimatedCategoryTotal = estimatedCategories.reduce((sum, item) => sum + item.tokens, 0);
+  const categories = estimatedCategoryTotal > 0
+    ? calibrateCategories(estimatedCategories, providerContextInputTokens)
+    : [];
+  const unattributedTokens = estimatedCategoryTotal > 0 ? 0 : providerContextInputTokens;
+
   if (outputTokens > 0) {
     categories.push({
       key: 'current_assistant_output',
@@ -271,11 +317,21 @@ export function calibrateContextBreakdown(
       accuracy: 'derived',
     });
   }
+
+  const calibratedMemoryTokens = categories.find((item) => item.key === 'memory')?.tokens ?? 0;
+  const calibratedMcpTokens = categories
+    .find((item) => item.key === 'tool_definitions')
+    ?.children?.find((item) => item.key === 'tool_definitions_mcp')?.tokens ?? 0;
+  const memoryFiles = calibrateTokenItems(breakdown.memoryFiles ?? [], calibratedMemoryTokens);
+  const mcpTools = calibrateTokenItems(breakdown.mcpTools ?? [], calibratedMcpTokens);
+
   return {
     ...breakdown,
     providerInputTokens,
     providerContextTokens,
     unattributedTokens,
     categories,
+    memoryFiles,
+    mcpTools,
   };
 }

@@ -29,7 +29,7 @@ function formatPercent(value: number): string {
 }
 
 function AccuracyBadge({ accuracy }: { accuracy: ContextUsageCategory['accuracy'] }) {
-  const label = accuracy === 'provider' ? '实际' : accuracy === 'derived' ? '差额' : '估算';
+  const label = accuracy === 'provider' ? '实际' : accuracy === 'derived' ? '差额' : '校准估算';
   return (
     <span className="rounded bg-muted px-1 py-px text-[9px] text-muted-foreground">
       {label}
@@ -205,7 +205,7 @@ export function TokenUsageDisplay({
                 <span className="font-medium">当前上下文</span>
                 {contextUsage!.breakdown && (
                   <span className="text-[10px] text-muted-foreground">
-                    总量为 provider 实际值 · 构成为平台估算
+                    总量为 provider 实际值 · 构成按估算占比校准
                   </span>
                 )}
               </div>
@@ -242,9 +242,9 @@ export function TokenUsageDisplay({
                   <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
                     <span>上下文构成</span>
                     <span>
-                      估算 {formatTokenCount(contextUsage!.breakdown.estimatedTokens)}
+                      原始估算 {formatTokenCount(contextUsage!.breakdown.estimatedTokens)}
                       {contextUsage!.breakdown.providerContextTokens != null
-                        ? ` / 实际 ${formatTokenCount(contextUsage!.breakdown.providerContextTokens)}`
+                        ? ` / 校准总量 ${formatTokenCount(contextUsage!.breakdown.providerContextTokens)}`
                         : ''}
                     </span>
                   </div>

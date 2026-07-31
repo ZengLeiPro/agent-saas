@@ -99,35 +99,84 @@ describe('contextBreakdown', () => {
     expect(snapshot.breakdown.estimatedTokens).toBeGreaterThan(estimateContextTokens('fallback'));
   });
 
-  it('用 provider 当前上下文总量生成未归因差额，不缩放估算分类', () => {
+  it('按估算占比将分项校准到 provider 当前上下文总量', () => {
     const base = {
       method: 'utf8_bytes_v1' as const,
       estimatedTokens: 100,
       unattributedTokens: 0,
-      categories: [{
-        key: 'system_prompt',
-        name: '系统提示语',
-        tokens: 100,
-        color: '#000',
-        accuracy: 'estimated' as const,
-      }],
+      categories: [
+        {
+          key: 'system_prompt',
+          name: '系统提示语',
+          tokens: 60,
+          color: '#000',
+          accuracy: 'estimated' as const,
+          children: [
+            { key: 'system:a', name: '规则 A', tokens: 30, color: '#000', accuracy: 'estimated' as const },
+            { key: 'system:b', name: '规则 B', tokens: 30, color: '#000', accuracy: 'estimated' as const },
+          ],
+        },
+        {
+          key: 'memory',
+          name: '长期记忆',
+          tokens: 20,
+          color: '#000',
+          accuracy: 'estimated' as const,
+        },
+        {
+          key: 'tool_definitions',
+          name: '工具定义',
+          tokens: 20,
+          color: '#000',
+          accuracy: 'estimated' as const,
+          children: [{
+            key: 'tool_definitions_mcp',
+            name: 'MCP 工具',
+            tokens: 20,
+            color: '#000',
+            accuracy: 'estimated' as const,
+            children: [
+              { key: 'tool:a', name: '工具 A', tokens: 5, color: '#000', accuracy: 'estimated' as const },
+              { key: 'tool:b', name: '工具 B', tokens: 15, color: '#000', accuracy: 'estimated' as const },
+            ],
+          }],
+        },
+      ],
+      memoryFiles: [{ path: 'MEMORY.md', type: '长期记忆', tokens: 20 }],
+      mcpTools: [
+        { name: '工具 A', serverName: '测试', tokens: 5 },
+        { name: '工具 B', serverName: '测试', tokens: 15 },
+      ],
     };
 
-    const calibrated = calibrateContextBreakdown(base, { inputTokens: 140, outputTokens: 10 }, 160);
+    const calibrated = calibrateContextBreakdown(base, { inputTokens: 140, outputTokens: 10 }, 150);
     expect(calibrated.providerInputTokens).toBe(140);
-    expect(calibrated.providerContextTokens).toBe(160);
-    expect(calibrated.unattributedTokens).toBe(50);
-    expect(calibrated.categories).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        key: 'current_assistant_output',
-        tokens: 10,
-        accuracy: 'provider',
-      }),
-      expect.objectContaining({
-        key: 'unattributed',
-        tokens: 50,
-        accuracy: 'derived',
-      }),
-    ]));
+    expect(calibrated.providerContextTokens).toBe(150);
+    expect(calibrated.unattributedTokens).toBe(0);
+    expect(calibrated.categories.map((item) => [item.key, item.tokens])).toEqual([
+      ['system_prompt', 84],
+      ['memory', 28],
+      ['tool_definitions', 28],
+      ['current_assistant_output', 10],
+    ]);
+    expect(calibrated.categories[0].children?.map((item) => item.tokens)).toEqual([42, 42]);
+    expect(calibrated.memoryFiles?.map((item) => item.tokens)).toEqual([28]);
+    expect(calibrated.mcpTools?.map((item) => item.tokens)).toEqual([7, 21]);
+    expect(calibrated.categories.reduce((sum, item) => sum + item.tokens, 0)).toBe(150);
+  });
+
+  it('没有估算分项时将真实输入保留为未归因差额', () => {
+    const calibrated = calibrateContextBreakdown({
+      method: 'utf8_bytes_v1',
+      estimatedTokens: 0,
+      unattributedTokens: 0,
+      categories: [],
+    }, { inputTokens: 40, outputTokens: 5 }, 45);
+
+    expect(calibrated.unattributedTokens).toBe(40);
+    expect(calibrated.categories.map((item) => [item.key, item.tokens])).toEqual([
+      ['current_assistant_output', 5],
+      ['unattributed', 40],
+    ]);
   });
 });

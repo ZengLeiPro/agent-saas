@@ -110,8 +110,11 @@ describe("TokenUsageDisplay", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: /上下文 64\.0k/ }));
+    expect(screen.getByText("总量为 provider 实际值 · 构成按估算占比校准")).toBeTruthy();
+    expect(screen.getByText("原始估算 60.0k / 校准总量 64.0k")).toBeTruthy();
     expect(screen.getByText("上下文构成")).toBeTruthy();
     expect(screen.getByText("系统提示语")).toBeTruthy();
+    expect(screen.getAllByText("校准估算").length).toBeGreaterThan(0);
     expect(screen.getByText("平台基础规则")).toBeTruthy();
     expect(screen.getByText("协议及未归因开销")).toBeTruthy();
     expect(screen.getByText("累计模型用量")).toBeTruthy();

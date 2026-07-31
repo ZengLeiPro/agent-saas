@@ -1021,8 +1021,8 @@ export class RawAgentLoop implements AgentLoop {
             completed.responseChained,
             {
               breakdown: calibratedBreakdown,
-              memoryFiles: contextSnapshot.memoryFiles,
-              mcpTools: contextSnapshot.mcpTools,
+              memoryFiles: calibratedBreakdown.memoryFiles ?? contextSnapshot.memoryFiles,
+              mcpTools: calibratedBreakdown.mcpTools ?? contextSnapshot.mcpTools,
             },
           );
         }
@@ -2679,8 +2679,8 @@ export class RawAgentLoop implements AgentLoop {
             completed.responseChained,
             {
               breakdown: calibratedBreakdown,
-              memoryFiles: contextSnapshot.memoryFiles,
-              mcpTools: contextSnapshot.mcpTools,
+              memoryFiles: calibratedBreakdown.memoryFiles ?? contextSnapshot.memoryFiles,
+              mcpTools: calibratedBreakdown.mcpTools ?? contextSnapshot.mcpTools,
             },
           );
         }

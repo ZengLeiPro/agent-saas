@@ -117,7 +117,8 @@ describe("McpManager 连接器目录", () => {
 
     expect(await screen.findByText("钉钉")).toBeTruthy();
     expect(screen.getByText("飞书")).toBeTruthy();
-    expect(screen.getAllByText("未连接")).toHaveLength(2);
+    // 钉钉 + 飞书 + GitHub 三张内置连接卡
+    expect(screen.getAllByText("未连接")).toHaveLength(3);
     expect(dwsAuthFetch).toHaveBeenCalledWith("/api/dws/connections");
     expect(dwsAuthFetch).toHaveBeenCalledWith("/api/feishu/connections");
 

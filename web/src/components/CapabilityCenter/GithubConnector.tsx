@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, ExternalLink, Github, Loader2 } from "lucide-react";
+import { CircleAlert, CircleCheck, ExternalLink, Github, Loader2 } from "lucide-react";
 import {
   connectGithub,
   disconnectGithub,
@@ -116,7 +116,7 @@ export function GithubConnector({
                 <Badge variant="secondary"><Loader2 className="mr-1 size-3 animate-spin" />检测中</Badge>
               ) : connected ? (
                 <Badge variant="secondary" className="text-emerald-700 dark:text-emerald-400">
-                  <CheckCircle2 className="mr-1 size-3" />已连接
+                  <CircleCheck className="mr-1 size-3" />已连接
                 </Badge>
               ) : (
                 <Badge variant="outline">未连接</Badge>
@@ -174,7 +174,7 @@ export function GithubConnector({
 
         {error && (
           <div className="flex items-start gap-2 text-sm text-destructive">
-            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <CircleAlert className="mt-0.5 size-4 shrink-0" />
             <span>{error}</span>
           </div>
         )}

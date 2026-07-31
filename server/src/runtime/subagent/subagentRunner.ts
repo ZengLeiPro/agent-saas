@@ -386,6 +386,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     const runContext: RunContext = {
       runId: childRunId,
       sessionId: childSessionId,
+      modelRef: refToResolve ?? model,
       model,
       cwd: parentWorkspace.root,
       workspaceId: parentWorkspace.id ?? childSessionId,

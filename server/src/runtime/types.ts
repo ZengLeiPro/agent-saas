@@ -15,6 +15,8 @@ export interface RuntimeConnection {
 export interface RunContext {
   runId: string;
   sessionId: string;
+  /** models.groups 下的稳定配置身份（group/model），用于隔离同名 provider 模型配置。 */
+  modelRef?: string;
   model: string;
   cwd: string;
   workspaceId?: string;

@@ -50,6 +50,8 @@ export interface ModelPrice {
 }
 
 export interface PricingModelConfig {
+  /** 配置内稳定模型 id；与 group.id 组成运行时 modelRef。 */
+  id?: string;
   value: string;
   alias_actual?: string;
   pricing?: ModelPrice;
@@ -61,7 +63,7 @@ export interface PricingModelConfig {
 }
 
 export interface PricingModelsConfig {
-  groups: Array<{ models: PricingModelConfig[] }>;
+  groups: Array<{ id?: string; models: PricingModelConfig[] }>;
 }
 
 /**
@@ -125,6 +127,9 @@ let configuredPricing: Record<string, ModelPrice> = {};
 let configuredUsageAccounting: Record<string, UsageAccountingMode> = {};
 let configuredContextWindows: Record<string, number> = {};
 let configuredAutoCompactThresholds: Record<string, number> = {};
+let configuredContextWindowsByRef: Record<string, number> = {};
+let configuredAutoCompactThresholdsByRef: Record<string, number> = {};
+let configuredModelRefs = new Set<string>();
 
 /** 未配置模型级触发比例时的兼容默认值。 */
 export const DEFAULT_AUTO_COMPACT_THRESHOLD_RATIO = 0.8;
@@ -132,10 +137,22 @@ export const DEFAULT_AUTO_COMPACT_THRESHOLD_RATIO = 0.8;
 export function configureModelPricing(modelsConfig: PricingModelsConfig | undefined): void {
   const next: Record<string, ModelPrice> = {};
   const nextAccounting: Record<string, UsageAccountingMode> = {};
-  const nextContextWindows: Record<string, number> = {};
-  const nextAutoCompactThresholds: Record<string, number> = {};
+  const contextWindowCandidates: Record<string, number> = {};
+  const autoCompactThresholdCandidates: Record<string, number> = {};
+  const identityCounts: Record<string, number> = {};
+  const nextContextWindowsByRef: Record<string, number> = {};
+  const nextAutoCompactThresholdsByRef: Record<string, number> = {};
+  const nextModelRefs = new Set<string>();
   for (const group of modelsConfig?.groups ?? []) {
     for (const model of group.models ?? []) {
+      const identityKeys = new Set([model.value, model.alias_actual].filter(
+        (value): value is string => typeof value === 'string' && value.length > 0,
+      ));
+      for (const key of identityKeys) {
+        identityCounts[key] = (identityCounts[key] ?? 0) + 1;
+      }
+      const modelRef = group.id && model.id ? `${group.id}/${model.id}` : undefined;
+      if (modelRef) nextModelRefs.add(modelRef);
       if (model.pricing) {
         next[model.value] = model.pricing;
         if (model.alias_actual) next[model.alias_actual] = model.pricing;
@@ -145,21 +162,32 @@ export function configureModelPricing(modelsConfig: PricingModelsConfig | undefi
         if (model.alias_actual) nextAccounting[model.alias_actual] = model.usage_accounting;
       }
       if (typeof model.context_window === 'number' && model.context_window > 0) {
-        nextContextWindows[model.value] = model.context_window;
-        if (model.alias_actual) nextContextWindows[model.alias_actual] = model.context_window;
+        contextWindowCandidates[model.value] = model.context_window;
+        if (model.alias_actual) contextWindowCandidates[model.alias_actual] = model.context_window;
+        if (modelRef) nextContextWindowsByRef[modelRef] = model.context_window;
       }
       if (typeof model.auto_compact_threshold === 'number'
         && model.auto_compact_threshold > 0
         && model.auto_compact_threshold < 1) {
-        nextAutoCompactThresholds[model.value] = model.auto_compact_threshold;
-        if (model.alias_actual) nextAutoCompactThresholds[model.alias_actual] = model.auto_compact_threshold;
+        autoCompactThresholdCandidates[model.value] = model.auto_compact_threshold;
+        if (model.alias_actual) autoCompactThresholdCandidates[model.alias_actual] = model.auto_compact_threshold;
+        if (modelRef) nextAutoCompactThresholdsByRef[modelRef] = model.auto_compact_threshold;
       }
     }
   }
+  const nextContextWindows = Object.fromEntries(
+    Object.entries(contextWindowCandidates).filter(([key]) => identityCounts[key] === 1),
+  );
+  const nextAutoCompactThresholds = Object.fromEntries(
+    Object.entries(autoCompactThresholdCandidates).filter(([key]) => identityCounts[key] === 1),
+  );
   configuredPricing = next;
   configuredUsageAccounting = nextAccounting;
   configuredContextWindows = nextContextWindows;
   configuredAutoCompactThresholds = nextAutoCompactThresholds;
+  configuredContextWindowsByRef = nextContextWindowsByRef;
+  configuredAutoCompactThresholdsByRef = nextAutoCompactThresholdsByRef;
+  configuredModelRefs = nextModelRefs;
 }
 
 /**
@@ -167,7 +195,10 @@ export function configureModelPricing(modelsConfig: PricingModelsConfig | undefi
  * 不做内置猜测——窗口值直接决定自动压缩触发点，配错比不配危害更大。
  * 未配置返回 undefined，调用方（自动压缩）应视为「该模型不启用自动压缩」。
  */
-export function getModelContextWindow(model: string): number | undefined {
+export function getModelContextWindow(model: string, modelRef?: string): number | undefined {
+  if (modelRef && configuredModelRefs.has(modelRef)) {
+    return configuredContextWindowsByRef[modelRef];
+  }
   return configuredContextWindows[model];
 }
 
@@ -175,7 +206,10 @@ export function getModelContextWindow(model: string): number | undefined {
  * 模型自动压缩触发比例。模型未显式配置时返回平台默认值，保证旧配置行为不变。
  * 调用方仍需先确认该模型配置了 context_window。
  */
-export function getModelAutoCompactThreshold(model: string): number {
+export function getModelAutoCompactThreshold(model: string, modelRef?: string): number {
+  if (modelRef && configuredModelRefs.has(modelRef)) {
+    return configuredAutoCompactThresholdsByRef[modelRef] ?? DEFAULT_AUTO_COMPACT_THRESHOLD_RATIO;
+  }
   return configuredAutoCompactThresholds[model] ?? DEFAULT_AUTO_COMPACT_THRESHOLD_RATIO;
 }
 

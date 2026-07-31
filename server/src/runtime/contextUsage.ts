@@ -55,6 +55,7 @@ export class RuntimeContextUsageTracker {
   constructor(
     private readonly defaultModel: string,
     priorEvents: PlatformEvent[],
+    private readonly modelRef?: string,
   ) {
     for (const event of priorEvents) {
       if (event.type === 'compaction') {
@@ -153,8 +154,8 @@ export class RuntimeContextUsageTracker {
   }
 
   private toContextUsage(model: string, lastRequest: LastRequestCacheMetrics | null): ContextUsageData {
-    const maxTokens = getModelContextWindow(model);
-    const autoCompactThreshold = getModelAutoCompactThreshold(model);
+    const maxTokens = getModelContextWindow(model, this.modelRef);
+    const autoCompactThreshold = getModelAutoCompactThreshold(model, this.modelRef);
     const cacheHitRatio = this.state.cacheHitDenominatorTokens > 0
       ? this.state.totalCacheReadTokens / this.state.cacheHitDenominatorTokens
       : null;

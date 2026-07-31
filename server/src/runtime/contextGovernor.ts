@@ -27,11 +27,12 @@ export function governModelRequestMessages(
   model: string,
   currentUserMessageIndex: number,
   currentContextTokens?: number,
+  modelRef?: string,
 ): GovernedModelMessages {
   const bounded = truncateOldToolResults(messages);
-  const contextWindow = getModelContextWindow(model);
+  const contextWindow = getModelContextWindow(model, modelRef);
   const thresholdTokens = contextWindow
-    ? Math.floor(contextWindow * getModelAutoCompactThreshold(model))
+    ? Math.floor(contextWindow * getModelAutoCompactThreshold(model, modelRef))
     : undefined;
   const initialEstimate = estimateModelMessageTokens(bounded);
   const triggerTokens = Math.max(initialEstimate, currentContextTokens ?? 0);
@@ -51,11 +52,13 @@ export function governModelRequestMessages(
     .slice(0, safeCurrentUserIndex)
     .filter((message) => message.role === 'system');
   const currentUserMessage = bounded[safeCurrentUserIndex];
+  const priorTurnAnchor = buildPriorTurnAnchor(bounded.slice(0, safeCurrentUserIndex));
   const core: ModelChatMessage[] = [
     ...systemMessages,
+    ...priorTurnAnchor.messages,
     {
       role: 'user',
-      content: '[平台上下文保护] 较早会话内容已从本次模型请求中省略；事实源仍完整保留，可按需使用 SessionSearchEvents / SessionGetToolTrace 检索。请基于当前任务和最近工具结果收束回答。',
+      content: '[平台上下文保护] 较早会话内容已从本次模型请求中省略；上一轮用户消息与最终答复已保留。事实源仍完整保留，可按需使用 SessionSearchEvents / SessionGetToolTrace 检索。请基于当前任务和最近工具结果收束回答。',
     },
     ...(currentUserMessage ? [currentUserMessage] : []),
   ];
@@ -70,13 +73,17 @@ export function governModelRequestMessages(
     selected = candidate;
   }
   const finalMessages = truncateOldToolResults(selected);
+  const retainedMessageCount = systemMessages.length
+    + priorTurnAnchor.sourceMessageCount
+    + (currentUserMessage ? 1 : 0)
+    + selectedGroups.flat().length;
   return {
     messages: finalMessages,
     estimatedTokens: estimateModelMessageTokens(finalMessages),
     triggerTokens,
     thresholdTokens,
     forceSynthesis: true,
-    droppedMessages: Math.max(0, bounded.length - finalMessages.length),
+    droppedMessages: Math.max(0, bounded.length - retainedMessageCount),
   };
 }
 
@@ -94,4 +101,71 @@ function groupCompleteTurns(messages: ModelChatMessage[]): ModelChatMessage[][] 
     }
   }
   return groups;
+}
+
+const PRIOR_TURN_ANCHOR_MAX_CHARS = 24_000;
+
+function buildPriorTurnAnchor(messages: ModelChatMessage[]): {
+  messages: ModelChatMessage[];
+  sourceMessageCount: number;
+} {
+  let assistantIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === 'assistant' && message.content?.trim()) {
+      assistantIndex = index;
+      break;
+    }
+  }
+  if (assistantIndex < 0) return { messages: [], sourceMessageCount: 0 };
+
+  let userIndex = -1;
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      userIndex = index;
+      break;
+    }
+  }
+
+  const anchor: ModelChatMessage[] = [];
+  if (userIndex >= 0) {
+    const userMessage = messages[userIndex];
+    if (userMessage?.role === 'user') {
+      anchor.push({
+        role: 'user',
+        content: truncatePriorUserContent(userMessage.content, PRIOR_TURN_ANCHOR_MAX_CHARS),
+      });
+    }
+  }
+  const assistantMessage = messages[assistantIndex];
+  if (assistantMessage?.role === 'assistant' && assistantMessage.content) {
+    anchor.push({
+      role: 'assistant',
+      content: truncateAnchorText(assistantMessage.content, PRIOR_TURN_ANCHOR_MAX_CHARS),
+    });
+  }
+  return {
+    messages: anchor,
+    sourceMessageCount: anchor.length,
+  };
+}
+
+function truncatePriorUserContent(
+  content: Extract<ModelChatMessage, { role: 'user' }>['content'],
+  maxChars: number,
+): Extract<ModelChatMessage, { role: 'user' }>['content'] {
+  if (typeof content === 'string') return truncateAnchorText(content, maxChars);
+  if (JSON.stringify(content).length <= maxChars) return content;
+  const text = content.map((part) => {
+    if (part.type === 'text') return part.text;
+    if (part.type === 'vision_summary') return part.text;
+    return `[附件：${part.displayName}]`;
+  }).join('\n');
+  return truncateAnchorText(text, maxChars);
+}
+
+function truncateAnchorText(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content;
+  const half = Math.floor((maxChars - 80) / 2);
+  return `${content.slice(0, half)}\n\n……（上一轮内容过长，中间省略）……\n\n${content.slice(-half)}`;
 }

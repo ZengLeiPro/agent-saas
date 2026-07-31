@@ -21,6 +21,7 @@ import { buildContextProjection } from '../runtime/contextProjection.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
+import { SessionContextService, SessionToolProvider } from '../runtime/sessionContext.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import type { LatestResponseSessionState, ResponseSessionStatePatch, RunStore } from '../runtime/runStore.js';
 import type { ModelAdapter, ModelEvent, ModelRequest, ModelToolCall, RunContext } from '../runtime/types.js';
@@ -2604,7 +2605,9 @@ describe('RawAgentLoop', () => {
       eventStore,
       approvalStore: new EventBackedApprovalStore(eventStore, 'session-relay-1'),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
-      toolRuntime: new PlatformToolRuntime(),
+      toolRuntime: new PlatformToolRuntime({
+        providers: [new SessionToolProvider(new SessionContextService(eventStore))],
+      }),
       runStore,
     });
     await collect(loop.run(
@@ -2637,7 +2640,7 @@ describe('RawAgentLoop', () => {
     expect(adapter.requests[0]?.previousResponseId).toBe('resp_prev');
   });
 
-  it('远端接力链达到上下文阈值时断开 previousResponseId，并强制无工具收束', async () => {
+  it('远端接力链达到上下文阈值时断链接力，保留上一轮答复并仅开放只读会话检索', async () => {
     configureModelPricing({
       groups: [{ models: [{ value: 'relay-small', context_window: 1_000, auto_compact_threshold: 0.5 }] }],
     });
@@ -2648,8 +2651,14 @@ describe('RawAgentLoop', () => {
         600,
       );
       expect(adapter.requests[0]?.previousResponseId).toBeUndefined();
-      expect(adapter.requests[0]?.toolChoice).toBe('none');
+      expect(adapter.requests[0]?.toolChoice).toBeUndefined();
+      expect(adapter.requests[0]?.tools.map((tool) => tool.name).sort()).toEqual([
+        'SessionGetEvents',
+        'SessionGetToolTrace',
+        'SessionSearchEvents',
+      ]);
       expect(JSON.stringify(adapter.requests[0]?.messages)).toContain('平台收束指令');
+      expect(JSON.stringify(adapter.requests[0]?.messages)).toContain('prior response');
     } finally {
       configureModelPricing(undefined);
     }

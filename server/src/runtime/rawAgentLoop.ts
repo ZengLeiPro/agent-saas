@@ -77,6 +77,11 @@ import {
  */
 const logger = createLogger('RawAgentLoop');
 const INTERACTIVE_TOOL_NAMES = new Set(['AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode']);
+const SESSION_CONTEXT_RECOVERY_TOOL_NAMES = new Set([
+  'SessionGetEvents',
+  'SessionSearchEvents',
+  'SessionGetToolTrace',
+]);
 const RUN_START_REPLAY_EXCLUDED_EVENT_TYPES = [
   'tool_output_delta',
   'tool_progress',
@@ -90,8 +95,8 @@ const WEB_FETCH_SYNTHESIS_PROMPT = [
 ].join('\n');
 const CONTEXT_SYNTHESIS_PROMPT = [
   '[平台收束指令]',
-  '本次任务的上下文已达到安全阈值。停止调用任何工具。',
-  '请立即基于当前上下文中已经取得的材料完成任务；明确区分已核实事实、证据不足项与未完成项。',
+  '本次任务的上下文已达到安全阈值。除 SessionGetEvents、SessionSearchEvents、SessionGetToolTrace 外，不要调用其他工具。',
+  '若保留的上一轮答复仍不足以衔接当前任务，先用上述只读会话工具检索事实源；随后基于当前上下文完成任务，并明确区分已核实事实、证据不足项与未完成项。',
 ].join('\n');
 
 interface ReplaceableDraftRunState {
@@ -396,6 +401,7 @@ export class RawAgentLoop implements AgentLoop {
   private forcedSynthesisReason?: string;
   private forcedSynthesisPrompt = CONTEXT_SYNTHESIS_PROMPT;
   private forcedSynthesisPromptAppended = false;
+  private forcedSynthesisAllowsSessionRecovery = false;
 
   constructor(options: RawAgentLoopOptions) {
     this.modelAdapter = options.modelAdapter;
@@ -577,10 +583,16 @@ export class RawAgentLoop implements AgentLoop {
     logger.warn(`[web-fetch-circuit] force synthesis session=${context.sessionId} run=${context.runId}: ${reason}`);
   }
 
-  private forceSynthesis(reason: string, context: RunContext, prompt = CONTEXT_SYNTHESIS_PROMPT): void {
+  private forceSynthesis(
+    reason: string,
+    context: RunContext,
+    prompt = CONTEXT_SYNTHESIS_PROMPT,
+    allowSessionRecovery = false,
+  ): void {
     if (this.forcedSynthesisReason) return;
     this.forcedSynthesisReason = reason;
     this.forcedSynthesisPrompt = prompt;
+    this.forcedSynthesisAllowsSessionRecovery = allowSessionRecovery;
     logger.warn(`[context-governor] force synthesis session=${context.sessionId} run=${context.runId}: ${reason}`);
   }
 
@@ -764,7 +776,11 @@ export class RawAgentLoop implements AgentLoop {
       restoredDraftRecoveryUsed = !canonicalCommitted;
       await this.persistReplaceableDraftState(context, null);
     }
-    const contextUsageTracker = new RuntimeContextUsageTracker(context.model, recoveredEvents);
+    const contextUsageTracker = new RuntimeContextUsageTracker(
+      context.model,
+      recoveredEvents,
+      context.modelRef,
+    );
     const contextProjection = buildContextProjection(recoveredEvents, {
       sessionId: context.sessionId,
       runId: context.runId,
@@ -862,18 +878,33 @@ export class RawAgentLoop implements AgentLoop {
           context.model,
           currentUserMessageIndex,
           contextUsageTracker.currentContextTokens,
+          context.modelRef,
         );
         if (preflight.forceSynthesis) {
           this.forceSynthesis(
             `上下文 ${preflight.triggerTokens} tokens 已达到模型阈值 ${preflight.thresholdTokens}; 已省略 ${preflight.droppedMessages} 条较早消息并断开 Responses 接力链`,
             context,
+            CONTEXT_SYNTHESIS_PROMPT,
+            true,
           );
           // previous_response_id 会在上游重新带回已超窗的远端历史；本轮必须改用
           // 受 context governor 约束的本地全量投影，成功后 usage 会重新锚定。
           currentResponseId = undefined;
         }
         const forceSynthesis = this.prepareForcedSynthesis(messages);
-        const governed = governModelRequestMessages(messages, context.model, currentUserMessageIndex);
+        const requestTools = forceSynthesis && this.forcedSynthesisAllowsSessionRecovery
+          ? tools.filter((tool) => SESSION_CONTEXT_RECOVERY_TOOL_NAMES.has(tool.name))
+          : tools;
+        const allowSessionRecovery = forceSynthesis
+          && this.forcedSynthesisAllowsSessionRecovery
+          && requestTools.length > 0;
+        const governed = governModelRequestMessages(
+          messages,
+          context.model,
+          currentUserMessageIndex,
+          undefined,
+          context.modelRef,
+        );
         const requestSystemIndex = governed.messages.findIndex((message) => message.role !== 'system');
         const requestHistory = governed.messages.slice(Math.max(0, requestSystemIndex));
         const requestCurrentUserMessage = requestHistory.at(-1);
@@ -895,15 +926,15 @@ export class RawAgentLoop implements AgentLoop {
           )),
           currentUserContent: requestCurrentUser,
           attachmentCount: input.attachments?.length,
-          tools,
+          tools: requestTools,
           descriptorsByName,
         });
         for await (const event of this.modelAdapter.stream({
           model: context.model,
           messages: governed.messages,
-          tools,
+          tools: requestTools,
           signal: context.signal,
-          ...(forceSynthesis ? { toolChoice: 'none' as const } : {}),
+          ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
           ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
         }, this.withModelRequestDiagnostics(context))) {
           if (event.type === 'thinking_delta') {
@@ -2469,7 +2500,11 @@ export class RawAgentLoop implements AgentLoop {
       restoredDraftRecoveryUsed = !canonicalCommitted;
       await this.persistReplaceableDraftState(args.context, null);
     }
-    const contextUsageTracker = new RuntimeContextUsageTracker(args.context.model, args.priorEvents);
+    const contextUsageTracker = new RuntimeContextUsageTracker(
+      args.context.model,
+      args.priorEvents,
+      args.context.modelRef,
+    );
 
     // RFC v1 P0.4：resume 路径同样接力 Responses API session state。
     const usesStoredResponseState = this.modelAdapter.capabilities?.responseState !== 'stateless';
@@ -2513,31 +2548,46 @@ export class RawAgentLoop implements AgentLoop {
           args.context.model,
           currentUserMessageIndex,
           contextUsageTracker.currentContextTokens,
+          args.context.modelRef,
         );
         if (preflight.forceSynthesis) {
           this.forceSynthesis(
             `上下文 ${preflight.triggerTokens} tokens 已达到模型阈值 ${preflight.thresholdTokens}; 已省略 ${preflight.droppedMessages} 条较早消息并断开 Responses 接力链`,
             args.context,
+            CONTEXT_SYNTHESIS_PROMPT,
+            true,
           );
           currentResponseId = undefined;
         }
         const forceSynthesis = this.prepareForcedSynthesis(args.messages);
-        const governed = governModelRequestMessages(args.messages, args.context.model, currentUserMessageIndex);
+        const requestTools = forceSynthesis && this.forcedSynthesisAllowsSessionRecovery
+          ? args.tools.filter((tool) => SESSION_CONTEXT_RECOVERY_TOOL_NAMES.has(tool.name))
+          : args.tools;
+        const allowSessionRecovery = forceSynthesis
+          && this.forcedSynthesisAllowsSessionRecovery
+          && requestTools.length > 0;
+        const governed = governModelRequestMessages(
+          args.messages,
+          args.context.model,
+          currentUserMessageIndex,
+          undefined,
+          args.context.modelRef,
+        );
         const requestHistory = governed.messages.filter((message) => message.role !== 'system');
         const currentUserMessage = requestHistory.at(-1);
         const contextSnapshot = buildContextBreakdownSnapshot({
           instructions: args.instructions,
           historyMessages: requestHistory.slice(0, -1),
           currentUserContent: currentUserMessage?.role === 'user' ? currentUserMessage.content : '',
-          tools: args.tools,
+          tools: requestTools,
           descriptorsByName: args.descriptorsByName,
         });
         for await (const event of this.modelAdapter.stream({
           model: args.context.model,
           messages: governed.messages,
-          tools: args.tools,
+          tools: requestTools,
           signal: args.context.signal,
-          ...(forceSynthesis ? { toolChoice: 'none' as const } : {}),
+          ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
           ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
         }, this.withModelRequestDiagnostics(args.context))) {
           if (event.type === 'thinking_delta') {

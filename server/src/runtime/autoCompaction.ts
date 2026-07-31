@@ -83,16 +83,17 @@ export interface AutoCompactionEvaluation {
 export function evaluateAutoCompaction(input: {
   events: PlatformEvent[];
   model: string;
+  modelRef?: string;
   autoCompactEnabled: boolean;
 }): AutoCompactionEvaluation {
   if (!input.autoCompactEnabled) {
     return { shouldCompact: false, reason: 'tenant_disabled' };
   }
-  const contextWindow = getModelContextWindow(input.model);
+  const contextWindow = getModelContextWindow(input.model, input.modelRef);
   if (!contextWindow) {
     return { shouldCompact: false, reason: 'no_context_window_configured' };
   }
-  const thresholdRatio = getModelAutoCompactThreshold(input.model);
+  const thresholdRatio = getModelAutoCompactThreshold(input.model, input.modelRef);
   const thresholdTokens = Math.floor(contextWindow * thresholdRatio);
 
   let lastUsageIndex = -1;
@@ -168,12 +169,13 @@ export class AutoCompactionService {
         ? {
             shouldCompact: true,
             reason: input.forceReason ?? 'forced',
-            contextWindow: getModelContextWindow(input.model),
-            thresholdRatio: getModelAutoCompactThreshold(input.model),
+            contextWindow: getModelContextWindow(input.model, input.modelRef),
+            thresholdRatio: getModelAutoCompactThreshold(input.model, input.modelRef),
           }
         : evaluateAutoCompaction({
             events: input.events,
             model: input.model,
+            modelRef: input.modelRef,
             autoCompactEnabled: enabled,
           });
       if (!evaluation.shouldCompact) {

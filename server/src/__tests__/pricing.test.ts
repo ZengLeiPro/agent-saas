@@ -189,6 +189,31 @@ describe('pricing.computeCostMicro', () => {
       expect(getModelAutoCompactThreshold('gpt-5.5-alias')).toBe(0.65);
     });
 
+    it('同名 provider 模型的上下文配置按 group/model 隔离，裸模型名歧义时 fail closed', () => {
+      configureModelPricing({
+        groups: [
+          {
+            id: 'codex',
+            models: [{ id: 'gpt-5.6-sol-high', value: 'gpt-5.6-sol' }],
+          },
+          {
+            id: 'kaiyan-llm',
+            models: [{
+              id: 'gpt-5.6-sol-high',
+              value: 'gpt-5.6-sol',
+              context_window: 372_000,
+              auto_compact_threshold: 0.65,
+            }],
+          },
+        ],
+      });
+
+      expect(getModelContextWindow('gpt-5.6-sol', 'codex/gpt-5.6-sol-high')).toBeUndefined();
+      expect(getModelContextWindow('gpt-5.6-sol', 'kaiyan-llm/gpt-5.6-sol-high')).toBe(372_000);
+      expect(getModelAutoCompactThreshold('gpt-5.6-sol', 'kaiyan-llm/gpt-5.6-sol-high')).toBe(0.65);
+      expect(getModelContextWindow('gpt-5.6-sol')).toBeUndefined();
+    });
+
     it('OpenAI-compatible total 不额外叠加 cached tokens', () => {
       expect(computeUsageTotalTokens('gpt-5.5', {
         inputTokens: 2006,

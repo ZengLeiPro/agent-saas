@@ -2187,6 +2187,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       const runContext = {
         runId,
         sessionId,
+        modelRef: sessionModelRef,
         model,
         cwd,
         workspaceId: sessionRecord.workspaceId ?? sessionId,
@@ -2721,6 +2722,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         {
           runId: resumeRunId,
           sessionId: request.sessionId,
+          modelRef: sessionModelRef,
           model,
           cwd,
           workspaceId: sessionRecord.workspaceId ?? request.sessionId,
@@ -3110,6 +3112,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         {
           runId: resumeRunId,
           sessionId: request.sessionId,
+          modelRef: sessionModelRef,
           model,
           cwd,
           workspaceId: sessionRecord.workspaceId ?? request.sessionId,

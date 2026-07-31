@@ -113,14 +113,6 @@ function getFirstTimestamp(items: RenderItem[]): number | undefined {
   return undefined;
 }
 
-const tailBase: React.CSSProperties = {
-  width: 0,
-  height: 0,
-  borderLeft: `${TAIL_SIZE}px solid transparent`,
-  borderRight: `${TAIL_SIZE}px solid transparent`,
-  marginBottom: -1,
-};
-
 function AiMessageHeader({ agentProfile, timestamp }: { agentProfile?: AgentProfile | null; timestamp?: number }) {
   const timeStr = formatHeaderTime(timestamp);
   return (
@@ -136,13 +128,6 @@ function AiMessageHeader({ agentProfile, timestamp }: { agentProfile?: AgentProf
         <span className="text-sm text-foreground">{agentProfile?.name || 'AI'}</span>
         {timeStr && <span className="text-xs text-muted-foreground">{timeStr}</span>}
       </div>
-      <div
-        style={{
-          ...tailBase,
-          borderBottom: `${TAIL_SIZE}px solid hsl(var(--card))`,
-          marginLeft: AVATAR_SIZE / 2 - TAIL_SIZE,
-        }}
-      />
     </>
   );
 }
@@ -389,7 +374,7 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={timestamp} />
                 )}
-                <div className="rounded-lg bg-card px-3 py-2 shadow-[0_2px_4px_rgba(15,23,42,0.06),0_8px_24px_-6px_rgba(15,23,42,0.10)]">
+                <div className="px-3 py-2">
                   {item.items.map((sub) => {
                     // 双重保险:此层理论上不该出现 file_download。
                     // - [FILE] 内联(无 artifactId): groupIntoBubbles 已 continue 掉。
@@ -443,7 +428,7 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
                 )}
-                <div className="rounded-lg bg-card px-3 py-2 shadow-[0_2px_4px_rgba(15,23,42,0.06),0_8px_24px_-6px_rgba(15,23,42,0.10)]">
+                <div className="px-3 py-2">
                   <ErrorBoundary inline>
                     <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} />
                   </ErrorBoundary>
@@ -579,7 +564,7 @@ export const MessageList = memo(function MessageList({
         {!showCenterLoading && showAgentLoading && (
           <div ref={lastMessageRef} className="flex flex-col">
             <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
-            <div className="rounded-lg bg-card px-3 py-2 shadow-[0_2px_4px_rgba(15,23,42,0.06),0_8px_24px_-6px_rgba(15,23,42,0.10)]">
+            <div className="px-3 py-2">
               <div className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
                 <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground/70" />
                 <span>正在思考</span>

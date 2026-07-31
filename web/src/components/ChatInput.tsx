@@ -314,7 +314,7 @@ export function ChatInput({
   return (
     <>
       {topSlot && (
-        <div className="bg-background">
+        <div className="bg-transparent">
           <div className="content-container pt-3">
             {topSlot}
           </div>
@@ -323,7 +323,7 @@ export function ChatInput({
 
       <div
         ref={wrapperRef}
-        className="bg-background"
+        className="bg-transparent"
         style={{ paddingBottom: "var(--sab)" }}
       >
         <div className="content-container pt-3 pb-1">

@@ -338,10 +338,18 @@ export function DesktopLayout(props: LayoutProps) {
       />
 
       {/* 右侧内容区 */}
-      <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", chatFontLarge && "chat-font-large", chatWidthWide && "chat-width-wide")}>
+      <div className={cn(
+        "flex min-h-0 min-w-0 flex-1 flex-col",
+        activeTab === "chat" && "bg-card",
+        chatFontLarge && "chat-font-large",
+        chatWidthWide && "chat-width-wide",
+      )}>
         {/* 内容区 header */}
         <header
-          className="flex h-12 shrink-0 items-center gap-3 bg-background px-4"
+          className={cn(
+            "flex h-12 shrink-0 items-center gap-3 px-4",
+            activeTab === "chat" ? "bg-card" : "bg-background",
+          )}
           onClick={(e) => {
             if ((e.target as HTMLElement).closest("button, a, input, textarea, select, [role=button]")) return;
             (scrollContainerRef as React.RefObject<HTMLDivElement>)?.current?.scrollTo({ top: 0, behavior: "smooth" });

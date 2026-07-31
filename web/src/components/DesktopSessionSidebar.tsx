@@ -1750,7 +1750,7 @@ export function DesktopSessionSidebar({
         />
         {renderSessionSearchBox("inline")}
         <div className="relative min-h-0 flex-1 overflow-hidden">
-          <div className="absolute inset-0 flex flex-col bg-card" style={{ transform: singleExpandedGroup ? "translateX(-100%)" : "translateX(0)", transition: "transform 233ms cubic-bezier(.25,.1,.25,1)" }}>
+          <div className="absolute inset-0 flex flex-col bg-background" style={{ transform: singleExpandedGroup ? "translateX(-100%)" : "translateX(0)", transition: "transform 233ms cubic-bezier(.25,.1,.25,1)" }}>
             <div className="relative flex h-12 items-center justify-between border-b px-3">
               <div className="pointer-events-none min-w-0 flex-1 pr-3">
                 <div className="truncate text-sm font-semibold">全部会话<span className="ml-1 font-normal text-muted-foreground">({singleColumnEntries.length})</span></div>
@@ -1835,7 +1835,7 @@ export function DesktopSessionSidebar({
             </ScrollArea>
           </div>
 
-          <div className="absolute inset-0 flex flex-col bg-card" style={{ transform: singleExpandedGroup ? "translateX(0)" : "translateX(100%)", transition: "transform 233ms cubic-bezier(.25,.1,.25,1)" }}>
+          <div className="absolute inset-0 flex flex-col bg-background" style={{ transform: singleExpandedGroup ? "translateX(0)" : "translateX(100%)", transition: "transform 233ms cubic-bezier(.25,.1,.25,1)" }}>
             <div className="relative flex h-12 items-center gap-2 border-b px-3">
               <button type="button" className="inline-flex min-w-0 items-center gap-1.5 rounded-lg pr-2 text-left transition-colors hover:bg-accent" onClick={() => { clearSingleSelection(); setSingleExpandedGroupKey(null); }} title="返回">
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-full">
@@ -2277,7 +2277,7 @@ export function DesktopSessionSidebar({
         {/* 右子栏：会话列表 / 回收站 */}
         {(subPanelOpen || showTrash) && (
           <div
-            className="flex min-w-0 shrink-0 flex-col bg-card"
+            className="flex min-w-0 shrink-0 flex-col bg-background"
             style={{ width: subPanelWidth }}
           >
             {showTrash && isAdmin ? (

@@ -330,6 +330,11 @@ export interface RawRuntimeRunDispatchConfig {
   orgAgentStore?: OrgAgentStore;
   tenantStore?: TenantStore;
   resolveUserRole?: (identity: { userId?: string; username?: string }) => 'admin' | 'user' | undefined;
+  /**
+   * 解析账户级「全部授权」偏好。所有入口（Web、钉钉、cron、scheduler wake、
+   * 子 Agent）都以服务端持久化偏好兜底，避免依赖客户端逐条消息携带策略。
+   */
+  resolveUserAutoApproveTools?: (identity: { userId?: string; username?: string }) => boolean | undefined;
   /** Resolve the account profile full name for scheduler wake identity injection. */
   resolveUserRealName?: (identity: { userId?: string; username?: string }) => string | undefined;
   /** Default raw loop turn budget when a run does not specify maxTurns. */
@@ -1588,6 +1593,32 @@ function normalizeApprovalPolicy(value: unknown): ToolApprovalPolicyOptions | un
 }
 
 /**
+ * 账户偏好是授权模式的服务端权威来源；调用方显式携带的 true 仍兼容旧客户端。
+ * resolver 缺失、用户不存在或读取失败时保持原有人工审批语义，不做 fail-open。
+ */
+export function resolveEffectiveApprovalPolicy(
+  config: Pick<RawRuntimeRunDispatchConfig, 'resolveUserAutoApproveTools'>,
+  requestedPolicy: unknown,
+  identity: { userId?: string; username?: string } | undefined,
+): ToolApprovalPolicyOptions | undefined {
+  const requested = normalizeApprovalPolicy(requestedPolicy);
+  if (requested) return requested;
+  if (!identity || !config.resolveUserAutoApproveTools) return undefined;
+  try {
+    return config.resolveUserAutoApproveTools(identity) === true
+      ? { autoApproveTools: true }
+      : undefined;
+  } catch (err) {
+    logger.warn('resolveUserAutoApproveTools 抛错（fail-safe 降级为人工审批）', {
+      userId: identity.userId,
+      username: identity.username,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
+  }
+}
+
+/**
  * 加载并组装 system prompt。模板源在 `workspace-shared/prompts/*.md`。
  *
  * Sections 顺序严格按 variability「从低到高」排列，最大化 OpenAI 自动前缀缓存命中：
@@ -1834,7 +1865,11 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     let baseUrl = connection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
     const executionTarget = options.executionTarget ?? resolveDefaultExecutionTargetForContext(executionConfig, context);
     const sandboxPolicy = buildRawRuntimeSandboxPolicy(config, context, cwd, executionTarget);
-    const approvalPolicy = normalizeApprovalPolicy(options.approvalPolicy);
+    const identitySource = context.sessionOwner || context.user;
+    const approvalPolicy = resolveEffectiveApprovalPolicy(config, options.approvalPolicy, {
+      userId: identitySource?.id,
+      username: identitySource?.username,
+    });
     const toolProfile = normalizeToolProfile(options.toolProfile);
 
     const isResume = !!resumeSessionId;
@@ -1842,7 +1877,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const runId = options.runtimeRunId ?? `${Date.now()}-${randomUUID()}`;
     const abortController = options.abortController ?? new AbortController();
     enterSessionContext(sessionId, runId);
-    const identitySource = context.sessionOwner || context.user;
     const effectiveTenantId = resolveContextTenantId(context, existingSession);
     // BUG FIX 2026-06-23：tenantId 必须与 userId 同源用 identitySource，否则
     // admin 代操作 / cron / 内部触发等 context.user 为空但 sessionOwner 存在的
@@ -2416,7 +2450,11 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       ?? existingSession?.executionTarget
       ?? resolveDefaultExecutionTargetForContext(executionConfig, request.context);
     const sandboxPolicy = buildRawRuntimeSandboxPolicy(config, request.context, cwd, executionTarget);
-    const approvalPolicy = normalizeApprovalPolicy(request.approvalPolicy);
+    const identitySource = request.context.sessionOwner || request.context.user;
+    const approvalPolicy = resolveEffectiveApprovalPolicy(config, request.approvalPolicy, {
+      userId: identitySource?.id,
+      username: identitySource?.username,
+    });
     const resumeToolProfile = normalizeToolProfile(request.toolProfile);
     const abortController = request.abortController ?? new AbortController();
 
@@ -2432,7 +2470,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       return;
     }
 
-    const identitySource = request.context.sessionOwner || request.context.user;
     const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
     // 专职 Agent 覆盖（approval resume 同样应用，漏一处 = 审批恢复后越权）。
     // resume 路径 orgAgentId 只信 session meta（existingSession）。
@@ -2794,7 +2831,11 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       ?? existingSession?.executionTarget
       ?? resolveDefaultExecutionTargetForContext(executionConfig, request.context);
     const sandboxPolicy = buildRawRuntimeSandboxPolicy(config, request.context, cwd, executionTarget);
-    const approvalPolicy = normalizeApprovalPolicy(request.approvalPolicy);
+    const identitySource = request.context.sessionOwner || request.context.user;
+    const approvalPolicy = resolveEffectiveApprovalPolicy(config, request.approvalPolicy, {
+      userId: identitySource?.id,
+      username: identitySource?.username,
+    });
     const resumeToolProfile = normalizeToolProfile(request.toolProfile);
     const abortController = request.abortController ?? new AbortController();
 
@@ -2808,7 +2849,6 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       return;
     }
 
-    const identitySource = request.context.sessionOwner || request.context.user;
     const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
     // 专职 Agent 覆盖（interaction resume 同样应用，漏一处 = 交互恢复后越权）。
     // resume 路径 orgAgentId 只信 session meta（existingSession）。
@@ -3209,7 +3249,10 @@ export async function wakeRuntimeSession(
     ? isConsumedResume(run.metadata, 'resumeInteractionConsumed', resumeInteractionCandidate.interactionId)
     : false;
   const resumeInteraction = resumeInteractionCandidate && !resumeInteractionConsumed ? resumeInteractionCandidate : null;
-  const approvalPolicy = normalizeApprovalPolicy(run.metadata?.approvalPolicy);
+  const approvalPolicy = resolveEffectiveApprovalPolicy(config, run.metadata?.approvalPolicy, {
+    userId: session.userId || undefined,
+    username: session.username || undefined,
+  });
   const wakeToolProfile = normalizeToolProfile(run.metadata?.toolProfile);
   const pendingApproval = [...events].reverse().find((event): event is Extract<PlatformEvent, { type: 'approval_requested' }> => (
     event.type === 'approval_requested'

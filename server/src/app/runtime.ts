@@ -1921,6 +1921,17 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           : undefined;
       return user?.role as 'admin' | 'user' | undefined;
     },
+    // 「全部授权」是账户级服务端策略，不能依赖 Web 客户端逐条消息透传。
+    // 老用户没有该字段时与前端默认值保持一致：默认开启；用户不存在则 fail-closed。
+    resolveUserAutoApproveTools: ({ userId, username }: { userId?: string; username?: string }) => {
+      const user = userId
+        ? userStore?.findById(userId)
+        : username
+          ? userStore?.findByUsername(username)
+          : undefined;
+      if (!user) return undefined;
+      return user.preferences?.authorizationModeEnabled ?? true;
+    },
     // scheduler wake 不经过 Web channel，需要从账户资料恢复系统提示语使用的全名。
     resolveUserRealName: ({ userId, username }: { userId?: string; username?: string }) => {
       const user = userId

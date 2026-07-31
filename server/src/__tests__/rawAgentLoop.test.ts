@@ -701,9 +701,9 @@ describe('RawAgentLoop', () => {
     });
   });
 
-  it('auto-approves workspace writes for regular tenant users when tool auto-approval is enabled', async () => {
+  it('keeps account-level auto-approval when legacy run metadata has no approvalPolicy', async () => {
     // 授权模式对所有已认证用户生效（2026-07-02 起）：普通用户开启后
-    // Write/Edit 免人工审批；Shell 的宿主隔离兜底另行覆盖（toolRuntime.test.ts）。
+    // Write/Edit 免人工审批；存量/派生 run 缺少 metadata 字段时不能反向清空账户策略。
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-write-auto-user-'));
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
@@ -716,6 +716,9 @@ describe('RawAgentLoop', () => {
       approvalStore,
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        get: vi.fn(async () => ({ metadata: {} })),
+      } as any,
     });
 
     const events = await collect(loop.run(

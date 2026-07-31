@@ -46,6 +46,7 @@ import {
   markRunState,
   resolveSessionCatalog,
   resolveTenantRemoteHandsSource,
+  resolveEffectiveApprovalPolicy,
   RunStateTrackingEventStore,
   visibleWorkspaceCwd,
   type RawRuntimeRunDispatchConfig,
@@ -171,6 +172,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   const username = parentSession?.username || identity?.username || parentContext.workspace.username;
   const userId = parentSession?.userId || identity?.id || parentContext.workspace.userId;
   const executionTarget = parentContext.workspace.executionTarget;
+  const approvalPolicy = resolveEffectiveApprovalPolicy(config, undefined, { userId, username });
   let boundProfile: BoundAgentRuntimeProfile | undefined;
   if (config.agentRuntimeProfileResolver) {
     const bindingKey = params.profileSourceSession?.profileBindingKey
@@ -283,6 +285,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         parentToolCallId: parentContext.toolCallId,
         agentType: agentType.id,
         description: request.description,
+        ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(boundProfile ? profileRunMetadata(boundProfile) : {}),
         cwd: parentWorkspace.root,
         // 刻意不写 wakeMessage：子 run 是父死子亡语义，绝不允许 scheduler 恢复重放
@@ -397,6 +400,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       env: parentContext.env,
       sandboxPolicy: parentWorkspace.sandboxPolicy,
       channelContext: parentContext.channelContext,
+      approvalPolicy,
       hooks: childHooks,
       signal: combinedSignal,
       ...(boundProfile ? {

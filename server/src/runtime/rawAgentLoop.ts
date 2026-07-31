@@ -2021,7 +2021,12 @@ export class RawAgentLoop implements AgentLoop {
     if (!this.runStore) return context;
     try {
       const run = await this.runStore.get(context.runId);
-      const approvalPolicy = run?.metadata?.approvalPolicy;
+      // 存量/派生 run 可能没有 approvalPolicy metadata；此时保留 dispatch 已按账户
+      // 偏好解析出的策略。metadata 显式写入 null 则表示运行中关闭授权，必须清空。
+      if (!run || !Object.prototype.hasOwnProperty.call(run.metadata ?? {}, 'approvalPolicy')) {
+        return context;
+      }
+      const approvalPolicy = run.metadata?.approvalPolicy;
       const autoApproveTools = Boolean(
         approvalPolicy
         && typeof approvalPolicy === 'object'

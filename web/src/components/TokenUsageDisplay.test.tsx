@@ -13,6 +13,14 @@ describe("TokenUsageDisplay", () => {
           totalTokens: 217626,
           model: "gpt-5.6-sol",
           categories: [],
+          usageTotals: {
+            inputTokens: 352451,
+            uncachedInputTokens: 179907,
+            cacheReadTokens: 172544,
+            cacheCreationTokens: 0,
+            outputTokens: 37719,
+            reasoningTokens: 0,
+          },
           memoryFiles: [],
           mcpTools: [],
         }}
@@ -42,9 +50,17 @@ describe("TokenUsageDisplay", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: /上下文 217\.6k/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^217\.6k$/ }));
 
-    expect(screen.getByText("父 Agent")).toBeTruthy();
+    const cumulativeHeading = screen.getByText("累计模型用量");
+    const parentHeading = screen.getByText("父 Agent");
+    const childHeading = screen.getByText("子 Agent（7 个 · 297 次调用）");
+    const contextHeading = screen.getByText("当前上下文");
+    expect(cumulativeHeading.compareDocumentPosition(parentHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(parentHeading.compareDocumentPosition(childHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(childHeading.compareDocumentPosition(contextHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    expect(parentHeading).toBeTruthy();
     expect(screen.getByText("子 Agent（7 个 · 297 次调用）")).toBeTruthy();
     expect(screen.getByText("33.1M")).toBeTruthy();
     expect(screen.getByText("11,024,944")).toBeTruthy();
@@ -109,7 +125,7 @@ describe("TokenUsageDisplay", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: /上下文 64\.0k/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^64\.0k · 50%$/ }));
     expect(screen.getByText("总量为 provider 实际值 · 构成按估算占比校准")).toBeTruthy();
     expect(screen.getByText("原始估算 60.0k / 校准总量 64.0k")).toBeTruthy();
     expect(screen.getByText("上下文构成")).toBeTruthy();
@@ -181,7 +197,7 @@ describe("TokenUsageDisplay", () => {
       />,
     );
 
-    expect(screen.getByText("上下文 1.2k")).toBeTruthy();
+    expect(screen.getByText("1.2k")).toBeTruthy();
     expect(screen.queryByRole("button")).toBeNull();
   });
 });

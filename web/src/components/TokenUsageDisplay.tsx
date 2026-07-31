@@ -149,7 +149,7 @@ export function TokenUsageDisplay({
     : 'text-muted-foreground';
   const label = (
     <>
-      {hasExactContext ? '上下文' : '累计'} {formatTokenCount(displayTokens)}
+      {hasExactContext ? formatTokenCount(displayTokens) : `累计 ${formatTokenCount(displayTokens)}`}
       {hasContextWindow && ` · ${(percentage * 100).toFixed(0)}%`}
     </>
   );
@@ -199,6 +199,101 @@ export function TokenUsageDisplay({
 
       {open && allowDetails && (
         <div className="absolute right-0 top-full z-50 mt-1 max-h-[75vh] w-96 overflow-y-auto rounded-lg border bg-popover p-3 text-xs shadow-lg">
+          {hasRealtime && contextUsage!.usageTotals && (
+            <div className="mb-3">
+              <div className="mb-1 font-medium">累计模型用量</div>
+              <div className="space-y-1">
+                <DetailRow label="输入 Token" value={contextUsage!.usageTotals.inputTokens} />
+                <DetailRow label="未缓存输入" value={contextUsage!.usageTotals.uncachedInputTokens} />
+                <DetailRow label="缓存命中" value={contextUsage!.usageTotals.cacheReadTokens} />
+                <DetailRow label="缓存写入" value={contextUsage!.usageTotals.cacheCreationTokens} />
+                <DetailRow label="输出 Token" value={contextUsage!.usageTotals.outputTokens} />
+                {contextUsage!.usageTotals.reasoningTokens > 0 && (
+                  <DetailRow label="思考 Token" value={contextUsage!.usageTotals.reasoningTokens} />
+                )}
+              </div>
+            </div>
+          )}
+
+          {tokenUsage && (
+            <div className={`${hasRealtime && contextUsage!.usageTotals ? 'border-t pt-2' : ''} space-y-1.5`}>
+              <div className="mb-1 font-medium">父 Agent</div>
+              <DetailRow label="上下文" value={formatTokenCount(displayTokens)} />
+              <DetailRow label="累计消耗" value={formatTokenCount(parentCumulativeTokens)} />
+              <DetailRow label="累计输入" value={tokenUsage.totalInputTokens} />
+              <DetailRow label="累计输出" value={tokenUsage.totalOutputTokens} />
+              <DetailRow label="缓存读取" value={tokenUsage.totalCacheReadTokens} />
+              <DetailRow label="缓存写入" value={tokenUsage.totalCacheCreationTokens} />
+              {cacheHitRatio !== undefined && (
+                <DetailRow label="缓存命中率" value={formatPercent(cacheHitRatio)} />
+              )}
+              {tokenUsage.totalCostUsd != null && tokenUsage.totalCostUsd > 0 && (
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-muted-foreground">
+                    {tokenUsage.subagentTotalTokens > 0 ? '父 Agent 等效成本' : '等效成本'}
+                  </span>
+                  <span className="font-mono tabular-nums">${tokenUsage.totalCostUsd.toFixed(4)}</span>
+                </div>
+              )}
+              {tokenUsage.subagentTotalTokens > 0 && (
+                <>
+                  <div className="my-1.5 border-t" />
+                  <div className="mb-1 font-medium">
+                    子 Agent{subagentUsage ? `（${subagentUsage.childCount} 个 · ${subagentUsage.requestCount} 次调用）` : ''}
+                  </div>
+                  <DetailRow label="累计消耗" value={formatTokenCount(tokenUsage.subagentTotalTokens)} />
+                  {subagentUsage && (
+                    <>
+                      <DetailRow label="输入（含缓存）" value={subagentUsage.inputTokens} />
+                      <DetailRow label="非缓存输入" value={subagentUsage.uncachedInputTokens} />
+                      <DetailRow label="缓存读取" value={subagentUsage.cacheReadTokens} />
+                      <DetailRow label="缓存写入（上报）" value={subagentUsage.cacheCreationTokens} />
+                      <DetailRow label="输出" value={subagentUsage.outputTokens} />
+                      {subagentUsage.cacheHitRatio != null && (
+                        <DetailRow label="缓存命中率" value={formatPercent(subagentUsage.cacheHitRatio)} />
+                      )}
+                      {subagentUsage.cacheCreationTokens === 0 && (
+                        <div className="pt-0.5 text-[10px] leading-snug text-muted-foreground">
+                          缓存写入为 provider 上报值；0 不代表一定未创建缓存。
+                        </div>
+                      )}
+                    </>
+                  )}
+                  <div className="my-1.5 border-t" />
+                  <DetailRow label="任务总消耗" value={formatTokenCount(cumulativeTokens)} />
+                </>
+              )}
+              {childAgents.length > 0 && (
+                <div className="mt-2 space-y-1 rounded-md border bg-muted/20 p-2">
+                  <div className="text-[10px] font-medium text-muted-foreground">子任务资源</div>
+                  {childAgents.map((child) => (
+                    <button
+                      type="button"
+                      key={child.childSessionId}
+                      onClick={() => onOpenChildSession?.(child.childSessionId)}
+                      disabled={!onOpenChildSession}
+                      className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left text-[11px] transition-colors enabled:hover:bg-muted"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium">{child.agentType}</span>
+                        <span className="block truncate text-[10px] text-muted-foreground">
+                          {childStatusLabel(child.status)}
+                          {child.model ? ` · ${child.model}` : ''}
+                          {typeof child.durationMs === 'number' ? ` · ${(child.durationMs / 1000).toFixed(1)}s` : ''}
+                        </span>
+                      </span>
+                      <span className="shrink-0 font-mono tabular-nums">
+                        {typeof child.totalTokens === 'number' ? formatTokenCount(child.totalTokens) : '—'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {(hasRealtime || tokenUsage) && <div className="my-2 border-t" />}
+
           {hasRealtime && (
             <>
               <div className="mb-1 flex items-center justify-between gap-2">
@@ -312,23 +407,6 @@ export function TokenUsageDisplay({
                 </details>
               )}
 
-              {contextUsage!.usageTotals && (
-                <div className="mt-3 border-t pt-2">
-                  <div className="mb-1 font-medium">累计模型用量</div>
-                  <div className="space-y-1">
-                    <DetailRow label="输入 Token" value={contextUsage!.usageTotals.inputTokens} />
-                    <DetailRow label="未缓存输入" value={contextUsage!.usageTotals.uncachedInputTokens} />
-                    <DetailRow label="缓存命中" value={contextUsage!.usageTotals.cacheReadTokens} />
-                    <DetailRow label="缓存写入" value={contextUsage!.usageTotals.cacheCreationTokens} />
-                    <DetailRow label="输出 Token" value={contextUsage!.usageTotals.outputTokens} />
-                    {contextUsage!.usageTotals.reasoningTokens > 0 && (
-                      <DetailRow label="思考 Token" value={contextUsage!.usageTotals.reasoningTokens} />
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="my-2 border-t" />
             </>
           )}
 
@@ -352,85 +430,6 @@ export function TokenUsageDisplay({
             </>
           )}
 
-          {/* 计费口径（从 transcript 解析） */}
-          <div className="space-y-1.5">
-            {tokenUsage && (
-              <>
-                {childAgents.length > 0 && (
-                  <div className="mb-2 space-y-1 rounded-md border bg-muted/20 p-2">
-                    <div className="text-[10px] font-medium text-muted-foreground">子任务资源</div>
-                    {childAgents.map((child) => (
-                      <button
-                        type="button"
-                        key={child.childSessionId}
-                        onClick={() => onOpenChildSession?.(child.childSessionId)}
-                        disabled={!onOpenChildSession}
-                        className="flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left text-[11px] transition-colors enabled:hover:bg-muted"
-                      >
-                        <span className="min-w-0">
-                          <span className="block truncate font-medium">{child.agentType}</span>
-                          <span className="block truncate text-[10px] text-muted-foreground">
-                            {childStatusLabel(child.status)}
-                            {child.model ? ` · ${child.model}` : ''}
-                            {typeof child.durationMs === 'number' ? ` · ${(child.durationMs / 1000).toFixed(1)}s` : ''}
-                          </span>
-                        </span>
-                        <span className="shrink-0 font-mono tabular-nums">
-                          {typeof child.totalTokens === 'number' ? formatTokenCount(child.totalTokens) : '—'}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div className="mb-1 font-medium">父 Agent</div>
-                <DetailRow label="上下文" value={formatTokenCount(displayTokens)} />
-                <DetailRow label="累计消耗" value={formatTokenCount(parentCumulativeTokens)} />
-                <DetailRow label="累计输入" value={tokenUsage.totalInputTokens} />
-                <DetailRow label="累计输出" value={tokenUsage.totalOutputTokens} />
-                <DetailRow label="缓存读取" value={tokenUsage.totalCacheReadTokens} />
-                <DetailRow label="缓存写入" value={tokenUsage.totalCacheCreationTokens} />
-                {cacheHitRatio !== undefined && (
-                  <DetailRow label="缓存命中率" value={formatPercent(cacheHitRatio)} />
-                )}
-                {tokenUsage.totalCostUsd != null && tokenUsage.totalCostUsd > 0 && (
-                  <div className="flex items-center justify-between gap-4">
-                    <span className="text-muted-foreground">
-                      {tokenUsage.subagentTotalTokens > 0 ? '父 Agent 等效成本' : '等效成本'}
-                    </span>
-                    <span className="font-mono tabular-nums">${tokenUsage.totalCostUsd.toFixed(4)}</span>
-                  </div>
-                )}
-                {tokenUsage.subagentTotalTokens > 0 && (
-                  <>
-                    <div className="my-1.5 border-t" />
-                    <div className="mb-1 font-medium">
-                      子 Agent{subagentUsage ? `（${subagentUsage.childCount} 个 · ${subagentUsage.requestCount} 次调用）` : ''}
-                    </div>
-                    <DetailRow label="累计消耗" value={formatTokenCount(tokenUsage.subagentTotalTokens)} />
-                    {subagentUsage && (
-                      <>
-                        <DetailRow label="输入（含缓存）" value={subagentUsage.inputTokens} />
-                        <DetailRow label="非缓存输入" value={subagentUsage.uncachedInputTokens} />
-                        <DetailRow label="缓存读取" value={subagentUsage.cacheReadTokens} />
-                        <DetailRow label="缓存写入（上报）" value={subagentUsage.cacheCreationTokens} />
-                        <DetailRow label="输出" value={subagentUsage.outputTokens} />
-                        {subagentUsage.cacheHitRatio != null && (
-                          <DetailRow label="缓存命中率" value={formatPercent(subagentUsage.cacheHitRatio)} />
-                        )}
-                        {subagentUsage.cacheCreationTokens === 0 && (
-                          <div className="pt-0.5 text-[10px] leading-snug text-muted-foreground">
-                            缓存写入为 provider 上报值；0 不代表一定未创建缓存。
-                          </div>
-                        )}
-                      </>
-                    )}
-                    <div className="my-1.5 border-t" />
-                    <DetailRow label="任务总消耗" value={formatTokenCount(cumulativeTokens)} />
-                  </>
-                )}
-              </>
-            )}
-          </div>
         </div>
       )}
     </div>

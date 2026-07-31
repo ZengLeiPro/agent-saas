@@ -1,7 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Volume2, VolumeX, Loader2, PanelLeft, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
@@ -400,11 +399,6 @@ export function DesktopLayout(props: LayoutProps) {
                 ({cronJobCount.enabled}/{cronJobCount.total})
               </span>
             )}
-            {activeTab === "chat" && sessionId ? (
-              <Badge variant="secondary" className="shrink-0">
-                {sessionId.slice(0, 8)}
-              </Badge>
-            ) : null}
           </div>
           {activeTab === "platform-admin" && (
             <PlatformAdminHeaderControls

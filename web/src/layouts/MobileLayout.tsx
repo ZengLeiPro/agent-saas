@@ -1,7 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { ChevronLeft, Volume2, VolumeX, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SwipeDrawer } from "@/components/mobile/SwipeDrawer";
 import { SlidePanel } from "@/components/SlidePanel";
@@ -214,14 +213,7 @@ export function MobileLayout(props: LayoutProps) {
                 {previewFilePath.split("/").pop() || previewFilePath}
               </span>
             ) : (
-              <>
-                <div className="truncate text-base font-semibold">{activeOrgAgent?.name || (orgAgentIdentityLoading ? "企业专家" : agentProfile?.name) || "KY Agent"}</div>
-                {sessionId ? (
-                  <Badge variant="secondary" className="hidden sm:inline-flex">
-                    {sessionId.slice(0, 8)}
-                  </Badge>
-                ) : null}
-              </>
+              <div className="truncate text-base font-semibold">{activeOrgAgent?.name || (orgAgentIdentityLoading ? "企业专家" : agentProfile?.name) || "KY Agent"}</div>
             )}
           </div>
           {previewFilePath ? (

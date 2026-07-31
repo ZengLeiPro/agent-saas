@@ -1334,7 +1334,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         },
         { type: 'compaction_status', phase: 'started' },
         { type: 'compaction_status', phase: 'completed', compaction: { summary: 's', coveredEventCount: 3 } },
-        { type: 'done', runId: 'run-out-1', client_msg_id: 'cm-out-1' },
+        { type: 'done', sessionId, streamId: 'run-out-1', runId: 'run-out-1', client_msg_id: 'cm-out-1' },
       ]);
       // session_init → running；done → completed + session_updated；buffer 收口
       expect(rig.userEvents[0]).toEqual({
@@ -1352,7 +1352,14 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const base = { sessionId, runId: 'run-out-err', userId: USER.sub, clientMsgId: 'cm-out-e' };
       rig.channel.publishRuntimeOutboundEvent({ ...base, event: { type: 'session_init', sessionId } });
       rig.channel.publishRuntimeOutboundEvent({ ...base, event: { type: 'error', error: 'runtime blew up' } });
-      expect(rig.sessionEvents.at(-1)).toEqual({ type: 'done', runId: 'run-out-err', client_msg_id: 'cm-out-e', error: 'runtime blew up' });
+      expect(rig.sessionEvents.at(-1)).toEqual({
+        type: 'done',
+        sessionId,
+        streamId: 'run-out-err',
+        runId: 'run-out-err',
+        client_msg_id: 'cm-out-e',
+        error: 'runtime blew up',
+      });
       expect(rig.userEvents.at(-1)).toEqual({
         type: 'session_status', sessionId, status: 'failed',
         streamId: 'run-out-err', runId: 'run-out-err', reason: 'runtime blew up',
@@ -1402,7 +1409,13 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         type: 'run_finished', runId: 'run-pe-1', sessionId,
         subtype: 'error', numTurns: 1, error: 'boom from worker',
       } as any);
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'done', runId: 'run-pe-1', client_msg_id: 'cm-pe-1', error: 'boom from worker' });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({
+        type: 'done',
+        sessionId,
+        runId: 'run-pe-1',
+        client_msg_id: 'cm-pe-1',
+        error: 'boom from worker',
+      });
       expect(rig.userEvents).toContainEqual(expect.objectContaining({
         type: 'session_status', sessionId, status: 'failed', reason: 'boom from worker',
       }));

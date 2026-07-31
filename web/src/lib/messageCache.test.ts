@@ -4,6 +4,7 @@ import {
   clearAllMessageCache,
   clearSessionMessages,
   loadSessionMessages,
+  prepareMessagesForCache,
   saveSessionMessages,
 } from "./messageCache";
 
@@ -14,6 +15,23 @@ import {
  * 对外承诺的核心健壮性行为：所有 try/catch 分支都不得把底层错误抛给调用方。
  * IndexedDB 可用时的命中/TTL/裁剪等逻辑需依赖 fake-indexeddb，暂跳过（见返回说明）。
  */
+describe("messageCache 缓存快照", () => {
+  it("剥离 system-error、结束 streaming，并与原可变数组解耦", () => {
+    const messages = [
+      { id: "m1", type: "user", content: "hello", status: "sent" },
+      { id: "error-1", type: "system-error", content: "Agent 开小差了" },
+      { id: "m2", type: "text", content: "reply", streaming: true },
+    ] as MessageItem[];
+
+    const snapshot = prepareMessagesForCache(messages);
+    (messages[0] as Extract<MessageItem, { type: "user" }>).content = "mutated";
+
+    expect(snapshot.map((message) => message.id)).toEqual(["m1", "m2"]);
+    expect((snapshot[0] as Extract<MessageItem, { type: "user" }>).content).toBe("hello");
+    expect(snapshot[1]).toMatchObject({ type: "text", streaming: false });
+  });
+});
+
 describe("messageCache 在 IndexedDB 不可用时的优雅降级", () => {
   beforeEach(() => {
     localStorage.clear();

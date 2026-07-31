@@ -31,6 +31,17 @@ interface SaveSessionMessagesOptions {
   cursor?: string;
 }
 
+/** 构造与当前可变消息数组解耦的缓存快照，并剥离由服务端状态派生的提示。 */
+export function prepareMessagesForCache(messages: MessageItem[]): MessageItem[] {
+  return messages
+    .filter((message) => message.type !== "system-error")
+    .map((message) => (
+      "streaming" in message && message.streaming
+        ? { ...message, streaming: false }
+        : { ...message }
+    ));
+}
+
 const cacheMetadata = new Map<string, SaveSessionMessagesOptions>();
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
@@ -124,13 +135,14 @@ export function saveSessionMessages(
 ): void {
   if (options) cacheMetadata.set(sessionId, options);
   const knownMetadata = options ?? cacheMetadata.get(sessionId);
+  // 入队前同步截取快照：messages 是可变数组，不能等 IndexedDB ready 后再读取。
+  // system-error 由服务端 lastRunState 派生，也不能作为会话正文缓存。
+  const cacheableMessages = prepareMessagesForCache(messages);
+  const trimmed = cacheableMessages.slice(-MAX_CACHED_MESSAGES);
+  const complete = knownMetadata?.complete === true && trimmed.length === cacheableMessages.length;
   void (async () => {
     try {
       const db = await getDB();
-      const trimmed = messages.slice(-MAX_CACHED_MESSAGES).map((m) =>
-        "streaming" in m && m.streaming ? { ...m, streaming: false } : m,
-      );
-      const complete = knownMetadata?.complete === true && trimmed.length === messages.length;
       await db.put(STORE_NAME, {
         sessionId,
         messages: trimmed,

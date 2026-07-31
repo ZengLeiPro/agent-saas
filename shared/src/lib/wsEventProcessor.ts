@@ -709,6 +709,19 @@ export function processWsEvent(
   }
 
   if (data.type === "done") {
+    const expectedSessionId = activeSessionId ?? latestSessionId.value;
+    if (data.sessionId && expectedSessionId && data.sessionId !== expectedSessionId) return;
+    if (data.streamId && streamIdRef.current && data.streamId !== streamIdRef.current) return;
+    if (data.runId && ctx.runIdRef?.current && data.runId !== ctx.runIdRef.current) return;
+    if (data.client_msg_id && ctx.userMsgIndex >= 0) {
+      const currentUserMessage = msg.messagesRef.current[ctx.userMsgIndex];
+      const expectedClientMsgId = (
+        currentUserMessage
+        && (currentUserMessage.type === 'user' || currentUserMessage.type === 'user-voice')
+      ) ? currentUserMessage.clientMsgId : undefined;
+      if (expectedClientMsgId && data.client_msg_id !== expectedClientMsgId) return;
+    }
+
     removeRuntimeStatusMessages(msg);
     finalizeStreamingMessages(msg);
     block.currentBlockIndex = -1;

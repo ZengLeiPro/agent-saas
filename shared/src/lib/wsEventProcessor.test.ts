@@ -646,6 +646,34 @@ describe('processWsEvent - subagent', () => {
 });
 
 describe('processWsEvent - done 终态', () => {
+  it('A 会话失败终态不得污染当前打开的 B/C/D 会话', () => {
+    for (const activeSessionId of ['session-b', 'session-c', 'session-d']) {
+      const ctrl = makeController([
+        { id: `user-${activeSessionId}`, type: 'user', content: 'current', status: 'sent', clientMsgId: `client-${activeSessionId}` },
+        { id: `text-${activeSessionId}`, type: 'text', content: 'still streaming', streaming: true },
+      ]);
+      const { ctx, hooks } = makeCtx(ctrl, {
+        userMsgIndex: 0,
+        streamIdRef: { current: `stream-${activeSessionId}` },
+        runIdRef: { current: `run-${activeSessionId}` },
+      });
+      const before = ctrl.messages.map((message) => ({ ...message }));
+
+      const ret = dispatch({
+        type: 'done',
+        sessionId: 'session-a',
+        streamId: 'stream-session-a',
+        runId: 'run-session-a',
+        client_msg_id: 'client-session-a',
+        error: 'boom',
+      }, ctx, freshBlock(), { value: activeSessionId }, activeSessionId);
+
+      expect(ret).toBeUndefined();
+      expect(ctrl.messages).toEqual(before);
+      expect(hooks.onChatDone).not.toHaveBeenCalled();
+    }
+  });
+
   it('done 无 error：清状态条、收尾 streaming、返回 done、触发 onChatDone', () => {
     const ctrl = makeController([
       { id: 'r', type: 'runtime_status', status: 'running' },

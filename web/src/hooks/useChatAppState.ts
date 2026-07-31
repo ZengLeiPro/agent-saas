@@ -1397,7 +1397,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       attached: false,
     });
 
-    if (args.sessionId !== sessionIdRef.current) return;
+    if (args.sessionId !== immediateSessionIdRef.current) return;
 
     clearWatchdog();
     finalizeStreamingMessages(msgRef.current);
@@ -1467,7 +1467,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       ...(lastRunState.runId ? { runId: lastRunState.runId } : {}),
       attached: false,
     });
-    if (sessionId !== sessionIdRef.current) return;
+    if (sessionId !== immediateSessionIdRef.current) return;
 
     try {
       const res = await authFetch(`/api/sessions/${sessionId}/stream-status`);
@@ -2017,7 +2017,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const result = processWsEvent(
         data, ctx, wsBlockRef.current,
         wsLatestSessionIdRef.current,
-        sessionIdRef.current,
+        immediateSessionIdRef.current,
       );
 
       // 新建会话 → replaceState（不创建历史记录）

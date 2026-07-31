@@ -810,7 +810,13 @@ export class WebChannel implements BaseChannel {
         });
         break;
       case 'done':
-        emitSession({ type: 'done', runId: input.runId, client_msg_id: input.clientMsgId });
+        emitSession({
+          type: 'done',
+          sessionId: input.sessionId,
+          streamId,
+          runId: input.runId,
+          client_msg_id: input.clientMsgId,
+        });
         this.eventBufferStore.complete(input.sessionId);
         this.activeStreams.delete(streamId);
         this.inProcessOutboundRuns.delete(input.runId);
@@ -854,7 +860,14 @@ export class WebChannel implements BaseChannel {
         clearSessionsListCache();
         break;
       case 'error':
-        emitSession({ type: 'done', runId: input.runId, client_msg_id: input.clientMsgId, error: input.event.error });
+        emitSession({
+          type: 'done',
+          sessionId: input.sessionId,
+          streamId,
+          runId: input.runId,
+          client_msg_id: input.clientMsgId,
+          error: input.event.error,
+        });
         this.eventBufferStore.complete(input.sessionId);
         this.activeStreams.delete(streamId);
         this.inProcessOutboundRuns.delete(input.runId);
@@ -3038,7 +3051,14 @@ export class WebChannel implements BaseChannel {
       // 不再单发 error 事件（否则客户端只会加一条 text 气泡，pending 气泡永久卡住）
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.idempotencySet(user?.sub, clientMsgId, 'failed', streamId);
-      send({ type: 'done', client_msg_id: clientMsgId, error: errorMessage });
+      const terminalSessionId = bufferCtx.sessionId ?? validSessionId ?? resolvedSessionId;
+      send({
+        type: 'done',
+        ...(terminalSessionId ? { sessionId: terminalSessionId } : {}),
+        streamId,
+        client_msg_id: clientMsgId,
+        error: errorMessage,
+      });
     } finally {
       clearTimeout(watchdogTimer);
       ws.off('close', onWsClose);
@@ -3217,7 +3237,7 @@ export class WebChannel implements BaseChannel {
       ...(guardrailEventId ? { guardrailEventId } : {}),
     });
     emitSession({ type: 'block_end', blockType: 'text' });
-    emitSession({ type: 'done', client_msg_id: args.clientMsgId });
+    emitSession({ type: 'done', sessionId, streamId, client_msg_id: args.clientMsgId });
     this.eventBufferStore.complete(sessionId);
     if (user?.sub && this.eventBus) {
       this.eventBus.emitUser(user.sub, {
@@ -4160,6 +4180,7 @@ function projectRuntimePlatformEvent(
             },
             {
               type: 'done',
+              sessionId: event.sessionId,
               runId: event.runId,
               ...(options.clientMsgId ? { client_msg_id: options.clientMsgId } : {}),
               ...(terminalError ? { error: terminalError } : {}),
@@ -4193,6 +4214,7 @@ function projectRuntimePlatformEvent(
         return {
           events: [{
             type: 'done',
+            sessionId: event.sessionId,
             runId: event.runId,
             ...(options.clientMsgId ? { client_msg_id: options.clientMsgId } : {}),
             error: terminalError,

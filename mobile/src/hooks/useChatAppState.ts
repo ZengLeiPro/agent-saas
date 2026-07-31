@@ -1191,7 +1191,7 @@ export function useChatAppStateCore(): ChatAppState {
         ctx,
         wsBlockRef.current,
         wsLatestSessionIdRef.current,
-        sessionIdRef.current,
+        immediateSessionIdRef.current,
       );
 
       if (data.type === "session" && "sessionId" in data) {

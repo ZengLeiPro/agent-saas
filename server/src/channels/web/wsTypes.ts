@@ -174,7 +174,7 @@ export type WsDownstreamEvent =
     | { type: 'title_updated'; sessionId: string; title: string }
     | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean }
     | { type: 'buffer_overflow' }
-    | { type: 'done'; runId?: string; client_msg_id?: string; error?: string }
+    | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string }
     | { type: 'error'; message: string }
     | { type: 'respond_error'; interactionId: string; error: string }
     | { type: 'respond_ok'; interactionId: string }

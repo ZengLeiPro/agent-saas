@@ -307,14 +307,15 @@ export function useSession(
         const cached = await loadSessionMessageSnapshot(id);
         if (isStale()) return;
         if (cached) {
-          baseMessages = cached.messages;
+          const cachedMessages = cached.messages.filter((message) => message.type !== "system-error");
+          baseMessages = cachedMessages;
           baseComplete = cached.complete;
           requestCursor = cached.cursor;
           detailCursorRef.current.set(id, {
             complete: cached.complete,
             ...(cached.cursor ? { cursor: cached.cursor } : {}),
           });
-          cbRef.current.setMessages(cached.messages, opts);
+          cbRef.current.setMessages(cachedMessages, opts);
           setSessionId(id);
         }
       }
@@ -344,7 +345,7 @@ export function useSession(
           // 增量基底里可能保留上一轮的临时状态；以本次 lastRunState / pending API
           // 为真源重建，避免已结束的交互或失败 banner 永久粘在历史里。
           msgs = msgs.filter((message) =>
-            !message.id.startsWith("system-error-") && !message.id.startsWith("pending-"),
+            message.type !== "system-error" && !message.id.startsWith("pending-"),
           );
 
           // a-2 对账：根据 lastRunState 在消息尾追加 system-error banner,

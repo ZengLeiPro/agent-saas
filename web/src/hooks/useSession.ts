@@ -840,6 +840,7 @@ export function useSession(
       setSessions(cached.sessions);
       setHasMore(cached.hasMore);
       setIsLoadingSessions(false);
+      cbRef.current.onSessionsLoaded?.(cached.sessions);
     }
 
     // Step 2: 消费预取结果或发起 API 请求
@@ -855,6 +856,7 @@ export function useSession(
           setSessions(freshSessions);
           setHasMore(freshHasMore);
           setIsLoadingSessions(false);
+          cbRef.current.onSessionsLoaded?.(freshSessions);
         } else {
           // 有缓存时静默加载，避免 loading 状态闪烁
           void loadSessions({ silent: !!cached });

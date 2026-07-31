@@ -503,12 +503,19 @@ function buildStep(
   const blocks: ApiTranscriptBlock[] = [];
 
   if (index === 0) {
+    const entry = scenario.launch.entry;
+    const entryTitle = entry.kind === "scheduled_trigger"
+      ? "定时任务触发"
+      : entry.kind === "business_event"
+        ? "业务事件"
+        : "用户消息";
     blocks.push({
-      id: "presentation-user-prompt",
-      kind: "prompt",
-      title: "用户消息",
+      id: "presentation-entry",
+      kind: entry.kind === "user_request" ? "prompt" : "text",
+      title: entryTitle,
       defaultOpen: true,
-      content: scenario.launch.starterMessage,
+      content: entry.content,
+      replayInstant: entry.kind !== "user_request",
     });
   }
 

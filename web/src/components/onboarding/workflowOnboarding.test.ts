@@ -37,6 +37,7 @@ function context(
       launch: {
         sampleAvailable: false,
         startMode: options.startMode ?? "chat",
+        entry: { kind: "user_request", content: "用示例数据开始" },
         starterMessage: "用示例数据开始",
       },
       cta: { primary: "立即试一试" },

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "workflowContractVersion": 2,
-  "updatedAt": "2026-07-21",
+  "updatedAt": "2026-07-31",
   "roles": [
     {
       "id": "boss",
@@ -38837,6 +38837,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "CRM 新增 4 条线索：两条疑似同一企业，一条缺少可验证来源，一条联系人处于退订状态。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         },
@@ -39053,6 +39057,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "客户在沟通中确认下周看方案，但 CRM 里的下一步仍是“待联系”，负责人和日期都没填。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -39142,6 +39150,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "客户消息要求 X7 防护等级 IP67，询价附件写的是 IP65；原型号库存为 0，替代型号库存 36 件。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         },
@@ -39377,6 +39389,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "订单 SO-2026-1842 因客户超信用额度 18 万元被系统拦截，销售申请今天放行，尚未取得财务授权。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -39459,6 +39475,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "合同、SOW 和最终报价已经归档，但三份文件中的交付日期和验收口径不一致，项目尚未生成批准基线。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -39550,6 +39570,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "产品规范 V4.2 已批准发布，但 MES 仍在使用 V4.1，仓库作业指导书也未同步。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -39658,6 +39682,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "订单 SO-2026-2307 承诺周五交付，当前关键工序延迟 2 天，客户尚未收到改期说明。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -39748,6 +39776,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "scheduled_trigger",
+            "content": "09:00 客户开工资料巡检：项目 PRJ-2026-0718 仍缺盖章版需求确认单和现场联系人信息。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -39829,6 +39861,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "客户新增“支持海外多币种结算”的需求，项目经理尚未确认工期、成本和合同范围影响。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -39933,6 +39969,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "宁波项目已完成交付，12 万元尾款仍卡在培训签字；验收、开票和收款状态尚未闭合。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         },
@@ -40169,6 +40209,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "平台 7 月结算单比门店流水少 23,680 元，退款、佣金和到账金额尚未对平。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -40249,6 +40293,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "华东仓 A17 轴承仅剩 120 件，未来 7 天需求 900 件；华南仓有 1,300 件可用库存。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -40349,6 +40397,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "生产订单 MO-2026-0812 下周一投产，A17 轴承缺口 800 件，当前在途数量和替代料资格尚未确认。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -40428,6 +40480,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "采购申请 PR-2026-487 需要 2,000 套伺服组件，三家报价的交期、税率和质保口径不一致。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -40508,6 +40564,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "发票 INV-2026-337 金额与收货单相差 8,400 元，付款申请已进入审批但三单尚未匹配。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -40607,6 +40667,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "下周要发一批 X7 控制器去德国，客户催着要合规文件；当前证据是否齐全、能否放行尚未确认。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -40700,6 +40764,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "来料检验发现批次 B20260731 的连接器不良率 6.8%，已上线的 240 件产品可能受影响。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -40810,6 +40878,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "客户工单 CS-2026-1198 反馈设备间歇停机，服务团队称已恢复，但监控仍有两次同类告警。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -40902,6 +40974,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "scheduled_trigger",
+            "content": "07:00 到期事项巡检：本周有 6 项法定或合同期限临近，其中 2 项材料未齐、1 项已提交但尚未收到回执。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -40974,6 +41050,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "招聘申请 HR-2026-214 已获编制批准，面试通过 2 人；薪资方案和最终 Offer 尚未由负责人确认。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -41048,6 +41128,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "business_event",
+            "content": "员工陈晨将于 8 月 5 日从销售部调到渠道部，HR 已批准，但权限、汇报关系和目标归属尚未同步。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -41151,6 +41235,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "scheduled_trigger",
+            "content": "08:30 经营异常巡检：华东区本月回款较计划少 18%，其中三笔大额应收已逾期，原商机和责任人待核对。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -41258,6 +41346,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "user_request",
+            "content": "我们在考虑明年进入越南市场。请根据我上传的调研资料，对比市场规模、主要竞争者和渠道门槛，关键结论标明出处，最后给出是否进入的建议。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -41339,6 +41431,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "user_request",
+            "content": "明天要拜访恒远装备的采购总监。把 CRM、最近三次沟通和未结订单整理成一页拜访简报，重点标出对方最可能关心的问题。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -41429,6 +41525,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "user_request",
+            "content": "我下周去上海出差三天，住宿能报多少？发票有什么要求吗？"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -41508,6 +41608,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "user_request",
+            "content": "根据我上传的新品资料，写 3 条抖音口播和 2 篇小红书文案；涉及性能数据只能使用资料里的数字，发布前先给我确认。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -41597,6 +41701,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "user_request",
+            "content": "昨天 Q2 经营分析会的听记出来了，两个多小时。你把决议和要办的事整理出来，别又整成一份存进网盘就没人打开的纪要。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }
@@ -41677,6 +41785,10 @@
           "valueProof": "用对象版本、动作回执、独立回读、终态断言和无未决任务证明完成"
         },
         "launch": {
+          "entry": {
+            "kind": "user_request",
+            "content": "把我上传的项目资料整理成一份客户验收报告，所有结论标明来源，保留版本号，缺少证据的地方不要补写。"
+          },
           "sampleAvailable": false,
           "inputHint": "查看工作流与演示计划；实际接入范围以当前成熟度和租户能力为准"
         }

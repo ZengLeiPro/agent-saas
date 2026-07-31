@@ -60,9 +60,8 @@ function groupIntoBubbles(items: RenderItem[]): BubbleRenderItem[] {
     if (item.type === 'user' || item.type === 'user-voice') {
       flushGroup();
       result.push(item);
-    } else if (item.type === 'system-error') {
-      // system-error 是会话级独立 alert,不与 AI 输出共享 bubble,也不归属 user 侧。
-      // 单独 push,渲染时居中无头像 header。
+    } else if (item.type === 'system-error' || item.type === 'system_event') {
+      // 系统事件与会话级错误都是独立中性信息，不归属用户或 AI 气泡。
       flushGroup();
       result.push(item);
     } else if (asCompactionItem(item)) {
@@ -308,8 +307,8 @@ export const MessageList = memo(function MessageList({
     const ids = new Set<string>();
     let prevSide: 'user' | 'ai' | null = null;
     for (const item of bubbleItems) {
-      // system-error / compaction 是中性渲染单元,不参与 user/ai 头像 header 切换计算（也不打断后续 prevSide）
-      if (item.type === 'system-error' || asCompactionItem(item)) continue;
+      // 系统事件、system-error 与 compaction 是中性渲染单元，不参与头像切换计算。
+      if (item.type === 'system_event' || item.type === 'system-error' || asCompactionItem(item)) continue;
       const side = (item.type === 'user' || item.type === 'user-voice') ? 'user' : 'ai';
       if (side !== prevSide) ids.add(item.id);
       prevSide = side;
@@ -433,6 +432,20 @@ export const MessageList = memo(function MessageList({
                     <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} />
                   </ErrorBoundary>
                 </div>
+              </div>
+            );
+          }
+
+          // --- system_event: 业务事件 / 定时触发，无用户或 AI 头像 ---
+          if (item.type === 'system_event') {
+            return (
+              <div
+                key={item.id}
+                ref={ri === lastRenderIdx && !showAgentLoading ? lastMessageRef : undefined}
+                className="rounded-xl border border-border/70 bg-muted/40 px-4 py-3"
+              >
+                <div className="text-xs font-semibold text-muted-foreground">{item.title}</div>
+                <div className="mt-1 whitespace-pre-wrap text-sm leading-6 text-foreground">{item.content}</div>
               </div>
             );
           }

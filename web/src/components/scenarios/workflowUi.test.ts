@@ -27,12 +27,12 @@ describe("Workflow V3 UI 纯契约", () => {
     expect(workflowCta(makeWorkflowScenario("d0")).action).toBe("chat");
     expect(workflowCta(makeWorkflowScenario("d1", {
       readiness: "D1_CONNECTOR",
-      launch: { sampleAvailable: false, startMode: "connector", starterMessage: "接入后启动" },
+      launch: { sampleAvailable: false, startMode: "connector", entry: { kind: "business_event", content: "业务系统出现一条待处理事件。" }, starterMessage: "业务系统出现一条待处理事件。" },
       cta: { primary: "接入我的系统", secondary: "查看工作流" },
     }))).toEqual({ action: "connector", label: "接入我的系统", secondaryLabel: "查看工作流" });
     expect(workflowCta(makeWorkflowScenario("d2", {
       readiness: "D2_PROJECT",
-      launch: { sampleAvailable: false, startMode: "diagnosis", starterMessage: "预约诊断" },
+      launch: { sampleAvailable: false, startMode: "diagnosis", entry: { kind: "business_event", content: "预约诊断" }, starterMessage: "预约诊断" },
       cta: { primary: "预约落地诊断", secondary: "查看行业演示" },
     })).action).toBe("diagnosis");
   });
@@ -41,7 +41,7 @@ describe("Workflow V3 UI 纯契约", () => {
   it("有受控演示时先展示工作现场，真实接入保留为次动作", () => {
     const scenario = makeWorkflowScenario("presentation", {
       readiness: "D1_CONNECTOR",
-      launch: { sampleAvailable: false, startMode: "connector", starterMessage: "接入后启动" },
+      launch: { sampleAvailable: false, startMode: "connector", entry: { kind: "business_event", content: "业务系统出现一条待处理事件。" }, starterMessage: "业务系统出现一条待处理事件。" },
       cta: { primary: "接入我的系统", secondary: "查看工作流" },
       presentation: {
         version: 1,
@@ -71,14 +71,14 @@ describe("Workflow V3 UI 纯契约", () => {
   it("手写 ReplayScript 与 presentation 都显示演示入口，无剧本场景不显示", () => {
     const handwritten = makeWorkflowScenario("catalog-evidence-backed-communication-create", {
       readiness: "D1_CONNECTOR",
-      launch: { sampleAvailable: false, startMode: "connector", starterMessage: "接入后启动" },
+      launch: { sampleAvailable: false, startMode: "connector", entry: { kind: "business_event", content: "业务系统出现一条待处理事件。" }, starterMessage: "业务系统出现一条待处理事件。" },
       cta: { primary: "接入我的系统", secondary: "查看工作流" },
     });
     expect(workflowCta(handwritten).action).toBe("presentation");
 
     const noReplay = makeWorkflowScenario("no-replay", {
       readiness: "D1_CONNECTOR",
-      launch: { sampleAvailable: false, startMode: "connector", starterMessage: "接入后启动" },
+      launch: { sampleAvailable: false, startMode: "connector", entry: { kind: "business_event", content: "业务系统出现一条待处理事件。" }, starterMessage: "业务系统出现一条待处理事件。" },
       cta: { primary: "接入我的系统", secondary: "查看工作流" },
     });
     expect(workflowCta(noReplay).action).toBe("connector");

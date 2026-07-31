@@ -7,7 +7,12 @@ const d0 = makeWorkflowScenario("d0-current", { title: "当前可运行工作流
 const d1 = makeWorkflowScenario("d1-connector", {
   title: "需要标准接入工作流",
   readiness: "D1_CONNECTOR",
-  launch: { sampleAvailable: false, startMode: "connector", starterMessage: "接入后启动" },
+  launch: {
+    sampleAvailable: false,
+    startMode: "connector",
+    entry: { kind: "business_event", content: "业务系统出现一条待处理事件。" },
+    starterMessage: "业务系统出现一条待处理事件。",
+  },
   cta: { primary: "接入我的系统", secondary: "查看工作流" },
 });
 const demo = makeWorkflowScenario("demo-with-script", {

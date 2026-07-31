@@ -31,6 +31,7 @@ export const workflowPrimaryTypeSchema = z.enum(["CREATE", "WATCH", "ACT", "LOOP
 /** 执行结构与目录主体验解耦：WATCH/ACT 只要含等待恢复，执行上就是 LOOP。 */
 export const workflowExecutionTypeSchema = z.enum(["CREATE", "ACT", "LOOP"]);
 export const workflowTriggerModeSchema = z.enum(["manual", "event-driven", "scheduled"]);
+export const workflowEntryKindSchema = z.enum(["user_request", "business_event", "scheduled_trigger"]);
 export const workflowReadinessSchema = z.enum(["D0_CURRENT", "D1_CONNECTOR", "D2_PROJECT"]);
 export const workflowCapabilityKindSchema = z.enum([
   "CURRENT",
@@ -595,6 +596,10 @@ const catalogPublicRawSchema = z.object({
   launch: z.object({
     sampleAvailable: z.boolean(),
     inputHint: rawTextSchema.optional(),
+    entry: z.object({
+      kind: workflowEntryKindSchema,
+      content: rawTextSchema,
+    }).strict(),
   }).strict(),
   presentation: presentationPublicRawSchema.optional(),
 }).strict();
@@ -630,6 +635,10 @@ export const catalogScenarioPublicSchema = z.object({
     sampleAvailable: z.boolean(),
     inputHint: workflowPublicTextSchema.optional(),
     startMode: z.enum(["chat", "replay", "connector", "diagnosis"]),
+    entry: z.object({
+      kind: workflowEntryKindSchema,
+      content: workflowPublicTextSchema,
+    }).strict(),
     starterMessage: workflowPublicTextSchema,
   }).strict(),
   primaryType: workflowPrimaryTypeSchema,
@@ -870,6 +879,19 @@ export const workflowLibraryFileV3Schema = z.object({
       if (!roleIds.has(roleId)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `目录 ${item.id} 角色引用无效` });
     }
     const workflow = library.workflows.find((candidate) => candidate.id === item.workflowId);
+    if (workflow) {
+      const expectedEntryKind = workflow.executionType === "CREATE"
+        ? "user_request"
+        : workflow.triggerMode === "scheduled"
+          ? "scheduled_trigger"
+          : "business_event";
+      if (item.public.launch.entry.kind !== expectedEntryKind) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `目录 ${item.id} 的入口类型应为 ${expectedEntryKind}`,
+        });
+      }
+    }
     const workflowSkinIds = new Set(workflow?.skins.map((skin) => skin.id) ?? []);
     const workflowRoleViewIds = new Set(workflow?.roleViews.map((view) => view.id) ?? []);
     if (item.skinId && !workflowSkinIds.has(item.skinId)) {

@@ -68,7 +68,12 @@ export function projectWorkflowLibraryPublic(
       const launch: CatalogScenarioPublic["launch"] = {
         sampleAvailable: false,
         startMode: startModeFor(workflow.readiness),
-        starterMessage: `请启动「${scenario.public.title}」。先说明当前可直接完成的范围，以及需要我提供哪些资料；不要假设已经连接未配置的系统。`,
+        entry: {
+          kind: scenario.public.launch.entry.kind,
+          content: scenario.public.launch.entry.content,
+        },
+        // 兼容现有聊天启动链路；新入口展示统一读取 entry。
+        starterMessage: scenario.public.launch.entry.content,
       };
       if (scenario.public.launch.inputHint) launch.inputHint = scenario.public.launch.inputHint;
 

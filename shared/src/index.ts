@@ -210,6 +210,7 @@ export {
   workflowPrimaryTypeSchema,
   workflowExecutionTypeSchema,
   workflowTriggerModeSchema,
+  workflowEntryKindSchema,
   workflowPublicSummarySchema,
   workflowPublicTextSchema,
   workflowReadinessSchema,

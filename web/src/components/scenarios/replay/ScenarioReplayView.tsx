@@ -89,7 +89,7 @@ export function ScenarioReplayView({
   /** 测试可缩短间隔；生产默认模拟真实模型流式输出速度。 */
   typewriterIntervalMs?: number;
 }) {
-  // 首屏只显示用户发来的信息；由用户主动推进后，才展示第一步 Agent 输出。
+  // 首屏只显示入口：用户请求、业务事件或定时触发；推进后才展示第一步 Agent 输出。
   const [stepIndex, setStepIndex] = useState(0);
   const [decisions, setDecisions] = useState<Record<number, "approved" | "rejected">>({});
   const [artifact, setArtifact] = useState<{ path: string; fileName: string } | null>(null);
@@ -104,7 +104,7 @@ export function ScenarioReplayView({
 
   const visibleBlocks = useMemo(() => {
     if (stepIndex === 0) {
-      return script.steps[0]?.blocks.filter((block) => block.kind === "prompt") ?? [];
+      return script.steps[0]?.blocks.slice(0, 1) ?? [];
     }
     return script.steps.slice(0, stepIndex).flatMap((step, index) => [
       ...step.blocks,
@@ -118,7 +118,7 @@ export function ScenarioReplayView({
   const activeTextBlock = useMemo(() => {
     if (!typewriterEnabled) return null;
     for (const block of visibleBlocks) {
-      if (block.kind !== "text") continue;
+      if (block.kind !== "text" || block.replayInstant) continue;
       const length = splitText(block.content).length;
       if ((streamedTextLengths[block.id] ?? 0) < length) return block;
     }
@@ -147,7 +147,7 @@ export function ScenarioReplayView({
     const blocks = visibleBlocks.map((block) => {
       if (block.kind !== "text") return block;
       const characters = splitText(block.content);
-      const visibleLength = typewriterEnabled
+      const visibleLength = typewriterEnabled && !block.replayInstant
         ? Math.min(characters.length, streamedTextLengths[block.id] ?? 0)
         : characters.length;
       return {
@@ -158,11 +158,22 @@ export function ScenarioReplayView({
       };
     });
     const mapped = blocks.length ? mapSessionDetailToMessages(buildDetail(blocks)) : [];
-    return mapped.map((message) => (
-      message.type === "text" && message.id === activeTextBlock?.id
+    const blockById = new Map(blocks.map((block) => [block.id, block]));
+    return mapped.map((message) => {
+      const sourceBlock = blockById.get(message.id);
+      if (message.type === "text" && sourceBlock?.kind === "text" && sourceBlock.replayInstant) {
+        return {
+          id: message.id,
+          type: "system_event" as const,
+          title: sourceBlock.title,
+          content: sourceBlock.content,
+          timestamp: message.timestamp,
+        };
+      }
+      return message.type === "text" && message.id === activeTextBlock?.id
         ? { ...message, streaming: true }
-        : message
-    ));
+        : message;
+    });
   }, [activeTextBlock?.id, streamedTextLengths, typewriterEnabled, visibleBlocks]);
 
   // 面板从消息流 fold，与真实会话同一个 hook——面板没有独立数据通道

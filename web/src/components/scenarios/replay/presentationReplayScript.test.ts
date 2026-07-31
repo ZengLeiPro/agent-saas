@@ -60,6 +60,23 @@ describe("presentationToReplayScript", () => {
     expect(script?.steps.at(-1)?.blocks.at(-1)?.content).toContain("本次会话改变了什么");
   });
 
+  it("业务事件以事件入口展示，不伪装成用户消息", () => {
+    const scenario = makeScenarioWithApproval();
+    scenario.launch = {
+      ...scenario.launch,
+      entry: { kind: "business_event", content: "CRM 收到一条规格冲突的询价。" },
+      starterMessage: "CRM 收到一条规格冲突的询价。",
+    };
+    const entry = presentationToReplayScript(scenario)?.steps[0].blocks[0];
+    expect(entry).toMatchObject({
+      id: "presentation-entry",
+      kind: "text",
+      title: "业务事件",
+      replayInstant: true,
+    });
+    expect(entry?.content).toContain("CRM 收到一条规格冲突的询价。");
+  });
+
   it("confirm 章节生成真实审批门禁和批准留痕", () => {
     const script = presentationToReplayScript(makeScenarioWithApproval());
     const approval = script?.steps[1].approval;

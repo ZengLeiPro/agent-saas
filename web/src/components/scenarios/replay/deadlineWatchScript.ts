@@ -170,9 +170,9 @@ export const deadlineWatchScript: ReplayScript = {
           kind: "text",
           title: "定时任务触发",
           defaultOpen: true,
+          replayInstant: true,
           content: [
-            "**07:00 定时任务 · 到期事项巡检** 已启动，批次 WATCH-2026-0726。",
-            "",
+            "07:00 到期事项巡检已启动，批次 WATCH-2026-0726。",
             "这一轮没有人提问、没有人点开对话框。排程到点自己发起：扫全部带法定或合同时限的在办事项 → 逐项核材料是否齐套 → 齐套的按批准渠道提交 → 然后一直盯回执。",
           ].join("\n"),
         },

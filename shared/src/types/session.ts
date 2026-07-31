@@ -263,6 +263,8 @@ export interface ApiTranscriptBlock {
   attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
   /** text block：门禁拒答气泡关联的 guardrail event id（员工申诉入口用） */
   guardrailEventId?: string;
+  /** 演示剧本入口事件直接完整展示，不模拟 Agent 流式输出。 */
+  replayInstant?: boolean;
   /**
    * tool_use block：工具执行的「给人看」摘要。
    * 与 content/raw（给模型看的原始 payload）并存；缺省时渲染回退到原始 payload。

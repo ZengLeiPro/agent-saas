@@ -200,7 +200,11 @@ function createLibrary() {
           followUp: "需要业务写入时进入后续流程",
           valueProof: "版本和校验记录一致",
         },
-        launch: { sampleAvailable: false, inputHint: "上传资料开始" },
+        launch: {
+          sampleAvailable: false,
+          inputHint: "上传资料开始",
+          entry: { kind: "user_request", content: "把这批资料整理成一份可核验的成果，先标出缺失信息。" },
+        },
       },
       internal: {
         enabled: true,
@@ -283,6 +287,13 @@ describe("Workflow v3 schema", () => {
 
     expect(projected.scenarios).toHaveLength(1);
     expect(projected.scenarios[0]?.actionBadge).toContain("技能");
+    expect(projected.scenarios[0]?.launch).toMatchObject({
+      entry: {
+        kind: "user_request",
+        content: "把这批资料整理成一份可核验的成果，先标出缺失信息。",
+      },
+      starterMessage: "把这批资料整理成一份可核验的成果，先标出缺失信息。",
+    });
     expect(projected.aliases[0]).toMatchObject({
       resolution: "catalog",
       targetCatalogScenarioId: "verified-artifact-create",
@@ -291,6 +302,12 @@ describe("Workflow v3 schema", () => {
     expect(serialized).not.toContain("internal-operation-probe");
     expect(serialized).not.toContain("run-id-probe");
     expect(serialized).not.toContain("cannot-promise-probe");
+  });
+
+  it("入口类型必须匹配执行结构和触发方式", () => {
+    const library = createLibrary();
+    library.catalogScenarios[0]!.public.launch.entry.kind = "scheduled_trigger";
+    expect(workflowLibraryFileV3Schema.safeParse(library).success).toBe(false);
   });
 
   it("strict schema 拒绝未知字段", () => {

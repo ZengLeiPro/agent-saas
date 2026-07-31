@@ -48,6 +48,7 @@ function workflowContext(
       launch: {
         sampleAvailable: true,
         startMode: "replay",
+        entry: { kind: "user_request", content: "查看订单异常" },
         starterMessage: "查看订单异常",
       },
       cta: { primary: "用示例数据体验" },

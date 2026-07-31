@@ -8,6 +8,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { ScenarioReplayView } from './ScenarioReplayView';
 import { knowledgeQaScript } from './knowledgeQaScript';
+import { deadlineWatchScript } from './deadlineWatchScript';
 import type { ReplayScript } from './types';
 
 beforeAll(() => {
@@ -50,6 +51,15 @@ describe('ScenarioReplayView', () => {
     clickNext(1);
     expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
     expect(screen.getByText('确认问题范围与可用资料')).toBeTruthy();
+  });
+
+  it('定时工作流首屏显示触发事件，推进后才展示执行动作', () => {
+    render(<ScenarioReplayView script={deadlineWatchScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
+    expect(screen.getByText(/07:00 到期事项巡检/)).toBeTruthy();
+    expect(screen.queryByText('扫描到期事项台账')).toBeNull();
+
+    clickNext(1);
+    expect(screen.getByText('扫描到期事项台账')).toBeTruthy();
   });
 
   it('回放控制位于会话列底部，替代输入框而非横跨右侧面板', () => {

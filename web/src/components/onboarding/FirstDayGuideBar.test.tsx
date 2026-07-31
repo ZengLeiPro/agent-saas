@@ -34,6 +34,7 @@ function workflowContext(
       launch: {
         sampleAvailable: true,
         startMode: "replay",
+        entry: { kind: "user_request", content: "开始测试" },
         starterMessage: "开始测试",
       },
       cta: { primary: "用示例数据体验" },

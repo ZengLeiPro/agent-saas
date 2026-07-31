@@ -33,7 +33,8 @@ export function makeWorkflowScenario(
     launch: {
       sampleAvailable: false,
       startMode: "chat",
-      starterMessage: "请启动这个工作流，并先说明需要的资料。",
+      entry: { kind: "user_request", content: "帮我处理这项业务，先把缺失信息标出来。" },
+      starterMessage: "帮我处理这项业务，先把缺失信息标出来。",
     },
     primaryType: "LOOP",
     readiness: "D0_CURRENT",

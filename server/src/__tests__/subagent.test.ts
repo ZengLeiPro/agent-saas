@@ -58,11 +58,13 @@ import type { ChannelContext, OutboundEvent } from '../types/index.js';
 /** 一次成功即收束的模型：可选记录第一轮 request（工具集断言用）。 */
 class TextOnlyAdapter implements ModelAdapter {
   requests: ModelRequest[] = [];
+  contexts: RunContext[] = [];
 
   constructor(private readonly text = '子任务完成：结论 A。') {}
 
-  async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+  async *stream(request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent> {
     this.requests.push(request);
+    this.contexts.push(context);
     yield { type: 'text_delta', content: this.text };
     yield {
       type: 'completed',
@@ -255,6 +257,10 @@ describe('runSubagent', () => {
 
   it('completed：结果文本回传、usage 落 channel=subagent、子事件不进父 store、catalog 记 kind=subagent', async () => {
     const fixture = await makeFixture({ cleanupDirs });
+    fixture.parentContext.env = {
+      GH_TOKEN: 'connector-token-alice',
+      GIT_CONFIG_COUNT: '2',
+    };
     const modelAdapter = new TextOnlyAdapter();
     const outcome = await runSubagent({
       ...runnerDeps(fixture),
@@ -270,6 +276,7 @@ describe('runSubagent', () => {
     expect(outcome.errorMessage).toBeUndefined();
     expect(outcome.childSessionId.startsWith('sub-')).toBe(true);
     expect(outcome.totalTokens).toBe(15);
+    expect(modelAdapter.contexts[0]?.env).toEqual(fixture.parentContext.env);
     const firstUserMessage = modelAdapter.requests[0]?.messages.find((message) => message.role === 'user');
     expect(firstUserMessage?.content).toMatch(
       /^\[\d{4}\/\d{2}\/\d{2}\s+周[一二三四五六日]\s+\d{2}:\d{2}\]\s+完成测试子任务$/,

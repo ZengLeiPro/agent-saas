@@ -40,7 +40,8 @@ import type { SkillConfigStore } from '../data/skills/store.js';
 import { getUserExtraDirs, type UserOverrides } from '../security/extraDirs.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
-import { assertGitCredentialEnvHasNoPlaintextSecret, buildIsolatedGitCredentialEnv } from '../security/gitCredentialIsolation.js';
+import { assertGitCredentialEnvHasNoPlaintextSecret } from '../security/gitCredentialIsolation.js';
+import { buildConnectorRunEnv } from '../runtime/connectorRunEnv.js';
 import {
   DEFAULT_SANDBOX_ALLOW_WRITE,
   DEFAULT_SANDBOX_DENY_READ,
@@ -596,31 +597,13 @@ export function createMiddlewareRunDispatch(
 
         }
 
-        if (options.resolveConnectorRuntimeEnv && context.user) {
-          const connectorEnv = await options.resolveConnectorRuntimeEnv({
-            username: context.user.username,
-            tenantId: context.user.tenantId ?? DEFAULT_TENANT_ID,
-          });
-          effectiveOptions = {
-            ...effectiveOptions,
-            env: { ...(effectiveOptions.env ?? {}), ...connectorEnv },
-          };
-        }
-
         if (context.user) {
-          const credentialAvailable = Boolean(
-            effectiveOptions.env?.GH_TOKEN || effectiveOptions.env?.GITHUB_TOKEN,
-          );
+          const connectorRunEnv = await buildConnectorRunEnv(options, context.user);
           effectiveOptions = {
             ...effectiveOptions,
             env: {
               ...effectiveOptions.env,
-              ...buildIsolatedGitCredentialEnv({
-                tokenCommand: `printf '%s' "\${GH_TOKEN:-\${GITHUB_TOKEN:-}}"`,
-                credentialAvailable,
-                allowGhCli: true,
-                ghConfigDir: resolve('/tmp', `gh-${context.user.username}`),
-              }),
+              ...connectorRunEnv,
             },
           };
           assertGitCredentialEnvHasNoPlaintextSecret(effectiveOptions.env ?? {});

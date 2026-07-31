@@ -6,6 +6,7 @@ import { PlatformToolRuntime, type ToolCallContext, type ToolProvider } from '..
 import { readSessionMeta } from '../../data/transcripts/meta.js';
 import type { ChannelContext, UserIdentity } from '../../types/index.js';
 import { createLogger } from '../../utils/logger.js';
+import { buildConnectorRunEnv } from '../connectorRunEnv.js';
 import { runtimeRunController } from '../runController.js';
 import type { RunRecord, RunStatus, RunStore } from '../runStore.js';
 import {
@@ -408,6 +409,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       await sessionCatalog.markStatus(record.sessionId, 'running');
       const tooling = await collectRuntimeTooling(this.config, taskSession.username);
       const identity = sessionIdentity(taskSession);
+      const connectorRunEnv = await buildConnectorRunEnv(this.config, identity);
       const channelContext: ChannelContext = {
         channel: metadata.parentChannel,
         resumeSessionId: record.sessionId,
@@ -417,6 +419,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       };
       const parentContext: ToolCallContext = {
         channelContext,
+        env: connectorRunEnv,
         workspace: {
           id: metadata.workspaceId,
           root: metadata.cwd,

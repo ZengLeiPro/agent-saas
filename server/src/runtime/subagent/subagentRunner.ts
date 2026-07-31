@@ -394,6 +394,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       mountSubPath: parentWorkspace.mountSubPath,
       tenantId,
       executionTarget,
+      env: parentContext.env,
       sandboxPolicy: parentWorkspace.sandboxPolicy,
       channelContext: parentContext.channelContext,
       hooks: childHooks,

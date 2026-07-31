@@ -23,7 +23,6 @@ import { readTenantInstructionsSync } from '../data/tenants/instructions.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import type { UserOverrides } from '../security/extraDirs.js';
-import { buildIsolatedGitCredentialEnv } from '../security/gitCredentialIsolation.js';
 import type { DispatchConfig } from '../app/config.js';
 import type { ArtifactService } from './artifactService.js';
 import type { ChannelContext, InboundMessage, ModelProviderOptions, OutboundEvent } from '../types/index.js';
@@ -117,6 +116,7 @@ function enterSessionContext(sessionId: string, runId: string): void {
   });
 }
 import type { ContextReconstructionPolicy } from './contextProjection.js';
+import { buildConnectorRunEnv } from './connectorRunEnv.js';
 import { SessionContextService, SessionToolProvider } from './sessionContext.js';
 import { buildRuntimeReplayState, type RuntimeReplayState } from './replay.js';
 import {
@@ -1777,28 +1777,6 @@ export function buildTenantRemoteHandWireEnv(workspace: WorkspaceRef): Record<st
   };
 }
 
-async function buildConnectorRunEnv(
-  config: RawRuntimeRunDispatchConfig,
-  identity: { username?: string; tenantId?: string },
-): Promise<Record<string, string>> {
-  if (!identity.username) return {};
-  const connectorEnv = config.resolveConnectorRuntimeEnv
-    ? await config.resolveConnectorRuntimeEnv({
-        username: identity.username,
-        tenantId: identity.tenantId ?? DEFAULT_TENANT_ID,
-      })
-    : {};
-  return {
-    ...connectorEnv,
-    ...buildIsolatedGitCredentialEnv({
-      tokenCommand: `printf '%s' "\${GH_TOKEN:-\${GITHUB_TOKEN:-}}"`,
-      credentialAvailable: Boolean(connectorEnv.GH_TOKEN || connectorEnv.GITHUB_TOKEN),
-      allowGhCli: true,
-      ghConfigDir: resolve('/tmp', `gh-${identity.username}`),
-    }),
-  };
-}
-
 export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig): AgentRunDispatch {
   const logger = config.logger ?? noopLogger;
   const sessionCatalog = resolveSessionCatalog(config);
@@ -3395,13 +3373,17 @@ export async function wakeRuntimeSession(
   }
 
   const wakePrompt = resolveWakePrompt(run, events, session);
+  const sessionOwner = resolveWakeSessionOwner(config, session, run.userId);
   const context: ChannelContext = {
     channel: 'web',
     replaceableDrafts: run.metadata?.replaceableDrafts === true,
     resumeSessionId: run.sessionId,
-    sessionOwner: resolveWakeSessionOwner(config, session, run.userId),
+    sessionOwner,
     targetCwd: session.cwd,
   };
+  // Durable scheduler wake bypasses engine/dispatch middleware, so rebuild the
+  // session owner's connector env here before the raw loop starts.
+  const connectorRunEnv = await buildConnectorRunEnv(config, sessionOwner);
   const dispatch = createRawRuntimeRunDispatch(config);
   const abortController = new AbortController();
   runtimeRunController.register(run.runId, abortController);
@@ -3421,6 +3403,7 @@ export async function wakeRuntimeSession(
         runtimeRunId: run.runId,
         resumeSessionId: run.sessionId,
         cwd: session.cwd,
+        env: connectorRunEnv,
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,

@@ -310,6 +310,12 @@ describe('DurableBackgroundTaskService', () => {
 
   it('executes through the subagent assembly, freezes the result, then queues the parent wake', async () => {
     const base = fixture();
+    const connectorEnvRequests: Array<{ username: string; tenantId: string }> = [];
+    base.config.resolveConnectorRuntimeEnv = async (identity) => {
+      connectorEnvRequests.push(identity);
+      return { GH_TOKEN: 'connector-token-alice' };
+    };
+    let seenConnectorEnv: Record<string, string> | undefined;
     const outcome: SubagentOutcome = {
       status: 'completed',
       text: '后台执行完成',
@@ -323,6 +329,7 @@ describe('DurableBackgroundTaskService', () => {
     };
     const service = new DurableBackgroundTaskService(base.config, {
       runSubagentImpl: async (params) => {
+        seenConnectorEnv = params.parentContext.env;
         await params.onChildRunCreated?.({
           childSessionId: outcome.childSessionId,
           childRunId: outcome.childRunId,
@@ -344,6 +351,13 @@ describe('DurableBackgroundTaskService', () => {
 
     await service.execute(task);
 
+    expect(connectorEnvRequests).toEqual([{ username: 'alice', tenantId: 'tenant-1' }]);
+    expect(seenConnectorEnv).toMatchObject({
+      GH_TOKEN: 'connector-token-alice',
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_1: 'credential.helper',
+    });
+    expect(seenConnectorEnv?.GIT_CONFIG_VALUE_1).not.toContain('connector-token-alice');
     expect(base.runStore.records.get(task.runId)).toMatchObject({
       status: 'completed',
       statusReason: undefined,

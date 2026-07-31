@@ -513,6 +513,7 @@ describe('wakeRuntimeSession', () => {
     const runStore = {
       get: async () => run,
     } as unknown as RunStore;
+    const connectorEnvRequests: Array<{ username: string; tenantId: string }> = [];
 
     const oldApiKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
@@ -523,12 +524,18 @@ describe('wakeRuntimeSession', () => {
         sessionCatalog: new MemorySessionCatalog(session),
         eventStoreFactory: () => eventStore,
         runStore,
+        resolveUserTenantId: () => 'kaiyan',
+        resolveConnectorRuntimeEnv: async (identity) => {
+          connectorEnvRequests.push(identity);
+          return { GH_TOKEN: 'connector-token-alice' };
+        },
       }, run, { lease })).rejects.toThrow(/Raw runtime 缺少 OPENAI_API_KEY/);
     } finally {
       if (oldApiKey === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = oldApiKey;
     }
 
+    expect(connectorEnvRequests).toEqual([{ username: 'alice', tenantId: 'kaiyan' }]);
     expect(releases).toEqual([]);
   });
 });

@@ -326,7 +326,16 @@ function buildLibraryFixture(): Record<string, unknown> {
         followUp: "持续复查最终状态",
         valueProof: "以成果哈希或系统回读作为证明",
       },
-      launch: { sampleAvailable: true, inputHint: "使用合成示例体验" },
+      launch: {
+        sampleAvailable: true,
+        inputHint: "使用合成示例体验",
+        entry: {
+          kind: index < 6 ? "user_request" : "business_event",
+          content: index < 6
+            ? "请根据我提供的资料生成一份可复核成果"
+            : "新的业务对象已进入待处理状态",
+        },
+      },
     },
     internal: {
       enabled: true,

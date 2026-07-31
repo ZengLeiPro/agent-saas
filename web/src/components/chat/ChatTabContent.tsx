@@ -230,7 +230,6 @@ export function ChatTabContent({
           </div>
         ) : (
           <>
-            <TodoPanel messages={messages} sessionId={sessionId} runActive={loading && !stopping} />
             <FileUpload
               uploadedFiles={uploadedFiles}
               uploading={uploading}
@@ -259,6 +258,9 @@ export function ChatTabContent({
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={onAutoApproveRunShellChange}
               onSendVoice={onSendVoice}
+              attachedTopSlot={(
+                <TodoPanel messages={messages} sessionId={sessionId} runActive={loading && !stopping} />
+              )}
               topSlot={(orgAgent || activeAskUser) ? (
                 <div className="space-y-2">
                   {orgAgent && (

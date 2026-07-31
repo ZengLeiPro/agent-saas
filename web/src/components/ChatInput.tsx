@@ -39,6 +39,7 @@ interface ChatInputProps {
   disabled?: boolean;
   disabledPlaceholder?: string;
   topSlot?: React.ReactNode;
+  attachedTopSlot?: React.ReactNode;
 }
 
 const MIN_HEIGHT = 36;
@@ -74,6 +75,7 @@ export function ChatInput({
   disabled,
   disabledPlaceholder = "只读状态无法发送消息",
   topSlot,
+  attachedTopSlot,
 }: ChatInputProps) {
   const isDisabled = disabled === true;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -327,8 +329,9 @@ export function ChatInput({
         style={{ paddingBottom: "var(--sab)" }}
       >
         <div className="content-container pt-3 pb-1">
+          {attachedTopSlot}
           <div
-            className="flex flex-col rounded-xl border border-border/60 bg-card shadow-sm"
+            className="relative z-10 flex flex-col rounded-xl border border-border/60 bg-card shadow-sm"
             onClick={() => !isDisabled && !voiceRecorder.isRecording && textareaRef.current?.focus()}
           >
             {/* 文本输入区 / 录音指示器 */}

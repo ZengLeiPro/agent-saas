@@ -187,6 +187,7 @@ function baseConfig(): AcsOrchestratorConfig {
     memoryRequest: '512Mi',
     sandboxWaitTimeoutMs: 1,
     execTimeoutMs: 1,
+    imageCacheEnabled: true,
     skipProvisionOnSameRecipe: true,
     lifecycleEnabled: true,
     sandboxCleanupIntervalMs: 300_000,

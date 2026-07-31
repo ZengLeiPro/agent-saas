@@ -40,6 +40,13 @@ export interface AcsOrchestratorConfig {
   memoryLimit?: string;
   sandboxWaitTimeoutMs: number;
   execTimeoutMs: number;
+  /**
+   * 2026-07-31 方案3-P0：Pod 注解 `image.alibabacloud.com/enable-image-cache`。
+   * 开启后 ACS 自动按镜像名匹配最新可用 ImageCache（官方称拉取耗时缩短 90%+）；
+   * 无匹配缓存时无副作用（回退正常拉取）。缓存本体由发版侧创建（acc OpenAPI
+   * create-image-cache），此开关只控制新建 Sandbox 是否参与匹配。
+   */
+  imageCacheEnabled: boolean;
   skipProvisionOnSameRecipe: boolean;
   lifecycleEnabled: boolean;
   sandboxCleanupIntervalMs: number;
@@ -376,6 +383,7 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     memoryLimit: process.env.ACS_SANDBOX_MEMORY_LIMIT?.trim() || undefined,
     sandboxWaitTimeoutMs: readIntEnv('ACS_SANDBOX_WAIT_TIMEOUT_MS', 90_000, { min: 1_000, max: 600_000 }),
     execTimeoutMs: readIntEnv('ACS_EXEC_TIMEOUT_MS', 120_000, { min: 1_000, max: 600_000 }),
+    imageCacheEnabled: readBoolEnv('ACS_SANDBOX_IMAGE_CACHE_ENABLED', true),
     skipProvisionOnSameRecipe: readBoolEnv('ACS_SKIP_PROVISION_ON_SAME_RECIPE', true),
     lifecycleEnabled: readBoolEnv('ACS_SANDBOX_LIFECYCLE_ENABLED', true),
     sandboxCleanupIntervalMs: readIntEnv('ACS_SANDBOX_CLEANUP_INTERVAL_MS', 60_000, { min: 10_000, max: 24 * 60 * 60_000 }),

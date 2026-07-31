@@ -1348,6 +1348,7 @@ function baseConfig(): AcsOrchestratorConfig {
     memoryRequest: '512Mi',
     sandboxWaitTimeoutMs: 1,
     execTimeoutMs: 1,
+    imageCacheEnabled: true,
     skipProvisionOnSameRecipe: true,
     lifecycleEnabled: true,
     sandboxCleanupIntervalMs: 300_000,
@@ -1647,5 +1648,53 @@ describe('resume 快路径与 Failed fail-fast', () => {
     await expect(manager.ensureRunning(input)).rejects.toThrow(/Failed 终态/);
     // 首轮 get 即 Failed → 秒级失败，绝不等满 60s
     expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+});
+
+describe('ImageCache 注解（2026-07-31 方案3-P0）', () => {
+  const ok = (stdout = ''): KubectlResult => ({ stdout, stderr: '', exitCode: 0, signal: null });
+
+  async function applyAndGetPodAnnotations(imageCacheEnabled: boolean) {
+    let podTemplateAnnotations: Record<string, string> | undefined;
+    let created = false;
+    const kubectl = {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        if (args[0] === 'get' && args.includes('-l')) return ok(JSON.stringify({ items: [] }));
+        if (args[0] === 'get') {
+          if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
+          return ok(JSON.stringify({ status: { phase: 'Running' } }));
+        }
+        if (args[0] === 'apply') {
+          const manifest = JSON.parse(options.input ?? '{}') as {
+            kind?: string;
+            spec?: { template?: { metadata?: { annotations?: Record<string, string> } } };
+          };
+          if (manifest.kind === 'Sandbox') {
+            podTemplateAnnotations = manifest.spec?.template?.metadata?.annotations;
+            created = true;
+          }
+          return ok();
+        }
+        if (args[0] === 'patch') return ok();
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+    const manager = new SandboxManager(
+      { ...baseConfig(), imageCacheEnabled, sandboxWaitTimeoutMs: 5_000, maxRunningSandboxes: 0 },
+      kubectl,
+      noopLogger,
+    );
+    await manager.ensureRunning({ workspaceId: `ws-imc-${imageCacheEnabled}`, sessionId: 's-1' });
+    return podTemplateAnnotations;
+  }
+
+  it('默认开启时 pod template 带 enable-image-cache 注解', async () => {
+    const annotations = await applyAndGetPodAnnotations(true);
+    expect(annotations?.['image.alibabacloud.com/enable-image-cache']).toBe('true');
+  });
+
+  it('关闭时不带该注解', async () => {
+    const annotations = await applyAndGetPodAnnotations(false);
+    expect(annotations?.['image.alibabacloud.com/enable-image-cache']).toBeUndefined();
   });
 });

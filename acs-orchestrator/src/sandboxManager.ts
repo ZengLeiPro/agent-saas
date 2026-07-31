@@ -1107,6 +1107,9 @@ export class SandboxManager {
           metadata: {
             annotations: {
               'network.alibabacloud.com/wait-clusterip-ready': '*',
+              // 方案3-P0（2026-07-31）：按镜像名自动匹配 ImageCache，命中后 ACS 回填
+              // `image.alibabacloud.com/matched-image-caches` 注解；无缓存时无副作用。
+              ...(this.config.imageCacheEnabled ? { 'image.alibabacloud.com/enable-image-cache': 'true' } : {}),
               ...annotations,
             },
             labels,

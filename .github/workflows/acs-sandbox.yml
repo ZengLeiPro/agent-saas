@@ -742,5 +742,48 @@ jobs:
             fi
           fi
 
+          # ── 6. ImageCache: 为本次镜像提交缓存制作 + 清理旧缓存（2026-07-31 方案3-P0）──
+          # 命中缓存的新 Sandbox 镜像拉取官方口径省 90%+。整段子 shell 容错：
+          # 缓存制作失败只告警，绝不影响部署结果（无缓存时 Pod 回退正常拉取）。
+          # ECS 侧凭据=EcsRamRole（policy AgentSaasAccImageCache，仅 acc 镜像缓存四个 API）。
+          (
+            set +e
+            if ! command -v aliyun >/dev/null 2>&1; then echo "WARN: aliyun CLI missing, skip image cache"; exit 0; fi
+            CACHE_NAME="agent-saas-acs-sandbox-$(printf '%s' "$IMAGE_TAG" | tr 'A-Z._' 'a-z--')"
+            EXISTING=$(aliyun acc list-image-caches --biz-region-id cn-shenzhen 2>/dev/null)
+            if printf '%s' "$EXISTING" | grep -F "\"$IMAGE\"" >/dev/null 2>&1; then
+              echo "image cache already exists for $IMAGE_TAG"
+            else
+              if aliyun acc create-image-cache \
+                --biz-region-id cn-shenzhen \
+                --image-cache-name "$CACHE_NAME" \
+                --images "$IMAGE" \
+                --network-config '{"SecurityGroupId":"sg-wz97utch71p1mo0etbg9","VSwitchIds":["vsw-wz99c9ukqjjwn8xlzg5h5"]}' \
+                --acr-registry-infos InstanceId=cri-tapxtcyd6odwj3m4 RegionId=cn-shenzhen >/tmp/acs-imc-create.json 2>&1; then
+                echo "image cache creation submitted: $CACHE_NAME"
+              else
+                echo "WARN: image cache creation failed (non-fatal)"
+                cat /tmp/acs-imc-create.json 2>/dev/null || true
+              fi
+            fi
+            # 只清理本前缀且不是最近 3 个的缓存（免费额度 20/地域，防堆积）
+            aliyun acc list-image-caches --biz-region-id cn-shenzhen 2>/dev/null | node -e '
+              let raw = ""; process.stdin.on("data", (c) => raw += c).on("end", () => {
+                const caches = (JSON.parse(raw || "{}").ImageCaches || [])
+                  .filter((c) => (c.ImageCacheName || "").startsWith("agent-saas-acs-sandbox-"))
+                  .sort((a, b) => String(b.CreateTime).localeCompare(String(a.CreateTime)));
+                for (const c of caches.slice(3)) console.log(c.ImageCacheId);
+              });
+            ' | while IFS= read -r cache_id; do
+              [ -n "$cache_id" ] || continue
+              if aliyun acc delete-image-cache --biz-region-id cn-shenzhen --image-cache-id "$cache_id" >/dev/null 2>&1; then
+                echo "pruned old image cache $cache_id"
+              else
+                echo "WARN: failed to prune image cache $cache_id"
+              fi
+            done
+            exit 0
+          )
+
           echo "ACS deploy OK: $IMAGE"
           REMOTE

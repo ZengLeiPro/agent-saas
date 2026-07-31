@@ -269,6 +269,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       sessionShareStore: runtime.sessionShareStore,
       sessionProjectionStore: runtime.runtimeSessionProjectionStore,
       sessionReadStateStore: runtime.sessionReadStateStore,
+      sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId),
     }),
   );
   app.use(

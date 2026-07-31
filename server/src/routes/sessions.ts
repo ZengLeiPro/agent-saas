@@ -373,6 +373,11 @@ export interface SessionsRouterOptions {
   };
   /** 用户维度会话未读状态真源。 */
   sessionReadStateStore?: SessionReadStateStore;
+  /**
+   * Sandbox 预热钩子（2026-07-31 冷启动治理）：用户打开会话页时 fire-and-forget
+   * 预热 ACS Sandbox，冷启动与打字/LLM 首轮并行。纯旁路，失败不影响会话打开。
+   */
+  sandboxWarmup?: (sessionId: string) => void;
 }
 
 interface ResolvedSessionPath {
@@ -2096,6 +2101,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       // 审计：记录会话打开（silent 参数标记自动刷新，跳过审计）
       if (!req.query.silent) {
         auditLog(req, "session_opened", sessionId);
+        // 用户真实打开会话 → 提前预热 Sandbox（fire-and-forget，内部节流+失败仅日志）。
+        // silent 自动刷新不预热，避免后台轮询把 idle Sandbox 一直顶着。
+        options.sandboxWarmup?.(sessionId);
       }
 
       const totalDurationMs = Date.now() - requestStartedAt;

@@ -379,7 +379,10 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     skipProvisionOnSameRecipe: readBoolEnv('ACS_SKIP_PROVISION_ON_SAME_RECIPE', true),
     lifecycleEnabled: readBoolEnv('ACS_SANDBOX_LIFECYCLE_ENABLED', true),
     sandboxCleanupIntervalMs: readIntEnv('ACS_SANDBOX_CLEANUP_INTERVAL_MS', 60_000, { min: 10_000, max: 24 * 60 * 60_000 }),
-    sandboxIdlePauseMs: readIntEnv('ACS_SANDBOX_IDLE_PAUSE_MS', 5 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
+    // 2026-07-31 曾磊拍板：idle pause 默认 5min -> 4h。ACS pause 后唤醒实测走
+    // 删除重建（35-110s，resume 快路径 7 天 0 命中），而 0.25C/0.5G Running 成本
+    // 仅约 ¥0.03/h；工作时段内保持 Running 直接消灭绝大多数冷启动等待。
+    sandboxIdlePauseMs: readIntEnv('ACS_SANDBOX_IDLE_PAUSE_MS', 4 * 60 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
     sandboxTtlMs: readIntEnv('ACS_SANDBOX_TTL_MS', 7 * 24 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
     sandboxCiTtlMs: readIntEnv('ACS_SANDBOX_CI_TTL_MS', 6 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
     sandboxOrphanGraceMs: readIntEnv('ACS_SANDBOX_ORPHAN_GRACE_MS', 30 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),

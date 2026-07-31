@@ -1381,3 +1381,154 @@ function baseConfig(): AcsOrchestratorConfig {
     logLevel: 'info',
   };
 }
+
+// ─── 2026-07-31 冷启动治理批次：already_running 快路径 + ensure 合流 ───
+
+describe('SandboxManager ensure fast path & coalescing', () => {
+  const ok = (stdout = ''): KubectlResult => ({ stdout, stderr: '', exitCode: 0, signal: null });
+
+  function runningSandboxJson(config: AcsOrchestratorConfig, input: { workspaceId: string; mountSubPath?: string }, phase = 'Running', paused = false) {
+    return JSON.stringify({
+      metadata: {
+        annotations: {
+          'agent-saas.kaiyan.net/workspace-id': input.workspaceId,
+          'agent-saas.kaiyan.net/mount-subpath': input.mountSubPath ?? input.workspaceId,
+        },
+      },
+      spec: {
+        paused,
+        template: { spec: { containers: [{ name: config.sandboxContainerName, image: config.sandboxImage }] } },
+      },
+      status: { phase },
+    });
+  }
+
+  function isApplyKind(args: string[], options: { input?: string } | undefined, kind: string): boolean {
+    if (args[0] !== 'apply') return false;
+    try {
+      return (JSON.parse(options?.input ?? '{}') as { kind?: string }).kind === kind;
+    } catch {
+      return false;
+    }
+  }
+
+  it('already_running 完整校验后走快路径：跳过 TrafficPolicy reconcile 且 60s 内不重复 touch', async () => {
+    const config = baseConfig();
+    const input = { workspaceId: 'ws-fast', sessionId: 's-1' };
+    let trafficPolicyApplies = 0;
+    let touchPatches = 0;
+    const kubectl = {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        if (args[0] === 'get') return ok(runningSandboxJson(config, input));
+        if (isApplyKind(args, options, 'TrafficPolicy')) { trafficPolicyApplies += 1; return ok(); }
+        if (args[0] === 'patch') { touchPatches += 1; return ok(); }
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+    const manager = new SandboxManager(config, kubectl, noopLogger);
+
+    await manager.ensureRunning(input);
+    expect(trafficPolicyApplies).toBe(1);
+    expect(touchPatches).toBe(1);
+
+    await manager.ensureRunning(input);
+    await manager.ensureRunning(input);
+    // 快路径：不再 reconcile TrafficPolicy，touch 被 60s 节流
+    expect(trafficPolicyApplies).toBe(1);
+    expect(touchPatches).toBe(1);
+  });
+
+  it('pause 使快路径缓存失效：下一次 ensureRunning 重新完整校验', async () => {
+    const config = baseConfig();
+    const input = { workspaceId: 'ws-invalidate', sessionId: 's-1' };
+    let trafficPolicyApplies = 0;
+    const kubectl = {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        if (args[0] === 'get') return ok(runningSandboxJson(config, input));
+        if (isApplyKind(args, options, 'TrafficPolicy')) { trafficPolicyApplies += 1; return ok(); }
+        if (args[0] === 'patch') return ok();
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+    const manager = new SandboxManager(config, kubectl, noopLogger);
+
+    const ref = await manager.ensureRunning(input);
+    await manager.ensureRunning(input);
+    expect(trafficPolicyApplies).toBe(1);
+
+    await manager.patchPaused(ref.name, true);
+    await manager.ensureRunning(input);
+    expect(trafficPolicyApplies).toBe(2);
+  });
+
+  it('Paused 状态不走快路径：即使缓存新鲜也执行 resume', async () => {
+    const config = baseConfig();
+    const input = { workspaceId: 'ws-resume', sessionId: 's-1' };
+    let phase = 'Running';
+    let paused = false;
+    let unpausePatches = 0;
+    const kubectl = {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        if (args[0] === 'get') return ok(runningSandboxJson(config, input, phase, paused));
+        if (isApplyKind(args, options, 'TrafficPolicy')) return ok();
+        if (args[0] === 'patch') {
+          const body = JSON.parse(args[args.length - 1] ?? '{}') as { spec?: { paused?: boolean } };
+          if (body.spec && body.spec.paused === false) {
+            unpausePatches += 1;
+            phase = 'Running';
+            paused = false;
+          }
+          return ok();
+        }
+        if (args[0] === 'get' && args[1] === 'sandbox') return ok(JSON.stringify({ items: [] }));
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+    const manager = new SandboxManager({ ...config, sandboxWaitTimeoutMs: 5_000, maxRunningSandboxes: 0 }, kubectl, noopLogger);
+
+    await manager.ensureRunning(input);
+    phase = 'Paused';
+    paused = true;
+    await manager.ensureRunning(input);
+    expect(unpausePatches).toBe(1);
+  });
+
+  it('同名并发 ensureRunning 合流：只执行一次创建流程', async () => {
+    const config = { ...baseConfig(), sandboxWaitTimeoutMs: 5_000, maxRunningSandboxes: 0 };
+    const input = { workspaceId: 'ws-coalesce', sessionId: 's-1' };
+    let created = false;
+    let sandboxApplies = 0;
+    let applyStarted!: () => void;
+    const applyGate = new Promise<void>((resolveGate) => { applyStarted = resolveGate; });
+    let releaseApply!: () => void;
+    const applyBlock = new Promise<void>((resolveBlock) => { releaseApply = resolveBlock; });
+    const kubectl = {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        if (args[0] === 'get' && args.includes('-l')) return ok(JSON.stringify({ items: [] }));
+        if (args[0] === 'get') {
+          if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
+          return ok(runningSandboxJson(config, input));
+        }
+        if (isApplyKind(args, options, 'Sandbox')) {
+          sandboxApplies += 1;
+          applyStarted();
+          await applyBlock;
+          created = true;
+          return ok();
+        }
+        if (args[0] === 'apply') return ok();
+        if (args[0] === 'patch') return ok();
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+    const manager = new SandboxManager(config, kubectl, noopLogger);
+
+    const first = manager.ensureRunning(input);
+    await applyGate;
+    const second = manager.ensureRunning(input);
+    releaseApply();
+    const [ref1, ref2] = await Promise.all([first, second]);
+    expect(ref1.name).toBe(ref2.name);
+    expect(sandboxApplies).toBe(1);
+  });
+});

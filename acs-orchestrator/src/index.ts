@@ -110,6 +110,11 @@ const server = createServer((req, res) => {
     return;
   }
 
+  if (req.url === '/warmup') {
+    void handleWarmup(req, res);
+    return;
+  }
+
   if (req.url === '/provision') {
     void withInflight(() => handleProvision(req, res));
     return;
@@ -449,6 +454,57 @@ function sendSandboxError(res: ServerResponse, err: unknown): void {
   if (err instanceof SandboxNotFoundError) return sendJson(res, 404, { status: 'error', error: err.message });
   if (err instanceof SandboxInvalidStateError) return sendJson(res, 400, { status: 'error', error: err.message });
   return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+}
+
+/**
+ * POST /warmup（2026-07-31 冷启动治理批次）。
+ *
+ * server 在用户打开会话页时 fire-and-forget 调用，提前把 Sandbox 带到 Running，
+ * 让 30s+ 冷启动与用户打字/LLM 首轮思考并行。立即返回 202，ensureRunning 在
+ * 后台完成（同名并发由 SandboxManager.ensureInFlight 合流；与真实 execute 的
+ * ensure 也会合流）。失败仅记日志——warmup 是纯优化路径，不影响正式链路。
+ * 不计 withInflight：drain 不必等待 warmup（kubectl apply 已发出的创建由
+ * ACS 侧自行完成，无中断损失）。
+ */
+async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+  if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
+  if (draining) {
+    res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5' });
+    res.end(JSON.stringify({ status: 'error', error: 'orchestrator draining' }));
+    return;
+  }
+  const body = await readJson(req, res);
+  if (!body.ok) return;
+  const raw = body.value as Record<string, unknown>;
+  const workspaceId = typeof raw.workspaceId === 'string' ? raw.workspaceId.trim() : '';
+  const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId.trim() : '';
+  const sandboxScopeId = typeof raw.sandboxScopeId === 'string' && raw.sandboxScopeId.trim() ? raw.sandboxScopeId.trim() : undefined;
+  const mountSubPath = typeof raw.mountSubPath === 'string' && raw.mountSubPath.trim() ? raw.mountSubPath.trim() : undefined;
+  if (!workspaceId || !sessionId) {
+    return sendJson(res, 400, { status: 'error', error: 'workspaceId and sessionId are required' });
+  }
+  let ref: ReturnType<typeof sandboxManager.ref>;
+  try {
+    ref = sandboxManager.ref({ workspaceId, sessionId, sandboxScopeId, mountSubPath });
+  } catch (err) {
+    return sendJson(res, 400, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+  }
+  sendJson(res, 202, { status: 'accepted', sandbox: ref.name });
+  const activeKey = `warmup:${ref.name}:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
+  const releaseActive = activeRegistry.acquire(ref.name, activeKey);
+  const startedAt = Date.now();
+  try {
+    await sandboxManager.ensureRunning(
+      { workspaceId, sessionId, sandboxScopeId, mountSubPath },
+      { busySandboxNames: executor.busySandboxNames(), activeKey },
+    );
+    logger.info(`sandbox_warmup_ok sandbox=${ref.name} totalMs=${Date.now() - startedAt}`);
+  } catch (err) {
+    logger.warn(`sandbox_warmup_failed sandbox=${ref.name} totalMs=${Date.now() - startedAt} err=${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    releaseActive();
+  }
 }
 
 async function handleProvision(req: IncomingMessage, res: ServerResponse): Promise<void> {

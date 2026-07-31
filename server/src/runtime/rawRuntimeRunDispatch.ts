@@ -751,7 +751,7 @@ function buildWorkspaceRecipe(
   };
 }
 
-function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: string }): string | undefined {
+export function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: string }): string | undefined {
   if (!input.cwd) return undefined;
   const mountRoot = resolve(input.agentCwd, '..');
   const workspaceRoot = resolve(input.cwd);
@@ -760,7 +760,7 @@ function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: string }):
   return rel.split(sep).join('/');
 }
 
-function deriveSandboxScopeId(input: { workspaceId: string; mountSubPath?: string }): string {
+export function deriveSandboxScopeId(input: { workspaceId: string; mountSubPath?: string }): string {
   return input.mountSubPath ? `${input.workspaceId}__${input.mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}` : input.workspaceId;
 }
 

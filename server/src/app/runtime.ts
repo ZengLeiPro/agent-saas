@@ -72,6 +72,7 @@ import { isBackgroundCommandTaskRun } from '../runtime/background/backgroundTask
 import { AutoCompactionService } from '../runtime/autoCompaction.js';
 import { runtimeRunController } from '../runtime/runController.js';
 import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
+import { SandboxWarmupService } from '../runtime/sandboxWarmup.js';
 import { createMiddlewareRunDispatch } from '../engine/dispatch.js';
 import { DispatchMetricsStore } from '../engine/metricsStore.js';
 import { createMemoryMaintenanceHook, withMemoryMaintenance } from '../engine/memoryHook.js';
@@ -214,6 +215,8 @@ export interface AppRuntime {
   processCwd: string;
   sessionBasePath: string;
   agentCwd: string;
+  /** Sandbox 预热服务（2026-07-31 冷启动治理）：会话打开即 fire-and-forget 预热 ACS Sandbox。 */
+  sandboxWarmupService: SandboxWarmupService;
   sharedDir: string;
   tenantSkillsRootDir: string;
   uploadsDir: string;
@@ -1760,6 +1763,17 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('TenantHand'),
   });
 
+  // Sandbox 预热（2026-07-31 冷启动治理）：用户打开会话页即 fire-and-forget 预热
+  // ACS Sandbox，让 30s+ 冷启动与打字/LLM 首轮并行。未配置 tenantRemoteHands
+  // 的环境（本地开发/测试）service 内部找不到 ACS hand 自然跳过。
+  const sandboxWarmupService = new SandboxWarmupService({
+    agentCwd,
+    sessionCatalog,
+    tenantRemoteHands: () => config.tenantRemoteHands?.hands,
+    tenantRemoteHandResolver,
+    logger: serverLogger.child('SandboxWarmup'),
+  });
+
   // A4: serverRemote 凭证在装配层解析为 plaintext，下游 dispatch / cancel delivery
   // 仍按 plaintext 接收。authTokenRef 走 vault.getSecret(actor:'system')；inline
   // authToken 直接透传。两者互斥由 schema 保证。
@@ -2935,6 +2949,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     processCwd,
     sessionBasePath,
     agentCwd,
+    sandboxWarmupService,
     sharedDir,
     tenantSkillsRootDir,
     uploadsDir,

@@ -121,10 +121,25 @@ const ACS_NETWORK_POLICY_MODE_ANNOTATION = 'network.alibabacloud.com/network-pol
 const EGRESS_FINGERPRINT_ANNOTATION = 'agent-saas.kaiyan.net/egress-fingerprint';
 const SANDBOX_TIMEZONE = 'Asia/Shanghai';
 
+/**
+ * already_running 快路径缓存 TTL（2026-07-31 冷启动治理批次）。
+ * ensureRunning 每次工具调用都会跑 networkPolicy reconcile（~0.5s）+ SNAT
+ * ensure（~0.6s），生产 P50 1.4s/次纯 kubectl/CLI 开销。完整校验成功后 5 分钟内
+ * 直接信任缓存（getStatus 仍每次真查，Running 由它兜底），把高频路径压到 ~0.4s。
+ * 失效点：pause / delete / 重建（invalidateEnsureFastPath）。
+ */
+const ENSURE_FAST_PATH_TTL_MS = 5 * 60_000;
+/** touch（lastActiveAt annotation patch，~0.2s）节流窗口；idle 判定为小时级，60s 精度足够。 */
+const TOUCH_THROTTLE_MS = 60_000;
+
 export class SandboxManager {
   private readonly networkPolicyManager: AcsNetworkPolicyManager;
   private readonly snatManager: SnatManager;
   private readonly prewarmInFlight = new Map<string, Promise<void>>();
+  /** 同名 Sandbox 并发 ensureRunning 合流：后到者 join 先行者的 promise（消除 warmup/execute 并发 create 竞态与重复开销）。 */
+  private readonly ensureInFlight = new Map<string, Promise<SandboxRef>>();
+  /** already_running 快路径缓存：完整校验（networkPolicy+SNAT）通过时间与最近 touch 时间。 */
+  private readonly ensureFastPath = new Map<string, { verifiedAt: number; touchedAt: number }>();
 
   constructor(
     private readonly config: AcsOrchestratorConfig,
@@ -155,6 +170,26 @@ export class SandboxManager {
     options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
   ): Promise<SandboxRef> {
     const ref = this.ref(input);
+    const inFlight = this.ensureInFlight.get(ref.name);
+    if (inFlight) {
+      // join 语义：忽略本次 options，等 leader 把 Sandbox 带到 Running 即可。
+      // 后到者不执行 recreate/capacity 分支，busy 断言由 leader 自己的 activeKey 保障。
+      this.logger.info(`sandbox_ensure_join name=${ref.name}`);
+      return await inFlight;
+    }
+    const promise = this.ensureRunningExclusive(ref, options);
+    this.ensureInFlight.set(ref.name, promise);
+    try {
+      return await promise;
+    } finally {
+      if (this.ensureInFlight.get(ref.name) === promise) this.ensureInFlight.delete(ref.name);
+    }
+  }
+
+  private async ensureRunningExclusive(
+    ref: SandboxRef,
+    options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
+  ): Promise<SandboxRef> {
     const timing = this.createEnsureTiming(ref.name);
     let path = 'unknown';
     let status: 'ok' | 'error' = 'error';
@@ -196,7 +231,8 @@ export class SandboxManager {
           await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
           await timing.step('applySandbox', () => this.applySandbox(ref));
           await this.waitForRunningAndEnsureSnat(ref, timing);
-          await timing.step('touch', () => this.touch(ref.name));
+          this.markEnsureFastPathVerified(ref.name);
+          await timing.step('touch', () => this.touchThrottled(ref.name));
           status = 'ok';
           return ref;
         }
@@ -209,7 +245,17 @@ export class SandboxManager {
         await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
         await timing.step('applySandbox', () => this.applySandbox(ref));
         await this.waitForRunningAndEnsureSnat(ref, timing);
-        await timing.step('touch', () => this.touch(ref.name));
+        this.markEnsureFastPathVerified(ref.name);
+        await timing.step('touch', () => this.touchThrottled(ref.name));
+        status = 'ok';
+        return ref;
+      }
+      // already_running 快路径：5 分钟内完整校验过 networkPolicy+SNAT 的 Running
+      // Sandbox，跳过两项 reconcile（合计 ~1.1s/次 kubectl/CLI 开销）。getStatus
+      // 上面已真查过 phase，Running 事实不依赖缓存。
+      if (existing.phase === 'Running' && this.isEnsureFastPathFresh(ref.name)) {
+        path = 'already_running_fast';
+        await timing.step('touch', () => this.touchThrottled(ref.name));
         status = 'ok';
         return ref;
       }
@@ -219,11 +265,7 @@ export class SandboxManager {
         if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
         await timing.step('patchUnpause', () => this.patchPaused(ref.name, false));
         await this.waitForRunningAndEnsureSnat(ref, timing);
-        await timing.step('touch', () => this.touch(ref.name));
-        status = 'ok';
-        return ref;
-      }
-      if (existing.phase !== 'Running') {
+      } else if (existing.phase !== 'Running') {
         path = 'wait_non_running';
         if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
         await this.waitForRunningAndEnsureSnat(ref, timing);
@@ -231,7 +273,8 @@ export class SandboxManager {
         path = 'already_running';
         await timing.step('ensureSnat', () => this.snatManager.ensureForSandbox(ref));
       }
-      await timing.step('touch', () => this.touch(ref.name));
+      this.markEnsureFastPathVerified(ref.name);
+      await timing.step('touch', () => this.touchThrottled(ref.name));
       status = 'ok';
       return ref;
     } finally {
@@ -241,6 +284,7 @@ export class SandboxManager {
 
   async delete(ref: SandboxRef, options: { activeKey?: string } = {}): Promise<void> {
     this.assertIdle(ref.name, 'delete', options.activeKey);
+    this.invalidateEnsureFastPath(ref.name);
     await this.kubectl.run(['delete', this.resourceName(ref.name), '--ignore-not-found=true'], {
       timeoutMs: this.config.sandboxWaitTimeoutMs,
     });
@@ -407,6 +451,7 @@ export class SandboxManager {
   async deleteByName(name: string, input: { busySandboxNames?: Set<string> } = {}): Promise<void> {
     this.assertIdleByName(name, 'delete', input.busySandboxNames);
     await this.assertNotBackgroundShellProtected(name, 'delete');
+    this.invalidateEnsureFastPath(name);
     await this.kubectl.run(['delete', this.resourceName(name), '--ignore-not-found=true'], {
       timeoutMs: this.config.sandboxWaitTimeoutMs,
     });
@@ -553,6 +598,7 @@ export class SandboxManager {
           skippedBusy.push(sandbox.name);
           continue;
         }
+        this.invalidateEnsureFastPath(sandbox.name);
         await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
           timeoutMs: this.config.sandboxWaitTimeoutMs,
         });
@@ -618,6 +664,7 @@ export class SandboxManager {
 
   async patchPaused(name: string, paused: boolean, options: { activeKey?: string } = {}): Promise<void> {
     if (paused) this.assertIdle(name, 'pause', options.activeKey);
+    this.invalidateEnsureFastPath(name);
     const result = await this.kubectl.run([
       'patch',
       this.resourceName(name),
@@ -637,6 +684,30 @@ export class SandboxManager {
       JSON.stringify({ metadata: { annotations: { [LAST_ACTIVE_AT_ANNOTATION]: now.toISOString() } } }),
     ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
     if (result.exitCode !== 0) throw new Error(`touch sandbox 失败: ${result.stderr || result.stdout}`);
+  }
+
+  /** 60s 内已 touch 过则跳过（idle 判定为小时级，精度足够；省一次 kubectl patch）。 */
+  private async touchThrottled(name: string, now: Date = new Date()): Promise<void> {
+    const entry = this.ensureFastPath.get(name);
+    if (entry && now.getTime() - entry.touchedAt < TOUCH_THROTTLE_MS) return;
+    await this.touch(name, now);
+    const updated = this.ensureFastPath.get(name);
+    if (updated) updated.touchedAt = now.getTime();
+  }
+
+  private markEnsureFastPathVerified(name: string, nowMs = Date.now()): void {
+    const entry = this.ensureFastPath.get(name);
+    if (entry) entry.verifiedAt = nowMs;
+    else this.ensureFastPath.set(name, { verifiedAt: nowMs, touchedAt: 0 });
+  }
+
+  private isEnsureFastPathFresh(name: string, nowMs = Date.now()): boolean {
+    const entry = this.ensureFastPath.get(name);
+    return Boolean(entry && nowMs - entry.verifiedAt < ENSURE_FAST_PATH_TTL_MS);
+  }
+
+  private invalidateEnsureFastPath(name: string): void {
+    this.ensureFastPath.delete(name);
   }
 
   async setBackgroundShellProtection(name: string, protectedUntil?: string): Promise<void> {

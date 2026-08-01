@@ -113,8 +113,9 @@ export function DesktopLayout(props: LayoutProps) {
   const { snapshot: systemPanel, open: systemPanelOpen, selectView: selectSystemPanelView, dismiss: dismissSystemPanel } =
     useSystemPanelDock(messages, sessionId);
 
-  // 主会话与能力中心走同一档浮动白框；其余管理类 tab 仍平铺在品牌底上。
-  const contentPanelFloating = activeTab === "chat" || activeTab === "capabilities";
+  // 主会话、能力中心与定时任务走同一档浮动白框；其余管理类 tab 仍平铺在品牌底上。
+  const contentPanelFloating =
+    activeTab === "chat" || activeTab === "capabilities" || activeTab === "cron";
 
   const sidePreviewOpen = !!previewFilePath && previewMode === "side";
   /**
@@ -560,7 +561,8 @@ export function DesktopLayout(props: LayoutProps) {
           </div>
         )}
         {cronMounted && (
-          <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "cron" && "hidden")}>
+          // 白框内不整页滚动：列表栏与详情栏各自滚，滚动条才不会压在圆角边上
+          <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "cron" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <CronManager
                 onJobCountChange={handleCronJobCountChange}

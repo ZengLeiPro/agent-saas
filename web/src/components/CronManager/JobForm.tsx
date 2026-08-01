@@ -22,6 +22,8 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { CAPABILITY_SUBTLE_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
+import { cn } from "@/lib/utils";
 
 const MODEL_DEFAULT_VALUE = "__default__";
 
@@ -335,7 +337,7 @@ export function JobForm({
   return (
     <form id="cron-job-form" onSubmit={handleSubmit} className="space-y-5">
       {error ? (
-        <div className="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           {error}
         </div>
       ) : null}
@@ -545,7 +547,7 @@ export function JobForm({
       {payloadKind === "agentTurn" ? (
         <div className="space-y-3">
           <Label className="text-sm font-medium">上下文注入</Label>
-          <div className="space-y-2 rounded-md border bg-muted/20 px-4 py-3">
+          <div className={cn("space-y-2 px-4 py-3", CAPABILITY_SUBTLE_SURFACE)}>
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="ctx-system-prompt"
@@ -589,7 +591,7 @@ export function JobForm({
       </div>
 
       {notifyEnabled ? (
-        <div className="space-y-4 rounded-md border bg-muted/20 p-4">
+        <div className={cn("space-y-4 p-4", CAPABILITY_SUBTLE_SURFACE)}>
           <div className="space-y-2">
             <Label>通知渠道</Label>
             <Select

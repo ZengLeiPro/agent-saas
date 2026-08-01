@@ -25,6 +25,10 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
+import {
+  CAPABILITY_SUBTLE_SURFACE,
+  CAPABILITY_SURFACE,
+} from "@/components/CapabilityCenter/CatalogUi";
 import { parseJsonResponse } from "@agent/shared";
 
 type RunLogBlockKind =
@@ -138,12 +142,11 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
     }
   };
 
+  // 走 Badge 的状态语义档：成功=success、失败=danger（destructive 留给破坏性动作）、跳过=muted
   const statusBadge = (status: CronRunLogEntry["status"]) => {
-    if (status === "ok") {
-      return <Badge className="bg-primary/15 text-primary hover:bg-primary/15">成功</Badge>;
-    }
-    if (status === "error") return <Badge variant="destructive">失败</Badge>;
-    return <Badge variant="secondary">跳过</Badge>;
+    if (status === "ok") return <Badge variant="success">成功</Badge>;
+    if (status === "error") return <Badge variant="danger">失败</Badge>;
+    return <Badge variant="muted">跳过</Badge>;
   };
 
   const blockKindBadge = (kind: RunLogBlockKind) => {
@@ -177,7 +180,7 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
 
   if (error) {
     return (
-      <div className="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+      <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
         {error}
       </div>
     );
@@ -188,9 +191,10 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
   }
 
   return (
-    <div className="space-y-3">
-      <div className="text-sm font-semibold">运行历史</div>
-      <Table>
+    // 不再另起「运行历史」小标题：详情区里除了这张表没有别的内容，表头已经说明了列含义
+    <>
+      {/* 表格容器保留 overflow-auto（窄栏下横向滚动），只补白底描边；圆角由容器自身裁切 */}
+      <Table containerClassName={CAPABILITY_SURFACE}>
         <TableHeader>
           <TableRow>
             <TableHead className="whitespace-nowrap">时间</TableHead>
@@ -262,13 +266,13 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
               ) : null}
               <Badge variant="outline">run: {selected.runId}</Badge>
               {toolErrorCount > 0 ? (
-                <Badge variant="destructive">工具错误 {toolErrorCount}</Badge>
+                <Badge variant="danger">工具错误 {toolErrorCount}</Badge>
               ) : null}
             </div>
           ) : null}
 
           {detailsError ? (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <div className="rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {detailsError}
             </div>
           ) : null}
@@ -323,7 +327,7 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
 
           {/* entry.error 独立展示：不依赖 details 加载（status='error' 时 details 不会请求） */}
           {selected?.error ? (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3">
+            <div className="rounded-xl border border-destructive/50 bg-destructive/10 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="text-sm font-semibold text-destructive">错误</div>
                 <Button variant="outline" size="sm" onClick={() => copyText(selected.error || "")}>
@@ -354,8 +358,8 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
                     <div
                       key={b.id}
                       className={cn(
-                        "rounded-md border bg-card",
-                        b.isError && "border-destructive/50 bg-destructive/5"
+                        CAPABILITY_SURFACE,
+                        b.isError && "bg-destructive/5 ring-destructive/40"
                       )}
                     >
                       <button
@@ -372,7 +376,7 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
                       >
                         <div className="flex min-w-0 items-center gap-2">
                           {blockKindBadge(b.kind)}
-                          {b.isError ? <Badge variant="destructive">ERROR</Badge> : null}
+                          {b.isError ? <Badge variant="danger">ERROR</Badge> : null}
                           <div className="flex min-w-0 items-center gap-2">
                             <div className="min-w-0 truncate text-sm font-medium">
                               {b.title}
@@ -407,7 +411,7 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
                             ) : null}
                           </div>
 
-                          <div className="rounded-md bg-muted/30 p-3">
+                          <div className={cn("p-3", CAPABILITY_SUBTLE_SURFACE)}>
                             <pre className="whitespace-pre-wrap text-xs text-foreground/90">
                               {b.content}
                             </pre>
@@ -418,7 +422,7 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
                               <summary className="cursor-pointer select-none text-xs text-muted-foreground">
                                 查看原始 JSON
                               </summary>
-                              <div className="mt-2 rounded-md bg-muted/20 p-3">
+                              <div className="mt-2 rounded-xl bg-muted/20 p-3">
                                 <pre className="whitespace-pre-wrap text-xs text-muted-foreground">
                                   {b.raw}
                                 </pre>
@@ -439,6 +443,6 @@ export function RunHistory({ entries, loading, error }: RunHistoryProps) {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

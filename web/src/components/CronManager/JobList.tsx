@@ -1,27 +1,22 @@
 import type { ModelList } from "@/types/models";
 import type { CronJob } from "./types";
 
-import {
-  ArrowRight,
-  Clock,
-  Pencil,
-  Play,
-  Power,
-  Trash2,
-} from "lucide-react";
+import { ArrowRight, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
+import {
+  CAPABILITY_EMPTY_SURFACE,
+  CAPABILITY_SURFACE,
+  CAPABILITY_SURFACE_HOVER,
+} from "@/components/CapabilityCenter/CatalogUi";
 
 interface JobListProps {
   jobs: CronJob[];
   selectedId: string | null;
   modelList?: ModelList | null;
   currentUserId?: string;
-  runningJobId?: string | null;
   onSelect: (id: string) => void;
   onToggle: (job: CronJob) => void;
-  onRun: (job: CronJob) => void;
-  onEdit: (job: CronJob) => void;
-  onDelete: (job: CronJob) => void;
 }
 
 function resolveModelName(ref: string, modelList?: ModelList | null): string {
@@ -79,14 +74,20 @@ function formatNextRun(ms?: number) {
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
-/** 状态色点 + 文本：成功 / 运行中(呼吸) / 失败 / 跳过 / 禁用 / 待运行 */
+/**
+ * 状态色点 + 文本：成功 / 运行中(呼吸) / 失败 / 跳过 / 禁用 / 待运行
+ *
+ * 一律走项目状态语义色（success / danger / info），不写 emerald / red 硬编码调色板——
+ * 语义 token 的 -ink 已内含亮暗两套值，调用点不必再补 dark: 变体。
+ * 「运行中」用 info 而非品牌蓝：品牌蓝只留给主 CTA、链接与选中导航。
+ */
 function StatusPill({ job }: { job: CronJob }) {
   if (job.state.runningAtMs) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-info/15 px-2 py-0.5 text-[11px] font-semibold text-info-ink">
         <span className="relative flex size-1.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-70" />
-          <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-info opacity-70" />
+          <span className="relative inline-flex size-1.5 rounded-full bg-info" />
         </span>
         运行中
       </span>
@@ -103,15 +104,15 @@ function StatusPill({ job }: { job: CronJob }) {
   switch (job.state.lastStatus) {
     case "ok":
       return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-          <span className="size-1.5 rounded-full bg-emerald-500" />
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-semibold text-success-ink">
+          <span className="size-1.5 rounded-full bg-success" />
           成功
         </span>
       );
     case "error":
       return (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-300">
-          <span className="size-1.5 rounded-full bg-red-500" />
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-danger/15 px-2 py-0.5 text-[11px] font-semibold text-danger-ink">
+          <span className="size-1.5 rounded-full bg-danger" />
           失败
         </span>
       );
@@ -132,60 +133,20 @@ function StatusPill({ job }: { job: CronJob }) {
   }
 }
 
-interface ActionButtonProps {
-  label: string;
-  primary?: boolean;
-  danger?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}
-
-/** 悬停浮现的方形操作按钮：32×32 圆角 9 */
-function ActionButton({
-  label,
-  primary,
-  danger,
-  disabled,
-  onClick,
-  children,
-}: ActionButtonProps) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      disabled={disabled}
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      className={cn(
-        "grid size-8 place-items-center rounded-[9px] border text-xs transition-colors",
-        "disabled:cursor-not-allowed disabled:opacity-50",
-        primary
-          ? "border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 disabled:hover:bg-primary"
-          : danger
-            ? "border-border bg-card text-muted-foreground hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
-            : "border-border bg-card text-muted-foreground hover:border-brand-200 hover:bg-brand-50 hover:text-primary",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
+/**
+ * 任务列表卡片。
+ *
+ * 卡片上只有两个可点区域：整卡（选中，右栏出详情）+ 右侧启停开关。
+ * 运行 / 编辑 / 删除都在右栏详情里做——它们低频且有副作用（「立即运行」会真跑一轮），
+ * 放在鼠标划过路径上的悬浮按钮里太容易误触，触屏上还根本摸不到。
+ */
 export function JobList({
   jobs,
   selectedId,
   modelList,
   currentUserId,
-  runningJobId,
   onSelect,
   onToggle,
-  onRun,
-  onEdit,
-  onDelete,
 }: JobListProps) {
   const canManageJob = (job: CronJob) => {
     if (!currentUserId) return true; // auth 未启用
@@ -194,7 +155,7 @@ export function JobList({
 
   if (jobs.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed bg-card/60 p-8 text-center text-sm text-muted-foreground">
+      <div className={cn("p-8 text-center text-sm text-muted-foreground", CAPABILITY_EMPTY_SURFACE)}>
         暂无任务
       </div>
     );
@@ -204,7 +165,6 @@ export function JobList({
     <div className="space-y-2.5">
       {jobs.map((job) => {
         const isRunning = !!job.state.runningAtMs;
-        const submitting = runningJobId === job.id;
         const manageable = canManageJob(job);
         const selected = selectedId === job.id;
         const modelLabel =
@@ -225,97 +185,70 @@ export function JobList({
               }
             }}
             className={cn(
-              "group relative cursor-pointer rounded-2xl border bg-card py-3.5 pl-4 pr-3 transition-all",
-              "hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-lg hover:shadow-brand-500/10",
+              "flex cursor-pointer items-start gap-3 py-3.5 pl-4 pr-3.5",
+              CAPABILITY_SURFACE,
+              CAPABILITY_SURFACE_HOVER,
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-              selected
-                ? "border-primary/40 bg-accent/40"
-                : "border-border/70",
-              !job.enabled && !isRunning && "opacity-70",
+              // 选中态靠描边加重 + 极浅品牌底表达，不改背景层级，避免与 hover 浮起打架
+              selected && "bg-primary/[0.04] ring-primary/40",
             )}
           >
-            {/* 主行：任务名 + 状态 */}
-            <div className="flex min-w-0 items-center gap-2.5 pr-2">
-              <span className="truncate text-[14.5px] font-semibold text-foreground">
-                {job.name}
-              </span>
-              <StatusPill job={job} />
-            </div>
-
-            {/* 副行：调度 · 下次 · 模型 · (admin: 创建者) */}
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1.5">
-                <Clock className="size-3 opacity-80" />
-                {formatSchedule(job)}
-              </span>
-              {job.state.nextRunAtMs ? (
-                <>
-                  <span className="size-0.5 rounded-full bg-muted-foreground/50" />
-                  <span className="inline-flex items-center gap-1.5">
-                    <ArrowRight className="size-3 opacity-80" />
-                    {formatNextRun(job.state.nextRunAtMs)}
-                  </span>
-                </>
-              ) : null}
-              {modelLabel ? (
-                <>
-                  <span className="size-0.5 rounded-full bg-muted-foreground/50" />
-                  <span>{modelLabel}</span>
-                </>
-              ) : null}
-            </div>
-
-            {/* 描述（强制单行截断，省略号） */}
-            {job.description ? (
-              <div className="mt-1.5 truncate text-xs text-foreground/75">
-                {job.description}
+            {/* 停用的任务整块信息压暗，但开关本身保持正常对比度——它还能点 */}
+            <div className={cn("min-w-0 flex-1", !job.enabled && !isRunning && "opacity-60")}>
+              {/* 主行：任务名 + 状态 */}
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="truncate text-[14.5px] font-semibold text-foreground">
+                  {job.name}
+                </span>
+                <StatusPill job={job} />
               </div>
-            ) : null}
 
-            {/* 悬停浮现的操作 */}
+              {/* 副行：调度 · 下次 · 模型 */}
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <Clock className="size-3 opacity-80" />
+                  {formatSchedule(job)}
+                </span>
+                {job.state.nextRunAtMs ? (
+                  <>
+                    <span className="size-0.5 rounded-full bg-muted-foreground/50" />
+                    <span className="inline-flex items-center gap-1.5">
+                      <ArrowRight className="size-3 opacity-80" />
+                      {formatNextRun(job.state.nextRunAtMs)}
+                    </span>
+                  </>
+                ) : null}
+                {modelLabel ? (
+                  <>
+                    <span className="size-0.5 rounded-full bg-muted-foreground/50" />
+                    <span>{modelLabel}</span>
+                  </>
+                ) : null}
+              </div>
+
+              {/* 描述（强制单行截断，省略号） */}
+              {job.description ? (
+                <div className="mt-1.5 truncate text-xs text-foreground/75">
+                  {job.description}
+                </div>
+              ) : null}
+            </div>
+
+            {/* 启停开关：卡片上唯一的常驻操作。包一层拦住冒泡，
+                否则点开关会连带触发整卡的选中、空格键也会两个都触发 */}
             {manageable && (
               <div
+                className="shrink-0 pt-0.5"
                 onClick={(e) => e.stopPropagation()}
-                className={cn(
-                  // 右下角对齐；保留 14px 内边距，避免贴边并减少遮挡正文
-                  "pointer-events-none absolute bottom-3.5 right-3.5 flex translate-x-1.5 translate-y-1.5 items-center gap-1.5",
-                  "opacity-0 transition-all duration-200",
-                  "group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:translate-y-0 group-hover:opacity-100",
-                  "before:pointer-events-none before:absolute before:bottom-0 before:right-full before:h-12 before:w-10 before:bg-gradient-to-l before:from-card before:to-transparent before:content-['']",
-                )}
+                onKeyDown={(e) => e.stopPropagation()}
               >
-                <ActionButton
-                  label={submitting ? "提交中" : job.enabled ? "立即运行" : "需先启用"}
-                  primary
-                  disabled={isRunning || submitting || !job.enabled}
-                  onClick={() => onRun(job)}
-                >
-                  <Play className="size-3.5 fill-current" />
-                </ActionButton>
-                <ActionButton
-                  label="编辑"
+                <Switch
+                  checked={job.enabled}
                   disabled={isRunning}
-                  onClick={() => onEdit(job)}
-                >
-                  <Pencil className="size-3.5" />
-                </ActionButton>
-                <ActionButton
-                  label={job.enabled ? "禁用" : "启用"}
-                  disabled={isRunning}
-                  onClick={() => onToggle(job)}
-                >
-                  <Power className="size-3.5" />
-                </ActionButton>
-                <ActionButton
-                  label="删除"
-                  danger
-                  disabled={isRunning}
-                  onClick={() => {
-                    if (confirm(`确认删除任务 "${job.name}"?`)) onDelete(job);
-                  }}
-                >
-                  <Trash2 className="size-3.5" />
-                </ActionButton>
+                  onCheckedChange={() => onToggle(job)}
+                  aria-label={job.enabled ? `禁用任务 ${job.name}` : `启用任务 ${job.name}`}
+                  title={isRunning ? "任务运行中，暂不可切换" : job.enabled ? "点击禁用" : "点击启用"}
+                />
               </div>
             )}
           </div>

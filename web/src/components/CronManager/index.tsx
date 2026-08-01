@@ -16,7 +16,11 @@ import type { CronJob } from "./types";
 import { Button } from "@/components/ui/button";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { SettingsTwoColumn } from "@/components/SettingsCenter/SettingsTwoColumn";
-import { Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CAPABILITY_EMPTY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
+import { cn } from "@/lib/utils";
+import { EntityIcons } from "@/lib/icons";
+import { Switch } from "@/components/ui/switch";
+import { Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { refreshAll } from "@/lib/refreshBus";
 import {
   Dialog,
@@ -170,7 +174,8 @@ export function CronManager({
   );
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col px-4 pb-4 pt-4 sm:px-6 sm:pb-6 sm:pt-6">
+    // 桌面端标题已在全局 header 里，这里不再留一整段顶部呼吸，内容直接跟上
+    <div className="flex h-full min-h-0 w-full flex-col px-4 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-4">
       {headerActionsTarget === undefined ? (
         <SettingsPanelHeader
           title="定时任务"
@@ -192,33 +197,28 @@ export function CronManager({
               selectedId={selectedJobId}
               modelList={modelList}
               currentUserId={currentUserId}
-              runningJobId={runningJobId}
               onSelect={(id) => {
                 setSelectedJobId(id);
                 if (isMobile) setShowDetail(true);
               }}
               onToggle={handleToggle}
-              onRun={handleRun}
-              onEdit={openEdit}
-              onDelete={handleDelete}
             />
           </div>
         )}
       >
-        {/* 右侧面板：移动端隐藏（走独立 Dialog），桌面端正常显示，去掉 border-l 竖线走简约 */}
+        {/* 右侧面板：移动端隐藏（走独立 Dialog）。桌面端直接铺在浮动白框里——
+            同为 bg-card，再套一层描边只会多出一条看不清用途的线，层次交给内部分隔线与表格框。 */}
         <div className="hidden h-full flex-col overflow-hidden md:flex">
         {showFormPanel ? (
           <>
-            <div className="border-b px-6 py-4">
-              <div className="min-w-0">
-                <div className="text-base font-semibold">
-                  {editingJob ? "编辑定时任务" : "创建定时任务"}
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {editingJob
-                    ? "保存后将更新该任务的配置。"
-                    : "创建后可在列表中启用、运行或删除。"}
-                </div>
+            <div className="flex items-center gap-3 border-b border-border/60 px-6 py-3">
+              <div className="shrink-0 text-base font-semibold">
+                {editingJob ? "编辑定时任务" : "创建定时任务"}
+              </div>
+              <div className="min-w-0 truncate text-xs text-muted-foreground">
+                {editingJob
+                  ? "保存后将更新该任务的配置。"
+                  : "创建后可在列表中启用、运行或删除。"}
               </div>
             </div>
             <div className="flex-1 overflow-auto p-6">
@@ -243,22 +243,32 @@ export function CronManager({
           </>
         ) : selectedJob ? (
           <>
-            <div className="flex items-start justify-between gap-3 border-b px-6 py-4">
-              <div className="min-w-0">
-                <div className="truncate text-base font-semibold">
-                  {selectedJob.name}
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  上次:{" "}
-                  {selectedJob.state.lastRunAtMs
-                    ? new Date(selectedJob.state.lastRunAtMs).toLocaleString(
-                        "zh-CN",
-                      )
-                    : "-"}
-                </div>
+            {/* 单行头：任务名 + 操作。原来的「上次运行」副标题删了——
+                它和下方运行历史第一行是同一条数据，多占一层高度 */}
+            <div className="flex items-center justify-between gap-3 border-b border-border/60 px-6 py-3">
+              <div className="min-w-0 truncate text-base font-semibold">
+                {selectedJob.name}
               </div>
               {canManageJob(selectedJob) && (
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
+                  {/* 「立即运行」只在详情里给：它会真跑一轮，不该出现在鼠标划过列表的路径上 */}
+                  <Button
+                    size="sm"
+                    onClick={() => handleRun(selectedJob)}
+                    disabled={
+                      !selectedJob.enabled ||
+                      !!selectedJob.state.runningAtMs ||
+                      runningJobId === selectedJob.id
+                    }
+                    title={selectedJob.enabled ? "立即运行一次" : "任务已禁用，需先启用"}
+                  >
+                    <Play className="fill-current" />
+                    {selectedJob.state.runningAtMs
+                      ? "运行中"
+                      : runningJobId === selectedJob.id
+                        ? "提交中"
+                        : "立即运行"}
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
@@ -267,9 +277,11 @@ export function CronManager({
                   >
                     编辑
                   </Button>
+                  {/* 删除是二次确认后才发生的动作，这里只做入口：常驻实心红会成为整页最重的元素 */}
                   <Button
                     size="sm"
-                    variant="destructive"
+                    variant="outline"
+                    className="text-destructive hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
                     onClick={() => {
                       if (confirm(`确认删除任务 "${selectedJob.name}"?`))
                         handleDelete(selectedJob);
@@ -291,8 +303,16 @@ export function CronManager({
             </div>
           </>
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            选择一个任务查看详情
+          <div className="flex h-full items-center justify-center p-6">
+            <div
+              className={cn(
+                "flex w-full max-w-sm flex-col items-center px-6 py-12 text-center text-muted-foreground",
+                CAPABILITY_EMPTY_SURFACE,
+              )}
+            >
+              <EntityIcons.cron className="size-8" />
+              <div className="mt-3 text-sm">选择左侧任务查看运行历史</div>
+            </div>
           </div>
         )}
         </div>
@@ -320,7 +340,34 @@ export function CronManager({
                 </DialogDescription>
               </DialogHeader>
               {canManageJob(selectedJob) && (
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* 移动端此前只有编辑/删除：列表卡的操作靠 hover 浮现，触屏根本触发不了，
+                      导致手机上既不能启停也不能手动跑。启停与运行在这里补齐。 */}
+                  <label className="mr-1 inline-flex items-center gap-2 text-sm">
+                    <Switch
+                      checked={selectedJob.enabled}
+                      disabled={!!selectedJob.state.runningAtMs}
+                      onCheckedChange={() => handleToggle(selectedJob)}
+                      aria-label={selectedJob.enabled ? "禁用任务" : "启用任务"}
+                    />
+                    {selectedJob.enabled ? "已启用" : "已禁用"}
+                  </label>
+                  <Button
+                    size="sm"
+                    onClick={() => handleRun(selectedJob)}
+                    disabled={
+                      !selectedJob.enabled ||
+                      !!selectedJob.state.runningAtMs ||
+                      runningJobId === selectedJob.id
+                    }
+                  >
+                    <Play className="fill-current" />
+                    {selectedJob.state.runningAtMs
+                      ? "运行中"
+                      : runningJobId === selectedJob.id
+                        ? "提交中"
+                        : "立即运行"}
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
@@ -334,7 +381,8 @@ export function CronManager({
                   </Button>
                   <Button
                     size="sm"
-                    variant="destructive"
+                    variant="outline"
+                    className="text-destructive hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
                     onClick={() => {
                       if (confirm(`确认删除任务 "${selectedJob.name}"?`)) {
                         setShowDetail(false);
@@ -369,7 +417,7 @@ export function CronManager({
         }}
       >
         <DialogContent className="max-h-[90vh] overflow-y-auto p-0 sm:max-w-xl">
-          <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b bg-card px-6 py-4">
+          <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-border/60 bg-card px-6 py-4">
             <DialogHeader className="min-w-0 flex-1 space-y-1">
               <DialogTitle>
                 {editingJob ? "编辑定时任务" : "创建定时任务"}

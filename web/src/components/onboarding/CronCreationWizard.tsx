@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { CAPABILITY_SUBTLE_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
 import { friendlyPushChannel, friendlyPushTarget } from "@/components/scenarios/friendlyMappings";
 import {
   isWorkflowCronEligible,
@@ -265,7 +266,7 @@ export function CronCreationWizard({
                 <button
                   key={target}
                   type="button"
-                  className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-1 text-xs"
+                  className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-1 text-xs ring-1 ring-border/60"
                   onClick={() => setMonitorTargets((prev) => prev.filter((item) => item !== target))}
                 >
                   {target}
@@ -314,7 +315,7 @@ export function CronCreationWizard({
         {step === 3 && (
           <div className="space-y-3">
             {forceHumanReview && (
-              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <div className="rounded-xl bg-warning-subtle px-3 py-2 text-sm text-warning-ink">
                 该场景涉及对外发送，必须先发给主管确认。
               </div>
             )}
@@ -338,13 +339,13 @@ export function CronCreationWizard({
               checked={pushSlot.humanReviewRequired || pushSlot.target === "manager"}
               onSelect={() => setPushSlot({ humanReviewRequired: true, target: "manager", channel: "ding_work_notification" })}
             />
-            <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            <div className={cn("px-3 py-2 text-xs text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>
               随时可关，出差/休假可暂停/换公司，决定权在您手里。
             </div>
           </div>
         )}
 
-        {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+        {error && <div className="rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => (step === 1 ? onOpenChange(false) : setStep((value) => (value === 3 ? 2 : 1)))}>
@@ -417,8 +418,8 @@ function RadioOption({
       type="button"
       disabled={disabled}
       className={cn(
-        "flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors",
-        checked ? "border-brand-400 bg-brand-50" : "hover:bg-muted/50",
+        "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left ring-1 ring-border/60 transition-colors",
+        checked ? "bg-brand-50 ring-brand-400 dark:bg-brand-900/25" : "hover:bg-muted/50",
         disabled && "cursor-not-allowed opacity-50",
       )}
       onClick={onSelect}

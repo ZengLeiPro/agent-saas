@@ -341,8 +341,8 @@ export function DesktopLayout(props: LayoutProps) {
       <div
         ref={showRightPanel ? splitContainerRef : undefined}
         className={cn(
-          "my-2 mr-2 flex min-h-0 min-w-0 flex-1",
-          sidebarCollapsed && "ml-2",
+          "my-3 mr-3 flex min-h-0 min-w-0 flex-1",
+          sidebarCollapsed && "ml-3",
           chatFontLarge && "chat-font-large",
           chatWidthWide && "chat-width-wide",
         )}
@@ -350,10 +350,11 @@ export function DesktopLayout(props: LayoutProps) {
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl",
-            activeTab === "chat" && "bg-card",
+            activeTab === "chat" &&
+              "bg-card ring-1 ring-border/60 shadow-[0_2px_6px_rgba(15,23,42,0.05),0_10px_28px_-10px_rgba(15,23,42,0.10)]",
           )}
           style={showRightPanel
-            ? { flexBasis: `calc(${(1 - splitRatio) * 100}% - 2px)`, flexShrink: 0, flexGrow: 0 }
+            ? { flexBasis: `calc(${(1 - splitRatio) * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }
             : { flex: 1 }}
         >
         {/* 内容区 header */}
@@ -779,7 +780,7 @@ export function DesktopLayout(props: LayoutProps) {
 
         {rightPanelOpen && (
           <>
-            <div className={cn("w-1 shrink-0 items-center justify-center", showRightPanel ? "flex" : "hidden")}>
+            <div className={cn("w-2.5 shrink-0 items-center justify-center", showRightPanel ? "flex" : "hidden")}>
               <ResizablePanelDivider
                 label="调整右侧面板宽度"
                 onMouseDown={onDividerMouseDown}
@@ -788,10 +789,10 @@ export function DesktopLayout(props: LayoutProps) {
             </div>
             <div
               className={cn(
-                "min-w-0 flex-col overflow-hidden rounded-xl bg-card",
+                "min-w-0 flex-col overflow-hidden rounded-xl bg-card ring-1 ring-border/60 shadow-[0_2px_6px_rgba(15,23,42,0.05),0_10px_28px_-10px_rgba(15,23,42,0.10)]",
                 showRightPanel ? "flex" : "hidden",
               )}
-              style={{ flexBasis: `calc(${splitRatio * 100}% - 2px)`, flexShrink: 0, flexGrow: 0 }}
+              style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }}
             >
               {rightPanelKind === 'preview' && previewFilePath ? (
                 <FilePreviewPanel

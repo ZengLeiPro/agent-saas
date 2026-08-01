@@ -21,12 +21,13 @@ export async function sendDingtalkAlertWebhook(
     });
     const body = (await res.json().catch(() => ({}))) as { errcode?: number; errmsg?: string };
     if (!res.ok || (body.errcode && body.errcode !== 0)) {
-      apiLogger.warn(
-        `[alerting] 钉钉告警推送失败 status=${res.status} errcode=${body.errcode ?? ''} errmsg=${body.errmsg ?? ''}`,
+      throw new Error(
+        `钉钉告警推送失败 status=${res.status} errcode=${body.errcode ?? ''} errmsg=${body.errmsg ?? ''}`,
       );
     }
   } catch (err) {
     apiLogger.warn(`[alerting] 钉钉告警推送异常: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
   } finally {
     clearTimeout(timer);
   }

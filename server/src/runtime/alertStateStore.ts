@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -50,6 +52,14 @@ export class PgAlertStateStore {
         )
       `);
       await client.query(`
+        ALTER TABLE ${this.alertStateTable}
+        ADD COLUMN IF NOT EXISTS notification_claimed_at TIMESTAMPTZ
+      `);
+      await client.query(`
+        ALTER TABLE ${this.alertStateTable}
+        ADD COLUMN IF NOT EXISTS notification_claim_token TEXT
+      `);
+      await client.query(`
         CREATE INDEX IF NOT EXISTS ${this.alertStateTable}_last_seen_idx
         ON ${this.alertStateTable} (last_seen_at)
       `);
@@ -83,30 +93,97 @@ export class PgAlertStateStore {
     return mapAlertStateRow(result.rows[0]!);
   }
 
-  async markNotified(alertKey: string, notifiedAt = new Date()): Promise<void> {
+  async tryClaimNotification(
+    alertKey: string,
+    expectedLastNotifiedAt: string | null,
+    claimedAt = new Date(),
+    staleAfterMs = 5 * 60_000,
+  ): Promise<string | null> {
+    const claimToken = randomUUID();
+    const staleBefore = new Date(claimedAt.getTime() - staleAfterMs);
+    const result = await this.pool.query(
+      `UPDATE ${this.alertStateTable}
+       SET notification_claimed_at = $3,
+           notification_claim_token = $5
+       WHERE alert_key = $1
+         AND last_notified_at IS NOT DISTINCT FROM $2::timestamptz
+         AND (notification_claimed_at IS NULL OR notification_claimed_at < $4)
+       RETURNING alert_key`,
+      [alertKey, expectedLastNotifiedAt, claimedAt, staleBefore, claimToken],
+    );
+    return (result.rowCount ?? 0) > 0 ? claimToken : null;
+  }
+
+  async releaseNotificationClaim(alertKey: string, claimToken: string): Promise<void> {
     await this.pool.query(
       `UPDATE ${this.alertStateTable}
-       SET last_notified_at = $2, notify_count = notify_count + 1
-       WHERE alert_key = $1`,
-      [alertKey, notifiedAt],
+       SET notification_claimed_at = NULL,
+           notification_claim_token = NULL
+       WHERE alert_key = $1 AND notification_claim_token = $2`,
+      [alertKey, claimToken],
     );
   }
 
-  async cleanupGone(activeKeys: string[], olderThanMs: number, now = new Date()): Promise<number> {
-    const cutoff = new Date(now.getTime() - olderThanMs);
-    const result = activeKeys.length > 0
-      ? await this.pool.query(
-          `DELETE FROM ${this.alertStateTable}
-           WHERE NOT (alert_key = ANY($1::text[]))
-             AND last_seen_at < $2`,
-          [activeKeys, cutoff],
-        )
-      : await this.pool.query(
-          `DELETE FROM ${this.alertStateTable}
-           WHERE last_seen_at < $1`,
-          [cutoff],
-        );
-    return result.rowCount ?? 0;
+  async tryClaimEvaluation(claimedAt = new Date(), staleAfterMs = 30 * 60_000): Promise<string | null> {
+    const key = '__platform_incident_evaluation_lock__';
+    const claimToken = randomUUID();
+    const staleBefore = new Date(claimedAt.getTime() - staleAfterMs);
+    const result = await this.pool.query(
+      `INSERT INTO ${this.alertStateTable}
+         (alert_key, severity, first_seen_at, last_seen_at, notification_claimed_at, notification_claim_token)
+       VALUES ($1, 'info', $2, $2, $2, $4)
+       ON CONFLICT (alert_key) DO UPDATE SET
+         last_seen_at = EXCLUDED.last_seen_at,
+         notification_claimed_at = EXCLUDED.notification_claimed_at,
+         notification_claim_token = EXCLUDED.notification_claim_token
+       WHERE ${this.alertStateTable}.notification_claimed_at IS NULL
+          OR ${this.alertStateTable}.notification_claimed_at < $3
+       RETURNING alert_key`,
+      [key, claimedAt, staleBefore, claimToken],
+    );
+    return (result.rowCount ?? 0) > 0 ? claimToken : null;
+  }
+
+  async isEvaluationClaimOwner(claimToken: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `SELECT 1 FROM ${this.alertStateTable}
+       WHERE alert_key = $1 AND notification_claim_token = $2`,
+      ['__platform_incident_evaluation_lock__', claimToken],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async releaseEvaluationClaim(claimToken: string): Promise<void> {
+    await this.releaseNotificationClaim('__platform_incident_evaluation_lock__', claimToken);
+  }
+
+  async markNotified(alertKey: string, claimToken: string, notifiedAt = new Date()): Promise<void> {
+    await this.pool.query(
+      `UPDATE ${this.alertStateTable}
+       SET last_notified_at = $3,
+           notify_count = notify_count + 1,
+           notification_claimed_at = NULL,
+           notification_claim_token = NULL
+       WHERE alert_key = $1 AND notification_claim_token = $2`,
+      [alertKey, claimToken, notifiedAt],
+    );
+  }
+
+  async remove(alertKey: string): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM ${this.alertStateTable} WHERE alert_key = $1`,
+      [alertKey],
+    );
+  }
+
+  async removeClaimed(alertKey: string, claimToken: string, expectedLastSeenAt: string): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM ${this.alertStateTable}
+       WHERE alert_key = $1
+         AND notification_claim_token = $2
+         AND last_seen_at = $3::timestamptz`,
+      [alertKey, claimToken, expectedLastSeenAt],
+    );
   }
 
   async summary(): Promise<{ configured: boolean; lastNotifiedAt: string | null; notifyCount: number }> {

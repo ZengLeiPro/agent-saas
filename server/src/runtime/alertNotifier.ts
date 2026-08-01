@@ -11,6 +11,13 @@ import {
   fetchSandboxSummaries,
 } from './attention.js';
 import type { PgEventStore } from './pgEventStore.js';
+import {
+  RECOVERABLE_PLATFORM_INCIDENT_KINDS,
+  buildRunSystemIncidents,
+  platformRecoveryItem,
+  selectAttentionSystemIncidents,
+  selectExternalSystemIncidents,
+} from './platformIncidentPolicy.js';
 import type { PgRunStore } from './runStore.js';
 import type { PgSystemMetricsStore } from './systemMetricsStore.js';
 
@@ -50,6 +57,7 @@ export interface AlertNotifierOptions {
   webBaseUrl?: string;
   sender?: (webhookUrl: string, markdown: { title: string; text: string }) => Promise<void>;
   robotSender?: (config: DingtalkRobotAlertConfig, markdown: { title: string; text: string }) => Promise<void>;
+  externalIncidentSelector?: (source: string, items: AttentionItem[]) => AttentionItem[];
   logger?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 }
 
@@ -96,7 +104,10 @@ export class AlertNotifier {
     const cfg = this.options.config.alerting;
     if (cfg?.enabled === false || !hasDeliveryChannel(cfg)) return { considered: 0, notified: 0 };
     this.inFlight = true;
+    let evaluationClaimToken: string | null = null;
     try {
+      evaluationClaimToken = await this.options.alertStateStore.tryClaimEvaluation();
+      if (!evaluationClaimToken) return { considered: 0, notified: 0 };
       const sandboxes = await fetchSandboxSummaries({
         config: this.options.config,
         secretVault: this.options.secretVault,
@@ -106,7 +117,7 @@ export class AlertNotifier {
         this.options.logger?.warn(`AlertNotifier sandbox fetch failed: ${errorMessage(err)}`);
         return [];
       });
-      const items = await buildAttentionQueue({
+      const attentionItems = await buildAttentionQueue({
         runStore: this.options.runStore,
         eventStore: this.options.eventStore,
         systemMetricsStore: this.options.systemMetricsStore,
@@ -114,14 +125,83 @@ export class AlertNotifier {
         dailyCostThresholdYuan: cfg.dailyCostThresholdYuan,
         sandboxes,
       });
-      return await this.notifyItems('attention', items);
+      const incidents = [
+        ...selectAttentionSystemIncidents(attentionItems),
+        ...await buildRunSystemIncidents(this.options.runStore),
+      ];
+      if (!await this.options.alertStateStore.isEvaluationClaimOwner(evaluationClaimToken)) {
+        return { considered: 0, notified: 0 };
+      }
+      await this.notifyPlatformRecoveries(cfg, incidents, evaluationClaimToken);
+      return await this.notifyItems('platform_incident', incidents);
     } finally {
+      if (evaluationClaimToken) {
+        await this.options.alertStateStore.releaseEvaluationClaim(evaluationClaimToken).catch((err) => {
+          this.options.logger?.warn(`AlertNotifier evaluation claim release failed: ${errorMessage(err)}`);
+        });
+      }
       this.inFlight = false;
     }
   }
 
   async notifyExternal(source: string, items: NotifiableAlertItem[]): Promise<{ considered: number; notified: number }> {
-    return await this.notifyItems(source, items);
+    const selector = this.options.externalIncidentSelector ?? selectExternalSystemIncidents;
+    const incidents = selector(source, items) as NotifiableAlertItem[];
+    if (incidents.length === 0) return { considered: items.length, notified: 0 };
+    return await this.notifyItems(source, incidents);
+  }
+
+  private async notifyPlatformRecoveries(
+    cfg: NonNullable<AlertingConfig>,
+    incidents: AttentionItem[],
+    evaluationClaimToken: string,
+  ): Promise<void> {
+    const activeKinds = new Set(incidents.map((item) => item.kind));
+    const claimed: Array<{ key: string; claimToken: string; lastSeenAt: string; item?: AttentionItem }> = [];
+    for (const kind of RECOVERABLE_PLATFORM_INCIDENT_KINDS) {
+      if (activeKinds.has(kind)) continue;
+      const key = `${kind}:global`;
+      const state = await this.options.alertStateStore.get(key);
+      if (!state) continue;
+      const claimToken = await this.options.alertStateStore.tryClaimNotification(key, state.lastNotifiedAt);
+      if (!claimToken) continue;
+      claimed.push({
+        key,
+        claimToken,
+        lastSeenAt: state.lastSeenAt,
+        ...(state.lastNotifiedAt ? { item: platformRecoveryItem(kind) } : {}),
+      });
+    }
+    if (claimed.length === 0) return;
+    const releaseClaims = async () => {
+      await Promise.all(claimed.map((entry) => (
+        this.options.alertStateStore.releaseNotificationClaim(entry.key, entry.claimToken)
+      )));
+    };
+    if (!await this.options.alertStateStore.isEvaluationClaimOwner(evaluationClaimToken)) {
+      await releaseClaims();
+      return;
+    }
+    const silent = claimed.filter((entry) => !entry.item);
+    await Promise.all(silent.map((entry) => (
+      this.options.alertStateStore.removeClaimed(entry.key, entry.claimToken, entry.lastSeenAt)
+    )));
+    const recovered = claimed.filter((entry): entry is typeof entry & { item: AttentionItem } => !!entry.item);
+    if (recovered.length === 0) return;
+    if (!await this.options.alertStateStore.isEvaluationClaimOwner(evaluationClaimToken)) {
+      await releaseClaims();
+      return;
+    }
+    try {
+      await this.deliver(cfg, this.renderMarkdown(recovered.map((entry) => entry.item), 'platform_recovery'));
+    } catch (err) {
+      await releaseClaims();
+      this.options.logger?.error(`AlertNotifier recovery delivery failed: ${errorMessage(err)}`);
+      return;
+    }
+    await Promise.all(recovered.map((entry) => (
+      this.options.alertStateStore.removeClaimed(entry.key, entry.claimToken, entry.lastSeenAt)
+    )));
   }
 
   async sendTestAlert(): Promise<void> {
@@ -170,35 +250,39 @@ export class AlertNotifier {
     const minSeverity = parseSeverity(cfg.minSeverity) ?? 'high';
     const now = new Date();
     const eligible = items.filter((item) => severityRank(item.severity) >= severityRank(minSeverity));
-    const toNotify: AttentionItem[] = [];
-    const activeKeys: string[] = [];
+    const due: Array<{ item: AttentionItem; key: string; lastNotifiedAt: string | null }> = [];
     for (const item of eligible) {
       const key = alertKey(source, item);
-      activeKeys.push(key);
       const state = await this.options.alertStateStore.touch(key, item.severity, now);
       if (!state.lastNotifiedAt) {
-        toNotify.push(item);
+        due.push({ item, key, lastNotifiedAt: null });
         continue;
       }
       const repeatMs = this.repeatIntervalMs(item.severity);
       if (now.getTime() - Date.parse(state.lastNotifiedAt) >= repeatMs) {
-        toNotify.push(item);
+        due.push({ item, key, lastNotifiedAt: state.lastNotifiedAt });
       }
     }
-    await this.options.alertStateStore.cleanupGone(activeKeys, 24 * 60 * 60_000, now).catch((err) => {
-      this.options.logger?.warn(`AlertNotifier cleanup failed: ${errorMessage(err)}`);
-      return 0;
-    });
-    if (toNotify.length === 0) return { considered: eligible.length, notified: 0 };
+    const claimed: Array<(typeof due)[number] & { claimToken: string }> = [];
+    for (const entry of due) {
+      const claimToken = await this.options.alertStateStore.tryClaimNotification(entry.key, entry.lastNotifiedAt, now);
+      if (claimToken) claimed.push({ ...entry, claimToken });
+    }
+    if (claimed.length === 0) return { considered: eligible.length, notified: 0 };
     try {
-      await this.deliver(cfg, this.renderMarkdown(toNotify, source));
+      await this.deliver(cfg, this.renderMarkdown(claimed.map((entry) => entry.item), source));
     } catch (err) {
-      // 文档 §6.4：投递失败打日志不重试不抛出；不写 last_notified_at，下轮自然重试。
+      await Promise.all(claimed.map((entry) => (
+        this.options.alertStateStore.releaseNotificationClaim(entry.key, entry.claimToken)
+      )));
+      // 投递失败打日志不抛出；释放 claim 后，下轮自然重试。
       this.options.logger?.error(`AlertNotifier delivery failed: ${errorMessage(err)}`);
       return { considered: eligible.length, notified: 0 };
     }
-    await Promise.all(toNotify.map((item) => this.options.alertStateStore.markNotified(alertKey(source, item), now)));
-    return { considered: eligible.length, notified: toNotify.length };
+    await Promise.all(claimed.map((entry) => (
+      this.options.alertStateStore.markNotified(entry.key, entry.claimToken, now)
+    )));
+    return { considered: eligible.length, notified: claimed.length };
   }
 
   /**
@@ -238,7 +322,7 @@ export class AlertNotifier {
   }
 
   private renderMarkdown(items: AttentionItem[], source: string): { title: string; text: string } {
-    const title = 'agent-saas 告警';
+    const title = source === 'platform_recovery' ? 'agent-saas 恢复通知' : 'agent-saas 告警';
     const lines = [
       `### ${title}`,
       `- 来源：${source}`,

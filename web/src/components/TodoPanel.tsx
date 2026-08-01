@@ -105,7 +105,7 @@ export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelP
   const summaryActive = summary.status === "in_progress" && runActive;
 
   return (
-    <div className="relative z-0 mx-4 -mb-px">
+    <div className="relative z-0 mx-6 -mb-px">
       <div
         className={cn(
           "overflow-hidden rounded-lg border bg-card text-sm shadow-sm transition-colors",

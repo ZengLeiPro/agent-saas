@@ -11,7 +11,7 @@ import type { SVGProps } from "react";
  * 展开态（侧边栏 header 的收起入口）与收起态（内容区 header 的展开入口）共用同一图标，
  * 不按状态换向 —— 两处必须保持一致，改一处即为 bug。
  *
- * 尺寸与线宽遵循 `lib/icons.ts` 注册表规范：默认档 `size-4`、`strokeWidth=2`。
+ * 两个切换入口均以 `size-5` 渲染，`strokeWidth=2`。
  */
 export function PanelToggleIcon(props: SVGProps<SVGSVGElement>) {
   return (

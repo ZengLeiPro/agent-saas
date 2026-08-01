@@ -5,6 +5,8 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'path';
 
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 
+import { getImageBlobStore } from './imageBlobStore.js';
+import { createLogger } from '../utils/logger.js';
 import type { InboundMessage, UploadedFileInfo } from '../types/index.js';
 import type {
   ModelAttachmentRef,
@@ -23,6 +25,12 @@ const MAX_MODEL_IMAGE_BYTES = 5 * 1024 * 1024;
 const NORMALIZATION_VERSION = 'v1';
 const RETAIN_IMAGE_TURNS = 3;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** 规范化图片的受信路径形态；blob 回退只接受这一种，避免绕开 uploads 路径校验。 */
+const MODEL_IMAGE_PATH_PATTERN = /^uploads\/\.model-images\/[a-f0-9]{64}-v\d+\.(?:png|jpg)$/;
+/** 历史图片字节已不可用时的标记；调用方据此决定降级还是 fail-fast。 */
+export const MISSING_IMAGE_ERROR_PREFIX = 'ATTACHMENT_MISSING';
+
+const imageLogger = createLogger('ImageAttachments');
 
 type ImageDimensions = { width: number; height: number };
 
@@ -113,18 +121,20 @@ export function buildModelUserContent(
   text: string,
   attachments: readonly ModelAttachmentRef[] | undefined,
   visionAnalysis?: ModelVisionAnalysis,
+  options?: { historical?: boolean },
 ): ModelUserContent {
   const images = (attachments ?? []).filter((item) => item.isImage && item.modelRelativePath && item.modelMimeType);
   if (images.length === 0) return text;
 
+  const historical = options?.historical === true;
   const parts: ModelUserContentPart[] = [];
   if (images.length === 1) {
-    parts.push(toImagePart(images[0]));
+    parts.push(toImagePart(images[0], historical));
   } else {
     for (let index = 0; index < images.length; index++) {
       const image = images[index];
       parts.push({ type: 'text', text: `[附件图片 ${index + 1}：${image.originalName}]` });
-      parts.push(toImagePart(image));
+      parts.push(toImagePart(image, historical));
     }
   }
   if (visionAnalysis) {
@@ -162,16 +172,96 @@ export async function readModelImageDataUrl(
   cwd: string,
   part: Extract<ModelUserContentPart, { type: 'image_attachment' }>,
 ): Promise<string> {
-  const absolutePath = await resolveTrustedWorkspaceFile(cwd, part.relativePath);
-  const file = (await readRegularFileNoFollow(absolutePath)).bytes!;
+  let file: Buffer;
+  try {
+    const absolutePath = await resolveTrustedWorkspaceFile(cwd, part.relativePath);
+    file = (await readRegularFileNoFollow(absolutePath)).bytes!;
+    // 懒回填：blob 副本上线前就存在的图片，只要还被读到就补一份，无需一次性迁移脚本。
+    void backfillModelImageBlob(cwd, part.relativePath, part.mimeType, file);
+  } catch (error) {
+    // 文件侧不可用（最常见是用户清空 uploads/ 后的历史会话），回落到 blob 副本。
+    const blob = await readModelImageBlob(cwd, part.relativePath);
+    if (!blob) {
+      throw new Error(
+        `${MISSING_IMAGE_ERROR_PREFIX}: 图片字节已不可用 attachmentId=${part.attachmentId} `
+        + `cause=${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    file = blob;
+  }
   if (file.byteLength !== part.sizeBytes) {
-    throw new Error(`ATTACHMENT_MISSING: 规范化图片字节数发生变化 attachmentId=${part.attachmentId}`);
+    throw new Error(`${MISSING_IMAGE_ERROR_PREFIX}: 规范化图片字节数发生变化 attachmentId=${part.attachmentId}`);
   }
   const detected = detectImageMime(file);
   if (detected !== part.mimeType) {
     throw new Error(`PROVIDER_IMAGE_REJECTED: 图片 MIME 校验失败 attachmentId=${part.attachmentId}`);
   }
   return `data:${part.mimeType};base64,${file.toString('base64')}`;
+}
+
+/**
+ * 历史图片读不到时的降级文本：保留附件引用，让模型知道这里原本有图而不是凭空少一段。
+ */
+export function buildMissingImagePlaceholder(
+  part: Extract<ModelUserContentPart, { type: 'image_attachment' }>,
+): string {
+  return `[图片「${part.displayName}」的内容已不可用（附件已被清理）；附件引用=${part.attachmentId}。`
+    + '如任务必须查看该图，请让用户重新上传。]';
+}
+
+/**
+ * adapter 的统一读图入口。
+ * - 本轮图片读不到 = 真故障，原样抛出，让整个 run 失败；
+ * - 历史图片读不到 = 用户清空过附件的预期状态，降级成文本占位让对话继续。
+ */
+export async function readImagePartOrPlaceholder(
+  cwd: string,
+  part: Extract<ModelUserContentPart, { type: 'image_attachment' }>,
+): Promise<string | { placeholder: string }> {
+  try {
+    return await readModelImageDataUrl(cwd, part);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!part.historical || !message.startsWith(MISSING_IMAGE_ERROR_PREFIX)) throw error;
+    imageLogger.warn(
+      `历史图片字节不可用，已降级为文本占位 attachmentId=${part.attachmentId} path=${part.relativePath}`,
+    );
+    return { placeholder: buildMissingImagePlaceholder(part) };
+  }
+}
+
+async function readModelImageBlob(cwd: string, relativePath: string): Promise<Buffer | undefined> {
+  if (!MODEL_IMAGE_PATH_PATTERN.test(relativePath)) return undefined;
+  const store = getImageBlobStore();
+  if (!store) return undefined;
+  try {
+    return (await store.get(cwd, basename(relativePath)))?.bytes;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 进程内去重，避免同一张图在长会话里每轮都发一次 ON CONFLICT DO NOTHING。 */
+const backfilledBlobKeys = new Set<string>();
+const BACKFILL_CACHE_LIMIT = 5_000;
+
+async function backfillModelImageBlob(
+  cwd: string,
+  relativePath: string,
+  mimeType: ModelImageMimeType,
+  bytes: Buffer,
+): Promise<void> {
+  if (!MODEL_IMAGE_PATH_PATTERN.test(relativePath)) return;
+  const store = getImageBlobStore();
+  if (!store) return;
+  const blobKey = basename(relativePath);
+  const cacheKey = `${cwd}\u0000${blobKey}`;
+  if (backfilledBlobKeys.has(cacheKey)) return;
+  if (backfilledBlobKeys.size >= BACKFILL_CACHE_LIMIT) backfilledBlobKeys.clear();
+  backfilledBlobKeys.add(cacheKey);
+  await store.put({ workspaceKey: cwd, blobKey, mimeType, bytes }).catch(() => {
+    backfilledBlobKeys.delete(cacheKey);
+  });
 }
 
 export function modelSupportsImage(inputModalities: readonly string[] | undefined): boolean {
@@ -323,6 +413,14 @@ async function normalizeImage(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
   }
+  // blob 副本是历史重放的持久事实源：`uploads/` 允许用户一键清空，文件随时可能消失。
+  // 写失败不阻断上传——本轮仍能从文件读到图，只是失去未来的兜底。
+  await getImageBlobStore()?.put({
+    workspaceKey: cwd,
+    blobKey: basename(relativePath),
+    mimeType,
+    bytes: encoded,
+  }).catch(() => undefined);
 
   return {
     relativePath,
@@ -336,6 +434,7 @@ async function normalizeImage(
 
 function toImagePart(
   image: ModelAttachmentRef,
+  historical = false,
 ): Extract<ModelUserContentPart, { type: 'image_attachment' }> {
   return {
     type: 'image_attachment',
@@ -347,6 +446,7 @@ function toImagePart(
     width: image.width,
     height: image.height,
     detail: 'high',
+    ...(historical ? { historical: true } : {}),
   };
 }
 

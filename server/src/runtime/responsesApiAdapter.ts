@@ -39,7 +39,7 @@ import {
   detectMojibake,
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
-import { modelSupportsImage, readModelImageDataUrl, toTextOnlyContent } from './imageAttachments.js';
+import { modelSupportsImage, readImagePartOrPlaceholder, toTextOnlyContent } from './imageAttachments.js';
 import { OpenAICompatibleResponsesTransport } from './responses/openAICompatibleResponsesTransport.js';
 import type {
   ProviderContinuationBinding,
@@ -1346,9 +1346,14 @@ export class ResponsesApiAdapter implements ModelAdapter {
       if (part.type === 'text') {
         result.push({ type: 'input_text', text: defendUserMessageText(part.text, sessionIdShort) });
       } else {
+        const dataUrl = await readImagePartOrPlaceholder(cwd, part);
+        if (typeof dataUrl !== 'string') {
+          result.push({ type: 'input_text', text: defendUserMessageText(dataUrl.placeholder, sessionIdShort) });
+          continue;
+        }
         result.push({
           type: 'input_image',
-          image_url: await readModelImageDataUrl(cwd, part),
+          image_url: dataUrl,
           detail: part.detail === 'original' ? 'high' : part.detail,
         });
       }

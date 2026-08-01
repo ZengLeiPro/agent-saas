@@ -246,6 +246,12 @@ export type ModelUserContentPart =
     width?: number;
     height?: number;
     detail: 'high' | 'original';
+    /**
+     * true = 该 part 来自历史事件重放，而非用户本轮上传。
+     * 历史图片的字节可能已随 `uploads/` 清空而消失，读不到时降级为文本占位并继续；
+     * 本轮图片读不到属于真故障，必须 fail-fast。
+     */
+    historical?: boolean;
   }
   | {
     /** 仅供 text-only adapter 使用；视觉模型 adapter 会忽略，避免原图+摘要双重暗示。 */

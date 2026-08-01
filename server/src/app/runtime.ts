@@ -54,6 +54,7 @@ import {
   type ArtifactStore,
 } from '../runtime/artifactStore.js';
 import { ArtifactService } from '../runtime/artifactService.js';
+import { PgImageBlobStore, setImageBlobStore } from '../runtime/imageBlobStore.js';
 import {
   InMemorySessionShareStore,
   PgSessionShareStore,
@@ -1223,6 +1224,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await pgArtifactStore.init();
     artifactStore = pgArtifactStore;
+    // 模型图片 blob 副本：uploads/ 可被用户一键清空，历史会话重放要能从这里取回字节。
+    // init 失败只降级（读图回落文件系统、历史图缺失时降级占位），不阻断服务启动。
+    try {
+      const imageBlobStore = new PgImageBlobStore({
+        pool: pgEventStore.pool,
+        tablePrefix: config.runtimeEventStore.tablePrefix,
+      });
+      await imageBlobStore.init();
+      setImageBlobStore(imageBlobStore);
+    } catch (err) {
+      serverLogger.warn(
+        `PgImageBlobStore init failed, model images fall back to filesystem only: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     const pgSessionShareStore = new PgSessionShareStore({
       pool: pgEventStore.pool,
       tablePrefix: config.runtimeEventStore.tablePrefix,

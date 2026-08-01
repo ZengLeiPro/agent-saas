@@ -19,7 +19,7 @@ import {
   detectMojibake,
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
-import { modelSupportsImage, readModelImageDataUrl, toTextOnlyContent } from './imageAttachments.js';
+import { modelSupportsImage, readImagePartOrPlaceholder, toTextOnlyContent } from './imageAttachments.js';
 
 const logger = createLogger('Cache');
 const CHAT_COMPLETIONS_MAX_FETCH_ATTEMPTS = 3;
@@ -105,10 +105,15 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
           content.push({ type: 'text', text: defendUserMessageText(part.text, sessionIdShort) });
           continue;
         }
+        const dataUrl = await readImagePartOrPlaceholder(context.cwd, part);
+        if (typeof dataUrl !== 'string') {
+          content.push({ type: 'text', text: defendUserMessageText(dataUrl.placeholder, sessionIdShort) });
+          continue;
+        }
         content.push({
           type: 'image_url',
           image_url: {
-            url: await readModelImageDataUrl(context.cwd, part),
+            url: dataUrl,
             detail: part.detail === 'original' ? 'high' : part.detail,
           },
         });

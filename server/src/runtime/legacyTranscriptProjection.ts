@@ -309,7 +309,12 @@ export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatM
           role: 'user',
           content: prunedImageEventIndices.has(eventIndex)
             ? buildPrunedHistoricalUserContent(event.modelContent ?? event.content, event.attachments)
-            : buildModelUserContent(event.modelContent ?? event.content, event.attachments, event.visionAnalysis),
+            : buildModelUserContent(
+              event.modelContent ?? event.content,
+              event.attachments,
+              event.visionAnalysis,
+              { historical: true },
+            ),
         });
         break;
       case 'assistant_message':

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -8,12 +8,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChatCompletionsModelAdapter } from '../runtime/chatCompletionsAdapter.js';
 import {
   buildModelUserContent,
+  readImagePartOrPlaceholder,
   resolveInboundAttachments,
 } from '../runtime/imageAttachments.js';
+import { InMemoryImageBlobStore, setImageBlobStore } from '../runtime/imageBlobStore.js';
 import { analyzeImagesWithFallback } from '../runtime/imageUnderstanding.js';
 import { buildChatMessagesFromEvents } from '../runtime/legacyTranscriptProjection.js';
 import { ResponsesApiAdapter } from '../runtime/responsesApiAdapter.js';
-import type { ModelEvent, ModelVisionAnalysis, PlatformEvent } from '../runtime/types.js';
+import type {
+  ModelAttachmentRef,
+  ModelEvent,
+  ModelUserContent,
+  ModelUserContentPart,
+  ModelVisionAnalysis,
+  PlatformEvent,
+} from '../runtime/types.js';
 
 function chatSse(payload: unknown): string {
   return `data: ${typeof payload === 'string' ? payload : JSON.stringify(payload)}\n\n`;
@@ -53,9 +62,31 @@ async function createUploadedPng(): Promise<{
   return { cwd, attachmentId, relativePath: `uploads/${fileName}` };
 }
 
+async function resolveFixtureAttachments(
+  fixture: { cwd: string; attachmentId: string; relativePath: string },
+): Promise<ModelAttachmentRef[]> {
+  return resolveInboundAttachments([{
+    attachmentId: fixture.attachmentId,
+    originalName: '界面截图.png',
+    savedPath: fixture.relativePath,
+    relativePath: fixture.relativePath,
+    size: 1,
+    mimeType: 'image/png',
+    isImage: true,
+  }], { cwd: fixture.cwd, channel: 'web' });
+}
+
+function imagePartOf(content: ModelUserContent): Extract<ModelUserContentPart, { type: 'image_attachment' }> {
+  if (typeof content === 'string') throw new Error('期望多模态内容，实际是纯文本');
+  const part = content.find((item) => item.type === 'image_attachment');
+  if (!part || part.type !== 'image_attachment') throw new Error('未找到 image_attachment part');
+  return part;
+}
+
 describe('图片附件 P1', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    setImageBlobStore(undefined);
   });
 
   it('按 attachmentId 在当前 workspace 重解析，并忽略客户端 savedPath/MIME/size', async () => {
@@ -285,5 +316,98 @@ describe('图片附件 P1', () => {
     expect(typeof messages[0]?.content).toBe('string');
     expect(messages[0]?.content).toContain('历史图片已从活跃视觉上下文移除');
     expect(messages.slice(1).every((message) => Array.isArray(message.content))).toBe(true);
+  });
+
+  it('历史重放的图片 part 带 historical 标记', () => {
+    const events: PlatformEvent[] = [{
+      id: 'event-历史标记',
+      timestamp: '2026-08-01T08:00:00.000Z',
+      type: 'user_message' as const,
+      runId: 'run-历史标记',
+      sessionId: 'session-历史标记',
+      content: '这是什么',
+      attachments: [{
+        attachmentId: 'attachment-历史',
+        originalName: 'a.png',
+        relativePath: 'uploads/a.png',
+        sizeBytes: 10,
+        mimeType: 'image/png',
+        isImage: true,
+        modelRelativePath: 'uploads/.model-images/a.png',
+        modelMimeType: 'image/png',
+        modelSizeBytes: 10,
+      }],
+    }];
+
+    const [message] = buildChatMessagesFromEvents(events);
+    const parts = message?.content as ModelUserContentPart[];
+    expect(Array.isArray(parts)).toBe(true);
+    expect(parts.find((part) => part.type === 'image_attachment')).toMatchObject({ historical: true });
+  });
+
+  it('uploads 被清空后仍能从 blob 副本还原历史图片', async () => {
+    setImageBlobStore(new InMemoryImageBlobStore());
+    const fixture = await createUploadedPng();
+    const part = imagePartOf(buildModelUserContent(
+      '请分析',
+      await resolveFixtureAttachments(fixture),
+      undefined,
+      { historical: true },
+    ));
+
+    // 模拟用户点「清空全部附件」：uploads/ 下含 .model-images 一并消失
+    await rm(join(fixture.cwd, 'uploads'), { recursive: true, force: true });
+
+    const result = await readImagePartOrPlaceholder(fixture.cwd, part);
+    expect(typeof result).toBe('string');
+    expect(result as string).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it('blob 上线前就存在的图片，被读到时懒回填出副本', async () => {
+    const store = new InMemoryImageBlobStore();
+    const fixture = await createUploadedPng();
+    // 上传发生在 blob store 生效之前：只有文件，没有副本
+    const attachments = await resolveFixtureAttachments(fixture);
+    const part = imagePartOf(buildModelUserContent('请分析', attachments, undefined, { historical: true }));
+    setImageBlobStore(store);
+
+    expect(await store.get(fixture.cwd, part.relativePath.split('/').pop()!)).toBeUndefined();
+    await readImagePartOrPlaceholder(fixture.cwd, part);
+    await vi.waitFor(async () => {
+      expect(await store.get(fixture.cwd, part.relativePath.split('/').pop()!)).toBeDefined();
+    });
+
+    await rm(join(fixture.cwd, 'uploads'), { recursive: true, force: true });
+    expect(typeof await readImagePartOrPlaceholder(fixture.cwd, part)).toBe('string');
+  });
+
+  it('blob 按 workspace 隔离，不跨工作区命中', async () => {
+    setImageBlobStore(new InMemoryImageBlobStore());
+    const fixture = await createUploadedPng();
+    const part = imagePartOf(buildModelUserContent(
+      '请分析',
+      await resolveFixtureAttachments(fixture),
+      undefined,
+      { historical: true },
+    ));
+    await rm(join(fixture.cwd, 'uploads'), { recursive: true, force: true });
+
+    const otherCwd = await mkdtemp(join(tmpdir(), 'agent-saas-image-other-'));
+    await expect(readImagePartOrPlaceholder(otherCwd, part))
+      .resolves.toMatchObject({ placeholder: expect.stringContaining('已不可用') });
+  });
+
+  it('历史图片彻底缺失时降级为文本占位，本轮图片缺失仍 fail-fast', async () => {
+    setImageBlobStore(undefined);
+    const fixture = await createUploadedPng();
+    const attachments = await resolveFixtureAttachments(fixture);
+    const historicalPart = imagePartOf(buildModelUserContent('历史', attachments, undefined, { historical: true }));
+    const currentPart = imagePartOf(buildModelUserContent('本轮', attachments));
+    await rm(join(fixture.cwd, 'uploads'), { recursive: true, force: true });
+
+    await expect(readImagePartOrPlaceholder(fixture.cwd, historicalPart))
+      .resolves.toMatchObject({ placeholder: expect.stringContaining('界面截图.png') });
+    await expect(readImagePartOrPlaceholder(fixture.cwd, currentPart))
+      .rejects.toThrow('ATTACHMENT_MISSING');
   });
 });

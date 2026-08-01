@@ -1764,8 +1764,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
   const googleWorkspaceClientId = process.env.GOOGLE_WORKSPACE_CONNECTOR_CLIENT_ID?.trim();
   const googleWorkspaceClientSecret = process.env.GOOGLE_WORKSPACE_CONNECTOR_CLIENT_SECRET?.trim();
+  let googleWorkspaceOAuthStateStore;
   if (googleWorkspaceClientId && googleWorkspaceClientSecret) {
-    let googleWorkspaceOAuthStateStore;
     if (pgEventStore) {
       const pgStateStore = new PgGoogleWorkspaceOAuthStateStore(
         pgEventStore.pool,
@@ -1776,15 +1776,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       await pgStateStore.init();
       googleWorkspaceOAuthStateStore = pgStateStore;
     }
-    googleWorkspaceOAuthService = new GoogleWorkspaceOAuthService({
-      clientId: googleWorkspaceClientId,
-      clientSecret: googleWorkspaceClientSecret,
-      connectionStore: connectorConnectionStore,
-      vault: secretVault,
-      stateStore: googleWorkspaceOAuthStateStore,
-      userResolver: userId => userStore?.findById(userId),
-      logger: serverLogger.child('GoogleWorkspaceConnector'),
-    });
   } else {
     serverLogger.warn('Google Workspace connector disabled: OAuth client id/secret not configured');
   }
@@ -1831,6 +1822,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     egressLogger,
   );
   const egressFetch = createEgressFetch(egressDispatchers, egressLogger);
+  if (googleWorkspaceClientId && googleWorkspaceClientSecret) {
+    googleWorkspaceOAuthService = new GoogleWorkspaceOAuthService({
+      clientId: googleWorkspaceClientId,
+      clientSecret: googleWorkspaceClientSecret,
+      connectionStore: connectorConnectionStore,
+      vault: secretVault,
+      stateStore: googleWorkspaceOAuthStateStore,
+      userResolver: userId => userStore?.findById(userId),
+      logger: serverLogger.child('GoogleWorkspaceConnector'),
+      fetchImpl: egressFetch,
+    });
+  }
   const codexWebSocketPool = new CodexResponsesWebSocketPool(
     createEgressWebSocketConnector(egressDispatchers, egressLogger),
     { logger: egressLogger },

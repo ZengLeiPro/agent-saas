@@ -342,8 +342,8 @@ export function DesktopLayout(props: LayoutProps) {
       <div
         ref={showRightPanel ? splitContainerRef : undefined}
         className={cn(
-          "my-3 mr-3 flex min-h-0 min-w-0 flex-1",
-          sidebarCollapsed && "ml-3",
+          "my-2.5 mr-2.5 flex min-h-0 min-w-0 flex-1",
+          sidebarCollapsed && "ml-2.5",
           chatFontLarge && "chat-font-large",
           chatWidthWide && "chat-width-wide",
         )}

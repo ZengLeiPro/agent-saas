@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { MessageItem } from "@agent/shared";
 
@@ -27,12 +27,30 @@ describe("TodoPanel", () => {
     expect(container.querySelector(".animate-spin")).toBeTruthy();
   });
 
-  it("is narrower than and attached to the composer", () => {
+  it("is narrower than and attached flush to the composer", () => {
     const { container } = render(<TodoPanel messages={[todoMessage()]} runActive />);
     const panel = container.firstElementChild;
+    const panelSurface = panel?.firstElementChild;
 
     expect(panel?.classList.contains("mx-6")).toBe(true);
     expect(panel?.classList.contains("-mb-px")).toBe(true);
+    expect(panelSurface?.classList.contains("rounded-t-lg")).toBe(true);
+    expect(panelSurface?.classList.contains("rounded-b-none")).toBe(true);
+  });
+
+  it("points toward the action for the bottom-anchored panel", () => {
+    render(<TodoPanel messages={[todoMessage()]} runActive />);
+
+    const expandButton = screen.getByRole("button", { name: "展开任务清单" });
+    const chevron = expandButton.lastElementChild;
+
+    expect(chevron?.classList.contains("lucide-chevron-up")).toBe(true);
+    expect(chevron?.classList.contains("rotate-180")).toBe(false);
+
+    fireEvent.click(expandButton);
+
+    expect(screen.getByRole("button", { name: "收起任务清单" })).toBeTruthy();
+    expect(chevron?.classList.contains("rotate-180")).toBe(true);
   });
 
   it("keeps the latest todo snapshot static after the run stops", () => {

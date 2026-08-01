@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CircleCheck, ChevronDown, CircleDashed, Loader2 } from "lucide-react";
+import { CircleCheck, ChevronUp, CircleDashed, Loader2 } from "lucide-react";
 import { extractLatestTodos } from "@agent/shared";
 import type { MessageItem, TodoItem, TodoStatus } from "@agent/shared";
 
@@ -108,7 +108,7 @@ export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelP
     <div className="relative z-0 mx-6 -mb-px">
       <div
         className={cn(
-          "overflow-hidden rounded-lg border bg-card text-sm shadow-sm transition-colors",
+          "overflow-hidden rounded-t-lg rounded-b-none border bg-card text-sm shadow-sm transition-colors",
           summary.allCompleted && "border-success/25 bg-success/5",
         )}
         aria-live="polite"
@@ -139,7 +139,7 @@ export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelP
           <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
             {summary.completed}/{summary.total}
           </span>
-          <ChevronDown
+          <ChevronUp
             className={cn(
               "size-4 shrink-0 text-muted-foreground transition-transform",
               expanded && "rotate-180",

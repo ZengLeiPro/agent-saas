@@ -59,6 +59,12 @@ export interface AcsOrchestratorConfig {
    */
   sandboxCiTtlMs: number;
   sandboxOrphanGraceMs: number;
+  /**
+   * 2026-08-01：broken Paused sandbox（假暂停，如 SandboxPaused 卡 False/ImageChanged）
+   * 的自愈回收宽限期。condition 翻转/最后活跃/创建三个时间戳全部超过该宽限才删除 CR，
+   * 防误伤正常 pause/resume 瞬态。0 = 关闭自愈（不建议：假暂停持续按运行态计费）。
+   */
+  sandboxBrokenRecycleGraceMs: number;
   maxRunningSandboxes: number;
   warnRunningSandboxes: number;
   drainDeadlineMs: number;
@@ -67,7 +73,12 @@ export interface AcsOrchestratorConfig {
   /** 出口代理与镜像源；由 server 侧配置页经 PATCH /runtime-config 下发 */
   egress: AcsEgressConfig;
   runtimeConfigPath?: string;
-  alertWebhookUrl?: string;
+  /**
+   * 2026-08-01：改为 URL 列表，逐个尝试直到成功。server 蓝绿部署下单一固定端口
+   * （3200/3201）会在切色或部署窗口不可达（07-25 起历轮 prewarm failed 告警全部
+   * `fetch failed` 丢失即此因）；env `ACS_ALERT_WEBHOOK_URL` 支持逗号分隔多地址。
+   */
+  alertWebhookUrls: string[];
   alertWebhookBearerToken?: string;
   alertMinIntervalMs: number;
   capabilities: AcsRuntimeCapabilities;
@@ -394,6 +405,9 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     sandboxTtlMs: readIntEnv('ACS_SANDBOX_TTL_MS', 7 * 24 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
     sandboxCiTtlMs: readIntEnv('ACS_SANDBOX_CI_TTL_MS', 6 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
     sandboxOrphanGraceMs: readIntEnv('ACS_SANDBOX_ORPHAN_GRACE_MS', 30 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
+    // 宽限默认 5min：正常 pause 收敛 <2min（生产实测），5min 足以避开瞬态；
+    // 且必须小于发布门禁的等待窗口（acs-sandbox.yml 5.5 段 8min），否则门禁等不到自愈。
+    sandboxBrokenRecycleGraceMs: readIntEnv('ACS_SANDBOX_BROKEN_RECYCLE_GRACE_MS', 5 * 60_000, { min: 0, max: 24 * 60 * 60_000 }),
     maxRunningSandboxes: readIntEnv('ACS_SANDBOX_MAX_RUNNING', 8, { min: 0, max: 1_000 }),
     warnRunningSandboxes: readIntEnv('ACS_SANDBOX_WARN_RUNNING', 6, { min: 0, max: 1_000 }),
     drainDeadlineMs: readIntEnv('ACS_ORCH_DRAIN_DEADLINE_MS', 120_000, { min: 1_000, max: 24 * 60 * 60_000 }),
@@ -412,7 +426,10 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     // 默认全关；实际值由 server 下发的 runtime-config 覆盖（下方 applyRuntimeConfigPatch）
     egress: defaultEgressConfig(),
     ...(runtimeConfigPath ? { runtimeConfigPath } : {}),
-    alertWebhookUrl: process.env.ACS_ALERT_WEBHOOK_URL?.trim() || undefined,
+    alertWebhookUrls: (process.env.ACS_ALERT_WEBHOOK_URL ?? '')
+      .split(',')
+      .map((url) => url.trim())
+      .filter((url) => url.length > 0),
     alertWebhookBearerToken: process.env.ACS_ALERT_WEBHOOK_BEARER_TOKEN?.trim() || undefined,
     alertMinIntervalMs: readIntEnv('ACS_ALERT_MIN_INTERVAL_MS', 5 * 60_000, { min: 0, max: 24 * 60 * 60_000 }),
     capabilities: readRuntimeCapabilities(),

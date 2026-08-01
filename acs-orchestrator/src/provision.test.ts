@@ -201,6 +201,7 @@ function baseConfig(): AcsOrchestratorConfig {
     sandboxTtlMs: 7 * 24 * 60 * 60_000,
     sandboxCiTtlMs: 6 * 60 * 60_000,
     sandboxOrphanGraceMs: 1_800_000,
+    sandboxBrokenRecycleGraceMs: 300_000,
     maxRunningSandboxes: 8,
     warnRunningSandboxes: 6,
     drainDeadlineMs: 120_000,
@@ -213,6 +214,7 @@ function baseConfig(): AcsOrchestratorConfig {
       requestTimeoutMs: 1,
       stabilizeAfterCreateMs: 0,
     },
+    alertWebhookUrls: [],
     alertMinIntervalMs: 300_000,
     capabilities: {
       browser: true,

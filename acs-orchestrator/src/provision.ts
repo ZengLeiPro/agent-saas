@@ -75,20 +75,11 @@ export class Provisioner {
     }
   }
 
+  // 2026-08-01：stale Paused 改为直接删除退役（见 SandboxManager.retireStalePausedSandbox），
+  // 不再原地换镜像启动，因此不需要 runtime bootstrap。
   async prewarmStaleImagePausedSandboxes(input: { busySandboxNames?: Set<string> } = {}) {
     return await this.sandboxManager.prewarmStaleImagePausedSandboxes({
       busySandboxNames: input.busySandboxNames ?? this.getBusySandboxNames(),
-      bootstrap: async (ref) => {
-        const runtimeBootstrap = await this.runRuntimeBootstrap(ref.name, {
-          workspaceId: ref.workspaceId,
-          sessionId: ref.sessionId,
-          sandboxScopeId: ref.sandboxScopeId,
-          mountSubPath: ref.mountSubPath,
-        }, RUNTIME_BOOTSTRAP_TIMEOUT_MS);
-        if (runtimeBootstrap.status === 'error') {
-          throw new Error(runtimeBootstrap.stderr || runtimeBootstrap.stdout || 'runtime bootstrap failed');
-        }
-      },
     });
   }
 

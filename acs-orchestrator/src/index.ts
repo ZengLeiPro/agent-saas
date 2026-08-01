@@ -212,7 +212,8 @@ async function handleHealth(res: ServerResponse): Promise<void> {
       drainDeadlineMs: config.drainDeadlineMs,
       maxRunningSandboxes: config.maxRunningSandboxes,
       warnRunningSandboxes: config.warnRunningSandboxes,
-      alertWebhookConfigured: Boolean(config.alertWebhookUrl),
+      brokenRecycleGraceMs: config.sandboxBrokenRecycleGraceMs,
+      alertWebhookConfigured: config.alertWebhookUrls.length > 0,
     },
     runtimeConfig: runtimeConfigSnapshot(config),
     runtimeContract: runtimeContractSnapshot(),
@@ -759,13 +760,13 @@ async function runStaleImagePrewarmOnce(reason: string): Promise<void> {
     if (result.queued.length || result.skipped.length || result.skippedBusy.length || result.failed.length) {
       logger.warn(
         `sandbox_stale_image_prewarm reason=${reason} queued=${result.queued.length} `
-        + `prewarmed=${result.prewarmed.length} adopted=${result.adopted.length} `
+        + `retired=${result.retired.length} adopted=${result.adopted.length} `
         + `skipped=${result.skipped.length} skippedBusy=${result.skippedBusy.length} failed=${result.failed.length}`,
       );
       await emitAlert({
         event: 'sandbox_stale_image_prewarm',
         severity: result.failed.length ? 'warning' : 'info',
-        message: `ACS Sandbox stale-image prewarm processed ${result.queued.length} Paused sandbox${result.queued.length === 1 ? '' : 'es'}`,
+        message: `ACS Sandbox stale-image retire processed ${result.queued.length} Paused sandbox${result.queued.length === 1 ? '' : 'es'}`,
         metadata: result,
       });
     } else {
@@ -792,15 +793,18 @@ async function runLifecycleOnce(reason: string): Promise<void> {
       );
     }
     const report = await sandboxManager.cleanupSandboxes({ busySandboxNames: activeBusySandboxNames() });
-    if (report.paused.length || report.deleted.length || report.skippedBusy.length) {
+    if (report.paused.length || report.deleted.length || report.brokenRecycled.length || report.skippedBusy.length) {
       logger.warn(
         `sandbox_lifecycle_actions reason=${reason} checked=${report.checked} paused=${report.paused.length} `
-        + `deleted=${report.deleted.length} skippedBusy=${report.skippedBusy.length} snatDeleted=${report.snatDeleted.length}`,
+        + `deleted=${report.deleted.length} brokenRecycled=${report.brokenRecycled.length} `
+        + `skippedBusy=${report.skippedBusy.length} snatDeleted=${report.snatDeleted.length}`,
       );
       await emitAlert({
         event: 'sandbox_lifecycle_actions',
-        severity: report.deleted.length ? 'warning' : 'info',
-        message: 'ACS Sandbox lifecycle guard took action',
+        severity: report.deleted.length || report.brokenRecycled.length ? 'warning' : 'info',
+        message: report.brokenRecycled.length
+          ? `ACS Sandbox lifecycle recycled ${report.brokenRecycled.length} broken paused sandbox${report.brokenRecycled.length === 1 ? '' : 'es'} (false-paused billing leak)`
+          : 'ACS Sandbox lifecycle guard took action',
         metadata: report,
       });
     }
@@ -852,36 +856,45 @@ async function emitAlert(input: {
 }): Promise<void> {
   const log = input.severity === 'error' ? logger.error : input.severity === 'warning' ? logger.warn : logger.info;
   log(`alert event=${input.event} severity=${input.severity} message=${input.message}`);
-  if (!config.alertWebhookUrl) return;
+  if (config.alertWebhookUrls.length === 0) return;
   const now = Date.now();
   const lastAt = lastAlertAtByEvent.get(input.event) ?? 0;
   if (config.alertMinIntervalMs > 0 && now - lastAt < config.alertMinIntervalMs) return;
   lastAlertAtByEvent.set(input.event, now);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5_000);
-  timer.unref?.();
-  try {
-    const response = await fetch(config.alertWebhookUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(config.alertWebhookBearerToken ? { authorization: `Bearer ${config.alertWebhookBearerToken}` } : {}),
-      },
-      body: JSON.stringify({
-        source: 'agent-saas-acs-orchestrator',
-        namespace: config.namespace,
-        event: input.event,
-        severity: input.severity,
-        message: input.message,
-        metadata: input.metadata ?? {},
-        occurredAt: new Date().toISOString(),
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) logger.warn(`alert webhook HTTP ${response.status}`);
-  } catch (err) {
-    logger.warn(`alert webhook failed: ${err instanceof Error ? err.message : String(err)}`);
-  } finally {
-    clearTimeout(timer);
+  const body = JSON.stringify({
+    source: 'agent-saas-acs-orchestrator',
+    namespace: config.namespace,
+    event: input.event,
+    severity: input.severity,
+    message: input.message,
+    metadata: input.metadata ?? {},
+    occurredAt: new Date().toISOString(),
+  });
+  // 2026-08-01：多 URL fallback。server 蓝绿部署下单端口（3200/3201）在切色或部署
+  // 窗口会连接拒绝，07-25 起历轮 prewarm failed 告警全部 fetch failed 丢失。逐个
+  // 尝试，任一投递成功即停。
+  const errors: string[] = [];
+  for (const url of config.alertWebhookUrls) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5_000);
+    timer.unref?.();
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(config.alertWebhookBearerToken ? { authorization: `Bearer ${config.alertWebhookBearerToken}` } : {}),
+        },
+        body,
+        signal: controller.signal,
+      });
+      if (response.ok) return;
+      errors.push(`HTTP ${response.status} (${url})`);
+    } catch (err) {
+      errors.push(`${err instanceof Error ? err.message : String(err)} (${url})`);
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  logger.warn(`alert webhook failed on all ${config.alertWebhookUrls.length} url(s): ${errors.join('; ')}`);
 }

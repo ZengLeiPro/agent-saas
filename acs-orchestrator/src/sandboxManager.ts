@@ -33,6 +33,12 @@ export interface ManagedSandbox {
   mountSubPath?: string;
   phase?: string;
   brokenReason?: string;
+  /**
+   * status.conditions 里 SandboxPaused condition 的 lastTransitionTime。
+   * 用于 broken 态回收宽限判定：condition 卡在 False/ImageChanged 超过宽限期才回收，
+   * 避免误伤正常 pause/resume 过程中的瞬态。
+   */
+  pausedConditionChangedAt?: string;
   createdAt?: string;
   lastActiveAt?: string;
   /** 后台 Shell 仍可能运行的最晚时间；生命周期在此之前不得 pause/delete/recreate。 */
@@ -63,6 +69,13 @@ export interface SandboxCleanupReport {
   checked: number;
   paused: string[];
   deleted: string[];
+  /**
+   * 2026-08-01：矛盾态自愈回收的 sandbox。phase=Paused 但 broken（SandboxPaused
+   * condition 卡 False/ImageChanged、或 spec.paused=false 半状态）超过宽限期，
+   * ACS 对这种「假暂停」持续按运行态计费；巡检删除 CR 止损，NAS workspace 保留，
+   * 下次访问自动重建。07-22 事故 21 个、08-01 复发 6 个的兜底修复。
+   */
+  brokenRecycled: string[];
   skippedBusy: string[];
   snatDeleted: string[];
   snatUnexpected: number;
@@ -73,7 +86,14 @@ export interface SandboxCleanupReport {
 export interface SandboxStaleImagePrewarmReport {
   checked: number;
   queued: string[];
-  prewarmed: string[];
+  /**
+   * 2026-08-01 语义变更：旧 prewarm（原地 applySandbox 换镜像 + 保持 Running 等
+   * idle pause）在 ACS 侧不可靠——07-22/08-01 两轮事故实证：apply 失败无回滚会留
+   * 半状态；apply「成功」后续 pause 仍卡 SandboxPaused=False/ImageChanged，均持续
+   * 计费。stale Paused sandbox 改为直接删除 CR（retired），NAS workspace 不动，
+   * 用户下次访问按新镜像走 create 冷启动。对照实证：recreate 路径 pause 正常。
+   */
+  retired: string[];
   adopted: string[];
   skipped: string[];
   skippedBusy: string[];
@@ -398,6 +418,7 @@ export class SandboxManager {
         mountSubPath: stringValue(annotations[MOUNT_SUBPATH_ANNOTATION]),
         phase,
         ...optionalString('brokenReason', brokenSandboxStateReason({ phase, raw: item })),
+        ...optionalString('pausedConditionChangedAt', pausedConditionLastTransition(item)),
         createdAt: stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
         lastActiveAt: stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]) ?? stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
         backgroundShellProtectedUntil: stringValue(annotations[BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION]),
@@ -461,13 +482,12 @@ export class SandboxManager {
 
   async prewarmStaleImagePausedSandboxes(input: {
     busySandboxNames?: Set<string>;
-    bootstrap?: (ref: SandboxRef) => Promise<void>;
   } = {}): Promise<SandboxStaleImagePrewarmReport> {
     const busySandboxNames = input.busySandboxNames ?? new Set<string>();
     const currentImage = this.config.sandboxImage;
     const sandboxes = await this.listManagedSandboxes();
     const queued: string[] = [];
-    const prewarmed: string[] = [];
+    const retired: string[] = [];
     const adopted: string[] = [];
     const skipped: string[] = [];
     const skippedBusy: string[] = [];
@@ -504,33 +524,30 @@ export class SandboxManager {
       candidates.push(ref);
     }
 
-    const runningCount = sandboxes.filter((sandbox) => isRunningCostPhase(sandbox.phase)).length;
-    const availableSlots = this.config.maxRunningSandboxes > 0
-      ? Math.max(1, this.config.maxRunningSandboxes - runningCount)
-      : candidates.length;
-    const concurrency = Math.min(candidates.length, availableSlots);
+    // retire 是轻量删除操作（kubectl delete + 网络清理），不再占用运行槽位，
+    // 固定小并发即可，避免对 apiserver 的瞬时压力。
+    const concurrency = Math.min(candidates.length, 4);
     let cursor = 0;
     const worker = async () => {
       while (cursor < candidates.length) {
         const ref = candidates[cursor++]!;
-        await this.runPrewarmCandidate(ref, input.bootstrap, prewarmed, adopted, skipped, failed);
+        await this.runRetireCandidate(ref, retired, adopted, skipped, failed);
       }
     };
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
-    return { checked: sandboxes.length, queued, prewarmed, adopted, skipped, skippedBusy, failed };
+    return { checked: sandboxes.length, queued, retired, adopted, skipped, skippedBusy, failed };
   }
 
-  private async runPrewarmCandidate(
+  private async runRetireCandidate(
     ref: SandboxRef,
-    bootstrap: ((ref: SandboxRef) => Promise<void>) | undefined,
-    prewarmed: string[],
+    retired: string[],
     adopted: string[],
     skipped: string[],
     failed: Array<{ name: string; error: string }>,
   ): Promise<void> {
     try {
-      const result = await this.startPrewarm(ref, bootstrap);
-      if (result === 'prewarmed') prewarmed.push(ref.name);
+      const result = await this.startPrewarm(ref);
+      if (result === 'retired') retired.push(ref.name);
       else if (result === 'adopted') adopted.push(ref.name);
       else skipped.push(ref.name);
     } catch (err) {
@@ -570,6 +587,7 @@ export class SandboxManager {
     const sandboxes = await this.listManagedSandboxes();
     const paused: string[] = [];
     const deleted: string[] = [];
+    const brokenRecycled: string[] = [];
     const skippedBusy: string[] = [];
     const snatDeleted: string[] = [];
 
@@ -583,6 +601,32 @@ export class SandboxManager {
       const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt) ?? createdAtMs;
       const ageMs = createdAtMs === undefined ? 0 : nowMs - createdAtMs;
       const idleMs = lastActiveAtMs === undefined ? 0 : nowMs - lastActiveAtMs;
+      // 2026-08-01 矛盾态自愈：phase=Paused 但 broken（SandboxPaused 卡 False/ImageChanged
+      // 或 spec.paused=false 半状态）时 ACS 未完成休眠、持续按运行态计费，且旧逻辑只看
+      // phase 会把它当「已暂停」永久跳过（07-22 事故 21 个 / 08-01 复发 6 个，最长滞留
+      // 10 天）。宽限期取 condition 翻转、最后活跃、创建三个时间戳的最近者，全部超过
+      // 宽限才回收，避免误伤正常 pause/resume 的瞬态（正常流程另有 busy 保护）。
+      if (sandbox.brokenReason && this.config.sandboxBrokenRecycleGraceMs > 0) {
+        const brokenSinceMs = Math.max(
+          parseDateMs(sandbox.pausedConditionChangedAt) ?? 0,
+          lastActiveAtMs ?? 0,
+          createdAtMs ?? 0,
+        );
+        if (brokenSinceMs > 0 && nowMs - brokenSinceMs >= this.config.sandboxBrokenRecycleGraceMs) {
+          this.logger.warn(
+            `sandbox_broken_recycle name=${sandbox.name} reason=${sandbox.brokenReason} `
+            + `brokenForMs=${nowMs - brokenSinceMs}`,
+          );
+          this.invalidateEnsureFastPath(sandbox.name);
+          await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
+            timeoutMs: this.config.sandboxWaitTimeoutMs,
+          });
+          await this.networkPolicyManager.deleteForSandboxName(sandbox.name);
+          snatDeleted.push(...await this.snatManager.deleteForSandboxName(sandbox.name));
+          brokenRecycled.push(sandbox.name);
+          continue;
+        }
+      }
       // 07-05：CI 临时 sandbox（as-ws-ci-* 前缀）走短 TTL（sandboxCiTtlMs，默认 6h）。
       // CI 场景一次性使用无复用价值，不该跟用户会话共享 7 天 TTL。
       // sandboxCiTtlMs=0 表示关闭这条特殊路径，退回普通 TTL。
@@ -618,18 +662,19 @@ export class SandboxManager {
     }
 
     const pausedSet = new Set(paused);
-    const deletedSet = new Set(deleted);
+    const removedSet = new Set([...deleted, ...brokenRecycled]);
     const snatReport = await this.cleanupOrphanSnat();
 
     return {
       checked: sandboxes.length,
       paused,
       deleted,
+      brokenRecycled,
       skippedBusy,
       snatDeleted: [...snatDeleted, ...snatReport.deleted],
       snatUnexpected: snatReport.unexpected.length,
       runningCount: sandboxes.filter((sandbox) => (
-        !deletedSet.has(sandbox.name)
+        !removedSet.has(sandbox.name)
         && !pausedSet.has(sandbox.name)
         && isRunningCostPhase(sandbox.phase)
       )).length,
@@ -791,17 +836,14 @@ export class SandboxManager {
     }
   }
 
-  private async startPrewarm(
-    ref: SandboxRef,
-    bootstrap: ((ref: SandboxRef) => Promise<void>) | undefined,
-  ): Promise<'prewarmed' | 'adopted' | 'skipped'> {
+  private async startPrewarm(ref: SandboxRef): Promise<'retired' | 'adopted' | 'skipped'> {
     const existing = this.prewarmInFlight.get(ref.name);
     if (existing) {
       await existing;
       return 'skipped';
     }
-    let outcome: 'prewarmed' | 'adopted' | 'skipped' = 'skipped';
-    const promise = this.prewarmPausedSandbox(ref, bootstrap).then((result) => {
+    let outcome: 'retired' | 'adopted' | 'skipped' = 'skipped';
+    const promise = this.retireStalePausedSandbox(ref).then((result) => {
       outcome = result;
     });
     this.prewarmInFlight.set(ref.name, promise);
@@ -813,11 +855,22 @@ export class SandboxManager {
     }
   }
 
-  private async prewarmPausedSandbox(
-    ref: SandboxRef,
-    bootstrap: ((ref: SandboxRef) => Promise<void>) | undefined,
-  ): Promise<'prewarmed' | 'adopted' | 'skipped'> {
-    const activeKey = `prewarm:${ref.name}:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
+  /**
+   * 2026-08-01：stale-image Paused sandbox 直接删除退役，取代旧「原地 applySandbox
+   * 换镜像 + 保持 Running 等 idle pause」的 prewarm。
+   *
+   * 事故依据（07-22 / 08-01 两轮，journal 实锤）：
+   * - apply 后 waitRunning 失败无回滚 → CR 留在 spec.paused=false + phase=Paused +
+   *   SandboxPaused=False/ImageChanged 半状态，ACS 持续按运行态计费；
+   * - apply「成功」（prewarm_ready）后 4h idle pause 时仍卡 ImageChanged 无法完成
+   *   休眠（07-31 21:17 prewarm_ready → 08-01 01:15 pause 卡死，精确到秒对应）；
+   * - 对照：走 delete+recreate 的 sandbox 后续 pause 均正常（True/DeletePod）。
+   *
+   * 删除只影响 CR/NetworkPolicy/SNAT，NAS workspace/用户数据不动；用户下次访问
+   * ensureRunning 按新镜像 create（冷启动 ~90-140s），Paused 态本就无热度可保。
+   */
+  private async retireStalePausedSandbox(ref: SandboxRef): Promise<'retired' | 'adopted' | 'skipped'> {
+    const activeKey = `retire:${ref.name}:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
     const releaseActive = this.activeRegistry?.acquire(ref.name, activeKey);
     try {
       const latest = await this.getStatus(ref.name);
@@ -826,24 +879,16 @@ export class SandboxManager {
       if (!oldImage || oldImage === this.config.sandboxImage) return 'skipped';
       if (this.isBusy(ref.name, undefined, activeKey)) return 'adopted';
 
-      this.logger.warn(`sandbox_stale_image_paused_prewarm name=${ref.name} old=${oldImage} new=${this.config.sandboxImage}`);
-      await this.ensureHostWorkspace(ref);
-      await this.ensureCapacity(ref.name);
-      await this.networkPolicyManager.reconcile(ref);
-      await this.applySandbox(ref);
-      await this.waitForPhase(ref.name, 'Running');
-      await this.snatManager.ensureForSandbox(ref);
-      await this.touch(ref.name);
-      await bootstrap?.(ref);
-
-      if (this.isBusy(ref.name, undefined, activeKey)) {
-        this.logger.info(`sandbox_stale_image_prewarm_adopted name=${ref.name}`);
-        return 'adopted';
-      }
-      // Keep the freshly updated sandbox Running. Pausing immediately after a
-      // Paused image refresh can leave ACS in ImageChanged/recreating limbo.
-      this.logger.info(`sandbox_stale_image_prewarm_ready name=${ref.name}`);
-      return 'prewarmed';
+      this.logger.warn(`sandbox_stale_image_paused_retire name=${ref.name} old=${oldImage} new=${this.config.sandboxImage}`);
+      this.invalidateEnsureFastPath(ref.name);
+      const result = await this.kubectl.run(['delete', this.resourceName(ref.name), '--ignore-not-found=true'], {
+        timeoutMs: this.config.sandboxWaitTimeoutMs,
+      });
+      if (result.exitCode !== 0) throw new Error(`delete stale paused sandbox 失败: ${result.stderr || result.stdout}`);
+      await this.networkPolicyManager.deleteForSandboxName(ref.name);
+      await this.snatManager.deleteForSandboxName(ref.name);
+      this.logger.info(`sandbox_stale_image_retired name=${ref.name}`);
+      return 'retired';
     } finally {
       releaseActive?.();
     }
@@ -1263,6 +1308,18 @@ export function brokenSandboxStateReason(status: SandboxStatus): string | undefi
 export function brokenPausedStateReason(status: SandboxStatus): string | undefined {
   if (status.phase !== 'Paused') return undefined;
   return brokenSandboxStateReason(status);
+}
+
+/** 从 Sandbox CR item 里取 SandboxPaused condition 的 lastTransitionTime（用于 broken 回收宽限判定）。 */
+export function pausedConditionLastTransition(item: Record<string, unknown>): string | undefined {
+  const statusBody = item.status && typeof item.status === 'object' ? item.status as Record<string, unknown> : {};
+  const conditions = Array.isArray(statusBody.conditions) ? statusBody.conditions : [];
+  const pausedCondition = conditions.find((condition): condition is Record<string, unknown> => (
+    Boolean(condition)
+    && typeof condition === 'object'
+    && (condition as Record<string, unknown>).type === 'SandboxPaused'
+  ));
+  return stringValue(pausedCondition?.lastTransitionTime);
 }
 
 function isRunningCostPhase(phase: string | undefined): boolean {

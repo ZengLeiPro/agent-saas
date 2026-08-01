@@ -740,6 +740,52 @@ jobs:
           }
           NODE
             fi
+
+            # ── 5.5 发布门禁：假暂停必须收敛为 0（2026-08-01，07-22/08-01 事故）──
+            # 假暂停 = phase=Paused 但 SandboxPaused condition != True（如卡 False/
+            # ImageChanged）或 spec.paused != true 的半状态；ACS 对其持续按运行态计费。
+            # 新 orchestrator startup 会 retire stale Paused + lifecycle 回收 broken
+            # （回收宽限默认 5min），给最多 8 分钟收敛。门禁失败不回滚（旧版行为更差），
+            # 只 fail 提醒人工介入。
+            GATE_OK=false
+            for _ in $(seq 1 48); do
+              # shellcheck disable=SC2086
+              kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" get sandbox \
+                -l "app.kubernetes.io/managed-by=agent-saas-acs-orchestrator" \
+                -o json >/tmp/acs-gate-sandboxes.json 2>/dev/null || true
+              BROKEN_COUNT="$(node <<'NODE'
+          const fs = require('node:fs');
+          let body = { items: [] };
+          try { body = JSON.parse(fs.readFileSync('/tmp/acs-gate-sandboxes.json', 'utf8') || '{"items":[]}'); } catch {}
+          const items = Array.isArray(body.items) ? body.items : [];
+          let broken = 0;
+          for (const item of items) {
+            if ((item?.status?.phase || '') !== 'Paused') continue;
+            const conditions = Array.isArray(item?.status?.conditions) ? item.status.conditions : [];
+            const paused = conditions.find((c) => c && c.type === 'SandboxPaused');
+            const pausedOk = paused && paused.status === 'True';
+            const specPaused = item?.spec?.paused === true;
+            if (!pausedOk || !specPaused) {
+              broken += 1;
+              console.error(`broken paused: ${item?.metadata?.name} specPaused=${item?.spec?.paused} cond=${paused ? `${paused.status}/${paused.reason}` : 'missing'}`);
+            }
+          }
+          console.log(broken);
+          NODE
+              )"
+              if [ "$BROKEN_COUNT" = "0" ]; then
+                GATE_OK=true
+                break
+              fi
+              echo "false-paused gate: ${BROKEN_COUNT} broken paused sandbox(es) remaining, waiting..."
+              sleep 10
+            done
+            if [ "$GATE_OK" != "true" ]; then
+              echo "FALSE-PAUSED GATE FAILED: broken paused sandboxes did not converge to 0 within 8min" >&2
+              echo "these sandboxes keep billing as running (see 07-22/08-01 incidents); investigate orchestrator lifecycle logs" >&2
+              exit 1
+            fi
+            echo "false-paused gate passed: 0 broken paused sandboxes"
           fi
 
           # ── 6. ImageCache: 为本次镜像提交缓存制作 + 清理旧缓存（2026-07-31 方案3-P0）──

@@ -4,6 +4,7 @@ import type { SecretVault, VaultCaller } from '../../security/secretVault.js';
 import {
   CodexSubscriptionTelemetry,
   type CodexSubscriptionRuntimeStatus,
+  type CodexWireRequestSample,
 } from './codexSubscriptionTelemetry.js';
 
 export const CODEX_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
@@ -24,6 +25,8 @@ export interface CodexSubscriptionRuntimeConfig {
   credentialRef?: string;
   endpoint?: string;
   originator?: string;
+  /** 连接内 stateful 接力；关闭时保持 HTTP/SSE 全量历史。 */
+  websocketEnabled?: boolean;
 }
 
 export interface CodexOAuthTokens {
@@ -95,7 +98,7 @@ export class CodexCredentialManager {
     fetchImpl?: typeof fetch;
   }) {}
 
-  getConfiguration(): Required<Pick<CodexSubscriptionRuntimeConfig, 'enabled' | 'endpoint' | 'originator'>>
+  getConfiguration(): Required<Pick<CodexSubscriptionRuntimeConfig, 'enabled' | 'endpoint' | 'originator' | 'websocketEnabled'>>
     & Pick<CodexSubscriptionRuntimeConfig, 'credentialRef'> {
     const raw = this.options.getConfig() ?? {};
     return {
@@ -104,6 +107,7 @@ export class CodexCredentialManager {
       // ChatGPT private Codex endpoint currently accepts first-party Codex originators.
       // Keep the current CLI/TUI identity as the safe wire default; the app still owns the harness.
       originator: validateOriginator(raw.originator ?? 'codex-tui'),
+      websocketEnabled: raw.websocketEnabled === true,
       ...(raw.credentialRef ? { credentialRef: raw.credentialRef } : {}),
     };
   }
@@ -226,6 +230,10 @@ export class CodexCredentialManager {
 
   recordModelFailure(model: string, error: unknown): void {
     this.telemetry.recordFailure(model, error);
+  }
+
+  recordWireRequest(input: CodexWireRequestSample): void {
+    this.telemetry.recordWireRequest(input);
   }
 
   private async refreshUnderLock(

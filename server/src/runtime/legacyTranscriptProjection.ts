@@ -2,7 +2,13 @@ import { appendFile, mkdir } from 'fs/promises';
 import { dirname } from 'path';
 
 import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
-import type { ModelChatMessage, ModelResponseMode, ModelUsage, PlatformEvent } from './types.js';
+import type {
+  ModelChatMessage,
+  ModelResponseMode,
+  ModelUsage,
+  ModelWireMode,
+  PlatformEvent,
+} from './types.js';
 import {
   buildModelUserContent,
   buildPrunedHistoricalUserContent,
@@ -50,6 +56,9 @@ function assistantLine(
     promptCacheKey?: string;
     requestInputPrefixHash?: string;
     requestBodyBytes?: number;
+    wireMode?: ModelWireMode;
+    wireRequestBodyBytes?: number;
+    wireFallbackReason?: string;
   } = {},
 ): string {
   const message: Record<string, unknown> = { role: 'assistant', content };
@@ -71,6 +80,11 @@ function assistantLine(
   if (extra.promptCacheKey) message.prompt_cache_key = extra.promptCacheKey;
   if (extra.requestInputPrefixHash) message.request_input_prefix_hash = extra.requestInputPrefixHash;
   if (extra.requestBodyBytes !== undefined) message.request_body_bytes = extra.requestBodyBytes;
+  if (extra.wireMode) message.wire_mode = extra.wireMode;
+  if (extra.wireRequestBodyBytes !== undefined) {
+    message.wire_request_body_bytes = extra.wireRequestBodyBytes;
+  }
+  if (extra.wireFallbackReason) message.wire_fallback_reason = extra.wireFallbackReason;
   return jsonl({
     type: 'assistant',
     message,
@@ -151,6 +165,11 @@ export class LegacyTranscriptProjection {
               ? { requestInputPrefixHash: event.requestInputPrefixHash }
               : {}),
             ...(event.requestBodyBytes !== undefined ? { requestBodyBytes: event.requestBodyBytes } : {}),
+            ...(event.wireMode ? { wireMode: event.wireMode } : {}),
+            ...(event.wireRequestBodyBytes !== undefined
+              ? { wireRequestBodyBytes: event.wireRequestBodyBytes }
+              : {}),
+            ...(event.wireFallbackReason ? { wireFallbackReason: event.wireFallbackReason } : {}),
           },
         );
       case 'assistant_thinking':
@@ -182,6 +201,11 @@ export class LegacyTranscriptProjection {
           ...(event.promptCacheKey ? { promptCacheKey: event.promptCacheKey } : {}),
           ...(event.requestInputPrefixHash ? { requestInputPrefixHash: event.requestInputPrefixHash } : {}),
           ...(event.requestBodyBytes !== undefined ? { requestBodyBytes: event.requestBodyBytes } : {}),
+          ...(event.wireMode ? { wireMode: event.wireMode } : {}),
+          ...(event.wireRequestBodyBytes !== undefined
+            ? { wireRequestBodyBytes: event.wireRequestBodyBytes }
+            : {}),
+          ...(event.wireFallbackReason ? { wireFallbackReason: event.wireFallbackReason } : {}),
         });
       }
       case 'tool_result':

@@ -135,6 +135,12 @@ export interface ModelUsage {
 
 export type ModelTerminalStatus = 'completed' | 'incomplete' | 'failed' | 'cancelled';
 
+export type ModelWireMode =
+  | 'http_sse_full'
+  | 'websocket_full'
+  | 'websocket_relay'
+  | 'websocket_fallback_full';
+
 export type ModelRequestDiagnostic =
   | {
     type: 'started';
@@ -348,6 +354,12 @@ export type ModelEvent =
     cacheEligible?: boolean;
     /** 最终成功请求的 UTF-8 JSON body 大小。 */
     requestBodyBytes?: number;
+    /** 实际 provider wire 形态；不参与模型上下文 Token 核算。 */
+    wireMode?: ModelWireMode;
+    /** 实际 wire payload 大小；WebSocket relay 时可显著小于 requestBodyBytes。 */
+    wireRequestBodyBytes?: number;
+    /** WebSocket 不可用并回退 HTTP/SSE 时的脱敏原因码。 */
+    wireFallbackReason?: string;
     /** 原生 Responses tool_search 的终态事实；为空表示本轮未搜索/加载。 */
     toolSearchResults?: ModelToolSearchResult[];
     /** Opaque encrypted reasoning items; never projected to client-visible transcript JSONL. */
@@ -506,6 +518,9 @@ export type PlatformEvent =
     requestHistoryHash?: string;
     cacheEligible?: boolean;
     requestBodyBytes?: number;
+    wireMode?: ModelWireMode;
+    wireRequestBodyBytes?: number;
+    wireFallbackReason?: string;
     contextBreakdown?: ContextUsageBreakdown;
     /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;
@@ -561,6 +576,9 @@ export type PlatformEvent =
     requestHistoryHash?: string;
     cacheEligible?: boolean;
     requestBodyBytes?: number;
+    wireMode?: ModelWireMode;
+    wireRequestBodyBytes?: number;
+    wireFallbackReason?: string;
     contextBreakdown?: ContextUsageBreakdown;
     /** True when the content was already delivered live via in-process outbound deltas. */
     streamed?: boolean;

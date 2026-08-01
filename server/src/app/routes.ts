@@ -352,6 +352,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       config,
       credentialManager: runtime.codexCredentialManager,
       deviceAuthService: runtime.codexDeviceAuthService,
+      closeWebSockets: runtime.codexWebSocketShutdown,
     }),
   );
   app.use(

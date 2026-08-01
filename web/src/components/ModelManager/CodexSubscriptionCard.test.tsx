@@ -17,6 +17,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 const connectedState = {
   config: {
     enabled: true,
+    websocketEnabled: true,
     endpoint: "https://chatgpt.com/backend-api/codex/responses",
     originator: "kaiyan-agent",
   },
@@ -39,6 +40,18 @@ const connectedState = {
       cachedInputTokens: 2_400,
       cacheHitRequestRate: 1,
       cachedInputTokenRate: 0.8,
+    },
+    wireWindow: {
+      limit: 50,
+      sampleCount: 3,
+      websocketRequestCount: 3,
+      relayRequestCount: 2,
+      fallbackFullRequestCount: 0,
+      httpFallbackRequestCount: 0,
+      logicalRequestBodyBytes: 12_000,
+      wireRequestBodyBytes: 4_000,
+      savedRequestBodyBytes: 8_000,
+      savedRequestBodyRate: 2 / 3,
     },
     lastRequestAt: "2026-07-29T15:30:00.000Z",
     lastSuccessAt: "2026-07-29T15:30:00.000Z",
@@ -86,6 +99,7 @@ describe("CodexSubscriptionCard", () => {
       expect(saveCall?.[0]).toBe("/api/admin/codex-subscription");
       expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual({
         enabled: true,
+        websocketEnabled: true,
       });
     });
   });

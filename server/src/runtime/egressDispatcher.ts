@@ -12,7 +12,12 @@
  * 放大成全站不可用是更糟的选择。降级会打 warn 日志，便于发现代理静默失效。
  */
 
-import { ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
+import {
+  ProxyAgent,
+  WebSocket as UndiciWebSocket,
+  fetch as undiciFetch,
+  type Dispatcher,
+} from 'undici';
 
 import {
   parseProxyUrl,
@@ -35,6 +40,15 @@ export interface EgressDispatcherLogger {
   warn(msg: string): void;
   info?(msg: string): void;
 }
+
+export type EgressWebSocket = InstanceType<typeof UndiciWebSocket>;
+
+export type EgressWebSocketConnector = (input: {
+  url: string;
+  headers: Record<string, string>;
+  signal?: AbortSignal;
+  connectTimeoutMs?: number;
+}) => Promise<EgressWebSocket>;
 
 interface CachedDispatcher {
   version: number;
@@ -187,4 +201,89 @@ export function createEgressFetch(
       return baseFetch(input, init);
     }
   } as typeof fetch;
+}
+
+/**
+ * 构造一个遵守同一 server egress policy 的 WebSocket connector。
+ *
+ * undici.WebSocket 接受 Dispatcher，因此可以直接复用 HTTP/SSE 已验证的
+ * ProxyAgent，不需要另建一套代理配置或绕过平台出口策略。只有配置显式
+ * failOpen 且错误属于代理链路故障时，才会降级直连重试一次。
+ */
+export function createEgressWebSocketConnector(
+  registry: EgressDispatcherRegistry,
+  logger: EgressDispatcherLogger = { warn: () => undefined },
+): EgressWebSocketConnector {
+  return async ({ url, headers, signal, connectTimeoutMs = 15_000 }) => {
+    const { dispatcher, failOpen } = registry.resolve(url);
+    try {
+      return await openWebSocket(url, headers, dispatcher, signal, connectTimeoutMs);
+    } catch (error) {
+      if (!dispatcher || !failOpen || !isProxyTransportError(error)) throw error;
+      logger.warn(
+        `[egress] WebSocket 经代理连接失败，已降级直连重试: ${url}`
+          + ` (${error instanceof Error ? error.message : String(error)})`,
+      );
+      return openWebSocket(url, headers, null, signal, connectTimeoutMs);
+    }
+  };
+}
+
+async function openWebSocket(
+  url: string,
+  headers: Record<string, string>,
+  dispatcher: Dispatcher | null,
+  signal: AbortSignal | undefined,
+  connectTimeoutMs: number,
+): Promise<EgressWebSocket> {
+  if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError');
+  const socket = new UndiciWebSocket(url, {
+    headers,
+    ...(dispatcher ? { dispatcher } : {}),
+  });
+  socket.binaryType = 'arraybuffer';
+
+  return new Promise<EgressWebSocket>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      socket.removeEventListener('open', onOpen);
+      socket.removeEventListener('error', onError);
+      socket.removeEventListener('close', onClose);
+      if (error !== undefined) {
+        try { socket.close(); } catch { /* connecting socket may already be closed */ }
+        reject(error);
+      } else {
+        resolve(socket);
+      }
+    };
+    const onOpen = () => finish();
+    const onError = (event: Event) => {
+      const candidate = event as Event & { error?: unknown; message?: string };
+      const detail = candidate.error instanceof Error && candidate.error.message.trim()
+        ? candidate.error
+        : typeof candidate.message === 'string' && candidate.message.trim()
+          ? new Error(candidate.message)
+          : new Error('WebSocket connection failed before open (empty ErrorEvent)');
+      finish(detail);
+    };
+    const onClose = (event: CloseEvent) => {
+      finish(new Error(
+        `WebSocket closed before open (code=${event.code} reason=${event.reason || 'none'})`,
+      ));
+    };
+    const onAbort = () => finish(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+    const timer = setTimeout(() => {
+      finish(new Error(`WebSocket connect timeout after ${connectTimeoutMs}ms`));
+    }, connectTimeoutMs);
+    timer.unref?.();
+
+    socket.addEventListener('open', onOpen);
+    socket.addEventListener('error', onError);
+    socket.addEventListener('close', onClose);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }

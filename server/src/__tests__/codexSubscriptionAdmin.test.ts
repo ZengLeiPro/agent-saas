@@ -27,6 +27,7 @@ function rawConfig() {
     server: { port: 3200 },
     codexSubscription: {
       enabled: false,
+      websocketEnabled: false,
       endpoint: 'https://chatgpt.com/backend-api/codex/responses',
       originator: 'kaiyan-agent',
     },
@@ -85,6 +86,7 @@ describe('Codex subscription admin router', () => {
         expires_in: 3600,
       }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
     const deviceAuthService = new CodexDeviceAuthService(oauthFetch);
+    const closeWebSockets = vi.fn();
 
     const app = express();
     app.use(express.json());
@@ -102,6 +104,7 @@ describe('Codex subscription admin router', () => {
       config,
       credentialManager,
       deviceAuthService,
+      closeWebSockets,
     }));
     const server = app.listen(0);
     servers.push(server);
@@ -127,7 +130,7 @@ describe('Codex subscription admin router', () => {
     const connected = await pollResponse.json() as any;
     expect(connected).toMatchObject({
       status: 'completed',
-      config: { enabled: true, originator: 'kaiyan-agent' },
+      config: { enabled: true, websocketEnabled: false, originator: 'kaiyan-agent' },
       credential: {
         configured: true,
         connected: true,
@@ -138,11 +141,16 @@ describe('Codex subscription admin router', () => {
           limit: 50,
           sampleCount: 0,
         },
+        wireWindow: {
+          limit: 50,
+          sampleCount: 0,
+        },
         oauth: {},
       },
     });
     expect(connected.credential).not.toHaveProperty('accessToken');
     expect(connected.credential).not.toHaveProperty('refreshToken');
+    expect(closeWebSockets).toHaveBeenCalledTimes(1);
 
     const written = readFileSync(configPath, 'utf-8');
     const persistedConfig = JSON.parse(written);
@@ -156,21 +164,27 @@ describe('Codex subscription admin router', () => {
     const saveResponse = await fetch(baseUrl, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ enabled: false, originator: 'kaiyan-runtime' }),
+      body: JSON.stringify({
+        enabled: false,
+        websocketEnabled: true,
+        originator: 'kaiyan-runtime',
+      }),
     });
     expect(saveResponse.status).toBe(200);
     expect(await saveResponse.json()).toMatchObject({
-      config: { enabled: false, originator: 'kaiyan-agent' },
+      config: { enabled: false, websocketEnabled: false, originator: 'kaiyan-agent' },
       credential: { configured: true },
     });
+    expect(closeWebSockets).toHaveBeenCalledTimes(2);
 
     const disconnectResponse = await fetch(baseUrl, { method: 'DELETE' });
     expect(disconnectResponse.status).toBe(200);
     expect(await disconnectResponse.json()).toMatchObject({
-      config: { enabled: false, originator: 'kaiyan-agent' },
+      config: { enabled: false, websocketEnabled: false, originator: 'kaiyan-agent' },
       credential: { configured: false, connected: false },
     });
     expect(config.codexSubscription?.credentialRef).toBeUndefined();
+    expect(closeWebSockets).toHaveBeenCalledTimes(3);
     expect(JSON.parse(readFileSync(configPath, 'utf-8')).codexSubscription.credentialRef).toBeUndefined();
     expect(credentialFetch).toHaveBeenCalledWith(
       'https://auth.openai.com/oauth/revoke',

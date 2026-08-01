@@ -74,6 +74,7 @@ import { ChatCompletionsModelAdapter } from './chatCompletionsAdapter.js';
 import { ResponsesApiAdapter } from './responsesApiAdapter.js';
 import type { ModelAdapter } from './types.js';
 import { CodexSubscriptionResponsesTransport } from './responses/codexSubscriptionResponsesTransport.js';
+import type { CodexResponsesWebSocketPool } from './responses/codexResponsesWebSocketPool.js';
 import type { CodexCredentialManager } from './responses/codexCredentialManager.js';
 import {
   createExecutionConfig,
@@ -199,6 +200,7 @@ const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 export interface ModelAdapterFactoryDependencies {
   codexCredentialManager?: CodexCredentialManager;
   codexFetch?: typeof fetch;
+  codexWebSocketPool?: CodexResponsesWebSocketPool;
 }
 
 export type ModelAdapterFactory = (
@@ -229,6 +231,7 @@ export function createModelAdapterForProtocol(
         new CodexSubscriptionResponsesTransport(
           dependencies.codexCredentialManager,
           dependencies.codexFetch,
+          dependencies.codexWebSocketPool,
         ),
       );
     }

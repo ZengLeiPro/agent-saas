@@ -1097,6 +1097,11 @@ export class RawAgentLoop implements AgentLoop {
             ...(completed.requestHistoryHash ? { requestHistoryHash: completed.requestHistoryHash } : {}),
             ...(completed.cacheEligible !== undefined ? { cacheEligible: completed.cacheEligible } : {}),
             ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+            ...(completed.wireMode ? { wireMode: completed.wireMode } : {}),
+            ...(completed.wireRequestBodyBytes !== undefined
+              ? { wireRequestBodyBytes: completed.wireRequestBodyBytes }
+              : {}),
+            ...(completed.wireFallbackReason ? { wireFallbackReason: completed.wireFallbackReason } : {}),
             ...(completed.providerContinuation
               ? { providerContinuation: completed.providerContinuation }
               : {}),
@@ -1173,6 +1178,11 @@ export class RawAgentLoop implements AgentLoop {
           ...(completed.requestHistoryHash ? { requestHistoryHash: completed.requestHistoryHash } : {}),
           ...(completed.cacheEligible !== undefined ? { cacheEligible: completed.cacheEligible } : {}),
           ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+          ...(completed.wireMode ? { wireMode: completed.wireMode } : {}),
+          ...(completed.wireRequestBodyBytes !== undefined
+            ? { wireRequestBodyBytes: completed.wireRequestBodyBytes }
+            : {}),
+          ...(completed.wireFallbackReason ? { wireFallbackReason: completed.wireFallbackReason } : {}),
           ...(completed.providerContinuation
             ? { providerContinuation: completed.providerContinuation }
             : {}),
@@ -2759,6 +2769,11 @@ export class RawAgentLoop implements AgentLoop {
             ...(completed.requestHistoryHash ? { requestHistoryHash: completed.requestHistoryHash } : {}),
             ...(completed.cacheEligible !== undefined ? { cacheEligible: completed.cacheEligible } : {}),
             ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+            ...(completed.wireMode ? { wireMode: completed.wireMode } : {}),
+            ...(completed.wireRequestBodyBytes !== undefined
+              ? { wireRequestBodyBytes: completed.wireRequestBodyBytes }
+              : {}),
+            ...(completed.wireFallbackReason ? { wireFallbackReason: completed.wireFallbackReason } : {}),
             ...(completed.providerContinuation
               ? { providerContinuation: completed.providerContinuation }
               : {}),
@@ -2835,6 +2850,11 @@ export class RawAgentLoop implements AgentLoop {
           ...(completed.requestHistoryHash ? { requestHistoryHash: completed.requestHistoryHash } : {}),
           ...(completed.cacheEligible !== undefined ? { cacheEligible: completed.cacheEligible } : {}),
           ...(completed.requestBodyBytes !== undefined ? { requestBodyBytes: completed.requestBodyBytes } : {}),
+          ...(completed.wireMode ? { wireMode: completed.wireMode } : {}),
+          ...(completed.wireRequestBodyBytes !== undefined
+            ? { wireRequestBodyBytes: completed.wireRequestBodyBytes }
+            : {}),
+          ...(completed.wireFallbackReason ? { wireFallbackReason: completed.wireFallbackReason } : {}),
           ...(completed.providerContinuation
             ? { providerContinuation: completed.providerContinuation }
             : {}),

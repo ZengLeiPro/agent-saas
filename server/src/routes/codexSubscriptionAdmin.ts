@@ -14,6 +14,7 @@ export interface CreateCodexSubscriptionAdminRouterOptions {
   config: AppConfig;
   credentialManager: CodexCredentialManager;
   deviceAuthService: CodexDeviceAuthService;
+  closeWebSockets?: () => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -48,6 +49,7 @@ async function publicState(options: CreateCodexSubscriptionAdminRouterOptions) {
   return {
     config: {
       enabled: configuration.enabled,
+      websocketEnabled: configuration.websocketEnabled,
       endpoint: configuration.endpoint,
       originator: configuration.originator,
     },
@@ -70,6 +72,10 @@ export function createCodexSubscriptionAdminRouter(
     const current = options.credentialManager.getConfiguration();
     const body = isRecord(req.body) ? req.body : {};
     const enabled = typeof body.enabled === 'boolean' ? body.enabled : current.enabled;
+    const requestedWebsocketEnabled = typeof body.websocketEnabled === 'boolean'
+      ? body.websocketEnabled
+      : current.websocketEnabled;
+    const websocketEnabled = enabled && requestedWebsocketEnabled;
     if (enabled && !current.credentialRef) {
       res.status(409).json({ error: '请先完成 Codex 账号授权，再启用订阅 transport' });
       return;
@@ -78,10 +84,12 @@ export function createCodexSubscriptionAdminRouter(
     try {
       persistConfig(options, {
         enabled,
+        websocketEnabled,
         endpoint: current.endpoint,
         originator: current.originator,
         ...(current.credentialRef ? { credentialRef: current.credentialRef } : {}),
       });
+      options.closeWebSockets?.();
       res.json(await publicState(options));
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
@@ -117,10 +125,12 @@ export function createCodexSubscriptionAdminRouter(
       try {
         persistConfig(options, {
           enabled: true,
+          websocketEnabled: current.websocketEnabled,
           endpoint: current.endpoint,
           originator: current.originator,
           credentialRef: persisted.credentialRef,
         });
+        options.closeWebSockets?.();
       } catch (error) {
         if (!current.credentialRef) {
           await options.credentialManager.revoke(persisted.credentialRef).catch(() => undefined);
@@ -139,9 +149,11 @@ export function createCodexSubscriptionAdminRouter(
     try {
       persistConfig(options, {
         enabled: false,
+        websocketEnabled: false,
         endpoint: current.endpoint,
         originator: current.originator,
       });
+      options.closeWebSockets?.();
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
       return;

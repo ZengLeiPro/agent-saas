@@ -1,4 +1,5 @@
 import type { ModelTerminalStatus, ModelUsage } from '../types.js';
+import type { ResponsesWireMode } from './responsesTransport.js';
 
 const REQUEST_SAMPLE_LIMIT = 50;
 
@@ -12,6 +13,19 @@ export interface CodexSubscriptionRuntimeStatus {
     cachedInputTokens: number;
     cacheHitRequestRate?: number;
     cachedInputTokenRate?: number;
+  };
+  wireWindow: {
+    limit: number;
+    sampleCount: number;
+    websocketRequestCount: number;
+    relayRequestCount: number;
+    fallbackFullRequestCount: number;
+    httpFallbackRequestCount: number;
+    logicalRequestBodyBytes: number;
+    wireRequestBodyBytes: number;
+    savedRequestBodyBytes: number;
+    savedRequestBodyRate?: number;
+    lastFallbackReason?: string;
   };
   lastRequestAt?: string;
   lastSuccessAt?: string;
@@ -36,6 +50,17 @@ interface RequestSample {
   error?: string;
 }
 
+export interface CodexWireRequestSample {
+  mode: ResponsesWireMode;
+  logicalRequestBodyBytes: number;
+  wireRequestBodyBytes: number;
+  fallbackReason?: string;
+}
+
+interface StoredWireRequestSample extends CodexWireRequestSample {
+  timestamp: string;
+}
+
 /**
  * 当前 Server 实例的轻量运行健康窗口。
  *
@@ -44,6 +69,7 @@ interface RequestSample {
  */
 export class CodexSubscriptionTelemetry {
   private readonly requests: RequestSample[] = [];
+  private readonly wireRequests: StoredWireRequestSample[] = [];
   private lastRefreshAt?: string;
   private lastRefreshGeneration?: number;
   private lastRefreshErrorAt?: string;
@@ -80,6 +106,21 @@ export class CodexSubscriptionTelemetry {
     });
   }
 
+  recordWireRequest(input: CodexWireRequestSample): void {
+    this.wireRequests.push({
+      timestamp: new Date().toISOString(),
+      mode: input.mode,
+      logicalRequestBodyBytes: nonNegativeInt(input.logicalRequestBodyBytes),
+      wireRequestBodyBytes: nonNegativeInt(input.wireRequestBodyBytes),
+      ...(input.fallbackReason
+        ? { fallbackReason: compactTelemetryError(input.fallbackReason) }
+        : {}),
+    });
+    if (this.wireRequests.length > REQUEST_SAMPLE_LIMIT) {
+      this.wireRequests.splice(0, this.wireRequests.length - REQUEST_SAMPLE_LIMIT);
+    }
+  }
+
   recordRefreshSuccess(generation: number): void {
     this.lastRefreshAt = new Date().toISOString();
     this.lastRefreshGeneration = generation;
@@ -100,6 +141,14 @@ export class CodexSubscriptionTelemetry {
     const last = this.requests.at(-1);
     const lastSuccess = findLast(this.requests, (sample) => sample.terminalStatus === 'completed');
     const lastError = findLast(this.requests, (sample) => sample.terminalStatus !== 'completed');
+    const websocketRequestCount = this.wireRequests.filter((sample) => sample.mode.startsWith('websocket_')).length;
+    const relayRequestCount = this.wireRequests.filter((sample) => sample.mode === 'websocket_relay').length;
+    const fallbackFullRequestCount = this.wireRequests.filter((sample) => sample.mode === 'websocket_fallback_full').length;
+    const httpFallbackRequestCount = this.wireRequests.filter((sample) => sample.mode === 'http_sse_full' && !!sample.fallbackReason).length;
+    const logicalRequestBodyBytes = this.wireRequests.reduce((sum, sample) => sum + sample.logicalRequestBodyBytes, 0);
+    const wireRequestBodyBytes = this.wireRequests.reduce((sum, sample) => sum + sample.wireRequestBodyBytes, 0);
+    const savedRequestBodyBytes = Math.max(0, logicalRequestBodyBytes - wireRequestBodyBytes);
+    const lastFallback = findLast(this.wireRequests, (sample) => !!sample.fallbackReason);
     return {
       requestWindow: {
         limit: REQUEST_SAMPLE_LIMIT,
@@ -113,6 +162,23 @@ export class CodexSubscriptionTelemetry {
           : {}),
         ...(eligibleInputTokens > 0
           ? { cachedInputTokenRate: Math.min(1, cachedInputTokens / eligibleInputTokens) }
+          : {}),
+      },
+      wireWindow: {
+        limit: REQUEST_SAMPLE_LIMIT,
+        sampleCount: this.wireRequests.length,
+        websocketRequestCount,
+        relayRequestCount,
+        fallbackFullRequestCount,
+        httpFallbackRequestCount,
+        logicalRequestBodyBytes,
+        wireRequestBodyBytes,
+        savedRequestBodyBytes,
+        ...(logicalRequestBodyBytes > 0
+          ? { savedRequestBodyRate: savedRequestBodyBytes / logicalRequestBodyBytes }
+          : {}),
+        ...(lastFallback?.fallbackReason
+          ? { lastFallbackReason: lastFallback.fallbackReason }
           : {}),
       },
       ...(last ? { lastRequestAt: last.timestamp, lastModel: last.model } : {}),

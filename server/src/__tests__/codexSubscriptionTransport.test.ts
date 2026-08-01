@@ -9,6 +9,10 @@ import {
 } from '../runtime/responses/codexCredentialManager.js';
 import { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import { CodexSubscriptionResponsesTransport } from '../runtime/responses/codexSubscriptionResponsesTransport.js';
+import {
+  CodexResponsesWebSocketPool,
+  CodexWebSocketUnavailableError,
+} from '../runtime/responses/codexResponsesWebSocketPool.js';
 import type { ModelEvent, ModelProviderContinuation } from '../runtime/types.js';
 
 function jwt(payload: Record<string, unknown>): string {
@@ -380,6 +384,89 @@ describe('Codex subscription Responses transport', () => {
     expect(events.find((event) => event.type === 'completed')).toMatchObject({
       providerContinuationReset: true,
       modelRequestAttemptCount: 2,
+    });
+  });
+
+  it('WebSocket wire 接力不改变 logical responseMode 和上下文核算语义', async () => {
+    const { config, manager } = await createCredentialFixture();
+    config.websocketEnabled = true;
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    const websocketPool = {
+      execute: vi.fn(async () => ({
+        response: terminalStream('resp-ws'),
+        wireMode: 'websocket_relay' as const,
+        wireRequestBodyBytes: 128,
+      })),
+    } as unknown as CodexResponsesWebSocketPool;
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: '', baseUrl: 'https://chatgpt.com/backend-api/codex' },
+      { protocol: 'responses', responsesTransport: 'codex_subscription' },
+      new CodexSubscriptionResponsesTransport(manager, fetch, websocketPool),
+    );
+
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.4',
+      previousResponseId: 'logical-response-id-must-remain-unused',
+      messages: [{ role: 'user', content: '继续执行' }],
+      tools: [],
+    }, context));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const completed = events.find((event) => event.type === 'completed');
+    expect(completed).toMatchObject({
+      responseChained: false,
+      responseMode: 'full',
+      wireMode: 'websocket_relay',
+      wireRequestBodyBytes: 128,
+    });
+    expect(websocketPool.execute).toHaveBeenCalledWith(expect.objectContaining({
+      serializedBody: expect.not.stringContaining('previous_response_id'),
+      tenantId: 'kaiyan',
+      sessionId: context.sessionId,
+    }));
+    expect(manager.getRuntimeStatus().wireWindow).toMatchObject({
+      sampleCount: 1,
+      websocketRequestCount: 1,
+      relayRequestCount: 1,
+      httpFallbackRequestCount: 0,
+    });
+  });
+
+  it('WebSocket 建连不可用时无损回退现有 HTTP/SSE 全量请求并留下原因', async () => {
+    const { config, manager } = await createCredentialFixture();
+    config.websocketEnabled = true;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(terminalStream('resp-sse-fallback'));
+    const websocketPool = {
+      execute: vi.fn(async () => {
+        throw new CodexWebSocketUnavailableError('proxy unavailable', 'connect_failed');
+      }),
+    } as unknown as CodexResponsesWebSocketPool;
+    const adapter = new ResponsesApiAdapter(
+      { apiKey: '', baseUrl: 'https://chatgpt.com/backend-api/codex' },
+      { protocol: 'responses', responsesTransport: 'codex_subscription' },
+      new CodexSubscriptionResponsesTransport(manager, fetch, websocketPool),
+    );
+
+    const events = await collect(adapter.stream({
+      model: 'gpt-5.4',
+      messages: [{ role: 'user', content: '继续执行' }],
+      tools: [],
+    }, context));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const sentBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(sentBody.input).toHaveLength(1);
+    expect(sentBody.previous_response_id).toBeUndefined();
+    expect(events.find((event) => event.type === 'completed')).toMatchObject({
+      responseMode: 'full',
+      wireMode: 'http_sse_full',
+      wireFallbackReason: 'connect_failed',
+    });
+    expect(manager.getRuntimeStatus().wireWindow).toMatchObject({
+      sampleCount: 1,
+      websocketRequestCount: 0,
+      httpFallbackRequestCount: 1,
+      lastFallbackReason: 'connect_failed',
     });
   });
 

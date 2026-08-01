@@ -15,6 +15,7 @@ import {
   PgCodexCredentialLock,
 } from '../runtime/responses/codexCredentialManager.js';
 import { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
+import { CodexResponsesWebSocketPool } from '../runtime/responses/codexResponsesWebSocketPool.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import {
   DuckDBRuntimeAuditQuery,
@@ -129,7 +130,11 @@ import {
 } from '../connectors/notion.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
 import { EgressConfigStore } from '../data/egressConfig.js';
-import { EgressDispatcherRegistry, createEgressFetch } from '../runtime/egressDispatcher.js';
+import {
+  EgressDispatcherRegistry,
+  createEgressFetch,
+  createEgressWebSocketConnector,
+} from '../runtime/egressDispatcher.js';
 import type { EgressConfig } from '../runtime/egressPolicy.js';
 import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds, scanUserCustomSkills } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
@@ -251,6 +256,7 @@ export interface AppRuntime {
   secretVault?: SecretVault;
   codexCredentialManager: CodexCredentialManager;
   codexDeviceAuthService: CodexDeviceAuthService;
+  codexWebSocketShutdown?: () => void;
   userStore?: UserStore;
   /** DWS 连接状态只保存非敏感元数据；token 始终留在用户 workspace 的 .dws。 */
   dwsConnectionStore?: DwsConnectionStore;
@@ -1825,6 +1831,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     egressLogger,
   );
   const egressFetch = createEgressFetch(egressDispatchers, egressLogger);
+  const codexWebSocketPool = new CodexResponsesWebSocketPool(
+    createEgressWebSocketConnector(egressDispatchers, egressLogger),
+    { logger: egressLogger },
+  );
   const mcpCapabilityTokens = new CapabilityTokenService();
   const mcpClientManager = new McpClientManager({
     agentCwd,
@@ -2026,7 +2036,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     modelAdapterFactory: (connection, providerOptions) => createModelAdapterForProtocol(
       connection,
       providerOptions,
-      { codexCredentialManager, codexFetch: egressFetch },
+      { codexCredentialManager, codexFetch: egressFetch, codexWebSocketPool },
     ),
     getSystemPrompt: (id) => systemPromptRegistry.get(id),
     agentRuntimeProfileResolver,
@@ -3168,6 +3178,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     secretVault,
     codexCredentialManager,
     codexDeviceAuthService,
+    codexWebSocketShutdown: () => codexWebSocketPool.close(),
     userStore,
     dwsConnectionStore,
     dwsAuthFlowService,

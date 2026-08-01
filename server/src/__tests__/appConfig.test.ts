@@ -36,6 +36,7 @@ describe('parseAppConfig', () => {
       ...baseConfig,
       codexSubscription: {
         enabled: false,
+        websocketEnabled: true,
         endpoint: 'https://chatgpt.com/backend-api/codex/responses',
         originator: 'kaiyan-agent',
       },
@@ -58,6 +59,7 @@ describe('parseAppConfig', () => {
     });
     expect(config.codexSubscription).toMatchObject({
       enabled: false,
+      websocketEnabled: true,
       originator: 'kaiyan-agent',
     });
   });

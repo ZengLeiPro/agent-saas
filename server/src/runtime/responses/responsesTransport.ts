@@ -3,10 +3,13 @@ import type {
   ModelTerminalStatus,
   ModelToolDefinition,
   ModelUsage,
+  ModelWireMode,
   RunContext,
 } from '../types.js';
 
 export type ResponsesTransportId = 'openai_compatible' | 'codex_subscription';
+
+export type ResponsesWireMode = ModelWireMode;
 
 export interface ResponsesTransportCapabilities {
   responseState: 'stored' | 'stateless';
@@ -41,6 +44,12 @@ export interface ResponsesTransportExecuteResult {
   continuationReplayReset?: boolean;
   /** OAuth 401 recovery is one logical model attempt but can contain one extra HTTP request. */
   authRetryCount?: number;
+  /** 实际 wire 传输形态；与模型上下文核算用的 responseMode 分离。 */
+  wireMode?: ResponsesWireMode;
+  /** 实际发到 provider 的 UTF-8 payload 大小；WebSocket relay 时小于 logical body。 */
+  wireRequestBodyBytes?: number;
+  /** WebSocket 不可用时回退 HTTP/SSE 的脱敏原因码。 */
+  wireFallbackReason?: string;
 }
 
 export interface ResponsesTransport {

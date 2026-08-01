@@ -155,7 +155,7 @@ describe("ModelManager 排序", () => {
       expect(payload.models.groups[0].disable_prompt_cache_key).toBeUndefined();
     });
     expect(screen.queryByText("API Key")).toBeNull();
-    expect(screen.getByText(/Codex 固定协议/)).toBeTruthy();
+    expect(screen.getByText(/Codex 固定逻辑协议/)).toBeTruthy();
   });
 
   it("模型单独选择 Codex 时自动锁定 Responses，切回继承时恢复组级语义", async () => {

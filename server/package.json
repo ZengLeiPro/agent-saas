@@ -24,6 +24,7 @@
     "verify:tenant-container-smoke": "tsx scripts/verify-tenant-container-smoke.mts",
     "verify:audit-read": "tsx scripts/verify-runtime-audit-read.mts",
     "verify:server-remote-smoke": "tsx scripts/verify-server-remote-smoke.mts",
+    "verify:codex-websocket": "tsx scripts/verify-codex-websocket-stateful.mts",
     "verify:pg-event-store": "tsx scripts/verify-pg-event-store.mts",
     "backfill:runtime-sessions": "tsx scripts/backfill-runtime-sessions.mts",
     "kb:previews": "tsx scripts/generate-kb-previews.mts",

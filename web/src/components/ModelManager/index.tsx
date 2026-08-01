@@ -1134,12 +1134,12 @@ export function ModelManager() {
                 </div>
                 {selectedGroupHasOpenAiCompatible ? (
                   <>
-                    <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_response_chaining} onChange={(e) => updateGroup(selectedGroup.id, { disable_response_chaining: e.target.checked ? undefined : true })} /><span>启用 Responses 有状态接力（previous_response_id）<span className="block text-xs text-muted-foreground">仅作用于 API Key transport。开启后会使用 previous_response_id 连接多轮 Responses 调用；Codex 订阅始终固定为无状态完整历史。</span></span></label>
+                    <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_response_chaining} onChange={(e) => updateGroup(selectedGroup.id, { disable_response_chaining: e.target.checked ? undefined : true })} /><span>启用 Responses 有状态接力（previous_response_id）<span className="block text-xs text-muted-foreground">仅作用于 API Key transport。Codex 订阅的 WebSocket 接力在上方账号卡片单独控制。</span></span></label>
                     <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={!selectedGroup.disable_prompt_cache_key} onChange={(e) => updateGroup(selectedGroup.id, { disable_prompt_cache_key: e.target.checked ? undefined : true })} /><span>启用 prompt_cache_key 内容指纹<span className="block text-xs text-muted-foreground">仅控制 API Key transport 的兼容行为；Codex 订阅始终发送稳定 session cache key，并以真实 cached_tokens 验收。</span></span></label>
                   </>
                 ) : (
                   <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
-                    Codex 固定协议：`store:false`、完整历史、禁止 `previous_response_id`、稳定 session cache key、encrypted reasoning replay。上述行为由代码保证，不开放为配置开关。
+                    Codex 固定逻辑协议：`store:false`、每轮保留完整历史、禁止标准 HTTP `previous_response_id`、稳定 session cache key、encrypted reasoning replay。启用上方 WebSocket 接力后，只压缩线上发送内容；PostgreSQL 完整历史仍是事实源，异常会自动回退全量 HTTP/SSE。
                   </div>
                 )}
                 <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={selectedGroup.input_modalities?.includes("image") === true} onChange={(e) => updateGroup(selectedGroup.id, { input_modalities: e.target.checked ? ["text", "image"] : ["text"] })} /><span>分组模型支持图片输入<span className="block text-xs text-muted-foreground">只在已验证 provider 协议确实支持视觉时开启；模型可单独覆盖。</span></span></label>

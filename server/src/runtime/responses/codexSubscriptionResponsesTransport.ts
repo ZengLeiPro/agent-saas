@@ -9,6 +9,10 @@ import {
   CodexCredentialManager,
   hashAccountBinding,
 } from './codexCredentialManager.js';
+import {
+  CodexResponsesWebSocketPool,
+  CodexWebSocketUnavailableError,
+} from './codexResponsesWebSocketPool.js';
 import type {
   ResponsesTransport,
   ResponsesTransportExecuteInput,
@@ -31,6 +35,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
   constructor(
     private readonly credentials: CodexCredentialManager,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly websocketPool?: CodexResponsesWebSocketPool,
   ) {}
 
   computePromptCacheKey(input: {
@@ -94,6 +99,58 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     accountId: string,
   ): Promise<ResponsesTransportExecuteResult> {
     const config = this.credentials.getConfiguration();
+    if (config.websocketEnabled && this.websocketPool) {
+      try {
+        const binding = this.bindingFor(accountId);
+        const result = await this.websocketPool.execute({
+          endpoint: config.endpoint,
+          accessToken,
+          accountId,
+          accountBindingHash: binding.accountBindingHash,
+          originator: config.originator,
+          serializedBody: input.serializedBody,
+          tenantId: input.context.tenantId ?? '__default__',
+          sessionId: input.context.sessionId,
+          clientRequestId: input.clientRequestId,
+          signal: input.signal,
+        });
+        this.credentials.recordWireRequest({
+          mode: result.wireMode,
+          logicalRequestBodyBytes: Buffer.byteLength(input.serializedBody, 'utf8'),
+          wireRequestBodyBytes: result.wireRequestBodyBytes,
+        });
+        return {
+          response: result.response,
+          continuationBinding: binding,
+          wireMode: result.wireMode,
+          wireRequestBodyBytes: result.wireRequestBodyBytes,
+        };
+      } catch (error) {
+        if (!(error instanceof CodexWebSocketUnavailableError)) throw error;
+        this.credentials.recordWireRequest({
+          mode: 'http_sse_full',
+          logicalRequestBodyBytes: Buffer.byteLength(input.serializedBody, 'utf8'),
+          wireRequestBodyBytes: Buffer.byteLength(input.serializedBody, 'utf8'),
+          fallbackReason: error.reason,
+        });
+        return this.executeHttpWithToken(input, accessToken, accountId, error.reason);
+      }
+    }
+    return this.executeHttpWithToken(
+      input,
+      accessToken,
+      accountId,
+      config.websocketEnabled ? 'pool_unavailable' : undefined,
+    );
+  }
+
+  private async executeHttpWithToken(
+    input: ResponsesTransportExecuteInput,
+    accessToken: string,
+    accountId: string,
+    fallbackReason?: string,
+  ): Promise<ResponsesTransportExecuteResult> {
+    const config = this.credentials.getConfiguration();
     const response = await this.fetchImpl(config.endpoint, {
       method: 'POST',
       headers: {
@@ -113,6 +170,9 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     return {
       response,
       continuationBinding: this.bindingFor(accountId),
+      wireMode: 'http_sse_full',
+      wireRequestBodyBytes: Buffer.byteLength(input.serializedBody, 'utf8'),
+      ...(fallbackReason ? { wireFallbackReason: fallbackReason } : {}),
     };
   }
 

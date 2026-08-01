@@ -27,6 +27,7 @@ import type {
   ModelRequestDiagnostic,
   ModelTerminalStatus,
   ModelToolSearchResult,
+  ModelWireMode,
   RunContext,
   RuntimeConnection,
 } from './types.js';
@@ -324,6 +325,9 @@ export class ResponsesApiAdapter implements ModelAdapter {
     let body = retryState?.body ?? await buildRequestBody();
     let continuationReplayReset = retryState?.continuationReplayReset ?? false;
     let requestBodyBytes = 0;
+    let wireMode: ModelWireMode | undefined;
+    let wireRequestBodyBytes: number | undefined;
+    let wireFallbackReason: string | undefined;
     let requestInputPrefixHash = '';
     let requestInstructionsHash = '';
     let requestToolsHash = '';
@@ -378,6 +382,9 @@ export class ResponsesApiAdapter implements ModelAdapter {
           ...(expectedContinuationBinding ? { expectedContinuationBinding } : {}),
         });
         attemptResponse = executed.response;
+        wireMode = executed.wireMode;
+        wireRequestBodyBytes = executed.wireRequestBodyBytes;
+        wireFallbackReason = executed.wireFallbackReason;
         responseContinuationBinding = executed.continuationBinding ?? responseContinuationBinding;
         if (executed.continuationReplayReset) continuationReplayReset = true;
       } catch (err) {
@@ -1018,6 +1025,9 @@ export class ResponsesApiAdapter implements ModelAdapter {
         requestHistoryHash,
         cacheEligible: (usage?.inputTokens ?? 0) >= 1_024,
         requestBodyBytes,
+        ...(wireMode ? { wireMode } : {}),
+        ...(wireRequestBodyBytes !== undefined ? { wireRequestBodyBytes } : {}),
+        ...(wireFallbackReason ? { wireFallbackReason } : {}),
       };
       return;
     }
@@ -1100,6 +1110,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     logger.info(
       `Responses 请求完成 mode=${responseMode} attempts=${modelRequestAttemptCount} `
       + `model=${request.model} session=${sessionIdShort ?? '-'} body_bytes=${requestBodyBytes} `
+      + `wire=${wireMode ?? '-'} wire_bytes=${wireRequestBodyBytes ?? requestBodyBytes} `
       + `prompt_cache_key=${promptCacheKey?.slice(0, 12) ?? '-'} `
       + `input_prefix_hash=${requestInputPrefixHash.slice(0, 12)} `
       + `input=${usage?.inputTokens ?? 0} cache_read=${usage?.cacheReadInputTokens ?? 0} `
@@ -1130,6 +1141,9 @@ export class ResponsesApiAdapter implements ModelAdapter {
       requestHistoryHash,
       cacheEligible: (usage?.inputTokens ?? 0) >= 1_024,
       requestBodyBytes,
+      ...(wireMode ? { wireMode } : {}),
+      ...(wireRequestBodyBytes !== undefined ? { wireRequestBodyBytes } : {}),
+      ...(wireFallbackReason ? { wireFallbackReason } : {}),
       ...(toolSearchResults.length > 0 ? { toolSearchResults } : {}),
       ...(providerContinuation ? { providerContinuation } : {}),
       ...(continuationReplayReset ? { providerContinuationReset: true } : {}),

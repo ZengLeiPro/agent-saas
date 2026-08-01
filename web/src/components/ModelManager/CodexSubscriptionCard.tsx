@@ -19,6 +19,19 @@ type CodexRuntimeStatus = {
     cacheHitRequestRate?: number;
     cachedInputTokenRate?: number;
   };
+  wireWindow?: {
+    limit: number;
+    sampleCount: number;
+    websocketRequestCount: number;
+    relayRequestCount: number;
+    fallbackFullRequestCount: number;
+    httpFallbackRequestCount: number;
+    logicalRequestBodyBytes: number;
+    wireRequestBodyBytes: number;
+    savedRequestBodyBytes: number;
+    savedRequestBodyRate?: number;
+    lastFallbackReason?: string;
+  };
   lastRequestAt?: string;
   lastSuccessAt?: string;
   lastErrorAt?: string;
@@ -35,6 +48,8 @@ type CodexRuntimeStatus = {
 type CodexSubscriptionState = {
   config: {
     enabled: boolean;
+    /** 蓝绿 N/N+1：旧 Server 缺字段时按关闭处理。 */
+    websocketEnabled?: boolean;
     endpoint: string;
     originator: string;
   };
@@ -69,6 +84,7 @@ async function readJson<T>(response: Response): Promise<T & { error?: string }> 
 export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
   const [state, setState] = useState<CodexSubscriptionState | null>(null);
   const [enabled, setEnabled] = useState(false);
+  const [websocketEnabled, setWebsocketEnabled] = useState(false);
   const [deviceSession, setDeviceSession] = useState<DeviceSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -77,6 +93,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
   const applyState = useCallback((next: CodexSubscriptionState) => {
     setState(next);
     setEnabled(next.config.enabled);
+    setWebsocketEnabled(next.config.websocketEnabled === true);
     setError(next.warning ?? null);
   }, []);
 
@@ -170,7 +187,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
       const response = await authFetch("/api/admin/codex-subscription", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify({ enabled, websocketEnabled }),
       });
       const data = await readJson<CodexSubscriptionState>(response);
       if (!response.ok || !data.config || !data.credential) {
@@ -182,7 +199,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     } finally {
       setWorking(false);
     }
-  }, [applyState, enabled]);
+  }, [applyState, enabled, websocketEnabled]);
 
   const disconnect = useCallback(async () => {
     if (!window.confirm("确定断开 Codex 订阅账号并撤销已保存的 OAuth 凭据吗？")) return;
@@ -246,6 +263,21 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                 />
                 启用订阅 transport
               </label>
+              <label className="flex items-start gap-2 md:col-span-2 text-sm">
+                <input
+                  className="mt-0.5"
+                  type="checkbox"
+                  checked={websocketEnabled}
+                  disabled={readOnly || working || !enabled || !state?.credential.configured}
+                  onChange={(event) => setWebsocketEnabled(event.target.checked)}
+                />
+                <span>
+                  启用 WebSocket 会话接力
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    同一连接内只发送新增内容；状态不确定时自动回退完整历史，不改变 Token 核算。
+                  </span>
+                </span>
+              </label>
             </div>
 
             {state?.credential.configured && (
@@ -293,6 +325,29 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                       : ""}
                   </div>
                 </div>
+                {state.runtime.wireWindow && state.runtime.wireWindow.sampleCount > 0 && (
+                  <div className="mt-2 grid gap-1 border-t pt-2 text-muted-foreground md:grid-cols-2">
+                    <div>
+                      WebSocket 接力：{state.runtime.wireWindow.relayRequestCount}/
+                      {state.runtime.wireWindow.sampleCount}
+                    </div>
+                    <div>
+                      请求体减少：{state.runtime.wireWindow.savedRequestBodyBytes.toLocaleString()} 字节
+                      （{formatRate(state.runtime.wireWindow.savedRequestBodyRate)}）
+                    </div>
+                    <div>
+                      全量重锚：{state.runtime.wireWindow.fallbackFullRequestCount}
+                    </div>
+                    <div>
+                      HTTP/SSE 回退：{state.runtime.wireWindow.httpFallbackRequestCount}
+                    </div>
+                    {state.runtime.wireWindow.lastFallbackReason && (
+                      <div className="md:col-span-2">
+                        最近回退原因：{state.runtime.wireWindow.lastFallbackReason}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {state.runtime.lastError && (
                   <div className="mt-2 text-destructive">
                     最近请求错误（{formatTime(state.runtime.lastErrorAt)}）：{state.runtime.lastError}

@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
+import { CAPABILITY_SURFACE } from "./CatalogUi";
 
 const DISCONNECTED: GithubConnection = {
   connectorId: "github",
@@ -82,7 +84,7 @@ export function GithubConnector({
   const connected = connection.status === "connected";
 
   return (
-    <Card className="overflow-hidden">
+    <Card className={cn("overflow-hidden border-0 shadow-none", CAPABILITY_SURFACE)}>
       <CardContent className="space-y-4 p-5">
         <div className="flex items-start gap-3">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-foreground text-background">
@@ -94,7 +96,7 @@ export function GithubConnector({
               {loading ? (
                 <Badge variant="secondary"><Loader2 className="mr-1 size-3 animate-spin" />检测中</Badge>
               ) : connected ? (
-                <Badge variant="secondary" className="text-emerald-700 dark:text-emerald-400">
+                <Badge variant="secondary" className="text-success-ink">
                   <CircleCheck className="mr-1 size-3" />已连接
                 </Badge>
               ) : (
@@ -108,7 +110,7 @@ export function GithubConnector({
         </div>
 
         {!loading && (!connected || editingCredential) && (
-          <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+          <div className="space-y-2 rounded-xl bg-muted/20 p-3 ring-1 ring-border/60">
             <div className="flex items-center justify-between gap-3">
               <Label htmlFor="github-token">Personal Access Token</Label>
               <a
@@ -126,6 +128,7 @@ export function GithubConnector({
               type="password"
               autoComplete="new-password"
               passwordManager="ignore"
+              className="border-transparent bg-muted/50 shadow-none focus-visible:bg-card"
               value={token}
               onChange={(event) => setToken(event.target.value)}
               placeholder="github_pat_… 或 ghp_…"

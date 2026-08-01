@@ -41,6 +41,10 @@ import {
   CapabilityDetailDrawer,
   CapabilitySourceBadge,
   CatalogToolbar,
+  CAPABILITY_EMPTY_SURFACE,
+  CAPABILITY_SUBTLE_SURFACE,
+  CAPABILITY_SURFACE,
+  CAPABILITY_SURFACE_HOVER,
   type CapabilitySource,
 } from "@/components/CapabilityCenter/CatalogUi";
 import {
@@ -561,9 +565,9 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
         />
 
         <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
-          {error ? <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
+          {error ? <div className="mb-4 rounded-xl border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
           {filteredServers.length === 0 && !showGithubCard && !showDingtalkCard && !showFeishuCard && !showNotionCard && !showGoogleWorkspaceCard ? (
-            <div className="rounded-2xl border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
+            <div className={cn("px-6 py-12 text-center text-sm text-muted-foreground", CAPABILITY_EMPTY_SURFACE)}>
               没有找到匹配的连接器
             </div>
           ) : (
@@ -595,7 +599,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                 return (
                   <Card
                     key={server.id}
-                    className="group cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
+                    className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
                     onClick={() => setDetailServerId(server.id)}
                     onKeyDown={(event) => {
                       if ((event.target as HTMLElement).closest("button")) return;
@@ -623,7 +627,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                             className={cn(
                               "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
                               connectionReady
-                                ? "border-transparent bg-success text-success-foreground shadow-sm hover:bg-success/85"
+                                ? "border-transparent bg-success text-success-foreground hover:bg-success/85"
                                 : connectionFailed
                                   ? "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15"
                                 : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
@@ -683,8 +687,8 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                 && (!detailServer.oauth || detailServer.oauth.status === "connected")
                 && !(detailServer.secretRequirements ?? []).some(requirement => requirement.required !== false && !requirement.configured) ? (
                   <div className={cn(
-                    "rounded-xl border p-4",
-                    detailServer.connection?.status === "error" && "border-destructive/40 bg-destructive/5",
+                    "rounded-xl p-4 ring-1 ring-border/60",
+                    detailServer.connection?.status === "error" && "bg-destructive/5 ring-destructive/40",
                   )}>
                     <div className="flex items-start justify-between gap-3">
                       <div>
@@ -716,11 +720,11 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                 ) : null}
 
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl bg-muted/40 p-3">
+                <div className={cn("p-3", CAPABILITY_SUBTLE_SURFACE)}>
                   <div className="text-xs text-muted-foreground">连接方式</div>
                   <div className="mt-1 text-sm font-medium">{detailServer.transport === "stdio" ? "本地服务" : "远程服务"}</div>
                 </div>
-                <div className="rounded-xl bg-muted/40 p-3">
+                <div className={cn("p-3", CAPABILITY_SUBTLE_SURFACE)}>
                   <div className="text-xs text-muted-foreground">权限级别</div>
                   <div className="mt-1 text-sm font-medium">
                     {detailServer.riskLevel === "read_only" ? "只读" : detailServer.riskLevel ? "可执行操作" : "按连接器配置"}
@@ -729,7 +733,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
               </div>
 
               {detailServer.oauth ? (
-                <div className="rounded-xl border p-4">
+                <div className="rounded-xl p-4 ring-1 ring-border/60">
                   <div className="text-sm font-medium">账号授权</div>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">授权只属于当前账号，组织内其他成员无法使用你的凭据。</p>
                   <div className="mt-3">
@@ -754,7 +758,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                 const badge = SCOPE_BADGE[requirement.scope];
                 const disabledReason = canBind ? "" : noBindReason(requirement);
                 return (
-                  <div key={requirement.key} className="rounded-xl border p-4">
+                  <div key={requirement.key} className="rounded-xl p-4 ring-1 ring-border/60">
                     <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
                       <span>{requirement.label}</span>
                       {requirement.required === false ? <span className="text-xs font-normal text-muted-foreground">可选</span> : null}
@@ -767,6 +771,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                         type="password"
                         autoComplete="new-password"
                         passwordManager="ignore"
+                        className="border-transparent bg-muted/50 shadow-none focus-visible:bg-card"
                         placeholder={canBind ? `输入 ${requirement.label}` : disabledReason}
                         value={secretInputs[inputKey] || ""}
                         onChange={(event) => setSecretInputs((previous) => ({ ...previous, [inputKey]: event.target.value }))}
@@ -799,7 +804,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                 ) : null}
 
               {detailServer.personal ? (
-                <div className="grid grid-cols-2 gap-2 border-t pt-5">
+                <div className="grid grid-cols-2 gap-2 border-t border-border/60 pt-5">
                   <Button variant="outline" onClick={() => editPersonalServer(detailServer as ManagedMcpServer)}>编辑配置</Button>
                   <Button variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => { void removePersonalServer(detailServer.id); }}>
                     <Trash2 className="size-4" />删除
@@ -871,12 +876,12 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
       />
 
       <div className="min-h-0 flex-1 space-y-6 overflow-auto">
-      {error && <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      {error && <div className="rounded-xl border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
 
       {/* admin 态不渲染「我的连接器」：个人账号连接（OAuth）/启用/个人 secret 绑定
           统一走能力中心 → 连接器，平台管理页只维护 Server Catalog 本身。 */}
       {diagnostic && (
-        <Card>
+        <Card className={cn("border-0 shadow-none", CAPABILITY_SURFACE)}>
           <CardHeader className="pb-3"><CardTitle className="text-base">诊断结果</CardTitle></CardHeader>
           <CardContent className="space-y-2 pt-0 text-sm">
             <div className={diagnostic.ok ? "text-green-600" : "text-destructive"}>{diagnostic.ok ? `连接成功，发现 ${diagnostic.toolCount} 个工具` : `连接失败：${diagnostic.error || "未知错误"}`}</div>
@@ -886,15 +891,15 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
       )}
 
       {mode === "admin" && isAdmin && (
-        <Card>
+        <Card className={cn("border-0 shadow-none", CAPABILITY_SURFACE)}>
           <CardHeader className="pb-3"><CardTitle className="text-base">管理员：MCP Server Catalog</CardTitle></CardHeader>
           <CardContent className="space-y-4 pt-0">
             {(templates?.templates.length ?? 0) > 0 && (
-              <div className="rounded-lg border bg-muted/30 p-3">
+              <div className={cn("p-3", CAPABILITY_SUBTLE_SURFACE)}>
                 <div className="mb-2 text-sm font-medium">从安全模板创建</div>
                 <div className="grid gap-2 md:grid-cols-3">
                   {templates!.templates.filter(t => isPlatformAdmin || !(t.server.config as { oauth?: unknown }).oauth).map(t => (
-                    <button key={t.id} className="rounded border bg-background p-2 text-left text-xs hover:bg-accent" onClick={() => applyTemplate(t.server)}>
+                    <button key={t.id} className="rounded-xl bg-card p-2 text-left text-xs ring-1 ring-border/60 transition-colors hover:bg-accent" onClick={() => applyTemplate(t.server)}>
                       <div className="font-medium">{t.name}</div>
                       <div className="mt-1 text-muted-foreground">{t.riskLevel}{t.recommendedDefault ? " · 推荐默认启用" : " · 默认关闭"}</div>
                     </button>
@@ -939,7 +944,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                     ? { label: `本组织 ${server.tenantId}`, className: "bg-muted text-muted-foreground" }
                     : { label: `跨组织 ${server.tenantId ?? "?"}`, className: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100" };
                 return (
-                  <div key={server.id} className="flex items-center gap-2 rounded border p-2 text-sm">
+                  <div key={server.id} className="flex items-center gap-2 rounded-xl p-2 text-sm ring-1 ring-border/60">
                     <button className="min-w-0 flex-1 text-left" onClick={() => editServer(server)}>
                       <div className="flex items-center gap-2 font-medium">
                         <span>{server.name}</span>

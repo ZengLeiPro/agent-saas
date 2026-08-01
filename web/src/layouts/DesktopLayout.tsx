@@ -67,6 +67,13 @@ const SuspenseFallback = (
   </div>
 );
 
+/**
+ * 浮动内容框：纯白面板浮在品牌底（--background）上，靠描边勾轮廓、双层柔和阴影撑起层次。
+ * 主会话、右侧预览/文件/系统面板与能力中心共用同一档，切 tab 时外框不跳。
+ */
+const FLOATING_PANEL_SURFACE =
+  "bg-card ring-1 ring-border/60 shadow-[0_2px_6px_rgba(15,23,42,0.05),0_10px_28px_-10px_rgba(15,23,42,0.10)]";
+
 export function DesktopLayout(props: LayoutProps) {
   const {
     sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
@@ -105,6 +112,9 @@ export function DesktopLayout(props: LayoutProps) {
   // 企业系统面板：从当前会话消息流 fold，与演示回放共用同一个 hook
   const { snapshot: systemPanel, open: systemPanelOpen, selectView: selectSystemPanelView, dismiss: dismissSystemPanel } =
     useSystemPanelDock(messages, sessionId);
+
+  // 主会话与能力中心走同一档浮动白框；其余管理类 tab 仍平铺在品牌底上。
+  const contentPanelFloating = activeTab === "chat" || activeTab === "capabilities";
 
   const sidePreviewOpen = !!previewFilePath && previewMode === "side";
   /**
@@ -351,8 +361,7 @@ export function DesktopLayout(props: LayoutProps) {
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl",
-            activeTab === "chat" &&
-              "bg-card ring-1 ring-border/60 shadow-[0_2px_6px_rgba(15,23,42,0.05),0_10px_28px_-10px_rgba(15,23,42,0.10)]",
+            contentPanelFloating && FLOATING_PANEL_SURFACE,
           )}
           style={showRightPanel
             ? { flexBasis: `calc(${(1 - splitRatio) * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }
@@ -362,7 +371,7 @@ export function DesktopLayout(props: LayoutProps) {
         <header
           className={cn(
             "flex h-12 shrink-0 items-center gap-3 px-4",
-            activeTab === "chat" ? "bg-card" : "bg-background",
+            contentPanelFloating ? "bg-card" : "bg-background",
           )}
           onClick={(e) => {
             if ((e.target as HTMLElement).closest("button, a, input, textarea, select, [role=button]")) return;
@@ -790,7 +799,8 @@ export function DesktopLayout(props: LayoutProps) {
             </div>
             <div
               className={cn(
-                "min-w-0 flex-col overflow-hidden rounded-xl bg-card ring-1 ring-border/60 shadow-[0_2px_6px_rgba(15,23,42,0.05),0_10px_28px_-10px_rgba(15,23,42,0.10)]",
+                "min-w-0 flex-col overflow-hidden rounded-xl",
+                FLOATING_PANEL_SURFACE,
                 showRightPanel ? "flex" : "hidden",
               )}
               style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }}

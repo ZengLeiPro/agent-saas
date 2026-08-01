@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { CAPABILITY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
 
 interface SkillToggleItemProps {
   name: string;
@@ -15,7 +16,7 @@ interface SkillToggleItemProps {
 
 export function SkillToggleItem({ name, description, checked, onCheckedChange, badge, disabled, leadingAction }: SkillToggleItemProps) {
   return (
-    <div className="flex items-start gap-3 rounded-lg border bg-card p-3">
+    <div className={cn("flex items-start gap-3 p-3", CAPABILITY_SURFACE)}>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">{name}</span>

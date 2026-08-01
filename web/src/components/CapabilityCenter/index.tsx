@@ -3,6 +3,7 @@ import { MessageSquarePlus } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import type { CatalogScenarioPublic, OrgAgentSummary, ScenarioItem } from "@agent/shared";
 import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
@@ -10,13 +11,19 @@ import { SkillSelector } from "@/components/SkillSelector";
 import { McpManager } from "@/components/McpManager";
 import { CapabilityTabsList } from "./CapabilityTabsList";
 import { useCapabilityNavigation } from "./navigation";
-import { CatalogToolbar, CapabilityLogo } from "./CatalogUi";
+import {
+  CatalogToolbar,
+  CapabilityLogo,
+  CAPABILITY_EMPTY_SURFACE,
+  CAPABILITY_SURFACE,
+  CAPABILITY_SURFACE_HOVER,
+} from "./CatalogUi";
 import { BuiltInConnectors } from "./BuiltInConnectors";
 import { ScenariosPanel } from "@/components/scenarios/ScenariosPanel";
 
 function ManagedCapabilityNotice({ kind }: { kind: "技能" | "连接器" }) {
   return (
-    <div className="mx-auto flex max-w-xl flex-col items-center rounded-2xl border border-dashed bg-muted/20 px-6 py-12 text-center">
+    <div className={cn("mx-auto flex max-w-xl flex-col items-center px-6 py-12 text-center", CAPABILITY_EMPTY_SURFACE)}>
       {kind === "技能" ? <EntityIcons.skill className="size-8 text-brand-600" /> : <EntityIcons.connector className="size-8 text-brand-600" />}
       <h3 className="mt-4 text-base font-semibold">{kind} 由组织统一配置</h3>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">
@@ -111,18 +118,21 @@ export function CapabilityCenter({
               />
             ) : null}
             {experts.length === 0 ? (
-              <div className="flex flex-col items-center rounded-2xl border border-dashed px-6 py-12 text-center text-muted-foreground">
+              <div className={cn("flex flex-col items-center px-6 py-12 text-center text-muted-foreground", CAPABILITY_EMPTY_SURFACE)}>
                 <EntityIcons.expert className="size-8" />
                 <div className="mt-3 text-sm">当前没有指派给你的企业专家</div>
               </div>
             ) : filteredExperts.length === 0 ? (
-              <div className="rounded-2xl border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
+              <div className={cn("px-6 py-12 text-center text-sm text-muted-foreground", CAPABILITY_EMPTY_SURFACE)}>
                 没有找到匹配的企业专家
               </div>
             ) : (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {filteredExperts.map((expert) => (
-                  <Card key={expert.id} className="group overflow-hidden border-border/70 transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-lg">
+                  <Card
+                    key={expert.id}
+                    className={cn("group overflow-hidden border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
+                  >
                     <CardContent className="flex h-full flex-col p-5">
                       <div className="flex items-start gap-3">
                         <CapabilityLogo label={expert.name} className="text-2xl">
@@ -143,7 +153,7 @@ export function CapabilityCenter({
                           </span>
                         ))}
                       </div>
-                      <div className="mt-5 flex items-center justify-between gap-3 border-t pt-4">
+                      <div className="mt-5 flex items-center justify-between gap-3 border-t border-border/60 pt-4">
                         <span className="text-xs text-muted-foreground">
                           {expert.skillCount > 0 ? `${expert.skillCount} 个固有技能` : "专属职责范围"}
                         </span>

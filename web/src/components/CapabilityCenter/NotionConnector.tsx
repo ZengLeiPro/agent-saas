@@ -10,7 +10,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { CapabilityDetailDrawer, CapabilitySourceBadge } from "./CatalogUi";
+import {
+  CapabilityDetailDrawer,
+  CapabilitySourceBadge,
+  CAPABILITY_SUBTLE_SURFACE,
+  CAPABILITY_SURFACE,
+  CAPABILITY_SURFACE_HOVER,
+} from "./CatalogUi";
 
 interface NotionConnectorState {
   connection: NotionConnection | null;
@@ -155,7 +161,7 @@ export function NotionConnectorCard({ state, onOpenDetail }: { state: NotionConn
   const connected = state.connection?.status === "connected";
   const busy = state.loading || state.connecting || state.session?.status === "starting" || state.session?.status === "awaiting_user";
   return (
-    <Card className="group cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md" onClick={onOpenDetail}>
+    <Card className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)} onClick={onOpenDetail}>
       <CardContent className="flex min-h-36 items-start gap-4 p-5">
         <NotionLogo />
         <div className="min-w-0 flex-1">
@@ -181,9 +187,9 @@ export function NotionConnectorDrawer({ open, onOpenChange, state }: { open: boo
   return (
     <CapabilityDetailDrawer open={open} onOpenChange={onOpenChange} title="Notion" description={DESCRIPTION}>
       <div className="flex items-center gap-3"><NotionLogo /><div><CapabilitySourceBadge source="platform" /><div className={cn("mt-1 text-xs font-medium", connected ? "text-success" : "text-muted-foreground")}>{connected ? "已连接，运行环境可用" : "未连接"}</div></div></div>
-      <div className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">授权完成后，平台会向当前用户运行环境注入 <code>NOTION_API_TOKEN</code>，Shell、SDK 和官方 <code>ntn</code> CLI 可直接使用。</div>
-      {state.session?.status === "awaiting_user" ? <div className="rounded-xl border p-3"><div className="text-sm font-medium">Notion 验证码：{state.session.userCode}</div><p className="mt-1 text-xs text-muted-foreground">请在 Notion 官方页面确认相同验证码。</p><Button className="mt-3" variant="outline" onClick={state.reopen}><ExternalLink className="mr-2 size-4" />打开授权页</Button></div> : null}
-      {state.popupBlocked ? <div className="flex gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-900"><TriangleAlert className="mt-0.5 size-4" />浏览器阻止了弹窗，请点击“打开授权页”。</div> : null}
+      <div className={cn("p-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>授权完成后，平台会向当前用户运行环境注入 <code>NOTION_API_TOKEN</code>，Shell、SDK 和官方 <code>ntn</code> CLI 可直接使用。</div>
+      {state.session?.status === "awaiting_user" ? <div className="rounded-xl p-3 ring-1 ring-border/60"><div className="text-sm font-medium">Notion 验证码：{state.session.userCode}</div><p className="mt-1 text-xs text-muted-foreground">请在 Notion 官方页面确认相同验证码。</p><Button className="mt-3" variant="outline" onClick={state.reopen}><ExternalLink className="mr-2 size-4" />打开授权页</Button></div> : null}
+      {state.popupBlocked ? <div className="flex gap-2 rounded-xl bg-warning-subtle p-3 text-sm text-warning-ink"><TriangleAlert className="mt-0.5 size-4" />浏览器阻止了弹窗，请点击“打开授权页”。</div> : null}
       {state.error ? <div className="flex gap-2 rounded-xl bg-destructive/10 p-3 text-sm text-destructive"><TriangleAlert className="mt-0.5 size-4" />{state.error}</div> : null}
       <div className="flex gap-2">
         {connected ? <Button variant="destructive" onClick={() => void state.disconnect()} disabled={state.connecting}>断开连接</Button> : <Button onClick={() => void state.start()} disabled={state.connecting}>{state.connecting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}连接 Notion</Button>}

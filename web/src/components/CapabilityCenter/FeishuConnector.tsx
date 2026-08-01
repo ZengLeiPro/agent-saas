@@ -6,7 +6,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
-import { CapabilityDetailDrawer, CapabilitySourceBadge } from "./CatalogUi";
+import {
+  CapabilityDetailDrawer,
+  CapabilitySourceBadge,
+  CAPABILITY_SUBTLE_SURFACE,
+  CAPABILITY_SURFACE,
+  CAPABILITY_SURFACE_HOVER,
+} from "./CatalogUi";
 import { writeFeishuAuthorizingPopup } from "./feishuAuthorizingPopup";
 
 export interface FeishuConnectionView {
@@ -196,11 +202,11 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
 
 export function feishuConnectorStatus(state: FeishuConnectionsState): { label: string; className: string } {
   if (state.loading) return { label: "检测中", className: "text-muted-foreground" };
-  if (state.authInProgress || state.connecting) return { label: "等待授权", className: "text-blue-700 dark:text-blue-300" };
-  if (state.authServiceUnavailable && !state.hasConnected) return { label: "待配置", className: "text-amber-700 dark:text-amber-300" };
+  if (state.authInProgress || state.connecting) return { label: "等待授权", className: "text-info-ink" };
+  if (state.authServiceUnavailable && !state.hasConnected) return { label: "待配置", className: "text-warning-ink" };
   if (state.needsReconnect) return { label: "需重连", className: "text-destructive" };
-  if (state.connections.some((item) => item.status === "error")) return { label: "重试中", className: "text-amber-700 dark:text-amber-300" };
-  if (state.connections.some((item) => item.status === "pending")) return { label: "检测中", className: "text-blue-700 dark:text-blue-300" };
+  if (state.connections.some((item) => item.status === "error")) return { label: "重试中", className: "text-warning-ink" };
+  if (state.connections.some((item) => item.status === "pending")) return { label: "检测中", className: "text-info-ink" };
   if (state.hasConnected) return { label: "已连接", className: "text-success" };
   return { label: "未连接", className: "text-muted-foreground" };
 }
@@ -216,7 +222,7 @@ export function feishuMatchesCatalog(query: string, activeFilter: string, state:
 
 export function FeishuBrandLogo({ className }: { className?: string }) {
   return (
-    <span className={cn("flex size-11 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-inset ring-black/10", className)} aria-hidden="true">
+    <span className={cn("flex size-11 shrink-0 items-center justify-center rounded-xl bg-white ring-1 ring-inset ring-black/10", className)} aria-hidden="true">
       <span className="bg-gradient-to-br from-[#3370FF] via-[#00B8D9] to-[#7B61FF] bg-clip-text text-lg font-bold text-transparent">飞</span>
     </span>
   );
@@ -229,7 +235,7 @@ export function FeishuConnectorCard({ state, onOpenDetail }: { state: FeishuConn
   const busy = state.authInProgress || state.connecting;
   return (
     <Card
-      className="group cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
+      className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
       onClick={onOpenDetail}
       onKeyDown={(event) => {
         if ((event.target as HTMLElement).closest("button")) return;
@@ -254,7 +260,7 @@ export function FeishuConnectorCard({ state, onOpenDetail }: { state: FeishuConn
               className={cn(
                 "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
                 state.hasConnected && !state.needsReconnect
-                  ? "border-transparent bg-success text-success-foreground shadow-sm hover:bg-success/85"
+                  ? "border-transparent bg-success text-success-foreground hover:bg-success/85"
                   : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
               )}
               disabled={busy || state.authServiceUnavailable}
@@ -292,21 +298,21 @@ export function FeishuConnectorDrawer({
         <FeishuBrandLogo />
         <div><CapabilitySourceBadge source="platform" /><div className={`mt-1 text-xs font-medium ${status.className}`}>{status.label}</div></div>
       </div>
-      <div className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
+      <div className={cn("p-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>
         连接一次后，官方 lark-cli 会使用当前用户独立的 LARKSUITE_CLI_CONFIG_DIR；组织内其他成员不能使用你的凭据。
       </div>
 
       {state.authError ? (
-        <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
+        <div className="flex items-start gap-2 rounded-xl bg-warning-subtle px-3 py-3 text-sm text-warning-ink">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" /><span>{state.authError}</span>
         </div>
       ) : null}
       {state.authSession?.status === "starting" ? (
-        <div className="flex items-center gap-2 rounded-xl bg-blue-50 px-3 py-3 text-sm text-blue-800"><Loader2 className="size-4 animate-spin" />正在生成飞书官方授权页面</div>
+        <div className="flex items-center gap-2 rounded-xl bg-info-subtle px-3 py-3 text-sm text-info-ink"><Loader2 className="size-4 animate-spin" />正在生成飞书官方授权页面</div>
       ) : state.authSession?.status === "awaiting_user" ? (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900">
+        <div className="rounded-xl bg-info-subtle px-3 py-3 text-sm text-info-ink ring-1 ring-info/25">
           <div className="font-medium">请在飞书官方页面查看权限并同意授权</div>
-          <div className="mt-1 text-xs text-blue-800">完成后本页会自动更新，无需复制授权码。</div>
+          <div className="mt-1 text-xs text-info-ink/85">完成后本页会自动更新，无需复制授权码。</div>
           {state.popupBlocked && state.authSession.authorizationUrl ? (
             <Button className="mt-3" size="sm" variant="outline" onClick={() => state.reopenAuthorizationPage(state.authSession!.authorizationUrl!)}>
               <ExternalLink className="size-3.5" />打开飞书授权页面
@@ -314,24 +320,24 @@ export function FeishuConnectorDrawer({
           ) : null}
         </div>
       ) : state.authSession?.status === "connected" ? (
-        <div className="flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-3 text-sm text-emerald-800"><CircleCheck className="size-4" />飞书连接成功，Agent 现在可以直接使用飞书能力</div>
+        <div className="flex items-center gap-2 rounded-xl bg-success-subtle px-3 py-3 text-sm text-success-ink"><CircleCheck className="size-4" />飞书连接成功，Agent 现在可以直接使用飞书能力</div>
       ) : state.authSession?.status === "failed" || state.authSession?.status === "expired" ? (
-        <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900"><TriangleAlert className="mt-0.5 size-4 shrink-0" /><span>{state.authSession.message}</span></div>
+        <div className="flex items-start gap-2 rounded-xl bg-warning-subtle px-3 py-3 text-sm text-warning-ink"><TriangleAlert className="mt-0.5 size-4 shrink-0" /><span>{state.authSession.message}</span></div>
       ) : null}
 
       {state.loading ? (
-        <div className="flex items-center gap-2 rounded-xl bg-muted/50 px-3 py-3 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />正在读取连接状态</div>
+        <div className={cn("flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}><Loader2 className="size-4 animate-spin" />正在读取连接状态</div>
       ) : state.error ? (
-        <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900"><TriangleAlert className="mt-0.5 size-4 shrink-0" /><span>{state.error}，不影响已经保存的飞书授权。</span></div>
+        <div className="flex items-start gap-2 rounded-xl bg-warning-subtle px-3 py-3 text-sm text-warning-ink"><TriangleAlert className="mt-0.5 size-4 shrink-0" /><span>{state.error}，不影响已经保存的飞书授权。</span></div>
       ) : state.connections.length === 0 ? (
-        <div className="rounded-xl bg-muted/50 px-3 py-3 text-sm"><div className="font-medium">尚未连接飞书</div><div className="mt-1 text-muted-foreground">点击“连接飞书”，在飞书官方页面确认一次即可。</div></div>
+        <div className={cn("px-3 py-3 text-sm", CAPABILITY_SUBTLE_SURFACE)}><div className="font-medium">尚未连接飞书</div><div className="mt-1 text-muted-foreground">点击“连接飞书”，在飞书官方页面确认一次即可。</div></div>
       ) : (
         <div className="space-y-2">
           {state.connections.map((item) => {
             const connected = item.status === "connected";
             const pending = item.status === "pending";
             return (
-              <div key={item.profileId} className="flex items-start justify-between gap-4 rounded-xl border px-3 py-3">
+              <div key={item.profileId} className="flex items-start justify-between gap-4 rounded-xl px-3 py-3 ring-1 ring-border/60">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{item.userName || "飞书账号"}</div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">{item.message}</div>
@@ -339,10 +345,10 @@ export function FeishuConnectorDrawer({
                 </div>
                 <div className={cn(
                   "flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium",
-                  connected && "bg-emerald-50 text-emerald-700",
-                  pending && "bg-blue-50 text-blue-700",
-                  item.status === "error" && "bg-amber-50 text-amber-800",
-                  item.status === "disconnected" && "bg-red-50 text-red-700",
+                  connected && "bg-success-subtle text-success-ink",
+                  pending && "bg-info-subtle text-info-ink",
+                  item.status === "error" && "bg-warning-subtle text-warning-ink",
+                  item.status === "disconnected" && "bg-danger-subtle text-danger-ink",
                 )}>
                   {connected ? <CircleCheck className="size-3.5" /> : pending ? <Loader2 className="size-3.5 animate-spin" /> : <TriangleAlert className="size-3.5" />}
                   {connected ? "已连接" : pending ? "检测中" : item.status === "error" ? "重试中" : "需重连"}

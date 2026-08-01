@@ -11,6 +11,8 @@ import { ArrowRight } from "lucide-react";
 import { buildScenarioPrompt } from "@agent/shared";
 import type { CatalogScenarioPublic, ScenarioItem } from "@agent/shared";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogUi";
 import { useAuth } from "@/contexts/AuthContext";
 import { ScenarioCard } from "./ScenarioCard";
 import { hasReplayScript } from "./replay/registry";
@@ -63,7 +65,10 @@ export function EmptySessionScenarios({ onTryScenario, onStartWorkflow, onViewAl
               else openCatalog(scenario);
             };
             return (
-              <div key={scenario.id} className="flex flex-col rounded-lg border bg-card p-4 text-left shadow-sm transition-colors hover:border-brand-200">
+              <div
+                key={scenario.id}
+                className={cn("flex flex-col p-4 text-left", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
+              >
                 <div className="text-xs text-muted-foreground">{scenario.readiness === "D0_CURRENT" ? "当前即用" : scenario.readiness === "D1_CONNECTOR" ? "标准接入" : "项目集成"}</div>
                 <div className="mt-2 text-sm font-semibold">{scenario.title}</div>
                 <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{scenario.value}</p>

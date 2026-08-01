@@ -21,6 +21,10 @@ import {
   CapabilityLogo,
   CapabilitySourceBadge,
   CatalogToolbar,
+  CAPABILITY_EMPTY_SURFACE,
+  CAPABILITY_SUBTLE_SURFACE,
+  CAPABILITY_SURFACE,
+  CAPABILITY_SURFACE_HOVER,
   type CapabilitySource,
 } from "@/components/CapabilityCenter/CatalogUi";
 
@@ -271,7 +275,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
 
       <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
         {filteredSkills.length === 0 ? (
-          <div className="rounded-2xl border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
+          <div className={cn("px-6 py-12 text-center text-sm text-muted-foreground", CAPABILITY_EMPTY_SURFACE)}>
             {skills.length === 0 ? "暂无可用技能" : "没有找到匹配的技能"}
           </div>
         ) : (
@@ -283,7 +287,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
               return (
                 <Card
                   key={skill.id}
-                  className="group cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
+                  className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
                   onClick={() => setDetailSkill(skill)}
                   onKeyDown={(event) => {
                     if ((event.target as HTMLElement).closest("button")) return;
@@ -309,7 +313,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                             className={cn(
                               "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
                               selected
-                                ? "border-transparent bg-success text-success-foreground shadow-sm hover:bg-success/85"
+                                ? "border-transparent bg-success text-success-foreground hover:bg-success/85"
                                 : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
                             )}
                             onClick={(event) => {
@@ -360,7 +364,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
                 )}
               </div>
             </div>
-            <div className="rounded-xl bg-muted/40 p-4 text-sm leading-6 text-muted-foreground">
+            <div className={cn("p-4 text-sm leading-6 text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>
               {sourceDescription(skillSource(detailSkill))}
             </div>
             <Button

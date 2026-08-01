@@ -10,6 +10,7 @@ import { Globe, MessageSquareShare, MousePointerClick, Repeat, ShieldAlert, Uplo
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogUi";
 import type { CatalogScenarioPublic, ScenarioItem, ScenarioRequirement } from "@agent/shared";
 import { friendlyPrimaryType, friendlyReadiness } from "./friendlyMappings";
 import { workflowCta, type WorkflowPrimaryAction } from "./workflowUi";
@@ -75,7 +76,7 @@ export function ScenarioRequireBadges({
         return (
           <span
             key={req}
-            className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-muted-foreground"
+            className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2 py-0.5 text-xs text-muted-foreground"
           >
             <Icon className="size-3" />
             {label}
@@ -118,8 +119,9 @@ export function ScenarioCard({ scenario, onTry, onOpenDetail, compact }: Scenari
           : undefined
       }
       className={cn(
-        "flex flex-col gap-2 rounded-lg border bg-card p-4 text-left text-card-foreground shadow-sm transition-shadow",
-        clickable && "cursor-pointer hover:shadow-[0_2px_8px_-2px_rgba(15,23,42,0.18)]",
+        "flex flex-col gap-2 p-4 text-left text-card-foreground",
+        CAPABILITY_SURFACE,
+        clickable && cn("cursor-pointer", CAPABILITY_SURFACE_HOVER),
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -215,8 +217,9 @@ export function WorkflowScenarioCard({
   return (
     <article
       className={cn(
-        "flex flex-col rounded-xl border bg-card p-4 text-left text-card-foreground shadow-sm transition-shadow",
-        "hover:shadow-[0_2px_8px_-2px_rgba(15,23,42,0.18)]",
+        "flex flex-col p-4 text-left text-card-foreground",
+        CAPABILITY_SURFACE,
+        CAPABILITY_SURFACE_HOVER,
       )}
     >
       <div className="flex flex-wrap items-center gap-1.5">
@@ -290,8 +293,14 @@ export function WorkflowPresentationCard({
   // 会话式回放剧本优先：它的步数才是观众实际要按几次。
   const replayScript = getReplayScript(scenario.id, scenario);
   const chapterCount = replayScript?.steps.length ?? 0;
+  // 主推位：外层白框内不靠阴影，改用极淡品牌底 + 品牌描边把「先看这个」提出来
   return (
-    <article className="flex flex-col overflow-hidden rounded-2xl border border-brand-100 bg-gradient-to-br from-white via-white to-brand-50/70 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md">
+    <article
+      className={cn(
+        "flex flex-col overflow-hidden rounded-xl bg-brand-50/40 p-5 ring-1 ring-brand-100 dark:bg-brand-900/20 dark:ring-brand-800",
+        CAPABILITY_SURFACE_HOVER,
+      )}
+    >
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge className="gap-1 bg-brand-50 font-normal text-brand-700 hover:bg-brand-50">
           <MousePointerClick className="size-3" />
@@ -299,7 +308,7 @@ export function WorkflowPresentationCard({
         </Badge>
         <Badge variant="outline" className="font-normal">{friendlyReadiness[scenario.readiness]}</Badge>
       </div>
-      <h3 className="mt-4 text-lg font-semibold leading-snug text-slate-950">{scenario.title}</h3>
+      <h3 className="mt-4 text-lg font-semibold leading-snug text-foreground">{scenario.title}</h3>
       <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">{scenario.value}</p>
       <div className="mt-4 text-xs font-medium text-brand-700">{chapterCount} 个业务步骤 · 右侧系统状态同步变化</div>
       <div className="mt-auto flex flex-wrap items-center justify-end gap-2 pt-5">

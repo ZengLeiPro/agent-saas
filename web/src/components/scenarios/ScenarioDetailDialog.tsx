@@ -9,6 +9,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
+import { CAPABILITY_SURFACE, CAPABILITY_SUBTLE_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
 import { friendlyPrimaryType, friendlyReadiness } from "./friendlyMappings";
 import {
   workflowById,
@@ -115,7 +117,7 @@ export function ScenarioDetailDialog({
             </ol>
           </section>
 
-          <section className="grid gap-3 rounded-lg border bg-muted/20 p-4 sm:grid-cols-2">
+          <section className={cn("grid gap-3 p-4 sm:grid-cols-2", CAPABILITY_SUBTLE_SURFACE)}>
             <div>
               <h3 className="font-medium">人审与权限</h3>
               <p className="mt-1.5 leading-6 text-muted-foreground">{scenario.detail.approval}</p>
@@ -138,7 +140,7 @@ export function ScenarioDetailDialog({
           </section>
 
           {skin ? (
-            <section className="rounded-lg border p-4">
+            <section className={cn("p-4", CAPABILITY_SURFACE)}>
               <h3 className="font-medium">行业业务版本 · {skin.title}</h3>
               <div className="mt-2 space-y-2 leading-6 text-muted-foreground">
                 <p>适用：{[...skin.industryVerticals, ...skin.businessModels].join("、")}</p>
@@ -163,7 +165,7 @@ export function ScenarioDetailDialog({
                   <div className="text-foreground">会执行并回读</div>
                   <ul className="space-y-2">
                     {skin.operations.map((item, index) => (
-                      <li key={`${item.target}-${index}`} className="rounded-md bg-muted/40 p-2.5">
+                      <li key={`${item.target}-${index}`} className={cn("p-2.5", CAPABILITY_SUBTLE_SURFACE)}>
                         <div>{item.target}：{item.operation}</div>
                         <div>人审：{item.approval}</div>
                         <div>回读：{item.readback}</div>
@@ -192,7 +194,7 @@ export function ScenarioDetailDialog({
           ) : null}
 
           {roleView ? (
-            <section className="rounded-lg border p-4">
+            <section className={cn("p-4", CAPABILITY_SURFACE)}>
               <h3 className="font-medium">岗位视图 · {roleView.title}</h3>
               <div className="mt-2 space-y-2 leading-6 text-muted-foreground">
                 <div>
@@ -215,7 +217,7 @@ export function ScenarioDetailDialog({
             </section>
           ) : null}
 
-          <section className="rounded-lg border p-4">
+          <section className={cn("p-4", CAPABILITY_SURFACE)}>
             <h3 className="font-medium">现在怎么用</h3>
             <p className="mt-1.5 text-muted-foreground">成熟度：{friendlyReadiness[effectiveReadiness]}</p>
             {capabilities.length > 0 ? (

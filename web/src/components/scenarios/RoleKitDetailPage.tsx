@@ -15,6 +15,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import {
+  CAPABILITY_EMPTY_SURFACE,
+  CAPABILITY_SUBTLE_SURFACE,
+  CAPABILITY_SURFACE,
+} from "@/components/CapabilityCenter/CatalogUi";
+import {
   friendlyDataDependency,
   friendlyDataSourceDifficulty,
   friendlySkillLevel,
@@ -88,7 +93,7 @@ function Section({
   const Icon = open ? ChevronDown : ChevronRight;
 
   return (
-    <section className="border-b border-border/70 py-5 last:border-b-0">
+    <section className="border-b border-border/60 py-5 last:border-b-0">
       <button
         type="button"
         className={cn(
@@ -108,7 +113,7 @@ function Section({
 
 function EmptyHint({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+    <div className={cn("px-3 py-2 text-sm text-muted-foreground", CAPABILITY_EMPTY_SURFACE)}>
       {children}
     </div>
   );
@@ -122,7 +127,7 @@ function MiniScenarioCard({
   onTry: (scenario: ScenarioItem) => void;
 }) {
   return (
-    <Card className="rounded-lg shadow-none">
+    <Card className={cn("border-0 shadow-none", CAPABILITY_SURFACE)}>
       <CardContent className="flex h-full flex-col p-4">
         <div className="flex items-start justify-between gap-2">
           <div className="line-clamp-2 text-sm font-medium">{scenario.title}</div>
@@ -205,7 +210,7 @@ export function RoleKitDetailPage({
         </Badge>
       </div>
 
-      <div className="rounded-lg border bg-card px-5">
+      <div className={cn("px-5", CAPABILITY_SURFACE)}>
         <Section title="岗位画像与差异化" expandable={false}>
           <p className="text-sm leading-6 text-muted-foreground">
             {welcomeText(safe, industryHint)}
@@ -216,7 +221,7 @@ export function RoleKitDetailPage({
           {safe.roleTopPains?.length ? (
             <ol className="grid gap-2 sm:grid-cols-2">
               {safe.roleTopPains.slice(0, 5).map((pain, index) => (
-                <li key={pain} className="flex gap-2 rounded-md bg-muted/30 px-3 py-2 text-sm">
+                <li key={pain} className={cn("flex gap-2 px-3 py-2 text-sm", CAPABILITY_SUBTLE_SURFACE)}>
                   <span className="text-muted-foreground">{index + 1}.</span>
                   <span>{pain}</span>
                 </li>
@@ -245,7 +250,11 @@ export function RoleKitDetailPage({
                 <button
                   key={scenario.id}
                   type="button"
-                  className="block w-full rounded-md border bg-background px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50"
+                  className={cn(
+                    // 全宽列表行：只做底色反馈，不用卡片位移，否则一列指令会跟着抖
+                    "block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-muted/40",
+                    CAPABILITY_SURFACE,
+                  )}
                   onClick={() => onTryScenario(scenario)}
                 >
                   <span className="block font-medium">{scenario.title}</span>
@@ -264,7 +273,7 @@ export function RoleKitDetailPage({
           {safe.roleP0DataSources?.length ? (
             <div className="grid gap-3 sm:grid-cols-2">
               {safe.roleP0DataSources.map((source) => (
-                <div key={source.name} className="rounded-md border px-3 py-2">
+                <div key={source.name} className={cn("px-3 py-2", CAPABILITY_SURFACE)}>
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-sm font-medium">{source.name}</div>
                     <Badge variant="secondary" className="font-normal">
@@ -285,7 +294,7 @@ export function RoleKitDetailPage({
           {skillCandidates.length ? (
             <div className="grid gap-3 sm:grid-cols-2">
               {skillCandidates.map((candidate) => (
-                <div key={candidate.name} className="rounded-md border px-3 py-2 text-sm">
+                <div key={candidate.name} className={cn("px-3 py-2 text-sm", CAPABILITY_SURFACE)}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium">{candidate.name}</span>
                     <Badge variant="outline">{friendlySkillLevel[candidate.level]}</Badge>
@@ -305,7 +314,7 @@ export function RoleKitDetailPage({
             {day1Steps.length > 0 && (
               <div className="space-y-2">
                 {day1Steps.map((step, index) => (
-                  <div key={`${step.stage}-${index}`} className="rounded-md bg-muted/30 px-3 py-2 text-sm">
+                  <div key={`${step.stage}-${index}`} className={cn("px-3 py-2 text-sm", CAPABILITY_SUBTLE_SURFACE)}>
                     <div className="font-medium">{step.stage}</div>
                     <div className="mt-1 text-muted-foreground">
                       {step.userAction} → {step.aiAction} → {step.userSees}
@@ -317,7 +326,7 @@ export function RoleKitDetailPage({
             {retention.length > 0 && (
               <div className="grid gap-2 sm:grid-cols-2">
                 {retention.map((item) => (
-                  <div key={item.day} className="rounded-md border px-3 py-2 text-sm">
+                  <div key={item.day} className={cn("px-3 py-2 text-sm", CAPABILITY_SURFACE)}>
                     <div className="font-medium">{item.day}</div>
                     <div className="mt-1 text-muted-foreground">{item.mainlineAiAction}</div>
                     {!item.sellUpBanned && item.backupCsmAction && (

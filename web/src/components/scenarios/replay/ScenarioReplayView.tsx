@@ -12,6 +12,7 @@ import { useResizePanel } from "@/hooks/useResizePanel";
 import { useSystemPanel } from "@/hooks/useSystemPanel";
 import { ActionIcons, EntityIcons, StatusIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { CAPABILITY_SUBTLE_SURFACE, CAPABILITY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
 import type { ReplayScript } from "./types";
 
 const ApprovalIcon = EntityIcons.admin;
@@ -57,7 +58,7 @@ function ArtifactPanel({ html, fileName, onClose, onBackToPanel }: { html: strin
   );
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col bg-background">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2">
         {onBackToPanel ? (
           <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={onBackToPanel}>
             <ChevronLeft className="size-3.5" />
@@ -69,6 +70,7 @@ function ArtifactPanel({ html, fileName, onClose, onBackToPanel }: { html: strin
           <X className="size-4" />
         </Button>
       </div>
+      {/* 产物 HTML 多数不自带底色：iframe 底固定为白，跟随 bg-card 会在暗色下变成深底黑字 */}
       <iframe
         title={fileName}
         srcDoc={srcDoc}
@@ -272,7 +274,7 @@ export function ScenarioReplayView({
     // h-full 而非 flex-1：父级 TabsContent 是普通块、不是 flex 容器，
     // flex-1 在那里不生效，会导致消息区高度塌陷、回放条被顶到页面上方
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-2">
         <Button variant="ghost" size="sm" onClick={onExit} className="gap-1 px-2">
           <ChevronLeft className="size-4" />
           返回
@@ -303,12 +305,12 @@ export function ScenarioReplayView({
               debugModeOverride={false}
             />
             {currentStep?.approval && currentDecision !== "approved" ? (
-              <div className="shrink-0 border-t border-border bg-amber-50/60 px-4 py-3">
-                <div className="mx-auto max-w-3xl rounded-xl border border-amber-200 bg-background p-4 shadow-sm">
+              <div className="shrink-0 border-t border-border/60 bg-warning-subtle px-4 py-3">
+                <div className="mx-auto max-w-3xl rounded-xl bg-card p-4 ring-1 ring-warning/25">
                   {currentDecision === "rejected" ? (
                     <div className="flex flex-wrap items-center gap-3">
                       <div className="flex min-w-0 flex-1 items-start gap-2">
-                        <UndoIcon className="mt-0.5 size-4 shrink-0 text-amber-700" />
+                        <UndoIcon className="mt-0.5 size-4 shrink-0 text-warning-ink" />
                         <div>
                           <div className="text-sm font-medium">已退回修改，未写入业务系统</div>
                           <p className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -321,7 +323,7 @@ export function ScenarioReplayView({
                   ) : (
                     <>
                       <div className="flex items-start gap-2">
-                        <ApprovalIcon className="mt-0.5 size-4 shrink-0 text-amber-700" />
+                        <ApprovalIcon className="mt-0.5 size-4 shrink-0 text-warning-ink" />
                         <div>
                           <div className="text-sm font-medium">{currentStep.approval.title}</div>
                           <p className="mt-1 text-xs leading-5 text-muted-foreground">{currentStep.approval.description}</p>
@@ -329,7 +331,7 @@ export function ScenarioReplayView({
                       </div>
                       <dl className="mt-3 grid gap-2 sm:grid-cols-2">
                         {currentStep.approval.facts.map((fact) => (
-                          <div key={`${fact.label}-${fact.value}`} className="rounded-lg border bg-muted/30 px-3 py-2">
+                          <div key={`${fact.label}-${fact.value}`} className={cn("px-3 py-2", CAPABILITY_SUBTLE_SURFACE)}>
                             <dt className="text-xs text-muted-foreground">{fact.label}</dt>
                             <dd className="mt-0.5 text-sm font-medium">{fact.value}</dd>
                           </div>
@@ -354,7 +356,7 @@ export function ScenarioReplayView({
           {/* 回放控制替代真实输入框，只占会话列，并复用输入框的居中宽度。 */}
           <div className="shrink-0 bg-background" style={{ paddingBottom: "var(--sab)" }}>
             <div className="content-container pb-1 pt-3">
-              <div className="rounded-xl border border-border/60 bg-card px-3 py-2.5 shadow-sm">
+              <div className={cn("px-3 py-2.5", CAPABILITY_SURFACE)}>
                 <div className="grid gap-2 md:grid-cols-[1fr_auto_1fr] md:items-center">
                   <span className="hidden md:block" aria-hidden="true" />
                   <div role="toolbar" aria-label="演示回放控制" className="flex flex-wrap items-center justify-center gap-2">
@@ -390,7 +392,7 @@ export function ScenarioReplayView({
             />
             <div
               data-scenario-replay-panel
-              className="flex min-h-0 shrink-0 flex-col border-l border-border"
+              className="flex min-h-0 shrink-0 flex-col border-l border-border/60"
               style={{ flexBasis: `${splitRatio * 100}%`, flexGrow: 0, flexShrink: 0 }}
             >
               {/* 产物预览抢占面板：用户显式点击的意图压过自动跟随。

@@ -16,7 +16,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
-import { CapabilityDetailDrawer, CapabilitySourceBadge, CatalogHeader } from "./CatalogUi";
+import {
+  CapabilityDetailDrawer,
+  CapabilitySourceBadge,
+  CatalogHeader,
+  CAPABILITY_SUBTLE_SURFACE,
+  CAPABILITY_SURFACE,
+  CAPABILITY_SURFACE_HOVER,
+} from "./CatalogUi";
 import { writeDingtalkAuthorizingPopup } from "./dingtalkAuthorizingPopup";
 import dingtalkIcon from "@/assets/connector-brands/dingtalk.svg";
 
@@ -221,13 +228,13 @@ export function useDwsConnections(enabled = true): DwsConnectionsState {
 
 export function dingtalkConnectorStatus(dws: DwsConnectionsState): { label: string; className: string } {
   if (dws.loading) return { label: "检测中", className: "text-muted-foreground" };
-  if (dws.authInProgress || dws.connecting) return { label: "等待授权", className: "text-blue-700 dark:text-blue-300" };
+  if (dws.authInProgress || dws.connecting) return { label: "等待授权", className: "text-info-ink" };
   if (dws.needsReconnect) return { label: "需重连", className: "text-destructive" };
   if (dws.connections.some((connection) => connection.status === "error")) {
-    return { label: "重试中", className: "text-amber-700 dark:text-amber-300" };
+    return { label: "重试中", className: "text-warning-ink" };
   }
   if (dws.connections.some((connection) => connection.status === "pending")) {
-    return { label: "检测中", className: "text-blue-700 dark:text-blue-300" };
+    return { label: "检测中", className: "text-info-ink" };
   }
   if (dws.hasConnected) {
     const count = dws.connections.filter((connection) => connection.status === "connected").length;
@@ -250,7 +257,7 @@ export function DingtalkBrandLogo({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-inset ring-black/10 dark:bg-white",
+        "flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-inset ring-black/10 dark:bg-white",
         className,
       )}
       aria-hidden="true"
@@ -274,7 +281,7 @@ export function DingtalkConnectorCard({
   const actionLabel = dws.hasConnected && !dws.needsReconnect ? "查看 钉钉" : "连接 钉钉";
   return (
     <Card
-      className="group cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
+      className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
       onClick={onOpenDetail}
       onKeyDown={(event) => {
         if ((event.target as HTMLElement).closest("button")) return;
@@ -302,7 +309,7 @@ export function DingtalkConnectorCard({
               className={cn(
                 "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
                 dws.hasConnected && !dws.needsReconnect
-                  ? "border-transparent bg-success text-success-foreground shadow-sm hover:bg-success/85"
+                  ? "border-transparent bg-success text-success-foreground hover:bg-success/85"
                   : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
               )}
               disabled={busy || dws.authServiceUnavailable}
@@ -347,25 +354,25 @@ export function DingtalkConnectorDrawer({
         </div>
       </div>
 
-      <div className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
+      <div className={cn("p-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>
         连接一次后，官方 dws CLI 会使用当前用户独立的 DWS_CONFIG_DIR 与多组织 profile；组织内其他成员无法使用你的凭据。
       </div>
 
       {dws.authError ? (
-        <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
+        <div className="flex items-start gap-2 rounded-xl bg-warning-subtle px-3 py-3 text-sm text-warning-ink">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" />
           <span>{dws.authError}</span>
         </div>
       ) : null}
 
       {dws.authSession?.status === "starting" ? (
-        <div className="flex items-center gap-2 rounded-xl bg-blue-50 px-3 py-3 text-sm text-blue-800">
+        <div className="flex items-center gap-2 rounded-xl bg-info-subtle px-3 py-3 text-sm text-info-ink">
           <Loader2 className="size-4 animate-spin" />正在生成钉钉官方授权页面
         </div>
       ) : dws.authSession?.status === "awaiting_user" ? (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900">
+        <div className="rounded-xl bg-info-subtle px-3 py-3 text-sm text-info-ink ring-1 ring-info/25">
           <div className="font-medium">请在钉钉页面选择组织并同意授权</div>
-          <div className="mt-1 text-xs text-blue-800">授权码：{dws.authSession.userCode || "正在读取"}</div>
+          <div className="mt-1 text-xs text-info-ink/85">授权码：{dws.authSession.userCode || "正在读取"}</div>
           {dws.popupBlocked && dws.authSession.authorizationUrl ? (
             <Button className="mt-3" size="sm" variant="outline" onClick={() => dws.reopenAuthorizationPage(dws.authSession!.authorizationUrl!)}>
               <ExternalLink className="size-3.5" />打开钉钉授权页面
@@ -373,27 +380,27 @@ export function DingtalkConnectorDrawer({
           ) : null}
         </div>
       ) : dws.authSession?.status === "connected" ? (
-        <div className="flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+        <div className="flex items-center gap-2 rounded-xl bg-success-subtle px-3 py-3 text-sm text-success-ink">
           <CircleCheck className="size-4" />钉钉连接成功，Agent 现在可以直接使用钉钉能力
         </div>
       ) : dws.authSession?.status === "failed" || dws.authSession?.status === "expired" ? (
-        <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
+        <div className="flex items-start gap-2 rounded-xl bg-warning-subtle px-3 py-3 text-sm text-warning-ink">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" />
           <span>{dws.authSession.message}</span>
         </div>
       ) : null}
 
       {dws.loading ? (
-        <div className="flex items-center gap-2 rounded-xl bg-muted/50 px-3 py-3 text-sm text-muted-foreground">
+        <div className={cn("flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>
           <Loader2 className="size-4 animate-spin" />正在读取连接状态
         </div>
       ) : dws.error ? (
-        <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-3 text-sm text-amber-900">
+        <div className="flex items-start gap-2 rounded-xl bg-warning-subtle px-3 py-3 text-sm text-warning-ink">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" />
           <span>{dws.error}，不影响已经保存的钉钉授权。</span>
         </div>
       ) : dws.connections.length === 0 ? (
-        <div className="rounded-xl bg-muted/50 px-3 py-3 text-sm">
+        <div className={cn("px-3 py-3 text-sm", CAPABILITY_SUBTLE_SURFACE)}>
           <div className="font-medium">尚未连接钉钉</div>
           <div className="mt-1 text-muted-foreground">点击“连接钉钉”，在钉钉官方页面确认一次即可。</div>
         </div>
@@ -403,7 +410,7 @@ export function DingtalkConnectorDrawer({
             const connected = connection.status === "connected";
             const pending = connection.status === "pending";
             return (
-              <div key={connection.profileId} className="flex items-start justify-between gap-4 rounded-xl border px-3 py-3">
+              <div key={connection.profileId} className="flex items-start justify-between gap-4 rounded-xl px-3 py-3 ring-1 ring-border/60">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{connection.corpName || connection.profileName || "钉钉组织"}</div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -415,10 +422,10 @@ export function DingtalkConnectorDrawer({
                 </div>
                 <div className={cn(
                   "flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium",
-                  connected && "bg-emerald-50 text-emerald-700",
-                  pending && "bg-blue-50 text-blue-700",
-                  connection.status === "error" && "bg-amber-50 text-amber-800",
-                  connection.status === "disconnected" && "bg-red-50 text-red-700",
+                  connected && "bg-success-subtle text-success-ink",
+                  pending && "bg-info-subtle text-info-ink",
+                  connection.status === "error" && "bg-warning-subtle text-warning-ink",
+                  connection.status === "disconnected" && "bg-danger-subtle text-danger-ink",
                 )}>
                   {connected ? <CircleCheck className="size-3.5" /> : pending ? <Loader2 className="size-3.5 animate-spin" /> : <TriangleAlert className="size-3.5" />}
                   {connected ? "已连接" : pending ? "检测中" : connection.status === "error" ? "重试中" : "需重连"}

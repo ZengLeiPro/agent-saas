@@ -10,6 +10,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+/**
+ * 能力中心表面语言
+ *
+ * 能力中心整体已被 DesktopLayout 套进一块浮动白框（bg-card + ring + 双层阴影），
+ * 所以框内的任何区块都不再自带阴影——白底上叠白卡加阴影会糊成一片。
+ * 统一规则：内部区块 = 圆角 xl + 极淡描边；只有可点的卡片在 hover 时才浮起来。
+ * 工作流页（scenarios/*）与技能、连接器、专家目录共用这三档，别再各写各的。
+ */
+export const CAPABILITY_SURFACE = "rounded-xl bg-card ring-1 ring-border/60";
+export const CAPABILITY_SURFACE_HOVER =
+  "transition-all hover:-translate-y-0.5 hover:ring-brand-200 hover:shadow-[0_6px_18px_-8px_rgba(15,23,42,0.18)]";
+/** 空态 / 提示位：不承载操作，用虚线描边而非实线，底色比白框略深一档 */
+export const CAPABILITY_EMPTY_SURFACE = "rounded-xl border border-dashed border-border/70 bg-muted/20";
+/** 框内次级容器（说明块、分组底）：无描边，仅靠底色与白框区分 */
+export const CAPABILITY_SUBTLE_SURFACE = "rounded-xl bg-muted/40";
+
 export type CapabilitySource = "platform" | "organization" | "personal";
 
 const SOURCE_META: Record<CapabilitySource, { label: string; className: string }> = {
@@ -95,10 +111,10 @@ export function CapabilityFilterTabs<T extends string>({
             role="tab"
             aria-selected={selected}
             className={cn(
-              "shrink-0 rounded-full border px-3 py-1.5 text-sm transition-colors",
+              "shrink-0 rounded-full border border-transparent px-3 py-1.5 text-sm transition-colors",
               selected
-                ? "border-transparent bg-primary text-primary-foreground"
-                : "bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground",
             )}
             onClick={() => onValueChange(option.value)}
           >
@@ -161,7 +177,7 @@ export function CatalogToolbar<T extends string>({
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder={searchPlaceholder}
             aria-label={searchPlaceholder}
-            className="h-10 rounded-xl bg-card pl-9 shadow-sm"
+            className="h-10 rounded-xl border-transparent bg-muted/50 pl-9 shadow-none focus-visible:bg-card"
           />
         </div>
         {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}

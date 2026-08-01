@@ -9,6 +9,7 @@ import {
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogUi";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   matchRoleIdByPosition,
@@ -133,7 +134,7 @@ export function EmptyChatRecommendCards({
             return (
               <div
                 key={scenario.id}
-                className={cn("flex min-h-[172px] flex-col rounded-lg border bg-card p-4 text-left shadow-sm transition-all", "hover:-translate-y-0.5 hover:border-brand-200")}
+                className={cn("flex min-h-[172px] flex-col p-4 text-left", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
               >
                 <div className="text-[11px] font-medium text-muted-foreground">{scenario.primaryType === "CREATE" ? "产出成果" : scenario.primaryType === "WATCH" ? "持续巡检" : scenario.primaryType === "ACT" ? "会动系统" : "持续闭环"} · {scenario.readiness === "D0_CURRENT" ? "当前即用" : scenario.readiness === "D1_CONNECTOR" ? "标准接入" : "项目集成"}</div>
                 <div className="mt-2 line-clamp-2 text-sm font-semibold leading-snug">{scenario.title}</div>
@@ -212,8 +213,9 @@ export function EmptyChatRecommendCards({
             key={scenario.id}
             type="button"
             className={cn(
-              "flex min-h-[172px] flex-col rounded-lg border bg-card p-4 text-left shadow-sm transition-all",
-              "hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-[0_8px_24px_-20px_rgba(15,23,42,0.7)]",
+              "flex min-h-[172px] flex-col p-4 text-left",
+              CAPABILITY_SURFACE,
+              CAPABILITY_SURFACE_HOVER,
             )}
             onClick={() => onTryScenario(buildScenarioPrompt(scenario), scenario)}
           >

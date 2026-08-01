@@ -40,7 +40,7 @@ export function ConnectorBrandLogo({ server, className }: { server: McpServerSum
   return (
     <span
       className={cn(
-        "flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-inset ring-black/10 dark:bg-white",
+        "flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-inset ring-black/10 dark:bg-white",
         className,
       )}
       aria-hidden="true"

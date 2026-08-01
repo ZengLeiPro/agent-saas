@@ -1,5 +1,7 @@
 import { authFetch } from './authFetch';
 import type {
+  AliyunConnectInput,
+  AliyunConnectionResponse,
   GithubConnectionResponse,
   GoogleWorkspaceConnectionResponse,
   GoogleWorkspaceOAuthStartResponse,
@@ -76,4 +78,23 @@ export async function disconnectGoogleWorkspace(): Promise<void> {
     const body = await res.json().catch(() => ({})) as { error?: string };
     throw new Error(body.error || 'Google Workspace 断开失败');
   }
+}
+
+export async function fetchAliyunConnection(): Promise<AliyunConnectionResponse> {
+  return jsonOrError(await authFetch('/api/connectors/aliyun'), '读取阿里云连接失败');
+}
+
+export async function connectAliyun(input: AliyunConnectInput): Promise<AliyunConnectionResponse> {
+  return jsonOrError(await authFetch('/api/connectors/aliyun', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  }), '阿里云连接失败');
+}
+
+export async function disconnectAliyun(): Promise<AliyunConnectionResponse> {
+  return jsonOrError(
+    await authFetch('/api/connectors/aliyun', { method: 'DELETE' }),
+    '阿里云断开失败',
+  );
 }

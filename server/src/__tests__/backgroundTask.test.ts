@@ -351,7 +351,7 @@ describe('DurableBackgroundTaskService', () => {
 
     await service.execute(task);
 
-    expect(connectorEnvRequests).toEqual([{ username: 'alice', tenantId: 'tenant-1' }]);
+    expect(connectorEnvRequests).toEqual([{ userId: 'user-1', username: 'alice', tenantId: 'tenant-1' }]);
     expect(seenConnectorEnv).toMatchObject({
       GH_TOKEN: 'connector-token-alice',
       GIT_CONFIG_COUNT: '2',

@@ -3,9 +3,10 @@ import express from 'express';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { JwtPayload } from '../auth/types.js';
+import { AliyunConnectorService, type AliyunAssumeRole } from '../connectors/aliyun.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { resolveGithubRuntimeEnv } from '../connectors/github.js';
 import { createConnectorsRouter } from '../routes/connectors.js';
@@ -27,6 +28,16 @@ async function createRig(): Promise<Rig> {
   const root = mkdtempSync(join(tmpdir(), 'connectors-route-'));
   const connectionStore = new ConnectorConnectionStore(join(root, 'connections.json'));
   const secretVault = new InMemorySecretVault();
+  const aliyunService = new AliyunConnectorService({
+    connectionStore,
+    vault: secretVault,
+    assumeRole: vi.fn<AliyunAssumeRole>().mockResolvedValue({
+      accessKeyId: 'STS.route',
+      accessKeySecret: 'sts-route-secret',
+      securityToken: 'sts-route-token',
+      expiration: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    }),
+  });
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -38,7 +49,7 @@ async function createRig(): Promise<Rig> {
     } satisfies JwtPayload;
     next();
   });
-  app.use('/api/connectors', createConnectorsRouter({ connectionStore, secretVault }));
+  app.use('/api/connectors', createConnectorsRouter({ connectionStore, secretVault, aliyunService }));
   const server: Server = await new Promise(resolve => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
@@ -110,5 +121,34 @@ describe('native connectors routes', () => {
   it('rejects invalid tokens', async () => {
     const rig = await createRig();
     expect((await rig.request('/api/connectors/github', json('POST', { token: 'not-a-token' }))).status).toBe(400);
+  });
+
+  it('connects, reads and disconnects an Aliyun RAM Role without returning secrets', async () => {
+    const rig = await createRig();
+    const connect = await rig.request('/api/connectors/aliyun', json('POST', {
+      accessKeyId: 'LTAIroute',
+      accessKeySecret: 'source-route-secret',
+      roleArn: 'acs:ram::1234567890123456:role/agent-saas',
+      regionId: 'cn-shenzhen',
+      externalId: 'tenant-a',
+    }));
+    expect(connect.status).toBe(200);
+    const connected = await connect.json() as { connection: Record<string, unknown> };
+    expect(connected.connection).toMatchObject({
+      status: 'connected',
+      accountId: '1234567890123456',
+      roleName: 'agent-saas',
+      regionId: 'cn-shenzhen',
+    });
+    expect(JSON.stringify(connected)).not.toContain('source-route-secret');
+    expect(JSON.stringify(connected)).not.toContain('LTAIroute');
+
+    const get = await rig.request('/api/connectors/aliyun');
+    expect(get.status).toBe(200);
+    expect(await get.json()).toMatchObject({ connection: { status: 'connected' } });
+
+    const disconnect = await rig.request('/api/connectors/aliyun', { method: 'DELETE' });
+    expect(disconnect.status).toBe(200);
+    expect(await disconnect.json()).toMatchObject({ connection: { status: 'disconnected' } });
   });
 });

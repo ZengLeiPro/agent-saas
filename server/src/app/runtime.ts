@@ -114,6 +114,10 @@ import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { McpConfigStore } from '../data/mcpConfig.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import {
+  AliyunConnectorService,
+  revokePendingAliyunCredentials,
+} from '../connectors/aliyun.js';
+import {
   GITHUB_CONNECTOR_ID,
   revokePendingGithubCredentials,
   resolveGithubRuntimeEnv,
@@ -285,6 +289,8 @@ export interface AppRuntime {
   mcpConfigStore?: McpConfigStore;
   /** 通用连接器账号、SecretVault ref 与能力开关；不依赖 MCP 生命周期。 */
   connectorConnectionStore?: ConnectorConnectionStore;
+  /** 阿里云 RAM Role 连接器；源凭据只存 Vault，运行时仅注入短期 STS。 */
+  aliyunConnectorService?: AliyunConnectorService;
   mcpOAuthService?: McpOAuthService;
   /** 自助注册动态配置（platform-admin 配置页写入，signup router 按 version 懒重建） */
   signupConfigStore?: SignupConfigStore;
@@ -1738,6 +1744,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     onError: error => serverLogger.warn(`Pending GitHub credential revoke skipped: ${error.message}`),
   });
+  await revokePendingAliyunCredentials({
+    connectionStore: connectorConnectionStore,
+    vault: secretVault,
+    onError: error => serverLogger.warn(`Pending Aliyun credential revoke skipped: ${error.message}`),
+  });
+  const aliyunConnectorService = new AliyunConnectorService({
+    connectionStore: connectorConnectionStore,
+    vault: secretVault,
+    onError: error => serverLogger.warn(`Aliyun connector runtime env skipped: ${error.message}`),
+  });
   const mcpOAuthService = new McpOAuthService({
     store: mcpConfigStore,
     vault: secretVault,
@@ -1882,12 +1898,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     'google_chat',
     'google_people',
   ]);
-  const resolveRunScopedEnv = async (context: { username: string; tenantId: string }) => {
+  const resolveRunScopedEnv = async (context: { userId: string; username: string; tenantId: string }) => {
     const owner = userStore?.findByUsername(context.username);
-    const nativeContext = owner && !owner.disabled && owner.tenantId === context.tenantId
-      ? { userId: owner.id, ...context }
-      : (!userStore ? { userId: context.username, ...context } : undefined);
-    const [githubEnv, notionEnv, googleWorkspaceEnv, mcpConnectorEnv] = await Promise.all([
+    const nativeContext = owner
+      ? (!owner.disabled && owner.id === context.userId && owner.tenantId === context.tenantId ? context : undefined)
+      : (!userStore ? context : undefined);
+    const [githubEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, mcpConnectorEnv] = await Promise.all([
       nativeContext ? resolveGithubRuntimeEnv({
         connectionStore: connectorConnectionStore,
         vault: secretVault,
@@ -1909,6 +1925,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           `Native connector runtime env skipped: connector=google-workspace reason=${error.message}`,
         ),
       ) : {},
+      nativeContext ? aliyunConnectorService.resolveRuntimeEnv(nativeContext) : {},
       resolveConnectorRuntimeEnv({
         store: mcpConfigStore,
         vault: secretVault,
@@ -1921,6 +1938,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ]);
     return {
       ...mcpConnectorEnv,
+      ...aliyunEnv,
       ...googleWorkspaceEnv,
       ...notionEnv,
       ...githubEnv,
@@ -3207,6 +3225,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     skillConfigStore,
     mcpConfigStore,
     connectorConnectionStore,
+    aliyunConnectorService,
     mcpOAuthService,
     signupConfigStore,
     egressConfigStore,

@@ -168,10 +168,14 @@ RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
 RUN curl -fsSL "https://aliyuncli.alicdn.com/aliyun-cli-linux-${ALIYUN_CLI_VERSION}-amd64.tgz" -o /tmp/aliyun-cli.tgz \
     && echo "${ALIYUN_CLI_SHA256}  /tmp/aliyun-cli.tgz" | sha256sum -c - \
     && tar xzf /tmp/aliyun-cli.tgz -C /tmp \
-    && install -m 0755 /tmp/aliyun /usr/local/bin/aliyun \
+    && install -m 0755 /tmp/aliyun /usr/local/libexec/aliyun \
     && rm -f /tmp/aliyun /tmp/aliyun-cli.tgz \
-    && aliyun version \
+    && /usr/local/libexec/aliyun version \
     && rg --version
+
+COPY scripts/aliyun-runtime-wrapper.py /usr/local/bin/aliyun
+RUN chmod 0755 /usr/local/bin/aliyun \
+    && aliyun version
 
 RUN corepack enable \
     && corepack prepare pnpm@10.18.3 --activate \

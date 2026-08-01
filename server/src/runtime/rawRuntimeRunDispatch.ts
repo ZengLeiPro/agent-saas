@@ -117,7 +117,7 @@ function enterSessionContext(sessionId: string, runId: string): void {
   });
 }
 import type { ContextReconstructionPolicy } from './contextProjection.js';
-import { buildConnectorRunEnv } from './connectorRunEnv.js';
+import { buildConnectorRunEnv, reconcileConnectorRunEnv } from './connectorRunEnv.js';
 import { SessionContextService, SessionToolProvider } from './sessionContext.js';
 import { buildRuntimeReplayState, type RuntimeReplayState } from './replay.js';
 import {
@@ -500,6 +500,7 @@ export interface RawRuntimeRunDispatchConfig {
   workspaceProvisioner?: (input: { userId?: string; username?: string }) => Promise<void>;
   /** 当前用户已启用连接器的运行态环境变量解析器。 */
   resolveConnectorRuntimeEnv?: (context: {
+    userId: string;
     username: string;
     tenantId: string;
   }) => Promise<Record<string, string>>;
@@ -1882,6 +1883,23 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const abortController = options.abortController ?? new AbortController();
     enterSessionContext(sessionId, runId);
     const effectiveTenantId = resolveContextTenantId(context, existingSession);
+    const connectorIdentity = existingSession
+      ? {
+          userId: existingSession.userId,
+          username: existingSession.username,
+          tenantId: existingSession.tenantId,
+        }
+      : {
+          userId: identitySource?.id,
+          username: identitySource?.username,
+          tenantId: identitySource?.tenantId,
+        };
+    const runtimeEnv = await reconcileConnectorRunEnv(config, {
+      identity: connectorIdentity,
+      env: options.env,
+      resolvedFor: options.connectorEnvResolvedFor,
+      injectedKeys: options.connectorEnvKeys,
+    });
     // BUG FIX 2026-06-23：tenantId 必须与 userId 同源用 identitySource，否则
     // admin 代操作 / cron / 内部触发等 context.user 为空但 sessionOwner 存在的
     // 路径上 hasTranscriptOwnerRef 会返回 false，transcript 会回退到 ownerless
@@ -2219,7 +2237,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         mountSubPath: workspaceMountSubPath,
         tenantId: sessionRecord.tenantId,
         executionTarget,
-        env: options.env,
+        env: runtimeEnv,
         sandboxPolicy,
         workerId: options.runtimeWorkerId,
         channelContext: context,
@@ -2725,6 +2743,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     });
 
     const resumeEnv = await buildConnectorRunEnv(config, {
+      userId: sessionRecord.userId,
       username: resumeUsername,
       tenantId: sessionRecord.tenantId,
     });
@@ -3118,6 +3137,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     });
 
     const resumeEnv = await buildConnectorRunEnv(config, {
+      userId: sessionRecord.userId,
       username: resumeUsername,
       tenantId: sessionRecord.tenantId,
     });
@@ -3324,7 +3344,7 @@ export async function wakeRuntimeSession(
     });
     const dispatch = createRawApprovalResumeDispatch(config);
     const abortController = new AbortController();
-    runtimeRunController.register(run.runId, abortController);
+    runtimeRunController.register(run.runId, abortController, { userId: session.userId });
     const renewTimer = startWakeLeaseRenewal({
       lease: options.lease,
       runStore: config.runStore,
@@ -3381,7 +3401,7 @@ export async function wakeRuntimeSession(
     });
     const dispatch = createRawInteractionResumeDispatch(config);
     const abortController = new AbortController();
-    runtimeRunController.register(run.runId, abortController);
+    runtimeRunController.register(run.runId, abortController, { userId: session.userId });
     const renewTimer = startWakeLeaseRenewal({
       lease: options.lease,
       runStore: config.runStore,
@@ -3435,12 +3455,9 @@ export async function wakeRuntimeSession(
     sessionOwner,
     targetCwd: session.cwd,
   };
-  // Durable scheduler wake bypasses engine/dispatch middleware, so rebuild the
-  // session owner's connector env here before the raw loop starts.
-  const connectorRunEnv = await buildConnectorRunEnv(config, sessionOwner);
   const dispatch = createRawRuntimeRunDispatch(config);
   const abortController = new AbortController();
-  runtimeRunController.register(run.runId, abortController);
+  runtimeRunController.register(run.runId, abortController, { userId: sessionOwner.id });
   const renewTimer = startWakeLeaseRenewal({
     lease: options.lease,
     runStore: config.runStore,
@@ -3457,7 +3474,6 @@ export async function wakeRuntimeSession(
         runtimeRunId: run.runId,
         resumeSessionId: run.sessionId,
         cwd: session.cwd,
-        env: connectorRunEnv,
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,

@@ -535,7 +535,7 @@ describe('wakeRuntimeSession', () => {
       else process.env.OPENAI_API_KEY = oldApiKey;
     }
 
-    expect(connectorEnvRequests).toEqual([{ username: 'alice', tenantId: 'kaiyan' }]);
+    expect(connectorEnvRequests).toEqual([{ userId: 'user-1', username: 'alice', tenantId: 'kaiyan' }]);
     expect(releases).toEqual([]);
   });
 });

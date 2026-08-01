@@ -9,16 +9,19 @@ import {
   GoogleWorkspaceConnectorDrawer,
   useGoogleWorkspaceConnector,
 } from "./GoogleWorkspaceConnector";
+import { AliyunConnectorCard, AliyunConnectorDrawer, useAliyunConnector } from "./AliyunConnector";
 
 export function BuiltInConnectors() {
   const [dingtalkOpen, setDingtalkOpen] = useState(false);
   const [feishuOpen, setFeishuOpen] = useState(false);
   const [notionOpen, setNotionOpen] = useState(false);
   const [googleOpen, setGoogleOpen] = useState(false);
+  const [aliyunOpen, setAliyunOpen] = useState(false);
   const dws = useDwsConnections(true);
   const feishu = useFeishuConnections(true);
   const notion = useNotionConnector(true);
   const google = useGoogleWorkspaceConnector(true);
+  const aliyun = useAliyunConnector(true);
 
   return (
     <div className="space-y-5">
@@ -31,12 +34,14 @@ export function BuiltInConnectors() {
         <FeishuConnectorCard state={feishu} onOpenDetail={() => setFeishuOpen(true)} />
         <NotionConnectorCard state={notion} onOpenDetail={() => setNotionOpen(true)} />
         <GoogleWorkspaceConnectorCard state={google} onOpenDetail={() => setGoogleOpen(true)} />
+        <AliyunConnectorCard state={aliyun} onOpenDetail={() => setAliyunOpen(true)} />
         <GithubConnector />
       </div>
       <DingtalkConnectorDrawer open={dingtalkOpen} onOpenChange={setDingtalkOpen} dws={dws} />
       <FeishuConnectorDrawer open={feishuOpen} onOpenChange={setFeishuOpen} state={feishu} />
       <NotionConnectorDrawer open={notionOpen} onOpenChange={setNotionOpen} state={notion} />
       <GoogleWorkspaceConnectorDrawer open={googleOpen} onOpenChange={setGoogleOpen} state={google} />
+      <AliyunConnectorDrawer open={aliyunOpen} onOpenChange={setAliyunOpen} state={aliyun} />
     </div>
   );
 }

@@ -136,6 +136,7 @@ export class ConnectorConnectionStore {
       result = {
         connectorId,
         username,
+        ...(current?.userId ? { userId: current.userId } : {}),
         tenantId,
         status: 'disconnected',
         credentialRefs: {},

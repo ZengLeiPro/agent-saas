@@ -55,6 +55,8 @@
     "verify:client-daemon": "vitest run src/__tests__/clientDaemonProtocol.test.ts src/__tests__/clientDaemonGateway.test.ts src/__tests__/clientDaemonRunner.test.ts"
   },
   "dependencies": {
+    "@alicloud/openapi-client": "0.4.15",
+    "@alicloud/sts20150401": "1.2.0",
     "@duckdb/node-api": "1.5.3-r.3",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@modelcontextprotocol/sdk": "^1.29.0",

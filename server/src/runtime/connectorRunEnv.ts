@@ -1,24 +1,28 @@
 import { resolve } from 'path';
 
-import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { buildIsolatedGitCredentialEnv } from '../security/gitCredentialIsolation.js';
 
+export interface ConnectorRuntimeIdentity {
+  userId: string;
+  username: string;
+  tenantId: string;
+}
+
 export interface ConnectorRuntimeEnvResolverConfig {
-  resolveConnectorRuntimeEnv?: (identity: {
-    username: string;
-    tenantId: string;
-  }) => Promise<Record<string, string>>;
+  resolveConnectorRuntimeEnv?: (identity: ConnectorRuntimeIdentity) => Promise<Record<string, string>>;
 }
 
 export async function buildConnectorRunEnv(
   config: ConnectorRuntimeEnvResolverConfig,
-  identity: { username?: string; tenantId?: string },
+  identity: { id?: string; userId?: string; username?: string; tenantId?: string },
 ): Promise<Record<string, string>> {
-  if (!identity.username) return {};
+  const userId = identity.id ?? identity.userId;
+  if (!userId || !identity.username || !identity.tenantId) return {};
   const connectorEnv = config.resolveConnectorRuntimeEnv
     ? await config.resolveConnectorRuntimeEnv({
+        userId,
         username: identity.username,
-        tenantId: identity.tenantId ?? DEFAULT_TENANT_ID,
+        tenantId: identity.tenantId,
       })
     : {};
   return {
@@ -29,5 +33,32 @@ export async function buildConnectorRunEnv(
       allowGhCli: true,
       ghConfigDir: resolve('/tmp', `gh-${identity.username}`),
     }),
+  };
+}
+
+export async function reconcileConnectorRunEnv(
+  config: ConnectorRuntimeEnvResolverConfig,
+  input: {
+    identity: { id?: string; userId?: string; username?: string; tenantId?: string };
+    env?: Record<string, string>;
+    resolvedFor?: ConnectorRuntimeIdentity;
+    injectedKeys?: string[];
+  },
+): Promise<Record<string, string>> {
+  const userId = input.identity.id ?? input.identity.userId;
+  const sameOwner = Boolean(
+    userId
+    && input.identity.username
+    && input.identity.tenantId
+    && input.resolvedFor?.userId === userId
+    && input.resolvedFor.username === input.identity.username
+    && input.resolvedFor.tenantId === input.identity.tenantId,
+  );
+  const env = { ...input.env };
+  if (sameOwner) return env;
+  for (const key of input.injectedKeys ?? []) delete env[key];
+  return {
+    ...env,
+    ...await buildConnectorRunEnv(config, input.identity),
   };
 }

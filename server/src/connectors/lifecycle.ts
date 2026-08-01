@@ -1,4 +1,5 @@
 import type { SecretVault } from '../security/secretVault.js';
+import { ALIYUN_CONNECTOR_ID } from './aliyun.js';
 import type { ConnectorConnectionStore } from './connectionStore.js';
 
 export async function revokeAllUserConnectorCredentials(input: {
@@ -19,7 +20,7 @@ export async function revokeAllUserConnectorCredentials(input: {
       try {
         await input.vault.revokeSecret(ref, {
           actor: 'connector_proxy',
-          userId: input.username,
+          userId: record.connectorId === ALIYUN_CONNECTOR_ID ? input.userId : input.username,
           tenantId: input.tenantId,
           scopes: ['secret:connector:read', 'secret:mcp:read'],
         });

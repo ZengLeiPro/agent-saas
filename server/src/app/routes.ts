@@ -4,6 +4,7 @@ import type { Express, Request, Response } from "express";
 
 import type { AppRuntime } from "./runtime.js";
 import type { TenantStore } from "../data/tenants/store.js";
+import type { UserInfo } from "../data/users/types.js";
 import type { TitleGeneratorConfig } from "../agent/titleGenerator.js";
 import type { GuardrailModelConfig } from "../agent/guardrail.js";
 import {
@@ -56,6 +57,7 @@ import { createNotionRouter } from "../routes/notion.js";
 import { createGoogleWorkspaceRouter } from "../routes/googleWorkspace.js";
 import { disconnectNotion } from "../connectors/notion.js";
 import { revokeAllUserConnectorCredentials } from "../connectors/lifecycle.js";
+import { runtimeRunController } from "../runtime/runController.js";
 import { createTenantsRouter } from "../routes/tenants.js";
 import { deleteTenantResources } from "../data/tenants/cleanup.js";
 import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
@@ -607,6 +609,33 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         }
       }
     })();
+    const terminateAndRevokeUserConnectors = async (target: UserInfo) => {
+      // 先中止活跃运行，避免外部连接器清理失败时用户继续持有已注入的短期凭据。
+      runtimeRunController.abortByUser(target.id, 'user access revoked');
+      webChannel?.disconnectUser(target.id);
+      await runtime.aliyunConnectorService?.disconnect({
+        userId: target.id,
+        username: target.username,
+        tenantId: target.tenantId,
+      }).catch(() => undefined);
+      await Promise.allSettled([
+        runtime.connectorConnectionStore && runtime.secretVault
+          ? revokeAllUserConnectorCredentials({
+              connectionStore: runtime.connectorConnectionStore,
+              vault: runtime.secretVault,
+              userId: target.id,
+              username: target.username,
+              tenantId: target.tenantId,
+            })
+          : undefined,
+        runtime.dwsAuthFlowService?.revokeUser?.(target),
+        runtime.feishuAuthFlowService?.revokeUser?.(target),
+        runtime.notionAuthFlowService?.cancelUser?.(target.tenantId, target.id),
+        runtime.googleWorkspaceOAuthService?.cancelUser(target.id),
+        runtime.googleWorkspaceOAuthService?.disconnect(target.id, target.username, target.tenantId),
+        runtime.mcpOAuthService?.disconnectUser(target.username, target.tenantId),
+      ]);
+    };
     app.use(
       "/api/auth",
       createAuthRouter({
@@ -621,53 +650,11 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         tenantSkillsRootDir,
         onUserDisabled: async (userId: string) => {
           const disabledUser = userStore.findById(userId);
-          if (disabledUser) {
-            await Promise.all([
-              runtime.dwsAuthFlowService?.revokeUser?.(disabledUser),
-              runtime.feishuAuthFlowService?.revokeUser?.(disabledUser),
-              runtime.notionAuthFlowService?.cancelUser?.(disabledUser.tenantId, disabledUser.id),
-            ]);
-            await runtime.googleWorkspaceOAuthService?.cancelUser(disabledUser.id);
-            await runtime.googleWorkspaceOAuthService?.disconnect(
-              disabledUser.id,
-              disabledUser.username,
-              disabledUser.tenantId,
-            );
-            if (runtime.connectorConnectionStore && runtime.secretVault) {
-              await revokeAllUserConnectorCredentials({
-                connectionStore: runtime.connectorConnectionStore,
-                vault: runtime.secretVault,
-                userId: disabledUser.id,
-                username: disabledUser.username,
-                tenantId: disabledUser.tenantId,
-              });
-            }
-          }
-          webChannel?.disconnectUser(userId);
+          if (disabledUser) await terminateAndRevokeUserConnectors(disabledUser);
         },
+        onUserTenantChanging: terminateAndRevokeUserConnectors,
         skillConfigStore: runtime.skillConfigStore,
-        onUserDeleting: async (target) => {
-          await Promise.all([
-            runtime.dwsAuthFlowService?.revokeUser?.(target),
-            runtime.feishuAuthFlowService?.revokeUser?.(target),
-            runtime.notionAuthFlowService?.cancelUser?.(target.tenantId, target.id),
-          ]);
-          await runtime.googleWorkspaceOAuthService?.cancelUser(target.id);
-          await runtime.googleWorkspaceOAuthService?.disconnect(
-            target.id,
-            target.username,
-            target.tenantId,
-          );
-          if (runtime.connectorConnectionStore && runtime.secretVault) {
-            await revokeAllUserConnectorCredentials({
-              connectionStore: runtime.connectorConnectionStore,
-              vault: runtime.secretVault,
-              userId: target.id,
-              username: target.username,
-              tenantId: target.tenantId,
-            });
-          }
-        },
+        onUserDeleting: terminateAndRevokeUserConnectors,
         mcpOAuthService: runtime.mcpOAuthService,
         signupConfigStore: runtime.signupConfigStore,
         secretVault: runtime.secretVault,
@@ -791,6 +778,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         createConnectorsRouter({
           connectionStore: runtime.connectorConnectionStore,
           secretVault: runtime.secretVault,
+          aliyunService: runtime.aliyunConnectorService,
         }),
       );
       app.use(

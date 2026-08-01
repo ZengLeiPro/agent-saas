@@ -102,6 +102,7 @@ export interface CreateRunDispatchOptions {
   skillConfigStore?: SkillConfigStore;
   userOverrides?: UserOverrides;
   resolveConnectorRuntimeEnv?: (context: {
+    userId: string;
     username: string;
     tenantId: string;
   }) => Promise<Record<string, string>>;
@@ -601,6 +602,14 @@ export function createMiddlewareRunDispatch(
           const connectorRunEnv = await buildConnectorRunEnv(options, context.user);
           effectiveOptions = {
             ...effectiveOptions,
+            ...(context.user.tenantId ? {
+              connectorEnvResolvedFor: {
+                userId: context.user.id,
+                username: context.user.username,
+                tenantId: context.user.tenantId,
+              },
+            } : {}),
+            connectorEnvKeys: Object.keys(connectorRunEnv),
             env: {
               ...effectiveOptions.env,
               ...connectorRunEnv,

@@ -20,6 +20,7 @@ describe('native connector credential lifecycle', () => {
     const vault = new InMemorySecretVault();
     const github = await vault.putSecret('alice', 'connector', 'github-secret', { tenantId: 'tenant-a' });
     const notion = await vault.putSecret('alice', 'connector', 'notion-secret', { tenantId: 'tenant-a' });
+    const aliyun = await vault.putSecret('user-1', 'connector', 'aliyun-secret', { tenantId: 'tenant-a' });
     const replacement = await vault.putSecret('bob', 'connector', 'replacement-secret', { tenantId: 'tenant-a' });
 
     await store.connect({
@@ -27,6 +28,9 @@ describe('native connector credential lifecycle', () => {
     });
     await store.connect({
       connectorId: 'notion', username: 'alice', userId: 'user-1', tenantId: 'tenant-a', credentialRefs: { token: notion.id },
+    });
+    await store.connect({
+      connectorId: 'aliyun', username: 'alice', userId: 'user-1', tenantId: 'tenant-a', credentialRefs: { ram_role: aliyun.id },
     });
     await store.connect({
       connectorId: 'github', username: 'bob', userId: 'user-2', tenantId: 'tenant-a', credentialRefs: { token: replacement.id },
@@ -38,10 +42,11 @@ describe('native connector credential lifecycle', () => {
       userId: 'user-1',
       username: 'alice',
       tenantId: 'tenant-a',
-    })).resolves.toBe(2);
+    })).resolves.toBe(3);
 
     expect(store.get('alice', 'github')).toMatchObject({ status: 'disconnected', credentialRefs: {} });
     expect(store.get('alice', 'notion')).toMatchObject({ status: 'disconnected', credentialRefs: {} });
+    expect(store.get('alice', 'aliyun')).toMatchObject({ status: 'disconnected', credentialRefs: {} });
     expect(store.get('bob', 'github')).toMatchObject({ status: 'connected', userId: 'user-2' });
   });
 });

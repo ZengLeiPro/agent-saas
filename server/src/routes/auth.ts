@@ -329,6 +329,8 @@ export interface AuthRouterDeps {
   tenantSkillsRootDir?: string;
   /** 用户被禁用时的回调（断开 WS 连接 + 中止活跃流） */
   onUserDisabled?: (userId: string) => void | Promise<void>;
+  /** 用户跨租户迁移前撤销旧租户连接器，并中止旧会话。 */
+  onUserTenantChanging?: (user: UserInfo) => Promise<void>;
   /** Skill 配置 store，用于删除用户时清理孤儿条目 */
   skillConfigStore?: SkillConfigStore;
   /** 删除用户时撤销其原生连接器凭据；必须在 userStore 删除前执行。 */
@@ -1271,6 +1273,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(400).json({ error: policyError });
         return;
       }
+      if (tenantIdUpdate && tenantIdUpdate !== target.tenantId) {
+        await deps.onUserTenantChanging?.(target);
+      }
       const user = await userStore.update(req.params.id, {
         password,
         role,
@@ -1333,7 +1338,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         return;
       }
       await deps.onUserDeleting?.(target);
-      await mcpOAuthService?.disconnectUser(target.username, target.tenantId);
+      if (!deps.onUserDeleting) {
+        await mcpOAuthService?.disconnectUser(target.username, target.tenantId);
+      }
       await userStore.delete(req.params.id);
 
       // 软删除关联资源（workspace、transcripts、avatars）

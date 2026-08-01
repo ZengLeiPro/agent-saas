@@ -388,7 +388,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     }
 
     const abortController = new AbortController();
-    runtimeRunController.register(record.runId, abortController, { abortOnDrain: false });
+    runtimeRunController.register(record.runId, abortController, {
+      abortOnDrain: false,
+      userId: taskSession.userId,
+    });
     const renewTimer = lease ? setInterval(() => {
       void lease.renew().catch((err) => {
         logger.warn(`后台命令监控 lease 续约失败 task=${record.runId}: ${err instanceof Error ? err.message : String(err)}`);
@@ -640,7 +643,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   ): Promise<void> {
     const sessionCatalog = resolveSessionCatalog(this.config);
     const abortController = new AbortController();
-    runtimeRunController.register(record.runId, abortController, { abortOnDrain: false });
+    runtimeRunController.register(record.runId, abortController, {
+      abortOnDrain: false,
+      userId: taskSession.userId,
+    });
     const renewTimer = lease ? setInterval(() => {
       void lease.renew().catch((err) => abortController.abort(err instanceof Error ? err : new Error(String(err))));
     }, 30_000) : null;

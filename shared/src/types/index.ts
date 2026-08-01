@@ -64,6 +64,9 @@ export type {
   GoogleWorkspaceConnection,
   GoogleWorkspaceConnectionResponse,
   GoogleWorkspaceOAuthStartResponse,
+  AliyunConnection,
+  AliyunConnectionResponse,
+  AliyunConnectInput,
 } from "./connectors";
 
 export type {

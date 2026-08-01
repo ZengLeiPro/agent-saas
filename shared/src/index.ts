@@ -191,6 +191,9 @@ export type {
   GoogleWorkspaceConnection,
   GoogleWorkspaceConnectionResponse,
   GoogleWorkspaceOAuthStartResponse,
+  AliyunConnection,
+  AliyunConnectionResponse,
+  AliyunConnectInput,
 } from "./types/index";
 export { FILE_SORT_LABELS, PLATFORM_CAPABILITIES, buildScenarioPrompt } from "./types/index";
 export { saveUserPreferences } from "./lib/preferencesApi";
@@ -667,4 +670,7 @@ export {
   fetchGoogleWorkspaceConnection,
   startGoogleWorkspaceOAuth,
   disconnectGoogleWorkspace,
+  fetchAliyunConnection,
+  connectAliyun,
+  disconnectAliyun,
 } from "./lib/connectorsApi";

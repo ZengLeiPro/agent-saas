@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import type { SecretVault } from '../security/secretVault.js';
 import type { ConnectorConnectionStore } from '../connectors/connectionStore.js';
+import type { AliyunConnectorService } from '../connectors/aliyun.js';
 import {
   GITHUB_CONNECTOR_ID,
   GITHUB_TOKEN_CREDENTIAL_KEY,
@@ -14,9 +15,18 @@ const githubConnectSchema = z.object({
   token: z.string().min(1).max(20_000),
 }).strict();
 
+const aliyunConnectSchema = z.object({
+  accessKeyId: z.string().min(1).max(256),
+  accessKeySecret: z.string().min(1).max(512),
+  roleArn: z.string().min(1).max(512),
+  regionId: z.string().min(1).max(128),
+  externalId: z.string().max(1224).optional(),
+}).strict();
+
 export interface ConnectorsRouterDeps {
   connectionStore: ConnectorConnectionStore;
   secretVault: SecretVault;
+  aliyunService?: AliyunConnectorService;
 }
 
 function authContext(req: Request): { userId: string; username: string; tenantId: string } | undefined {
@@ -102,6 +112,36 @@ export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
       username: auth.username,
     });
     return res.json({ connection: toGithubConnectionView(connection) });
+  });
+
+  router.get('/aliyun', (req, res) => {
+    const auth = authContext(req);
+    if (!auth) return res.status(401).json({ error: 'Authentication required' });
+    if (!deps.aliyunService) return res.status(503).json({ error: '阿里云连接器未启用' });
+    return res.json({ connection: deps.aliyunService.getConnection(auth) });
+  });
+
+  router.post('/aliyun', async (req, res) => {
+    const auth = authContext(req);
+    if (!auth) return res.status(401).json({ error: 'Authentication required' });
+    if (!deps.aliyunService) return res.status(503).json({ error: '阿里云连接器未启用' });
+    const parsed = aliyunConnectSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
+    try {
+      const connection = await deps.aliyunService.connect(auth, parsed.data);
+      return res.json({ connection });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '阿里云授权验证失败';
+      return res.status(400).json({ error: message });
+    }
+  });
+
+  router.delete('/aliyun', async (req, res) => {
+    const auth = authContext(req);
+    if (!auth) return res.status(401).json({ error: 'Authentication required' });
+    if (!deps.aliyunService) return res.status(503).json({ error: '阿里云连接器未启用' });
+    const connection = await deps.aliyunService.disconnect(auth);
+    return res.json({ connection });
   });
 
   return router;

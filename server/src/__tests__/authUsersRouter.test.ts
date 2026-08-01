@@ -37,6 +37,7 @@ interface TestRig {
     wainUser: UserInfo;
   };
   sender: CaptureSender;
+  tenantChanges: UserInfo[];
   setCaller(user: UserInfo): void;
   request(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
@@ -62,6 +63,7 @@ async function makeTestRig(): Promise<TestRig> {
     createdBy: "system",
   });
   await tenantStore.create({ id: "wain", name: "唯恩", createdBy: "system" });
+  await tenantStore.create({ id: "other", name: "其他组织", createdBy: "system" });
 
   const userStore = new UserStore(join(tmpRoot, "users.json"));
   const superAdmin = await userStore.create({
@@ -110,6 +112,7 @@ async function makeTestRig(): Promise<TestRig> {
     phoneVerifiedAt: new Date().toISOString(),
   });
   const sender = new CaptureSender();
+  const tenantChanges: UserInfo[] = [];
 
   const app = express();
   app.use(express.json());
@@ -130,6 +133,7 @@ async function makeTestRig(): Promise<TestRig> {
       agentCwd: join(tmpRoot, "workspaces"),
       sharedDir: join(tmpRoot, "shared"),
       loginCodeService: new VerificationCodeService({ sender, cooldownMs: 0 }),
+      onUserTenantChanging: async user => { tenantChanges.push({ ...user }); },
     }),
   );
 
@@ -143,6 +147,7 @@ async function makeTestRig(): Promise<TestRig> {
   return {
     users: { superAdmin, platformAdmin, platformAdminB, wainAdminA, wainAdminB, wainUser },
     sender,
+    tenantChanges,
     setCaller(user) {
       currentCaller = asCaller(user);
     },
@@ -261,6 +266,23 @@ describe("auth users router admin boundaries", () => {
       id: h.users.wainAdminB.id,
       realName: "平台已修改",
     });
+  });
+
+  it("跨租户迁移前先撤销用户在旧租户的连接器", async () => {
+    h.setCaller(h.users.superAdmin);
+    const res = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenantId: "other" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(h.tenantChanges).toHaveLength(1);
+    expect(h.tenantChanges[0]).toMatchObject({
+      id: h.users.wainUser.id,
+      tenantId: "wain",
+    });
+    await expect(res.json()).resolves.toMatchObject({ tenantId: "other" });
   });
 
   it("委托平台管理员可管理客户账号，但不能管理万神殿同事", async () => {

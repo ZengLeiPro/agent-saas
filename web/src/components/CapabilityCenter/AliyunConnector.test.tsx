@@ -1,0 +1,70 @@
+// @vitest-environment jsdom
+
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const api = vi.hoisted(() => ({
+  fetchAliyunConnection: vi.fn(),
+  connectAliyun: vi.fn(),
+  disconnectAliyun: vi.fn(),
+}));
+
+vi.mock("@agent/shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@agent/shared")>()),
+  ...api,
+}));
+
+import { AliyunConnectorDrawer, useAliyunConnector } from "./AliyunConnector";
+
+function TestConnector() {
+  const state = useAliyunConnector(true);
+  return <AliyunConnectorDrawer open onOpenChange={() => undefined} state={state} />;
+}
+
+describe("AliyunConnector", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.fetchAliyunConnection.mockResolvedValue({
+      connection: { connectorId: "aliyun", status: "disconnected" },
+    });
+  });
+
+  it("通过用户级 RAM Role 授权并且不回显源凭据", async () => {
+    api.connectAliyun.mockResolvedValue({
+      connection: {
+        connectorId: "aliyun",
+        status: "connected",
+        accountId: "1234567890123456",
+        roleArn: "acs:ram::1234567890123456:role/agent-saas",
+        roleName: "agent-saas",
+        regionId: "cn-shenzhen",
+      },
+    });
+
+    render(<TestConnector />);
+
+    fireEvent.change(await screen.findByLabelText("AccessKey ID"), { target: { value: "LTAItest" } });
+    const secretInput = screen.getByLabelText("AccessKey Secret");
+    expect(secretInput.getAttribute("type")).toBe("password");
+    expect(secretInput.getAttribute("autocomplete")).toBe("new-password");
+    expect(secretInput.getAttribute("data-1p-ignore")).toBe("true");
+    fireEvent.change(secretInput, { target: { value: "source-secret" } });
+    fireEvent.change(screen.getByLabelText("RAM Role ARN"), {
+      target: { value: "acs:ram::1234567890123456:role/agent-saas" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "连接阿里云" }));
+
+    await waitFor(() => {
+      expect(api.connectAliyun).toHaveBeenCalledWith({
+        accessKeyId: "LTAItest",
+        accessKeySecret: "source-secret",
+        roleArn: "acs:ram::1234567890123456:role/agent-saas",
+        regionId: "cn-shenzhen",
+      });
+    });
+    expect(await screen.findByText("1234567890123456")).toBeTruthy();
+    expect(screen.queryByDisplayValue("LTAItest")).toBeNull();
+    expect(screen.queryByDisplayValue("source-secret")).toBeNull();
+    expect(screen.getByText("已连接，运行环境将使用短期 STS")).toBeTruthy();
+  });
+});

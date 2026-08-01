@@ -61,3 +61,26 @@ export interface GoogleWorkspaceOAuthStartResponse {
   authorizationUrl: string;
   state: string;
 }
+
+export interface AliyunConnection {
+  connectorId: 'aliyun';
+  status: 'connected' | 'disconnected';
+  accountId?: string;
+  roleArn?: string;
+  roleName?: string;
+  regionId?: string;
+  connectedAt?: string;
+  updatedAt?: string;
+}
+
+export interface AliyunConnectionResponse {
+  connection: AliyunConnection;
+}
+
+export interface AliyunConnectInput {
+  accessKeyId: string;
+  accessKeySecret: string;
+  roleArn: string;
+  regionId: string;
+  externalId?: string;
+}

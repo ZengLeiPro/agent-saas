@@ -1568,7 +1568,7 @@ export class WebChannel implements BaseChannel {
       await this.config.enqueueRuntime.runStore.markStatus(resolvedRunId, 'cancelled', 'web_abort').catch(() => null);
       runtimeRunController.abort(resolvedRunId, 'web_abort');
     }
-    entry?.controller.abort();
+    entry?.controller.abort('web_abort');
     this.wsSend(client.ws, { type: 'abort_ok', ...(resolvedStreamId ? { streamId: resolvedStreamId } : {}), ...(resolvedRunId ? { runId: resolvedRunId } : {}) });
   }
 
@@ -3921,6 +3921,12 @@ export class WebChannel implements BaseChannel {
         }
       },
       onError(error) {
+        // 用户主动停止后 SDK 通常仍会产出 AbortError；这是正常取消，不是运行失败。
+        // 不写入 lastError，避免 onDone 把用户消息标红并显示错误卡。
+        if (signal?.aborted && signal.reason === 'web_abort') {
+          chatLogger.info(`[chat] SDK stream stopped by user for client_msg_id=${clientMsgId}`);
+          return;
+        }
         // SDK 错误：记录 error 供 onDone 合并到 done 事件，不再单发 error
         // （客户端收到 done + error 后会清理 loading 状态 + 显示错误文案，无需靠 watchdog 兜底）
         lastError = error;
@@ -4168,7 +4174,9 @@ function projectRuntimePlatformEvent(
       };
     case 'run_state_changed':
       if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') {
-        const terminalError = event.status !== 'completed' ? event.reason ?? event.status : undefined;
+        // cancelled 是用户主动停止等正常终态，不得投影为 done.error。
+        // 否则客户端会把本轮用户消息标记为发送失败，并显示红色错误卡。
+        const terminalError = event.status === 'failed' ? event.reason ?? event.status : undefined;
         return {
           events: [
             {

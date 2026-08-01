@@ -295,6 +295,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       });
       await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', streamId: 'st-c' });
       expect(controller.signal.aborted).toBe(true);
+      expect(controller.signal.reason).toBe('web_abort');
       expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'abort_ok', streamId: 'st-c' });
     });
 
@@ -978,6 +979,36 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent[0].data).toMatchObject({ type: 'chat_rejected', reason_code: 'duplicate_inflight' });
     });
 
+    it('用户主动停止后 SDK 返回 error：done 不携带 error', async () => {
+      const tmp = await makeTmp('cov-user-abort-');
+      const sessionId = randomUUID();
+      const dispatch: AgentRunDispatch = async function* (_message, _context, options) {
+        yield { type: 'session_init', sessionId };
+        const signal = options?.abortController?.signal;
+        await new Promise<void>((resolve) => {
+          if (signal?.aborted) resolve();
+          else signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        yield { type: 'error', error: 'The operation was aborted' };
+      };
+      const rig = makeRig({ agentCwd: tmp }, dispatch);
+
+      const sendPromise = rig.send(USER, { client_msg_id: 'cm-user-abort', message: '停止我' });
+      await flushMicrotasks();
+      const streamId = rig.ws.sent.find((message) => message.data.type === 'stream_id')?.data.streamId;
+      expect(streamId).toBeTypeOf('string');
+
+      await (rig.channel as any).handleAbortAsync(
+        wsClient(rig.ws, USER),
+        { action: 'abort', streamId },
+      );
+      await sendPromise;
+
+      expect(rig.ws.sent.filter((message) => message.data.type === 'done').at(-1)?.data).toEqual({
+        type: 'done', client_msg_id: 'cm-user-abort',
+      });
+    });
+
     it('幽灵会话回滚：新会话无真实内容 → 删 transcript + session_deleted 广播 + buffer 清理', async () => {
       const tmp = await makeTmp('cov-phantom-');
       const rig = makeRig({ agentCwd: tmp });
@@ -1394,6 +1425,37 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         subtype: 'success', numTurns: 1,
       } as any);
       expect((rig.channel as any).eventBufferStore.get(successSession)).toBeUndefined();
+    });
+
+    it('run_state_changed(cancelled) 终态：正常结束流但不携带 error', () => {
+      const rig = makeRig();
+      const sessionId = randomUUID();
+      (rig.channel as any).activeStreams.set('st-cancelled', {
+        controller: new AbortController(), userId: USER.sub, ws: rig.ws,
+        sessionId, runId: 'run-cancelled', clientMsgId: 'cm-cancelled',
+      });
+      (rig.channel as any).wsActiveStream.set(rig.ws, 'st-cancelled');
+
+      rig.channel.publishRuntimePlatformEvent({
+        id: 'evt-cancelled', timestamp: new Date().toISOString(),
+        type: 'run_state_changed', runId: 'run-cancelled', sessionId,
+        status: 'cancelled', previousStatus: 'running', reason: 'web_abort',
+      } as any);
+
+      expect(rig.ws.sent.map((message) => message.data)).toEqual([
+        {
+          type: 'session_status', sessionId, status: 'cancelled',
+          runId: 'run-cancelled', reason: 'web_abort',
+        },
+        {
+          type: 'done', sessionId, runId: 'run-cancelled', client_msg_id: 'cm-cancelled',
+        },
+      ]);
+      expect(rig.userEvents).toContainEqual(expect.objectContaining({
+        type: 'session_status', sessionId, status: 'cancelled',
+      }));
+      expect((rig.channel as any).activeStreams.has('st-cancelled')).toBe(false);
+      expect((rig.channel as any).eventBufferStore.isActive(sessionId)).toBe(false);
     });
 
     it('run_finished(error) 终态：done+error 直推、幂等回填 failed、与后续 run_state_changed(failed) 跨事件去重', async () => {

@@ -81,7 +81,7 @@ ARG GH_CLI_SHA256=83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd
 ARG ALIYUN_CLI_VERSION=3.4.4
 ARG ALIYUN_CLI_SHA256=11dc3c6999e0e2f3cdac6e38775920e14ace7b52567534ff1222db22ae327684
 ARG GWS_CLI_VERSION=0.22.5
-ARG GWS_CLI_TARGET=x86_64-unknown-linux-gnu
+ARG GWS_CLI_TARGET=x86_64-unknown-linux-musl
 
 COPY --from=node-bookworm /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-bookworm /usr/local/lib/node_modules /usr/local/lib/node_modules

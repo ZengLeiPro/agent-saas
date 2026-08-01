@@ -111,6 +111,8 @@ export interface BillingLedgerEntry {
   type: LedgerType;
   source: string;
   relatedUsageEventIds: string[];
+  userId?: string;
+  usernameSnapshot?: string;
   sessionId?: string;
   runId?: string;
   messageId?: string;
@@ -126,6 +128,43 @@ export interface BillingLedgerEntry {
   billingPolicyVersion: string;
   note?: string;
   createdBy?: string;
+  createdAt: string;
+}
+
+export interface BillingMemberBudgetUsage {
+  userId: string;
+  monthlyLimitCreditsMicro?: number;
+  active: boolean;
+  version: number;
+  monthUsedCreditsMicro: number;
+  lastUsedAt?: string;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+
+export interface BillingMemberBudgetOverview {
+  tenantId: string;
+  timezone: 'Asia/Shanghai';
+  periodStart: string;
+  periodEnd: string;
+  monthUsedCreditsMicro: number;
+  unattributedCreditsMicro: number;
+  items: BillingMemberBudgetUsage[];
+}
+
+export interface BillingMemberBudgetAuditEntry {
+  id: string;
+  idempotencyKey: string;
+  tenantId: string;
+  userId: string;
+  beforeLimitCreditsMicro?: number;
+  afterLimitCreditsMicro?: number;
+  beforeActive: boolean;
+  afterActive: boolean;
+  periodStart: string;
+  note: string;
+  actorUserId: string;
+  actorUsername: string;
   createdAt: string;
 }
 
@@ -211,6 +250,8 @@ export interface ProjectedRuntimeUsageInput {
  */
 export interface FixedDebitInput {
   tenantId: string;
+  userId?: string;
+  username?: string;
   /** 建议 `debit:tool:v1:${eventId}`——锚定事件 id，投影重跑/事件重放不重复扣。 */
   idempotencyKey: string;
   /** ledger source，如 'tool:image_gen'。与 settleRunDebit 的 'usage_event' 隔离，互不去重。 */

@@ -52,6 +52,10 @@ import { RuntimeEfficiencyQuery } from "../runtime/efficiencyQuery.js";
 import { createSkillsRouter } from "../routes/skills.js";
 import { createMcpRouter } from "../routes/mcp.js";
 import { createConnectorsRouter } from "../routes/connectors.js";
+import { createNotionRouter } from "../routes/notion.js";
+import { createGoogleWorkspaceRouter } from "../routes/googleWorkspace.js";
+import { disconnectNotion } from "../connectors/notion.js";
+import { revokeAllUserConnectorCredentials } from "../connectors/lifecycle.js";
 import { createTenantsRouter } from "../routes/tenants.js";
 import { deleteTenantResources } from "../data/tenants/cleanup.js";
 import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
@@ -614,10 +618,55 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         agentCwd,
         sharedDir,
         tenantSkillsRootDir,
-        onUserDisabled: webChannel
-          ? (userId: string) => webChannel.disconnectUser(userId)
-          : undefined,
+        onUserDisabled: async (userId: string) => {
+          const disabledUser = userStore.findById(userId);
+          if (disabledUser) {
+            await Promise.all([
+              runtime.dwsAuthFlowService?.revokeUser?.(disabledUser),
+              runtime.feishuAuthFlowService?.revokeUser?.(disabledUser),
+              runtime.notionAuthFlowService?.cancelUser?.(disabledUser.tenantId, disabledUser.id),
+            ]);
+            await runtime.googleWorkspaceOAuthService?.cancelUser(disabledUser.id);
+            await runtime.googleWorkspaceOAuthService?.disconnect(
+              disabledUser.id,
+              disabledUser.username,
+              disabledUser.tenantId,
+            );
+            if (runtime.connectorConnectionStore && runtime.secretVault) {
+              await revokeAllUserConnectorCredentials({
+                connectionStore: runtime.connectorConnectionStore,
+                vault: runtime.secretVault,
+                userId: disabledUser.id,
+                username: disabledUser.username,
+                tenantId: disabledUser.tenantId,
+              });
+            }
+          }
+          webChannel?.disconnectUser(userId);
+        },
         skillConfigStore: runtime.skillConfigStore,
+        onUserDeleting: async (target) => {
+          await Promise.all([
+            runtime.dwsAuthFlowService?.revokeUser?.(target),
+            runtime.feishuAuthFlowService?.revokeUser?.(target),
+            runtime.notionAuthFlowService?.cancelUser?.(target.tenantId, target.id),
+          ]);
+          await runtime.googleWorkspaceOAuthService?.cancelUser(target.id);
+          await runtime.googleWorkspaceOAuthService?.disconnect(
+            target.id,
+            target.username,
+            target.tenantId,
+          );
+          if (runtime.connectorConnectionStore && runtime.secretVault) {
+            await revokeAllUserConnectorCredentials({
+              connectionStore: runtime.connectorConnectionStore,
+              vault: runtime.secretVault,
+              userId: target.id,
+              username: target.username,
+              tenantId: target.tenantId,
+            });
+          }
+        },
         mcpOAuthService: runtime.mcpOAuthService,
         signupConfigStore: runtime.signupConfigStore,
         secretVault: runtime.secretVault,
@@ -669,6 +718,28 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
               skillConfigStore: runtime.skillConfigStore,
               mcpConfigStore: runtime.mcpConfigStore,
               connectorConnectionStore: runtime.connectorConnectionStore,
+              onUserDeleting: async (target) => {
+                await Promise.all([
+                  runtime.dwsAuthFlowService?.revokeUser?.(target),
+                  runtime.feishuAuthFlowService?.revokeUser?.(target),
+                  runtime.notionAuthFlowService?.cancelUser?.(target.tenantId, target.id),
+                ]);
+                await runtime.googleWorkspaceOAuthService?.cancelUser(target.id);
+                await runtime.googleWorkspaceOAuthService?.disconnect(
+                  target.id,
+                  target.username,
+                  target.tenantId,
+                );
+                if (runtime.connectorConnectionStore && runtime.secretVault) {
+                  await revokeAllUserConnectorCredentials({
+                    connectionStore: runtime.connectorConnectionStore,
+                    vault: runtime.secretVault,
+                    userId: target.id,
+                    username: target.username,
+                    tenantId: target.tenantId,
+                  });
+                }
+              },
               mcpOAuthService: runtime.mcpOAuthService,
               groupStore: runtime.groupStore,
               cronService: runtime.cronRuntime.service,
@@ -713,19 +784,35 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       );
     }
     // 原生连接器账号与凭据；独立于 MCP feature gate。
-    if (
-      runtime.connectorConnectionStore
-      && runtime.mcpConfigStore
-      && runtime.mcpClientManager
-      && runtime.secretVault
-    ) {
+    if (runtime.connectorConnectionStore && runtime.secretVault) {
       app.use(
         "/api/connectors",
         createConnectorsRouter({
           connectionStore: runtime.connectorConnectionStore,
-          mcpConfigStore: runtime.mcpConfigStore,
-          mcpClientManager: runtime.mcpClientManager,
           secretVault: runtime.secretVault,
+        }),
+      );
+      app.use(
+        "/api/connectors",
+        createNotionRouter({
+          connectionStore: runtime.connectorConnectionStore,
+          authFlowService: runtime.notionAuthFlowService,
+          userStore: runtime.userStore,
+          disconnect: (userId, username, tenantId) => disconnectNotion({
+            connectionStore: runtime.connectorConnectionStore!,
+            vault: runtime.secretVault!,
+            userId,
+            username,
+            tenantId,
+          }),
+        }),
+      );
+      app.use(
+        "/api/connectors",
+        createGoogleWorkspaceRouter({
+          oauthService: runtime.googleWorkspaceOAuthService,
+          userStore: runtime.userStore,
+          webBaseUrl: config.server?.webBaseUrl,
         }),
       );
     }

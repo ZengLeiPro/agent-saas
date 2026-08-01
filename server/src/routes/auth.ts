@@ -20,7 +20,7 @@ import type { JwtPayload } from "../auth/types.js";
 import { isModelAllowedForTenant } from "../app/models.js";
 import type { ModelsConfig } from "../types/index.js";
 import type { UserStore } from "../data/users/store.js";
-import type { UserRecord } from "../data/users/types.js";
+import type { UserInfo, UserRecord } from "../data/users/types.js";
 import type { TenantStore } from "../data/tenants/store.js";
 import {
   DEFAULT_TENANT_ID,
@@ -328,9 +328,11 @@ export interface AuthRouterDeps {
   /** 租户自有 skill 持久根目录 */
   tenantSkillsRootDir?: string;
   /** 用户被禁用时的回调（断开 WS 连接 + 中止活跃流） */
-  onUserDisabled?: (userId: string) => void;
+  onUserDisabled?: (userId: string) => void | Promise<void>;
   /** Skill 配置 store，用于删除用户时清理孤儿条目 */
   skillConfigStore?: SkillConfigStore;
+  /** 删除用户时撤销其原生连接器凭据；必须在 userStore 删除前执行。 */
+  onUserDeleting?: (user: UserInfo) => Promise<void>;
   /** 删除用户时撤销其 MCP OAuth token，并清理用户 MCP 配置。 */
   mcpOAuthService?: McpOAuthService;
   /** 动态注册配置 store：复用其中的 SMS provider 配置给短信验证码登录。 */
@@ -1330,6 +1332,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(403).json({ error: platformTargetError });
         return;
       }
+      await deps.onUserDeleting?.(target);
       await mcpOAuthService?.disconnectUser(target.username, target.tenantId);
       await userStore.delete(req.params.id);
 
@@ -1398,7 +1401,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       );
       auditLog(req, disabled ? "user_disabled" : "user_enabled", user.username);
       if (disabled && deps.onUserDisabled) {
-        deps.onUserDisabled(req.params.id);
+        await deps.onUserDisabled(req.params.id);
       }
       res.json({
         ...user,

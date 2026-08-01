@@ -1,12 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatInput } from "./ChatInput";
+
+const voiceRecorderState = vi.hoisted(() => ({ isSupported: false }));
 
 vi.mock("@/hooks/useVoiceRecorder", () => ({
   useVoiceRecorder: () => ({
     isRecording: false,
-    isSupported: false,
+    isSupported: voiceRecorderState.isSupported,
     duration: 0,
     ensurePermission: vi.fn(),
     startRecording: vi.fn(),
@@ -31,6 +33,10 @@ function renderInput(overrides: Partial<React.ComponentProps<typeof ChatInput>> 
   return { onFileSelect };
 }
 
+beforeEach(() => {
+  voiceRecorderState.isSupported = false;
+});
+
 describe("ChatInput 布局", () => {
   it("将附着内容渲染在输入框前，并让输入框覆盖交界边框", () => {
     renderInput({ attachedTopSlot: <div data-testid="attached-top-slot">任务清单</div> });
@@ -40,6 +46,26 @@ describe("ChatInput 布局", () => {
 
     expect(attachedSlot.compareDocumentPosition(inputCard as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(inputCard?.classList.contains("z-10")).toBe(true);
+  });
+
+  it("空输入时保留禁用的发送按钮", () => {
+    renderInput();
+
+    expect((screen.getByRole("button", { name: "发送消息" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("支持语音时分别显示麦克风和发送按钮", () => {
+    voiceRecorderState.isSupported = true;
+    renderInput({ onSendVoice: vi.fn() });
+
+    expect(screen.getByRole("button", { name: "语音输入" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "发送消息" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("输入消息后启用发送按钮", () => {
+    renderInput({ input: "测试消息" });
+
+    expect((screen.getByRole("button", { name: "发送消息" }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
 

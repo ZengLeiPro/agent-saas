@@ -75,6 +75,7 @@ export interface DeleteTenantResourcesOptions {
   skillConfigStore?: SkillConfigStore;
   mcpConfigStore?: McpConfigStore;
   connectorConnectionStore?: ConnectorConnectionStore;
+  onUserDeleting?: (user: UserInfo) => Promise<void>;
   mcpOAuthService?: McpOAuthService;
   groupStore?: GroupStore;
   cronService?: CronService | null;
@@ -192,6 +193,11 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
   const skills = options.skillConfigStore
     ? await options.skillConfigStore.removeTenant(tenantId, usernames)
     : { usersRemoved: 0, tenantConfigRemoved: false, platformRefsRemoved: 0 };
+  if (options.onUserDeleting) {
+    for (const user of users) {
+      await options.onUserDeleting(user);
+    }
+  }
   if (options.mcpOAuthService) {
     for (const username of usernames) {
       await options.mcpOAuthService.revokeUserConnections(username, tenantId);

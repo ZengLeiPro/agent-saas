@@ -45,9 +45,12 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENAI_BASE_URL: "${OPENAI_BASE_URL:-}"
 
-      # Remote MCP OAuth：Google 应用凭据平台配置一次；用户 token 进入 SecretVault。
-      GOOGLE_MCP_OAUTH_CLIENT_ID: "${GOOGLE_MCP_OAUTH_CLIENT_ID:-}"
-      GOOGLE_MCP_OAUTH_CLIENT_SECRET: "${GOOGLE_MCP_OAUTH_CLIENT_SECRET:-}"
+      # Google Workspace 原生连接器 OAuth：平台配置一次应用，用户 token 进入 SecretVault。
+      GOOGLE_WORKSPACE_CONNECTOR_CLIENT_ID: "${GOOGLE_WORKSPACE_CONNECTOR_CLIENT_ID:-}"
+      GOOGLE_WORKSPACE_CONNECTOR_CLIENT_SECRET: "${GOOGLE_WORKSPACE_CONNECTOR_CLIENT_SECRET:-}"
+      CONNECTOR_OAUTH_CALLBACK_URL: "${CONNECTOR_OAUTH_CALLBACK_URL:-}"
+
+      # 用户自建 MCP OAuth callback；内置连接器不再使用 MCP OAuth。
       MCP_OAUTH_CALLBACK_URL: "${MCP_OAUTH_CALLBACK_URL:-}"
 
       # 飞书官方 CLI 连接器：平台自建应用凭据；用户 OAuth token 仍逐用户隔离。

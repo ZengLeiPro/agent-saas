@@ -60,6 +60,7 @@ export interface FeishuConnectionStore {
   failCheck(record: FeishuConnectionRecord, workerId: string, error: string, now?: Date): Promise<void>;
   releaseClaim(record: FeishuConnectionRecord, workerId: string): Promise<void>;
   listForUser(tenantId: string, userId: string): Promise<FeishuConnectionRecord[]>;
+  removeForUser?(tenantId: string, userId: string): Promise<number>;
 }
 
 export class PgFeishuConnectionStore implements FeishuConnectionStore {
@@ -264,6 +265,14 @@ export class PgFeishuConnectionStore implements FeishuConnectionStore {
       ORDER BY connection_status = 'connected' DESC, updated_at DESC
     `, [tenantId, userId]);
     return result.rows.map(mapRow);
+  }
+
+  async removeForUser(tenantId: string, userId: string): Promise<number> {
+    const result = await this.options.pool.query(
+      `DELETE FROM ${this.table} WHERE tenant_id = $1 AND user_id = $2`,
+      [tenantId, userId],
+    );
+    return result.rowCount ?? 0;
   }
 }
 

@@ -1,14 +1,18 @@
 import { authFetch } from './authFetch';
-import type { GithubConnectionResponse } from '../types/connectors';
+import type {
+  GithubConnectionResponse,
+  GoogleWorkspaceConnectionResponse,
+  GoogleWorkspaceOAuthStartResponse,
+  NotionAuthSessionResponse,
+  NotionConnectionResponse,
+} from '../types/connectors';
 
-type ApiErrorBody = { error?: string };
-
-async function jsonOrError(res: Response, fallback: string): Promise<GithubConnectionResponse> {
+async function jsonOrError<T>(res: Response, fallback: string): Promise<T> {
   if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as ApiErrorBody;
-    throw new Error(body.error || `${fallback}: ${res.status}`);
+    const body = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error || fallback);
   }
-  return res.json() as Promise<GithubConnectionResponse>;
+  return res.json() as Promise<T>;
 }
 
 export async function fetchGithubConnection(): Promise<GithubConnectionResponse> {
@@ -17,23 +21,59 @@ export async function fetchGithubConnection(): Promise<GithubConnectionResponse>
 
 export async function connectGithub(input: {
   token: string;
-  mcpEnabled?: boolean;
 }): Promise<GithubConnectionResponse> {
-  return jsonOrError(await authFetch('/api/connectors/github', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+  const res = await authFetch('/api/connectors/github', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
-  }), '连接 GitHub 失败');
-}
-
-export async function updateGithubCapabilities(mcpEnabled: boolean): Promise<GithubConnectionResponse> {
-  return jsonOrError(await authFetch('/api/connectors/github', {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mcpEnabled }),
-  }), '更新 GitHub 能力失败');
+  });
+  return jsonOrError(res, 'GitHub 连接失败');
 }
 
 export async function disconnectGithub(): Promise<GithubConnectionResponse> {
-  return jsonOrError(await authFetch('/api/connectors/github', { method: 'DELETE' }), '断开 GitHub 失败');
+  const res = await authFetch('/api/connectors/github', { method: 'DELETE' });
+  return jsonOrError(res, 'GitHub 断开失败');
+}
+
+export async function fetchNotionConnection(): Promise<NotionConnectionResponse> {
+  return jsonOrError(await authFetch('/api/connectors/notion'), '读取 Notion 连接失败');
+}
+
+export async function fetchNotionAuthSession(): Promise<NotionAuthSessionResponse> {
+  return jsonOrError(await authFetch('/api/connectors/notion/auth/session'), '读取 Notion 授权状态失败');
+}
+
+export async function startNotionAuthSession(): Promise<NotionAuthSessionResponse> {
+  return jsonOrError(await authFetch('/api/connectors/notion/auth/session', {
+    method: 'POST',
+  }), '启动 Notion 授权失败');
+}
+
+export async function disconnectNotion(): Promise<void> {
+  const res = await authFetch('/api/connectors/notion', { method: 'DELETE' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error || 'Notion 断开失败');
+  }
+}
+
+export async function fetchGoogleWorkspaceConnection(): Promise<GoogleWorkspaceConnectionResponse> {
+  return jsonOrError(
+    await authFetch('/api/connectors/google-workspace'),
+    '读取 Google Workspace 连接失败',
+  );
+}
+
+export async function startGoogleWorkspaceOAuth(): Promise<GoogleWorkspaceOAuthStartResponse> {
+  return jsonOrError(await authFetch('/api/connectors/google-workspace/oauth/start', {
+    method: 'POST',
+  }), '启动 Google Workspace 授权失败');
+}
+
+export async function disconnectGoogleWorkspace(): Promise<void> {
+  const res = await authFetch('/api/connectors/google-workspace', { method: 'DELETE' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error || 'Google Workspace 断开失败');
+  }
 }

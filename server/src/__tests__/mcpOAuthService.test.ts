@@ -19,7 +19,31 @@ async function fixture() {
   roots.push(root);
   const configPath = join(root, 'mcp-config.json');
   const store = new McpConfigStore(configPath);
-  await store.installBuiltinOAuthServers();
+  await store.upsertServer({
+    id: 'notion',
+    name: 'Synthetic OAuth MCP',
+    tenantId: '*',
+    config: {
+      type: 'streamable-http',
+      url: 'https://example.com/mcp',
+      oauth: { provider: 'notion' },
+    },
+  });
+  await store.upsertServer({
+    id: 'google_drive',
+    name: 'Synthetic Google OAuth MCP',
+    tenantId: '*',
+    config: {
+      type: 'streamable-http',
+      url: 'https://example.com/google-mcp',
+      oauth: {
+        provider: 'google-workspace',
+        beta: true,
+        clientIdEnv: 'GOOGLE_MCP_OAUTH_CLIENT_ID',
+        clientSecretEnv: 'GOOGLE_MCP_OAUTH_CLIENT_SECRET',
+      },
+    },
+  });
   const vault = new InMemorySecretVault();
   return { root, configPath, store, vault };
 }
@@ -154,7 +178,7 @@ describe('McpOAuthService', () => {
     expect(authFn).toHaveBeenCalledTimes(1);
   });
 
-  it('安装内置预设时不覆盖管理员已有的同 id 配置', async () => {
+  it('v5 不再安装能力中心内置 MCP preset，也不覆盖管理员自建服务', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mcp-preset-'));
     roots.push(root);
     const store = new McpConfigStore(join(root, 'mcp-config.json'));
@@ -164,7 +188,7 @@ describe('McpOAuthService', () => {
       tenantId: '*',
       config: { type: 'streamable-http', url: 'https://existing.example.com/mcp' },
     });
-    expect(await store.installBuiltinOAuthServers()).toBe(6);
+    expect(await store.installBuiltinOAuthServers()).toBe(0);
     expect(store.getServer('github')).toMatchObject({
       name: 'Existing GitHub',
       config: { url: 'https://existing.example.com/mcp' },
@@ -172,60 +196,34 @@ describe('McpOAuthService', () => {
     await expect(store.installBuiltinOAuthServers()).resolves.toBe(0);
   });
 
-  it('presets v2：存量内置 github OAuth 实例就地升级为 v3 PAT 模式，保留 tenantId', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'mcp-preset-v2-'));
-    roots.push(root);
-    const store = new McpConfigStore(join(root, 'mcp-config.json'));
-    await store.installBuiltinOAuthServers();
-    // 手工降级 github 到 v2 OAuth 旧形态，并把版本标记退回 1，模拟旧生产数据 + 新代码首启
-    await store.upsertServer({
-      id: 'github',
-      name: 'GitHub',
-      tenantId: '*',
-      createdFromTemplateId: 'github',
-      createdFromTemplateVersion: 2,
-      config: { type: 'streamable-http', url: 'https://api.githubcopilot.com/mcp/', oauth: { provider: 'github' } },
-      secretRequirements: [],
-    });
-    const raw = JSON.parse(await readFile(join(root, 'mcp-config.json'), 'utf-8')) as Record<string, unknown>;
-    raw.builtinPresetsVersion = 1;
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(join(root, 'mcp-config.json'), JSON.stringify(raw));
-
-    const store2 = new McpConfigStore(join(root, 'mcp-config.json'));
-    await store2.installBuiltinOAuthServers();
-    const upgraded = store2.getServer('github')!;
-    // 断言对齐当前 github 模板版本（GitHub connector 升到 5）；升级逻辑始终写入 template.templateVersion
-    expect(upgraded.createdFromTemplateVersion).toBe(5);
-    expect(upgraded.tenantId).toBe('*');
-    expect('oauth' in upgraded.config && upgraded.config.oauth).toBeFalsy();
-    // v5 起凭据由 GitHub 原生连接器统一管理（managedByConnectorId），不再直挂 runtimeEnv
-    expect(upgraded.secretRequirements?.[0]).toMatchObject({
-      key: 'token',
-      target: 'header',
-      name: 'Authorization',
-      scope: 'user',
-    });
-    expect(upgraded.secretRequirements?.[0]?.runtimeEnv).toBeUndefined();
-    expect(upgraded.managedByConnectorId).toBe('github');
-  });
-
-  it('presets v3：为存量内置 OAuth 连接器补运行态 env 映射', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'mcp-preset-v3-'));
+  it('v5 会从用户 MCP 选择中移除旧的内置连接器，但保留管理员同名自建服务', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mcp-preset-v5-'));
     roots.push(root);
     const file = join(root, 'mcp-config.json');
     const store = new McpConfigStore(file);
-    await store.installBuiltinOAuthServers();
+    await store.upsertServer({
+      id: 'notion',
+      name: 'Legacy Notion',
+      tenantId: '*',
+      createdFromTemplateId: 'notion',
+      createdFromTemplateVersion: 1,
+      config: { type: 'streamable-http', url: 'https://mcp.notion.com/mcp' },
+    });
+    await store.upsertServer({
+      id: 'custom',
+      name: 'Custom',
+      tenantId: '*',
+      config: { type: 'streamable-http', url: 'https://example.com/mcp' },
+    });
+    await store.setUserEnabledServers('alice', ['notion', 'custom']);
     const raw = JSON.parse(await readFile(file, 'utf-8')) as any;
-    raw.builtinPresetsVersion = 2;
-    delete raw.servers.notion.config.oauth.runtimeEnv;
-    delete raw.servers.google_gmail.config.oauth.runtimeEnv;
+    raw.builtinPresetsVersion = 4;
     const { writeFile } = await import('node:fs/promises');
     await writeFile(file, JSON.stringify(raw));
 
-    const upgradedStore = new McpConfigStore(file);
-    await upgradedStore.installBuiltinOAuthServers();
-    expect((upgradedStore.getServer('notion')?.config as any).oauth.runtimeEnv).toEqual(['NOTION_TOKEN']);
-    expect((upgradedStore.getServer('google_gmail')?.config as any).oauth.runtimeEnv).toEqual(['GOOGLE_GMAIL_ACCESS_TOKEN']);
+    const upgraded = new McpConfigStore(file);
+    await upgraded.installBuiltinOAuthServers();
+    expect(upgraded.getUserConfig('alice').enabledServers).toEqual(['custom']);
+    expect(upgraded.listServersVisibleToUser('alice', '*').map(server => server.id)).toEqual(['custom']);
   });
 });

@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -168,6 +169,45 @@ interface BillingState {
   audit: BillingAuditSummary | null;
 }
 
+type MemberBudgetStatus = "unset" | "normal" | "attention" | "warning" | "over";
+
+interface MemberBudgetPeriod {
+  start: string;
+  end: string;
+  timezone: string;
+}
+
+interface MemberBudgetSummary {
+  tenantBalanceCredits: number;
+  monthUsedCredits: number;
+  budgetedUsers: number;
+  nearLimitUsers: number;
+  overLimitUsers: number;
+  unattributedCredits: number;
+}
+
+interface MemberBudgetItem {
+  userId: string;
+  username: string;
+  realName?: string;
+  role: string;
+  disabled: boolean;
+  canManage: boolean;
+  monthlyLimitCredits: number | null;
+  monthUsedCredits: number;
+  usageRatioBps: number | null;
+  status: MemberBudgetStatus;
+  active: boolean;
+  version: number;
+  lastUsedAt?: string;
+}
+
+interface MemberBudgetResponse {
+  period: MemberBudgetPeriod;
+  summary: MemberBudgetSummary;
+  items: MemberBudgetItem[];
+}
+
 interface PolicyDraft {
   billingEnabled: boolean;
   billingMode: BillingMode;
@@ -226,9 +266,55 @@ function formatDate(value?: string): string {
   return new Date(value).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
 }
 
+function formatDateInTimeZone(value: string, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      timeZone,
+    }).format(new Date(value));
+  } catch {
+    return formatDate(value);
+  }
+}
+
 function makeIdempotencyKey(): string {
   return globalThis.crypto?.randomUUID?.()
     ?? ['manual', Date.now(), Math.random().toString(36).slice(2)].join('_');
+}
+
+function makeBudgetIdempotencyKey(): string {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
+  if (typeof cryptoApi?.getRandomValues === "function") {
+    const bytes = cryptoApi.getRandomValues(new Uint8Array(24));
+    const randomHex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+    return `budget_${randomHex}`;
+  }
+  return [
+    "budget",
+    Date.now().toString(36),
+    Math.random().toString(36).slice(2),
+    Math.random().toString(36).slice(2),
+    Math.random().toString(36).slice(2),
+  ].join("_");
+}
+
+function memberBudgetStatusLabel(status: MemberBudgetStatus): string {
+  if (status === "over") return "已超预算";
+  if (status === "warning") return "临近预算";
+  if (status === "attention") return "需要关注";
+  if (status === "normal") return "正常";
+  return "未设置";
+}
+
+function memberBudgetStatusClass(status: MemberBudgetStatus): string {
+  if (status === "over") return "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-50";
+  if (status === "warning") return "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-50";
+  if (status === "attention") return "border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-50";
+  if (status === "normal") return "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50";
+  return "bg-muted text-muted-foreground hover:bg-muted";
 }
 
 function billingModeLabel(mode: BillingMode): string {
@@ -1643,14 +1729,208 @@ function AuditView({ onJumpUnpriced }: { onJumpUnpriced: () => void }) {
 }
 
 // ============================================================
-// TenantBillingPanel (组织管理员只读视图)
+// TenantBillingPanel（组织管理员视图）
 // ============================================================
+
+function MemberBudgetMetric({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 text-base font-semibold tabular-nums">{value}</div>
+      {hint && <div className="mt-0.5 text-[11px] text-muted-foreground">{hint}</div>}
+    </div>
+  );
+}
+
+function MemberBudgetDialog({
+  open,
+  member,
+  tenantId,
+  onOpenChange,
+  onSaved,
+  onConflictRefresh,
+}: {
+  open: boolean;
+  member: MemberBudgetItem | null;
+  tenantId: string;
+  onOpenChange: (open: boolean) => void;
+  onSaved: (member: MemberBudgetItem) => Promise<void>;
+  onConflictRefresh: () => Promise<void>;
+}) {
+  const [limitText, setLimitText] = useState("");
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+  const attemptRef = useRef<{ fingerprint: string; key: string } | null>(null);
+
+  useEffect(() => {
+    if (!open || !member) return;
+    setLimitText(member.monthlyLimitCredits === null ? "" : String(member.monthlyLimitCredits));
+    setNote("");
+    setError(null);
+    setConflict(false);
+    attemptRef.current = null;
+  }, [open, member]);
+
+  const normalizedLimit = limitText.trim() === "" ? null : Number(limitText);
+  const belowUsed = member !== null
+    && normalizedLimit !== null
+    && Number.isFinite(normalizedLimit)
+    && normalizedLimit < member.monthUsedCredits;
+
+  const handleSubmit = async () => {
+    if (!member) return;
+    setError(null);
+    setConflict(false);
+    if (normalizedLimit !== null && (!Number.isFinite(normalizedLimit) || normalizedLimit < 0 || normalizedLimit > 1_000_000_000)) {
+      setError("月度预算必须是 0 到 10 亿之间的积分数，留空表示未设置。");
+      return;
+    }
+    const trimmedNote = note.trim();
+    if (trimmedNote.length < 2 || trimmedNote.length > 200) {
+      setError("备注必填，请填写 2–200 个字符。");
+      return;
+    }
+
+    const payloadWithoutKey = {
+      monthlyLimitCredits: normalizedLimit,
+      expectedVersion: member.version,
+      note: trimmedNote,
+    };
+    const fingerprint = JSON.stringify([member.userId, payloadWithoutKey]);
+    const idempotencyKey = attemptRef.current?.fingerprint === fingerprint
+      ? attemptRef.current.key
+      : makeBudgetIdempotencyKey();
+    attemptRef.current = { fingerprint, key: idempotencyKey };
+
+    setSubmitting(true);
+    try {
+      const query = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : "";
+      const response = await authFetch(
+        `/api/admin/billing/member-budgets/${encodeURIComponent(member.userId)}${query}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payloadWithoutKey, idempotencyKey }),
+        },
+      );
+      const data = await response.json().catch(() => ({})) as { code?: string; error?: string };
+      if (response.status === 409) {
+        setConflict(true);
+        setError(data.code === "BUDGET_VERSION_CONFLICT"
+          ? "预算已被其他管理员更新，请刷新最新数据后重试。"
+          : "本次保存发生冲突，请刷新最新数据后重试。");
+        return;
+      }
+      if (!response.ok) throw new Error(data.error || "保存员工预算失败");
+      attemptRef.current = null;
+      onOpenChange(false);
+      await onSaved(member);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!submitting) onOpenChange(nextOpen); }}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>设置员工预算</DialogTitle>
+          <DialogDescription>
+            {member ? `${member.realName || member.username}（${member.username}）` : "员工"} · 预算仅用于用量提醒，不会划拨余额或阻断任务。
+          </DialogDescription>
+        </DialogHeader>
+        {member && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/20 p-3 text-sm">
+              <div>
+                <div className="text-xs text-muted-foreground">本月已用</div>
+                <div className="mt-1 font-semibold tabular-nums">{formatCredits(member.monthUsedCredits)} 积分</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">当前预算</div>
+                <div className="mt-1 font-semibold tabular-nums">
+                  {member.monthlyLimitCredits === null ? "未设置" : `${formatCredits(member.monthlyLimitCredits)} 积分`}
+                </div>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="member-budget-limit">每月预算（积分）</Label>
+              <Input
+                id="member-budget-limit"
+                type="number"
+                min="0"
+                max="1000000000"
+                step="0.01"
+                inputMode="decimal"
+                value={limitText}
+                onChange={(event) => setLimitText(event.target.value)}
+                placeholder="留空表示未设置"
+              />
+              <p className="text-xs text-muted-foreground">预算按自然月统计，员工继续使用公司共享积分池。</p>
+              {belowUsed && (
+                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                  <CircleAlert className="mt-0.5 size-4 shrink-0" />
+                  <span>该预算低于员工本月已用量，保存后会立即显示为超出预算，但不会阻断任务。</span>
+                </div>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="member-budget-note">调整备注（必填）</Label>
+                <span className="text-xs text-muted-foreground">{note.length}/200</span>
+              </div>
+              <Textarea
+                id="member-budget-note"
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                maxLength={200}
+                className="min-h-20 resize-y"
+                placeholder="说明设置或调整原因"
+              />
+            </div>
+            {error && (
+              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          {conflict ? (
+            <Button
+              variant="outline"
+              onClick={() => { void onConflictRefresh(); }}
+              disabled={submitting}
+            >
+              <RefreshCw className="size-4" />
+              刷新最新数据
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>取消</Button>
+          )}
+          <Button onClick={() => { void handleSubmit(); }} disabled={!member || submitting || conflict}>
+            {submitting ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            保存预算
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string; tenantName?: string }) {
   const [state, setState] = useState<BillingState>({ summary: null, policy: null, audit: null });
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [budgetData, setBudgetData] = useState<MemberBudgetResponse | null>(null);
+  const [budgetLoading, setBudgetLoading] = useState(false);
+  const [budgetError, setBudgetError] = useState<string | null>(null);
+  const [budgetNotice, setBudgetNotice] = useState<string | null>(null);
+  const [editingMember, setEditingMember] = useState<MemberBudgetItem | null>(null);
+  const [budgetDialogOpen, setBudgetDialogOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!tenantId) return;
@@ -1669,14 +1949,65 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
     }
   }, [tenantId]);
 
+  const loadBudgets = useCallback(async (): Promise<boolean> => {
+    if (!tenantId) return false;
+    setBudgetLoading(true);
+    try {
+      const response = await authFetch(
+        `/api/admin/billing/member-budgets?tenantId=${encodeURIComponent(tenantId)}`,
+      );
+      const data = await response.json().catch(() => ({})) as MemberBudgetResponse & { error?: string };
+      if (!response.ok) throw new Error(data.error || "加载员工预算失败");
+      setBudgetData(data);
+      setBudgetError(null);
+      return true;
+    } catch (err) {
+      setBudgetError(err instanceof Error ? err.message : String(err));
+      return false;
+    } finally {
+      setBudgetLoading(false);
+    }
+  }, [tenantId]);
+
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    setBudgetData(null);
+    setBudgetError(null);
+    setBudgetNotice(null);
+    setEditingMember(null);
+    setBudgetDialogOpen(false);
+    void loadBudgets();
+  }, [loadBudgets]);
+
+  const handleBudgetSaved = async (member: MemberBudgetItem) => {
+    await loadBudgets();
+    setBudgetNotice(`已更新 ${member.realName || member.username} 的月度提醒预算。`);
+  };
+
+  const handleConflictRefresh = async () => {
+    const refreshed = await loadBudgets();
+    if (refreshed) setBudgetDialogOpen(false);
+  };
+
+  const budgetPeriod = budgetData
+    ? `${formatDateInTimeZone(budgetData.period.start, budgetData.period.timezone)} – ${formatDateInTimeZone(budgetData.period.end, budgetData.period.timezone)} · ${budgetData.period.timezone}`
+    : "按自然月统计";
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader
         title="计费"
-        description="组织管理员只查看余额、消耗和流水；充值、策略与封顶由平台管理员统一维护。"
-        actions={<Button variant="outline" onClick={() => { void load(); }} disabled={loading}><RefreshCw className={cn("size-4", loading && "animate-spin")} />刷新</Button>}
+        description="查看共享积分池、消耗和流水，并为员工设置提醒预算；充值、计费策略与封顶仍由平台管理员统一维护。"
+        actions={(
+          <Button
+            variant="outline"
+            onClick={() => { void Promise.all([load(), loadBudgets()]); }}
+            disabled={loading || budgetLoading}
+          >
+            <RefreshCw className={cn("size-4", (loading || budgetLoading) && "animate-spin")} />
+            刷新
+          </Button>
+        )}
       />
       <div className="min-h-0 flex-1 space-y-5 overflow-auto">
       {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
@@ -1710,6 +2041,118 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
           平台尚未为本组织启用积分计费。启用前，聊天页不会显示积分余额，也不会产生客户侧扣费流水。
         </div>
       ) : null}
+
+      <Card>
+        <CardHeader className="space-y-2 pb-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <CardTitle className="text-base">员工预算</CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">{budgetPeriod}</p>
+            </div>
+            {budgetLoading && <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="正在刷新员工预算" />}
+          </div>
+          <div className="flex items-start gap-2 rounded-md border border-primary/15 bg-primary/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
+            <CircleAlert className="mt-0.5 size-4 shrink-0 text-primary" />
+            <span>公司使用共享积分池。员工预算只做用量提醒，不转移余额、不形成个人钱包，也不会阻断任务。</span>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {budgetError && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <span>{budgetError}</span>
+              <Button size="sm" variant="outline" onClick={() => { void loadBudgets(); }} disabled={budgetLoading}>
+                <RefreshCw className={cn("size-4", budgetLoading && "animate-spin")} />
+                重试
+              </Button>
+            </div>
+          )}
+          {budgetNotice && (
+            <div className="flex items-center justify-between gap-3 rounded-md bg-success/10 px-3 py-2 text-sm text-success">
+              <span>{budgetNotice}</span>
+              <button type="button" onClick={() => setBudgetNotice(null)} aria-label="关闭提示" className="opacity-70 hover:opacity-100">
+                <X className="size-4" />
+              </button>
+            </div>
+          )}
+          {budgetData ? (
+            <>
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                <MemberBudgetMetric label="共享池余额" value={formatCredits(budgetData.summary.tenantBalanceCredits)} hint="组织可用积分" />
+                <MemberBudgetMetric label="员工本月用量" value={formatCredits(budgetData.summary.monthUsedCredits)} hint="已归属员工" />
+                <MemberBudgetMetric label="已设预算" value={`${budgetData.summary.budgetedUsers} 人`} hint={`共 ${budgetData.items.length} 人`} />
+                <MemberBudgetMetric label="临近预算" value={`${budgetData.summary.nearLimitUsers} 人`} hint="使用率达到 90%" />
+                <MemberBudgetMetric label="已超预算" value={`${budgetData.summary.overLimitUsers} 人`} hint="仅提醒，不阻断" />
+                <MemberBudgetMetric label="未归属用量" value={formatCredits(budgetData.summary.unattributedCredits)} hint="无法关联到员工" />
+              </div>
+              {budgetData.items.length > 0 ? (
+                <Table className="min-w-[760px]" containerClassName="max-h-[440px] rounded-lg border">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>员工</TableHead>
+                      <TableHead>月度预算</TableHead>
+                      <TableHead>本月已用</TableHead>
+                      <TableHead>使用率</TableHead>
+                      <TableHead>状态</TableHead>
+                      <TableHead className="text-right">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {budgetData.items.map((member) => (
+                      <TableRow key={member.userId}>
+                        <TableCell>
+                          <div className="font-medium">{member.realName || member.username}</div>
+                          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <span>{member.realName ? member.username : (member.role === "admin" ? "管理员" : "成员")}</span>
+                            {member.realName && <span>· {member.role === "admin" ? "管理员" : "成员"}</span>}
+                            {member.disabled && <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">已停用</Badge>}
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-mono tabular-nums">
+                          {member.monthlyLimitCredits === null ? (
+                            <span className="font-sans text-muted-foreground">未设置</span>
+                          ) : formatCredits(member.monthlyLimitCredits)}
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-mono tabular-nums">{formatCredits(member.monthUsedCredits)}</div>
+                          {member.lastUsedAt && <div className="mt-0.5 text-[11px] text-muted-foreground">最近 {formatDateTime(member.lastUsedAt)}</div>}
+                        </TableCell>
+                        <TableCell className="font-mono tabular-nums">
+                          {member.usageRatioBps === null ? "-" : formatPercentBps(member.usageRatioBps)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={memberBudgetStatusClass(member.status)}>
+                            {memberBudgetStatusLabel(member.status)}
+                          </Badge>
+                          {!member.active && <div className="mt-1 text-[11px] text-muted-foreground">预算未生效</div>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!member.canManage || budgetLoading}
+                            title={member.canManage ? "设置月度提醒预算" : "无权修改该管理员的预算"}
+                            onClick={() => {
+                              setEditingMember(member);
+                              setBudgetDialogOpen(true);
+                            }}
+                          >
+                            {member.monthlyLimitCredits === null ? "设置" : "调整"}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">当前组织暂无员工。</div>
+              )}
+            </>
+          ) : !budgetLoading && !budgetError ? (
+            <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">暂无员工预算数据。</div>
+          ) : null}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader><CardTitle className="text-base">最近流水</CardTitle></CardHeader>
         <CardContent>
@@ -1723,6 +2166,14 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
         </div>
       )}
       </div>
+      <MemberBudgetDialog
+        open={budgetDialogOpen}
+        member={editingMember}
+        tenantId={tenantId}
+        onOpenChange={setBudgetDialogOpen}
+        onSaved={handleBudgetSaved}
+        onConflictRefresh={handleConflictRefresh}
+      />
     </div>
   );
 }

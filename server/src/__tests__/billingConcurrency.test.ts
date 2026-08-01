@@ -195,7 +195,7 @@ class FakePg {
     if (/INSERT INTO\s+\S*credit_ledger/i.test(sql)) {
       const [
         id, idempotency_key, tenant_id, account_id, type, source, related_usage_event_ids,
-        session_id, run_id, message_id, credits_delta_micro, balance_before_micro, balance_after_micro,
+        user_id, username_snapshot, session_id, run_id, message_id, credits_delta_micro, balance_before_micro, balance_after_micro,
         credit_value_yuan_micro, revenue_yuan_micro, actual_cost_yuan_micro, gross_profit_yuan_micro,
         gross_margin_bps, pricing_version, billing_policy_version, note, created_by, created_at,
       ] = params as any[];
@@ -208,6 +208,7 @@ class FakePg {
       const row: LedgerRow = {
         id, idempotency_key, tenant_id, account_id, type, source,
         related_usage_event_ids: Array.isArray(related_usage_event_ids) ? [...related_usage_event_ids] : [],
+        user_id: user_id ?? null, username_snapshot: username_snapshot ?? null,
         session_id: session_id ?? null, run_id: run_id ?? null, message_id: message_id ?? null,
         credits_delta_micro, balance_before_micro, balance_after_micro, credit_value_yuan_micro,
         revenue_yuan_micro, actual_cost_yuan_micro, gross_profit_yuan_micro,

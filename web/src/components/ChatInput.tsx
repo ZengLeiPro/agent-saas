@@ -42,7 +42,7 @@ interface ChatInputProps {
   attachedTopSlot?: React.ReactNode;
 }
 
-const MIN_HEIGHT = 36;
+const MIN_HEIGHT = 52;
 const MAX_HEIGHT = 200;
 
 function formatDuration(seconds: number): string {
@@ -214,7 +214,23 @@ export function ChatInput({
     }
   }, [isDisabled, voiceRecorder.ensurePermission, voiceRecorder.startRecording]);
 
-  // 右侧按钮：loading/stopping → stop → recording → hasContent → send → mic/send
+  const renderVoiceButton = () => {
+    if (!showVoice || voiceRecorder.isRecording || loading) return null;
+
+    return (
+      <button
+        type="button"
+        onClick={handleMicClick}
+        className="flex size-8 shrink-0 items-center justify-center text-foreground transition-opacity hover:opacity-70 active:opacity-50"
+        title="语音输入"
+        aria-label="语音输入"
+      >
+        <Mic className="size-5" />
+      </button>
+    );
+  };
+
+  // 右侧主按钮：loading/stopping → stop → recording → send
   const renderRightButton = () => {
     if (isDisabled) {
       return (
@@ -278,35 +294,20 @@ export function ChatInput({
             "hover:opacity-80 active:opacity-70",
             "disabled:pointer-events-none disabled:opacity-40",
           )}
+          title="发送消息"
+          aria-label="发送消息"
         >
           <ArrowUp className="size-5" strokeWidth={2.5} />
-        </button>
-      );
-    }
-    // 无内容：显示 mic（如支持）或 send
-    if (showVoice) {
-      return (
-        <button
-          type="button"
-          onClick={handleMicClick}
-          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-muted-foreground/20 active:bg-muted-foreground/30"
-          title="语音输入"
-        >
-          <Mic className="size-5" />
         </button>
       );
     }
     return (
       <button
         type="button"
-        onTouchEnd={(e) => { e.preventDefault(); onSend(); }}
-        onClick={onSend}
-        disabled={uploading}
-        className={cn(
-          "flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity",
-          "hover:opacity-80 active:opacity-70",
-          "disabled:pointer-events-none disabled:opacity-40",
-        )}
+        disabled
+        className="flex size-8 shrink-0 cursor-not-allowed items-center justify-center rounded-full bg-muted text-muted-foreground/40"
+        title="发送消息"
+        aria-label="发送消息"
       >
         <ArrowUp className="size-5" strokeWidth={2.5} />
       </button>
@@ -331,7 +332,7 @@ export function ChatInput({
         <div className="content-container pt-3 pb-1">
           {attachedTopSlot}
           <div
-            className="relative z-10 flex flex-col rounded-xl border border-border/60 bg-card shadow-sm"
+            className="relative z-10 flex flex-col rounded-[24px] border border-border bg-card shadow-sm"
             onClick={() => !isDisabled && !voiceRecorder.isRecording && textareaRef.current?.focus()}
           >
             {/* 文本输入区 / 录音指示器 */}
@@ -384,11 +385,11 @@ export function ChatInput({
             )}
 
             {/* 底部工具栏 */}
-            <div className="flex items-center justify-between px-2 pb-2 pt-1">
+            <div className="flex items-center justify-between px-4 pb-3">
               <div className="flex items-center gap-0.5">
                 <label
                   className={cn(
-                    "relative flex size-8 items-center justify-center overflow-hidden rounded-full text-muted-foreground transition-colors",
+                    "relative flex size-8 items-center justify-center overflow-hidden rounded-full border border-border text-foreground transition-colors",
                     "hover:bg-muted-foreground/10 active:bg-muted-foreground/20",
                     disableAttach || voiceRecorder.isRecording
                       ? "cursor-not-allowed opacity-40"
@@ -471,6 +472,7 @@ export function ChatInput({
                   </Select>
                 )}
 
+                {renderVoiceButton()}
                 {renderRightButton()}
               </div>
             </div>

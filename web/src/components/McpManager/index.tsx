@@ -56,6 +56,18 @@ import {
   useFeishuConnections,
 } from "@/components/CapabilityCenter/FeishuConnector";
 import { GithubConnector } from "@/components/CapabilityCenter/GithubConnector";
+import {
+  NotionConnectorCard,
+  NotionConnectorDrawer,
+  notionMatchesCatalog,
+  useNotionConnector,
+} from "@/components/CapabilityCenter/NotionConnector";
+import {
+  GoogleWorkspaceConnectorCard,
+  GoogleWorkspaceConnectorDrawer,
+  googleWorkspaceMatchesCatalog,
+  useGoogleWorkspaceConnector,
+} from "@/components/CapabilityCenter/GoogleWorkspaceConnector";
 
 const SCOPE_BADGE: Record<McpSecretScope, { label: string; className: string }> = {
   user: { label: "用户私有", className: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100" },
@@ -156,8 +168,12 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const [githubConnected, setGithubConnected] = useState(false);
   const dws = useDwsConnections(mode === "personal");
   const feishu = useFeishuConnections(mode === "personal");
+  const notion = useNotionConnector(mode === "personal");
+  const googleWorkspace = useGoogleWorkspaceConnector(mode === "personal");
   const [dingtalkDetailOpen, setDingtalkDetailOpen] = useState(false);
   const [feishuDetailOpen, setFeishuDetailOpen] = useState(false);
+  const [notionDetailOpen, setNotionDetailOpen] = useState(false);
+  const [googleWorkspaceDetailOpen, setGoogleWorkspaceDetailOpen] = useState(false);
 
   const diagnose = useCallback(async (force = false) => {
     setDiagnosing(true);
@@ -464,14 +480,16 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
       return matchesFilter && matchesQuery;
     });
   }, [activeFilter, connectorServers, query]);
-  // 三个原生连接器计入「全部 / 已启用 / 平台提供」的计数。
+  // 五个官方 CLI 原生连接器计入「全部 / 已启用 / 平台提供」的计数。
+  const notionConnected = notion.connection?.status === "connected";
+  const googleWorkspaceConnected = googleWorkspace.connection?.status === "connected";
   const connectorFilters = useMemo(() => [
-    { value: "all" as const, label: "全部", count: connectorServers.length + 3 },
-    { value: "enabled" as const, label: "已启用", count: enabledCount + (githubConnected ? 1 : 0) + (dws.hasConnected ? 1 : 0) + (feishu.hasConnected ? 1 : 0) },
-    { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length + 3 },
+    { value: "all" as const, label: "全部", count: connectorServers.length + 5 },
+    { value: "enabled" as const, label: "已启用", count: enabledCount + (githubConnected ? 1 : 0) + (dws.hasConnected ? 1 : 0) + (feishu.hasConnected ? 1 : 0) + (notionConnected ? 1 : 0) + (googleWorkspaceConnected ? 1 : 0) },
+    { value: "platform" as const, label: "平台提供", count: connectorServers.filter((server) => connectorSource(server) === "platform").length + 5 },
     { value: "organization" as const, label: "组织提供", count: connectorServers.filter((server) => connectorSource(server) === "organization").length },
     { value: "personal" as const, label: "我创建的", count: connectorServers.filter((server) => connectorSource(server) === "personal").length },
-  ], [connectorServers, dws.hasConnected, enabledCount, feishu.hasConnected, githubConnected]);
+  ], [connectorServers, dws.hasConnected, enabledCount, feishu.hasConnected, githubConnected, googleWorkspaceConnected, notionConnected]);
   const githubMatchesQuery = !query.trim()
     || "github git gh sdk 仓库 issue pull request".includes(query.trim().toLocaleLowerCase());
   const showGithubCard = githubMatchesQuery && (
@@ -481,6 +499,8 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   );
   const showDingtalkCard = dingtalkMatchesCatalog(query, activeFilter, dws);
   const showFeishuCard = feishuMatchesCatalog(query, activeFilter, feishu);
+  const showNotionCard = notionMatchesCatalog(query, activeFilter, notionConnected);
+  const showGoogleWorkspaceCard = googleWorkspaceMatchesCatalog(query, activeFilter, googleWorkspaceConnected);
   const detailServer = detailServerId ? connectorServers.find((server) => server.id === detailServerId) ?? null : null;
 
   const toggleServer = useCallback(async (server: McpServerSummary, nextValue: boolean) => {
@@ -542,7 +562,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
 
         <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
           {error ? <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
-          {filteredServers.length === 0 && !showGithubCard && !showDingtalkCard && !showFeishuCard ? (
+          {filteredServers.length === 0 && !showGithubCard && !showDingtalkCard && !showFeishuCard && !showNotionCard && !showGoogleWorkspaceCard ? (
             <div className="rounded-2xl border border-dashed px-6 py-12 text-center text-sm text-muted-foreground">
               没有找到匹配的连接器
             </div>
@@ -556,6 +576,12 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
               ) : null}
               {showFeishuCard ? (
                 <FeishuConnectorCard state={feishu} onOpenDetail={() => setFeishuDetailOpen(true)} />
+              ) : null}
+              {showNotionCard ? (
+                <NotionConnectorCard state={notion} onOpenDetail={() => setNotionDetailOpen(true)} />
+              ) : null}
+              {showGoogleWorkspaceCard ? (
+                <GoogleWorkspaceConnectorCard state={googleWorkspace} onOpenDetail={() => setGoogleWorkspaceDetailOpen(true)} />
               ) : null}
               {filteredServers.map((server) => {
                 const source = connectorSource(server);
@@ -786,6 +812,8 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
 
         <DingtalkConnectorDrawer open={dingtalkDetailOpen} onOpenChange={setDingtalkDetailOpen} dws={dws} />
         <FeishuConnectorDrawer open={feishuDetailOpen} onOpenChange={setFeishuDetailOpen} state={feishu} />
+        <NotionConnectorDrawer open={notionDetailOpen} onOpenChange={setNotionDetailOpen} state={notion} />
+        <GoogleWorkspaceConnectorDrawer open={googleWorkspaceDetailOpen} onOpenChange={setGoogleWorkspaceDetailOpen} state={googleWorkspace} />
 
         <Dialog open={customDialogOpen} onOpenChange={setCustomDialogOpen}>
           <DialogContent className="max-h-[min(760px,calc(100vh-48px))] max-w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-2xl">

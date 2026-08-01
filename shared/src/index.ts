@@ -183,6 +183,14 @@ export type {
   McpDiagnosticResponse,
   GithubConnection,
   GithubConnectionResponse,
+  ConnectorAuthSessionStatus,
+  ConnectorAuthSession,
+  NotionConnection,
+  NotionConnectionResponse,
+  NotionAuthSessionResponse,
+  GoogleWorkspaceConnection,
+  GoogleWorkspaceConnectionResponse,
+  GoogleWorkspaceOAuthStartResponse,
 } from "./types/index";
 export { FILE_SORT_LABELS, PLATFORM_CAPABILITIES, buildScenarioPrompt } from "./types/index";
 export { saveUserPreferences } from "./lib/preferencesApi";
@@ -651,6 +659,12 @@ export {
 export {
   fetchGithubConnection,
   connectGithub,
-  updateGithubCapabilities,
   disconnectGithub,
+  fetchNotionConnection,
+  fetchNotionAuthSession,
+  startNotionAuthSession,
+  disconnectNotion,
+  fetchGoogleWorkspaceConnection,
+  startGoogleWorkspaceOAuth,
+  disconnectGoogleWorkspace,
 } from "./lib/connectorsApi";

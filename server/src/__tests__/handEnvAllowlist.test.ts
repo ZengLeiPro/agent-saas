@@ -8,7 +8,7 @@ describe('handEnvAllowlist', () => {
     expect(HAND_ENV_ALLOWLIST).toContain('AZEROTH_API_URL');
     for (const key of [
       'AZEROTH_TOKEN', 'AZEROTH_API_URL', 'GH_TOKEN', 'GITHUB_TOKEN',
-      'NOTION_TOKEN', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
+      'NOTION_API_TOKEN', 'GOOGLE_WORKSPACE_CLI_TOKEN', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
     ]) {
       expect(isHandEnvAllowed(key)).toBe(true);
     }
@@ -27,13 +27,15 @@ describe('handEnvAllowlist', () => {
     expect(pickHandEnv({
       AZEROTH_TOKEN: 'pat_x',
       GH_TOKEN: 'gh_x',
-      NOTION_TOKEN: 'notion_x',
+      NOTION_API_TOKEN: 'notion_x',
+      GOOGLE_WORKSPACE_CLI_TOKEN: 'google_x',
       PATH: '/tmp/evil',
       NODE_OPTIONS: '--require /tmp/evil.js',
     })).toEqual({
       AZEROTH_TOKEN: 'pat_x',
       GH_TOKEN: 'gh_x',
-      NOTION_TOKEN: 'notion_x',
+      NOTION_API_TOKEN: 'notion_x',
+      GOOGLE_WORKSPACE_CLI_TOKEN: 'google_x',
     });
   });
 

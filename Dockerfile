@@ -188,15 +188,20 @@ RUN pnpm install --frozen-lockfile \
     --filter '!mobile' \
     --filter '!web'
 
-# dws CLI（钉钉工作台 skill 依赖）— pin 版本避免 latest 漂浮
-# skills-pool/dws/SKILL.md frontmatter 要求 cli_version: ">=1.0.15"（v1.0.51 static-endpoint baseline）
-# npm 包名: dingtalk-workspace-cli（bin 名: dws）；不用 dws@... 会拉到无关的 Decarta wrapper
-RUN npm install -g dingtalk-workspace-cli@1.0.51 \
+# 能力中心官方 CLI — 全部 pin 版本，避免 latest 漂浮。
+# Notion npm 包名/命令均为 ntn；Google Workspace npm 包提供 gws 命令。
+RUN npm install -g ntn@0.21.6 @googleworkspace/cli@0.22.5 \
+    && ntn --version \
+    && gws --version
+
+# dws CLI（钉钉工作台 skill 依赖）
+# npm 包名: dingtalk-workspace-cli（bin 名: dws）；不用 dws@... 会拉到无关的 Decarta wrapper。
+RUN npm install -g dingtalk-workspace-cli@1.0.55 \
     && dws --version
 
-# 飞书官方 CLI（能力中心飞书连接器 + feishu skill）— pin 版本避免 latest 漂浮。
-# @larksuite/cli 的 postinstall 会按当前 linux/amd64 下载官方二进制，bin 名为 lark-cli。
-RUN npm install -g @larksuite/cli@1.0.73 \
+# 飞书官方 CLI（能力中心飞书连接器 + feishu skill）。
+# @larksuite/cli 的 postinstall 会按当前平台下载官方二进制，bin 名为 lark-cli。
+RUN npm install -g @larksuite/cli@1.0.81 \
     && lark-cli --version
 
 # Office skills（pptx/docx）Node 依赖 — 预装到独立前缀（2026-07-16 生产反馈修复）
@@ -357,6 +362,10 @@ ENV PATH=/home/agent/.npm-global/bin:$PATH
 # Office skills Node 依赖（pptxgenjs/docx）的 fallback 解析路径；
 # 项目本地 node_modules 仍优先（NODE_PATH 是 require 解析的最后一级）
 ENV NODE_PATH=/opt/ky-agent/node/node_modules
+# Notion/Google Workspace 官方 CLI：凭据优先由用户级连接器注入 token env；
+# 仍把官方 CLI 的本地状态限定到当前用户独立 workspace，避免落入临时 HOME。
+ENV NOTION_KEYRING=0 \
+    GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/workspace/.gws
 # dws warm sandbox 隔离约定（agent 无需 source .dws/env.sh）：
 # 强制 token/config 写工作区 /workspace/.dws/、禁用系统凭据管理器。
 # 用绝对路径而非 $PWD/.dws/…：agent 走到子目录（如 assets/YYYYMMDD/）时 token 归属不漂移。

@@ -7,12 +7,15 @@ export type ConnectorConnectionStatus = 'connected' | 'disconnected';
 export interface ConnectorConnectionRecord {
   connectorId: string;
   username: string;
+  /** 不可变用户 id；防止账号删除后同名重建继承旧凭据。 */
+  userId?: string;
   tenantId: string;
   status: ConnectorConnectionStatus;
   credentialRefs: Record<string, string>;
   /** 已脱离活动连接、等待从 Vault 撤销的 ref；不包含明文。 */
   pendingRevokeRefs?: string[];
   capabilities: Record<string, boolean>;
+  metadata?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
   connectedAt?: string;
@@ -57,27 +60,35 @@ export class ConnectorConnectionStore {
 
   async connect(input: {
     username: string;
+    userId: string;
     tenantId: string;
     connectorId: string;
     credentialRefs: Record<string, string>;
     capabilities?: Record<string, boolean>;
+    metadata?: Record<string, string>;
   }): Promise<ConnectorConnectionRecord> {
     let result!: ConnectorConnectionRecord;
     await this.mutate(() => {
       const now = new Date().toISOString();
       const current = this.data.users[input.username]?.[input.connectorId];
+      const sameOwner = !current
+        || (current.userId ? current.userId === input.userId : current.tenantId === input.tenantId);
       const nextRefs = new Set(Object.values(input.credentialRefs));
       const retiredRefs = Object.values(current?.credentialRefs ?? {}).filter(ref => !nextRefs.has(ref));
       const pendingRevokeRefs = Array.from(new Set([...(current?.pendingRevokeRefs ?? []), ...retiredRefs]));
       result = {
         connectorId: input.connectorId,
         username: input.username,
+        userId: input.userId,
         tenantId: input.tenantId,
         status: 'connected',
         credentialRefs: { ...input.credentialRefs },
         ...(pendingRevokeRefs.length > 0 ? { pendingRevokeRefs } : {}),
-        capabilities: { ...(current?.capabilities ?? {}), ...(input.capabilities ?? {}) },
-        createdAt: current?.createdAt ?? now,
+        capabilities: { ...(sameOwner ? current?.capabilities ?? {} : {}), ...(input.capabilities ?? {}) },
+        ...((input.metadata || (sameOwner && current?.metadata)) ? {
+          metadata: { ...(sameOwner ? current?.metadata ?? {} : {}), ...(input.metadata ?? {}) },
+        } : {}),
+        createdAt: sameOwner ? current?.createdAt ?? now : now,
         updatedAt: now,
         connectedAt: now,
       };

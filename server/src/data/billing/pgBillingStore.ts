@@ -10,6 +10,9 @@ import {
   type BillingAuditSummary,
   type BillingCreditAccount,
   type BillingLedgerEntry,
+  type BillingMemberBudgetAuditEntry,
+  type BillingMemberBudgetOverview,
+  type BillingMemberBudgetUsage,
   type BillingMode,
   type BillingPricingVersion,
   type BillingUsageEvent,
@@ -40,6 +43,27 @@ export interface BillingPolicyPatch {
   showUsageCredits?: boolean;
   showCost?: boolean;
   showGrossMargin?: boolean;
+}
+
+export class BillingBudgetVersionConflictError extends Error {}
+export class BillingBudgetIdempotencyConflictError extends Error {}
+
+export interface UpsertMemberBudgetInput {
+  tenantId: string;
+  userId: string;
+  monthlyLimitCreditsMicro?: number;
+  expectedVersion: number;
+  idempotencyKey: string;
+  note: string;
+  actorUserId: string;
+  actorUsername: string;
+  now?: Date;
+}
+
+export interface UpsertMemberBudgetResult {
+  budget: BillingMemberBudgetUsage;
+  audit: BillingMemberBudgetAuditEntry;
+  replayed: boolean;
 }
 
 export interface PgBillingStoreOptions {
@@ -74,6 +98,8 @@ export class PgBillingStore {
   readonly usageEventsTable: string;
   readonly creditAccountsTable: string;
   readonly creditLedgerTable: string;
+  readonly memberBudgetsTable: string;
+  readonly memberBudgetAuditTable: string;
   readonly projectionStateTable: string;
   private readonly eventsTable?: string;
   private readonly runsTable?: string;
@@ -88,6 +114,8 @@ export class PgBillingStore {
     this.usageEventsTable = `${prefix}_billing_usage_events`;
     this.creditAccountsTable = `${prefix}_billing_credit_accounts`;
     this.creditLedgerTable = `${prefix}_billing_credit_ledger`;
+    this.memberBudgetsTable = `${prefix}_billing_member_budgets`;
+    this.memberBudgetAuditTable = `${prefix}_billing_member_budget_audit`;
     this.projectionStateTable = `${prefix}_billing_projection_state`;
   }
 
@@ -209,6 +237,8 @@ export class PgBillingStore {
           type TEXT NOT NULL,
           source TEXT NOT NULL,
           related_usage_event_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+          user_id TEXT,
+          username_snapshot TEXT,
           session_id TEXT,
           run_id TEXT,
           message_id TEXT,
@@ -228,6 +258,45 @@ export class PgBillingStore {
         )
       `);
       await client.query(`
+        ALTER TABLE ${this.creditLedgerTable}
+          ADD COLUMN IF NOT EXISTS user_id TEXT,
+          ADD COLUMN IF NOT EXISTS username_snapshot TEXT
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.memberBudgetsTable} (
+          tenant_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          monthly_limit_micro BIGINT,
+          timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+          active BOOLEAN NOT NULL DEFAULT true,
+          version BIGINT NOT NULL DEFAULT 1,
+          created_by TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL,
+          PRIMARY KEY (tenant_id, user_id),
+          CHECK (monthly_limit_micro IS NULL OR monthly_limit_micro >= 0)
+        )
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.memberBudgetAuditTable} (
+          id TEXT PRIMARY KEY,
+          idempotency_key TEXT NOT NULL,
+          request_fingerprint TEXT NOT NULL,
+          tenant_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          before_limit_micro BIGINT,
+          after_limit_micro BIGINT,
+          before_active BOOLEAN NOT NULL,
+          after_active BOOLEAN NOT NULL,
+          period_start DATE NOT NULL,
+          note TEXT NOT NULL,
+          actor_user_id TEXT NOT NULL,
+          actor_username TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL
+        )
+      `);
+      await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.projectionStateTable} (
           key TEXT PRIMARY KEY,
           last_global_sequence BIGINT NOT NULL DEFAULT 0,
@@ -240,6 +309,11 @@ export class PgBillingStore {
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.usageEventsTable}_user_idx ON ${this.usageEventsTable} (tenant_id, user_id, created_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.creditLedgerTable}_tenant_created_idx ON ${this.creditLedgerTable} (tenant_id, created_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.creditLedgerTable}_run_idx ON ${this.creditLedgerTable} (run_id) WHERE run_id IS NOT NULL`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.creditLedgerTable}_tenant_user_created_idx ON ${this.creditLedgerTable} (tenant_id, user_id, created_at DESC) WHERE user_id IS NOT NULL`);
+      await client.query(`ALTER TABLE ${this.memberBudgetAuditTable} DROP CONSTRAINT IF EXISTS ${this.memberBudgetAuditTable}_idempotency_key_key`);
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${this.memberBudgetAuditTable}_tenant_idempotency_idx ON ${this.memberBudgetAuditTable} (tenant_id, idempotency_key)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.memberBudgetAuditTable}_tenant_user_created_idx ON ${this.memberBudgetAuditTable} (tenant_id, user_id, created_at DESC)`);
+      await this.backfillLedgerUserAttribution(client);
       await this.ensureDefaultPricingVersion(client);
     } finally {
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
@@ -665,6 +739,15 @@ export class PgBillingStore {
         this.options.logger?.warn?.(`billing debit makes tenant negative: tenant=${tenantId} run=${runId} before=${before} debit=${creditsToChargeMicro}`);
       }
       const grossProfitYuanMicro = revenueYuanMicro - actualCostYuanMicro;
+      const userIds = [...new Set(pendingUsageEvents.map((item) => item.userId).filter((item): item is string => !!item))];
+      const allUsageAttributed = pendingUsageEvents.every((item) => !!item.userId);
+      const userId = allUsageAttributed && userIds.length === 1 ? userIds[0] : undefined;
+      const usernameSnapshot = userId
+        ? pendingUsageEvents.find((item) => item.userId === userId)?.username
+        : undefined;
+      if (!userId && (userIds.length > 0 || pendingUsageEvents.some((item) => !item.userId))) {
+        this.options.logger?.warn?.(`billing run has ambiguous subjects: tenant=${tenantId} run=${runId} users=${userIds.join(',') || 'none'}`);
+      }
       return await this.insertLedgerAndUpdateAccount(client, {
         idempotencyKey,
         tenantId,
@@ -672,6 +755,8 @@ export class PgBillingStore {
         type: 'debit',
         source: 'usage_event',
         relatedUsageEventIds: pendingUsageEvents.map((item) => item.id),
+        ...(userId ? { userId } : {}),
+        ...(usernameSnapshot ? { usernameSnapshot } : {}),
         sessionId: pendingUsageEvents[0]?.sessionId,
         runId,
         creditsDeltaMicro: -creditsToChargeMicro,
@@ -729,6 +814,8 @@ export class PgBillingStore {
         type: 'debit',
         source: input.source,
         relatedUsageEventIds: input.relatedUsageEventIds ?? [],
+        ...(input.userId ? { userId: input.userId } : {}),
+        ...(input.username ? { usernameSnapshot: input.username } : {}),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         ...(input.runId ? { runId: input.runId } : {}),
         creditsDeltaMicro: -creditsToChargeMicro,
@@ -960,6 +1047,8 @@ export class PgBillingStore {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query(`DELETE FROM ${this.memberBudgetAuditTable} WHERE tenant_id = $1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.memberBudgetsTable} WHERE tenant_id = $1`, [tenantId]);
       const creditLedger = await client.query(`DELETE FROM ${this.creditLedgerTable} WHERE tenant_id = $1`, [tenantId]);
       const usageEvents = await client.query(`DELETE FROM ${this.usageEventsTable} WHERE tenant_id = $1`, [tenantId]);
       const creditAccounts = await client.query(`DELETE FROM ${this.creditAccountsTable} WHERE tenant_id = $1`, [tenantId]);
@@ -1040,6 +1129,245 @@ export class PgBillingStore {
       })),
       alerts,
     };
+  }
+
+  async getMemberBudgetOverview(tenantId: string, userId?: string, now = new Date()): Promise<BillingMemberBudgetOverview> {
+    const period = beijingMonthRange(now);
+    const result = await this.pool.query<{
+      user_id: string;
+      monthly_limit_micro: string | number | null;
+      active: boolean | null;
+      version: string | number | null;
+      month_used_micro: string | number | null;
+      last_used_at: Date | string | null;
+      updated_by: string | null;
+      updated_at: Date | string | null;
+    }>(`
+      WITH budgets AS (
+        SELECT user_id, monthly_limit_micro, active, version, updated_by, updated_at
+        FROM ${this.memberBudgetsTable}
+        WHERE tenant_id = $1
+          AND ($4::text IS NULL OR user_id = $4)
+      ), usage AS (
+        SELECT user_id,
+               COALESCE(SUM(GREATEST(0, -credits_delta_micro)), 0)::bigint AS month_used_micro,
+               MAX(created_at) AS last_used_at
+        FROM ${this.creditLedgerTable}
+        WHERE tenant_id = $1
+          AND type = 'debit'
+          AND user_id IS NOT NULL
+          AND created_at >= $2
+          AND created_at < $3
+          AND ($4::text IS NULL OR user_id = $4)
+        GROUP BY user_id
+      )
+      SELECT COALESCE(b.user_id, u.user_id) AS user_id,
+             b.monthly_limit_micro,
+             b.active,
+             b.version,
+             COALESCE(u.month_used_micro, 0)::bigint AS month_used_micro,
+             u.last_used_at,
+             b.updated_by,
+             b.updated_at
+      FROM budgets b
+      FULL OUTER JOIN usage u ON u.user_id = b.user_id
+      ORDER BY COALESCE(u.month_used_micro, 0) DESC, COALESCE(b.user_id, u.user_id)
+    `, [tenantId, period.start, period.end, userId ?? null]);
+    const aggregate = await this.pool.query<{
+      month_used_micro: string | number;
+      unattributed_micro: string | number;
+    }>(`
+      SELECT COALESCE(SUM(GREATEST(0, -credits_delta_micro)), 0)::bigint AS month_used_micro,
+             COALESCE(SUM(CASE WHEN user_id IS NULL THEN GREATEST(0, -credits_delta_micro) ELSE 0 END), 0)::bigint AS unattributed_micro
+      FROM ${this.creditLedgerTable}
+      WHERE tenant_id = $1
+        AND type = 'debit'
+        AND created_at >= $2
+        AND created_at < $3
+    `, [tenantId, period.start, period.end]);
+    return {
+      tenantId,
+      timezone: 'Asia/Shanghai',
+      periodStart: period.start.toISOString(),
+      periodEnd: period.end.toISOString(),
+      monthUsedCreditsMicro: Number(aggregate.rows[0]?.month_used_micro ?? 0),
+      unattributedCreditsMicro: Number(aggregate.rows[0]?.unattributed_micro ?? 0),
+      items: result.rows.map((row) => ({
+        userId: row.user_id,
+        ...(row.monthly_limit_micro === null ? {} : { monthlyLimitCreditsMicro: Number(row.monthly_limit_micro) }),
+        active: row.active ?? false,
+        version: Number(row.version ?? 0),
+        monthUsedCreditsMicro: Number(row.month_used_micro ?? 0),
+        ...(row.last_used_at ? { lastUsedAt: toIso(row.last_used_at) } : {}),
+        ...(row.updated_by ? { updatedBy: row.updated_by } : {}),
+        ...(row.updated_at ? { updatedAt: toIso(row.updated_at) } : {}),
+      })),
+    };
+  }
+
+  async upsertMemberBudget(input: UpsertMemberBudgetInput): Promise<UpsertMemberBudgetResult> {
+    const now = input.now ?? new Date();
+    const period = beijingMonthRange(now);
+    const monthlyLimit = input.monthlyLimitCreditsMicro === undefined ? null : Math.trunc(input.monthlyLimitCreditsMicro);
+    const fingerprint = createHash('sha256').update(JSON.stringify({
+      tenantId: input.tenantId,
+      userId: input.userId,
+      monthlyLimitCreditsMicro: monthlyLimit,
+      note: input.note,
+    })).digest('hex');
+    const client = await this.pool.connect();
+    let audit!: BillingMemberBudgetAuditEntry;
+    let replayed = false;
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 1))', [`${input.tenantId}:${input.userId}`]);
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${input.tenantId}:${input.idempotencyKey}`]);
+      const replay = await client.query<{ row_json: Record<string, unknown>; request_fingerprint: string }>(`
+        SELECT row_to_json(a.*) AS row_json, request_fingerprint
+        FROM ${this.memberBudgetAuditTable} a
+        WHERE tenant_id = $1 AND idempotency_key = $2
+        FOR UPDATE
+      `, [input.tenantId, input.idempotencyKey]);
+      if (replay.rows[0]) {
+        if (replay.rows[0].request_fingerprint !== fingerprint) {
+          throw new BillingBudgetIdempotencyConflictError('幂等键已用于另一项预算修改');
+        }
+        audit = normalizeMemberBudgetAudit(replay.rows[0].row_json);
+        replayed = true;
+      } else {
+        const current = await client.query<{ row_json: Record<string, unknown> }>(`
+          SELECT row_to_json(b.*) AS row_json
+          FROM ${this.memberBudgetsTable} b
+          WHERE tenant_id = $1 AND user_id = $2
+          FOR UPDATE
+        `, [input.tenantId, input.userId]);
+        const currentRow = current.rows[0]?.row_json;
+        const currentVersion = Number(currentRow?.version ?? 0);
+        if (currentVersion !== input.expectedVersion) {
+          throw new BillingBudgetVersionConflictError('预算已被其他管理员修改，请刷新后重试');
+        }
+        const createdAt = currentRow?.created_at ? toIso(currentRow.created_at) : now.toISOString();
+        const createdBy = currentRow?.created_by ? String(currentRow.created_by) : input.actorUsername;
+        const nextVersion = currentVersion + 1;
+        await client.query(`
+          INSERT INTO ${this.memberBudgetsTable}
+            (tenant_id, user_id, monthly_limit_micro, timezone, active, version,
+             created_by, created_at, updated_by, updated_at)
+          VALUES ($1,$2,$3,'Asia/Shanghai',true,$4,$5,$6,$7,$8)
+          ON CONFLICT (tenant_id, user_id) DO UPDATE SET
+            monthly_limit_micro = EXCLUDED.monthly_limit_micro,
+            active = true,
+            version = EXCLUDED.version,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = EXCLUDED.updated_at
+        `, [
+          input.tenantId,
+          input.userId,
+          monthlyLimit,
+          nextVersion,
+          createdBy,
+          createdAt,
+          input.actorUsername,
+          now.toISOString(),
+        ]);
+        const auditId = randomUUID();
+        await client.query(`
+          INSERT INTO ${this.memberBudgetAuditTable}
+            (id, idempotency_key, request_fingerprint, tenant_id, user_id,
+             before_limit_micro, after_limit_micro, before_active, after_active,
+             period_start, note, actor_user_id, actor_username, created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10,$11,$12,$13)
+        `, [
+          auditId,
+          input.idempotencyKey,
+          fingerprint,
+          input.tenantId,
+          input.userId,
+          currentRow?.monthly_limit_micro ?? null,
+          monthlyLimit,
+          Boolean(currentRow?.active ?? false),
+          beijingDateString(period.start),
+          input.note,
+          input.actorUserId,
+          input.actorUsername,
+          now.toISOString(),
+        ]);
+        audit = {
+          id: auditId,
+          idempotencyKey: input.idempotencyKey,
+          tenantId: input.tenantId,
+          userId: input.userId,
+          ...(currentRow?.monthly_limit_micro === null || currentRow?.monthly_limit_micro === undefined
+            ? {}
+            : { beforeLimitCreditsMicro: Number(currentRow.monthly_limit_micro) }),
+          ...(monthlyLimit === null ? {} : { afterLimitCreditsMicro: monthlyLimit }),
+          beforeActive: Boolean(currentRow?.active ?? false),
+          afterActive: true,
+          periodStart: beijingDateString(period.start),
+          note: input.note,
+          actorUserId: input.actorUserId,
+          actorUsername: input.actorUsername,
+          createdAt: now.toISOString(),
+        };
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+    const overview = await this.getMemberBudgetOverview(input.tenantId, input.userId, now);
+    const budget = overview.items[0] ?? {
+      userId: input.userId,
+      active: true,
+      version: replayed ? input.expectedVersion : input.expectedVersion + 1,
+      monthUsedCreditsMicro: 0,
+      ...(monthlyLimit === null ? {} : { monthlyLimitCreditsMicro: monthlyLimit }),
+    };
+    return { budget, audit, replayed };
+  }
+
+  async listMemberBudgetAudit(tenantId: string, userId?: string, limit = 100): Promise<BillingMemberBudgetAuditEntry[]> {
+    const result = await this.pool.query<{ row_json: Record<string, unknown> }>(`
+      SELECT row_to_json(a.*) AS row_json
+      FROM ${this.memberBudgetAuditTable} a
+      WHERE tenant_id = $1
+        AND ($2::text IS NULL OR user_id = $2)
+      ORDER BY created_at DESC, id DESC
+      LIMIT $3
+    `, [tenantId, userId ?? null, Math.max(1, Math.min(200, Math.trunc(limit)))]);
+    return result.rows.map((row) => normalizeMemberBudgetAudit(row.row_json));
+  }
+
+  private async backfillLedgerUserAttribution(client: PgClient): Promise<void> {
+    const marker = 'billing_ledger_user_backfill_v1';
+    const existing = await client.query(`SELECT 1 FROM ${this.projectionStateTable} WHERE key = $1`, [marker]);
+    if (existing.rows[0]) return;
+    const result = await client.query(`
+      UPDATE ${this.creditLedgerTable} ledger
+      SET user_id = resolved.user_id,
+          username_snapshot = resolved.username
+      FROM (
+        SELECT source.id,
+               MIN(usage.user_id) AS user_id,
+               MIN(usage.username) AS username
+        FROM ${this.creditLedgerTable} source
+        CROSS JOIN LATERAL unnest(source.related_usage_event_ids) AS related(event_id)
+        JOIN ${this.usageEventsTable} usage ON usage.id = related.event_id
+        WHERE source.user_id IS NULL
+        GROUP BY source.id, source.related_usage_event_ids
+        HAVING COUNT(*) = cardinality(source.related_usage_event_ids)
+          AND COUNT(usage.user_id) = COUNT(*)
+          AND COUNT(DISTINCT usage.user_id) = 1
+      ) resolved
+      WHERE ledger.id = resolved.id
+    `);
+    await client.query(`
+      INSERT INTO ${this.projectionStateTable} (key, last_global_sequence, updated_at)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (key) DO NOTHING
+    `, [marker, result.rowCount ?? 0, new Date().toISOString()]);
   }
 
   private async ensureDefaultPricingVersion(client: PgClient): Promise<void> {
@@ -1134,10 +1462,11 @@ export class PgBillingStore {
     const result = await client.query<{ row_json: Record<string, unknown> }>(`
       INSERT INTO ${this.creditLedgerTable}
         (id, idempotency_key, tenant_id, account_id, type, source, related_usage_event_ids,
-         session_id, run_id, message_id, credits_delta_micro, balance_before_micro, balance_after_micro,
+         user_id, username_snapshot, session_id, run_id, message_id,
+         credits_delta_micro, balance_before_micro, balance_after_micro,
          credit_value_yuan_micro, revenue_yuan_micro, actual_cost_yuan_micro, gross_profit_yuan_micro,
          gross_margin_bps, pricing_version, billing_policy_version, note, created_by, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7::text[],$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+      VALUES ($1,$2,$3,$4,$5,$6,$7::text[],$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
       RETURNING row_to_json(${this.creditLedgerTable}.*) AS row_json
     `, [
       randomUUID(),
@@ -1147,6 +1476,8 @@ export class PgBillingStore {
       input.type,
       input.source,
       input.relatedUsageEventIds,
+      input.userId ?? null,
+      input.usernameSnapshot ?? null,
       input.sessionId ?? null,
       input.runId ?? null,
       input.messageId ?? null,
@@ -1263,6 +1594,56 @@ function sanitizeQualifiedIdentifier(value: string): string {
   return value.split('.').map(sanitizeIdentifier).join('.');
 }
 
+function beijingMonthRange(now: Date): { start: Date; end: Date } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(now);
+  const year = Number(parts.find((part) => part.type === 'year')?.value);
+  const month = Number(parts.find((part) => part.type === 'month')?.value);
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const start = new Date(`${year}-${String(month).padStart(2, '0')}-01T00:00:00+08:00`);
+  const end = new Date(`${nextYear}-${String(nextMonth).padStart(2, '0')}-01T00:00:00+08:00`);
+  return { start, end };
+}
+
+function beijingDateString(date: Date): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === 'year')?.value ?? '';
+  const month = parts.find((part) => part.type === 'month')?.value ?? '';
+  const day = parts.find((part) => part.type === 'day')?.value ?? '';
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeMemberBudgetAudit(row: Record<string, unknown>): BillingMemberBudgetAuditEntry {
+  return {
+    id: String(row.id),
+    idempotencyKey: String(row.idempotency_key),
+    tenantId: String(row.tenant_id),
+    userId: String(row.user_id),
+    ...(row.before_limit_micro === null || row.before_limit_micro === undefined
+      ? {}
+      : { beforeLimitCreditsMicro: Number(row.before_limit_micro) }),
+    ...(row.after_limit_micro === null || row.after_limit_micro === undefined
+      ? {}
+      : { afterLimitCreditsMicro: Number(row.after_limit_micro) }),
+    beforeActive: Boolean(row.before_active),
+    afterActive: Boolean(row.after_active),
+    periodStart: String(row.period_start),
+    note: String(row.note),
+    actorUserId: String(row.actor_user_id),
+    actorUsername: String(row.actor_username),
+    createdAt: toIso(row.created_at),
+  };
+}
+
 function normalizePricingVersion(row: Record<string, unknown>): BillingPricingVersion {
   return {
     version: String(row.version),
@@ -1363,6 +1744,8 @@ function normalizeLedgerEntry(row: Record<string, unknown>): BillingLedgerEntry 
     type: row.type as LedgerType,
     source: String(row.source),
     relatedUsageEventIds: Array.isArray(row.related_usage_event_ids) ? row.related_usage_event_ids.map(String) : [],
+    ...(row.user_id ? { userId: String(row.user_id) } : {}),
+    ...(row.username_snapshot ? { usernameSnapshot: String(row.username_snapshot) } : {}),
     ...(row.session_id ? { sessionId: String(row.session_id) } : {}),
     ...(row.run_id ? { runId: String(row.run_id) } : {}),
     ...(row.message_id ? { messageId: String(row.message_id) } : {}),

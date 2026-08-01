@@ -347,7 +347,7 @@ export const MessageList = memo(function MessageList({
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
     <div ref={setContainerRef} onScroll={showCenterLoading ? undefined : handleScroll} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain">
-      <div className="content-container flex flex-col gap-3 pt-4 pb-4 px-5 md:px-3">
+      <div className="content-container flex flex-col gap-3 py-4">
         {showCenterLoading ? (
           <div className="flex min-h-[50vh] items-center justify-center">
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -373,7 +373,7 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={timestamp} />
                 )}
-                <div className="px-3 py-2">
+                <div className="py-2">
                   {item.items.map((sub) => {
                     // 双重保险:此层理论上不该出现 file_download。
                     // - [FILE] 内联(无 artifactId): groupIntoBubbles 已 continue 掉。
@@ -427,7 +427,7 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
                 )}
-                <div className="px-3 py-2">
+                <div className="py-2">
                   <ErrorBoundary inline>
                     <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} />
                   </ErrorBoundary>
@@ -577,7 +577,7 @@ export const MessageList = memo(function MessageList({
         {!showCenterLoading && showAgentLoading && (
           <div ref={lastMessageRef} className="flex flex-col">
             <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
-            <div className="px-3 py-2">
+            <div className="py-2">
               <div className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
                 <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground/70" />
                 <span>正在思考</span>

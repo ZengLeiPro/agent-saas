@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { writeFile, rename, unlink, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { McpOAuthServerConfig, McpServerConfig, McpServersFileShape } from '../mcp/clientManager.js';
+import type { McpServerConfig, McpServersFileShape } from '../mcp/clientManager.js';
 import { LEGACY_TENANT_ID } from './tenants/types.js';
 import { agentSettingsPath } from '../workspace/namespace.js';
 
@@ -110,109 +110,17 @@ export interface McpSecretStatus extends McpSecretRequirement {
 }
 
 const SAFE_MCP_ID_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
-
-const GOOGLE_OAUTH: McpOAuthServerConfig = {
-  provider: 'google-workspace',
-  beta: true,
-  clientIdEnv: 'GOOGLE_MCP_OAUTH_CLIENT_ID',
-  clientSecretEnv: 'GOOGLE_MCP_OAUTH_CLIENT_SECRET',
-};
-
-const GOOGLE_MCP_PRESETS: Array<[string, string, string, string]> = [
-  ['google_gmail', 'Google Gmail', 'https://gmailmcp.googleapis.com/mcp/v1', '读取、搜索和处理 Gmail 邮件。'],
-  ['google_drive', 'Google Drive', 'https://drivemcp.googleapis.com/mcp/v1', '搜索和读取 Google Drive 文件。'],
-  ['google_calendar', 'Google Calendar', 'https://calendarmcp.googleapis.com/mcp/v1', '查询和维护 Google 日历与日程。'],
-  ['google_chat', 'Google Chat', 'https://chatmcp.googleapis.com/mcp/v1', '访问 Google Chat 会话与消息。'],
-  ['google_people', 'Google Contacts', 'https://people.googleapis.com/mcp/v1', '查询 Google 联系人与个人资料。'],
-];
+const LEGACY_NATIVE_CONNECTOR_SERVER_IDS = new Set([
+  'github',
+  'notion',
+  'google_gmail',
+  'google_drive',
+  'google_calendar',
+  'google_chat',
+  'google_people',
+]);
 
 export const MCP_TEMPLATES: McpTemplate[] = [
-  {
-    // v3：GitHub 的授权服务器不支持 OAuth 动态客户端注册（DCR），OAuth 流程
-    // 对第三方 MCP 客户端不可用（VS Code/Claude Code/OpenCode 同样受影响），
-    // 改为每位用户绑定自己的 Personal Access Token（Bearer header）。
-    id: 'github',
-    templateVersion: 5,
-    name: 'GitHub MCP 工具',
-    description: 'GitHub 原生连接器的可选 remote MCP 工具适配器。',
-    riskLevel: 'credentialed_external_write',
-    recommendedDefault: false,
-    server: {
-      id: 'github',
-      name: 'GitHub MCP 工具',
-      description: '使用 GitHub 原生连接器中的账号访问仓库、Issue 和 Pull Request。',
-      managedByConnectorId: 'github',
-      enabledByDefault: false,
-      riskLevel: 'credentialed_external_write',
-      createdFromTemplateId: 'github',
-      createdFromTemplateVersion: 5,
-      tenantId: GLOBAL_TENANT_ID,
-      config: {
-        type: 'streamable-http',
-        url: 'https://api.githubcopilot.com/mcp/',
-      },
-      secretRequirements: [
-        {
-          key: 'token',
-          label: 'GitHub Personal Access Token',
-          target: 'header',
-          name: 'Authorization',
-          prefix: 'Bearer ',
-          scope: 'user',
-          required: true,
-          instructions: '凭据由能力中心的 GitHub 原生连接器统一管理。',
-        },
-      ],
-    },
-  },
-  {
-    id: 'notion',
-    templateVersion: 1,
-    name: 'Notion',
-    description: 'Notion 官方 remote MCP。每位用户授权自己的 Notion workspace。',
-    riskLevel: 'credentialed_external_write',
-    recommendedDefault: false,
-    server: {
-      id: 'notion',
-      name: 'Notion',
-      description: '搜索、读取和维护用户有权限访问的 Notion 页面与数据库。',
-      enabledByDefault: false,
-      riskLevel: 'credentialed_external_write',
-      createdFromTemplateId: 'notion',
-      createdFromTemplateVersion: 1,
-      tenantId: GLOBAL_TENANT_ID,
-      config: {
-        type: 'streamable-http',
-        url: 'https://mcp.notion.com/mcp',
-        oauth: { provider: 'notion', runtimeEnv: ['NOTION_TOKEN'] },
-      },
-      secretRequirements: [],
-    },
-  },
-  ...GOOGLE_MCP_PRESETS.map(([id, name, url, description]): McpTemplate => ({
-    id,
-    templateVersion: 1,
-    name: `${name}（Beta）`,
-    description: `${description} Google 官方 MCP 当前为 Developer Preview。`,
-    riskLevel: 'credentialed_external_write',
-    recommendedDefault: false,
-    server: {
-      id,
-      name,
-      description: `${description} 当前为 Google Developer Preview。`,
-      enabledByDefault: false,
-      riskLevel: 'credentialed_external_write',
-      createdFromTemplateId: id,
-      createdFromTemplateVersion: 1,
-      tenantId: GLOBAL_TENANT_ID,
-      config: {
-        type: 'streamable-http',
-        url,
-        oauth: { ...GOOGLE_OAUTH, runtimeEnv: [`${id.toUpperCase()}_ACCESS_TOKEN`] },
-      },
-      secretRequirements: [],
-    },
-  })),
   {
     id: 'streamable-http-bearer',
     templateVersion: 1,
@@ -281,20 +189,20 @@ export class McpConfigStore {
   }
 
   listServers(): ManagedMcpServer[] {
-    return Object.values(this.data.servers).map(s => cloneServer(s));
+    return Object.values(this.data.servers).map(server => cloneServer(server));
   }
 
   /** 列出对该组织可见的 catalog server（同组织 or 全局；不含用户私有）。 */
   listServersVisibleToTenant(tenantId: string): ManagedMcpServer[] {
-    return this.listServers().filter(s => !s.ownerUsername && isServerVisibleToTenant(s, tenantId));
+    return this.listServers().filter(s => !isLegacyNativeConnectorServer(s) && !s.ownerUsername && isServerVisibleToTenant(s, tenantId));
   }
 
   listServersVisibleToUser(username: string, tenantId: string): ManagedMcpServer[] {
-    return this.listServers().filter(s => isServerVisibleToUser(s, username, tenantId));
+    return this.listServers().filter(s => !isLegacyNativeConnectorServer(s) && isServerVisibleToUser(s, username, tenantId));
   }
 
   listCatalogServers(): ManagedMcpServer[] {
-    return this.listServers().filter(s => !s.ownerUsername);
+    return this.listServers().filter(s => !isLegacyNativeConnectorServer(s) && !s.ownerUsername);
   }
 
   listTemplates(): McpTemplate[] {
@@ -316,74 +224,19 @@ export class McpConfigStore {
     return { enabledServers: this.defaultEnabledServerIds(), secretRefs: {}, oauthConnections: {} };
   }
 
-  /** 首次启动安装官方推荐连接器；已有同 id 配置不覆盖（模板升级除外，见 v2 步骤）。 */
+  /** v5 起内置能力中心连接器全部迁出 MCP；仅清理用户选择，保留旧记录供启动迁移撤销凭据。 */
   async installBuiltinOAuthServers(): Promise<number> {
-    const targetVersion = 4;
+    const targetVersion = 5;
     if ((this.data.builtinPresetsVersion ?? 0) >= targetVersion) return 0;
     return this.serialize(async () => {
       if ((this.data.builtinPresetsVersion ?? 0) >= targetVersion) return 0;
-      let installed = 0;
-      for (const template of MCP_TEMPLATES.filter(t => ['github', 'notion'].includes(t.id) || t.id.startsWith('google_'))) {
-        if (this.data.servers[template.server.id]) continue;
-        this.data.servers[template.server.id] = normalizeServer(template.server);
-        installed++;
-      }
-      // v2：github 模板 v3 从 OAuth（GitHub 不支持 DCR，流程走不通）切到用户级 PAT。
-      // 仅升级仍保持内置形态的实例（来自模板且未被管理员改过关键配置），保留 tenantId。
-      const existingGithub = this.data.servers['github'];
-      if (
-        existingGithub
-        && existingGithub.createdFromTemplateId === 'github'
-        && (existingGithub.createdFromTemplateVersion ?? 0) < 3
-        && !('command' in existingGithub.config)
-        && existingGithub.config.oauth?.provider === 'github'
-      ) {
-        const template = MCP_TEMPLATES.find(t => t.id === 'github')!;
-        this.data.servers['github'] = normalizeServer({
-          ...template.server,
-          tenantId: existingGithub.tenantId,
-          enabledByDefault: existingGithub.enabledByDefault,
-        });
-        installed++;
-      }
-      // v3：内置连接器声明运行态 env 映射。只补字段，不覆盖管理员修改的 URL、风险级别或启用状态。
-      for (const templateId of ['github', 'notion', ...GOOGLE_MCP_PRESETS.map(([id]) => id)]) {
-        const server = this.data.servers[templateId];
-        const template = MCP_TEMPLATES.find(item => item.id === templateId);
-        if (!server || !template || server.createdFromTemplateId !== templateId) continue;
-        if ('url' in server.config && 'url' in template.server.config) {
-          const runtimeEnv = template.server.config.oauth?.runtimeEnv;
-          if (runtimeEnv?.length && template.server.config.oauth) {
-            server.config.oauth = {
-              ...(server.config.oauth ?? template.server.config.oauth),
-              provider: (server.config.oauth ?? template.server.config.oauth).provider,
-              runtimeEnv: [...runtimeEnv],
-            };
-          }
-        }
-        const templateRequirements = new Map(
-          (template.server.secretRequirements ?? []).map(requirement => [requirement.key, requirement]),
-        );
-        server.secretRequirements = (server.secretRequirements ?? []).map(requirement => {
-          const runtimeEnv = templateRequirements.get(requirement.key)?.runtimeEnv;
-          return runtimeEnv?.length ? { ...requirement, runtimeEnv: [...runtimeEnv] } : requirement;
-        });
-        server.createdFromTemplateVersion = template.templateVersion;
-      }
-      // v4：GitHub 账号与凭据提升为原生 Connector；这里仅保留隐藏的 MCP 工具适配器。
-      const githubAdapter = this.data.servers.github;
-      if (githubAdapter?.createdFromTemplateId === 'github') {
-        const template = MCP_TEMPLATES.find(item => item.id === 'github')!;
-        githubAdapter.name = template.server.name;
-        githubAdapter.description = template.server.description;
-        githubAdapter.managedByConnectorId = 'github';
-        githubAdapter.secretRequirements = clone(template.server.secretRequirements ?? []);
-        githubAdapter.createdFromTemplateVersion = template.templateVersion;
+      for (const config of Object.values(this.data.users)) {
+        config.enabledServers = config.enabledServers.filter(id => !LEGACY_NATIVE_CONNECTOR_SERVER_IDS.has(id));
       }
       this.data.builtinPresetsVersion = targetVersion;
       this.bumpVersion();
       await this.persist();
-      return installed;
+      return 0;
     });
   }
 
@@ -789,6 +642,11 @@ function normalizeServer(input: ManagedMcpServer): ManagedMcpServer {
       ? { ...input.secretRefs }
       : undefined,
   };
+}
+
+function isLegacyNativeConnectorServer(server: ManagedMcpServer): boolean {
+  return LEGACY_NATIVE_CONNECTOR_SERVER_IDS.has(server.id)
+    && server.createdFromTemplateId === server.id;
 }
 
 /** 判断 server 是否对该组织可见（同组织 or 全局）。 */

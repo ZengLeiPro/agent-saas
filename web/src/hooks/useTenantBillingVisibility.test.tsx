@@ -2,7 +2,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authFetch } from "@/lib/authFetch";
-import { useTenantBillingVisibility } from "./useTenantBillingVisibility";
+import { useTenantBillingSummary, useTenantBillingVisibility } from "./useTenantBillingVisibility";
 
 vi.mock("@/lib/authFetch", () => ({
   authFetch: vi.fn(),
@@ -21,6 +21,15 @@ describe("useTenantBillingVisibility", () => {
     const { result } = renderHook(() => useTenantBillingVisibility("tenant-1"));
 
     await waitFor(() => expect(result.current).toBe(true));
+  });
+
+  it("返回账户积分余额与计费模式", async () => {
+    const summary = { balanceCredits: 300, billingEnabled: true, billingMode: "prepaid" };
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({ summary }), { status: 200 }));
+
+    const { result } = renderHook(() => useTenantBillingSummary("tenant-1"));
+
+    await waitFor(() => expect(result.current).toEqual(summary));
   });
 
   it.each([

@@ -25,6 +25,7 @@ export interface FeishuDeviceLoginRunnerLike {
     onAuthorization: (authorization: FeishuDeviceAuthorization) => void | Promise<void>,
     signal?: AbortSignal,
   ): Promise<FeishuLoginMetadata>;
+  logout?(user: UserInfo, profileIds: string[]): Promise<void>;
 }
 
 export interface FeishuDeviceLoginRunnerOptions {
@@ -96,6 +97,22 @@ export class FeishuDeviceLoginRunner implements FeishuDeviceLoginRunnerLike {
     };
   }
 
+  async logout(user: UserInfo, profileIds: string[]): Promise<void> {
+    const targets = profileIds.length > 0 ? profileIds : [this.profileId];
+    const transport = await this.createTransport(user);
+    for (const profileId of targets) {
+      const response = await transport.invoke({
+        toolName: 'Shell',
+        input: {
+          command: `lark-cli auth logout --profile ${shellQuote(profileId)} --force`,
+          timeoutMs: 60_000,
+        },
+        context: this.createContext(user, undefined, 'logout'),
+      });
+      if (response.status === 'error') throw new Error(redactFeishuError(response.error));
+    }
+  }
+
   private async createTransport(user: UserInfo): Promise<HttpTransport> {
     const serverRemote = await this.options.resolveServerRemote(user);
     return new HttpTransport({
@@ -142,6 +159,8 @@ async function invokeFeishuCli(
 export interface FeishuAuthFlowServiceLike {
   start(user: UserInfo): Promise<FeishuAuthSessionRecord>;
   getLatest(tenantId: string, userId: string): Promise<FeishuAuthSessionRecord | null>;
+  cancelUser?(tenantId: string, userId: string): Promise<void>;
+  revokeUser?(user: UserInfo): Promise<void>;
 }
 
 export interface FeishuAuthFlowServiceOptions {
@@ -157,6 +176,8 @@ export interface FeishuAuthFlowServiceOptions {
 
 export class FeishuAuthFlowService implements FeishuAuthFlowServiceLike {
   private readonly active = new Map<string, AbortController>();
+  private readonly activeUsers = new Map<string, AbortController>();
+  private readonly activeTasks = new Map<string, Promise<void>>();
   private stopped = false;
 
   constructor(private readonly options: FeishuAuthFlowServiceOptions) {}
@@ -167,10 +188,16 @@ export class FeishuAuthFlowService implements FeishuAuthFlowServiceLike {
     const result = await this.options.authSessionStore.createOrReuse(identity);
     if (result.created) {
       const controller = new AbortController();
+      const userKey = `${identity.tenantId}:${identity.userId}`;
       this.active.set(result.record.sessionId, controller);
-      void this.run(result.record, user, identity, controller).finally(() => {
+      this.activeUsers.set(userKey, controller);
+      const task = this.run(result.record, user, identity, controller).finally(() => {
         if (this.active.get(result.record.sessionId) === controller) this.active.delete(result.record.sessionId);
+        if (this.activeUsers.get(userKey) === controller) this.activeUsers.delete(userKey);
+        if (this.activeTasks.get(userKey) === task) this.activeTasks.delete(userKey);
       });
+      this.activeTasks.set(userKey, task);
+      void task;
     }
     return result.record;
   }
@@ -179,10 +206,27 @@ export class FeishuAuthFlowService implements FeishuAuthFlowServiceLike {
     return await this.options.authSessionStore.getLatestForUser(tenantId, userId);
   }
 
+  async cancelUser(tenantId: string, userId: string): Promise<void> {
+    const key = `${tenantId}:${userId}`;
+    this.activeUsers.get(key)?.abort();
+    await this.activeTasks.get(key)?.catch(() => undefined);
+    this.activeUsers.delete(key);
+    this.activeTasks.delete(key);
+  }
+
+  async revokeUser(user: UserInfo): Promise<void> {
+    await this.cancelUser(user.tenantId, user.id);
+    const profiles = await this.options.connectionStore.listForUser(user.tenantId, user.id);
+    await this.options.runner.logout?.(user, profiles.map(profile => profile.profileId));
+    await this.options.connectionStore.removeForUser?.(user.tenantId, user.id);
+  }
+
   stop(): void {
     this.stopped = true;
     for (const controller of this.active.values()) controller.abort();
     this.active.clear();
+    this.activeUsers.clear();
+    this.activeTasks.clear();
   }
 
   private async run(
@@ -195,7 +239,9 @@ export class FeishuAuthFlowService implements FeishuAuthFlowServiceLike {
       const login = await this.options.runner.login(user, async ({ authorizationUrl }) => {
         await this.options.authSessionStore.markAwaitingUser(session.sessionId, identity, authorizationUrl);
       }, controller.signal);
+      if (controller.signal.aborted) throw new Error('飞书授权已取消');
       await this.options.connectionStore.upsertLogin(identity, login);
+      if (controller.signal.aborted) throw new Error('飞书授权已取消');
       await this.options.authSessionStore.markConnected(session.sessionId, identity);
       await this.options.onConnected?.(user).catch((err) => {
         this.options.logger?.warn(`Feishu post-login verification deferred user=${user.id}: ${redactFeishuError(err)}`);
@@ -282,6 +328,10 @@ function boundedString(value: unknown, maxLength: number): string | undefined {
 
 function stringField(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function redactFeishuError(error: unknown): string {

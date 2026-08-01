@@ -268,6 +268,7 @@ async function shutdownCleanup(): Promise<void> {
   try {
     httpServer?.close();
     cronService?.stop();
+    runtime?.notionAuthFlowShutdown?.();
     runtime?.dwsAuthKeepaliveShutdown?.();
     runtime?.feishuAuthKeepaliveShutdown?.();
     kbPreviewScheduler?.stop();
@@ -339,6 +340,7 @@ process.on('SIGUSR2', () => {
 
   // 停止接受新 HTTP 连接（已建立的 WS/流不受影响，继续跑完）
   httpServer?.close();
+  runtime?.notionAuthFlowShutdown?.();
   runtime?.dwsAuthKeepaliveShutdown?.();
   runtime?.feishuAuthKeepaliveShutdown?.();
   kbPreviewScheduler?.stop();

@@ -69,6 +69,7 @@ function usageEvent(overrides: Partial<BillingUsageEvent> = {}): BillingUsageEve
     id: 'usage-1',
     idempotencyKey: 'usage:event:v1:e1',
     tenantId: 'wain-test',
+    userId: 'user-alice',
     username: 'alice',
     sessionId: 'sess-1',
     runId: 'run-1',
@@ -118,6 +119,8 @@ describe('PgBillingStore.settleRunDebit', () => {
       // 毛利率 = 4.5 / 7.5 = 6000 bps
       grossMarginBps: 6000,
       relatedUsageEventIds: ['usage-1'],
+      userId: 'user-alice',
+      usernameSnapshot: 'alice',
       runId: 'run-1',
     });
     expect(insert).toHaveBeenCalledTimes(1);
@@ -134,6 +137,38 @@ describe('PgBillingStore.settleRunDebit', () => {
     const entry = await store.settleRunDebit('wain-test', 'run-1');
     // base revenue 7.5 元 × 2.0 = 15 元
     expect(entry!.revenueYuanMicro).toBe(15_000_000);
+  });
+
+  it('同一 run 出现多个计费主体时不误归属给任一员工并记录告警', async () => {
+    const warn = vi.fn();
+    const { store } = makeStore();
+    (store as any).options.logger = { warn };
+    vi.spyOn(store, 'listUsageEvents').mockResolvedValue([
+      usageEvent({ id: 'usage-a', userId: 'user-a', username: 'alice' }),
+      usageEvent({ id: 'usage-b', userId: 'user-b', username: 'bob', requestIndex: 2 }),
+    ]);
+    vi.spyOn(store as any, 'listDebitedUsageEventIds').mockResolvedValue(new Set());
+
+    const entry = await store.settleRunDebit('wain-test', 'run-1');
+    expect(entry).not.toHaveProperty('userId');
+    expect(entry).not.toHaveProperty('usernameSnapshot');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ambiguous subjects'));
+  });
+
+  it('同一 run 同时含已归属和未归属 usage 时整笔保持未归属', async () => {
+    const warn = vi.fn();
+    const { store } = makeStore();
+    (store as any).options.logger = { warn };
+    vi.spyOn(store, 'listUsageEvents').mockResolvedValue([
+      usageEvent({ id: 'usage-a', userId: 'user-a', username: 'alice' }),
+      usageEvent({ id: 'usage-unknown', userId: undefined, username: 'system', requestIndex: 2 }),
+    ]);
+    vi.spyOn(store as any, 'listDebitedUsageEventIds').mockResolvedValue(new Set());
+
+    const entry = await store.settleRunDebit('wain-test', 'run-1');
+    expect(entry).not.toHaveProperty('userId');
+    expect(entry).not.toHaveProperty('usernameSnapshot');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ambiguous subjects'));
   });
 
   it('internal / billing 关闭租户不结算，直接返回 null', async () => {

@@ -320,7 +320,7 @@ export function DingtalkConnectorCard({
             </button>
           </div>
           <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{DINGTALK_DESCRIPTION}</p>
-          <div className="mt-3 text-xs text-muted-foreground">点击查看连接状态与组织</div>
+          <div className="mt-3 text-xs text-muted-foreground">官方 CLI：dws · 支持多组织 profile</div>
         </div>
       </CardContent>
     </Card>
@@ -348,7 +348,7 @@ export function DingtalkConnectorDrawer({
       </div>
 
       <div className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
-        连接一次后，平台会自动维持登录，无需定期重新授权。授权只属于当前账号，组织内其他成员无法使用你的凭据。
+        连接一次后，官方 dws CLI 会使用当前用户独立的 DWS_CONFIG_DIR 与多组织 profile；组织内其他成员无法使用你的凭据。
       </div>
 
       {dws.authError ? (

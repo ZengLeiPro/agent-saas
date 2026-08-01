@@ -34,6 +34,7 @@ const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   // 企业专家图片头像：<img> 加载不带鉴权头，与 agents/avatar 同口径公开（204 防枚举在路由内）
   { method: "GET", path: /^\/org-agents\/avatar\// },
   { method: "GET", path: "/mcp/oauth/callback" },
+  { method: "GET", path: "/connectors/oauth/callback" },
   { method: "GET", path: "/mcp/oauth/client-metadata" },
   { method: "GET", path: /^\/artifacts\/[^/]+\/content$/ },
   { method: "GET", path: /^\/share\/sessions\/[^/]+$/ },

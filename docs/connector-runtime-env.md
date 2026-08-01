@@ -1,124 +1,55 @@
-# 能力中心连接器运行态凭据注入
+# 能力中心原生连接器与官方 CLI
 
-## 目标
+## 统一目标
 
-能力中心中已启用、已绑定的连接器，其用户凭据以 SecretVault 为唯一持久来源。每次 Agent 任务开始时，服务端按连接器声明解析环境变量，并注入该用户本次运行环境，使 CLI、SDK 和脚本按官方标准环境变量直接使用。
+能力中心内置连接器不再以 MCP server 作为授权、启停或主要调用模型。每位用户独立授权后，平台在该用户每次运行、恢复、durable wake 和后台 Agent 执行时解析当前连接状态，并向运行环境提供官方 CLI 所需的认证环境。
 
-这套机制只适用于“能力中心 → 连接器”，不读取或注入平台系统配置、管理员 Secret、部署环境变量或任意 `.env` 文件。
+| 连接器 | 官方 CLI | 运行时认证环境 |
+|---|---|---|
+| GitHub | `gh` / `git` | `GH_TOKEN`、`GITHUB_TOKEN`、隔离 Git credential helper |
+| Notion | `ntn` | `NOTION_API_TOKEN` |
+| Google Workspace | `gws` | `GOOGLE_WORKSPACE_CLI_TOKEN` |
+| 钉钉 | `dws` | `DWS_CONFIG_DIR=/workspace/.dws` |
+| 飞书 | `lark-cli` | `LARKSUITE_CLI_CONFIG_DIR=/workspace/.lark-cli` |
 
-## 数据流
+Notion、Google Workspace 的长期凭据由 SecretVault 持久化；Google refresh token 永不进入运行时 env，每次运行只注入有效的短期 access token。钉钉、飞书按官方 CLI 的多 profile/keychain 机制运行，认证目录位于当前用户独立 workspace。
 
-```text
-能力中心绑定连接器
-  → ConnectorConnectionStore 保存账号状态与 SecretVault ref
-  → SecretVault 持久化凭据
-  → 原生 Connector adapter 声明运行态 env
-  → 每次任务开始解析当前用户已连接账号
-  → AgentRunOptions.env
-  → SDK / 本地 Shell / 容器 Shell / 远端 hand
-```
+## 运行链路
 
-凭据不会写入用户工作区、项目 `.git/config` 或授权配置文件。
+统一入口为 `server/src/runtime/connectorRunEnv.ts` 与 `server/src/app/runtime.ts` 的 native connector resolver。覆盖：
 
-## 连接器声明
+- 普通消息 dispatch；
+- Tool approval / 交互恢复；
+- durable scheduler wake；
+- 前台子 Agent（继承父运行 env）；
+- 后台 Agent（执行时按任务 owner 重新解析）。
 
-### Env Secret
+环境是 run-scoped，不修改宿主进程全局 `process.env`，也不需要重启用户运行环境。授权或断开后，下一个 run/resume 生效；已经启动的进程不会被反向修改。
 
-`target: "env"` 的 Secret 默认使用 `name` 作为运行态环境变量，不需要重复声明：
+## 镜像基线
 
-```json
-{
-  "key": "api_key",
-  "target": "env",
-  "name": "EXAMPLE_API_KEY",
-  "scope": "user"
-}
-```
+`Dockerfile` 必须固定并在构建期执行版本 smoke test：
 
-### Header Secret 同步给 CLI
+- `gh`
+- `ntn`
+- `gws`
+- `dws`
+- `lark-cli`
 
-原本用于 HTTP Header、同时需要提供给 CLI/SDK 的凭据，通过 `runtimeEnv` 声明：
+生产镜像不在用户运行时执行 `npx ...@latest`。升级版本先修改 Dockerfile pin，再经过镜像构建和官方 CLI `--version`/授权 smoke test。
 
-```json
-{
-  "key": "token",
-  "target": "header",
-  "name": "Authorization",
-  "scope": "user",
-  "runtimeEnv": ["EXAMPLE_API_TOKEN"]
-}
-```
+## Google OAuth 配置
 
-### OAuth access token
-
-OAuth 连接器可在 `config.oauth.runtimeEnv` 声明 access token 的环境变量名：
-
-```json
-{
-  "type": "streamable-http",
-  "url": "https://example.com/mcp",
-  "oauth": {
-    "provider": "generic",
-    "runtimeEnv": ["EXAMPLE_TOKEN"]
-  }
-}
-```
-
-第一版只注入 OAuth `access_token`，不注入 refresh token、client secret 或 OAuth client 配置。内置映射为：Notion 使用 `NOTION_TOKEN`；Google 官方连接器使用各自独立的 `GOOGLE_<SERVICE>_ACCESS_TOKEN`，避免多个 Google 授权互相覆盖。
-
-## 生效规则
-
-只有同时满足以下条件的连接器才会注入：
-
-- 对当前租户可见；
-- 当前用户已启用；
-- 对应 Secret 或 OAuth connection 已绑定且可读取；
-- 环境变量名符合 `^[A-Z_][A-Z0-9_]*$`。
-
-单个连接器凭据失效时，该连接器跳过并记录不含凭据值的警告，不阻断其他连接器和 Agent 任务。
-
-连接器值覆盖平台通用运行环境中的同名变量，保证当前用户授权优先。
-
-## GitHub
-
-GitHub 是原生 Connector：账号、PAT、连接状态与能力开关不再归属 `McpConfigStore`。同一个 Connection 可被三类 adapter 消费：
-
-- Runtime Env adapter：向 CLI/SDK 注入标准环境变量；
-- Git Credential adapter：为原生 Git 提供隔离 helper；
-- MCP adapter：用户按需启用 GitHub remote MCP 工具，开关不影响 Git/gh/SDK。
-
-内置 GitHub Connector 将 PAT 注入：
+原生 Google Workspace Connector 使用：
 
 ```text
-GH_TOKEN
-GITHUB_TOKEN
+GOOGLE_WORKSPACE_CONNECTOR_CLIENT_ID
+GOOGLE_WORKSPACE_CONNECTOR_CLIENT_SECRET
+CONNECTOR_OAUTH_CALLBACK_URL=https://<公开域名>/api/connectors/oauth/callback
 ```
 
-`gh` CLI 直接读取上述变量。原生 Git 通过固定的 `credential.helper` 从相同环境变量读取 token，因此 `clone/fetch/pull/push` 不依赖 `gh auth login`、工作区授权文件或用户项目配置。
+原生 Connector 不读取旧 MCP OAuth client 配置，避免 client 与回调 URI 串线。回调 URL 必须在 Google OAuth client 中单独登记。
 
-## 远端 hand
+## MCP 边界
 
-brain 到远端 hand 的 wire env 接受标准大写环境变量名，同时拒绝可能改变进程加载、模块解析或执行路径的保留变量，例如：
-
-```text
-PATH
-HOME
-NODE_OPTIONS
-NODE_PATH
-LD_PRELOAD
-LD_LIBRARY_PATH
-PYTHONPATH
-```
-
-服务端发送和 hand 接收两侧都会执行相同过滤。
-
-## 安全边界
-
-本方案优先保证连接器的原生工具兼容性和任务成功率。连接器凭据进入当前用户运行态后，Agent 及其启动的代码可以读取该用户主动授权的凭据。
-
-平台仍必须保证：
-
-- 不跨用户、跨租户注入；
-- 不把凭据值写入日志、审计、工作区或 Git；
-- 连接器断开、更新或撤销后，后续任务重新从 Vault 解析；
-- 不将本机制扩展到能力中心连接器之外的系统 Secret。
+通用 MCP Manager 继续支持用户或管理员自行添加的第三方 MCP server；GitHub、Notion、Google Workspace、钉钉、飞书不再作为内置 MCP preset 出现。旧 preset 在 v5 迁移时会从用户启用列表移除，运行态 resolver 也显式排除这些 legacy id。

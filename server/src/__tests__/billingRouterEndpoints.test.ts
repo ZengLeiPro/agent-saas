@@ -109,12 +109,56 @@ function makeFns() {
     getSessionSummary: vi.fn(async (_tenantId: string, sessionId: string) => ({
       sessionId, creditsUsed: 12.345, revenueYuan: 0.12345, childSessionCount: 0,
     })),
+    userStore: {
+      listAll: vi.fn(() => [
+        { id: 'u-wa', username: 'wain_admin', realName: '外星管理员', role: 'admin', tenantId: 'wain', disabled: false },
+        { id: 'u-member', username: 'bob', realName: '鲍勃', role: 'user', tenantId: 'wain', disabled: false },
+        { id: 'u-peer', username: 'peer_admin', realName: '同级管理员', role: 'admin', tenantId: 'wain', disabled: false },
+        { id: 'u-other', username: 'other', realName: '其他组织用户', role: 'user', tenantId: 'other-org', disabled: false },
+      ]),
+      findById: vi.fn((id: string) => ({
+        'u-wa': { id: 'u-wa', username: 'wain_admin', realName: '外星管理员', role: 'admin', tenantId: 'wain', disabled: false },
+        'u-member': { id: 'u-member', username: 'bob', realName: '鲍勃', role: 'user', tenantId: 'wain', disabled: false },
+        'u-peer': { id: 'u-peer', username: 'peer_admin', realName: '同级管理员', role: 'admin', tenantId: 'wain', disabled: false },
+        'u-other': { id: 'u-other', username: 'other', realName: '其他组织用户', role: 'user', tenantId: 'other-org', disabled: false },
+      } as Record<string, Record<string, unknown>>)[id]),
+    },
     store: {
       listPricingVersions: vi.fn(async () => [{ version: 'price-v1', status: 'active', creditValueYuanMicro: 10_000 }]),
       getTenantPolicy: vi.fn(async () => fullPolicy()),
       listUsageEvents: vi.fn(async () => [{ id: 'ue-1', actualCostYuanMicro: 49_380 }]),
       findLedgerByIdempotencyKey: vi.fn(async () => null as BillingLedgerEntry | null),
       sumManualPositiveCreditsByActorSince: vi.fn(async () => 0),
+      getMemberBudgetOverview: vi.fn(async (_tenantId: string, userId?: string) => ({
+        tenantId: 'wain',
+        timezone: 'Asia/Shanghai' as const,
+        periodStart: '2026-07-31T16:00:00.000Z',
+        periodEnd: '2026-08-31T16:00:00.000Z',
+        monthUsedCreditsMicro: 1_250_000_000,
+        unattributedCreditsMicro: 50_000_000,
+        items: [
+          {
+            userId: userId ?? 'u-member',
+            monthlyLimitCreditsMicro: 2_000_000_000,
+            active: true,
+            version: 2,
+            monthUsedCreditsMicro: 1_000_000_000,
+            lastUsedAt: '2026-08-01T01:00:00.000Z',
+          },
+        ],
+      })),
+      upsertMemberBudget: vi.fn(async (input: Record<string, unknown>) => ({
+        budget: {
+          userId: String(input.userId),
+          ...(input.monthlyLimitCreditsMicro === undefined ? {} : { monthlyLimitCreditsMicro: Number(input.monthlyLimitCreditsMicro) }),
+          active: true,
+          version: Number(input.expectedVersion) + 1,
+          monthUsedCreditsMicro: 1_000_000_000,
+        },
+        audit: { id: 'budget-audit-1' },
+        replayed: false,
+      })),
+      listMemberBudgetAudit: vi.fn(async () => [{ id: 'budget-audit-1', userId: 'u-member' }]),
     },
   };
 }
@@ -599,6 +643,107 @@ describe('Billing 路由端点', () => {
       expect(entry).not.toHaveProperty('idempotencyKey');
       expect(entry).not.toHaveProperty('accountId');
       expect(entry).not.toHaveProperty('billingPolicyVersion');
+    });
+  });
+
+  describe('员工月度软预算', () => {
+    it('组织管理员只能列出本组织员工，并拿到预算状态与未归属用量', async () => {
+      const rig = await newRig(WAIN_ADMIN);
+      const res = await rig.request('/api/admin/billing/member-budgets');
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.summary).toEqual({
+        tenantBalanceCredits: 487.655,
+        monthUsedCredits: 1250,
+        budgetedUsers: 1,
+        nearLimitUsers: 0,
+        overLimitUsers: 0,
+        unattributedCredits: 50,
+      });
+      expect(body.items.map((item: { userId: string }) => item.userId).sort()).toEqual(['u-member', 'u-peer', 'u-wa']);
+      expect(body.items.find((item: { userId: string }) => item.userId === 'u-member')).toMatchObject({
+        monthlyLimitCredits: 2000,
+        monthUsedCredits: 1000,
+        usageRatioBps: 5000,
+        status: 'normal',
+        canManage: true,
+      });
+      expect(body.items.find((item: { userId: string }) => item.userId === 'u-peer').canManage).toBe(false);
+      expect(rig.fns.store.getMemberBudgetOverview).toHaveBeenCalledWith('wain');
+    });
+
+    it('组织管理员可以设置普通员工预算，但不能修改同级管理员或跨组织用户', async () => {
+      const rig = await newRig(WAIN_ADMIN);
+      const ok = await rig.request('/api/admin/billing/member-budgets/u-member', {
+        method: 'PUT',
+        body: {
+          monthlyLimitCredits: 2500,
+          expectedVersion: 2,
+          idempotencyKey: 'budget:202608:u-member',
+          note: '8 月员工预算',
+        },
+      });
+      expect(ok.status).toBe(200);
+      expect(rig.fns.store.upsertMemberBudget).toHaveBeenCalledWith(expect.objectContaining({
+        tenantId: 'wain',
+        userId: 'u-member',
+        monthlyLimitCreditsMicro: 2_500_000_000,
+        expectedVersion: 2,
+        actorUserId: 'u-wa',
+        actorUsername: 'wain_admin',
+      }));
+
+      const peer = await rig.request('/api/admin/billing/member-budgets/u-peer', {
+        method: 'PUT',
+        body: {
+          monthlyLimitCredits: 1000,
+          expectedVersion: 0,
+          idempotencyKey: 'budget:202608:u-peer',
+          note: '同级管理员预算',
+        },
+      });
+      expect(peer.status).toBe(403);
+
+      const other = await rig.request('/api/admin/billing/member-budgets/u-other', {
+        method: 'PUT',
+        body: {
+          monthlyLimitCredits: 1000,
+          expectedVersion: 0,
+          idempotencyKey: 'budget:202608:u-other',
+          note: '其他组织预算',
+        },
+      });
+      expect(other.status).toBe(404);
+    });
+
+    it('普通员工只能查看自己的预算，不能进入管理员预算列表', async () => {
+      const rig = await newRig(WAIN_MEMBER);
+      const me = await rig.request('/api/billing/me/budget');
+      expect(me.status).toBe(200);
+      expect((await me.json()).budget).toMatchObject({
+        userId: 'u-member',
+        monthlyLimitCredits: 2000,
+        monthUsedCredits: 1000,
+        status: 'normal',
+      });
+      expect(rig.fns.store.getMemberBudgetOverview).toHaveBeenLastCalledWith('wain', 'u-member');
+    });
+
+    it('预算审计只允许读取当前组织', async () => {
+      const rig = await newRig(WAIN_ADMIN);
+      expect((await rig.request('/api/admin/billing/member-budget-audit?userId=u-member')).status).toBe(200);
+      expect(rig.fns.store.listMemberBudgetAudit).toHaveBeenCalledWith('wain', 'u-member', 100);
+      expect((await rig.request('/api/admin/billing/member-budget-audit?tenantId=other-org')).status).toBe(403);
+    });
+
+    it('平台委托账号读取员工预算和审计必须具备 finance.read', async () => {
+      const rig = await newRig(BILLING_OPERATOR);
+      expect((await rig.request('/api/admin/billing/member-budgets?tenantId=wain')).status).toBe(403);
+      expect((await rig.request('/api/admin/billing/member-budget-audit?tenantId=wain')).status).toBe(403);
+
+      rig.setCaller({ ...BILLING_OPERATOR, platformCapabilities: ['finance.read'] });
+      expect((await rig.request('/api/admin/billing/member-budgets?tenantId=wain')).status).toBe(200);
+      expect((await rig.request('/api/admin/billing/member-budget-audit?tenantId=wain')).status).toBe(200);
     });
   });
 });

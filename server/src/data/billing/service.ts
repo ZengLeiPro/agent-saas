@@ -37,6 +37,10 @@ export class BillingService {
     return this.options.store;
   }
 
+  get userStore(): UserStore | undefined {
+    return this.options.userStore;
+  }
+
   async projectRuntimeEvents(limit = 500): Promise<BillingProjectionResult> {
     if (this.projectionInFlight) {
       const last = await this.options.store.getProjectionState('runtime_events');
@@ -387,6 +391,8 @@ export class BillingService {
     });
     const debit = await this.options.store.chargeFixedDebit({
       tenantId: row.tenantId,
+      ...(row.runUserId ? { userId: row.runUserId } : {}),
+      ...(user?.username ? { username: user.username } : {}),
       idempotencyKey: `debit:tool:v1:${row.eventId}`,
       source: METERED_TOOL_LEDGER_SOURCES[toolId] ?? `tool:${toolId}`,
       creditsMicro: quantity * unitCreditsMicro,

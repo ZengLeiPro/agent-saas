@@ -113,11 +113,19 @@ import { McpConfigStore } from '../data/mcpConfig.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import {
   GITHUB_CONNECTOR_ID,
-  githubMcpCredentialOverrides,
-  migrateLegacyGithubConnections,
   revokePendingGithubCredentials,
   resolveGithubRuntimeEnv,
 } from '../connectors/github.js';
+import {
+  GoogleWorkspaceOAuthService,
+  PgGoogleWorkspaceOAuthStateStore,
+  resolveGoogleWorkspaceRuntimeEnv,
+} from '../connectors/googleWorkspace.js';
+import {
+  connectNotionCredential,
+  disconnectNotion,
+  resolveNotionRuntimeEnv,
+} from '../connectors/notion.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
 import { EgressConfigStore } from '../data/egressConfig.js';
 import { EgressDispatcherRegistry, createEgressFetch } from '../runtime/egressDispatcher.js';
@@ -165,6 +173,11 @@ import { PgDwsConnectionStore, type DwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
 import { DwsAuthFlowService, DwsDeviceLoginRunner, type DwsAuthFlowServiceLike } from '../dws/authFlow.js';
+import {
+  NotionAuthFlowService,
+  NotionDeviceLoginRunner,
+  type NotionAuthFlowServiceLike,
+} from '../notion/authFlow.js';
 import { PgFeishuConnectionStore, type FeishuConnectionStore } from '../feishu/store.js';
 import { FeishuAuthKeepaliveService, FeishuAuthStatusRunner } from '../feishu/keepalive.js';
 import { PgFeishuAuthSessionStore } from '../feishu/authStore.js';
@@ -242,6 +255,11 @@ export interface AppRuntime {
   dwsConnectionStore?: DwsConnectionStore;
   /** DWS 首次绑定：能力中心连接器页启动 device flow，短期授权码落 PG，token 仍只进用户 workspace。 */
   dwsAuthFlowService?: DwsAuthFlowServiceLike;
+  /** Notion 官方 ntn 两阶段登录，成功后 token 转存用户级 Vault。 */
+  notionAuthFlowService?: NotionAuthFlowServiceLike;
+  /** Google Workspace 官方 API OAuth，运行时向 gws 注入短期 access token。 */
+  googleWorkspaceOAuthService?: GoogleWorkspaceOAuthService;
+  notionAuthFlowShutdown?: () => void;
   /** 停止 DWS 授权守活 worker（ws-only 进程不启动）。 */
   dwsAuthKeepaliveShutdown?: () => void;
   /** 飞书连接只保存非敏感元数据；用户 token 与加密 keychain 均留在其 workspace。 */
@@ -925,6 +943,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let dwsAuthSessionStore: PgDwsAuthSessionStore | undefined;
   let dwsAuthKeepaliveService: DwsAuthKeepaliveService | undefined;
   let dwsAuthFlowService: DwsAuthFlowService | undefined;
+  let notionAuthSessionStore: PgDwsAuthSessionStore | undefined;
+  let notionAuthFlowService: NotionAuthFlowService | undefined;
+  let googleWorkspaceOAuthService: GoogleWorkspaceOAuthService | undefined;
   let feishuConnectionStore: PgFeishuConnectionStore | undefined;
   let feishuAuthSessionStore: PgFeishuAuthSessionStore | undefined;
   let feishuAuthKeepaliveService: FeishuAuthKeepaliveService | undefined;
@@ -1083,6 +1104,17 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         dwsAuthSessionStore = undefined;
         serverLogger.warn(`PgDwsAuthSessionStore init failed, DWS one-click connection disabled: ${err instanceof Error ? err.message : String(err)}`);
       }
+    }
+    try {
+      notionAuthSessionStore = new PgDwsAuthSessionStore({
+        pool: pgEventStore.pool,
+        tablePrefix: config.runtimeEventStore.tablePrefix,
+        connectorId: 'notion',
+      });
+      await notionAuthSessionStore.init();
+    } catch (err) {
+      notionAuthSessionStore = undefined;
+      serverLogger.warn(`Notion auth session store init failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     try {
       feishuConnectionStore = new PgFeishuConnectionStore({
@@ -1633,13 +1665,52 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const connectorConnectionStore = new ConnectorConnectionStore(
     join(processCwd, 'data', 'connector-connections.json'),
   );
-  const migratedGithubConnections = await migrateLegacyGithubConnections({
-    connectionStore: connectorConnectionStore,
-    mcpConfigStore,
-    userStore,
-  });
-  if (migratedGithubConnections > 0) {
-    serverLogger.info(`Migrated ${migratedGithubConnections} GitHub connection(s) from MCP config`);
+  for (const legacyConnection of connectorConnectionStore.listAll().filter(connection => !connection.userId)) {
+    await connectorConnectionStore.disconnect(
+      legacyConnection.username,
+      legacyConnection.connectorId,
+      legacyConnection.tenantId,
+    );
+    const disconnected = connectorConnectionStore.get(
+      legacyConnection.username,
+      legacyConnection.connectorId,
+    );
+    for (const ref of disconnected?.pendingRevokeRefs ?? []) {
+      try {
+        await secretVault.revokeSecret(ref, {
+          actor: 'connector_proxy',
+          userId: legacyConnection.username,
+          tenantId: legacyConnection.tenantId,
+          scopes: ['secret:connector:read', 'secret:mcp:read'],
+        });
+        await connectorConnectionStore.markCredentialRevoked(
+          legacyConnection.username,
+          legacyConnection.connectorId,
+          ref,
+        );
+      } catch (error) {
+        serverLogger.warn(
+          `Legacy unbound connector credential revoke pending: connector=${legacyConnection.connectorId} user=${legacyConnection.username} reason=${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+  for (const username of mcpConfigStore.listUsernames()) {
+    const legacyGithubRef = mcpConfigStore.getUserSecretRef(username, GITHUB_CONNECTOR_ID, 'token');
+    if (!legacyGithubRef) continue;
+    await mcpConfigStore.clearUserSecretRef(username, GITHUB_CONNECTOR_ID, 'token');
+    try {
+      await secretVault.revokeSecret(legacyGithubRef, {
+        actor: 'admin',
+        userId: 'native-connector-v5-migration',
+        tenantId: '*',
+        scopes: ['secret:admin'],
+      });
+    } catch (error) {
+      serverLogger.warn(
+        `Legacy GitHub MCP credential revoke failed after detaching ref: user=${username} reason=${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
   await revokePendingGithubCredentials({
     connectionStore: connectorConnectionStore,
@@ -1654,6 +1725,48 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       return user ? { tenantId: user.tenantId, disabled: user.disabled } : undefined;
     },
   });
+  const legacyNativeMcpIds = new Set([
+    'github',
+    'notion',
+    'google_gmail',
+    'google_drive',
+    'google_calendar',
+    'google_chat',
+    'google_people',
+  ]);
+  for (const username of mcpConfigStore.listUsernames()) {
+    for (const connection of mcpConfigStore.listUserOAuthConnections(username)) {
+      if (legacyNativeMcpIds.has(connection.serverId)) {
+        await mcpOAuthService.disconnect(username, connection.tenantId, connection.serverId);
+      }
+    }
+  }
+  const googleWorkspaceClientId = process.env.GOOGLE_WORKSPACE_CONNECTOR_CLIENT_ID?.trim();
+  const googleWorkspaceClientSecret = process.env.GOOGLE_WORKSPACE_CONNECTOR_CLIENT_SECRET?.trim();
+  if (googleWorkspaceClientId && googleWorkspaceClientSecret) {
+    let googleWorkspaceOAuthStateStore;
+    if (pgEventStore) {
+      const pgStateStore = new PgGoogleWorkspaceOAuthStateStore(
+        pgEventStore.pool,
+        config.runtimeEventStore?.backend === 'pg'
+          ? config.runtimeEventStore.tablePrefix ?? 'runtime'
+          : 'runtime',
+      );
+      await pgStateStore.init();
+      googleWorkspaceOAuthStateStore = pgStateStore;
+    }
+    googleWorkspaceOAuthService = new GoogleWorkspaceOAuthService({
+      clientId: googleWorkspaceClientId,
+      clientSecret: googleWorkspaceClientSecret,
+      connectionStore: connectorConnectionStore,
+      vault: secretVault,
+      stateStore: googleWorkspaceOAuthStateStore,
+      userResolver: userId => userStore?.findById(userId),
+      logger: serverLogger.child('GoogleWorkspaceConnector'),
+    });
+  } else {
+    serverLogger.warn('Google Workspace connector disabled: OAuth client id/secret not configured');
+  }
   // 自助注册动态配置：文件不存在时用 config.json 的 auth.selfSignup 作 seed（兼容旧配置方式）
   const signupConfigStore = new SignupConfigStore(
     join(processCwd, 'data', 'signup-config.json'),
@@ -1709,7 +1822,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       username,
       workspaceRoot,
       userStore?.findByUsername(username)?.tenantId,
-      githubMcpCredentialOverrides(connectorConnectionStore, username),
     ),
     workspaceResolver: (username) => {
       const u = userStore?.findByUsername(username);
@@ -1733,25 +1845,56 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('McpProxy'),
   });
   const mcpClientShutdown = () => mcpClientManager.shutdown();
+  const nativeMcpConnectorIds = new Set([
+    GITHUB_CONNECTOR_ID,
+    'notion',
+    'google_gmail',
+    'google_drive',
+    'google_calendar',
+    'google_chat',
+    'google_people',
+  ]);
   const resolveRunScopedEnv = async (context: { username: string; tenantId: string }) => {
-    const githubEnv = await resolveGithubRuntimeEnv({
-      connectionStore: connectorConnectionStore,
-      vault: secretVault,
-      onError: error => serverLogger.warn(
-        `Native connector runtime env skipped: connector=${GITHUB_CONNECTOR_ID} reason=${error.message}`,
-      ),
-    }, context);
-    const mcpConnectorEnv = await resolveConnectorRuntimeEnv({
-      store: mcpConfigStore,
-      vault: secretVault,
-      oauthService: mcpOAuthService,
-      excludedServerIds: new Set([GITHUB_CONNECTOR_ID]),
-      onError: (error, meta) => serverLogger.warn(
-        `MCP connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
-      ),
-    }, context);
+    const owner = userStore?.findByUsername(context.username);
+    const nativeContext = owner && !owner.disabled && owner.tenantId === context.tenantId
+      ? { userId: owner.id, ...context }
+      : (!userStore ? { userId: context.username, ...context } : undefined);
+    const [githubEnv, notionEnv, googleWorkspaceEnv, mcpConnectorEnv] = await Promise.all([
+      nativeContext ? resolveGithubRuntimeEnv({
+        connectionStore: connectorConnectionStore,
+        vault: secretVault,
+        onError: error => serverLogger.warn(
+          `Native connector runtime env skipped: connector=${GITHUB_CONNECTOR_ID} reason=${error.message}`,
+        ),
+      }, nativeContext) : {},
+      nativeContext ? resolveNotionRuntimeEnv({
+        connectionStore: connectorConnectionStore,
+        vault: secretVault,
+        onError: error => serverLogger.warn(
+          `Native connector runtime env skipped: connector=notion reason=${error.message}`,
+        ),
+      }, nativeContext) : {},
+      nativeContext ? resolveGoogleWorkspaceRuntimeEnv(
+        googleWorkspaceOAuthService,
+        nativeContext,
+        error => serverLogger.warn(
+          `Native connector runtime env skipped: connector=google-workspace reason=${error.message}`,
+        ),
+      ) : {},
+      resolveConnectorRuntimeEnv({
+        store: mcpConfigStore,
+        vault: secretVault,
+        oauthService: mcpOAuthService,
+        excludedServerIds: nativeMcpConnectorIds,
+        onError: (error, meta) => serverLogger.warn(
+          `MCP connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
+        ),
+      }, context),
+    ]);
     return {
       ...mcpConnectorEnv,
+      ...googleWorkspaceEnv,
+      ...notionEnv,
       ...githubEnv,
       ...(resolvedSttRuntimeConfig.audioTranscribeEnvByTenant.get(context.tenantId) ?? {}),
     };
@@ -2827,6 +2970,38 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     };
   };
 
+  if (notionAuthSessionStore && userStore && (resolvedServerRemote || connectorAcsConfigured)) {
+    notionAuthFlowService = new NotionAuthFlowService({
+      authSessionStore: notionAuthSessionStore,
+      runner: new NotionDeviceLoginRunner({
+        agentCwd,
+        resolveServerRemote: resolveConnectorServerRemote,
+      }),
+      onCredential: async (connectedUser, token) => {
+        const currentUser = userStore.findById(connectedUser.id);
+        if (
+          !currentUser
+          || currentUser.disabled
+          || currentUser.username !== connectedUser.username
+          || currentUser.tenantId !== connectedUser.tenantId
+        ) {
+          throw new Error('Notion 授权用户已失效');
+        }
+        await connectNotionCredential({
+          connectionStore: connectorConnectionStore,
+          vault: secretVault,
+          username: connectedUser.username,
+          userId: connectedUser.id,
+          tenantId: connectedUser.tenantId,
+          token,
+        });
+      },
+      logger: serverLogger.child('NotionAuthFlow'),
+    });
+  } else if (userStore) {
+    serverLogger.warn('Notion auth flow unavailable: PG auth store or connector execution remote is not configured');
+  }
+
   if (dwsConnectionStore && userStore && (resolvedServerRemote || connectorAcsConfigured)) {
     dwsAuthKeepaliveService = new DwsAuthKeepaliveService({
       agentCwd,
@@ -2981,6 +3156,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     userStore,
     dwsConnectionStore,
     dwsAuthFlowService,
+    notionAuthFlowService,
+    googleWorkspaceOAuthService,
+    notionAuthFlowShutdown: notionAuthFlowService ? () => notionAuthFlowService?.stop() : undefined,
     dwsAuthKeepaliveShutdown: dwsAuthKeepaliveService || dwsAuthFlowService
       ? () => {
           dwsAuthFlowService?.stop();

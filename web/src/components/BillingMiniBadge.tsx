@@ -24,6 +24,15 @@ interface SessionBillingSummary {
   childSessionCount?: number;
 }
 
+type MemberBudgetStatus = "unset" | "normal" | "attention" | "warning" | "over";
+
+interface MyMemberBudget {
+  monthlyLimitCredits: number | null;
+  monthUsedCredits: number;
+  usageRatioBps: number | null;
+  status: MemberBudgetStatus;
+}
+
 interface BillingMiniBadgeProps {
   sessionId?: string | null;
 }
@@ -55,9 +64,31 @@ function billingModeLabel(mode: string): string {
   }
 }
 
+function formatUsageRatio(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "-";
+  return `${(value / 100).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+}
+
+function budgetStatusLabel(status: MemberBudgetStatus): string {
+  if (status === "over") return "已超预算";
+  if (status === "warning") return "临近预算";
+  if (status === "attention") return "需要关注";
+  if (status === "normal") return "正常";
+  return "未设置";
+}
+
+function budgetStatusClass(status: MemberBudgetStatus): string {
+  if (status === "over") return "text-rose-600 dark:text-rose-300";
+  if (status === "warning") return "text-amber-600 dark:text-amber-300";
+  if (status === "attention") return "text-orange-600 dark:text-orange-300";
+  if (status === "normal") return "text-emerald-600 dark:text-emerald-300";
+  return "text-muted-foreground";
+}
+
 export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [sessionSummary, setSessionSummary] = useState<SessionBillingSummary | null>(null);
+  const [memberBudget, setMemberBudget] = useState<MyMemberBudget | null>(null);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -94,6 +125,27 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
       window.clearInterval(timer);
     };
   }, [sessionId]);
+
+  // 个人预算是增强信息，独立加载；接口失败或变慢都不能影响原有余额徽标。
+  useEffect(() => {
+    let cancelled = false;
+    const loadBudget = async () => {
+      try {
+        const response = await authFetch("/api/billing/me/budget");
+        if (!response.ok) throw new Error(`member budget ${response.status}`);
+        const data = await response.json() as { budget: MyMemberBudget };
+        if (!cancelled) setMemberBudget(data.budget);
+      } catch {
+        if (!cancelled) setMemberBudget(null);
+      }
+    };
+    void loadBudget();
+    const timer = window.setInterval(() => void loadBudget(), 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -150,6 +202,35 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
           <Separator />
 
           <div className="space-y-2 px-4 py-3 text-xs">
+            <div className="text-[11px] font-medium text-foreground">我的本月</div>
+            {memberBudget ? (
+              <>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">我的本月用量</span>
+                  <span className="font-mono tabular-nums">{formatCredits(memberBudget.monthUsedCredits)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">我的月度预算</span>
+                  <span className="font-mono tabular-nums">
+                    {memberBudget.monthlyLimitCredits === null ? "未设置" : formatCredits(memberBudget.monthlyLimitCredits)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">使用率</span>
+                  <span className={`font-mono tabular-nums ${budgetStatusClass(memberBudget.status)}`}>
+                    {formatUsageRatio(memberBudget.usageRatioBps)} · {budgetStatusLabel(memberBudget.status)}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="text-muted-foreground">个人预算数据暂不可用</div>
+            )}
+          </div>
+
+          <Separator />
+
+          <div className="space-y-2 px-4 py-3 text-xs">
+            <div className="text-[11px] font-medium text-foreground">公司共享积分池</div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted-foreground">可用余额</span>
               <span className="font-mono tabular-nums">{formatCredits(summary.balanceCredits)}</span>
@@ -161,7 +242,7 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
               </div>
             )}
             <div className="flex items-center justify-between gap-3">
-              <span className="text-muted-foreground">本月消耗</span>
+              <span className="text-muted-foreground">组织本月消耗</span>
               <span className="font-mono tabular-nums">{formatCredits(summary.currentMonthCreditsUsed)}</span>
             </div>
             {sessionSummary && (
@@ -175,7 +256,7 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
           </div>
 
           <div className="border-t bg-muted/35 px-4 py-2 text-[10px] leading-relaxed text-muted-foreground">
-            积分用于 Agent 服务，实际消耗以平台计费记录为准。
+            员工预算仅用于提醒，不转移共享余额、不形成个人钱包，也不会阻断任务。实际消耗以平台计费记录为准。
           </div>
         </div>
       )}

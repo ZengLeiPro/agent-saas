@@ -53,7 +53,18 @@ export type { ChatSessionIndexItem, AppTab } from "./sidebar";
 export { baseNavItems, getSidebarNavItems, formatShortDate, sourceDisplayText } from "./sidebar";
 
 export type { SessionGroup, SessionListEntry } from "./sessionGroup";
-export type { GithubConnection, GithubConnectionResponse } from "./connectors";
+export type {
+  GithubConnection,
+  GithubConnectionResponse,
+  ConnectorAuthSessionStatus,
+  ConnectorAuthSession,
+  NotionConnection,
+  NotionConnectionResponse,
+  NotionAuthSessionResponse,
+  GoogleWorkspaceConnection,
+  GoogleWorkspaceConnectionResponse,
+  GoogleWorkspaceOAuthStartResponse,
+} from "./connectors";
 
 export type {
   ScenarioMode,

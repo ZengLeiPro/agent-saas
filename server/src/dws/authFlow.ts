@@ -29,6 +29,7 @@ export interface DwsDeviceLoginRunnerLike {
     onAuthorization: (authorization: DwsDeviceAuthorization) => void | Promise<void>,
     signal?: AbortSignal,
   ): Promise<void>;
+  logout?(user: UserInfo, profileIds: string[]): Promise<void>;
 }
 
 export interface DwsDeviceLoginRunnerOptions {
@@ -115,6 +116,47 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
       await onAuthorization(authorization);
     }
   }
+
+  async logout(user: UserInfo, profileIds: string[]): Promise<void> {
+    const targets: Array<string | undefined> = profileIds.length > 0 ? profileIds : [undefined];
+    const serverRemote = await resolveServerRemote(this.options, user);
+    const transport = new HttpTransport({
+      baseUrl: serverRemote.baseUrl,
+      authToken: serverRemote.authToken,
+      invokeTimeoutMs: serverRemote.invokeTimeoutMs,
+      fetchImpl: this.options.fetchImpl,
+    });
+    const userCwd = resolveUserCwd(this.options.agentCwd, user);
+    const mountSubPath = deriveWorkspaceMountSubPath(this.options.agentCwd, userCwd);
+    if (!mountSubPath) throw new Error('无法解析 DWS 用户工作区挂载路径');
+    const workspaceId = deriveStableWorkspaceId(user, `dws-${user.id}`);
+    const sandboxScopeId = `${workspaceId}__${mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
+    for (const profileId of targets) {
+      const profileArg = profileId ? ` --profile ${shellQuote(profileId)}` : '';
+      const response = await transport.invoke({
+        toolName: 'Shell',
+        input: {
+          command: `dws auth logout${profileArg} --format json`,
+          timeoutMs: 60_000,
+        },
+        context: {
+          invocationId: `dws-logout-${randomUUID()}`,
+          workspace: {
+            id: workspaceId,
+            root: userCwd,
+            userId: user.id,
+            username: user.username,
+            tenantId: user.tenantId,
+            sessionId: `dws-logout-${user.id}`,
+            sandboxScopeId,
+            mountSubPath,
+            executionTarget: 'server-remote',
+          },
+        },
+      });
+      if (response.status === 'error') throw new Error(redactDwsError(response.error));
+    }
+  }
 }
 
 async function resolveServerRemote(
@@ -131,6 +173,8 @@ async function resolveServerRemote(
 export interface DwsAuthFlowServiceLike {
   start(user: UserInfo): Promise<DwsAuthSessionRecord>;
   getLatest(tenantId: string, userId: string): Promise<DwsAuthSessionRecord | null>;
+  cancelUser?(tenantId: string, userId: string): Promise<void>;
+  revokeUser?(user: UserInfo): Promise<void>;
 }
 
 export interface DwsAuthFlowServiceOptions {
@@ -147,6 +191,8 @@ export interface DwsAuthFlowServiceOptions {
 
 export class DwsAuthFlowService implements DwsAuthFlowServiceLike {
   private readonly active = new Map<string, AbortController>();
+  private readonly activeUsers = new Map<string, AbortController>();
+  private readonly activeTasks = new Map<string, Promise<void>>();
   private stopped = false;
 
   constructor(private readonly options: DwsAuthFlowServiceOptions) {}
@@ -157,10 +203,16 @@ export class DwsAuthFlowService implements DwsAuthFlowServiceLike {
     const result = await this.options.authSessionStore.createOrReuse(identity);
     if (result.created) {
       const controller = new AbortController();
+      const userKey = `${identity.tenantId}:${identity.userId}`;
       this.active.set(result.record.sessionId, controller);
-      void this.run(result.record, user, identity, controller).finally(() => {
+      this.activeUsers.set(userKey, controller);
+      const task = this.run(result.record, user, identity, controller).finally(() => {
         if (this.active.get(result.record.sessionId) === controller) this.active.delete(result.record.sessionId);
+        if (this.activeUsers.get(userKey) === controller) this.activeUsers.delete(userKey);
+        if (this.activeTasks.get(userKey) === task) this.activeTasks.delete(userKey);
       });
+      this.activeTasks.set(userKey, task);
+      void task;
     }
     return result.record;
   }
@@ -169,10 +221,27 @@ export class DwsAuthFlowService implements DwsAuthFlowServiceLike {
     return await this.options.authSessionStore.getLatestForUser(tenantId, userId);
   }
 
+  async cancelUser(tenantId: string, userId: string): Promise<void> {
+    const key = `${tenantId}:${userId}`;
+    this.activeUsers.get(key)?.abort();
+    await this.activeTasks.get(key)?.catch(() => undefined);
+    this.activeUsers.delete(key);
+    this.activeTasks.delete(key);
+  }
+
+  async revokeUser(user: UserInfo): Promise<void> {
+    await this.cancelUser(user.tenantId, user.id);
+    const profiles = await this.options.connectionStore.listForUser(user.tenantId, user.id);
+    await this.options.runner.logout?.(user, profiles.map(profile => profile.profileId));
+    await this.options.connectionStore.removeForUser?.(user.tenantId, user.id);
+  }
+
   stop(): void {
     this.stopped = true;
     for (const controller of this.active.values()) controller.abort();
     this.active.clear();
+    this.activeUsers.clear();
+    this.activeTasks.clear();
   }
 
   private async run(
@@ -190,10 +259,13 @@ export class DwsAuthFlowService implements DwsAuthFlowServiceLike {
           authorization.authorizationUrl,
         );
       }, controller.signal);
+      if (controller.signal.aborted) throw new Error('DWS 授权已取消');
 
       const profiles = await readDwsProfiles(resolveUserCwd(this.options.agentCwd, user));
       if (!profiles || profiles.length === 0) throw new Error('钉钉已返回授权成功，但未生成组织连接信息');
+      if (controller.signal.aborted) throw new Error('DWS 授权已取消');
       await this.options.connectionStore.syncProfiles(identity, profiles);
+      if (controller.signal.aborted) throw new Error('DWS 授权已取消');
       await this.options.authSessionStore.markConnected(session.sessionId, identity);
       await this.options.onConnected?.(user).catch((err) => {
         this.options.logger?.warn(`DWS post-login verification deferred user=${user.id}: ${redactDwsError(err)}`);
@@ -235,6 +307,10 @@ function deriveWorkspaceMountSubPath(agentCwd: string, userCwd: string): string 
   const rel = relative(mountRoot, resolve(userCwd));
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return undefined;
   return rel.split(sep).join('/');
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function redactDwsError(error: unknown): string {

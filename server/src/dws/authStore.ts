@@ -39,13 +39,16 @@ export interface DwsAuthSessionStore {
 export interface PgDwsAuthSessionStoreOptions {
   pool: PgPool;
   tablePrefix?: string;
+  connectorId?: string;
 }
 
 export class PgDwsAuthSessionStore implements DwsAuthSessionStore {
   readonly table: string;
+  private readonly connectorId: string;
 
   constructor(private readonly options: PgDwsAuthSessionStoreOptions) {
-    this.table = `${sanitizeIdentifier(options.tablePrefix ?? 'runtime')}_dws_auth_sessions`;
+    this.connectorId = sanitizeIdentifier(options.connectorId ?? 'dws');
+    this.table = `${sanitizeIdentifier(options.tablePrefix ?? 'runtime')}_${this.connectorId}_auth_sessions`;
   }
 
   async init(): Promise<void> {
@@ -93,7 +96,7 @@ export class PgDwsAuthSessionStore implements DwsAuthSessionStore {
 
   async createOrReuse(identity: DwsAuthSessionIdentity, now = new Date()): Promise<{ record: DwsAuthSessionRecord; created: boolean }> {
     const client = await this.options.pool.connect();
-    const lockKey = `dws-auth:${identity.tenantId}:${identity.userId}`;
+    const lockKey = `${this.connectorId}-auth:${identity.tenantId}:${identity.userId}`;
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);

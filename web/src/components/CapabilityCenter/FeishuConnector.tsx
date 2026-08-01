@@ -269,7 +269,7 @@ export function FeishuConnectorCard({ state, onOpenDetail }: { state: FeishuConn
             </button>
           </div>
           <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{DESCRIPTION}</p>
-          <div className="mt-3 text-xs text-muted-foreground">点击查看授权账号与连接状态</div>
+          <div className="mt-3 text-xs text-muted-foreground">官方 CLI：lark-cli</div>
         </div>
       </CardContent>
     </Card>
@@ -293,7 +293,7 @@ export function FeishuConnectorDrawer({
         <div><CapabilitySourceBadge source="platform" /><div className={`mt-1 text-xs font-medium ${status.className}`}>{status.label}</div></div>
       </div>
       <div className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
-        连接一次后，平台会自动维护登录。授权只属于当前账号，组织内其他成员不能使用你的凭据。
+        连接一次后，官方 lark-cli 会使用当前用户独立的 LARKSUITE_CLI_CONFIG_DIR；组织内其他成员不能使用你的凭据。
       </div>
 
       {state.authError ? (

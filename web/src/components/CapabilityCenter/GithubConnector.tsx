@@ -4,7 +4,6 @@ import {
   connectGithub,
   disconnectGithub,
   fetchGithubConnection,
-  updateGithubCapabilities,
   type GithubConnection,
 } from "@agent/shared";
 
@@ -13,12 +12,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 
 const DISCONNECTED: GithubConnection = {
   connectorId: "github",
   status: "disconnected",
-  mcpEnabled: false,
 };
 
 export function GithubConnector({
@@ -28,7 +25,6 @@ export function GithubConnector({
 }) {
   const [connection, setConnection] = useState<GithubConnection>(DISCONNECTED);
   const [token, setToken] = useState("");
-  const [mcpEnabled, setMcpEnabled] = useState(true);
   const [editingCredential, setEditingCredential] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -39,7 +35,6 @@ export function GithubConnector({
       setError(undefined);
       const result = await fetchGithubConnection();
       setConnection(result.connection);
-      setMcpEnabled(result.connection.status === "connected" ? result.connection.mcpEnabled : true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "读取 GitHub 连接失败");
     } finally {
@@ -57,9 +52,8 @@ export function GithubConnector({
     setSaving(true);
     setError(undefined);
     try {
-      const result = await connectGithub({ token, mcpEnabled });
+      const result = await connectGithub({ token });
       setConnection(result.connection);
-      setMcpEnabled(result.connection.mcpEnabled);
       setToken("");
       setEditingCredential(false);
     } catch (err) {
@@ -69,28 +63,13 @@ export function GithubConnector({
     }
   };
 
-  const toggleMcp = async (enabled: boolean) => {
-    const previous = mcpEnabled;
-    setMcpEnabled(enabled);
-    setError(undefined);
-    try {
-      const result = await updateGithubCapabilities(enabled);
-      setConnection(result.connection);
-      setMcpEnabled(result.connection.mcpEnabled);
-    } catch (err) {
-      setMcpEnabled(previous);
-      setError(err instanceof Error ? err.message : "更新 GitHub MCP 能力失败");
-    }
-  };
-
   const disconnect = async () => {
-    if (!window.confirm("确定断开 GitHub？运行态 Git、gh、SDK 和 GitHub MCP 工具都将停止使用该凭据。")) return;
+    if (!window.confirm("确定断开 GitHub？运行态 Git、gh 和 SDK 都将停止使用该凭据。")) return;
     setSaving(true);
     setError(undefined);
     try {
       const result = await disconnectGithub();
       setConnection(result.connection);
-      setMcpEnabled(false);
       setEditingCredential(false);
       setToken("");
     } catch (err) {
@@ -123,7 +102,7 @@ export function GithubConnector({
               )}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              一个账号连接同时供原生 Git、gh、SDK 使用；MCP 工具按需启用。
+              授权后，原生 Git、gh、SDK 和 Shell 在当前用户运行环境中直接可用。
             </p>
           </div>
         </div>
@@ -152,25 +131,6 @@ export function GithubConnector({
               placeholder="github_pat_… 或 ghp_…"
             />
             <p className="text-xs text-muted-foreground">建议授予 repo、read:org 权限；凭据只保存到个人加密存储。</p>
-          </div>
-        )}
-
-        {!loading && (connected || token.trim()) && (
-          <div className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
-            <div>
-              <Label htmlFor="github-mcp">启用 GitHub MCP 工具</Label>
-              <p className="text-xs text-muted-foreground">仓库、Issue、Pull Request 等结构化 Agent 工具。</p>
-            </div>
-            <Switch
-              id="github-mcp"
-              aria-label="启用 GitHub MCP 工具"
-              checked={mcpEnabled}
-              disabled={saving || (!connected && !token.trim())}
-              onCheckedChange={(enabled) => {
-                if (connected) void toggleMcp(enabled);
-                else setMcpEnabled(enabled);
-              }}
-            />
           </div>
         )}
 

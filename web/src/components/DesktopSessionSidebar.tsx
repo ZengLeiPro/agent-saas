@@ -59,7 +59,7 @@ import {
 } from "@agent/shared";
 import { useResizableWidth } from "@/hooks/useResizableWidth";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
-import { useTenantBillingVisibility } from "@/hooks/useTenantBillingVisibility";
+import { useTenantBillingSummary, type TenantBillingSummary } from "@/hooks/useTenantBillingVisibility";
 import { AddAccountDialog } from "@/components/AddAccountDialog";
 import { LogoutAccountDialog } from "@/components/LogoutAccountDialog";
 import { getAccountKey, type SavedAccountSummary } from "@/lib/savedAccounts";
@@ -114,8 +114,28 @@ const NAV_ITEM_UNSELECTED =
   "text-muted-foreground hover:bg-muted/60 hover:text-foreground";
 
 const USER_MENU_ITEM =
-  "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent";
-const USER_MENU_SECTION = "border-t border-border/60 py-1 first:border-t-0";
+  "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] text-foreground transition-colors hover:bg-accent";
+const USER_MENU_SECTION = "border-t border-border/60 py-1.5";
+
+function formatBillingCredits(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  if (Math.abs(value) >= 10_000) return `${(value / 10_000).toFixed(1)}万`;
+  if (Math.abs(value) >= 100) return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function billingModeLabel(mode: string): string {
+  switch (mode) {
+    case "prepaid":
+      return "预付费";
+    case "postpaid":
+      return "后付费";
+    case "trial":
+      return "试用";
+    default:
+      return "积分";
+  }
+}
 
 function compareSessionActivity(a: ChatSessionIndexItem, b: ChatSessionIndexItem): number {
   if (Boolean(a.isRunning) !== Boolean(b.isRunning)) return a.isRunning ? -1 : 1;
@@ -603,6 +623,7 @@ interface SidebarUserMenuFooterProps {
   onNavigateAdminTab?: (tab: AppTab) => void;
   onOpenAdminSettings?: (target: AdminSettingsTarget) => void;
   onOpenBilling?: () => void;
+  billingSummary: TenantBillingSummary | null;
   accounts: SavedAccountSummary[];
   switchAccount: (accountKey: string) => void;
 }
@@ -620,6 +641,7 @@ function SidebarUserMenuFooter({
   onNavigateAdminTab,
   onOpenAdminSettings,
   onOpenBilling,
+  billingSummary,
   accounts,
   switchAccount,
 }: SidebarUserMenuFooterProps) {
@@ -632,6 +654,9 @@ function SidebarUserMenuFooter({
   }, [showUserMenu]);
 
   const currentAccountKey = authUser ? getAccountKey(authUser) : null;
+  const visibleBillingSummary = billingSummary?.billingEnabled && billingSummary.billingMode !== "internal"
+    ? billingSummary
+    : null;
 
   return (
     <div className="px-1 py-1.5">
@@ -640,7 +665,7 @@ function SidebarUserMenuFooter({
           type="button"
           onClick={() => authEnabled && authUser && setShowUserMenu((v) => !v)}
           disabled={!authUser}
-          className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-muted disabled:opacity-50"
+          className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted disabled:opacity-50"
         >
           {authUser ? (
             authUser.avatar ? (
@@ -659,31 +684,41 @@ function SidebarUserMenuFooter({
               <User className="size-3 text-muted-foreground" />
             </div>
           )}
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] font-semibold leading-tight">
-              {authUser ? authUser.realName || authUser.username : "未登录"}
-            </span>
-            {authUser && (
-              <span className="mt-px block truncate text-[11px] leading-tight text-muted-foreground">
-                {roleLabel}
-              </span>
-            )}
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold leading-tight">
+            {authUser ? authUser.realName || authUser.username : "未登录"}
           </span>
-          <ChevronsUpDown className="size-3 shrink-0 text-muted-foreground/60" />
+          {visibleBillingSummary ? (
+            <span className="flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-background px-2 py-1 text-xs font-medium tabular-nums text-foreground shadow-sm">
+              <EntityIcons.credits className="size-3.5" aria-hidden="true" />
+              {formatBillingCredits(visibleBillingSummary.balanceCredits)}
+            </span>
+          ) : (
+            <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground/60" />
+          )}
         </button>
         {showUserMenu && authEnabled && authUser && (
-          <div className="absolute bottom-full left-0 z-50 mb-2 w-44 overflow-visible rounded-xl border bg-popover p-1 shadow-xl">
+          <div className="absolute bottom-full left-0 z-50 mb-2 w-80 overflow-visible rounded-[20px] border bg-popover p-2 shadow-[0_18px_50px_rgba(15,23,42,0.16)]">
             <div
               className="relative"
               onMouseEnter={() => setShowAccountMenu(true)}
               onMouseLeave={() => setShowAccountMenu(false)}
             >
-              <button type="button" className="flex w-full items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-left transition-colors hover:bg-muted" aria-haspopup="menu" aria-expanded={showAccountMenu}>
+              <button type="button" className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted" aria-haspopup="menu" aria-expanded={showAccountMenu}>
+                {authUser.avatar ? (
+                  <img src={resolveApiAssetUrl(authUser.avatar)} alt="" className="size-10 shrink-0 rounded-full object-cover ring-1 ring-brand-100" />
+                ) : (
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-semibold text-primary-foreground">
+                    {authUser.username.charAt(0).toUpperCase()}
+                  </div>
+                )}
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">{authUser.realName || authUser.username}</div>
-                  <div className="mt-0.5 truncate text-xs text-muted-foreground">@{authUser.username}</div>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <div className="truncate text-base font-semibold">{authUser.realName || authUser.username}</div>
+                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{roleLabel}</span>
+                  </div>
+                  <div className="mt-0.5 truncate text-sm text-muted-foreground">@{authUser.username}</div>
                 </div>
-                <ChevronRight className="size-4 shrink-0" />
+                <ChevronRight className="size-5 shrink-0 text-muted-foreground" />
               </button>
 
               {showAccountMenu && (
@@ -737,9 +772,30 @@ function SidebarUserMenuFooter({
               )}
             </div>
 
+            {visibleBillingSummary && onOpenBilling && (
+              <button
+                type="button"
+                className="mb-2 mt-1 w-full rounded-2xl border border-border/80 bg-muted/35 p-3 text-left transition-colors hover:bg-muted/60"
+                onClick={() => { setShowUserMenu(false); onOpenBilling(); }}
+              >
+                <span className="flex items-center justify-between gap-3">
+                  <span className="font-semibold">积分账户</span>
+                  <span className="rounded-full bg-background px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-sm">
+                    {billingModeLabel(visibleBillingSummary.billingMode)}
+                  </span>
+                </span>
+                <span className="mt-3 flex items-center gap-2 text-sm">
+                  <EntityIcons.credits className="size-[18px]" aria-hidden="true" />
+                  <span className="text-muted-foreground">可用积分</span>
+                  <span className="ml-auto text-lg font-semibold tabular-nums">{formatBillingCredits(visibleBillingSummary.balanceCredits)}</span>
+                  <ChevronRight className="size-4 text-muted-foreground" />
+                </span>
+              </button>
+            )}
+
             <div className={USER_MENU_SECTION}>
               <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenSettings?.("account"); }}>
-                <UserCog className="size-3.5" />
+                <UserCog className="size-5" />
                 个人设置
               </button>
             </div>
@@ -747,11 +803,11 @@ function SidebarUserMenuFooter({
             {isAdmin && (
               <div className={USER_MENU_SECTION}>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onNavigateAdminTab?.("tenant-admin"); }}>
-                  <EntityIcons.analytics className="size-3.5" />
+                  <EntityIcons.analytics className="size-5" />
                   组织分析
                 </button>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenAdminSettings?.("tenant"); }}>
-                  <Settings2 className="size-3.5" />
+                  <Settings2 className="size-5" />
                   组织管理
                 </button>
               </div>
@@ -760,28 +816,19 @@ function SidebarUserMenuFooter({
             {isPlatformAdmin && (
               <div className={USER_MENU_SECTION}>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onNavigateAdminTab?.("platform-admin"); }}>
-                  <EntityIcons.analytics className="size-3.5" />
+                  <EntityIcons.analytics className="size-5" />
                   平台分析
                 </button>
                 <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenAdminSettings?.("platform"); }}>
-                  <Settings2 className="size-3.5" />
+                  <Settings2 className="size-5" />
                   平台管理
-                </button>
-              </div>
-            )}
-
-            {onOpenBilling && (
-              <div className={USER_MENU_SECTION}>
-                <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenBilling(); }}>
-                  <EntityIcons.credits className="size-3.5" />
-                  我的积分
                 </button>
               </div>
             )}
 
             <div className={USER_MENU_SECTION}>
               <button type="button" className={cn(USER_MENU_ITEM, "text-destructive hover:bg-destructive/10")} onClick={() => { setShowUserMenu(false); setShowLogoutDialog(true); }}>
-                <LogOut className="size-3.5" />
+                <LogOut className="size-5" />
                 退出登录
               </button>
             </div>
@@ -1073,7 +1120,8 @@ export function DesktopSessionSidebar({
   personalAgentEnabled = true,
 }: DesktopSessionSidebarProps) {
   const { user: authUser, accounts, switchAccount, authEnabled } = useAuth();
-  const showBilling = useTenantBillingVisibility(authUser?.tenantId);
+  const billingSummary = useTenantBillingSummary(authUser?.tenantId);
+  const showBilling = billingSummary?.billingEnabled === true && billingSummary.billingMode !== "internal";
   // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
   const compactList = authUser?.preferences?.showSessionListAvatar !== true;
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -1892,11 +1940,12 @@ export function DesktopSessionSidebar({
           onOpenSettings={onOpenSettings}
           onNavigateAdminTab={(tab) => (onPushTab ?? onTabChange)?.(tab)}
           onOpenAdminSettings={onOpenAdminSettings}
-          onOpenBilling={() => {
+          onOpenBilling={showBilling ? () => {
             // BillingMiniBadge 只在 chat tab 上渲染，先切回 chat，再命令展开面板。
             (onPushTab ?? onTabChange)?.("chat");
             requestOpenBillingBadge();
-          }}
+          } : undefined}
+          billingSummary={billingSummary}
           accounts={accounts}
           switchAccount={switchAccount}
         />
@@ -2262,6 +2311,7 @@ export function DesktopSessionSidebar({
               (onPushTab ?? onTabChange)?.("chat");
               requestOpenBillingBadge();
             } : undefined}
+            billingSummary={billingSummary}
             accounts={accounts}
             switchAccount={switchAccount}
           />

@@ -12,9 +12,14 @@ import {
   CREDIT_MICRO,
   type BillingAuditSummary,
   type BillingLedgerEntry,
+  type BillingMemberBudgetUsage,
   type LedgerType,
 } from '../data/billing/types.js';
-import { BillingPricingConflictError } from '../data/billing/pgBillingStore.js';
+import {
+  BillingBudgetIdempotencyConflictError,
+  BillingBudgetVersionConflictError,
+  BillingPricingConflictError,
+} from '../data/billing/pgBillingStore.js';
 
 function decodeCursor(value?: string): { createdAt: string; id: string } | undefined {
   if (!value) return undefined;
@@ -284,6 +289,147 @@ export function createAdminBillingRouter(options: BillingRouterOptions): Router 
     res.json({ audit });
   });
 
+  router.get('/member-budgets', async (req: Request, res: Response) => {
+    const tenantIdQuery = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+    const parsedTenantId = tenantIdQuery ? tenantIdSchema.safeParse(tenantIdQuery) : undefined;
+    if (parsedTenantId && !parsedTenantId.success) return res.status(400).json({ error: 'tenantId 不合法' });
+    const access = resolveTenantAccess(req, parsedTenantId?.data);
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    if (access.platform && (!req.user || !hasPlatformCapability(req.user, 'finance.read'))) {
+      return res.status(403).json({ error: '缺少平台财务读取权限' });
+    }
+    const userStore = billingService.userStore;
+    if (!userStore) return res.status(503).json({ error: '用户目录暂不可用' });
+    await billingService.ensureProjected();
+    const [overview, summary] = await Promise.all([
+      billingService.store.getMemberBudgetOverview(access.tenantId),
+      billingService.getSummaryForTenant(access.tenantId),
+    ]);
+    const usageByUser = new Map(overview.items.map((item) => [item.userId, item]));
+    const platformCanManage = access.platform && !!req.user && hasPlatformCapability(req.user, 'billing.adjust');
+    const members = userStore.listAll()
+      .filter((user) => user.tenantId === access.tenantId)
+      .sort((a, b) => (a.realName || a.username).localeCompare(b.realName || b.username, 'zh-CN'))
+      .map((user) => {
+        const budget = formatMemberBudget(usageByUser.get(user.id) ?? {
+          userId: user.id,
+          active: true,
+          version: 0,
+          monthUsedCreditsMicro: 0,
+        });
+        const canManage = access.platform
+          ? platformCanManage
+          : user.role !== 'admin' || user.id === req.user?.sub;
+        return {
+          ...budget,
+          username: user.username,
+          realName: user.realName,
+          role: user.role,
+          disabled: user.disabled,
+          canManage,
+        };
+      });
+    res.json({
+      period: {
+        start: overview.periodStart,
+        end: overview.periodEnd,
+        timezone: overview.timezone,
+      },
+      summary: {
+        tenantBalanceCredits: summary.balanceCredits,
+        monthUsedCredits: overview.monthUsedCreditsMicro / CREDIT_MICRO,
+        budgetedUsers: members.filter((item) => item.monthlyLimitCredits !== null).length,
+        nearLimitUsers: members.filter((item) => item.status === 'warning').length,
+        overLimitUsers: members.filter((item) => item.status === 'over').length,
+        unattributedCredits: overview.unattributedCreditsMicro / CREDIT_MICRO,
+      },
+      items: members,
+    });
+  });
+
+  router.put('/member-budgets/:userId', async (req: Request, res: Response) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    const tenantIdQuery = typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined;
+    const parsedTenantId = tenantIdQuery ? tenantIdSchema.safeParse(tenantIdQuery) : undefined;
+    if (parsedTenantId && !parsedTenantId.success) return res.status(400).json({ error: 'tenantId 不合法' });
+    const access = resolveTenantAccess(req, parsedTenantId?.data);
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    if (access.platform && !hasPlatformCapability(req.user, 'billing.adjust')) {
+      return res.status(403).json({ error: '缺少平台计费管理权限' });
+    }
+    const body = memberBudgetUpdateSchema.safeParse(req.body ?? {});
+    if (!body.success) return res.status(400).json({ error: 'Invalid body', issues: body.error.issues });
+    const userStore = billingService.userStore;
+    if (!userStore) return res.status(503).json({ error: '用户目录暂不可用' });
+    const targetUser = userStore.findById(String(req.params.userId || ''));
+    if (!targetUser || targetUser.tenantId !== access.tenantId) {
+      return res.status(404).json({ error: '目标员工不存在' });
+    }
+    if (!access.platform && targetUser.role === 'admin' && targetUser.id !== req.user.sub) {
+      return res.status(403).json({ error: '组织管理员不能修改其他管理员的预算' });
+    }
+    const monthlyLimitCreditsMicro = body.data.monthlyLimitCredits === null
+      ? undefined
+      : Math.round(body.data.monthlyLimitCredits * CREDIT_MICRO);
+    if (monthlyLimitCreditsMicro !== undefined && !Number.isSafeInteger(monthlyLimitCreditsMicro)) {
+      return res.status(400).json({ error: '预算金额超出安全范围' });
+    }
+    try {
+      const result = await billingService.store.upsertMemberBudget({
+        tenantId: access.tenantId,
+        userId: targetUser.id,
+        ...(monthlyLimitCreditsMicro === undefined ? {} : { monthlyLimitCreditsMicro }),
+        expectedVersion: body.data.expectedVersion,
+        idempotencyKey: body.data.idempotencyKey,
+        note: body.data.note,
+        actorUserId: req.user.sub,
+        actorUsername: req.user.username,
+      });
+      auditLog(req, 'billing_member_budget_updated', JSON.stringify({
+        tenantId: access.tenantId,
+        userId: targetUser.id,
+        monthlyLimitCredits: body.data.monthlyLimitCredits,
+        auditId: result.audit.id,
+        replayed: result.replayed,
+      }));
+      res.json({
+        budget: formatMemberBudget(result.budget),
+        audit: { id: result.audit.id, createdAt: result.audit.createdAt },
+        replayed: result.replayed,
+      });
+    } catch (err) {
+      if (err instanceof BillingBudgetVersionConflictError) {
+        return res.status(409).json({ code: 'BUDGET_VERSION_CONFLICT', error: err.message });
+      }
+      if (err instanceof BillingBudgetIdempotencyConflictError) {
+        return res.status(409).json({ code: 'IDEMPOTENCY_KEY_REUSED', error: err.message });
+      }
+      throw err;
+    }
+  });
+
+  router.get('/member-budget-audit', async (req: Request, res: Response) => {
+    const query = memberBudgetAuditQuerySchema.safeParse(req.query);
+    if (!query.success) return res.status(400).json({ error: 'Invalid query', issues: query.error.issues });
+    const access = resolveTenantAccess(req, query.data.tenantId);
+    if (!access.ok) return res.status(access.status).json({ error: access.error });
+    if (access.platform && (!req.user || !hasPlatformCapability(req.user, 'finance.read'))) {
+      return res.status(403).json({ error: '缺少平台财务读取权限' });
+    }
+    const entries = await billingService.store.listMemberBudgetAudit(
+      access.tenantId,
+      query.data.userId,
+      query.data.limit ?? 100,
+    );
+    res.json({
+      entries: entries.map(({ beforeLimitCreditsMicro, afterLimitCreditsMicro, ...entry }) => ({
+        ...entry,
+        beforeLimitCredits: beforeLimitCreditsMicro === undefined ? null : beforeLimitCreditsMicro / CREDIT_MICRO,
+        afterLimitCredits: afterLimitCreditsMicro === undefined ? null : afterLimitCreditsMicro / CREDIT_MICRO,
+      })),
+    });
+  });
+
   router.get('/sessions/:sessionId/summary', requirePlatformAdmin, async (req: Request, res: Response) => {
     const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : '';
     const parsed = tenantIdSchema.safeParse(tenantId);
@@ -317,6 +463,27 @@ export function createBillingRouter(options: BillingRouterOptions): Router {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
     const summary = await billingService.getSummaryForTenant(req.user.tenantId);
     res.json({ summary });
+  });
+
+  router.get('/me/budget', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    await billingService.ensureProjected();
+    const overview = await billingService.store.getMemberBudgetOverview(req.user.tenantId, req.user.sub);
+    const budget = overview.items[0] ?? {
+      userId: req.user.sub,
+      active: true,
+      version: 0,
+      monthUsedCreditsMicro: 0,
+    };
+    const { updatedBy: _updatedBy, ...memberBudget } = formatMemberBudget(budget);
+    res.json({
+      period: {
+        start: overview.periodStart,
+        end: overview.periodEnd,
+        timezone: overview.timezone,
+      },
+      budget: memberBudget,
+    });
   });
 
   router.get('/sessions/:sessionId/summary', async (req, res) => {
@@ -380,6 +547,19 @@ const pricingVersionPatchSchema = z.object({
   fxRateToCny: z.number().positive().max(50).optional(),
 });
 
+const memberBudgetUpdateSchema = z.object({
+  monthlyLimitCredits: z.number().finite().min(0).max(1_000_000_000).nullable(),
+  expectedVersion: z.number().int().min(0),
+  idempotencyKey: z.string().trim().min(8).max(120).regex(/^[a-zA-Z0-9:_-]+$/),
+  note: z.string().trim().min(2).max(200),
+});
+
+const memberBudgetAuditQuerySchema = z.object({
+  tenantId: tenantIdSchema.optional(),
+  userId: z.string().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
 const accountAdjustSchema = z.object({
   creditsDelta: z.number().finite(),
   type: z.enum(['recharge', 'grant', 'refund', 'adjustment', 'expire', 'reversal']).optional(),
@@ -436,6 +616,38 @@ const auditQuerySchema = z.object({
   tenantId: tenantIdSchema.optional(),
   days: z.coerce.number().int().min(1).max(90).optional(),
 });
+
+function formatMemberBudget(item: BillingMemberBudgetUsage) {
+  const monthlyLimitCredits = item.monthlyLimitCreditsMicro === undefined
+    ? null
+    : item.monthlyLimitCreditsMicro / CREDIT_MICRO;
+  const monthUsedCredits = item.monthUsedCreditsMicro / CREDIT_MICRO;
+  const usageRatioBps = item.monthlyLimitCreditsMicro === undefined
+    ? null
+    : item.monthlyLimitCreditsMicro <= 0
+      ? (item.monthUsedCreditsMicro > 0 ? 10000 : 0)
+      : Math.round((item.monthUsedCreditsMicro / item.monthlyLimitCreditsMicro) * 10000);
+  return {
+    userId: item.userId,
+    monthlyLimitCredits,
+    monthUsedCredits,
+    usageRatioBps,
+    status: budgetStatus(usageRatioBps),
+    active: item.active,
+    version: item.version,
+    lastUsedAt: item.lastUsedAt,
+    updatedBy: item.updatedBy,
+    updatedAt: item.updatedAt,
+  };
+}
+
+function budgetStatus(usageRatioBps: number | null): 'unset' | 'normal' | 'attention' | 'warning' | 'over' {
+  if (usageRatioBps === null) return 'unset';
+  if (usageRatioBps >= 10000) return 'over';
+  if (usageRatioBps >= 9000) return 'warning';
+  if (usageRatioBps >= 7500) return 'attention';
+  return 'normal';
+}
 
 function redactPolicy<T extends { showCost: boolean; showGrossMargin: boolean; defaultTargetMarginBps: number; organizationMultiplierBps: number }>(policy: T) {
   return {

@@ -77,6 +77,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ARG DEBIAN_MIRROR=http://deb.debian.org/debian
 ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
 ARG GH_CLI_VERSION=2.96.0
+ARG GH_CLI_SHA256=83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60
 ARG ALIYUN_CLI_VERSION=3.4.4
 ARG ALIYUN_CLI_SHA256=11dc3c6999e0e2f3cdac6e38775920e14ace7b52567534ff1222db22ae327684
 ARG GWS_CLI_VERSION=0.22.5
@@ -91,14 +92,6 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 
 RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries \
     && sed -i "s|http://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g; s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && mkdir -p -m 755 /etc/apt/keyrings \
-    && curl -fsSL -o /tmp/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    && echo '6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b  /tmp/githubcli-archive-keyring.gpg' | sha256sum -c - \
-    && install -m 0644 /tmp/githubcli-archive-keyring.gpg /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    && rm -f /tmp/githubcli-archive-keyring.gpg \
-    && printf 'deb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
       bash \
@@ -117,7 +110,6 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https:
       ffmpeg \
       git \
       git-lfs \
-      gh=${GH_CLI_VERSION} \
       ghostscript \
       iproute2 \
       iputils-ping \
@@ -160,13 +152,25 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https:
     && fc-cache -fv \
     && update-ca-certificates
 
+# GitHub CLI 的 apt 仓库只保留有限版本，固定版本会在下架后让历史镜像无法重建。
+# 改用 GitHub 官方 immutable release，并校验官方发布的 SHA256。
+RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
+      --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 1200 \
+      --connect-timeout 20 --max-time 300 \
+      "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_amd64.tar.gz" \
+      -o /tmp/gh-cli.tar.gz \
+    && echo "${GH_CLI_SHA256}  /tmp/gh-cli.tar.gz" | sha256sum -c - \
+    && tar xzf /tmp/gh-cli.tar.gz -C /tmp \
+    && install -m 0755 "/tmp/gh_${GH_CLI_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh \
+    && rm -rf /tmp/gh-cli.tar.gz "/tmp/gh_${GH_CLI_VERSION}_linux_amd64" \
+    && gh --version
+
 RUN curl -fsSL "https://aliyuncli.alicdn.com/aliyun-cli-linux-${ALIYUN_CLI_VERSION}-amd64.tgz" -o /tmp/aliyun-cli.tgz \
     && echo "${ALIYUN_CLI_SHA256}  /tmp/aliyun-cli.tgz" | sha256sum -c - \
     && tar xzf /tmp/aliyun-cli.tgz -C /tmp \
     && install -m 0755 /tmp/aliyun /usr/local/bin/aliyun \
     && rm -f /tmp/aliyun /tmp/aliyun-cli.tgz \
     && aliyun version \
-    && gh --version \
     && rg --version
 
 RUN corepack enable \

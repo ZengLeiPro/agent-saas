@@ -1,7 +1,8 @@
-import type { AppConfig } from '../app/config.js';
+import type { AlertingConfig, AppConfig } from '../app/config.js';
 import type { BillingService } from '../data/billing/service.js';
 import type { SecretVault } from '../security/secretVault.js';
 import { sendDingtalkAlertWebhook } from '../integrations/dingtalk/alertWebhook.js';
+import { type DingtalkRobotAlertConfig, sendDingtalkRobotOtoAlert } from '../integrations/dingtalk/robotOtoAlert.js';
 import type { PgAlertStateStore } from './alertStateStore.js';
 import {
   type AttentionItem,
@@ -48,21 +49,29 @@ export interface AlertNotifierOptions {
   acsTimeoutMs?: number;
   webBaseUrl?: string;
   sender?: (webhookUrl: string, markdown: { title: string; text: string }) => Promise<void>;
+  robotSender?: (config: DingtalkRobotAlertConfig, markdown: { title: string; text: string }) => Promise<void>;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+}
+
+/** 任一投递通道（群 webhook / 企业机器人私聊）已配置即可通知。 */
+function hasDeliveryChannel(cfg: AlertingConfig): cfg is NonNullable<AlertingConfig> {
+  return !!cfg?.dingtalkWebhook || !!cfg?.dingtalkRobot;
 }
 
 export class AlertNotifier {
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight = false;
   private readonly sender: (webhookUrl: string, markdown: { title: string; text: string }) => Promise<void>;
+  private readonly robotSender: (config: DingtalkRobotAlertConfig, markdown: { title: string; text: string }) => Promise<void>;
 
   constructor(private readonly options: AlertNotifierOptions) {
     this.sender = options.sender ?? ((webhookUrl, markdown) => sendDingtalkAlertWebhook(webhookUrl, markdown, options.fetchImpl ?? fetch));
+    this.robotSender = options.robotSender ?? ((config, markdown) => sendDingtalkRobotOtoAlert(config, markdown, options.fetchImpl ?? fetch));
   }
 
   start(): void {
     const cfg = this.options.config.alerting;
-    if (cfg?.enabled === false || !cfg?.dingtalkWebhook) return;
+    if (cfg?.enabled === false || !hasDeliveryChannel(cfg)) return;
     if (this.timer) return;
     const intervalMs = cfg.evaluateIntervalMs ?? 120_000;
     // FIX-3: evaluateOnce 异常必须被 catch，否则 PG 抖动即 unhandled rejection（index.ts 会 process.exit(1)）。
@@ -85,7 +94,7 @@ export class AlertNotifier {
   async evaluateOnce(): Promise<{ considered: number; notified: number }> {
     if (this.inFlight) return { considered: 0, notified: 0 };
     const cfg = this.options.config.alerting;
-    if (cfg?.enabled === false || !cfg?.dingtalkWebhook) return { considered: 0, notified: 0 };
+    if (cfg?.enabled === false || !hasDeliveryChannel(cfg)) return { considered: 0, notified: 0 };
     this.inFlight = true;
     try {
       const sandboxes = await fetchSandboxSummaries({
@@ -117,8 +126,8 @@ export class AlertNotifier {
 
   async sendTestAlert(): Promise<void> {
     const cfg = this.options.config.alerting;
-    if (cfg?.enabled === false || !cfg?.dingtalkWebhook) {
-      throw new Error('Alerting webhook is not configured');
+    if (cfg?.enabled === false || !hasDeliveryChannel(cfg)) {
+      throw new Error('Alerting delivery channel is not configured');
     }
     const item: AttentionItem = {
       kind: 'test_alert',
@@ -127,13 +136,15 @@ export class AlertNotifier {
       occurredAt: new Date().toISOString(),
       actions: ['verify_dingtalk'],
     };
-    await this.sender(cfg.dingtalkWebhook, this.renderMarkdown([item], 'test'));
+    await this.deliver(cfg, this.renderMarkdown([item], 'test'));
   }
 
   async getStatus(): Promise<{
     configured: boolean;
     webhookConfigured: boolean;
     webhookMasked: string | null;
+    robotConfigured: boolean;
+    robotReceiverCount: number;
     minSeverity: AttentionSeverity;
     lastNotifiedAt: string | null;
     notifyCount: number;
@@ -142,9 +153,11 @@ export class AlertNotifier {
     const summary = await this.options.alertStateStore.summary();
     const webhook = cfg?.dingtalkWebhook;
     return {
-      configured: cfg?.enabled !== false && !!webhook,
+      configured: cfg?.enabled !== false && hasDeliveryChannel(cfg),
       webhookConfigured: !!webhook,
       webhookMasked: webhook ? maskWebhook(webhook) : null,
+      robotConfigured: !!cfg?.dingtalkRobot,
+      robotReceiverCount: cfg?.dingtalkRobot?.receiverUserIds.length ?? 0,
       minSeverity: parseSeverity(cfg?.minSeverity) ?? 'high',
       lastNotifiedAt: summary.lastNotifiedAt,
       notifyCount: summary.notifyCount,
@@ -153,7 +166,7 @@ export class AlertNotifier {
 
   private async notifyItems(source: string, items: NotifiableAlertItem[]): Promise<{ considered: number; notified: number }> {
     const cfg = this.options.config.alerting;
-    if (cfg?.enabled === false || !cfg?.dingtalkWebhook) return { considered: items.length, notified: 0 };
+    if (cfg?.enabled === false || !hasDeliveryChannel(cfg)) return { considered: items.length, notified: 0 };
     const minSeverity = parseSeverity(cfg.minSeverity) ?? 'high';
     const now = new Date();
     const eligible = items.filter((item) => severityRank(item.severity) >= severityRank(minSeverity));
@@ -178,14 +191,45 @@ export class AlertNotifier {
     });
     if (toNotify.length === 0) return { considered: eligible.length, notified: 0 };
     try {
-      await this.sender(cfg.dingtalkWebhook, this.renderMarkdown(toNotify, source));
+      await this.deliver(cfg, this.renderMarkdown(toNotify, source));
     } catch (err) {
-      // 文档 §6.4：webhook 发送失败打日志不重试不抛出；不写 last_notified_at，下轮自然重试。
-      this.options.logger?.error(`AlertNotifier webhook send failed: ${errorMessage(err)}`);
+      // 文档 §6.4：投递失败打日志不重试不抛出；不写 last_notified_at，下轮自然重试。
+      this.options.logger?.error(`AlertNotifier delivery failed: ${errorMessage(err)}`);
       return { considered: eligible.length, notified: 0 };
     }
     await Promise.all(toNotify.map((item) => this.options.alertStateStore.markNotified(alertKey(source, item), now)));
     return { considered: eligible.length, notified: toNotify.length };
+  }
+
+  /**
+   * 逐通道投递（群 webhook / 企业机器人私聊），任一成功即算送达（避免重复轰炸）；
+   * 全部失败才抛错，让调用方保持「下轮自然重试」语义。
+   */
+  private async deliver(cfg: NonNullable<AlertingConfig>, markdown: { title: string; text: string }): Promise<void> {
+    const errors: string[] = [];
+    let delivered = false;
+    if (cfg.dingtalkWebhook) {
+      try {
+        await this.sender(cfg.dingtalkWebhook, markdown);
+        delivered = true;
+      } catch (err) {
+        errors.push(`webhook: ${errorMessage(err)}`);
+      }
+    }
+    if (cfg.dingtalkRobot) {
+      try {
+        await this.robotSender(cfg.dingtalkRobot, markdown);
+        delivered = true;
+      } catch (err) {
+        errors.push(`robot: ${errorMessage(err)}`);
+      }
+    }
+    if (!delivered) {
+      throw new Error(errors.length ? errors.join('; ') : 'no delivery channel configured');
+    }
+    if (errors.length) {
+      this.options.logger?.warn(`AlertNotifier partial delivery failure: ${errors.join('; ')}`);
+    }
   }
 
   private repeatIntervalMs(severity: AttentionSeverity): number {

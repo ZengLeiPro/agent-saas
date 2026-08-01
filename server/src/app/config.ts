@@ -310,6 +310,16 @@ const alertSeveritySchema = z.enum(['critical', 'high', 'medium', 'low', 'info']
 const alertingConfigSchema = z.object({
   enabled: z.boolean().optional(),
   dingtalkWebhook: z.string().url().optional(),
+  /**
+   * 2026-08-01：钉钉企业内部机器人「单聊」通道（自定义 webhook 机器人无创建 API，
+   * 曾磊拍板告警直接私聊）。与 dingtalkWebhook 可并存，任一配置即视为已配置通道。
+   */
+  dingtalkRobot: z.object({
+    appKey: z.string().min(1),
+    appSecret: z.string().min(1),
+    robotCode: z.string().min(1).optional(),
+    receiverUserIds: z.array(z.string().min(1)).min(1),
+  }).optional(),
   minSeverity: alertSeveritySchema.optional(),
   evaluateIntervalMs: z.number().int().positive().optional(),
   repeatIntervalMs: z.object({

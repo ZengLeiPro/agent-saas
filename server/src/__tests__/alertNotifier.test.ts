@@ -180,12 +180,69 @@ describe('AlertNotifier', () => {
     const item: AttentionItem = { kind: 'failed_run', severity: 'high', title: 'Run failed' };
 
     await expect(notifier.notifyExternal('test', [item])).resolves.toMatchObject({ considered: 1, notified: 0 });
-    expect(errors.some((msg) => msg.includes('webhook send failed'))).toBe(true);
+    expect(errors.some((msg) => msg.includes('delivery failed') && msg.includes('dingtalk 500'))).toBe(true);
     expect(store.states.get('failed_run:global')?.lastNotifiedAt).toBeNull();
 
     // last_notified_at 未写 → 下一轮继续尝试发送
     await notifier.notifyExternal('test', [item]);
     expect(sender).toHaveBeenCalledTimes(2);
+  });
+
+  it('delivers via dingtalk robot oTo channel when only dingtalkRobot is configured', async () => {
+    const robotSent: Array<{ config: { receiverUserIds: string[] }; text: string }> = [];
+    const notifier = new AlertNotifier({
+      config: {
+        alerting: {
+          enabled: true,
+          dingtalkRobot: {
+            appKey: 'ding-test-key',
+            appSecret: 'secret',
+            receiverUserIds: ['0817456921848268'],
+          },
+          minSeverity: 'medium',
+        },
+      } as any,
+      alertStateStore: new FakeAlertStateStore() as unknown as PgAlertStateStore,
+      sender: async () => { throw new Error('webhook should not be called'); },
+      robotSender: async (config, markdown) => { robotSent.push({ config, text: markdown.text }); },
+    });
+
+    expect(await notifier.notifyExternal('acs', [
+      { kind: 'acs_sandbox_stale_image_prewarm', severity: 'medium', title: 'ACS Sandbox stale-image retire processed 6 Paused sandboxes' },
+    ])).toMatchObject({ considered: 1, notified: 1 });
+    expect(robotSent).toHaveLength(1);
+    expect(robotSent[0]!.config.receiverUserIds).toEqual(['0817456921848268']);
+    expect(robotSent[0]!.text).toContain('stale-image retire');
+    const status = await notifier.getStatus();
+    expect(status).toMatchObject({ configured: true, webhookConfigured: false, robotConfigured: true, robotReceiverCount: 1 });
+  });
+
+  it('treats partial channel failure as delivered (webhook fails, robot succeeds)', async () => {
+    const warns: string[] = [];
+    const robotSent: string[] = [];
+    const store = new FakeAlertStateStore();
+    const notifier = new AlertNotifier({
+      config: {
+        alerting: {
+          enabled: true,
+          dingtalkWebhook: 'https://oapi.dingtalk.com/robot/send?access_token=token',
+          dingtalkRobot: { appKey: 'k', appSecret: 's', receiverUserIds: ['u1'] },
+          minSeverity: 'high',
+        },
+      } as any,
+      alertStateStore: store as unknown as PgAlertStateStore,
+      sender: async () => { throw new Error('dingtalk 500'); },
+      robotSender: async (_config, markdown) => { robotSent.push(markdown.text); },
+      logger: { info: () => {}, warn: (msg) => warns.push(msg), error: () => {} },
+    });
+
+    expect(await notifier.notifyExternal('test', [
+      { kind: 'failed_run', severity: 'high', title: 'Run failed' },
+    ])).toMatchObject({ considered: 1, notified: 1 });
+    expect(robotSent).toHaveLength(1);
+    expect(warns.some((msg) => msg.includes('partial delivery failure'))).toBe(true);
+    // 任一通道成功即 markNotified，避免下一轮重复轰炸
+    expect(store.states.get('failed_run:global')?.lastNotifiedAt).not.toBeNull();
   });
 
   it('cleans up keys that disappeared for more than 24h', async () => {

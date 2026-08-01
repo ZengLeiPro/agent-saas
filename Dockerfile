@@ -168,7 +168,7 @@ RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
 RUN curl -fsSL "https://aliyuncli.alicdn.com/aliyun-cli-linux-${ALIYUN_CLI_VERSION}-amd64.tgz" -o /tmp/aliyun-cli.tgz \
     && echo "${ALIYUN_CLI_SHA256}  /tmp/aliyun-cli.tgz" | sha256sum -c - \
     && tar xzf /tmp/aliyun-cli.tgz -C /tmp \
-    && install -m 0755 /tmp/aliyun /usr/local/libexec/aliyun \
+    && install -D -m 0755 /tmp/aliyun /usr/local/libexec/aliyun \
     && rm -f /tmp/aliyun /tmp/aliyun-cli.tgz \
     && /usr/local/libexec/aliyun version \
     && rg --version

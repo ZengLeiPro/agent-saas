@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { reconcileInterruptedForegroundSubagents } from '../runtime/subagent/recovery.js';
+import { reconcileInterruptedForegroundToolCalls } from '../runtime/subagent/recovery.js';
 import type { RunRecord, RunStore } from '../runtime/runStore.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
@@ -76,7 +76,7 @@ async function seedInterruptedAgentCall(eventStore: MemoryEventStore, includeSta
   }
 }
 
-describe('reconcileInterruptedForegroundSubagents', () => {
+describe('reconcileInterruptedForegroundToolCalls', () => {
   it('orphans the child and durably closes the parent Agent invocation without duplicates', async () => {
     const eventStore = new MemoryEventStore();
     await seedInterruptedAgentCall(eventStore);
@@ -94,13 +94,13 @@ describe('reconcileInterruptedForegroundSubagents', () => {
       markStatus: vi.fn(async () => undefined),
     } as unknown as SessionCatalog;
 
-    const first = await reconcileInterruptedForegroundSubagents({
+    const first = await reconcileInterruptedForegroundToolCalls({
       eventStore,
       runStore,
       sessionCatalog,
       parentSessionId: 'parent-session-1',
     });
-    const second = await reconcileInterruptedForegroundSubagents({
+    const second = await reconcileInterruptedForegroundToolCalls({
       eventStore,
       runStore,
       sessionCatalog,
@@ -140,7 +140,7 @@ describe('reconcileInterruptedForegroundSubagents', () => {
       markStatus: vi.fn(),
     } as unknown as SessionCatalog;
 
-    expect(await reconcileInterruptedForegroundSubagents({
+    expect(await reconcileInterruptedForegroundToolCalls({
       eventStore,
       runStore,
       sessionCatalog,
@@ -154,5 +154,75 @@ describe('reconcileInterruptedForegroundSubagents', () => {
       status: 'cancelled',
       error: expect.stringContaining('建立完成记录前中断'),
     });
+  });
+
+  it('closes an interrupted non-Agent foreground invocation immediately', async () => {
+    const eventStore = new MemoryEventStore();
+    await eventStore.append({
+      type: 'assistant_tool_calls',
+      runId: 'parent-run-1',
+      sessionId: 'parent-session-1',
+      content: '',
+      toolCalls: [{ id: 'shell-call-1', name: 'Shell', arguments: '{"command":"sleep 30"}' }],
+    });
+    await eventStore.append({
+      type: 'tool_invocation_started',
+      runId: 'parent-run-1',
+      sessionId: 'parent-session-1',
+      invocationId: 'parent-run-1:shell-call-1',
+      toolCallId: 'shell-call-1',
+      toolName: 'Shell',
+      executionTarget: 'server-remote',
+    });
+
+    const recovered = await reconcileInterruptedForegroundToolCalls({
+      eventStore,
+      sessionCatalog: { markStatus: vi.fn() } as unknown as SessionCatalog,
+      parentSessionId: 'parent-session-1',
+    });
+
+    expect(recovered).toBe(1);
+    expect(eventStore.events.find((event) => event.type === 'tool_invocation_completed')).toMatchObject({
+      toolCallId: 'shell-call-1',
+      toolName: 'Shell',
+      status: 'cancelled',
+      error: expect.stringContaining('Shell 执行完成前中断'),
+    });
+  });
+
+  it('preserves a durable ask_user interaction that is still waiting for the user', async () => {
+    const eventStore = new MemoryEventStore();
+    await eventStore.append({
+      type: 'assistant_tool_calls',
+      runId: 'parent-run-1',
+      sessionId: 'parent-session-1',
+      content: '',
+      toolCalls: [{ id: 'ask-call-1', name: 'AskUserQuestion', arguments: '{}' }],
+    });
+    await eventStore.append({
+      type: 'tool_invocation_started',
+      runId: 'parent-run-1',
+      sessionId: 'parent-session-1',
+      invocationId: 'parent-run-1:ask-call-1',
+      toolCallId: 'ask-call-1',
+      toolName: 'AskUserQuestion',
+      executionTarget: 'server-local',
+    });
+    await eventStore.append({
+      type: 'interaction_requested',
+      runId: 'parent-run-1',
+      sessionId: 'parent-session-1',
+      invocationId: 'parent-run-1:ask-call-1',
+      toolCallId: 'ask-call-1',
+      interactionId: 'interaction-1',
+      interactionType: 'ask_user',
+    });
+
+    expect(await reconcileInterruptedForegroundToolCalls({
+      eventStore,
+      sessionCatalog: { markStatus: vi.fn() } as unknown as SessionCatalog,
+      parentSessionId: 'parent-session-1',
+    })).toBe(0);
+    expect(eventStore.events.filter((event) => event.type === 'tool_invocation_completed')).toHaveLength(0);
   });
 });

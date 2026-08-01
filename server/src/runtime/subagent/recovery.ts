@@ -13,7 +13,7 @@ const ACTIVE_RUN_STATUSES = new Set<RunStatus>([
 
 const RECOVERY_REASON = 'subagent_parent_recovered_after_interruption';
 
-export interface ForegroundSubagentRecoveryOptions {
+export interface ForegroundToolRecoveryOptions {
   eventStore: EventStore;
   runStore?: RunStore;
   sessionCatalog: SessionCatalog;
@@ -22,16 +22,17 @@ export interface ForegroundSubagentRecoveryOptions {
 }
 
 /**
- * 会话锁已由当前 dispatch 独占后，对账崩溃前未闭合的前台 Agent 调用。
+ * 会话锁已由当前 dispatch 独占后，对账崩溃前未闭合的前台工具调用。
  *
- * 正常父 run 会在子 run 返回后依次写 subagent_finished、
- * tool_invocation_completed、tool_result。进程若在中间被 SIGKILL，新进程不能重放
- * 子 Agent（会造成双份执行/计费），但也不能继续把父会话阻塞到 zombie timeout。
- * 这里把残留子 run 终止为 orphaned，并补齐父调用的失败终态；RawAgentLoop 随后会
- * 基于 tool_invocation_completed 合成标准 tool_result，让父会话立即可继续。
+ * 进程若在工具执行中被 SIGKILL，新进程不能盲目重放（会造成双份副作用/计费），
+ * 也不能继续把父会话阻塞到 zombie timeout。这里补齐失败终态；Agent 工具还会把
+ * 残留 child run/session 一并收口。RawAgentLoop 随后基于
+ * tool_invocation_completed 合成标准 tool_result，让父会话立即可继续。
+ *
+ * pending approval / ask_user 没有开始真实执行，必须保留给既有恢复路径继续处理。
  */
-export async function reconcileInterruptedForegroundSubagents(
-  options: ForegroundSubagentRecoveryOptions,
+export async function reconcileInterruptedForegroundToolCalls(
+  options: ForegroundToolRecoveryOptions,
 ): Promise<number> {
   const events = await options.eventStore.list(options.parentSessionId);
   const replay = buildRuntimeReplayState(events, [], options.parentSessionId);
@@ -39,15 +40,18 @@ export async function reconcileInterruptedForegroundSubagents(
 
   for (const state of replay.unclosedToolCalls) {
     if (
-      state.toolName !== 'Agent'
-      || !state.invocationStarted
+      !state.invocationStarted
       || state.invocationCompleted
       || state.cancelRequested
+      || state.status === 'pending_approval'
+      || (state.interactionRequest && !state.interactionResolution)
     ) {
       continue;
     }
 
-    const started = findSubagentStarted(events, state.runId, state.toolCallId);
+    const started = state.toolName === 'Agent'
+      ? findSubagentStarted(events, state.runId, state.toolCallId)
+      : undefined;
     const finished = started
       ? events.some((event) => (
           event.type === 'subagent_finished'
@@ -56,9 +60,11 @@ export async function reconcileInterruptedForegroundSubagents(
           && event.childRunId === started.childRunId
         ))
       : false;
-    const error = started
-      ? '父 run 在子 Agent 提交结果前中断；本次工具调用未完成'
-      : '父 run 在子 Agent 建立完成记录前中断；本次工具调用未完成';
+    const error = state.toolName !== 'Agent'
+      ? `父 run 在 ${state.toolName} 执行完成前中断；本次工具调用未完成`
+      : started
+        ? '父 run 在子 Agent 提交结果前中断；本次工具调用未完成'
+        : '父 run 在子 Agent 建立完成记录前中断；本次工具调用未完成';
 
     let childStatus: RunStatus | undefined;
     if (started && !finished) {
@@ -122,8 +128,10 @@ export async function reconcileInterruptedForegroundSubagents(
       for (const event of terminalEvents) await options.eventStore.append(event);
     }
     options.logger?.warn(
-      `Recovered interrupted foreground Agent call ${state.toolCallId}`
-      + `${started ? `; child=${started.childRunId} status=${childStatus ?? 'missing'}` : '; child link missing'}`,
+      `Recovered interrupted foreground ${state.toolName} call ${state.toolCallId}`
+      + (started
+        ? `; child=${started.childRunId} status=${childStatus ?? 'missing'}`
+        : state.toolName === 'Agent' ? '; child link missing' : ''),
     );
     recovered += 1;
   }

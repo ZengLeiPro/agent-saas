@@ -156,7 +156,7 @@ import { deriveStableWorkspaceId } from './workspaceIdentity.js';
 // 注意：subagent/agentToolProvider.js 反向 import 本文件的装配小件（ESM 循环依赖，
 // 仅函数级引用、无模块求值期访问，安全）。
 import { AgentToolProvider } from './subagent/agentToolProvider.js';
-import { reconcileInterruptedForegroundSubagents } from './subagent/recovery.js';
+import { reconcileInterruptedForegroundToolCalls } from './subagent/recovery.js';
 import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.js';
 import { BackgroundTaskToolProvider } from './background/backgroundTaskToolProvider.js';
 
@@ -2100,7 +2100,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       logger: config.logger,
     });
     await markRunState(config.runStore, eventStore, sessionId, runId, 'running');
-    await reconcileInterruptedForegroundSubagents({
+    await reconcileInterruptedForegroundToolCalls({
       eventStore,
       runStore: config.runStore,
       sessionCatalog,

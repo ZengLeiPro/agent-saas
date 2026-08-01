@@ -79,6 +79,8 @@ ARG DEBIAN_SECURITY_MIRROR=http://deb.debian.org/debian-security
 ARG GH_CLI_VERSION=2.96.0
 ARG ALIYUN_CLI_VERSION=3.4.4
 ARG ALIYUN_CLI_SHA256=11dc3c6999e0e2f3cdac6e38775920e14ace7b52567534ff1222db22ae327684
+ARG GWS_CLI_VERSION=0.22.5
+ARG GWS_CLI_TARGET=x86_64-unknown-linux-gnu
 
 COPY --from=node-bookworm /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-bookworm /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -189,10 +191,30 @@ RUN pnpm install --frozen-lockfile \
     --filter '!web'
 
 # 能力中心官方 CLI — 全部 pin 版本，避免 latest 漂浮。
-# Notion npm 包名/命令均为 ntn；Google Workspace npm 包提供 gws 命令。
-RUN npm install -g ntn@0.21.6 @googleworkspace/cli@0.22.5 \
-    && ntn --version \
-    && gws --version
+# Notion npm 包名/命令均为 ntn。
+RUN npm install -g ntn@0.21.6 \
+    && ntn --version
+
+# Google Workspace CLI 的 npm 包只是一层 postinstall 壳：它用 Node native fetch
+# 直连 GitHub Releases，既无重试，也不读取 HTTP_PROXY/HTTPS_PROXY。
+# 直接按官方推荐下载 immutable release，保留官方 SHA256 校验并显式重试。
+RUN set -eu; \
+    archive="google-workspace-cli-${GWS_CLI_TARGET}.tar.gz"; \
+    release_url="https://github.com/googleworkspace/cli/releases/download/v${GWS_CLI_VERSION}"; \
+    download_dir="$(mktemp -d)"; \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
+      --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 1200 \
+      --connect-timeout 20 --max-time 300 \
+      -o "${download_dir}/${archive}" "${release_url}/${archive}"; \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
+      --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 300 \
+      --connect-timeout 20 --max-time 60 \
+      -o "${download_dir}/${archive}.sha256" "${release_url}/${archive}.sha256"; \
+    (cd "${download_dir}" && sha256sum -c "${archive}.sha256"); \
+    tar -xzf "${download_dir}/${archive}" -C "${download_dir}" ./gws; \
+    install -m 0755 "${download_dir}/gws" /usr/local/bin/gws; \
+    rm -rf "${download_dir}"; \
+    gws --version
 
 # dws CLI（钉钉工作台 skill 依赖）
 # npm 包名: dingtalk-workspace-cli（bin 名: dws）；不用 dws@... 会拉到无关的 Decarta wrapper。

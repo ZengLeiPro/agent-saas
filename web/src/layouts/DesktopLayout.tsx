@@ -377,7 +377,7 @@ export function DesktopLayout(props: LayoutProps) {
                 onClick={(e) => { e.stopPropagation(); toggleSidebar(); }}
                 title="展开侧边栏"
               >
-                <PanelLeft className="size-7" strokeWidth={2} />
+                <PanelLeft className="size-7" strokeWidth={1.5} />
               </Button>
             )}
             {activeTab === "capabilities" ? (

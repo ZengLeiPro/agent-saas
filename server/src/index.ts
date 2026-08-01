@@ -12,6 +12,7 @@ import { verifyAzerothTokenMetadata } from './integrations/azeroth/tokens.js';
 import { startKbPreviewScheduler, type KbPreviewScheduler } from './kb/previewScheduler.js';
 import { serverLogger, cronLogger } from './utils/logger.js';
 import { sessionCompression } from './middleware/sessionCompression.js';
+import { runtimeRunController } from './runtime/runController.js';
 
 type ProcessRole = 'all' | 'ws-only' | 'scheduler-only';
 
@@ -379,7 +380,8 @@ process.on('SIGUSR2', () => {
 
   // 硬性截止（默认 15min，AGENT_SAAS_DRAIN_DEADLINE_MS 可调）：蓝绿模式下
   // 旧色在后台排空、不阻塞部署，可以给长 run 充足余量。到点后仅允许
-  // 打断可由 lease 恢复的 run；HTTP 上传仍在进行时继续等待，绝不强退。
+  // 先取消 in-process run 并等待终态事件落盘；真正来不及收尾的 run 才交给
+  // 新实例的 lease/session recovery。HTTP 上传仍在进行时继续等待，绝不强退。
   const deadlineMs = parseInt(process.env.AGENT_SAAS_DRAIN_DEADLINE_MS || '', 10) || 900_000;
   const onDrainDeadline = (): void => {
     const remaining = runtime?.channelManager.getActiveStreamCount() ?? 0;
@@ -390,8 +392,29 @@ process.on('SIGUSR2', () => {
       drainDeadline.unref();
       return;
     }
+    const abortedRuns = runtimeRunController.abortAllForDrain('server_drain_deadline');
+    if (abortedRuns > 0) {
+      const abortGraceMs = parseInt(process.env.AGENT_SAAS_DRAIN_ABORT_GRACE_MS || '', 10) || 30_000;
+      serverLogger.warn(
+        `Drain deadline after ${deadlineMs}ms: ${remaining} stream(s) still active; `
+        + `cancelled ${abortedRuns} runtime run(s), waiting up to ${abortGraceMs}ms for durable finalization`,
+      );
+      drainDeadline = setTimeout(() => {
+        clearInterval(drainPoll);
+        const stillActive = runtime?.channelManager.getActiveStreamCount() ?? 0;
+        serverLogger.warn(
+          `Drain abort grace expired after ${abortGraceMs}ms: ${stillActive} stream(s) still active, forcing exit`,
+        );
+        finishDrain('abort grace expired');
+      }, abortGraceMs);
+      drainDeadline.unref();
+      return;
+    }
     clearInterval(drainPoll);
-    serverLogger.warn(`Drain deadline after ${deadlineMs}ms: ${remaining} stream(s) still active and no uploads, forcing exit (runs recover via lease)`);
+    serverLogger.warn(
+      `Drain deadline after ${deadlineMs}ms: ${remaining} stream(s) still active, `
+      + 'no cancellable runtime run found, forcing exit',
+    );
     finishDrain('deadline reached');
   };
   drainDeadline = setTimeout(onDrainDeadline, deadlineMs);

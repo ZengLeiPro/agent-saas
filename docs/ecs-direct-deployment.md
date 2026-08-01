@@ -75,6 +75,18 @@ GitHub Secrets：
 - `OSS_WEB_DEPLOY_AK_ID`
 - `OSS_WEB_DEPLOY_AK_SECRET`
 
+## Google Workspace OAuth
+
+Google Workspace 原生连接器由 `/etc/agent-saas/server.env` 提供平台级 OAuth Client：
+
+```ini
+GOOGLE_WORKSPACE_CONNECTOR_CLIENT_ID=<Google OAuth client id>
+GOOGLE_WORKSPACE_CONNECTOR_CLIENT_SECRET=<Google OAuth client secret>
+CONNECTOR_OAUTH_CALLBACK_URL=https://api.agent.kaiyan.net/api/connectors/oauth/callback
+```
+
+Google Cloud Console 中必须登记完全一致的 Authorized redirect URI。修改共享 `server.env` 后，通过正常蓝绿发布启动 idle 色并切流；不要直接重启 active 色制造中断。
+
 ## ky-azeroth PAT 注入
 
 `agent-saas-server.service` 通过 `AZEROTH_TOKENS_FILE` 读取 `(tenantId, username) -> PAT` 映射。生产文件放在稳定路径：

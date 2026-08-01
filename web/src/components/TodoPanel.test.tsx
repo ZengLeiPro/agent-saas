@@ -31,7 +31,7 @@ describe("TodoPanel", () => {
     const { container } = render(<TodoPanel messages={[todoMessage()]} runActive />);
     const panel = container.firstElementChild;
 
-    expect(panel?.classList.contains("mx-4")).toBe(true);
+    expect(panel?.classList.contains("mx-6")).toBe(true);
     expect(panel?.classList.contains("-mb-px")).toBe(true);
   });
 

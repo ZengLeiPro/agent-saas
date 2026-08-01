@@ -371,7 +371,8 @@ export function DesktopLayout(props: LayoutProps) {
         {/* 内容区 header */}
         <header
           className={cn(
-            "flex h-12 shrink-0 items-center gap-3 px-4",
+            "flex shrink-0 items-center gap-3",
+            activeTab === "capabilities" ? "h-14 px-6" : "h-12 px-4",
             contentPanelFloating ? "bg-card" : "bg-background",
           )}
           onClick={(e) => {
@@ -395,8 +396,9 @@ export function DesktopLayout(props: LayoutProps) {
             {activeTab === "capabilities" ? (
               <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="min-w-0">
                 <CapabilityTabsList
+                  activeValue={activeCapabilityTab}
                   showTemplates={personalAgentEnabled}
-                  className="w-[34rem] max-w-[min(34rem,calc(100vw-24rem))]"
+                  className="w-[30rem] max-w-[min(30rem,calc(100vw-24rem))]"
                 />
               </Tabs>
             ) : activeTab !== "tenants" &&

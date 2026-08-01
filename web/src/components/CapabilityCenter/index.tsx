@@ -74,7 +74,10 @@ export function CapabilityCenter({
     <div className="flex h-full min-h-0 w-full flex-col">
       <Tabs value={activeCapabilityTab} onValueChange={handleCapabilityTabChange} className="flex min-h-0 flex-1 flex-col">
         <div className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-6 md:hidden">
-          <CapabilityTabsList showTemplates={personalAgentEnabled} />
+          <CapabilityTabsList
+            activeValue={activeCapabilityTab}
+            showTemplates={personalAgentEnabled}
+          />
         </div>
 
         <div className="mt-5 min-h-0 flex-1 overflow-y-auto md:mt-0">

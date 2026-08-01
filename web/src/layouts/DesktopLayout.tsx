@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { Volume2, VolumeX, Loader2, PanelLeft, FolderOpen } from "lucide-react";
+import { Volume2, VolumeX, Loader2, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
 import { FilePreviewDialog, FilePreviewPanel } from "@/components/FilePreviewPanel";
 import { DesktopSessionSidebar } from "@/components/DesktopSessionSidebar";
+import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
 import { TrashView } from "@/components/chat/TrashView";
 import { TokenUsageDisplay } from "@/components/TokenUsageDisplay";
 import { BillingMiniBadge } from "@/components/BillingMiniBadge";
@@ -378,7 +379,7 @@ export function DesktopLayout(props: LayoutProps) {
                 onClick={(e) => { e.stopPropagation(); toggleSidebar(); }}
                 title="展开侧边栏"
               >
-                <PanelLeft className="size-7" strokeWidth={1.5} />
+                <PanelToggleIcon className="size-4" />
               </Button>
             )}
             {activeTab === "capabilities" ? (

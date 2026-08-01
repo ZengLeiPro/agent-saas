@@ -116,6 +116,8 @@ describe("图标体系守护", () => {
     const allowed = new Set([
       "components/MessageList.tsx: strokeWidth={1}",          // 用户气泡 tail 自绘 path
       "components/mobile/PullToRefresh.tsx: strokeWidth={4}", // 下拉刷新自绘 spinner
+      // 侧边栏折叠图标为自绘 SVG，无 lucide 默认值可继承，须显式声明为注册表同档的 2
+      "components/icons/PanelToggleIcon.tsx: strokeWidth={2}",
     ]);
     const real = violations.filter((v) => !allowed.has(v));
     expect(real, real.join("\n")).toEqual([]);

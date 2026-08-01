@@ -17,7 +17,6 @@ import {
   ChevronRight,
   FolderMinus,
   Check,
-  PanelLeft,
   Clock,
   Minimize2,
   Settings2,
@@ -29,6 +28,7 @@ import {
   Share2,
 } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
+import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
 import { DeleteGroupDialog } from "@/components/chat/DeleteGroupDialog";
@@ -537,7 +537,7 @@ function SidebarBrandHeader({ className, onCollapse }: SidebarBrandHeaderProps) 
           onClick={onCollapse}
           title="收起侧边栏"
         >
-          <PanelLeft className="size-7" strokeWidth={1.5} />
+          <PanelToggleIcon className="size-4" />
         </button>
       )}
     </div>

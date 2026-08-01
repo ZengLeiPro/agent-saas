@@ -537,7 +537,7 @@ function SidebarBrandHeader({ className, onCollapse }: SidebarBrandHeaderProps) 
           onClick={onCollapse}
           title="收起侧边栏"
         >
-          <PanelToggleIcon className="size-4" />
+          <PanelToggleIcon className="size-5" />
         </button>
       )}
     </div>

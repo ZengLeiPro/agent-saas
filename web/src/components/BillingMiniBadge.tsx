@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { EntityIcons } from "@/lib/icons";
 import { authFetch } from "@/lib/authFetch";
-import { Separator } from "@/components/ui/separator";
 import {
   consumePendingBillingBadgeOpen,
   subscribeBillingBadgeOpen,
@@ -83,6 +82,45 @@ function budgetStatusClass(status: MemberBudgetStatus): string {
   if (status === "attention") return "text-orange-600 dark:text-orange-300";
   if (status === "normal") return "text-emerald-600 dark:text-emerald-300";
   return "text-muted-foreground";
+}
+
+/** 预算进度条填充色：与 budgetStatusClass 同一套状态语义，避免文字与进度条讲两种话。 */
+function budgetBarClass(status: MemberBudgetStatus): string {
+  if (status === "over") return "bg-rose-500";
+  if (status === "warning") return "bg-amber-500";
+  if (status === "attention") return "bg-orange-400";
+  if (status === "normal") return "bg-emerald-500";
+  return "bg-muted-foreground/30";
+}
+
+function budgetBarWidth(value: number | null): number {
+  if (value === null || !Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value / 100));
+}
+
+/**
+ * 触发按钮的告警等级：余额不足或已超个人预算=danger，临近预算=warn，其余保持无色。
+ * 颜色只承载状态，不做常态装饰——常态下按钮与右上角其他 ghost 控件同重量。
+ */
+function badgeTone(lowBalance: boolean, status: MemberBudgetStatus | undefined): "none" | "warn" | "danger" {
+  if (lowBalance || status === "over") return "danger";
+  if (status === "warning") return "warn";
+  return "none";
+}
+
+const BADGE_TONE_CLASS: Record<"none" | "warn" | "danger", string> = {
+  none: "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+  warn: "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200 dark:hover:bg-amber-950/50",
+  danger: "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200 dark:hover:bg-rose-950/50",
+};
+
+function StatRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="min-w-0 truncate text-muted-foreground">{label}</span>
+      <span className="shrink-0 tabular-nums">{value}</span>
+    </div>
+  );
 }
 
 export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
@@ -167,97 +205,98 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
 
   if (!summary || !summary.billingEnabled || summary.billingMode === "internal") return null;
 
+  const tone = badgeTone(summary.lowBalance, memberBudget?.status);
+
   return (
     <div ref={containerRef} className="relative" onClick={(event) => event.stopPropagation()}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="inline-flex h-7 items-center gap-1 rounded-md border border-brand-200 bg-brand-50 px-2.5 text-xs font-semibold text-brand-700 shadow-sm tabular-nums transition-colors hover:border-brand-300 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-900/35 dark:text-brand-100 dark:hover:bg-brand-900/55"
+        className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium tabular-nums transition-colors ${BADGE_TONE_CLASS[tone]}`}
         title="组织积分余额"
       >
-        <EntityIcons.credits className="size-3.5" aria-hidden="true" />
+        <EntityIcons.credits className="size-4" aria-hidden="true" />
         {formatCredits(summary.balanceCredits)}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl">
-          <div className="px-4 pb-3 pt-4">
+        <div className="absolute right-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-1.5rem)] rounded-[20px] border bg-popover p-2 text-popover-foreground shadow-[0_18px_50px_rgba(15,23,42,0.16)]">
+          <div className="rounded-2xl border border-border/80 bg-muted/35 p-3">
             <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-1.5 text-sm font-medium">
-                <EntityIcons.credits className="size-4 text-brand-600 dark:text-brand-300" aria-hidden="true" />
+              <span className="flex items-center gap-1.5 text-sm font-semibold">
+                <EntityIcons.credits className="size-[18px]" aria-hidden="true" />
                 积分余额
-              </div>
-              <div className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+              </span>
+              <span className="rounded-full bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
                 {billingModeLabel(summary.billingMode)}
-              </div>
+              </span>
             </div>
-            <div className="mt-3 text-right text-2xl font-semibold leading-none tabular-nums">
-              {formatCredits(summary.balanceCredits)}
+            <div className="mt-3 flex items-baseline gap-2">
+              <span className="text-2xl font-semibold leading-none tabular-nums">
+                {formatCredits(summary.balanceCredits)}
+              </span>
+              <span className="text-xs text-muted-foreground">可用</span>
+              {summary.lowBalance && (
+                <span className="ml-auto rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive">
+                  余额较低
+                </span>
+              )}
             </div>
-            {summary.lowBalance && (
-              <div className="mt-2 text-right text-[11px] text-destructive">余额较低</div>
-            )}
           </div>
 
-          <Separator />
-
-          <div className="space-y-2 px-4 py-3 text-xs">
-            <div className="text-[11px] font-medium text-foreground">我的本月</div>
+          <div className="px-3 pb-3 pt-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[13px] font-medium">我的本月</span>
+              {memberBudget && (
+                <span className={`text-[11px] font-medium tabular-nums ${budgetStatusClass(memberBudget.status)}`}>
+                  {formatUsageRatio(memberBudget.usageRatioBps)} · {budgetStatusLabel(memberBudget.status)}
+                </span>
+              )}
+            </div>
             {memberBudget ? (
               <>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">我的本月用量</span>
-                  <span className="font-mono tabular-nums">{formatCredits(memberBudget.monthUsedCredits)}</span>
+                {memberBudget.monthlyLimitCredits !== null && (
+                  <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      className={`h-full rounded-full transition-[width] ${budgetBarClass(memberBudget.status)}`}
+                      style={{ width: `${budgetBarWidth(memberBudget.usageRatioBps)}%` }}
+                    />
+                  </div>
+                )}
+                <div className="mt-2.5 space-y-1.5 text-[13px]">
+                  <StatRow label="我的本月用量" value={formatCredits(memberBudget.monthUsedCredits)} />
+                  <StatRow
+                    label="我的月度预算"
+                    value={memberBudget.monthlyLimitCredits === null ? "未设置" : formatCredits(memberBudget.monthlyLimitCredits)}
+                  />
                 </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">我的月度预算</span>
-                  <span className="font-mono tabular-nums">
-                    {memberBudget.monthlyLimitCredits === null ? "未设置" : formatCredits(memberBudget.monthlyLimitCredits)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">使用率</span>
-                  <span className={`font-mono tabular-nums ${budgetStatusClass(memberBudget.status)}`}>
-                    {formatUsageRatio(memberBudget.usageRatioBps)} · {budgetStatusLabel(memberBudget.status)}
-                  </span>
-                </div>
+                <p className="mt-2.5 text-[10px] leading-relaxed text-muted-foreground/80">
+                  员工预算仅用于提醒，不转移共享余额、不形成个人钱包，也不会阻断任务。实际消耗以平台计费记录为准。
+                </p>
               </>
             ) : (
-              <div className="text-muted-foreground">个人预算数据暂不可用</div>
+              <div className="mt-2 text-[13px] text-muted-foreground">个人预算数据暂不可用</div>
             )}
           </div>
 
-          <Separator />
-
-          <div className="space-y-2 px-4 py-3 text-xs">
-            <div className="text-[11px] font-medium text-foreground">公司共享积分池</div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-muted-foreground">可用余额</span>
-              <span className="font-mono tabular-nums">{formatCredits(summary.balanceCredits)}</span>
+          <div className="border-t border-border/60 px-3 py-3">
+            <div className="text-[13px] font-medium">公司共享积分池</div>
+            <div className="mt-2.5 space-y-1.5 text-[13px]">
+              {summary.reservedCredits > 0 && (
+                <StatRow label="已预留" value={formatCredits(summary.reservedCredits)} />
+              )}
+              <StatRow label="组织本月消耗" value={formatCredits(summary.currentMonthCreditsUsed)} />
             </div>
-            {summary.reservedCredits > 0 && (
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">已预留</span>
-                <span className="font-mono tabular-nums">{formatCredits(summary.reservedCredits)}</span>
-              </div>
-            )}
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-muted-foreground">组织本月消耗</span>
-              <span className="font-mono tabular-nums">{formatCredits(summary.currentMonthCreditsUsed)}</span>
-            </div>
-            {sessionSummary && (
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">
-                  当前会话{sessionSummary.childSessionCount ? `（含 ${sessionSummary.childSessionCount} 个子 Agent）` : ''}
-                </span>
-                <span className="font-mono tabular-nums">{formatSessionCredits(sessionSummary.creditsUsed)}</span>
-              </div>
-            )}
           </div>
 
-          <div className="border-t bg-muted/35 px-4 py-2 text-[10px] leading-relaxed text-muted-foreground">
-            员工预算仅用于提醒，不转移共享余额、不形成个人钱包，也不会阻断任务。实际消耗以平台计费记录为准。
-          </div>
+          {sessionSummary && (
+            <div className="border-t border-border/60 px-3 py-3 text-[13px]">
+              <StatRow
+                label={`当前会话${sessionSummary.childSessionCount ? `（含 ${sessionSummary.childSessionCount} 个子 Agent）` : ""}`}
+                value={formatSessionCredits(sessionSummary.creditsUsed)}
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -674,6 +674,50 @@ describe('processWsEvent - done 终态', () => {
     }
   });
 
+  it('草稿态（新建会话尚未定型）丢弃其他会话晚到的失败终态', () => {
+    const ctrl = makeController([]);
+    const { ctx, hooks } = makeCtx(ctrl, {
+      userMsgIndex: -1,
+      streamIdRef: { current: null },
+      runIdRef: { current: null },
+    });
+
+    const ret = dispatch({
+      type: 'done',
+      sessionId: 'session-a',
+      streamId: 'stream-session-a',
+      runId: 'run-session-a',
+      client_msg_id: 'client-session-a',
+      error: 'boom',
+    }, ctx, freshBlock(), { value: null }, null);
+
+    expect(ret).toBeUndefined();
+    expect(ctrl.messages).toEqual([]);
+    expect(hooks.onChatDone).not.toHaveBeenCalled();
+  });
+
+  it('草稿态首条消息自身的失败终态仍按 client_msg_id 放行', () => {
+    const ctrl = makeController([
+      { id: 'u1', type: 'user', content: 'hi', status: 'sent', clientMsgId: 'client-draft' },
+    ]);
+    const { ctx, hooks } = makeCtx(ctrl, {
+      userMsgIndex: 0,
+      streamIdRef: { current: null },
+      runIdRef: { current: null },
+    });
+
+    const ret = dispatch({
+      type: 'done',
+      sessionId: 'session-new',
+      client_msg_id: 'client-draft',
+      error: 'boom',
+    }, ctx, freshBlock(), { value: null }, null);
+
+    expect(ret).toBe('done');
+    expect(hooks.onChatDone).toHaveBeenCalledWith('client-draft', 'boom');
+    expect(ctrl.messages[0]).toMatchObject({ status: 'failed' });
+  });
+
   it('done 无 error：清状态条、收尾 streaming、返回 done、触发 onChatDone', () => {
     const ctrl = makeController([
       { id: 'r', type: 'runtime_status', status: 'running' },

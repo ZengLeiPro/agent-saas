@@ -710,7 +710,23 @@ export function processWsEvent(
 
   if (data.type === "done") {
     const expectedSessionId = activeSessionId ?? latestSessionId.value;
-    if (data.sessionId && expectedSessionId && data.sessionId !== expectedSessionId) return;
+    if (data.sessionId) {
+      if (expectedSessionId) {
+        if (data.sessionId !== expectedSessionId) return;
+      } else {
+        // 草稿态（新建会话后尚未定型，activeSessionId 与 latestSessionId 都为 null）：
+        // 只接受与本地在飞用户消息 client_msg_id 精确匹配的终态。否则就是别的会话晚到或
+        // 重放的事件，会被写进刚清空的草稿页——2026-08-01 线上失败提示串会话的路径之一。
+        const draftUserMessage = ctx.userMsgIndex >= 0
+          ? msg.messagesRef.current[ctx.userMsgIndex]
+          : undefined;
+        const draftClientMsgId = (
+          draftUserMessage
+          && (draftUserMessage.type === 'user' || draftUserMessage.type === 'user-voice')
+        ) ? draftUserMessage.clientMsgId : undefined;
+        if (!data.client_msg_id || !draftClientMsgId || data.client_msg_id !== draftClientMsgId) return;
+      }
+    }
     if (data.streamId && streamIdRef.current && data.streamId !== streamIdRef.current) return;
     if (data.runId && ctx.runIdRef?.current && data.runId !== ctx.runIdRef.current) return;
     if (data.client_msg_id && ctx.userMsgIndex >= 0) {

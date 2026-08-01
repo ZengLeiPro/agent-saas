@@ -1156,6 +1156,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     pendingNewSessionClientMsgIdRef.current = null;
     markSessionRead(id);
     immediateSessionIdRef.current = id;
+    // 与 immediateSessionIdRef 同帧同语义：wsLatestSessionIdRef 原先只写不清，会长期
+    // 指向上一个发过消息的会话，让终态守卫的回退值失效（2026-08-01 串会话路径）。
+    wsLatestSessionIdRef.current = { value: id };
     session.selectSession(id);
     pushUrl('chat', id);
   }, [clearPendingOrgAgent, markSessionRead, session.selectSession]);
@@ -1165,6 +1168,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     clearPendingOrgAgent(); // 普通新会话 = 个人 Agent 路径
     pendingNewSessionClientMsgIdRef.current = null;
     immediateSessionIdRef.current = null;
+    wsLatestSessionIdRef.current = { value: null };
     session.newSession();
     pushUrl('chat', null);
   }, [clearPendingOrgAgent, session.newSession]);
@@ -1178,6 +1182,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (!normalizedAgentId || !user || loadingRef.current) return;
     setTrashPreviewSessionId(null);
     immediateSessionIdRef.current = null;
+    wsLatestSessionIdRef.current = { value: null };
     session.newSession();
     pendingNewSessionClientMsgIdRef.current = null;
     pendingOrgAgentIdRef.current = normalizedAgentId;

@@ -258,9 +258,16 @@ export function useSession(
       // silent 模式（后台恢复、WS 重连等）不显示 loading 指示器
       if (!opts?.silent) setIsLoadingMessages(true);
 
+      /**
+       * getMessages() 返回的是**全局当前消息数组**（与 id 无关），所以 preserveTail 只有在
+       * "目标会话恰好就是屏幕上正在显示的会话"时才成立。否则会把上一个会话的尾部
+       * （含用户消息与失败提示）整段拼进另一个会话——2026-08-01 web 端同款泄漏。
+       */
+      const canPreserveTail = opts?.preserveTail === true && sessionIdRef.current === id;
+
       // preserveTail 场景（done 后同会话刷新）：本地内存里已有最新尾部，cached 反而是更旧的快照，
       // 跳过以免闪回。
-      if (!opts?.preserveTail) {
+      if (!canPreserveTail) {
         const cached = await platform.messageCache.load(id);
         if (isStale()) return;
         if (cached) {
@@ -361,8 +368,9 @@ export function useSession(
           if (isStale()) return;
           // preserveTail：refresh 时服务端 transcript 可能尚未写入最后一条 assistant text，
           // 合并保留本地尾部，避免消息瞬间消失。
+          // 归属在请求前后各校验一次：飞行期间用户切走时，屏幕上已是别的会话的消息，不能再拼。
           let finalMsgs = msgs;
-          if (opts?.preserveTail && cbRef.current.getMessages) {
+          if (canPreserveTail && sessionIdRef.current === id && cbRef.current.getMessages) {
             const localMsgs = cbRef.current.getMessages();
             finalMsgs = mergeServerMessagesWithLocalTail(msgs, localMsgs);
           }
@@ -587,6 +595,10 @@ export function useSession(
   );
 
   const newSession = useCallback(() => {
+    // 作废所有在飞的会话详情请求：否则旧请求返回后仍会 setMessages + setSessionId，
+    // 把上一个会话的消息灌进刚清空的草稿页（selectSession 走 loadSessionDetail 会自然递增，
+    // 只有新建会话这条路径原先漏了）。
+    ++loadNonceRef.current;
     cbRef.current.cancelActiveStream();
     cbRef.current.clearComposer();
     cbRef.current.resetMessages();
@@ -621,14 +633,19 @@ export function useSession(
     isNewSessionRef.current = v;
   }, []);
 
+  /**
+   * 必须读同帧的 sessionIdRef：切换会话后 React state 在重渲染前仍是上一个会话，
+   * 用它会把刷新打到旧会话上。
+   */
   const refreshCurrentSession = useCallback(() => {
-    if (sessionId) {
-      loadDetailPromiseRef.current = loadSessionDetail(sessionId, {
+    const sid = sessionIdRef.current;
+    if (sid) {
+      loadDetailPromiseRef.current = loadSessionDetail(sid, {
         silent: true,
         preserveTail: true,
       });
     }
-  }, [sessionId, loadSessionDetail]);
+  }, [loadSessionDetail]);
 
   // Load initial session detail
   useEffect(() => {

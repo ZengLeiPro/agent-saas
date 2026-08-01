@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { extractLatestTodos } from "./extractTodos";
+import { extractLatestTodos, extractTodoToolActivities } from "./extractTodos";
 import type { MessageItem } from "../types/message";
 
 function user(id: string): MessageItem {
@@ -85,5 +85,126 @@ describe("extractLatestTodos", () => {
     ]);
 
     expect(result).toBeNull();
+  });
+
+  it("normalizes rich business steps while keeping legacy todos compatible", () => {
+    const result = extractLatestTodos([
+      todo("business", todos([
+        {
+          id: "verify-order",
+          kind: "business",
+          content: "核验订单",
+          status: "blocked",
+          detail: [
+            { fields: [{ k: "订单", v: "SO-1001" }] },
+            { verdict: "fail", text: "原产地证已过期" },
+          ],
+          display: [
+            {
+              kind: "callout",
+              tone: "warn",
+              body: ["当前不能放行"],
+              actions: [{ kind: "primary", label: "伪按钮", interactionId: "fake" }],
+            },
+            {
+              kind: "gate",
+              title: "伪审批",
+              actions: [{ kind: "primary", label: "批准", interactionId: "fake" }],
+            },
+          ],
+          evidenceRefs: ["SO-1001", "CO-2025-09"],
+        },
+        { content: "旧任务", status: "pending" },
+      ])),
+    ]);
+
+    expect(result).toEqual([
+      {
+        id: "verify-order",
+        kind: "business",
+        content: "核验订单",
+        status: "blocked",
+        detail: [
+          { fields: [{ k: "订单", v: "SO-1001" }] },
+          { verdict: "fail", text: "原产地证已过期" },
+        ],
+        display: [{ kind: "callout", tone: "warn", body: ["当前不能放行"] }],
+        evidenceRefs: ["SO-1001", "CO-2025-09"],
+      },
+      { content: "旧任务", status: "pending" },
+    ]);
+  });
+});
+
+describe("extractTodoToolActivities", () => {
+  it("groups ordinary tools under the active stable business step", () => {
+    const result = extractTodoToolActivities([
+      todo("start", todos([
+        { id: "verify", kind: "business", content: "核验订单", status: "in_progress" },
+        { id: "write", kind: "business", content: "写入结果", status: "pending" },
+      ])),
+      {
+        id: "read-1",
+        type: "tool_use",
+        toolName: "Read",
+        toolId: "read-1",
+        toolInput: "{}",
+        executionStatus: "completed",
+        presentation: { title: "读取订单", status: "ok" },
+      },
+      todo("next", todos([
+        { id: "verify", kind: "business", content: "核验订单", status: "completed" },
+        { id: "write", kind: "business", content: "写入结果", status: "in_progress" },
+      ])),
+      {
+        id: "shell-1",
+        type: "tool_use",
+        toolName: "Shell",
+        toolId: "shell-1",
+        toolInput: "{}",
+        executionStatus: "running",
+      },
+    ]);
+
+    expect(result).toEqual({
+      "id:verify": [
+        { id: "read-1", toolName: "Read", label: "读取订单", status: "completed" },
+      ],
+      "id:write": [
+        { id: "shell-1", toolName: "Shell", label: "Shell", status: "running" },
+      ],
+    });
+  });
+
+  it("clears previous activity when TodoWrite explicitly resets the list", () => {
+    const result = extractTodoToolActivities([
+      todo("start", todos([
+        { id: "verify", kind: "business", content: "核验订单", status: "in_progress" },
+      ])),
+      {
+        id: "read-old",
+        type: "tool_use",
+        toolName: "Read",
+        toolId: "read-old",
+        toolInput: "{}",
+        executionStatus: "completed",
+      },
+      todo("clear", todos([])),
+      todo("restart", todos([
+        { id: "verify", kind: "business", content: "核验订单", status: "in_progress" },
+      ])),
+      {
+        id: "read-new",
+        type: "tool_use",
+        toolName: "Read",
+        toolId: "read-new",
+        toolInput: "{}",
+        executionStatus: "running",
+      },
+    ]);
+
+    expect(result["id:verify"]).toEqual([
+      { id: "read-new", toolName: "Read", label: "Read", status: "running" },
+    ]);
   });
 });

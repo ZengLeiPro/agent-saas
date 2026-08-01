@@ -59,4 +59,63 @@ describe("TodoPanel", () => {
     expect(screen.getByText("停留在：读取代码")).toBeTruthy();
     expect(container.querySelector(".animate-spin")).toBeNull();
   });
+
+  it("renders a rich business step and groups its tool activity", () => {
+    const messages: MessageItem[] = [
+      {
+        id: "todo-start",
+        type: "tool_use",
+        toolName: "TodoWrite",
+        toolId: "todo-start",
+        toolInput: JSON.stringify({
+          todos: [{
+            id: "verify-order",
+            kind: "business",
+            content: "核验订单",
+            status: "in_progress",
+            activeForm: "正在核验订单",
+          }],
+        }),
+      },
+      {
+        id: "read-order",
+        type: "tool_use",
+        toolName: "Read",
+        toolId: "read-order",
+        toolInput: "{}",
+        executionStatus: "completed",
+        presentation: { title: "读取订单", status: "ok" },
+      },
+      {
+        id: "todo-blocked",
+        type: "tool_use",
+        toolName: "TodoWrite",
+        toolId: "todo-blocked",
+        toolInput: JSON.stringify({
+          todos: [{
+            id: "verify-order",
+            kind: "business",
+            content: "核验订单",
+            status: "blocked",
+            detail: [
+              { fields: [{ k: "订单", v: "SO-1001" }] },
+              { verdict: "fail", text: "原产地证已过期" },
+            ],
+            display: [{ kind: "callout", tone: "warn", body: ["当前不能放行"] }],
+            evidenceRefs: ["SO-1001"],
+          }],
+        }),
+      },
+    ];
+
+    render(<TodoPanel messages={messages} sessionId="business-session" runActive />);
+
+    expect(screen.getByRole("button", { name: "收起任务清单" })).toBeTruthy();
+    expect(screen.getAllByText("核验订单").length).toBeGreaterThan(0);
+    expect(screen.getByText("原产地证已过期")).toBeTruthy();
+    expect(screen.getByText("当前不能放行")).toBeTruthy();
+    expect(screen.getAllByText("SO-1001")).toHaveLength(2);
+    expect(screen.getByText("执行详情（1）")).toBeTruthy();
+    expect(screen.getByText("读取订单")).toBeTruthy();
+  });
 });

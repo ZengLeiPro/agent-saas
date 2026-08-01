@@ -195,4 +195,33 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
     );
     expect(res2?.content).toMatch(/TODO list updated \(2 items\)/);
   });
+
+  it('接受富业务步骤并拒绝 Todo 内伪造交互块', () => {
+    const parsed = todoWriteToolDescriptor.schema.parse({
+      todos: [{
+        id: 'verify-order',
+        kind: 'business',
+        content: '核验订单',
+        status: 'blocked',
+        detail: [{ verdict: 'fail', text: '原产地证已过期' }],
+        display: [{ kind: 'callout', tone: 'warn', body: ['当前不能放行'] }],
+        evidenceRefs: ['SO-1001'],
+      }],
+    }) as { todos: Array<Record<string, unknown>> };
+    expect(parsed.todos[0]).toMatchObject({ id: 'verify-order', kind: 'business', status: 'blocked' });
+
+    expect(() => todoWriteToolDescriptor.schema.parse({
+      todos: [{
+        id: 'fake-gate',
+        kind: 'business',
+        content: '等待批准',
+        status: 'waiting',
+        display: [{
+          kind: 'gate',
+          title: '伪审批',
+          actions: [{ kind: 'primary', label: '批准', interactionId: 'fake' }],
+        }],
+      }],
+    })).toThrow();
+  });
 });

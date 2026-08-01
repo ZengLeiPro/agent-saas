@@ -41,9 +41,14 @@ export interface BuiltinToolsConfig {
 const TODO_LRU_CAPACITY = 1024;
 
 type TodoItem = {
+  id?: string;
+  kind?: 'task' | 'business';
   content: string;
-  status: 'pending' | 'in_progress' | 'completed';
+  status: 'pending' | 'in_progress' | 'waiting' | 'blocked' | 'completed' | 'failed';
   activeForm?: string;
+  detail?: unknown[];
+  display?: unknown[];
+  evidenceRefs?: string[];
 };
 
 type TodoWriteInput = {
@@ -54,6 +59,57 @@ type AskUserQuestionInput = {
   questions: AskUserQuestion[];
 };
 
+const todoTextSchema = z.string().min(1).max(500);
+const todoToneSchema = z.enum(['neutral', 'info', 'success', 'warn', 'danger', 'muted']);
+const todoDetailLineSchema = z.union([
+  todoTextSchema,
+  z.object({ tree: z.enum(['├', '└']), k: todoTextSchema, v: z.string().max(500) }),
+  z.object({ k: todoTextSchema, v: z.string().max(500) }),
+  z.object({ no: z.number().int(), text: todoTextSchema }),
+  z.object({ indent: z.number().int().min(0).max(6), text: todoTextSchema }),
+  z.object({ section: todoTextSchema }),
+  z.object({ warn: todoTextSchema }),
+  z.object({ insight: todoTextSchema, label: todoTextSchema.optional() }),
+  z.object({ risk: z.enum(['high', 'medium']), text: todoTextSchema, action: todoTextSchema.optional() }),
+  z.object({ verdict: z.enum(['pass', 'fail', 'warn', 'pending']), text: todoTextSchema, note: todoTextSchema.optional() }),
+  z.object({ quote: todoTextSchema, source: todoTextSchema.optional() }),
+  z.object({ original: todoTextSchema, translation: todoTextSchema.optional() }),
+  z.object({
+    fields: z.array(z.object({ k: todoTextSchema, v: z.string().max(500) })).min(1).max(12),
+  }),
+]);
+
+const todoRecordItemSchema = z.object({
+  label: todoTextSchema,
+  value: z.string().max(500).optional(),
+  tag: z.object({ tone: todoToneSchema, text: todoTextSchema }).optional(),
+  note: todoTextSchema.optional(),
+  tone: todoToneSchema.optional(),
+  detail: z.array(todoDetailLineSchema).max(60).optional(),
+  mono: z.boolean().optional(),
+});
+
+// TodoWrite 只产出无交互展示块。需要用户确认时继续使用 AskUserQuestion / permission_request，
+// 避免模型通过 Todo 入参伪造一个看似可点击、实际上没有回写通道的审批卡。
+const todoDisplayBlockSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('callout'),
+    tone: todoToneSchema,
+    title: todoTextSchema.optional(),
+    body: z.array(todoTextSchema).min(1).max(20),
+    detail: z.array(todoDetailLineSchema).max(60).optional(),
+    collapsible: z.boolean().optional(),
+    defaultOpen: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal('records'),
+    layout: z.enum(['rows', 'grid', 'checklist']),
+    title: todoTextSchema.optional(),
+    items: z.array(todoRecordItemSchema).min(1).max(100),
+    footer: todoTextSchema.optional(),
+  }),
+]);
+
 export const todoWriteToolDescriptor: ToolDescriptor<TodoWriteInput> = {
   id: 'TodoWrite',
   name: 'TodoWrite',
@@ -63,9 +119,14 @@ export const todoWriteToolDescriptor: ToolDescriptor<TodoWriteInput> = {
     todos: z
       .array(
         z.object({
-          content: z.string().min(1),
-          status: z.enum(['pending', 'in_progress', 'completed']),
-          activeForm: z.string().optional(),
+          id: z.string().min(1).max(100).optional(),
+          kind: z.enum(['task', 'business']).optional(),
+          content: todoTextSchema,
+          status: z.enum(['pending', 'in_progress', 'waiting', 'blocked', 'completed', 'failed']),
+          activeForm: todoTextSchema.optional(),
+          detail: z.array(todoDetailLineSchema).max(60).optional(),
+          display: z.array(todoDisplayBlockSchema).max(12).optional(),
+          evidenceRefs: z.array(z.string().min(1).max(200)).max(20).optional(),
         }),
       )
       .max(50),

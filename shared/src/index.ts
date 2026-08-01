@@ -317,8 +317,13 @@ export { mapSessionDetailToMessages } from "./lib/sessionsApi";
 export { searchSessions } from "./lib/searchApi";
 export type { SearchSessionsParams } from "./lib/searchApi";
 export { mergeServerMessagesWithLocalTail, mergeSessionMessageDelta } from "./lib/sessionMerge";
-export { extractLatestTodos } from "./lib/extractTodos";
-export type { TodoItem, TodoStatus } from "./lib/extractTodos";
+export {
+  extractLatestTodos,
+  extractTodoToolActivities,
+  isRichTodo,
+  todoItemKey,
+} from "./lib/extractTodos";
+export type { TodoItem, TodoStatus, TodoToolActivity } from "./lib/extractTodos";
 
 // Lib - groups API
 export {

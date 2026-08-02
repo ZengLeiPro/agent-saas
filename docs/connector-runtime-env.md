@@ -10,10 +10,10 @@
 | Notion | `ntn` | `NOTION_API_TOKEN` |
 | Google Workspace | `gws` | `GOOGLE_WORKSPACE_CLI_TOKEN` |
 | 钉钉 | `dws` | `DWS_CONFIG_DIR=/workspace/.dws` |
-| 飞书 | `lark-cli` | `LARKSUITE_CLI_CONFIG_DIR=/workspace/.lark-cli` |
+| 飞书 | `lark-cli` | `LARKSUITE_CLI_APP_ID`、短期 `LARKSUITE_CLI_USER_ACCESS_TOKEN` |
 | 阿里云 | `aliyun` | 短期 STS 三件套、`ALIBABA_CLOUD_REGION_ID` |
 
-Notion、Google Workspace、阿里云的长期凭据由 SecretVault 持久化；Google refresh token 永不进入运行时 env，每次运行只注入有效的短期 access token。阿里云源 AK/SK 只用于 Server 端 `AssumeRole`，运行时只注入短期 STS，不创建共享 `~/.aliyun/config.json`。钉钉、飞书按官方 CLI 的多 profile/keychain 机制运行，认证目录位于当前用户独立 workspace。
+Notion、Google Workspace、飞书、阿里云的长期凭据由 SecretVault 持久化；Google 与飞书 refresh token 永不进入运行时 env，每次运行只注入有效的短期 access token。阿里云源 AK/SK 只用于 Server 端 `AssumeRole`，运行时只注入短期 STS，不创建共享 `~/.aliyun/config.json`。钉钉继续使用官方 CLI 的用户级 profile/keychain，认证目录位于当前用户独立 workspace。
 
 ## 运行链路
 
@@ -51,6 +51,22 @@ CONNECTOR_OAUTH_CALLBACK_URL=https://<公开域名>/api/connectors/oauth/callbac
 ```
 
 原生 Connector 不读取旧 MCP OAuth client 配置，避免 client 与回调 URI 串线。回调 URL 必须在 Google OAuth client 中单独登记。
+
+## 飞书 Token Broker 配置
+
+Server 需要以下配置：
+
+```text
+FEISHU_CONNECTOR_APP_ID
+FEISHU_CONNECTOR_APP_SECRET_REF
+FEISHU_CONNECTOR_SCOPES=<按应用实际开通权限填写，逗号或空格分隔>
+```
+
+生产必须把 App Secret 放在 SecretVault，并只向 Server 提供 opaque ref。`FEISHU_CONNECTOR_APP_SECRET` 仅用于迁移兼容，Server 读取后会立即从 `process.env` 移除。业务 scope 为空时 Broker fail closed，不启用一键授权；`offline_access` 由 Server 自动追加。
+
+授权后的 user access/refresh token 以 `tenantId + userId + feishu` 绑定在 SecretVault。运行、恢复、durable wake 与后台 Agent 执行时，Server 在过期前 5 分钟 single-flight 刷新，跨进程通过 PostgreSQL advisory transaction lock 避免重复消费旋转型 refresh token；sandbox 只得到 App ID 与短期 access token。App Secret、refresh token 以及 Vault ref 不进入 sandbox env。
+
+旧 CLI keychain 连接在用户重新授权时先执行 legacy logout，再删除无 Broker refs 的旧 PG 行；清理失败会阻断新授权。`FEISHU_CONNECTOR_APP_ID` 不支持就地覆盖：切换 App ID 前必须仍使用旧应用凭据让所有用户完成断开撤销，确认旧连接已清空后再修改配置，否则 Broker 会返回 `app_mismatch` 并保留旧 token 引用。
 
 ## 阿里云 RAM Role 基线
 

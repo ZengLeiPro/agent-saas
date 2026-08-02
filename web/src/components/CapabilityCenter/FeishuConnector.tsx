@@ -340,7 +340,7 @@ export function FeishuConnectorDrawer({
         <div><CapabilitySourceBadge source="platform" /><div className={`mt-1 text-xs font-medium ${status.className}`}>{status.label}</div></div>
       </div>
       <div className={cn("p-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>
-        连接一次后，官方 lark-cli 会使用当前用户独立的 LARKSUITE_CLI_CONFIG_DIR；组织内其他成员不能使用你的凭据。
+        平台 App Secret 只保留在 Server；官方 lark-cli 每次运行仅获得当前用户的短期 access token，组织内其他成员不能使用你的凭据。
       </div>
 
       {state.authError ? (

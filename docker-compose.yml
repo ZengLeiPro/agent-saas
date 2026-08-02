@@ -53,11 +53,12 @@ services:
       # 用户自建 MCP OAuth callback；内置连接器不再使用 MCP OAuth。
       MCP_OAUTH_CALLBACK_URL: "${MCP_OAUTH_CALLBACK_URL:-}"
 
-      # 飞书官方 CLI 连接器：平台自建应用凭据；用户 OAuth token 仍逐用户隔离。
+      # 飞书 Token Broker：App Secret 仅由 Server 读取，用户 refresh token 存 SecretVault。
       # 生产优先用 SecretVault ref，FEISHU_CONNECTOR_APP_SECRET 仅作部署迁移兼容。
       FEISHU_CONNECTOR_APP_ID: "${FEISHU_CONNECTOR_APP_ID:-}"
       FEISHU_CONNECTOR_APP_SECRET_REF: "${FEISHU_CONNECTOR_APP_SECRET_REF:-}"
       FEISHU_CONNECTOR_APP_SECRET: "${FEISHU_CONNECTOR_APP_SECRET:-}"
+      FEISHU_CONNECTOR_SCOPES: "${FEISHU_CONNECTOR_SCOPES:-}"
 
       # Legacy/no-op placeholders: server 核心配置只读挂载的 config.json；
       # runtimeEventStore/serverRemote/auth.jwtSecret 必须写入 config.json。

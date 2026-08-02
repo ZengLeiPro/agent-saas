@@ -9,6 +9,7 @@ export const FEISHU_RETRY_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 const FEISHU_ACCESS_REFRESH_RETRY_MS = 3 * 60 * 60 * 1_000;
 
 export type FeishuConnectionStatus = 'pending' | 'connected' | 'error' | 'disconnected';
+export type FeishuTokenStatus = 'valid' | 'invalid' | 'provider_revoked' | 'revoked';
 
 export interface FeishuConnectionIdentity {
   tenantId: string;
@@ -22,13 +23,19 @@ export interface FeishuLoginMetadata {
   userOpenId: string;
   userName?: string;
   scope?: string;
+  expiresAt?: string;
+  refreshExpiresAt?: string;
+  /** Opaque SecretVault reference. Never contains token plaintext. */
+  tokenSecretRef?: string;
+  /** Stable scope key used to reject tenant/user/connector mix-ups. */
+  brokerSecretId?: string;
 }
 
 export interface FeishuConnectionRecord extends FeishuConnectionIdentity, FeishuLoginMetadata {
   connectionStatus: FeishuConnectionStatus;
   authenticated?: boolean;
   verified?: boolean;
-  tokenStatus?: string;
+  tokenStatus?: FeishuTokenStatus;
   expiresAt?: string;
   refreshExpiresAt?: string;
   lastCheckedAt?: string;
@@ -60,6 +67,22 @@ export interface FeishuConnectionStore {
   failCheck(record: FeishuConnectionRecord, workerId: string, error: string, now?: Date): Promise<void>;
   releaseClaim(record: FeishuConnectionRecord, workerId: string): Promise<void>;
   listForUser(tenantId: string, userId: string): Promise<FeishuConnectionRecord[]>;
+  updateBrokerToken?(
+    identity: FeishuConnectionIdentity,
+    profileId: string,
+    expiresAt: string,
+    refreshExpiresAt: string,
+    scope: string,
+  ): Promise<void>;
+  invalidateBroker?(identity: FeishuConnectionIdentity, profileId: string, reason: string): Promise<void>;
+  withBrokerRefreshLock?<T>(
+    identity: FeishuConnectionIdentity,
+    profileId: string,
+    run: () => Promise<T>,
+  ): Promise<T>;
+  removeLegacyProfile?(identity: FeishuConnectionIdentity, profileId: string): Promise<number>;
+  markBrokerProviderRevoked?(identity: FeishuConnectionIdentity, profileId: string): Promise<void>;
+  markBrokerRevoked?(identity: FeishuConnectionIdentity, profileId: string): Promise<void>;
   removeForUser?(tenantId: string, userId: string): Promise<number>;
 }
 
@@ -86,6 +109,8 @@ export class PgFeishuConnectionStore implements FeishuConnectionStore {
           user_open_id TEXT NOT NULL,
           user_name TEXT,
           scope TEXT,
+          token_secret_ref TEXT,
+          broker_secret_id TEXT,
           connection_status TEXT NOT NULL DEFAULT 'pending',
           authenticated BOOLEAN,
           verified BOOLEAN,
@@ -104,6 +129,8 @@ export class PgFeishuConnectionStore implements FeishuConnectionStore {
           CHECK (connection_status IN ('pending', 'connected', 'error', 'disconnected'))
         )
       `);
+      await client.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS token_secret_ref TEXT`);
+      await client.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS broker_secret_id TEXT`);
       await client.query(`
         CREATE INDEX IF NOT EXISTS ${this.table}_due_idx
         ON ${this.table} (next_check_at)
@@ -131,18 +158,27 @@ export class PgFeishuConnectionStore implements FeishuConnectionStore {
     await this.options.pool.query(`
       INSERT INTO ${this.table} (
         tenant_id, user_id, username, profile_id, app_id, user_open_id, user_name, scope,
-        connection_status, authenticated, verified, next_check_at, last_error,
+        token_secret_ref, broker_secret_id, connection_status, authenticated, verified, token_status,
+        expires_at, refresh_expires_at, next_check_at, last_error,
         consecutive_failures, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', TRUE, NULL, $9, NULL, 0, $9, $9)
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', TRUE, NULL, 'valid',
+        $11, $12, $13, NULL, 0, $13, $13
+      )
       ON CONFLICT (tenant_id, user_id, profile_id) DO UPDATE SET
         username = EXCLUDED.username,
         app_id = EXCLUDED.app_id,
         user_open_id = EXCLUDED.user_open_id,
         user_name = EXCLUDED.user_name,
         scope = EXCLUDED.scope,
+        token_secret_ref = COALESCE(EXCLUDED.token_secret_ref, ${this.table}.token_secret_ref),
+        broker_secret_id = COALESCE(EXCLUDED.broker_secret_id, ${this.table}.broker_secret_id),
+        expires_at = COALESCE(EXCLUDED.expires_at, ${this.table}.expires_at),
+        refresh_expires_at = COALESCE(EXCLUDED.refresh_expires_at, ${this.table}.refresh_expires_at),
         connection_status = 'pending',
         authenticated = TRUE,
         verified = NULL,
+        token_status = 'valid',
         next_check_at = EXCLUDED.next_check_at,
         last_error = NULL,
         consecutive_failures = 0,
@@ -158,6 +194,10 @@ export class PgFeishuConnectionStore implements FeishuConnectionStore {
       login.userOpenId,
       nullable(login.userName),
       nullable(login.scope),
+      nullable(login.tokenSecretRef),
+      nullable(login.brokerSecretId),
+      validIso(login.expiresAt) ?? null,
+      validIso(login.refreshExpiresAt) ?? null,
       now.toISOString(),
     ]);
   }
@@ -267,6 +307,91 @@ export class PgFeishuConnectionStore implements FeishuConnectionStore {
     return result.rows.map(mapRow);
   }
 
+  async updateBrokerToken(
+    identity: FeishuConnectionIdentity,
+    profileId: string,
+    expiresAt: string,
+    refreshExpiresAt: string,
+    scope: string,
+  ): Promise<void> {
+    await this.options.pool.query(`
+      UPDATE ${this.table}
+      SET expires_at = $4, refresh_expires_at = $5, scope = $6,
+          token_status = 'valid', authenticated = TRUE, updated_at = NOW()
+      WHERE tenant_id = $1 AND user_id = $2 AND profile_id = $3
+    `, [identity.tenantId, identity.userId, profileId, expiresAt, refreshExpiresAt, scope]);
+  }
+
+  async invalidateBroker(
+    identity: FeishuConnectionIdentity,
+    profileId: string,
+    reason: string,
+  ): Promise<void> {
+    await this.options.pool.query(`
+      UPDATE ${this.table}
+      SET connection_status = 'disconnected', authenticated = FALSE, verified = FALSE,
+          token_status = 'invalid',
+          last_error = $4, lease_owner = NULL, lease_until = NULL, updated_at = NOW()
+      WHERE tenant_id = $1 AND user_id = $2 AND profile_id = $3
+    `, [identity.tenantId, identity.userId, profileId, reason.slice(0, 1_000)]);
+  }
+
+  async withBrokerRefreshLock<T>(
+    identity: FeishuConnectionIdentity,
+    profileId: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const client = await this.options.pool.connect();
+    const lockKey = `feishu-refresh:${identity.tenantId}:${identity.userId}:${profileId}`;
+    let transactionOpen = false;
+    try {
+      await client.query('BEGIN');
+      transactionOpen = true;
+      await client.query("SET LOCAL statement_timeout = '30000ms'");
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [lockKey]);
+      const result = await run();
+      await client.query('COMMIT');
+      transactionOpen = false;
+      return result;
+    } catch (error) {
+      if (transactionOpen) await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async removeLegacyProfile(identity: FeishuConnectionIdentity, profileId: string): Promise<number> {
+    const result = await this.options.pool.query(`
+      DELETE FROM ${this.table}
+      WHERE tenant_id = $1 AND user_id = $2 AND profile_id = $3
+        AND token_secret_ref IS NULL AND broker_secret_id IS NULL
+    `, [identity.tenantId, identity.userId, profileId]);
+    return result.rowCount ?? 0;
+  }
+
+  async markBrokerProviderRevoked(identity: FeishuConnectionIdentity, profileId: string): Promise<void> {
+    await this.updateBrokerRevokeStatus(identity, profileId, 'provider_revoked');
+  }
+
+  async markBrokerRevoked(identity: FeishuConnectionIdentity, profileId: string): Promise<void> {
+    await this.updateBrokerRevokeStatus(identity, profileId, 'revoked');
+  }
+
+  private async updateBrokerRevokeStatus(
+    identity: FeishuConnectionIdentity,
+    profileId: string,
+    tokenStatus: Extract<FeishuTokenStatus, 'provider_revoked' | 'revoked'>,
+  ): Promise<void> {
+    const result = await this.options.pool.query(`
+      UPDATE ${this.table}
+      SET connection_status = 'disconnected', authenticated = FALSE, verified = FALSE,
+          token_status = $4, updated_at = NOW()
+      WHERE tenant_id = $1 AND user_id = $2 AND profile_id = $3
+    `, [identity.tenantId, identity.userId, profileId, tokenStatus]);
+    if ((result.rowCount ?? 0) !== 1) throw new Error('Feishu broker connection no longer exists');
+  }
+
   async removeForUser(tenantId: string, userId: string): Promise<number> {
     const result = await this.options.pool.query(
       `DELETE FROM ${this.table} WHERE tenant_id = $1 AND user_id = $2`,
@@ -297,10 +422,12 @@ function mapRow(row: Record<string, unknown>): FeishuConnectionRecord {
     userOpenId: String(row.user_open_id),
     ...(stringValue(row.user_name) ? { userName: stringValue(row.user_name) } : {}),
     ...(stringValue(row.scope) ? { scope: stringValue(row.scope) } : {}),
+    ...(stringValue(row.token_secret_ref) ? { tokenSecretRef: stringValue(row.token_secret_ref) } : {}),
+    ...(stringValue(row.broker_secret_id) ? { brokerSecretId: stringValue(row.broker_secret_id) } : {}),
     connectionStatus: String(row.connection_status) as FeishuConnectionStatus,
     ...(typeof row.authenticated === 'boolean' ? { authenticated: row.authenticated } : {}),
     ...(typeof row.verified === 'boolean' ? { verified: row.verified } : {}),
-    ...(stringValue(row.token_status) ? { tokenStatus: stringValue(row.token_status) } : {}),
+    ...(stringValue(row.token_status) ? { tokenStatus: stringValue(row.token_status) as FeishuTokenStatus } : {}),
     ...(isoValue(row.expires_at) ? { expiresAt: isoValue(row.expires_at) } : {}),
     ...(isoValue(row.refresh_expires_at) ? { refreshExpiresAt: isoValue(row.refresh_expires_at) } : {}),
     ...(isoValue(row.last_checked_at) ? { lastCheckedAt: isoValue(row.last_checked_at) } : {}),

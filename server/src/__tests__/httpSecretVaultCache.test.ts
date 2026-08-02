@@ -217,4 +217,22 @@ describe('HttpSecretVault cache (A3)', () => {
     await vault.getSecret('ref-b', caller); // fetch
     expect(resolveCount).toBe(4);
   });
+
+  it('aborts a Vault HTTP request after requestTimeoutMs', async () => {
+    const fetchImpl: typeof fetch = vi.fn(async (_input, init) => {
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      });
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.local',
+      authToken: 'test-token-xyz',
+      fetchImpl,
+      requestTimeoutMs: 10,
+      cacheTtlMs: 0,
+    });
+
+    await expect(vault.getSecret('ref-a', caller)).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
 });

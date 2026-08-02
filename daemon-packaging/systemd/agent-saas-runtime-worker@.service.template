@@ -10,7 +10,7 @@
 Description=Agent SaaS Runtime Worker (%i)
 After=network-online.target remote-fs.target agent-saas-acs-orchestrator.service
 Wants=network-online.target
-RequiresMountsFor=/mnt/agent-workspaces
+RequiresMountsFor=/mnt/agent-workspaces /mnt/agent-saas
 
 [Service]
 Type=simple

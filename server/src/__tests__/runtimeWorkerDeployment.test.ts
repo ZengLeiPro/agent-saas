@@ -54,6 +54,10 @@ describe('Runtime Worker 生产部署契约', () => {
       join(repoRoot, 'daemon-packaging/systemd/agent-saas-runtime-worker@.service.template'),
       'utf-8',
     );
+    const nginxNasDropIn = await readFile(
+      join(repoRoot, 'daemon-packaging/systemd/nginx-agent-saas-nas.conf'),
+      'utf-8',
+    );
     const workflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
 
     expect(webUnit).toContain('Environment=AGENT_SAAS_PROCESS_ROLE=ws-only');
@@ -61,6 +65,9 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workerUnit).toContain('AGENT_SAAS_PIDFILE=/run/agent-saas-runtime-worker-%i.pid');
     expect(workerUnit).toContain('AGENT_SAAS_READYFILE=/run/agent-saas-runtime-worker-%i.ready');
     expect(workerUnit).toContain('WorkingDirectory=/opt/agent-saas-app/worker/%i/server');
+    expect(webUnit).toContain('RequiresMountsFor=/mnt/agent-workspaces /mnt/agent-saas');
+    expect(workerUnit).toContain('RequiresMountsFor=/mnt/agent-workspaces /mnt/agent-saas');
+    expect(nginxNasDropIn).toContain('RequiresMountsFor=/mnt/agent-saas');
     expect(webUnit.indexOf('Environment=AGENT_SAAS_PROCESS_ROLE=ws-only'))
       .toBeGreaterThan(webUnit.lastIndexOf('EnvironmentFile='));
     expect(workerUnit.indexOf('Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker'))
@@ -68,5 +75,8 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workflow).toContain('runtime worker split blocked because production clientDaemon is configured');
     expect(workflow).toContain('runtime worker split blocked because active clientDaemon devices exist');
     expect(workflow).toContain('if (config?.clientDaemon) process.exit(42)');
+    expect(workflow).toContain('systemctl disable "${SERVICE_NAME}@${ACTIVE}"');
+    expect(workflow).toContain('systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
+    expect(workflow).toContain('nginx.service.d/agent-saas-nas.conf');
   });
 });

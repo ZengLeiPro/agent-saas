@@ -3,9 +3,8 @@
 # 安装为 /etc/systemd/system/agent-saas-server@.service
 #
 # 蓝绿用法：
-#   - 启用两个实例（首次迁移时手工做一次）：
-#       systemctl enable agent-saas-server@blue agent-saas-server@green
-#     日常只有 active 色常驻服务，idle 色由 ci.yml 部署脚本按需 start。
+#   - 只启用 active 色；idle 色由 ci.yml 发布时临时启动，切流后新 active 留作
+#     开机自启、旧 active 立即 disable（不影响其继续 drain）。
 #   - 每色端口/pidfile 由 /etc/agent-saas/server-%i.env 提供
 #     （见 server-color-env.example；手工创建一次，内容固定，不随部署改写）：
 #       blue  → PORT=3200, /run/agent-saas-server-blue.pid
@@ -25,7 +24,7 @@
 Description=Agent SaaS Server (%i)
 After=network-online.target remote-fs.target agent-saas-acs-orchestrator.service
 Wants=network-online.target
-RequiresMountsFor=/mnt/agent-workspaces
+RequiresMountsFor=/mnt/agent-workspaces /mnt/agent-saas
 
 [Service]
 Type=simple

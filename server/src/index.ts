@@ -13,6 +13,7 @@ import { startKbPreviewScheduler, type KbPreviewScheduler } from './kb/previewSc
 import { serverLogger, cronLogger } from './utils/logger.js';
 import { sessionCompression } from './middleware/sessionCompression.js';
 import { runtimeRunController } from './runtime/runController.js';
+import { isTransientNetworkError } from './utils/transientNetworkError.js';
 
 type ProcessRole = 'all' | 'ws-only' | 'scheduler-only' | 'runtime-worker';
 
@@ -224,25 +225,6 @@ function isSdkAbortError(err: unknown): boolean {
 // MCP transport 并发连接冲突判定（SDK 0.2.x 多 dispatch 共用 in-process MCP server 实例时触发）
 function isMcpTransportError(err: unknown): boolean {
   return err instanceof Error && err.message.includes('Already connected to a transport');
-}
-
-// 瞬态网络错误判定：网络波动不应终结进程
-const TRANSIENT_NETWORK_CODES = new Set([
-  'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT',
-  'EAI_AGAIN', 'EPIPE', 'ERR_NETWORK', 'ECONNABORTED',
-  'EHOSTUNREACH', 'ENETUNREACH', 'ESOCKETTIMEDOUT',
-]);
-
-function isTransientNetworkError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as Record<string, unknown>;
-  // axios 网络错误
-  if (e.isAxiosError && typeof e.code === 'string' && TRANSIENT_NETWORK_CODES.has(e.code)) return true;
-  // 原生 Node.js 网络错误
-  if (err instanceof Error && typeof (err as NodeJS.ErrnoException).code === 'string') {
-    return TRANSIENT_NETWORK_CODES.has((err as NodeJS.ErrnoException).code!);
-  }
-  return false;
 }
 
 // SDK bug 安全网：SDK 内部 Query.handleControlRequest 的 catch 块在

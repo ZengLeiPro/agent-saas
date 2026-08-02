@@ -1,0 +1,37 @@
+# ============================================================================
+# Agent SaaS 稳定 Runtime Worker（systemd template unit）
+# 安装为 /etc/systemd/system/agent-saas-runtime-worker@.service
+#
+# worker/blue 与 worker/green 指向独立 release。发布运行时代码时先启动 idle
+# worker，确认 readyfile 后再 SIGUSR2 排空旧 worker；两者短暂并存时依靠 PG lease
+# 与 cron advisory lock 保证单 run/单定时任务归属。纯 web/** 发布不切 worker。
+# ============================================================================
+[Unit]
+Description=Agent SaaS Runtime Worker (%i)
+After=network-online.target remote-fs.target agent-saas-acs-orchestrator.service
+Wants=network-online.target
+RequiresMountsFor=/mnt/agent-workspaces
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-saas-app/worker/%i/server
+Environment=NODE_ENV=production
+Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas/config.json
+Environment=AZEROTH_TOKENS_FILE=/etc/agent-saas/azeroth-tokens.json
+EnvironmentFile=/etc/agent-saas/server.env
+# Worker 的角色与进程文件是拓扑硬约束，必须覆盖共享 env 中可能残留的旧值
+Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker
+Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-runtime-worker-%i.pid
+Environment=AGENT_SAAS_READYFILE=/run/agent-saas-runtime-worker-%i.ready
+ExecStartPre=/usr/bin/rm -f /run/agent-saas-runtime-worker-%i.ready
+ExecStart=/usr/local/bin/pnpm start
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=35
+SuccessExitStatus=143
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

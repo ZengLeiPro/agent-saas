@@ -23,7 +23,7 @@ describe('createRuntime 运行时装配（补充分支）', () => {
     cleanupRoots.clear();
   });
 
-  it('processRole 缺省为 all，可显式指定 ws-only', async () => {
+  it('processRole 缺省为 all，可显式指定 ws-only/runtime-worker', async () => {
     const { rootDir, processCwd } = await createFixture({ agent: {}, server: {} });
     cleanupRoots.add(rootDir);
 
@@ -34,6 +34,23 @@ describe('createRuntime 运行时装配（补充分支）', () => {
     cleanupRoots.add(r2);
     const runtimeWs = await createRuntime({ processCwd: cwd2, processRole: 'ws-only' });
     expect(runtimeWs.processRole).toBe('ws-only');
+
+    const { rootDir: r3, processCwd: cwd3 } = await createFixture({ agent: {}, server: {} });
+    cleanupRoots.add(r3);
+    const runtimeWorker = await createRuntime({ processCwd: cwd3, processRole: 'runtime-worker' });
+    expect(runtimeWorker.processRole).toBe('runtime-worker');
+  });
+
+  it('runtime-worker 遇到进程内 clientDaemon 配置时 fail-fast，避免静默切断本地 Hand', async () => {
+    const { rootDir, processCwd } = await createFixture({
+      agent: {},
+      server: {},
+      clientDaemon: { path: '/daemon' },
+    });
+    cleanupRoots.add(rootDir);
+
+    await expect(createRuntime({ processCwd, processRole: 'runtime-worker' }))
+      .rejects.toThrow(/runtime-worker 暂不支持进程内 clientDaemon gateway/);
   });
 
   it('guardrail 配置缺省时门禁模型链为空数组；updateGuardrailModelConfigs 热写后 getter 取到最新链（同一 getter 引用不失效）', async () => {

@@ -20,7 +20,7 @@ const SERVER_ENTRY = new URL('../src/index.ts', import.meta.url).pathname;
 const HAND_ENTRY = new URL('../../hand-server/src/index.ts', import.meta.url).pathname;
 const POSTGRES_IMAGE = 'postgres:16-alpine';
 
-type Scenario = 'minimal' | 'e2e' | 'notify-drop' | 'db-unavailable' | 'scheduler-restart' | 'hand-kill';
+type Scenario = 'minimal' | 'e2e' | 'notify-drop' | 'db-unavailable' | 'scheduler-restart' | 'worker-handoff' | 'hand-kill';
 
 interface SpawnedProcess {
   child: ChildProcessWithoutNullStreams;
@@ -36,13 +36,16 @@ interface WsEnvelope {
 
 async function main(): Promise<void> {
   const raw = argValue('--scenario') ?? 'e2e';
-  if (raw !== 'minimal' && raw !== 'e2e' && raw !== 'notify-drop' && raw !== 'db-unavailable' && raw !== 'scheduler-restart' && raw !== 'hand-kill') {
-    throw new Error(`Unknown scenario "${raw}". Expected one of: minimal, e2e, notify-drop, db-unavailable, scheduler-restart, hand-kill`);
+  if (raw !== 'minimal' && raw !== 'e2e' && raw !== 'notify-drop' && raw !== 'db-unavailable' && raw !== 'scheduler-restart' && raw !== 'worker-handoff' && raw !== 'hand-kill') {
+    throw new Error(`Unknown scenario "${raw}". Expected one of: minimal, e2e, notify-drop, db-unavailable, scheduler-restart, worker-handoff, hand-kill`);
   }
   await runScenario(raw);
 }
 
 export async function runScenario(scenario: Scenario): Promise<void> {
+  const workerProcessRole = scenario === 'worker-handoff' || process.env.MP_WORKER_PROCESS_ROLE === 'runtime-worker'
+    ? 'runtime-worker'
+    : 'scheduler-only';
   const rootDir = await mkdtemp(join(tmpdir(), `agent-saas-mp-${scenario}-`));
   const processCwd = join(rootDir, 'server');
   const pgName = `agent-saas-mp-pg-${randomUUID()}`;
@@ -58,6 +61,7 @@ export async function runScenario(scenario: Scenario): Promise<void> {
   let hand: SpawnedProcess | undefined;
   let wsServer: SpawnedProcess | undefined;
   let scheduler: SpawnedProcess | undefined;
+  let handoffScheduler: SpawnedProcess | undefined;
   let ws: WebSocket | undefined;
   let replayWs: WebSocket | undefined;
 
@@ -110,7 +114,7 @@ export async function runScenario(scenario: Scenario): Promise<void> {
     scheduler = spawnNodeTs(SERVER_ENTRY, {
       cwd: processCwd,
       env: {
-        AGENT_SAAS_PROCESS_ROLE: 'scheduler-only',
+        AGENT_SAAS_PROCESS_ROLE: workerProcessRole,
         OPENAI_API_KEY: 'fake-key',
         OPENAI_BASE_URL: `http://127.0.0.1:${fakeModelPort}/v1`,
         OPENAI_MODEL: 'fake-chat-model',
@@ -203,6 +207,61 @@ export async function runScenario(scenario: Scenario): Promise<void> {
       assert.ok(events.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('MULTIPROCESS_DONE')), `expected final assistant text to survive ${scenario}`);
       const doneEvents = events.filter((e) => e.data?.type === 'done');
       assert.equal(doneEvents.length, 1, `expected exactly one terminal done event (no duplicate wake), got ${doneEvents.length}`);
+    } else if (scenario === 'worker-handoff') {
+      // 生产同构路径：A 已持有 run lease 并进入三秒工具批次；先启动候选 B，
+      // 再给 A 发 SIGUSR2。A 在完整工具批次边界释放同一 run，B 以隐藏
+      // continuation 接力第二个模型轮；客户端只能看到唯一正常终态。
+      const events: WsEnvelope[] = [...first];
+      let handoffTriggered = false;
+      let handoffPromise: Promise<void> | undefined;
+      const triggerHandoff = async (): Promise<void> => {
+        handoffScheduler = spawnNodeTs(SERVER_ENTRY, {
+          cwd: processCwd,
+          env: {
+            AGENT_SAAS_PROCESS_ROLE: 'runtime-worker',
+            OPENAI_API_KEY: 'fake-key',
+            OPENAI_BASE_URL: `http://127.0.0.1:${fakeModelPort}/v1`,
+            OPENAI_MODEL: 'fake-chat-model',
+          },
+          label: 'sched2',
+        });
+        await waitForLog(handoffScheduler, /RuntimeScheduler started: autoWake=true/, 'runtime-worker B start');
+        assert.equal(scheduler!.child.kill('SIGUSR2'), true, 'expected SIGUSR2 delivery to runtime-worker A');
+        console.log('[chaos] worker-handoff: candidate B ready; SIGUSR2 sent to A during active tool batch');
+      };
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(`worker-handoff timed out; saw=${JSON.stringify(events.map((e) => e.data?.type))}`)),
+          60_000,
+        );
+        const onMessage = (raw: WebSocket.RawData) => {
+          let parsed: WsEnvelope;
+          try { parsed = JSON.parse(raw.toString()) as WsEnvelope; } catch { return; }
+          events.push(parsed);
+          if (!handoffTriggered && parsed.data?.type === 'tool_input') {
+            handoffTriggered = true;
+            handoffPromise = triggerHandoff();
+            handoffPromise.catch((err) => {
+              clearTimeout(timer);
+              ws!.off('message', onMessage);
+              reject(err);
+            });
+          }
+          if (parsed.data?.type === 'done') {
+            clearTimeout(timer);
+            ws!.off('message', onMessage);
+            void (handoffPromise ?? Promise.resolve()).then(resolve, reject);
+          }
+        };
+        ws!.on('message', onMessage);
+      });
+      assert.equal(handoffTriggered, true, 'expected handoff to trigger during tool_input');
+      assert.ok(events.some((e) => e.data?.type === 'tool_result' && String(e.data?.content ?? '').includes('MP_E2E_')), 'expected complete tool result across worker handoff');
+      assert.ok(events.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('MULTIPROCESS_DONE')), 'expected continuation final text from worker B');
+      assert.equal(events.filter((e) => e.data?.type === 'done').length, 1, 'expected exactly one terminal done across worker handoff');
+      assert.equal(events.some((e) => e.data?.type === 'error'), false, 'worker handoff must not emit a user-visible error');
+      await waitForLog(scheduler, /Runtime drain handoff released run=/, 'runtime-worker A lease release');
+      await waitForLog(handoffScheduler!, /\[run\] finished session=/, 'runtime-worker B continuation finish');
     } else if (scenario === 'scheduler-restart' || scenario === 'hand-kill') {
       // scheduler-restart：active wake 期间 SIGKILL scheduler-only A，等 lease 过期后
       // spawn 第二个 scheduler-only B；断言 lease 接管后 run 收敛到唯一 terminal done
@@ -223,7 +282,7 @@ export async function runScenario(scenario: Scenario): Promise<void> {
           scheduler = spawnNodeTs(SERVER_ENTRY, {
             cwd: processCwd,
             env: {
-              AGENT_SAAS_PROCESS_ROLE: 'scheduler-only',
+              AGENT_SAAS_PROCESS_ROLE: workerProcessRole,
               OPENAI_API_KEY: 'fake-key',
               OPENAI_BASE_URL: `http://127.0.0.1:${fakeModelPort}/v1`,
               OPENAI_MODEL: 'fake-chat-model',
@@ -283,11 +342,11 @@ export async function runScenario(scenario: Scenario): Promise<void> {
     if (scenario !== 'scheduler-restart' && scenario !== 'hand-kill') {
       assert.ok(fakeModel.requestCount() >= 2, 'expected fake model to handle tool turn and final turn');
     }
-    console.log(`[PASS] runtime multiprocess ${scenario}: ws-only enqueue + scheduler-only wake + hand-server + PG live/replay/done verified`);
+    console.log(`[PASS] runtime multiprocess ${scenario}: ws-only enqueue + ${workerProcessRole} wake + hand-server + PG live/replay/done verified`);
   } finally {
     ws?.close();
     replayWs?.close();
-    for (const proc of [scheduler, wsServer, hand]) await stopProcess(proc);
+    for (const proc of [handoffScheduler, scheduler, wsServer, hand]) await stopProcess(proc);
     await fakeModel?.close();
     await execFile('docker', ['rm', '-f', pgName]).catch(() => undefined);
     await rm(rootDir, { recursive: true, force: true }).catch(() => undefined);
@@ -315,7 +374,9 @@ async function writeFixtureConfig(input: {
       username: 'admin',
       passwordHash: await bcrypt.hash('admin-pass', 10),
       role: 'admin',
-      tenantId: 'kaiyan',
+      // 平台管理员判定要求 root tenant='pantheon'；kaiyan 是日常业务租户，
+      // 显式 server-remote override 会按普通组织管理员 fail-closed。
+      tenantId: 'pantheon',
       createdAt: new Date().toISOString(),
       createdBy: 'fixture',
       updatedAt: new Date().toISOString(),

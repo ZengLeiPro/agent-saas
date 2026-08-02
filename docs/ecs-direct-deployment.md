@@ -1,6 +1,7 @@
 # ECS 直部署：agent-saas server
 
-> 当前生产口径：server 直接跑在新深圳 ECS systemd（蓝绿双实例，2026-07-15 起）；不使用 Docker。
+> 当前生产口径：server 直接跑在新深圳 ECS systemd；API/WS 与 Runtime Worker
+> 分别蓝绿，不使用 Docker。
 > 蓝绿部署机制、探针语义、drain 生命周期见 [零停机部署](zero-downtime-deployment.md)。
 
 ## 运行位置
@@ -8,6 +9,10 @@
 - release 目录：`/opt/agent-saas-app/releases/<sha>`；`current`/`previous` symlink 仅作 bookkeeping
 - 每色代码 symlink：`/opt/agent-saas-app/color/blue`、`/opt/agent-saas-app/color/green` → `releases/<sha>`（部署只改 idle 色）
 - systemd：模板实例 `agent-saas-server@blue`（127.0.0.1:3200）/ `agent-saas-server@green`（127.0.0.1:3201）；模板见 `daemon-packaging/systemd/agent-saas-server@.service.template`
+- Runtime Worker：`agent-saas-runtime-worker@blue|green`，代码 symlink 为
+  `/opt/agent-saas-app/worker/<色>`，活动色标记为
+  `/etc/agent-saas/runtime-worker-active-color`；模板见
+  `daemon-packaging/systemd/agent-saas-runtime-worker@.service.template`
 - 活动色标记：`/etc/agent-saas/active-color`（内容 `blue`|`green`，切流成功后由部署脚本改写）
 - pidfile：`/run/agent-saas-server-<色>.pid`（drain 信号 `kill -USR2 $(cat pidfile)` 的投递目标）
 - 配置：`/etc/agent-saas/config.json`
@@ -41,11 +46,17 @@
 1. 打包不含 `web/` 的 Server release，scp 上传 ECS。
 2. 读 `/etc/agent-saas/active-color` 定位 idle 色；校验 active 实例在服务。
 3. 安装前清理未受保护的历史 release，并校验至少 8 GiB 可用空间、25 万可用 inode；随后解包到 `releases/<sha>`，`server/data` 软链 NAS，以 isolated linker 安装 server/shared 依赖。
-4. 只改 idle 色 symlink（active 色 symlink 永不动）→ `systemctl start agent-saas-server@<idle>`。
+4. 只改 Web idle 色 symlink（active 色 symlink 永不动）→ 启动固定 `ws-only` 的 `agent-saas-server@<idle>`。
 5. 切流前门禁：`/api/healthz/ready` 200（180s 硬门禁）+ warmup done（420s 软门禁）+ 冒烟。任何失败会还原 idle 色 symlink 并回收当次 release/上传包，老色全程在服务。
 6. 切流：重写 nginx upstream（新色 primary、旧色 backup）→ `nginx -t` → reload → 验证。
-7. 更新 active-color，重新生成 `/opt/agent-saas-app/rollback.sh`。
-8. `kill -USR2` 精确 drain 旧色（活跃流清空后自退，`Restart=on-failure` 不复活）。
+7. 更新 Web active-color；运行时代码命中分类时再滚动独立 Runtime Worker，
+   候选 ready 后让旧 worker 在安全边界交棒；纯 Web 变更跳过 worker。
+8. 重新生成 rollback 脚本，并 `kill -USR2` 精确 drain 旧 Web 色。
+
+当前 `rollback.sh` 只回滚 Web/API。Runtime Worker 依靠 N/N+1 兼容与受控滚动，
+需要回退时按上一生产 SHA 重新发布；不会因为一次纯 Web 回滚而隐式切换执行层。
+若生产配置含 `clientDaemon` 或 PG 中存在 active device，拆分发布会在切流前
+fail-fast，旧 all-in-one 拓扑保持不动。
 
 `deploy-web-oss` 在 OSS 线上门禁通过后，将同一份 `web/dist` 打包上传到
 `/opt/agent-saas-web-recovery/releases/<sha>`，校验 `index.html`/`sw.js` 后原子切换

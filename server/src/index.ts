@@ -14,7 +14,7 @@ import { serverLogger, cronLogger } from './utils/logger.js';
 import { sessionCompression } from './middleware/sessionCompression.js';
 import { runtimeRunController } from './runtime/runController.js';
 
-type ProcessRole = 'all' | 'ws-only' | 'scheduler-only';
+type ProcessRole = 'all' | 'ws-only' | 'scheduler-only' | 'runtime-worker';
 
 let runtime: AppRuntime | undefined;
 let cronService: CronService | null | undefined;
@@ -26,8 +26,8 @@ eventLoopDelayMonitor.enable();
 
 function resolveProcessRole(): ProcessRole {
   const raw = (process.env.AGENT_SAAS_PROCESS_ROLE || process.env.RUNTIME_PROCESS_ROLE || 'all').trim();
-  if (raw === 'all' || raw === 'ws-only' || raw === 'scheduler-only') return raw;
-  throw new Error(`Invalid process role "${raw}". Expected one of: all, ws-only, scheduler-only`);
+  if (raw === 'all' || raw === 'ws-only' || raw === 'scheduler-only' || raw === 'runtime-worker') return raw;
+  throw new Error(`Invalid process role "${raw}". Expected one of: all, ws-only, scheduler-only, runtime-worker`);
 }
 
 // 蓝绿部署（2026-07-15）：AGENT_SAAS_PIDFILE 由 systemd 每色 env 文件指定
@@ -50,6 +50,24 @@ function removePidFile(): void {
   } catch { /* 不存在或不可删，忽略 */ }
 }
 
+function writeReadyFile(): void {
+  const readyFile = process.env.AGENT_SAAS_READYFILE;
+  if (!readyFile) return;
+  try {
+    fs.writeFileSync(readyFile, `${process.pid}\n`, 'utf-8');
+  } catch (err) {
+    serverLogger.warn(`Failed to write ready file ${readyFile}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function removeReadyFile(): void {
+  const readyFile = process.env.AGENT_SAAS_READYFILE;
+  if (!readyFile) return;
+  try {
+    fs.unlinkSync(readyFile);
+  } catch { /* 不存在或不可删，忽略 */ }
+}
+
 async function startServer(): Promise<void> {
   const processRole = resolveProcessRole();
   // 蓝绿部署（2026-07-15）：把真实 node PID 写入 pidfile，部署脚本用
@@ -61,14 +79,20 @@ async function startServer(): Promise<void> {
   // 技能物化与 HTTP/WS/cron 解耦；PG 按 release 隔离消费者，并用 workspace
   // advisory lock 防止蓝绿并发写同一用户目录。
   runtime.startSkillMaterializationCoordinator();
-  if (processRole === 'scheduler-only') {
-    serverLogger.info('Scheduler-only process started; HTTP/WebSocket listeners are disabled');
+  const { cronRuntime } = runtime;
+  cronService = cronRuntime.service;
+  if (processRole === 'scheduler-only' || processRole === 'runtime-worker') {
+    if (processRole === 'runtime-worker') {
+      runtime.startCronCoordinator();
+      kbPreviewScheduler = startKbPreviewScheduler(runtime.processCwd);
+    }
+    writeReadyFile();
+    serverLogger.info(`${processRole} process started; HTTP/WebSocket listeners are disabled`);
     void runtime.runDeferredStartupTasks();
     return;
   }
-  const { config, agentCwd, uploadsDir, channelManager, cronRuntime } = runtime;
+  const { config, agentCwd, uploadsDir, channelManager } = runtime;
   const { enabled: cronEnabled, cronStorePath } = cronRuntime;
-  cronService = cronRuntime.service;
 
   const app = express();
   // 生产在 nginx 反代后：信任第一层代理的 X-Forwarded-For，否则 req.ip 恒为
@@ -298,6 +322,7 @@ async function shutdownCleanup(): Promise<void> {
   }
 
   removePidFile();
+  removeReadyFile();
 
   // 等待 stdout/stderr flush，避免日志丢失
   await new Promise<void>((resolve) => {

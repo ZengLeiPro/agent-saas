@@ -173,8 +173,8 @@ jobs:
   deploy-ecs:
     name: Deploy to ECS
     runs-on: ubuntu-latest
-    # 覆盖构建打包(~8min) + 远端蓝绿部署最坏路径(~34min)
-    timeout-minutes: 45
+    # 覆盖构建打包 + Web/Runtime Worker 双蓝绿部署最坏路径
+    timeout-minutes: 55
     needs: build
     # 生产部署只走手动触发（workflow_dispatch），push main 不再自动上生产
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
@@ -192,6 +192,9 @@ jobs:
       # 2026-07-03 曾因配额爆掉全线 CI 红）；deploy job 自构建后直接 scp。
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          # Runtime Worker 必要性门禁要和生产当前 worker SHA 做完整 diff。
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -245,6 +248,43 @@ jobs:
           printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_deploy_key
           chmod 600 ~/.ssh/ecs_deploy_key
           ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Determine runtime worker rollout
+        run: |
+          CURRENT_WORKER_SHA=$(ssh -i ~/.ssh/ecs_deploy_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$ECS_USER@$ECS_HOST" '
+              set -e
+              marker=/etc/agent-saas/runtime-worker-active-color
+              root=/opt/agent-saas-app/worker
+              [ -f "$marker" ] || exit 0
+              color=$(tr -d "[:space:]" < "$marker")
+              case "$color" in blue|green) ;; *) exit 0 ;; esac
+              target=$(readlink -f "$root/$color" 2>/dev/null || true)
+              [ -n "$target" ] && basename "$target"
+            ')
+
+          if ! printf '%s' "$CURRENT_WORKER_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "RUNTIME_WORKER_DEPLOY_REQUIRED=true" >> "$GITHUB_ENV"
+            echo "runtime worker rollout: required (bootstrap or unreadable production baseline)"
+            exit 0
+          fi
+          if ! git cat-file -e "$CURRENT_WORKER_SHA^{commit}" 2>/dev/null; then
+            echo "RUNTIME_WORKER_DEPLOY_REQUIRED=true" >> "$GITHUB_ENV"
+            echo "runtime worker rollout: required (baseline $CURRENT_WORKER_SHA is outside checkout history)"
+            exit 0
+          fi
+
+          git diff --name-only "$CURRENT_WORKER_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/runtime-worker-changed-files.txt"
+          bash .github/scripts/runtime-worker-classify.sh "$RUNNER_TEMP/runtime-worker-changed-files.txt" \
+            | tee "$RUNNER_TEMP/runtime-worker-classification.txt"
+          REQUIRED=$(awk -F= '$1 == "required" { print $2 }' "$RUNNER_TEMP/runtime-worker-classification.txt")
+          if [ "$REQUIRED" != "true" ] && [ "$REQUIRED" != "false" ]; then
+            echo "invalid runtime worker classification: ${REQUIRED:-missing}"
+            exit 1
+          fi
+          echo "RUNTIME_WORKER_DEPLOY_REQUIRED=$REQUIRED" >> "$GITHUB_ENV"
+          echo "runtime worker baseline=$CURRENT_WORKER_SHA target=$GITHUB_SHA required=$REQUIRED"
 
       - name: Upload release
         run: |
@@ -362,16 +402,15 @@ jobs:
 
       - name: Deploy and restart
         id: deploy
-        timeout-minutes: 36
+        timeout-minutes: 46
         run: |
-          # 覆盖冷安装(~10min) + 残留 idle drain 等待(600s) + ready(180s)
-          # + warmup(420s) + 旧色 drain 观察(60s)，并给 step 本身保留收尾余量。
-          REMOTE_DEPLOY_TIMEOUT_SECONDS=2000
+          # 覆盖冷安装、Web idle 排空、worker idle 排空、双 ready/warmup 与旧实例观察。
+          REMOTE_DEPLOY_TIMEOUT_SECONDS=2600
           echo "Remote deploy timeout: ${REMOTE_DEPLOY_TIMEOUT_SECONDS}s"
           timeout "${REMOTE_DEPLOY_TIMEOUT_SECONDS}s" ssh -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$ECS_USER@$ECS_HOST" \
-            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz' RELEASE_ID='${GITHUB_SHA}' bash -s" <<'REMOTE'
+            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz' RELEASE_ID='${GITHUB_SHA}' WORKER_DEPLOY_REQUIRED='${RUNTIME_WORKER_DEPLOY_REQUIRED}' bash -s" <<'REMOTE'
           # -E: 函数内失败也触发 ERR trap，保证任何失败都有 on_error 日志
           set -Eeuo pipefail
 
@@ -379,14 +418,19 @@ jobs:
           : "${SERVICE_NAME:?missing SERVICE_NAME}"
           : "${RELEASE_TGZ:?missing RELEASE_TGZ}"
           : "${RELEASE_ID:?missing RELEASE_ID}"
+          : "${WORKER_DEPLOY_REQUIRED:?missing WORKER_DEPLOY_REQUIRED}"
+          case "$WORKER_DEPLOY_REQUIRED" in true|false) ;; *) echo "invalid WORKER_DEPLOY_REQUIRED=$WORKER_DEPLOY_REQUIRED"; exit 1 ;; esac
 
           APP_LINK="$DEPLOY_ROOT/current"
           PREV_LINK="$DEPLOY_ROOT/previous"
           RELEASES_DIR="$DEPLOY_ROOT/releases"
           RELEASE_DIR="$RELEASES_DIR/$RELEASE_ID"
           COLOR_DIR="$DEPLOY_ROOT/color"
+          WORKER_DIR="$DEPLOY_ROOT/worker"
           DATA_DIR="/mnt/agent-saas/server-data"
           ACTIVE_COLOR_FILE="/etc/agent-saas/active-color"
+          WORKER_ACTIVE_COLOR_FILE="/etc/agent-saas/runtime-worker-active-color"
+          WORKER_SERVICE="agent-saas-runtime-worker"
           UPSTREAM_CONF="/etc/nginx/conf.d/agent-saas-upstream.conf"
           API_SITE_CONF="/etc/nginx/conf.d/agent-api-kaiyan.conf"
           DEPLOY_LOCK_FILE="/run/lock/agent-saas-deploy.lock"
@@ -500,16 +544,19 @@ jobs:
           DRAINZ_URL="http://127.0.0.1:$IDLE_PORT/api/healthz/drain"
 
           # ── 2. 发布前清理与容量门禁：先腾空间，再开始不可复用的安装工作 ──
-          mkdir -p "$RELEASES_DIR" "$DATA_DIR" "$COLOR_DIR"
+          mkdir -p "$RELEASES_DIR" "$DATA_DIR" "$COLOR_DIR" "$WORKER_DIR"
           KEEP_CURRENT=$(readlink "$APP_LINK" 2>/dev/null || true)
           KEEP_PREV=$(readlink "$PREV_LINK" 2>/dev/null || true)
           KEEP_BLUE=$(readlink "$COLOR_DIR/blue" 2>/dev/null || true)
           KEEP_GREEN=$(readlink "$COLOR_DIR/green" 2>/dev/null || true)
+          KEEP_WORKER_BLUE=$(readlink "$WORKER_DIR/blue" 2>/dev/null || true)
+          KEEP_WORKER_GREEN=$(readlink "$WORKER_DIR/green" 2>/dev/null || true)
 
           is_protected_release() {
             local candidate="$1"
             [ "$candidate" = "$KEEP_CURRENT" ] || [ "$candidate" = "$KEEP_PREV" ] \
-              || [ "$candidate" = "$KEEP_BLUE" ] || [ "$candidate" = "$KEEP_GREEN" ]
+              || [ "$candidate" = "$KEEP_BLUE" ] || [ "$candidate" = "$KEEP_GREEN" ] \
+              || [ "$candidate" = "$KEEP_WORKER_BLUE" ] || [ "$candidate" = "$KEEP_WORKER_GREEN" ]
           }
 
           log "release cleanup start before install: keep newest 4 existing releases plus current/previous/color targets"
@@ -581,6 +628,15 @@ jobs:
           log "remote pnpm install done"
           INSTALL_CLEANUP_ARMED=0
 
+          # 每次发布都以仓库模板刷新 unit；systemd 仅 reload 定义，不重启当前 active
+          # 进程。蓝绿 Web 固定 ws-only，runtime worker 由独立蓝绿 unit 承担。
+          install -m 0644 "$RELEASE_DIR/daemon-packaging/systemd/agent-saas-server@.service.template" \
+            "/etc/systemd/system/${SERVICE_NAME}@.service"
+          install -m 0644 "$RELEASE_DIR/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template" \
+            "/etc/systemd/system/${WORKER_SERVICE}@.service"
+          systemctl daemon-reload
+          log "systemd units refreshed: web=ws-only worker=runtime-worker"
+
           # ── 4. idle 色残留处理：上次部署的旧色可能仍在 drain 未退 ──
           if systemctl is-active --quiet "${SERVICE_NAME}@${IDLE}"; then
             log "idle unit ${SERVICE_NAME}@${IDLE} still active (previous drain not finished); waiting up to 600s"
@@ -614,6 +670,9 @@ jobs:
           PREV_PREVIOUS=$(readlink "$PREV_LINK" 2>/dev/null || true)
           PREV_IDLE_TARGET=$(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || true)
           PREVIOUS_UPDATED=0
+          WORKER_CANDIDATE_STARTED=0
+          WORKER_IDLE=""
+          PREV_WORKER_IDLE_TARGET=""
           log "switch color/$IDLE: $(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || echo '<none>') -> $RELEASE_DIR"
           ln -sfn "$RELEASE_DIR" "$COLOR_DIR/$IDLE"
           log "switch current: ${PREV_CURRENT:-<none>} -> $RELEASE_DIR"
@@ -627,6 +686,15 @@ jobs:
           # nginx/active-color 全程未动，老色一直在服务，用户零影响。
           rollback_idle_and_exit() {
             log "deploy FAILED before traffic switch; old color $ACTIVE untouched and still serving"
+            if [ "$WORKER_CANDIDATE_STARTED" -eq 1 ] && [ -n "$WORKER_IDLE" ]; then
+              log "stop runtime worker candidate: ${WORKER_SERVICE}@${WORKER_IDLE}"
+              systemctl stop "${WORKER_SERVICE}@${WORKER_IDLE}" || true
+              if [ -n "$PREV_WORKER_IDLE_TARGET" ]; then
+                ln -sfn "$PREV_WORKER_IDLE_TARGET" "$WORKER_DIR/$WORKER_IDLE"
+              else
+                rm -f "$WORKER_DIR/$WORKER_IDLE"
+              fi
+            fi
             journalctl -u "${SERVICE_NAME}@${IDLE}" -n 120 --no-pager || true
             log "stop idle unit ${SERVICE_NAME}@${IDLE}"
             systemctl stop "${SERVICE_NAME}@${IDLE}" || true
@@ -763,6 +831,111 @@ jobs:
           fi
           log "smoke ok: healthz 200, drain status: $SMOKE_DRAIN_STATUS"
 
+          # ── 8.5 Runtime Worker 候选：仅运行时代码受影响时滚动 ──
+          # 切流前只准备 idle worker symlink，不让候选提前 claim 任务；Web 切流成功
+          # 后再启动并等 readyfile，随后更新 marker、SIGUSR2 排空旧 worker。
+          # 切流前失败可完整回退且不触碰正在执行的任务。
+          WORKER_ACTIVE=""
+          if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
+            # ClientDaemonGateway 目前仍是进程内连接表，不能跨 ws-only/runtime-worker
+            # 转发。生产若显式启用，必须在 Web 切流前停止，保留旧 all 进程继续服务。
+            CLIENT_DAEMON_PREFLIGHT=0
+            (
+              cd "$RELEASE_DIR/server"
+              node --input-type=module -e '
+                import { readFileSync } from "node:fs";
+                import { parse } from "jsonc-parser";
+                const errors = [];
+                const path = process.env.AGENT_SAAS_CONFIG_PATH || "/etc/agent-saas/config.json";
+                const config = parse(readFileSync(path, "utf8"), errors, { allowTrailingComma: true });
+                if (errors.length > 0) process.exit(3);
+                if (config?.clientDaemon) process.exit(42);
+                if (config?.runtimeEventStore?.backend === "pg") {
+                  const prefix = config.runtimeEventStore.tablePrefix || "runtime";
+                  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(prefix)) process.exit(3);
+                  const table = `${prefix}_client_daemon_devices`;
+                  const pg = await import("pg");
+                  const client = new pg.Client({ connectionString: config.runtimeEventStore.connectionString });
+                  await client.connect();
+                  try {
+                    const exists = await client.query("SELECT to_regclass($1)::text AS name", [table]);
+                    if (exists.rows[0]?.name) {
+                      const active = await client.query(`SELECT 1 FROM "${table}" WHERE status = $1 LIMIT 1`, ["active"]);
+                      if (active.rowCount > 0) process.exitCode = 43;
+                    }
+                  } finally {
+                    await client.end();
+                  }
+                }
+              '
+            ) || CLIENT_DAEMON_PREFLIGHT=$?
+            if [ "$CLIENT_DAEMON_PREFLIGHT" -eq 42 ]; then
+              log "ERROR: runtime worker split blocked because production clientDaemon is configured"
+              rollback_idle_and_exit
+            elif [ "$CLIENT_DAEMON_PREFLIGHT" -eq 43 ]; then
+              log "ERROR: runtime worker split blocked because active clientDaemon devices exist"
+              rollback_idle_and_exit
+            elif [ "$CLIENT_DAEMON_PREFLIGHT" -ne 0 ]; then
+              log "ERROR: runtime worker config preflight failed with status=$CLIENT_DAEMON_PREFLIGHT"
+              rollback_idle_and_exit
+            fi
+
+            if [ -f "$WORKER_ACTIVE_COLOR_FILE" ]; then
+              WORKER_ACTIVE=$(tr -d '[:space:]' < "$WORKER_ACTIVE_COLOR_FILE")
+              case "$WORKER_ACTIVE" in
+                blue) WORKER_IDLE="green" ;;
+                green) WORKER_IDLE="blue" ;;
+                *)
+                  log "ERROR: invalid runtime worker active color '$WORKER_ACTIVE'"
+                  rollback_idle_and_exit
+                  ;;
+              esac
+              if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
+                log "ERROR: active runtime worker ${WORKER_SERVICE}@${WORKER_ACTIVE} is not active"
+                rollback_idle_and_exit
+              fi
+            else
+              for candidate_color in blue green; do
+                if systemctl is-active --quiet "${WORKER_SERVICE}@${candidate_color}"; then
+                  log "ERROR: runtime worker marker missing but ${WORKER_SERVICE}@${candidate_color} is active; refusing ambiguous bootstrap"
+                  rollback_idle_and_exit
+                fi
+              done
+              WORKER_IDLE="blue"
+            fi
+
+            if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}"; then
+              log "runtime worker idle unit ${WORKER_SERVICE}@${WORKER_IDLE} still draining; waiting up to 600s"
+              WORKER_IDLE_WAITED=0
+              while systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}"; do
+                if [ "$WORKER_IDLE_WAITED" -ge 600 ]; then
+                  log "ERROR: runtime worker idle unit still active after 600s; refusing force-stop of durable runs"
+                  rollback_idle_and_exit
+                fi
+                sleep 5
+                WORKER_IDLE_WAITED=$((WORKER_IDLE_WAITED + 5))
+              done
+            fi
+
+            PREV_WORKER_IDLE_TARGET=$(readlink "$WORKER_DIR/$WORKER_IDLE" 2>/dev/null || true)
+            log "switch worker/$WORKER_IDLE: ${PREV_WORKER_IDLE_TARGET:-<none>} -> $RELEASE_DIR"
+            ln -sfn "$RELEASE_DIR" "$WORKER_DIR/$WORKER_IDLE"
+            WORKER_CANDIDATE_STARTED=1
+            log "runtime worker candidate prepared: color=$WORKER_IDLE (start deferred until Web cutover succeeds)"
+          else
+            if [ ! -f "$WORKER_ACTIVE_COLOR_FILE" ]; then
+              log "ERROR: classifier skipped runtime worker but active marker is missing"
+              rollback_idle_and_exit
+            fi
+            WORKER_ACTIVE=$(tr -d '[:space:]' < "$WORKER_ACTIVE_COLOR_FILE")
+            case "$WORKER_ACTIVE" in blue|green) ;; *) log "ERROR: invalid runtime worker active color '$WORKER_ACTIVE'"; rollback_idle_and_exit ;; esac
+            if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
+              log "ERROR: classifier skipped runtime worker but active unit is unavailable"
+              rollback_idle_and_exit
+            fi
+            log "runtime worker unchanged: active=$WORKER_ACTIVE (pure Web/non-runtime release)"
+          fi
+
           # ── 9. 切流：重写 nginx upstream（新色 primary、旧色 backup）→ nginx -t → reload ──
           UPSTREAM_BAK="/tmp/agent-saas-upstream.conf.bak.$$"
           API_SITE_BAK="/tmp/agent-api-kaiyan.conf.bak.$$"
@@ -824,6 +997,61 @@ jobs:
           # ── 10. 更新活动色标记 ──
           echo "$IDLE" > "$ACTIVE_COLOR_FILE"
           log "active color updated: $ACTIVE -> $IDLE"
+
+          # ── 10.5 提升 Runtime Worker 候选并协作排空旧 worker ──
+          if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
+            rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" \
+              "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready"
+            systemctl enable --now "${WORKER_SERVICE}@${WORKER_IDLE}"
+            WORKER_READY=0
+            WORKER_READY_WAITED=0
+            for _ in $(seq 1 180); do
+              worker_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" 2>/dev/null || true)
+              worker_ready_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready" 2>/dev/null || true)
+              if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}" \
+                && [ -n "$worker_pid" ] && [ "$worker_pid" = "$worker_ready_pid" ] \
+                && kill -0 "$worker_pid" 2>/dev/null; then
+                WORKER_READY=1
+                break
+              fi
+              sleep 1
+              WORKER_READY_WAITED=$((WORKER_READY_WAITED + 1))
+            done
+            if [ "$WORKER_READY" -ne 1 ]; then
+              log "ERROR: runtime worker candidate failed readiness after Web cutover"
+              journalctl -u "${WORKER_SERVICE}@${WORKER_IDLE}" -n 160 --no-pager || true
+              exit 1
+            fi
+            log "runtime worker candidate ready: color=$WORKER_IDLE pid=$worker_pid waited=${WORKER_READY_WAITED}s"
+            echo "$WORKER_IDLE" > "$WORKER_ACTIVE_COLOR_FILE"
+            log "runtime worker active color updated: ${WORKER_ACTIVE:-<bootstrap>} -> $WORKER_IDLE"
+            if [ -n "$WORKER_ACTIVE" ]; then
+              OLD_WORKER_PIDFILE="/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid"
+              if [ ! -f "$OLD_WORKER_PIDFILE" ]; then
+                log "ERROR: old runtime worker pidfile missing after traffic switch: $OLD_WORKER_PIDFILE"
+                exit 1
+              fi
+              OLD_WORKER_PID=$(cat "$OLD_WORKER_PIDFILE")
+              if ! kill -USR2 "$OLD_WORKER_PID" 2>/dev/null; then
+                log "ERROR: failed to signal old runtime worker $WORKER_ACTIVE pid=$OLD_WORKER_PID"
+                exit 1
+              fi
+              log "runtime worker drain signal sent: color=$WORKER_ACTIVE pid=$OLD_WORKER_PID"
+              WORKER_OLD_WAITED=0
+              while [ "$WORKER_OLD_WAITED" -lt 60 ] \
+                && systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; do
+                sleep 5
+                WORKER_OLD_WAITED=$((WORKER_OLD_WAITED + 5))
+              done
+              if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
+                log "old runtime worker draining in background after 60s; no force-stop issued"
+              else
+                log "old runtime worker drained after ${WORKER_OLD_WAITED}s"
+              fi
+            else
+              log "runtime worker bootstrap completed: active=$WORKER_IDLE"
+            fi
+          fi
 
           # ── 11. 生成蓝绿 rollback.sh（幂等覆盖）：ssh 上来执行 bash /opt/agent-saas-app/rollback.sh ──
           # 快路径：上一色还在 drain 未退（进程仍跑旧代码）→ 直接把 nginx 翻回去；

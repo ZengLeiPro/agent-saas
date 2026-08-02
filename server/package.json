@@ -50,6 +50,7 @@
     "verify:chaos:multiprocess:notify-drop": "tsx scripts/verify-runtime-chaos-notify-drop-multiprocess.mts",
     "verify:chaos:multiprocess:db-unavailable": "tsx scripts/verify-runtime-chaos-db-unavailable-multiprocess.mts",
     "verify:chaos:multiprocess:scheduler-restart": "tsx scripts/verify-runtime-chaos-scheduler-restart-multiprocess.mts",
+    "verify:chaos:multiprocess:worker-handoff": "tsx scripts/verify-runtime-multiprocess-e2e.mts --scenario=worker-handoff",
     "verify:chaos:multiprocess:hand-kill": "tsx scripts/verify-runtime-chaos-hand-kill-multiprocess.mts",
     "client-daemon": "tsx scripts/client-daemon.mts",
     "verify:client-daemon": "vitest run src/__tests__/clientDaemonProtocol.test.ts src/__tests__/clientDaemonGateway.test.ts src/__tests__/clientDaemonRunner.test.ts"

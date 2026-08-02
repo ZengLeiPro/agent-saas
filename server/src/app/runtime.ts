@@ -357,11 +357,11 @@ export interface AppRuntime {
   runtimeHandStore?: PgHandStore;
   /** PG-backed platform/system metrics store. Undefined for file backend. */
   systemMetricsStore?: PgSystemMetricsStore;
-  /** Periodic collector for disk/NAS/PG/workspace metrics. Started only by processRole=all. */
+  /** Periodic collector for disk/NAS/PG/workspace metrics. Started by all/runtime-worker only. */
   systemMetricsCollector?: SystemMetricsCollector;
   /** PG-backed alert dedupe state store. Undefined for file backend. */
   alertStateStore?: PgAlertStateStore;
-  /** Periodic DingTalk alert notifier. Started only by processRole=all and configured webhook. */
+  /** Periodic DingTalk alert notifier. Started by all/runtime-worker only when configured. */
   alertNotifier?: AlertNotifier;
   /**
    * PG runtime event store 直接句柄（仅 backend='pg'；file backend 为 undefined）。
@@ -402,7 +402,7 @@ export interface AppRuntime {
   runtimeEventStoreFor: (transcriptPath: string) => EventStore;
   /**
    * 零停机部署（2026-07-15）：listen 后执行的后台启动任务（skills warmup 等）。
-   * index.ts 在 app.listen 回调里调用；scheduler-only 进程在 createRuntime 后调用。
+   * index.ts 在 app.listen 回调里调用；无 HTTP listener 的 worker 进程在 createRuntime 后调用。
    */
   runDeferredStartupTasks: () => Promise<void>;
   /** skills 后台物化状态（/api/healthz/ready 载荷；部署门禁等待 done 再切流） */
@@ -413,7 +413,7 @@ export interface AppRuntime {
   startSkillMaterializationCoordinator: () => void;
   /**
    * 启动 cron leader 协调器（PG advisory lock 单例守护，防蓝绿并存期双跑）。
-   * 仅 processRole=all 且 cron 启用时有实际效果；替代旧的 cronService.start() 直调。
+   * 仅 processRole=all/runtime-worker 且 cron 启用时有实际效果；替代旧的 cronService.start() 直调。
    */
   startCronCoordinator: () => void;
   /**
@@ -430,7 +430,7 @@ export interface CreateRuntimeOptions {
   processRole?: AppRuntimeProcessRole;
 }
 
-export type AppRuntimeProcessRole = 'all' | 'ws-only' | 'scheduler-only';
+export type AppRuntimeProcessRole = 'all' | 'ws-only' | 'scheduler-only' | 'runtime-worker';
 
 function ensureDirectory(path: string, label: string): void {
   if (!existsSync(path)) {
@@ -552,10 +552,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const processCwd = options.processCwd ?? process.cwd();
   const processRole = options.processRole ?? 'all';
   const enableSchedulerWorker = processRole !== 'ws-only';
+  const enableHttpListeners = processRole === 'all' || processRole === 'ws-only';
+  const enableSingletonWorkers = processRole === 'all' || processRole === 'runtime-worker';
   const config = loadAppConfig(processCwd);
   const sessionLockMode = config.runtimeScheduler?.sessionLockMode ?? 'dual';
   // 非 production 进程禁止连远程 PG（2026-07-26 本地 dev 接管生产库事故）
   assertDevDatabaseSafety(config);
+  // ClientDaemonGateway 仍是进程内连接表。拆成 ws-only + runtime-worker 后，daemon
+  // 连在 Web 进程、执行却发生在 Worker，二者尚无跨进程转发层。显式配置时必须
+  // fail-fast，让部署保留旧 worker，不能静默把 executionTarget=client 变成不可用。
+  if (processRole === 'runtime-worker' && config.clientDaemon) {
+    throw new Error(
+      'runtime-worker 暂不支持进程内 clientDaemon gateway；请先外置 gateway 或禁用 clientDaemon 配置',
+    );
+  }
 
   // 从配置初始化全局 Logger（必须在其他模块使用 logger 之前）
   const loggingConfig = config.observability?.logging;
@@ -635,7 +645,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
   const uploadsDir = join(agentCwd, 'uploads');
   const uploadManager = new UploadManager({ agentCwd });
-  if (processRole !== 'scheduler-only') uploadManager.start();
+  if (enableHttpListeners) uploadManager.start();
   const sessionBasePath = processCwd;
 
   // Memory Index: 只保留索引服务本身；OpenAI Agents 的 MCP/function tool 接入后续单独实现。
@@ -1273,6 +1283,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await pgClientDaemonRegistry.init();
+    if (processRole === 'runtime-worker') {
+      const activeClientDaemonDevices = (await pgClientDaemonRegistry.list())
+        .filter((device) => device.status === 'active');
+      if (activeClientDaemonDevices.length > 0) {
+        throw new Error(
+          `runtime-worker 暂不支持 ${activeClientDaemonDevices.length} 个活跃 clientDaemon device；请先外置跨进程 gateway`,
+        );
+      }
+    }
     const billingLogger = serverLogger.child('Billing');
     const pgBillingStore = new PgBillingStore({
       pool: pgEventStore.pool,
@@ -1321,13 +1340,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         tlsCheckHosts: config.systemMonitor?.tlsCheckHosts,
         logger: serverLogger.child('SystemMetrics'),
       });
-      if (processRole === 'all') {
+      if (enableSingletonWorkers) {
         systemMetricsCollector.start();
       } else {
         serverLogger.info(`SystemMetricsCollector worker disabled for processRole=${processRole}`);
       }
     }
-    if (processRole === 'all') {
+    if (enableSingletonWorkers) {
       alertNotifier.start();
     } else {
       serverLogger.info(`AlertNotifier worker disabled for processRole=${processRole}`);
@@ -1347,17 +1366,21 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         })));
       }
     };
-    void billingService.projectRuntimeEvents(2000)
-      .then(() => runBillingAudit())
-      .catch((err) => {
-        billingLogger.warn(`Billing startup projection/audit failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    billingAuditTimer = setInterval(() => {
-      void runBillingAudit().catch((err) => {
-        billingLogger.warn(`Billing audit failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }, 24 * 60 * 60 * 1000);
-    billingAuditTimer.unref?.();
+    if (enableSingletonWorkers) {
+      void billingService.projectRuntimeEvents(2000)
+        .then(() => runBillingAudit())
+        .catch((err) => {
+          billingLogger.warn(`Billing startup projection/audit failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      billingAuditTimer = setInterval(() => {
+        void runBillingAudit().catch((err) => {
+          billingLogger.warn(`Billing audit failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }, 24 * 60 * 60 * 1000);
+      billingAuditTimer.unref?.();
+    } else {
+      serverLogger.info(`Billing audit worker disabled for processRole=${processRole}`);
+    }
     const retentionConfig = config.runtimeEventRetention;
     runtimeEventRetention = new RuntimeEventRetention({
       pool: pgEventStore.pool,
@@ -1378,19 +1401,21 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       projectBillingRuntimeEvents: (limit) => billingService!.projectRuntimeEvents(limit),
       logger: serverLogger.child('RuntimeEventRetention'),
     });
-    if (processRole === 'all') {
+    if (enableSingletonWorkers) {
       runtimeEventRetention.start();
     } else {
       serverLogger.info(`RuntimeEventRetention disabled for processRole=${processRole}`);
     }
-    const recoveryResult = await recoverRunningToolInvocations({
-      toolInvocationStore: pgToolInvocationStore,
-      eventStore: pgEventStore,
-      runStore: pgRunStore,
-      logger: serverLogger.child('ToolInvocationRecovery'),
-    });
-    if (recoveryResult.recovered > 0) {
-      serverLogger.warn(`Recovered stale running tool invocations at startup: ${recoveryResult.recovered}/${recoveryResult.scanned}`);
+    if (enableSchedulerWorker) {
+      const recoveryResult = await recoverRunningToolInvocations({
+        toolInvocationStore: pgToolInvocationStore,
+        eventStore: pgEventStore,
+        runStore: pgRunStore,
+        logger: serverLogger.child('ToolInvocationRecovery'),
+      });
+      if (recoveryResult.recovered > 0) {
+        serverLogger.warn(`Recovered stale running tool invocations at startup: ${recoveryResult.recovered}/${recoveryResult.scanned}`);
+      }
     }
     runtimeEventStoreShutdown = async () => {
       setSessionMetaProjectionSink(undefined);
@@ -1535,7 +1560,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     defaultReadUrlTtlSeconds: artifactConfig?.readUrlTtlSeconds,
     maxBlobBytes: artifactConfig?.maxBlobBytes,
   });
-  if (artifactConfig?.retentionDays) {
+  if (artifactConfig?.retentionDays && enableSingletonWorkers) {
     const runArtifactGc = async () => {
       const result = await artifactService!.pruneExpiredArtifacts(artifactConfig.retentionDays!, 200);
       if (result.deleted > 0) {
@@ -2574,7 +2599,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
   // Token usage 历史回填：首次启动时扫 ~/.agent-saas/legacy-transcripts 全量重建一次。
   // 异步触发，不阻塞启动；rebuild_state 表已有记录则自动跳过。
-  if (businessDbHandle) {
+  if (businessDbHandle && enableSingletonWorkers) {
     void rebuildTokenUsageFromJsonl(businessDbHandle, {
       agentCwd,
       log: (msg) => serverLogger.info(msg),
@@ -2708,10 +2733,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // leader，行为与历史一致。
   //
   // 记忆轮询每用户任务对账（2026-07-14 批次）：leader 上任时补齐 + 每 6h 复核。
-  // 仅 processRole=all 执行（ws-only/scheduler-only 不动 cron store）；
+  // 仅 processRole=all/runtime-worker 执行（ws-only/scheduler-only 不动 cron store）；
   // 平台开关 config.memory.polling.enabled 关闭时也跑对账——负责把存量系统任务禁用。
   // ── L2 记忆整合引擎（2026-07-29）：随 cron leadership 启停（蓝绿单实例）──
-  if (processRole === 'all' && pgEventStore && pgSessionProjectionStore && memoryConsolidationStore && userStore) {
+  if (enableSingletonWorkers && pgEventStore && pgSessionProjectionStore && memoryConsolidationStore && userStore) {
     const consolidationLogger = serverLogger.child('MemoryConsolidation');
     const engineUserStore = userStore;
     memoryConsolidationEngine = new MemoryConsolidationEngine({
@@ -2747,7 +2772,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let cronLeadership: CronLeadership | undefined;
   let memoryPollReconcileTimer: ReturnType<typeof setInterval> | undefined;
   let runMemoryPollReconcile: (() => Promise<void>) | undefined;
-  if (processRole === 'all' && cronRuntime.service) {
+  if (enableSingletonWorkers && cronRuntime.service) {
     const cronService = cronRuntime.service;
     if (userStore) {
       runMemoryPollReconcile = async (): Promise<void> => {
@@ -2864,25 +2889,27 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     await runtimeScheduler?.stop();
   };
 
-  // Backfill cron groups from historical run logs (one-time migration)
-  await migrateCronGroups(groupStore, cronRuntime.service, cronRuntime.cronRunsDir);
+  if (enableSingletonWorkers) {
+    // Backfill cron groups from historical run logs (one-time migration)
+    await migrateCronGroups(groupStore, cronRuntime.service, cronRuntime.cronRunsDir);
 
-  // Prune orphaned sessionIds from groups (transcripts deleted outside API)
-  const pruned = await groupStore.pruneOrphanedSessionIds(
-    async (sid) => (await findTranscriptPathBySessionId(sid)) !== null,
-  );
-  if (pruned > 0) {
-    serverLogger.info(`Groups: pruned ${pruned} orphaned sessionIds`);
-  }
+    // Prune orphaned sessionIds from groups (transcripts deleted outside API)
+    const pruned = await groupStore.pruneOrphanedSessionIds(
+      async (sid) => (await findTranscriptPathBySessionId(sid)) !== null,
+    );
+    if (pruned > 0) {
+      serverLogger.info(`Groups: pruned ${pruned} orphaned sessionIds`);
+    }
 
-  // Startup data migrations: BUG 2/3/4
-  if (userStore) {
-    await runStartupMigrations({
-      globalAgentCwd: agentCwd,
-      userStore,
-      groupStore,
-      cronService: cronRuntime.service,
-    });
+    // Startup data migrations: BUG 2/3/4
+    if (userStore) {
+      await runStartupMigrations({
+        globalAgentCwd: agentCwd,
+        userStore,
+        groupStore,
+        cronService: cronRuntime.service,
+      });
+    }
   }
 
   const webChannel = new WebChannel({
@@ -2935,7 +2962,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 让 scheduler.wake 的 onOutboundEvent 回调自动跳过（line 826 已 `?.()` 守卫），避免
   // scheduler-only 进程刷出大量 "Runtime outbound event dropped before WebChannel start"
   // 误报。生产投递走 PG NOTIFY → ws-only 进程订阅 publishRuntimePlatformEvent 路径。
-  if (processRole !== 'scheduler-only') {
+  if (enableHttpListeners) {
     webRuntimeEventSink = (args) => webChannel.publishRuntimeOutboundEvent(args);
   }
   channelManager.register(webChannel);
@@ -2956,7 +2983,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }
     };
     runtimeEventSubscriptionShutdown = await pgEventStore.subscribeAppended((event) => {
-      if (event.type === 'tool_invocation_cancel_requested') {
+      if (event.type === 'tool_invocation_cancel_requested' && enableSchedulerWorker) {
         void deliverToolInvocationCancel({
           event,
           toolInvocationStore: pgToolInvocationStore,
@@ -2973,17 +3000,19 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         // L2 记忆整合低延迟唤醒；正确性不依赖此调用（durable cursor 扫描兜底）
         memoryConsolidationEngine?.wake();
       }
-      webChannel.publishRuntimePlatformEvent(event);
+      if (enableHttpListeners) webChannel.publishRuntimePlatformEvent(event);
     });
-    await runCancelDeliveryScan().catch((err) => {
-      serverLogger.warn(`Tool cancel delivery startup scan failed: ${err instanceof Error ? err.message : String(err)}`);
-    });
-    cancelDeliveryRetryTimer = setInterval(() => {
-      void runCancelDeliveryScan().catch((err) => {
-        serverLogger.warn(`Tool cancel delivery retry scan failed: ${err instanceof Error ? err.message : String(err)}`);
+    if (enableSchedulerWorker) {
+      await runCancelDeliveryScan().catch((err) => {
+        serverLogger.warn(`Tool cancel delivery startup scan failed: ${err instanceof Error ? err.message : String(err)}`);
       });
-    }, 5_000);
-    cancelDeliveryRetryTimer.unref?.();
+      cancelDeliveryRetryTimer = setInterval(() => {
+        void runCancelDeliveryScan().catch((err) => {
+          serverLogger.warn(`Tool cancel delivery retry scan failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }, 5_000);
+      cancelDeliveryRetryTimer.unref?.();
+    }
     serverLogger.info('Runtime EventStore live bridge initialized: backend=pg listen/notify');
   }
   if (runtimeScheduler && enableSchedulerWorker) {
@@ -3136,7 +3165,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
 
   // B4: Server-remote hands 健康 scanner（仅 PG runtime）。默认开启；显式 false 关闭。
-  if (pgHandStore && pgEventStore && config.runtimeHandHealthScanner?.enabled !== false) {
+  if (enableSingletonWorkers && pgHandStore && pgEventStore && config.runtimeHandHealthScanner?.enabled !== false) {
     handHealthScanner = new HandHealthScanner({
       handStore: pgHandStore,
       eventStore: pgEventStore,

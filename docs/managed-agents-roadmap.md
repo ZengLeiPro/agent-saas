@@ -422,12 +422,16 @@ Abort / approval / AskUserQuestion resume 也已经 durable 化到 command event
      - `all`（默认）：保持历史 all-in-one 行为，HTTP/WS + enqueue + scheduler wake + cron 同进程。
      - `ws-only`：启动 HTTP/WS 与 durable enqueue；不启动本进程 scheduler wake worker，也不启动 cron 这类后台副作用。
      - `scheduler-only`：只创建 runtime 并启动 scheduler wake worker；不绑定 HTTP/WS listener。
+     - `runtime-worker`：生产常驻角色；在 `scheduler-only` 基础上承载 cron leadership、记忆整合、健康扫描、监控/留存等单实例后台职责，不绑定 HTTP/WS listener。
    - 注意：`ws-only` 仍需要装配 `RuntimeScheduler` 对象，因为 WebChannel enqueue 路径复用 `scheduler.enqueue()` 写 durable run；区别是 `RuntimeScheduler.start()` 不在 WS 进程调用。
 2. [x] 补真实多进程 E2E / 最小闭环编排脚本：
    - `pnpm -F server verify:multiprocess:minimal`：启动隔离 PG + fake OpenAI streaming endpoint + hand-server + `ws-only` server + `scheduler-only` worker；通过 WebSocket 发送一条 `server-remote` 工具会话，断言 durable enqueue、scheduler wake、remote hand streaming tool output、最终 `done`。
    - `pnpm -F server verify:multiprocess:e2e`：在 minimal 基础上增加中途断开 WebSocket、重连 `resume`、按 PG cursor replay/订阅活跃 run，断言跨进程 live/replay/done。
    - 两个脚本都使用临时 `config.json` / `users.json` / workspace、随机端口、随机 PG table prefix；不读写生产配置或生产 RDS。依赖本机 `docker` 与已存在的 `postgres:16-alpine` image（与 chaos PG modes 一致，脚本使用 `--pull=never`）。
 3. [x] **WebSocket 进程和 scheduler worker 物理分离部署**已验证：`verify:multiprocess:e2e` / `verify:chaos:multiprocess:*` 均在真分离拓扑（独立 ws-only + 独立 scheduler-only + hand-server + 隔离 PG）跑通 PG NOTIFY 跨进程 live event / reconnect replay / terminal done。
+   - 2026-08-02 生产装配升级为 Web `ws-only` 蓝绿 + `runtime-worker` 独立蓝绿；
+     纯 Web 发布按路径分类跳过 worker。SIGUSR2 不再把前台 run 写成 failed，而是
+     在完整模型轮/工具批次边界释放 lease，由新 worker 用隐藏 continuation 接同一 run。
 4. [x] **端到端真实 server 拓扑下复跑 Phase 1 关键场景**：`notify-drop` / `db-unavailable` / `scheduler-restart` / `hand-kill` 4 个 chaos mode 全部移植到真实多进程脚本（见后文"chaos 扩展顺序"），首次在真分离拓扑下端到端证明 chaos Phase 1 修的 defect A（terminal-sink 守卫）+ defect B（subscribeAppended 重连/catchup/水位）成立。
 5. [ ] 评估接真实 staging 环境（当前无 staging，端到端验证脚本直打生产 RDS，需隔离）。**暂不推进，曾磊 2026-06-22 决议先放着。**
 
@@ -1275,9 +1279,11 @@ Hand    = replaceable execution environment/tool endpoint
 
 > **Phase 2 真实多进程拓扑验证（2026-06-22 完成 chaos 落地，剩 staging 决策）**：
 >
-> 角色开关：`AGENT_SAAS_PROCESS_ROLE=ws-only|scheduler-only|all`（`RUNTIME_PROCESS_ROLE` 别名）；ws-only 不调 `RuntimeScheduler.start()` 但仍装配 scheduler 对象给 enqueue 复用，scheduler-only 不绑 HTTP/WS listener。
+> 角色开关：`AGENT_SAAS_PROCESS_ROLE=ws-only|scheduler-only|runtime-worker|all`（`RUNTIME_PROCESS_ROLE` 别名）；ws-only 不调 `RuntimeScheduler.start()` 但仍装配 scheduler 对象给 enqueue 复用，scheduler-only/runtime-worker 不绑 HTTP/WS listener；runtime-worker 额外承担生产单实例后台职责。
 >
-> 多进程 chaos 6 个 scenario 全部落地（`server/scripts/verify-runtime-multiprocess-e2e.mts` + 6 个 thin wrapper + 6 个 npm script `verify:multiprocess:*` / `verify:chaos:multiprocess:*`）：
+> 多进程回归现含原有 6 个 chaos scenario，并新增生产同构
+> `worker-handoff`：候选 Runtime Worker ready 后向旧 Worker 发 SIGUSR2，验证完整
+> 工具批次落盘、同一 durable run 接力、唯一 `done` 且无用户可见 error。
 >
 > | scenario | 验什么 | 状态 |
 > |---|---|---|

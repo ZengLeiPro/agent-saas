@@ -36,6 +36,8 @@ Environment=AZEROTH_TOKENS_FILE=/etc/agent-saas/azeroth-tokens.json
 EnvironmentFile=/etc/agent-saas/server.env
 # 每色覆盖项（PORT、AGENT_SAAS_PIDFILE），放在共享 server.env 之后以便覆盖
 EnvironmentFile=/etc/agent-saas/server-%i.env
+# 角色是拓扑硬约束，必须放在可编辑 EnvironmentFile 之后，防止被旧值覆盖
+Environment=AGENT_SAAS_PROCESS_ROLE=ws-only
 ExecStart=/usr/local/bin/pnpm start
 # on-failure：drain 自退（exit 0）不复活，崩溃仍自动拉起
 Restart=on-failure

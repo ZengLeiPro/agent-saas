@@ -3,7 +3,8 @@
 > 2026-07-15 上线。本文是生产蓝绿部署的机制说明与运维手册，一切细节以
 > `.github/workflows/ci.yml` deploy-ecs job、`server/src/index.ts`、
 > `server/src/app/runtime.ts`、`server/src/runtime/cronLeadership.ts`、
-> `daemon-packaging/systemd/agent-saas-server@.service.template` 为准。
+> `daemon-packaging/systemd/agent-saas-server@.service.template`、
+> `daemon-packaging/systemd/agent-saas-runtime-worker@.service.template` 为准。
 > 单实例时代的基础信息（NAS 布局、PAT 注入等）见 [ECS 直部署](ecs-direct-deployment.md)。
 
 ## 1. 背景与目标
@@ -24,9 +25,12 @@
   失败都会触发 CI 硬门禁（见 §9.4）；
 - 新版本所有校验（ready / warmup / 冒烟）在**切流前**完成，任何失败只回收
   idle 色，老色全程在服务，用户零影响；
-- 旧实例用 SIGUSR2 精确 drain：拒新流量、结清 cron、交出 leadership、
-  等活跃流清空后自退，不打断在途会话；
-- 回滚一条命令（`bash /opt/agent-saas-app/rollback.sh`），快路径只翻 nginx。
+- Web/API 蓝绿实例固定为 `ws-only`，长 run 由独立 Runtime Worker 蓝绿承载；
+  纯 `web/**` 发布不滚动 Runtime Worker；
+- Runtime Worker 用 SIGUSR2 精确 drain：当前模型轮与工具批次完整落盘后释放
+  同一 durable run lease，新 worker 从原 run/session 接力，不写失败终态；
+- Web/API 回滚一条命令（`bash /opt/agent-saas-app/rollback.sh`），快路径只翻
+  nginx；Runtime Worker 不跟随纯 Web 回滚，需按上一生产 SHA 重新走受控发布。
 
 ## 2. 架构总览
 
@@ -57,9 +61,15 @@
                                   ▼                      ▼
                      agent-saas-server@blue   agent-saas-server@green
                      127.0.0.1:3200           127.0.0.1:3201
+                     processRole=ws-only       processRole=ws-only
                      代码: color/blue → …     代码: color/green → …
                                   │                      │
                                   └─────────┬────────────┘
+                                            ▼
+                    agent-saas-runtime-worker@blue / @green
+                    processRole=runtime-worker；代码: worker/<色> → releases/<sha>
+                    scheduler wake / cron / 记忆整合 / 监控与后台维护单实例职责
+                                            │
                                             ▼
                     共享层（双色同读写，蓝绿并存期的正确性边界所在）
                     ├─ PG：runtime events / runs(lease) / cron leader 锁
@@ -72,6 +82,14 @@
 - systemd 模板实例 `agent-saas-server@blue`（3200）/ `@green`（3201）；每色
   端口与 pidfile 由 `/etc/agent-saas/server-<色>.env` 提供（`PORT`、
   `AGENT_SAAS_PIDFILE=/run/agent-saas-server-<色>.pid`），手工创建一次，不随部署改写；
+- 两个 Web 实例由 unit 固定注入 `AGENT_SAAS_PROCESS_ROLE=ws-only`；独立 worker
+  使用 `agent-saas-runtime-worker@blue|green`、`/opt/agent-saas-app/worker/<色>`、
+  `/etc/agent-saas/runtime-worker-active-color` 与各自 pidfile/readyfile；
+- `.github/scripts/runtime-worker-classify.sh` 以生产当前 worker SHA 为基线分类：
+  生产 Server/shared/技能源或运行依赖变化才滚动 worker，纯 Web/文档/测试跳过；
+- `ClientDaemonGateway` 仍是进程内连接表；生产显式配置 `clientDaemon` 或存在
+  active device 时，部署会在 Web 切流前 fail-fast 并保留旧拓扑，待跨进程
+  gateway 落地后再拆分；
 - 每色代码走固定 symlink `/opt/agent-saas-app/color/<色>` → `releases/<sha>`。
   部署只改 idle 色的 symlink，active 色的 symlink 永不动，保证 active 色
   crash-restart 时仍加载自己的代码版本；
@@ -107,16 +125,18 @@ deploy-ecs 远端脚本（ci.yml「Deploy and restart」step 内嵌，编号与�
 | --- | --- | --- |
 | 0 | 获取 ECS `flock`，安装/刷新超龄部署包清理 timer，并立即执行一次清理 | 上传包自动回收；活动色不动 |
 | 1 | 前置校验：`/etc/agent-saas/active-color` 存在且为 `blue|green`，`agent-saas-server@<active>` 必须 active，否则要求先完成一次性手工迁移。据此解析 idle 色/端口 | 直接退出，什么都没动 |
-| 2 | 安装前清理旧 release：保留最近 4 个现有版本 + current/previous + 两个 color symlink 的 target；同 SHA 的未完成目录直接回收，活动版本则幂等 no-op；随后校验至少 8 GiB 可用空间与 25 万可用 inode | 切流前失败，老色照常服务；上传包自动回收 |
-| 3 | 解包 release 到 `releases/<sha>`，`server/data` 软链到 NAS，以 `node-linker=isolated` 安装 server/shared 依赖；安装阶段失败自动删除当次 release 与上传包 | 同上 |
+| 2 | 安装前清理旧 release：保留最近 4 个现有版本 + current/previous + Web/worker 两组 symlink 的 target；同 SHA 的未完成目录直接回收，活动版本则幂等 no-op；随后校验至少 8 GiB 可用空间与 25 万可用 inode | 切流前失败，老色照常服务；上传包自动回收 |
+| 3 | 解包 release 到 `releases/<sha>`，`server/data` 软链到 NAS，以 `node-linker=isolated` 安装 server/shared 依赖，并刷新 Web/worker systemd unit（只 daemon-reload，不重启 active） | 同上 |
 | 4 | idle 色残留处理：上次部署的旧色可能还在 drain，最多等 600s，超时 `systemctl stop` 强停 | 同上 |
 | 5 | 更新 symlink：只动 `color/<idle>` → 新 release；`current`/`previous` 仅作 bookkeeping | 同上 |
 | 6 | `systemctl start agent-saas-server@<idle>` + **ready 硬门禁**：等 `/api/healthz/ready` 200，最长 180s | `rollback_idle_and_exit`：stop idle 色 + 还原 current/previous/idle 色 symlink + 删除当次 release/上传包，nginx/active-color 全程未动 |
 | 7 | **warmup 软门禁**：等 ready 载荷 `warmup.state=done`，最长 420s；`failed`/超时降级为警告继续（dispatch 时增量同步兜底，见 §7） | 不失败，仅告警 |
 | 8 | 冒烟：idle 端口 `/api/healthz` 200 且 `/api/healthz/drain` 返回合法 JSON | `rollback_idle_and_exit` |
+| 8.5 | 若分类命中 Runtime Worker：解析 worker idle 色、等待上次排水实例退出，只准备 idle worker symlink；切流前不启动、不 claim run | `rollback_idle_and_exit` 还原 worker symlink |
 | 9 | 切流：安装受版本管理的 API 站点配置（`/api/upload` 请求体直通、NAS fallback 临时目录）+ 重写 `/etc/nginx/conf.d/agent-saas-upstream.conf`（新色 primary、旧色 backup）→ `nginx -t` → `systemctl reload nginx` → 经 `https://127.0.0.1`（Host: api.agent.kaiyan.net）验证，最多重试 10 次 | `nginx -t` 失败同时还原站点与 upstream conf；reload 后验证失败把 nginx 翻回旧色再 `rollback_idle_and_exit` |
 | 10 | 更新 `/etc/agent-saas/active-color` 为新色 | — |
-| 11 | 重新生成 `/opt/agent-saas-app/rollback.sh`（蓝绿语义，幂等覆盖，见 §9.1） | — |
+| 10.5 | 启动 worker 候选并以 pidfile=readyfile 做硬门禁；成功后更新 worker active-color，SIGUSR2 排空旧 worker。纯 Web 发布整步跳过 | 候选失败时旧 worker（或首次迁移时旧 all 进程）仍继续执行 run；发布判红但不产生 run 失败 |
+| 11 | 重新生成 Web/API `/opt/agent-saas-app/rollback.sh`（蓝绿语义，幂等覆盖，见 §9.1；不隐式切换 Runtime Worker） | — |
 | 12 | drain 旧色：`kill -USR2 $(cat /run/agent-saas-server-<旧色>.pid)` 精确送 node 主进程；pidfile 缺失/kill 失败则降级 `systemctl stop`（SIGTERM，可能打断活跃流）。观察 60s，未退不算失败（后台继续排空，下次部署最多等 600s） | — |
 | 13 | 收尾：`pnpm store prune` + 删除上传包 | — |
 

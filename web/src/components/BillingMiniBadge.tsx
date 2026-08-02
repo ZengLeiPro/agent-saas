@@ -270,9 +270,6 @@ export function BillingMiniBadge({ sessionId }: BillingMiniBadgeProps) {
                     value={memberBudget.monthlyLimitCredits === null ? "未设置" : formatCredits(memberBudget.monthlyLimitCredits)}
                   />
                 </div>
-                <p className="mt-2.5 text-[10px] leading-relaxed text-muted-foreground/80">
-                  员工预算仅用于提醒，不转移共享余额、不形成个人钱包，也不会阻断任务。实际消耗以平台计费记录为准。
-                </p>
               </>
             ) : (
               <div className="mt-2 text-[13px] text-muted-foreground">个人预算数据暂不可用</div>

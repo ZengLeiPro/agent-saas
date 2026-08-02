@@ -192,9 +192,20 @@ import {
   type NotionAuthFlowServiceLike,
 } from '../notion/authFlow.js';
 import { PgFeishuConnectionStore, type FeishuConnectionStore } from '../feishu/store.js';
-import { FeishuAuthKeepaliveService, FeishuAuthStatusRunner } from '../feishu/keepalive.js';
+import { FeishuAuthKeepaliveService } from '../feishu/keepalive.js';
 import { PgFeishuAuthSessionStore } from '../feishu/authStore.js';
-import { FeishuAuthFlowService, FeishuDeviceLoginRunner, type FeishuAuthFlowServiceLike } from '../feishu/authFlow.js';
+import {
+  FeishuAuthFlowService,
+  FeishuDeviceLoginRunner,
+  type FeishuAuthFlowServiceLike,
+} from '../feishu/authFlow.js';
+import {
+  FeishuOAuthClient,
+  FeishuTokenBroker,
+  FeishuTokenBrokerLoginRunner,
+  FeishuTokenBrokerStatusRunner,
+} from '../feishu/tokenBroker.js';
+import { resolveFeishuConnectorRunEnv } from '../runtime/connectorRunEnv.js';
 import { SystemPromptRegistry } from '../runtime/systemPrompts.js';
 import {
   InMemoryAgentRuntimeProfileStore,
@@ -984,6 +995,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let googleWorkspaceOAuthService: GoogleWorkspaceOAuthService | undefined;
   let feishuConnectionStore: PgFeishuConnectionStore | undefined;
   let feishuAuthSessionStore: PgFeishuAuthSessionStore | undefined;
+  let feishuTokenBroker: FeishuTokenBroker | undefined;
   let feishuAuthKeepaliveService: FeishuAuthKeepaliveService | undefined;
   let feishuAuthFlowService: FeishuAuthFlowService | undefined;
   let artifactStore: ArtifactStore | undefined;
@@ -1055,14 +1067,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     return cd.authToken;
   })();
 
-  // 飞书官方 CLI 的 device flow 必须先绑定一个企业自建应用。App ID 可由普通 env
-  // 提供；App Secret 优先从 SecretVault ref 解析，兼容直接 env 仅用于部署迁移。
-  // 明文只保留在 server 进程内，后续经 ACS 内部 __FeishuCli 的 stdin 写入用户
-  // workspace 加密 keychain，不进入浏览器、PG、sandbox env 或 Agent transcript。
+  // 飞书 Token Broker 只在 Server 内持有平台 App Secret。用户 access/refresh token
+  // 以 tenant/user 隔离写入 SecretVault；sandbox 每次运行只获得 App ID 与短期 access token。
+  // inline secret 仅作部署迁移兼容，生产优先使用 SecretVault ref。
   const resolvedFeishuConnector = await (async (): Promise<{ appId: string; appSecret: string } | undefined> => {
     const appId = process.env.FEISHU_CONNECTOR_APP_ID?.trim();
     const appSecretRef = process.env.FEISHU_CONNECTOR_APP_SECRET_REF?.trim();
     const inlineSecret = process.env.FEISHU_CONNECTOR_APP_SECRET?.trim();
+    // 迁移期 inline secret 读取后立即从宿主 env 移除，避免匿名内部子进程继承。
+    if (inlineSecret) delete process.env.FEISHU_CONNECTOR_APP_SECRET;
     if (!appId && !appSecretRef && !inlineSecret) return undefined;
     if (!appId) {
       serverLogger.warn('Feishu connector disabled: FEISHU_CONNECTOR_APP_ID is missing');
@@ -1086,6 +1099,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       return undefined;
     }
   })();
+  const feishuConnectorScopes = Array.from(new Set(
+    (process.env.FEISHU_CONNECTOR_SCOPES ?? '')
+      .split(/[\s,]+/)
+      .map(scope => scope.trim())
+      .filter(scope => scope && scope !== 'offline_access'),
+  )).join(' ');
+  if (resolvedFeishuConnector && !feishuConnectorScopes) {
+    serverLogger.warn('Feishu Token Broker disabled: FEISHU_CONNECTOR_SCOPES has no business scopes');
+  }
 
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
@@ -1956,7 +1978,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     const nativeContext = owner
       ? (!owner.disabled && owner.id === context.userId && owner.tenantId === context.tenantId ? context : undefined)
       : (!userStore ? context : undefined);
-    const [githubEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, mcpConnectorEnv] = await Promise.all([
+    const [githubEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, feishuEnv, mcpConnectorEnv] = await Promise.all([
       nativeContext ? resolveGithubRuntimeEnv({
         connectionStore: connectorConnectionStore,
         vault: secretVault,
@@ -1979,6 +2001,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         ),
       ) : {},
       nativeContext ? aliyunConnectorService.resolveRuntimeEnv(nativeContext) : {},
+      nativeContext ? resolveFeishuConnectorRunEnv(
+        feishuTokenBroker,
+        nativeContext,
+        error => serverLogger.warn(
+          `Native connector runtime env skipped: connector=feishu reason=${error.message}`,
+        ),
+      ) : {},
       resolveConnectorRuntimeEnv({
         store: mcpConfigStore,
         vault: secretVault,
@@ -1992,6 +2021,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     return {
       ...mcpConnectorEnv,
       ...aliyunEnv,
+      ...feishuEnv,
       ...googleWorkspaceEnv,
       ...notionEnv,
       ...githubEnv,
@@ -3153,11 +3183,23 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.warn('DWS auth keepalive unavailable: PG connection store or DWS execution remote is not configured');
   }
 
-  if (feishuConnectionStore && userStore && (resolvedServerRemote || connectorAcsConfigured)) {
+  if (feishuConnectionStore && userStore && resolvedFeishuConnector && feishuConnectorScopes) {
+    feishuTokenBroker = new FeishuTokenBroker({
+      oauth: new FeishuOAuthClient({
+        appId: resolvedFeishuConnector.appId,
+        appSecret: resolvedFeishuConnector.appSecret,
+        fetchImpl: egressFetch,
+      }),
+      vault: secretVault,
+      connectionStore: feishuConnectionStore,
+      scope: feishuConnectorScopes,
+      profileId: 'kaiyan-agent',
+      onError: error => serverLogger.warn(`Feishu Token Broker maintenance failed: ${error.message}`),
+    });
     feishuAuthKeepaliveService = new FeishuAuthKeepaliveService({
       userStore,
       connectionStore: feishuConnectionStore,
-      runner: new FeishuAuthStatusRunner({ agentCwd, resolveServerRemote: resolveConnectorServerRemote }),
+      runner: new FeishuTokenBrokerStatusRunner(feishuTokenBroker),
       logger: serverLogger.child('FeishuKeepalive'),
     });
     if (enableSchedulerWorker) {
@@ -3165,15 +3207,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     } else {
       serverLogger.info(`Feishu auth keepalive worker disabled for processRole=${processRole}; status API remains available`);
     }
-    if (feishuAuthSessionStore && resolvedFeishuConnector) {
+    if (feishuAuthSessionStore) {
+      const legacyFeishuLogoutRunner = new FeishuDeviceLoginRunner({
+        agentCwd,
+        appId: resolvedFeishuConnector.appId,
+        appSecret: resolvedFeishuConnector.appSecret,
+        resolveServerRemote: resolveConnectorServerRemote,
+      });
       feishuAuthFlowService = new FeishuAuthFlowService({
         authSessionStore: feishuAuthSessionStore,
         connectionStore: feishuConnectionStore,
-        runner: new FeishuDeviceLoginRunner({
-          agentCwd,
-          appId: resolvedFeishuConnector.appId,
-          appSecret: resolvedFeishuConnector.appSecret,
-          resolveServerRemote: resolveConnectorServerRemote,
+        runner: new FeishuTokenBrokerLoginRunner(feishuTokenBroker, {
+          legacyLogout: (user, profileIds) => legacyFeishuLogoutRunner.logout(user, profileIds),
         }),
         onConnected: async (connectedUser) => {
           if (
@@ -3192,11 +3237,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         },
         logger: serverLogger.child('FeishuAuthFlow'),
       });
-    } else if (!resolvedFeishuConnector) {
-      serverLogger.warn('Feishu one-click connection unavailable: connector app credentials are not configured');
     }
   } else if (userStore) {
-    serverLogger.warn('Feishu auth keepalive unavailable: PG connection store or ACS execution remote is not configured');
+    serverLogger.warn('Feishu Token Broker unavailable: PG store, app credentials, or business scopes are not configured');
   }
 
   // B4: Server-remote hands 健康 scanner（仅 PG runtime）。默认开启；显式 false 关闭。

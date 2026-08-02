@@ -232,7 +232,16 @@ RUN npm install -g dingtalk-workspace-cli@1.0.55 \
 # 飞书官方 CLI（能力中心飞书连接器 + feishu skill）。
 # @larksuite/cli 的 postinstall 会按当前平台下载官方二进制，bin 名为 lark-cli。
 RUN npm install -g @larksuite/cli@1.0.81 \
-    && lark-cli --version
+    && lark-cli --version \
+    && mkdir -p /tmp/lark-smoke/config /tmp/lark-smoke/data \
+    && output="$(LARKSUITE_CLI_CONFIG_DIR=/tmp/lark-smoke/config \
+      LARKSUITE_CLI_DATA_DIR=/tmp/lark-smoke/data \
+      LARKSUITE_CLI_APP_ID=cli_smoke \
+      LARKSUITE_CLI_USER_ACCESS_TOKEN=u-smoke-token \
+      lark-cli auth status --json 2>&1 || true)" \
+    && printf '%s' "$output" | grep -q 'credentials are provided externally' \
+    && ! printf '%s' "$output" | grep -q 'u-smoke-token' \
+    && rm -rf /tmp/lark-smoke
 
 # Office skills（pptx/docx）Node 依赖 — 预装到独立前缀（2026-07-16 生产反馈修复）
 # skills-pool 的 pptx skill「从零制作」主路径 require('pptxgenjs')、docx skill 新建文档 require('docx')；

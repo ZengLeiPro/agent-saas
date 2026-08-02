@@ -98,6 +98,20 @@ CONNECTOR_OAUTH_CALLBACK_URL=https://api.agent.kaiyan.net/api/connectors/oauth/c
 
 Google Cloud Console 中必须登记完全一致的 Authorized redirect URI。修改共享 `server.env` 后，通过正常蓝绿发布启动 idle 色并切流；不要直接重启 active 色制造中断。
 
+## 飞书 Token Broker
+
+飞书原生连接器由 Server-side Token Broker 承载。生产配置：
+
+```ini
+FEISHU_CONNECTOR_APP_ID=<飞书自建应用 App ID>
+FEISHU_CONNECTOR_APP_SECRET_REF=<SecretVault 中的 opaque ref>
+FEISHU_CONNECTOR_SCOPES=<按飞书应用实际开通权限填写>
+```
+
+不要在生产 `server.env` 持久化 `FEISHU_CONNECTOR_APP_SECRET`；它只用于迁移兼容。`FEISHU_CONNECTOR_SCOPES` 为空会禁用 Broker，避免只申请 `offline_access` 却误报可用。每位用户需重新完成一次飞书 device authorization；重新授权前 Server 会先 logout 旧 workspace keychain，旧 token 不会导入 Broker。
+
+`FEISHU_CONNECTOR_APP_ID` 不能直接覆盖切换。变更前必须保持旧 App ID/Secret 配置，让所有用户在能力中心完成断开并确认连接行已清空，再发布新 App ID；否则服务返回 `app_mismatch`，保留旧 Vault ref，避免把旧应用 token 变成孤儿。
+
 ## ky-azeroth PAT 注入
 
 `agent-saas-server.service` 通过 `AZEROTH_TOKENS_FILE` 读取 `(tenantId, username) -> PAT` 映射。生产文件放在稳定路径：

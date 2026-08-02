@@ -15,6 +15,8 @@ const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 export const HAND_ENV_ALLOWLIST: readonly string[] = [
   'AZEROTH_TOKEN',
   'AZEROTH_API_URL',
+  'LARKSUITE_CLI_APP_ID',
+  'LARKSUITE_CLI_USER_ACCESS_TOKEN',
 ] as const;
 
 export const HAND_ENV_DENYLIST: readonly string[] = [
@@ -35,6 +37,11 @@ export const HAND_ENV_DENYLIST: readonly string[] = [
 ] as const;
 
 const HAND_ENV_DENYLIST_SET = new Set<string>(HAND_ENV_DENYLIST);
+const LARKSUITE_RUNTIME_ENV_ALLOWLIST = new Set([
+  'LARKSUITE_CLI_APP_ID',
+  'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+]);
+const FEISHU_SECRET_ENV = /(?:FEISHU|LARKSUITE).*(?:SECRET|REFRESH_TOKEN)/;
 
 export function pickHandEnv(
   env: Record<string, string | undefined> | undefined | null,
@@ -55,5 +62,7 @@ export function pickHandEnv(
 }
 
 export function isHandEnvAllowed(key: string): boolean {
-  return ENV_NAME_RE.test(key) && !HAND_ENV_DENYLIST_SET.has(key);
+  if (!ENV_NAME_RE.test(key) || HAND_ENV_DENYLIST_SET.has(key) || FEISHU_SECRET_ENV.test(key)) return false;
+  if (key.startsWith('LARKSUITE_CLI_')) return LARKSUITE_RUNTIME_ENV_ALLOWLIST.has(key);
+  return true;
 }

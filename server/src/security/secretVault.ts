@@ -47,6 +47,8 @@ export interface SecretVault {
   getSecret(ref: SecretRef | string, caller: VaultCaller): Promise<string>;
   rotateSecret(ref: SecretRef | string, value: string, caller: VaultCaller): Promise<SecretRef>;
   revokeSecret(ref: SecretRef | string, caller: VaultCaller): Promise<void>;
+  /** 可选：使当前进程的 plaintext cache 失效；跨进程 rotate 后强制 fresh read。 */
+  invalidate?(ref: SecretRef | string): void;
 }
 
 interface StoredSecret extends SecretRef {
@@ -249,6 +251,8 @@ export interface HttpSecretVaultOptions {
   baseUrl: string;
   authToken: string;
   fetchImpl?: typeof fetch;
+  /** 单次 Vault HTTP 请求超时（毫秒），默认 20 秒。 */
+  requestTimeoutMs?: number;
   /**
    * A3: 本地 plaintext cache TTL（毫秒）。默认 30_000；设 0 或负数关闭 cache。
    * 命中条件：未过期 + 未被 invalidate / rotate / revoke。cache key 只用 refId
@@ -264,6 +268,7 @@ export interface HttpSecretVaultOptions {
 
 const DEFAULT_HTTP_CACHE_TTL_MS = 30_000;
 const DEFAULT_HTTP_CACHE_MAX_ENTRIES = 256;
+const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 20_000;
 
 interface CacheEntry {
   value: string;
@@ -274,6 +279,7 @@ interface CacheEntry {
 export class HttpSecretVault implements SecretVault {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly requestTimeoutMs: number;
   private readonly cacheTtlMs: number;
   private readonly maxCacheEntries: number;
   private readonly nowMs: () => number;
@@ -286,6 +292,10 @@ export class HttpSecretVault implements SecretVault {
     if (parsed.protocol !== 'https:' && !localHttp) throw new Error('HttpSecretVault baseUrl must be https (except localhost development)');
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_HTTP_REQUEST_TIMEOUT_MS;
+    if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) {
+      throw new Error('HttpSecretVault requestTimeoutMs must be positive');
+    }
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_HTTP_CACHE_TTL_MS;
     this.maxCacheEntries = options.maxCacheEntries ?? DEFAULT_HTTP_CACHE_MAX_ENTRIES;
     this.nowMs = options.nowMs ?? (() => Date.now());
@@ -376,6 +386,7 @@ export class HttpSecretVault implements SecretVault {
         authorization: `Bearer ${this.options.authToken}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(this.requestTimeoutMs),
     });
     if (!response.ok) throw new Error(`HttpSecretVault ${path} failed: HTTP ${response.status}`);
     return await response.json() as T;

@@ -1,6 +1,7 @@
 import { resolve } from 'path';
 
 import { buildIsolatedGitCredentialEnv } from '../security/gitCredentialIsolation.js';
+import type { FeishuTokenBrokerLike } from '../feishu/tokenBroker.js';
 
 export interface ConnectorRuntimeIdentity {
   userId: string;
@@ -10,6 +11,24 @@ export interface ConnectorRuntimeIdentity {
 
 export interface ConnectorRuntimeEnvResolverConfig {
   resolveConnectorRuntimeEnv?: (identity: ConnectorRuntimeIdentity) => Promise<Record<string, string>>;
+}
+
+export async function resolveFeishuConnectorRunEnv(
+  broker: FeishuTokenBrokerLike | undefined,
+  identity: ConnectorRuntimeIdentity,
+  onError?: (error: Error) => void,
+): Promise<Record<string, string>> {
+  if (!broker) return {};
+  try {
+    const token = await broker.ensureFresh(identity);
+    return {
+      LARKSUITE_CLI_APP_ID: token.appId,
+      LARKSUITE_CLI_USER_ACCESS_TOKEN: token.accessToken,
+    };
+  } catch (error) {
+    onError?.(error instanceof Error ? error : new Error(String(error)));
+    return {};
+  }
 }
 
 export async function buildConnectorRunEnv(

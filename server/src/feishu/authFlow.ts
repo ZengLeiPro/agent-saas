@@ -20,6 +20,7 @@ export interface FeishuDeviceAuthorization {
 }
 
 export interface FeishuDeviceLoginRunnerLike {
+  readonly persistsConnection?: boolean;
   login(
     user: UserInfo,
     onAuthorization: (authorization: FeishuDeviceAuthorization) => void | Promise<void>,
@@ -243,8 +244,16 @@ export class FeishuAuthFlowService implements FeishuAuthFlowServiceLike {
       const login = await this.options.runner.login(user, async ({ authorizationUrl }) => {
         await this.options.authSessionStore.markAwaitingUser(session.sessionId, identity, authorizationUrl);
       }, controller.signal);
-      if (controller.signal.aborted) throw new Error('飞书授权已取消');
-      await this.options.connectionStore.upsertLogin(identity, login);
+      if (controller.signal.aborted) {
+        if (this.options.runner.persistsConnection && this.options.runner.logout) {
+          await this.options.runner.logout(user, [login.profileId]);
+          await this.options.connectionStore.removeForUser?.(identity.tenantId, identity.userId);
+        }
+        throw new Error('飞书授权已取消');
+      }
+      if (!this.options.runner.persistsConnection) {
+        await this.options.connectionStore.upsertLogin(identity, login);
+      }
       if (controller.signal.aborted) throw new Error('飞书授权已取消');
       await this.options.authSessionStore.markConnected(session.sessionId, identity);
       await this.options.onConnected?.(user).catch((err) => {

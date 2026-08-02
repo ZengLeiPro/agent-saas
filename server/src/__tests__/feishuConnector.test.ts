@@ -183,6 +183,41 @@ describe('飞书官方 CLI 连接器', () => {
     expect(authStore.markFailed).not.toHaveBeenCalled();
   });
 
+  it('Token Broker runner 已持久化 Vault/PG 时，AuthFlow 不重复 upsert', async () => {
+    let connected!: () => void;
+    const done = new Promise<void>((resolve) => { connected = resolve; });
+    const authStore: FeishuAuthSessionStore = {
+      createOrReuse: vi.fn(async () => ({ record: session(), created: true })),
+      markAwaitingUser: vi.fn(async () => undefined),
+      markConnected: vi.fn(async () => { connected(); }),
+      markFailed: vi.fn(async () => undefined),
+      getLatestForUser: vi.fn(async () => session()),
+    };
+    const store = connectionStore();
+    const service = new FeishuAuthFlowService({
+      authSessionStore: authStore,
+      connectionStore: store,
+      runner: {
+        persistsConnection: true,
+        login: vi.fn(async (_user, publish) => {
+          await publish({ authorizationUrl: 'https://accounts.feishu.cn/device?user_code=ABC' });
+          return {
+            profileId: 'kaiyan-agent',
+            appId: 'cli_test',
+            userOpenId: 'ou_1',
+            tokenSecretRef: 'vault-ref',
+            brokerSecretId: 'broker-id',
+          };
+        }),
+      },
+    });
+
+    await service.start(USER);
+    await done;
+    expect(store.upsertLogin).not.toHaveBeenCalled();
+    expect(authStore.markConnected).toHaveBeenCalled();
+  });
+
   it('远端 logout 失败时保留本地连接记录', async () => {
     const store = connectionStore([connection()]);
     const service = new FeishuAuthFlowService({

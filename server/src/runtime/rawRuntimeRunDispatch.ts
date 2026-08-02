@@ -3389,6 +3389,7 @@ export async function wakeRuntimeSession(
         if (event.type === 'error') outboundError = event.error ?? 'approval resume wake failed';
       }
       if (outboundError) throw new Error(outboundError);
+      if (drainHandoff.requested && renewTimer) clearInterval(renewTimer);
       if (await releaseWakeLeaseForDrainHandoff({
         config,
         eventStore,
@@ -3459,6 +3460,7 @@ export async function wakeRuntimeSession(
         if (event.type === 'error') outboundError = event.error ?? 'interaction resume wake failed';
       }
       if (outboundError) throw new Error(outboundError);
+      if (drainHandoff.requested && renewTimer) clearInterval(renewTimer);
       if (await releaseWakeLeaseForDrainHandoff({
         config,
         eventStore,
@@ -3524,6 +3526,7 @@ export async function wakeRuntimeSession(
       if (event.type === 'error') outboundError = event.error ?? 'wake dispatch failed';
     }
     if (outboundError) throw new Error(outboundError);
+    if (drainHandoff.requested && renewTimer) clearInterval(renewTimer);
     if (await releaseWakeLeaseForDrainHandoff({
       config,
       eventStore,

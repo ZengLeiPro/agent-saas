@@ -2664,95 +2664,102 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
 
-      let transcriptPath: string | null = null;
+      try {
+        let transcriptPath: string | null = null;
 
-      // 会话归属校验
-      // PR 7 P0-3 残余：admin 跨组织也得守门；轻量接口返回 [] 不暴露 403
-      if (req.user && req.user.role !== "admin") {
-        const pendingUserCwd = resolveUserCwd(agentCwd, {
-          id: req.user.sub,
-          username: req.user.username,
-          role: req.user.role,
-          tenantId: req.user.tenantId,
-        });
-        transcriptPath = getTranscriptPath(pendingUserCwd, sessionId, reqTranscriptOwner(req.user));
-        const meta = await readSessionMeta(transcriptPath);
-        if (!canAccessSession(req.user, meta, options.userStore)) {
-          res.json([]);
-          return;
-        }
-        if (hidesMemoryPollFrom(req.user, meta)) {
-          res.json([]);
-          return;
-        }
-      } else if (req.user) {
-        transcriptPath = await findTranscriptPathBySessionId(sessionId);
-        // admin 也要跨 tenant 检查
-        if (transcriptPath) {
+        // 会话归属校验
+        // PR 7 P0-3 残余：admin 跨组织也得守门；轻量接口返回 [] 不暴露 403
+        if (req.user && req.user.role !== "admin") {
+          const pendingUserCwd = resolveUserCwd(agentCwd, {
+            id: req.user.sub,
+            username: req.user.username,
+            role: req.user.role,
+            tenantId: req.user.tenantId,
+          });
+          transcriptPath = getTranscriptPath(pendingUserCwd, sessionId, reqTranscriptOwner(req.user));
           const meta = await readSessionMeta(transcriptPath);
           if (!canAccessSession(req.user, meta, options.userStore)) {
             res.json([]);
             return;
           }
+          if (hidesMemoryPollFrom(req.user, meta)) {
+            res.json([]);
+            return;
+          }
+        } else if (req.user) {
+          transcriptPath = await findTranscriptPathBySessionId(sessionId);
+          // admin 也要跨 tenant 检查
+          if (transcriptPath) {
+            const meta = await readSessionMeta(transcriptPath);
+            if (!canAccessSession(req.user, meta, options.userStore)) {
+              res.json([]);
+              return;
+            }
+          }
         }
-      }
 
-      const pending = interactionStore.getPendingInteractions(sessionId);
-      if (transcriptPath) {
-        const eventStore = runtimeEventStoreFor
-          ? runtimeEventStoreFor(transcriptPath)
-          : new FileEventStore(getRuntimeEventLogPath(transcriptPath));
-        const approvalStore = new EventBackedApprovalStore(
-          eventStore,
-          sessionId,
-        );
-        const replayState = buildRuntimeReplayState(
-          await eventStore.list(sessionId),
-          await approvalStore.list(sessionId),
-          sessionId,
-        );
-        const existingIds = new Set(
-          pending.map((entry) => entry.interactionId),
-        );
-        for (const state of buildPendingInteractionsFromEvents(
-          replayState.events,
-          sessionId,
-        )) {
-          if (existingIds.has(state.interactionId)) continue;
-          if (state.type !== "ask_user" && state.type !== "permission_request")
-            continue;
-          pending.push({
-            interactionId: state.interactionId,
-            type: state.type,
-            runId: state.runId,
-            toolCallId: state.toolCallId,
-            invocationId: state.invocationId,
-            questions: state.questions,
-            toolId: state.toolId,
-            toolName: state.toolName,
-            displayName: state.displayName,
-            toolInput: state.toolInput,
-          });
-          existingIds.add(state.interactionId);
+        const pending = interactionStore.getPendingInteractions(sessionId);
+        if (transcriptPath) {
+          const eventStore = runtimeEventStoreFor
+            ? runtimeEventStoreFor(transcriptPath)
+            : new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+          const approvalStore = new EventBackedApprovalStore(
+            eventStore,
+            sessionId,
+          );
+          const replayState = buildRuntimeReplayState(
+            await eventStore.list(sessionId),
+            await approvalStore.list(sessionId),
+            sessionId,
+          );
+          const existingIds = new Set(
+            pending.map((entry) => entry.interactionId),
+          );
+          for (const state of buildPendingInteractionsFromEvents(
+            replayState.events,
+            sessionId,
+          )) {
+            if (existingIds.has(state.interactionId)) continue;
+            if (state.type !== "ask_user" && state.type !== "permission_request")
+              continue;
+            pending.push({
+              interactionId: state.interactionId,
+              type: state.type,
+              runId: state.runId,
+              toolCallId: state.toolCallId,
+              invocationId: state.invocationId,
+              questions: state.questions,
+              toolId: state.toolId,
+              toolName: state.toolName,
+              displayName: state.displayName,
+              toolInput: state.toolInput,
+            });
+            existingIds.add(state.interactionId);
+          }
+          for (const state of replayState.pendingApprovals) {
+            const approval = state.approval;
+            if (!approval) continue;
+            if (existingIds.has(approval.id)) continue;
+            pending.push({
+              interactionId: approval.id,
+              type: "permission_request",
+              toolId: approval.toolId,
+              toolName: approval.toolName,
+              displayName: approval.displayName,
+              toolInput:
+                approval.input && typeof approval.input === "object"
+                  ? (approval.input as Record<string, unknown>)
+                  : { value: approval.input },
+            });
+          }
         }
-        for (const state of replayState.pendingApprovals) {
-          const approval = state.approval;
-          if (!approval) continue;
-          if (existingIds.has(approval.id)) continue;
-          pending.push({
-            interactionId: approval.id,
-            type: "permission_request",
-            toolId: approval.toolId,
-            toolName: approval.toolName,
-            displayName: approval.displayName,
-            toolInput:
-              approval.input && typeof approval.input === "object"
-                ? (approval.input as Record<string, unknown>)
-                : { value: approval.input },
-          });
-        }
+        res.json(pending);
+      } catch (err) {
+        apiLogger.warn(
+          `[sessions] pending interactions read failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        res.status(503).json({ error: "Agent 开小差了，请发送「继续」" });
       }
-      res.json(pending);
     },
   );
 

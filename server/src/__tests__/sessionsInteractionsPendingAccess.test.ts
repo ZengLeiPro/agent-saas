@@ -22,6 +22,7 @@ import { createSessionsRouter } from '../routes/sessions.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import { writeSessionMeta } from '../data/transcripts/meta.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
+import type { EventStore } from '../runtime/types.js';
 import { resolveUserCwd, type WorkspaceUser } from '../workspace/resolver.js';
 import { interactionStore } from '../channels/web/interactionStore.js';
 
@@ -40,7 +41,13 @@ function jwtFor(user: WorkspaceUser) {
   return { sub: user.id, username: user.username, role: user.role, tenantId: user.tenantId! };
 }
 
-async function startServer(agentCwd: string, user: WorkspaceUser): Promise<{ server: Server; baseUrl: string }> {
+async function startServer(
+  agentCwd: string,
+  user: WorkspaceUser,
+  runtimeEventStoreFor: (transcriptPath: string) => EventStore = (transcriptPath) => (
+    new FileEventStore(getRuntimeEventLogPath(transcriptPath))
+  ),
+): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -49,7 +56,7 @@ async function startServer(agentCwd: string, user: WorkspaceUser): Promise<{ ser
   });
   app.use('/api', createSessionsRouter({
     agentCwd,
-    runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+    runtimeEventStoreFor,
   }));
   return new Promise((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => {
@@ -186,6 +193,28 @@ describe('GET /chat/interactions/pending owner-self access guard', () => {
       const { status, body } = await fetchPending(baseUrl);
       expect(status).toBe(400);
       expect((body as { error: string }).error).toBe('sessionId required');
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('EventStore 瞬时断线 → 503，不把 route rejection 泄漏到进程级', async () => {
+    const sessionId = randomUUID();
+    await writeOwnedSession(sessionId);
+    const failingStore: EventStore = {
+      async append() {
+        throw new Error('not used');
+      },
+      async list() {
+        throw new Error('Connection terminated unexpectedly');
+      },
+    };
+
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, () => failingStore);
+    try {
+      const { status, body } = await fetchPending(baseUrl, sessionId);
+      expect(status).toBe(503);
+      expect(body).toEqual({ error: 'Agent 开小差了，请发送「继续」' });
     } finally {
       await stopServer(server);
     }

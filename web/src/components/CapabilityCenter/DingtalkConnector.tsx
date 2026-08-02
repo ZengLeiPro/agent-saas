@@ -10,7 +10,7 @@
  * （原「设置 → 账户 → 钉钉连接」入口已下线）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CircleCheck, ExternalLink, Loader2, Plus, TriangleAlert } from "lucide-react";
+import { Check, CircleCheck, ExternalLink, Loader2, Plus, TriangleAlert, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/contexts/AuthContext";
@@ -63,7 +63,10 @@ export interface DwsConnectionsState {
   needsReconnect: boolean;
   hasConnected: boolean;
   connectLabel: string;
+  disconnectingProfileId: string | null;
   startConnection: () => Promise<void>;
+  cancelAuthorization: () => Promise<void>;
+  disconnectConnection: (profileId: string) => Promise<void>;
   reopenAuthorizationPage: (url: string) => void;
 }
 
@@ -80,6 +83,7 @@ export function useDwsConnections(enabled = true): DwsConnectionsState {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authServiceAvailable, setAuthServiceAvailable] = useState<boolean | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [disconnectingProfileId, setDisconnectingProfileId] = useState<string | null>(null);
   const [popupBlocked, setPopupBlocked] = useState(false);
   const authorizationPopupRef = useRef<Window | null>(null);
   const openedAuthorizationUrlRef = useRef<string | null>(null);
@@ -161,6 +165,39 @@ export function useDwsConnections(enabled = true): DwsConnectionsState {
     }
   }, [authServiceAvailable, reopenAuthorizationPage]);
 
+  const cancelAuthorization = useCallback(async () => {
+    setConnecting(true);
+    setAuthError(null);
+    try {
+      const response = await authFetch("/api/dws/auth/session", { method: "DELETE" });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "钉钉授权取消失败，请稍后重试");
+      setAuthSession(null);
+      const popup = authorizationPopupRef.current;
+      if (popup && !popup.closed) popup.close();
+      authorizationPopupRef.current = null;
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "钉钉授权取消失败，请稍后重试");
+    } finally {
+      setConnecting(false);
+    }
+  }, []);
+
+  const disconnectConnection = useCallback(async (profileId: string) => {
+    setDisconnectingProfileId(profileId);
+    setAuthError(null);
+    try {
+      const response = await authFetch(`/api/dws/connections?profileId=${encodeURIComponent(profileId)}`, { method: "DELETE" });
+      const data = await response.json().catch(() => ({})) as { connections?: DwsConnectionView[]; error?: string };
+      if (!response.ok) throw new Error(data.error || "钉钉断开失败，请稍后重试");
+      setConnections(data.connections ?? []);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "钉钉断开失败，请稍后重试");
+    } finally {
+      setDisconnectingProfileId(null);
+    }
+  }, []);
+
   useEffect(() => {
     if (!enabled) return;
     setAuthSession(null);
@@ -221,7 +258,10 @@ export function useDwsConnections(enabled = true): DwsConnectionsState {
     needsReconnect,
     hasConnected,
     connectLabel,
+    disconnectingProfileId,
     startConnection,
+    cancelAuthorization,
+    disconnectConnection,
     reopenAuthorizationPage,
   };
 }
@@ -420,15 +460,31 @@ export function DingtalkConnectorDrawer({
                     <div className="mt-1 text-[11px] text-muted-foreground">最近检查：{formatDwsConnectionTime(connection.lastCheckedAt)}</div>
                   ) : null}
                 </div>
-                <div className={cn(
-                  "flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium",
-                  connected && "bg-success-subtle text-success-ink",
-                  pending && "bg-info-subtle text-info-ink",
-                  connection.status === "error" && "bg-warning-subtle text-warning-ink",
-                  connection.status === "disconnected" && "bg-danger-subtle text-danger-ink",
-                )}>
-                  {connected ? <CircleCheck className="size-3.5" /> : pending ? <Loader2 className="size-3.5 animate-spin" /> : <TriangleAlert className="size-3.5" />}
-                  {connected ? "已连接" : pending ? "检测中" : connection.status === "error" ? "重试中" : "需重连"}
+                <div className="flex shrink-0 items-center gap-2">
+                  <div className={cn(
+                    "flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium",
+                    connected && "bg-success-subtle text-success-ink",
+                    pending && "bg-info-subtle text-info-ink",
+                    connection.status === "error" && "bg-warning-subtle text-warning-ink",
+                    connection.status === "disconnected" && "bg-danger-subtle text-danger-ink",
+                  )}>
+                    {connected ? <CircleCheck className="size-3.5" /> : pending ? <Loader2 className="size-3.5 animate-spin" /> : <TriangleAlert className="size-3.5" />}
+                    {connected ? "已连接" : pending ? "检测中" : connection.status === "error" ? "重试中" : "需重连"}
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-8 text-muted-foreground hover:text-destructive"
+                    disabled={dws.disconnectingProfileId === connection.profileId}
+                    aria-label={`断开 ${connection.corpName || connection.profileName || "钉钉组织"}`}
+                    onClick={() => {
+                      if (window.confirm("确认断开这个钉钉组织？断开后 Agent 将无法继续访问该组织。")) {
+                        void dws.disconnectConnection(connection.profileId);
+                      }
+                    }}
+                  >
+                    {dws.disconnectingProfileId === connection.profileId ? <Loader2 className="size-4 animate-spin" /> : <Unplug className="size-4" />}
+                  </Button>
                 </div>
               </div>
             );
@@ -438,12 +494,12 @@ export function DingtalkConnectorDrawer({
 
       <Button
         className="w-full"
-        variant={dws.hasConnected && !dws.needsReconnect ? "outline" : "default"}
-        disabled={dws.authServiceUnavailable || dws.authInProgress || dws.connecting}
-        onClick={() => { void dws.startConnection(); }}
+        variant={dws.authInProgress || (dws.hasConnected && !dws.needsReconnect) ? "outline" : "default"}
+        disabled={dws.authServiceUnavailable || dws.connecting}
+        onClick={() => { void (dws.authInProgress ? dws.cancelAuthorization() : dws.startConnection()); }}
       >
-        {(dws.authInProgress || dws.connecting) ? <Loader2 className="size-4 animate-spin" /> : null}
-        {dws.connectLabel}
+        {dws.connecting ? <Loader2 className="size-4 animate-spin" /> : dws.authInProgress ? <Unplug className="size-4" /> : null}
+        {dws.authInProgress ? "取消授权" : dws.connectLabel}
       </Button>
     </CapabilityDetailDrawer>
   );

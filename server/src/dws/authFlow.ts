@@ -174,6 +174,7 @@ export interface DwsAuthFlowServiceLike {
   start(user: UserInfo): Promise<DwsAuthSessionRecord>;
   getLatest(tenantId: string, userId: string): Promise<DwsAuthSessionRecord | null>;
   cancelUser?(tenantId: string, userId: string): Promise<void>;
+  revokeProfile?(user: UserInfo, profileId: string): Promise<void>;
   revokeUser?(user: UserInfo): Promise<void>;
 }
 
@@ -229,11 +230,26 @@ export class DwsAuthFlowService implements DwsAuthFlowServiceLike {
     this.activeTasks.delete(key);
   }
 
+  async revokeProfile(user: UserInfo, profileId: string): Promise<void> {
+    await this.cancelUser(user.tenantId, user.id);
+    const profiles = await this.options.connectionStore.listForUser(user.tenantId, user.id);
+    if (!profiles.some(profile => profile.profileId === profileId)) return;
+    if (!this.options.runner.logout || !this.options.connectionStore.removeProfile) {
+      throw new Error('DWS 断开服务尚未配置');
+    }
+    await this.options.runner.logout(user, [profileId]);
+    await this.options.connectionStore.removeProfile(user.tenantId, user.id, profileId);
+  }
+
   async revokeUser(user: UserInfo): Promise<void> {
     await this.cancelUser(user.tenantId, user.id);
     const profiles = await this.options.connectionStore.listForUser(user.tenantId, user.id);
-    await this.options.runner.logout?.(user, profiles.map(profile => profile.profileId));
-    await this.options.connectionStore.removeForUser?.(user.tenantId, user.id);
+    if (profiles.length === 0) return;
+    if (!this.options.runner.logout || !this.options.connectionStore.removeForUser) {
+      throw new Error('DWS 断开服务尚未配置');
+    }
+    await this.options.runner.logout(user, profiles.map(profile => profile.profileId));
+    await this.options.connectionStore.removeForUser(user.tenantId, user.id);
   }
 
   stop(): void {

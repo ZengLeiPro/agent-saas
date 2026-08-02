@@ -70,6 +70,59 @@ export function createDwsRouter(options: DwsRouterOptions): Router {
     }
   });
 
+  router.delete('/dws/auth/session', async (req, res) => {
+    if (!req.user?.sub || !req.user.tenantId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    if (!options.authFlowService?.cancelUser) {
+      res.status(503).json({ error: '钉钉授权取消服务暂不可用' });
+      return;
+    }
+    try {
+      await options.authFlowService.cancelUser(req.user.tenantId, req.user.sub);
+      res.json({ session: null });
+    } catch {
+      res.status(503).json({ error: '钉钉授权取消失败，请稍后重试' });
+    }
+  });
+
+  router.delete('/dws/connections', async (req, res) => {
+    if (!req.user?.sub || !req.user.tenantId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    if (!options.authFlowService || !options.connectionStore || !options.userStore) {
+      res.status(503).json({ error: '钉钉断开服务暂不可用' });
+      return;
+    }
+    const user = options.userStore.findById(req.user.sub);
+    if (!user || user.disabled || user.tenantId !== req.user.tenantId) {
+      res.status(403).json({ error: '当前账号无法断开钉钉' });
+      return;
+    }
+    const profileId = typeof req.query.profileId === 'string' ? req.query.profileId.trim() : '';
+    try {
+      if (profileId) {
+        if (!options.authFlowService.revokeProfile) {
+          res.status(503).json({ error: '钉钉单组织断开服务暂不可用' });
+          return;
+        }
+        await options.authFlowService.revokeProfile(user, profileId);
+      } else {
+        if (!options.authFlowService.revokeUser) {
+          res.status(503).json({ error: '钉钉断开服务暂不可用' });
+          return;
+        }
+        await options.authFlowService.revokeUser(user);
+      }
+      const rows = await options.connectionStore.listForUser(req.user.tenantId, req.user.sub);
+      res.json({ connections: rows.map(toPublicConnection) });
+    } catch {
+      res.status(503).json({ error: '钉钉断开失败，请稍后重试' });
+    }
+  });
+
   return router;
 }
 

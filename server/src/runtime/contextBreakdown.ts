@@ -302,7 +302,7 @@ export function calibrateContextBreakdown(
   if (outputTokens > 0) {
     categories.push({
       key: 'current_assistant_output',
-      name: '本轮助手输出',
+      name: '本轮 Agent 输出',
       tokens: outputTokens,
       color: COLORS.assistant,
       accuracy: 'provider',

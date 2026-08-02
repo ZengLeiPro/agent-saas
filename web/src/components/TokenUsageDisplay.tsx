@@ -263,15 +263,9 @@ export function TokenUsageDisplay({
           {/* Hero 卡：用户点「上下文」最关心的信息放第一屏 */}
           {hasExactContext ? (
             <div className="rounded-2xl border border-border/80 bg-muted/35 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-semibold">当前上下文</span>
-                <span className="rounded-full bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
-                  {hasRealtime ? '实际值' : 'provider usage'}
-                </span>
-              </div>
               {/* KPI 区：有累计消耗时双列并排，否则单指标 */}
               {showHeroCumulative ? (
-                <div className="mt-3 grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     {hasContextWindow ? (
                       <>
@@ -279,7 +273,7 @@ export function TokenUsageDisplay({
                           {(percentage * 100).toFixed(1)}%
                         </div>
                         <div className="mt-1.5 text-[10px] tabular-nums text-muted-foreground">
-                          {formatTokenCount(displayTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
+                          当前上下文 {formatTokenCount(displayTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
                         </div>
                       </>
                     ) : (
@@ -287,7 +281,7 @@ export function TokenUsageDisplay({
                         <div className="text-2xl font-semibold leading-none tabular-nums">
                           {formatTokenCount(displayTokens)}
                         </div>
-                        <div className="mt-1.5 text-[10px] text-muted-foreground">当前占用</div>
+                        <div className="mt-1.5 text-[10px] text-muted-foreground">当前上下文</div>
                       </>
                     )}
                   </div>
@@ -299,20 +293,20 @@ export function TokenUsageDisplay({
                   </div>
                 </div>
               ) : hasContextWindow ? (
-                <div className="mt-3 flex items-baseline gap-2">
+                <div className="flex items-baseline gap-2">
                   <span className={`text-2xl font-semibold leading-none tabular-nums ${heroPercentColor}`}>
                     {(percentage * 100).toFixed(1)}%
                   </span>
                   <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-                    {formatTokenCount(displayTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
+                    当前上下文 {formatTokenCount(displayTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
                   </span>
                 </div>
               ) : (
-                <div className="mt-3 flex items-baseline gap-2">
+                <div className="flex items-baseline gap-2">
                   <span className="text-2xl font-semibold leading-none tabular-nums">
                     {formatTokenCount(displayTokens)}
                   </span>
-                  <span className="text-xs text-muted-foreground">tokens</span>
+                  <span className="text-xs text-muted-foreground">当前上下文</span>
                 </div>
               )}
               {hasContextWindow && (
@@ -418,13 +412,13 @@ export function TokenUsageDisplay({
               <div className="px-3 py-3">
                 <div className="text-[13px] font-medium">累计模型用量</div>
                 <div className="mt-2.5 space-y-1.5 text-[12px]">
-                  <DetailRow label="输入 Token" value={contextUsage!.usageTotals.inputTokens} />
+                  <DetailRow label="输入" value={contextUsage!.usageTotals.inputTokens} />
                   <DetailRow label="未缓存输入" value={contextUsage!.usageTotals.uncachedInputTokens} />
                   <DetailRow label="缓存命中" value={contextUsage!.usageTotals.cacheReadTokens} />
                   <DetailRow label="缓存写入" value={contextUsage!.usageTotals.cacheCreationTokens} />
-                  <DetailRow label="输出 Token" value={contextUsage!.usageTotals.outputTokens} />
+                  <DetailRow label="输出" value={contextUsage!.usageTotals.outputTokens} />
                   {contextUsage!.usageTotals.reasoningTokens > 0 && (
-                    <DetailRow label="思考 Token" value={contextUsage!.usageTotals.reasoningTokens} />
+                    <DetailRow label="思考" value={contextUsage!.usageTotals.reasoningTokens} />
                   )}
                 </div>
               </div>
@@ -433,7 +427,7 @@ export function TokenUsageDisplay({
             {/* 父 Agent */}
             {tokenUsage && (
               <div className="px-3 py-3">
-                <div className="text-[13px] font-medium">父 Agent</div>
+                <div className="text-[13px] font-medium">主 Agent</div>
                 <div className="mt-2.5 space-y-1.5 text-[12px]">
                   {hasExactContext && <DetailRow label="上下文" value={formatTokenCount(displayTokens)} />}
                   <DetailRow label="累计消耗" value={formatTokenCount(parentCumulativeTokens)} />
@@ -447,7 +441,7 @@ export function TokenUsageDisplay({
                   {tokenUsage.totalCostUsd != null && tokenUsage.totalCostUsd > 0 && (
                     <div className="flex items-center justify-between gap-4">
                       <span className="text-muted-foreground">
-                        {tokenUsage.subagentTotalTokens > 0 ? '父 Agent 等效成本' : '等效成本'}
+                        {tokenUsage.subagentTotalTokens > 0 ? '主 Agent 等效成本' : '等效成本'}
                       </span>
                       <span className="font-mono tabular-nums">${tokenUsage.totalCostUsd.toFixed(4)}</span>
                     </div>

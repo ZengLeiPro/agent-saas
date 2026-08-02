@@ -53,10 +53,10 @@ describe("TokenUsageDisplay", () => {
     await userEvent.click(screen.getByRole("button", { name: /^217\.6k$/ }));
 
     const cumulativeHeading = screen.getByText("累计模型用量");
-    const parentHeading = screen.getByText("父 Agent");
+    const parentHeading = screen.getByText("主 Agent");
     const childHeading = screen.getByText("子 Agent（7 个 · 297 次调用）");
     const contextHeading = screen.getByText("当前上下文");
-    // 新信息架构：当前上下文（hero 卡）在最前，其后依次为累计模型用量 → 父 Agent → 子 Agent
+    // 新信息架构：当前上下文（hero 卡）在最前，其后依次为累计模型用量 → 主 Agent → 子 Agent
     expect(contextHeading.compareDocumentPosition(cumulativeHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(cumulativeHeading.compareDocumentPosition(parentHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(parentHeading.compareDocumentPosition(childHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -137,7 +137,7 @@ describe("TokenUsageDisplay", () => {
     expect(screen.getByText("平台基础规则")).toBeTruthy();
     expect(screen.getByText("协议及未归因开销")).toBeTruthy();
     expect(screen.getByText("累计模型用量")).toBeTruthy();
-    expect(screen.getByText("思考 Token")).toBeTruthy();
+    expect(screen.getByText("思考")).toBeTruthy();
   });
 
   it("renders per-child resource entries and opens child session", async () => {

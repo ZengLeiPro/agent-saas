@@ -3723,7 +3723,7 @@ export function resolveWakePrompt(
   const hasPersistedUserMessage = events.some((event) => (
     event.type === 'user_message'
     && event.sessionId === run.sessionId
-    && event.runId === run.runId
+    && (event.runId === run.runId || event.interjectionSourceRunId === run.runId)
   ));
   if (!hasPersistedUserMessage) {
     return { message: restoreWakeMessage(run, events, session), recordUserMessage: true };

@@ -29,6 +29,7 @@ class MemorySessionCatalog implements SessionCatalog {
 class MemoryEventStore implements EventStore {
   events: PlatformEvent[] = [];
   appendContexts: Array<Parameters<EventStore['append']>[1]> = [];
+  listOptions: Array<Parameters<EventStore['list']>[1]> = [];
   async append(event: PlatformEventInput, ctx?: Parameters<EventStore['append']>[1]): Promise<PlatformEvent> {
     const full = { ...event, id: `e${this.events.length + 1}`, timestamp: new Date().toISOString() } as PlatformEvent;
     this.appendContexts.push(ctx);

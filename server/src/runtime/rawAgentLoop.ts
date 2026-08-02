@@ -991,6 +991,9 @@ export class RawAgentLoop implements AgentLoop {
           ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
           ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
         }, this.withModelRequestDiagnostics(context))) {
+          if (!boundaryInterjectionsClaimed && event.type === 'completed') {
+            assertSuccessfulModelTerminal(event);
+          }
           if (!boundaryInterjectionsClaimed) {
             boundaryInterjectionsClaimed = true;
             const requestedSourceRunIds = boundaryInterjections.map((interjection) => interjection.sourceRunId);

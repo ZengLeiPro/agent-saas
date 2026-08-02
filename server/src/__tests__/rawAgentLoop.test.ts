@@ -229,6 +229,27 @@ class AbortBeforeInterjectionEventAdapter implements ModelAdapter {
   }
 }
 
+class FailedBeforeInterjectionEventAdapter implements ModelAdapter {
+  calls = 0;
+
+  async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    if (this.calls === 1) {
+      yield { type: 'text_delta', content: '第一段回答。' };
+      yield { type: 'completed', content: '第一段回答。', toolCalls: [] };
+      return;
+    }
+    yield {
+      type: 'completed',
+      content: '',
+      toolCalls: [],
+      terminalStatus: 'incomplete',
+      incompleteReason: 'max_output_tokens',
+      finishReason: 'length',
+    };
+  }
+}
+
 class InterjectionAfterToolAdapter implements ModelAdapter {
   calls = 0;
   requests: ModelRequest[] = [];
@@ -1202,6 +1223,64 @@ describe('RawAgentLoop', () => {
     expect(events.at(-1)).toEqual({
       type: 'error',
       error: 'cancelled before interjection model event',
+    });
+    expect(adapter.calls).toBe(2);
+    expect(markApplied).not.toHaveBeenCalled();
+  });
+
+  it('keeps the source pending when the next model turn fails before producing content', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-interjection-failed-boundary-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new FailedBeforeInterjectionEventAdapter();
+    const queued: QueuedInterjection[] = [{
+      inputId: 'input-failed-boundary',
+      sourceRunId: 'source-failed-boundary',
+      clientMsgId: 'client-failed-boundary',
+      message: { channel: 'web', chatId: 'chat-failed-boundary', content: '失败前插话' },
+      prompt: '失败前插话',
+    }];
+    let loadCalls = 0;
+    const markApplied = vi.fn(async (_targetRunId: string, sourceRunIds: string[]) => sourceRunIds);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-interjection-failed-boundary'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        markSteeringInputsApplied: markApplied,
+        trySealSteeringInputWindow: async () => false,
+      } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-failed-boundary', content: '先回答' },
+        prompt: '先回答',
+        instructions: '直接回答。',
+        maxTurns: 3,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-failed-boundary',
+        sessionId: 'session-interjection-failed-boundary',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+        loadQueuedInterjections: async () => {
+          loadCalls += 1;
+          return loadCalls === 1 ? [] : queued;
+        },
+      },
+    ));
+
+    expect(events.at(-1)).toMatchObject({
+      type: 'error',
+      error: expect.stringContaining('max_output_tokens'),
     });
     expect(adapter.calls).toBe(2);
     expect(markApplied).not.toHaveBeenCalled();

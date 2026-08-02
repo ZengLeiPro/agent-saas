@@ -131,7 +131,9 @@ import {
 import {
   connectNotionCredential,
   disconnectNotion,
+  getLiveNotionConnection,
   resolveNotionRuntimeEnv,
+  type NotionConnectionView,
 } from '../connectors/notion.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
 import { EgressConfigStore } from '../data/egressConfig.js';
@@ -269,6 +271,16 @@ export interface AppRuntime {
   dwsAuthFlowService?: DwsAuthFlowServiceLike;
   /** Notion 官方 ntn 两阶段登录，成功后 token 转存用户级 Vault。 */
   notionAuthFlowService?: NotionAuthFlowServiceLike;
+  getNotionConnection?: (identity: {
+    userId: string;
+    username: string;
+    tenantId: string;
+  }) => Promise<NotionConnectionView>;
+  disconnectNotionConnection?: (identity: {
+    userId: string;
+    username: string;
+    tenantId: string;
+  }) => Promise<unknown>;
   /** Google Workspace 官方 API OAuth，运行时向 gws 注入短期 access token。 */
   googleWorkspaceOAuthService?: GoogleWorkspaceOAuthService;
   notionAuthFlowShutdown?: () => void;
@@ -1864,6 +1876,21 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     egressLogger,
   );
   const egressFetch = createEgressFetch(egressDispatchers, egressLogger);
+  const getNotionConnection = connectorConnectionStore && secretVault
+    ? (identity: { userId: string; username: string; tenantId: string }) => getLiveNotionConnection({
+        ...identity,
+        connectionStore: connectorConnectionStore,
+        vault: secretVault,
+        fetchImpl: egressFetch,
+      })
+    : undefined;
+  const disconnectNotionConnection = connectorConnectionStore && secretVault
+    ? (identity: { userId: string; username: string; tenantId: string }) => disconnectNotion({
+        ...identity,
+        connectionStore: connectorConnectionStore,
+        vault: secretVault,
+      })
+    : undefined;
   if (googleWorkspaceClientId && googleWorkspaceClientSecret) {
     googleWorkspaceOAuthService = new GoogleWorkspaceOAuthService({
       clientId: googleWorkspaceClientId,
@@ -3076,6 +3103,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           userId: connectedUser.id,
           tenantId: connectedUser.tenantId,
           token,
+          fetchImpl: egressFetch,
         });
       },
       logger: serverLogger.child('NotionAuthFlow'),
@@ -3240,6 +3268,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     dwsConnectionStore,
     dwsAuthFlowService,
     notionAuthFlowService,
+    getNotionConnection,
+    disconnectNotionConnection,
     googleWorkspaceOAuthService,
     notionAuthFlowShutdown: notionAuthFlowService ? () => notionAuthFlowService?.stop() : undefined,
     dwsAuthKeepaliveShutdown: dwsAuthKeepaliveService || dwsAuthFlowService

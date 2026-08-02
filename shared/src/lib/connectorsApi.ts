@@ -7,6 +7,7 @@ import type {
   GoogleWorkspaceOAuthStartResponse,
   NotionAuthSessionResponse,
   NotionConnectionResponse,
+  NotionDisconnectResponse,
 } from '../types/connectors';
 
 async function jsonOrError<T>(res: Response, fallback: string): Promise<T> {
@@ -51,12 +52,9 @@ export async function startNotionAuthSession(): Promise<NotionAuthSessionRespons
   }), '启动 Notion 授权失败');
 }
 
-export async function disconnectNotion(): Promise<void> {
+export async function disconnectNotion(): Promise<NotionDisconnectResponse> {
   const res = await authFetch('/api/connectors/notion', { method: 'DELETE' });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error || 'Notion 断开失败');
-  }
+  return jsonOrError(res, 'Notion 断开失败');
 }
 
 export async function fetchGoogleWorkspaceConnection(): Promise<GoogleWorkspaceConnectionResponse> {

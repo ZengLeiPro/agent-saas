@@ -678,7 +678,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await rig.send(USER, { client_msg_id: 'cm-durable-active', message: '重试' });
       expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['chat_ack', 'stream_id', 'session']);
       expect(rig.ws.sent[1].data).toEqual({
-        type: 'stream_id', streamId: 'st-9', runId: 'run-idem-a', client_msg_id: 'cm-durable-active',
+        type: 'stream_id', streamId: 'st-9', sessionId: 's-idem-a', runId: 'run-idem-a', client_msg_id: 'cm-durable-active',
       });
       expect(rig.ws.sent[2].data).toEqual({ type: 'session', sessionId: 's-idem-a', client_msg_id: 'cm-durable-active' });
 

@@ -69,7 +69,7 @@ describe("BillingMiniBadge", () => {
     expect(screen.getByText("75% · 需要关注")).toBeTruthy();
     expect(screen.getByText("当前会话（含 7 个子 Agent）")).toBeTruthy();
     expect(screen.getByText("2,737.58")).toBeTruthy();
-    expect(screen.getByText(/员工预算仅用于提醒/)).toBeTruthy();
+    expect(screen.queryByText(/员工预算仅用于提醒/)).toBeNull();
     expect(screen.queryByText(/每日刷新|免费积分|300/)).toBeNull();
   });
 

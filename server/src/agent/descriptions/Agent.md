@@ -21,4 +21,4 @@ agent_type 可选 {{AGENT_TYPES}}。
 限额：单次运行最多派生 {{PER_RUN_TOTAL}} 个子 agent、同时并行 {{PER_RUN_CONCURRENCY}} 个；
 每个子 agent 最多 {{MAX_TURNS}} 轮、硬超时 {{TIMEOUT_MINUTES}} 分钟，超限自动终止并返回 status。
 子 agent 与你共享同一工作目录；其内部过程不进入本对话。前台模式把最终报告作为工具结果返回，后台模式在终态后注入完成通知。
-后台模式下可用 BackgroundTaskList / BackgroundTaskStatus 核对状态，用 BackgroundTaskCancel 取消任务。
+后台模式下可用 BackgroundTask(action="list"/"status") 核对状态，用 BackgroundTask(action="cancel") 取消任务。

@@ -33,6 +33,18 @@ export interface BackgroundCommandReservation {
   status: 'starting';
 }
 
+/**
+ * BackgroundTask(action=output) 的入参（2026-08-03 工具面收敛批次）：
+ * 后台命令增量续读，语义与 hand 端 BashOutput 协议一一对应。
+ */
+export interface BackgroundCommandOutputRequest {
+  taskId: string;
+  stdoutOffset?: number;
+  stderrOffset?: number;
+  limitBytes?: number;
+  waitMs?: number;
+}
+
 export interface BackgroundTaskRuntime {
   enqueue(context: ToolCallContext, request: BackgroundAgentRequest): Promise<BackgroundTaskStartResult>;
   reserveCommand(context: ToolCallContext, request: BackgroundCommandRequest): Promise<BackgroundCommandReservation>;
@@ -46,6 +58,11 @@ export interface BackgroundTaskRuntime {
   list(context: ToolCallContext, limit?: number): Promise<RunRecord[]>;
   get(context: ToolCallContext, taskId: string): Promise<RunRecord | null>;
   cancel(context: ToolCallContext, taskId: string): Promise<RunRecord>;
+  /**
+   * 运行中后台命令的增量输出续读（内部按 hand 协议名 BashOutput 透传，ACS 零改动）。
+   * 仅对 taskType=command 且未进终态的任务有效；其余情况抛出带引导的错误。
+   */
+  readCommandOutput(context: ToolCallContext, request: BackgroundCommandOutputRequest): Promise<{ content: string }>;
 }
 
 export function isBackgroundTaskRun(record: Pick<RunRecord, 'metadata'>): boolean {

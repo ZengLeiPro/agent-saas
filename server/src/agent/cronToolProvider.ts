@@ -21,7 +21,7 @@ import type {
 } from './toolRuntime.js';
 
 /**
- * 内置定时任务工具（CronList / CronManage）。
+ * 内置定时任务工具（CronManage，单工具）。
  *
  * 背景：skills-pool 的 cron skill 原指示模型调用 `mcp__cron__manage`——那是
  * 本机 harness 专属 MCP 工具，agent-saas 运行时不存在，模型会陷入找工具迷航
@@ -31,14 +31,14 @@ import type {
  *   所有读写只作用于 owner 自己的任务，与 REST `canAccess` 相同。
  * - create/update 复用 cronJobCreateSchema / cronJobPatchSchema，字段校验
  *   与 REST 完全一致。
+ *
+ * 2026-08-03 工具面收敛批次：原 CronList 并入本工具的 action="list"。
+ * 静态 risk 保持 dangerous（最高档），resolveCallPolicy 对 list 降为 safe，
+ * 免审批语义与原 CronList（safe/never）完全一致。
  */
 
-type CronListInput = {
-  id?: string;
-};
-
 type CronManageInput = {
-  action: 'create' | 'update' | 'delete' | 'run';
+  action: 'list' | 'create' | 'update' | 'delete' | 'run';
   id?: string;
   name?: string;
   description?: string;
@@ -48,13 +48,9 @@ type CronManageInput = {
   notify?: unknown;
 };
 
-const cronListSchema = z.object({
-  id: z.string().optional().describe('任务 id。省略则列出当前用户的全部任务；提供则返回单个任务的完整详情。'),
-});
-
 const cronManageSchema = z.object({
-  action: z.enum(['create', 'update', 'delete', 'run']).describe('create = 新建任务；update = 修改已有任务的部分字段；delete = 删除任务；run = 立即触发一次。'),
-  id: z.string().optional().describe('任务 id。update/delete/run 必填。'),
+  action: z.enum(['list', 'create', 'update', 'delete', 'run']).describe('list = 列出当前用户全部任务（带 id 时返回单个任务完整详情）；create = 新建任务；update = 修改已有任务的部分字段；delete = 删除任务；run = 立即触发一次。'),
+  id: z.string().optional().describe('任务 id。update/delete/run 必填；list 可选（提供则返回单任务详情）。'),
   name: z.string().min(1).optional().describe('任务名称。create 必填。'),
   description: z.string().optional(),
   enabled: z.boolean().optional().describe('任务是否启用。create 时默认 true。'),
@@ -62,19 +58,6 @@ const cronManageSchema = z.object({
   payload: z.union([cronPayloadSchema, cronPayloadPatchSchema]).optional().describe('create 必填。kind=agentTurn：{message} 以任务所有者身份在全新会话中执行一轮 agent；kind=systemEvent：{text} 纯通知文本。'),
   notify: notifyConfigSchema.optional().describe('任务完成后的结果推送，如 {"enabled":true,"channel":"web"}。dingtalk 渠道需要用户提供 mode 及 conversationId/userId/chatId。'),
 });
-
-export const cronListToolDescriptor: ToolDescriptor<CronListInput> = {
-  id: 'CronList',
-  name: 'CronList',
-  displayName: 'List Cron Jobs',
-  description: loadToolDescription('CronList'),
-  schema: cronListSchema,
-  risk: 'safe',
-  approvalMode: 'never',
-  auditCategory: 'cron.read',
-  category: 'cron',
-  label: '列出定时任务',
-};
 
 export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
   id: 'CronManage',
@@ -87,6 +70,10 @@ export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
   auditCategory: 'cron.manage',
   category: 'cron',
   label: '管理定时任务',
+  resolveCallPolicy: (input) => {
+    const action = input && typeof input === 'object' ? (input as { action?: unknown }).action : undefined;
+    return action === 'list' ? { risk: 'safe' } : undefined;
+  },
 };
 
 interface CronIdentity {
@@ -157,11 +144,11 @@ export class CronToolProvider implements ToolProvider {
   list(context?: ToolCallContext): ToolDescriptor[] {
     if (!this.options.service()) return [];
     if (!resolveIdentity(context)) return [];
-    return [cronListToolDescriptor, cronManageToolDescriptor];
+    return [cronManageToolDescriptor];
   }
 
   async invoke(call: AuthorizedToolCall, context: ToolCallContext): Promise<ToolResult | undefined> {
-    if (call.toolId !== cronListToolDescriptor.id && call.toolId !== cronManageToolDescriptor.id) {
+    if (call.toolId !== cronManageToolDescriptor.id) {
       return undefined;
     }
     const service = this.options.service();
@@ -169,15 +156,14 @@ export class CronToolProvider implements ToolProvider {
     const identity = resolveIdentity(context);
     if (!identity) throw new Error('缺少当前用户身份，无法访问定时任务');
 
-    if (call.toolId === cronListToolDescriptor.id) {
-      const input = cronListSchema.parse(call.input ?? {}) as CronListInput;
+    const input = cronManageSchema.parse(call.input ?? {}) as CronManageInput;
+    if (input.action === 'list') {
       return this.query(service, identity, input);
     }
-    const input = cronManageSchema.parse(call.input ?? {}) as CronManageInput;
     return this.manage(service, identity, input);
   }
 
-  private async query(service: CronService, identity: CronIdentity, input: CronListInput): Promise<ToolResult> {
+  private async query(service: CronService, identity: CronIdentity, input: CronManageInput): Promise<ToolResult> {
     if (input.id) {
       const job = await this.getOwnedJob(service, identity, input.id);
       return { content: JSON.stringify(jobDetail(job), null, 2) };

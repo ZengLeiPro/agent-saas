@@ -16,48 +16,40 @@ import type {
   ToolResult,
 } from './toolRuntime.js';
 
-type ReadCompanyInfoInput = {
+/**
+ * 2026-08-03 工具面收敛批次：ReadCompanyInfo/UpdateCompanyInfo 合并为
+ * CompanyInfo(action=read|update)。静态 risk 取最高档 workspace_write（fail-safe），
+ * resolveCallPolicy 对 read 降为 safe；update 保持 neverAutoApprove（强制人工审批，
+ * 原 NEVER_AUTO_APPROVE_TOOLS 语义），invoke 层另有 human_approval 硬校验兜底。
+ */
+type CompanyInfoInput = {
+  action: 'read' | 'update';
   tenantId?: string;
+  content?: string;
 };
 
-type UpdateCompanyInfoInput = {
-  tenantId?: string;
-  content: string;
-};
-
-const readCompanyInfoSchema = z.object({
-  tenantId: z.string().optional().describe('要读取的租户 id。平台管理员可指定任意租户；租户管理员/用户只能读自己所在租户。'),
+const companyInfoSchema = z.object({
+  action: z.enum(['read', 'update']).describe('read = 读取租户 company.md；update = 完整替换 company.md（仅组织/平台管理员，需人工审批）。'),
+  tenantId: z.string().optional().describe('租户 id。平台管理员可指定任意租户；租户管理员/用户只能访问自己所在租户。'),
+  content: z.string().max(MAX_COMPANY_INFO_CHARS).optional().describe('update 必填：租户 company.md 的完整替换内容。'),
 });
 
-const updateCompanyInfoSchema = z.object({
-  tenantId: z.string().optional().describe('要更新的租户 id。平台管理员可指定任意租户；租户管理员只能更新自己所在租户。'),
-  content: z.string().max(MAX_COMPANY_INFO_CHARS).describe('租户 company.md 的完整替换内容。'),
-});
-
-export const readCompanyInfoToolDescriptor: ToolDescriptor<ReadCompanyInfoInput> = {
-  id: 'ReadCompanyInfo',
-  name: 'ReadCompanyInfo',
-  displayName: 'Read Company Info',
-  description: loadToolDescription('ReadCompanyInfo'),
-  schema: readCompanyInfoSchema,
-  risk: 'safe',
-  approvalMode: 'never',
-  auditCategory: 'tenant.companyInfo.read',
-  category: 'memory',
-  label: '读取组织资料',
-};
-
-export const updateCompanyInfoToolDescriptor: ToolDescriptor<UpdateCompanyInfoInput> = {
-  id: 'UpdateCompanyInfo',
-  name: 'UpdateCompanyInfo',
-  displayName: 'Update Company Info',
-  description: loadToolDescription('UpdateCompanyInfo'),
-  schema: updateCompanyInfoSchema,
+export const companyInfoToolDescriptor: ToolDescriptor<CompanyInfoInput> = {
+  id: 'CompanyInfo',
+  name: 'CompanyInfo',
+  displayName: 'Company Info',
+  description: loadToolDescription('CompanyInfo'),
+  schema: companyInfoSchema,
   risk: 'workspace_write',
   approvalMode: 'web',
-  auditCategory: 'tenant.companyInfo.write',
+  auditCategory: 'tenant.companyInfo.manage',
   category: 'memory',
-  label: '更新组织资料',
+  label: '组织资料',
+  resolveCallPolicy: (input) => {
+    const action = input && typeof input === 'object' ? (input as { action?: unknown }).action : undefined;
+    if (action === 'read') return { risk: 'safe' };
+    return { risk: 'workspace_write', neverAutoApprove: true };
+  },
 };
 
 export interface TenantCompanyInfoToolProviderOptions {
@@ -71,22 +63,19 @@ export class TenantCompanyInfoToolProvider implements ToolProvider {
   list(context?: ToolCallContext): ToolDescriptor[] {
     const identity = context?.channelContext.user ?? context?.channelContext.sessionOwner;
     if (!identity?.tenantId) return [];
-    if (identity.role === 'admin') {
-      return [readCompanyInfoToolDescriptor, updateCompanyInfoToolDescriptor];
-    }
-    return [readCompanyInfoToolDescriptor];
+    return [companyInfoToolDescriptor];
   }
 
   async invoke(call: AuthorizedToolCall, context: ToolCallContext): Promise<ToolResult | undefined> {
-    if (call.toolId === readCompanyInfoToolDescriptor.id) {
-      const input = readCompanyInfoToolDescriptor.schema.parse(call.input) as ReadCompanyInfoInput;
+    if (call.toolId !== companyInfoToolDescriptor.id) return undefined;
+    const input = companyInfoSchema.parse(call.input) as CompanyInfoInput;
+    if (input.action === 'read') {
       return this.read(input, context);
     }
-    if (call.toolId === updateCompanyInfoToolDescriptor.id) {
-      const input = updateCompanyInfoToolDescriptor.schema.parse(call.input) as UpdateCompanyInfoInput;
-      return this.update(input, context, call);
+    if (typeof input.content !== 'string') {
+      throw new Error('CompanyInfo(action="update") 需要 content（company.md 的完整替换内容）。');
     }
-    return undefined;
+    return this.update({ tenantId: input.tenantId, content: input.content }, context, call);
   }
 
   private resolveTenantId(inputTenantId: string | undefined, context: ToolCallContext): string {
@@ -103,7 +92,7 @@ export class TenantCompanyInfoToolProvider implements ToolProvider {
     return requestedTenantId;
   }
 
-  private async read(input: ReadCompanyInfoInput, context: ToolCallContext): Promise<ToolResult> {
+  private async read(input: { tenantId?: string }, context: ToolCallContext): Promise<ToolResult> {
     const tenantId = this.resolveTenantId(input.tenantId, context);
     const content = await readTenantCompanyInfo(this.options.sharedDir, tenantId);
     return {
@@ -120,7 +109,7 @@ export class TenantCompanyInfoToolProvider implements ToolProvider {
   }
 
   private async update(
-    input: UpdateCompanyInfoInput,
+    input: { tenantId?: string; content: string },
     context: ToolCallContext,
     call: AuthorizedToolCall,
   ): Promise<ToolResult> {
@@ -129,7 +118,7 @@ export class TenantCompanyInfoToolProvider implements ToolProvider {
       throw new Error('只有组织管理员或平台管理员可以更新 company.md');
     }
     if (call.authorization.source !== 'human_approval') {
-      throw new Error('UpdateCompanyInfo 必须经过人工审批后才能写入');
+      throw new Error('CompanyInfo(action="update") 必须经过人工审批后才能写入');
     }
     const tenantId = this.resolveTenantId(input.tenantId, context);
     const result = await writeTenantCompanyInfo(this.options.sharedDir, tenantId, input.content);

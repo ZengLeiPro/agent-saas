@@ -128,81 +128,80 @@ type SessionGetToolTraceInput = {
   toolCallId: string;
 };
 
-export const sessionGetEventsToolDescriptor: ToolDescriptor<SessionGetEventsInput> = {
-  id: 'SessionGetEvents',
-  name: 'SessionGetEvents',
-  displayName: 'Session Get Events',
-  description: loadToolDescription('SessionGetEvents'),
-  schema: z.object({
-    afterCursor: z.string().optional(),
-    limit: z.number().int().positive().max(MAX_LIMIT).optional(),
-    runId: z.string().optional(),
-    type: z.string().optional(),
-  }),
+/**
+ * 2026-08-03 工具面收敛批次：SessionGetEvents/SessionSearchEvents/SessionGetToolTrace
+ * 合并为 SessionContext(action=events|search|trace)。三个 action 均为只读 safe，
+ * 常开（不随上下文阈值增删——同会话工具面必须稳定以保 prompt prefix 缓存），
+ * context governor 超阈值时把本工具设为唯一可用工具。
+ */
+type SessionContextInput = {
+  action: 'events' | 'search' | 'trace';
+  afterCursor?: string;
+  limit?: number;
+  runId?: string;
+  type?: PlatformEvent['type'];
+  query?: string;
+  toolCallId?: string;
+};
+
+const sessionContextSchema = z.object({
+  action: z.enum(['events', 'search', 'trace']).describe('events = 按时间顺序分页读取本会话历史事件；search = 按关键词搜索本会话历史事件；trace = 按 toolCallId 获取某次工具调用的完整输入输出。'),
+  afterCursor: z.string().optional().describe('events 专用：上次返回的 nextCursor，续读下一页。'),
+  limit: z.number().int().positive().max(MAX_LIMIT).optional().describe('返回条数上限（events 最多 200，search 最多 50，超出自动收窄）。'),
+  runId: z.string().optional().describe('events/search 可选：只看某个 run 的事件。'),
+  type: z.string().optional().describe('events/search 可选：只看某类事件。'),
+  query: z.string().min(1).optional().describe('search 必填：搜索关键词。'),
+  toolCallId: z.string().min(1).optional().describe('trace 必填：工具调用 id。'),
+});
+
+export const sessionContextToolDescriptor: ToolDescriptor<SessionContextInput> = {
+  id: 'SessionContext',
+  name: 'SessionContext',
+  displayName: 'Session Context',
+  description: loadToolDescription('SessionContext'),
+  schema: sessionContextSchema,
   risk: 'safe',
   approvalMode: 'never',
   auditCategory: 'session.context',
   category: 'session',
-  label: '读取会话事件',
-};
-
-export const sessionSearchEventsToolDescriptor: ToolDescriptor<SessionSearchEventsInput> = {
-  id: 'SessionSearchEvents',
-  name: 'SessionSearchEvents',
-  displayName: 'Session Search Events',
-  description: loadToolDescription('SessionSearchEvents'),
-  schema: z.object({
-    query: z.string().min(1),
-    limit: z.number().int().positive().max(MAX_SEARCH_RESULTS).optional(),
-    runId: z.string().optional(),
-    type: z.string().optional(),
-  }),
-  risk: 'safe',
-  approvalMode: 'never',
-  auditCategory: 'session.context.search',
-  category: 'session',
-  label: '搜索会话事件',
-};
-
-export const sessionGetToolTraceToolDescriptor: ToolDescriptor<SessionGetToolTraceInput> = {
-  id: 'SessionGetToolTrace',
-  name: 'SessionGetToolTrace',
-  displayName: 'Session Get Tool Trace',
-  description: loadToolDescription('SessionGetToolTrace'),
-  schema: z.object({
-    toolCallId: z.string().min(1),
-  }),
-  risk: 'safe',
-  approvalMode: 'never',
-  auditCategory: 'session.context.tool_trace',
-  category: 'session',
-  label: '查看工具调用追踪',
+  label: '会话历史检索',
 };
 
 export class SessionToolProvider implements ToolProvider {
   constructor(private readonly contextService: SessionContextService) {}
 
   list(): ToolDescriptor[] {
-    return [sessionGetEventsToolDescriptor, sessionSearchEventsToolDescriptor, sessionGetToolTraceToolDescriptor];
+    return [sessionContextToolDescriptor];
   }
 
   async invoke(call: AuthorizedToolCall, context: ToolCallContext): Promise<ToolResult | undefined> {
+    if (call.toolId !== sessionContextToolDescriptor.id) return undefined;
     const sessionId = context.workspace.sessionId;
     if (!sessionId) throw new Error('Session context tools require workspace.sessionId.');
 
-    if (call.toolId === sessionGetEventsToolDescriptor.id) {
-      const input = sessionGetEventsToolDescriptor.schema.parse(call.input) as SessionGetEventsInput;
-      return { content: JSON.stringify(await this.contextService.getEvents(sessionId, input), null, 2) };
+    const input = sessionContextSchema.parse(call.input) as SessionContextInput;
+    if (input.action === 'events') {
+      const opts: SessionGetEventsInput = {
+        ...(input.afterCursor !== undefined ? { afterCursor: input.afterCursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        ...(input.type !== undefined ? { type: input.type } : {}),
+      };
+      return { content: JSON.stringify(await this.contextService.getEvents(sessionId, opts), null, 2) };
     }
-    if (call.toolId === sessionSearchEventsToolDescriptor.id) {
-      const input = sessionSearchEventsToolDescriptor.schema.parse(call.input) as SessionSearchEventsInput;
-      return { content: JSON.stringify(await this.contextService.searchEvents(sessionId, input.query, input), null, 2) };
+    if (input.action === 'search') {
+      if (!input.query) throw new Error('SessionContext(action="search") 需要 query。');
+      const opts: SessionSearchEventsInput = {
+        query: input.query,
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        ...(input.type !== undefined ? { type: input.type } : {}),
+      };
+      return { content: JSON.stringify(await this.contextService.searchEvents(sessionId, opts.query, opts), null, 2) };
     }
-    if (call.toolId === sessionGetToolTraceToolDescriptor.id) {
-      const input = sessionGetToolTraceToolDescriptor.schema.parse(call.input) as SessionGetToolTraceInput;
-      return { content: JSON.stringify(await this.contextService.getToolTrace(sessionId, input.toolCallId), null, 2) };
-    }
-    return undefined;
+    // action === 'trace'
+    if (!input.toolCallId) throw new Error('SessionContext(action="trace") 需要 toolCallId。');
+    return { content: JSON.stringify(await this.contextService.getToolTrace(sessionId, input.toolCallId), null, 2) };
   }
 }
 

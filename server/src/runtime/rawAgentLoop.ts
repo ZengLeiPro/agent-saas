@@ -78,6 +78,9 @@ import {
 const logger = createLogger('RawAgentLoop');
 const INTERACTIVE_TOOL_NAMES = new Set(['AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode']);
 const SESSION_CONTEXT_RECOVERY_TOOL_NAMES = new Set([
+  // 2026-08-03 工具面收敛批次：三个会话检索工具合并为 SessionContext。
+  // 旧名保留在集合里以兼容存量会话/历史投影中的旧工具名判定，无副作用。
+  'SessionContext',
   'SessionGetEvents',
   'SessionSearchEvents',
   'SessionGetToolTrace',
@@ -95,8 +98,8 @@ const WEB_FETCH_SYNTHESIS_PROMPT = [
 ].join('\n');
 const CONTEXT_SYNTHESIS_PROMPT = [
   '[平台收束指令]',
-  '本次任务的上下文已达到安全阈值。除 SessionGetEvents、SessionSearchEvents、SessionGetToolTrace 外，不要调用其他工具。',
-  '若保留的上一轮答复仍不足以衔接当前任务，先用上述只读会话工具检索事实源；随后基于当前上下文完成任务，并明确区分已核实事实、证据不足项与未完成项。',
+  '本次任务的上下文已达到安全阈值。除 SessionContext（action=events|search|trace）外，不要调用其他工具。',
+  '若保留的上一轮答复仍不足以衔接当前任务，先用该只读会话工具检索事实源；随后基于当前上下文完成任务，并明确区分已核实事实、证据不足项与未完成项。',
 ].join('\n');
 
 interface ReplaceableDraftRunState {

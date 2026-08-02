@@ -13,7 +13,7 @@
  *     的工具（白名单派生，不是独立注册）。
  *   - explore 的白名单按 descriptor.name 精确匹配——MCP / Skill 工具名是动态的，
  *     天然不在名单内（explore 不给动态工具）；general 用 null 表示「全量」，再由
- *     runner 侧的无条件剥夺清单（Agent/AskUserQuestion/CronList/CronManage/UpdateCompanyInfo）兜底。
+ *     runner 侧的无条件剥夺清单（Agent/AskUserQuestion/CronManage/BackgroundTask 等）兜底。
  */
 
 import { SUBAGENT_MAX_TURNS } from './subagentLimits.js';

@@ -58,7 +58,7 @@ export function governModelRequestMessages(
     ...priorTurnAnchor.messages,
     {
       role: 'user',
-      content: '[平台上下文保护] 较早会话内容已从本次模型请求中省略；上一轮用户消息与最终答复已保留。事实源仍完整保留，可按需使用 SessionSearchEvents / SessionGetToolTrace 检索。请基于当前任务和最近工具结果收束回答。',
+      content: '[平台上下文保护] 较早会话内容已从本次模型请求中省略；上一轮用户消息与最终答复已保留。事实源仍完整保留，可按需使用 SessionContext（action=search|trace）检索。请基于当前任务和最近工具结果收束回答。',
     },
     ...(currentUserMessage ? [currentUserMessage] : []),
   ];

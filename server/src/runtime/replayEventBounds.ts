@@ -7,7 +7,7 @@ import type { PlatformEvent } from './types.js';
 export const REPLAY_TOOL_RESULT_MAX_CHARS = 4_000;
 export const REPLAY_TOOL_RESULT_KEEP_RECENT = 8;
 export const REPLAY_RECENT_TOOL_RESULT_MAX_CHARS = 16_000;
-export const REPLAY_TOOL_RESULT_MARKER_PREFIX = '\n\n...[tool_result 已截断；完整原文请用 SessionGetToolTrace toolCallId=';
+export const REPLAY_TOOL_RESULT_MARKER_PREFIX = '\n\n...[tool_result 已截断；完整原文请用 SessionContext(action="trace") toolCallId=';
 export const REPLAY_TOOL_RESULT_MARKER_SUFFIX = ' 查询]';
 
 export function replayToolResultMarker(toolCallId: string): string {

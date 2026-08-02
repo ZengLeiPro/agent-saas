@@ -615,6 +615,28 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     return tasks.find((task) => task.runId === taskId) ?? null;
   }
 
+  async readCommandOutput(
+    context: ToolCallContext,
+    request: import('./backgroundTaskRuntime.js').BackgroundCommandOutputRequest,
+  ): Promise<{ content: string }> {
+    const task = await this.get(context, request.taskId);
+    if (!task) throw new Error('后台任务不存在，或不属于当前会话/用户。');
+    const metadata = parseBackgroundTaskMetadata(task);
+    if (metadata?.taskType !== 'command') {
+      throw new Error('该任务不是后台命令任务；后台 Agent 任务请用 BackgroundTask(action="status") 查看结果。');
+    }
+    if (isTerminal(task.status)) {
+      throw new Error(`后台命令已进入终态（${task.status}）；用 BackgroundTask(action="status") 查看结果摘要与完整输出文件位置。`);
+    }
+    return await this.invokeCommandControl(task, metadata, 'BashOutput', {
+      task_id: request.taskId,
+      stdout_offset: request.stdoutOffset ?? 0,
+      stderr_offset: request.stderrOffset ?? 0,
+      limit_bytes: request.limitBytes ?? 20_000,
+      wait_ms: request.waitMs ?? 0,
+    });
+  }
+
   async cancel(context: ToolCallContext, taskId: string): Promise<RunRecord> {
     const task = await this.get(context, taskId);
     if (!task) throw new Error('后台任务不存在，或不属于当前会话/用户。');

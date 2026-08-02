@@ -55,7 +55,7 @@ const SYSTEM_COMMAND_MODEL_CONTENT_PREFIX = '[系统命令]';
  *   + 历史可检索提醒。
  * - 保留段（cutoff 之后）正常重放。独立 /compact 会剔除命令 run 自身的事件；
  *   内联自动压缩只剔除 compaction 事件本身，保留当前业务 run 的最近一轮原文。
- * 原始事件仍在 EventStore（SessionSearchEvents 可查原文），这里只影响 prompt 投影。
+ * 原始事件仍在 EventStore（SessionContext(action="search") 可查原文），这里只影响 prompt 投影。
  */
 function applyCompaction(events: PlatformEvent[]): {
   effectiveEvents: PlatformEvent[];
@@ -154,7 +154,7 @@ export function renderUserMessageTrail(items: TrailItem[]): string {
     }
     const omitted = lines.length - 1 - recent.length;
     selected = omitted > 0
-      ? [first, `……（中间省略 ${omitted} 条用户消息，可用 SessionSearchEvents 检索原文）……`, ...recent]
+      ? [first, `……（中间省略 ${omitted} 条用户消息，可用 SessionContext(action="search") 检索原文）……`, ...recent]
       : [first, ...recent];
   }
 
@@ -185,7 +185,7 @@ function formatCompactionContext(summary: string, trail: TrailItem[]): string {
   }
   parts.push(
     '',
-    '提示：本会话完整历史（含每次工具调用的原始输入输出）仍完整保留。仅当以上摘要与消息摘录不足时再检索：SessionSearchEvents 按关键词搜索历史事件；SessionGetToolTrace 按 toolCallId 获取某次工具调用的完整记录。',
+    '提示：本会话完整历史（含每次工具调用的原始输入输出）仍完整保留。仅当以上摘要与消息摘录不足时再检索：SessionContext(action="search") 按关键词搜索历史事件；SessionContext(action="trace") 按 toolCallId 获取某次工具调用的完整记录。',
   );
   return parts.join('\n');
 }

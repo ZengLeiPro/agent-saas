@@ -84,15 +84,15 @@ export function applyToolProfile(
     });
   }
   // 无后台 profile 的 run（主会话/子 agent/后台命令等）一律套记忆策略过滤：
-  // 默认 v1 = 隐藏 MemoryCommand/MemoryCommit，工具面与改造前完全一致。
+  // 默认 v1 = 隐藏 MemoryCommand/MemoryCommit + 主会话隐藏集（见上方常量注释）。
   return applyMemoryPolicyFilter(runtime, memoryPolicy ?? 'v1');
 }
 
 /**
  * 主会话记忆写入策略过滤（2026-07-29 记忆写入职责剥离批次）。
  *
- * - v1（默认，现状行为）：隐藏 MemoryCommand/MemoryCommit 两个新工具——
- *   工具面与改造前完全一致，存量会话 prompt prefix 零变化。
+ * - v1（默认）：隐藏 MemoryCommand/MemoryCommit 两个记忆政策工具，
+ *   外加主会话隐藏集（UserActivityList/MemoryList，2026-08-03 起）。
  * - v2（memoryPolicyVersion=v2，租户 memoryWriteDelegationEnabled 的新会话）：
  *   暴露 MemoryCommand、隐藏 MemoryCommit，并对 Write/Edit 加记忆路径 deny
  *   guard（授权级封锁）。注意这不是硬隔离（Shell 旁路仍存在，R8c，靠审计与
@@ -103,8 +103,19 @@ export function applyToolProfile(
  */
 export type MemoryWritePolicyVersion = 'v1' | 'v2';
 
-const MEMORY_POLICY_HIDDEN_TOOLS_V1: ReadonlySet<string> = new Set(['MemoryCommand', 'MemoryCommit']);
-const MEMORY_POLICY_HIDDEN_TOOLS_V2: ReadonlySet<string> = new Set(['MemoryCommit']);
+/**
+ * 主会话（无后台 profile）隐藏集（2026-08-03 工具面收敛批次扩充）：
+ * - MemoryCommand/MemoryCommit：记忆写入职责剥离批次的政策工具，按 v1/v2 分档。
+ * - UserActivityList：记忆轮询的原料工具，主会话场景弱（用户活动本来就在会话里），
+ *   仅 memory_poll profile 白名单保留。
+ * - MemoryList：主会话有 Shell（`ls memory/` 等价）；存在价值在无 Shell 的
+ *   memory_consolidate profile 与受限的 memory_poll profile，白名单保留。
+ * 注意：这两个工具的 provider 仍挂载（PLATFORM_TOOL_CATALOG 治理面不变），
+ * 这里只是主会话模型可见面的收敛。
+ */
+const MAIN_SESSION_HIDDEN_TOOLS = ['UserActivityList', 'MemoryList'];
+const MEMORY_POLICY_HIDDEN_TOOLS_V1: ReadonlySet<string> = new Set(['MemoryCommand', 'MemoryCommit', ...MAIN_SESSION_HIDDEN_TOOLS]);
+const MEMORY_POLICY_HIDDEN_TOOLS_V2: ReadonlySet<string> = new Set(['MemoryCommit', ...MAIN_SESSION_HIDDEN_TOOLS]);
 
 export function applyMemoryPolicyFilter(runtime: ToolRuntime, policy: MemoryWritePolicyVersion): ToolRuntime {
   if (policy === 'v1') {

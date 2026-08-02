@@ -99,21 +99,17 @@ describe('tool controls admin router', () => {
         'MemorySearch',
         'MemoryList',
         'UserActivityList',
-        'ReadCompanyInfo',
-        'UpdateCompanyInfo',
+        'CompanyInfo',
         'Skill',
         'TodoWrite',
         'AskUserQuestion',
-        'SessionGetEvents',
-        'SessionSearchEvents',
-        'SessionGetToolTrace',
+        'SessionContext',
         'WebSearch',
         'WebFetch',
         'GenerateImage',
-        'CronList',
         'CronManage',
       ]));
-      expect(body.tools.map((tool: { id: string }) => tool.id)).not.toEqual(expect.arrayContaining(['List', 'Glob', 'Grep']));
+      expect(body.tools.map((tool: { id: string }) => tool.id)).not.toEqual(expect.arrayContaining(['List', 'Glob', 'Grep', 'BashOutput', 'KillBash', 'CronList', 'ReadCompanyInfo', 'UpdateCompanyInfo', 'SessionGetEvents', 'SessionSearchEvents', 'SessionGetToolTrace']));
       expect(body.toolControls.tools?.Grep).toBeUndefined();
       expect(body.tools.find((tool: { id: string }) => tool.id === 'Shell').enabled).toBe(false);
       expect(body.tools.find((tool: { id: string }) => tool.id === 'Read').enabled).toBe(true);

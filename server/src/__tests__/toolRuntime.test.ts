@@ -125,8 +125,6 @@ describe('PlatformToolRuntime', () => {
       ['Read', 'safe'],
       ['Write', 'workspace_write'],
       ['Shell', 'dangerous'],
-      ['BashOutput', 'safe'],
-      ['KillBash', 'safe'],
       ['Edit', 'workspace_write'],
     ]);
   });

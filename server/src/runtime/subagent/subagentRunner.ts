@@ -80,8 +80,12 @@ const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
  * 无条件剥夺清单（D4，按 descriptor.name/id 匹配）：
  *   - Agent：禁嵌套（全行业共识，工具移除式——模型看不到 > 运行时报错）
  *   - AskUserQuestion：子 agent 无 UI 交互通道
- *   - CronList/CronManage：不能以父身份排程（OpenClaw/Hermes 同款黑名单）
- *   - UpdateCompanyInfo：NEVER_AUTO_APPROVE 强审批工具，子 agent 内无审批通道
+ *   - CronManage：不能以父身份排程（OpenClaw/Hermes 同款黑名单）
+ *   - BackgroundTask：禁止后台任务嵌套治理
+ *   - CompanyInfo 刻意不剥夺：action=read 对子 agent 有价值；action=update
+ *     由 neverAutoApprove 审批闸门挡（子 agent 无审批通道，调用即失败）
+ *   - 旧名（CronList/UpdateCompanyInfo/BackgroundTaskList 等）保留匹配，
+ *     防御存量配置与名字混用，冗余无害（2026-08-03 工具面收敛批次）
  */
 export const SUBAGENT_DENIED_TOOL_NAMES: ReadonlySet<string> = new Set([
   'Agent',
@@ -89,6 +93,7 @@ export const SUBAGENT_DENIED_TOOL_NAMES: ReadonlySet<string> = new Set([
   'CronList',
   'CronManage',
   'UpdateCompanyInfo',
+  'BackgroundTask',
   'BackgroundTaskList',
   'BackgroundTaskStatus',
   'BackgroundTaskCancel',

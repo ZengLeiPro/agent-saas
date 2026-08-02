@@ -149,6 +149,6 @@ describe('会话详情内存边界', () => {
     expect(toolResults.slice(4).every((block) => block.content.length <= REPLAY_RECENT_TOOL_RESULT_MAX_CHARS)).toBe(true);
     expect(toolResults.slice(0, 4).every((block) => block.raw === undefined)).toBe(true);
     expect(toolResults.slice(4).every((block) => (block.raw?.length ?? 0) <= TRANSCRIPT_DETAIL_RAW_MAX_CHARS)).toBe(true);
-    expect(toolResults[0]?.content).toContain('SessionGetToolTrace');
+    expect(toolResults[0]?.content).toContain('SessionContext');
   });
 });

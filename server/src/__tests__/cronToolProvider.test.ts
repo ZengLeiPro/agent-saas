@@ -49,8 +49,8 @@ describe('CronToolProvider', () => {
     provider = new CronToolProvider({ service: () => service });
   });
 
-  it('有会话身份时暴露 CronList/CronManage，无身份或服务未启用时隐藏', () => {
-    expect(provider.list(context(OWNER)).map((t) => t.id)).toEqual(['CronList', 'CronManage']);
+  it('有会话身份时暴露 CronManage，无身份或服务未启用时隐藏', () => {
+    expect(provider.list(context(OWNER)).map((t) => t.id)).toEqual(['CronManage']);
     expect(provider.list({ ...context(OWNER), channelContext: { channel: 'web' } })).toEqual([]);
     const disabled = new CronToolProvider({ service: () => undefined });
     expect(disabled.list(context(OWNER))).toEqual([]);
@@ -66,17 +66,17 @@ describe('CronToolProvider', () => {
     expect(stored?.ownerName).toBe(OWNER.username);
   });
 
-  it('CronList 只返回自己的任务；他人任务详情不可见', async () => {
+  it('action=list 只返回自己的任务；他人任务详情不可见', async () => {
     const created = await provider.invoke(call('CronManage', CREATE_INPUT), context(OWNER));
     const jobId = (JSON.parse(created!.content) as { job: { id: string } }).job.id;
 
-    const mine = JSON.parse((await provider.invoke(call('CronList', {}), context(OWNER)))!.content) as { count: number };
+    const mine = JSON.parse((await provider.invoke(call('CronManage', { action: 'list' }), context(OWNER)))!.content) as { count: number };
     expect(mine.count).toBe(1);
 
-    const others = JSON.parse((await provider.invoke(call('CronList', {}), context(OTHER)))!.content) as { count: number };
+    const others = JSON.parse((await provider.invoke(call('CronManage', { action: 'list' }), context(OTHER)))!.content) as { count: number };
     expect(others.count).toBe(0);
 
-    await expect(provider.invoke(call('CronList', { id: jobId }), context(OTHER))).rejects.toThrow(/不存在/);
+    await expect(provider.invoke(call('CronManage', { action: 'list', id: jobId }), context(OTHER))).rejects.toThrow(/不存在/);
   });
 
   it('update/delete/run 拒绝非本人任务，本人可正常操作', async () => {

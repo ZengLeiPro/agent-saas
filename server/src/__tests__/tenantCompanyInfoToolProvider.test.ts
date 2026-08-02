@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { TenantCompanyInfoToolProvider, updateCompanyInfoToolDescriptor } from '../agent/tenantCompanyInfoToolProvider.js';
+import { TenantCompanyInfoToolProvider, companyInfoToolDescriptor } from '../agent/tenantCompanyInfoToolProvider.js';
 import type { ToolCallContext } from '../agent/toolRuntime.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { TenantStore } from '../data/tenants/store.js';
@@ -62,26 +62,31 @@ describe('TenantCompanyInfoToolProvider', () => {
     };
   }
 
-  it('普通用户只能看到读取工具，组织 admin 可看到写工具', () => {
-    expect(provider.list(context(WAIN_USER)).map((tool) => tool.id)).toEqual(['ReadCompanyInfo']);
-    expect(provider.list(context(WAIN_ADMIN)).map((tool) => tool.id)).toEqual([
-      'ReadCompanyInfo',
-      'UpdateCompanyInfo',
-    ]);
+  it('有租户身份即可见 CompanyInfo 单工具（update 权限在 invoke 层校验）', () => {
+    expect(provider.list(context(WAIN_USER)).map((tool) => tool.id)).toEqual(['CompanyInfo']);
+    expect(provider.list(context(WAIN_ADMIN)).map((tool) => tool.id)).toEqual(['CompanyInfo']);
+  });
+
+  it('普通用户调用 update 被拒绝', async () => {
+    await expect(provider.invoke({
+      toolId: 'CompanyInfo',
+      input: { action: 'update', content: '# 越权' },
+      authorization: { approved: true, source: 'human_approval' },
+    }, context(WAIN_USER))).rejects.toThrow(/只有组织管理员或平台管理员/);
   });
 
   it('组织 admin 可更新并读取自己组织 company.md', async () => {
     await provider.invoke({
-      toolId: 'UpdateCompanyInfo',
-      input: { content: '# 唯恩电气\n组织资料' },
+      toolId: 'CompanyInfo',
+      input: { action: 'update', content: '# 唯恩电气\n组织资料' },
       authorization: { approved: true, source: 'human_approval' },
     }, context(WAIN_ADMIN));
 
     expect(readFileSync(join(sharedDir, 'tenants', 'wain', 'company.md'), 'utf-8')).toBe('# 唯恩电气\n组织资料');
 
     const result = await provider.invoke({
-      toolId: 'ReadCompanyInfo',
-      input: {},
+      toolId: 'CompanyInfo',
+      input: { action: 'read' },
       authorization: { approved: true, source: 'policy_auto' },
     }, context(WAIN_USER));
     expect(JSON.parse(result!.content)).toMatchObject({
@@ -93,35 +98,35 @@ describe('TenantCompanyInfoToolProvider', () => {
 
   it('组织 admin 不能更新其他组织 company.md', async () => {
     await expect(provider.invoke({
-      toolId: 'UpdateCompanyInfo',
-      input: { tenantId: 'kaiyan', content: '# 开沿科技' },
+      toolId: 'CompanyInfo',
+      input: { action: 'update', tenantId: 'kaiyan', content: '# 开沿科技' },
       authorization: { approved: true, source: 'human_approval' },
     }, context(WAIN_ADMIN))).rejects.toThrow(/跨组织访问 company\.md 被拒绝/);
   });
 
   it('平台 admin 可指定并更新任意组织 company.md', async () => {
     await provider.invoke({
-      toolId: 'UpdateCompanyInfo',
-      input: { tenantId: 'wain', content: '# Wain\nFrom platform admin' },
+      toolId: 'CompanyInfo',
+      input: { action: 'update', tenantId: 'wain', content: '# Wain\nFrom platform admin' },
       authorization: { approved: true, source: 'human_approval' },
     }, context(PLATFORM_ADMIN));
 
     expect(readFileSync(join(sharedDir, 'tenants', 'wain', 'company.md'), 'utf-8')).toBe('# Wain\nFrom platform admin');
   });
 
-  it('UpdateCompanyInfo 不接受 policy_auto，必须人工审批', async () => {
+  it('CompanyInfo update 不接受 policy_auto，必须人工审批', async () => {
     await expect(provider.invoke({
-      toolId: 'UpdateCompanyInfo',
-      input: { content: '# 唯恩电气' },
+      toolId: 'CompanyInfo',
+      input: { action: 'update', content: '# 唯恩电气' },
       authorization: { approved: true, source: 'policy_auto' },
     }, context(WAIN_ADMIN))).rejects.toThrow(/必须经过人工审批/);
   });
 
-  it('平台 admin 开启自动批准时，策略仍要求 UpdateCompanyInfo 审批', async () => {
+  it('平台 admin 开启自动批准时，策略仍要求 CompanyInfo update 审批', async () => {
     const policy = new DefaultToolPolicy();
     const decision = await policy.decide(
-      updateCompanyInfoToolDescriptor,
-      { tenantId: 'wain', content: '# Wain' },
+      companyInfoToolDescriptor,
+      { action: 'update', tenantId: 'wain', content: '# Wain' },
       {
         runId: 'run-1',
         sessionId: 'session-1',

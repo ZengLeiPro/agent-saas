@@ -32,7 +32,7 @@ describe('bounded replay event view', () => {
     expect((bounded[2] as Extract<PlatformEvent, { type: 'tool_result' }>).content)
       .toHaveLength(REPLAY_RECENT_TOOL_RESULT_MAX_CHARS);
     expect((bounded[9] as Extract<PlatformEvent, { type: 'tool_result' }>).content)
-      .toContain('SessionGetToolTrace toolCallId=call-9');
+      .toContain('SessionContext(action="trace") toolCallId=call-9');
     expect(source[0]?.content).toHaveLength(20_000);
   });
 });

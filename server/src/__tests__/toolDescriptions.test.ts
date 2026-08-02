@@ -23,20 +23,15 @@ import { skillToolDescriptor } from '../agent/skillToolProvider.js';
 import {
   MAX_FILE_BYTES,
   MAX_READ_LINES,
-  bashOutputToolDescriptor,
-  killBashToolDescriptor,
   readFileToolDescriptor,
   runShellToolDescriptor,
   waitForWorkspaceReadyToolDescriptor,
   writeFileToolDescriptor,
 } from '../agent/toolRuntime.js';
+import { backgroundTaskToolDescriptor } from '../runtime/background/backgroundTaskToolProvider.js';
 import { generateImageToolDescriptor } from '../agent/imageGenToolProvider.js';
 import { webFetchToolDescriptor, webSearchToolDescriptor } from '../agent/webToolProvider.js';
-import {
-  sessionGetEventsToolDescriptor,
-  sessionGetToolTraceToolDescriptor,
-  sessionSearchEventsToolDescriptor,
-} from '../runtime/sessionContext.js';
+import { sessionContextToolDescriptor } from '../runtime/sessionContext.js';
 
 const ALL_TOOLS = [
   // builtinTools.ts / workspaceHandTools.ts —— 4
@@ -44,17 +39,15 @@ const ALL_TOOLS = [
   todoWriteToolDescriptor,
   askUserQuestionToolDescriptor,
   artifactCreateToolDescriptor,
-  // toolRuntime.ts workspace runtime —— 6
+  // toolRuntime.ts workspace runtime —— 4（BashOutput/KillBash 已并入 BackgroundTask，2026-08-03）
   waitForWorkspaceReadyToolDescriptor,
   readFileToolDescriptor,
   writeFileToolDescriptor,
   runShellToolDescriptor,
-  bashOutputToolDescriptor,
-  killBashToolDescriptor,
-  // sessionContext.ts —— 3
-  sessionGetEventsToolDescriptor,
-  sessionSearchEventsToolDescriptor,
-  sessionGetToolTraceToolDescriptor,
+  // background —— 1
+  backgroundTaskToolDescriptor,
+  // sessionContext.ts —— 1（三工具合并，2026-08-03）
+  sessionContextToolDescriptor,
   // web —— 2
   webSearchToolDescriptor,
   webFetchToolDescriptor,
@@ -67,8 +60,8 @@ const ALL_TOOLS = [
 ] as const;
 
 describe('Tool descriptions', () => {
-  it('covers all 19 tools (regression: 漏 import 立即可见)', () => {
-    expect(ALL_TOOLS).toHaveLength(19);
+  it('covers all 16 tools (regression: 漏 import 立即可见)', () => {
+    expect(ALL_TOOLS).toHaveLength(16);
     const ids = ALL_TOOLS.map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length); // 无重复 id
   });

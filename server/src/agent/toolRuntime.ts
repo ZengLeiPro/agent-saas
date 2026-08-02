@@ -188,6 +188,18 @@ export interface ToolDescriptor<TInput = unknown> {
     serverDescription?: string;
   };
   /**
+   * 可选：per-call 风险分档（2026-08-03 工具面收敛批次）。
+   *
+   * 背景：合并型工具（一个 descriptor 内用 action 参数同时承载读/写路径，如
+   * CronManage 的 list vs create、CompanyInfo 的 read vs update）无法用单一静态
+   * risk 表达真实审批需求。本钩子让 ToolPolicy 在拿到入参后对单次调用降/升档。
+   *
+   * 约定：静态 `risk` 必须取该工具所有 action 中的**最高档**（fail-safe：任何
+   * 忽略本钩子的消费点得到的是「读也要审批」而不是「写不用审批」）；钩子只
+   * 允许对具体入参返回更精确的档位。返回 undefined = 沿用静态 risk。
+   */
+  resolveCallPolicy?: (input: unknown) => { risk: ToolRisk; neverAutoApprove?: boolean } | undefined;
+  /**
    * 描述中必须保留的关键片段（运行时行为契约的锚点）。
    *
    * 背景：平台管理员可在后台用 descriptionOverride 覆盖描述，`mode: 'replace'`
@@ -411,7 +423,9 @@ export const bashOutputToolDescriptor: ToolDescriptor<{
   id: 'BashOutput',
   name: 'BashOutput',
   displayName: 'Read Background Shell Output',
-  description: loadToolDescription('BashOutput'),
+  // 2026-08-03 工具面收敛批次起不再进入模型可见工具面（模型入口=BackgroundTask
+  // action=output），仅作为 hand 端执行协议契约保留；description 不再走 md loader。
+  description: '内部协议：读取后台命令的增量输出（模型入口为 BackgroundTask action=output）。',
   schema: z.object({
     task_id: z.string().min(1),
     stdout_offset: z.number().int().min(0).optional().default(0),
@@ -430,7 +444,8 @@ export const killBashToolDescriptor: ToolDescriptor<{ task_id: string }> = {
   id: 'KillBash',
   name: 'KillBash',
   displayName: 'Kill Background Shell',
-  description: loadToolDescription('KillBash'),
+  // 同 BashOutput：仅 hand 端执行协议契约，模型入口为 BackgroundTask action=cancel。
+  description: '内部协议：终止后台命令（模型入口为 BackgroundTask action=cancel）。',
   schema: z.object({ task_id: z.string().min(1) }),
   risk: 'safe',
   approvalMode: 'never',
@@ -1078,9 +1093,15 @@ class WorkspaceToolProvider implements ToolProvider {
   }
 
   list(_context?: ToolCallContext): ToolDescriptor[] {
-    const workspaceTools = this.artifactService
-      ? WORKSPACE_HAND_TOOLS
-      : WORKSPACE_HAND_TOOLS.filter((tool) => tool.id !== artifactCreateToolDescriptor.id);
+    // BashOutput/KillBash 不再进入模型可见工具面（2026-08-03 工具面收敛批次）：
+    // 后台命令的续读/取消统一收口到 BackgroundTask(action=output|cancel)。
+    // WORKSPACE_HAND_TOOLS 常量保持完整——它同时是 hand 端执行契约，
+    // DurableBackgroundTaskService.invokeCommandControl 仍按原协议名内部调用。
+    const workspaceTools = WORKSPACE_HAND_TOOLS.filter((tool) => {
+      if (tool.id === bashOutputToolDescriptor.id || tool.id === killBashToolDescriptor.id) return false;
+      if (tool.id === artifactCreateToolDescriptor.id && !this.artifactService) return false;
+      return true;
+    });
     return [waitForWorkspaceReadyToolDescriptor, ...workspaceTools];
   }
 
@@ -1253,6 +1274,15 @@ class WorkspaceToolProvider implements ToolProvider {
     // 执行结果（Shell 的 exitCode/字节数/耗时、Write 的写入字节数），
     // 到了收口点只剩截断后的 content，再数就会静默错报。
     const presentation = buildToolPresentation(call.toolId, parsedInput, undefined, response.metadata);
+    // 后台命令启动成功时在 brain 侧追加续读/取消引导：hand 端返回文案仍指向
+    // 协议名 BashOutput/KillBash（ACS 零改动），但模型可见工具已收敛为
+    // BackgroundTask——不在这里纠偏，模型会按 hand 文案调用已下线的工具名。
+    if (isBackgroundShellStart && reservedTaskId) {
+      return {
+        content: `${response.content}\n\n续读输出用 BackgroundTask(action="output", task_id="${reservedTaskId}")，取消用 BackgroundTask(action="cancel", task_id="${reservedTaskId}")。`,
+        ...(presentation ? { presentation } : {}),
+      };
+    }
     return { content: response.content, ...(presentation ? { presentation } : {}) };
   }
 

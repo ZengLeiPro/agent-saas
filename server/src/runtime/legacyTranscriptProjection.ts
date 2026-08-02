@@ -232,7 +232,7 @@ function parseToolArguments(raw: string): unknown {
 
 /**
  * 默认 tool_result 截断阈值：单条不超过 ~4K 字符（约 1.5K-2K token），
- * 超出部分用占位符接住，引导模型用 SessionSearchEvents 按 toolCallId 拉原文。
+ * 超出部分用占位符接住，引导模型用 SessionContext 按 toolCallId 拉原文。
  */
 const DEFAULT_TOOL_RESULT_MAX_CHARS = REPLAY_TOOL_RESULT_MAX_CHARS;
 /**
@@ -266,7 +266,7 @@ export interface ToolResultTruncationOptions {
  * - 只动 role='tool' 的消息，其它 role 完全不碰，前缀字节缓存语义不变。
  * - 最近 keepRecent 条 tool 使用更大的上限 — 模型刚做的工具调用，需要更多结果继续推理。
  * - 更早的 tool 消息只截掉超过 maxChars 的尾巴，前段照旧 + 显式占位符 +
- *   引导模型用 SessionSearchEvents 按 toolCallId 拉原文（如果需要）。
+ *   引导模型用 SessionContext 按 toolCallId 拉原文（如果需要）。
  *
  * 这是 O2 优化的核心：长 session 跨 run 重发历史时不再把 Read 整文件 /
  * grep 数千行 / Skill body 64K 反复打到 input_tokens 里。

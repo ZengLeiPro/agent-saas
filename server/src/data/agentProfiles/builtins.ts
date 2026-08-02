@@ -82,6 +82,7 @@ const EXPLORE_TOOLS = [
 
 const SHELL_FIRST_PROFILE_PUBLISHED_AT = '2026-07-24T17:04:00.000Z';
 const TENANT_INSTRUCTIONS_PROFILE_PUBLISHED_AT = '2026-07-25T04:10:00.000Z';
+const TOOL_CONSOLIDATION_PROFILE_PUBLISHED_AT = '2026-08-02T19:00:00.000Z';
 
 function memoryPollConfig(tools: string[], shell: boolean, allowedTargets: AgentRuntimeProfileConfig['execution']['allowedTargets']): AgentRuntimeProfileConfig {
   return baseConfig({
@@ -194,6 +195,40 @@ export const BUILTIN_AGENT_PROFILES: readonly BuiltinAgentProfileDefinition[] = 
     name: '子 Agent · General',
     description: '通用子 Agent；代码层不可放宽嵌套、交互和排程限制。',
     purpose: '通用前台子 Agent',
+    // v2（2026-08-03 工具面收敛批次）：denylist 补合并后的新工具名 BackgroundTask；
+    // 旧名保留（防御 descriptor 名混用，denylist 里冗余无害）。UpdateCompanyInfo
+    // 的后继 CompanyInfo 刻意不进 denylist——action=read 对子 agent 有价值，
+    // action=update 由审批闸门挡（子 agent 无审批通道，调用即失败）。
+    versionNumber: 2,
+    previousVersions: [{
+      versionNumber: 1,
+      config: baseConfig({
+        limits: { maxTurns: SUBAGENT_MAX_TURNS },
+        capabilities: {
+          shell: true,
+          backgroundTasks: false,
+          interaction: false,
+          subagents: false,
+          scheduling: false,
+        },
+        tools: {
+          allowlist: null,
+          denylist: [
+            'Agent',
+            'AskUserQuestion',
+            'BackgroundTaskCancel',
+            'BackgroundTaskList',
+            'BackgroundTaskStatus',
+            'BashOutput',
+            'CronList',
+            'CronManage',
+            'KillBash',
+            'UpdateCompanyInfo',
+          ],
+        },
+      }),
+    }],
+    publishedAt: TOOL_CONSOLIDATION_PROFILE_PUBLISHED_AT,
     config: baseConfig({
       limits: { maxTurns: SUBAGENT_MAX_TURNS },
       capabilities: {
@@ -208,6 +243,7 @@ export const BUILTIN_AGENT_PROFILES: readonly BuiltinAgentProfileDefinition[] = 
         denylist: [
           'Agent',
           'AskUserQuestion',
+          'BackgroundTask',
           'BackgroundTaskCancel',
           'BackgroundTaskList',
           'BackgroundTaskStatus',

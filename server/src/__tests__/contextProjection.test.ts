@@ -383,8 +383,8 @@ describe('compaction 切分（/compact 真实现）', () => {
     expect(summary.content).toContain('user_message-0');
     expect(summary.content).not.toContain('user_message-2');
     // 末尾三件套提醒
-    expect(summary.content).toContain('SessionSearchEvents');
-    expect(summary.content).toContain('SessionGetToolTrace');
+    expect(summary.content).toContain('SessionContext(action="search")');
+    expect(summary.content).toContain('SessionContext(action="trace")');
     // 保留窗口原文重放
     expect(projection.messages[1]).toMatchObject({ role: 'user', content: 'user_message-2' });
     expect(projection.messages[4]).toMatchObject({ role: 'assistant', content: 'assistant_message-5' });

@@ -195,9 +195,12 @@ export function assertAgentProfileExecutionTarget(
   }
 }
 
+// 2026-08-03 工具面收敛批次起，现役名=BackgroundTask/CronManage/CompanyInfo(update 由
+// 审批闸门挡，不整体硬禁)；旧名保留匹配（历史 Profile 版本/防御性，冗余无害）。
 const GENERAL_HARD_DENY = new Set([
   'Agent',
   'AskUserQuestion',
+  'BackgroundTask',
   'BackgroundTaskCancel',
   'BackgroundTaskList',
   'BackgroundTaskStatus',
@@ -266,6 +269,7 @@ class AgentProfileFilteredToolRuntime implements ToolRuntime {
 
     if (!config.capabilities.shell && matches(new Set(['Shell', 'BashOutput', 'KillBash']))) return false;
     if (!config.capabilities.backgroundTasks && matches(new Set([
+      'BackgroundTask',
       'BackgroundTaskCancel', 'BackgroundTaskList', 'BackgroundTaskStatus', 'BashOutput', 'KillBash',
     ]))) return false;
     if (!config.capabilities.interaction && matches(new Set(['AskUserQuestion']))) return false;

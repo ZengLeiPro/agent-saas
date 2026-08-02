@@ -145,13 +145,11 @@ describe('SessionContextService', () => {
     } as ToolCallContext;
 
     expect(provider.list().map((tool) => tool.id)).toEqual([
-      'SessionGetEvents',
-      'SessionSearchEvents',
-      'SessionGetToolTrace',
+      'SessionContext',
     ]);
     const result = await provider.invoke({
-      toolId: 'SessionGetToolTrace',
-      input: { toolCallId: 'call-1' },
+      toolId: 'SessionContext',
+      input: { action: 'trace', toolCallId: 'call-1' },
       authorization: { approved: true, source: 'policy_auto' },
     }, context);
     expect(result?.content).toContain('package content');

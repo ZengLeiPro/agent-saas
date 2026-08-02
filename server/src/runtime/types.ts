@@ -715,7 +715,7 @@ export type PlatformEvent =
      *   正常重放——即「保留最近 N 轮原始交互」。独立 /compact run 会剔除该命令
      *   run 自身；内联自动压缩保留当前业务 run 的最近一轮。
      * - cutoffEventId 缺失（v1 存量事件）：退化为以 compaction 自身为切分点，之前全替代。
-     * 原始事件仍完整留在 EventStore（SessionSearchEvents 可查），本事件只改变
+     * 原始事件仍完整留在 EventStore（SessionContext 可查），本事件只改变
      * prompt 投影，不删数据。
      * v2 起投影到 legacy transcript（前端渲染为压缩分界线，摘要 debugMode 可展开）。
      */

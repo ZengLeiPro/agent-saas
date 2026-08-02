@@ -3239,9 +3239,7 @@ describe('RawAgentLoop', () => {
       expect(adapter.requests[0]?.previousResponseId).toBeUndefined();
       expect(adapter.requests[0]?.toolChoice).toBeUndefined();
       expect(adapter.requests[0]?.tools.map((tool) => tool.name).sort()).toEqual([
-        'SessionGetEvents',
-        'SessionGetToolTrace',
-        'SessionSearchEvents',
+        'SessionContext',
       ]);
       expect(JSON.stringify(adapter.requests[0]?.messages)).toContain('平台收束指令');
       expect(JSON.stringify(adapter.requests[0]?.messages)).toContain('prior response');
@@ -3503,7 +3501,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(summary.content).toContain('再对比 B 方案');
     expect(summary.content).toContain('那 C 方案呢');
     expect(summary.content).not.toContain('最后看下 D 方案');
-    expect(summary.content).toContain('SessionGetToolTrace');
+    expect(summary.content).toContain('SessionContext');
     // 最近 1 轮原文完整保留
     expect(projection.messages[1]).toMatchObject({ role: 'user', content: '最后看下 D 方案' });
     expect(projection.messages[2]).toMatchObject({ role: 'assistant', content: 'D 方案与 B 接近，仍推荐 B。' });

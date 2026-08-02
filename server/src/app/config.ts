@@ -1222,8 +1222,6 @@ const runtimeSchedulerConfigSchema = z.object({
   maxConcurrentRuns: z.number().int().positive().optional(),
   /** 平台管理员热调并发的部署级安全上限；默认 64，提升需显式改部署配置。 */
   maxConfigurableConcurrentRuns: z.number().int().positive().max(10_000).optional(),
-  /** 后台 Agent 并发槽；默认 2，保留普通交互容量。 */
-  maxConcurrentBackgroundRuns: z.number().int().positive().optional(),
   /**
    * session single-writer 迁移模式。首次发布保持 dual 兼容旧 advisory-lock
    * 实例；确认全量升级后切 lease，取消每个活跃会话的常驻 PG connection。

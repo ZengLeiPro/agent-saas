@@ -63,6 +63,33 @@ describe('workspace usage classification', () => {
   });
 });
 
+describe('collector startup load', () => {
+  it('defers the expensive workspace scan instead of running du during worker startup', async () => {
+    const collector = new SystemMetricsCollector({
+      store: {} as PgSystemMetricsStore,
+      agentCwd: '/mnt/agent-saas/workspaces',
+      processCwd: '/srv/server',
+      fastIntervalMs: 60_000,
+      workspaceScanIntervalMs: 60_000,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    const fast = vi.spyOn(collector, 'collectFastOnce').mockResolvedValue(undefined);
+    const workspace = vi.spyOn(collector, 'scanWorkspacesOnce').mockResolvedValue({
+      dirs: 0,
+      orphans: 0,
+      totalBytes: 0,
+      durationMs: 0,
+    });
+
+    collector.start();
+    await Promise.resolve();
+
+    expect(fast).toHaveBeenCalledTimes(1);
+    expect(workspace).not.toHaveBeenCalled();
+    collector.stop();
+  });
+});
+
 describe('workspace scan failure handling (FIX-1 / FIX-4)', () => {
   const AGENT_CWD = '/mnt/agent-saas/workspaces';
 

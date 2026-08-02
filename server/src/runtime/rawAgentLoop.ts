@@ -744,6 +744,7 @@ export class RawAgentLoop implements AgentLoop {
     const descriptors = this.toolRuntime.list(baseToolContext);
     const priorEvents = await this.eventStore.list(context.sessionId, {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+      replayMode: 'bounded',
     });
     const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, context);
     const replayState = buildRuntimeReplayState(
@@ -759,6 +760,7 @@ export class RawAgentLoop implements AgentLoop {
     const recoveredEvents = recovery.recovered > 0
       ? await this.eventStore.list(context.sessionId, {
         excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+        replayMode: 'bounded',
       })
       : priorEvents;
     const restoredDraftState = await this.loadReplaceableDraftState(context);
@@ -1318,6 +1320,7 @@ export class RawAgentLoop implements AgentLoop {
   async *compact(input: CompactInput, context: RunContext): AsyncIterable<OutboundEvent> {
     const priorEvents = await this.eventStore.list(context.sessionId, {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+      replayMode: 'bounded',
     });
     const projection = buildContextProjection(priorEvents, {
       sessionId: context.sessionId,
@@ -1604,6 +1607,7 @@ export class RawAgentLoop implements AgentLoop {
     const replayState = buildRuntimeReplayState(
       await this.eventStore.list(sessionId, {
         excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+        replayMode: 'bounded',
       }),
       await this.approvalStore.list(sessionId),
       sessionId,
@@ -1786,7 +1790,7 @@ export class RawAgentLoop implements AgentLoop {
       return;
     }
 
-    const priorEvents = await this.eventStore.list(approval.sessionId);
+    const priorEvents = await this.eventStore.list(approval.sessionId, { replayMode: 'bounded' });
     const approvals = await this.approvalStore.list(approval.sessionId);
     const replayState = buildRuntimeReplayState(priorEvents, approvals, approval.sessionId);
     const toolCallState = replayState.toolCallsById.get(approval.toolCallId);
@@ -1879,7 +1883,7 @@ export class RawAgentLoop implements AgentLoop {
       throw err;
     }
 
-    const replayEvents = await this.eventStore.list(approval.sessionId);
+    const replayEvents = await this.eventStore.list(approval.sessionId, { replayMode: 'bounded' });
     const contextProjection = buildContextProjection(replayEvents, {
       sessionId: approval.sessionId,
       runId: resumeContext.runId,
@@ -1905,7 +1909,7 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   async *resumeInteraction(input: ResumeInteractionInput, context: RunContext): AsyncIterable<OutboundEvent> {
-    const priorEvents = await this.eventStore.list(context.sessionId);
+    const priorEvents = await this.eventStore.list(context.sessionId, { replayMode: 'bounded' });
     const request = [...priorEvents].reverse().find((event): event is Extract<PlatformEvent, { type: 'interaction_requested' }> => (
       event.type === 'interaction_requested'
       && event.sessionId === context.sessionId
@@ -2014,7 +2018,7 @@ export class RawAgentLoop implements AgentLoop {
       throw err;
     }
 
-    const replayEvents = await this.eventStore.list(context.sessionId);
+    const replayEvents = await this.eventStore.list(context.sessionId, { replayMode: 'bounded' });
     const contextProjection = buildContextProjection(replayEvents, {
       sessionId: context.sessionId,
       runId: context.runId,

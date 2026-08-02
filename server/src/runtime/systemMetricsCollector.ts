@@ -89,9 +89,8 @@ export class SystemMetricsCollector {
     void this.collectFastOnce().catch((err) => {
       this.options.logger?.warn(`SystemMetricsCollector startup fast pass failed: ${errorMessage(err)}`);
     });
-    void this.scanWorkspacesOnce().catch((err) => {
-      this.options.logger?.warn(`SystemMetricsCollector startup workspace scan failed: ${errorMessage(err)}`);
-    });
+    // workspace `du` 是 6 小时级容量盘点，不属于进程就绪条件。首次扫描延后到
+    // workspaceScanIntervalMs，避免 Worker OOM 重启时反复并发扫描 NAS 放大恢复压力。
   }
 
   stop(): void {

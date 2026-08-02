@@ -909,7 +909,7 @@ describe('RuntimeScheduler', () => {
     });
   });
 
-  it('prioritizes normal runs and limits background execution to reserved slots', async () => {
+  it('uses one shared concurrency pool without task-type reservations', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();
     await runStore.upsertPending({ runId: 'bg-1', sessionId: 'sub-1', metadata: { backgroundTask: true } });
@@ -925,7 +925,6 @@ describe('RuntimeScheduler', () => {
       workerId: 'worker-1',
       autoWake: true,
       maxConcurrentRuns: 4,
-      maxConcurrentBackgroundRuns: 2,
       wake: async (candidate, lease) => {
         started.push(candidate.runId);
         await gate.promise;
@@ -936,9 +935,47 @@ describe('RuntimeScheduler', () => {
     await scheduler.tick();
     await flushSchedulerMicrotasks();
     expect(started).toHaveLength(4);
-    expect(started).toEqual(expect.arrayContaining(['normal-1', 'normal-2']));
-    expect(started.filter((runId) => runId.startsWith('bg-'))).toHaveLength(2);
+    expect(started).toEqual(['bg-1', 'bg-2', 'bg-3', 'normal-1']);
 
+    gate.resolve();
+    await scheduler.stop();
+  });
+
+  it('leaves pending runs untouched while memory admission is paused and resumes automatically', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    await runStore.upsertPending({ runId: 'run-memory-gated', sessionId: 'session-memory-gated' });
+    let admitting = false;
+    const gate = deferred();
+    const wake = vi.fn(async (_candidate, lease) => {
+      await gate.promise;
+      await lease.release('completed');
+    });
+    const admissionGuard = {
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(() => undefined),
+      canAcquire: () => admitting,
+      getSnapshot: () => ({
+        state: admitting ? 'healthy' as const : 'paused' as const,
+        admitting,
+      }),
+    };
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      autoWake: true,
+      admissionGuard,
+      wake,
+    });
+
+    await scheduler.tick();
+    expect(wake).not.toHaveBeenCalled();
+    await expect(runStore.get('run-memory-gated')).resolves.toMatchObject({ status: 'pending' });
+
+    admitting = true;
+    await scheduler.tick();
+    await flushSchedulerMicrotasks();
+    expect(wake).toHaveBeenCalledTimes(1);
     gate.resolve();
     await scheduler.stop();
   });

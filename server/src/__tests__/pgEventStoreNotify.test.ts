@@ -346,6 +346,44 @@ describe('PgEventStore notify coalescing', () => {
     expect(lastQuery?.params).toEqual(['session-1', ['tool_output_delta']]);
   });
 
+  it('bounds tool_result content inside PostgreSQL before replay rows enter Node', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+
+    await store.list('session-1', {
+      replayMode: 'bounded',
+      excludeTypes: ['tool_output_delta'],
+    });
+
+    const lastQuery = pool.queries.at(-1);
+    expect(lastQuery?.text).toContain('ROW_NUMBER() OVER');
+    expect(lastQuery?.text).toContain("jsonb_set(event_json, '{content}'");
+    expect(lastQuery?.text).toContain("event_type <> 'tool_result'");
+    expect(lastQuery?.params?.[0]).toBe('session-1');
+    expect(lastQuery?.params?.[1]).toBe(false);
+    expect(lastQuery?.params?.[3]).toEqual(['tool_output_delta']);
+    expect(lastQuery?.params?.[4]).toBe(8);
+    expect(lastQuery?.params?.[5]).toBe(16_000);
+    expect(lastQuery?.params?.[6]).toBe(4_000);
+  });
+
+  it('filters wake-state event types in SQL instead of loading the whole session', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+
+    await store.list('session-1', {
+      includeTypes: ['approval_requested', 'approval_resolved'],
+    });
+
+    const lastQuery = pool.queries.at(-1);
+    expect(lastQuery?.text).toContain('event_type = ANY($2::text[])');
+    expect(lastQuery?.params).toEqual([
+      'session-1',
+      ['approval_requested', 'approval_resolved'],
+      [],
+    ]);
+  });
+
   it('listPage 在 SQL 查询阶段排除内部事件', async () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;

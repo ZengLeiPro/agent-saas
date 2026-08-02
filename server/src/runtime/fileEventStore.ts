@@ -3,6 +3,7 @@ import { appendFile, mkdir } from 'fs/promises';
 import { dirname } from 'path';
 
 import { readFileCoalesce } from './fileReadCoalesce.js';
+import { boundReplayToolResultEvents } from './replayEventBounds.js';
 import type { EventAppendContext, EventListOptions, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
 
 export function getRuntimeEventLogPath(transcriptPath: string): string {
@@ -35,9 +36,10 @@ export class FileEventStore implements EventStore {
 
   async list(_sessionId: string, options: EventListOptions = {}): Promise<PlatformEvent[]> {
     const events = await this.readAll();
-    if (!options.excludeTypes?.length) return events;
     const excluded = new Set(options.excludeTypes);
-    return events.filter((event) => !excluded.has(event.type));
+    const included = options.includeTypes?.length ? new Set(options.includeTypes) : null;
+    const selected = events.filter((event) => !excluded.has(event.type) && (!included || included.has(event.type)));
+    return options.replayMode === 'bounded' ? boundReplayToolResultEvents(selected) : selected;
   }
 
   async listPage(_sessionId: string, options: {

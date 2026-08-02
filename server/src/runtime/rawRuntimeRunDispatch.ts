@@ -3220,7 +3220,7 @@ export async function loadRawRuntimeWakeState(
   if (!session) return null;
   const eventStore = createEventStoreForSession(config, session);
   const approvalStore = createApprovalStoreForSession(config, session, eventStore);
-  const events = await eventStore.list(sessionId);
+  const events = await eventStore.list(sessionId, { replayMode: 'bounded' });
   const approvals = await approvalStore.list(sessionId);
   const replayState = buildRuntimeReplayState(events, approvals, sessionId);
   return { session, events, approvals, replayState };
@@ -3265,7 +3265,15 @@ export async function wakeRuntimeSession(
     config.runStore,
     session.tenantId ?? run.tenantId,
   );
-  const events = await eventStore.list(run.sessionId);
+  const events = await eventStore.list(run.sessionId, {
+    includeTypes: [
+      'run_cancel_requested',
+      'approval_requested',
+      'approval_resolved',
+      'interaction_requested',
+      'interaction_resolved',
+    ],
+  });
   const cancelRequested = events.some((event) => (
     event.type === 'run_cancel_requested'
     && (event.runId === run.runId || (!event.runId && event.sessionId === run.sessionId))

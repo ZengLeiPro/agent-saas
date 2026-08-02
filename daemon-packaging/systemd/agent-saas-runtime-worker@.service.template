@@ -26,10 +26,17 @@ Environment=AGENT_SAAS_READYFILE=/run/agent-saas-runtime-worker-%i.ready
 ExecStartPre=/usr/bin/rm -f /run/agent-saas-runtime-worker-%i.ready
 ExecStart=/usr/local/bin/pnpm start
 Restart=on-failure
-RestartSec=5
+RestartSec=30
 KillSignal=SIGTERM
 TimeoutStopSec=35
 SuccessExitStatus=143
+# Worker 可以被 cgroup OOM 终止并自动恢复，但不能再把整机拖入 global OOM。
+# 百分比随 ECS 内存规格自动缩放；MemoryHigh 先回收/节流，MemoryMax 是最终硬边界。
+MemoryHigh=45%
+MemoryMax=60%
+MemorySwapMax=0
+OOMPolicy=stop
+OOMScoreAdjust=500
 NoNewPrivileges=true
 PrivateTmp=true
 

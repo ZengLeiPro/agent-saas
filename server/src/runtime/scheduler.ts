@@ -7,6 +7,7 @@ import {
   isBackgroundTaskRun,
 } from './background/backgroundTaskRuntime.js';
 import type { RunRecord, RunStatus, RunStore } from './runStore.js';
+import type { RuntimeAdmissionGuard } from './memoryPressureGuard.js';
 import type { EventStore } from './types.js';
 
 const DEFAULT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
@@ -32,8 +33,8 @@ export interface RuntimeSchedulerOptions {
   maxConcurrentRuns?: number;
   /** 从共享配置源刷新顶层并发；失败时保留当前值，不阻断调度。 */
   resolveMaxConcurrentRuns?: () => Promise<number>;
-  /** 后台 Agent 独占上限；默认 2，始终不超过 maxConcurrentRuns。 */
-  maxConcurrentBackgroundRuns?: number;
+  /** 仅按真实资源压力暂停领取新 run；不区分用户、租户或任务类型。 */
+  admissionGuard?: RuntimeAdmissionGuard;
   approvalTimeoutMs?: number;
   autoWake?: boolean;
   /** acquire run lease 前先确认目标 session 当前没有被其他 brain 持有。 */
@@ -59,7 +60,6 @@ export class RuntimeScheduler {
   private readonly pollIntervalMs: number;
   private readonly leaseMs: number;
   private maxConcurrentRuns: number;
-  private readonly configuredMaxConcurrentBackgroundRuns: number;
   private readonly approvalTimeoutMs: number;
   private timer: NodeJS.Timeout | null = null;
   private stopped = true;
@@ -79,25 +79,16 @@ export class RuntimeScheduler {
       1,
       Math.floor(options.maxConcurrentRuns ?? DEFAULT_MAX_CONCURRENT_RUNS),
     );
-    this.configuredMaxConcurrentBackgroundRuns = Math.max(
-      1,
-      Math.floor(options.maxConcurrentBackgroundRuns ?? 2),
-    );
     this.approvalTimeoutMs = Math.max(0, Math.floor(options.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS));
   }
 
   getCapacitySnapshot(): {
     maxConcurrentRuns: number;
-    maxConcurrentBackgroundRuns: number;
     inFlightRuns: number;
     inFlightBackgroundRuns: number;
   } {
     return {
       maxConcurrentRuns: this.maxConcurrentRuns,
-      maxConcurrentBackgroundRuns: Math.min(
-        this.maxConcurrentRuns,
-        this.configuredMaxConcurrentBackgroundRuns,
-      ),
       inFlightRuns: this.inFlightRuns.size,
       inFlightBackgroundRuns: [...this.inFlightRunRecords.values()]
         .filter((record) => isBackgroundTaskRun(record)).length,
@@ -123,6 +114,7 @@ export class RuntimeScheduler {
   async start(): Promise<void> {
     if (this.timer) return;
     this.stopped = false;
+    await this.options.admissionGuard?.start();
     await this.tick();
     this.timer = setInterval(() => {
       void this.tick();
@@ -132,6 +124,7 @@ export class RuntimeScheduler {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.options.admissionGuard?.stop();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     // Drain in-flight tick so caller can safely close shared PG pools
@@ -190,6 +183,8 @@ export class RuntimeScheduler {
         const message = err instanceof Error ? err.message : String(err);
         this.options.logger?.warn(`Runtime scheduler capacity refresh failed; keeping current value: ${message}`);
       }
+
+      if (this.options.admissionGuard && !this.options.admissionGuard.canAcquire()) return;
 
       const recoverable = await this.options.runStore.listRecoverable();
       const recoverableRunIds = new Set(recoverable.map((record) => record.runId));
@@ -257,26 +252,14 @@ export class RuntimeScheduler {
           && isBackgroundTaskReady(record)
         );
       });
-      // 普通/交互恢复优先；后台任务同时受总槽位和独立后台槽位约束。
-      pendingRecoverable.sort((a, b) => Number(isBackgroundTaskRun(a)) - Number(isBackgroundTaskRun(b)));
       const selected: RunRecord[] = [];
       const selectedSessions = new Set<string>();
-      const inFlightBackground = [...this.inFlightRunRecords.values()]
-        .filter((record) => isBackgroundTaskRun(record)).length;
-      const maxConcurrentBackgroundRuns = Math.min(
-        this.maxConcurrentRuns,
-        this.configuredMaxConcurrentBackgroundRuns,
-      );
-      let selectedBackground = 0;
       for (const record of pendingRecoverable) {
         if (selected.length >= availableSlots) break;
         if (this.inFlightSessions.has(record.sessionId)) continue;
         if (selectedSessions.has(record.sessionId)) continue;
-        if (isBackgroundTaskRun(record)
-          && inFlightBackground + selectedBackground >= maxConcurrentBackgroundRuns) continue;
         selected.push(record);
         selectedSessions.add(record.sessionId);
-        if (isBackgroundTaskRun(record)) selectedBackground += 1;
       }
 
       for (const record of selected) {
@@ -317,7 +300,9 @@ export class RuntimeScheduler {
     const cutoff = new Date(Date.now() - this.approvalTimeoutMs);
     const staleRuns = await listStale(cutoff, STALE_APPROVAL_BATCH_SIZE);
     for (const record of staleRuns) {
-      const events = await this.options.eventStore.list(record.sessionId);
+      const events = await this.options.eventStore.list(record.sessionId, {
+        includeTypes: ['approval_requested', 'approval_resolved'],
+      });
       const pendingApprovals = buildApprovalRecordsFromEvents(events, record.sessionId)
         .filter((approval) => approval.runId === record.runId && approval.status === 'pending');
       const cancelled = await cancelStale(record.runId, cutoff, STALE_APPROVAL_REASON, {
@@ -374,9 +359,17 @@ export class RuntimeScheduler {
   }
 
   private async tryHandle(record: RunRecord): Promise<void> {
+    if (this.options.admissionGuard && !this.options.admissionGuard.canAcquire()) {
+      this.deferRun(record.runId);
+      return;
+    }
     if (this.options.canWake && !(await this.options.canWake(record))) {
       this.deferRun(record.runId);
       this.options.logger?.info(`Deferred recoverable run ${record.runId}: session busy`);
+      return;
+    }
+    if (this.options.admissionGuard && !this.options.admissionGuard.canAcquire()) {
+      this.deferRun(record.runId);
       return;
     }
 

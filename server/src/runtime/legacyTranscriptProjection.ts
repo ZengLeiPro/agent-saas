@@ -14,6 +14,12 @@ import {
   buildPrunedHistoricalUserContent,
   pruneHistoricalImageContent,
 } from './imageAttachments.js';
+import {
+  REPLAY_RECENT_TOOL_RESULT_MAX_CHARS,
+  REPLAY_TOOL_RESULT_KEEP_RECENT,
+  REPLAY_TOOL_RESULT_MAX_CHARS,
+  truncateReplayToolResultContent,
+} from './replayEventBounds.js';
 
 function jsonl(obj: unknown): string {
   return JSON.stringify(obj) + '\n';
@@ -228,14 +234,14 @@ function parseToolArguments(raw: string): unknown {
  * 默认 tool_result 截断阈值：单条不超过 ~4K 字符（约 1.5K-2K token），
  * 超出部分用占位符接住，引导模型用 SessionSearchEvents 按 toolCallId 拉原文。
  */
-const DEFAULT_TOOL_RESULT_MAX_CHARS = 4000;
+const DEFAULT_TOOL_RESULT_MAX_CHARS = REPLAY_TOOL_RESULT_MAX_CHARS;
 /**
  * 默认优先保留最近 N 条 tool 消息。N=8 大致覆盖最近 2-3 轮
  * 工具调用（一轮平均 2-4 个并行/串行 call）。
  */
-const DEFAULT_TOOL_RESULT_KEEP_RECENT = 8;
+const DEFAULT_TOOL_RESULT_KEEP_RECENT = REPLAY_TOOL_RESULT_KEEP_RECENT;
 /** 最近工具结果也必须有单条上限，避免一次并行 Read 把下一轮请求直接撑爆。 */
-const DEFAULT_RECENT_TOOL_RESULT_MAX_CHARS = 16_000;
+const DEFAULT_RECENT_TOOL_RESULT_MAX_CHARS = REPLAY_RECENT_TOOL_RESULT_MAX_CHARS;
 /** 单次模型请求中全部 tool_result 的累计字符预算。 */
 const DEFAULT_TOOL_RESULT_TOTAL_MAX_CHARS = 96_000;
 const TOOL_RESULT_PLACEHOLDER_MAX_CHARS = 160;
@@ -296,21 +302,12 @@ export function truncateOldToolResults(
     const availableNow = Math.max(0, remainingTotal - placeholderReserve * Math.max(0, remainingMessages - 1));
     const perMessageLimit = position < keepRecent ? recentMaxChars : maxChars;
     const budget = Math.min(perMessageLimit, availableNow);
-    const content = truncateToolResultContent(message.content, budget, message.tool_call_id);
+    const content = truncateReplayToolResultContent(message.content, budget, message.tool_call_id);
     remainingTotal = Math.max(0, remainingTotal - content.length);
     if (content !== message.content) bounded.set(idx, { ...message, content });
   }
   if (bounded.size === 0) return messages;
   return messages.map((message, idx) => bounded.get(idx) ?? message);
-}
-
-function truncateToolResultContent(content: string, maxChars: number, toolCallId: string): string {
-  if (content.length <= maxChars) return content;
-  if (maxChars <= 0) return '';
-  const marker = `\n\n...[tool_result 已截断；完整原文请用 SessionGetToolTrace toolCallId=${toolCallId} 查询]`;
-  if (marker.length >= maxChars) return marker.slice(0, maxChars);
-  const keptChars = maxChars - marker.length;
-  return `${content.slice(0, keptChars)}${marker}`;
 }
 
 export function buildChatMessagesFromEvents(events: PlatformEvent[]): ModelChatMessage[] {

@@ -247,7 +247,9 @@ export class EventBackedApprovalStore implements ApprovalStore {
   }
 
   async list(sessionId = this.sessionId): Promise<ApprovalRecord[]> {
-    const events = await this.eventStore.list(sessionId);
+    const events = await this.eventStore.list(sessionId, {
+      includeTypes: ['approval_requested', 'approval_resolved'],
+    });
     return buildApprovalRecordsFromEvents(events, sessionId);
   }
 

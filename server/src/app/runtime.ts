@@ -64,6 +64,7 @@ import {
 import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
 import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from '../runtime/toolInvocationCancelDelivery.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
+import { MemoryPressureGuard } from '../runtime/memoryPressureGuard.js';
 import {
   effectiveMaxConcurrentRuns,
   PgRuntimeSchedulerConfigStore,
@@ -2341,6 +2342,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   if (pgRunStore && pgEventStore) {
     runtimeSchedulerAutoWake = enableSchedulerWorker && (config.runtimeScheduler?.autoWake ?? true);
     const schedulerConfig = await runtimeSchedulerConfigStore!.get();
+    const memoryPressureGuard = new MemoryPressureGuard({
+      logger: serverLogger.child('MemoryPressureGuard'),
+    });
     runtimeScheduler = new RuntimeScheduler({
       runStore: pgRunStore,
       eventStore: pgEventStore,
@@ -2357,7 +2361,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         (await runtimeSchedulerConfigStore!.get()).maxConcurrentRuns,
         sessionLockMode,
       ),
-      maxConcurrentBackgroundRuns: config.runtimeScheduler?.maxConcurrentBackgroundRuns,
+      admissionGuard: memoryPressureGuard,
       approvalTimeoutMs: config.runtimeScheduler?.approvalTimeoutMs,
       canWake: sessionLock
         ? async (record) => {

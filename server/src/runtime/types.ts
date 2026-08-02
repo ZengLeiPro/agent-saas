@@ -1044,6 +1044,13 @@ export interface EventListOptions {
    * 仍按 EventStore 事实源全量补齐工具输出中间段。
    */
   excludeTypes?: PlatformEvent['type'][];
+  /** 只读取指定类型；用于 wake/approval 状态判断，避免把无关的大事件载入 Node。 */
+  includeTypes?: PlatformEvent['type'][];
+  /**
+   * 模型/恢复回放视图：工具原文仍留在 EventStore，读取边界只返回有界 content。
+   * 生产 PG backend 在 SQL 内截断，避免先把大字段送进 Node 再做内存截断。
+   */
+  replayMode?: 'bounded';
 }
 
 export interface EventStore {

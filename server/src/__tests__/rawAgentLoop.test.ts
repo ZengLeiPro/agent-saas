@@ -24,7 +24,7 @@ import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
 import { SessionContextService, SessionToolProvider } from '../runtime/sessionContext.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import type { LatestResponseSessionState, ResponseSessionStatePatch, RunStore } from '../runtime/runStore.js';
-import type { ModelAdapter, ModelEvent, ModelRequest, ModelToolCall, RunContext } from '../runtime/types.js';
+import type { ModelAdapter, ModelEvent, ModelRequest, ModelToolCall, QueuedInterjection, RunContext } from '../runtime/types.js';
 import type { OutboundEvent } from '../types/index.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { configureModelPricing } from '../data/usage/pricing.js';
@@ -195,6 +195,48 @@ class TextThenToolThenTextAdapter implements ModelAdapter {
       content: '最终答案。',
       toolCalls: [],
       usage: { inputTokens: 3, outputTokens: 2, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+    };
+  }
+}
+
+class InterjectionAfterFinalAdapter implements ModelAdapter {
+  calls = 0;
+  requests: ModelRequest[] = [];
+
+  async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    this.requests.push(request);
+    const content = this.calls === 1 ? '第一段回答。' : '已按插话修正。';
+    yield { type: 'text_delta', content };
+    yield { type: 'completed', content, toolCalls: [] };
+  }
+}
+
+class InterjectionAfterToolAdapter implements ModelAdapter {
+  calls = 0;
+  requests: ModelRequest[] = [];
+
+  async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    this.requests.push(request);
+    if (this.calls === 1) {
+      yield {
+        type: 'completed',
+        content: '先读取文件。',
+        toolCalls: [{
+          id: 'call_read_interjection',
+          name: 'Read',
+          arguments: JSON.stringify({ path: 'seed.txt' }),
+        }],
+      };
+      return;
+    }
+    yield { type: 'text_delta', content: '已结合两条插话回答。' };
+    yield {
+      type: 'completed',
+      content: '已结合两条插话回答。',
+      toolCalls: [],
+      usage: { inputTokens: 8, outputTokens: 3 },
     };
   }
 }
@@ -1022,6 +1064,151 @@ describe('RawAgentLoop', () => {
     // live 流式只走 yield 直推（上方 events 断言已覆盖），持久化内容由聚合行承载。
     const streamEvents = runtimeEvents.filter((event) => event.type === 'assistant_stream_event');
     expect(streamEvents).toEqual([]);
+  });
+
+  it('starts another model turn when an interjection arrives during a final text response', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-final-interjection-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new InterjectionAfterFinalAdapter();
+    let queued: QueuedInterjection[] = [{
+      inputId: 'input-final',
+      sourceRunId: 'source-final',
+      clientMsgId: 'client-final',
+      message: { channel: 'web', chatId: 'chat-final', content: '请按新条件修正' },
+      prompt: '请按新条件修正',
+    }];
+    let loadCalls = 0;
+    const markApplied = vi.fn(async () => {
+      queued = [];
+    });
+    const trySeal = vi.fn(async () => true);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-final-interjection'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        markSteeringInputsApplied: markApplied,
+        trySealSteeringInputWindow: trySeal,
+      } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-final', content: '先回答' },
+        prompt: '先回答',
+        instructions: '直接回答。',
+        maxTurns: 3,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-final',
+        sessionId: 'session-final-interjection',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+        loadQueuedInterjections: async () => {
+          loadCalls += 1;
+          return loadCalls === 1 ? [] : queued;
+        },
+      },
+    ));
+
+    expect(adapter.requests).toHaveLength(2);
+    expect(adapter.requests[1]?.messages.slice(-2)).toEqual([
+      { role: 'assistant', content: '第一段回答。' },
+      { role: 'user', content: '请按新条件修正' },
+    ]);
+    expect(events.filter((event) => event.type === 'interjection_applied')).toHaveLength(1);
+    expect(events.at(-1)).toEqual({ type: 'done' });
+    expect(markApplied).toHaveBeenCalledWith('target-final', ['source-final']);
+    expect(trySeal).toHaveBeenCalledTimes(1);
+  });
+
+  it('injects all queued interjections after tool completion into one next model turn', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-interjection-'));
+    cleanupDirs.add(cwd);
+    await writeFile(join(cwd, 'seed.txt'), 'seed content', 'utf-8');
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new InterjectionAfterToolAdapter();
+    let loadCalls = 0;
+    let queued: QueuedInterjection[] = [
+      {
+        inputId: 'input-1',
+        sourceRunId: 'source-run-1',
+        clientMsgId: 'client-1',
+        message: { channel: 'web', chatId: 'chat-1', content: '补充条件一' },
+        prompt: '补充条件一',
+      },
+      {
+        inputId: 'input-2',
+        sourceRunId: 'source-run-2',
+        clientMsgId: 'client-2',
+        message: { channel: 'web', chatId: 'chat-1', content: '补充条件二' },
+        prompt: '补充条件二',
+      },
+    ];
+    const markApplied = vi.fn(async (_targetRunId: string, _sourceRunIds: string[]) => {
+      queued = [];
+    });
+    const runStore = {
+      markSteeringInputsApplied: markApplied,
+      trySealSteeringInputWindow: vi.fn(async () => true),
+    } as unknown as RunStore;
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-interjection'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '先读文件' },
+        prompt: '先读文件',
+        instructions: '读取后回答。',
+        maxTurns: 4,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-run',
+        sessionId: 'session-interjection',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+        loadQueuedInterjections: async () => {
+          loadCalls += 1;
+          return loadCalls === 1 ? [] : queued;
+        },
+      },
+    ));
+
+    expect(events.map((event) => event.type)).toContain('interjection_applied');
+    expect(events.find((event) => event.type === 'interjection_applied')).toMatchObject({
+      sourceRunIds: ['source-run-1', 'source-run-2'],
+      clientMsgIds: ['client-1', 'client-2'],
+    });
+    expect(markApplied).toHaveBeenCalledWith('target-run', ['source-run-1', 'source-run-2']);
+    expect(adapter.requests).toHaveLength(2);
+    expect(adapter.requests[1]?.messages.filter((message) => message.role === 'user').slice(-2)).toEqual([
+      { role: 'user', content: '补充条件一' },
+      { role: 'user', content: '补充条件二' },
+    ]);
+    const runtimeEvents = await eventStore.list('session-interjection');
+    expect(runtimeEvents.filter((event) => event.type === 'user_message')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ interjectionSourceRunId: 'source-run-1', clientMsgId: 'client-1' }),
+      expect.objectContaining({ interjectionSourceRunId: 'source-run-2', clientMsgId: 'client-2' }),
+    ]));
   });
 
   it('streams assistant_tool_calls content when the model only returns it in the completed event', async () => {

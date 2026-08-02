@@ -83,5 +83,64 @@ describe("useSession 跨会话详情请求隔离", () => {
 
     expect(callbacks.setMessages).toHaveBeenCalled();
     expect(result.current.sessionId).toBe("session-a");
+    expect(authFetchMock).toHaveBeenCalledWith(expect.stringContaining("limit=100"));
+  });
+
+  it("首屏只取尾部一页，并能向前合并历史且去除边界重叠", async () => {
+    let currentMessages: ReturnType<NonNullable<SessionCallbacks["getMessages"]>> = [];
+    const callbacks = makeCallbacks();
+    callbacks.getMessages = () => currentMessages;
+    callbacks.setMessages = vi.fn((messages) => { currentMessages = messages; });
+
+    const blocks = (start: number, end: number) => Array.from(
+      { length: end - start + 1 },
+      (_, index) => {
+        const line = start + index;
+        return {
+          id: `line-${line}`,
+          kind: line % 2 === 0 ? "text" : "prompt",
+          content: `内容 ${line}`,
+        };
+      },
+    );
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.includes("before=line-101")) {
+        return Promise.resolve(jsonResponse({
+          mode: "before",
+          blocks: blocks(1, 101),
+          oldestCursor: "line-1",
+          cursor: "line-200",
+          historyComplete: true,
+        }));
+      }
+      if (url.startsWith("/api/sessions/session-a?")) {
+        return Promise.resolve(jsonResponse({
+          mode: "full",
+          blocks: blocks(101, 200),
+          oldestCursor: "line-101",
+          cursor: "line-200",
+          historyComplete: false,
+        }));
+      }
+      if (url.startsWith("/api/chat/interactions/pending")) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    const { result } = renderHook(() => useSession(callbacks));
+    await act(async () => { await result.current.loadSessionDetail("session-a"); });
+
+    expect(currentMessages).toHaveLength(100);
+    expect(currentMessages[0]?.id).toBe("line-101");
+    expect(result.current.hasMoreHistory).toBe(true);
+
+    await act(async () => { await result.current.loadEarlierMessages(); });
+
+    expect(currentMessages).toHaveLength(200);
+    expect(currentMessages[0]?.id).toBe("line-1");
+    expect(currentMessages.at(-1)?.id).toBe("line-200");
+    expect(currentMessages.filter((message) => message.id === "line-101")).toHaveLength(1);
+    expect(result.current.hasMoreHistory).toBe(false);
   });
 });

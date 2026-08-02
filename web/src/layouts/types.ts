@@ -70,6 +70,9 @@ export interface LayoutProps {
   messages: MessageItem[];
   loading: boolean;
   isLoadingMessages: boolean;
+  hasMoreHistory: boolean;
+  isLoadingEarlier: boolean;
+  loadEarlierMessages: () => Promise<void>;
   retryMessage: (message: MessageItem) => void;
   forkFromMessage: (message: MessageItem) => void;
   lastMessageRef: Ref<HTMLDivElement>;

@@ -317,7 +317,7 @@ export type {
 export { mapSessionDetailToMessages } from "./lib/sessionsApi";
 export { searchSessions } from "./lib/searchApi";
 export type { SearchSessionsParams } from "./lib/searchApi";
-export { mergeServerMessagesWithLocalTail, mergeSessionMessageDelta } from "./lib/sessionMerge";
+export { mergeServerMessagesWithLocalTail, mergeSessionMessageDelta, mergeSessionMessagePage } from "./lib/sessionMerge";
 export {
   extractLatestTodos,
   extractTodoToolActivities,

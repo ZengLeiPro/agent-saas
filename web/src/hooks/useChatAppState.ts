@@ -105,6 +105,9 @@ export interface ChatAppState {
   isDragging: boolean;
   isLoadingSessions: boolean;
   isLoadingMessages: boolean;
+  hasMoreHistory: boolean;
+  isLoadingEarlier: boolean;
+  loadEarlierMessages: () => Promise<void>;
   deleteSessionId: string | null;
   deleteSessionCount: number;
   lastMessageRef: RefObject<HTMLDivElement>;
@@ -590,6 +593,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     voiceFile?: { savedPath: string; relativePath: string; duration: number },
     existingClientMsgId?: string,
     autoApproveRunShellForMessage?: boolean,
+    preserveActiveStream?: boolean,
   ) => Promise<void>) | null>(null);
   const reconcileLastRunStateRef = useRef<(sessionId: string, lastRunState: LastRunState) => void>(() => {});
 
@@ -1994,6 +1998,15 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           // 门禁/入队失败（chat_rejected）后重发仍需带 orgAgentId；
           // 改在 'session' 事件（服务端已写 meta 绑定）后清除
         },
+        onInterjectionApplied: (_sourceRunIds, clientMsgIds) => {
+          const applied = new Set(clientMsgIds);
+          outboxRef.current = outboxRef.current.filter((entry) => !applied.has(entry.clientMsgId));
+          for (const clientMsgId of clientMsgIds) {
+            const timer = ackTimersRef.current.get(clientMsgId);
+            if (timer) clearTimeout(timer);
+            ackTimersRef.current.delete(clientMsgId);
+          }
+        },
         onChatRejected: (clientMsgId) => {
           // 服务端拒绝：清 ACK 定时器、从 outbox 移除；bubble 已在 wsEventProcessor 翻 failed
           const t = ackTimersRef.current.get(clientMsgId);
@@ -2071,8 +2084,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         // 已 detach（切换会话后）或 loading 已被其他路径（watchdog/reject）清掉：
         // 仍需清理本轮 acked/sending，并推进排队消息，避免 queued 永远卡在 outbox。
         if (!loadingRef.current) {
-          // H-3 修复：done 晚到的路径也要排空 outbox 并推进队列
-          outboxRef.current = outboxRef.current.filter(e => e.state === 'queued');
+          // 当前 done 只清理由 onChatDone 命中的 run；已 ACK 的插话仍由服务端消费或回退执行。
           flushQueuedHead();
           return;
         }
@@ -2144,10 +2156,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         setLoading(false);
         setStopping(false);
 
-        // 从 outbox 移除已处理完的 acked/sending 条目（done 代表这一轮完结）
-        outboxRef.current = outboxRef.current.filter(e => e.state === 'queued');
+        // onChatDone 只移除本轮 entry；其他 acked 条目是服务端持久化插话，不能随本轮 done 丢弃。
 
-        // 检查排队消息（stopping 时不发排队消息，因为是用户主动中止）
+        // 检查仅因断线等原因留在本地的排队消息（stopping 时不发送）
         if (!stoppingRef.current) {
           const nextQueued = outboxRef.current.find(e => e.state === 'queued');
           if (nextQueued) {
@@ -2247,6 +2258,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     voiceFile?: { savedPath: string; relativePath: string; duration: number },
     existingClientMsgId?: string,
     autoApproveRunShellForMessage = autoApproveRunShellRef.current,
+    preserveActiveStream = false,
   ) => {
     const activeSessionId = sessionIdRef.current;
     // 自己发起的续聊流：纳入未读追踪，确保切走后流完成（idle）时能标记未读
@@ -2259,16 +2271,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       newSessionClientMsgIdsRef.current.add(clientMsgId);
     }
 
-    wsLatestSessionIdRef.current = { value: activeSessionId };
-    wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
-    lastEventIdRef.current = null;
-        lastEventCursorRef.current = null;
-    streamNonceRef.current += 1;
-    wsAttachedRef.current = true;
+    if (!preserveActiveStream) {
+      wsLatestSessionIdRef.current = { value: activeSessionId };
+      wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
+      lastEventIdRef.current = null;
+      lastEventCursorRef.current = null;
+      streamNonceRef.current += 1;
+      wsAttachedRef.current = true;
+    }
 
+    let submittedUserMessageIndex = -1;
     if (showBubble) {
       msgRef.current.triggerScroll();
-      wsUserMsgIndexRef.current = msgRef.current.addMessage({
+      submittedUserMessageIndex = msgRef.current.addMessage({
         type: "user",
         content: inputText,
         ...(attachments.length > 0 ? { attachments: attachments.map(f => ({ name: f.originalName, isImage: f.isImage, relativePath: f.relativePath })) } : {}),
@@ -2276,6 +2291,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         timestamp: Date.now(),
         clientMsgId,
       });
+      // 插话不能覆盖当前 run 的 userMsgIndex，否则目标 run 的 done 会被防串校验丢弃。
+      if (!preserveActiveStream) wsUserMsgIndexRef.current = submittedUserMessageIndex;
       // 乐观更新会话列表：preview + 排序即时变化
       if (activeSessionId) {
         sessionRef.current.updateSessionMeta(activeSessionId, {
@@ -2313,10 +2330,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       createdAt: Date.now(),
     });
 
-    upsertRuntimeStatusMessage(msgRef.current, 'sending');
-    setLoading(true);
-    resetWatchdog();
-    dispatchConnection('connect');
+    if (!preserveActiveStream) {
+      upsertRuntimeStatusMessage(msgRef.current, 'sending');
+      setLoading(true);
+      resetWatchdog();
+      dispatchConnection('connect');
+    }
 
     const ok = await wsClient.ensureConnectedSend({
       action: 'chat',
@@ -2347,9 +2366,15 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (!ok) {
       // 传输层失败：从 outbox 移除，翻 failed
       outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
-      markBubbleFailed(clientMsgId, wsUserMsgIndexRef.current, '网络连接失败，请重试');
-      wsAttachedRef.current = false;
-      setLoading(false);
+      markBubbleFailed(
+        clientMsgId,
+        submittedUserMessageIndex >= 0 ? submittedUserMessageIndex : wsUserMsgIndexRef.current,
+        '网络连接失败，请重试',
+      );
+      if (!preserveActiveStream) {
+        wsAttachedRef.current = false;
+        setLoading(false);
+      }
       if (pendingNewSessionClientMsgIdRef.current === clientMsgId) pendingNewSessionClientMsgIdRef.current = null;
       newSessionClientMsgIdsRef.current.delete(clientMsgId);
     } else {
@@ -2403,25 +2428,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     fileUpload.clearFiles();
 
     if (loadingRef.current) {
-      // 排队：新一条消息入 outbox.queued + 渲染 pending bubble
-      const queuedClientMsgId = crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      outboxRef.current.push({
-        clientMsgId: queuedClientMsgId,
-        input: capturedInput,
-        attachments: capturedAttachments,
-        ...(autoApproveRunShellRef.current ? { autoApproveRunShell: true } : {}),
-        state: 'queued',
-        createdAt: Date.now(),
-      });
-      msgRef.current.triggerScroll();
-      msgRef.current.addMessage({
-        type: "user",
-        content: capturedInput,
-        ...(capturedAttachments.length > 0 ? { attachments: capturedAttachments.map(f => ({ name: f.originalName, isImage: f.isImage, relativePath: f.relativePath })) } : {}),
-        status: 'pending',
-        timestamp: Date.now(),
-        clientMsgId: queuedClientMsgId,
-      });
+      // 运行中立即交给服务端持久化；当前流保持挂载，服务端会在 AgentLoop 边界注入。
+      await sendChatViaWs(
+        capturedInput,
+        capturedAttachments,
+        true,
+        undefined,
+        undefined,
+        autoApproveRunShellRef.current,
+        true,
+      );
       return;
     }
 
@@ -2758,6 +2774,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     isDragging: fileUpload.isDragging,
     isLoadingSessions: session.isLoadingSessions,
     isLoadingMessages: session.isLoadingMessages,
+    hasMoreHistory: session.hasMoreHistory,
+    isLoadingEarlier: session.isLoadingEarlier,
+    loadEarlierMessages: session.loadEarlierMessages,
     deleteSessionId: session.deleteSessionId,
     deleteSessionCount: session.deleteSessionCount,
     lastMessageRef: msg.lastMessageRef,

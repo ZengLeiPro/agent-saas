@@ -795,7 +795,48 @@ export class RawAgentLoop implements AgentLoop {
       ...this.filterLoadedToolMessages(contextProjection.messages, tools),
       { role: 'user', content: buildModelUserContent(input.prompt, input.attachments, input.visionAnalysis) },
     ];
-    const currentUserMessageIndex = messages.length - 1;
+    let currentUserMessageIndex = messages.length - 1;
+    const recoveredInterjectionSourceRunIds = new Set(
+      recoveredEvents
+        .filter((event): event is Extract<PlatformEvent, { type: 'user_message' }> => (
+          event.type === 'user_message' && typeof event.interjectionSourceRunId === 'string'
+        ))
+        .map((event) => event.interjectionSourceRunId!),
+    );
+    const drainQueuedInterjections = async () => {
+      const queued = await context.loadQueuedInterjections?.() ?? [];
+      if (queued.length === 0) return [];
+      for (const interjection of queued) {
+        if (recoveredInterjectionSourceRunIds.has(interjection.sourceRunId)) continue;
+        const userMessageEvent = await this.eventStore.append({
+          type: 'user_message',
+          runId: context.runId,
+          sessionId: context.sessionId,
+          content: interjection.prompt,
+          modelContent: interjection.message.content,
+          ...(interjection.attachments?.length ? { attachments: interjection.attachments } : {}),
+          ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
+          interjectionSourceRunId: interjection.sourceRunId,
+          ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
+        });
+        await this.transcriptProjection.project(userMessageEvent);
+        messages.push({
+          role: 'user',
+          content: buildModelUserContent(
+            interjection.prompt,
+            interjection.attachments,
+            interjection.visionAnalysis,
+          ),
+        });
+        currentUserMessageIndex = messages.length - 1;
+        recoveredInterjectionSourceRunIds.add(interjection.sourceRunId);
+      }
+      await this.runStore?.markSteeringInputsApplied?.(
+        context.runId,
+        queued.map((interjection) => interjection.sourceRunId),
+      );
+      return queued;
+    };
 
     if (contextProjection.summaryEvent) await this.append(contextProjection.summaryEvent);
     if (input.memoryContext) {
@@ -853,6 +894,16 @@ export class RawAgentLoop implements AgentLoop {
             `[run] safe drain handoff session=${context.sessionId} run=${context.runId} afterTurns=${turn - 1}`,
           );
           return;
+        }
+        const boundaryInterjections = await drainQueuedInterjections();
+        if (boundaryInterjections.length > 0) {
+          yield {
+            type: 'interjection_applied',
+            sourceRunIds: boundaryInterjections.map((interjection) => interjection.sourceRunId),
+            clientMsgIds: boundaryInterjections.flatMap((interjection) => (
+              interjection.clientMsgId ? [interjection.clientMsgId] : []
+            )),
+          };
         }
         context.replaceableDraftRetryUsed = turn === 1 && restoredDraftRecoveryUsed;
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
@@ -937,7 +988,8 @@ export class RawAgentLoop implements AgentLoop {
         });
         for await (const event of this.modelAdapter.stream({
           model: context.model,
-          messages: governed.messages,
+          // Adapter 可能为诊断/重试保留 request 引用；传快照，避免本轮结束后的上下文追加反向污染已发送请求。
+          messages: [...governed.messages],
           tools: requestTools,
           signal: context.signal,
           ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
@@ -1126,6 +1178,29 @@ export class RawAgentLoop implements AgentLoop {
             yield { type: 'draft_commit', draftId };
           }
           if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
+          if (completed.providerContinuationReset) clearProviderContinuations(messages);
+          messages.push({
+            role: 'assistant',
+            content: assistantContent,
+            ...(completed.providerContinuation
+              ? { provider_continuation: completed.providerContinuation }
+              : {}),
+          });
+          let queuedInterjections = await drainQueuedInterjections();
+          if (queuedInterjections.length === 0 && this.runStore?.trySealSteeringInputWindow) {
+            const sealed = await this.runStore.trySealSteeringInputWindow(context.runId);
+            if (!sealed) queuedInterjections = await drainQueuedInterjections();
+          }
+          if (queuedInterjections.length > 0) {
+            yield {
+              type: 'interjection_applied',
+              sourceRunIds: queuedInterjections.map((interjection) => interjection.sourceRunId),
+              clientMsgIds: queuedInterjections.flatMap((interjection) => (
+                interjection.clientMsgId ? [interjection.clientMsgId] : []
+              )),
+            };
+            continue;
+          }
           const modelUsage = buildModelUsage(context.model, totalUsage);
           await this.append({
             type: 'run_finished',
@@ -1227,6 +1302,16 @@ export class RawAgentLoop implements AgentLoop {
           context,
           messages,
         });
+        const queuedInterjections = await drainQueuedInterjections();
+        if (queuedInterjections.length > 0) {
+          yield {
+            type: 'interjection_applied',
+            sourceRunIds: queuedInterjections.map((interjection) => interjection.sourceRunId),
+            clientMsgIds: queuedInterjections.flatMap((interjection) => (
+              interjection.clientMsgId ? [interjection.clientMsgId] : []
+            )),
+          };
+        }
       }
 
       if (textStarted) {
@@ -2619,7 +2704,8 @@ export class RawAgentLoop implements AgentLoop {
         });
         for await (const event of this.modelAdapter.stream({
           model: args.context.model,
-          messages: governed.messages,
+          // Adapter 可能为诊断/重试保留 request 引用；传快照，避免本轮结束后的上下文追加反向污染已发送请求。
+          messages: [...governed.messages],
           tools: requestTools,
           signal: args.context.signal,
           ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),

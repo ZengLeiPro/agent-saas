@@ -17,6 +17,17 @@ export interface RuntimeConnection {
   baseUrl?: string;
 }
 
+/** 已完成附件解析、可直接注入下一次模型请求的插话消息。 */
+export interface QueuedInterjection {
+  inputId: string;
+  sourceRunId: string;
+  clientMsgId?: string;
+  message: InboundMessage;
+  prompt: string;
+  attachments?: ModelAttachmentRef[];
+  visionAnalysis?: ModelVisionAnalysis;
+}
+
 export interface RunContext {
   runId: string;
   sessionId: string;
@@ -50,6 +61,8 @@ export interface RunContext {
    * 写入失败不得反向打断模型请求。
    */
   recordModelRequestDiagnostic?: (event: ModelRequestDiagnostic) => Promise<boolean | void>;
+  /** 在模型轮边界读取本 run 尚未消费的 durable 插话消息。 */
+  loadQueuedInterjections?: () => Promise<QueuedInterjection[]>;
   /** 当前逻辑模型轮是否已经用过 Web 部分草稿恢复机会。 */
   replaceableDraftRetryUsed?: boolean;
 }
@@ -435,6 +448,9 @@ export type PlatformEvent =
     modelContent?: string;
     attachments?: ModelAttachmentRef[];
     visionAnalysis?: ModelVisionAnalysis;
+    /** 插话来源 run；用于崩溃恢复时识别已持久化但尚未结算的输入。 */
+    interjectionSourceRunId?: string;
+    clientMsgId?: string;
   }
   | {
     id: string;

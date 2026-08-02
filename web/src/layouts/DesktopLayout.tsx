@@ -80,7 +80,8 @@ export function DesktopLayout(props: LayoutProps) {
     isLoadingSessions, activeTab, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
-    messages, loading, isLoadingMessages, retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
+    messages, loading, isLoadingMessages, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
+    retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
     handlePermissionResponse, handleAskUserResponse,
     uploadedFiles, removeFile, input, uploading, uploadError, dismissUploadError, setInput,
     sendMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handlePaste, ttsProps, ttsStateMap, modelList,
@@ -499,6 +500,9 @@ export function DesktopLayout(props: LayoutProps) {
               messages={messages}
               loading={loading}
               isLoadingMessages={isLoadingMessages}
+              hasMoreHistory={hasMoreHistory}
+              isLoadingEarlier={isLoadingEarlier}
+              onLoadEarlier={loadEarlierMessages}
               lastMessageRef={lastMessageRef}
               scrollContainerRef={scrollContainerRef}
               isNearBottomRef={isNearBottomRef}

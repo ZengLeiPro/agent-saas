@@ -537,6 +537,73 @@ describe('WebChannel executionTarget gating', () => {
     }
   });
 
+  it('ACKs a steering message as queued without replacing the current websocket stream', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'web-steering-enqueue-'));
+    try {
+      const runStore = new MemoryRunStore();
+      const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
+      const enqueueCalls: Array<{ input: UpsertRunInput; options: unknown }> = [];
+      const { channel } = createChannel({
+        agentCwd: tmp,
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        enqueueRuntime: {
+          scheduler: {
+            enqueue: async (input: UpsertRunInput, options: unknown) => {
+              enqueueCalls.push({ input, options });
+              const record = await runStore.upsertPending(input);
+              return {
+                ...record,
+                metadata: {
+                  ...record.metadata,
+                  steeringTargetRunId: 'target-run',
+                  steeringState: 'pending',
+                },
+              };
+            },
+          } as any,
+          runStore,
+          sessionCatalog,
+          enabled: true,
+        },
+      });
+      const ws = new FakeWebSocket();
+      const client = {
+        ws: ws as any,
+        user: PLATFORM_ADMIN_USER,
+        alive: true,
+        lastActivityAt: Date.now(),
+      };
+      (channel as any).wsActiveStream.set(ws as any, 'target-stream');
+      (channel as any).activeStreams.set('target-stream', {
+        controller: new AbortController(),
+        userId: 'admin-1',
+        ws: ws as any,
+        sessionId: 'session-steering',
+        runId: 'target-run',
+        clientMsgId: 'target-client',
+      });
+      (channel as any).eventBufferStore.create('session-steering', 'admin-1');
+
+      await (channel as any).processChatMessage(client, chatMessage({
+        sessionId: 'session-steering',
+        message: '运行中的补充条件',
+        client_msg_id: 'steering-client',
+      }));
+
+      expect(enqueueCalls).toHaveLength(1);
+      expect(enqueueCalls[0]?.options).toEqual({ steeringAware: true });
+      expect(ws.sent.find((message) => message.data?.type === 'stream_id')?.data).toMatchObject({
+        queued: true,
+        targetRunId: 'target-run',
+        client_msg_id: 'steering-client',
+      });
+      expect((channel as any).wsActiveStream.get(ws as any)).toBe('target-stream');
+      expect((channel as any).eventBufferStore.isActive('session-steering')).toBe(true);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('returns an error terminal event when enqueueRuntime fails after ACK', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'web-enqueue-fail-'));
     try {

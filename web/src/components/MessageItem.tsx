@@ -807,6 +807,11 @@ export const MessageItem = memo(function MessageItem({
               </div>
             )}
           </div>
+          {message.status === 'queued' && (
+            <div className="mt-1 text-right text-xs text-muted-foreground">
+              已排队，将在当前步骤结束后插入
+            </div>
+          )}
           {/* 失败态副文案 + 重试按钮 */}
           {isFailed && (
             <div className="mt-1 flex items-center justify-end gap-2 text-xs">

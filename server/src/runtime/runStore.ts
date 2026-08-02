@@ -136,9 +136,27 @@ export interface ActiveRunCounts {
   total: number;
 }
 
+/** 一条等待注入目标 AgentLoop 的 durable 用户消息。sourceRun 保留为故障回退 run。 */
+export interface SteeringInputRecord {
+  inputId: string;
+  sourceRunId: string;
+  targetRunId: string;
+  sessionId: string;
+  state: 'pending' | 'applied';
+  acceptedAt: string;
+  appliedAt?: string;
+  sourceRun: RunRecord;
+}
+
 export interface RunStore {
   init?(): Promise<void>;
   upsertPending(input: UpsertRunInput): Promise<RunRecord>;
+  /** 原子创建 source run，并在同 session 有开放 run 时把它登记为插话输入。 */
+  enqueueSteeringAware?(input: UpsertRunInput): Promise<RunRecord>;
+  listPendingSteeringInputs?(targetRunId: string): Promise<SteeringInputRecord[]>;
+  markSteeringInputsApplied?(targetRunId: string, sourceRunIds: string[]): Promise<void>;
+  /** 仅当没有待注入消息时封口；false 表示调用方应先消费刚到达的消息。 */
+  trySealSteeringInputWindow?(targetRunId: string): Promise<boolean>;
   markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null>;
   patchMetadata?(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null>;
   get(runId: string): Promise<RunRecord | null>;
@@ -204,6 +222,7 @@ export interface PgRunStoreOptions {
 export class PgRunStore implements RunStore {
   readonly pool: PgPool;
   readonly runsTable: string;
+  readonly steeringInputsTable: string;
   private readonly ownsPool: boolean;
 
   constructor(options: PgRunStoreOptions) {
@@ -212,6 +231,7 @@ export class PgRunStore implements RunStore {
     }
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
     this.runsTable = `${prefix}_runs`;
+    this.steeringInputsTable = `${prefix}_steering_inputs`;
     this.pool = options.pool ?? new Pool({ connectionString: options.connectionString! });
     this.ownsPool = !options.pool;
   }
@@ -249,6 +269,21 @@ export class PgRunStore implements RunStore {
           metadata JSONB NOT NULL DEFAULT '{}'
         )
       `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.steeringInputsTable} (
+          input_id TEXT PRIMARY KEY,
+          source_run_id TEXT NOT NULL UNIQUE,
+          target_run_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'pending',
+          sequence BIGSERIAL NOT NULL,
+          accepted_at TIMESTAMPTZ NOT NULL,
+          applied_at TIMESTAMPTZ
+        )
+      `);
+      await client.query(`ALTER TABLE ${this.steeringInputsTable} ADD COLUMN IF NOT EXISTS sequence BIGSERIAL`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.steeringInputsTable}_target_sequence_idx ON ${this.steeringInputsTable} (target_run_id, state, sequence)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.steeringInputsTable}_source_idx ON ${this.steeringInputsTable} (source_run_id, state)`);
       const existingColumns = new Set((await client.query<{ column_name: string }>(`
         SELECT attname AS column_name
         FROM pg_attribute
@@ -328,6 +363,213 @@ export class PgRunStore implements RunStore {
       RETURNING row_to_json(${this.runsTable}.*) AS row_json
     `, [input.runId, input.sessionId, input.userId ?? null, input.tenantId ?? null, input.model ?? null, input.channel ?? null, now, input.idempotencyKey ?? null, input.executionTarget ?? null, input.workspaceId ?? null, input.sandboxScopeId ?? null, JSON.stringify(input.metadata ?? {})]);
     return normalizeRunRecord(result.rows[0]!.row_json);
+  }
+
+  async enqueueSteeringAware(input: UpsertRunInput): Promise<RunRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `${this.runsTable}:steering:${input.sessionId}`,
+      ]);
+      const now = new Date().toISOString();
+      const targetResult = await client.query<{ run_id: string }>(`
+        SELECT target.run_id
+        FROM ${this.runsTable} target
+        WHERE target.session_id = $1
+          AND target.run_id <> $2
+          AND target.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+          AND target.channel = 'web'
+          AND target.model IS NOT DISTINCT FROM $3::text
+          AND target.execution_target IS NOT DISTINCT FROM $4::text
+          AND target.workspace_id IS NOT DISTINCT FROM $5::text
+          AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
+          AND COALESCE(target.metadata->>'backgroundTask', 'false') <> 'true'
+          AND NOT EXISTS (
+            SELECT 1 FROM ${this.steeringInputsTable} own_input
+            WHERE own_input.source_run_id = target.run_id AND own_input.state = 'pending'
+          )
+        ORDER BY
+          CASE target.status
+            WHEN 'running' THEN 0
+            WHEN 'waiting_approval' THEN 0
+            WHEN 'waiting_user' THEN 0
+            WHEN 'waiting_hand' THEN 0
+            ELSE 1
+          END,
+          target.requested_at ASC
+        LIMIT 1
+        FOR UPDATE
+      `, [
+        input.sessionId,
+        input.runId,
+        input.model ?? null,
+        input.executionTarget ?? null,
+        input.workspaceId ?? null,
+      ]);
+      const targetRunId = targetResult.rows[0]?.run_id;
+      const metadata = {
+        ...(input.metadata ?? {}),
+        ...(targetRunId ? {
+          steeringTargetRunId: targetRunId,
+          steeringState: 'pending',
+        } : {}),
+      };
+      const result = await client.query<{ row_json: RunRecord }>(`
+        INSERT INTO ${this.runsTable}
+          (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at,
+           idempotency_key, execution_target, workspace_id, sandbox_scope_id, metadata)
+        VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12::jsonb)
+        ON CONFLICT (run_id) DO UPDATE SET
+          updated_at = EXCLUDED.updated_at,
+          metadata = ${this.runsTable}.metadata || EXCLUDED.metadata
+        RETURNING row_to_json(${this.runsTable}.*) AS row_json
+      `, [
+        input.runId,
+        input.sessionId,
+        input.userId ?? null,
+        input.tenantId ?? null,
+        input.model ?? null,
+        input.channel ?? null,
+        now,
+        input.idempotencyKey ?? null,
+        input.executionTarget ?? null,
+        input.workspaceId ?? null,
+        input.sandboxScopeId ?? null,
+        JSON.stringify(metadata),
+      ]);
+      if (targetRunId) {
+        await client.query(`
+          INSERT INTO ${this.steeringInputsTable}
+            (input_id, source_run_id, target_run_id, session_id, state, accepted_at)
+          VALUES ($1,$1,$2,$3,'pending',$4)
+          ON CONFLICT (source_run_id) DO NOTHING
+        `, [input.runId, targetRunId, input.sessionId, now]);
+      }
+      await client.query('COMMIT');
+      return normalizeRunRecord(result.rows[0]!.row_json);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listPendingSteeringInputs(targetRunId: string): Promise<SteeringInputRecord[]> {
+    const result = await this.pool.query<{
+      input_id: string;
+      source_run_id: string;
+      target_run_id: string;
+      session_id: string;
+      state: 'pending' | 'applied';
+      accepted_at: string | Date;
+      applied_at: string | Date | null;
+      row_json: RunRecord;
+    }>(`
+      SELECT input.input_id, input.source_run_id, input.target_run_id, input.session_id,
+             input.state, input.accepted_at, input.applied_at,
+             row_to_json(source.*) AS row_json
+      FROM ${this.steeringInputsTable} input
+      JOIN ${this.runsTable} source ON source.run_id = input.source_run_id
+      WHERE input.target_run_id = $1
+        AND input.state = 'pending'
+        AND source.status = 'pending'
+      ORDER BY input.sequence ASC
+    `, [targetRunId]);
+    return result.rows.map((row) => ({
+      inputId: row.input_id,
+      sourceRunId: row.source_run_id,
+      targetRunId: row.target_run_id,
+      sessionId: row.session_id,
+      state: row.state,
+      acceptedAt: new Date(row.accepted_at).toISOString(),
+      ...(row.applied_at ? { appliedAt: new Date(row.applied_at).toISOString() } : {}),
+      sourceRun: normalizeRunRecord(row.row_json),
+    }));
+  }
+
+  async markSteeringInputsApplied(targetRunId: string, sourceRunIds: string[]): Promise<void> {
+    if (sourceRunIds.length === 0) return;
+    const now = new Date().toISOString();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const applied = await client.query<{ source_run_id: string }>(`
+        UPDATE ${this.steeringInputsTable}
+        SET state = 'applied', applied_at = $3
+        WHERE target_run_id = $1
+          AND source_run_id = ANY($2::text[])
+          AND state = 'pending'
+        RETURNING source_run_id
+      `, [targetRunId, sourceRunIds, now]);
+      const appliedRunIds = applied.rows.map((row) => row.source_run_id);
+      if (appliedRunIds.length > 0) {
+        await client.query(`
+          UPDATE ${this.runsTable}
+          SET status = 'completed',
+              status_reason = 'steered_into_run',
+              updated_at = $3,
+              completed_at = $3,
+              worker_id = NULL,
+              lease_expires_at = NULL,
+              metadata = metadata || jsonb_build_object(
+                'steeringState', 'applied',
+                'steeringAppliedToRunId', $1,
+                'steeringAppliedAt', $3::text
+              )
+          WHERE run_id = ANY($2::text[]) AND status = 'pending'
+        `, [targetRunId, appliedRunIds, now]);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async trySealSteeringInputWindow(targetRunId: string): Promise<boolean> {
+    const sessionResult = await this.pool.query<{ session_id: string }>(
+      `SELECT session_id FROM ${this.runsTable} WHERE run_id = $1`,
+      [targetRunId],
+    );
+    const sessionId = sessionResult.rows[0]?.session_id;
+    if (!sessionId) return true;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `${this.runsTable}:steering:${sessionId}`,
+      ]);
+      const pending = await client.query(`
+        SELECT 1
+        FROM ${this.steeringInputsTable} input
+        JOIN ${this.runsTable} source ON source.run_id = input.source_run_id
+        WHERE input.target_run_id = $1
+          AND input.state = 'pending'
+          AND source.status = 'pending'
+        LIMIT 1
+      `, [targetRunId]);
+      if (pending.rowCount && pending.rowCount > 0) {
+        await client.query('COMMIT');
+        return false;
+      }
+      await client.query(`
+        UPDATE ${this.runsTable}
+        SET metadata = metadata || jsonb_build_object('steeringInputWindow', 'sealed'),
+            updated_at = $2
+        WHERE run_id = $1
+      `, [targetRunId, new Date().toISOString()]);
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async enqueueBackgroundTask(
@@ -563,11 +805,28 @@ export class PgRunStore implements RunStore {
 
   async getActiveBySession(sessionId: string): Promise<RunRecord | null> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
-      SELECT row_to_json(${this.runsTable}.*) AS row_json
-      FROM ${this.runsTable}
-      WHERE session_id = $1
-        AND status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
-      ORDER BY updated_at DESC
+      SELECT row_to_json(run.*) AS row_json
+      FROM ${this.runsTable} run
+      WHERE run.session_id = $1
+        AND run.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${this.steeringInputsTable} input
+          JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
+          WHERE input.source_run_id = run.run_id
+            AND input.state = 'pending'
+            AND target.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+            AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
+        )
+      ORDER BY
+        CASE run.status
+          WHEN 'running' THEN 0
+          WHEN 'waiting_approval' THEN 0
+          WHEN 'waiting_user' THEN 0
+          WHEN 'waiting_hand' THEN 0
+          ELSE 1
+        END,
+        run.updated_at DESC
       LIMIT 1
     `, [sessionId]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
@@ -587,8 +846,17 @@ export class PgRunStore implements RunStore {
         COUNT(*) FILTER (WHERE status = 'waiting_approval') AS waiting_approval,
         COUNT(*) FILTER (WHERE status = 'waiting_user') AS waiting_user,
         COUNT(*) FILTER (WHERE status = 'waiting_hand') AS waiting_hand
-      FROM ${this.runsTable}
+      FROM ${this.runsTable} run
       WHERE status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${this.steeringInputsTable} input
+          JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
+          WHERE input.source_run_id = run.run_id
+            AND input.state = 'pending'
+            AND target.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+            AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
+        )
     `);
     const row = result.rows[0];
     const pending = parseCount(row?.pending);
@@ -629,17 +897,43 @@ export class PgRunStore implements RunStore {
   }
 
   async deleteByTenant(tenantId: string): Promise<number> {
-    const result = await this.pool.query(`DELETE FROM ${this.runsTable} WHERE tenant_id = $1`, [tenantId]);
-    return result.rowCount ?? 0;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`
+        DELETE FROM ${this.steeringInputsTable} input
+        USING ${this.runsTable} source
+        WHERE source.run_id = input.source_run_id AND source.tenant_id = $1
+      `, [tenantId]);
+      const result = await client.query(`DELETE FROM ${this.runsTable} WHERE tenant_id = $1`, [tenantId]);
+      await client.query('COMMIT');
+      return result.rowCount ?? 0;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async listRecoverable(now = new Date()): Promise<RunRecord[]> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
-      SELECT row_to_json(${this.runsTable}.*) AS row_json
-      FROM ${this.runsTable}
-      WHERE status = 'pending'
-         OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < $1))
-      ORDER BY updated_at ASC
+      SELECT row_to_json(run.*) AS row_json
+      FROM ${this.runsTable} run
+      WHERE (
+        run.status = 'pending'
+        OR (run.status = 'running' AND (run.lease_expires_at IS NULL OR run.lease_expires_at < $1))
+      )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${this.steeringInputsTable} input
+          JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
+          WHERE input.source_run_id = run.run_id
+            AND input.state = 'pending'
+            AND target.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+            AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
+        )
+      ORDER BY run.updated_at ASC
     `, [now.toISOString()]);
     return result.rows.map((row) => normalizeRunRecord(row.row_json));
   }
@@ -700,6 +994,15 @@ export class PgRunStore implements RunStore {
         AND (
           status = 'pending'
           OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < $4))
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${this.steeringInputsTable} input
+          JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
+          WHERE input.source_run_id = ${this.runsTable}.run_id
+            AND input.state = 'pending'
+            AND target.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+            AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
         )
       RETURNING row_to_json(${this.runsTable}.*) AS row_json
     `;

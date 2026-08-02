@@ -127,7 +127,7 @@ import {
   type RuntimeSessionRecord,
   type SessionCatalog,
 } from './sessionCatalog.js';
-import type { ApprovalRecord, ApprovalStore, EventStore, ModelAttachmentRef, PlatformEvent } from './types.js';
+import type { ApprovalRecord, ApprovalStore, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
 import type { RunRecord, RunStatus, RunStore } from './runStore.js';
 import { HandManager } from './handManager.js';
 import type { HandCapability, HandRecord, HandStore, WorkspaceRecipe } from './handStore.js';
@@ -2229,7 +2229,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     });
 
     try {
-      const runContext = {
+      const runContext: RunContext = {
         runId,
         sessionId,
         modelRef: sessionModelRef,
@@ -2253,6 +2253,81 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         hooks,
         signal: abortController.signal,
         drainHandoff: options.runtimeDrainHandoff,
+        ...(config.runStore?.listPendingSteeringInputs ? {
+          loadQueuedInterjections: async () => {
+            const queued = await config.runStore!.listPendingSteeringInputs!(runId);
+            const prepared: QueuedInterjection[] = [];
+            for (const input of queued) {
+              const wakeMessage = input.sourceRun.metadata?.wakeMessage;
+              if (!isWakeMessage(wakeMessage)) {
+                throw new Error(`插话消息 ${input.sourceRunId} 缺少 durable wakeMessage`);
+              }
+              const queuedMessage: InboundMessage = {
+                channel: (wakeMessage.channel ?? 'web') as InboundMessage['channel'],
+                chatId: wakeMessage.chatId ?? sessionId,
+                content: wakeMessage.content,
+                senderId: wakeMessage.senderId,
+                senderName: wakeMessage.senderName,
+                attachments: wakeMessage.attachments,
+                metadata: wakeMessage.metadata,
+              };
+              const queuedAttachments = await resolveInboundAttachments(queuedMessage.attachments, {
+                cwd,
+                channel: queuedMessage.channel,
+              });
+              let queuedVisionAnalysis;
+              if (
+                queuedAttachments.some((attachment) => attachment.isImage)
+                && !modelSupportsImage(modelProviderOptions?.inputModalities)
+              ) {
+                queuedVisionAnalysis = await analyzeImagesWithFallback(
+                  queuedAttachments,
+                  config.getImageUnderstandingModelConfigs?.() ?? [],
+                  runContext,
+                  {
+                    timeoutMs: config.getImageUnderstandingTimeoutMs?.(),
+                    systemPrompt: config.getSystemPrompt?.('utility.imageUnderstanding'),
+                    onAttempt: async (attempt) => {
+                      await eventStore.append({
+                        type: 'image_understanding',
+                        runId,
+                        sessionId,
+                        model: attempt.model,
+                        attachmentIds: queuedAttachments
+                          .filter((attachment) => attachment.isImage)
+                          .map((attachment) => attachment.attachmentId),
+                        status: attempt.status,
+                        ...(attempt.usage ? { usage: attempt.usage } : {}),
+                        ...(attempt.error ? { error: attempt.error } : {}),
+                      });
+                      if (attempt.usage && identitySource?.username) {
+                        config.tokenUsageStore?.()?.recordResult({
+                          username: identitySource.username,
+                          tenantId: sessionRecord.tenantId ?? DEFAULT_TENANT_ID,
+                          channel: 'vision',
+                          modelUsage: { [attempt.model]: attempt.usage },
+                          occurredAtMs: Date.now(),
+                        });
+                      }
+                    },
+                  },
+                );
+              }
+              prepared.push({
+                inputId: input.inputId,
+                sourceRunId: input.sourceRunId,
+                ...(typeof input.sourceRun.metadata?.clientMsgId === 'string'
+                  ? { clientMsgId: input.sourceRun.metadata.clientMsgId }
+                  : {}),
+                message: queuedMessage,
+                prompt: buildPrompt(queuedMessage, context),
+                ...(queuedAttachments.length > 0 ? { attachments: queuedAttachments } : {}),
+                ...(queuedVisionAnalysis ? { visionAnalysis: queuedVisionAnalysis } : {}),
+              });
+            }
+            return prepared;
+          },
+        } : {}),
       };
       let visionAnalysis;
       if (

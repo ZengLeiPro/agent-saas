@@ -185,6 +185,9 @@ interface MessageListProps {
   messages: MessageItemType[];
   loading: boolean;
   isLoadingMessages?: boolean;
+  hasMoreHistory?: boolean;
+  isLoadingEarlier?: boolean;
+  onLoadEarlier?: () => Promise<void>;
   onPermissionResponse?: (interactionId: string, allow: boolean) => void;
   onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => void;
   onRetry?: (message: MessageItemType) => void;
@@ -210,6 +213,9 @@ export const MessageList = memo(function MessageList({
   messages,
   loading,
   isLoadingMessages,
+  hasMoreHistory,
+  isLoadingEarlier,
+  onLoadEarlier,
   onPermissionResponse,
   onAskUserResponse,
   onRetry,
@@ -256,6 +262,25 @@ export const MessageList = memo(function MessageList({
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, []);
+
+  const prependScrollRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const handleLoadEarlier = useCallback(() => {
+    const el = internalContainerRef.current;
+    if (!el || !onLoadEarlier || isLoadingEarlier) return;
+    prependScrollRef.current = {
+      scrollHeight: el.scrollHeight,
+      scrollTop: el.scrollTop,
+    };
+    void onLoadEarlier();
+  }, [isLoadingEarlier, onLoadEarlier]);
+
+  useLayoutEffect(() => {
+    const el = internalContainerRef.current;
+    const previous = prependScrollRef.current;
+    if (!el || !previous) return;
+    el.scrollTop = previous.scrollTop + (el.scrollHeight - previous.scrollHeight);
+    prependScrollRef.current = null;
+  }, [messages[0]?.id]);
 
   const voicePlayer = useVoicePlayer();
   const groupedMessages = useGroupedMessages(messages, loading);
@@ -349,6 +374,19 @@ export const MessageList = memo(function MessageList({
     <div className="relative flex min-h-0 flex-1 flex-col">
     <div ref={setContainerRef} onScroll={showCenterLoading ? undefined : handleScroll} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain">
       <div className="content-container flex flex-col gap-3 py-4">
+        {!showCenterLoading && hasMoreHistory && (
+          <div className="flex justify-center pb-1">
+            <button
+              type="button"
+              onClick={handleLoadEarlier}
+              disabled={isLoadingEarlier}
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isLoadingEarlier && <Loader2 className="size-3.5 animate-spin" />}
+              {isLoadingEarlier ? "正在加载" : "加载更早消息"}
+            </button>
+          </div>
+        )}
         {showCenterLoading ? (
           <div className="flex min-h-[50vh] items-center justify-center">
             <div className="flex items-center gap-2 text-muted-foreground">

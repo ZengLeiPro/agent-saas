@@ -202,6 +202,7 @@ export interface WsProcessingContext {
   sessionOwnerRef?: { current: string | undefined };
   /** 消息可靠性协议回调（2026-04-18 新增）—— 用于 outbox 状态机更新 */
   onChatAck?: (clientMsgId: string) => void;
+  onInterjectionApplied?: (sourceRunIds: string[], clientMsgIds: string[]) => void;
   onChatRejected?: (clientMsgId: string, reasonCode: string, reason: string) => void;
   /** done 事件（可能带 error）时被调用，用于同步 outbox 终态 */
   onChatDone?: (clientMsgId: string | undefined, error: string | undefined) => void;
@@ -254,12 +255,14 @@ export function processWsEvent(
   const { msg, session, selectedModelRef, voiceCallbackRef, streamIdRef } = ctx;
 
   if (data.type === "stream_id") {
-    streamIdRef.current = data.streamId;
-    if (ctx.runIdRef) ctx.runIdRef.current = data.runId ?? null;
-    upsertRuntimeStatusMessage(msg, "queued", {
-      streamId: data.streamId,
-      ...(data.runId ? { runId: data.runId } : {}),
-    });
+    if (!data.queued) {
+      streamIdRef.current = data.streamId;
+      if (ctx.runIdRef) ctx.runIdRef.current = data.runId ?? null;
+      upsertRuntimeStatusMessage(msg, "queued", {
+        streamId: data.streamId,
+        ...(data.runId ? { runId: data.runId } : {}),
+      });
+    }
     // 优先按 client_msg_id 精准定位（支持多条 pending 并发），回退到 userMsgIndex 兼容老路径
     const msgs = msg.messagesRef.current;
     let targetIdx = -1;
@@ -271,9 +274,27 @@ export function processWsEvent(
     }
     if (targetIdx >= 0) {
       msg.updateMessageAt(targetIdx, (m) =>
-        m.type === "user" && m.status === "pending" ? { ...m, status: "sent" as const } : m
+        m.type === "user" && (m.status === "pending" || m.status === "queued")
+          ? { ...m, status: data.queued ? "queued" as const : "sent" as const }
+          : m
       );
     }
+    return;
+  }
+
+  if (data.type === "interjection_applied") {
+    const applied = new Set(data.clientMsgIds);
+    for (let index = 0; index < msg.messagesRef.current.length; index += 1) {
+      msg.updateMessageAt(index, (message) => (
+        message.type === "user"
+          && message.status === "queued"
+          && message.clientMsgId
+          && applied.has(message.clientMsgId)
+          ? { ...message, status: "sent" as const }
+          : message
+      ));
+    }
+    ctx.onInterjectionApplied?.(data.sourceRunIds, data.clientMsgIds);
     return;
   }
 

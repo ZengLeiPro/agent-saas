@@ -85,3 +85,13 @@ export function mergeSessionMessageDelta(
   }
   return result;
 }
+
+/** 向前分页：历史页放在现有消息之前，重叠消息以新页面版本为准。 */
+export function mergeSessionMessagePage(
+  base: MessageItem[],
+  page: MessageItem[],
+): MessageItem[] {
+  if (page.length === 0) return base;
+  const pageIds = new Set(page.map((message) => message.id));
+  return [...page, ...base.filter((message) => !pageIds.has(message.id))];
+}

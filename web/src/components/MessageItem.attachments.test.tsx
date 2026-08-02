@@ -56,6 +56,17 @@ function renderMessage(message: MessageItemType, openPreview = vi.fn(), owner?: 
 }
 
 describe('用户消息附件 chip', () => {
+  it('插话 ACK 后显示等待当前步骤结束的排队状态', () => {
+    renderMessage({
+      id: 'queued-user-message',
+      type: 'user',
+      content: '补充一个条件',
+      status: 'queued',
+      clientMsgId: 'client-queued',
+    });
+    expect(screen.getByText('已排队，将在当前步骤结束后插入')).toBeTruthy();
+  });
+
   it('存量附件（无 relativePath）保持静态展示', () => {
     const openPreview = vi.fn();
     renderMessage(userMessage([{ name: '旧附件.pdf' }]), openPreview);

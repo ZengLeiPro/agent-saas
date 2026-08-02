@@ -89,38 +89,94 @@ import type {
 // 所以 TTL 只是兜底,越长越好。
 const SESSIONS_LIST_CACHE_TTL_MS = 5 * 60_000;
 const SESSION_DETAIL_DELTA_OVERLAP_BLOCKS = 32;
+const SESSION_DETAIL_DEFAULT_PAGE_SIZE = 100;
+const SESSION_DETAIL_MAX_PAGE_SIZE = 200;
 
 type SessionDetailPayload = SessionShareSnapshot & {
-  mode: "full" | "delta";
+  mode: "full" | "delta" | "before";
   cursor?: string;
+  oldestCursor?: string;
+  historyComplete?: boolean;
   after?: string;
+  before?: string;
 };
 
+interface SessionDetailPayloadOptions {
+  after?: string;
+  before?: string;
+  limit?: number;
+}
+
+function withoutTranscriptRaw(
+  blocks: SessionShareSnapshot["blocks"],
+): SessionShareSnapshot["blocks"] {
+  return blocks.map(({ raw: _raw, ...block }) => block);
+}
+
 /**
- * 详情增量协议：命中稳定 block id 时返回一段重叠尾部，供客户端原位刷新工具状态；
- * 游标因 compact/重写而失配时自动退回完整快照，绝不让客户端拿半截历史。
+ * 详情分页协议：
+ * - after 命中时返回重叠尾部和新增块；
+ * - before 命中时返回游标之前一页，并携带一个边界重叠块；
+ * - 指定 limit 的普通请求只返回最新一页；未指定 limit 保持旧客户端的完整快照行为。
  */
 export function buildSessionDetailPayload(
   detail: SessionShareSnapshot,
-  after?: string,
+  options: SessionDetailPayloadOptions = {},
 ): SessionDetailPayload {
+  const { after, before } = options;
+  const requestedLimit = options.limit === undefined
+    ? undefined
+    : Math.min(
+      SESSION_DETAIL_MAX_PAGE_SIZE,
+      Math.max(1, Math.floor(options.limit || SESSION_DETAIL_DEFAULT_PAGE_SIZE)),
+    );
   const cursor = detail.blocks.at(-1)?.id;
+
   if (after) {
     const afterIndex = detail.blocks.findIndex((block) => block.id === after);
-    if (afterIndex >= 0) {
+    const addedBlockCount = afterIndex >= 0 ? detail.blocks.length - afterIndex - 1 : 0;
+    if (
+      afterIndex >= 0 &&
+      (requestedLimit === undefined || addedBlockCount <= requestedLimit)
+    ) {
       const start = Math.max(0, afterIndex - SESSION_DETAIL_DELTA_OVERLAP_BLOCKS + 1);
       return {
         ...detail,
         mode: "delta",
-        blocks: detail.blocks.slice(start),
+        blocks: withoutTranscriptRaw(detail.blocks.slice(start)),
         after,
         ...(cursor ? { cursor } : {}),
       };
     }
   }
+
+  if (before) {
+    const beforeIndex = detail.blocks.findIndex((block) => block.id === before);
+    if (beforeIndex >= 0) {
+      const limit = requestedLimit ?? SESSION_DETAIL_DEFAULT_PAGE_SIZE;
+      const start = Math.max(0, beforeIndex - limit);
+      const blocks = detail.blocks.slice(start, beforeIndex + 1);
+      return {
+        ...detail,
+        mode: "before",
+        blocks: withoutTranscriptRaw(blocks),
+        before,
+        historyComplete: start === 0,
+        ...(blocks[0]?.id ? { oldestCursor: blocks[0].id } : {}),
+        ...(cursor ? { cursor } : {}),
+      };
+    }
+  }
+
+  const limit = requestedLimit;
+  const start = limit === undefined ? 0 : Math.max(0, detail.blocks.length - limit);
+  const blocks = detail.blocks.slice(start);
   return {
     ...detail,
     mode: "full",
+    blocks: withoutTranscriptRaw(blocks),
+    historyComplete: start === 0,
+    ...(blocks[0]?.id ? { oldestCursor: blocks[0].id } : {}),
     ...(cursor ? { cursor } : {}),
   };
 }
@@ -2120,7 +2176,28 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const after = typeof req.query.after === "string" && req.query.after.trim()
         ? req.query.after.trim()
         : undefined;
-      res.json(buildSessionDetailPayload(built.detail, after));
+      const before = typeof req.query.before === "string" && req.query.before.trim()
+        ? req.query.before.trim()
+        : undefined;
+      if (after && before) {
+        res.status(400).json({ error: "after and before cannot be used together" });
+        return;
+      }
+      const hasLimit = typeof req.query.limit === "string";
+      const rawLimit = hasLimit ? Number.parseInt(req.query.limit as string, 10) : undefined;
+      const limit = hasLimit
+        ? rawLimit !== undefined && Number.isFinite(rawLimit)
+          ? rawLimit
+          : SESSION_DETAIL_DEFAULT_PAGE_SIZE
+        : undefined;
+      const payload = buildSessionDetailPayload(built.detail, { after, before, limit });
+      res.setHeader(
+        "Server-Timing",
+        `session-detail;dur=${totalDurationMs}, transcript-parse;dur=${built.parseDurationMs}`,
+      );
+      res.setHeader("X-Session-Detail-Mode", payload.mode);
+      res.setHeader("X-Session-Blocks", String(payload.blocks.length));
+      res.json(payload);
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
       if (msg.includes("outside allowed directory")) {

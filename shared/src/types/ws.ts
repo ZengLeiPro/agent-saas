@@ -31,7 +31,8 @@ export type ChatRejectReasonCode =
     | 'org_agent_unavailable';
 
 export type WsEvent =
-    | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string }
+    | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; targetRunId?: string }
+    | { type: 'interjection_applied'; sourceRunIds: string[]; clientMsgIds: string[] }
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
     | { type: 'session'; sessionId: string; client_msg_id?: string }

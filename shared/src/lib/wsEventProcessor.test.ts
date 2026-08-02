@@ -61,6 +61,7 @@ function makeController(initial: MessageItem[] = []): FakeController {
 // ── 构造一个最小可用的 WsProcessingContext ──────────────────────────────
 interface CtxHooks {
   onChatAck: Mock<(clientMsgId: string) => void>;
+  onInterjectionApplied: Mock<(sourceRunIds: string[], clientMsgIds: string[]) => void>;
   onChatRejected: Mock<(clientMsgId: string, reasonCode: string, reason: string) => void>;
   onChatDone: Mock<(clientMsgId: string | undefined, error: string | undefined) => void>;
   onModelPersist: Mock<(sessionId: string, model: string) => void>;
@@ -91,6 +92,7 @@ function makeCtx(
 ): { ctx: WsProcessingContext; hooks: CtxHooks } {
   const hooks: CtxHooks = {
     onChatAck: vi.fn<(clientMsgId: string) => void>(),
+    onInterjectionApplied: vi.fn<(sourceRunIds: string[], clientMsgIds: string[]) => void>(),
     onChatRejected: vi.fn<(clientMsgId: string, reasonCode: string, reason: string) => void>(),
     onChatDone: vi.fn<(clientMsgId: string | undefined, error: string | undefined) => void>(),
     onModelPersist: vi.fn<(sessionId: string, model: string) => void>(),
@@ -132,6 +134,7 @@ function makeCtx(
     lastEventIdRef: { current: null },
     userMsgIndex: -1,
     onChatAck: hooks.onChatAck,
+    onInterjectionApplied: hooks.onInterjectionApplied,
     onChatRejected: hooks.onChatRejected,
     onChatDone: hooks.onChatDone,
     onModelPersist: hooks.onModelPersist,
@@ -268,6 +271,46 @@ describe('processWsEvent - 连接与消息生命周期', () => {
     // 新增了 queued 状态条
     const status = ctrl.messages.find((m) => m.type === 'runtime_status');
     expect(status).toMatchObject({ status: 'queued', streamId: 's1', runId: 'r1' });
+  });
+
+  it('stream_id queued：只把对应气泡标为已排队，不覆盖当前 stream/run 引用', () => {
+    const ctrl = makeController([
+      { id: 'u1', type: 'user', content: '当前问题', status: 'sent', clientMsgId: 'c1' },
+      { id: 'u2', type: 'user', content: '插话', status: 'pending', clientMsgId: 'c2' },
+    ]);
+    const { ctx } = makeCtx(ctrl);
+    ctx.streamIdRef.current = 'active-stream';
+    ctx.runIdRef!.current = 'active-run';
+
+    dispatch({
+      type: 'stream_id',
+      streamId: 'queued-stream',
+      runId: 'queued-run',
+      client_msg_id: 'c2',
+      queued: true,
+      targetRunId: 'active-run',
+    }, ctx);
+
+    expect(ctx.streamIdRef.current).toBe('active-stream');
+    expect(ctx.runIdRef!.current).toBe('active-run');
+    expect((ctrl.messages[1] as Extract<MessageItem, { type: 'user' }>).status).toBe('queued');
+    expect(ctrl.messages.some((message) => message.type === 'runtime_status')).toBe(false);
+  });
+
+  it('interjection_applied：把已排队气泡翻为 sent 并回调清理 outbox', () => {
+    const ctrl = makeController([
+      { id: 'u', type: 'user', content: '插话', status: 'queued', clientMsgId: 'c2' },
+    ]);
+    const { ctx, hooks } = makeCtx(ctrl);
+
+    dispatch({
+      type: 'interjection_applied',
+      sourceRunIds: ['source-run'],
+      clientMsgIds: ['c2'],
+    }, ctx);
+
+    expect((ctrl.messages[0] as Extract<MessageItem, { type: 'user' }>).status).toBe('sent');
+    expect(hooks.onInterjectionApplied).toHaveBeenCalledWith(['source-run'], ['c2']);
   });
 
   it('stream_id：无 client_msg_id 时回退到 userMsgIndex 定位 pending user', () => {

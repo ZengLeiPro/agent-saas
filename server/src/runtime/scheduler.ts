@@ -105,8 +105,13 @@ export class RuntimeScheduler {
     this.scheduleImmediateTick('capacity-updated');
   }
 
-  async enqueue(input: Parameters<RunStore['upsertPending']>[0]): Promise<RunRecord> {
-    const record = await this.options.runStore.upsertPending(input);
+  async enqueue(
+    input: Parameters<RunStore['upsertPending']>[0],
+    options: { steeringAware?: boolean } = {},
+  ): Promise<RunRecord> {
+    const record = options.steeringAware && this.options.runStore.enqueueSteeringAware
+      ? await this.options.runStore.enqueueSteeringAware(input)
+      : await this.options.runStore.upsertPending(input);
     this.scheduleImmediateTick('enqueue');
     return record;
   }

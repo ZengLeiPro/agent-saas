@@ -7,7 +7,11 @@ import type {
 import type { AgentProfile, ContextUsageData } from "@agent/shared";
 import { formatRuntimeFailureMessage, isInsufficientCreditsFailure } from "@agent/shared";
 import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
-import { mergeServerMessagesWithLocalTail, mergeSessionMessageDelta } from "@agent/shared";
+import {
+  mergeServerMessagesWithLocalTail,
+  mergeSessionMessageDelta,
+  mergeSessionMessagePage,
+} from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { SESSION_STORAGE_KEY } from "@/lib/constants";
 import { sessionsPreload } from "@/lib/preload";
@@ -24,6 +28,82 @@ import {
 import { fetchGroupSessions } from "@agent/shared";
 import type { SessionOwnerInfo } from "@agent/shared";
 import type { MessageItem } from "@/components/types";
+
+interface PendingInteraction {
+  interactionId: string;
+  type: "ask_user" | "permission_request";
+  questions?: Array<{
+    question: string;
+    header: string;
+    options: Array<{ label: string; description: string }>;
+    multiSelect: boolean;
+  }>;
+  toolName?: string;
+  displayName?: string;
+  toolInput?: Record<string, unknown>;
+  planContent?: string;
+}
+
+function recordPerformanceMeasure(name: string, start: number, end: number): void {
+  try {
+    performance.measure(name, { start, end });
+  } catch {
+    // 老浏览器或测试环境不支持 PerformanceMeasureOptions 时静默跳过。
+  }
+}
+
+function appendPendingInteractions(
+  messages: MessageItem[],
+  pendingList: PendingInteraction[],
+): MessageItem[] {
+  const next = [...messages];
+  const existingIds = new Set(
+    next
+      .filter((message) => "interactionId" in message && message.interactionId)
+      .map((message) => (message as { interactionId: string }).interactionId),
+  );
+  const planLabels: Record<string, { name: string; fallback: string }> = {
+    EnterPlanMode: {
+      name: "进入规划模式",
+      fallback: "Agent 请求进入规划模式，将在只读模式下探索代码库并设计实现方案。",
+    },
+    ExitPlanMode: {
+      name: "规划方案审批",
+      fallback: "Agent 已完成方案规划，请审阅后决定是否批准执行。",
+    },
+  };
+
+  for (const pending of pendingList) {
+    if (existingIds.has(pending.interactionId)) continue;
+    if (pending.type === "ask_user" && pending.questions) {
+      next.push({
+        id: `pending-${pending.interactionId}`,
+        type: "ask_user",
+        interactionId: pending.interactionId,
+        questions: pending.questions,
+        status: "pending",
+      });
+    } else if (pending.type === "permission_request" && pending.toolName) {
+      const label = planLabels[pending.toolName] ?? {
+        name: pending.toolName,
+        fallback: "",
+      };
+      next.push({
+        id: `pending-${pending.interactionId}`,
+        type: "permission_request",
+        interactionId: pending.interactionId,
+        toolName: pending.displayName || label.name,
+        toolInput:
+          pending.planContent ||
+          (pending.toolInput
+            ? JSON.stringify(pending.toolInput, null, 2)
+            : label.fallback),
+        status: "pending",
+      });
+    }
+  }
+  return next;
+}
 
 export interface SessionCallbacks {
   resetMessages: () => void;
@@ -48,6 +128,9 @@ export interface SessionState {
   sessions: ApiSessionListItem[];
   isLoadingSessions: boolean;
   isLoadingMessages: boolean;
+  hasMoreHistory: boolean;
+  isLoadingEarlier: boolean;
+  loadEarlierMessages: () => Promise<void>;
   deleteSessionId: string | null;
   deleteSessionCount: number;
   isNewSession: boolean;
@@ -131,6 +214,8 @@ export function useSession(
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
+  const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
   const [sessionOwner, setSessionOwner] = useState<SessionOwnerInfo | null>(
     null,
   );
@@ -139,7 +224,12 @@ export function useSession(
   const hasInitialLoadRef = useRef(false);
   const loadDetailPromiseRef = useRef<Promise<void> | null>(null);
   const loadNonceRef = useRef(0);
-  const detailCursorRef = useRef<Map<string, { complete: boolean; cursor?: string }>>(new Map());
+  const detailCursorRef = useRef<Map<string, {
+    historyComplete: boolean;
+    tailCursor?: string;
+    oldestCursor?: string;
+  }>>(new Map());
+  const isLoadingEarlierRef = useRef(false);
 
   const deleteSessionId = deleteSessionIds[0] ?? null;
   const deleteSessionCount = deleteSessionIds.length;
@@ -290,8 +380,9 @@ export function useSession(
       if (!opts?.silent) setIsLoadingMessages(true);
 
       let baseMessages: MessageItem[] | null = null;
-      let baseComplete = false;
       let requestCursor: string | undefined;
+      let baseHistoryComplete = false;
+      let baseOldestCursor: string | undefined;
 
       /**
        * getMessages() 返回的是**全局当前消息数组**（与 id 无关），所以 preserveTail 只有在
@@ -304,10 +395,11 @@ export function useSession(
       // 跳过以免闪回。
       if (canPreserveTail && cbRef.current.getMessages) {
         const detailState = detailCursorRef.current.get(id);
-        if (detailState?.complete) {
+        if (detailState?.tailCursor) {
           baseMessages = cbRef.current.getMessages();
-          baseComplete = true;
-          requestCursor = detailState.cursor;
+          requestCursor = detailState.tailCursor;
+          baseHistoryComplete = detailState.historyComplete;
+          baseOldestCursor = detailState.oldestCursor;
         }
       } else {
         // 先尝试展示本地缓存（冷启动 / 后台恢复时瞬间可见）
@@ -316,38 +408,61 @@ export function useSession(
         if (cached) {
           const cachedMessages = cached.messages.filter((message) => message.type !== "system-error");
           baseMessages = cachedMessages;
-          baseComplete = cached.complete;
-          requestCursor = cached.cursor;
+          requestCursor = cached.tailCursor;
+          baseHistoryComplete = cached.historyComplete;
+          baseOldestCursor = cached.oldestCursor;
           detailCursorRef.current.set(id, {
-            complete: cached.complete,
-            ...(cached.cursor ? { cursor: cached.cursor } : {}),
+            historyComplete: cached.historyComplete,
+            ...(cached.tailCursor ? { tailCursor: cached.tailCursor } : {}),
+            ...(cached.oldestCursor ? { oldestCursor: cached.oldestCursor } : {}),
           });
+          setHasMoreHistory(!cached.historyComplete);
           cbRef.current.setMessages(cachedMessages, opts);
           setSessionId(id);
         }
       }
 
       try {
+        const requestStartedAt = performance.now();
         const params = new URLSearchParams();
+        params.set("limit", "100");
         if (opts?.silent) params.set("silent", "1");
-        if (baseComplete && requestCursor) params.set("after", requestCursor);
+        if (requestCursor) params.set("after", requestCursor);
         const serializedParams = params.toString();
         const query = serializedParams ? `?${serializedParams}` : "";
         const response = await authFetch(
           `/api/sessions/${encodeURIComponent(id)}${query}`,
         );
+        const responseReceivedAt = performance.now();
+        recordPerformanceMeasure(
+          "agent-saas:session-detail-fetch",
+          requestStartedAt,
+          responseReceivedAt,
+        );
         if (isStale()) return;
         if (response.ok) {
           const data: ApiSessionDetail = await response.json();
+          const responseParsedAt = performance.now();
+          recordPerformanceMeasure(
+            "agent-saas:session-detail-json",
+            responseReceivedAt,
+            responseParsedAt,
+          );
           if (isStale()) return;
           const sessionOwner =
             data.owner?.username ??
             sessionsRef.current.find((s) => s.sessionId === id)?.owner
               ?.username;
           const incomingMsgs = mapSessionDetailToMessages(data, sessionOwner);
-          let msgs = data.mode === "delta" && baseComplete && baseMessages
+          let msgs = data.mode === "delta" && baseMessages
             ? mergeSessionMessageDelta(baseMessages, incomingMsgs)
             : incomingMsgs;
+          const historyComplete = data.mode === "delta"
+            ? baseHistoryComplete
+            : data.historyComplete !== false;
+          const oldestCursor = data.mode === "delta"
+            ? baseOldestCursor
+            : data.oldestCursor ?? incomingMsgs[0]?.id;
 
           // 增量基底里可能保留上一轮的临时状态；以本次 lastRunState / pending API
           // 为真源重建，避免已结束的交互或失败 banner 永久粘在历史里。
@@ -385,83 +500,6 @@ export function useSession(
             cbRef.current.onLastRunState?.(id, lrs);
           }
 
-          // 检查是否有 pending 交互（SSE 断开后存活的 ask_user / plan mode）
-          try {
-            const pendingRes = await authFetch(
-              `/api/chat/interactions/pending?sessionId=${encodeURIComponent(id)}`,
-            );
-            if (!isStale() && pendingRes.ok) {
-              const pendingList: Array<{
-                interactionId: string;
-                type: "ask_user" | "permission_request";
-                questions?: Array<{
-                  question: string;
-                  header: string;
-                  options: Array<{ label: string; description: string }>;
-                  multiSelect: boolean;
-                }>;
-                toolId?: string;
-                toolName?: string;
-                displayName?: string;
-                toolInput?: Record<string, unknown>;
-                planContent?: string;
-              }> = await pendingRes.json();
-
-              const PLAN_LABELS: Record<
-                string,
-                { name: string; fallback: string }
-              > = {
-                EnterPlanMode: {
-                  name: "进入规划模式",
-                  fallback:
-                    "Agent 请求进入规划模式，将在只读模式下探索代码库并设计实现方案。",
-                },
-                ExitPlanMode: {
-                  name: "规划方案审批",
-                  fallback: "Agent 已完成方案规划，请审阅后决定是否批准执行。",
-                },
-              };
-
-              // interactionId 去重：避免与 transcript 中已有的交互重复
-              const existingIds = new Set(
-                msgs
-                  .filter((m) => "interactionId" in m && m.interactionId)
-                  .map((m) => (m as any).interactionId as string),
-              );
-              for (const p of pendingList) {
-                if (existingIds.has(p.interactionId)) continue;
-                if (p.type === "ask_user" && p.questions) {
-                  msgs.push({
-                    id: `pending-${p.interactionId}`,
-                    type: "ask_user",
-                    interactionId: p.interactionId,
-                    questions: p.questions,
-                    status: "pending",
-                  });
-                } else if (p.type === "permission_request" && p.toolName) {
-                  const label = PLAN_LABELS[p.toolName] ?? {
-                    name: p.toolName,
-                    fallback: "",
-                  };
-                  msgs.push({
-                    id: `pending-${p.interactionId}`,
-                    type: "permission_request",
-                    interactionId: p.interactionId,
-                    toolName: p.displayName || label.name,
-                    toolInput:
-                      p.planContent ||
-                      (p.toolInput
-                        ? JSON.stringify(p.toolInput, null, 2)
-                        : label.fallback),
-                    status: "pending",
-                  });
-                }
-              }
-            }
-          } catch {
-            // silent fail — pending check is best-effort
-          }
-
           if (isStale()) return;
           // preserveTail：refresh 时服务端 transcript 可能尚未写入最后一条 assistant text，
           // 合并保留本地尾部，避免消息瞬间消失。
@@ -472,17 +510,49 @@ export function useSession(
             finalMsgs = mergeServerMessagesWithLocalTail(msgs, localMsgs);
           }
           cbRef.current.setMessages(finalMsgs, opts);
+          const messagesCommittedAt = performance.now();
+          recordPerformanceMeasure(
+            "agent-saas:session-detail-map-commit",
+            responseParsedAt,
+            messagesCommittedAt,
+          );
+          requestAnimationFrame(() => {
+            recordPerformanceMeasure(
+              "agent-saas:session-detail-visible",
+              requestStartedAt,
+              performance.now(),
+            );
+          });
           setSessionId(id);
           setSessionOwner(data.owner ?? null);
+          setHasMoreHistory(!historyComplete);
           void fetchTokenUsage(id);
-          const complete = data.mode !== "delta" || baseComplete;
           detailCursorRef.current.set(id, {
-            complete,
-            ...(data.cursor ? { cursor: data.cursor } : {}),
+            historyComplete,
+            ...(data.cursor ? { tailCursor: data.cursor } : {}),
+            ...(oldestCursor ? { oldestCursor } : {}),
           });
           saveSessionMessages(id, finalMsgs, {
-            complete,
-            ...(data.cursor ? { cursor: data.cursor } : {}),
+            historyComplete,
+            ...(data.cursor ? { tailCursor: data.cursor } : {}),
+            ...(oldestCursor ? { oldestCursor } : {}),
+          });
+
+          // pending 交互不再阻塞首屏；详情一到就先渲染，再异步补入交互卡片。
+          void authFetch(
+            `/api/chat/interactions/pending?sessionId=${encodeURIComponent(id)}`,
+          ).then(async (pendingRes) => {
+            if (!pendingRes.ok) return null;
+            return pendingRes.json() as Promise<PendingInteraction[]>;
+          }).then((pendingList) => {
+            if (!pendingList || isStale() || sessionIdRef.current !== id) return;
+            const currentMessages = cbRef.current.getMessages?.() ?? finalMsgs;
+            cbRef.current.setMessages(
+              appendPendingInteractions(currentMessages, pendingList),
+              { scrollToBottom: false },
+            );
+          }).catch(() => {
+            // pending check is best-effort
           });
         } else {
           console.error("加载会话详情失败:", response.statusText);
@@ -501,6 +571,61 @@ export function useSession(
     },
     [],
   );
+
+  const loadEarlierMessages = useCallback(async () => {
+    const id = sessionIdRef.current;
+    const detailState = id ? detailCursorRef.current.get(id) : undefined;
+    if (
+      !id ||
+      !detailState?.oldestCursor ||
+      detailState.historyComplete ||
+      isLoadingEarlierRef.current
+    ) return;
+
+    isLoadingEarlierRef.current = true;
+    setIsLoadingEarlier(true);
+    try {
+      const params = new URLSearchParams({
+        before: detailState.oldestCursor,
+        limit: "100",
+        silent: "1",
+      });
+      const response = await authFetch(
+        `/api/sessions/${encodeURIComponent(id)}?${params.toString()}`,
+      );
+      if (!response.ok || sessionIdRef.current !== id) return;
+      const data: ApiSessionDetail = await response.json();
+      if (sessionIdRef.current !== id) return;
+
+      const owner = data.owner?.username ?? sessionOwner?.username;
+      const incoming = mapSessionDetailToMessages(data, owner);
+      const current = cbRef.current.getMessages?.() ?? [];
+      const merged = data.mode === "before"
+        ? mergeSessionMessagePage(current, incoming)
+        : incoming;
+      const historyComplete = data.historyComplete !== false;
+      const oldestCursor = data.oldestCursor ?? incoming[0]?.id;
+      const tailCursor = data.cursor ?? detailState.tailCursor;
+
+      cbRef.current.setMessages(merged, { scrollToBottom: false });
+      setHasMoreHistory(!historyComplete);
+      detailCursorRef.current.set(id, {
+        historyComplete,
+        ...(tailCursor ? { tailCursor } : {}),
+        ...(oldestCursor ? { oldestCursor } : {}),
+      });
+      saveSessionMessages(id, merged, {
+        historyComplete,
+        ...(tailCursor ? { tailCursor } : {}),
+        ...(oldestCursor ? { oldestCursor } : {}),
+      });
+    } catch (err) {
+      console.error("加载更早消息失败:", err);
+    } finally {
+      isLoadingEarlierRef.current = false;
+      if (sessionIdRef.current === id) setIsLoadingEarlier(false);
+    }
+  }, [sessionOwner?.username]);
 
   const confirmDeleteSessions = useCallback((ids: string[]) => {
     const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
@@ -786,6 +911,8 @@ export function useSession(
     setTokenUsage(null);
     setContextUsage(null);
     setIsLoadingMessages(false);
+    setHasMoreHistory(false);
+    setIsLoadingEarlier(false);
     localStorage.removeItem(SESSION_STORAGE_KEY);
   }, []);
 
@@ -802,6 +929,8 @@ export function useSession(
       setSessionOwner(null);
       setTokenUsage(null);
       setContextUsage(null);
+      setHasMoreHistory(false);
+      setIsLoadingEarlier(false);
       isNewSessionRef.current = false;
       loadDetailPromiseRef.current = loadSessionDetail(id);
     },
@@ -965,6 +1094,8 @@ export function useSession(
     sessions,
     isLoadingSessions,
     isLoadingMessages,
+    hasMoreHistory,
+    isLoadingEarlier,
     deleteSessionId,
     deleteSessionCount,
     isNewSession: isNewSessionRef.current,
@@ -979,6 +1110,7 @@ export function useSession(
     loadSessions,
     loadMoreSessions,
     loadSessionDetail,
+    loadEarlierMessages,
     newSession,
     selectSession,
     confirmDeleteSession,

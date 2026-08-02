@@ -17,6 +17,9 @@ interface ChatTabContentProps {
   messages: MessageItem[];
   loading: boolean;
   isLoadingMessages?: boolean;
+  hasMoreHistory?: boolean;
+  isLoadingEarlier?: boolean;
+  onLoadEarlier?: () => Promise<void>;
   lastMessageRef: Ref<HTMLDivElement>;
   scrollContainerRef: Ref<HTMLDivElement>;
   isNearBottomRef?: MutableRefObject<boolean>;
@@ -108,6 +111,9 @@ export function ChatTabContent({
   messages,
   loading,
   isLoadingMessages,
+  hasMoreHistory,
+  isLoadingEarlier,
+  onLoadEarlier,
   lastMessageRef,
   scrollContainerRef,
   isNearBottomRef,
@@ -189,6 +195,9 @@ export function ChatTabContent({
         messages={visibleMessages}
         loading={activeAskUser ? false : loading}
         isLoadingMessages={isLoadingMessages}
+        hasMoreHistory={hasMoreHistory}
+        isLoadingEarlier={isLoadingEarlier}
+        onLoadEarlier={onLoadEarlier}
         onPermissionResponse={readOnly ? undefined : onPermissionResponse}
         onAskUserResponse={readOnly ? undefined : onAskUserResponse}
         onRetry={readOnly ? undefined : onRetry}

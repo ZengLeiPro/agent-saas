@@ -15,20 +15,29 @@ interface CachedEntry {
   sessionId: string;
   messages: MessageItem[];
   timestamp: number;
-  /** 只有完整快照才允许带 cursor 发增量请求。旧缓存缺省为 false。 */
+  /** 是否已加载到 transcript 起点。 */
+  historyComplete?: boolean;
+  /** 当前缓存尾部对应的服务端最新 block 游标。 */
+  tailCursor?: string;
+  /** 当前缓存最早消息对应的 block 游标。 */
+  oldestCursor?: string;
+  /** v2 兼容字段。 */
   complete?: boolean;
+  /** v2 兼容字段。 */
   cursor?: string;
 }
 
 export interface SessionMessageSnapshot {
   messages: MessageItem[];
-  complete: boolean;
-  cursor?: string;
+  historyComplete: boolean;
+  tailCursor?: string;
+  oldestCursor?: string;
 }
 
 interface SaveSessionMessagesOptions {
-  complete: boolean;
-  cursor?: string;
+  historyComplete: boolean;
+  tailCursor?: string;
+  oldestCursor?: string;
 }
 
 /** 构造与当前可变消息数组解耦的缓存快照，并剥离由服务端状态派生的提示。 */
@@ -139,7 +148,11 @@ export function saveSessionMessages(
   // system-error 由服务端 lastRunState 派生，也不能作为会话正文缓存。
   const cacheableMessages = prepareMessagesForCache(messages);
   const trimmed = cacheableMessages.slice(-MAX_CACHED_MESSAGES);
-  const complete = knownMetadata?.complete === true && trimmed.length === cacheableMessages.length;
+  const wasTrimmed = trimmed.length < cacheableMessages.length;
+  const historyComplete = knownMetadata?.historyComplete === true && !wasTrimmed;
+  const oldestCursor = wasTrimmed
+    ? trimmed[0]?.id
+    : knownMetadata?.oldestCursor ?? trimmed[0]?.id;
   void (async () => {
     try {
       const db = await getDB();
@@ -147,8 +160,9 @@ export function saveSessionMessages(
         sessionId,
         messages: trimmed,
         timestamp: Date.now(),
-        complete,
-        ...(complete && knownMetadata?.cursor ? { cursor: knownMetadata.cursor } : {}),
+        historyComplete,
+        ...(knownMetadata?.tailCursor ? { tailCursor: knownMetadata.tailCursor } : {}),
+        ...(oldestCursor ? { oldestCursor } : {}),
       } satisfies CachedEntry);
 
       if (++saveCounter % EVICT_CHECK_INTERVAL === 0) {
@@ -160,7 +174,7 @@ export function saveSessionMessages(
   })();
 }
 
-/** 读取缓存快照；只有未裁剪的完整快照才会暴露增量 cursor。 */
+/** 读取缓存快照；尾部 cursor 与历史是否完整相互独立。 */
 export async function loadSessionMessageSnapshot(
   sessionId: string,
 ): Promise<SessionMessageSnapshot | null> {
@@ -176,15 +190,19 @@ export async function loadSessionMessageSnapshot(
     const messages = entry.messages.map(m =>
       m.type === 'user' && m.status === 'pending' ? { ...m, status: 'failed' as const } : m
     );
-    const complete = entry.complete === true;
+    const historyComplete = entry.historyComplete ?? entry.complete === true;
+    const tailCursor = entry.tailCursor ?? (entry.complete ? entry.cursor : undefined);
+    const oldestCursor = entry.oldestCursor ?? messages[0]?.id;
     const snapshot: SessionMessageSnapshot = {
       messages,
-      complete,
-      ...(complete && entry.cursor ? { cursor: entry.cursor } : {}),
+      historyComplete,
+      ...(tailCursor ? { tailCursor } : {}),
+      ...(oldestCursor ? { oldestCursor } : {}),
     };
     cacheMetadata.set(sessionId, {
-      complete: snapshot.complete,
-      ...(snapshot.cursor ? { cursor: snapshot.cursor } : {}),
+      historyComplete: snapshot.historyComplete,
+      ...(snapshot.tailCursor ? { tailCursor: snapshot.tailCursor } : {}),
+      ...(snapshot.oldestCursor ? { oldestCursor: snapshot.oldestCursor } : {}),
     });
     return snapshot;
   } catch {

@@ -266,6 +266,8 @@ export class WebChannel implements BaseChannel {
    * controller 用于用户主动停止时中止 Agent。
    */
   private activeStreams = new Map<string, ActiveStreamEntry>();
+  /** 同一 WS 上的 chat 必须按到达顺序完成接收入队，避免异步 guardrail/附件处理打乱插话 FIFO。 */
+  private chatProcessingTails = new WeakMap<WebSocket, Promise<void>>();
 
   /** 返回当前活跃流数量（供 ChannelManager 聚合） */
   getActiveStreamCount(): number {
@@ -656,6 +658,15 @@ export class WebChannel implements BaseChannel {
 
     switch (input.event.type) {
       case 'session_init':
+        if (activeEntry && !this.wsActiveStream.has(activeEntry.ws)) {
+          this.wsActiveStream.set(activeEntry.ws, streamId);
+          this.eventBus.emitReply(activeEntry.ws, {
+            type: 'stream_id',
+            streamId,
+            runId: input.runId,
+            client_msg_id: activeEntry.clientMsgId,
+          });
+        }
         this.eventBufferStore.create(input.sessionId, input.userId);
         emitSession({ type: 'session', sessionId: input.event.sessionId ?? input.sessionId, ...(input.clientMsgId ? { client_msg_id: input.clientMsgId } : {}) });
         if (input.userId) {
@@ -668,6 +679,25 @@ export class WebChannel implements BaseChannel {
           });
         }
         break;
+      case 'interjection_applied': {
+        const sourceRunIds = input.event.sourceRunIds ?? [];
+        const clientMsgIds = input.event.clientMsgIds ?? [];
+        emitSession({ type: 'interjection_applied', sourceRunIds, clientMsgIds });
+        for (const [sourceStreamId, sourceEntry] of this.activeStreams) {
+          if (!sourceEntry.runId || !sourceRunIds.includes(sourceEntry.runId)) continue;
+          this.activeStreams.delete(sourceStreamId);
+          if (sourceEntry.clientMsgId) {
+            this.idempotencySet(
+              sourceEntry.userId,
+              sourceEntry.clientMsgId,
+              'done',
+              sourceStreamId,
+              { sessionId: sourceEntry.sessionId, runId: sourceEntry.runId },
+            );
+          }
+        }
+        break;
+      }
       case 'text_start':
         emitSession({
           type: 'block_start',
@@ -817,8 +847,16 @@ export class WebChannel implements BaseChannel {
           runId: input.runId,
           client_msg_id: input.clientMsgId,
         });
-        this.eventBufferStore.complete(input.sessionId);
+        const hasDeferredStream = Array.from(this.activeStreams.entries()).some(
+          ([candidateStreamId, entry]) => (
+            candidateStreamId !== streamId && entry.sessionId === input.sessionId
+          ),
+        );
+        if (!hasDeferredStream) this.eventBufferStore.complete(input.sessionId);
         this.activeStreams.delete(streamId);
+        if (activeEntry?.ws && this.wsActiveStream.get(activeEntry.ws) === streamId) {
+          this.wsActiveStream.delete(activeEntry.ws);
+        }
         this.inProcessOutboundRuns.delete(input.runId);
         if (input.userId) {
           if (!input.event.error) {
@@ -868,8 +906,16 @@ export class WebChannel implements BaseChannel {
           client_msg_id: input.clientMsgId,
           error: input.event.error,
         });
-        this.eventBufferStore.complete(input.sessionId);
+        const hasDeferredErrorStream = Array.from(this.activeStreams.entries()).some(
+          ([candidateStreamId, entry]) => (
+            candidateStreamId !== streamId && entry.sessionId === input.sessionId
+          ),
+        );
+        if (!hasDeferredErrorStream) this.eventBufferStore.complete(input.sessionId);
         this.activeStreams.delete(streamId);
+        if (activeEntry?.ws && this.wsActiveStream.get(activeEntry.ws) === streamId) {
+          this.wsActiveStream.delete(activeEntry.ws);
+        }
         this.inProcessOutboundRuns.delete(input.runId);
         if (input.userId) {
           // 与 PG 桥接路径（publishRuntimePlatformEvent → run_state_changed{failed}）行为对齐:
@@ -966,7 +1012,12 @@ export class WebChannel implements BaseChannel {
       }
     }
     if (projection.terminal) {
-      this.eventBufferStore.complete(sessionId);
+      const hasDeferredStream = Array.from(this.activeStreams.entries()).some(
+        ([candidateStreamId, entry]) => (
+          candidateStreamId !== streamId && entry.sessionId === sessionId
+        ),
+      );
+      if (!hasDeferredStream) this.eventBufferStore.complete(sessionId);
       if (streamId) this.activeStreams.delete(streamId);
       if (activeEntry?.ws && this.wsActiveStream.get(activeEntry.ws) === streamId) {
         this.wsActiveStream.delete(activeEntry.ws);
@@ -1051,8 +1102,20 @@ export class WebChannel implements BaseChannel {
 
   /** 处理 chat 消息（替代 POST /api/chat） */
   private handleChat(client: WsClient, msg: WsChatMessage): void {
-    // 异步处理，不阻塞 WS 消息循环
-    void this.processChatMessage(client, msg);
+    const previous = this.chatProcessingTails.get(client.ws) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(() => this.processChatMessage(client, msg));
+    this.chatProcessingTails.set(client.ws, next);
+    const cleanup = () => {
+      if (this.chatProcessingTails.get(client.ws) === next) {
+        this.chatProcessingTails.delete(client.ws);
+      }
+    };
+    void next.then(cleanup, (error) => {
+      chatLogger.error(`[chat] 消息接收入队失败: ${error instanceof Error ? error.message : String(error)}`);
+      cleanup();
+    });
   }
 
   /** 处理 respond 消息（替代 POST /api/chat/respond） */
@@ -2498,9 +2561,7 @@ export class WebChannel implements BaseChannel {
           runId: enqueueRunId,
           clientMsgId,
         });
-        this.wsActiveStream.set(ws, streamId);
         this.idempotencySet(user?.sub, clientMsgId, 'in_flight', streamId, { sessionId: enqueueSessionId, runId: enqueueRunId });
-        this.eventBufferStore.create(enqueueSessionId, user?.sub);
 
         await this.appendRuntimeEvent(sessionRecord.transcriptPath, {
           type: 'user_message_submitted',
@@ -2511,7 +2572,7 @@ export class WebChannel implements BaseChannel {
           clientMsgId,
           content: resolvedMessage,
         }, sessionRecord.tenantId);
-        await enqueueRuntime.scheduler.enqueue({
+        const enqueuedRun = await enqueueRuntime.scheduler.enqueue({
           runId: enqueueRunId,
           sessionId: enqueueSessionId,
           userId: enqueueOwner?.id,
@@ -2537,7 +2598,10 @@ export class WebChannel implements BaseChannel {
               ...(inbound.metadata ? { metadata: inbound.metadata } : {}),
             },
           },
-        });
+        }, { steeringAware: true });
+        const steeringTargetRunId = typeof enqueuedRun.metadata?.steeringTargetRunId === 'string'
+          ? enqueuedRun.metadata.steeringTargetRunId
+          : undefined;
         await this.appendRuntimeEvent(sessionRecord.transcriptPath, {
           type: 'run_enqueued',
           sessionId: enqueueSessionId,
@@ -2547,7 +2611,17 @@ export class WebChannel implements BaseChannel {
         }, sessionRecord.tenantId);
 
         const send = (data: object) => this.eventBus!.emitReply(ws, data);
-        send({ type: 'stream_id', streamId, runId: enqueueRunId, client_msg_id: clientMsgId });
+        if (!steeringTargetRunId) {
+          this.wsActiveStream.set(ws, streamId);
+          this.eventBufferStore.create(enqueueSessionId, user?.sub);
+        }
+        send({
+          type: 'stream_id',
+          streamId,
+          runId: enqueueRunId,
+          client_msg_id: clientMsgId,
+          ...(steeringTargetRunId ? { queued: true, targetRunId: steeringTargetRunId } : {}),
+        });
         send({ type: 'session', sessionId: enqueueSessionId, client_msg_id: clientMsgId });
         if (userDisplayContent || attachmentMeta) {
           this.eventBufferStore.push(enqueueSessionId, JSON.stringify({
@@ -2558,7 +2632,7 @@ export class WebChannel implements BaseChannel {
             client_msg_id: clientMsgId,
           }));
         }
-        if (user?.sub && this.eventBus) {
+        if (user?.sub && this.eventBus && !steeringTargetRunId) {
           this.eventBus.emitUser(user.sub, {
             type: 'stream_started',
             sessionId: enqueueSessionId,
@@ -2573,13 +2647,17 @@ export class WebChannel implements BaseChannel {
             runId: enqueueRunId,
           });
         }
-        chatLogger.info(`[chat] enqueue-only accepted run=${enqueueRunId} session=${enqueueSessionId} client_msg_id=${clientMsgId}`);
+        chatLogger.info(
+          `[chat] enqueue-only accepted run=${enqueueRunId} session=${enqueueSessionId}`
+          + ` client_msg_id=${clientMsgId}`
+          + (steeringTargetRunId ? ` steering_target=${steeringTargetRunId}` : ''),
+        );
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         chatLogger.error(`[chat] enqueue-only failed: ${errorMessage}`);
         this.idempotencySet(user?.sub, clientMsgId, 'failed', streamId);
         this.activeStreams.delete(streamId);
-        this.wsActiveStream.delete(ws);
+        if (this.wsActiveStream.get(ws) === streamId) this.wsActiveStream.delete(ws);
         await enqueueRuntime.runStore.markStatus(enqueueRunId, 'failed', errorMessage).catch(() => null);
         if (sessionPersisted) {
           await enqueueRuntime.sessionCatalog.markStatus(enqueueSessionId, 'error').catch((statusError) => {

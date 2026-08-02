@@ -39,6 +39,7 @@ export interface InboundMessage {
 
 export type OutboundEventType =
   | "session_init"
+  | "interjection_applied"
   | "thinking_start"
   | "thinking_delta"
   | "thinking_end"
@@ -274,6 +275,8 @@ export interface OutboundEvent {
   notification?: NotificationData;
   memoryRecall?: MemoryRecallData;
   compaction?: CompactionOutboundData;
+  sourceRunIds?: string[];
+  clientMsgIds?: string[];
 }
 
 export interface UserPermissions {

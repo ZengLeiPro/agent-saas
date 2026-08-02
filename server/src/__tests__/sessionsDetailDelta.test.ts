@@ -13,22 +13,61 @@ function snapshot(blockCount: number): SessionShareSnapshot {
       title: '消息',
       defaultOpen: true,
       content: `内容 ${index + 1}`,
+      raw: `重复内容 ${index + 1}`,
     })),
   };
 }
 
 describe('buildSessionDetailPayload', () => {
-  it('无游标时返回完整快照和最新 cursor', () => {
-    const detail = snapshot(40);
-    const payload = buildSessionDetailPayload(detail);
+  it('旧客户端未传 limit 时返回完整快照和最新 cursor', () => {
+    const payload = buildSessionDetailPayload(snapshot(40));
 
     expect(payload.mode).toBe('full');
     expect(payload.blocks).toHaveLength(40);
     expect(payload.cursor).toBe('line-40');
+    expect(payload.oldestCursor).toBe('line-1');
+    expect(payload.historyComplete).toBe(true);
+    expect(payload.blocks[0]).not.toHaveProperty('raw');
+  });
+
+  it('指定 limit 时只返回最新一页', () => {
+    const payload = buildSessionDetailPayload(snapshot(240), { limit: 100 });
+
+    expect(payload.mode).toBe('full');
+    expect(payload.blocks).toHaveLength(100);
+    expect(payload.blocks[0]?.id).toBe('line-141');
+    expect(payload.oldestCursor).toBe('line-141');
+    expect(payload.cursor).toBe('line-240');
+    expect(payload.historyComplete).toBe(false);
+  });
+
+  it('before 命中时返回上一页和一个边界重叠块', () => {
+    const payload = buildSessionDetailPayload(snapshot(240), {
+      before: 'line-141',
+      limit: 100,
+    });
+
+    expect(payload.mode).toBe('before');
+    expect(payload.before).toBe('line-141');
+    expect(payload.blocks).toHaveLength(101);
+    expect(payload.blocks[0]?.id).toBe('line-41');
+    expect(payload.blocks.at(-1)?.id).toBe('line-141');
+    expect(payload.oldestCursor).toBe('line-41');
+    expect(payload.historyComplete).toBe(false);
+  });
+
+  it('before 到达起点时标记历史完整', () => {
+    const payload = buildSessionDetailPayload(snapshot(120), {
+      before: 'line-21',
+      limit: 100,
+    });
+
+    expect(payload.blocks[0]?.id).toBe('line-1');
+    expect(payload.historyComplete).toBe(true);
   });
 
   it('游标命中时只返回包含重叠尾部的增量', () => {
-    const payload = buildSessionDetailPayload(snapshot(50), 'line-40');
+    const payload = buildSessionDetailPayload(snapshot(50), { after: 'line-40' });
 
     expect(payload.mode).toBe('delta');
     expect(payload.after).toBe('line-40');
@@ -37,11 +76,27 @@ describe('buildSessionDetailPayload', () => {
     expect(payload.cursor).toBe('line-50');
   });
 
-  it('游标因 compact 或重写失配时自动回退完整快照', () => {
-    const payload = buildSessionDetailPayload(snapshot(12), 'line-999');
+  it('游标落后超过 limit 时按最新一页回退，避免巨型增量', () => {
+    const payload = buildSessionDetailPayload(snapshot(240), {
+      after: 'line-100',
+      limit: 100,
+    });
+
+    expect(payload.mode).toBe('full');
+    expect(payload.blocks).toHaveLength(100);
+    expect(payload.blocks[0]?.id).toBe('line-141');
+    expect(payload.historyComplete).toBe(false);
+  });
+
+  it('游标因 compact 或重写失配时按 limit 回退最新一页', () => {
+    const payload = buildSessionDetailPayload(snapshot(240), {
+      after: 'line-999',
+      limit: 100,
+    });
 
     expect(payload.mode).toBe('full');
     expect(payload).not.toHaveProperty('after');
-    expect(payload.blocks).toHaveLength(12);
+    expect(payload.blocks).toHaveLength(100);
+    expect(payload.blocks[0]?.id).toBe('line-141');
   });
 });

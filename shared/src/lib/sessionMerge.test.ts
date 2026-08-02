@@ -9,7 +9,11 @@
  * - 锚点后还有非 text 消息（file_download 等）时整段尾部都要保留
  */
 import { describe, expect, it } from 'vitest';
-import { mergeServerMessagesWithLocalTail, mergeSessionMessageDelta } from './sessionMerge';
+import {
+  mergeServerMessagesWithLocalTail,
+  mergeSessionMessageDelta,
+  mergeSessionMessagePage,
+} from './sessionMerge';
 import type { MessageItem } from '../types/message';
 
 const text = (id: string, content: string): MessageItem => ({ id, type: 'text', content });
@@ -105,6 +109,25 @@ describe('mergeServerMessagesWithLocalTail', () => {
       { id: 'line-1', type: 'text', content: '第一段' },
       { id: 'msg-2', type: 'text', content: '第二段未落盘' },
     ]);
+  });
+});
+
+describe('mergeSessionMessagePage', () => {
+  it('把更早页面放到现有消息之前，并用页面版本刷新重叠消息', () => {
+    const base = [text('line-3', '旧版本'), text('line-4', '最新')];
+    const page = [user('line-1', '问题'), text('line-2', '回答'), text('line-3', '新版本')];
+
+    expect(mergeSessionMessagePage(base, page)).toEqual([
+      page[0],
+      page[1],
+      page[2],
+      base[1],
+    ]);
+  });
+
+  it('空页面保持原数组引用', () => {
+    const base = [text('line-1', '回答')];
+    expect(mergeSessionMessagePage(base, [])).toBe(base);
   });
 });
 

@@ -49,7 +49,7 @@ import {
   getUsageAccountingMode,
 } from "../data/usage/pricing.js";
 import { interactionStore } from "../channels/web/interactionStore.js";
-import { EventBackedApprovalStore } from "../runtime/approvalStore.js";
+import { buildApprovalRecordsFromEvents } from "../runtime/approvalStore.js";
 import {
   FileEventStore,
   getRuntimeEventLogPath,
@@ -60,7 +60,6 @@ import {
 } from "../data/transcripts/activityDurations.js";
 import type { EventStore, PlatformEvent } from "../runtime/types.js";
 import { RuntimeContextUsageTracker } from "../runtime/contextUsage.js";
-import { buildRuntimeReplayState } from "../runtime/replay.js";
 import { buildPendingInteractionsFromEvents } from "../runtime/interactionProjection.js";
 import { auditLog } from "../data/login-logs/index.js";
 import { apiLogger } from "../utils/logger.js";
@@ -2709,20 +2708,19 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           const eventStore = runtimeEventStoreFor
             ? runtimeEventStoreFor(transcriptPath)
             : new FileEventStore(getRuntimeEventLogPath(transcriptPath));
-          const approvalStore = new EventBackedApprovalStore(
-            eventStore,
-            sessionId,
-          );
-          const replayState = buildRuntimeReplayState(
-            await eventStore.list(sessionId),
-            await approvalStore.list(sessionId),
-            sessionId,
-          );
+          const durableInteractionEvents = await eventStore.list(sessionId, {
+            includeTypes: [
+              "interaction_requested",
+              "interaction_resolved",
+              "approval_requested",
+              "approval_resolved",
+            ],
+          });
           const existingIds = new Set(
             pending.map((entry) => entry.interactionId),
           );
           for (const state of buildPendingInteractionsFromEvents(
-            replayState.events,
+            durableInteractionEvents,
             sessionId,
           )) {
             if (existingIds.has(state.interactionId)) continue;
@@ -2742,9 +2740,11 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             });
             existingIds.add(state.interactionId);
           }
-          for (const state of replayState.pendingApprovals) {
-            const approval = state.approval;
-            if (!approval) continue;
+          for (const approval of buildApprovalRecordsFromEvents(
+            durableInteractionEvents,
+            sessionId,
+          )) {
+            if (approval.status !== "pending") continue;
             if (existingIds.has(approval.id)) continue;
             pending.push({
               interactionId: approval.id,

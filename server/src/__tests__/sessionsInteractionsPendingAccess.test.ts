@@ -16,13 +16,13 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionsRouter } from '../routes/sessions.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import { writeSessionMeta } from '../data/transcripts/meta.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
-import type { EventStore } from '../runtime/types.js';
+import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import { resolveUserCwd, type WorkspaceUser } from '../workspace/resolver.js';
 import { interactionStore } from '../channels/web/interactionStore.js';
 
@@ -215,6 +215,63 @@ describe('GET /chat/interactions/pending owner-self access guard', () => {
       const { status, body } = await fetchPending(baseUrl, sessionId);
       expect(status).toBe(503);
       expect(body).toEqual({ error: 'Agent 开小差了，请发送「继续」' });
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('持久化 pending 只查询交互与审批事件，不读取完整会话正文', async () => {
+    const sessionId = randomUUID();
+    await writeOwnedSession(sessionId);
+    const durableEvents: PlatformEvent[] = [
+      {
+        id: 'interaction-requested-1',
+        timestamp: '2026-08-02T15:00:00.000Z',
+        type: 'interaction_requested',
+        sessionId,
+        runId: 'run-1',
+        interactionId: 'interaction-1',
+        interactionType: 'ask_user',
+        questions: [{ question: '继续？', header: '确认', options: [{ label: '是', description: '' }] }],
+      },
+      {
+        id: 'approval-requested-1',
+        timestamp: '2026-08-02T15:00:01.000Z',
+        type: 'approval_requested',
+        sessionId,
+        runId: 'run-1',
+        approvalId: 'approval-1',
+        toolCallId: 'tool-call-1',
+        toolId: 'Shell',
+        toolName: 'Shell',
+        input: { command: 'pwd' },
+      },
+    ];
+    const list = vi.fn(async (): Promise<PlatformEvent[]> => durableEvents);
+    const filteredStore: EventStore = {
+      async append() {
+        throw new Error('not used');
+      },
+      list,
+    };
+
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, () => filteredStore);
+    try {
+      const { status, body } = await fetchPending(baseUrl, sessionId);
+      expect(status).toBe(200);
+      expect(list).toHaveBeenCalledTimes(1);
+      expect(list).toHaveBeenCalledWith(sessionId, {
+        includeTypes: [
+          'interaction_requested',
+          'interaction_resolved',
+          'approval_requested',
+          'approval_resolved',
+        ],
+      });
+      expect(body).toEqual([
+        expect.objectContaining({ interactionId: 'interaction-1', type: 'ask_user' }),
+        expect.objectContaining({ interactionId: 'approval-1', type: 'permission_request', toolName: 'Shell' }),
+      ]);
     } finally {
       await stopServer(server);
     }

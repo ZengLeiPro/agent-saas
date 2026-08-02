@@ -3266,13 +3266,7 @@ export async function wakeRuntimeSession(
     session.tenantId ?? run.tenantId,
   );
   const events = await eventStore.list(run.sessionId, {
-    includeTypes: [
-      'run_cancel_requested',
-      'approval_requested',
-      'approval_resolved',
-      'interaction_requested',
-      'interaction_resolved',
-    ],
+    includeTypes: [...WAKE_EVENT_LIST_TYPES],
   });
   const cancelRequested = events.some((event) => (
     event.type === 'run_cancel_requested'
@@ -3618,6 +3612,25 @@ function isTerminalRunStatus(status: RunStatus | undefined): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'orphaned';
 }
 
+
+/**
+ * wake 路径事件加载白名单（内存瘦身，避免把大事件载入 Node）。
+ * 收窄前必须核对下游消费者：
+ * - cancelRequested 判断依赖 run_cancel_requested；
+ * - pending approval/interaction 恢复依赖 approval_* / interaction_*；
+ * - resolveWakePrompt 依赖 user_message 判断“当前 run 是否已持久化用户消息”（防 wake 重复重放）；
+ * - restoreWakeMessage 依赖 user_message_submitted / user_message 兜底恢复原始 prompt 内容。
+ * 2026-08-02 b58e63d 收窄时漏掉 user_message*，导致 drain handoff 后重复写 user_message（会话 18b40ab1）。
+ */
+export const WAKE_EVENT_LIST_TYPES = [
+  'run_cancel_requested',
+  'approval_requested',
+  'approval_resolved',
+  'interaction_requested',
+  'interaction_resolved',
+  'user_message',
+  'user_message_submitted',
+] as const satisfies readonly PlatformEvent['type'][];
 
 export const HIDDEN_WAKE_CONTINUE_PROMPT =
   'Continue the interrupted managed-agent run from the durable session context. '

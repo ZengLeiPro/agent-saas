@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   HIDDEN_WAKE_CONTINUE_PROMPT,
+  WAKE_EVENT_LIST_TYPES,
   resolveSessionOwnerTenantId,
   resolveWakeSessionOwner,
   resolveWakePrompt,
@@ -34,8 +35,11 @@ class MemoryEventStore implements EventStore {
     this.events.push(full);
     return full;
   }
-  async list(sessionId: string): Promise<PlatformEvent[]> {
-    return this.events.filter((event) => !('sessionId' in event) || event.sessionId === sessionId);
+  async list(sessionId: string, options?: { includeTypes?: PlatformEvent['type'][] }): Promise<PlatformEvent[]> {
+    return this.events.filter((event) => (
+      (!('sessionId' in event) || event.sessionId === sessionId)
+      && (!options?.includeTypes || options.includeTypes.includes(event.type))
+    ));
   }
 }
 
@@ -127,6 +131,69 @@ describe('wakeRuntimeSession', () => {
       originalRunId: 'run-hidden-continue',
       hiddenContinuation: true,
     });
+  });
+
+  it('keeps user_message visible through the wake includeTypes filter (regression: b58e63d duplicate replay after drain handoff)', async () => {
+    const session: RuntimeSessionRecord = {
+      sessionId: 'session-wake-filter',
+      userId: 'user-1',
+      username: 'alice',
+      channel: 'web',
+      cwd: '/tmp/alice',
+      transcriptPath: '/tmp/alice/session.jsonl',
+      modelRef: 'gpt-5.4-mini',
+      executionTarget: 'server-local',
+      workspaceId: 'workspace-1',
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const run: RunRecord = {
+      runId: 'run-wake-filter',
+      sessionId: session.sessionId,
+      userId: session.userId,
+      status: 'running',
+      model: 'gpt-5.4-mini',
+      channel: 'web',
+      requestedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      executionTarget: session.executionTarget,
+      workspaceId: session.workspaceId,
+      metadata: { wakeMessage: { chatId: session.sessionId, content: '继续处理长会话优化' } },
+    };
+    const eventStore = new MemoryEventStore();
+    await eventStore.append({
+      type: 'user_message_submitted',
+      sessionId: session.sessionId,
+      runId: run.runId,
+      content: '继续处理长会话优化',
+    });
+    await eventStore.append({
+      type: 'user_message',
+      sessionId: session.sessionId,
+      runId: run.runId,
+      content: '继续处理长会话优化',
+    });
+    // 一个体积大、与 wake 判断无关的事件：includeTypes 过滤应把它挡在 Node 之外
+    await eventStore.append({
+      type: 'tool_result',
+      sessionId: session.sessionId,
+      runId: run.runId,
+      toolCallId: 'call-big',
+      content: 'x'.repeat(1024),
+    } as PlatformEventInput);
+
+    // 与生产 wake 路径完全一致的加载方式（带 includeTypes 过滤）
+    const events = await eventStore.list(session.sessionId, { includeTypes: [...WAKE_EVENT_LIST_TYPES] });
+
+    expect(events.some((event) => event.type === 'tool_result')).toBe(false);
+    // resolveWakePrompt 必须仍能看到已持久化的 user_message，否则 drain handoff 后会重复重放
+    expect(events.some((event) => event.type === 'user_message')).toBe(true);
+    expect(events.some((event) => event.type === 'user_message_submitted')).toBe(true);
+
+    const decision = resolveWakePrompt(run, events, session);
+    expect(decision.recordUserMessage).toBe(false);
+    expect(decision.message.content).toBe(HIDDEN_WAKE_CONTINUE_PROMPT);
   });
 
   it('restores durable context far enough to honor cancel commands before model wake', async () => {

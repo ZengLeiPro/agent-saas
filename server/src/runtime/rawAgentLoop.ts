@@ -39,7 +39,7 @@ import {
 } from '../agent/toolRuntime.js';
 import { DefaultToolPolicy } from './toolPolicy.js';
 import { standardizeToolError } from './agentPlanDefense.js';
-import { buildChatMessagesFromEvents, LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
+import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { buildModelUserContent } from './imageAttachments.js';
 import { buildContextProjection, type ContextReconstructionPolicy } from './contextProjection.js';
 import { RuntimeContextUsageTracker } from './contextUsage.js';
@@ -173,23 +173,21 @@ export interface RawAgentLoopOptions {
 export interface CompactInput {
   message: InboundMessage;
   /**
-   * 会话的正常 system prompt。压缩调用刻意与正常对话轮保持完全同构
-   * （同 system、同工具定义、同接力语义），只把末尾 user 换成压缩请求——
-   * 这样请求前缀与上一正常轮一致，能命中 provider 的 prompt cache；
-   * Responses 接力模型更是只发一条增量 user，input 趋近于零。
-   * 若改成独立压缩器 system prompt，会从第 1 个 token 起打断缓存前缀，
-   * 让全会话最大的一次 input 付全价。
+   * 会话的正常 system prompt。压缩调用沿用同一 system 与工具定义，并发送
+   * 「待压缩段」的本地全量投影；最近一轮不进入请求，由平台原文保留。
+   * 待压缩段仍是上一正常轮 prompt 的稳定前缀，可继续利用 provider prompt cache。
    */
   instructions: string;
 }
 
 /**
  * /compact 真实现（2026-07-03）的压缩请求。作为普通 user message 追加在
- * 会话末尾（见 CompactInput.instructions 注释：请求形态必须与正常轮同构）。
+ * 待压缩段末尾。
  */
 const COMPACTION_REQUEST_PROMPT = [
-  '请暂停当前任务。现在需要对本会话到目前为止的对话历史做一次上下文压缩：请生成一份忠实、信息密集的摘要，它将替代原始历史用于后续对话。',
+  '请暂停当前任务。现在需要对下面提供的较早会话历史做一次上下文压缩：请生成一份忠实、信息密集的摘要，平台会将它与最近一轮原文一起用于后续对话。',
   '要求：',
+  '- 只总结当前请求中提供的较早历史；最近一轮未包含在本请求中，由平台另行保留，不要推测或补写。',
   '- 保留：任务目标与当前状态；重要事实与数据（数字/文件路径/命令/URL/代码要点）；已完成的工作及其产出位置；未完成的任务与下一步；用户明确表达的偏好与约束。',
   '- 丢弃：寒暄、重复内容、已被纠正的中间尝试细节、冗长的工具原始输出（只留结论）。',
   '- 无需逐字复述用户消息（系统会在摘要旁另行保留用户消息原文摘录），聚焦工作过程、结论与产出。',
@@ -214,7 +212,7 @@ const THINKING_ONLY_CONTINUATION_PROMPT = [
 const MIN_COMPACTABLE_MESSAGES = 4;
 
 /** 压缩时保留最近 N 轮真实用户交互的原文（不被摘要替代） */
-const RETAIN_RECENT_USER_TURNS = 2;
+const RETAIN_RECENT_USER_TURNS = 1;
 
 /**
  * 计算压缩切分点：倒数第 RETAIN_RECENT_USER_TURNS 条真实用户消息的事件下标。
@@ -1322,11 +1320,6 @@ export class RawAgentLoop implements AgentLoop {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
       replayMode: 'bounded',
     });
-    const projection = buildContextProjection(priorEvents, {
-      sessionId: context.sessionId,
-      runId: context.runId,
-      policy: this.contextPolicy,
-    });
     await this.append({
       type: 'run_started',
       runId: context.runId,
@@ -1350,7 +1343,12 @@ export class RawAgentLoop implements AgentLoop {
     // 切分点：倒数第 RETAIN_RECENT_USER_TURNS 条真实用户消息之前进入压缩段。
     // 门槛按「压缩段」投影消息数判定——保留窗口内的消息本来就不会被压缩。
     const cutIdx = findCompactionCutoffIndex(priorEvents);
-    const compressedMessages = buildChatMessagesFromEvents(priorEvents.slice(0, cutIdx));
+    const compressedProjection = buildContextProjection(priorEvents.slice(0, cutIdx), {
+      sessionId: context.sessionId,
+      runId: context.runId,
+      policy: this.contextPolicy,
+    });
+    const compressedMessages = compressedProjection.messages;
     if (cutIdx <= 0 || compressedMessages.length < MIN_COMPACTABLE_MESSAGES) {
       const note = '当前会话历史很短，无需压缩。';
       yield { type: 'compaction_end', compaction: { skipped: true, note, coveredEventCount: 0 } };
@@ -1369,7 +1367,7 @@ export class RawAgentLoop implements AgentLoop {
     let totalUsage: ModelUsage | undefined;
     let summaryText = '';
     try {
-      // 压缩固定用受控的本地全量投影，不能沿用 previous_response_id：触发压缩时
+      // 待压缩段固定用受控的本地全量投影，不能沿用 previous_response_id：触发压缩时
       // 远端接力链通常已接近或超过窗口，继续接力会让“想压缩却压不动”。
       const workspace = this.workspaceProvider.resolve(context.channelContext, {
         cwd: context.cwd,
@@ -1390,7 +1388,7 @@ export class RawAgentLoop implements AgentLoop {
       }).map(toModelToolDefinition);
       const requestMessages: ModelChatMessage[] = [
         { role: 'system', content: input.instructions },
-        ...projection.messages,
+        ...compressedMessages,
         { role: 'user', content: COMPACTION_REQUEST_PROMPT },
       ];
       let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;

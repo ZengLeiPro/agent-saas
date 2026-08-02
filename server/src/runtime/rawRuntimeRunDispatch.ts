@@ -7,6 +7,7 @@ import type {
   AgentRunHooks,
   AgentRunOptions,
   InteractionResponse,
+  RuntimeDrainHandoffState,
   ToolApprovalPolicyOptions,
 } from '../agent/types.js';
 import type { AgentStore } from '../data/agents/store.js';
@@ -567,6 +568,7 @@ export interface RawApprovalResumeRequest {
   abortController?: AbortController;
   maxTurns?: number;
   runtimeWorkerId?: string;
+  runtimeDrainHandoff?: RuntimeDrainHandoffState;
 }
 
 export interface RawInteractionResumeRequest {
@@ -587,6 +589,7 @@ export interface RawInteractionResumeRequest {
   abortController?: AbortController;
   maxTurns?: number;
   runtimeWorkerId?: string;
+  runtimeDrainHandoff?: RuntimeDrainHandoffState;
 }
 
 export interface RawRuntimeWakeState {
@@ -2249,6 +2252,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         } : {}),
         hooks,
         signal: abortController.signal,
+        drainHandoff: options.runtimeDrainHandoff,
       };
       let visionAnalysis;
       if (
@@ -2788,6 +2792,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           } : {}),
           hooks: request.hooks,
           signal: abortController.signal,
+          drainHandoff: request.runtimeDrainHandoff,
         },
       )) {
         if (event.type === 'error') loopError = event.error ?? 'approval resume failed';
@@ -3182,6 +3187,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           } : {}),
           hooks: request.hooks,
           signal: abortController.signal,
+          drainHandoff: request.runtimeDrainHandoff,
         },
       )) {
         if (event.type === 'error') loopError = event.error ?? 'interaction resume failed';
@@ -3344,7 +3350,11 @@ export async function wakeRuntimeSession(
     });
     const dispatch = createRawApprovalResumeDispatch(config);
     const abortController = new AbortController();
-    runtimeRunController.register(run.runId, abortController, { userId: session.userId });
+    const drainHandoff: RuntimeDrainHandoffState = { requested: false };
+    runtimeRunController.register(run.runId, abortController, {
+      userId: session.userId,
+      drainHandoff,
+    });
     const renewTimer = startWakeLeaseRenewal({
       lease: options.lease,
       runStore: config.runStore,
@@ -3373,11 +3383,20 @@ export async function wakeRuntimeSession(
         ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
         abortController,
         runtimeWorkerId: options.lease?.workerId,
+        runtimeDrainHandoff: drainHandoff,
       })) {
         await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
         if (event.type === 'error') outboundError = event.error ?? 'approval resume wake failed';
       }
       if (outboundError) throw new Error(outboundError);
+      if (await releaseWakeLeaseForDrainHandoff({
+        config,
+        eventStore,
+        sessionCatalog,
+        run,
+        lease: options.lease,
+        drainHandoff,
+      })) return;
       const current = await config.runStore?.get(run.runId);
       if (current) {
         await options.lease?.release(current.status, current.statusReason ?? 'approval_resume_wake_completed');
@@ -3401,7 +3420,11 @@ export async function wakeRuntimeSession(
     });
     const dispatch = createRawInteractionResumeDispatch(config);
     const abortController = new AbortController();
-    runtimeRunController.register(run.runId, abortController, { userId: session.userId });
+    const drainHandoff: RuntimeDrainHandoffState = { requested: false };
+    runtimeRunController.register(run.runId, abortController, {
+      userId: session.userId,
+      drainHandoff,
+    });
     const renewTimer = startWakeLeaseRenewal({
       lease: options.lease,
       runStore: config.runStore,
@@ -3430,11 +3453,20 @@ export async function wakeRuntimeSession(
         ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}),
         abortController,
         runtimeWorkerId: options.lease?.workerId,
+        runtimeDrainHandoff: drainHandoff,
       })) {
         await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
         if (event.type === 'error') outboundError = event.error ?? 'interaction resume wake failed';
       }
       if (outboundError) throw new Error(outboundError);
+      if (await releaseWakeLeaseForDrainHandoff({
+        config,
+        eventStore,
+        sessionCatalog,
+        run,
+        lease: options.lease,
+        drainHandoff,
+      })) return;
       const current = await config.runStore?.get(run.runId);
       if (current) {
         await options.lease?.release(current.status, current.statusReason ?? 'interaction_resume_wake_completed');
@@ -3457,7 +3489,11 @@ export async function wakeRuntimeSession(
   };
   const dispatch = createRawRuntimeRunDispatch(config);
   const abortController = new AbortController();
-  runtimeRunController.register(run.runId, abortController, { userId: sessionOwner.id });
+  const drainHandoff: RuntimeDrainHandoffState = { requested: false };
+  runtimeRunController.register(run.runId, abortController, {
+    userId: sessionOwner.id,
+    drainHandoff,
+  });
   const renewTimer = startWakeLeaseRenewal({
     lease: options.lease,
     runStore: config.runStore,
@@ -3481,12 +3517,21 @@ export async function wakeRuntimeSession(
         recordUserMessage: wakePrompt.recordUserMessage,
         abortController,
         runtimeWorkerId: options.lease?.workerId,
+        runtimeDrainHandoff: drainHandoff,
       },
     )) {
       await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
       if (event.type === 'error') outboundError = event.error ?? 'wake dispatch failed';
     }
     if (outboundError) throw new Error(outboundError);
+    if (await releaseWakeLeaseForDrainHandoff({
+      config,
+      eventStore,
+      sessionCatalog,
+      run,
+      lease: options.lease,
+      drainHandoff,
+    })) return;
     const current = await config.runStore?.get(run.runId);
     if (current) {
       await options.lease?.release(current.status, current.statusReason ?? 'wake_completed');
@@ -3495,6 +3540,41 @@ export async function wakeRuntimeSession(
     if (renewTimer) clearInterval(renewTimer);
     runtimeRunController.unregister(run.runId);
   }
+}
+
+async function releaseWakeLeaseForDrainHandoff(input: {
+  config: RawRuntimeRunDispatchConfig;
+  eventStore: EventStore;
+  sessionCatalog: SessionCatalog;
+  run: RunRecord;
+  lease?: RuntimeWakeLease;
+  drainHandoff: RuntimeDrainHandoffState;
+}): Promise<boolean> {
+  if (!input.drainHandoff.requested || !input.config.runStore || !input.lease) return false;
+
+  const current = await input.config.runStore.get(input.run.runId);
+  if (!current || isTerminalRunStatus(current.status)) return false;
+
+  const reason = input.drainHandoff.reason ?? 'server_drain_handoff';
+  const handedOffAt = new Date().toISOString();
+  await input.config.runStore.markStatus(input.run.runId, 'running', reason, {
+    drainHandoffAt: handedOffAt,
+    drainHandoffWorkerId: input.lease.workerId,
+  });
+  await appendRunStateChanged(
+    input.eventStore,
+    input.run.sessionId,
+    input.run.runId,
+    'running',
+    current.status,
+    reason,
+  );
+  await input.sessionCatalog.markStatus(input.run.sessionId, 'running');
+  await input.lease.release(undefined, reason);
+  input.config.logger?.info(
+    `Runtime drain handoff released run=${input.run.runId} session=${input.run.sessionId} worker=${input.lease.workerId}`,
+  );
+  return true;
 }
 
 function startWakeLeaseRenewal(input: {

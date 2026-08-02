@@ -848,6 +848,12 @@ export class RawAgentLoop implements AgentLoop {
 
     try {
       for (turn = 1; turn <= input.maxTurns; turn++) {
+        if (context.drainHandoff?.requested) {
+          logger.info(
+            `[run] safe drain handoff session=${context.sessionId} run=${context.runId} afterTurns=${turn - 1}`,
+          );
+          return;
+        }
         context.replaceableDraftRetryUsed = turn === 1 && restoredDraftRecoveryUsed;
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
         let turnContextUsage: OutboundEvent['contextUsage'] | null = null;
@@ -2533,6 +2539,12 @@ export class RawAgentLoop implements AgentLoop {
 
     try {
       for (turn = 1; turn <= args.maxTurns; turn++) {
+        if (args.context.drainHandoff?.requested) {
+          logger.info(
+            `[resume] safe drain handoff session=${args.context.sessionId} run=${args.context.runId} afterTurns=${turn - 1}`,
+          );
+          return;
+        }
         args.context.replaceableDraftRetryUsed = turn === 1 && restoredDraftRecoveryUsed;
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
         let turnContextUsage: OutboundEvent['contextUsage'] | null = null;

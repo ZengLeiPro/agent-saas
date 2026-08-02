@@ -98,6 +98,16 @@ export interface ToolApprovalPolicyOptions {
   autoApproveRunShell?: boolean;
 }
 
+/**
+ * 蓝绿排水的进程内协作信号。它不是取消：Agent 只在完整模型轮/工具批次边界
+ * 让出执行权，durable run 继续保持 running，由下一 runtime worker 接力。
+ */
+export interface RuntimeDrainHandoffState {
+  requested: boolean;
+  reason?: string;
+  requestedAt?: string;
+}
+
 export interface AgentRunOptions {
   cwd?: string;
   permissionMode?: PermissionMode;
@@ -168,6 +178,8 @@ export interface AgentRunOptions {
    * 供 durable tool invocation / cancel delivery 做 ownership 校验。
    */
   runtimeWorkerId?: string;
+  /** RuntimeScheduler 内部字段：蓝绿排水时在安全边界让出 durable run lease。 */
+  runtimeDrainHandoff?: RuntimeDrainHandoffState;
   /**
    * 兼容旧字段名：保留给尚未清理的通道/测试代码。
    * 新代码应使用 modelConnection。

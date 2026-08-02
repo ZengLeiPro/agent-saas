@@ -1,11 +1,15 @@
+import type { RuntimeDrainHandoffState } from '../agent/types.js';
+
 interface RuntimeRunControllerEntry {
   controller: AbortController;
   abortOnDrain: boolean;
+  drainHandoff?: RuntimeDrainHandoffState;
   userId?: string;
 }
 
 interface RuntimeRunControllerOptions {
   abortOnDrain?: boolean;
+  drainHandoff?: RuntimeDrainHandoffState;
   userId?: string;
 }
 
@@ -16,8 +20,23 @@ export const runtimeRunController = {
     controllers.set(runId, {
       controller,
       abortOnDrain: options.abortOnDrain ?? true,
+      drainHandoff: options.drainHandoff,
       userId: options.userId,
     });
+  },
+
+  requestAllForDrain(reason = 'server_drain_handoff'): number {
+    let requested = 0;
+    const requestedAt = new Date().toISOString();
+    for (const entry of controllers.values()) {
+      if (!entry.abortOnDrain || entry.controller.signal.aborted || !entry.drainHandoff) continue;
+      if (entry.drainHandoff.requested) continue;
+      entry.drainHandoff.requested = true;
+      entry.drainHandoff.reason = reason;
+      entry.drainHandoff.requestedAt = requestedAt;
+      requested += 1;
+    }
+    return requested;
   },
 
   abort(runId: string, reason?: string): boolean {

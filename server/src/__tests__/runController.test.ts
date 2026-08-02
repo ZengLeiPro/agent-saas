@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { RuntimeDrainHandoffState } from '../agent/types.js';
 import { runtimeRunController } from '../runtime/runController.js';
 
 const runIds: string[] = [];
@@ -8,6 +9,32 @@ afterEach(() => {
 });
 
 describe('runtimeRunController', () => {
+  it('requests cooperative drain handoff without aborting foreground runs', () => {
+    const controller = new AbortController();
+    const durable = new AbortController();
+    const drainHandoff: RuntimeDrainHandoffState = { requested: false };
+    runtimeRunController.register('handoff-run', controller, { drainHandoff });
+    runtimeRunController.register('handoff-background-run', durable, {
+      abortOnDrain: false,
+      drainHandoff: { requested: false },
+    });
+
+    try {
+      expect(runtimeRunController.requestAllForDrain('server_drain_handoff')).toBe(1);
+      expect(drainHandoff).toMatchObject({
+        requested: true,
+        reason: 'server_drain_handoff',
+      });
+      expect(drainHandoff.requestedAt).toEqual(expect.any(String));
+      expect(controller.signal.aborted).toBe(false);
+      expect(durable.signal.aborted).toBe(false);
+      expect(runtimeRunController.requestAllForDrain('duplicate')).toBe(0);
+    } finally {
+      runtimeRunController.unregister('handoff-run');
+      runtimeRunController.unregister('handoff-background-run');
+    }
+  });
+
   it('aborts every drain-interruptible run once, preserves reason, and leaves durable background work alone', () => {
     const first = new AbortController();
     const second = new AbortController();

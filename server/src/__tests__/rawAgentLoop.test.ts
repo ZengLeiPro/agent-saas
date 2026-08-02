@@ -59,6 +59,26 @@ class FakeToolCallingAdapter implements ModelAdapter {
   }
 }
 
+class DrainAfterToolCallAdapter implements ModelAdapter {
+  calls = 0;
+
+  constructor(private readonly handoff: { requested: boolean }) {}
+
+  async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    yield {
+      type: 'completed',
+      content: '',
+      toolCalls: [{
+        id: 'call_write_before_handoff',
+        name: 'Write',
+        arguments: JSON.stringify({ path: 'handoff.txt', content: 'CLOSED_BEFORE_HANDOFF' }),
+      }],
+    };
+    this.handoff.requested = true;
+  }
+}
+
 class ToolCallOnlyAdapter implements ModelAdapter {
   async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
     yield {
@@ -459,6 +479,51 @@ describe('RawAgentLoop', () => {
       await rm(dir, { recursive: true, force: true });
     }
     cleanupDirs.clear();
+  });
+
+  it('hands off only after the current tool-call batch is durably closed', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-drain-handoff-'));
+    cleanupDirs.add(cwd);
+    const eventPath = join(cwd, 'session.runtime-events.jsonl');
+    const eventStore = new FileEventStore(eventPath);
+    const drainHandoff = { requested: false };
+    const adapter = new DrainAfterToolCallAdapter(drainHandoff);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-drain-handoff'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '写完后继续' },
+        prompt: '写完后继续',
+        instructions: '先调用 Write，再继续回答。',
+        maxTurns: 4,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-drain-handoff',
+        sessionId: 'session-drain-handoff',
+        model: 'gpt-5.5',
+        cwd,
+        drainHandoff,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
+        },
+        approvalPolicy: { autoApproveTools: true },
+      },
+    ));
+
+    expect(readFileSync(join(cwd, 'handoff.txt'), 'utf-8')).toBe('CLOSED_BEFORE_HANDOFF');
+    expect(adapter.calls).toBe(1);
+    expect(events.map((event) => event.type)).toContain('tool_result');
+    expect(events.map((event) => event.type)).not.toContain('done');
+    const storedEvents = await eventStore.list('session-drain-handoff');
+    expect(storedEvents.map((event) => event.type)).not.toContain('run_finished');
   });
 
   it('forces a no-tool synthesis turn after the WebFetch failure circuit opens', async () => {

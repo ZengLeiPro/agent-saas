@@ -347,6 +347,13 @@ process.on('SIGUSR2', () => {
   runtime?.feishuAuthKeepaliveShutdown?.();
   kbPreviewScheduler?.stop();
 
+  // durable foreground run 不在部署时取消。先请求它们在完整模型轮/工具批次边界
+  // 让出 lease；新 runtime worker 会从同一 run/session 的事件事实源继续执行。
+  const handoffRuns = runtimeRunController.requestAllForDrain('server_drain_handoff');
+  if (handoffRuns > 0) {
+    serverLogger.info(`Drain: requested safe handoff for ${handoffRuns} runtime run(s)`);
+  }
+
   // runtime 侧按序 quiesce：停 cron 触发 → 等 in-flight cron 结清 →
   // 释放 cron leadership（新实例接管）→ 停 scheduler 并等 in-flight run 结清
   let runtimeQuiesced = false;

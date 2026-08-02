@@ -2,7 +2,12 @@ import type { ContextUsageBreakdown } from '../types/index.js';
 import type { ExecutionInvocationAudit, ToolDescriptor, ToolResult } from '../agent/toolRuntime.js';
 import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
 import type { ToolAuthorization, ToolRisk, ExecutionTargetKind } from '../agent/toolRuntime.js';
-import type { AgentRunHooks, SdkResultModelUsage, ToolApprovalPolicyOptions } from '../agent/types.js';
+import type {
+  AgentRunHooks,
+  RuntimeDrainHandoffState,
+  SdkResultModelUsage,
+  ToolApprovalPolicyOptions,
+} from '../agent/types.js';
 import type { ChannelContext, InboundMessage, OutboundEvent } from '../types/index.js';
 import type { RunStatus } from './runStore.js';
 import type { HandStatus } from './handStore.js';
@@ -38,6 +43,8 @@ export interface RunContext {
   profileConfigDigest?: string;
   hooks?: AgentRunHooks;
   signal?: AbortSignal;
+  /** 蓝绿排水协作信号；只在模型轮/工具批次已完整闭合后读取。 */
+  drainHandoff?: RuntimeDrainHandoffState;
   /**
    * 模型 HTTP attempt 的内部诊断旁路。由 RawAgentLoop 注入，adapter 只记录不消费；
    * 写入失败不得反向打断模型请求。

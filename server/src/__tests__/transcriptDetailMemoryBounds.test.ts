@@ -8,9 +8,11 @@ import {
   TRANSCRIPT_DETAIL_RAW_MAX_CHARS,
   TRANSCRIPT_DETAIL_TOOL_INPUT_MAX_CHARS,
   TRANSCRIPT_JSON_PARSE_LINE_THRESHOLD_CHARS,
-  TRANSCRIPT_JSON_PARSE_LINE_VALUE_BUDGET_CHARS,
+  TRANSCRIPT_STREAM_LINE_PREFIX_CHARS,
+  TRANSCRIPT_STREAM_LINE_TAIL_CHARS,
+  getTokenUsage,
   parseTranscriptFile,
-  sanitizeOversizedTranscriptJsonLine,
+  readTranscriptLinesBounded,
   truncateTranscriptDetailText,
 } from '../data/transcripts/parse.js';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
@@ -44,34 +46,60 @@ describe('会话详情内存边界', () => {
     expect(bounded).toContain('会话详情已截断；原始记录未改动');
   });
 
-  it('在 JSON.parse 前收口超大字符串值，同时保留完整结构和后置字段', () => {
-    const source = JSON.stringify({
+  it('流式读取超大单行时只保留固定头尾窗口，并继续读取下一行', async () => {
+    const oversized = 'a'.repeat(TRANSCRIPT_JSON_PARSE_LINE_THRESHOLD_CHARS + 500_000);
+    await writeFile(transcriptPath, `${oversized}\n{"type":"result"}\n`, 'utf-8');
+
+    const records = [];
+    for await (const record of readTranscriptLinesBounded(transcriptPath)) records.push(record);
+
+    expect(records).toHaveLength(2);
+    expect(records[0]).toMatchObject({
+      oversized: true,
+      sourceChars: oversized.length,
+      prefix: 'a'.repeat(TRANSCRIPT_STREAM_LINE_PREFIX_CHARS),
+      tail: 'a'.repeat(TRANSCRIPT_STREAM_LINE_TAIL_CHARS),
+    });
+    expect(records[1]).toEqual({
+      oversized: false,
+      line: '{"type":"result"}',
+      sourceChars: 17,
+    });
+  });
+
+  it('超大 assistant 行不整行物化，仍从尾部保留 token 统计', async () => {
+    const oversizedAssistant = JSON.stringify({
       type: 'assistant',
       message: {
         content: [{ type: 'text', text: 'x'.repeat(TRANSCRIPT_JSON_PARSE_LINE_THRESHOLD_CHARS + 1) }],
-        usage: { input_tokens: 123, output_tokens: 45 },
+        model: 'test/model',
+        response_mode: 'full',
+        response_chained: false,
+        usage: {
+          input_tokens: 123,
+          cache_read_input_tokens: 20,
+          cache_creation_input_tokens: 3,
+          output_tokens: 45,
+        },
       },
-      sessionId: 'session-oversized',
+      sessionId: 'session-oversized-stream',
     });
+    await writeFile(transcriptPath, `${oversizedAssistant}\n`, 'utf-8');
 
-    const bounded = sanitizeOversizedTranscriptJsonLine(source);
-    const parsed = JSON.parse(bounded);
+    const [parsed, usage] = await Promise.all([
+      parseTranscriptFile(transcriptPath),
+      getTokenUsage(transcriptPath),
+    ]);
 
-    expect(bounded.length).toBeLessThan(TRANSCRIPT_JSON_PARSE_LINE_VALUE_BUDGET_CHARS + 4096);
-    expect(parsed.type).toBe('assistant');
-    expect(parsed.sessionId).toBe('session-oversized');
-    expect(parsed.message.usage).toEqual({ input_tokens: 123, output_tokens: 45 });
-    expect(parsed.message.content[0].text).toContain('会话详情已截断；原始记录未改动');
-  });
-
-  it('不会在 JSON 转义或 surrogate pair 中间截断', () => {
-    const source = `{"type":"user","message":{"content":"${'\\\\u4e2d😀'.repeat(400_000)}"},"tail":7}`;
-    const bounded = sanitizeOversizedTranscriptJsonLine(source);
-    const parsed = JSON.parse(bounded);
-
-    expect(parsed.type).toBe('user');
-    expect(parsed.tail).toBe(7);
-    expect(parsed.message.content).toContain('会话详情已截断；原始记录未改动');
+    expect(parsed.blocks).toHaveLength(1);
+    expect(parsed.blocks[0]).toMatchObject({ kind: 'text', title: '输出' });
+    expect(parsed.blocks[0]?.content).toContain('原始记录未改动');
+    expect(usage).toMatchObject({
+      totalInputTokens: 123,
+      totalCacheReadTokens: 20,
+      totalCacheCreationTokens: 3,
+      totalOutputTokens: 45,
+    });
   });
 
   it('工具入参、raw 与结果按展示预算收口，最近结果仍获得较大窗口', async () => {

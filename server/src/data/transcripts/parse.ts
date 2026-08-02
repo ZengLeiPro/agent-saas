@@ -108,22 +108,11 @@ export const TRANSCRIPT_DETAIL_TOOL_INPUT_MAX_CHARS = 64 * 1024;
 export const TRANSCRIPT_DETAIL_RAW_MAX_CHARS = 16 * 1024;
 export const TRANSCRIPT_DETAIL_META_MAX_CHARS = 16 * 1024;
 
-/**
- * JSONL 单行在 JSON.parse 前的内存保险丝。
- *
- * transcript 原文件仍是完整事实源；只有详情/统计的派生读取在单行超过 2 MiB 时，
- * 把 JSON 字符串值限制为单值最多 512 KiB、整行字符串值合计最多 1 MiB。
- * 这样可以避免一个超大 tool result 在 readline 字符串、JSON.parse 对象和展示 block
- * 之间同时复制数份。JSON key 与结构字符始终完整保留。
- */
 export const TRANSCRIPT_JSON_PARSE_LINE_THRESHOLD_CHARS = 2 * 1024 * 1024;
-export const TRANSCRIPT_JSON_PARSE_VALUE_MAX_SOURCE_CHARS = 512 * 1024;
-export const TRANSCRIPT_JSON_PARSE_LINE_VALUE_BUDGET_CHARS = 1024 * 1024;
+export const TRANSCRIPT_STREAM_LINE_PREFIX_CHARS = 64 * 1024;
+export const TRANSCRIPT_STREAM_LINE_TAIL_CHARS = 64 * 1024;
 
 const TRANSCRIPT_DETAIL_TRUNCATION_LABEL = "会话详情已截断；原始记录未改动";
-const TRANSCRIPT_JSON_PARSE_TRUNCATION_SOURCE = JSON.stringify(
-  `...[${TRANSCRIPT_DETAIL_TRUNCATION_LABEL}]...`,
-).slice(1, -1);
 
 function findJsonStringEnd(source: string, start: number): number {
   for (let index = start; index < source.length; index += 1) {
@@ -137,73 +126,148 @@ function findJsonStringEnd(source: string, start: number): number {
   return -1;
 }
 
-function findSafeJsonStringPrefixEnd(source: string, start: number, maxSourceChars: number): number {
-  const limit = Math.min(source.length, start + Math.max(0, maxSourceChars));
-  let safeEnd = start;
-  let index = start;
-  while (index < limit) {
-    const char = source[index];
-    let next = index + 1;
-    if (char === "\\") {
-      next = source[index + 1] === "u" ? index + 6 : index + 2;
-    } else {
-      const code = source.charCodeAt(index);
-      if (code >= 0xd800 && code <= 0xdbff) next = index + 2;
-    }
-    if (next > limit) break;
-    safeEnd = next;
-    index = next;
+export type BoundedTranscriptLine =
+  | { oversized: false; line: string; sourceChars: number }
+  | { oversized: true; prefix: string; tail: string; sourceChars: number };
+
+function appendBoundedTail(current: string, segment: string): string {
+  if (segment.length >= TRANSCRIPT_STREAM_LINE_TAIL_CHARS) {
+    return segment.slice(-TRANSCRIPT_STREAM_LINE_TAIL_CHARS);
   }
-  return safeEnd;
+  const keepCurrent = TRANSCRIPT_STREAM_LINE_TAIL_CHARS - segment.length;
+  return `${current.slice(-keepCurrent)}${segment}`;
 }
 
 /**
- * 仅对异常大的 JSONL 行生效；返回值仍是合法 JSON，且不会改写磁盘原文。
+ * 按固定大小 chunk 读取 JSONL。异常大单行只保留头尾窗口，避免 readline 先把整行
+ * （生产上曾出现 269,261,793 字符）物化成一个巨型字符串。
  */
-export function sanitizeOversizedTranscriptJsonLine(line: string): string {
-  if (line.length <= TRANSCRIPT_JSON_PARSE_LINE_THRESHOLD_CHARS) return line;
+export async function* readTranscriptLinesBounded(
+  filePath: string,
+): AsyncGenerator<BoundedTranscriptLine> {
+  const input = createReadStream(filePath, { encoding: "utf-8", highWaterMark: 64 * 1024 });
+  let parts: string[] = [];
+  let sourceChars = 0;
+  let oversized = false;
+  let prefix = "";
+  let tail = "";
 
-  const parts: string[] = [];
-  let copyFrom = 0;
-  let remainingValueBudget = TRANSCRIPT_JSON_PARSE_LINE_VALUE_BUDGET_CHARS;
-
-  for (let index = 0; index < line.length; index += 1) {
-    if (line[index] !== '"') continue;
-    const valueStart = index + 1;
-    const valueEnd = findJsonStringEnd(line, valueStart);
-    if (valueEnd < 0) return line;
-
-    let lookahead = valueEnd + 1;
-    while (lookahead < line.length && /\s/.test(line[lookahead]!)) lookahead += 1;
-    const isObjectKey = line[lookahead] === ":";
-    if (!isObjectKey) {
-      const sourceLength = valueEnd - valueStart;
-      const allowedSourceChars = Math.min(
-        TRANSCRIPT_JSON_PARSE_VALUE_MAX_SOURCE_CHARS,
-        remainingValueBudget,
-      );
-      if (sourceLength > allowedSourceChars) {
-        const marker = allowedSourceChars >= TRANSCRIPT_JSON_PARSE_TRUNCATION_SOURCE.length
-          ? TRANSCRIPT_JSON_PARSE_TRUNCATION_SOURCE
-          : TRANSCRIPT_JSON_PARSE_TRUNCATION_SOURCE.slice(0, allowedSourceChars);
-        const prefixBudget = Math.max(0, allowedSourceChars - marker.length);
-        const prefixEnd = findSafeJsonStringPrefixEnd(line, valueStart, prefixBudget);
-        parts.push(line.slice(copyFrom, prefixEnd), marker);
-        copyFrom = valueEnd;
-        remainingValueBudget = Math.max(
-          0,
-          remainingValueBudget - (prefixEnd - valueStart) - marker.length,
-        );
-      } else {
-        remainingValueBudget = Math.max(0, remainingValueBudget - sourceLength);
-      }
+  const consume = (segment: string) => {
+    if (!segment) return;
+    sourceChars += segment.length;
+    if (!oversized && sourceChars <= TRANSCRIPT_JSON_PARSE_LINE_THRESHOLD_CHARS) {
+      parts.push(segment);
+      return;
     }
-    index = valueEnd;
+    if (!oversized) {
+      oversized = true;
+      const retained = parts.join("") + segment;
+      prefix = retained.slice(0, TRANSCRIPT_STREAM_LINE_PREFIX_CHARS);
+      tail = retained.slice(-TRANSCRIPT_STREAM_LINE_TAIL_CHARS);
+      parts = [];
+      return;
+    }
+    tail = appendBoundedTail(tail, segment);
+  };
+
+  const finish = (): BoundedTranscriptLine => {
+    if (!oversized) {
+      const line = parts.join("").replace(/\r$/, "");
+      return { oversized: false, line, sourceChars };
+    }
+    return {
+      oversized: true,
+      prefix,
+      tail: tail.replace(/\r$/, ""),
+      sourceChars,
+    };
+  };
+
+  const reset = () => {
+    parts = [];
+    sourceChars = 0;
+    oversized = false;
+    prefix = "";
+    tail = "";
+  };
+
+  for await (const chunk of input) {
+    let cursor = 0;
+    while (cursor < chunk.length) {
+      const newline = chunk.indexOf("\n", cursor);
+      if (newline < 0) {
+        consume(chunk.slice(cursor));
+        break;
+      }
+      consume(chunk.slice(cursor, newline));
+      yield finish();
+      reset();
+      cursor = newline + 1;
+    }
   }
 
-  if (copyFrom === 0) return line;
-  parts.push(line.slice(copyFrom));
-  return parts.join("");
+  if (sourceChars > 0 || parts.length > 0 || oversized) yield finish();
+}
+
+function hasJsonStringField(source: string, name: string, value: string): boolean {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedValue = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`"${escapedName}"\\s*:\\s*"${escapedValue}"`).test(source);
+}
+
+function isEscapedJsonQuote(source: string, quoteIndex: number): boolean {
+  let slashCount = 0;
+  for (let index = quoteIndex - 1; index >= 0 && source[index] === "\\"; index -= 1) {
+    slashCount += 1;
+  }
+  return slashCount % 2 === 1;
+}
+
+function findLastJsonFieldValueStart(source: string, name: string): number {
+  const needle = `"${name}"`;
+  let index = source.lastIndexOf(needle);
+  while (index >= 0) {
+    if (!isEscapedJsonQuote(source, index)) {
+      let cursor = index + needle.length;
+      while (cursor < source.length && /\s/.test(source[cursor]!)) cursor += 1;
+      if (source[cursor] === ":") {
+        cursor += 1;
+        while (cursor < source.length && /\s/.test(source[cursor]!)) cursor += 1;
+        return cursor;
+      }
+    }
+    index = source.lastIndexOf(needle, index - 1);
+  }
+  return -1;
+}
+
+function extractLastJsonNumberField(source: string, name: string): number | undefined {
+  const start = findLastJsonFieldValueStart(source, name);
+  if (start < 0) return undefined;
+  const match = source.slice(start, start + 64).match(/^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/);
+  if (!match) return undefined;
+  const value = Number(match[0]);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function extractLastJsonStringField(source: string, name: string): string | undefined {
+  const start = findLastJsonFieldValueStart(source, name);
+  if (start < 0 || source[start] !== '"') return undefined;
+  const end = findJsonStringEnd(source, start + 1);
+  if (end < 0) return undefined;
+  try {
+    return JSON.parse(source.slice(start, end + 1));
+  } catch {
+    return undefined;
+  }
+}
+
+function extractLastJsonBooleanField(source: string, name: string): boolean | undefined {
+  const start = findLastJsonFieldValueStart(source, name);
+  if (start < 0) return undefined;
+  if (source.startsWith("true", start)) return true;
+  if (source.startsWith("false", start)) return false;
+  return undefined;
 }
 
 export function truncateTranscriptDetailText(text: string, maxChars: number): string {
@@ -372,23 +436,77 @@ async function parseTranscriptFileUncached(
   const toolIdToBlockIndex: Record<string, number> = {};
   const recentToolResults: TranscriptBlock[] = [];
 
-  const rl = readline.createInterface({
-    input: createReadStream(resolved, { encoding: "utf-8" }),
-    crlfDelay: Infinity,
-  });
-
-  for await (const line of rl) {
+  for await (const record of readTranscriptLinesBounded(resolved)) {
     lines += 1;
+    if (record.oversized) {
+      boundedOversizedLines += 1;
+      largestSourceLineChars = Math.max(largestSourceLineChars, record.sourceChars);
+      parsedLines += 1;
+
+      const retained = `${record.prefix}${record.tail}`;
+      const tsMs = toTsMs(
+        extractLastJsonStringField(record.prefix, "timestamp")
+          ?? extractLastJsonStringField(record.prefix, "ts"),
+      );
+      const retainedSessionId = extractLastJsonStringField(retained, "sessionId")
+        ?? extractLastJsonStringField(retained, "session_id");
+      if (!sessionId && retainedSessionId) sessionId = retainedSessionId;
+
+      const marker = `${TRANSCRIPT_DETAIL_TRUNCATION_LABEL}（原始单行 ${record.sourceChars} 字符）`;
+      const isUser = hasJsonStringField(record.prefix, "type", "user");
+      const isAssistant = hasJsonStringField(record.prefix, "type", "assistant");
+      const isToolResult = hasJsonStringField(retained, "type", "tool_result");
+      const isToolUse = hasJsonStringField(retained, "type", "tool_use");
+
+      if (isUser && isToolResult) {
+        const toolUseId = extractLastJsonStringField(retained, "tool_use_id") ?? "unknown";
+        blocks.push({
+          id: `line-${lines}-oversized-tool-result`,
+          tsMs,
+          kind: "tool_result",
+          title: `工具结果: ${toolUseId}`,
+          defaultOpen: false,
+          content: marker,
+          toolName: toolIdToName[toolUseId],
+          toolId: toolUseId,
+        });
+        continue;
+      }
+
+      if (isAssistant && isToolUse) {
+        const toolId = extractLastJsonStringField(record.prefix, "id") ?? "";
+        const toolName = extractLastJsonStringField(record.prefix, "name") ?? "unknown";
+        if (toolId) toolIdToName[toolId] = toolName;
+        blocks.push({
+          id: `line-${lines}-oversized-tool-use`,
+          tsMs,
+          kind: "tool_use",
+          title: `工具调用: ${toolName}`,
+          defaultOpen: false,
+          content: marker,
+          toolName,
+          toolId,
+        });
+        continue;
+      }
+
+      blocks.push({
+        id: `line-${lines}-oversized`,
+        tsMs,
+        kind: isAssistant ? "text" : isUser ? "prompt" : "meta",
+        title: isAssistant ? "输出" : isUser ? "输入" : "超大记录",
+        defaultOpen: isAssistant || isUser,
+        content: marker,
+      });
+      continue;
+    }
+
+    const { line } = record;
     if (!line.trim()) continue;
 
     let obj: any;
     try {
-      const parseSource = sanitizeOversizedTranscriptJsonLine(line);
-      if (parseSource !== line) {
-        boundedOversizedLines += 1;
-        largestSourceLineChars = Math.max(largestSourceLineChars, line.length);
-      }
-      obj = JSON.parse(parseSource);
+      obj = JSON.parse(line);
       parsedLines += 1;
     } catch {
       parseErrors += 1;
@@ -921,71 +1039,18 @@ async function getTokenUsageUncached(
   let hasUsage = false;
   const contextAccumulator = new ContextTokenAccumulator();
 
-  const rl = readline.createInterface({
-    input: createReadStream(resolved, { encoding: "utf-8" }),
-    crlfDelay: Infinity,
-  });
-
-  for await (const line of rl) {
-    if (line.includes('"type":"compaction"')) {
-      try {
-        const obj = JSON.parse(sanitizeOversizedTranscriptJsonLine(line));
-        if (obj?.type === 'compaction') {
-          contextAccumulator.reset();
-          lastContextTokens = 0;
-          continue;
-        }
-      } catch {
-        // 交给下方常规解析忽略坏行
-      }
-    }
-    // 子 agent 数据在 user 消息的 toolUseResult 中
-    if (line.includes('"totalTokens"')) {
-      try {
-        const obj = JSON.parse(sanitizeOversizedTranscriptJsonLine(line));
-        const tr = obj?.toolUseResult;
-        if (tr && typeof tr.totalTokens === "number") {
-          subagentTotalTokens += tr.totalTokens;
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    // 主 agent 数据在 assistant 消息中
-    if (!line.includes('"type":"assistant"')) continue;
-
-    let obj: any;
-    try {
-      obj = JSON.parse(sanitizeOversizedTranscriptJsonLine(line));
-    } catch {
-      continue;
-    }
-
-    if (obj?.type !== "assistant") continue;
-
-    const usage = obj?.message?.usage;
-    if (!usage || typeof usage !== "object") continue;
-
+  const applyAssistantUsage = (
+    usage: Record<string, unknown>,
+    model: string,
+    responseMode: ModelResponseMode | undefined,
+    responseChained: boolean | undefined,
+  ) => {
     hasUsage = true;
 
     const inp = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
     const cr = typeof usage.cache_read_input_tokens === "number" ? usage.cache_read_input_tokens : 0;
     const cc = typeof usage.cache_creation_input_tokens === "number" ? usage.cache_creation_input_tokens : 0;
     const out = typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
-    const model = typeof obj?.message?.model === "string" ? obj.message.model : "";
-    const rawResponseMode = obj?.message?.response_mode;
-    const responseMode: ModelResponseMode | undefined = rawResponseMode === 'full'
-      || rawResponseMode === 'relay'
-      || rawResponseMode === 'fallback_full'
-      ? rawResponseMode
-      : options.legacyResponseMode;
-    const responseChained = typeof obj?.message?.response_chained === 'boolean'
-      ? obj.message.response_chained
-      : undefined;
-
-    // turnTotal 保持原语义（按 accounting_mode 归一化的单 leg 计费口径），
-    // 只用于 mainTotalTokens 累计展示，不再用于 contextTokens。
     const turnTotal = computeUsageTotalTokens(model, {
       inputTokens: inp,
       outputTokens: out,
@@ -1001,7 +1066,6 @@ async function getTokenUsageUncached(
       cacheCreationTokens: cc,
     });
 
-    // 当前上下文：显式 response_mode 优先；旧 transcript 才使用模型配置默认值/兼容启发式。
     if (inp > 0 || out > 0) {
       lastContextTokens = contextAccumulator.apply(model, {
         inputTokens: inp,
@@ -1011,11 +1075,98 @@ async function getTokenUsageUncached(
       }, responseMode, responseChained);
     }
 
-    // 分项累加
     totalInputTokens += inp;
     totalCacheReadTokens += cr;
     totalCacheCreationTokens += cc;
     totalOutputTokens += out;
+  };
+
+  for await (const record of readTranscriptLinesBounded(resolved)) {
+    if (record.oversized) {
+      const retained = `${record.prefix}${record.tail}`;
+      if (hasJsonStringField(record.prefix, "type", "compaction")) {
+        contextAccumulator.reset();
+        lastContextTokens = 0;
+        continue;
+      }
+      if (hasJsonStringField(record.prefix, "type", "user")) {
+        const totalTokens = extractLastJsonNumberField(retained, "totalTokens");
+        if (totalTokens !== undefined) subagentTotalTokens += totalTokens;
+        continue;
+      }
+      if (!hasJsonStringField(record.prefix, "type", "assistant")) continue;
+
+      const inputTokens = extractLastJsonNumberField(retained, "input_tokens");
+      const outputTokens = extractLastJsonNumberField(retained, "output_tokens");
+      if (inputTokens === undefined && outputTokens === undefined) continue;
+      const rawResponseMode = extractLastJsonStringField(retained, "response_mode");
+      const responseMode: ModelResponseMode | undefined = rawResponseMode === "full"
+        || rawResponseMode === "relay"
+        || rawResponseMode === "fallback_full"
+        ? rawResponseMode
+        : options.legacyResponseMode;
+      applyAssistantUsage({
+        input_tokens: inputTokens ?? 0,
+        output_tokens: outputTokens ?? 0,
+        cache_read_input_tokens: extractLastJsonNumberField(retained, "cache_read_input_tokens") ?? 0,
+        cache_creation_input_tokens: extractLastJsonNumberField(retained, "cache_creation_input_tokens") ?? 0,
+      }, extractLastJsonStringField(retained, "model") ?? "", responseMode,
+      extractLastJsonBooleanField(retained, "response_chained"));
+      continue;
+    }
+
+    const { line } = record;
+    if (line.includes('"type":"compaction"')) {
+      try {
+        const obj = JSON.parse(line);
+        if (obj?.type === 'compaction') {
+          contextAccumulator.reset();
+          lastContextTokens = 0;
+          continue;
+        }
+      } catch {
+        // 交给下方常规解析忽略坏行
+      }
+    }
+    // 子 agent 数据在 user 消息的 toolUseResult 中
+    if (line.includes('"totalTokens"')) {
+      try {
+        const obj = JSON.parse(line);
+        const tr = obj?.toolUseResult;
+        if (tr && typeof tr.totalTokens === "number") {
+          subagentTotalTokens += tr.totalTokens;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // 主 agent 数据在 assistant 消息中
+    if (!line.includes('"type":"assistant"')) continue;
+
+    let obj: any;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    if (obj?.type !== "assistant") continue;
+
+    const usage = obj?.message?.usage;
+    if (!usage || typeof usage !== "object") continue;
+
+    const model = typeof obj?.message?.model === "string" ? obj.message.model : "";
+    const rawResponseMode = obj?.message?.response_mode;
+    const responseMode: ModelResponseMode | undefined = rawResponseMode === 'full'
+      || rawResponseMode === 'relay'
+      || rawResponseMode === 'fallback_full'
+      ? rawResponseMode
+      : options.legacyResponseMode;
+    const responseChained = typeof obj?.message?.response_chained === 'boolean'
+      ? obj.message.response_chained
+      : undefined;
+    applyAssistantUsage(usage, model, responseMode, responseChained);
   }
 
   if (!hasUsage) return null;

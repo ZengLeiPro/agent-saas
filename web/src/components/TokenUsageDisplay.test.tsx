@@ -68,7 +68,9 @@ describe("TokenUsageDisplay", () => {
     expect(screen.getByText("21,776,384")).toBeTruthy();
     expect(screen.getByText("66.4%")).toBeTruthy();
     expect(screen.getByText("任务总消耗")).toBeTruthy();
-    expect(screen.getByText("33.5M")).toBeTruthy();
+    // 33.5M 出现两处：hero 卡「累计消耗 · 含子 Agent」+ 子 Agent 节「任务总消耗」
+    expect(screen.getByText("累计消耗 · 含子 Agent")).toBeTruthy();
+    expect(screen.getAllByText("33.5M").length).toBe(2);
     expect(screen.getByText("缓存写入为 provider 上报值；0 不代表一定未创建缓存。")).toBeTruthy();
   });
 

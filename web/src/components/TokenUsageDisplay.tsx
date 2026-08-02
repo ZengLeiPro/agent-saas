@@ -231,6 +231,12 @@ export function TokenUsageDisplay({
   const barColor = overThreshold ? 'bg-rose-500' : nearThreshold ? 'bg-amber-500' : 'bg-brand-500';
   const thresholdTokens = hasThreshold ? Math.floor(contextUsage!.maxTokens! * threshold!) : 0;
   const breakdown = hasRealtime ? contextUsage!.breakdown : undefined;
+  // Hero 第二列：任务累计消耗（含子 Agent）。与「当前上下文」是两个维度——
+  // 前者只增不减、关联成本；后者是窗口占用、会被压缩重置。
+  const showHeroCumulative = tokenUsage != null && cumulativeTokens > 0;
+  const heroCumulativeLabel = tokenUsage && tokenUsage.subagentTotalTokens > 0
+    ? '累计消耗 · 含子 Agent'
+    : '累计消耗';
 
   return (
     <div ref={containerRef} className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -263,16 +269,54 @@ export function TokenUsageDisplay({
                   {hasRealtime ? '实际值' : 'provider usage'}
                 </span>
               </div>
-              {hasContextWindow ? (
-                <>
-                  <div className="mt-3 flex items-baseline gap-2">
-                    <span className={`text-2xl font-semibold leading-none tabular-nums ${heroPercentColor}`}>
-                      {(percentage * 100).toFixed(1)}%
-                    </span>
-                    <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-                      {formatTokenCount(displayTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
-                    </span>
+              {/* KPI 区：有累计消耗时双列并排，否则单指标 */}
+              {showHeroCumulative ? (
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div>
+                    {hasContextWindow ? (
+                      <>
+                        <div className={`text-2xl font-semibold leading-none tabular-nums ${heroPercentColor}`}>
+                          {(percentage * 100).toFixed(1)}%
+                        </div>
+                        <div className="mt-1.5 text-[10px] tabular-nums text-muted-foreground">
+                          {formatTokenCount(displayTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="text-2xl font-semibold leading-none tabular-nums">
+                          {formatTokenCount(displayTokens)}
+                        </div>
+                        <div className="mt-1.5 text-[10px] text-muted-foreground">当前占用</div>
+                      </>
+                    )}
                   </div>
+                  <div className="border-l border-border/60 pl-3">
+                    <div className="text-2xl font-semibold leading-none tabular-nums">
+                      {formatTokenCount(cumulativeTokens)}
+                    </div>
+                    <div className="mt-1.5 text-[10px] text-muted-foreground">{heroCumulativeLabel}</div>
+                  </div>
+                </div>
+              ) : hasContextWindow ? (
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className={`text-2xl font-semibold leading-none tabular-nums ${heroPercentColor}`}>
+                    {(percentage * 100).toFixed(1)}%
+                  </span>
+                  <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+                    {formatTokenCount(displayTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
+                  </span>
+                </div>
+              ) : (
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-semibold leading-none tabular-nums">
+                    {formatTokenCount(displayTokens)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">tokens</span>
+                </div>
+              )}
+              {hasContextWindow && (
+                <>
                   <div className="relative mt-2.5 h-2 w-full overflow-hidden rounded-full bg-muted">
                     <div
                       className={`h-full rounded-full transition-[width] ${barColor}`}
@@ -295,13 +339,6 @@ export function TokenUsageDisplay({
                     </p>
                   )}
                 </>
-              ) : (
-                <div className="mt-3 flex items-baseline gap-2">
-                  <span className="text-2xl font-semibold leading-none tabular-nums">
-                    {formatTokenCount(displayTokens)}
-                  </span>
-                  <span className="text-xs text-muted-foreground">tokens</span>
-                </div>
               )}
               {hasExactFallback && accounting?.reason && (
                 <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground/80">{accounting.reason}</p>

@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  canAutoApplyUpdate,
   clearLegacyApiCaches,
   isUpdateReady,
   maybeNavigateWithUpdate,
@@ -54,6 +55,45 @@ describe("未就绪时导航拦截入口短路（不跳转）", () => {
 
   it("maybeReloadOnPopstate 在未就绪时返回 false，不触发 reload", () => {
     expect(maybeReloadOnPopstate()).toBe(false);
+  });
+});
+
+describe("自动更新熔断（防整页刷新循环）", () => {
+  const STAMP_KEY = "agentChat.swAutoApplyAt";
+
+  beforeEach(() => {
+    sessionStorage.removeItem(STAMP_KEY);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    sessionStorage.removeItem(STAMP_KEY);
+    vi.restoreAllMocks();
+  });
+
+  it("从未自动更新过 → 放行", () => {
+    expect(canAutoApplyUpdate()).toBe(true);
+  });
+
+  it("刚自动更新过（60s 内）→ 熔断，并留下诊断日志", () => {
+    sessionStorage.setItem(STAMP_KEY, String(Date.now() - 5_000));
+    expect(canAutoApplyUpdate()).toBe(false);
+    expect(console.warn).toHaveBeenCalled();
+  });
+
+  it("超过 60s → 重新放行", () => {
+    sessionStorage.setItem(STAMP_KEY, String(Date.now() - 61_000));
+    expect(canAutoApplyUpdate()).toBe(true);
+  });
+
+  it("时钟回拨（时间戳在未来）不永久卡死更新", () => {
+    sessionStorage.setItem(STAMP_KEY, String(Date.now() + 3_600_000));
+    expect(canAutoApplyUpdate()).toBe(true);
+  });
+
+  it("时间戳损坏时按未记录处理", () => {
+    sessionStorage.setItem(STAMP_KEY, "not-a-number");
+    expect(canAutoApplyUpdate()).toBe(true);
   });
 });
 

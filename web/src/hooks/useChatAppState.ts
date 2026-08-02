@@ -543,20 +543,21 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const refreshTokenUsageRef = useRef<() => void>(() => { });
   const loadSessionDetailRef = useRef<(id: string) => Promise<void>>(async () => { });
   // ---- SW 更新协作（lib/swUpdate.ts）----
-  // 守门：上传中 / 消息在途（outbox 未清）/ 任一会话 run 处于进行态 → 导航时不强刷
+  // 守门：上传中 / 消息在途（outbox 未清）/ **当前会话** run 处于进行态 → 导航时不强刷。
+  //
+  // 只守当前会话（2026-08-02）：后台会话的 run 跑在服务端，整页跳转不会打断它，回来照样
+  // resume。原实现遍历 activeRunsBySession 的所有会话，长期挂着后台任务的用户会被永久守门
+  // ——tab 锁死在旧 bundle，前端修复永远送不到他手上（曾磊因此仍在复现 d181ca3 已修的
+  // 跨会话残留 bug）。
   useEffect(() => {
     const unregisterGuard = registerUpdateGuard(() => {
       if (uploadingRef.current) return true;
       if (outboxRef.current.length > 0) return true;
-      for (const runtime of activeRunsBySession.current.values()) {
-        if (
-          runtime.status === 'busy' || runtime.status === 'running' || runtime.status === 'queued'
-          || runtime.status === 'waiting_approval' || runtime.status === 'waiting_hand'
-        ) {
-          return true;
-        }
-      }
-      return false;
+      // 草稿会话首条消息在途时 sessionId 仍为 null，靠 loading 兜住。
+      if (loadingRef.current) return true;
+      const currentSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+      if (!currentSessionId) return false;
+      return isActiveRuntimeStatus(activeRunsBySession.current.get(currentSessionId)?.status);
     });
     // 刷新前同步 flush 当前会话草稿：debounce 窗口内的输入不丢
     const unregisterHook = registerBeforeReloadHook(() => {

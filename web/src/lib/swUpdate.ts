@@ -15,9 +15,10 @@
  *    （server/src/index.ts）。
  *
  * 守门条件（命中则导航不强刷，只留提示条）：
- * - 组件注册的 guard（上传中 / active stream / waiting_approval，见 useChatAppState）
+ * - 组件注册的 guard（上传中 / 消息在途 / 当前会话 run 进行中，见 useChatAppState）
  * - 打开着的 dialog/modal（Radix role=dialog，设置表单无草稿持久化）
  * - 聚焦且非空的输入框（保守：即使聊天主输入框有草稿持久化也守门）
+ * - 熔断：同一 tab 60s 内已自动应用过一次更新（见 canAutoApplyUpdate）
  *
  * 刷新前统一执行 beforeReloadHooks（如聊天草稿同步 flush，绕过 2s debounce）。
  */
@@ -30,6 +31,8 @@ const COLD_START_WINDOW_MS = 30_000;
 const SW_ACTIVATE_TIMEOUT_MS = 2_000;
 const UPDATE_POLL_INTERVAL_MS = 60_000;
 const LEGACY_API_CACHE_PREFIX = "api-";
+const AUTO_APPLY_MIN_INTERVAL_MS = 60_000;
+const AUTO_APPLY_STAMP_KEY = "agentChat.swAutoApplyAt";
 
 const guards = new Set<Guard>();
 const beforeReloadHooks = new Set<Hook>();
@@ -97,6 +100,46 @@ function hasGuardActive(): boolean {
   return false;
 }
 
+/**
+ * 自动应用更新的熔断闸。
+ *
+ * 三条自动路径（冷启动静默刷 / 导航拦截 / popstate）都会整页跳转。若新版本因任何原因
+ * 没有真正接管（SW 未激活、index.html 与 SW 版本不一致等），下一次页面加载会再次判定
+ * 「有更新」→ 再跳转，形成无限刷新循环（2026-08-02 实测 tab 卡死，只能强关）。
+ * 同一 tab 60s 内只允许自动应用一次，超出后退回提示条，由用户主动点击。
+ *
+ * 时间戳存 sessionStorage：跨整页跳转存活，且不跨 tab、不跨浏览器重启。
+ */
+export function canAutoApplyUpdate(): boolean {
+  let last = 0;
+  try {
+    const raw = sessionStorage.getItem(AUTO_APPLY_STAMP_KEY);
+    const parsed = raw ? Number(raw) : Number.NaN;
+    if (Number.isFinite(parsed)) last = parsed;
+  } catch {
+    // sessionStorage 不可用（隐私模式等）→ 不熔断，保持原有行为
+    return true;
+  }
+  if (!last) return true;
+  const elapsed = Date.now() - last;
+  // elapsed < 0 = 系统时钟被回拨，按过期处理，不要因此卡死更新
+  if (elapsed < 0 || elapsed >= AUTO_APPLY_MIN_INTERVAL_MS) return true;
+  console.warn(`[sw] ${Math.round(elapsed / 1000)}s 前刚自动更新过，本次只提示不跳转（防刷新循环）`);
+  return false;
+}
+
+/** 自动路径统一入口：熔断放行才跳转；返回是否已接管本次跳转。 */
+function autoApply(targetUrl?: string): boolean {
+  if (!canAutoApplyUpdate()) return false;
+  try {
+    sessionStorage.setItem(AUTO_APPLY_STAMP_KEY, String(Date.now()));
+  } catch {
+    // 记不下时间戳就没有熔断保护，但不该因此阻断更新
+  }
+  applyUpdate(targetUrl);
+  return true;
+}
+
 function runBeforeReloadHooks(): void {
   for (const hook of beforeReloadHooks) {
     try {
@@ -141,9 +184,13 @@ function applyUpdate(targetUrl?: string): void {
 function markUpdateReady(): void {
   if (updateReady || applying) return;
   updateReady = true;
-  // 冷启动静默窗口：刚打开、零交互、无守门 → 直接刷，用户无感知
-  if (Date.now() - startedAt < COLD_START_WINDOW_MS && !hasInteracted && !hasGuardActive()) {
-    applyUpdate();
+  // 冷启动静默窗口：刚打开、零交互、无守门、未熔断 → 直接刷，用户无感知
+  if (
+    Date.now() - startedAt < COLD_START_WINDOW_MS
+    && !hasInteracted
+    && !hasGuardActive()
+    && autoApply()
+  ) {
     return;
   }
   readyListeners.forEach((l) => l());
@@ -155,8 +202,7 @@ function markUpdateReady(): void {
  */
 export function maybeNavigateWithUpdate(targetUrl: string): boolean {
   if (!updateReady || applying || hasGuardActive()) return false;
-  applyUpdate(targetUrl);
-  return true;
+  return autoApply(targetUrl);
 }
 
 /**
@@ -165,8 +211,7 @@ export function maybeNavigateWithUpdate(targetUrl: string): boolean {
  */
 export function maybeReloadOnPopstate(): boolean {
   if (!updateReady || applying || hasGuardActive()) return false;
-  applyUpdate();
-  return true;
+  return autoApply();
 }
 
 /** 提示条「立即更新」：用户主动触发，跳过守门（用户意志优先），草稿 flush 照跑。 */

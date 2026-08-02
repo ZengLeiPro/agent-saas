@@ -50,6 +50,7 @@ async function startServer(
     };
     orgAgentStore?: OrgAgentStore;
     sessionProjectionStore?: SessionsRouterOptions['sessionProjectionStore'];
+    runtimeEventStoreFor?: SessionsRouterOptions['runtimeEventStoreFor'];
   } = {},
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
@@ -66,7 +67,8 @@ async function startServer(
   });
   app.use('/api', createSessionsRouter({
     agentCwd,
-    runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+    runtimeEventStoreFor: options.runtimeEventStoreFor
+      ?? ((transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath))),
     resolveContextAccounting: options.resolveContextAccounting,
     orgAgentStore: options.orgAgentStore,
     sessionProjectionStore: options.sessionProjectionStore,
@@ -417,6 +419,34 @@ describe('sessions routes for meta-only runtime sessions', () => {
             lastRequestTokens: 12300,
           },
         },
+      });
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('stats 只读取上下文用量事件，不全量加载工具结果', async () => {
+    const { sessionId, transcriptPath } = await writeRuntimeSession({
+      metaPatch: { model: 'kaiyan-llm/gpt55-high' },
+    });
+    await writeAssistantUsageTranscript(transcriptPath, sessionId, {
+      inputTokens: 100,
+      outputTokens: 20,
+    });
+
+    const list = vi.fn(async () => []);
+    const listPage = vi.fn(async () => ({ events: [], hasMore: false }));
+    const runtimeEventStoreFor = vi.fn(() => ({ list, listPage }) as never);
+    const { server, baseUrl } = await startServer(agentCwd, { runtimeEventStoreFor });
+    try {
+      const stats = await fetch(`${baseUrl}/api/sessions/${sessionId}/stats`);
+      expect(stats.status).toBe(200);
+      expect(list).toHaveBeenCalledWith(sessionId, {
+        includeTypes: ['assistant_message', 'assistant_tool_calls', 'compaction'],
+      });
+      expect(listPage).toHaveBeenCalledWith(sessionId, {
+        limit: 500,
+        type: 'subagent_finished',
       });
     } finally {
       await stopServer(server);

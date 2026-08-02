@@ -108,7 +108,103 @@ export const TRANSCRIPT_DETAIL_TOOL_INPUT_MAX_CHARS = 64 * 1024;
 export const TRANSCRIPT_DETAIL_RAW_MAX_CHARS = 16 * 1024;
 export const TRANSCRIPT_DETAIL_META_MAX_CHARS = 16 * 1024;
 
+/**
+ * JSONL 单行在 JSON.parse 前的内存保险丝。
+ *
+ * transcript 原文件仍是完整事实源；只有详情/统计的派生读取在单行超过 2 MiB 时，
+ * 把 JSON 字符串值限制为单值最多 512 KiB、整行字符串值合计最多 1 MiB。
+ * 这样可以避免一个超大 tool result 在 readline 字符串、JSON.parse 对象和展示 block
+ * 之间同时复制数份。JSON key 与结构字符始终完整保留。
+ */
+export const TRANSCRIPT_JSON_PARSE_LINE_THRESHOLD_CHARS = 2 * 1024 * 1024;
+export const TRANSCRIPT_JSON_PARSE_VALUE_MAX_SOURCE_CHARS = 512 * 1024;
+export const TRANSCRIPT_JSON_PARSE_LINE_VALUE_BUDGET_CHARS = 1024 * 1024;
+
 const TRANSCRIPT_DETAIL_TRUNCATION_LABEL = "会话详情已截断；原始记录未改动";
+const TRANSCRIPT_JSON_PARSE_TRUNCATION_SOURCE = JSON.stringify(
+  `...[${TRANSCRIPT_DETAIL_TRUNCATION_LABEL}]...`,
+).slice(1, -1);
+
+function findJsonStringEnd(source: string, start: number): number {
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (char === '"') return index;
+  }
+  return -1;
+}
+
+function findSafeJsonStringPrefixEnd(source: string, start: number, maxSourceChars: number): number {
+  const limit = Math.min(source.length, start + Math.max(0, maxSourceChars));
+  let safeEnd = start;
+  let index = start;
+  while (index < limit) {
+    const char = source[index];
+    let next = index + 1;
+    if (char === "\\") {
+      next = source[index + 1] === "u" ? index + 6 : index + 2;
+    } else {
+      const code = source.charCodeAt(index);
+      if (code >= 0xd800 && code <= 0xdbff) next = index + 2;
+    }
+    if (next > limit) break;
+    safeEnd = next;
+    index = next;
+  }
+  return safeEnd;
+}
+
+/**
+ * 仅对异常大的 JSONL 行生效；返回值仍是合法 JSON，且不会改写磁盘原文。
+ */
+export function sanitizeOversizedTranscriptJsonLine(line: string): string {
+  if (line.length <= TRANSCRIPT_JSON_PARSE_LINE_THRESHOLD_CHARS) return line;
+
+  const parts: string[] = [];
+  let copyFrom = 0;
+  let remainingValueBudget = TRANSCRIPT_JSON_PARSE_LINE_VALUE_BUDGET_CHARS;
+
+  for (let index = 0; index < line.length; index += 1) {
+    if (line[index] !== '"') continue;
+    const valueStart = index + 1;
+    const valueEnd = findJsonStringEnd(line, valueStart);
+    if (valueEnd < 0) return line;
+
+    let lookahead = valueEnd + 1;
+    while (lookahead < line.length && /\s/.test(line[lookahead]!)) lookahead += 1;
+    const isObjectKey = line[lookahead] === ":";
+    if (!isObjectKey) {
+      const sourceLength = valueEnd - valueStart;
+      const allowedSourceChars = Math.min(
+        TRANSCRIPT_JSON_PARSE_VALUE_MAX_SOURCE_CHARS,
+        remainingValueBudget,
+      );
+      if (sourceLength > allowedSourceChars) {
+        const marker = allowedSourceChars >= TRANSCRIPT_JSON_PARSE_TRUNCATION_SOURCE.length
+          ? TRANSCRIPT_JSON_PARSE_TRUNCATION_SOURCE
+          : TRANSCRIPT_JSON_PARSE_TRUNCATION_SOURCE.slice(0, allowedSourceChars);
+        const prefixBudget = Math.max(0, allowedSourceChars - marker.length);
+        const prefixEnd = findSafeJsonStringPrefixEnd(line, valueStart, prefixBudget);
+        parts.push(line.slice(copyFrom, prefixEnd), marker);
+        copyFrom = valueEnd;
+        remainingValueBudget = Math.max(
+          0,
+          remainingValueBudget - (prefixEnd - valueStart) - marker.length,
+        );
+      } else {
+        remainingValueBudget = Math.max(0, remainingValueBudget - sourceLength);
+      }
+    }
+    index = valueEnd;
+  }
+
+  if (copyFrom === 0) return line;
+  parts.push(line.slice(copyFrom));
+  return parts.join("");
+}
 
 export function truncateTranscriptDetailText(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
@@ -260,6 +356,8 @@ async function parseTranscriptFileUncached(
   let lines = 0;
   let parsedLines = 0;
   let parseErrors = 0;
+  let boundedOversizedLines = 0;
+  let largestSourceLineChars = 0;
   let sessionId: string | undefined;
 
   // toolId -> toolName 映射，用于 tool_result 关联
@@ -285,7 +383,12 @@ async function parseTranscriptFileUncached(
 
     let obj: any;
     try {
-      obj = JSON.parse(line);
+      const parseSource = sanitizeOversizedTranscriptJsonLine(line);
+      if (parseSource !== line) {
+        boundedOversizedLines += 1;
+        largestSourceLineChars = Math.max(largestSourceLineChars, line.length);
+      }
+      obj = JSON.parse(parseSource);
       parsedLines += 1;
     } catch {
       parseErrors += 1;
@@ -631,6 +734,12 @@ async function parseTranscriptFileUncached(
     });
   }
 
+  if (boundedOversizedLines > 0) {
+    apiLogger.warn(
+      `[transcript] bounded oversized JSONL lines path=${resolved} count=${boundedOversizedLines} largestSourceLineChars=${largestSourceLineChars}`,
+    );
+  }
+
   return {
     sessionId,
     blocks,
@@ -750,7 +859,7 @@ export async function getTokenUsage(
   for await (const line of rl) {
     if (line.includes('"type":"compaction"')) {
       try {
-        const obj = JSON.parse(line);
+        const obj = JSON.parse(sanitizeOversizedTranscriptJsonLine(line));
         if (obj?.type === 'compaction') {
           contextAccumulator.reset();
           lastContextTokens = 0;
@@ -763,7 +872,7 @@ export async function getTokenUsage(
     // 子 agent 数据在 user 消息的 toolUseResult 中
     if (line.includes('"totalTokens"')) {
       try {
-        const obj = JSON.parse(line);
+        const obj = JSON.parse(sanitizeOversizedTranscriptJsonLine(line));
         const tr = obj?.toolUseResult;
         if (tr && typeof tr.totalTokens === "number") {
           subagentTotalTokens += tr.totalTokens;
@@ -778,7 +887,7 @@ export async function getTokenUsage(
 
     let obj: any;
     try {
-      obj = JSON.parse(line);
+      obj = JSON.parse(sanitizeOversizedTranscriptJsonLine(line));
     } catch {
       continue;
     }

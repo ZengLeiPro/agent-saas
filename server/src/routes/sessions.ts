@@ -2545,7 +2545,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         let contextUsage = null;
         try {
           const runtimeEvents = runtimeEventStoreFor
-            ? await runtimeEventStoreFor(transcriptPath).list(sessionId)
+            ? await runtimeEventStoreFor(transcriptPath).list(sessionId, {
+                includeTypes: ["assistant_message", "assistant_tool_calls", "compaction"],
+              })
             : [];
           contextUsage = new RuntimeContextUsageTracker(meta?.model ?? 'unknown', runtimeEvents).record(
             meta?.model ?? 'unknown',

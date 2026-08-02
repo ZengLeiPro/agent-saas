@@ -65,6 +65,7 @@ function connectionStore(rows: FeishuConnectionRecord[] = []): FeishuConnectionS
     failCheck: vi.fn(async () => undefined),
     releaseClaim: vi.fn(async () => undefined),
     listForUser: vi.fn(async () => rows),
+    removeForUser: vi.fn(async () => rows.length),
   };
 }
 
@@ -182,6 +183,21 @@ describe('飞书官方 CLI 连接器', () => {
     expect(authStore.markFailed).not.toHaveBeenCalled();
   });
 
+  it('远端 logout 失败时保留本地连接记录', async () => {
+    const store = connectionStore([connection()]);
+    const service = new FeishuAuthFlowService({
+      authSessionStore: {} as FeishuAuthSessionStore,
+      connectionStore: store,
+      runner: {
+        login: vi.fn(),
+        logout: vi.fn(async () => { throw new Error('remote logout failed'); }),
+      },
+    });
+
+    await expect(service.revokeUser(USER)).rejects.toThrow('remote logout failed');
+    expect(store.removeForUser).not.toHaveBeenCalled();
+  });
+
   it('按 5 天巡检且至少提前 2 天检查 refresh expiry', () => {
     const now = new Date(NOW);
     expect(computeNextCheckAfterStatus({}, now)).toBe('2026-07-26T03:30:00.000Z');
@@ -231,6 +247,22 @@ describe('飞书官方 CLI 连接器', () => {
   });
 });
 
+async function listenFeishuRouter(options: Parameters<typeof createFeishuRouter>[0]): Promise<{ server: Server; baseUrl: string }> {
+  const app = express();
+  app.use((req, _res, next) => {
+    (req as any).user = { sub: USER.id, username: USER.username, role: 'user', tenantId: USER.tenantId };
+    next();
+  });
+  app.use('/api', createFeishuRouter(options));
+  return await new Promise((resolve) => {
+    const current = app.listen(0, '127.0.0.1', () => {
+      const address = current.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      resolve({ server: current, baseUrl: `http://127.0.0.1:${port}` });
+    });
+  });
+}
+
 describe('飞书连接器路由', () => {
   let server: Server | undefined;
 
@@ -265,5 +297,53 @@ describe('飞书连接器路由', () => {
     expect(body.connections[0]).not.toHaveProperty('userOpenId');
     expect(body.connections[0]).not.toHaveProperty('appId');
     expect(body.connections[0]).not.toHaveProperty('scope');
+  });
+
+  it('取消授权只终止 pending session', async () => {
+    const cancelUser = vi.fn(async () => undefined);
+    const revokeUser = vi.fn(async () => undefined);
+    const opened = await listenFeishuRouter({
+      authFlowService: { start: vi.fn(), getLatest: vi.fn(), cancelUser, revokeUser },
+    });
+    server = opened.server;
+
+    const response = await fetch(`${opened.baseUrl}/api/feishu/auth/session`, { method: 'DELETE' });
+    expect(response.status).toBe(200);
+    expect(cancelUser).toHaveBeenCalledWith(USER.tenantId, USER.id);
+    expect(revokeUser).not.toHaveBeenCalled();
+  });
+
+  it('断开飞书时撤销当前用户凭据并返回剩余连接', async () => {
+    const store = connectionStore([]);
+    const revokeUser = vi.fn(async () => undefined);
+    const opened = await listenFeishuRouter({
+      connectionStore: store,
+      userStore: { findById: vi.fn(() => USER) } as any,
+      authFlowService: { start: vi.fn(), getLatest: vi.fn(), revokeUser },
+    });
+    server = opened.server;
+
+    const response = await fetch(`${opened.baseUrl}/api/feishu/connections`, { method: 'DELETE' });
+    expect(response.status).toBe(200);
+    expect(revokeUser).toHaveBeenCalledWith(USER);
+    expect(store.listForUser).toHaveBeenCalledWith(USER.tenantId, USER.id);
+  });
+
+  it('远端撤销失败时返回 503，不伪报断开成功', async () => {
+    const store = connectionStore([connection()]);
+    const opened = await listenFeishuRouter({
+      connectionStore: store,
+      userStore: { findById: vi.fn(() => USER) } as any,
+      authFlowService: {
+        start: vi.fn(),
+        getLatest: vi.fn(),
+        revokeUser: vi.fn(async () => { throw new Error('remote revoke failed'); }),
+      },
+    });
+    server = opened.server;
+
+    const response = await fetch(`${opened.baseUrl}/api/feishu/connections`, { method: 'DELETE' });
+    expect(response.status).toBe(503);
+    expect(store.listForUser).not.toHaveBeenCalled();
   });
 });

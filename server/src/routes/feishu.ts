@@ -70,6 +70,46 @@ export function createFeishuRouter(options: FeishuRouterOptions): Router {
     }
   });
 
+  router.delete('/feishu/auth/session', async (req, res) => {
+    if (!req.user?.sub || !req.user.tenantId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    if (!options.authFlowService?.cancelUser) {
+      res.status(503).json({ error: '飞书授权取消服务尚未配置' });
+      return;
+    }
+    try {
+      await options.authFlowService.cancelUser(req.user.tenantId, req.user.sub);
+      res.json({ session: null });
+    } catch {
+      res.status(503).json({ error: '飞书授权取消失败，请稍后重试' });
+    }
+  });
+
+  router.delete('/feishu/connections', async (req, res) => {
+    if (!req.user?.sub || !req.user.tenantId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    if (!options.authFlowService?.revokeUser || !options.connectionStore || !options.userStore) {
+      res.status(503).json({ error: '飞书断开服务尚未配置' });
+      return;
+    }
+    const user = options.userStore.findById(req.user.sub);
+    if (!user || user.disabled || user.tenantId !== req.user.tenantId) {
+      res.status(403).json({ error: '当前账号无法断开飞书' });
+      return;
+    }
+    try {
+      await options.authFlowService.revokeUser(user);
+      const rows = await options.connectionStore.listForUser(req.user.tenantId, req.user.sub);
+      res.json({ connections: rows.map(toPublicConnection) });
+    } catch {
+      res.status(503).json({ error: '飞书断开失败，请稍后重试' });
+    }
+  });
+
   return router;
 }
 

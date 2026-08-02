@@ -75,6 +75,7 @@ export interface DwsConnectionStore {
   failCheck(record: DwsConnectionRecord, workerId: string, error: string, now?: Date): Promise<void>;
   releaseClaim(record: DwsConnectionRecord, workerId: string): Promise<void>;
   listForUser(tenantId: string, userId: string): Promise<DwsConnectionRecord[]>;
+  removeProfile?(tenantId: string, userId: string, profileId: string): Promise<number>;
   removeForUser?(tenantId: string, userId: string): Promise<number>;
 }
 
@@ -374,6 +375,14 @@ export class PgDwsConnectionStore implements DwsConnectionStore {
       ORDER BY connection_status = 'connected' DESC, corp_name NULLS LAST, profile_id
     `, [tenantId, userId]);
     return result.rows.map(mapRow);
+  }
+
+  async removeProfile(tenantId: string, userId: string, profileId: string): Promise<number> {
+    const result = await this.options.pool.query(
+      `DELETE FROM ${this.table} WHERE tenant_id = $1 AND user_id = $2 AND profile_id = $3`,
+      [tenantId, userId, profileId],
+    );
+    return result.rowCount ?? 0;
   }
 
   async removeForUser(tenantId: string, userId: string): Promise<number> {

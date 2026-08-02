@@ -17,6 +17,8 @@ function storeWith(rows: DwsConnectionRecord[]): DwsConnectionStore {
     failCheck: vi.fn(async () => undefined),
     releaseClaim: vi.fn(async () => undefined),
     listForUser: vi.fn(async () => rows),
+    removeProfile: vi.fn(async () => 1),
+    removeForUser: vi.fn(async () => rows.length),
   };
 }
 
@@ -147,6 +149,35 @@ describe('DWS connections route', () => {
     const body = await response.json() as { session: Record<string, unknown> };
     expect(body.session.authorizationUrl).toBeNull();
     expect(body.session.userCode).toBeNull();
+  });
+
+  it('取消授权只终止 pending session，不断开已有组织', async () => {
+    const cancelUser = vi.fn(async () => undefined);
+    const revokeUser = vi.fn(async () => undefined);
+    const opened = await listen({ authFlowService: { start: vi.fn(), getLatest: vi.fn(), cancelUser, revokeUser } });
+    server = opened.server;
+
+    const response = await fetch(`${opened.baseUrl}/api/dws/auth/session`, { method: 'DELETE' });
+    expect(response.status).toBe(200);
+    expect(cancelUser).toHaveBeenCalledWith('tenant-a', USER.sub);
+    expect(revokeUser).not.toHaveBeenCalled();
+  });
+
+  it('按 profileId 断开单个钉钉组织，并返回剩余连接', async () => {
+    const store = storeWith([]);
+    const revokeProfile = vi.fn(async () => undefined);
+    const currentUser = { ...USER, id: USER.sub, disabled: false };
+    const opened = await listen({
+      connectionStore: store,
+      userStore: { findById: vi.fn(() => currentUser) },
+      authFlowService: { start: vi.fn(), getLatest: vi.fn(), revokeProfile },
+    });
+    server = opened.server;
+
+    const response = await fetch(`${opened.baseUrl}/api/dws/connections?profileId=ding-corp-1`, { method: 'DELETE' });
+    expect(response.status).toBe(200);
+    expect(revokeProfile).toHaveBeenCalledWith(currentUser, 'ding-corp-1');
+    expect(store.listForUser).toHaveBeenCalledWith('tenant-a', USER.sub);
   });
 });
 

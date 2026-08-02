@@ -1,6 +1,6 @@
 /** 飞书官方 lark-cli 连接器；与 MCP 目录同 grid 展示，但拥有独立授权/保活数据流。 */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CircleCheck, ExternalLink, Loader2, Plus, TriangleAlert } from "lucide-react";
+import { Check, CircleCheck, ExternalLink, Loader2, Plus, TriangleAlert, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/contexts/AuthContext";
@@ -48,7 +48,10 @@ export interface FeishuConnectionsState {
   needsReconnect: boolean;
   hasConnected: boolean;
   connectLabel: string;
+  disconnecting: boolean;
   startConnection: () => Promise<void>;
+  cancelAuthorization: () => Promise<void>;
+  disconnectConnection: () => Promise<void>;
   reopenAuthorizationPage: (url: string) => void;
 }
 
@@ -61,6 +64,7 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authServiceAvailable, setAuthServiceAvailable] = useState<boolean | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [popupBlocked, setPopupBlocked] = useState(false);
   const authorizationPopupRef = useRef<Window | null>(null);
   const openedAuthorizationUrlRef = useRef<string | null>(null);
@@ -137,6 +141,40 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
     }
   }, [authServiceAvailable, reopenAuthorizationPage]);
 
+  const cancelAuthorization = useCallback(async () => {
+    setConnecting(true);
+    setAuthError(null);
+    try {
+      const response = await authFetch("/api/feishu/auth/session", { method: "DELETE" });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "飞书授权取消失败，请稍后重试");
+      setAuthSession(null);
+      const popup = authorizationPopupRef.current;
+      if (popup && !popup.closed) popup.close();
+      authorizationPopupRef.current = null;
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "飞书授权取消失败，请稍后重试");
+    } finally {
+      setConnecting(false);
+    }
+  }, []);
+
+  const disconnectConnection = useCallback(async () => {
+    setDisconnecting(true);
+    setAuthError(null);
+    try {
+      const response = await authFetch("/api/feishu/connections", { method: "DELETE" });
+      const data = await response.json().catch(() => ({})) as { connections?: FeishuConnectionView[]; error?: string };
+      if (!response.ok) throw new Error(data.error || "飞书断开失败，请稍后重试");
+      setConnections(data.connections ?? []);
+      setAuthSession(null);
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "飞书断开失败，请稍后重试");
+    } finally {
+      setDisconnecting(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!enabled) return;
     setAuthSession(null);
@@ -195,7 +233,10 @@ export function useFeishuConnections(enabled = true): FeishuConnectionsState {
     needsReconnect,
     hasConnected,
     connectLabel,
+    disconnecting,
     startConnection,
+    cancelAuthorization,
+    disconnectConnection,
     reopenAuthorizationPage,
   };
 }
@@ -343,15 +384,31 @@ export function FeishuConnectorDrawer({
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">{item.message}</div>
                   {item.lastCheckedAt ? <div className="mt-1 text-[11px] text-muted-foreground">最近检查：{formatTime(item.lastCheckedAt)}</div> : null}
                 </div>
-                <div className={cn(
-                  "flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium",
-                  connected && "bg-success-subtle text-success-ink",
-                  pending && "bg-info-subtle text-info-ink",
-                  item.status === "error" && "bg-warning-subtle text-warning-ink",
-                  item.status === "disconnected" && "bg-danger-subtle text-danger-ink",
-                )}>
-                  {connected ? <CircleCheck className="size-3.5" /> : pending ? <Loader2 className="size-3.5 animate-spin" /> : <TriangleAlert className="size-3.5" />}
-                  {connected ? "已连接" : pending ? "检测中" : item.status === "error" ? "重试中" : "需重连"}
+                <div className="flex shrink-0 items-center gap-2">
+                  <div className={cn(
+                    "flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium",
+                    connected && "bg-success-subtle text-success-ink",
+                    pending && "bg-info-subtle text-info-ink",
+                    item.status === "error" && "bg-warning-subtle text-warning-ink",
+                    item.status === "disconnected" && "bg-danger-subtle text-danger-ink",
+                  )}>
+                    {connected ? <CircleCheck className="size-3.5" /> : pending ? <Loader2 className="size-3.5 animate-spin" /> : <TriangleAlert className="size-3.5" />}
+                    {connected ? "已连接" : pending ? "检测中" : item.status === "error" ? "重试中" : "需重连"}
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-8 text-muted-foreground hover:text-destructive"
+                    disabled={state.disconnecting}
+                    aria-label="断开飞书账号"
+                    onClick={() => {
+                      if (window.confirm("确认断开飞书？断开后 Agent 将无法继续访问你的飞书数据。")) {
+                        void state.disconnectConnection();
+                      }
+                    }}
+                  >
+                    {state.disconnecting ? <Loader2 className="size-4 animate-spin" /> : <Unplug className="size-4" />}
+                  </Button>
                 </div>
               </div>
             );
@@ -361,12 +418,12 @@ export function FeishuConnectorDrawer({
 
       <Button
         className="w-full"
-        variant={state.hasConnected && !state.needsReconnect ? "outline" : "default"}
-        disabled={state.authServiceUnavailable || state.authInProgress || state.connecting}
-        onClick={() => { void state.startConnection(); }}
+        variant={state.authInProgress || (state.hasConnected && !state.needsReconnect) ? "outline" : "default"}
+        disabled={state.authServiceUnavailable || state.connecting || state.disconnecting}
+        onClick={() => { void (state.authInProgress ? state.cancelAuthorization() : state.startConnection()); }}
       >
-        {(state.authInProgress || state.connecting) ? <Loader2 className="size-4 animate-spin" /> : null}
-        {state.connectLabel}
+        {state.connecting ? <Loader2 className="size-4 animate-spin" /> : state.authInProgress ? <Unplug className="size-4" /> : null}
+        {state.authInProgress ? "取消授权" : state.connectLabel}
       </Button>
     </CapabilityDetailDrawer>
   );

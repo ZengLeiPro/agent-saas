@@ -144,10 +144,11 @@ function SimpleTodoItem({ todo, runActive }: { todo: TodoItem; runActive: boolea
 }
 
 export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelProps) {
+  // 全量 todos（含 business 步骤）：TodoPanel 是常驻总览导航（吸附在输入框上方），
+  // 流内的业务步骤事件负责叙事，这里负责「我在哪、还剩什么」。
   const todos = useMemo(() => {
     const latest = extractLatestTodos(messages);
-    const simpleTodos = latest?.filter((todo) => todo.kind !== "business") ?? [];
-    return simpleTodos.length ? simpleTodos : null;
+    return latest?.length ? latest : null;
   }, [messages]);
   const isMobile = useIsMobile();
   const sessionKey = sessionId || "__local__";

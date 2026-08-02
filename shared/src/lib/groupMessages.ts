@@ -1,6 +1,6 @@
 import type { MessageItem, ActivityGroup, RenderItem } from '../types/message';
 import { ACTIVITY_TYPES } from '../types/message';
-import { projectBusinessTodoGroups } from './extractTodos';
+import { projectBusinessStepEvents } from './extractTodos';
 
 /** Check if activity group is active (has streaming/running items) */
 function isGroupActive(items: MessageItem[], isLastGroup: boolean, loading: boolean): boolean {
@@ -12,14 +12,24 @@ function isGroupActive(items: MessageItem[], isLastGroup: boolean, loading: bool
   return isLastGroup && loading;
 }
 
+export interface GroupMessagesOptions {
+  /**
+   * debug 视图保留 TodoWrite 原始工具块（与业务步骤事件并存，语义=看原始数据）；
+   * 非 debug 视图 TodoWrite 从主流隐藏——总览由 TodoPanel 承载、叙事由事件承载。
+   */
+  debugMode?: boolean;
+}
+
 /** Group flat message array into render units (pure function, O(n) single pass) */
-export function groupMessages(messages: MessageItem[], loading: boolean): RenderItem[] {
+export function groupMessages(
+  messages: MessageItem[],
+  loading: boolean,
+  options?: GroupMessagesOptions,
+): RenderItem[] {
   const result: RenderItem[] = [];
   let currentGroup: MessageItem[] = [];
-  const businessProjection = projectBusinessTodoGroups(messages, loading);
-  const businessGroupByAnchor = new Map(
-    businessProjection.groups.map((group) => [group.anchorMessageId, group]),
-  );
+  const debugMode = options?.debugMode === true;
+  const businessProjection = projectBusinessStepEvents(messages, loading);
 
   const flushGroup = (isLast: boolean) => {
     if (currentGroup.length === 0) return;
@@ -35,12 +45,15 @@ export function groupMessages(messages: MessageItem[], loading: boolean): Render
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
-    const businessGroup = businessGroupByAnchor.get(msg.id);
-    if (businessGroup) {
+
+    // 业务步骤事件插在产生它的 TodoWrite 消息位置：终态/开始事件按时间线性出现，
+    // 与 thinking / 工具活动 / 正文同向生长（时间叙事，不做原地更新的看板）。
+    const anchoredEvents = businessProjection.eventsByAnchor.get(msg.id);
+    if (anchoredEvents) {
       flushGroup(false);
-      result.push(businessGroup);
+      for (const event of anchoredEvents) result.push(event);
     }
-    if (businessProjection.hiddenSourceMessageIds.has(msg.id)) {
+    if (!debugMode && businessProjection.hiddenMessageIds.has(msg.id)) {
       continue;
     }
 

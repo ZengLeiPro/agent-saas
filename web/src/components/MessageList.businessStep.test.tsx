@@ -27,12 +27,10 @@ function messages(): MessageItem[] {
       toolName: "TodoWrite",
       toolId: "todo-start",
       toolInput: JSON.stringify({
-        todos: [{
-          id: "verify-order",
-          kind: "business",
-          content: "核验订单",
-          status: "in_progress",
-        }],
+        todos: [
+          { id: "verify-order", kind: "business", content: "核验订单", status: "in_progress" },
+          { id: "write-result", kind: "business", content: "写入核验结果", status: "pending" },
+        ],
       }),
     },
     {
@@ -50,26 +48,56 @@ function messages(): MessageItem[] {
       toolName: "TodoWrite",
       toolId: "todo-finish",
       toolInput: JSON.stringify({
-        todos: [{
-          id: "verify-order",
-          kind: "business",
-          content: "核验订单",
-          status: "completed",
-          detail: [{ verdict: "pass", text: "订单资料完整" }],
-        }],
+        todos: [
+          {
+            id: "verify-order",
+            kind: "business",
+            content: "核验订单",
+            status: "completed",
+            detail: [{ verdict: "pass", text: "订单资料完整" }],
+          },
+          { id: "write-result", kind: "business", content: "写入核验结果", status: "in_progress" },
+        ],
       }),
     },
   ];
 }
 
-describe("MessageList business todo projection", () => {
-  it("renders one updated business card in the main conversation", () => {
+describe("MessageList business step timeline", () => {
+  it("renders plan, terminal summary and start trace as a linear timeline", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
-    expect(screen.getByRole("region", { name: "业务步骤" })).toBeTruthy();
+    // 计划亮相块
+    expect(screen.getByRole("region", { name: "业务计划" })).toBeTruthy();
+    // 终态块携带业务小结
+    expect(screen.getByRole("region", { name: "业务步骤已完成" })).toBeTruthy();
     expect(screen.getByText("订单资料完整")).toBeTruthy();
-    expect(screen.getByText("执行详情（1）")).toBeTruthy();
+    // 第二步开始痕迹（plan 块 + start 行各出现一次）
+    expect(screen.getAllByText("写入核验结果")).toHaveLength(2);
+    // TodoWrite 原始块隐藏
     expect(screen.queryByText("TodoWrite")).toBeNull();
+  });
+
+  it("keeps ordinary tool activity in the flow instead of absorbing it into cards", () => {
+    const { container } = render(
+      <MessageList messages={messages()} loading={false} debugModeOverride={false} />,
+    );
+
+    // 普通工具调用保留在活动分组中（时间顺序），不被吸进任何步骤卡
+    expect(screen.queryByText(/执行详情/)).toBeNull();
+    expect(container.textContent).toContain("读取订单");
+  });
+
+  it("renders timeline order: plan before activity before terminal block", () => {
+    const { container } = render(
+      <MessageList messages={messages()} loading={false} debugModeOverride={false} />,
+    );
+
+    const html = container.innerHTML;
+    const planPos = html.indexOf("业务计划");
+    const completePos = html.indexOf("业务步骤已完成");
+    expect(planPos).toBeGreaterThan(-1);
+    expect(completePos).toBeGreaterThan(planPos);
   });
 
   it("keeps a 500-message conversation DOM bounded before viewport measurement", () => {

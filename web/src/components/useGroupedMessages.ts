@@ -4,7 +4,7 @@ import { groupMessages } from '@agent/shared';
 
 export { groupMessages };
 
-/** Grouping hook: recompute when messages or loading changes */
-export function useGroupedMessages(messages: MessageItem[], loading: boolean): RenderItem[] {
-  return useMemo(() => groupMessages(messages, loading), [messages, loading]);
+/** Grouping hook: recompute when messages, loading or debug view changes */
+export function useGroupedMessages(messages: MessageItem[], loading: boolean, debugMode = false): RenderItem[] {
+  return useMemo(() => groupMessages(messages, loading, { debugMode }), [messages, loading, debugMode]);
 }

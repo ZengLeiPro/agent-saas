@@ -6,10 +6,16 @@
  * - 组内有 streaming / running subagent → active
  * - 最后一组 + loading 且工具未 resultReady → active
  * - 非最后一组即使 loading 也不 active
+ *
+ * Business TodoWrite 走「快照差分→事件流」投影：
+ * - 事件插在产生它的 TodoWrite 消息位置，按时间线性出现；
+ * - 普通工具调用不再被吸进步骤卡，保持自然活动分组；
+ * - TodoWrite 消息非 debug 隐藏（总览由 TodoPanel 承载），debug 保留原始块。
  */
 import { describe, expect, it } from 'vitest';
 import { groupMessages } from './groupMessages';
-import type { MessageItem, ActivityGroup, BusinessTodoGroup } from '../types/message';
+import type { BusinessStepEventItem } from './extractTodos';
+import type { MessageItem, ActivityGroup } from '../types/message';
 
 const user = (id: string): MessageItem => ({ id, type: 'user', content: 'hi' });
 const text = (id: string): MessageItem => ({ id, type: 'text', content: 'answer' });
@@ -17,6 +23,13 @@ const tool = (id: string, extra: Partial<Extract<MessageItem, { type: 'tool_use'
   id, type: 'tool_use', toolName: 'Bash', toolInput: '{}', toolId: id, ...extra,
 });
 const thinking = (id: string, streaming = false): MessageItem => ({ id, type: 'thinking', content: 't', streaming });
+const businessTodo = (id: string, items: Array<Record<string, unknown>>): MessageItem => ({
+  id,
+  type: 'tool_use',
+  toolName: 'TodoWrite',
+  toolId: id,
+  toolInput: JSON.stringify({ todos: items }),
+});
 
 describe('groupMessages', () => {
   it('连续的活动消息聚合为一个 activity_group，id 取首个 item', () => {
@@ -65,25 +78,13 @@ describe('groupMessages', () => {
     expect((result[0] as ActivityGroup).items.map(i => i.id)).toEqual(['t1', 'bare']);
   });
 
-  it('Business TodoWrite 在首次位置投影成一张主流卡，后续快照只更新不追加', () => {
-    const start: MessageItem = {
-      id: 'todo-start',
-      type: 'tool_use',
-      toolName: 'TodoWrite',
-      toolId: 'todo-start',
-      toolInput: JSON.stringify({
-        todos: [{ id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' }],
-      }),
-    };
-    const update: MessageItem = {
-      id: 'todo-update',
-      type: 'tool_use',
-      toolName: 'TodoWrite',
-      toolId: 'todo-update',
-      toolInput: JSON.stringify({
-        todos: [{ id: 'verify', kind: 'business', content: '核验订单', status: 'completed' }],
-      }),
-    };
+  it('Business TodoWrite 差分成时间线事件：plan 在首快照位置，终态事件在后续快照位置', () => {
+    const start = businessTodo('todo-start', [
+      { id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' },
+    ]);
+    const update = businessTodo('todo-update', [
+      { id: 'verify', kind: 'business', content: '核验订单', status: 'completed', detail: ['核验通过'] },
+    ]);
     const read = tool('read-1', {
       toolName: 'Read',
       executionStatus: 'completed',
@@ -92,14 +93,55 @@ describe('groupMessages', () => {
 
     const result = groupMessages([user('user-1'), start, read, update, text('answer')], false);
 
-    expect(result.map(item => item.type)).toEqual(['user', 'business_todo', 'text']);
-    const business = result[1] as BusinessTodoGroup;
-    expect(business.id).toBe('business-todo-todo-start');
-    expect(business.todos).toMatchObject([{ id: 'verify', status: 'completed' }]);
-    expect(business.activitiesByTodo['id:verify']).toMatchObject([
-      { id: 'read-1', toolName: 'Read', label: '读取订单', status: 'completed' },
+    // 事件按时间线出现：plan（首快照位置）→ 工具活动组（不被吸收）→ complete（终态快照位置）→ 正文
+    expect(result.map(item => item.type)).toEqual([
+      'user', 'business_step', 'activity_group', 'business_step', 'text',
     ]);
-    expect(business.toolMessagesByTodo['id:verify'].map(item => item.id)).toEqual(['read-1']);
+    const plan = result[1] as BusinessStepEventItem;
+    expect(plan).toMatchObject({ kind: 'plan', anchorMessageId: 'todo-start' });
+    const activity = result[2] as ActivityGroup;
+    expect(activity.items.map(i => i.id)).toEqual(['read-1']);
+    const complete = result[3] as BusinessStepEventItem;
+    expect(complete).toMatchObject({
+      kind: 'complete',
+      anchorMessageId: 'todo-update',
+      todo: { id: 'verify', status: 'completed', detail: ['核验通过'] },
+    });
+  });
+
+  it('非 debug 视图隐藏 TodoWrite 原始块；debug 视图保留（与事件并存）', () => {
+    const snapshot = businessTodo('todo-1', [
+      { id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' },
+    ]);
+
+    const normal = groupMessages([snapshot], false);
+    expect(normal.map(item => item.type)).toEqual(['business_step']);
+
+    const debug = groupMessages([snapshot], false, { debugMode: true });
+    expect(debug.map(item => item.type)).toEqual(['business_step', 'activity_group']);
+    expect((debug[1] as ActivityGroup).items.map(i => i.id)).toEqual(['todo-1']);
+  });
+
+  it('task-only TodoWrite 从主流隐藏且不产生事件（总览由 TodoPanel 承载）', () => {
+    const taskSnapshot = businessTodo('todo-task', [
+      { id: 'task', kind: 'task', content: '普通任务', status: 'in_progress' },
+    ]);
+    const result = groupMessages([thinking('t1'), taskSnapshot, text('txt')], false);
+    expect(result.map(item => item.type)).toEqual(['activity_group', 'text']);
+    expect((result[0] as ActivityGroup).items.map(i => i.id)).toEqual(['t1']);
+  });
+
+  it('业务步骤事件切开前后的活动分组，普通工具保持自然顺序', () => {
+    const snapshot = businessTodo('todo-1', [
+      { id: 'a', kind: 'business', content: '第一步', status: 'in_progress' },
+    ]);
+    const result = groupMessages(
+      [thinking('t1'), snapshot, thinking('t2'), tool('shell-1')],
+      false,
+    );
+    expect(result.map(item => item.type)).toEqual(['activity_group', 'business_step', 'activity_group']);
+    expect((result[0] as ActivityGroup).items.map(i => i.id)).toEqual(['t1']);
+    expect((result[2] as ActivityGroup).items.map(i => i.id)).toEqual(['t2', 'shell-1']);
   });
 
   it('只有非活动消息时不产生任何 activity_group', () => {

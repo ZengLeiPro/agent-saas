@@ -60,24 +60,35 @@ describe("TodoPanel", () => {
     expect(container.querySelector(".animate-spin")).toBeNull();
   });
 
-  it("leaves business todos to the main conversation renderer", () => {
+  it("keeps business todos in the overview navigation (timeline events live in the flow)", () => {
     const messages: MessageItem[] = [{
       id: "todo-business",
       type: "tool_use",
       toolName: "TodoWrite",
       toolId: "todo-business",
       toolInput: JSON.stringify({
-        todos: [{
-          id: "verify-order",
-          kind: "business",
-          content: "核验订单",
-          status: "in_progress",
-        }],
+        todos: [
+          {
+            id: "verify-order",
+            kind: "business",
+            content: "核验订单",
+            status: "completed",
+          },
+          {
+            id: "write-result",
+            kind: "business",
+            content: "写入核验结果",
+            status: "in_progress",
+            activeForm: "正在写入核验结果",
+          },
+        ],
       }),
     }];
 
-    const { container } = render(<TodoPanel messages={messages} sessionId="business-session" runActive />);
+    render(<TodoPanel messages={messages} sessionId="business-session" runActive />);
 
-    expect(container.firstElementChild).toBeNull();
+    // 摘要条显示当前进行中的业务步骤与进度计数
+    expect(screen.getByText("正在写入核验结果")).toBeTruthy();
+    expect(screen.getByText("1/2")).toBeTruthy();
   });
 });

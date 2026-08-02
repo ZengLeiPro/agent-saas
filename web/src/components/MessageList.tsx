@@ -5,7 +5,7 @@ import { MessageItem as MessageItemType, type RenderItem } from './types';
 import { MessageItemWithDisplay as MessageItem } from './MessageItemWithDisplay';
 import type { TtsProps } from './MessageItem';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
-import { BusinessTodoBlock } from './BusinessTodoBlock';
+import { BusinessStepFlow } from './BusinessStepFlow';
 import { CompactionDivider } from './CompactionDivider';
 import { asCompactionItem } from '@/lib/compaction';
 import {
@@ -263,7 +263,9 @@ export const MessageList = memo(function MessageList({
   }, [scrollContainerRef]);
 
   const voicePlayer = useVoicePlayer();
-  const groupedMessages = useGroupedMessages(messages, loading);
+  const { user } = useAuth();
+  const debugMode = debugModeOverride ?? user?.debugMode === true;
+  const groupedMessages = useGroupedMessages(messages, loading, debugMode);
   const bubbleItems = useMemo(() => groupIntoBubbles(groupedMessages), [groupedMessages]);
   const lastRenderIdx = bubbleItems.length - 1;
   const bubbleKeys = useMemo(() => bubbleItems.map(getBubbleVirtualKey), [bubbleItems]);
@@ -558,8 +560,6 @@ export const MessageList = memo(function MessageList({
     return ids;
   }, [bubbleItems]);
 
-  const { user } = useAuth();
-  const debugMode = debugModeOverride ?? user?.debugMode === true;
   const displayUser = useMemo(() => {
     const owner = sessionParticipants?.owner;
     if (owner) {
@@ -627,10 +627,10 @@ export const MessageList = memo(function MessageList({
                 )}
                 <div className="py-2">
                   {item.items.map((sub) => {
-                    if (sub.type === 'business_todo') {
+                    if (sub.type === 'business_step') {
                       return (
                         <ErrorBoundary key={sub.id} inline>
-                          <BusinessTodoBlock group={sub} debugMode={debugMode} />
+                          <BusinessStepFlow event={sub} />
                         </ErrorBoundary>
                       );
                     }
@@ -678,8 +678,8 @@ export const MessageList = memo(function MessageList({
             );
           }
 
-          // --- Standalone business_todo (normally grouped into an AI bubble) ---
-          if (item.type === 'business_todo') {
+          // --- Standalone business_step (normally grouped into an AI bubble) ---
+          if (item.type === 'business_step') {
             return (
               <div
                 key={item.id}
@@ -691,7 +691,7 @@ export const MessageList = memo(function MessageList({
                 )}
                 <div className="py-2">
                   <ErrorBoundary inline>
-                    <BusinessTodoBlock group={item} debugMode={debugMode} />
+                    <BusinessStepFlow event={item} />
                   </ErrorBoundary>
                 </div>
               </div>

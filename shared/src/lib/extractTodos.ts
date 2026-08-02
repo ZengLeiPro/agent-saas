@@ -1,4 +1,4 @@
-import type { BusinessTodoGroup, MessageItem } from "../types/message";
+import type { MessageItem } from "../types/message";
 import { normalizeDetailLine, type DetailLine } from "./toolPresentation";
 import { normalizeDisplay } from "./presentation/registry";
 import type { PresentationBlock } from "./presentation/types";
@@ -26,17 +26,9 @@ export interface TodoItem {
   evidenceRefs?: string[];
 }
 
-export interface TodoToolActivity {
-  id: string;
-  toolName: string;
-  label: string;
-  status?: "pending" | "running" | "completed" | "failed" | "cancelled";
-}
-
 const TODO_WRITE_TOOL_NAME = "TodoWrite";
 const TODO_DETAIL_LIMIT = 60;
 const TODO_EVIDENCE_LIMIT = 20;
-const TODO_ACTIVITY_LIMIT = 50;
 
 function isTodoStatus(status: unknown): status is TodoStatus {
   return status === "pending"
@@ -133,137 +125,213 @@ export function todoItemKey(todo: TodoItem): string {
   return todo.id ? `id:${todo.id}` : `legacy:${todo.content}`;
 }
 
-export function isRichTodo(todo: TodoItem): boolean {
-  return todo.kind === "business"
-    || !!todo.detail?.length
-    || !!todo.display?.length
-    || !!todo.evidenceRefs?.length;
-}
-
 export function isBusinessTodo(todo: TodoItem): boolean {
   return todo.kind === "business";
 }
 
-function toToolActivity(message: Extract<MessageItem, { type: "tool_use" }>): TodoToolActivity {
-  return {
-    id: message.toolId || message.id,
-    toolName: message.toolName,
-    label: message.presentation?.title || message.toolName,
-    ...(message.executionStatus ? { status: message.executionStatus } : {}),
-  };
+// ---------------------------------------------------------------------------
+// 业务步骤事件流投影
+// ---------------------------------------------------------------------------
+//
+// 设计原则（对齐场景 demo 的时间线性叙事，替代 08-02 的「原地更新看板」形态）：
+// - TodoWrite 是全量快照替换语义；快照本身不直接渲染，而是对相邻快照做**差分**，
+//   把每个状态转移变成一条会话流内的事件，出现在它发生的时间位置。
+// - 普通工具调用不再被吸进步骤卡：thinking / 工具活动 / 正文保持自然时间顺序，
+//   与业务事件同向线性生长，杜绝「活动跳回上方卡片、正文在下方脱节」的撕裂。
+// - 计划总览职责交给常驻导航（TodoPanel），流内只保留叙事事件。
+// - 投影是纯函数、无累积状态：同一输入永远产出同一事件序列（React 重渲染幂等）。
+
+export type BusinessStepEventKind =
+  | "plan"
+  | "start"
+  | "complete"
+  | "fail"
+  | "block"
+  | "wait"
+  | "update";
+
+export interface BusinessStepEventItem {
+  type: "business_step";
+  /** 由 anchor 消息 id + 步骤 key + 事件种类构成，天然稳定、幂等。 */
+  id: string;
+  /** 产生本事件的 TodoWrite 消息 id，决定事件在会话流中的位置。 */
+  anchorMessageId: string;
+  kind: BusinessStepEventKind;
+  /** step 事件（start/complete/fail/block/wait）：事件发生时该步骤的快照内容。 */
+  todo?: TodoItem;
+  /** plan 事件：当时的完整业务步骤列表。 */
+  todos?: TodoItem[];
+  /** 1-based 序号（step 事件）。 */
+  stepIndex?: number;
+  stepCount?: number;
+  /** 最新快照的当前进行步骤且 run 仍活跃：渲染层据此显示 spinner。 */
+  isCurrent?: boolean;
 }
 
-export interface BusinessTodoProjection {
-  groups: BusinessTodoGroup[];
-  /** 已被业务步骤卡吸收的 TodoWrite 与普通工具消息，避免在主流重复出现。 */
-  hiddenSourceMessageIds: Set<string>;
+export interface BusinessStepProjection {
+  events: BusinessStepEventItem[];
+  /** 按 anchor 消息 id 索引，供 groupMessages 在对应位置插入事件。 */
+  eventsByAnchor: Map<string, BusinessStepEventItem[]>;
+  /** 完整解析的 TodoWrite 消息 id；非 debug 视图从主流隐藏（TodoPanel 承载总览）。 */
+  hiddenMessageIds: Set<string>;
 }
 
-interface BusinessTodoTurnState {
-  turnId: string;
-  anchorMessageId?: string;
-  latestTodos?: TodoItem[];
-  activitiesByTodo: Record<string, TodoToolActivity[]>;
-  toolMessagesByTodo: Record<string, Array<Extract<MessageItem, { type: "tool_use" }>>>;
-  activeTodoKey: string | null;
+interface StepEventBase {
+  type: "business_step";
+  anchorMessageId: string;
+  todo: TodoItem;
+  stepIndex?: number;
+  stepCount: number;
 }
+
+const TERMINAL_KIND_BY_STATUS: Partial<Record<TodoStatus, BusinessStepEventKind>> = {
+  completed: "complete",
+  failed: "fail",
+  blocked: "block",
+  waiting: "wait",
+};
 
 /**
- * 把每个用户 Turn 内的 Business TodoWrite 快照折叠成一个稳定的主会话渲染单元。
- * 首次 Business TodoWrite 决定卡片位置，后续完整快照只更新内容，不追加新卡片。
+ * 把 Business TodoWrite 快照序列差分成会话流内的业务步骤事件。
+ *
+ * 规则：
+ * - 每个用户 Turn 内首个完整 business 快照 → `plan` 事件（计划亮相，不回放快照内已有状态）；
+ * - 后续快照 vs 上一快照逐步骤 diff：
+ *   `→completed/failed/blocked/waiting` → 终态事件（携带该步骤最终 detail/display/evidence），
+ *   `→in_progress` → `start` 事件（首次开始与等待后继续同形）；
+ * - 收尾事件排在开新事件之前（同一快照先结旧步、再开新步）；
+ * - 仅结构增删且无任何状态转移时补一条轻量 `update`；
+ * - Turn 边界（user 消息）重置 baseline：跨 Turn 首快照重新亮相为 plan，不重复回放已完成步骤。
  */
-export function projectBusinessTodoGroups(messages: MessageItem[], loading: boolean): BusinessTodoProjection {
-  const groups: BusinessTodoGroup[] = [];
-  const hiddenSourceMessageIds = new Set<string>();
-  let state: BusinessTodoTurnState | null = null;
-  let anonymousTurn = 0;
+export function projectBusinessStepEvents(
+  messages: MessageItem[],
+  loading: boolean,
+): BusinessStepProjection {
+  const events: BusinessStepEventItem[] = [];
+  const eventsByAnchor = new Map<string, BusinessStepEventItem[]>();
+  const hiddenMessageIds = new Set<string>();
 
-  const ensureTurn = (): BusinessTodoTurnState => {
-    if (!state) {
-      anonymousTurn += 1;
-      state = {
-        turnId: `anonymous-${anonymousTurn}`,
-        activitiesByTodo: {},
-        toolMessagesByTodo: {},
-        activeTodoKey: null,
-      };
-    }
-    return state;
-  };
+  let baseline: Map<string, TodoItem> | null = null;
+  let latestActiveKey: string | null = null;
+  /** 最后一个承载「当前进行中」语义的事件（plan 或 start），用于 isCurrent 标注。 */
+  let lastProgressEvent: BusinessStepEventItem | null = null;
 
-  const flushTurn = () => {
-    if (!state?.anchorMessageId || !state.latestTodos?.length) return;
-    groups.push({
-      type: "business_todo",
-      id: `business-todo-${state.anchorMessageId}`,
-      turnId: state.turnId,
-      anchorMessageId: state.anchorMessageId,
-      todos: state.latestTodos,
-      activitiesByTodo: state.activitiesByTodo,
-      toolMessagesByTodo: state.toolMessagesByTodo,
-      isActive: false,
-    });
+  const pushEvents = (anchorId: string, batch: BusinessStepEventItem[]) => {
+    if (!batch.length) return;
+    events.push(...batch);
+    const bucket = eventsByAnchor.get(anchorId) ?? [];
+    bucket.push(...batch);
+    eventsByAnchor.set(anchorId, bucket);
   };
 
   for (const message of messages) {
     if (message.type === "user") {
-      flushTurn();
-      state = {
-        turnId: message.id,
-        activitiesByTodo: {},
-        toolMessagesByTodo: {},
-        activeTodoKey: null,
+      baseline = null;
+      latestActiveKey = null;
+      lastProgressEvent = null;
+      continue;
+    }
+    if (message.type !== "tool_use" || message.toolName !== TODO_WRITE_TOOL_NAME) continue;
+
+    const todos = parseTodos(message.toolInput);
+    // streaming 中的不完整入参：不隐藏、不发事件，等完整快照一次性处理。
+    if (todos === undefined) continue;
+
+    hiddenMessageIds.add(message.id);
+
+    const businessTodos = todos === null ? [] : todos.filter(isBusinessTodo);
+
+    if (!businessTodos.length) {
+      // 整体替换语义下没有 business 项 = 业务步骤列表被清空（任务收尾或退回纯 task）。
+      // 终态事件此前都已发出，这里静默清 baseline，不再追加噪音。
+      baseline = null;
+      latestActiveKey = null;
+      lastProgressEvent = null;
+      continue;
+    }
+
+    const stepCount = businessTodos.length;
+    const indexByKey = new Map(businessTodos.map((todo, index) => [todoItemKey(todo), index + 1]));
+    const activeTodo = businessTodos.find((todo) => todo.status === "in_progress");
+    latestActiveKey = activeTodo ? todoItemKey(activeTodo) : null;
+
+    if (baseline === null) {
+      const planEvent: BusinessStepEventItem = {
+        type: "business_step",
+        id: `bs-${message.id}-plan`,
+        anchorMessageId: message.id,
+        kind: "plan",
+        todos: businessTodos,
+        stepCount,
       };
-      continue;
-    }
-    if (message.type !== "tool_use") continue;
-
-    const turn = ensureTurn();
-    if (message.toolName === TODO_WRITE_TOOL_NAME) {
-      const todos = parseTodos(message.toolInput);
-      if (todos === undefined) continue;
-      if (turn.anchorMessageId) hiddenSourceMessageIds.add(message.id);
-      if (todos === null) {
-        turn.activeTodoKey = null;
-        continue;
-      }
-
-      const businessTodos = todos.filter(isBusinessTodo);
-      if (businessTodos.length > 0) {
-        turn.anchorMessageId ??= message.id;
-        turn.latestTodos = businessTodos;
-        hiddenSourceMessageIds.add(message.id);
-      }
-      const activeTodo = businessTodos.find((todo) => todo.status === "in_progress");
-      turn.activeTodoKey = activeTodo ? todoItemKey(activeTodo) : null;
+      pushEvents(message.id, [planEvent]);
+      lastProgressEvent = planEvent;
+      baseline = new Map(businessTodos.map((todo) => [todoItemKey(todo), todo]));
       continue;
     }
 
-    if (!turn.activeTodoKey) continue;
-    hiddenSourceMessageIds.add(message.id);
-    const bucket = turn.activitiesByTodo[turn.activeTodoKey] ?? [];
-    if (bucket.length >= TODO_ACTIVITY_LIMIT) continue;
-    bucket.push(toToolActivity(message));
-    turn.activitiesByTodo[turn.activeTodoKey] = bucket;
-    const toolMessages = turn.toolMessagesByTodo[turn.activeTodoKey] ?? [];
-    toolMessages.push(message);
-    turn.toolMessagesByTodo[turn.activeTodoKey] = toolMessages;
-  }
+    const closings: BusinessStepEventItem[] = [];
+    const openings: BusinessStepEventItem[] = [];
+    let structureChanged = false;
 
-  const activeTurnId = state?.turnId;
-  flushTurn();
-  if (loading && activeTurnId) {
-    for (let index = groups.length - 1; index >= 0; index -= 1) {
-      const activeGroup = groups[index];
-      if (activeGroup.turnId !== activeTurnId) continue;
-      if (activeGroup.todos.some((todo) => todo.status === "in_progress")) {
-        activeGroup.isActive = true;
+    for (const todo of businessTodos) {
+      const key = todoItemKey(todo);
+      const prev = baseline.get(key);
+      if (!prev) structureChanged = true;
+      // 新增步骤按 pending 起点做虚拟转移：新增即 completed 的补记步骤也能发出终态事件。
+      const prevStatus = prev?.status ?? "pending";
+      if (prevStatus === todo.status) continue;
+
+      const base: StepEventBase = {
+        type: "business_step",
+        anchorMessageId: message.id,
+        todo,
+        stepIndex: indexByKey.get(key),
+        stepCount,
+      };
+      const terminalKind = TERMINAL_KIND_BY_STATUS[todo.status];
+      if (terminalKind) {
+        closings.push({ ...base, id: `bs-${message.id}-${key}-${terminalKind}`, kind: terminalKind });
+      } else if (todo.status === "in_progress") {
+        openings.push({ ...base, id: `bs-${message.id}-${key}-start`, kind: "start" });
       }
-      break;
+      // →pending 的回退（重排）不产生事件。
     }
+
+    for (const key of baseline.keys()) {
+      if (!indexByKey.has(key)) structureChanged = true;
+    }
+
+    // 有状态转移时结构变化不再单独播报（start/终态事件已是足够的叙事）；
+    // 仅纯增删/重排时补一条轻量提示，避免计划演变在流内完全无痕。
+    const updates: BusinessStepEventItem[] =
+      structureChanged && !closings.length && !openings.length
+        ? [{
+            type: "business_step",
+            id: `bs-${message.id}-update`,
+            anchorMessageId: message.id,
+            kind: "update",
+            stepCount,
+          }]
+        : [];
+
+    pushEvents(message.id, [...closings, ...openings, ...updates]);
+    if (openings.length) {
+      lastProgressEvent = openings[openings.length - 1];
+    }
+    baseline = new Map(businessTodos.map((todo) => [todoItemKey(todo), todo]));
   }
 
-  return { groups, hiddenSourceMessageIds };
+  if (loading && latestActiveKey && lastProgressEvent) {
+    const matchesActive = lastProgressEvent.kind === "plan"
+      ? lastProgressEvent.todos?.some(
+          (todo) => todo.status === "in_progress" && todoItemKey(todo) === latestActiveKey,
+        )
+      : lastProgressEvent.todo && todoItemKey(lastProgressEvent.todo) === latestActiveKey;
+    if (matchesActive) lastProgressEvent.isCurrent = true;
+  }
+
+  return { events, eventsByAnchor, hiddenMessageIds };
 }
 
 export function extractLatestTodos(messages: MessageItem[]): TodoItem[] | null {
@@ -292,39 +360,4 @@ export function extractLatestTodos(messages: MessageItem[]): TodoItem[] | null {
   }
 
   return null;
-}
-
-/**
- * 把两次 TodoWrite 快照之间的普通工具调用归入当时的 in_progress 步骤。
- * 这里只生成折叠后的业务活动索引，不复制原始入参和结果。
- */
-export function extractTodoToolActivities(messages: MessageItem[]): Record<string, TodoToolActivity[]> {
-  const activities: Record<string, TodoToolActivity[]> = {};
-  let activeTodoKey: string | null = null;
-
-  for (const message of messages) {
-    if (message.type !== "tool_use") continue;
-
-    if (message.toolName === TODO_WRITE_TOOL_NAME) {
-      const todos = parseTodos(message.toolInput);
-      if (todos === undefined) continue;
-      if (todos === null) {
-        for (const key of Object.keys(activities)) delete activities[key];
-        activeTodoKey = null;
-        continue;
-      }
-      const activeTodo = todos.find((todo) => todo.status === "in_progress");
-      activeTodoKey = activeTodo ? todoItemKey(activeTodo) : null;
-      continue;
-    }
-
-    if (!activeTodoKey) continue;
-    const bucket = activities[activeTodoKey] ?? [];
-    if (bucket.length >= TODO_ACTIVITY_LIMIT) continue;
-
-    bucket.push(toToolActivity(message));
-    activities[activeTodoKey] = bucket;
-  }
-
-  return activities;
 }

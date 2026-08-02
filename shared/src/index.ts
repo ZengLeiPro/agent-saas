@@ -35,7 +35,6 @@ export type {
   SubagentStatus,
   UploadedFile,
   ActivityGroup,
-  BusinessTodoGroup,
   RenderItem,
   SessionOwnerInfo,
   SessionParticipants,
@@ -320,17 +319,16 @@ export type { SearchSessionsParams } from "./lib/searchApi";
 export { mergeServerMessagesWithLocalTail, mergeSessionMessageDelta, mergeSessionMessagePage } from "./lib/sessionMerge";
 export {
   extractLatestTodos,
-  extractTodoToolActivities,
   isBusinessTodo,
-  isRichTodo,
-  projectBusinessTodoGroups,
+  projectBusinessStepEvents,
   todoItemKey,
 } from "./lib/extractTodos";
 export type {
-  BusinessTodoProjection,
+  BusinessStepEventItem,
+  BusinessStepEventKind,
+  BusinessStepProjection,
   TodoItem,
   TodoStatus,
-  TodoToolActivity,
 } from "./lib/extractTodos";
 
 // Lib - groups API

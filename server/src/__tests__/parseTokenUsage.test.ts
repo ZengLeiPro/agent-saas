@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
@@ -215,6 +215,24 @@ describe('getTokenUsage — contextTokens accounting', () => {
     expect(usage?.totalInputTokens).toBe(2200);
     expect(usage?.totalOutputTokens).toBe(120);
     expect(usage?.totalCacheReadTokens).toBe(800);
+  });
+
+  it('复用未变化 transcript 的统计，并在文件追加后失效', async () => {
+    const path = await writeTranscript('usage-cache', [
+      assistantLine({ input_tokens: 1000, output_tokens: 100 }, 'glm-5.2', 'full'),
+    ]);
+
+    const first = await getTokenUsage(path);
+    const second = await getTokenUsage(path);
+    expect(second).toBe(first);
+
+    await appendFile(
+      path,
+      `${JSON.stringify(assistantLine({ input_tokens: 1200, output_tokens: 20 }, 'glm-5.2', 'full'))}\n`,
+    );
+    const afterAppend = await getTokenUsage(path);
+    expect(afterAppend).not.toBe(first);
+    expect(afterAppend?.totalTokens).toBe(2320);
   });
 
   it('cache_tokens_separate：缓存命中率分母包含 input/cache read/cache creation', async () => {

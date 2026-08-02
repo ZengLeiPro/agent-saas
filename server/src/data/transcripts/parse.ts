@@ -819,6 +819,52 @@ export interface TokenUsage {
   cacheHitRatio: number | null;
 }
 
+const TOKEN_USAGE_CACHE_MAX_ENTRIES = 128;
+
+interface TokenUsageCacheEntry {
+  mtimeMs: number;
+  size: number;
+  usage: TokenUsage | null;
+}
+
+const tokenUsageCache = new Map<string, TokenUsageCacheEntry>();
+const tokenUsageInFlight = new Map<string, Promise<TokenUsage | null>>();
+
+function tokenUsageCacheKey(resolved: string, legacyResponseMode?: ModelResponseMode): string {
+  return `${resolved}\0${legacyResponseMode ?? ""}`;
+}
+
+function getCachedTokenUsage(
+  key: string,
+  mtimeMs: number,
+  size: number,
+): TokenUsage | null | undefined {
+  const cached = tokenUsageCache.get(key);
+  if (!cached) return undefined;
+  if (cached.mtimeMs !== mtimeMs || cached.size !== size) {
+    tokenUsageCache.delete(key);
+    return undefined;
+  }
+  tokenUsageCache.delete(key);
+  tokenUsageCache.set(key, cached);
+  return cached.usage;
+}
+
+function setCachedTokenUsage(
+  key: string,
+  mtimeMs: number,
+  size: number,
+  usage: TokenUsage | null,
+): void {
+  tokenUsageCache.delete(key);
+  tokenUsageCache.set(key, { mtimeMs, size, usage });
+  while (tokenUsageCache.size > TOKEN_USAGE_CACHE_MAX_ENTRIES) {
+    const oldest = tokenUsageCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    tokenUsageCache.delete(oldest);
+  }
+}
+
 /**
  * 轻量级 token 统计：遍历 jsonl 提取主 agent 和子 agent 的 token 数据。
  *
@@ -837,8 +883,32 @@ export async function getTokenUsage(
   options: { legacyResponseMode?: ModelResponseMode } = {},
 ): Promise<TokenUsage | null> {
   const resolved = assertAllowedTranscriptPath(transcriptPath);
-  await fs.access(resolved);
+  const stat = await fs.stat(resolved);
+  const key = tokenUsageCacheKey(resolved, options.legacyResponseMode);
+  const cached = getCachedTokenUsage(key, stat.mtimeMs, stat.size);
+  if (cached !== undefined) return cached;
 
+  // 活跃会话可能在扫描期间继续追加；同一路径仍只保留一次扫描，避免大文件并行读两份。
+  // 本次结果若对应旧 stat，下一次请求会因 mtime/size 不同自动重新计算。
+  const existing = tokenUsageInFlight.get(key);
+  if (existing) return existing;
+
+  const usagePromise = getTokenUsageUncached(resolved, options)
+    .then((usage) => {
+      setCachedTokenUsage(key, stat.mtimeMs, stat.size, usage);
+      return usage;
+    })
+    .finally(() => {
+      tokenUsageInFlight.delete(key);
+    });
+  tokenUsageInFlight.set(key, usagePromise);
+  return usagePromise;
+}
+
+async function getTokenUsageUncached(
+  resolved: string,
+  options: { legacyResponseMode?: ModelResponseMode },
+): Promise<TokenUsage | null> {
   let lastContextTokens = 0;
   let lastRequestTokens = 0;
   let totalInputTokens = 0;

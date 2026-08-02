@@ -8,6 +8,12 @@ import * as fs from "node:fs/promises";
 import * as readline from "node:readline";
 import { apiLogger } from "../../utils/logger.js";
 import { ContextTokenAccumulator } from "../../runtime/contextAccounting.js";
+import {
+  REPLAY_RECENT_TOOL_RESULT_MAX_CHARS,
+  REPLAY_TOOL_RESULT_KEEP_RECENT,
+  REPLAY_TOOL_RESULT_MAX_CHARS,
+  truncateReplayToolResultContent,
+} from "../../runtime/replayEventBounds.js";
 import type { ModelResponseMode } from "../../runtime/types.js";
 import { computeCacheHitDenominatorTokens, computeUsageTotalTokens } from "../usage/pricing.js";
 import { assertAllowedTranscriptPath } from "./projectKey.js";
@@ -90,6 +96,31 @@ export interface ParsedTranscript {
   };
 }
 
+/**
+ * 会话详情是展示派生视图，不是原始 transcript 的镜像。
+ *
+ * 原文始终保留在 JSONL / EventStore；这里限制单块展示文本，避免一条超大工具结果在
+ * JSON.parse → block.content/raw → JSON.stringify → HTTP body 的链路上被复制数次。
+ */
+export const TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS = 512 * 1024;
+export const TRANSCRIPT_DETAIL_THINKING_MAX_CHARS = 128 * 1024;
+export const TRANSCRIPT_DETAIL_TOOL_INPUT_MAX_CHARS = 64 * 1024;
+export const TRANSCRIPT_DETAIL_RAW_MAX_CHARS = 16 * 1024;
+export const TRANSCRIPT_DETAIL_META_MAX_CHARS = 16 * 1024;
+
+const TRANSCRIPT_DETAIL_TRUNCATION_LABEL = "会话详情已截断；原始记录未改动";
+
+export function truncateTranscriptDetailText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  if (maxChars <= 0) return "";
+  const marker = `\n\n...[${TRANSCRIPT_DETAIL_TRUNCATION_LABEL}；省略 ${text.length - maxChars} 字符]...\n\n`;
+  if (marker.length >= maxChars) return marker.slice(0, maxChars);
+  const available = maxChars - marker.length;
+  const head = Math.ceil(available * 0.75);
+  const tail = available - head;
+  return `${text.slice(0, head)}${marker}${tail > 0 ? text.slice(-tail) : ""}`;
+}
+
 function toTsMs(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -122,16 +153,19 @@ function parseUserAttachments(
   return out.length > 0 ? out : undefined;
 }
 
-function formatJson(value: unknown): string {
+function formatJson(value: unknown, maxChars = TRANSCRIPT_DETAIL_META_MAX_CHARS): string {
   try {
-    return JSON.stringify(value, null, 2);
+    return truncateTranscriptDetailText(JSON.stringify(value, null, 2), maxChars);
   } catch {
-    return String(value);
+    return truncateTranscriptDetailText(String(value), maxChars);
   }
 }
 
-function normalizeTextContent(content: unknown): string {
-  if (typeof content === "string") return content;
+function normalizeTextContent(
+  content: unknown,
+  maxChars = TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS,
+): string {
+  if (typeof content === "string") return truncateTranscriptDetailText(content, maxChars);
   if (Array.isArray(content)) {
     const parts: string[] = [];
     for (const block of content) {
@@ -140,11 +174,11 @@ function normalizeTextContent(content: unknown): string {
         if (typeof t === "string") parts.push(t);
       }
     }
-    if (parts.length) return parts.join("\n");
-    return formatJson(content);
+    if (parts.length) return truncateTranscriptDetailText(parts.join("\n"), maxChars);
+    return formatJson(content, maxChars);
   }
   if (content == null) return "";
-  return String(content);
+  return truncateTranscriptDetailText(String(content), maxChars);
 }
 
 /** 剥离 <memory-context>...</memory-context> 前缀，用于前端展示时隐藏记忆内容 */
@@ -238,6 +272,7 @@ async function parseTranscriptFileUncached(
    * 前端只在 tool_use 分支读 presentation，配对过的 tool_result 会被丢弃。
    */
   const toolIdToBlockIndex: Record<string, number> = {};
+  const recentToolResults: TranscriptBlock[] = [];
 
   const rl = readline.createInterface({
     input: createReadStream(resolved, { encoding: "utf-8" }),
@@ -259,7 +294,7 @@ async function parseTranscriptFileUncached(
         kind: "meta",
         title: "Unparseable transcript line",
         defaultOpen: false,
-        content: line,
+        content: truncateTranscriptDetailText(line, TRANSCRIPT_DETAIL_META_MAX_CHARS),
       });
       continue;
     }
@@ -289,7 +324,9 @@ async function parseTranscriptFileUncached(
               kind: "text",
               title: "输出",
               defaultOpen: true,
-              content: typeof block.text === "string" ? block.text : formatJson(block),
+              content: typeof block.text === "string"
+                ? truncateTranscriptDetailText(block.text, TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS)
+                : formatJson(block, TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS),
               ...(guardrailEventId ? { guardrailEventId } : {}),
             });
             continue;
@@ -308,8 +345,11 @@ async function parseTranscriptFileUncached(
               kind: "thinking",
               title,
               defaultOpen: true,
-              content: thinkingText ?? "(no thinking text)",
-              raw: formatJson(block),
+              content: truncateTranscriptDetailText(
+                thinkingText ?? "(no thinking text)",
+                TRANSCRIPT_DETAIL_THINKING_MAX_CHARS,
+              ),
+              raw: formatJson(block, TRANSCRIPT_DETAIL_RAW_MAX_CHARS),
             });
             continue;
           }
@@ -334,12 +374,12 @@ async function parseTranscriptFileUncached(
               kind: "tool_use",
               title,
               defaultOpen: false,
-              content: formatJson(block?.input),
+              content: formatJson(block?.input, TRANSCRIPT_DETAIL_TOOL_INPUT_MAX_CHARS),
               raw: formatJson({
                 tool_use_id: block?.id,
                 name: block?.name,
                 input: block?.input,
-              }),
+              }, TRANSCRIPT_DETAIL_RAW_MAX_CHARS),
               toolName,
               toolId,
             });
@@ -352,7 +392,7 @@ async function parseTranscriptFileUncached(
             kind: "meta",
             title: `Assistant block: ${String(blockType ?? "unknown")}`,
             defaultOpen: false,
-            content: formatJson(block),
+            content: formatJson(block, TRANSCRIPT_DETAIL_META_MAX_CHARS),
           });
         }
       } else {
@@ -362,7 +402,7 @@ async function parseTranscriptFileUncached(
           kind: "text",
           title: "输出",
           defaultOpen: true,
-          content: normalizeTextContent(content),
+          content: normalizeTextContent(content, TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS),
         });
       }
       continue;
@@ -382,6 +422,11 @@ async function parseTranscriptFileUncached(
             const isError = block?.is_error === true;
             const toolUseId = String(block?.tool_use_id ?? "");
             const toolName = toolUseId ? (toolIdToName[toolUseId] ?? "unknown") : undefined;
+            const toolResultContent = truncateReplayToolResultContent(
+              normalizeTextContent(block?.content, TRANSCRIPT_DETAIL_TOOL_INPUT_MAX_CHARS),
+              REPLAY_RECENT_TOOL_RESULT_MAX_CHARS,
+              toolUseId || "unknown",
+            );
 
             // 反向嫁接：presentation 写在 tool_result 行，但要挂到 tool_use block 上。
             // 刻意不写进 raw——raw 的语义是「给模型看的原始 payload」，
@@ -392,26 +437,42 @@ async function parseTranscriptFileUncached(
               if (targetBlock) targetBlock.presentation = block.presentation;
             }
 
-            blocks.push({
+            const toolResultBlock: TranscriptBlock = {
               id: `line-${lines}-user-${idx}`,
               tsMs,
               kind: "tool_result",
               title: `工具结果: ${toolUseId || "unknown"}${isError ? "（错误）" : ""}`,
               defaultOpen: false,
-              content: normalizeTextContent(block?.content),
+              content: toolResultContent,
               raw: formatJson({
                 tool_use_id: block?.tool_use_id,
                 is_error: block?.is_error,
-                content: block?.content,
-              }),
+                content: toolResultContent,
+              }, TRANSCRIPT_DETAIL_RAW_MAX_CHARS),
               isError,
               toolName,
               toolId: toolUseId,
-            });
+            };
+            blocks.push(toolResultBlock);
+            recentToolResults.push(toolResultBlock);
+            if (recentToolResults.length > REPLAY_TOOL_RESULT_KEEP_RECENT) {
+              const older = recentToolResults.shift();
+              if (older) {
+                older.content = truncateReplayToolResultContent(
+                  older.content,
+                  REPLAY_TOOL_RESULT_MAX_CHARS,
+                  older.toolId || "unknown",
+                );
+                // raw 与 content 重复承载同一工具结果；旧结果保留可见节选即可。
+                delete older.raw;
+              }
+            }
             continue;
           }
           if (blockType === "text") {
-            const text = typeof block.text === "string" ? block.text : formatJson(block);
+            const text = typeof block.text === "string"
+              ? truncateTranscriptDetailText(block.text, TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS)
+              : formatJson(block, TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS);
             if (isSkillContextText(text)) {
               blocks.push({
                 id: `line-${lines}-user-${idx}`,
@@ -469,11 +530,11 @@ async function parseTranscriptFileUncached(
             kind: "meta",
             title: `User block: ${String(blockType ?? "unknown")}`,
             defaultOpen: false,
-            content: formatJson(block),
+            content: formatJson(block, TRANSCRIPT_DETAIL_META_MAX_CHARS),
           });
         }
       } else {
-        const text = normalizeTextContent(content);
+        const text = normalizeTextContent(content, TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS);
         if (isSkillContextText(text)) {
           blocks.push({
             id: `line-${lines}-user`,
@@ -532,7 +593,9 @@ async function parseTranscriptFileUncached(
         kind: "compaction",
         title: "上下文已压缩",
         defaultOpen: false,
-        content: typeof obj?.summary === "string" ? obj.summary : "",
+        content: typeof obj?.summary === "string"
+          ? truncateTranscriptDetailText(obj.summary, TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS)
+          : "",
         ...(typeof obj?.coveredEventCount === "number"
           ? { coveredEventCount: obj.coveredEventCount }
           : {}),
@@ -548,7 +611,7 @@ async function parseTranscriptFileUncached(
         kind: "meta",
         title: `结果: ${String(obj?.subtype ?? "unknown")}`,
         defaultOpen: false,
-        content: formatJson(obj),
+        content: formatJson(obj, TRANSCRIPT_DETAIL_META_MAX_CHARS),
       });
       continue;
     }
@@ -564,7 +627,7 @@ async function parseTranscriptFileUncached(
       kind: "meta",
       title: label,
       defaultOpen: false,
-      content: formatJson(obj),
+      content: formatJson(obj, TRANSCRIPT_DETAIL_META_MAX_CHARS),
     });
   }
 
@@ -989,8 +1052,79 @@ async function summarizeFullScan(filePath: string): Promise<TranscriptSummary> {
 }
 
 const summaryCache = new Map<string, { mtimeMs: number; summary: TranscriptSummary }>();
-const transcriptParseCache = new Map<string, { mtimeMs: number; parsed: ParsedTranscript }>();
+const TRANSCRIPT_PARSE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+const TRANSCRIPT_PARSE_CACHE_MAX_ENTRIES = 32;
+
+interface TranscriptParseCacheEntry {
+  mtimeMs: number;
+  parsed: ParsedTranscript;
+  estimatedBytes: number;
+}
+
+const transcriptParseCache = new Map<string, TranscriptParseCacheEntry>();
+let transcriptParseCacheBytes = 0;
 const transcriptParseInFlight = new Map<string, Promise<ParsedTranscript>>();
+
+function estimateParsedTranscriptBytes(parsed: ParsedTranscript): number {
+  let chars = parsed.sessionId?.length ?? 0;
+  for (const block of parsed.blocks) {
+    chars += block.id.length + block.title.length + block.content.length;
+    chars += block.raw?.length ?? 0;
+    chars += block.toolName?.length ?? 0;
+    chars += block.toolId?.length ?? 0;
+    if (block.presentation !== undefined) {
+      try {
+        chars += JSON.stringify(block.presentation).length;
+      } catch {
+        chars += 1024;
+      }
+    }
+  }
+  // V8 字符串通常按 1 或 2 bytes/char 存储；按 2 倍保守估算并计对象开销。
+  return chars * 2 + parsed.blocks.length * 512;
+}
+
+function deleteTranscriptParseCacheEntry(key: string): void {
+  const existing = transcriptParseCache.get(key);
+  if (!existing) return;
+  transcriptParseCache.delete(key);
+  transcriptParseCacheBytes = Math.max(0, transcriptParseCacheBytes - existing.estimatedBytes);
+}
+
+function getCachedTranscript(resolved: string, mtimeMs: number): ParsedTranscript | undefined {
+  const cached = transcriptParseCache.get(resolved);
+  if (!cached) return undefined;
+  if (cached.mtimeMs !== mtimeMs) {
+    // 活跃会话 mtime 变化时先释放旧快照，再解析新版本，避免两份大对象叠峰。
+    deleteTranscriptParseCacheEntry(resolved);
+    return undefined;
+  }
+  // Map 插入顺序作为 LRU；命中后移到尾部。
+  transcriptParseCache.delete(resolved);
+  transcriptParseCache.set(resolved, cached);
+  return cached.parsed;
+}
+
+function setCachedTranscript(resolved: string, mtimeMs: number, parsed: ParsedTranscript): void {
+  deleteTranscriptParseCacheEntry(resolved);
+  const estimatedBytes = estimateParsedTranscriptBytes(parsed);
+  if (estimatedBytes > TRANSCRIPT_PARSE_CACHE_MAX_BYTES) {
+    apiLogger.warn(
+      `[transcript] detail cache bypass path=${resolved} estimatedBytes=${estimatedBytes}`,
+    );
+    return;
+  }
+  transcriptParseCache.set(resolved, { mtimeMs, parsed, estimatedBytes });
+  transcriptParseCacheBytes += estimatedBytes;
+  while (
+    transcriptParseCache.size > TRANSCRIPT_PARSE_CACHE_MAX_ENTRIES
+    || transcriptParseCacheBytes > TRANSCRIPT_PARSE_CACHE_MAX_BYTES
+  ) {
+    const oldest = transcriptParseCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    deleteTranscriptParseCacheEntry(oldest);
+  }
+}
 
 export async function summarizeTranscript(
   transcriptPath: string,
@@ -1018,10 +1152,10 @@ export async function parseTranscriptFile(
   const resolved = assertAllowedTranscriptPath(transcriptPath);
   const stat = await fs.stat(resolved);
 
-  const cached = transcriptParseCache.get(resolved);
-  if (cached && cached.mtimeMs === stat.mtimeMs) {
+  const cached = getCachedTranscript(resolved, stat.mtimeMs);
+  if (cached) {
     apiLogger.info(`[transcript] detail cache hit path=${resolved}`);
-    return cached.parsed;
+    return cached;
   }
 
   const existing = transcriptParseInFlight.get(resolved);
@@ -1033,7 +1167,7 @@ export async function parseTranscriptFile(
   const startedAt = Date.now();
   const parsePromise = parseTranscriptFileUncached(resolved)
     .then((parsed) => {
-      transcriptParseCache.set(resolved, { mtimeMs: stat.mtimeMs, parsed });
+      setCachedTranscript(resolved, stat.mtimeMs, parsed);
       const durationMs = Date.now() - startedAt;
       apiLogger.info(`[transcript] detail cache miss path=${resolved} duration=${durationMs}ms blocks=${parsed.blocks.length} lines=${parsed.stats.lines}`);
       return parsed;

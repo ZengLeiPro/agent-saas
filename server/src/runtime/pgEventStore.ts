@@ -123,11 +123,22 @@ export class PgEventStore implements EventStore {
           UNIQUE(session_id, session_sequence)
         )
       `);
-      // PR 3 迁移：兼容旧库（在 CREATE 之前已存在的 runtime_events），加 tenant_id 列
-      await client.query(`
-        ALTER TABLE ${this.eventsTable}
-        ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'
-      `);
+      // PR 3 迁移：兼容旧库。不要在每次进程启动时无条件跑 ALTER TABLE；即使
+      // IF NOT EXISTS 已命中，PostgreSQL 仍会申请强表锁，关机前遗留的长会话读取
+      // 可能因此把 Server/Worker 的整个启动路径一起堵住。
+      const existingColumns = new Set((await client.query<{ column_name: string }>(`
+        SELECT attname AS column_name
+        FROM pg_attribute
+        WHERE attrelid = $1::regclass
+          AND attnum > 0
+          AND NOT attisdropped
+      `, [this.eventsTable])).rows.map((row) => row.column_name));
+      if (!existingColumns.has('tenant_id')) {
+        await client.query(`
+          ALTER TABLE ${this.eventsTable}
+          ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'
+        `);
+      }
       // UNIQUE(session_id, session_sequence) 已自带同序 btree，不再创建
       // ${this.eventsTable}_session_idx；event_json GIN 历史上 idx_scan=0，也不再创建。
       // 旧库可能仍有 legacy ${this.eventsTable}_run_idx（早期为 run_id 单列），

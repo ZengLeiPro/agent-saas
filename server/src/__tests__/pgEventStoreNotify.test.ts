@@ -10,11 +10,15 @@ const pgMock = vi.hoisted(() => {
   class MockConnection {
     readonly queries: QueryCall[] = [];
     readonly insertedEvents: PlatformEvent[] = [];
+    readonly existingColumns = new Set<string>();
     startSequence = '1';
     released = false;
 
     async query(text: string, params?: unknown[]): Promise<QueryResult> {
       this.queries.push({ text, params });
+      if (text.includes('FROM pg_attribute')) {
+        return { rows: [...this.existingColumns].map((column_name) => ({ column_name })) };
+      }
       if (text.includes('RETURNING next_sequence - $2 AS start_sequence')) {
         return { rows: [{ start_sequence: this.startSequence }] };
       }
@@ -310,6 +314,18 @@ describe('PgEventStore notify coalescing', () => {
     expect(ddl).not.toContain('test_events_event_json_gin_idx');
     expect(ddl).not.toContain('test_events_run_idx');
     expect(ddl).toContain('test_events_session_run_idx');
+  });
+
+  it('init skips ALTER TABLE when tenant_id already exists', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    pool.connection.existingColumns.add('tenant_id');
+
+    await store.init();
+
+    const ddl = pool.connection.queries.map((call) => call.text).join('\n');
+    expect(ddl).toContain('FROM pg_attribute');
+    expect(ddl).not.toContain('ALTER TABLE test_events');
   });
 
   it('list excludes replay-heavy event types when requested', async () => {

@@ -418,7 +418,7 @@ export interface AppRuntime {
    */
   startCronCoordinator: () => void;
   /**
-   * SIGUSR2 drain 序列（顺序敏感）：停 reconcile 定时器 → 停 cron 触发 →
+   * SIGUSR2 drain 序列（顺序敏感）：停/取消系统指标扫描 → 停 reconcile 定时器 → 停 cron 触发 →
    * 等 in-flight cron job 结清 → 释放 cron leadership（此后新实例可接管）→
    * 停 scheduler（不再 claim 新 run 并等 in-flight run 结清）。
    * WS 活跃流与 HTTP 上传不在此处等待，由 index.ts 的 drain 轮询负责。
@@ -2859,7 +2859,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const beginRuntimeDrain = async (): Promise<void> => {
     if (runtimeDrainStarted) return;
     runtimeDrainStarted = true;
-    // 1. 停 reconcile 定时器
+    // 1. 停止定时采样并取消在途 du。否则旧 Worker 在等待 run 安全交棒时仍会
+    //    继续扫描 NAS；若随后 OOM 重启，还会从头派生新一轮 du。
+    systemMetricsCollector?.stop();
+    // 2. 停 reconcile 定时器
     if (memoryPollReconcileTimer) {
       clearInterval(memoryPollReconcileTimer);
       memoryPollReconcileTimer = undefined;
@@ -2867,9 +2870,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // 技能物化先停止 claim，并等待当前目录原子提交完成，再释放 leader。
     await skillMaterializationService?.stop();
     await skillMaterializationLeadership?.stop();
-    // 2. 停 cron 触发（不打断执行中的 cron job）
+    // 3. 停 cron 触发（不打断执行中的 cron job）
     cronRuntime.service?.stop();
-    // 3. 等 in-flight cron job 结清后再释放 leadership：新 leader 从 jobs.json
+    // 4. 等 in-flight cron job 结清后再释放 leadership：新 leader 从 jobs.json
     //    加载状态，旧实例执行完的 saveJobs（lastRun 等）必须先落盘，否则任务
     //    状态回退可能导致新 leader 重复触发。
     if (cronRuntime.service) {
@@ -2886,9 +2889,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         await new Promise<void>((r) => setTimeout(r, 2000));
       }
     }
-    // 4. 释放 leadership → 新实例在一个重试周期（≤15s）内接管 cron
+    // 5. 释放 leadership → 新实例在一个重试周期（≤15s）内接管 cron
     await cronLeadership?.stop();
-    // 5. 停 scheduler：不再 claim 新 run，并等 in-flight run 结清
+    // 6. 停 scheduler：不再 claim 新 run，并等 in-flight run 结清
     //    （scheduler.stop 幂等；后续 runtimeEventStoreShutdown 再调用是 no-op）
     await runtimeScheduler?.stop();
   };

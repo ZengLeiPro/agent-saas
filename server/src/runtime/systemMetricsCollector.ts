@@ -22,7 +22,11 @@ export interface SystemMetricsCollectorOptions {
   workspaceScanIntervalMs?: number;
   duConcurrency?: number;
   tlsCheckHosts?: string[];
-  duExecutor?: (path: string, timeoutMs: number) => Promise<{ bytes: number; fileCount?: number | null }>;
+  duExecutor?: (
+    path: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ) => Promise<{ bytes: number; fileCount?: number | null }>;
   tlsChecker?: (host: string) => Promise<number>;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 }
@@ -52,11 +56,17 @@ export class SystemMetricsCollector {
   private workspaceTimer: ReturnType<typeof setInterval> | undefined;
   private fastInFlight = false;
   private workspaceInFlight = false;
+  private fastAbortController: AbortController | undefined;
+  private workspaceAbortController: AbortController | undefined;
   private readonly fastIntervalMs: number;
   private readonly workspaceScanIntervalMs: number;
   private readonly duConcurrency: number;
   private readonly tlsCheckHosts: string[];
-  private readonly duExecutor: (path: string, timeoutMs: number) => Promise<{ bytes: number; fileCount?: number | null }>;
+  private readonly duExecutor: (
+    path: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ) => Promise<{ bytes: number; fileCount?: number | null }>;
   private readonly tlsChecker: (host: string) => Promise<number>;
 
   constructor(private readonly options: SystemMetricsCollectorOptions) {
@@ -64,7 +74,8 @@ export class SystemMetricsCollector {
     this.workspaceScanIntervalMs = options.workspaceScanIntervalMs ?? 21_600_000;
     this.duConcurrency = Math.max(1, Math.min(8, options.duConcurrency ?? 2));
     this.tlsCheckHosts = resolveTlsCheckHosts(options.tlsCheckHosts);
-    this.duExecutor = options.duExecutor ?? runDu;
+    this.duExecutor = options.duExecutor
+      ?? ((path, timeoutMs, signal) => runDu(path, timeoutMs, runCommand, signal));
     this.tlsChecker = options.tlsChecker ?? getTlsCertSecondsLeft;
   }
 
@@ -73,12 +84,14 @@ export class SystemMetricsCollector {
     // FIX-3: 定时回调必须整体 catch，否则 PG 抖动等异常会变成 unhandled rejection 打崩进程。
     this.fastTimer = setInterval(() => {
       void this.collectFastOnce().catch((err) => {
+        if (err instanceof CommandAbortedError) return;
         this.options.logger?.warn(`SystemMetricsCollector fast pass failed: ${errorMessage(err)}`);
       });
     }, this.fastIntervalMs);
     this.fastTimer.unref?.();
     this.workspaceTimer = setInterval(() => {
       void this.scanWorkspacesOnce().catch((err) => {
+        if (err instanceof CommandAbortedError) return;
         this.options.logger?.warn(`SystemMetricsCollector workspace scan failed: ${errorMessage(err)}`);
       });
     }, this.workspaceScanIntervalMs);
@@ -87,6 +100,7 @@ export class SystemMetricsCollector {
       `SystemMetricsCollector started: fastIntervalMs=${this.fastIntervalMs} workspaceScanIntervalMs=${this.workspaceScanIntervalMs}`,
     );
     void this.collectFastOnce().catch((err) => {
+      if (err instanceof CommandAbortedError) return;
       this.options.logger?.warn(`SystemMetricsCollector startup fast pass failed: ${errorMessage(err)}`);
     });
     // workspace `du` 是 6 小时级容量盘点，不属于进程就绪条件。首次扫描延后到
@@ -94,6 +108,8 @@ export class SystemMetricsCollector {
   }
 
   stop(): void {
+    const abortedFastPass = this.fastAbortController !== undefined;
+    const abortedWorkspaceScan = this.workspaceAbortController !== undefined;
     if (this.fastTimer) {
       clearInterval(this.fastTimer);
       this.fastTimer = undefined;
@@ -102,18 +118,33 @@ export class SystemMetricsCollector {
       clearInterval(this.workspaceTimer);
       this.workspaceTimer = undefined;
     }
+    this.fastAbortController?.abort(new CommandAbortedError('System metrics collector stopped'));
+    this.workspaceAbortController?.abort(new CommandAbortedError('System metrics collector stopped'));
+    if (abortedFastPass || abortedWorkspaceScan) {
+      this.options.logger?.info(
+        `SystemMetricsCollector stopped: abortedFastPass=${abortedFastPass} abortedWorkspaceScan=${abortedWorkspaceScan}`,
+      );
+    }
   }
 
   async collectFastOnce(): Promise<void> {
     if (this.fastInFlight) return;
     this.fastInFlight = true;
+    const abortController = new AbortController();
+    this.fastAbortController = abortController;
     const sampledAt = new Date();
     try {
       await Promise.all([
         this.collectDisk('/', 'disk_root', sampledAt),
         existsSync(this.options.agentCwd) ? this.collectDisk(this.options.agentCwd, 'disk_nas', sampledAt) : Promise.resolve(),
         this.collectPgTableSizes(sampledAt),
-        this.collectPathSize(join(this.options.processCwd, 'data'), 'server_data_size', '', sampledAt),
+        this.collectPathSize(
+          join(this.options.processCwd, 'data'),
+          'server_data_size',
+          '',
+          sampledAt,
+          abortController.signal,
+        ),
         this.collectFileSize(join(this.options.processCwd, 'data', 'business.sqlite'), sampledAt),
         this.collectTls(sampledAt),
       ]);
@@ -122,6 +153,7 @@ export class SystemMetricsCollector {
         return 0;
       });
     } finally {
+      if (this.fastAbortController === abortController) this.fastAbortController = undefined;
       this.fastInFlight = false;
     }
   }
@@ -129,6 +161,9 @@ export class SystemMetricsCollector {
   async scanWorkspacesOnce(): Promise<WorkspaceScanResult> {
     if (this.workspaceInFlight) throw new WorkspaceScanAlreadyRunningError();
     this.workspaceInFlight = true;
+    const abortController = new AbortController();
+    this.workspaceAbortController = abortController;
+    const { signal } = abortController;
     const startedAt = Date.now();
     const scannedAt = new Date();
     try {
@@ -145,6 +180,7 @@ export class SystemMetricsCollector {
         this.options.logger?.warn(`Workspace scan aborted: agentCwd readdir failed: ${errorMessage(err)}`);
         throw err;
       }
+      signal.throwIfAborted();
       const { entries, partial } = listing;
       if (entries.length === 0) {
         // FIX-1: 0 目录 + 库内已有行 → 同样中止（0 目录 + 库空是合法初始态，放行）。
@@ -162,14 +198,23 @@ export class SystemMetricsCollector {
         return { ...entry, ...classification };
       });
       const sizes = await mapWithConcurrency(classified, this.duConcurrency, async (entry) => {
+        signal.throwIfAborted();
         try {
-          return await this.duExecutor(entry.absolutePath, 120_000);
+          return await this.duExecutor(entry.absolutePath, 120_000, signal);
         } catch (err) {
+          if (signal.aborted) throw signal.reason;
+          // 一个 du 超时通常代表 NAS/目录树失去响应。立即终止整轮，避免 timeout
+          // promise 返回后继续为后续 workspace 派生新的 du，造成残留进程累积。
+          if (err instanceof CommandTimeoutError) {
+            abortController.abort(err);
+            throw err;
+          }
           this.options.logger?.warn(`Workspace du failed path=${entry.relativePath}: ${errorMessage(err)}`);
-          // FIX-4: du 失败/超时记 -1（与空目录的 0 区分），汇总时不计入求和。
+          // 非超时 du 失败记 -1（与空目录的 0 区分），汇总时不计入求和。
           return { bytes: -1, fileCount: null };
         }
-      });
+      }, signal);
+      signal.throwIfAborted();
       const records: UpsertWorkspaceUsageInput[] = classified.map((entry, index) => ({
         path: entry.relativePath,
         tenantId: entry.tenantId,
@@ -198,6 +243,7 @@ export class SystemMetricsCollector {
       );
       return result;
     } finally {
+      if (this.workspaceAbortController === abortController) this.workspaceAbortController = undefined;
       this.workspaceInFlight = false;
     }
   }
@@ -235,10 +281,16 @@ export class SystemMetricsCollector {
     }
   }
 
-  private async collectPathSize(path: string, metric: 'server_data_size', label: string, sampledAt: Date): Promise<void> {
+  private async collectPathSize(
+    path: string,
+    metric: 'server_data_size',
+    label: string,
+    sampledAt: Date,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (!existsSync(path)) return;
     try {
-      const size = await this.duExecutor(path, 120_000);
+      const size = await this.duExecutor(path, 120_000, signal);
       await this.options.store.insertMetric({
         metric,
         label,
@@ -247,6 +299,7 @@ export class SystemMetricsCollector {
         sampledAt,
       });
     } catch (err) {
+      if (signal?.aborted) throw signal.reason;
       this.options.logger?.warn(`SystemMetricsCollector du failed path=${safePathLabel(path)}: ${errorMessage(err)}`);
     }
   }
@@ -358,20 +411,36 @@ export class CommandTimeoutError extends Error {
   }
 }
 
+export class CommandAbortedError extends Error {
+  constructor(command: string) {
+    super(`${command} aborted`);
+    this.name = 'CommandAbortedError';
+  }
+}
+
 export async function runDu(
   path: string,
   timeoutMs: number,
-  exec: (command: string, args: string[], timeoutMs: number) => Promise<string> = runCommand,
+  exec: (
+    command: string,
+    args: string[],
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ) => Promise<string> = runCommand,
+  signal?: AbortSignal,
 ): Promise<{ bytes: number; fileCount: number | null }> {
   let stdout: string;
   let multiplier = 1;
+  const execute = (args: string[]): Promise<string> => (
+    signal ? exec('du', args, timeoutMs, signal) : exec('du', args, timeoutMs)
+  );
   try {
-    stdout = await exec('du', ['-sb', path], timeoutMs);
+    stdout = await execute(['-sb', path]);
   } catch (err) {
     // FIX-4: 仅 `du -sb` 立即报错（如 BSD du 不支持 -b）才 fallback 到 -sk；
     // 超时说明目录过大/存储无响应，重跑 -sk 只会再吃满一轮 timeout。
-    if (err instanceof CommandTimeoutError) throw err;
-    stdout = await exec('du', ['-sk', path], timeoutMs);
+    if (err instanceof CommandTimeoutError || signal?.aborted) throw err;
+    stdout = await execute(['-sk', path]);
     multiplier = 1024;
   }
   const bytes = Number(stdout.trim().split(/\s+/)[0] ?? 0);
@@ -379,26 +448,47 @@ export async function runDu(
   return { bytes: bytes * multiplier, fileCount: null };
 }
 
-async function runCommand(command: string, args: string[], timeoutMs: number): Promise<string> {
+async function runCommand(
+  command: string,
+  args: string[],
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (signal?.aborted) throw new CommandAbortedError(command);
   return await new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => {
+    let settled = false;
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const rejectOnce = (err: Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       child.kill('SIGTERM');
-      reject(new CommandTimeoutError(command, timeoutMs));
+      reject(err);
+    };
+    const onAbort = (): void => rejectOnce(new CommandAbortedError(command));
+    const timer = setTimeout(() => {
+      rejectOnce(new CommandTimeoutError(command, timeoutMs));
     }, timeoutMs);
     timer.unref?.();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
+      rejectOnce(err);
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      cleanup();
       if (code === 0) resolvePromise(stdout);
       else reject(new Error(stderr.trim() || `${command} exited with code ${code}`));
     });
@@ -429,11 +519,13 @@ async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
   mapper: (item: T, index: number) => Promise<R>,
+  signal?: AbortSignal,
 ): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
     while (next < items.length) {
+      signal?.throwIfAborted();
       const index = next++;
       out[index] = await mapper(items[index]!, index);
     }

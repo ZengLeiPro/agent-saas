@@ -23,6 +23,8 @@ EnvironmentFile=/etc/agent-saas/server.env
 Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker
 Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-runtime-worker-%i.pid
 Environment=AGENT_SAAS_READYFILE=/run/agent-saas-runtime-worker-%i.ready
+Environment=AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-runtime-worker-%i.draining
+ExecCondition=/usr/bin/test ! -e /run/agent-saas-runtime-worker-%i.draining
 ExecStartPre=/usr/bin/rm -f /run/agent-saas-runtime-worker-%i.ready
 ExecStart=/usr/local/bin/pnpm start
 Restart=on-failure

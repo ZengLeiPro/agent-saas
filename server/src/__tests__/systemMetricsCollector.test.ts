@@ -10,6 +10,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 import {
+  CommandAbortedError,
   CommandTimeoutError,
   SystemMetricsCollector,
   classifyWorkspacePath,
@@ -195,7 +196,7 @@ describe('workspace scan failure handling (FIX-1 / FIX-4)', () => {
       agentCwd: AGENT_CWD,
       processCwd: '/srv/server',
       duExecutor: async (path) => {
-        if (path.endsWith('u1')) throw new CommandTimeoutError('du', 120_000);
+        if (path.endsWith('u1')) throw new Error('du failed');
         return { bytes: 42, fileCount: null };
       },
       logger: { info: () => {}, warn: () => {}, error: () => {} },
@@ -206,6 +207,65 @@ describe('workspace scan failure handling (FIX-1 / FIX-4)', () => {
     expect(records.find((record) => record.path === 't1/u1')?.bytes).toBe(-1);
     expect(records.find((record) => record.path === 't1/u2')?.bytes).toBe(42);
     expect(result.totalBytes).toBe(42);
+  });
+
+  it('aborts the whole round after one du timeout instead of launching later scans', async () => {
+    const root = resolve(AGENT_CWD);
+    readdirMock.mockImplementation(async (path: unknown) => {
+      const p = String(path);
+      if (p === root) return [dirent('t1')];
+      return [dirent('u1'), dirent('u2'), dirent('u3')];
+    });
+    const store = createFakeStore();
+    const duExecutor = vi.fn(async () => {
+      throw new CommandTimeoutError('du', 120_000);
+    });
+    const collector = new SystemMetricsCollector({
+      store: store as unknown as PgSystemMetricsStore,
+      agentCwd: AGENT_CWD,
+      processCwd: '/srv/server',
+      duConcurrency: 1,
+      duExecutor,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+
+    await expect(collector.scanWorkspacesOnce()).rejects.toBeInstanceOf(CommandTimeoutError);
+    expect(duExecutor).toHaveBeenCalledTimes(1);
+    expect(store.upsertWorkspaceUsage).not.toHaveBeenCalled();
+  });
+
+  it('stop aborts an in-flight du and prevents the scan from dispatching more work', async () => {
+    const root = resolve(AGENT_CWD);
+    readdirMock.mockImplementation(async (path: unknown) => {
+      const p = String(path);
+      if (p === root) return [dirent('t1')];
+      return [dirent('u1'), dirent('u2')];
+    });
+    const store = createFakeStore();
+    let started: (() => void) | undefined;
+    const firstStarted = new Promise<void>((resolveStarted) => { started = resolveStarted; });
+    const duExecutor = vi.fn(async (_path: string, _timeoutMs: number, signal?: AbortSignal) => {
+      started?.();
+      return await new Promise<{ bytes: number; fileCount: null }>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new CommandAbortedError('du')), { once: true });
+      });
+    });
+    const collector = new SystemMetricsCollector({
+      store: store as unknown as PgSystemMetricsStore,
+      agentCwd: AGENT_CWD,
+      processCwd: '/srv/server',
+      duConcurrency: 1,
+      duExecutor,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+
+    const scan = collector.scanWorkspacesOnce();
+    await firstStarted;
+    collector.stop();
+
+    await expect(scan).rejects.toBeInstanceOf(CommandAbortedError);
+    expect(duExecutor).toHaveBeenCalledTimes(1);
+    expect(store.upsertWorkspaceUsage).not.toHaveBeenCalled();
   });
 });
 

@@ -64,6 +64,8 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workerUnit).toContain('Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker');
     expect(workerUnit).toContain('AGENT_SAAS_PIDFILE=/run/agent-saas-runtime-worker-%i.pid');
     expect(workerUnit).toContain('AGENT_SAAS_READYFILE=/run/agent-saas-runtime-worker-%i.ready');
+    expect(workerUnit).toContain('AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-runtime-worker-%i.draining');
+    expect(workerUnit).toContain('ExecCondition=/usr/bin/test ! -e /run/agent-saas-runtime-worker-%i.draining');
     expect(workerUnit).toContain('WorkingDirectory=/opt/agent-saas-app/worker/%i/server');
     expect(workerUnit).toContain('MemoryHigh=45%');
     expect(workerUnit).toContain('MemoryMax=60%');
@@ -83,6 +85,8 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workflow).toContain('if (config?.clientDaemon) process.exit(42)');
     expect(workflow).toContain('systemctl disable "${SERVICE_NAME}@${ACTIVE}"');
     expect(workflow).toContain('systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
+    expect(workflow).toContain('runtime worker drain restart guard armed');
+    expect(workflow).toContain('"/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"');
     expect(workflow).toContain('nginx.service.d/agent-saas-nas.conf');
   });
 });

@@ -47,6 +47,39 @@ class CapacityPool {
 }
 
 describe('PgRunStore global scheduler capacity', () => {
+  it('skips startup ALTER TABLE statements when every compatibility column exists', async () => {
+    const queries: string[] = [];
+    const existingColumns = [
+      'last_response_id',
+      'last_response_expire_at',
+      'actual_model_seen',
+      'last_response_model',
+      'last_response_profile_digest',
+      'cumulative_input_tokens',
+      'sandbox_scope_id',
+      'tenant_id',
+    ];
+    const client = {
+      query: async <T>(sql: string) => {
+        queries.push(sql);
+        return {
+          rows: (sql.includes('FROM pg_attribute')
+            ? existingColumns.map((column_name) => ({ column_name }))
+            : []) as T[],
+        };
+      },
+      release: () => undefined,
+    };
+    const store = new PgRunStore({
+      pool: { connect: async () => client } as unknown as pg.Pool,
+    });
+
+    await store.init();
+
+    expect(queries.some((sql) => sql.includes('FROM pg_attribute'))).toBe(true);
+    expect(queries.some((sql) => sql.includes('ALTER TABLE runtime_runs'))).toBe(false);
+  });
+
   it('refuses a new run lease when another instance already filled the global cap', async () => {
     const pool = new CapacityPool(2);
     const store = new PgRunStore({ pool: pool as unknown as pg.Pool });

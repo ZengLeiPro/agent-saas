@@ -1006,7 +1006,8 @@ jobs:
           # ── 10.5 提升 Runtime Worker 候选并协作排空旧 worker ──
           if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
             rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" \
-              "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready"
+              "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready" \
+              "/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"
             systemctl enable --now "${WORKER_SERVICE}@${WORKER_IDLE}"
             WORKER_READY=0
             WORKER_READY_WAITED=0
@@ -1039,6 +1040,9 @@ jobs:
                 exit 1
               fi
               OLD_WORKER_PID=$(cat "$OLD_WORKER_PIDFILE")
+              OLD_WORKER_DRAIN_MARKER="/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+              install -m 0644 /dev/null "$OLD_WORKER_DRAIN_MARKER"
+              log "runtime worker drain restart guard armed: $OLD_WORKER_DRAIN_MARKER"
               if ! kill -USR2 "$OLD_WORKER_PID" 2>/dev/null; then
                 log "ERROR: failed to signal old runtime worker $WORKER_ACTIVE pid=$OLD_WORKER_PID"
                 exit 1

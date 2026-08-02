@@ -249,19 +249,42 @@ export class PgRunStore implements RunStore {
           metadata JSONB NOT NULL DEFAULT '{}'
         )
       `);
-      // RFC v1 P0.4：Responses API session state 4 字段。
-      // 用 ADD COLUMN IF NOT EXISTS 兼容存量 RDS（已落 134 sessions × 1014 events）。
-      await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS last_response_id TEXT`);
-      await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS last_response_expire_at TIMESTAMPTZ`);
-      await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS actual_model_seen TEXT`);
+      const existingColumns = new Set((await client.query<{ column_name: string }>(`
+        SELECT attname AS column_name
+        FROM pg_attribute
+        WHERE attrelid = $1::regclass
+          AND attnum > 0
+          AND NOT attisdropped
+      `, [this.runsTable])).rows.map((row) => row.column_name));
+      // RFC v1 P0.4：Responses API session state 字段。先查 catalog 再按缺口 ALTER，
+      // 避免每次启动为已存在的列申请强表锁。
+      if (!existingColumns.has('last_response_id')) {
+        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN last_response_id TEXT`);
+      }
+      if (!existingColumns.has('last_response_expire_at')) {
+        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN last_response_expire_at TIMESTAMPTZ`);
+      }
+      if (!existingColumns.has('actual_model_seen')) {
+        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN actual_model_seen TEXT`);
+      }
       // 2026-07-02：接力身份键（切模型后跨后端接力必炸，见 findLatestResponseSessionStateBySession 调用方）
-      await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS last_response_model TEXT`);
-      await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS last_response_profile_digest TEXT`);
-      await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS cumulative_input_tokens BIGINT NOT NULL DEFAULT 0`);
-      await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS sandbox_scope_id TEXT`);
+      if (!existingColumns.has('last_response_model')) {
+        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN last_response_model TEXT`);
+      }
+      if (!existingColumns.has('last_response_profile_digest')) {
+        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN last_response_profile_digest TEXT`);
+      }
+      if (!existingColumns.has('cumulative_input_tokens')) {
+        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN cumulative_input_tokens BIGINT NOT NULL DEFAULT 0`);
+      }
+      if (!existingColumns.has('sandbox_scope_id')) {
+        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN sandbox_scope_id TEXT`);
+      }
       // PR 3：多组织改造 — 加 tenant_id 列，旧数据回填 LEGACY_TENANT_ID，新 run 由
       // dispatch 层（PR 4）显式传入；UpsertRunInput 已加可选 tenantId 字段。
-      await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'`);
+      if (!existingColumns.has('tenant_id')) {
+        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'`);
+      }
       await client.query(`UPDATE ${this.runsTable} SET sandbox_scope_id = metadata->>'sandboxScopeId' WHERE sandbox_scope_id IS NULL AND metadata ? 'sandboxScopeId'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_tenant_idx ON ${this.runsTable} (tenant_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_user_idx ON ${this.runsTable} (user_id, updated_at DESC)`);

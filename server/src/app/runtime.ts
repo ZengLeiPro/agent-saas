@@ -2273,11 +2273,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...(pgRunStore ? { runStore: pgRunStore } : {}),
     ...(pgHandStore ? { handStore: pgHandStore } : {}),
     ...(pgToolInvocationStore ? { toolInvocationStore: pgToolInvocationStore } : {}),
-    // /compact v2 自动压缩：需要 PG runStore（enqueue 走 scheduler wake 链路）。
-    // file backend 无 scheduler，不装配（手动 /compact 不受影响）。
+    // /compact v2 自动压缩：在当前业务 run 的尾阶段内联执行；需要 PG runStore
+    // 持久化 context pressure，并让压缩期间到达的用户消息继续作为 steering 排队。
     ...(pgRunStore && tenantStore ? {
       autoCompaction: new AutoCompactionService({
-        runStore: pgRunStore,
         getTenantSettings: (tenantId) => {
           if (!tenantId) return undefined;
           try {

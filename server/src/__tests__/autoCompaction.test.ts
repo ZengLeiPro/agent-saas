@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   configureModelPricing,
@@ -8,7 +8,6 @@ import {
 import { AutoCompactionService, evaluateAutoCompaction } from '../runtime/autoCompaction.js';
 import { RuntimeContextUsageTracker } from '../runtime/contextUsage.js';
 import type { PlatformEvent } from '../runtime/types.js';
-import type { RunRecord, RunStore } from '../runtime/runStore.js';
 
 function assistantEvent(
   index: number,
@@ -190,120 +189,64 @@ describe('evaluateAutoCompaction（自动压缩判定）', () => {
   });
 });
 
-describe('AutoCompactionService（调度 / 让路 / 抢占）', () => {
+describe('AutoCompactionService（当前 run 内联判定）', () => {
   beforeEach(() => {
     configureModelPricing({
       groups: [{ models: [{ value: 'glm-5.2', context_window: 100_000 }] }],
     });
   });
 
-  function makeService(activeRuns: RunRecord[] = []) {
-    const upserted: unknown[] = [];
-    const runStore = {
-      upsertPending: vi.fn(async (input: unknown) => {
-        upserted.push(input);
-        return input as RunRecord;
-      }),
-      listBySession: vi.fn(async () => activeRuns),
-      markStatus: vi.fn(),
-      get: vi.fn(),
-      findByIdempotencyKey: vi.fn(),
-      listRecoverable: vi.fn(async () => []),
-    } as unknown as RunStore;
+  function makeService() {
     const service = new AutoCompactionService({
-      runStore,
       getTenantSettings: (tenantId) => tenantId === 'kaiyan' ? { autoCompactEnabled: true } : { autoCompactEnabled: false },
     });
-    return { service, runStore, upserted };
+    return service;
   }
 
-  const scheduleInput = {
-    sessionId: 'session-1',
-    finishedRunId: 'run-finished',
+  const evaluationInput = {
     modelRef: 'ark-agents/glm-5.2',
     model: 'glm-5.2',
     tenantId: 'kaiyan',
-    userId: 'user-1',
-    channel: 'web',
     events: [assistantEvent(0, 90_000)],
   };
 
-  it('超阈值 + 无活跃 run → enqueue 一条 /compact run（metadata.autoCompaction）', async () => {
-    const { service, upserted } = makeService();
-    await service.maybeScheduleAfterRun(scheduleInput);
-    expect(upserted).toHaveLength(1);
-    const run = upserted[0] as { sessionId: string; model: string; metadata: Record<string, unknown> };
-    expect(run.sessionId).toBe('session-1');
-    expect(run.model).toBe('ark-agents/glm-5.2');
-    expect(run.metadata.autoCompaction).toBe(true);
-    expect((run.metadata.wakeMessage as { content: string }).content).toBe('/compact');
+  it('超阈值时要求当前 run 进入内联压缩', () => {
+    expect(makeService().evaluate(evaluationInput)).toMatchObject({
+      shouldCompact: true,
+      reason: 'threshold_exceeded',
+      currentTokens: 90_100,
+    });
   });
 
-  it('enqueue 后冷却期内不重复 enqueue', async () => {
-    const { service, upserted } = makeService();
-    await service.maybeScheduleAfterRun(scheduleInput);
-    await service.maybeScheduleAfterRun(scheduleInput);
-    expect(upserted).toHaveLength(1);
+  it('租户未开启时不压缩', () => {
+    expect(makeService().evaluate({ ...evaluationInput, tenantId: 'other' })).toMatchObject({
+      shouldCompact: false,
+      reason: 'tenant_disabled',
+    });
   });
 
-  it('租户未开启 → 不 enqueue', async () => {
-    const { service, upserted } = makeService();
-    await service.maybeScheduleAfterRun({ ...scheduleInput, tenantId: 'other' });
-    expect(upserted).toHaveLength(0);
-  });
-
-  it('context_too_large 可在本轮没有 usage 时强制 enqueue', async () => {
-    const { service, upserted } = makeService();
-    await service.maybeScheduleAfterRun({
-      ...scheduleInput,
+  it('context governor 压力可绕过裁剪后的低 usage 强制压缩', () => {
+    expect(makeService().evaluate({
+      ...evaluationInput,
       events: [],
       force: true,
-      forceReason: 'context_too_large',
+      forceReason: 'context_governor',
+    })).toMatchObject({
+      shouldCompact: true,
+      reason: 'context_governor',
     });
-    expect(upserted).toHaveLength(1);
   });
 
-  it('强制压缩仍尊重租户总开关', async () => {
-    const { service, upserted } = makeService();
-    await service.maybeScheduleAfterRun({
-      ...scheduleInput,
+  it('强制压缩仍尊重租户总开关', () => {
+    expect(makeService().evaluate({
+      ...evaluationInput,
       tenantId: 'other',
       events: [],
       force: true,
-      forceReason: 'context_too_large',
+      forceReason: 'context_governor',
+    })).toMatchObject({
+      shouldCompact: false,
+      reason: 'tenant_disabled',
     });
-    expect(upserted).toHaveLength(0);
-  });
-
-  it('session 已有其他活跃 run → 让路不 enqueue', async () => {
-    const { service, upserted } = makeService([
-      { runId: 'run-user', sessionId: 'session-1', status: 'pending' } as RunRecord,
-    ]);
-    await service.maybeScheduleAfterRun(scheduleInput);
-    expect(upserted).toHaveLength(0);
-  });
-
-  it('shouldYield：存在其他活跃 run 时让路，只剩自己时不让', async () => {
-    const { service } = makeService([
-      { runId: 'run-self', sessionId: 'session-1', status: 'running' } as RunRecord,
-      { runId: 'run-user', sessionId: 'session-1', status: 'pending' } as RunRecord,
-    ]);
-    expect(await service.shouldYield('session-1', 'run-self')).toBe(true);
-
-    const { service: soloService } = makeService([
-      { runId: 'run-self', sessionId: 'session-1', status: 'running' } as RunRecord,
-    ]);
-    expect(await soloService.shouldYield('session-1', 'run-self')).toBe(false);
-  });
-
-  it('preempt：未注册的 session 返回 false；注册后 abort 对应 run', async () => {
-    const { service } = makeService();
-    expect(service.preempt('session-1')).toBe(false);
-    service.registerActive('session-1', 'run-compact');
-    // runtimeRunController 里没有该 runId 的 controller，abort 返回 false，
-    // 但 preempt 本身返回 true（表示发起过抢占尝试）
-    expect(service.preempt('session-1')).toBe(true);
-    service.unregisterActive('session-1', 'run-compact');
-    expect(service.preempt('session-1')).toBe(false);
   });
 });

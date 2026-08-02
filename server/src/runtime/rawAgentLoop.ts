@@ -180,6 +180,35 @@ export interface CompactInput {
   instructions: string;
 }
 
+interface ContextPressureState {
+  reason: 'context_governor';
+  detectedAt: string;
+  triggerTokens: number;
+  thresholdTokens: number;
+  droppedMessages: number;
+}
+
+interface CompactionOutcome {
+  status: 'compacted' | 'skipped' | 'aborted' | 'error';
+  numTurns: number;
+  resultText: string;
+  usage?: ModelUsage;
+  error?: string;
+}
+
+function parseContextPressureState(value: unknown): ContextPressureState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const state = value as Record<string, unknown>;
+  if (
+    state.reason !== 'context_governor'
+    || typeof state.detectedAt !== 'string'
+    || typeof state.triggerTokens !== 'number'
+    || typeof state.thresholdTokens !== 'number'
+    || typeof state.droppedMessages !== 'number'
+  ) return null;
+  return state as unknown as ContextPressureState;
+}
+
 /**
  * /compact 真实现（2026-07-03）的压缩请求。作为普通 user message 追加在
  * 待压缩段末尾。
@@ -230,6 +259,13 @@ function findCompactionCutoffIndex(events: { type: string; modelContent?: string
     if (seen >= RETAIN_RECENT_USER_TURNS) return i;
   }
   return 0;
+}
+
+function findLastUserMessageIndex(messages: ModelChatMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'user') return i;
+  }
+  return -1;
 }
 
 export interface ResumeApprovalInput {
@@ -603,6 +639,13 @@ export class RawAgentLoop implements AgentLoop {
     return true;
   }
 
+  private clearForcedSynthesis(): void {
+    this.forcedSynthesisReason = undefined;
+    this.forcedSynthesisPrompt = CONTEXT_SYNTHESIS_PROMPT;
+    this.forcedSynthesisPromptAppended = false;
+    this.forcedSynthesisAllowsSessionRecovery = false;
+  }
+
   private async prepareSessionTools(
     descriptors: ToolDescriptor[],
     priorEvents: PlatformEvent[],
@@ -776,11 +819,24 @@ export class RawAgentLoop implements AgentLoop {
       restoredDraftRecoveryUsed = !canonicalCommitted;
       await this.persistReplaceableDraftState(context, null);
     }
-    const contextUsageTracker = new RuntimeContextUsageTracker(
+    let contextUsageTracker = new RuntimeContextUsageTracker(
       context.model,
       recoveredEvents,
       context.modelRef,
     );
+    let contextPressureForceReason: string | undefined;
+    if (context.evaluateAutoCompaction && this.runStore?.get) {
+      try {
+        const currentRun = await this.runStore.get(context.runId);
+        contextPressureForceReason = parseContextPressureState(currentRun?.metadata?.contextPressure)?.reason;
+      } catch (err) {
+        logger.warn(
+          `[auto-compact] restore context pressure failed session=${context.sessionId} run=${context.runId}: `
+          + `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    let autoCompactionSuppressed = false;
     const contextProjection = buildContextProjection(recoveredEvents, {
       sessionId: context.sessionId,
       runId: context.runId,
@@ -879,6 +935,7 @@ export class RawAgentLoop implements AgentLoop {
     let totalUsage: ModelUsage | undefined;
     let finalText = '';
     let turn = 0;
+    let turnLimit = input.maxTurns;
     let thinkingOnlyContinuationUsed = false;
     let pendingTurnText = '';
 
@@ -892,7 +949,7 @@ export class RawAgentLoop implements AgentLoop {
       : undefined;
 
     try {
-      for (turn = 1; turn <= input.maxTurns; turn++) {
+      for (turn = 1; turn <= turnLimit; turn++) {
         if (context.drainHandoff?.requested) {
           logger.info(
             `[run] safe drain handoff session=${context.sessionId} run=${context.runId} afterTurns=${turn - 1}`,
@@ -907,6 +964,7 @@ export class RawAgentLoop implements AgentLoop {
         let turnText = '';
         let turnThinking = '';
         const turnFinalTextStart = finalText.length;
+        let inlineCompactionAttempted = false;
         const draftId = context.channelContext.replaceableDrafts ? randomUUID() : undefined;
         const draftStartedAt = new Date().toISOString();
         let draftStatePersisted = false;
@@ -943,6 +1001,24 @@ export class RawAgentLoop implements AgentLoop {
           // previous_response_id 会在上游重新带回已超窗的远端历史；本轮必须改用
           // 受 context governor 约束的本地全量投影，成功后 usage 会重新锚定。
           currentResponseId = undefined;
+          if (!contextPressureForceReason) {
+            const pressure: ContextPressureState = {
+              reason: 'context_governor',
+              detectedAt: new Date().toISOString(),
+              triggerTokens: preflight.triggerTokens ?? 0,
+              thresholdTokens: preflight.thresholdTokens ?? 0,
+              droppedMessages: preflight.droppedMessages,
+            };
+            contextPressureForceReason = pressure.reason;
+            try {
+              await this.runStore?.patchMetadata?.(context.runId, { contextPressure: pressure });
+            } catch (err) {
+              logger.warn(
+                `[auto-compact] persist context pressure failed session=${context.sessionId} run=${context.runId}: `
+                + `${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
         }
         const forceSynthesis = this.prepareForcedSynthesis(messages);
         const requestTools = forceSynthesis && this.forcedSynthesisAllowsSessionRecovery
@@ -1211,13 +1287,107 @@ export class RawAgentLoop implements AgentLoop {
               ? { provider_continuation: completed.providerContinuation }
               : {}),
           });
-          if (turn < input.maxTurns) {
+          if (context.evaluateAutoCompaction && !autoCompactionSuppressed) {
+            const compactionEvents = await this.eventStore.list(context.sessionId, {
+              excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+              replayMode: 'bounded',
+            });
+            const evaluation = context.evaluateAutoCompaction(
+              compactionEvents,
+              contextPressureForceReason,
+            );
+            if (evaluation.shouldCompact) {
+              inlineCompactionAttempted = true;
+              logger.info(
+                `[auto-compact] inline start session=${context.sessionId} run=${context.runId} `
+                + `tokens=${evaluation.currentTokens ?? 'unknown'}/${evaluation.contextWindow ?? 'unknown'} `
+                + `threshold=${evaluation.thresholdTokens ?? 'forced'}(${evaluation.thresholdRatio ?? 'unknown'}) `
+                + `reason=${evaluation.reason}`,
+              );
+              const outcome = yield* this.compactHistory(
+                { message: input.message, instructions: input.instructions },
+                context,
+                compactionEvents,
+                true,
+              );
+              if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
+              if (outcome.status === 'aborted') {
+                const reason = context.signal?.reason;
+                throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
+              }
+              if (outcome.status === 'compacted') {
+                const compactedEvents = await this.eventStore.list(context.sessionId, {
+                  excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
+                  replayMode: 'bounded',
+                });
+                const compactedProjection = buildContextProjection(compactedEvents, {
+                  sessionId: context.sessionId,
+                  runId: context.runId,
+                  policy: this.contextPolicy,
+                });
+                messages.splice(
+                  0,
+                  messages.length,
+                  { role: 'system', content: input.instructions },
+                  ...memoryMessage,
+                  ...this.filterLoadedToolMessages(compactedProjection.messages, tools),
+                );
+                currentUserMessageIndex = findLastUserMessageIndex(messages);
+                contextUsageTracker = new RuntimeContextUsageTracker(
+                  context.model,
+                  compactedEvents,
+                  context.modelRef,
+                );
+                currentResponseId = undefined;
+                this.clearForcedSynthesis();
+                thinkingOnlyContinuationUsed = false;
+                contextPressureForceReason = undefined;
+                try {
+                  await this.runStore?.patchMetadata?.(context.runId, {
+                    contextPressure: null,
+                    autoCompactedAt: new Date().toISOString(),
+                  });
+                } catch (err) {
+                  logger.warn(
+                    `[auto-compact] clear context pressure failed session=${context.sessionId} run=${context.runId}: `
+                    + `${err instanceof Error ? err.message : String(err)}`,
+                  );
+                }
+                logger.info(`[auto-compact] inline finished session=${context.sessionId} run=${context.runId}`);
+              } else {
+                autoCompactionSuppressed = true;
+                if (outcome.status === 'error') {
+                  logger.warn(
+                    `[auto-compact] inline failed; continuing run session=${context.sessionId} run=${context.runId}: `
+                    + `${outcome.error ?? 'unknown error'}`,
+                  );
+                  yield {
+                    type: 'compaction_end',
+                    compaction: {
+                      skipped: true,
+                      note: '自动压缩失败，已继续当前会话。',
+                      coveredEventCount: 0,
+                    },
+                  };
+                }
+              }
+            }
+          }
+          if (turn < turnLimit || inlineCompactionAttempted) {
             let queuedInterjections = await drainQueuedInterjections();
             if (queuedInterjections.length === 0 && this.runStore?.trySealSteeringInputWindow) {
               const sealed = await this.runStore.trySealSteeringInputWindow(context.runId);
               if (!sealed) queuedInterjections = await drainQueuedInterjections();
             }
-            if (queuedInterjections.length > 0) continue;
+            if (queuedInterjections.length > 0) {
+              // 压缩期间到达的消息必须仍是当前 run 的插话。即使原任务恰好耗尽
+              // maxTurns，也为这批插话重新开放一份完整轮次预算，避免压缩尾阶段
+              // 人为制造“上一 run 已停、下一 run 尚未开始”的断层。
+              if (inlineCompactionAttempted && turn >= turnLimit) {
+                turnLimit = turn + input.maxTurns;
+              }
+              continue;
+            }
           }
           const modelUsage = buildModelUsage(context.model, totalUsage);
           await this.append({
@@ -1320,14 +1490,14 @@ export class RawAgentLoop implements AgentLoop {
           context,
           messages,
         });
-        if (turn < input.maxTurns) await drainQueuedInterjections();
+        if (turn < turnLimit) await drainQueuedInterjections();
       }
 
       if (textStarted) {
         textStarted = false;
         yield { type: 'text_end' };
       }
-      throw new Error(`raw agent loop exceeded maxTurns=${input.maxTurns}`);
+      throw new Error(`raw agent loop exceeded maxTurns=${turnLimit}`);
     } catch (err) {
       if (err instanceof ApprovalPendingWithoutInteractionHook) {
         if (thinkingStarted) yield { type: 'thinking_end' };
@@ -1432,6 +1602,71 @@ export class RawAgentLoop implements AgentLoop {
       content: input.message.content,
       modelContent: COMPACT_COMMAND_MODEL_CONTENT,
     });
+    const outcome = yield* this.compactHistory(input, context, priorEvents, false);
+    const modelUsage = buildModelUsage(context.model, outcome.usage);
+    if (outcome.status === 'compacted' || outcome.status === 'skipped') {
+      await this.append({
+        type: 'run_finished',
+        runId: context.runId,
+        sessionId: context.sessionId,
+        subtype: 'success',
+        numTurns: outcome.numTurns,
+        ...(modelUsage ? { modelUsage } : {}),
+      });
+      await context.hooks?.onResult?.({
+        subtype: 'success',
+        numTurns: outcome.numTurns,
+        resultText: outcome.resultText,
+        ...(modelUsage ? { modelUsage } : {}),
+      });
+      yield { type: 'done' };
+      return;
+    }
+    if (outcome.status === 'aborted') {
+      await this.append({
+        type: 'run_finished',
+        runId: context.runId,
+        sessionId: context.sessionId,
+        subtype: 'interrupted',
+        numTurns: 1,
+        ...(modelUsage ? { modelUsage } : {}),
+      });
+      await context.hooks?.onResult?.({
+        subtype: 'interrupted',
+        numTurns: 1,
+        resultText: '',
+        ...(modelUsage ? { modelUsage } : {}),
+      });
+      logger.info(`[compact] aborted session=${context.sessionId}`);
+      yield { type: 'done' };
+      return;
+    }
+    const message = outcome.error ?? 'unknown error';
+    await this.append({
+      type: 'run_finished',
+      runId: context.runId,
+      sessionId: context.sessionId,
+      subtype: 'error',
+      numTurns: 1,
+      ...(modelUsage ? { modelUsage } : {}),
+      error: message,
+    });
+    await context.hooks?.onResult?.({
+      subtype: 'error',
+      numTurns: 1,
+      resultText: outcome.resultText,
+      ...(modelUsage ? { modelUsage } : {}),
+    });
+    logger.error(`[compact] failed session=${context.sessionId}: ${message}`);
+    yield { type: 'error', error: `上下文压缩失败: ${message}` };
+  }
+
+  private async *compactHistory(
+    input: CompactInput,
+    context: RunContext,
+    priorEvents: PlatformEvent[],
+    inline: boolean,
+  ): AsyncGenerator<OutboundEvent, CompactionOutcome> {
     yield { type: 'compaction_start' };
 
     // 切分点：倒数第 RETAIN_RECENT_USER_TURNS 条真实用户消息之前进入压缩段。
@@ -1446,16 +1681,7 @@ export class RawAgentLoop implements AgentLoop {
     if (cutIdx <= 0 || compressedMessages.length < MIN_COMPACTABLE_MESSAGES) {
       const note = '当前会话历史很短，无需压缩。';
       yield { type: 'compaction_end', compaction: { skipped: true, note, coveredEventCount: 0 } };
-      await this.append({
-        type: 'run_finished',
-        runId: context.runId,
-        sessionId: context.sessionId,
-        subtype: 'success',
-        numTurns: 0,
-      });
-      await context.hooks?.onResult?.({ subtype: 'success', numTurns: 0, resultText: note });
-      yield { type: 'done' };
-      return;
+      return { status: 'skipped', numTurns: 0, resultText: note };
     }
 
     let totalUsage: ModelUsage | undefined;
@@ -1505,18 +1731,11 @@ export class RawAgentLoop implements AgentLoop {
       if (!completed) throw new Error('model stream completed without completion event');
       if (completed.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
       assertSuccessfulModelTerminal(completed);
-      if (!summaryText && completed?.content) {
-        summaryText = completed.content;
-      }
-      if (!summaryText.trim()) {
-        throw new Error('compaction failed: model returned empty summary');
-      }
+      if (!summaryText && completed.content) summaryText = completed.content;
+      if (!summaryText.trim()) throw new Error('compaction failed: model returned empty summary');
 
-      // 被摘要覆盖的事件 = 切分点（保留窗口起点）之前的全部事件
       const coveredEventCount = cutIdx;
       const cutoffEventId = priorEvents[cutIdx]!.id;
-
-      // 清空 Responses API 接力链（见方法头注释：必须在 compaction 落库之前）
       if (this.runStore?.clearResponseSessionStateBySession) {
         const cleared = await this.runStore.clearResponseSessionStateBySession(context.sessionId);
         if (cleared > 0) {
@@ -1530,71 +1749,31 @@ export class RawAgentLoop implements AgentLoop {
         summary: summaryText.trim(),
         coveredEventCount,
         cutoffEventId,
+        ...(inline ? { inline: true } : {}),
       });
 
-      const modelUsage = buildModelUsage(context.model, totalUsage);
-      await this.append({
-        type: 'run_finished',
-        runId: context.runId,
-        sessionId: context.sessionId,
-        subtype: 'success',
-        numTurns: 1,
-        ...(modelUsage ? { modelUsage } : {}),
-      });
-      logger.info(`[compact] finished session=${context.sessionId} covered=${coveredEventCount} cutoff=${cutoffEventId} summaryChars=${summaryText.length}`);
+      logger.info(
+        `[compact] finished session=${context.sessionId} covered=${coveredEventCount} `
+        + `cutoff=${cutoffEventId} summaryChars=${summaryText.length} inline=${inline}`,
+      );
       const resultText = `✅ 上下文已压缩：${coveredEventCount} 条较早历史事件已被摘要替代，最近 ${RETAIN_RECENT_USER_TURNS} 轮对话原文保留（完整记录仍可检索）。`;
       yield {
         type: 'compaction_end',
         compaction: { summary: summaryText.trim(), coveredEventCount },
       };
-      await context.hooks?.onResult?.({
-        subtype: 'success',
-        numTurns: 1,
-        resultText,
-        ...(modelUsage ? { modelUsage } : {}),
-      });
-      yield { type: 'done' };
+      return { status: 'compacted', numTurns: 1, resultText, ...(totalUsage ? { usage: totalUsage } : {}) };
     } catch (err) {
-      const modelUsage = buildModelUsage(context.model, totalUsage);
-      // 被抢占（用户新消息 abort 自动压缩）：静默收尾，不报错——压缩是可推迟的
-      // 维护动作，abort 无残留（compaction 事件只在成功收尾时落库）。
       if (context.signal?.aborted) {
-        await this.append({
-          type: 'run_finished',
-          runId: context.runId,
-          sessionId: context.sessionId,
-          subtype: 'interrupted',
-          numTurns: 1,
-          ...(modelUsage ? { modelUsage } : {}),
-        });
-        await context.hooks?.onResult?.({
-          subtype: 'interrupted',
-          numTurns: 1,
-          resultText: '',
-          ...(modelUsage ? { modelUsage } : {}),
-        });
-        logger.info(`[compact] preempted/aborted session=${context.sessionId}`);
-        yield { type: 'done' };
-        return;
+        return { status: 'aborted', numTurns: 1, resultText: '', ...(totalUsage ? { usage: totalUsage } : {}) };
       }
       const message = err instanceof Error ? err.message : String(err);
-      await this.append({
-        type: 'run_finished',
-        runId: context.runId,
-        sessionId: context.sessionId,
-        subtype: 'error',
-        numTurns: 1,
-        ...(modelUsage ? { modelUsage } : {}),
-        error: message,
-      });
-      await context.hooks?.onResult?.({
-        subtype: 'error',
+      return {
+        status: 'error',
         numTurns: 1,
         resultText: summaryText,
-        ...(modelUsage ? { modelUsage } : {}),
-      });
-      logger.error(`[compact] failed session=${context.sessionId}: ${message}`);
-      yield { type: 'error', error: `上下文压缩失败: ${message}` };
+        ...(totalUsage ? { usage: totalUsage } : {}),
+        error: message,
+      };
     }
   }
 

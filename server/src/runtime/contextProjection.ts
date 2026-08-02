@@ -53,8 +53,8 @@ const SYSTEM_COMMAND_MODEL_CONTENT_PREFIX = '[系统命令]';
  *   被替代为一条 user message：<context-summary>（LLM 摘要）+ <user-message-trail>
  *   （从压缩段原始事件中抽取的用户消息原文，非 LLM 转述，投影时重建、天然幂等）
  *   + 历史可检索提醒。
- * - 保留段（cutoff 之后）正常重放，但剔除 compaction 所属 run 自身的事件
- *   （/compact 命令替身等，避免模型看到未回应的压缩指令）。
+ * - 保留段（cutoff 之后）正常重放。独立 /compact 会剔除命令 run 自身的事件；
+ *   内联自动压缩只剔除 compaction 事件本身，保留当前业务 run 的最近一轮原文。
  * 原始事件仍在 EventStore（SessionSearchEvents 可查原文），这里只影响 prompt 投影。
  */
 function applyCompaction(events: PlatformEvent[]): {
@@ -71,9 +71,12 @@ function applyCompaction(events: PlatformEvent[]): {
       if (idx >= 0 && idx <= i) cutIdx = idx;
     }
     const compressed = events.slice(0, cutIdx);
-    // 保留段：cutoff 之后的全部事件，剔除本 compaction run 自身（含 compaction 事件本身）
+    // 独立 /compact 的 run 只含系统命令生命周期，可整段剔除；内联压缩与业务
+    // 交互共用 runId，不能按 runId 过滤，否则会把承诺保留的最近一轮一起删掉。
     const retained = events.slice(cutIdx).filter(
-      (e) => !('runId' in e) || e.runId !== event.runId,
+      (e) => event.inline
+        ? e.id !== event.id
+        : !('runId' in e) || e.runId !== event.runId,
     );
     return {
       effectiveEvents: retained,

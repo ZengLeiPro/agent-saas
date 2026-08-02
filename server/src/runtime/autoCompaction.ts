@@ -1,66 +1,31 @@
 /**
- * 自动上下文压缩（/compact v2，2026-07-03）
+ * 自动上下文压缩判定（/compact v2）。
  *
- * 触发策略（三层）：
- * 1. post-run 主触发：正常 run 结束后评估「当前上下文 token / 模型窗口」，
- *    超阈值则以系统身份 enqueue 一条 content='/compact' 的 run——复用
- *    scheduler → wakeRuntimeSession → dispatch → loop.compact() 全链路，
- *    UI 分界线 / transcript / 事件流全部免费获得。
- * 2. 让路 + 抢占：
- *    - 让路：自动压缩 run 被 wake 时若该 session 已有更新的活跃 run
- *      （用户消息在排队），直接 cancelled 退出，不执行压缩。
- *    - 抢占：用户消息 dispatch 抢锁失败时，若持锁的是本进程的自动压缩 run，
- *      abort 它并短暂重试拿锁——用户消息永远第一优先级，压缩是可推迟的
- *      维护动作（compact 只在最后落 compaction 事件时才生效，中途 abort 无残留）。
- * 3. 防死循环：最后一条 compaction 事件晚于最后一条带 usage 的 assistant 事件
- *    时（刚压缩过、还没有新的模型轮），不触发；另有 enqueue 冷却兜底。
- *
- * 生效前提：租户 features.autoCompactEnabled=true 且模型配置了 context_window；
- * 触发比例读取模型的 auto_compact_threshold，未配置时兼容默认 0.8。
+ * 自动压缩由当前 Agent run 在最终回答之后以内联尾阶段执行：run、session lock 与
+ * steering window 在压缩完成前始终保持活跃。这里仅负责按租户开关和模型窗口给出
+ * 判定，不再创建独立 `/compact` run。
  */
-import { randomUUID } from 'node:crypto';
 
 import {
   getModelAutoCompactThreshold,
   getModelContextWindow,
 } from '../data/usage/pricing.js';
-import { createLogger } from '../utils/logger.js';
 import { calculateCurrentContextTokens } from './contextAccounting.js';
-import { runtimeRunController } from './runController.js';
-import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import type { PlatformEvent } from './types.js';
-import type { RunRecord, RunStore } from './runStore.js';
-
-const logger = createLogger('AutoCompaction');
-
-/** enqueue 后冷却：期间不再评估该 session（防重复 enqueue）。 */
-const ENQUEUE_COOLDOWN_MS = 5 * 60_000;
-/** 抢占后等待锁释放的重试窗口。 */
-const PREEMPT_LOCK_WAIT_MS = 10_000;
-const PREEMPT_LOCK_RETRY_INTERVAL_MS = 250;
 
 export interface AutoCompactionTenantSettingsReader {
   (tenantId: string | undefined): { autoCompactEnabled?: boolean } | undefined;
 }
 
-export interface AutoCompactionScheduleInput {
-  sessionId: string;
-  /** 刚结束的 run（评估来源，不是压缩 run） */
-  finishedRunId: string;
+export interface AutoCompactionEvaluationInput {
   /** 可被 resolveRuntimeModelOptions 解析的配置引用（group/model）。 */
   modelRef: string;
   /** provider 实际模型名，用于 usage / context_window 计量。 */
   model: string;
   tenantId?: string;
-  userId?: string;
-  channel?: string;
-  executionTarget?: ExecutionTargetKind;
-  workspaceId?: string;
-  cwd?: string;
-  transcriptPath?: string;
-  /** 该 session 的全量事件（调用方已持有 eventStore，list 后传入） */
+  /** 该 session 的全量事件。 */
   events: PlatformEvent[];
-  /** context_too_large 等已确认超窗错误：跳过 usage 阈值判定，直接排一次压缩。 */
+  /** context governor 等已确认的上下文压力：跳过被裁剪 usage，直接压缩。 */
   force?: boolean;
   forceReason?: string;
 }
@@ -143,142 +108,25 @@ export function evaluateAutoCompaction(input: {
 }
 
 export class AutoCompactionService {
-  /** sessionId -> 进行中的自动压缩 runId（本进程内存态，抢占用） */
-  private readonly activeRuns = new Map<string, string>();
-  /** sessionId -> 冷却截止时间戳 */
-  private readonly cooldownUntil = new Map<string, number>();
-
   constructor(private readonly deps: {
-    runStore: RunStore;
     getTenantSettings: AutoCompactionTenantSettingsReader;
   }) {}
 
-  /**
-   * post-run 主触发入口。fire-and-forget：调用方 `void service.maybeScheduleAfterRun(...)`，
-   * 内部吞错只打日志，绝不影响主 run 的出站流收尾。
-   */
-  async maybeScheduleAfterRun(input: AutoCompactionScheduleInput): Promise<void> {
-    try {
-      const now = Date.now();
-      const cooldown = this.cooldownUntil.get(input.sessionId);
-      if (cooldown && cooldown > now) return;
-
-      const settings = this.deps.getTenantSettings(input.tenantId);
-      const enabled = settings?.autoCompactEnabled === true;
-      const evaluation = input.force && enabled
-        ? {
-            shouldCompact: true,
-            reason: input.forceReason ?? 'forced',
-            contextWindow: getModelContextWindow(input.model, input.modelRef),
-            thresholdRatio: getModelAutoCompactThreshold(input.model, input.modelRef),
-          }
-        : evaluateAutoCompaction({
-            events: input.events,
-            model: input.model,
-            modelRef: input.modelRef,
-            autoCompactEnabled: enabled,
-          });
-      if (!evaluation.shouldCompact) {
-        if (evaluation.reason !== 'tenant_disabled' && evaluation.reason !== 'below_threshold') {
-          logger.debug(`[auto-compact] skip session=${input.sessionId} reason=${evaluation.reason}`);
-        }
-        return;
-      }
-
-      // 该 session 已有活跃 run（用户消息在排队/执行）→ 本次不压，下个 run 结束后再评估
-      const active = await this.findOtherActiveRun(input.sessionId, input.finishedRunId);
-      if (active) {
-        logger.info(`[auto-compact] yield-before-enqueue session=${input.sessionId} activeRun=${active.runId}`);
-        return;
-      }
-
-      const runId = `${Date.now()}-${randomUUID()}`;
-      await this.deps.runStore.upsertPending({
-        runId,
-        sessionId: input.sessionId,
-        userId: input.userId,
-        tenantId: input.tenantId,
-        model: input.modelRef,
-        channel: input.channel ?? 'web',
-        executionTarget: input.executionTarget,
-        workspaceId: input.workspaceId,
-        metadata: {
-          ...(input.cwd ? { cwd: input.cwd } : {}),
-          ...(input.transcriptPath ? { transcriptPath: input.transcriptPath } : {}),
-          autoCompaction: true,
-          wakeMessage: {
-            channel: input.channel ?? 'web',
-            chatId: input.sessionId,
-            content: '/compact',
-            attachments: [],
-          },
-        },
-      });
-      this.cooldownUntil.set(input.sessionId, now + ENQUEUE_COOLDOWN_MS);
-      logger.info(
-        `[auto-compact] enqueued session=${input.sessionId} run=${runId} `
-        + `tokens=${evaluation.currentTokens ?? 'unknown'}/${evaluation.contextWindow ?? 'unknown'} `
-        + `threshold=${evaluation.thresholdTokens ?? 'forced'}(${evaluation.thresholdRatio ?? 'unknown'}) `
-        + `reason=${evaluation.reason} `
-        + `model=${input.model} modelRef=${input.modelRef}`,
-      );
-    } catch (err) {
-      logger.warn(`[auto-compact] schedule failed session=${input.sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+  evaluate(input: AutoCompactionEvaluationInput): AutoCompactionEvaluation {
+    const enabled = this.deps.getTenantSettings(input.tenantId)?.autoCompactEnabled === true;
+    if (input.force && enabled) {
+      return {
+        shouldCompact: true,
+        reason: input.forceReason ?? 'forced',
+        contextWindow: getModelContextWindow(input.model, input.modelRef),
+        thresholdRatio: getModelAutoCompactThreshold(input.model, input.modelRef),
+      };
     }
+    return evaluateAutoCompaction({
+      events: input.events,
+      model: input.model,
+      modelRef: input.modelRef,
+      autoCompactEnabled: enabled,
+    });
   }
-
-  /** 自动压缩 run 开始执行前的让路检查：session 里是否存在其他活跃 run。 */
-  async shouldYield(sessionId: string, selfRunId: string): Promise<boolean> {
-    const other = await this.findOtherActiveRun(sessionId, selfRunId);
-    return !!other;
-  }
-
-  registerActive(sessionId: string, runId: string): void {
-    this.activeRuns.set(sessionId, runId);
-  }
-
-  unregisterActive(sessionId: string, runId: string): void {
-    if (this.activeRuns.get(sessionId) === runId) {
-      this.activeRuns.delete(sessionId);
-    }
-  }
-
-  /**
-   * 用户消息抢占：若该 session 有本进程进行中的自动压缩 run，abort 它。
-   * 返回是否发起了抢占（调用方据此决定是否重试拿锁）。
-   */
-  preempt(sessionId: string): boolean {
-    const runId = this.activeRuns.get(sessionId);
-    if (!runId) return false;
-    const aborted = runtimeRunController.abort(runId);
-    logger.info(`[auto-compact] preempted session=${sessionId} run=${runId} aborted=${aborted}`);
-    return true;
-  }
-
-  private async findOtherActiveRun(sessionId: string, selfRunId: string): Promise<RunRecord | null> {
-    const list = await this.deps.runStore.listBySession?.(sessionId, { limit: 10 });
-    if (!list) {
-      // runStore 不支持 listBySession（file/内存实现）→ 保守不让路
-      return null;
-    }
-    const ACTIVE = new Set(['pending', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand']);
-    return list.find((run) => run.runId !== selfRunId && ACTIVE.has(run.status)) ?? null;
-  }
-}
-
-/**
- * 抢占后等待锁释放的辅助：短间隔重试 tryAcquire，直到拿到或超时。
- */
-export async function waitAcquireSessionLock<T>(
-  tryAcquire: () => Promise<T | null>,
-  timeoutMs: number = PREEMPT_LOCK_WAIT_MS,
-  intervalMs: number = PREEMPT_LOCK_RETRY_INTERVAL_MS,
-): Promise<T | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise((resolveSleep) => setTimeout(resolveSleep, intervalMs));
-    const handle = await tryAcquire();
-    if (handle) return handle;
-  }
-  return null;
 }

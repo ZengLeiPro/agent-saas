@@ -63,6 +63,21 @@ export interface RunContext {
   recordModelRequestDiagnostic?: (event: ModelRequestDiagnostic) => Promise<boolean | void>;
   /** 在模型轮边界读取本 run 尚未消费的 durable 插话消息。 */
   loadQueuedInterjections?: () => Promise<QueuedInterjection[]>;
+  /**
+   * 当前 run 的内联自动压缩判定器。最终回答落库后、run_finished 之前调用；
+   * forceReason 来自已持久化的 context pressure，不受 governor 裁剪后的 usage 干扰。
+   */
+  evaluateAutoCompaction?: (
+    events: PlatformEvent[],
+    forceReason?: string,
+  ) => {
+    shouldCompact: boolean;
+    reason: string;
+    currentTokens?: number;
+    contextWindow?: number;
+    thresholdRatio?: number;
+    thresholdTokens?: number;
+  };
   /** 当前逻辑模型轮是否已经用过 Web 部分草稿恢复机会。 */
   replaceableDraftRetryUsed?: boolean;
 }
@@ -697,7 +712,8 @@ export type PlatformEvent =
      * 上下文压缩点（2026-07-03 /compact 真实现；2026-07-03 v2 黑箱化+保留窗口）。
      * buildContextProjection 以「最后一条 compaction」定位压缩：
      * - cutoffEventId 存在时：该事件 id 之前的历史被 summary 替代，之后的事件
-     *   （剔除本 compaction 所属 run 自身的事件）正常重放——即「保留最近 N 轮原始交互」。
+     *   正常重放——即「保留最近 N 轮原始交互」。独立 /compact run 会剔除该命令
+     *   run 自身；内联自动压缩保留当前业务 run 的最近一轮。
      * - cutoffEventId 缺失（v1 存量事件）：退化为以 compaction 自身为切分点，之前全替代。
      * 原始事件仍完整留在 EventStore（SessionSearchEvents 可查），本事件只改变
      * prompt 投影，不删数据。
@@ -712,9 +728,11 @@ export type PlatformEvent =
     coveredEventCount: number;
     /**
      * 保留窗口起点：投影时从该事件（含）开始保留原文，之前的历史被摘要替代。
-     * 由 compact() 计算为「倒数第 2 条真实用户消息」的事件 id。
+     * 由 compact() 计算为「倒数第 1 条真实用户消息」的事件 id。
      */
     cutoffEventId?: string;
+    /** true 表示压缩发生在当前业务 run 的尾阶段，而非独立 /compact 命令 run。 */
+    inline?: boolean;
   }
   | {
     id: string;

@@ -3250,6 +3250,75 @@ describe('RawAgentLoop', () => {
     }
   });
 
+  it('context governor 压力先持久化，再以内联自动压缩 forceReason 参与尾阶段判定', async () => {
+    configureModelPricing({
+      groups: [{ models: [{ value: 'pressure-small', context_window: 1_000, auto_compact_threshold: 0.5 }] }],
+    });
+    try {
+      const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-context-pressure-'));
+      cleanupDirs.add(cwd);
+      const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+      await eventStore.append({
+        type: 'assistant_message',
+        runId: 'run-pressure-old',
+        sessionId: 'session-pressure',
+        content: '很长的既有上下文',
+        model: 'pressure-small',
+        usage: { inputTokens: 600, outputTokens: 1 },
+        responseMode: 'full',
+        responseChained: false,
+      });
+      const patchMetadata = vi.fn(async () => null);
+      const runStore = {
+        get: vi.fn(async () => ({ status: 'running', metadata: {} })),
+        patchMetadata,
+        findLatestResponseSessionStateBySession: vi.fn(async () => null),
+        updateResponseSessionState: vi.fn(async () => null),
+      } as unknown as RunStore;
+      const adapter = new ResponseIdTextAdapter('resp-pressure');
+      const loop = new RawAgentLoop({
+        modelAdapter: adapter,
+        eventStore,
+        approvalStore: new EventBackedApprovalStore(eventStore, 'session-pressure'),
+        transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+        toolRuntime: new PlatformToolRuntime(),
+        runStore,
+      });
+      const forceReasons: Array<string | undefined> = [];
+      await collect(loop.run(
+        {
+          message: { channel: 'web', chatId: 'chat-pressure', content: '继续' },
+          prompt: '继续',
+          instructions: '继续。',
+          maxTurns: 1,
+          connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+        },
+        {
+          runId: 'run-pressure',
+          sessionId: 'session-pressure',
+          model: 'pressure-small',
+          cwd,
+          channelContext: { channel: 'web' },
+          evaluateAutoCompaction: (_events, forceReason) => {
+            forceReasons.push(forceReason);
+            return { shouldCompact: false, reason: 'test_observe_only' };
+          },
+        },
+      ));
+
+      expect(patchMetadata).toHaveBeenCalledWith('run-pressure', {
+        contextPressure: expect.objectContaining({
+          reason: 'context_governor',
+          triggerTokens: 601,
+          thresholdTokens: 500,
+        }),
+      });
+      expect(forceReasons).toEqual(['context_governor']);
+    } finally {
+      configureModelPricing(undefined);
+    }
+  });
+
   it('上一 run 模型不同时禁止接力（切模型后 response id 属于旧后端）', async () => {
     const { adapter } = await runRelayScenario(
       { runId: 'run-relay-1', lastResponseId: 'resp_prev', lastResponseModel: 'gpt-5.5' },
@@ -3525,5 +3594,265 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     const lastUser = projection.messages.filter((m) => m.role === 'user').at(-1);
     expect(lastUser?.content).toContain('[系统命令]');
     expect(lastUser?.content).not.toBe('/compact');
+  });
+
+  it('自动压缩作为同一 run 尾阶段执行，压缩期间到达的用户消息以插话继续 loop', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-inline-auto-compact-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    for (let i = 1; i <= 3; i++) {
+      await eventStore.append({
+        type: 'user_message',
+        runId: `run-old-${i}`,
+        sessionId: 'session-inline-auto',
+        content: `历史问题 ${i}`,
+      });
+      await eventStore.append({
+        type: 'assistant_message',
+        runId: `run-old-${i}`,
+        sessionId: 'session-inline-auto',
+        content: `历史回答 ${i}`,
+      });
+    }
+
+    let queued: QueuedInterjection[] = [];
+    class InlineAutoCompactAdapter implements ModelAdapter {
+      requests: ModelRequest[] = [];
+      normalCalls = 0;
+
+      async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+        this.requests.push(request);
+        const lastContent = request.messages.at(-1)?.content;
+        const isCompaction = typeof lastContent === 'string' && lastContent.includes('上下文压缩');
+        if (isCompaction) {
+          queued = [{
+            inputId: 'input-during-compact',
+            sourceRunId: 'source-during-compact',
+            clientMsgId: 'client-during-compact',
+            message: { channel: 'web', chatId: 'chat-inline-auto', content: '压缩期间的新消息' },
+            prompt: '压缩期间的新消息',
+          }];
+          yield { type: 'text_delta', content: '## 自动摘要\n较早三轮历史已归纳。' };
+          yield {
+            type: 'completed',
+            content: '## 自动摘要\n较早三轮历史已归纳。',
+            toolCalls: [],
+            usage: { inputTokens: 300, outputTokens: 30 },
+          };
+          return;
+        }
+        this.normalCalls += 1;
+        const content = this.normalCalls === 1 ? '上一条任务已经完成。' : '已接着处理压缩期间的新消息。';
+        yield { type: 'text_delta', content };
+        yield {
+          type: 'completed',
+          content,
+          toolCalls: [],
+          usage: { inputTokens: 100, outputTokens: 10 },
+        };
+      }
+    }
+
+    const adapter = new InlineAutoCompactAdapter();
+    const patchMetadata = vi.fn(async () => null);
+    const markApplied = vi.fn(async (_targetRunId: string, sourceRunIds: string[]) => {
+      queued = [];
+      return sourceRunIds;
+    });
+    const runStore = {
+      get: vi.fn(async () => ({
+        status: 'running',
+        metadata: {
+          contextPressure: {
+            reason: 'context_governor',
+            detectedAt: '2026-08-03T02:00:00.000Z',
+            triggerTokens: 230_000,
+            thresholdTokens: 217_600,
+            droppedMessages: 427,
+          },
+        },
+      })),
+      patchMetadata,
+      markSteeringInputsApplied: markApplied,
+      trySealSteeringInputWindow: vi.fn(async () => true),
+      clearResponseSessionStateBySession: vi.fn(async () => 1),
+      findLatestResponseSessionStateBySession: vi.fn(async () => null),
+    } as unknown as RunStore;
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-inline-auto'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore,
+    });
+    let evaluations = 0;
+    const forceReasons: Array<string | undefined> = [];
+    const outbound = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-inline-auto', content: '完成当前任务' },
+        prompt: '完成当前任务',
+        instructions: '正常系统指令',
+        maxTurns: 1,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-inline-auto',
+        sessionId: 'session-inline-auto',
+        model: 'glm-5.2',
+        cwd,
+        channelContext: { channel: 'web' },
+        loadQueuedInterjections: async () => queued,
+        evaluateAutoCompaction: (_events, forceReason) => {
+          forceReasons.push(forceReason);
+          return {
+            shouldCompact: evaluations++ === 0,
+            reason: forceReason ?? 'below_threshold',
+          };
+        },
+      },
+    ));
+
+    expect(adapter.normalCalls).toBe(2);
+    expect(adapter.requests).toHaveLength(3);
+    expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('## 自动摘要');
+    expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('完成当前任务');
+    expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('上一条任务已经完成。');
+    expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('压缩期间的新消息');
+    expect(markApplied).toHaveBeenCalledWith('run-inline-auto', ['source-during-compact']);
+    expect(forceReasons).toEqual(['context_governor', undefined]);
+    expect(patchMetadata).toHaveBeenCalledWith('run-inline-auto', expect.objectContaining({
+      contextPressure: null,
+      autoCompactedAt: expect.any(String),
+    }));
+    expect(outbound.map((event) => event.type)).toContain('compaction_start');
+    expect(outbound.map((event) => event.type)).toContain('compaction_end');
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+
+    const events = await eventStore.list('session-inline-auto');
+    expect(events.filter((event) => event.type === 'run_started')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'run_finished')).toHaveLength(1);
+    const compactionIndex = events.findIndex((event) => event.type === 'compaction');
+    const interjectionIndex = events.findIndex((event) => (
+      event.type === 'user_message' && event.interjectionSourceRunId === 'source-during-compact'
+    ));
+    expect(compactionIndex).toBeGreaterThan(0);
+    expect(interjectionIndex).toBeGreaterThan(compactionIndex);
+    expect(events[compactionIndex]).toMatchObject({
+      type: 'compaction',
+      runId: 'run-inline-auto',
+      inline: true,
+    });
+  });
+
+  it('内联自动压缩失败时不终止 run，压缩期间的插话仍继续处理', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-inline-auto-compact-failure-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    for (let i = 1; i <= 3; i++) {
+      await eventStore.append({
+        type: 'user_message',
+        runId: `run-old-${i}`,
+        sessionId: 'session-inline-auto-failure',
+        content: `历史问题 ${i}`,
+      });
+      await eventStore.append({
+        type: 'assistant_message',
+        runId: `run-old-${i}`,
+        sessionId: 'session-inline-auto-failure',
+        content: `历史回答 ${i}`,
+      });
+    }
+
+    let queued: QueuedInterjection[] = [];
+    class FailedInlineCompactionAdapter implements ModelAdapter {
+      requests: ModelRequest[] = [];
+      normalCalls = 0;
+
+      async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+        this.requests.push(request);
+        const lastContent = request.messages.at(-1)?.content;
+        const isCompaction = typeof lastContent === 'string' && lastContent.includes('上下文压缩');
+        if (isCompaction) {
+          queued = [{
+            inputId: 'input-during-failed-compact',
+            sourceRunId: 'source-during-failed-compact',
+            clientMsgId: 'client-during-failed-compact',
+            message: { channel: 'web', chatId: 'chat-inline-auto-failure', content: '压缩失败时的新消息' },
+            prompt: '压缩失败时的新消息',
+          }];
+          yield { type: 'completed', content: '', toolCalls: [] };
+          return;
+        }
+        this.normalCalls += 1;
+        const content = this.normalCalls === 1 ? '当前任务已完成。' : '压缩失败了，但新消息已继续处理。';
+        yield { type: 'completed', content, toolCalls: [] };
+      }
+    }
+
+    const adapter = new FailedInlineCompactionAdapter();
+    const markApplied = vi.fn(async (_targetRunId: string, sourceRunIds: string[]) => {
+      queued = [];
+      return sourceRunIds;
+    });
+    const runStore = {
+      markSteeringInputsApplied: markApplied,
+      trySealSteeringInputWindow: vi.fn(async () => true),
+      clearResponseSessionStateBySession: vi.fn(async () => 0),
+      findLatestResponseSessionStateBySession: vi.fn(async () => null),
+    } as unknown as RunStore;
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-inline-auto-failure'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore,
+    });
+    let evaluations = 0;
+    const outbound = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-inline-auto-failure', content: '完成当前任务' },
+        prompt: '完成当前任务',
+        instructions: '正常系统指令',
+        maxTurns: 1,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-inline-auto-failure',
+        sessionId: 'session-inline-auto-failure',
+        model: 'glm-5.2',
+        cwd,
+        channelContext: { channel: 'web' },
+        loadQueuedInterjections: async () => queued,
+        evaluateAutoCompaction: () => ({
+          shouldCompact: evaluations++ === 0,
+          reason: 'threshold_reached',
+        }),
+      },
+    ));
+
+    expect(adapter.normalCalls).toBe(2);
+    expect(adapter.requests).toHaveLength(3);
+    expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('压缩失败时的新消息');
+    expect(markApplied).toHaveBeenCalledWith('run-inline-auto-failure', ['source-during-failed-compact']);
+    expect(outbound).toContainEqual({
+      type: 'compaction_end',
+      compaction: {
+        skipped: true,
+        note: '自动压缩失败，已继续当前会话。',
+        coveredEventCount: 0,
+      },
+    });
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+
+    const events = await eventStore.list('session-inline-auto-failure');
+    expect(events.some((event) => event.type === 'compaction')).toBe(false);
+    expect(events.filter((event) => event.type === 'run_started')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'run_finished')).toHaveLength(1);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'user_message',
+      interjectionSourceRunId: 'source-during-failed-compact',
+    }));
   });
 });

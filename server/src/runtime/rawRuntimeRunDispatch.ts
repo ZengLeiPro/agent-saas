@@ -139,7 +139,6 @@ import {
 import type { SecretVault } from '../security/secretVault.js';
 import type { NetworkPolicyConfig } from './networkPolicy.js';
 import { runtimeRunController } from './runController.js';
-import { waitAcquireSessionLock } from './autoCompaction.js';
 import type { ToolInvocationStore } from './toolInvocationStore.js';
 import {
   buildPendingInteractionsFromEvents,
@@ -417,8 +416,8 @@ export interface RawRuntimeRunDispatchConfig {
   /** Artifact service used by hand-backed CreateArtifact. */
   artifactService?: ArtifactService;
   /**
-   * 自动上下文压缩（/compact v2）。配置后：post-run 超阈值 enqueue 压缩 run；
-   * 用户消息抢锁失败时抢占进行中的自动压缩；自动压缩 wake 时向排队用户消息让路。
+   * 自动上下文压缩（/compact v2）。配置后，正常回答结束但 run 尚未终态时
+   * 以内联尾阶段压缩；期间用户消息继续进入同一 run 的 durable steering queue。
    */
   autoCompaction?: import('./autoCompaction.js').AutoCompactionService;
   /**
@@ -1154,12 +1153,6 @@ export function resolveTenantRemoteHandsSource(
   source: TenantRemoteHandsSource | undefined,
 ): TenantRemoteHandDispatchConfig[] | undefined {
   return typeof source === 'function' ? source() : source;
-}
-
-// 以下装配小件同时被 subagent/subagentRunner.ts 复用（子 loop 精简重建，
-// 见该文件头注释）；除加 export 外语义零改动。
-function isContextTooLargeError(message: string | undefined): boolean {
-  return !!message && /context[_ ]too[_ ]large|maximum context|context window|input.*too (?:large|long)/i.test(message);
 }
 
 export class RunStateTrackingEventStore implements EventStore {
@@ -1970,22 +1963,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const sessionLockAcquireOptions: SessionLockAcquireOptions = {
       onLost: (reason) => abortController.abort(reason),
     };
-    let lockHandle = config.sessionLock
+    const lockHandle = config.sessionLock
       ? await config.sessionLock.tryAcquire(sessionId, sessionLockAcquireOptions)
       : null;
-    if (config.sessionLock && !lockHandle && !isCompactCommand(message.content) && config.autoCompaction) {
-      // 自动压缩抢占（/compact v2）：用户消息永远第一优先级。若持锁的是本进程
-      // 进行中的自动压缩 run，abort 它并短暂重试拿锁（压缩中途 abort 无残留——
-      // compaction 事件只在成功收尾时落库）。
-      if (config.autoCompaction.preempt(sessionId)) {
-        lockHandle = await waitAcquireSessionLock(
-          () => config.sessionLock!.tryAcquire(sessionId, sessionLockAcquireOptions),
-        );
-        if (lockHandle) {
-          logger.info(`[auto-compact] user message preempted auto compaction, lock acquired session=${sessionId}`);
-        }
-      }
-    }
     if (config.sessionLock && !lockHandle) {
       yield { type: 'error', error: `Session ${sessionId} 已被另一个 brain 持有，本次 dispatch 退让` };
       return;
@@ -2328,6 +2308,17 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             return prepared;
           },
         } : {}),
+        ...(!isCompactCommand(message.content) && config.autoCompaction ? {
+          evaluateAutoCompaction: (events: PlatformEvent[], forceReason?: string) => (
+            config.autoCompaction!.evaluate({
+              modelRef: sessionModelRef,
+              model,
+              tenantId: sessionRecord.tenantId,
+              events,
+              ...(forceReason ? { force: true, forceReason } : {}),
+            })
+          ),
+        } : {}),
       };
       let visionAnalysis;
       if (
@@ -2372,30 +2363,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       // instructions 传会话正常 system prompt——压缩请求与正常轮同构以命中 prompt cache。
       let loopError: string | undefined;
       if (isCompactCommand(message.content)) {
-        const runRecord = config.autoCompaction ? await config.runStore?.get(runId) : null;
-        const isAutoCompactionRun = runRecord?.metadata?.autoCompaction === true;
-        if (isAutoCompactionRun && config.autoCompaction) {
-          // 让路：wake 到执行之间可能已有用户消息在排队 → 静默放弃本次压缩
-          if (await config.autoCompaction.shouldYield(sessionId, runId)) {
-            await config.runStore?.markStatus(runId, 'cancelled', 'auto_compaction_yield_to_user');
-            logger.info(`[auto-compact] yield-at-wake session=${sessionId} run=${runId}`);
-            yield { type: 'done' };
-            return;
-          }
-          config.autoCompaction.registerActive(sessionId, runId);
-          try {
-            for await (const event of loop.compact({ message, instructions }, runContext)) {
-              if (event.type === 'error') loopError = event.error ?? 'context compaction failed';
-              yield event;
-            }
-          } finally {
-            config.autoCompaction.unregisterActive(sessionId, runId);
-          }
-        } else {
-          for await (const event of loop.compact({ message, instructions }, runContext)) {
-            if (event.type === 'error') loopError = event.error ?? 'context compaction failed';
-            yield event;
-          }
+        for await (const event of loop.compact({ message, instructions }, runContext)) {
+          if (event.type === 'error') loopError = event.error ?? 'context compaction failed';
+          yield event;
         }
       } else {
         for await (const event of loop.run(
@@ -2426,30 +2396,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         )) {
           if (event.type === 'error') loopError = event.error ?? 'raw agent loop failed';
           yield event;
-        }
-        // post-run 自动压缩评估（fire-and-forget：绝不阻塞出站流收尾，错误内部吞掉）
-        if (config.autoCompaction) {
-          const autoCompaction = config.autoCompaction;
-          void eventStore.list(sessionId)
-            .then((allEvents) => autoCompaction.maybeScheduleAfterRun({
-              sessionId,
-              finishedRunId: runId,
-              modelRef: sessionModelRef,
-              model,
-              tenantId: sessionRecord.tenantId,
-              userId: identitySource?.id,
-              channel: context.channel,
-              executionTarget,
-              workspaceId: sessionRecord.workspaceId,
-              cwd,
-              transcriptPath: sessionRecord.transcriptPath,
-              events: allEvents,
-              ...(isContextTooLargeError(loopError) ? {
-                force: true,
-                forceReason: 'context_too_large',
-              } : {}),
-            }))
-            .catch(() => undefined);
         }
       }
       await sessionCatalog.markStatus(

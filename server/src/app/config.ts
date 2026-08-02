@@ -547,7 +547,7 @@ const modelItemSchema = z.object({
   usage_accounting: usageAccountingSchema.optional(),
   /**
    * 模型上下文窗口（token 数）。自动压缩用它计算触发阈值
-   * （当前上下文 ≥ context_window × 阈值比例时 post-run 自动压缩）。
+   * （当前上下文 ≥ context_window × 阈值比例时在 run 尾阶段自动压缩）。
    * 不配置 = 该模型不启用自动压缩（无内置默认，配错比不配危害大）。
    */
   context_window: z.number().int().positive().optional(),

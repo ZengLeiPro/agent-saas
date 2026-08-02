@@ -394,6 +394,28 @@ describe('compaction 切分（/compact 真实现）', () => {
     expect(projection.messages.some((m) => typeof m.content === 'string' && m.content.includes('[系统命令]'))).toBe(false);
   });
 
+  it('内联自动压缩保留与 compaction 同 run 的最近一轮业务原文', () => {
+    const currentUser = { ...event(2), runId: 'run-inline' } as PlatformEvent;
+    const currentAssistant = { ...event(3, 'assistant_message'), runId: 'run-inline' } as PlatformEvent;
+    const inlineCompaction = {
+      ...compactionEvent(4, '较早历史摘要', 'event-2'),
+      runId: 'run-inline',
+      inline: true,
+    } as PlatformEvent;
+    const projection = buildContextProjection([
+      event(0),
+      event(1, 'assistant_message'),
+      currentUser,
+      currentAssistant,
+      inlineCompaction,
+    ], { sessionId: 'session-1', runId: 'run-inline' });
+
+    expect(projection.messages).toHaveLength(3);
+    expect(projection.messages[0]?.content).toContain('较早历史摘要');
+    expect(projection.messages[1]).toMatchObject({ role: 'user', content: 'user_message-2' });
+    expect(projection.messages[2]).toMatchObject({ role: 'assistant', content: 'assistant_message-3' });
+  });
+
   it('cutoffEventId 指向不存在的事件时退化为以 compaction 自身为切分点', () => {
     const events = [
       event(0),

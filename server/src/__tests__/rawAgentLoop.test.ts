@@ -79,6 +79,21 @@ class DrainAfterToolCallAdapter implements ModelAdapter {
   }
 }
 
+class ForcedDrainAdapter implements ModelAdapter {
+  constructor(
+    private readonly controller: AbortController,
+    private readonly handoff: { requested: boolean; reason?: string },
+  ) {}
+
+  async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    yield { type: 'text_delta', content: '已完成的部分' };
+    this.handoff.requested = true;
+    this.handoff.reason = 'server_drain_handoff';
+    this.controller.abort(new Error('server_drain_deadline'));
+    throw this.controller.signal.reason;
+  }
+}
+
 class ToolCallOnlyAdapter implements ModelAdapter {
   async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
     yield {
@@ -523,6 +538,52 @@ describe('RawAgentLoop', () => {
     expect(events.map((event) => event.type)).toContain('tool_result');
     expect(events.map((event) => event.type)).not.toContain('done');
     const storedEvents = await eventStore.list('session-drain-handoff');
+    expect(storedEvents.map((event) => event.type)).not.toContain('run_finished');
+  });
+
+  it('does not terminalize a run when the drain deadline forces a handoff', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-forced-drain-handoff-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const abortController = new AbortController();
+    const drainHandoff = { requested: false };
+    const loop = new RawAgentLoop({
+      modelAdapter: new ForcedDrainAdapter(abortController, drainHandoff),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-forced-drain-handoff'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-1', content: '执行长任务' },
+        prompt: '执行长任务',
+        instructions: '执行任务。',
+        maxTurns: 4,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'run-forced-drain-handoff',
+        sessionId: 'session-forced-drain-handoff',
+        model: 'gpt-5.5',
+        cwd,
+        signal: abortController.signal,
+        drainHandoff,
+        channelContext: { channel: 'web' },
+      },
+    ));
+
+    expect(events.map((event) => event.type)).not.toContain('error');
+    expect(events.map((event) => event.type)).not.toContain('done');
+    const storedEvents = await eventStore.list('session-forced-drain-handoff');
+    expect(storedEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'assistant_message',
+        content: '已完成的部分',
+        incomplete: true,
+      }),
+    ]));
     expect(storedEvents.map((event) => event.type)).not.toContain('run_finished');
   });
 

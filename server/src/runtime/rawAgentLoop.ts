@@ -1270,6 +1270,12 @@ export class RawAgentLoop implements AgentLoop {
           incomplete: true,
         });
       }
+      if (isForcedDrainHandoff(context)) {
+        logger.warn(
+          `[run] drain deadline forced safe handoff session=${context.sessionId} run=${context.runId} turn=${turn}`,
+        );
+        return;
+      }
       const surfacedMessage = pendingTurnText
         ? `${message}；已保留本次未完成正文，可发送“继续”接着完成。`
         : message;
@@ -2948,6 +2954,12 @@ export class RawAgentLoop implements AgentLoop {
           incomplete: true,
         });
       }
+      if (isForcedDrainHandoff(args.context)) {
+        logger.warn(
+          `[resume] drain deadline forced safe handoff session=${args.context.sessionId} run=${args.context.runId} turn=${turn}`,
+        );
+        return;
+      }
       const surfacedMessage = pendingTurnText
         ? `${message}；已保留本次未完成正文，可发送“继续”接着完成。`
         : message;
@@ -2975,6 +2987,13 @@ export class RawAgentLoop implements AgentLoop {
     const stored = await this.eventStore.append(event);
     await this.transcriptProjection.project(stored);
   }
+}
+
+function isForcedDrainHandoff(context: RunContext): boolean {
+  if (!context.drainHandoff?.requested || !context.signal?.aborted) return false;
+  const reason = context.signal.reason;
+  const message = reason instanceof Error ? reason.message : String(reason ?? '');
+  return message === 'server_drain_deadline';
 }
 
 function assertSuccessfulModelTerminal(completed: Extract<ModelEvent, { type: 'completed' }>): void {

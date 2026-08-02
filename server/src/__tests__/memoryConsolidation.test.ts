@@ -21,7 +21,7 @@ import {
 } from '../memory/consolidation/digest.js';
 import { sliceEventsByBudget } from '../memory/consolidation/engine.js';
 import { buildDailyFileNext, serializeCandidate } from '../memory/consolidation/materialize.js';
-import { applyMemoryPolicyFilter, applyToolProfile } from '../runtime/toolProfiles.js';
+import { applyMainSessionToolFilter, applyToolProfile } from '../runtime/toolProfiles.js';
 
 // ============================================
 // helpers
@@ -163,7 +163,7 @@ describe('memory_consolidate profile', () => {
 
 describe('memory policy filter', () => {
   it('v1：隐藏 MemoryCommand 与 MemoryCommit，其余透传', () => {
-    const names = applyMemoryPolicyFilter(fakeRuntime(), 'v1').list(toolContext()).map((d) => d.name);
+    const names = applyMainSessionToolFilter(fakeRuntime(), 'v1').list(toolContext()).map((d) => d.name);
     expect(names).not.toContain('MemoryCommand');
     expect(names).not.toContain('MemoryCommit');
     expect(names).toContain('Write');
@@ -171,13 +171,13 @@ describe('memory policy filter', () => {
   });
 
   it('v2：暴露 MemoryCommand、隐藏 MemoryCommit', () => {
-    const names = applyMemoryPolicyFilter(fakeRuntime(), 'v2').list(toolContext()).map((d) => d.name);
+    const names = applyMainSessionToolFilter(fakeRuntime(), 'v2').list(toolContext()).map((d) => d.name);
     expect(names).toContain('MemoryCommand');
     expect(names).not.toContain('MemoryCommit');
   });
 
   it('v2 deny guard：Write/Edit 命中记忆路径被拒并提示 MemoryCommand', async () => {
-    const runtime = applyMemoryPolicyFilter(fakeRuntime(), 'v2');
+    const runtime = applyMainSessionToolFilter(fakeRuntime(), 'v2');
     await expect(
       runtime.invoke({ toolId: 'Write', input: { path: 'MEMORY.md', content: 'x' } } as never, toolContext()),
     ).rejects.toThrow(/MemoryCommand/);
@@ -188,7 +188,7 @@ describe('memory policy filter', () => {
 
   it('v2 deny guard：普通文件写不受影响', async () => {
     const spy = vi.fn(async () => ({ content: 'ok' }));
-    const runtime = applyMemoryPolicyFilter(fakeRuntime(spy), 'v2');
+    const runtime = applyMainSessionToolFilter(fakeRuntime(spy), 'v2');
     await runtime.invoke({ toolId: 'Write', input: { path: 'assets/report.md', content: 'x' } } as never, toolContext());
     expect(spy).toHaveBeenCalledTimes(1);
   });

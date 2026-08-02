@@ -85,11 +85,17 @@ export function applyToolProfile(
   }
   // 无后台 profile 的 run（主会话/子 agent/后台命令等）一律套记忆策略过滤：
   // 默认 v1 = 隐藏 MemoryCommand/MemoryCommit + 主会话隐藏集（见上方常量注释）。
-  return applyMemoryPolicyFilter(runtime, memoryPolicy ?? 'v1');
+  return applyMainSessionToolFilter(runtime, memoryPolicy ?? 'v1');
 }
 
 /**
- * 主会话记忆写入策略过滤（2026-07-29 记忆写入职责剥离批次）。
+ * 主会话（无后台 profile）工具面过滤器。
+ *
+ * 命名沿革：原名 applyMemoryPolicyFilter（2026-07-29 记忆写入职责剥离批次引入，
+ * 当时唯一职责是按租户记忆政策隐藏 MemoryCommand/MemoryCommit）；2026-08-03
+ * 工具面收敛批次起兼管主会话隐藏集（UserActivityList/MemoryList），职责已
+ * 超出「记忆政策」，故更名为中性的 applyMainSessionToolFilter（曾磊 08-03 拍板）。
+ * v1/v2 分档语义仍来自租户记忆写入政策（memoryWriteDelegationEnabled）：
  *
  * - v1（默认）：隐藏 MemoryCommand/MemoryCommit 两个记忆政策工具，
  *   外加主会话隐藏集（UserActivityList/MemoryList，2026-08-03 起）。
@@ -113,21 +119,21 @@ export type MemoryWritePolicyVersion = 'v1' | 'v2';
  * 注意：这两个工具的 provider 仍挂载（PLATFORM_TOOL_CATALOG 治理面不变），
  * 这里只是主会话模型可见面的收敛。
  */
-const MAIN_SESSION_HIDDEN_TOOLS = ['UserActivityList', 'MemoryList'];
-const MEMORY_POLICY_HIDDEN_TOOLS_V1: ReadonlySet<string> = new Set(['MemoryCommand', 'MemoryCommit', ...MAIN_SESSION_HIDDEN_TOOLS]);
-const MEMORY_POLICY_HIDDEN_TOOLS_V2: ReadonlySet<string> = new Set(['MemoryCommit', ...MAIN_SESSION_HIDDEN_TOOLS]);
+const MAIN_SESSION_HIDDEN_COMMON = ['UserActivityList', 'MemoryList'];
+const MAIN_SESSION_HIDDEN_TOOLS_V1: ReadonlySet<string> = new Set(['MemoryCommand', 'MemoryCommit', ...MAIN_SESSION_HIDDEN_COMMON]);
+const MAIN_SESSION_HIDDEN_TOOLS_V2: ReadonlySet<string> = new Set(['MemoryCommit', ...MAIN_SESSION_HIDDEN_COMMON]);
 
-export function applyMemoryPolicyFilter(runtime: ToolRuntime, policy: MemoryWritePolicyVersion): ToolRuntime {
+export function applyMainSessionToolFilter(runtime: ToolRuntime, policy: MemoryWritePolicyVersion): ToolRuntime {
   if (policy === 'v1') {
     return new ProfileFilteredToolRuntime(runtime, {
       isAllowed: (descriptor) =>
-        !MEMORY_POLICY_HIDDEN_TOOLS_V1.has(descriptor.name) && !MEMORY_POLICY_HIDDEN_TOOLS_V1.has(descriptor.id),
-      profileLabel: 'memory_policy_v1',
+        !MAIN_SESSION_HIDDEN_TOOLS_V1.has(descriptor.name) && !MAIN_SESSION_HIDDEN_TOOLS_V1.has(descriptor.id),
+      profileLabel: 'main_session_v1',
     });
   }
   return new ProfileFilteredToolRuntime(runtime, {
     isAllowed: (descriptor) =>
-      !MEMORY_POLICY_HIDDEN_TOOLS_V2.has(descriptor.name) && !MEMORY_POLICY_HIDDEN_TOOLS_V2.has(descriptor.id),
+      !MAIN_SESSION_HIDDEN_TOOLS_V2.has(descriptor.name) && !MAIN_SESSION_HIDDEN_TOOLS_V2.has(descriptor.id),
     guardInvoke: (call, context) => {
       const paramName = WRITE_PATH_PARAM[call.toolId];
       if (!paramName) return;
@@ -145,7 +151,7 @@ export function applyMemoryPolicyFilter(runtime: ToolRuntime, policy: MemoryWrit
         );
       }
     },
-    profileLabel: 'memory_policy_v2',
+    profileLabel: 'main_session_v2',
   });
 }
 

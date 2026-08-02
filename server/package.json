@@ -14,6 +14,7 @@
     "test": "pnpm run typecheck && vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage --maxWorkers=2 --coverage.processingConcurrency=2",
+    "benchmark:long-transcript": "tsx src/scripts/benchmarkLongTranscript.ts",
     "scenarios:lint": "tsx scripts/scenarios-lint.mjs",
     "scenarios:lint:fix": "tsx scripts/scenarios-lint.mjs --fix",
     "scenarios:sanitize-check": "tsx scripts/scenarios-sanitize-check.mjs",

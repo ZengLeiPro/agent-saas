@@ -143,6 +143,12 @@ describe('WebChannel executionTarget gating', () => {
         }
       },
       emitUser: () => {},
+      emitDual: () => {},
+      emitSession: (context: any, data: any) => {
+        if (context?.ws && typeof context.ws.send === 'function') {
+          context.ws.send(JSON.stringify({ data }));
+        }
+      },
       emit: () => {},
       subscribe: () => () => {},
       register: () => {},
@@ -599,9 +605,159 @@ describe('WebChannel executionTarget gating', () => {
       });
       expect((channel as any).wsActiveStream.get(ws as any)).toBe('target-stream');
       expect((channel as any).eventBufferStore.isActive('session-steering')).toBe(true);
+
+      // 传输层重发必须继续携带 queued 语义，不能误切断当前目标流。
+      await (channel as any).processChatMessage(client, chatMessage({
+        sessionId: 'session-steering',
+        message: '运行中的补充条件',
+        client_msg_id: 'steering-client',
+      }));
+      const steeringAcks = ws.sent.filter((message) => (
+        message.data?.type === 'stream_id' && message.data?.client_msg_id === 'steering-client'
+      ));
+      expect(steeringAcks).toHaveLength(2);
+      expect(steeringAcks.every((message) => (
+        message.data?.queued === true && message.data?.targetRunId === 'target-run'
+      ))).toBe(true);
+      expect((channel as any).wsActiveStream.get(ws as any)).toBe('target-stream');
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
+  });
+
+  it('promotes a queued source stream after the target ends before absorbing it', () => {
+    const { channel } = createChannel();
+    const ws = new FakeWebSocket();
+    const sessionId = 'session-webchannel-fallback-unique';
+    const targetStreamId = 'target-stream-webchannel-fallback-unique';
+    const sourceStreamId = 'source-stream-webchannel-fallback-unique';
+    const targetRunId = 'target-run-webchannel-fallback-unique';
+    const sourceRunId = 'source-run-webchannel-fallback-unique';
+    const targetClientMsgId = 'target-client-webchannel-fallback-unique';
+    const sourceClientMsgId = 'source-client-webchannel-fallback-unique';
+
+    (channel as any).activeStreams.set(targetStreamId, {
+      controller: new AbortController(),
+      userId: 'admin-1',
+      ws: ws as any,
+      sessionId,
+      runId: targetRunId,
+      clientMsgId: targetClientMsgId,
+    });
+    (channel as any).activeStreams.set(sourceStreamId, {
+      controller: new AbortController(),
+      userId: 'admin-1',
+      ws: ws as any,
+      sessionId,
+      runId: sourceRunId,
+      clientMsgId: sourceClientMsgId,
+    });
+    (channel as any).wsActiveStream.set(ws as any, targetStreamId);
+    (channel as any).wsSessionAffinity.set(ws as any, sessionId);
+    (channel as any).eventBufferStore.create(sessionId, 'admin-1');
+
+    channel.publishRuntimeOutboundEvent({
+      sessionId,
+      runId: targetRunId,
+      streamId: targetStreamId,
+      userId: 'admin-1',
+      clientMsgId: targetClientMsgId,
+      event: { type: 'done' },
+    });
+    expect((channel as any).wsActiveStream.has(ws as any)).toBe(false);
+
+    channel.publishRuntimeOutboundEvent({
+      sessionId,
+      runId: sourceRunId,
+      streamId: sourceStreamId,
+      userId: 'admin-1',
+      clientMsgId: sourceClientMsgId,
+      event: { type: 'session_init', sessionId },
+    });
+
+    expect(ws.sent.find((message) => (
+      message.data?.type === 'stream_id' && message.data?.runId === sourceRunId
+    ))?.data).toMatchObject({
+      type: 'stream_id',
+      streamId: sourceStreamId,
+      runId: sourceRunId,
+      client_msg_id: sourceClientMsgId,
+    });
+    expect((channel as any).wsActiveStream.get(ws as any)).toBe(sourceStreamId);
+
+    channel.publishRuntimeOutboundEvent({
+      sessionId,
+      runId: sourceRunId,
+      streamId: sourceStreamId,
+      userId: 'admin-1',
+      clientMsgId: sourceClientMsgId,
+      event: { type: 'done' },
+    });
+    expect(ws.sent.find((message) => (
+      message.data?.type === 'done' && message.data?.client_msg_id === sourceClientMsgId
+    ))).toBeDefined();
+    expect((channel as any).activeStreams.has(sourceStreamId)).toBe(false);
+  });
+
+  it('promotes a queued source stream from a cross-process runtime event', () => {
+    const { channel } = createChannel();
+    const ws = new FakeWebSocket();
+
+    (channel as any).activeStreams.set('source-stream-cross', {
+      controller: new AbortController(),
+      userId: 'admin-1',
+      ws: ws as any,
+      sessionId: 'session-steering-cross',
+      runId: 'source-run-cross',
+      clientMsgId: 'source-client-cross',
+    });
+    (channel as any).wsSessionAffinity.set(ws as any, 'session-steering-cross');
+
+    channel.publishRuntimePlatformEvent({
+      id: 'event-source-running',
+      timestamp: new Date().toISOString(),
+      type: 'run_state_changed',
+      runId: 'source-run-cross',
+      sessionId: 'session-steering-cross',
+      status: 'running',
+      previousStatus: 'pending',
+    });
+
+    expect(ws.sent.find((message) => message.data?.type === 'stream_id')?.data).toMatchObject({
+      type: 'stream_id',
+      streamId: 'source-stream-cross',
+      sessionId: 'session-steering-cross',
+      runId: 'source-run-cross',
+      client_msg_id: 'source-client-cross',
+    });
+    expect((channel as any).wsActiveStream.get(ws as any)).toBe('source-stream-cross');
+  });
+
+  it('does not promote a queued source after the socket switches sessions', () => {
+    const { channel } = createChannel();
+    const ws = new FakeWebSocket();
+
+    (channel as any).activeStreams.set('source-stream-old', {
+      controller: new AbortController(),
+      userId: 'admin-1',
+      ws: ws as any,
+      sessionId: 'session-old',
+      runId: 'source-run-old',
+      clientMsgId: 'source-client-old',
+    });
+    (channel as any).wsSessionAffinity.set(ws as any, 'session-new');
+
+    channel.publishRuntimeOutboundEvent({
+      sessionId: 'session-old',
+      runId: 'source-run-old',
+      streamId: 'source-stream-old',
+      userId: 'admin-1',
+      clientMsgId: 'source-client-old',
+      event: { type: 'session_init', sessionId: 'session-old' },
+    });
+
+    expect(ws.sent.find((message) => message.data?.type === 'stream_id')).toBeUndefined();
+    expect((channel as any).wsActiveStream.has(ws as any)).toBe(false);
   });
 
   it('returns an error terminal event when enqueueRuntime fails after ACK', async () => {

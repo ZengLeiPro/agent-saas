@@ -35,10 +35,12 @@ class MemoryEventStore implements EventStore {
     this.events.push(full);
     return full;
   }
-  async list(sessionId: string, options?: { includeTypes?: PlatformEvent['type'][] }): Promise<PlatformEvent[]> {
+  async list(sessionId: string, options?: Parameters<EventStore['list']>[1]): Promise<PlatformEvent[]> {
+    this.listOptions.push(options);
+    const includedTypes = options?.includeTypes ? new Set(options.includeTypes) : null;
     return this.events.filter((event) => (
       (!('sessionId' in event) || event.sessionId === sessionId)
-      && (!options?.includeTypes || options.includeTypes.includes(event.type))
+      && (!includedTypes || includedTypes.has(event.type))
     ));
   }
 }
@@ -195,6 +197,55 @@ describe('wakeRuntimeSession', () => {
     expect(decision.recordUserMessage).toBe(false);
     expect(decision.message.content).toBe(HIDDEN_WAKE_CONTINUE_PROMPT);
   });
+
+  it('does not duplicate a steering message already persisted by the target run', async () => {
+    const session: RuntimeSessionRecord = {
+      sessionId: 'session-steering-fallback',
+      userId: 'user-1',
+      username: 'alice',
+      channel: 'web',
+      cwd: '/tmp/alice',
+      transcriptPath: '/tmp/alice/session.jsonl',
+      modelRef: 'gpt-5.4-mini',
+      executionTarget: 'server-local',
+      workspaceId: 'workspace-1',
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const run: RunRecord = {
+      runId: 'source-steering-fallback',
+      sessionId: session.sessionId,
+      userId: 'user-1',
+      status: 'pending',
+      model: 'gpt-5.4-mini',
+      channel: 'web',
+      requestedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      executionTarget: 'server-local',
+      workspaceId: 'workspace-1',
+      metadata: { wakeMessage: { chatId: session.sessionId, content: '插话消息' } },
+    };
+    const eventStore = new MemoryEventStore();
+    await eventStore.append({
+      type: 'user_message',
+      sessionId: session.sessionId,
+      runId: 'target-run',
+      content: '插话消息',
+      interjectionSourceRunId: run.runId,
+    });
+
+    const decision = resolveWakePrompt(run, await eventStore.list(session.sessionId), session);
+
+    expect(decision.recordUserMessage).toBe(false);
+    expect(decision.message.content).toBe(HIDDEN_WAKE_CONTINUE_PROMPT);
+    expect(decision.message.metadata).toMatchObject({
+      schedulerWake: true,
+      originalRunId: run.runId,
+      hiddenContinuation: true,
+    });
+  });
+
 
   it('restores durable context far enough to honor cancel commands before model wake', async () => {
     const session: RuntimeSessionRecord = {

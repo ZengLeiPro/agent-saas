@@ -8,6 +8,12 @@ import { ActivityGroupBlock } from './ActivityGroupBlock';
 import { BusinessTodoBlock } from './BusinessTodoBlock';
 import { CompactionDivider } from './CompactionDivider';
 import { asCompactionItem } from '@/lib/compaction';
+import {
+  buildMessageVirtualLayout,
+  findMessageRowAtOffset,
+  getMessageVirtualRange,
+  MAX_RENDERED_MESSAGE_ROWS,
+} from '@/lib/messageVirtualizer';
 import { useGroupedMessages } from './useGroupedMessages';
 import { ErrorBoundary } from './ErrorBoundary';
 import type { TtsState } from '@/hooks/useTtsPlayer';
@@ -111,6 +117,19 @@ function getFirstTimestamp(items: RenderItem[]): number | undefined {
     }
   }
   return undefined;
+}
+
+function getBubbleVirtualKey(item: BubbleRenderItem): string {
+  const timestamp = item.type === 'ai_bubble'
+    ? getFirstTimestamp(item.items)
+    : 'timestamp' in item
+      ? item.timestamp
+      : item.type === 'activity_group'
+        ? getFirstTimestamp(item.items)
+        : undefined;
+  // Transcript block ids restart at line-1 in every session. Including the stable timestamp
+  // prevents height measurements from one cached session leaking into another with equal ids.
+  return `${item.id}:${timestamp ?? ''}`;
 }
 
 function AiMessageHeader({ agentProfile, timestamp }: { agentProfile?: AgentProfile | null; timestamp?: number }) {
@@ -243,19 +262,118 @@ export const MessageList = memo(function MessageList({
     }
   }, [scrollContainerRef]);
 
+  const voicePlayer = useVoicePlayer();
+  const groupedMessages = useGroupedMessages(messages, loading);
+  const bubbleItems = useMemo(() => groupIntoBubbles(groupedMessages), [groupedMessages]);
+  const lastRenderIdx = bubbleItems.length - 1;
+  const bubbleKeys = useMemo(() => bubbleItems.map(getBubbleVirtualKey), [bubbleItems]);
+  const [measuredRowHeights, setMeasuredRowHeights] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
+  );
+  const layoutTiming = useMemo(() => {
+    const start = performance.now();
+    const layout = buildMessageVirtualLayout(bubbleKeys, measuredRowHeights);
+    return { layout, start, end: performance.now() };
+  }, [bubbleKeys, measuredRowHeights]);
+  const virtualLayout = layoutTiming.layout;
+
+  // Loading rows remain outside the virtualized bubble region, as before.
+  const lastItem = bubbleItems[lastRenderIdx];
+  const showAgentLoading = loading && (!lastItem || (lastItem.type !== 'ai_bubble' && lastItem.type !== 'activity_group' && lastItem.type === 'user'));
+  const showCenterLoading = isLoadingMessages && messages.length === 0 && !loading;
+  const showSyncLoading = isLoadingMessages && messages.length > 0 && !loading;
+
+  // ResizeObserver 在 streaming / 图片加载时可能逐帧触发；只在消息行数变化时
+  // 留一条最新 measure，避免 PerformanceEntry 自身成为长会话内存增长源。
+  const lastMeasuredLayoutRowCountRef = useRef(-1);
+  useEffect(() => {
+    const rowCount = virtualLayout.keys.length;
+    if (lastMeasuredLayoutRowCountRef.current === rowCount) return;
+    lastMeasuredLayoutRowCountRef.current = rowCount;
+    try {
+      performance.clearMeasures('message-list:virtual-layout');
+      performance.measure('message-list:virtual-layout', {
+        start: layoutTiming.start,
+        end: layoutTiming.end,
+        detail: { totalRowCount: rowCount },
+      });
+    } catch {
+      // Older browsers and test shims may not support numeric marks or measure detail.
+    }
+  }, [layoutTiming, virtualLayout.keys.length]);
+
+  const virtualBodyRef = useRef<HTMLDivElement | null>(null);
+  const rowNodesRef = useRef(new Map<string, HTMLDivElement>());
+  const rowObserverRef = useRef<ResizeObserver | null>(null);
+  const rowRefCallbacksRef = useRef(
+    new Map<string, (node: HTMLDivElement | null) => void>(),
+  );
+  const setMeasuredRow = useCallback((key: string, node: HTMLDivElement | null) => {
+    const previous = rowNodesRef.current.get(key);
+    if (previous === node) return;
+    if (previous) rowObserverRef.current?.unobserve(previous);
+    if (node) {
+      rowNodesRef.current.set(key, node);
+      rowObserverRef.current?.observe(node);
+    } else {
+      rowNodesRef.current.delete(key);
+    }
+  }, []);
+  const getMeasuredRowRef = useCallback((key: string) => {
+    let callback = rowRefCallbacksRef.current.get(key);
+    if (!callback) {
+      callback = (node) => setMeasuredRow(key, node);
+      rowRefCallbacksRef.current.set(key, callback);
+    }
+    return callback;
+  }, [setMeasuredRow]);
+
+  useEffect(() => {
+    const activeKeys = new Set(bubbleKeys);
+    setMeasuredRowHeights((current) => {
+      if ([...current.keys()].every((key) => activeKeys.has(key))) return current;
+      return new Map([...current].filter(([key]) => activeKeys.has(key)));
+    });
+    for (const key of rowRefCallbacksRef.current.keys()) {
+      if (!activeKeys.has(key)) rowRefCallbacksRef.current.delete(key);
+    }
+  }, [bubbleKeys]);
+
+  const [viewport, setViewport] = useState({ start: 0, size: 0 });
+  const viewportRafRef = useRef(0);
+  const viewportSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const updateViewportNow = useCallback(() => {
+    viewportRafRef.current = 0;
+    const container = internalContainerRef.current;
+    const body = virtualBodyRef.current;
+    if (!container || !body) return;
+    const start = Math.max(0, container.scrollTop - body.offsetTop);
+    const size = container.clientHeight;
+    setViewport((previous) => previous.start === start && previous.size === size
+      ? previous
+      : { start, size });
+  }, []);
+  const scheduleViewportUpdate = useCallback(() => {
+    if (viewportRafRef.current) return;
+    viewportRafRef.current = requestAnimationFrame(updateViewportNow);
+  }, [updateViewportNow]);
+
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  const wasNearBottomRef = useRef(isNearBottomRef?.current ?? true);
   const syncNearBottomState = useCallback(() => {
     const el = internalContainerRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isNear = distance < NEAR_BOTTOM_THRESHOLD;
+    wasNearBottomRef.current = isNear;
     if (isNearBottomRef) isNearBottomRef.current = isNear;
-    setShowJumpToBottom((prev) => (prev === !isNear ? prev : !isNear));
+    setShowJumpToBottom((previous) => previous === !isNear ? previous : !isNear);
   }, [isNearBottomRef]);
 
   const handleScroll = useCallback(() => {
     syncNearBottomState();
-  }, [syncNearBottomState]);
+    scheduleViewportUpdate();
+  }, [scheduleViewportUpdate, syncNearBottomState]);
 
   const handleJumpToBottom = useCallback(() => {
     const el = internalContainerRef.current;
@@ -263,29 +381,136 @@ export const MessageList = memo(function MessageList({
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, []);
 
-  const prependScrollRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const prependScrollRef = useRef<{
+    anchorKey: string;
+    screenOffset: number;
+    firstKey?: string;
+  } | null>(null);
   const handleLoadEarlier = useCallback(() => {
     const el = internalContainerRef.current;
-    if (!el || !onLoadEarlier || isLoadingEarlier) return;
-    prependScrollRef.current = {
-      scrollHeight: el.scrollHeight,
-      scrollTop: el.scrollTop,
-    };
+    const body = virtualBodyRef.current;
+    if (!el || !body || !onLoadEarlier || isLoadingEarlier) return;
+    const localStart = Math.max(0, el.scrollTop - body.offsetTop);
+    const anchorIndex = findMessageRowAtOffset(virtualLayout, localStart);
+    const anchorKey = virtualLayout.keys[anchorIndex];
+    if (anchorKey) {
+      prependScrollRef.current = {
+        anchorKey,
+        screenOffset: virtualLayout.offsets[anchorIndex] - localStart,
+        firstKey: virtualLayout.keys[0],
+      };
+    }
     void onLoadEarlier();
-  }, [isLoadingEarlier, onLoadEarlier]);
+  }, [isLoadingEarlier, onLoadEarlier, virtualLayout]);
 
+  // Preserve a key-based visual anchor across prepend and asynchronous row remeasurement.
+  const previousLayoutRef = useRef(virtualLayout);
   useLayoutEffect(() => {
     const el = internalContainerRef.current;
-    const previous = prependScrollRef.current;
-    if (!el || !previous) return;
-    el.scrollTop = previous.scrollTop + (el.scrollHeight - previous.scrollHeight);
-    prependScrollRef.current = null;
-  }, [messages[0]?.id]);
+    const body = virtualBodyRef.current;
+    const previous = previousLayoutRef.current;
+    if (!el || !body) {
+      previousLayoutRef.current = virtualLayout;
+      return;
+    }
 
-  const voicePlayer = useVoicePlayer();
-  const groupedMessages = useGroupedMessages(messages, loading);
-  const bubbleItems = useMemo(() => groupIntoBubbles(groupedMessages), [groupedMessages]);
-  const lastRenderIdx = bubbleItems.length - 1;
+    if (wasNearBottomRef.current) {
+      // Streaming, appended rows, and image/expander growth follow only while near the bottom.
+      el.scrollTop = el.scrollHeight;
+    } else if (previous !== virtualLayout && previous.keys.length > 0) {
+      const pendingPrepend = prependScrollRef.current;
+      const didPrepend = pendingPrepend
+        && pendingPrepend.firstKey !== virtualLayout.keys[0]
+        && virtualLayout.indexByKey.has(pendingPrepend.anchorKey);
+      if (didPrepend) {
+        const nextIndex = virtualLayout.indexByKey.get(pendingPrepend.anchorKey)!;
+        const nextLocalStart = virtualLayout.offsets[nextIndex] - pendingPrepend.screenOffset;
+        el.scrollTop = body.offsetTop + nextLocalStart;
+        prependScrollRef.current = null;
+      } else {
+        const previousLocalStart = Math.max(0, el.scrollTop - body.offsetTop);
+        const anchorIndex = findMessageRowAtOffset(previous, previousLocalStart);
+        const anchorKey = previous.keys[anchorIndex];
+        const nextIndex = virtualLayout.indexByKey.get(anchorKey);
+        if (nextIndex !== undefined) {
+          el.scrollTop += virtualLayout.offsets[nextIndex] - previous.offsets[anchorIndex];
+        }
+      }
+    }
+
+    previousLayoutRef.current = virtualLayout;
+    syncNearBottomState();
+    updateViewportNow();
+    // useMessages may force scrollTop in a parent effect without dispatching a scroll event.
+    // Re-sample once after that rAF rather than polling continuously.
+    if (viewportSettleTimerRef.current) clearTimeout(viewportSettleTimerRef.current);
+    viewportSettleTimerRef.current = setTimeout(() => {
+      viewportSettleTimerRef.current = null;
+      syncNearBottomState();
+      updateViewportNow();
+    }, 50);
+  }, [hasMoreHistory, showAgentLoading, showSyncLoading, syncNearBottomState, updateViewportNow, virtualLayout]);
+
+  useEffect(() => {
+    const container = internalContainerRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const measurements: Array<[string, number]> = [];
+      for (const entry of entries) {
+        if (entry.target === container) {
+          scheduleViewportUpdate();
+          continue;
+        }
+        const node = entry.target as HTMLDivElement;
+        const key = node.dataset.messageVirtualKey;
+        if (!key) continue;
+        measurements.push([
+          key,
+          Math.max(1, Math.ceil(node.getBoundingClientRect().height)),
+        ]);
+      }
+      if (measurements.length === 0) return;
+      setMeasuredRowHeights((current) => {
+        let next: Map<string, number> | null = null;
+        for (const [key, height] of measurements) {
+          if ((next ?? current).get(key) === height) continue;
+          if (!next) next = new Map(current);
+          next.set(key, height);
+        }
+        return next ?? current;
+      });
+    });
+    rowObserverRef.current = observer;
+    observer.observe(container);
+    for (const node of rowNodesRef.current.values()) observer.observe(node);
+    scheduleViewportUpdate();
+    return () => {
+      rowObserverRef.current = null;
+      observer.disconnect();
+    };
+  }, [scheduleViewportUpdate]);
+
+  useEffect(() => () => {
+    if (viewportRafRef.current) cancelAnimationFrame(viewportRafRef.current);
+    if (viewportSettleTimerRef.current) clearTimeout(viewportSettleTimerRef.current);
+  }, []);
+
+  const virtualRange = useMemo(
+    () => getMessageVirtualRange(virtualLayout, viewport.start, viewport.size),
+    [viewport, virtualLayout],
+  );
+  const visibleRows = useMemo(() => {
+    const rows: Array<{ item: BubbleRenderItem; key: string; index: number; top: number }> = [];
+    for (let index = virtualRange.start; index < virtualRange.end; index += 1) {
+      rows.push({
+        item: bubbleItems[index],
+        key: virtualLayout.keys[index],
+        index,
+        top: virtualLayout.offsets[index],
+      });
+    }
+    return rows;
+  }, [bubbleItems, virtualLayout.keys, virtualLayout.offsets, virtualRange]);
 
   // 构建 MessageItem id → 原始 messages 索引的映射（用于 TTS key 稳定性）
   const msgIndexMap = useMemo(() => {
@@ -295,15 +520,6 @@ export const MessageList = memo(function MessageList({
     }
     return map;
   }, [messages]);
-
-  // agent 尚未回复：loading 中且最后一个渲染单元是用户消息（或无消息）
-  const lastItem = bubbleItems[lastRenderIdx];
-  const showAgentLoading = loading && (!lastItem || (lastItem.type !== 'ai_bubble' && lastItem.type !== 'activity_group' && lastItem.type === 'user'));
-
-  // 场景 A：无缓存，从服务端加载中 → 居中 spinner
-  const showCenterLoading = isLoadingMessages && messages.length === 0 && !loading;
-  // 场景 B：有缓存已展示，后台刷新中 → 底部 spinner + 文案
-  const showSyncLoading = isLoadingMessages && messages.length > 0 && !loading;
 
   // 最后一个 activity_group 的 id（用于默认展开）
   const lastActivityGroupId = useMemo(() => {
@@ -342,23 +558,6 @@ export const MessageList = memo(function MessageList({
     return ids;
   }, [bubbleItems]);
 
-  // 消息列表或加载态变化后重算「距底距离」，让浮动按钮及时出/隐（新消息将底部推远时也能触发）。
-  useLayoutEffect(() => {
-    syncNearBottomState();
-  }, [syncNearBottomState, bubbleItems, showAgentLoading, showSyncLoading]);
-
-  // ResizeObserver：内容异步撑高（图片/PDF 首次布局）时同样重算。
-  useEffect(() => {
-    const el = internalContainerRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => syncNearBottomState());
-    ro.observe(el);
-    // 观察内部内容区，捕获内容高度变化
-    const inner = el.firstElementChild;
-    if (inner instanceof Element) ro.observe(inner);
-    return () => ro.disconnect();
-  }, [syncNearBottomState]);
-
   const { user } = useAuth();
   const debugMode = debugModeOverride ?? user?.debugMode === true;
   const displayUser = useMemo(() => {
@@ -372,7 +571,12 @@ export const MessageList = memo(function MessageList({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-    <div ref={setContainerRef} onScroll={showCenterLoading ? undefined : handleScroll} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain">
+    <div
+      ref={setContainerRef}
+      onScroll={showCenterLoading ? undefined : handleScroll}
+      className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain"
+      style={{ overflowAnchor: 'none' }}
+    >
       <div className="content-container flex flex-col gap-3 py-4">
         {!showCenterLoading && hasMoreHistory && (
           <div className="flex justify-center pb-1">
@@ -397,8 +601,17 @@ export const MessageList = memo(function MessageList({
         ) : bubbleItems.length === 0 && !loading && emptySlot ? (
           // 新会话空白态：展示空会话槽位（场景推荐卡）；一旦产生消息立即让位
           emptySlot
-        ) : bubbleItems.map((item, ri) => {
+        ) : bubbleItems.length === 0 ? null : (
+          <div
+            ref={virtualBodyRef}
+            className="relative w-full shrink-0"
+            style={{ height: virtualLayout.totalSize }}
+            data-rendered-row-count={visibleRows.length}
+            data-max-rendered-rows={MAX_RENDERED_MESSAGE_ROWS}
+          >
+          {visibleRows.map(({ item, key: virtualKey, index: ri, top }) => {
           const showHeader = headerItemIds.has(item.id);
+          const rowContent = (() => {
 
           // --- AI Bubble Group ---
           if (item.type === 'ai_bubble') {
@@ -638,7 +851,21 @@ export const MessageList = memo(function MessageList({
               </ErrorBoundary>
             </div>
           );
+          })();
+          return (
+            <div
+              key={virtualKey}
+              ref={getMeasuredRowRef(virtualKey)}
+              data-message-virtual-key={virtualKey}
+              className="absolute left-0 top-0 w-full"
+              style={{ transform: `translate3d(0, ${top}px, 0)` }}
+            >
+              {rowContent}
+            </div>
+          );
         })}
+          </div>
+        )}
 
         {!showCenterLoading && showAgentLoading && (
           <div ref={lastMessageRef} className="flex flex-col">

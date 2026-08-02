@@ -90,6 +90,107 @@ describe('PgRunStore steering inbox', () => {
     expect(queries.some((sql) => sql.includes('INSERT INTO runtime_steering_inputs'))).toBe(false);
   });
 
+  it('locks the target row and applies steering only while the target is active', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes('SELECT status, metadata')) {
+          return { rows: [{ status: 'running', metadata: { steeringInputWindow: 'open' } }] };
+        }
+        if (sql.includes('SELECT run_id, status')) {
+          return { rows: [{ run_id: 'source-run', status: 'pending' }] };
+        }
+        if (sql.includes('UPDATE runtime_steering_inputs')) {
+          return { rows: [{ source_run_id: 'source-run' }] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    await expect(store.markSteeringInputsApplied('target-run', ['source-run']))
+      .resolves.toEqual(['source-run']);
+    expect(queries).toEqual(expect.arrayContaining([
+      expect.stringContaining('FOR UPDATE'),
+      expect.stringContaining('UPDATE runtime_steering_inputs'),
+      expect.stringContaining("status = 'completed'"),
+      'COMMIT',
+    ]));
+  });
+
+  it('does not absorb a source run cancelled before the model boundary claim', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes('SELECT status, metadata')) {
+          return { rows: [{ status: 'running', metadata: { steeringInputWindow: 'open' } }] };
+        }
+        if (sql.includes('SELECT run_id, status')) {
+          return { rows: [{ run_id: 'source-run', status: 'cancelled' }] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    await expect(store.markSteeringInputsApplied('target-run', ['source-run']))
+      .resolves.toEqual([]);
+    expect(queries.some((sql) => sql.includes('UPDATE runtime_steering_inputs'))).toBe(false);
+    expect(queries.at(-1)).toBe('COMMIT');
+  });
+
+  it('claims a steering batch atomically when one source is no longer pending', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes('SELECT status, metadata')) {
+          return { rows: [{ status: 'running', metadata: { steeringInputWindow: 'open' } }] };
+        }
+        if (sql.includes('SELECT run_id, status')) {
+          return {
+            rows: [
+              { run_id: 'source-1', status: 'pending' },
+              { run_id: 'source-2', status: 'cancelled' },
+            ],
+          };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    await expect(store.markSteeringInputsApplied('target-run', ['source-1', 'source-2']))
+      .resolves.toEqual([]);
+    expect(queries.some((sql) => sql.includes('UPDATE runtime_steering_inputs'))).toBe(false);
+    expect(queries.at(-1)).toBe('COMMIT');
+  });
+
+  it('keeps source runs pending when the target became terminal before claim', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: async (sql: string) => {
+        queries.push(sql.trim());
+        if (sql.includes('SELECT status, metadata')) {
+          return { rows: [{ status: 'cancelled', metadata: { steeringInputWindow: 'open' } }] };
+        }
+        return { rows: [] };
+      },
+      release: vi.fn(),
+    };
+    const store = new PgRunStore({ pool: { connect: async () => client } as any });
+
+    await expect(store.markSteeringInputsApplied('target-run', ['source-run']))
+      .resolves.toEqual([]);
+    expect(queries.some((sql) => sql.includes('UPDATE runtime_steering_inputs'))).toBe(false);
+    expect(queries.at(-1)).toBe('COMMIT');
+  });
+
   it('does not seal the input window while a pending interjection is visible', async () => {
     const clientQueries: string[] = [];
     const client = {

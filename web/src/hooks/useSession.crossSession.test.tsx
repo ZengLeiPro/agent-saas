@@ -142,5 +142,210 @@ describe("useSession 跨会话详情请求隔离", () => {
     expect(currentMessages.at(-1)?.id).toBe("line-200");
     expect(currentMessages.filter((message) => message.id === "line-101")).toHaveLength(1);
     expect(result.current.hasMoreHistory).toBe(false);
+    const beforeRequestCount = authFetchMock.mock.calls.filter(
+      ([url]) => String(url).includes("before="),
+    ).length;
+    await act(async () => { await result.current.loadEarlierMessages(); });
+    expect(authFetchMock.mock.calls.filter(([url]) => String(url).includes("before="))).toHaveLength(
+      beforeRequestCount,
+    );
+  });
+
+  it("并发点击历史页只发一个请求，失败后可以重试", async () => {
+    let currentMessages: ReturnType<NonNullable<SessionCallbacks["getMessages"]>> = [];
+    let beforeRequests = 0;
+    const callbacks = makeCallbacks();
+    callbacks.getMessages = () => currentMessages;
+    callbacks.setMessages = vi.fn((messages) => { currentMessages = messages; });
+    const tailBlocks = Array.from({ length: 100 }, (_, index) => ({
+      id: `line-${index + 101}`,
+      kind: "text",
+      content: `尾页 ${index + 101}`,
+    }));
+
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.includes("before=")) {
+        beforeRequests += 1;
+        if (beforeRequests === 1) {
+          return Promise.resolve({ ok: false, status: 500, statusText: "boom" } as Response);
+        }
+        return Promise.resolve(jsonResponse({
+          mode: "before",
+          blocks: [{ id: "line-100", kind: "prompt", content: "更早" }],
+          oldestCursor: "line-100",
+          cursor: "line-200",
+          historyComplete: true,
+        }));
+      }
+      if (url.startsWith("/api/sessions/session-a?")) {
+        return Promise.resolve(jsonResponse({
+          mode: "full",
+          blocks: tailBlocks,
+          oldestCursor: "line-101",
+          cursor: "line-200",
+          historyComplete: false,
+        }));
+      }
+      if (url.startsWith("/api/chat/interactions/pending")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    const { result } = renderHook(() => useSession(callbacks));
+    await act(async () => { await result.current.loadSessionDetail("session-a"); });
+
+    let first!: Promise<void>;
+    act(() => {
+      first = result.current.loadEarlierMessages();
+      void result.current.loadEarlierMessages();
+    });
+    await act(async () => { await first; });
+    expect(beforeRequests).toBe(1);
+    expect(result.current.isLoadingEarlier).toBe(false);
+    expect(currentMessages[0]?.id).toBe("line-101");
+
+    await act(async () => { await result.current.loadEarlierMessages(); });
+    expect(beforeRequests).toBe(2);
+    expect(currentMessages[0]?.id).toBe("line-100");
+    expect(result.current.hasMoreHistory).toBe(false);
+  });
+
+  it("历史 cursor 失效返回 full 时重置旧窗口而不是继续 prepend", async () => {
+    let currentMessages: ReturnType<NonNullable<SessionCallbacks["getMessages"]>> = [];
+    const callbacks = makeCallbacks();
+    callbacks.getMessages = () => currentMessages;
+    callbacks.setMessages = vi.fn((messages) => { currentMessages = messages; });
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.includes("before=")) {
+        return Promise.resolve(jsonResponse({
+          mode: "full",
+          blocks: [{ id: "line-1", kind: "text", content: "compaction 后新尾页" }],
+          oldestCursor: "opaque-new-oldest",
+          cursor: "opaque-new-tail",
+          historyComplete: true,
+        }));
+      }
+      if (url.startsWith("/api/sessions/session-a?")) {
+        return Promise.resolve(jsonResponse({
+          mode: "full",
+          blocks: [{ id: "line-101", kind: "text", content: "旧尾页" }],
+          oldestCursor: "opaque-old-oldest",
+          cursor: "opaque-old-tail",
+          historyComplete: false,
+        }));
+      }
+      if (url.startsWith("/api/chat/interactions/pending")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    const { result } = renderHook(() => useSession(callbacks));
+    await act(async () => { await result.current.loadSessionDetail("session-a"); });
+    await act(async () => { await result.current.loadEarlierMessages(); });
+
+    expect(currentMessages.map((message) => message.id)).toEqual(["line-1"]);
+    expect(currentMessages[0]).toMatchObject({ content: "compaction 后新尾页" });
+    expect(result.current.hasMoreHistory).toBe(false);
+  });
+
+  it("pending 失败不阻塞首屏消息", async () => {
+    let currentMessages: ReturnType<NonNullable<SessionCallbacks["getMessages"]>> = [];
+    const callbacks = makeCallbacks();
+    callbacks.getMessages = () => currentMessages;
+    callbacks.setMessages = vi.fn((messages) => { currentMessages = messages; });
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("/api/chat/interactions/pending")) {
+        return Promise.reject(new Error("pending unavailable"));
+      }
+      if (url.startsWith("/api/sessions/session-a?")) {
+        return Promise.resolve(jsonResponse({
+          mode: "full",
+          blocks: [{ id: "line-1", kind: "text", content: "首屏" }],
+          oldestCursor: "line-1",
+          cursor: "line-1",
+          historyComplete: true,
+        }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    const { result } = renderHook(() => useSession(callbacks));
+    await act(async () => {
+      await result.current.loadSessionDetail("session-a");
+      await Promise.resolve();
+    });
+
+    expect(currentMessages.map((message) => message.id)).toEqual(["line-1"]);
+    expect(currentMessages.some((message) => message.id.startsWith("pending-"))).toBe(false);
+  });
+
+  it("历史页在途时保留新流式消息，慢 pending 随后合并到最新快照", async () => {
+    let currentMessages: ReturnType<NonNullable<SessionCallbacks["getMessages"]>> = [];
+    let releaseBefore!: (response: Response) => void;
+    let releasePending!: (response: Response) => void;
+    const beforeResponse = new Promise<Response>((resolve) => { releaseBefore = resolve; });
+    const pendingResponse = new Promise<Response>((resolve) => { releasePending = resolve; });
+    const callbacks = makeCallbacks();
+    callbacks.getMessages = () => currentMessages;
+    callbacks.setMessages = vi.fn((messages) => { currentMessages = messages; });
+
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.includes("before=")) return beforeResponse;
+      if (url.startsWith("/api/chat/interactions/pending")) return pendingResponse;
+      if (url.startsWith("/api/sessions/session-a?")) {
+        return Promise.resolve(jsonResponse({
+          mode: "full",
+          blocks: [{ id: "line-101", kind: "text", content: "尾页" }],
+          oldestCursor: "line-101",
+          cursor: "line-200",
+          historyComplete: false,
+        }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+
+    const { result } = renderHook(() => useSession(callbacks));
+    await act(async () => { await result.current.loadSessionDetail("session-a"); });
+
+    let earlier!: Promise<void>;
+    act(() => { earlier = result.current.loadEarlierMessages(); });
+    currentMessages = [
+      ...currentMessages,
+      { id: "stream-local", type: "text", content: "流式尾部" },
+    ];
+    await act(async () => {
+      releaseBefore(jsonResponse({
+        mode: "before",
+        blocks: [{ id: "line-1", kind: "prompt", content: "历史" }],
+        oldestCursor: "line-1",
+        cursor: "line-200",
+        historyComplete: true,
+      }));
+      await earlier;
+    });
+    expect(currentMessages.map((message) => message.id)).toEqual([
+      "line-1",
+      "line-101",
+      "stream-local",
+    ]);
+
+    await act(async () => {
+      releasePending(jsonResponse([{
+        interactionId: "ask-1",
+        type: "ask_user",
+        questions: [{
+          question: "继续吗？",
+          header: "确认",
+          options: [{ label: "继续", description: "继续执行" }],
+          multiSelect: false,
+        }],
+      }]));
+      await pendingResponse;
+      await Promise.resolve();
+    });
+    expect(currentMessages.map((message) => message.id)).toEqual([
+      "line-1",
+      "line-101",
+      "stream-local",
+      "pending-ask-1",
+    ]);
   });
 });

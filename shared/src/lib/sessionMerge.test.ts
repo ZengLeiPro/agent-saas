@@ -29,6 +29,37 @@ describe('mergeServerMessagesWithLocalTail', () => {
     expect(mergeServerMessagesWithLocalTail(server, local)).toBe(server);
   });
 
+  it('本地无 text 但有 queued 插话时保留该气泡', () => {
+    const server = [user('s1', '原问题'), text('s2', '原回答')];
+    const queued: MessageItem = {
+      id: 'u2', type: 'user', content: '插话', status: 'queued', clientMsgId: 'c2',
+    };
+    const local = [...server, queued];
+    expect(mergeServerMessagesWithLocalTail(server, local)).toEqual([...server, queued]);
+  });
+
+  it('历史中有同文 user 但最后一条 user 不同，仍保留本轮 queued 气泡', () => {
+    const server = [user('s0', '重复内容'), text('s1', '旧回答'), user('s2', '原问题'), text('s3', '原回答')];
+    const queued: MessageItem = {
+      id: 'u2', type: 'user', content: '重复内容', status: 'queued', clientMsgId: 'c2',
+    };
+    expect(mergeServerMessagesWithLocalTail(server, [...server, queued])).toEqual([...server, queued]);
+  });
+
+  it('回退 run 已开始流式但尚未落盘时保留 queued 气泡及其后的 text', () => {
+    const server = [user('s1', '原问题'), text('s2', '原回答')];
+    const queued: MessageItem = {
+      id: 'u2', type: 'user', content: '插话', status: 'queued', clientMsgId: 'c2',
+    };
+    const fallbackText = text('local-fallback', '回退回答');
+    const local = [...server, queued, fallbackText];
+    expect(mergeServerMessagesWithLocalTail(server, local)).toEqual([
+      ...server,
+      queued,
+      fallbackText,
+    ]);
+  });
+
   it('server 已存在相同 content 的 text（落盘完成）时返回 server 原样', () => {
     const server = [user('s0', 'q'), text('line-1', '答案')];
     const local = [user('u0', 'q'), text('msg-1', '答案')];

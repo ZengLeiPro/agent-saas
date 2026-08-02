@@ -62,6 +62,8 @@ function makeController(initial: MessageItem[] = []): FakeController {
 interface CtxHooks {
   onChatAck: Mock<(clientMsgId: string) => void>;
   onInterjectionApplied: Mock<(sourceRunIds: string[], clientMsgIds: string[]) => void>;
+  onActiveUserMsgIndexChange: Mock<(index: number) => void>;
+  onStreamAttached: Mock<(streamId: string, runId: string | null) => void>;
   onChatRejected: Mock<(clientMsgId: string, reasonCode: string, reason: string) => void>;
   onChatDone: Mock<(clientMsgId: string | undefined, error: string | undefined) => void>;
   onModelPersist: Mock<(sessionId: string, model: string) => void>;
@@ -93,6 +95,8 @@ function makeCtx(
   const hooks: CtxHooks = {
     onChatAck: vi.fn<(clientMsgId: string) => void>(),
     onInterjectionApplied: vi.fn<(sourceRunIds: string[], clientMsgIds: string[]) => void>(),
+    onActiveUserMsgIndexChange: vi.fn<(index: number) => void>(),
+    onStreamAttached: vi.fn<(streamId: string, runId: string | null) => void>(),
     onChatRejected: vi.fn<(clientMsgId: string, reasonCode: string, reason: string) => void>(),
     onChatDone: vi.fn<(clientMsgId: string | undefined, error: string | undefined) => void>(),
     onModelPersist: vi.fn<(sessionId: string, model: string) => void>(),
@@ -135,6 +139,8 @@ function makeCtx(
     userMsgIndex: -1,
     onChatAck: hooks.onChatAck,
     onInterjectionApplied: hooks.onInterjectionApplied,
+    onActiveUserMsgIndexChange: hooks.onActiveUserMsgIndexChange,
+    onStreamAttached: hooks.onStreamAttached,
     onChatRejected: hooks.onChatRejected,
     onChatDone: hooks.onChatDone,
     onModelPersist: hooks.onModelPersist,
@@ -295,6 +301,89 @@ describe('processWsEvent - 连接与消息生命周期', () => {
     expect(ctx.runIdRef!.current).toBe('active-run');
     expect((ctrl.messages[1] as Extract<MessageItem, { type: 'user' }>).status).toBe('queued');
     expect(ctrl.messages.some((message) => message.type === 'runtime_status')).toBe(false);
+  });
+
+  it('stream_id 接管（插话回退为独立 run）：切换 userMsgIndex 归属，后续 done 不被防串校验丢弃', () => {
+    const ctrl = makeController([
+      { id: 'u1', type: 'user', content: '当前问题', status: 'sent', clientMsgId: 'c1' },
+      { id: 'u2', type: 'user', content: '插话', status: 'queued', clientMsgId: 'c2' },
+    ]);
+    const { ctx, hooks } = makeCtx(ctrl);
+    ctx.streamIdRef.current = 'stream-a';
+    ctx.runIdRef!.current = 'run-a';
+    // 目标 run（c1）尚未结束时，userMsgIndex 仍指向它的气泡
+    ctx.userMsgIndex = 0;
+
+    // 目标 run 在边界前结束 → 服务端为回退 run 补发非 queued 的 stream_id
+    dispatch({
+      type: 'stream_id',
+      streamId: 'stream-b',
+      runId: 'run-b',
+      client_msg_id: 'c2',
+    }, ctx);
+
+    expect(ctx.streamIdRef.current).toBe('stream-b');
+    expect(ctx.runIdRef!.current).toBe('run-b');
+    expect(hooks.onStreamAttached).toHaveBeenCalledWith('stream-b', 'run-b');
+    expect(hooks.onActiveUserMsgIndexChange).toHaveBeenCalledWith(1);
+    expect((ctrl.messages[1] as Extract<MessageItem, { type: 'user' }>).status).toBe('sent');
+
+    // 上层按回调完成切换后重建 ctx（web/mobile 均为每事件重建）
+    ctx.userMsgIndex = 1;
+    const result = dispatch({
+      type: 'done',
+      sessionId: 's1',
+      streamId: 'stream-b',
+      runId: 'run-b',
+      client_msg_id: 'c2',
+    }, ctx, freshBlock(), { value: 's1' }, 's1');
+
+    expect(result).toBe('done');
+    expect(hooks.onChatDone).toHaveBeenCalledWith('c2', undefined);
+  });
+
+  it('stream_id 接管：sessionId 不属于当前会话时不接管', () => {
+    const ctrl = makeController([
+      { id: 'u1', type: 'user', content: '当前会话', status: 'sent', clientMsgId: 'c1' },
+    ]);
+    const { ctx, hooks } = makeCtx(ctrl);
+    ctx.streamIdRef.current = 'stream-current';
+    ctx.runIdRef!.current = 'run-current';
+
+    dispatch({
+      type: 'stream_id',
+      streamId: 'stream-other',
+      sessionId: 'other-session',
+      runId: 'run-other',
+      client_msg_id: 'c1',
+    }, ctx, freshBlock(), { value: 's1' }, 's1');
+
+    expect(ctx.streamIdRef.current).toBe('stream-current');
+    expect(ctx.runIdRef!.current).toBe('run-current');
+    expect(hooks.onStreamAttached).not.toHaveBeenCalled();
+  });
+
+  it('stream_id 接管：queued 的 stream_id 不触发 userMsgIndex 切换', () => {
+    const ctrl = makeController([
+      { id: 'u1', type: 'user', content: '当前问题', status: 'sent', clientMsgId: 'c1' },
+      { id: 'u2', type: 'user', content: '插话', status: 'pending', clientMsgId: 'c2' },
+    ]);
+    const { ctx, hooks } = makeCtx(ctrl);
+    ctx.streamIdRef.current = 'stream-a';
+    ctx.runIdRef!.current = 'run-a';
+    ctx.userMsgIndex = 0;
+
+    dispatch({
+      type: 'stream_id',
+      streamId: 'queued-stream',
+      runId: 'queued-run',
+      client_msg_id: 'c2',
+      queued: true,
+      targetRunId: 'run-a',
+    }, ctx);
+
+    expect(hooks.onActiveUserMsgIndexChange).not.toHaveBeenCalled();
+    expect(ctx.streamIdRef.current).toBe('stream-a');
   });
 
   it('interjection_applied：把已排队气泡翻为 sent 并回调清理 outbox', () => {
@@ -759,6 +848,35 @@ describe('processWsEvent - done 终态', () => {
     expect(ret).toBe('done');
     expect(hooks.onChatDone).toHaveBeenCalledWith('client-draft', 'boom');
     expect(ctrl.messages[0]).toMatchObject({ status: 'failed' });
+  });
+
+  it('fallback source 接管后，按精确 client_msg_id 接受终态，不受旧 userMsgIndex 影响', () => {
+    const ctrl = makeController([
+      { id: 'target', type: 'user', content: '原始消息', status: 'sent', clientMsgId: 'target-client' },
+      { id: 'source', type: 'user', content: '插话消息', status: 'sent', clientMsgId: 'source-client' },
+      { id: 'status', type: 'runtime_status', status: 'running', streamId: 'source-stream', runId: 'source-run' },
+      { id: 'text', type: 'text', content: 'fallback reply', streaming: true },
+    ]);
+    const { ctx, hooks } = makeCtx(ctrl, {
+      // 目标 run 结束后，session_status 已把 stream/run 切到 source，
+      // 但旧索引仍指向目标消息，这是 fallback 接管的真实时序。
+      userMsgIndex: 0,
+      streamIdRef: { current: 'source-stream' },
+      runIdRef: { current: 'source-run' },
+    });
+
+    const ret = dispatch({
+      type: 'done',
+      sessionId: 'session-1',
+      streamId: 'source-stream',
+      runId: 'source-run',
+      client_msg_id: 'source-client',
+    }, ctx, freshBlock(), { value: 'session-1' }, 'session-1');
+
+    expect(ret).toBe('done');
+    expect(hooks.onChatDone).toHaveBeenCalledWith('source-client', undefined);
+    expect(ctrl.messages.some((message) => message.type === 'runtime_status')).toBe(false);
+    expect((ctrl.messages.find((message) => message.id === 'text') as Extract<MessageItem, { type: 'text' }>).streaming).toBe(false);
   });
 
   it('done 无 error：清状态条、收尾 streaming、返回 done、触发 onChatDone', () => {

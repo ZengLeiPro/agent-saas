@@ -21,7 +21,35 @@ export function mergeServerMessagesWithLocalTail(
       break;
     }
   }
-  if (anchorIdx === -1) return server;
+
+  // 第二锚点：本地仍在途（pending/queued）的用户气泡。插话在服务端投影完成前
+  // 可能被 text 锚点逻辑漏掉——插话回退 run 的流式 text 会成为新锚点，把 queued
+  // 气泡挤到锚点之前而整体丢弃（气泡消失后，回退 run 的 done 还会失去归属目标）。
+  let inflightUserIdx = -1;
+  for (let i = local.length - 1; i >= 0; i--) {
+    const m = local[i];
+    if (m.type === 'user' && (m.status === 'pending' || m.status === 'queued')) {
+      inflightUserIdx = i;
+      break;
+    }
+  }
+  // 服务端已投影（最后一条 user 同内容）则不再保留本地气泡，避免重复。只比较
+  // 最后一条 user，不能在整个历史里 some：用户重复发送同一句话很常见，旧消息命中会
+  // 误吞本轮在途气泡。
+  let lastServerUserContent: string | undefined;
+  for (let i = server.length - 1; i >= 0; i--) {
+    if (server[i].type === 'user') {
+      lastServerUserContent = (server[i] as Extract<MessageItem, { type: 'user' }>).content;
+      break;
+    }
+  }
+  const inflightUserProjected = inflightUserIdx >= 0
+    && lastServerUserContent === (local[inflightUserIdx] as Extract<MessageItem, { type: 'user' }>).content;
+  const inflightTailStart = inflightUserIdx >= 0 && !inflightUserProjected ? inflightUserIdx : -1;
+
+  if (anchorIdx === -1) {
+    return inflightTailStart >= 0 ? [...server, ...local.slice(inflightTailStart)] : server;
+  }
 
   const anchor = local[anchorIdx];
   if (anchor.type !== 'text') return server;
@@ -30,9 +58,10 @@ export function mergeServerMessagesWithLocalTail(
 
   // 空流式占位不应作为消息追加，但仍需保留其后的 tool/subagent 等本地尾部。
   if (anchorContent.trim().length === 0) {
-    return localTailAfterAnchor.length === 0
-      ? server
-      : [...server, ...localTailAfterAnchor];
+    const tail = inflightTailStart >= 0 && inflightTailStart < anchorIdx
+      ? local.slice(inflightTailStart)
+      : localTailAfterAnchor;
+    return tail.length === 0 ? server : [...server, ...tail];
   }
 
   // 只检查服务端最后一条 text，避免历史中的同文消息误吞当前回复。
@@ -46,13 +75,18 @@ export function mergeServerMessagesWithLocalTail(
   }
 
   // startsWith 同时覆盖全文相等；不做 trim/模糊匹配，避免误吞不同消息。
+  // 服务端已有锚点 text 时，锚点前的在途气泡必然先于该 text 被消费/投影（transcript
+  // 顺序保证），只保留锚点后的本地尾部即可。
   if (lastServerTextContent?.startsWith(anchorContent)) {
     return localTailAfterAnchor.length === 0
       ? server
       : [...server, ...localTailAfterAnchor];
   }
 
-  return [...server, ...local.slice(anchorIdx)];
+  const startIdx = inflightTailStart >= 0 && inflightTailStart < anchorIdx
+    ? inflightTailStart
+    : anchorIdx;
+  return [...server, ...local.slice(startIdx)];
 }
 
 /**

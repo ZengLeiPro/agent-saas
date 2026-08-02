@@ -29,6 +29,9 @@ const METADATA_EVENTS = new Set([
   'groups_changed',
   'sync_ok',
   'sync_overflow',
+  // 插话回退为独立 run 的接管 stream_id 到达时 isAttached 已被目标 run 的 done 清掉，
+  // 必须放行；串会话由 processWsEvent 内的 sessionId 校验兜底。
+  'stream_id',
 ]);
 
 /** 外部回调注册（平台层设置） */
@@ -185,6 +188,14 @@ export function setupWsHandler(): () => void {
       sessionOwnerRef: { current: state.sessionOwner },
       onModelPersist: (sessionId, model) => {
         void getPlatform().storage.setItem(`agentChat.model.${sessionId}`, model);
+      },
+      onActiveUserMsgIndexChange: (index) => {
+        // 插话回退为独立 run 的接管：把防串校验的归属索引切到接管消息的气泡
+        if (store.getState().userMsgIndex !== index) store.setState({ userMsgIndex: index });
+      },
+      onStreamAttached: () => {
+        // 接管场景：目标 run 的 done 已清掉 attached，这里恢复，后续流式内容才能过守卫
+        if (!store.getState().isAttached) store.setState({ isAttached: true });
       },
     };
 

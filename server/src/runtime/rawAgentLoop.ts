@@ -804,8 +804,16 @@ export class RawAgentLoop implements AgentLoop {
         .map((event) => event.interjectionSourceRunId!),
     );
     const drainQueuedInterjections = async () => {
+      // abort 感知：取消/失败中的 run 不得再吸收插话。否则 markSteeringInputsApplied
+      // 会把 source run 置为 completed（steered_into_run），而目标 run 随后在 abort 中
+      // 终结——插话既没被模型消费，也不再退化执行，消息丢失。跳过 drain 后 source 保持
+      // pending，目标终态后自然退化为独立 run。
+      if (context.signal?.aborted) return [];
       const queued = await context.loadQueuedInterjections?.() ?? [];
       if (queued.length === 0) return [];
+      // loadQueuedInterjections 含附件解析/图像理解（秒级慢路径），结束后、落库并标记
+      // applied 前必须再检查一次。
+      if (context.signal?.aborted) return [];
       for (const interjection of queued) {
         if (recoveredInterjectionSourceRunIds.has(interjection.sourceRunId)) continue;
         const userMessageEvent = await this.eventStore.append({
@@ -831,10 +839,6 @@ export class RawAgentLoop implements AgentLoop {
         currentUserMessageIndex = messages.length - 1;
         recoveredInterjectionSourceRunIds.add(interjection.sourceRunId);
       }
-      await this.runStore?.markSteeringInputsApplied?.(
-        context.runId,
-        queued.map((interjection) => interjection.sourceRunId),
-      );
       return queued;
     };
 
@@ -896,15 +900,7 @@ export class RawAgentLoop implements AgentLoop {
           return;
         }
         const boundaryInterjections = await drainQueuedInterjections();
-        if (boundaryInterjections.length > 0) {
-          yield {
-            type: 'interjection_applied',
-            sourceRunIds: boundaryInterjections.map((interjection) => interjection.sourceRunId),
-            clientMsgIds: boundaryInterjections.flatMap((interjection) => (
-              interjection.clientMsgId ? [interjection.clientMsgId] : []
-            )),
-          };
-        }
+        let boundaryInterjectionsClaimed = boundaryInterjections.length === 0;
         context.replaceableDraftRetryUsed = turn === 1 && restoredDraftRecoveryUsed;
         let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
         let turnContextUsage: OutboundEvent['contextUsage'] | null = null;
@@ -995,6 +991,32 @@ export class RawAgentLoop implements AgentLoop {
           ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
           ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
         }, this.withModelRequestDiagnostics(context))) {
+          if (!boundaryInterjectionsClaimed) {
+            boundaryInterjectionsClaimed = true;
+            const requestedSourceRunIds = boundaryInterjections.map((interjection) => interjection.sourceRunId);
+            const appliedSourceRunIds = await this.runStore?.markSteeringInputsApplied?.(
+              context.runId,
+              requestedSourceRunIds,
+            ) ?? requestedSourceRunIds;
+            const appliedSourceRunIdSet = new Set(appliedSourceRunIds);
+            const appliedInterjections = boundaryInterjections.filter((interjection) => (
+              appliedSourceRunIdSet.has(interjection.sourceRunId)
+            ));
+            if (appliedInterjections.length !== boundaryInterjections.length) {
+              if (context.signal?.aborted) {
+                const reason = context.signal.reason;
+                throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
+              }
+              throw new Error('steering target became inactive before the next model turn');
+            }
+            yield {
+              type: 'interjection_applied',
+              sourceRunIds: appliedInterjections.map((interjection) => interjection.sourceRunId),
+              clientMsgIds: appliedInterjections.flatMap((interjection) => (
+                interjection.clientMsgId ? [interjection.clientMsgId] : []
+              )),
+            };
+          }
           if (event.type === 'thinking_delta') {
             if (!thinkingStarted) {
               thinkingStarted = true;
@@ -1186,20 +1208,13 @@ export class RawAgentLoop implements AgentLoop {
               ? { provider_continuation: completed.providerContinuation }
               : {}),
           });
-          let queuedInterjections = await drainQueuedInterjections();
-          if (queuedInterjections.length === 0 && this.runStore?.trySealSteeringInputWindow) {
-            const sealed = await this.runStore.trySealSteeringInputWindow(context.runId);
-            if (!sealed) queuedInterjections = await drainQueuedInterjections();
-          }
-          if (queuedInterjections.length > 0) {
-            yield {
-              type: 'interjection_applied',
-              sourceRunIds: queuedInterjections.map((interjection) => interjection.sourceRunId),
-              clientMsgIds: queuedInterjections.flatMap((interjection) => (
-                interjection.clientMsgId ? [interjection.clientMsgId] : []
-              )),
-            };
-            continue;
+          if (turn < input.maxTurns) {
+            let queuedInterjections = await drainQueuedInterjections();
+            if (queuedInterjections.length === 0 && this.runStore?.trySealSteeringInputWindow) {
+              const sealed = await this.runStore.trySealSteeringInputWindow(context.runId);
+              if (!sealed) queuedInterjections = await drainQueuedInterjections();
+            }
+            if (queuedInterjections.length > 0) continue;
           }
           const modelUsage = buildModelUsage(context.model, totalUsage);
           await this.append({
@@ -1302,16 +1317,7 @@ export class RawAgentLoop implements AgentLoop {
           context,
           messages,
         });
-        const queuedInterjections = await drainQueuedInterjections();
-        if (queuedInterjections.length > 0) {
-          yield {
-            type: 'interjection_applied',
-            sourceRunIds: queuedInterjections.map((interjection) => interjection.sourceRunId),
-            clientMsgIds: queuedInterjections.flatMap((interjection) => (
-              interjection.clientMsgId ? [interjection.clientMsgId] : []
-            )),
-          };
-        }
+        if (turn < input.maxTurns) await drainQueuedInterjections();
       }
 
       if (textStarted) {

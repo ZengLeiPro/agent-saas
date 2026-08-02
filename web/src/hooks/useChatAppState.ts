@@ -1880,9 +1880,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
       // 防串流守卫：未挂载到流时，只放行会话元数据事件，过滤所有流式内容事件
       if (!wsAttachedRef.current) {
+        // stream_id 必须放行：插话回退为独立 run 时，目标 run 的 done 已把 attached 清掉，
+        // 服务端补发的接管 stream_id 若被挡在这里，整条回退流的内容与 done 都会丢失。
+        // 串会话风险由 processWsEvent 内的 sessionId 校验兜底。
         const isMetadata = data.type === 'title_updated' || data.type === 'session_updated'
           || data.type === 'session_deleted' || data.type === 'interaction_resolved'
-          || data.type === 'pending_interactions' || data.type === 'voice_transcribed';
+          || data.type === 'pending_interactions' || data.type === 'voice_transcribed'
+          || data.type === 'stream_id';
         if (!isMetadata) return;
       }
 
@@ -1997,6 +2001,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           // 专职 Agent 挂起 ref 不在 ACK 清（2026-07 审查 F9）：ACK 只代表消息入队，
           // 门禁/入队失败（chat_rejected）后重发仍需带 orgAgentId；
           // 改在 'session' 事件（服务端已写 meta 绑定）后清除
+        },
+        onActiveUserMsgIndexChange: (index) => {
+          // 插话回退为独立 run 的接管：把防串校验的归属索引切到接管消息的气泡
+          wsUserMsgIndexRef.current = index;
+        },
+        onStreamAttached: () => {
+          // 接管场景：目标 run 的 done 已清掉 attached，这里恢复，后续流式内容才能过守卫
+          wsAttachedRef.current = true;
         },
         onInterjectionApplied: (_sourceRunIds, clientMsgIds) => {
           const applied = new Set(clientMsgIds);

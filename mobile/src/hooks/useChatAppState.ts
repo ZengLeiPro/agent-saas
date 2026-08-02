@@ -1058,13 +1058,16 @@ export function useChatAppStateCore(): ChatAppState {
 
       // 防串流守卫
       if (!wsAttachedRef.current) {
+        // stream_id 必须放行：插话回退为独立 run 时，目标 run 的 done 已把 attached 清掉，
+        // 服务端补发的接管 stream_id 若被挡在这里，整条回退流的内容与 done 都会丢失。
         const isMetadata =
           data.type === "title_updated" ||
           data.type === "session_updated" ||
           data.type === "session_deleted" ||
           data.type === "interaction_resolved" ||
           data.type === "pending_interactions" ||
-          data.type === "voice_transcribed";
+          data.type === "voice_transcribed" ||
+          data.type === "stream_id";
         if (!isMetadata) return;
       }
 
@@ -1142,6 +1145,14 @@ export function useChatAppStateCore(): ChatAppState {
           void getPlatform().storage.setItem(`agentChat.model.${sid}`, model);
         },
         // ─── 消息可靠性回调 ───
+        onActiveUserMsgIndexChange: (index) => {
+          // 插话回退为独立 run 的接管：把防串校验的归属索引切到接管消息的气泡
+          wsUserMsgIndexRef.current = index;
+        },
+        onStreamAttached: () => {
+          // 接管场景：目标 run 的 done 已清掉 attached，这里恢复，后续流式内容才能过守卫
+          wsAttachedRef.current = true;
+        },
         onChatAck: (clientMsgId) => {
           const t = ackTimersRef.current.get(clientMsgId);
           if (t) {

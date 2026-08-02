@@ -71,4 +71,20 @@ describe("MessageList business todo projection", () => {
     expect(screen.getByText("执行详情（1）")).toBeTruthy();
     expect(screen.queryByText("TodoWrite")).toBeNull();
   });
+
+  it("keeps a 500-message conversation DOM bounded before viewport measurement", () => {
+    const longMessages = Array.from({ length: 500 }, (_, index): MessageItem => ({
+      id: `user-${index + 1}`,
+      type: "user",
+      content: `消息 ${index + 1}`,
+      timestamp: index + 1,
+    }));
+    const { container } = render(
+      <MessageList messages={longMessages} loading={false} debugModeOverride={false} />,
+    );
+
+    expect(container.querySelectorAll("[data-message-virtual-key]")).toHaveLength(80);
+    expect(screen.getByText("消息 500")).toBeTruthy();
+    expect(screen.queryByText("消息 1")).toBeNull();
+  });
 });

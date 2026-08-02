@@ -203,6 +203,19 @@ export interface WsProcessingContext {
   /** 消息可靠性协议回调（2026-04-18 新增）—— 用于 outbox 状态机更新 */
   onChatAck?: (clientMsgId: string) => void;
   onInterjectionApplied?: (sourceRunIds: string[], clientMsgIds: string[]) => void;
+  /**
+   * 活跃流接管到另一条用户消息时回调（非 queued 的 stream_id 按 client_msg_id 定位到
+   * 非当前 userMsgIndex 的气泡）。典型场景：插话未能在目标 run 边界注入、回退为独立
+   * run 执行——上层必须把 userMsgIndex 切到该气泡，否则接管 run 的 done 会被
+   * client_msg_id 防串校验丢弃（流式内容永不确定、outbox 条目泄漏）。
+   */
+  onActiveUserMsgIndexChange?: (index: number) => void;
+  /**
+   * 非 queued 的 stream_id 把活跃流绑定到本连接时回调（含插话回退 run 的接管）。
+   * 上层用它恢复 attached 状态——接管场景下目标 run 的 done 已把 attached 清掉，
+   * 不恢复的话后续流式内容会被防串流守卫整体丢弃。
+   */
+  onStreamAttached?: (streamId: string, runId: string | null) => void;
   onChatRejected?: (clientMsgId: string, reasonCode: string, reason: string) => void;
   /** done 事件（可能带 error）时被调用，用于同步 outbox 终态 */
   onChatDone?: (clientMsgId: string | undefined, error: string | undefined) => void;
@@ -255,9 +268,16 @@ export function processWsEvent(
   const { msg, session, selectedModelRef, voiceCallbackRef, streamIdRef } = ctx;
 
   if (data.type === "stream_id") {
+    // 防串：带 sessionId 的 stream_id 必须属于当前查看的会话。切会话/多设备场景下
+    // 旧会话的接管 stream_id 不应劫持当前视图的流绑定（无 sessionId 的旧协议保持原行为）。
+    if (data.sessionId) {
+      const expectedSessionId = activeSessionId ?? latestSessionId.value;
+      if (expectedSessionId && data.sessionId !== expectedSessionId) return;
+    }
     if (!data.queued) {
       streamIdRef.current = data.streamId;
       if (ctx.runIdRef) ctx.runIdRef.current = data.runId ?? null;
+      ctx.onStreamAttached?.(data.streamId, data.runId ?? null);
       upsertRuntimeStatusMessage(msg, "queued", {
         streamId: data.streamId,
         ...(data.runId ? { runId: data.runId } : {}),
@@ -271,6 +291,11 @@ export function processWsEvent(
     }
     if (targetIdx < 0 && ctx.userMsgIndex >= 0) {
       targetIdx = ctx.userMsgIndex;
+    }
+    // 接管语义仅属于非 queued 的 stream_id：服务端明确把活跃流绑到这条用户消息上，
+    // 上层需同步切换 userMsgIndex，让该 run 的 done 通过 client_msg_id 归属校验。
+    if (!data.queued && targetIdx >= 0 && targetIdx !== ctx.userMsgIndex) {
+      ctx.onActiveUserMsgIndexChange?.(targetIdx);
     }
     if (targetIdx >= 0) {
       msg.updateMessageAt(targetIdx, (m) =>
@@ -756,7 +781,11 @@ export function processWsEvent(
         currentUserMessage
         && (currentUserMessage.type === 'user' || currentUserMessage.type === 'user-voice')
       ) ? currentUserMessage.clientMsgId : undefined;
-      if (expectedClientMsgId && data.client_msg_id !== expectedClientMsgId) return;
+      if (
+        expectedClientMsgId
+        && data.client_msg_id !== expectedClientMsgId
+        && findUserMsgIndexByClientId(msg.messagesRef.current, data.client_msg_id) < 0
+      ) return;
     }
 
     removeRuntimeStatusMessages(msg);

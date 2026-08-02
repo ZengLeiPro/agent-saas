@@ -3,6 +3,7 @@
  *
  * 将 JSONL 格式的 transcript 解析为结构化的 blocks。
  */
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as readline from "node:readline";
@@ -90,10 +91,48 @@ export interface ParsedTranscript {
   sessionId?: string;
   blocks: TranscriptBlock[];
   stats: {
+    /** Snapshot 内的真实物理行总数。全量解析时也等于本次扫描行数。 */
     lines: number;
     parsedLines: number;
     parseErrors: number;
+    /** 窗口解析实际扫描的物理行数；全量兼容路径不返回该字段。 */
+    scannedLines?: number;
   };
+}
+
+export interface TranscriptWindowTiming {
+  indexDurationMs: number;
+  readParseDurationMs: number;
+}
+
+export interface ParsedTranscriptWindow extends ParsedTranscript {
+  window: {
+    /** 1-based，空文件为 0。 */
+    startLine: number;
+    /** inclusive；空文件为 0。 */
+    endLine: number;
+    totalLines: number;
+    startsAtBeginning: boolean;
+    endsAtEnd: boolean;
+    /** 所有扩窗尝试累计扫描行数（可能大于最终窗口行数）。 */
+    totalScannedLines: number;
+    /** transcript 最新 block id；before 窗口通过独立的小尾窗获得。 */
+    latestCursor?: string;
+    /** 当前文件代次；仅用于生成不随 append 漂移的 opaque cursor。 */
+    cursorGeneration: string;
+    /** opaque/legacy cursor 校验后的真实 block id。 */
+    resolvedAfter?: string;
+    resolvedBefore?: string;
+    /** 文件被截断、替换或 cursor 已损坏时为 true，调用方应回退最新尾页。 */
+    cursorInvalidated: boolean;
+  };
+  timing: TranscriptWindowTiming;
+}
+
+export interface ParseTranscriptWindowOptions {
+  after?: string;
+  before?: string;
+  limit: number;
 }
 
 /**
@@ -130,6 +169,228 @@ export type BoundedTranscriptLine =
   | { oversized: false; line: string; sourceChars: number }
   | { oversized: true; prefix: string; tail: string; sourceChars: number };
 
+export interface ReadTranscriptLinesBoundedOptions {
+  /** UTF-8 文件字节偏移，inclusive；必须落在物理行起点。 */
+  start?: number;
+  /** UTF-8 文件字节偏移，exclusive；必须落在物理行边界或 snapshot EOF。 */
+  end?: number;
+}
+
+interface TranscriptLineIndex {
+  dev: number;
+  ino: number;
+  size: number;
+  mtimeMs: number;
+  lineStarts: number[];
+  endedWithNewline: boolean;
+  tailAnchor: string;
+  generation: string;
+}
+
+const TRANSCRIPT_WINDOW_CURSOR_PREFIX = 'tw1.';
+const transcriptWindowProcessSeed = createHash('sha256')
+  .update(`${process.pid}:${Date.now()}:${Math.random()}`)
+  .digest('base64url')
+  .slice(0, 12);
+let transcriptWindowGenerationSequence = 0;
+
+function createTranscriptWindowGeneration(stat: Awaited<ReturnType<typeof fs.stat>>): string {
+  transcriptWindowGenerationSequence += 1;
+  return `${transcriptWindowProcessSeed}:${stat.dev}:${stat.ino}:${transcriptWindowGenerationSequence}`;
+}
+
+export function encodeTranscriptWindowCursor(generation: string, blockId?: string): string | undefined {
+  if (!blockId) return undefined;
+  return `${TRANSCRIPT_WINDOW_CURSOR_PREFIX}${Buffer.from(JSON.stringify({
+    generation,
+    blockId,
+  })).toString('base64url')}`;
+}
+
+function resolveTranscriptWindowCursor(
+  cursor: string | undefined,
+  generation: string,
+): { blockId?: string; invalidated: boolean } {
+  if (!cursor) return { invalidated: false };
+  if (!cursor.startsWith(TRANSCRIPT_WINDOW_CURSOR_PREFIX)) {
+    // 兼容升级前已经落进 IndexedDB 的 line-* cursor。
+    return /^line-\d+(?:-|$)/.test(cursor)
+      ? { blockId: cursor, invalidated: false }
+      : { invalidated: true };
+  }
+  if (cursor.length > 2_048) return { invalidated: true };
+  try {
+    const decoded = JSON.parse(Buffer.from(
+      cursor.slice(TRANSCRIPT_WINDOW_CURSOR_PREFIX.length),
+      'base64url',
+    ).toString('utf8')) as { generation?: unknown; blockId?: unknown };
+    if (
+      decoded.generation !== generation
+      || typeof decoded.blockId !== 'string'
+      || !/^line-\d+(?:-|$)/.test(decoded.blockId)
+    ) {
+      return { invalidated: true };
+    }
+    return { blockId: decoded.blockId, invalidated: false };
+  } catch {
+    return { invalidated: true };
+  }
+}
+
+const TRANSCRIPT_LINE_INDEX_MAX_ENTRIES = 128;
+const TRANSCRIPT_LINE_INDEX_SCAN_BYTES = 64 * 1024;
+const TRANSCRIPT_LINE_INDEX_ANCHOR_BYTES = 256;
+const transcriptLineIndexCache = new Map<string, TranscriptLineIndex>();
+const transcriptLineIndexInFlight = new Map<string, Promise<TranscriptLineIndex>>();
+
+function rememberTranscriptLineIndex(path: string, index: TranscriptLineIndex): void {
+  transcriptLineIndexCache.delete(path);
+  transcriptLineIndexCache.set(path, index);
+  while (transcriptLineIndexCache.size > TRANSCRIPT_LINE_INDEX_MAX_ENTRIES) {
+    const oldest = transcriptLineIndexCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    transcriptLineIndexCache.delete(oldest);
+  }
+}
+
+async function readFileRange(
+  handle: fs.FileHandle,
+  start: number,
+  end: number,
+): Promise<Buffer> {
+  const length = Math.max(0, end - start);
+  if (length === 0) return Buffer.alloc(0);
+  const output = Buffer.allocUnsafe(length);
+  let written = 0;
+  while (written < length) {
+    const { bytesRead } = await handle.read(output, written, length - written, start + written);
+    if (bytesRead === 0) break;
+    written += bytesRead;
+  }
+  return written === length ? output : output.subarray(0, written);
+}
+
+function hashAnchor(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("base64url");
+}
+
+async function readTailAnchor(
+  handle: fs.FileHandle,
+  snapshotSize: number,
+): Promise<string> {
+  const start = Math.max(0, snapshotSize - TRANSCRIPT_LINE_INDEX_ANCHOR_BYTES);
+  return hashAnchor(await readFileRange(handle, start, snapshotSize));
+}
+
+async function anchorMatches(
+  handle: fs.FileHandle,
+  cached: TranscriptLineIndex,
+): Promise<boolean> {
+  if (cached.size === 0) return true;
+  return (await readTailAnchor(handle, cached.size)) === cached.tailAnchor;
+}
+
+async function scanLineStarts(
+  handle: fs.FileHandle,
+  start: number,
+  end: number,
+  lineStarts: number[],
+): Promise<boolean> {
+  const buffer = Buffer.allocUnsafe(TRANSCRIPT_LINE_INDEX_SCAN_BYTES);
+  let position = start;
+  let lastByte = -1;
+  while (position < end) {
+    const length = Math.min(buffer.length, end - position);
+    const { bytesRead } = await handle.read(buffer, 0, length, position);
+    if (bytesRead === 0) break;
+    for (let index = 0; index < bytesRead; index += 1) {
+      if (buffer[index] !== 0x0a) continue;
+      const nextLineStart = position + index + 1;
+      if (nextLineStart < end && lineStarts.at(-1) !== nextLineStart) {
+        lineStarts.push(nextLineStart);
+      }
+    }
+    lastByte = buffer[bytesRead - 1] ?? lastByte;
+    position += bytesRead;
+  }
+  return end > start ? lastByte === 0x0a : false;
+}
+
+async function buildTranscriptLineIndexUncached(resolved: string): Promise<TranscriptLineIndex> {
+  const handle = await fs.open(resolved, "r");
+  try {
+    const stat = await handle.stat();
+    const dev = Number(stat.dev);
+    const ino = Number(stat.ino);
+    const size = stat.size;
+    const cached = transcriptLineIndexCache.get(resolved);
+
+    if (
+      cached
+      && cached.dev === dev
+      && cached.ino === ino
+      && cached.size === size
+      && cached.mtimeMs === stat.mtimeMs
+    ) {
+      rememberTranscriptLineIndex(resolved, cached);
+      return cached;
+    }
+
+    // 只有身份不变、文件增长且旧 EOF anchor 仍相同时才按 append 增量扩展。
+    if (
+      cached
+      && cached.dev === dev
+      && cached.ino === ino
+      && size > cached.size
+      && await anchorMatches(handle, cached)
+    ) {
+      const lineStarts = [...cached.lineStarts];
+      if (cached.size === 0) lineStarts.push(0);
+      else if (cached.endedWithNewline && cached.size < size) lineStarts.push(cached.size);
+      const endedWithNewline = await scanLineStarts(handle, cached.size, size, lineStarts);
+      const index: TranscriptLineIndex = {
+        dev,
+        ino,
+        size,
+        mtimeMs: stat.mtimeMs,
+        lineStarts,
+        endedWithNewline,
+        tailAnchor: await readTailAnchor(handle, size),
+        generation: cached.generation,
+      };
+      rememberTranscriptLineIndex(resolved, index);
+      return index;
+    }
+
+    // 截断、替换、同尺寸重写和非 append compaction 都走完整重建。
+    const lineStarts = size > 0 ? [0] : [];
+    const endedWithNewline = await scanLineStarts(handle, 0, size, lineStarts);
+    const index: TranscriptLineIndex = {
+      dev,
+      ino,
+      size,
+      mtimeMs: stat.mtimeMs,
+      lineStarts,
+      endedWithNewline,
+      tailAnchor: await readTailAnchor(handle, size),
+      generation: createTranscriptWindowGeneration(stat),
+    };
+    rememberTranscriptLineIndex(resolved, index);
+    return index;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function getTranscriptLineIndex(resolved: string): Promise<TranscriptLineIndex> {
+  const existing = transcriptLineIndexInFlight.get(resolved);
+  if (existing) return existing;
+  const promise = buildTranscriptLineIndexUncached(resolved)
+    .finally(() => transcriptLineIndexInFlight.delete(resolved));
+  transcriptLineIndexInFlight.set(resolved, promise);
+  return promise;
+}
+
 function appendBoundedTail(current: string, segment: string): string {
   if (segment.length >= TRANSCRIPT_STREAM_LINE_TAIL_CHARS) {
     return segment.slice(-TRANSCRIPT_STREAM_LINE_TAIL_CHARS);
@@ -144,8 +405,17 @@ function appendBoundedTail(current: string, segment: string): string {
  */
 export async function* readTranscriptLinesBounded(
   filePath: string,
+  options: ReadTranscriptLinesBoundedOptions = {},
 ): AsyncGenerator<BoundedTranscriptLine> {
-  const input = createReadStream(filePath, { encoding: "utf-8", highWaterMark: 64 * 1024 });
+  const start = Math.max(0, Math.floor(options.start ?? 0));
+  const end = options.end === undefined ? undefined : Math.max(start, Math.floor(options.end));
+  if (end !== undefined && end <= start) return;
+  const input = createReadStream(filePath, {
+    encoding: "utf-8",
+    highWaterMark: 64 * 1024,
+    start,
+    ...(end === undefined ? {} : { end: end - 1 }),
+  });
   let parts: string[] = [];
   let sourceChars = 0;
   let oversized = false;
@@ -411,13 +681,23 @@ function parseTaskNotification(text: string): {
 /**
  * 解析 transcript 文件
  */
+interface ParseTranscriptRangeOptions {
+  start?: number;
+  end?: number;
+  physicalLineOffset?: number;
+  totalLines?: number;
+  exposeScannedLines?: boolean;
+}
+
 async function parseTranscriptFileUncached(
   resolved: string,
+  options: ParseTranscriptRangeOptions = {},
 ): Promise<ParsedTranscript> {
   await fs.access(resolved);
 
   const blocks: TranscriptBlock[] = [];
-  let lines = 0;
+  let lineNumber = options.physicalLineOffset ?? 0;
+  let scannedLines = 0;
   let parsedLines = 0;
   let parseErrors = 0;
   let boundedOversizedLines = 0;
@@ -436,8 +716,9 @@ async function parseTranscriptFileUncached(
   const toolIdToBlockIndex: Record<string, number> = {};
   const recentToolResults: TranscriptBlock[] = [];
 
-  for await (const record of readTranscriptLinesBounded(resolved)) {
-    lines += 1;
+  for await (const record of readTranscriptLinesBounded(resolved, options)) {
+    lineNumber += 1;
+    scannedLines += 1;
     if (record.oversized) {
       boundedOversizedLines += 1;
       largestSourceLineChars = Math.max(largestSourceLineChars, record.sourceChars);
@@ -461,7 +742,7 @@ async function parseTranscriptFileUncached(
       if (isUser && isToolResult) {
         const toolUseId = extractLastJsonStringField(retained, "tool_use_id") ?? "unknown";
         blocks.push({
-          id: `line-${lines}-oversized-tool-result`,
+          id: `line-${lineNumber}-oversized-tool-result`,
           tsMs,
           kind: "tool_result",
           title: `工具结果: ${toolUseId}`,
@@ -478,7 +759,7 @@ async function parseTranscriptFileUncached(
         const toolName = extractLastJsonStringField(record.prefix, "name") ?? "unknown";
         if (toolId) toolIdToName[toolId] = toolName;
         blocks.push({
-          id: `line-${lines}-oversized-tool-use`,
+          id: `line-${lineNumber}-oversized-tool-use`,
           tsMs,
           kind: "tool_use",
           title: `工具调用: ${toolName}`,
@@ -491,7 +772,7 @@ async function parseTranscriptFileUncached(
       }
 
       blocks.push({
-        id: `line-${lines}-oversized`,
+        id: `line-${lineNumber}-oversized`,
         tsMs,
         kind: isAssistant ? "text" : isUser ? "prompt" : "meta",
         title: isAssistant ? "输出" : isUser ? "输入" : "超大记录",
@@ -511,7 +792,7 @@ async function parseTranscriptFileUncached(
     } catch {
       parseErrors += 1;
       blocks.push({
-        id: `line-${lines}`,
+        id: `line-${lineNumber}`,
         kind: "meta",
         title: "Unparseable transcript line",
         defaultOpen: false,
@@ -540,7 +821,7 @@ async function parseTranscriptFileUncached(
           const blockType = block?.type;
           if (blockType === "text") {
             blocks.push({
-              id: `line-${lines}-assistant-${idx}`,
+              id: `line-${lineNumber}-assistant-${idx}`,
               tsMs,
               kind: "text",
               title: "输出",
@@ -561,7 +842,7 @@ async function parseTranscriptFileUncached(
                   ? block.text
                   : undefined;
             blocks.push({
-              id: `line-${lines}-assistant-${idx}`,
+              id: `line-${lineNumber}-assistant-${idx}`,
               tsMs,
               kind: "thinking",
               title,
@@ -590,7 +871,7 @@ async function parseTranscriptFileUncached(
             }
 
             blocks.push({
-              id: `line-${lines}-assistant-${idx}`,
+              id: `line-${lineNumber}-assistant-${idx}`,
               tsMs,
               kind: "tool_use",
               title,
@@ -608,7 +889,7 @@ async function parseTranscriptFileUncached(
           }
 
           blocks.push({
-            id: `line-${lines}-assistant-${idx}`,
+            id: `line-${lineNumber}-assistant-${idx}`,
             tsMs,
             kind: "meta",
             title: `Assistant block: ${String(blockType ?? "unknown")}`,
@@ -618,7 +899,7 @@ async function parseTranscriptFileUncached(
         }
       } else {
         blocks.push({
-          id: `line-${lines}-assistant`,
+          id: `line-${lineNumber}-assistant`,
           tsMs,
           kind: "text",
           title: "输出",
@@ -659,7 +940,7 @@ async function parseTranscriptFileUncached(
             }
 
             const toolResultBlock: TranscriptBlock = {
-              id: `line-${lines}-user-${idx}`,
+              id: `line-${lineNumber}-user-${idx}`,
               tsMs,
               kind: "tool_result",
               title: `工具结果: ${toolUseId || "unknown"}${isError ? "（错误）" : ""}`,
@@ -696,7 +977,7 @@ async function parseTranscriptFileUncached(
               : formatJson(block, TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS);
             if (isSkillContextText(text)) {
               blocks.push({
-                id: `line-${lines}-user-${idx}`,
+                id: `line-${lineNumber}-user-${idx}`,
                 tsMs,
                 kind: "meta",
                 title: "技能上下文（自动注入）",
@@ -715,14 +996,14 @@ async function parseTranscriptFileUncached(
                     ? '已取消'
                     : notif.status || '未知';
               blocks.push({
-                id: `line-${lines}-user-${idx}`,
+                id: `line-${lineNumber}-user-${idx}`,
                 tsMs,
                 kind: "tool_use",
                 title: `后台任务: ${statusLabel}`,
                 defaultOpen: false,
                 content: JSON.stringify({ description: notif.summary, status: notif.status }, null, 2),
                 toolName: "BackgroundTask",
-                toolId: notif.toolUseId || `bg-task-${lines}-${idx}`,
+                toolId: notif.toolUseId || `bg-task-${lineNumber}-${idx}`,
                 isError: notif.status === 'failed' || notif.status === 'cancelled',
               });
               continue;
@@ -734,7 +1015,7 @@ async function parseTranscriptFileUncached(
             const attachHere = userAttachments && !attachmentsAttached;
             if (attachHere) attachmentsAttached = true;
             blocks.push({
-              id: `line-${lines}-user-${idx}`,
+              id: `line-${lineNumber}-user-${idx}`,
               tsMs,
               kind: "prompt",
               title: "输入（Prompt）",
@@ -746,7 +1027,7 @@ async function parseTranscriptFileUncached(
             continue;
           }
           blocks.push({
-            id: `line-${lines}-user-${idx}`,
+            id: `line-${lineNumber}-user-${idx}`,
             tsMs,
             kind: "meta",
             title: `User block: ${String(blockType ?? "unknown")}`,
@@ -758,7 +1039,7 @@ async function parseTranscriptFileUncached(
         const text = normalizeTextContent(content, TRANSCRIPT_DETAIL_MESSAGE_MAX_CHARS);
         if (isSkillContextText(text)) {
           blocks.push({
-            id: `line-${lines}-user`,
+            id: `line-${lineNumber}-user`,
             tsMs,
             kind: "meta",
             title: "技能上下文（自动注入）",
@@ -777,14 +1058,14 @@ async function parseTranscriptFileUncached(
                 ? '已取消'
                 : notif.status || '未知';
           blocks.push({
-            id: `line-${lines}-user`,
+            id: `line-${lineNumber}-user`,
             tsMs,
             kind: "tool_use",
             title: `后台任务: ${statusLabel}`,
             defaultOpen: false,
             content: JSON.stringify({ description: notif.summary, status: notif.status }, null, 2),
             toolName: "BackgroundTask",
-            toolId: notif.toolUseId || `bg-task-${lines}`,
+            toolId: notif.toolUseId || `bg-task-${lineNumber}`,
             isError: notif.status === 'failed' || notif.status === 'cancelled',
           });
           continue;
@@ -793,7 +1074,7 @@ async function parseTranscriptFileUncached(
         const promptText = stripTimestampPrefix(stripMemoryContext(strippedText));
         const isVoiceTranscript = isVoiceSttTagged(promptText);
         blocks.push({
-          id: `line-${lines}-user`,
+          id: `line-${lineNumber}-user`,
           tsMs,
           kind: "prompt",
           title: "输入（Prompt）",
@@ -809,7 +1090,7 @@ async function parseTranscriptFileUncached(
     // /compact v2：压缩分界线。content 为摘要正文（前端仅 debugMode 提供展开查看）
     if (obj?.type === "compaction") {
       blocks.push({
-        id: `line-${lines}-compaction`,
+        id: `line-${lineNumber}-compaction`,
         tsMs,
         kind: "compaction",
         title: "上下文已压缩",
@@ -827,7 +1108,7 @@ async function parseTranscriptFileUncached(
     // SDK result message
     if (obj?.type === "result") {
       blocks.push({
-        id: `line-${lines}-result`,
+        id: `line-${lineNumber}-result`,
         tsMs,
         kind: "meta",
         title: `结果: ${String(obj?.subtype ?? "unknown")}`,
@@ -843,7 +1124,7 @@ async function parseTranscriptFileUncached(
         ? `${obj.type}${obj.subtype ? `:${obj.subtype}` : ""}`
         : "meta";
     blocks.push({
-      id: `line-${lines}-meta`,
+      id: `line-${lineNumber}-meta`,
       tsMs,
       kind: "meta",
       title: label,
@@ -861,7 +1142,12 @@ async function parseTranscriptFileUncached(
   return {
     sessionId,
     blocks,
-    stats: { lines, parsedLines, parseErrors },
+    stats: {
+      lines: options.totalLines ?? scannedLines,
+      parsedLines,
+      parseErrors,
+      ...(options.exposeScannedLines ? { scannedLines } : {}),
+    },
   };
 }
 
@@ -1474,6 +1760,213 @@ export async function summarizeTranscript(
 
   summaryCache.set(resolved, { mtimeMs: stat.mtimeMs, summary });
   return summary;
+}
+
+function transcriptCursorLine(cursor: string | undefined): number | undefined {
+  if (!cursor) return undefined;
+  const match = /^line-(\d+)(?:-|$)/.exec(cursor);
+  if (!match) return undefined;
+  const line = Number(match[1]);
+  return Number.isSafeInteger(line) && line > 0 ? line : undefined;
+}
+
+async function transcriptIndexSnapshotStillValid(
+  resolved: string,
+  index: TranscriptLineIndex,
+): Promise<boolean> {
+  const handle = await fs.open(resolved, "r");
+  try {
+    const stat = await handle.stat();
+    if (Number(stat.dev) !== index.dev || Number(stat.ino) !== index.ino) return false;
+    if (stat.size < index.size) return false;
+    if (stat.size === index.size) return stat.mtimeMs === index.mtimeMs;
+    return anchorMatches(handle, index);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * 只解析会话详情分页所需的连续物理行窗。索引仅驻留进程内存，不创建 sidecar，
+ * 并把读取上界固定在索引 snapshot EOF；并发 append 会留给下一次请求。
+ */
+export async function parseTranscriptWindow(
+  transcriptPath: string,
+  options: ParseTranscriptWindowOptions,
+): Promise<ParsedTranscriptWindow> {
+  const resolved = assertAllowedTranscriptPath(transcriptPath);
+  const limit = Math.max(1, Math.floor(options.limit));
+
+  // 路径在建索引和范围读取之间被 replace/compact 时重试一次；游标失效本身不抛错。
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const indexStartedAt = Date.now();
+    const index = await getTranscriptLineIndex(resolved);
+    const indexDurationMs = Date.now() - indexStartedAt;
+    const totalLines = index.lineStarts.length;
+    let totalScannedLines = 0;
+    let readParseDurationMs = 0;
+
+    const parseRange = async (startLine: number, endLine: number): Promise<ParsedTranscript> => {
+      if (totalLines === 0 || endLine < startLine) {
+        return {
+          blocks: [],
+          stats: { lines: totalLines, parsedLines: 0, parseErrors: 0, scannedLines: 0 },
+        };
+      }
+      const boundedStart = Math.max(1, Math.min(totalLines, startLine));
+      const boundedEnd = Math.max(boundedStart, Math.min(totalLines, endLine));
+      const start = index.lineStarts[boundedStart - 1]!;
+      const end = boundedEnd < totalLines ? index.lineStarts[boundedEnd]! : index.size;
+      const startedAt = Date.now();
+      const parsed = await parseTranscriptFileUncached(resolved, {
+        start,
+        end,
+        physicalLineOffset: boundedStart - 1,
+        totalLines,
+        exposeScannedLines: true,
+      });
+      readParseDurationMs += Date.now() - startedAt;
+      totalScannedLines += parsed.stats.scannedLines ?? 0;
+      return parsed;
+    };
+
+    const parseTail = async (wantedBlocks: number): Promise<{ parsed: ParsedTranscript; startLine: number }> => {
+      if (totalLines === 0) return { parsed: await parseRange(1, 0), startLine: 0 };
+      let span = Math.max(32, wantedBlocks);
+      let startLine = Math.max(1, totalLines - span + 1);
+      let parsed = await parseRange(startLine, totalLines);
+      while (parsed.blocks.length < wantedBlocks && startLine > 1) {
+        span *= 2;
+        startLine = Math.max(1, totalLines - span + 1);
+        parsed = await parseRange(startLine, totalLines);
+      }
+      return { parsed, startLine };
+    };
+
+    let parsed: ParsedTranscript;
+    let startLine: number;
+    let endLine: number;
+    let latestCursor: string | undefined;
+    const afterCursor = resolveTranscriptWindowCursor(options.after, index.generation);
+    const beforeCursor = resolveTranscriptWindowCursor(options.before, index.generation);
+    const resolvedAfter = afterCursor.blockId;
+    const resolvedBefore = beforeCursor.blockId;
+    const cursorInvalidated = afterCursor.invalidated || beforeCursor.invalidated;
+    const afterLine = transcriptCursorLine(resolvedAfter);
+    const beforeLine = transcriptCursorLine(resolvedBefore);
+
+    if (resolvedBefore && beforeLine && beforeLine <= totalLines) {
+      // 保留边界后的少量物理行，让 tool_result 仍可把 presentation 嫁接回
+      // before 附近的 tool_use；payload 最终仍只返回 before 之前的 blocks。
+      endLine = Math.min(totalLines, beforeLine + 32);
+      let span = Math.max(32, limit + 1);
+      startLine = Math.max(1, beforeLine - span + 1);
+      parsed = await parseRange(startLine, endLine);
+      let beforeIndex = parsed.blocks.findIndex((block) => block.id === resolvedBefore);
+      while (beforeIndex >= 0 && beforeIndex < limit && startLine > 1) {
+        span *= 2;
+        startLine = Math.max(1, beforeLine - span + 1);
+        parsed = await parseRange(startLine, endLine);
+        beforeIndex = parsed.blocks.findIndex((block) => block.id === resolvedBefore);
+      }
+      if (beforeIndex < 0) {
+        const tail = await parseTail(limit);
+        parsed = tail.parsed;
+        startLine = tail.startLine;
+        endLine = totalLines;
+      } else if (endLine < totalLines) {
+        latestCursor = (await parseTail(1)).parsed.blocks.at(-1)?.id;
+      }
+    } else if (
+      resolvedAfter
+      && afterLine
+      && afterLine <= totalLines
+      && totalLines - afterLine <= limit
+    ) {
+      endLine = totalLines;
+      let span = 32;
+      startLine = Math.max(1, afterLine - span + 1);
+      parsed = await parseRange(startLine, endLine);
+      let afterIndex = parsed.blocks.findIndex((block) => block.id === resolvedAfter);
+      while (afterIndex >= 0 && afterIndex < 31 && startLine > 1) {
+        span *= 2;
+        startLine = Math.max(1, afterLine - span + 1);
+        parsed = await parseRange(startLine, endLine);
+        afterIndex = parsed.blocks.findIndex((block) => block.id === resolvedAfter);
+      }
+      if (afterIndex < 0) {
+        const tail = await parseTail(limit);
+        parsed = tail.parsed;
+        startLine = tail.startLine;
+      }
+    } else {
+      const tail = await parseTail(limit);
+      parsed = tail.parsed;
+      startLine = tail.startLine;
+      endLine = totalLines;
+    }
+
+    latestCursor ??= endLine === totalLines ? parsed.blocks.at(-1)?.id : undefined;
+    if (await transcriptIndexSnapshotStillValid(resolved, index)) {
+      return {
+        ...parsed,
+        stats: {
+          ...parsed.stats,
+          lines: totalLines,
+          scannedLines: parsed.stats.scannedLines ?? 0,
+        },
+        window: {
+          startLine,
+          endLine,
+          totalLines,
+          startsAtBeginning: totalLines === 0 || startLine === 1,
+          endsAtEnd: totalLines === 0 || endLine === totalLines,
+          totalScannedLines,
+          ...(latestCursor ? { latestCursor } : {}),
+          cursorGeneration: index.generation,
+          ...(resolvedAfter ? { resolvedAfter } : {}),
+          ...(resolvedBefore ? { resolvedBefore } : {}),
+          cursorInvalidated,
+        },
+        timing: { indexDurationMs, readParseDurationMs },
+      };
+    }
+    transcriptLineIndexCache.delete(resolved);
+  }
+
+  // 极端持续 rewrite 下用最新索引再做一次尾窗，仍返回可用最新页而不是 500。
+  transcriptLineIndexCache.delete(resolved);
+  const indexStartedAt = Date.now();
+  const index = await getTranscriptLineIndex(resolved);
+  const indexDurationMs = Date.now() - indexStartedAt;
+  const totalLines = index.lineStarts.length;
+  const startLine = totalLines === 0 ? 0 : Math.max(1, totalLines - Math.max(32, limit * 2) + 1);
+  const startedAt = Date.now();
+  const parsed = totalLines === 0
+    ? { blocks: [], stats: { lines: 0, parsedLines: 0, parseErrors: 0, scannedLines: 0 } }
+    : await parseTranscriptFileUncached(resolved, {
+      start: index.lineStarts[startLine - 1],
+      end: index.size,
+      physicalLineOffset: startLine - 1,
+      totalLines,
+      exposeScannedLines: true,
+    });
+  const readParseDurationMs = Date.now() - startedAt;
+  return {
+    ...parsed,
+    window: {
+      startLine,
+      endLine: totalLines,
+      totalLines,
+      startsAtBeginning: totalLines === 0 || startLine === 1,
+      endsAtEnd: true,
+      totalScannedLines: parsed.stats.scannedLines ?? 0,
+      ...(parsed.blocks.at(-1)?.id ? { latestCursor: parsed.blocks.at(-1)!.id } : {}),
+      cursorGeneration: index.generation,
+      cursorInvalidated: Boolean(options.after || options.before),
+    },
+    timing: { indexDurationMs, readParseDurationMs },
+  };
 }
 
 export async function parseTranscriptFile(

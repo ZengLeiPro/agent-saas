@@ -17,6 +17,13 @@ export type RunStatus =
   | 'cancelled'
   | 'orphaned';
 
+const ACTIVE_STEERING_TARGET_STATUSES: RunStatus[] = [
+  'running',
+  'waiting_approval',
+  'waiting_user',
+  'waiting_hand',
+];
+
 export interface RunRecord {
   runId: string;
   sessionId: string;
@@ -154,7 +161,7 @@ export interface RunStore {
   /** 原子创建 source run，并在同 session 有开放 run 时把它登记为插话输入。 */
   enqueueSteeringAware?(input: UpsertRunInput): Promise<RunRecord>;
   listPendingSteeringInputs?(targetRunId: string): Promise<SteeringInputRecord[]>;
-  markSteeringInputsApplied?(targetRunId: string, sourceRunIds: string[]): Promise<void>;
+  markSteeringInputsApplied?(targetRunId: string, sourceRunIds: string[]): Promise<string[]>;
   /** 仅当没有待注入消息时封口；false 表示调用方应先消费刚到达的消息。 */
   trySealSteeringInputWindow?(targetRunId: string): Promise<boolean>;
   markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null>;
@@ -489,12 +496,45 @@ export class PgRunStore implements RunStore {
     }));
   }
 
-  async markSteeringInputsApplied(targetRunId: string, sourceRunIds: string[]): Promise<void> {
-    if (sourceRunIds.length === 0) return;
+  async markSteeringInputsApplied(targetRunId: string, sourceRunIds: string[]): Promise<string[]> {
+    if (sourceRunIds.length === 0) return [];
     const now = new Date().toISOString();
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      const target = await client.query<{ status: RunStatus; metadata: Record<string, unknown> }>(`
+        SELECT status, metadata
+        FROM ${this.runsTable}
+        WHERE run_id = $1
+        FOR UPDATE
+      `, [targetRunId]);
+      const targetRow = target.rows[0];
+      if (
+        !targetRow
+        || !ACTIVE_STEERING_TARGET_STATUSES.includes(targetRow.status)
+        || targetRow.metadata?.steeringInputWindow === 'sealed'
+      ) {
+        await client.query('COMMIT');
+        return [];
+      }
+      const sources = await client.query<{ run_id: string; status: RunStatus }>(`
+        SELECT run_id, status
+        FROM ${this.runsTable}
+        WHERE run_id = ANY($1::text[])
+        FOR UPDATE
+      `, [sourceRunIds]);
+      const pendingSourceRunIdSet = new Set(
+        sources.rows
+          .filter((row) => row.status === 'pending')
+          .map((row) => row.run_id),
+      );
+      const claimableSourceRunIds = sourceRunIds.filter((sourceRunId) => (
+        pendingSourceRunIdSet.has(sourceRunId)
+      ));
+      if (claimableSourceRunIds.length !== sourceRunIds.length) {
+        await client.query('COMMIT');
+        return [];
+      }
       const applied = await client.query<{ source_run_id: string }>(`
         UPDATE ${this.steeringInputsTable}
         SET state = 'applied', applied_at = $3
@@ -502,7 +542,7 @@ export class PgRunStore implements RunStore {
           AND source_run_id = ANY($2::text[])
           AND state = 'pending'
         RETURNING source_run_id
-      `, [targetRunId, sourceRunIds, now]);
+      `, [targetRunId, claimableSourceRunIds, now]);
       const appliedRunIds = applied.rows.map((row) => row.source_run_id);
       if (appliedRunIds.length > 0) {
         await client.query(`
@@ -522,6 +562,7 @@ export class PgRunStore implements RunStore {
         `, [targetRunId, appliedRunIds, now]);
       }
       await client.query('COMMIT');
+      return appliedRunIds;
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;

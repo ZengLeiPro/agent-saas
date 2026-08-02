@@ -212,6 +212,23 @@ class InterjectionAfterFinalAdapter implements ModelAdapter {
   }
 }
 
+class AbortBeforeInterjectionEventAdapter implements ModelAdapter {
+  calls = 0;
+
+  constructor(private readonly controller: AbortController) {}
+
+  async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    if (this.calls === 1) {
+      yield { type: 'text_delta', content: '第一段回答。' };
+      yield { type: 'completed', content: '第一段回答。', toolCalls: [] };
+      return;
+    }
+    this.controller.abort(new Error('cancelled before interjection model event'));
+    throw this.controller.signal.reason;
+  }
+}
+
 class InterjectionAfterToolAdapter implements ModelAdapter {
   calls = 0;
   requests: ModelRequest[] = [];
@@ -1128,6 +1145,180 @@ describe('RawAgentLoop', () => {
     expect(events.at(-1)).toEqual({ type: 'done' });
     expect(markApplied).toHaveBeenCalledWith('target-final', ['source-final']);
     expect(trySeal).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the source pending when cancellation happens before the next model event', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-interjection-cancel-boundary-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const controller = new AbortController();
+    const adapter = new AbortBeforeInterjectionEventAdapter(controller);
+    const queued: QueuedInterjection[] = [{
+      inputId: 'input-cancel-boundary',
+      sourceRunId: 'source-cancel-boundary',
+      clientMsgId: 'client-cancel-boundary',
+      message: { channel: 'web', chatId: 'chat-cancel-boundary', content: '取消前插话' },
+      prompt: '取消前插话',
+    }];
+    let loadCalls = 0;
+    const markApplied = vi.fn(async (_targetRunId: string, sourceRunIds: string[]) => sourceRunIds);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-interjection-cancel-boundary'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        markSteeringInputsApplied: markApplied,
+        trySealSteeringInputWindow: async () => false,
+      } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-cancel-boundary', content: '先回答' },
+        prompt: '先回答',
+        instructions: '直接回答。',
+        maxTurns: 3,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-cancel-boundary',
+        sessionId: 'session-interjection-cancel-boundary',
+        model: 'gpt-5.5',
+        cwd,
+        signal: controller.signal,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+        loadQueuedInterjections: async () => {
+          loadCalls += 1;
+          return loadCalls === 1 ? [] : queued;
+        },
+      },
+    ));
+
+    expect(events.at(-1)).toEqual({
+      type: 'error',
+      error: 'cancelled before interjection model event',
+    });
+    expect(adapter.calls).toBe(2);
+    expect(markApplied).not.toHaveBeenCalled();
+  });
+
+  it('leaves a final-turn interjection pending for durable fallback when no next model turn exists', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-final-interjection-fallback-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new InterjectionAfterFinalAdapter();
+    const queued: QueuedInterjection[] = [{
+      inputId: 'input-final-fallback',
+      sourceRunId: 'source-final-fallback',
+      clientMsgId: 'client-final-fallback',
+      message: { channel: 'web', chatId: 'chat-final-fallback', content: '最后一刻补充' },
+      prompt: '最后一刻补充',
+    }];
+    let loadCalls = 0;
+    const markApplied = vi.fn(async () => {});
+    const trySeal = vi.fn(async () => false);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-final-interjection-fallback'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        markSteeringInputsApplied: markApplied,
+        trySealSteeringInputWindow: trySeal,
+      } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-final-fallback', content: '先回答' },
+        prompt: '先回答',
+        instructions: '直接回答。',
+        maxTurns: 1,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-final-fallback',
+        sessionId: 'session-final-interjection-fallback',
+        model: 'gpt-5.5',
+        cwd,
+        channelContext: {
+          channel: 'web',
+          user: { id: 'admin-1', username: 'admin', role: 'admin' },
+        },
+        loadQueuedInterjections: async () => {
+          loadCalls += 1;
+          return loadCalls === 1 ? [] : queued;
+        },
+      },
+    ));
+
+    expect(adapter.requests).toHaveLength(1);
+    expect(events.some((event) => event.type === 'interjection_applied')).toBe(false);
+    expect(events.at(-1)).toEqual({ type: 'done' });
+    expect(markApplied).not.toHaveBeenCalled();
+    expect(trySeal).not.toHaveBeenCalled();
+  });
+
+  it('leaves interjections pending when the target aborts while loading them', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-aborted-interjection-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new InterjectionAfterFinalAdapter();
+    const controller = new AbortController();
+    const queued: QueuedInterjection[] = [{
+      inputId: 'input-aborted',
+      sourceRunId: 'source-aborted',
+      clientMsgId: 'client-aborted',
+      message: { channel: 'web', chatId: 'chat-aborted', content: '取消瞬间的插话' },
+      prompt: '取消瞬间的插话',
+    }];
+    let loadCalls = 0;
+    const markApplied = vi.fn(async () => {});
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-aborted-interjection'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+      runStore: {
+        markSteeringInputsApplied: markApplied,
+        trySealSteeringInputWindow: vi.fn(async () => false),
+      } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-aborted', content: '先回答' },
+        prompt: '先回答',
+        instructions: '直接回答。',
+        maxTurns: 3,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-aborted',
+        sessionId: 'session-aborted-interjection',
+        model: 'gpt-5.5',
+        cwd,
+        signal: controller.signal,
+        channelContext: { channel: 'web' },
+        loadQueuedInterjections: async () => {
+          loadCalls += 1;
+          if (loadCalls === 1) return [];
+          controller.abort(new Error('cancelled'));
+          return queued;
+        },
+      },
+    ));
+
+    expect(markApplied).not.toHaveBeenCalled();
+    expect(events.some((event) => event.type === 'interjection_applied')).toBe(false);
+    expect(adapter.requests).toHaveLength(1);
   });
 
   it('injects all queued interjections after tool completion into one next model turn', async () => {

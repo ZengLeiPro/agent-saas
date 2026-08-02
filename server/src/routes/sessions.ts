@@ -17,8 +17,10 @@ import {
   findMetaPathBySessionId,
   deleteSession,
   deleteSessionMetaOnly,
+  encodeTranscriptWindowCursor,
   listSessionMetas,
   parseTranscriptFile,
+  parseTranscriptWindow,
   type ParsedTranscript,
   summarizeTranscript,
   getTokenUsage,
@@ -105,6 +107,10 @@ interface SessionDetailPayloadOptions {
   after?: string;
   before?: string;
   limit?: number;
+  /** window API 未从文件起点解析时，用于避免误报 historyComplete。 */
+  windowStartsAtBeginning?: boolean;
+  /** before 窗口不含 EOF，由窗口 API 提供真实最新 cursor。 */
+  latestCursor?: string;
 }
 
 function withoutTranscriptRaw(
@@ -130,7 +136,8 @@ export function buildSessionDetailPayload(
       SESSION_DETAIL_MAX_PAGE_SIZE,
       Math.max(1, Math.floor(options.limit || SESSION_DETAIL_DEFAULT_PAGE_SIZE)),
     );
-  const cursor = detail.blocks.at(-1)?.id;
+  const cursor = options.latestCursor ?? detail.blocks.at(-1)?.id;
+  const windowStartsAtBeginning = options.windowStartsAtBeginning ?? true;
 
   if (after) {
     const afterIndex = detail.blocks.findIndex((block) => block.id === after);
@@ -161,7 +168,7 @@ export function buildSessionDetailPayload(
         mode: "before",
         blocks: withoutTranscriptRaw(blocks),
         before,
-        historyComplete: start === 0,
+        historyComplete: start === 0 && windowStartsAtBeginning,
         ...(blocks[0]?.id ? { oldestCursor: blocks[0].id } : {}),
         ...(cursor ? { cursor } : {}),
       };
@@ -175,7 +182,7 @@ export function buildSessionDetailPayload(
     ...detail,
     mode: "full",
     blocks: withoutTranscriptRaw(blocks),
-    historyComplete: start === 0,
+    historyComplete: start === 0 && windowStartsAtBeginning,
     ...(blocks[0]?.id ? { oldestCursor: blocks[0].id } : {}),
     ...(cursor ? { cursor } : {}),
   };
@@ -821,13 +828,26 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
   async function buildSessionDetailSnapshot(
     req: Request,
     sessionId: string,
-    optionsForBuild: { includeDeleted?: boolean } = {},
+    optionsForBuild: {
+      includeDeleted?: boolean;
+      transcriptWindow?: { after?: string; before?: string; limit: number };
+    } = {},
   ): Promise<
     | {
         ok: true;
         meta: SessionMeta | null;
         transcriptPath: string;
         parseDurationMs: number;
+        transcriptWindow?: {
+          startsAtBeginning: boolean;
+          latestCursor?: string;
+          cursorGeneration: string;
+          resolvedAfter?: string;
+          resolvedBefore?: string;
+          cursorInvalidated: boolean;
+          indexDurationMs: number;
+          readParseDurationMs: number;
+        };
         detail: SessionShareSnapshot;
       }
     | { ok: false; status: number; error: string }
@@ -863,8 +883,11 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       ? runtimeEventStoreFor(transcriptPath)
       : new FileEventStore(getRuntimeEventLogPath(transcriptPath));
     const parseStartedAt = Date.now();
+    const parsedWindow = hasTranscript && optionsForBuild.transcriptWindow
+      ? await parseTranscriptWindow(transcriptPath, optionsForBuild.transcriptWindow)
+      : undefined;
     let parsed = hasTranscript
-      ? await parseTranscriptFile(transcriptPath)
+      ? parsedWindow ?? await parseTranscriptFile(transcriptPath)
       : await buildMetaOnlyTranscript(
           sessionId,
           transcriptPath,
@@ -909,6 +932,24 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       meta,
       transcriptPath,
       parseDurationMs,
+      ...(parsedWindow ? {
+        transcriptWindow: {
+          startsAtBeginning: parsedWindow.window.startsAtBeginning,
+          ...(parsedWindow.window.latestCursor
+            ? { latestCursor: parsedWindow.window.latestCursor }
+            : {}),
+          cursorGeneration: parsedWindow.window.cursorGeneration,
+          ...(parsedWindow.window.resolvedAfter
+            ? { resolvedAfter: parsedWindow.window.resolvedAfter }
+            : {}),
+          ...(parsedWindow.window.resolvedBefore
+            ? { resolvedBefore: parsedWindow.window.resolvedBefore }
+            : {}),
+          cursorInvalidated: parsedWindow.window.cursorInvalidated,
+          indexDurationMs: parsedWindow.timing.indexDurationMs,
+          readParseDurationMs: parsedWindow.timing.readParseDurationMs,
+        },
+      } : {}),
       detail: {
         sessionId: parsed.sessionId ?? sessionId,
         stats: parsed.stats,
@@ -2151,8 +2192,36 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
 
       const includeDeleted =
         req.query.includeDeleted === "1" || req.query.includeDeleted === "true";
+      const after = typeof req.query.after === "string" && req.query.after.trim()
+        ? req.query.after.trim()
+        : undefined;
+      const before = typeof req.query.before === "string" && req.query.before.trim()
+        ? req.query.before.trim()
+        : undefined;
+      if (after && before) {
+        res.status(400).json({ error: "after and before cannot be used together" });
+        return;
+      }
+      const hasLimit = typeof req.query.limit === "string";
+      const rawLimit = hasLimit ? Number.parseInt(req.query.limit as string, 10) : undefined;
+      const limit = hasLimit
+        ? rawLimit !== undefined && Number.isFinite(rawLimit)
+          ? rawLimit
+          : SESSION_DETAIL_DEFAULT_PAGE_SIZE
+        : undefined;
+      const transcriptWindowLimit = limit === undefined
+        ? undefined
+        : Math.min(
+          SESSION_DETAIL_MAX_PAGE_SIZE,
+          Math.max(1, Math.floor(limit || SESSION_DETAIL_DEFAULT_PAGE_SIZE)),
+        );
 
-      const built = await buildSessionDetailSnapshot(req, sessionId, { includeDeleted });
+      const built = await buildSessionDetailSnapshot(req, sessionId, {
+        includeDeleted,
+        ...(transcriptWindowLimit === undefined ? {} : {
+          transcriptWindow: { after, before, limit: transcriptWindowLimit },
+        }),
+      });
       if (!built.ok) {
         res.status(built.status).json({ error: built.error });
         return;
@@ -2173,30 +2242,46 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         );
       }
 
-      const after = typeof req.query.after === "string" && req.query.after.trim()
-        ? req.query.after.trim()
-        : undefined;
-      const before = typeof req.query.before === "string" && req.query.before.trim()
-        ? req.query.before.trim()
-        : undefined;
-      if (after && before) {
-        res.status(400).json({ error: "after and before cannot be used together" });
-        return;
+      const payload = buildSessionDetailPayload(built.detail, {
+        after: built.transcriptWindow ? built.transcriptWindow.resolvedAfter : after,
+        before: built.transcriptWindow ? built.transcriptWindow.resolvedBefore : before,
+        limit,
+        ...(built.transcriptWindow ? {
+          windowStartsAtBeginning: built.transcriptWindow.startsAtBeginning,
+          ...(built.transcriptWindow.latestCursor
+            ? { latestCursor: built.transcriptWindow.latestCursor }
+            : {}),
+        } : {}),
+      });
+      if (built.transcriptWindow) {
+        const encodedCursor = encodeTranscriptWindowCursor(
+          built.transcriptWindow.cursorGeneration,
+          payload.cursor,
+        );
+        const encodedOldestCursor = encodeTranscriptWindowCursor(
+          built.transcriptWindow.cursorGeneration,
+          payload.oldestCursor,
+        );
+        if (encodedCursor) payload.cursor = encodedCursor;
+        else delete payload.cursor;
+        if (encodedOldestCursor) payload.oldestCursor = encodedOldestCursor;
+        else delete payload.oldestCursor;
       }
-      const hasLimit = typeof req.query.limit === "string";
-      const rawLimit = hasLimit ? Number.parseInt(req.query.limit as string, 10) : undefined;
-      const limit = hasLimit
-        ? rawLimit !== undefined && Number.isFinite(rawLimit)
-          ? rawLimit
-          : SESSION_DETAIL_DEFAULT_PAGE_SIZE
-        : undefined;
-      const payload = buildSessionDetailPayload(built.detail, { after, before, limit });
+      const transcriptTiming = built.transcriptWindow
+        ? `transcript-index;dur=${built.transcriptWindow.indexDurationMs}, transcript-read-parse;dur=${built.transcriptWindow.readParseDurationMs}`
+        : `transcript-parse;dur=${built.parseDurationMs}`;
       res.setHeader(
         "Server-Timing",
-        `session-detail;dur=${totalDurationMs}, transcript-parse;dur=${built.parseDurationMs}`,
+        `session-detail;dur=${totalDurationMs}, ${transcriptTiming}`,
       );
       res.setHeader("X-Session-Detail-Mode", payload.mode);
       res.setHeader("X-Session-Blocks", String(payload.blocks.length));
+      if (built.transcriptWindow) {
+        res.setHeader("X-Transcript-Lines-Parsed", String(built.detail.stats.parsedLines ?? 0));
+        if (built.transcriptWindow.cursorInvalidated) {
+          res.setHeader("X-Session-Cursor-Invalidated", "1");
+        }
+      }
       res.json(payload);
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);

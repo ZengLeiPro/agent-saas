@@ -362,10 +362,10 @@ export class WebChannel implements BaseChannel {
    *
    * 大小上限 500，单条 TTL 60s；TTL 过后允许用户手动"重试"生成新 client_msg_id。
    */
-  private idempotencyCache = new Map<string, { streamId: string; status: 'in_flight' | 'done' | 'failed'; at: number; sessionId?: string; runId?: string }>();
+  private idempotencyCache = new Map<string, { streamId: string; status: 'in_flight' | 'done' | 'failed'; at: number; sessionId?: string; runId?: string; steeringTargetRunId?: string }>();
   private static readonly IDEMPOTENCY_MAX = 500;
   private static readonly IDEMPOTENCY_TTL_MS = 60_000;
-  private idempotencyGet(userId: string | undefined, clientMsgId: string): { streamId: string; status: 'in_flight' | 'done' | 'failed'; sessionId?: string; runId?: string } | undefined {
+  private idempotencyGet(userId: string | undefined, clientMsgId: string): { streamId: string; status: 'in_flight' | 'done' | 'failed'; sessionId?: string; runId?: string; steeringTargetRunId?: string } | undefined {
     const key = `${userId ?? 'anon'}|${clientMsgId}`;
     const entry = this.idempotencyCache.get(key);
     if (!entry) return undefined;
@@ -381,6 +381,7 @@ export class WebChannel implements BaseChannel {
       status: entry.status,
       ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
       ...(entry.runId ? { runId: entry.runId } : {}),
+      ...(entry.steeringTargetRunId ? { steeringTargetRunId: entry.steeringTargetRunId } : {}),
     };
   }
   private idempotencySet(
@@ -388,7 +389,7 @@ export class WebChannel implements BaseChannel {
     clientMsgId: string,
     status: 'in_flight' | 'done' | 'failed',
     streamId: string,
-    meta: { sessionId?: string; runId?: string } = {},
+    meta: { sessionId?: string; runId?: string; steeringTargetRunId?: string } = {},
   ): void {
     const key = `${userId ?? 'anon'}|${clientMsgId}`;
     this.idempotencyCache.set(key, {
@@ -397,6 +398,7 @@ export class WebChannel implements BaseChannel {
       at: Date.now(),
       ...(meta.sessionId ? { sessionId: meta.sessionId } : {}),
       ...(meta.runId ? { runId: meta.runId } : {}),
+      ...(meta.steeringTargetRunId ? { steeringTargetRunId: meta.steeringTargetRunId } : {}),
     });
     // LRU 驱逐
     while (this.idempotencyCache.size > WebChannel.IDEMPOTENCY_MAX) {
@@ -464,6 +466,12 @@ export class WebChannel implements BaseChannel {
    * 事件仍会写入 EventBuffer，用户切回时通过 resume + replay 获取。
    */
   private wsActiveStream = new WeakMap<WebSocket, string>();
+  /**
+   * WS → 当前查看会话的亲和映射（chat accept / resume 设置，detach 清除）。
+   * 接管 stream_id 的补发必须限定在"用户仍查看该会话"的连接上：插话 queued 期间
+   * 用户切去别的会话后，退化 run 的接管不应劫持新会话视图的流绑定。
+   */
+  private wsSessionAffinity = new WeakMap<WebSocket, string>();
 
   private handleActiveStreamSocketClose(
     streamId: string,
@@ -658,11 +666,18 @@ export class WebChannel implements BaseChannel {
 
     switch (input.event.type) {
       case 'session_init':
-        if (activeEntry && !this.wsActiveStream.has(activeEntry.ws)) {
+        // 接管补发：仅当该连接仍查看此会话（affinity）且未绑定其他流时。
+        // 插话 queued 期间用户切走（detach 清 affinity）时不得劫持新视图的流绑定。
+        if (
+          activeEntry
+          && !this.wsActiveStream.has(activeEntry.ws)
+          && this.wsSessionAffinity.get(activeEntry.ws) === input.sessionId
+        ) {
           this.wsActiveStream.set(activeEntry.ws, streamId);
           this.eventBus.emitReply(activeEntry.ws, {
             type: 'stream_id',
             streamId,
+            sessionId: input.sessionId,
             runId: input.runId,
             client_msg_id: activeEntry.clientMsgId,
           });
@@ -981,6 +996,30 @@ export class WebChannel implements BaseChannel {
     const active = runId ? this.findActiveStreamByRunId(runId) : undefined;
     const streamId = active?.streamId ?? (runId ? runId : undefined);
     const activeEntry = active?.entry ?? (streamId ? this.activeStreams.get(streamId) : undefined);
+    // 跨进程接管兜底：steering 插话 accept 时不绑定 wsActiveStream（queued 语义）。
+    // 它退化为独立 run 后若被另一进程（standby/scheduler-only）的 scheduler wake，
+    // 本进程（ws 所在）只收到 PG NOTIFY 投影，同进程 session_init 的接管分支不会执行；
+    // 不在这里补绑定 + 补发 stream_id 的话，整条流都会被 wsActiveStream 门控丢掉。
+    // 每个投影事件都重试一次：目标 run 的终态投影与退化 run 的首个事件乱序到达时，
+    // 靠后续事件自愈（期间漏推的内容已写 EventBuffer，可经 resume 回放）。
+    // 仅在用户仍查看该会话（affinity）且连接未绑定任何流时接管——绑定到目标 run
+    // 期间绝不抢绑，等其终态投影释放后由退化 run 的后续事件补绑。
+    if (
+      activeEntry?.ws
+      && activeEntry.ws.readyState === activeEntry.ws.OPEN
+      && streamId
+      && !this.wsActiveStream.has(activeEntry.ws)
+      && this.wsSessionAffinity.get(activeEntry.ws) === sessionId
+    ) {
+      this.wsActiveStream.set(activeEntry.ws, streamId);
+      this.eventBus.emitReply(activeEntry.ws, {
+        type: 'stream_id',
+        streamId,
+        sessionId,
+        ...(runId ? { runId } : {}),
+        ...(activeEntry.clientMsgId ? { client_msg_id: activeEntry.clientMsgId } : {}),
+      });
+    }
     const projection = projectRuntimePlatformEvent(event, {
       clientMsgId: activeEntry?.clientMsgId,
       // 同进程 run 的 live 内容已由直推（publishRuntimeOutboundEvent）送达，聚合行
@@ -1750,6 +1789,7 @@ export class WebChannel implements BaseChannel {
 
   private async handleResumeAsync(client: WsClient, msg: WsResumeMessage): Promise<void> {
     const { sessionId: sid, lastEventId, lastEventCursor, skipReplay } = msg;
+    this.wsSessionAffinity.set(client.ws, sid);
 
     // 总是先清理旧订阅（防止切换会话后旧事件继续推送到新会话）
     const prevUnsub = this.resumeSubscriptions.get(client.ws);
@@ -1967,6 +2007,7 @@ export class WebChannel implements BaseChannel {
   private handleDetach(client: WsClient): void {
     // 清除 WS 活跃流绑定，阻止旧会话的 handleEvents/hooks send 继续向此 WS 直接推送
     this.wsActiveStream.delete(client.ws);
+    this.wsSessionAffinity.delete(client.ws);
     const prevUnsub = this.resumeSubscriptions.get(client.ws);
     if (prevUnsub) {
       prevUnsub();
@@ -2071,14 +2112,19 @@ export class WebChannel implements BaseChannel {
     const dupEntry = this.idempotencyGet(user?.sub, clientMsgId);
     if (dupEntry) {
       if (dupEntry.status === 'in_flight') {
+        if (dupEntry.sessionId) this.wsSessionAffinity.set(ws, dupEntry.sessionId);
         chatLogger.info(`[chat] Idempotency hit (in_flight), resending ACK for client_msg_id=${clientMsgId}`);
         this.sendChatAck(ws, clientMsgId);
         if (dupEntry.streamId) {
           this.wsSend(ws, {
             type: 'stream_id',
             streamId: dupEntry.streamId,
+            ...(dupEntry.sessionId ? { sessionId: dupEntry.sessionId } : {}),
             ...(dupEntry.runId ? { runId: dupEntry.runId } : {}),
             client_msg_id: clientMsgId,
+            ...(dupEntry.steeringTargetRunId
+              ? { queued: true, targetRunId: dupEntry.steeringTargetRunId }
+              : {}),
           });
         }
         if (dupEntry.sessionId) {
@@ -2096,9 +2142,25 @@ export class WebChannel implements BaseChannel {
       const streamId = typeof durableRun.metadata?.streamId === 'string' ? durableRun.metadata.streamId : '';
       const activeStatuses = new Set(['pending', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand']);
       if (activeStatuses.has(durableRun.status)) {
-        this.idempotencySet(user?.sub, clientMsgId, 'in_flight', streamId, { sessionId: durableRun.sessionId, runId: durableRun.runId });
+        this.wsSessionAffinity.set(ws, durableRun.sessionId);
+        const steeringTargetRunId = typeof durableRun.metadata?.steeringTargetRunId === 'string'
+          && durableRun.metadata?.steeringState === 'pending'
+          ? durableRun.metadata.steeringTargetRunId
+          : undefined;
+        this.idempotencySet(user?.sub, clientMsgId, 'in_flight', streamId, {
+          sessionId: durableRun.sessionId,
+          runId: durableRun.runId,
+          ...(steeringTargetRunId ? { steeringTargetRunId } : {}),
+        });
         this.sendChatAck(ws, clientMsgId);
-        this.wsSend(ws, { type: 'stream_id', streamId: streamId || durableRun.runId, runId: durableRun.runId, client_msg_id: clientMsgId });
+        this.wsSend(ws, {
+          type: 'stream_id',
+          streamId: streamId || durableRun.runId,
+          sessionId: durableRun.sessionId,
+          runId: durableRun.runId,
+          client_msg_id: clientMsgId,
+          ...(steeringTargetRunId ? { queued: true, targetRunId: steeringTargetRunId } : {}),
+        });
         this.wsSend(ws, { type: 'session', sessionId: durableRun.sessionId, client_msg_id: clientMsgId });
         return;
       }
@@ -2602,6 +2664,13 @@ export class WebChannel implements BaseChannel {
         const steeringTargetRunId = typeof enqueuedRun.metadata?.steeringTargetRunId === 'string'
           ? enqueuedRun.metadata.steeringTargetRunId
           : undefined;
+        // enqueue 后才能知道 queued/target；覆盖首次 in_flight 缓存，确保传输层重发
+        // stream_id 时保留 queued 语义，不会误切断当前活跃流。
+        this.idempotencySet(user?.sub, clientMsgId, 'in_flight', streamId, {
+          sessionId: enqueueSessionId,
+          runId: enqueueRunId,
+          ...(steeringTargetRunId ? { steeringTargetRunId } : {}),
+        });
         await this.appendRuntimeEvent(sessionRecord.transcriptPath, {
           type: 'run_enqueued',
           sessionId: enqueueSessionId,
@@ -2611,6 +2680,7 @@ export class WebChannel implements BaseChannel {
         }, sessionRecord.tenantId);
 
         const send = (data: object) => this.eventBus!.emitReply(ws, data);
+        this.wsSessionAffinity.set(ws, enqueueSessionId);
         if (!steeringTargetRunId) {
           this.wsActiveStream.set(ws, streamId);
           this.eventBufferStore.create(enqueueSessionId, user?.sub);
@@ -2618,6 +2688,7 @@ export class WebChannel implements BaseChannel {
         send({
           type: 'stream_id',
           streamId,
+          sessionId: enqueueSessionId,
           runId: enqueueRunId,
           client_msg_id: clientMsgId,
           ...(steeringTargetRunId ? { queued: true, targetRunId: steeringTargetRunId } : {}),

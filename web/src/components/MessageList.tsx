@@ -5,6 +5,7 @@ import { MessageItem as MessageItemType, type RenderItem } from './types';
 import { MessageItemWithDisplay as MessageItem } from './MessageItemWithDisplay';
 import type { TtsProps } from './MessageItem';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
+import { BusinessTodoBlock } from './BusinessTodoBlock';
 import { CompactionDivider } from './CompactionDivider';
 import { asCompactionItem } from '@/lib/compaction';
 import { useGroupedMessages } from './useGroupedMessages';
@@ -375,6 +376,13 @@ export const MessageList = memo(function MessageList({
                 )}
                 <div className="py-2">
                   {item.items.map((sub) => {
+                    if (sub.type === 'business_todo') {
+                      return (
+                        <ErrorBoundary key={sub.id} inline>
+                          <BusinessTodoBlock group={sub} debugMode={debugMode} />
+                        </ErrorBoundary>
+                      );
+                    }
                     // 双重保险:此层理论上不该出现 file_download。
                     // - [FILE] 内联(无 artifactId): groupIntoBubbles 已 continue 掉。
                     // - legacy artifact_created 卡片(有 artifactId): groupIntoBubbles 已独立提到顶层。
@@ -414,6 +422,26 @@ export const MessageList = memo(function MessageList({
                       </ErrorBoundary>
                     );
                   })}
+                </div>
+              </div>
+            );
+          }
+
+          // --- Standalone business_todo (normally grouped into an AI bubble) ---
+          if (item.type === 'business_todo') {
+            return (
+              <div
+                key={item.id}
+                ref={ri === lastRenderIdx && !showAgentLoading ? lastMessageRef : undefined}
+                className="flex flex-col"
+              >
+                {showHeader && (
+                  <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
+                )}
+                <div className="py-2">
+                  <ErrorBoundary inline>
+                    <BusinessTodoBlock group={item} debugMode={debugMode} />
+                  </ErrorBoundary>
                 </div>
               </div>
             );

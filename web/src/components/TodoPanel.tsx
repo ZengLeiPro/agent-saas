@@ -7,31 +7,17 @@ import {
   Clock3,
   Loader2,
   TriangleAlert,
-  Wrench,
 } from "lucide-react";
-import {
-  extractLatestTodos,
-  extractTodoToolActivities,
-  isRichTodo,
-  todoItemKey,
-} from "@agent/shared";
-import type {
-  MessageItem,
-  TodoItem,
-  TodoStatus,
-  TodoToolActivity,
-} from "@agent/shared";
+import { extractLatestTodos } from "@agent/shared";
+import type { MessageItem, TodoItem, TodoStatus } from "@agent/shared";
 
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import {
-  activityStatusBadgeClass,
   activityStatusIconClass,
   activityStatusTextClass,
   type ActivityStatusTone,
 } from "./activityStatusStyles";
-import { PresentationDetail } from "./PresentationDetail";
-import { PresentationBlocks } from "./presentation/PresentationBlocks";
 
 interface TodoPanelProps {
   messages: MessageItem[];
@@ -39,18 +25,18 @@ interface TodoPanelProps {
   runActive?: boolean;
 }
 
-const STATUS_META: Record<TodoStatus, { label: string; tone: ActivityStatusTone }> = {
-  pending: { label: "待开始", tone: "neutral" },
-  in_progress: { label: "进行中", tone: "active" },
-  waiting: { label: "等待中", tone: "pending" },
-  blocked: { label: "已阻断", tone: "danger" },
-  completed: { label: "已完成", tone: "success" },
-  failed: { label: "失败", tone: "danger" },
+const STATUS_TONE: Record<TodoStatus, ActivityStatusTone> = {
+  pending: "neutral",
+  in_progress: "active",
+  waiting: "pending",
+  blocked: "danger",
+  completed: "success",
+  failed: "danger",
 };
 
 function getStatusTone(status: TodoStatus, runActive = true): ActivityStatusTone {
   if (status === "in_progress" && !runActive) return "neutral";
-  return STATUS_META[status].tone;
+  return STATUS_TONE[status];
 }
 
 function TodoStatusIcon({
@@ -135,110 +121,12 @@ function buildSummary(todos: TodoItem[], runActive: boolean) {
   };
 }
 
-function toolActivityStatus(activity: TodoToolActivity): TodoStatus {
-  if (activity.status === "completed") return "completed";
-  if (activity.status === "failed" || activity.status === "cancelled") return "failed";
-  if (activity.status === "running") return "in_progress";
-  return "pending";
-}
-
-function ToolActivities({ activities, runActive }: { activities: TodoToolActivity[]; runActive: boolean }) {
-  if (!activities.length) return null;
-
-  return (
-    <details className="mt-2 rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5">
-      <summary className="cursor-pointer select-none text-xs text-muted-foreground">
-        执行详情（{activities.length}）
-      </summary>
-      <ul className="mt-1.5 space-y-1 border-t border-border/50 pt-1.5">
-        {activities.map((activity, index) => {
-          const status = toolActivityStatus(activity);
-          return (
-            <li key={`${activity.id}-${index}`} className="flex items-start gap-1.5 text-xs">
-              <TodoStatusIcon status={status} runActive={runActive} className="mt-0.5 size-3" />
-              <span className="min-w-0 flex-1 break-words text-muted-foreground">{activity.label}</span>
-              <span className="shrink-0 text-[11px] text-muted-foreground/70">{activity.toolName}</span>
-            </li>
-          );
-        })}
-      </ul>
-    </details>
-  );
-}
-
-function RichTodoItem({
-  todo,
-  activities,
-  runActive,
-}: {
-  todo: TodoItem;
-  activities: TodoToolActivity[];
-  runActive: boolean;
-}) {
+function SimpleTodoItem({ todo, runActive }: { todo: TodoItem; runActive: boolean }) {
   const active = todo.status === "in_progress" && runActive;
   const tone = getStatusTone(todo.status, runActive);
 
   return (
-    <li
-      className={cn(
-        "rounded-md border border-border/70 bg-background px-3 py-2",
-        todo.status === "completed" && "border-success/25 bg-success/5",
-        todo.status === "waiting" && "border-warning/25 bg-warning/5",
-        (todo.status === "blocked" || todo.status === "failed") && "border-destructive/25 bg-destructive/5",
-      )}
-      data-todo-id={todo.id}
-    >
-      <div className="flex items-start gap-2">
-        <TodoStatusIcon status={todo.status} runActive={runActive} className="mt-0.5" />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={cn("min-w-0 break-words font-medium", activityStatusTextClass(tone))}>
-              {todo.content}
-            </span>
-            <span className={activityStatusBadgeClass(tone)}>{STATUS_META[todo.status].label}</span>
-          </div>
-          {active && todo.activeForm && todo.activeForm !== todo.content ? (
-            <div className="mt-0.5 text-xs text-muted-foreground">{todo.activeForm}</div>
-          ) : null}
-        </div>
-      </div>
-
-      {todo.detail?.length ? (
-        <div className="ml-6 mt-2">
-          <PresentationDetail data={{ title: "", detail: todo.detail }} />
-        </div>
-      ) : null}
-
-      {todo.display?.length ? (
-        <div className="ml-6 mt-2">
-          <PresentationBlocks blocks={todo.display} ctx={{ readOnly: true }} />
-        </div>
-      ) : null}
-
-      {todo.evidenceRefs?.length ? (
-        <div className="ml-6 mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-          <span>依据</span>
-          {todo.evidenceRefs.map((ref) => (
-            <span key={ref} className="rounded border border-border/70 bg-muted/30 px-1.5 py-0.5 font-mono">
-              {ref}
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="ml-6">
-        <ToolActivities activities={activities} runActive={runActive} />
-      </div>
-    </li>
-  );
-}
-
-function SimpleTodoItem({ todo, runActive, index }: { todo: TodoItem; runActive: boolean; index: number }) {
-  const active = todo.status === "in_progress" && runActive;
-  const tone = getStatusTone(todo.status, runActive);
-
-  return (
-    <li key={`${todo.status}-${index}-${todo.content}`} className="flex min-h-7 items-start gap-2">
+    <li className="flex min-h-7 items-start gap-2">
       <TodoStatusIcon status={todo.status} runActive={runActive} className="mt-0.5 size-3.5" />
       <span
         className={cn(
@@ -256,13 +144,15 @@ function SimpleTodoItem({ todo, runActive, index }: { todo: TodoItem; runActive:
 }
 
 export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelProps) {
-  const todos = useMemo(() => extractLatestTodos(messages), [messages]);
-  const activitiesByTodo = useMemo(() => extractTodoToolActivities(messages), [messages]);
+  const todos = useMemo(() => {
+    const latest = extractLatestTodos(messages);
+    const simpleTodos = latest?.filter((todo) => todo.kind !== "business") ?? [];
+    return simpleTodos.length ? simpleTodos : null;
+  }, [messages]);
   const isMobile = useIsMobile();
   const sessionKey = sessionId || "__local__";
   const [expandedBySession, setExpandedBySession] = useState<Record<string, boolean>>({});
-  const hasRichTodos = !!todos?.some(isRichTodo);
-  const expanded = expandedBySession[sessionKey] ?? (!isMobile && hasRichTodos);
+  const expanded = expandedBySession[sessionKey] ?? false;
 
   useEffect(() => {
     if (!isMobile) return;
@@ -278,7 +168,7 @@ export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelP
     return () => document.removeEventListener("focusin", handleFocusIn);
   }, [isMobile, sessionKey]);
 
-  if (!todos || todos.length === 0) return null;
+  if (!todos) return null;
 
   const summary = buildSummary(todos, runActive);
   const summaryActive = summary.status === "in_progress" && runActive;
@@ -289,8 +179,7 @@ export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelP
         className={cn(
           "overflow-hidden rounded-t-lg rounded-b-none border bg-card text-sm shadow-sm transition-colors",
           summary.allCompleted && "border-success/25 bg-success/5",
-          summary.status === "blocked" && "border-destructive/25",
-          summary.status === "failed" && "border-destructive/25",
+          (summary.status === "blocked" || summary.status === "failed") && "border-destructive/25",
         )}
         aria-live="polite"
       >
@@ -317,7 +206,6 @@ export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelP
           >
             {summary.text}
           </span>
-          {hasRichTodos ? <Wrench className="size-3.5 shrink-0 text-muted-foreground" aria-label="业务步骤" /> : null}
           <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
             {summary.completed}/{summary.total}
           </span>
@@ -332,26 +220,15 @@ export function TodoPanel({ messages, sessionId, runActive = false }: TodoPanelP
         <div
           className={cn(
             "overflow-hidden transition-all duration-150 ease-out",
-            expanded ? "max-h-[60vh] opacity-100" : "max-h-0 opacity-0",
+            expanded ? "max-h-56 opacity-100" : "max-h-0 opacity-0",
           )}
           aria-hidden={!expanded}
         >
           <div className="border-t border-border px-3 py-2">
-            <ul className="max-h-[calc(60vh-3.5rem)] space-y-2 overflow-y-auto pr-1">
-              {todos.map((todo, index) => {
-                if (!isRichTodo(todo)) {
-                  return <SimpleTodoItem key={`${todo.status}-${index}-${todo.content}`} todo={todo} runActive={runActive} index={index} />;
-                }
-                const key = todoItemKey(todo);
-                return (
-                  <RichTodoItem
-                    key={key}
-                    todo={todo}
-                    activities={activitiesByTodo[key] ?? []}
-                    runActive={runActive}
-                  />
-                );
-              })}
+            <ul className="max-h-48 space-y-1 overflow-y-auto pr-1">
+              {todos.map((todo, index) => (
+                <SimpleTodoItem key={todo.id || `${todo.status}-${index}-${todo.content}`} todo={todo} runActive={runActive} />
+              ))}
             </ul>
           </div>
         </div>

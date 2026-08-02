@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { extractLatestTodos, extractTodoToolActivities } from "./extractTodos";
+import {
+  extractLatestTodos,
+  extractTodoToolActivities,
+  projectBusinessTodoGroups,
+} from "./extractTodos";
 import type { MessageItem } from "../types/message";
 
 function user(id: string): MessageItem {
@@ -206,5 +210,93 @@ describe("extractTodoToolActivities", () => {
     expect(result["id:verify"]).toEqual([
       { id: "read-new", toolName: "Read", label: "Read", status: "running" },
     ]);
+  });
+});
+
+describe("projectBusinessTodoGroups", () => {
+  it("keeps one stable card per user turn and updates it with the latest snapshot", () => {
+    const result = projectBusinessTodoGroups([
+      user("user-1"),
+      todo("todo-start", todos([
+        { id: "verify", kind: "business", content: "核验订单", status: "in_progress" },
+        { id: "write", kind: "business", content: "写入结果", status: "pending" },
+      ])),
+      {
+        id: "read-1",
+        type: "tool_use",
+        toolName: "Read",
+        toolId: "read-1",
+        toolInput: "{}",
+        executionStatus: "completed",
+        presentation: { title: "读取订单" },
+      },
+      todo("todo-adjust", todos([
+        { id: "verify", kind: "business", content: "核验订单", status: "completed" },
+        { id: "write-domestic", kind: "business", content: "写入国内系统", status: "in_progress" },
+        { id: "write-overseas", kind: "business", content: "同步海外系统", status: "pending" },
+      ])),
+      {
+        id: "shell-1",
+        type: "tool_use",
+        toolName: "Shell",
+        toolId: "shell-1",
+        toolInput: "{}",
+        executionStatus: "running",
+      },
+    ], true);
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]).toMatchObject({
+      id: "business-todo-todo-start",
+      turnId: "user-1",
+      anchorMessageId: "todo-start",
+      isActive: true,
+      todos: [
+        { id: "verify", status: "completed" },
+        { id: "write-domestic", status: "in_progress" },
+        { id: "write-overseas", status: "pending" },
+      ],
+      activitiesByTodo: {
+        "id:verify": [{ id: "read-1", toolName: "Read", label: "读取订单", status: "completed" }],
+        "id:write-domestic": [{ id: "shell-1", toolName: "Shell", label: "Shell", status: "running" }],
+      },
+    });
+    expect([...result.hiddenSourceMessageIds]).toEqual([
+      "todo-start",
+      "read-1",
+      "todo-adjust",
+      "shell-1",
+    ]);
+  });
+
+  it("creates a new persistent card for each later user turn", () => {
+    const result = projectBusinessTodoGroups([
+      user("user-1"),
+      todo("todo-1", todos([
+        { id: "first", kind: "business", content: "第一轮", status: "completed" },
+      ])),
+      { id: "answer-1", type: "text", content: "done" },
+      user("user-2"),
+      todo("todo-2", todos([
+        { id: "second", kind: "business", content: "第二轮", status: "in_progress" },
+      ])),
+    ], true);
+
+    expect(result.groups.map((group) => ({ id: group.id, active: group.isActive }))).toEqual([
+      { id: "business-todo-todo-1", active: false },
+      { id: "business-todo-todo-2", active: true },
+    ]);
+  });
+
+  it("does not project ordinary task todos into the main conversation", () => {
+    const result = projectBusinessTodoGroups([
+      user("user-1"),
+      todo("todo-task", todos([
+        { id: "task", kind: "task", content: "普通任务", status: "in_progress" },
+      ])),
+    ], true);
+
+    expect(result.groups).toEqual([]);
+    expect(result.hiddenSourceMessageIds.size).toBe(0);
   });
 });

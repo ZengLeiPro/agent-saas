@@ -1,5 +1,6 @@
 import type { MessageItem, ActivityGroup, RenderItem } from '../types/message';
 import { ACTIVITY_TYPES } from '../types/message';
+import { projectBusinessTodoGroups } from './extractTodos';
 
 /** Check if activity group is active (has streaming/running items) */
 function isGroupActive(items: MessageItem[], isLastGroup: boolean, loading: boolean): boolean {
@@ -15,6 +16,10 @@ function isGroupActive(items: MessageItem[], isLastGroup: boolean, loading: bool
 export function groupMessages(messages: MessageItem[], loading: boolean): RenderItem[] {
   const result: RenderItem[] = [];
   let currentGroup: MessageItem[] = [];
+  const businessProjection = projectBusinessTodoGroups(messages, loading);
+  const businessGroupByAnchor = new Map(
+    businessProjection.groups.map((group) => [group.anchorMessageId, group]),
+  );
 
   const flushGroup = (isLast: boolean) => {
     if (currentGroup.length === 0) return;
@@ -30,6 +35,15 @@ export function groupMessages(messages: MessageItem[], loading: boolean): Render
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
+    const businessGroup = businessGroupByAnchor.get(msg.id);
+    if (businessGroup) {
+      flushGroup(false);
+      result.push(businessGroup);
+    }
+    if (businessProjection.hiddenSourceMessageIds.has(msg.id)) {
+      continue;
+    }
+
     if (msg.type === 'tool_use' && msg.presentation && msg.defaultExpanded) {
       // 数据源（剧本 / 未来的服务端规则）用 defaultOpen 声明的高价值执行行，
       // 是「AI 在动系统」的可见痕迹，不允许被活动分组吞成「已完成 N 条」。

@@ -1,4 +1,4 @@
-import type { MessageItem } from "../types/message";
+import type { BusinessTodoGroup, MessageItem } from "../types/message";
 import { normalizeDetailLine, type DetailLine } from "./toolPresentation";
 import { normalizeDisplay } from "./presentation/registry";
 import type { PresentationBlock } from "./presentation/types";
@@ -140,6 +140,132 @@ export function isRichTodo(todo: TodoItem): boolean {
     || !!todo.evidenceRefs?.length;
 }
 
+export function isBusinessTodo(todo: TodoItem): boolean {
+  return todo.kind === "business";
+}
+
+function toToolActivity(message: Extract<MessageItem, { type: "tool_use" }>): TodoToolActivity {
+  return {
+    id: message.toolId || message.id,
+    toolName: message.toolName,
+    label: message.presentation?.title || message.toolName,
+    ...(message.executionStatus ? { status: message.executionStatus } : {}),
+  };
+}
+
+export interface BusinessTodoProjection {
+  groups: BusinessTodoGroup[];
+  /** 已被业务步骤卡吸收的 TodoWrite 与普通工具消息，避免在主流重复出现。 */
+  hiddenSourceMessageIds: Set<string>;
+}
+
+interface BusinessTodoTurnState {
+  turnId: string;
+  anchorMessageId?: string;
+  latestTodos?: TodoItem[];
+  activitiesByTodo: Record<string, TodoToolActivity[]>;
+  toolMessagesByTodo: Record<string, Array<Extract<MessageItem, { type: "tool_use" }>>>;
+  activeTodoKey: string | null;
+}
+
+/**
+ * 把每个用户 Turn 内的 Business TodoWrite 快照折叠成一个稳定的主会话渲染单元。
+ * 首次 Business TodoWrite 决定卡片位置，后续完整快照只更新内容，不追加新卡片。
+ */
+export function projectBusinessTodoGroups(messages: MessageItem[], loading: boolean): BusinessTodoProjection {
+  const groups: BusinessTodoGroup[] = [];
+  const hiddenSourceMessageIds = new Set<string>();
+  let state: BusinessTodoTurnState | null = null;
+  let anonymousTurn = 0;
+
+  const ensureTurn = (): BusinessTodoTurnState => {
+    if (!state) {
+      anonymousTurn += 1;
+      state = {
+        turnId: `anonymous-${anonymousTurn}`,
+        activitiesByTodo: {},
+        toolMessagesByTodo: {},
+        activeTodoKey: null,
+      };
+    }
+    return state;
+  };
+
+  const flushTurn = () => {
+    if (!state?.anchorMessageId || !state.latestTodos?.length) return;
+    groups.push({
+      type: "business_todo",
+      id: `business-todo-${state.anchorMessageId}`,
+      turnId: state.turnId,
+      anchorMessageId: state.anchorMessageId,
+      todos: state.latestTodos,
+      activitiesByTodo: state.activitiesByTodo,
+      toolMessagesByTodo: state.toolMessagesByTodo,
+      isActive: false,
+    });
+  };
+
+  for (const message of messages) {
+    if (message.type === "user") {
+      flushTurn();
+      state = {
+        turnId: message.id,
+        activitiesByTodo: {},
+        toolMessagesByTodo: {},
+        activeTodoKey: null,
+      };
+      continue;
+    }
+    if (message.type !== "tool_use") continue;
+
+    const turn = ensureTurn();
+    if (message.toolName === TODO_WRITE_TOOL_NAME) {
+      const todos = parseTodos(message.toolInput);
+      if (todos === undefined) continue;
+      if (turn.anchorMessageId) hiddenSourceMessageIds.add(message.id);
+      if (todos === null) {
+        turn.activeTodoKey = null;
+        continue;
+      }
+
+      const businessTodos = todos.filter(isBusinessTodo);
+      if (businessTodos.length > 0) {
+        turn.anchorMessageId ??= message.id;
+        turn.latestTodos = businessTodos;
+        hiddenSourceMessageIds.add(message.id);
+      }
+      const activeTodo = businessTodos.find((todo) => todo.status === "in_progress");
+      turn.activeTodoKey = activeTodo ? todoItemKey(activeTodo) : null;
+      continue;
+    }
+
+    if (!turn.activeTodoKey) continue;
+    hiddenSourceMessageIds.add(message.id);
+    const bucket = turn.activitiesByTodo[turn.activeTodoKey] ?? [];
+    if (bucket.length >= TODO_ACTIVITY_LIMIT) continue;
+    bucket.push(toToolActivity(message));
+    turn.activitiesByTodo[turn.activeTodoKey] = bucket;
+    const toolMessages = turn.toolMessagesByTodo[turn.activeTodoKey] ?? [];
+    toolMessages.push(message);
+    turn.toolMessagesByTodo[turn.activeTodoKey] = toolMessages;
+  }
+
+  const activeTurnId = state?.turnId;
+  flushTurn();
+  if (loading && activeTurnId) {
+    for (let index = groups.length - 1; index >= 0; index -= 1) {
+      const activeGroup = groups[index];
+      if (activeGroup.turnId !== activeTurnId) continue;
+      if (activeGroup.todos.some((todo) => todo.status === "in_progress")) {
+        activeGroup.isActive = true;
+      }
+      break;
+    }
+  }
+
+  return { groups, hiddenSourceMessageIds };
+}
+
 export function extractLatestTodos(messages: MessageItem[]): TodoItem[] | null {
   let hasUserMessageAfterTodo = false;
 
@@ -196,12 +322,7 @@ export function extractTodoToolActivities(messages: MessageItem[]): Record<strin
     const bucket = activities[activeTodoKey] ?? [];
     if (bucket.length >= TODO_ACTIVITY_LIMIT) continue;
 
-    bucket.push({
-      id: message.toolId || message.id,
-      toolName: message.toolName,
-      label: message.presentation?.title || message.toolName,
-      ...(message.executionStatus ? { status: message.executionStatus } : {}),
-    });
+    bucket.push(toToolActivity(message));
     activities[activeTodoKey] = bucket;
   }
 

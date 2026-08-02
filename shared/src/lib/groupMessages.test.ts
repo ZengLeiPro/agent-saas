@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { groupMessages } from './groupMessages';
-import type { MessageItem, ActivityGroup } from '../types/message';
+import type { MessageItem, ActivityGroup, BusinessTodoGroup } from '../types/message';
 
 const user = (id: string): MessageItem => ({ id, type: 'user', content: 'hi' });
 const text = (id: string): MessageItem => ({ id, type: 'text', content: 'answer' });
@@ -63,6 +63,43 @@ describe('groupMessages', () => {
     const result = groupMessages([thinking('t1'), bare], false);
     expect(result).toHaveLength(1);
     expect((result[0] as ActivityGroup).items.map(i => i.id)).toEqual(['t1', 'bare']);
+  });
+
+  it('Business TodoWrite 在首次位置投影成一张主流卡，后续快照只更新不追加', () => {
+    const start: MessageItem = {
+      id: 'todo-start',
+      type: 'tool_use',
+      toolName: 'TodoWrite',
+      toolId: 'todo-start',
+      toolInput: JSON.stringify({
+        todos: [{ id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' }],
+      }),
+    };
+    const update: MessageItem = {
+      id: 'todo-update',
+      type: 'tool_use',
+      toolName: 'TodoWrite',
+      toolId: 'todo-update',
+      toolInput: JSON.stringify({
+        todos: [{ id: 'verify', kind: 'business', content: '核验订单', status: 'completed' }],
+      }),
+    };
+    const read = tool('read-1', {
+      toolName: 'Read',
+      executionStatus: 'completed',
+      presentation: { title: '读取订单' },
+    });
+
+    const result = groupMessages([user('user-1'), start, read, update, text('answer')], false);
+
+    expect(result.map(item => item.type)).toEqual(['user', 'business_todo', 'text']);
+    const business = result[1] as BusinessTodoGroup;
+    expect(business.id).toBe('business-todo-todo-start');
+    expect(business.todos).toMatchObject([{ id: 'verify', status: 'completed' }]);
+    expect(business.activitiesByTodo['id:verify']).toMatchObject([
+      { id: 'read-1', toolName: 'Read', label: '读取订单', status: 'completed' },
+    ]);
+    expect(business.toolMessagesByTodo['id:verify'].map(item => item.id)).toEqual(['read-1']);
   });
 
   it('只有非活动消息时不产生任何 activity_group', () => {

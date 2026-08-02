@@ -1,5 +1,6 @@
 import type { ToolPresentation } from '../lib/toolPresentation';
 import type { PresentationBlock } from '../lib/presentation/types';
+import type { TodoItem, TodoToolActivity } from '../lib/extractTodos';
 
 export type AskUserAnswerValue = string | string[];
 export type AskUserAnswers = Record<string, AskUserAnswerValue>;
@@ -160,5 +161,17 @@ export interface ActivityGroup {
   isActive: boolean;
 }
 
-/** MessageList render unit = message | activity group */
-export type RenderItem = MessageItem | ActivityGroup;
+/** Turn 内 Business TodoWrite 快照折叠出的主会话业务步骤卡。 */
+export interface BusinessTodoGroup {
+  type: 'business_todo';
+  id: string;
+  turnId: string;
+  anchorMessageId: string;
+  todos: TodoItem[];
+  activitiesByTodo: Record<string, TodoToolActivity[]>;
+  toolMessagesByTodo: Record<string, Array<Extract<MessageItem, { type: 'tool_use' }>>>;
+  isActive: boolean;
+}
+
+/** MessageList render unit = message | activity group | business todo group */
+export type RenderItem = MessageItem | ActivityGroup | BusinessTodoGroup;

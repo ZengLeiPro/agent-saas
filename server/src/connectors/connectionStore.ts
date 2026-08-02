@@ -153,6 +153,25 @@ export class ConnectorConnectionStore {
     return clone(result);
   }
 
+  async updateMetadata(
+    username: string,
+    connectorId: string,
+    metadata: Record<string, string>,
+  ): Promise<ConnectorConnectionRecord | undefined> {
+    let result: ConnectorConnectionRecord | undefined;
+    await this.mutate(() => {
+      const current = this.data.users[username]?.[connectorId];
+      if (!current) return;
+      result = {
+        ...current,
+        metadata: { ...(current.metadata ?? {}), ...metadata },
+        updatedAt: new Date().toISOString(),
+      };
+      this.data.users[username][connectorId] = result;
+    });
+    return result ? clone(result) : undefined;
+  }
+
   async markCredentialRevoked(username: string, connectorId: string, ref: string): Promise<void> {
     await this.mutate(() => {
       const current = this.data.users[username]?.[connectorId];

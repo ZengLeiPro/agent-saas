@@ -55,7 +55,6 @@ import { createMcpRouter } from "../routes/mcp.js";
 import { createConnectorsRouter } from "../routes/connectors.js";
 import { createNotionRouter } from "../routes/notion.js";
 import { createGoogleWorkspaceRouter } from "../routes/googleWorkspace.js";
-import { disconnectNotion } from "../connectors/notion.js";
 import { revokeAllUserConnectorCredentials } from "../connectors/lifecycle.js";
 import { runtimeRunController } from "../runtime/runController.js";
 import { createTenantsRouter } from "../routes/tenants.js";
@@ -787,13 +786,15 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           connectionStore: runtime.connectorConnectionStore,
           authFlowService: runtime.notionAuthFlowService,
           userStore: runtime.userStore,
-          disconnect: (userId, username, tenantId) => disconnectNotion({
-            connectionStore: runtime.connectorConnectionStore!,
-            vault: runtime.secretVault!,
-            userId,
-            username,
-            tenantId,
-          }),
+          available: Boolean(runtime.getNotionConnection && runtime.disconnectNotionConnection),
+          getConnection: async (identity) => {
+            if (!runtime.getNotionConnection) throw new Error('Notion 连接服务尚未配置');
+            return await runtime.getNotionConnection(identity);
+          },
+          disconnect: async (userId, username, tenantId) => {
+            if (!runtime.disconnectNotionConnection) throw new Error('Notion 连接服务尚未配置');
+            return await runtime.disconnectNotionConnection({ userId, username, tenantId });
+          },
         }),
       );
       app.use(

@@ -99,8 +99,8 @@ export function useNotionConnector(enabled = true): NotionConnectorState {
     setConnecting(true);
     setError(null);
     try {
-      await disconnectNotion();
-      setConnection(null);
+      const result = await disconnectNotion();
+      setConnection(result.connection ?? null);
       setSession(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Notion 断开失败");
@@ -146,9 +146,17 @@ export function useNotionConnector(enabled = true): NotionConnectorState {
 }
 
 const DESCRIPTION = "使用 Notion 官方 ntn CLI 搜索、读取和维护页面、数据库与评论。";
+const LOCAL_DISCONNECT_HELP = "断开仅移除本平台保存的凭据，不会在 Notion 远程撤销。如需彻底撤销，请在 Notion 中移除授权/令牌。";
 
 function NotionLogo() {
   return <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-black text-white"><BookOpenText className="size-6" /></span>;
+}
+
+function statusLabel(status: NotionConnection["status"] | undefined): string {
+  if (status === "connected") return "已验证";
+  if (status === "invalid") return "授权已失效";
+  if (status === "unavailable") return "暂时无法验证";
+  return "未连接";
 }
 
 export function notionMatchesCatalog(query: string, activeFilter: string, connected: boolean): boolean {
@@ -158,7 +166,9 @@ export function notionMatchesCatalog(query: string, activeFilter: string, connec
 }
 
 export function NotionConnectorCard({ state, onOpenDetail }: { state: NotionConnectorState; onOpenDetail: () => void }) {
-  const connected = state.connection?.status === "connected";
+  const status = state.connection?.status;
+  const linked = Boolean(status && status !== "disconnected");
+  const connected = status === "connected";
   const busy = state.loading || state.connecting || state.session?.status === "starting" || state.session?.status === "awaiting_user";
   return (
     <Card className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)} onClick={onOpenDetail}>
@@ -168,14 +178,14 @@ export function NotionConnectorCard({ state, onOpenDetail }: { state: NotionConn
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="font-semibold">Notion</div>
-              <div className="mt-1 flex items-center gap-2"><CapabilitySourceBadge source="platform" /><span className={cn("text-xs font-medium", connected ? "text-success" : "text-muted-foreground")}>{busy ? "等待授权" : connected ? "已连接" : "未连接"}</span></div>
+              <div className="mt-1 flex items-center gap-2"><CapabilitySourceBadge source="platform" /><span className={cn("text-xs font-medium", connected ? "text-success" : status === "invalid" ? "text-destructive" : "text-muted-foreground")}>{busy ? "等待授权" : statusLabel(status)}</span></div>
             </div>
-            <button type="button" className={cn("flex size-8 items-center justify-center rounded-lg border", connected ? "border-transparent bg-success text-success-foreground" : "bg-muted/40 text-muted-foreground")} onClick={(event) => { event.stopPropagation(); if (connected) onOpenDetail(); else void state.start(); }} disabled={busy}>
-              {busy ? <Loader2 className="size-4 animate-spin" /> : connected ? <Check className="size-4" /> : <Plus className="size-4" />}
+            <button type="button" className={cn("flex size-8 items-center justify-center rounded-lg border", linked ? "border-transparent bg-success text-success-foreground" : "bg-muted/40 text-muted-foreground")} onClick={(event) => { event.stopPropagation(); if (linked) onOpenDetail(); else void state.start(); }} disabled={busy}>
+              {busy ? <Loader2 className="size-4 animate-spin" /> : linked ? <Check className="size-4" /> : <Plus className="size-4" />}
             </button>
           </div>
           <p className="mt-3 line-clamp-2 text-sm leading-5 text-muted-foreground">{DESCRIPTION}</p>
-          <div className="mt-3 text-xs text-muted-foreground">官方 CLI：ntn</div>
+          <div className="mt-3 truncate text-xs text-muted-foreground">{state.connection?.workspaceName ? `工作区：${state.connection.workspaceName}` : "官方 CLI：ntn"}</div>
         </div>
       </CardContent>
     </Card>
@@ -183,16 +193,26 @@ export function NotionConnectorCard({ state, onOpenDetail }: { state: NotionConn
 }
 
 export function NotionConnectorDrawer({ open, onOpenChange, state }: { open: boolean; onOpenChange: (open: boolean) => void; state: NotionConnectorState }) {
-  const connected = state.connection?.status === "connected";
+  const status = state.connection?.status;
+  const linked = Boolean(status && status !== "disconnected");
+  const connected = status === "connected";
+  const identity = state.connection?.identity;
   return (
     <CapabilityDetailDrawer open={open} onOpenChange={onOpenChange} title="Notion" description={DESCRIPTION}>
-      <div className="flex items-center gap-3"><NotionLogo /><div><CapabilitySourceBadge source="platform" /><div className={cn("mt-1 text-xs font-medium", connected ? "text-success" : "text-muted-foreground")}>{connected ? "已连接，运行环境可用" : "未连接"}</div></div></div>
-      <div className={cn("p-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>授权完成后，平台会向当前用户运行环境注入 <code>NOTION_API_TOKEN</code>，Shell、SDK 和官方 <code>ntn</code> CLI 可直接使用。</div>
+      <div className="flex items-center gap-3"><NotionLogo /><div><CapabilitySourceBadge source="platform" /><div className={cn("mt-1 text-xs font-medium", connected ? "text-success" : status === "invalid" ? "text-destructive" : "text-muted-foreground")}>{statusLabel(status)}{connected ? "，运行环境可用" : ""}</div></div></div>
+      <div className={cn("space-y-1 p-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>
+        {state.connection?.workspaceName ? <div>工作区：<span className="text-foreground">{state.connection.workspaceName}</span>{state.connection.workspaceId ? <span className="ml-1 text-xs">({state.connection.workspaceId})</span> : null}</div> : null}
+        {identity ? <div>身份：<span className="text-foreground">{identity.name || identity.email || identity.id}</span> · {identity.type === "person" ? "Person" : "Bot"}</div> : null}
+        {state.connection?.verifiedAt ? <div className="text-xs">最近验证：{new Date(state.connection.verifiedAt).toLocaleString()}</div> : null}
+        {state.connection?.verificationMessage ? <div className="text-xs">{state.connection.verificationMessage}</div> : null}
+        {!linked ? <div>授权完成后，平台会向当前用户运行环境注入 <code>NOTION_API_TOKEN</code>。</div> : null}
+      </div>
       {state.session?.status === "awaiting_user" ? <div className="rounded-xl p-3 ring-1 ring-border/60"><div className="text-sm font-medium">Notion 验证码：{state.session.userCode}</div><p className="mt-1 text-xs text-muted-foreground">请在 Notion 官方页面确认相同验证码。</p><Button className="mt-3" variant="outline" onClick={state.reopen}><ExternalLink className="mr-2 size-4" />打开授权页</Button></div> : null}
       {state.popupBlocked ? <div className="flex gap-2 rounded-xl bg-warning-subtle p-3 text-sm text-warning-ink"><TriangleAlert className="mt-0.5 size-4" />浏览器阻止了弹窗，请点击“打开授权页”。</div> : null}
       {state.error ? <div className="flex gap-2 rounded-xl bg-destructive/10 p-3 text-sm text-destructive"><TriangleAlert className="mt-0.5 size-4" />{state.error}</div> : null}
+      {linked ? <div className="flex gap-2 rounded-xl bg-warning-subtle p-3 text-sm text-warning-ink"><TriangleAlert className="mt-0.5 size-4 shrink-0" />{LOCAL_DISCONNECT_HELP}</div> : null}
       <div className="flex gap-2">
-        {connected ? <Button variant="destructive" onClick={() => void state.disconnect()} disabled={state.connecting}>断开连接</Button> : <Button onClick={() => void state.start()} disabled={state.connecting}>{state.connecting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}连接 Notion</Button>}
+        {linked ? <><Button variant="destructive" onClick={() => void state.disconnect()} disabled={state.connecting}>仅在本地断开</Button>{status === "invalid" ? <Button onClick={() => void state.start()} disabled={state.connecting}>重新连接</Button> : null}</> : <Button onClick={() => void state.start()} disabled={state.connecting}>{state.connecting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}连接 Notion</Button>}
       </div>
     </CapabilityDetailDrawer>
   );

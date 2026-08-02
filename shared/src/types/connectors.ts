@@ -25,17 +25,36 @@ export interface ConnectorAuthSession {
   message: string;
 }
 
+export type NotionConnectionStatus = 'connected' | 'invalid' | 'unavailable' | 'disconnected';
+
 export interface NotionConnection {
   connectorId: 'notion';
-  status: 'connected' | 'disconnected';
-  connectedAt?: string | null;
+  status: NotionConnectionStatus;
+  workspaceId?: string;
+  workspaceName?: string;
+  identity?: {
+    id: string;
+    type: 'person' | 'bot';
+    name?: string;
+    email?: string;
+    botOwnerType?: string;
+  };
+  connectedAt?: string;
+  verifiedAt?: string;
   updatedAt?: string;
-  cliCommand: 'ntn';
-  envAvailable: boolean;
+  verificationMessage?: string;
+  disconnectNotice: string;
 }
 
 export interface NotionConnectionResponse {
-  connection: NotionConnection | null;
+  available: boolean;
+  connection: NotionConnection;
+}
+
+export interface NotionDisconnectResponse {
+  connection?: NotionConnection;
+  providerRevoked: false;
+  notice: string;
 }
 
 export interface NotionAuthSessionResponse {

@@ -1,113 +1,143 @@
 import { Router } from 'express';
 
+import {
+  NOTION_LOCAL_DISCONNECT_NOTICE,
+  type NotionConnectionView,
+} from '../connectors/notion.js';
 import type { ConnectorConnectionStore } from '../connectors/connectionStore.js';
-import { NOTION_CONNECTOR_ID } from '../connectors/notion.js';
 import type { UserStore } from '../data/users/store.js';
-import type { DwsAuthSessionRecord } from '../dws/authStore.js';
 import type { NotionAuthFlowServiceLike } from '../notion/authFlow.js';
 
 export interface NotionRouterOptions {
   connectionStore: ConnectorConnectionStore;
+  userStore: UserStore;
   authFlowService?: NotionAuthFlowServiceLike;
-  userStore?: Pick<UserStore, 'findById'>;
-  disconnect?: (userId: string, username: string, tenantId: string) => Promise<void>;
+  getConnection?: (identity: {
+    userId: string;
+    username: string;
+    tenantId: string;
+  }) => Promise<NotionConnectionView>;
+  disconnect?: (
+    userId: string,
+    username: string,
+    tenantId: string,
+  ) => Promise<unknown>;
+  available: boolean;
 }
 
 export function createNotionRouter(options: NotionRouterOptions): Router {
   const router = Router();
 
-  router.get('/notion', (req, res) => {
-    if (!req.user?.sub || !req.user.username || !req.user.tenantId) {
-      res.status(401).json({ error: 'Authentication required' });
+  router.get('/connectors/notion', async (req, res) => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    const record = options.connectionStore.get(req.user.username, NOTION_CONNECTOR_ID);
-    if (!record || record.userId !== req.user.sub || record.tenantId !== req.user.tenantId) {
-      res.json({ connection: null });
+    if (!options.available || !options.getConnection) {
+      res.json({ available: false, connection: disconnectedView() });
       return;
     }
-    res.json({
-      connection: {
-        connectorId: NOTION_CONNECTOR_ID,
-        status: record.status,
-        connectedAt: record.connectedAt ?? null,
-        updatedAt: record.updatedAt,
-        cliCommand: 'ntn',
-        envAvailable: record.status === 'connected',
-      },
-    });
+    try {
+      const connection = await options.getConnection({
+        userId: req.user.sub,
+        username: req.user.username,
+        tenantId: req.user.tenantId,
+      });
+      res.json({ available: true, connection });
+    } catch {
+      res.status(503).json({ error: 'Notion 连接状态暂时不可用' });
+    }
   });
 
-  router.get('/notion/auth/session', async (req, res) => {
-    if (!req.user?.sub || !req.user.tenantId) {
-      res.status(401).json({ error: 'Authentication required' });
+  router.get('/connectors/notion/auth/session', async (req, res) => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
       return;
     }
     if (!options.authFlowService) {
-      res.status(503).json({ error: 'Notion 连接服务暂不可用' });
+      res.json({ available: false, session: null });
       return;
     }
     try {
       const session = await options.authFlowService.getLatest(req.user.tenantId, req.user.sub);
-      res.json({ session: session ? toPublicAuthSession(session) : null });
+      res.json({ available: true, session: sanitizeSession(session) });
     } catch {
-      res.status(503).json({ error: 'Notion 授权状态读取失败' });
+      res.status(500).json({ error: 'Notion 授权状态读取失败' });
     }
   });
 
-  router.post('/notion/auth/session', async (req, res) => {
-    if (!req.user?.sub || !req.user.tenantId) {
-      res.status(401).json({ error: 'Authentication required' });
+  router.post('/connectors/notion/auth/session', async (req, res) => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    if (!options.authFlowService || !options.userStore) {
-      res.status(503).json({ error: 'Notion 连接服务暂不可用' });
+    if (!options.authFlowService) {
+      res.status(503).json({ error: 'Notion 官方授权当前不可用' });
       return;
     }
-    const user = options.userStore.findById(req.user.sub);
-    if (!user || user.disabled || user.tenantId !== req.user.tenantId) {
-      res.status(403).json({ error: '当前账号无法连接 Notion' });
+    const current = options.userStore.findById(req.user.sub);
+    if (
+      !current
+      || current.disabled
+      || current.username !== req.user.username
+      || current.tenantId !== req.user.tenantId
+    ) {
+      res.status(403).json({ error: '用户状态已失效' });
       return;
     }
     try {
-      const session = await options.authFlowService.start(user);
-      res.status(202).json({ session: toPublicAuthSession(session) });
+      const session = await options.authFlowService.start(current);
+      res.status(202).json({ session: sanitizeSession(session) });
     } catch {
-      res.status(503).json({ error: 'Notion 授权启动失败，请稍后重试' });
+      res.status(500).json({ error: 'Notion 授权启动失败' });
     }
   });
 
-  router.delete('/notion', async (req, res) => {
-    if (!req.user?.sub || !req.user.username || !req.user.tenantId) {
-      res.status(401).json({ error: 'Authentication required' });
+  router.delete('/connectors/notion', async (req, res) => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
       return;
     }
     if (!options.disconnect) {
-      res.status(503).json({ error: 'Notion 连接服务暂不可用' });
+      res.status(503).json({ error: 'Notion 连接服务尚未配置' });
       return;
     }
     try {
-      await options.disconnect(req.user.sub, req.user.username, req.user.tenantId);
-      res.status(204).send();
+      await options.authFlowService?.cancelUser?.(req.user.tenantId, req.user.sub);
+      const result = await options.disconnect(req.user.sub, req.user.username, req.user.tenantId);
+      res.json({
+        ...(isRecord(result) ? result : {}),
+        providerRevoked: false,
+        notice: NOTION_LOCAL_DISCONNECT_NOTICE,
+      });
     } catch {
-      res.status(503).json({ error: 'Notion 断开失败，请稍后重试' });
+      res.status(500).json({ error: 'Notion 本地断开失败' });
     }
   });
 
   return router;
 }
 
-function toPublicAuthSession(row: DwsAuthSessionRecord): Record<string, unknown> {
-  const expired = Date.parse(row.expiresAt) <= Date.now()
-    && (row.status === 'starting' || row.status === 'awaiting_user');
-  const status = expired ? 'expired' : row.status;
+function disconnectedView(): NotionConnectionView {
   return {
-    sessionId: row.sessionId,
+    connectorId: 'notion',
+    status: 'disconnected',
+    disconnectNotice: NOTION_LOCAL_DISCONNECT_NOTICE,
+  };
+}
+
+function sanitizeSession(session: Awaited<ReturnType<NotionAuthFlowServiceLike['getLatest']>>) {
+  if (!session) return null;
+  const expired = Date.parse(session.expiresAt) <= Date.now()
+    && (session.status === 'starting' || session.status === 'awaiting_user');
+  const status = expired ? 'expired' : session.status;
+  return {
+    sessionId: session.sessionId,
     status,
-    authorizationUrl: status === 'awaiting_user' ? row.authorizationUrl ?? null : null,
-    userCode: status === 'awaiting_user' ? row.userCode ?? null : null,
-    expiresAt: row.expiresAt,
-    message: authSessionMessage(status, row.errorMessage),
+    authorizationUrl: status === 'awaiting_user' ? session.authorizationUrl ?? null : null,
+    userCode: status === 'awaiting_user' ? session.userCode ?? null : null,
+    expiresAt: session.expiresAt,
+    message: authSessionMessage(status, session.errorMessage),
   };
 }
 
@@ -118,4 +148,8 @@ function authSessionMessage(status: string, errorMessage: string | undefined): s
   if (status === 'expired') return '授权码已过期，请重新连接';
   if (status === 'failed') return errorMessage || 'Notion 授权失败，请重试';
   return 'Notion 授权状态未知';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

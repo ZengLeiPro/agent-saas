@@ -251,6 +251,18 @@ export class PgEventStore implements EventStore {
   async list(sessionId: string, options: EventListOptions = {}): Promise<PlatformEvent[]> {
     const excludeTypes = [...new Set(options.excludeTypes ?? [])];
     const includeTypes = [...new Set(options.includeTypes ?? [])];
+    if (options.projection === 'usage') {
+      const result = await this.pool.query<{ event_json: PlatformEvent }>(
+        `SELECT event_json - 'content' AS event_json
+         FROM ${this.eventsTable}
+         WHERE session_id = $1
+           AND ($2::boolean = false OR event_type = ANY($3::text[]))
+           AND event_type <> ALL($4::text[])
+         ORDER BY session_sequence ASC`,
+        [sessionId, includeTypes.length > 0, includeTypes, excludeTypes],
+      );
+      return result.rows.map((row) => normalizeEventJson(row.event_json));
+    }
     if (options.replayMode === 'bounded') {
       const result = await this.pool.query<{ event_json: PlatformEvent }>(
         `WITH ranked AS (
@@ -347,13 +359,17 @@ export class PgEventStore implements EventStore {
       runId?: string;
       type?: PlatformEvent['type'];
       excludeTypes?: PlatformEvent['type'][];
+      projection?: 'usage';
     } = {},
   ): Promise<EventListPage> {
     const afterSequence = parsePgCursor(options.afterCursor);
     const limit = options.limit && options.limit > 0 ? options.limit : 100;
     const excludeTypes = [...new Set(options.excludeTypes ?? [])];
+    const eventJsonProjection = options.projection === 'usage'
+      ? "event_json - 'content'"
+      : 'event_json';
     const result = await this.pool.query<{ event_json: PlatformEvent; session_sequence: string }>(
-      `SELECT event_json, session_sequence
+      `SELECT ${eventJsonProjection} AS event_json, session_sequence
        FROM ${this.eventsTable}
        WHERE session_id = $1
          AND session_sequence > $2

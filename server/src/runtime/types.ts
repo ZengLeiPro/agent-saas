@@ -1051,6 +1051,11 @@ export interface EventListOptions {
    * 生产 PG backend 在 SQL 内截断，避免先把大字段送进 Node 再做内存截断。
    */
   replayMode?: 'bounded';
+  /**
+   * 统计视图：只保留 usage/model/contextBreakdown 等计量字段，移除事件正文。
+   * PG backend 必须在 SQL 内完成投影，避免先把大 content 送入 Node。
+   */
+  projection?: 'usage';
 }
 
 export interface EventStore {
@@ -1063,6 +1068,7 @@ export interface EventStore {
     runId?: string;
     type?: PlatformEvent['type'];
     excludeTypes?: PlatformEvent['type'][];
+    projection?: 'usage';
   }): Promise<EventListPage>;
   listAround?(sessionId: string, eventId: string, options?: { before?: number; after?: number }): Promise<PlatformEvent[]>;
   listByRun?(sessionId: string, runId: string): Promise<PlatformEvent[]>;

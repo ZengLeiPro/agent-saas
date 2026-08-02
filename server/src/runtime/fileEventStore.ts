@@ -6,6 +6,12 @@ import { readFileCoalesce } from './fileReadCoalesce.js';
 import { boundReplayToolResultEvents } from './replayEventBounds.js';
 import type { EventAppendContext, EventListOptions, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
 
+function projectUsageEvent(event: PlatformEvent): PlatformEvent {
+  const projected = { ...event } as PlatformEvent & { content?: unknown };
+  delete projected.content;
+  return projected;
+}
+
 export function getRuntimeEventLogPath(transcriptPath: string): string {
   return transcriptPath.endsWith('.jsonl')
     ? transcriptPath.slice(0, -'.jsonl'.length) + '.runtime-events.jsonl'
@@ -39,6 +45,7 @@ export class FileEventStore implements EventStore {
     const excluded = new Set(options.excludeTypes);
     const included = options.includeTypes?.length ? new Set(options.includeTypes) : null;
     const selected = events.filter((event) => !excluded.has(event.type) && (!included || included.has(event.type)));
+    if (options.projection === 'usage') return selected.map(projectUsageEvent);
     return options.replayMode === 'bounded' ? boundReplayToolResultEvents(selected) : selected;
   }
 
@@ -48,6 +55,7 @@ export class FileEventStore implements EventStore {
     runId?: string;
     type?: PlatformEvent['type'];
     excludeTypes?: PlatformEvent['type'][];
+    projection?: 'usage';
   } = {}) {
     const excluded = new Set(options.excludeTypes ?? []);
     const all = (await this.readAll()).filter((event) => {
@@ -61,7 +69,7 @@ export class FileEventStore implements EventStore {
     const page = all.slice(offset, offset + limit);
     const nextOffset = offset + page.length;
     return {
-      events: page,
+      events: options.projection === 'usage' ? page.map(projectUsageEvent) : page,
       ...(nextOffset < all.length ? { nextCursor: String(nextOffset) } : {}),
       hasMore: nextOffset < all.length,
     };

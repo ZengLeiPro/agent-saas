@@ -400,6 +400,35 @@ describe('PgEventStore notify coalescing', () => {
     ]);
   });
 
+  it('projects usage events without content before rows enter Node', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+
+    await store.list('session-1', {
+      includeTypes: ['assistant_message', 'assistant_tool_calls', 'compaction'],
+      projection: 'usage',
+    });
+
+    let lastQuery = pool.queries.at(-1);
+    expect(lastQuery?.text).toContain("SELECT event_json - 'content' AS event_json");
+    expect(lastQuery?.text).toContain('event_type = ANY($3::text[])');
+    expect(lastQuery?.params).toEqual([
+      'session-1',
+      true,
+      ['assistant_message', 'assistant_tool_calls', 'compaction'],
+      [],
+    ]);
+
+    await store.listPage?.('session-1', {
+      limit: 500,
+      type: 'assistant_message',
+      projection: 'usage',
+    });
+
+    lastQuery = pool.queries.at(-1);
+    expect(lastQuery?.text).toContain("SELECT event_json - 'content' AS event_json, session_sequence");
+  });
+
   it('listPage 在 SQL 查询阶段排除内部事件', async () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;

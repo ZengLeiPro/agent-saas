@@ -216,7 +216,11 @@ async function listRuntimeEventsByType(
   type: PlatformEvent["type"],
 ): Promise<PlatformEvent[]> {
   if (!eventStore.listPage) {
-    return (await eventStore.list(sessionId)).filter(
+    const projected = await eventStore.list(sessionId, {
+      includeTypes: [type],
+      projection: "usage",
+    });
+    return projected.filter(
       (event) => event.sessionId === sessionId && event.type === type,
     );
   }
@@ -228,6 +232,7 @@ async function listRuntimeEventsByType(
       ...(afterCursor ? { afterCursor } : {}),
       limit: 500,
       type,
+      projection: "usage",
     });
     events.push(...page.events.filter(
       (event) => event.sessionId === sessionId && event.type === type,
@@ -2547,6 +2552,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           const runtimeEvents = runtimeEventStoreFor
             ? await runtimeEventStoreFor(transcriptPath).list(sessionId, {
                 includeTypes: ["assistant_message", "assistant_tool_calls", "compaction"],
+                projection: "usage",
               })
             : [];
           contextUsage = new RuntimeContextUsageTracker(meta?.model ?? 'unknown', runtimeEvents).record(

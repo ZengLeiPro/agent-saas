@@ -443,10 +443,12 @@ describe('sessions routes for meta-only runtime sessions', () => {
       expect(stats.status).toBe(200);
       expect(list).toHaveBeenCalledWith(sessionId, {
         includeTypes: ['assistant_message', 'assistant_tool_calls', 'compaction'],
+        projection: 'usage',
       });
       expect(listPage).toHaveBeenCalledWith(sessionId, {
         limit: 500,
         type: 'subagent_finished',
+        projection: 'usage',
       });
     } finally {
       await stopServer(server);

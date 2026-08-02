@@ -471,11 +471,11 @@ export function DesktopLayout(props: LayoutProps) {
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-8"
+                className="size-7"
                 onClick={toggleFileBrowser}
                 title="文件浏览器"
               >
-                <FolderOpen className={cn("size-5", fileBrowserOpen ? "text-primary" : "text-muted-foreground")} />
+                <FolderOpen className={cn("size-[18px]", fileBrowserOpen ? "text-primary" : "text-muted-foreground")} />
               </Button>
             </div>
           )}

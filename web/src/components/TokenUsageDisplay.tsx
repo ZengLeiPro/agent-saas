@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { TokenUsage } from "@/lib/sessionsApi";
 import type { ContextUsageCategory, ContextUsageData, MessageItem, SubagentStatus } from "@agent/shared";
 import { formatTokenCount } from "@/lib/sessionsApi";
@@ -148,18 +149,6 @@ export function TokenUsageDisplay({
 }: TokenUsageDisplayProps) {
   const [open, setOpen] = useState(false);
   const childAgents = collectChildAgentResources(messages);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
 
   const cumulativeTokens = tokenUsage
     ? tokenUsage.totalTokens
@@ -207,12 +196,9 @@ export function TokenUsageDisplay({
     : hasExactFallback
       ? `当前上下文：${formatTokenCount(displayTokens)}（provider usage）`
       : `${accounting?.label ?? '上下文不可确认'}：显示累计用量`;
-  const realtimeLastCacheRatio = contextUsage?.lastRequestCacheHitRatio;
-  const realtimeCacheRatio = typeof realtimeLastCacheRatio === 'number'
-    ? realtimeLastCacheRatio
-    : typeof contextUsage?.cacheHitRatio === 'number'
-      ? contextUsage.cacheHitRatio
-      : undefined;
+  const realtimeCacheRatio = typeof contextUsage?.cacheHitRatio === 'number'
+    ? contextUsage.cacheHitRatio
+    : undefined;
   const tokenCacheRatio = typeof tokenUsage?.cacheHitRatio === 'number'
     ? tokenUsage.cacheHitRatio
     : undefined;
@@ -239,57 +225,76 @@ export function TokenUsageDisplay({
     : '累计消耗';
 
   return (
-    <div ref={containerRef} className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+    <Popover open={open} onOpenChange={setOpen}>
       {allowDetails ? (
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className={`whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium tabular-nums transition-colors hover:bg-accent hover:text-accent-foreground ${buttonColor}`}
-          title={title}
-        >
-          {label}
-        </button>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className={`shrink-0 whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium tabular-nums transition-colors hover:bg-accent hover:text-accent-foreground ${buttonColor}`}
+            title={title}
+          >
+            {label}
+          </button>
+        </PopoverTrigger>
       ) : (
         <span
-          className={`whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium tabular-nums ${buttonColor}`}
+          className={`shrink-0 whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium tabular-nums ${buttonColor}`}
           title={title}
+          onClick={(e) => e.stopPropagation()}
         >
           {label}
         </span>
       )}
 
-      {open && allowDetails && (
-        <div className="absolute right-0 top-full z-50 mt-2 max-h-[75vh] w-96 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-[20px] border bg-popover p-2 text-xs text-popover-foreground shadow-[0_18px_50px_rgba(15,23,42,0.16)]">
+      {allowDetails && (
+        <PopoverContent
+          align="end"
+          sideOffset={8}
+          collisionPadding={12}
+          className="max-h-[75vh] w-96 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-[20px] p-2 text-xs shadow-[0_18px_50px_rgba(15,23,42,0.16)]"
+          onClick={(e) => e.stopPropagation()}
+        >
           {/* Hero 卡：用户点「上下文」最关心的信息放第一屏 */}
           {hasExactContext ? (
             <div className="rounded-2xl border border-border/80 bg-muted/35 p-3">
-              {/* KPI 区：有累计消耗时双列并排，否则单指标 */}
+              {/* KPI 区：有累计消耗时展示上下文、累计消耗、主 Agent 缓存命中率 */}
               {showHeroCumulative ? (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
+                <div className="grid grid-cols-3">
+                  <div className="min-w-0 pr-2">
                     {hasContextWindow ? (
                       <>
-                        <div className={`text-2xl font-semibold leading-none tabular-nums ${heroPercentColor}`}>
+                        <div className={`text-xl font-semibold leading-none tabular-nums ${heroPercentColor}`}>
                           {(percentage * 100).toFixed(1)}%
                         </div>
-                        <div className="mt-1.5 text-[10px] tabular-nums text-muted-foreground">
-                          当前上下文 {formatTokenCount(displayTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
+                        <div className="mt-1.5 text-[9px] leading-tight text-muted-foreground">
+                          <span className="block">当前上下文</span>
+                          <span className="mt-0.5 block truncate tabular-nums">
+                            {formatTokenCount(displayTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
+                          </span>
                         </div>
                       </>
                     ) : (
                       <>
-                        <div className="text-2xl font-semibold leading-none tabular-nums">
+                        <div className="text-xl font-semibold leading-none tabular-nums">
                           {formatTokenCount(displayTokens)}
                         </div>
-                        <div className="mt-1.5 text-[10px] text-muted-foreground">当前上下文</div>
+                        <div className="mt-1.5 text-[9px] leading-tight text-muted-foreground">当前上下文</div>
                       </>
                     )}
                   </div>
-                  <div className="border-l border-border/60 pl-3">
-                    <div className="text-2xl font-semibold leading-none tabular-nums">
+                  <div className="min-w-0 border-l border-border/60 px-2">
+                    <div className="text-xl font-semibold leading-none tabular-nums">
                       {formatTokenCount(cumulativeTokens)}
                     </div>
-                    <div className="mt-1.5 text-[10px] text-muted-foreground">{heroCumulativeLabel}</div>
+                    <div className="mt-1.5 text-[9px] leading-tight text-muted-foreground">{heroCumulativeLabel}</div>
+                  </div>
+                  <div className="min-w-0 border-l border-border/60 pl-2">
+                    <div className="text-xl font-semibold leading-none tabular-nums">
+                      {cacheHitRatio !== undefined ? formatPercent(cacheHitRatio) : '—'}
+                    </div>
+                    <div className="mt-1.5 text-[9px] leading-tight text-muted-foreground">
+                      主 Agent 缓存命中率
+                    </div>
                   </div>
                 </div>
               ) : hasContextWindow ? (
@@ -551,8 +556,8 @@ export function TokenUsageDisplay({
               </CollapsibleSection>
             )}
           </div>
-        </div>
+        </PopoverContent>
       )}
-    </div>
+    </Popover>
   );
 }

@@ -668,6 +668,41 @@ describe('processWsEvent - 工具执行与结果', () => {
     dispatch({ type: 'tool_result', toolId: 'nope', toolName: 'Read', result: 'orphan' }, ctx);
     expect(ctrl.messages[0]).toMatchObject({ type: 'tool_result', toolName: 'Read', result: 'orphan' });
   });
+
+  it('tool_result 带 presentation/metadata：normalize 后合并进 tool_use——实时观看与刷新后渲染一致', () => {
+    const ctrl = makeController([
+      { id: 't', type: 'tool_use', toolName: 'Shell', toolInput: '', toolId: 'i1', executionStatus: 'running' },
+    ]);
+    const { ctx } = makeCtx(ctrl);
+    dispatch({
+      type: 'tool_result',
+      toolId: 'i1',
+      result: 'stdout...',
+      presentation: {
+        title: '钉钉 · 创建待办',
+        detail: [{ k: '系统', v: '钉钉' }],
+        status: 'ok',
+        receipt: { id: '55820993744', system: '钉钉' },
+      },
+      metadata: { exitCode: 0, durationMs: 1393 },
+    }, ctx);
+    const tool = ctrl.messages[0] as Extract<MessageItem, { type: 'tool_use' }>;
+    expect(tool.presentation?.title).toBe('钉钉 · 创建待办');
+    expect(tool.presentation?.receipt).toEqual({ id: '55820993744', system: '钉钉' });
+    expect(tool.toolMetadata).toMatchObject({ exitCode: 0, durationMs: 1393 });
+  });
+
+  it('tool_result 的 presentation 非法时被 normalize 拦下，不污染消息', () => {
+    const ctrl = makeController([
+      { id: 't', type: 'tool_use', toolName: 'Shell', toolInput: '', toolId: 'i1', executionStatus: 'running' },
+    ]);
+    const { ctx } = makeCtx(ctrl);
+    dispatch({ type: 'tool_result', toolId: 'i1', result: 'x', presentation: 'not-an-object', metadata: 42 }, ctx);
+    const tool = ctrl.messages[0] as Extract<MessageItem, { type: 'tool_use' }>;
+    expect(tool.presentation).toBeUndefined();
+    expect(tool.toolMetadata).toBeUndefined();
+    expect(tool.resultReady).toBe(true);
+  });
 });
 
 describe('processWsEvent - 交互事件', () => {

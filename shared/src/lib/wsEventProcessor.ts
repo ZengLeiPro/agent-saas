@@ -6,6 +6,8 @@
 import type { MessageItem, MessageItemInput } from '../types/message';
 import type { WsEvent } from '../types/ws';
 import { formatRuntimeFailureMessage, isInsufficientCreditsFailure } from './runtimeErrorMessage';
+import { normalizeToolPresentation } from './toolPresentation';
+import { normalizeToolResultMetadata } from './toolResultMetadata';
 
 /**
  * 拥有独立卡片的工具：交互工具走 ask_user / permission_request，Agent 走
@@ -608,6 +610,10 @@ export function processWsEvent(
     }
     removeRuntimeStatusMessages(msg);
     const toolId = data.toolId || "";
+    // 与历史加载（sessionsApi）同一条不可信边界规则：WS payload 必须 normalize 后再入渲染层。
+    // 这两个字段让实时观看的工具行与刷新后一致（摘要标题/✓✗ 判定/回执章不用等历史加载）。
+    const presentation = normalizeToolPresentation(data.presentation) ?? undefined;
+    const toolMetadata = normalizeToolResultMetadata(data.metadata) ?? undefined;
     const msgs = msg.messagesRef.current;
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
@@ -618,6 +624,8 @@ export function processWsEvent(
                 ...prev,
                 result: data.result || "",
                 resultReady: true,
+                ...(presentation ? { presentation } : {}),
+                ...(toolMetadata ? { toolMetadata } : {}),
                 executionStatus: prev.executionStatus === "cancelled"
                   ? "cancelled"
                   : data.isError
@@ -634,6 +642,7 @@ export function processWsEvent(
     msg.addMessage({
       type: "tool_result", toolName: data.toolName || "unknown",
       result: data.result || "", toolId,
+      ...(presentation ? { presentation } : {}),
     });
     return;
   }

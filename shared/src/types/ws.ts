@@ -44,7 +44,9 @@ export type WsEvent =
     | { type: 'tool_input'; content: string; toolName?: string; toolId?: string }
     | { type: 'block_end'; blockType: WsBlockType; toolName?: string }
     | { type: 'tool_execution'; phase: 'started' | 'progress' | 'completed'; toolName?: string; toolId?: string; invocationId?: string; status?: 'success' | 'error' | 'cancelled'; durationMs?: number; content?: string; error?: string }
-    | { type: 'tool_result'; toolName?: string; toolId?: string; result?: string; isError?: boolean }
+    // presentation/metadata：与历史加载（transcript）同源的「给人看」摘要与结构化执行事实。
+    // 跨进程边界属不可信输入，前端必须过 normalizeToolPresentation / normalizeToolResultMetadata 再入渲染层
+    | { type: 'tool_result'; toolName?: string; toolId?: string; result?: string; isError?: boolean; presentation?: unknown; metadata?: unknown }
     | { type: 'permission_request'; interactionId: string; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string }
     | { type: 'ask_user'; interactionId: string; questions: WsAskUserQuestion[] }
     | { type: 'subagent_start'; toolId: string; agentType: string; childSessionId?: string; childRunId?: string; model?: string }

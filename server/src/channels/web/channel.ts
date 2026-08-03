@@ -811,6 +811,10 @@ export class WebChannel implements BaseChannel {
           result: input.event.toolResult ?? '',
           content: input.event.toolResult ?? '',
           ...(input.event.isError ? { isError: true } : {}),
+          // 与历史加载同源的摘要与执行事实：实时观看的工具行不用等刷新才有徽标。
+          // presentation 自带 200 行 detail 上限，不会把全量 stdout 塞进 WS
+          ...(input.event.toolPresentation ? { presentation: input.event.toolPresentation } : {}),
+          ...(input.event.toolResultMetadata ? { metadata: input.event.toolResultMetadata } : {}),
         });
         break;
       }
@@ -4222,6 +4226,9 @@ function projectRuntimePlatformEvent(
         content: event.content,
         result: event.content,
         isError: event.isError,
+        // durable replay 与 live 路径同规则：重连/接管的观看者同样即时拿到摘要与执行事实
+        ...(event.presentation ? { presentation: event.presentation } : {}),
+        ...(event.metadata ? { metadata: event.metadata } : {}),
       }];
       return { events };
     }

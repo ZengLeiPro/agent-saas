@@ -50,7 +50,8 @@ describe('ScenarioReplayView', () => {
 
     clickNext(1);
     expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
-    expect(screen.getByText('确认问题范围与可用资料')).toBeTruthy();
+    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.queryByText('确认问题范围与可用资料')).toBeNull();
   });
 
   it('定时工作流首屏显示触发事件，推进后才展示执行动作', () => {
@@ -59,7 +60,8 @@ describe('ScenarioReplayView', () => {
     expect(screen.queryByText('扫描到期事项台账')).toBeNull();
 
     clickNext(1);
-    expect(screen.getByText('扫描到期事项台账')).toBeTruthy();
+    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.queryByText('扫描到期事项台账')).toBeNull();
   });
 
   it('回放控制位于会话列底部，替代输入框而非横跨右侧面板', () => {
@@ -116,21 +118,21 @@ describe('ScenarioReplayView', () => {
     renderReplay();
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
     clickNext(1);
-    expect(screen.getByText('确认问题范围与可用资料')).toBeTruthy();
+    expect(screen.getByText('已运行')).toBeTruthy();
     clickNext(1);
-    // 第一步的用户消息仍在；剧本点名的高价值执行行独立成行、不进活动分组。
+    // 第一步的用户消息仍在；非调试视图中的工具动作统一收敛到固定状态。
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
     expect(screen.queryByText(/已完成 .*个工具/)).toBeNull();
-    expect(screen.getByText('检索企业制度库')).toBeTruthy();
+    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.queryByText('检索企业制度库')).toBeNull();
   });
 
-  it('工具摘要在客户同构视图（debugModeOverride=false）下默认展开可见', () => {
+  it('客户同构视图隐藏工具摘要，但保留同源的企业系统面板', () => {
     renderReplay();
     clickNext(2);
-    // defaultOpen 的执行行首次挂载即展开：业务字段不点击就可见
-    // 同一文本也出现在右侧面板工具栏里，说明两处同源；此处只断言会话流里有
+    // 工具 presentation 仍驱动右侧面板，但不能在非调试会话流里泄露标题和明细。
     expect(screen.getAllByText('制度中心 · 财务与行政').length).toBeGreaterThan(0);
-    expect(screen.getByText('《差旅管理办法》2026 修订版')).toBeTruthy();
+    expect(screen.queryByText('《差旅管理办法》2026 修订版')).toBeNull();
   });
 
   it('客户同构视图下不泄露原始工具 payload', () => {
@@ -179,7 +181,8 @@ describe('右侧企业系统面板', () => {
     expect(screen.queryByText('企业系统实况')).toBeNull();
     clickNext(1);
     expect(screen.getByText('企业系统实况')).toBeTruthy();
-    expect(screen.getByText('确认问题范围与可用资料')).toBeTruthy();
+    expect(screen.getByText('已运行')).toBeTruthy();
+    expect(screen.queryByText('确认问题范围与可用资料')).toBeNull();
   });
 
   it('可拖拽调整宽度，双击恢复默认宽度', () => {

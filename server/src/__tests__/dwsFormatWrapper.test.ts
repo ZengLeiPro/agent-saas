@@ -29,10 +29,13 @@ function makeFakeCliDir(): string {
 
 function runWrapper(args: string[], opts: { enable?: boolean; realDir?: string } = {}) {
   const realDir = opts.realDir ?? makeFakeCliDir();
-  return spawnSync('bash', [WRAPPER, ...args], {
+  return spawnSync('/bin/bash', [WRAPPER, ...args], {
     encoding: 'utf8',
+    timeout: 5_000,
     env: {
-      PATH: `${resolve(WRAPPER, '..')}:${realDir}:/usr/bin:/bin`,
+      // 与 Dockerfile 构建期 smoke 同构：PATH 只放 wrapper 和 fake CLI，
+      // 防止 dirname 等未声明的系统工具依赖被开发机环境掩盖。
+      PATH: `${resolve(WRAPPER, '..')}:${realDir}`,
       ...(opts.enable ? { KY_DWS_WRAPPER_ENABLE: '1' } : {}),
     },
   });

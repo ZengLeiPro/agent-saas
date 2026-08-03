@@ -17,7 +17,10 @@
 
 set -u
 
-SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || SELF_DIR="/opt/ky-agent/wrappers"
+# 只依赖 bash builtin：Docker 构建 smoke 会故意把 PATH 收窄到 wrapper + fake CLI，
+# 此时 dirname 等外部命令不可用。`${0%/*}` 在脚本由 PATH/绝对路径执行时都保留
+# 实际脚本目录；解析失败才回落到镜像内固定安装路径。
+SELF_DIR="$(cd "${0%/*}" 2>/dev/null && pwd -P)" || SELF_DIR="/opt/ky-agent/wrappers"
 
 find_real_dws() {
   local IFS=':'

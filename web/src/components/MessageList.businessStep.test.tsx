@@ -75,37 +75,34 @@ function messages(): MessageItem[] {
 }
 
 describe("MessageList business step sections", () => {
-  it("renders plan, a completed section with collapsed process, and an open section", () => {
+  it("renders plan, a compact completed section, and an open section", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
     // 计划亮相块
     expect(screen.getByRole("region", { name: "业务计划" })).toBeTruthy();
-    // 第 1 步：完成节——outcome 常显、过程折叠为一行
+    // 第 1 步：完成节只常显 outcome；业务详情可展开，内部过程不进入普通客户主流。
     expect(screen.getByRole("region", { name: "业务步骤已完成" })).toBeTruthy();
     expect(screen.getByText("17/18 张通过，1 张退回")).toBeTruthy();
-    expect(screen.getByText("订单资料完整")).toBeTruthy();
-    expect(screen.getByText(/过程 · 1 项/)).toBeTruthy();
-    // 折叠态下工具活动不可见
+    expect(screen.queryByText("订单资料完整")).toBeNull();
+    expect(screen.queryByText(/过程 · 1 项/)).toBeNull();
     expect(screen.queryByText("读取订单")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "业务详情" }));
+    expect(screen.getByText("订单资料完整")).toBeTruthy();
     // 第 2 步：开放节标题存在（plan 列表 + 节标题各一次）
     expect(screen.getAllByText("写入核验结果").length).toBeGreaterThanOrEqual(2);
     // TodoWrite 原始块隐藏
     expect(screen.queryByText("TodoWrite")).toBeNull();
   });
 
-  it("keeps the completed process collapsed and disables expansion outside debug mode", () => {
+  it("hides completed execution-process metadata outside debug mode", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
-    const processLabel = screen.getByText(/过程 · 1 项/);
-    const button = processLabel.closest("button") as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(button.getAttribute("aria-expanded")).toBe("false");
-    expect(button.querySelector(".lucide-chevron-right")).toBeTruthy();
-    fireEvent.click(button);
+    expect(screen.queryByText(/过程 · 1 项/)).toBeNull();
     expect(screen.queryByText(/读取订单/)).toBeNull();
+    expect(screen.getByRole("button", { name: "业务详情" })).toBeTruthy();
   });
 
-  it("keeps activity groups inside open sections collapsed and disabled outside debug mode", () => {
+  it("renders activity groups inside open sections as static summaries outside debug mode", () => {
     const withOpenActivity: MessageItem[] = [
       ...messages(),
       {
@@ -121,10 +118,9 @@ describe("MessageList business step sections", () => {
     ];
     render(<MessageList messages={withOpenActivity} loading={false} debugModeOverride={false} />);
 
-    const summary = screen.getByText("已完成 1 项");
-    const button = summary.closest("button") as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(button.getAttribute("aria-expanded")).toBe("false");
+    const summary = screen.getByText("已运行");
+    expect(summary.closest("button")).toBeNull();
+    expect(summary.closest("[aria-expanded]")).toBeNull();
     expect(screen.queryByText("Shell")).toBeNull();
   });
 

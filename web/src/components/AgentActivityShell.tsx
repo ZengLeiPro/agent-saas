@@ -65,7 +65,7 @@ export function AgentActivityShell({
   );
 
   return (
-    <div className={cn('my-3', className)}>
+    <div className={cn('my-1.5', className)}>
       <div className="flex items-center gap-2">
         {disabled ? (
           <div className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left">{content}</div>

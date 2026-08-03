@@ -730,7 +730,9 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={timestamp} />
                 )}
-                <div className="py-2">
+                {/* AI 连续多轮各占一个虚拟行，行距已由 MESSAGE_ROW_GAP 承担；
+                    行内留白收紧，避免与 AgentActivityShell margin 叠出双倍轮间距。 */}
+                <div className="py-0.5">
                   {item.items.map((sub) => {
                     // ai_bubble 顶层的 file_download 双重保险维持原语义：一律跳过。
                     if (sub.type === 'file_download') return null;
@@ -752,7 +754,7 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
                 )}
-                <div className="py-2">
+                <div className="py-0.5">
                   {renderFlowItem(item)}
                 </div>
               </div>
@@ -767,7 +769,7 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={undefined} />
                 )}
-                <div className="py-2">
+                <div className="py-0.5">
                   <ErrorBoundary inline>
                     <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} />
                   </ErrorBoundary>

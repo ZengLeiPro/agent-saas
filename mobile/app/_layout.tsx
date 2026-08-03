@@ -40,8 +40,10 @@ function AuthGate() {
     if (loading) return;
 
     const inAuthGroup = segments[0] === "login";
+    // SPIKE: webview-spike 走 Web 端自己的登录，不需要原生登录态
+    const inSpike = segments[0] === "webview-spike";
 
-    if (!user && !inAuthGroup) {
+    if (!user && !inAuthGroup && !inSpike) {
       router.replace("/login");
     } else if (user && inAuthGroup) {
       router.replace("/(tabs)/chat");
@@ -109,6 +111,7 @@ function AuthGate() {
           }}
         />
         <Stack.Screen name="login" />
+        <Stack.Screen name="webview-spike" />
         <Stack.Screen name="index" />
       </Stack>
     </ChatAppStateProvider>

@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Agent SaaS",
-    "slug": "agent-saas",
+    "slug": "ky-agent",
     "version": "1.9.5",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -27,13 +27,18 @@
       },
       "infoPlist": {
         "CFBundleDevelopmentRegion": "zh_CN",
-        "CFBundleLocalizations": ["zh_CN", "zh"],
+        "CFBundleLocalizations": [
+          "zh_CN",
+          "zh"
+        ],
         "NSMicrophoneUsageDescription": "用于发送语音消息",
         "NSCameraUsageDescription": "用于拍照上传",
         "NSPhotoLibraryUsageDescription": "用于从系统图库选择图片或视频作为附件、头像",
         "NSLocationWhenInUseUsageDescription": "用于操作日志中的位置记录",
         "ITSAppUsesNonExemptEncryption": false,
-        "LSApplicationQueriesSchemes": ["iosamap"]
+        "LSApplicationQueriesSchemes": [
+          "iosamap"
+        ]
       }
     },
     "android": {
@@ -78,8 +83,16 @@
             "NSExtensionActivationSupportsMovieWithMaxCount": 5,
             "NSExtensionActivationSupportsFileWithMaxCount": 10
           },
-          "androidIntentFilters": ["image/*", "video/*", "*/*"],
-          "androidMultiIntentFilters": ["image/*", "video/*", "*/*"]
+          "androidIntentFilters": [
+            "image/*",
+            "video/*",
+            "*/*"
+          ],
+          "androidMultiIntentFilters": [
+            "image/*",
+            "video/*",
+            "*/*"
+          ]
         }
       ],
       "@react-native-community/datetimepicker",
@@ -91,6 +104,7 @@
       "eas": {
         "projectId": "c5c346ce-795f-4dae-9570-b7e937028923"
       }
-    }
+    },
+    "owner": "zengleipro"
   }
 }

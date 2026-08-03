@@ -3125,6 +3125,17 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         });
         runtimeRunController.abort(event.runId, event.reason ?? 'tool_invocation_cancel_requested');
       }
+      // 2026-08-04 P0：web 进程 handleAbortAsync 里的 runtimeRunController.abort 是进程内注册表，
+      // Web/Worker 解耦后摸不到 worker 进程里正在跑的 run（实证 fc3bf95a：cancel 后 run 继续跑
+      // 4 分钟到自然 success）。run_cancel_requested 是 durable 广播事件，所有进程在此消费并
+      // abort 本进程注册表中的同 runId（不存在则 no-op），使停止按钮跨进程生效。模型请求飞行中
+      // 没有 running tool invocation，上面的分支不会触发，本分支是该窗口的唯一取消通道。
+      if (event.type === 'run_cancel_requested' && event.runId) {
+        const aborted = runtimeRunController.abort(event.runId, event.reason ?? 'run_cancel_requested');
+        if (aborted) {
+          serverLogger.info(`Run cancel delivered via event bridge: run=${event.runId} reason=${event.reason ?? 'run_cancel_requested'}`);
+        }
+      }
       if (event.type === 'run_finished' || event.type === 'run_started') {
         // L2 记忆整合低延迟唤醒；正确性不依赖此调用（durable cursor 扫描兜底）
         memoryConsolidationEngine?.wake();

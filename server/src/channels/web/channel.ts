@@ -1872,19 +1872,35 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    // 回放错过的事件（skipReplay 模式下跳过）
+    // 回放错过的事件（skipReplay 模式下跳过）。
+    // 2026-08-04 P1：buffer 的 lastEventId 是本 buffer 实例的内存自增 id，buffer 重建
+    // （run 交替/幽灵收口/进程重启）后与客户端持有值错位。客户端没有有效 buffer id、
+    // 只有 durable cursor 时（典型：刷新后 transcript 快照已含历史，随后断线重连），
+    // 走 durable 增量重放；此时 getEventsAfter(sid, 0) 会把整个 buffer 全量重放，
+    // 叠加到 transcript 快照上形成整段重复（实证 fc3bf95a）。
     if (!skipReplay) {
-      const result = this.eventBufferStore.getEventsAfter(sid, lastEventId);
-      if (result) {
-        if (result.gapDetected) {
-          this.wsSend(client.ws, { type: 'buffer_overflow' });
+      const hasBufferCursor = typeof lastEventId === 'number' && lastEventId > 0;
+      if (!hasBufferCursor && lastEventCursor) {
+        const store = await this.getRuntimeEventStoreForSession(sid);
+        if (store) {
+          await this.replayDurableRuntimeEvents(client, sid, store, {
+            lastEventCursor,
+            activeRunId: activeEntry?.runId ?? '',
+          });
         }
-        for (const evt of result.events) {
-          if (client.ws.readyState !== client.ws.OPEN) break;
-          try {
-            const data = JSON.parse(evt.data);
-            this.wsSend(client.ws, data, evt.id, evt.eventCursor);
-          } catch { /* skip */ }
+      } else {
+        const result = this.eventBufferStore.getEventsAfter(sid, lastEventId);
+        if (result) {
+          if (result.gapDetected) {
+            this.wsSend(client.ws, { type: 'buffer_overflow' });
+          }
+          for (const evt of result.events) {
+            if (client.ws.readyState !== client.ws.OPEN) break;
+            try {
+              const data = JSON.parse(evt.data);
+              this.wsSend(client.ws, data, evt.id, evt.eventCursor);
+            } catch { /* skip */ }
+          }
         }
       }
     }
@@ -2569,7 +2585,12 @@ export class WebChannel implements BaseChannel {
       }
     }
 
-    if (validSessionId) {
+    // 2026-08-04 P2：enqueue 路径（下方 enqueueRuntime 分支）会写带 runId 的权威
+    // user_message_submitted；这里再写一条无 runId 的会造成同一消息双份 submitted
+    // 事件（实证 fc3bf95a seq 75/76 等四对）。仅在 enqueue-only 运行时不可用的
+    // 旧同步路径保留此兜底写入。
+    const enqueueRuntimeEnabled = Boolean(this.config.enqueueRuntime) && this.config.enqueueRuntime?.enabled !== false;
+    if (validSessionId && !enqueueRuntimeEnabled) {
       void this.appendDurableWebCommand(validSessionId, {
         type: 'user_message_submitted',
         sessionId: validSessionId,

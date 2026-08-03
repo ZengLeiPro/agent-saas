@@ -108,6 +108,52 @@ describe('WebChannel active stream reconnect', () => {
     expect(onSpy).toHaveBeenCalledWith('close', expect.any(Function));
   });
 
+  // 2026-08-04 P1 回归：刷新后重连的客户端只有 durable cursor、没有有效 buffer id。
+  // buffer 的内存自增 id 与客户端错位时，getEventsAfter(sid, 0) 会把整个 buffer
+  // 全量重放并叠加到 transcript 快照上（实证 fc3bf95a）。此场景必须改走
+  // durable 增量重放（afterCursor），且不得重放 buffer 旧事件。
+  it('resume with only a durable cursor replays durable increments instead of the full buffer', async () => {
+    const channel = createChannel();
+    const ws = new FakeWebSocket();
+
+    (channel as any).activeStreams.set('stream-dc', {
+      controller: new AbortController(),
+      userId: 'admin-1',
+      ws: new FakeWebSocket(),
+      sessionId: 'session-dc',
+      runId: 'run-dc',
+    });
+    (channel as any).eventBufferStore.create('session-dc', 'admin-1');
+    (channel as any).eventBufferStore.push('session-dc', JSON.stringify({
+      type: 'text',
+      content: 'already shown in transcript snapshot',
+    }));
+
+    const listPage = vi.fn(async () => ({ events: [], hasMore: false }));
+    vi.spyOn(channel as any, 'getRuntimeEventStoreForSession').mockResolvedValue({ listPage });
+
+    (channel as any).handleResume(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      { action: 'resume', sessionId: 'session-dc', lastEventId: 0, lastEventCursor: '4321' },
+    );
+    await (channel as any).resumeChains.get(ws);
+
+    expect(ws.sent[0]).toMatchObject({
+      data: { type: 'active_stream', sessionId: 'session-dc', active: true },
+    });
+    // durable 增量：从客户端 cursor 之后取，而不是 buffer 全量
+    expect(listPage).toHaveBeenCalledWith('session-dc', {
+      afterCursor: '4321',
+      limit: 200,
+    });
+    expect(JSON.stringify(ws.sent)).not.toContain('already shown in transcript snapshot');
+  });
+
   it('keeps resume subscription when scheduler session_init reuses an active buffer', () => {
     const channel = createChannel();
     const ws = new FakeWebSocket();

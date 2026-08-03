@@ -3617,7 +3617,7 @@ async function releaseWakeLeaseForDrainHandoff(input: {
   return true;
 }
 
-function startWakeLeaseRenewal(input: {
+export function startWakeLeaseRenewal(input: {
   lease?: RuntimeWakeLease;
   runStore?: RunStore;
   runId: string;
@@ -3629,6 +3629,17 @@ function startWakeLeaseRenewal(input: {
     void (async () => {
       try {
         await input.lease?.renew();
+        // 2026-08-04 P0 兜底：run_cancel_requested 的跨进程投递主通道是 PG NOTIFY
+        // （app/runtime.ts subscribeAppended）；NOTIFY 丢失时由本轮询保证 ≤intervalMs
+        // 内感知 durable cancelled 并中止。仅响应 cancelled（外部取消信号）；
+        // completed/failed 是 loop 自己写的终态，不在此处理。
+        if (!input.abortController.signal.aborted && input.runStore) {
+          const current = await input.runStore.get(input.runId).catch(() => null);
+          if (current?.status === 'cancelled') {
+            clearInterval(timer);
+            input.abortController.abort(new Error(current.statusReason ?? 'run_cancel_requested'));
+          }
+        }
       } catch (err) {
         const current = await input.runStore?.get(input.runId).catch(() => null);
         if (isTerminalRunStatus(current?.status)) {

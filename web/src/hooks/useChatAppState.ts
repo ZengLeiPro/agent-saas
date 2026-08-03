@@ -1537,6 +1537,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               msgRef.current.setMessages(cleaned, { scrollToBottom: false });
             }
 
+            // 2026-08-04 P1：只有持有增量游标（buffer eventId 或 durable cursor）才请求
+            // replay；两者皆无时 replay 语义退化为「从头全量重放」，会把 transcript 快照
+            // 已展示的内容整段叠加一遍（实证 fc3bf95a）。无游标改走 refreshCurrentSession
+            // 补断线期间内容（transcript 投影是实时的）。
+            const hasReplayCursor = lastEventIdRef.current !== null
+              || Boolean(lastEventCursorRef.current);
             const handleReconnectStream = (envelope: WsEnvelope) => {
               const d = envelope.data as WsEvent;
               if (d.type !== 'active_stream') return;
@@ -1549,6 +1555,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               } else {
                 if (d.streamId) streamIdRef.current = d.streamId;
                 wsAttachedRef.current = true;
+                if (!hasReplayCursor) {
+                  // 跳过了 replay：用 transcript 刷新补齐断线期间的增量
+                  sessionRef.current.refreshCurrentSession();
+                }
               }
             };
             const unsubReconnect = wsClient.onMessage(handleReconnectStream);
@@ -1557,7 +1567,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               sessionId: targetSid,
               lastEventId: lastEventIdRef.current ?? 0,
               lastEventCursor: lastEventCursorRef.current,
-              skipReplay: false,
+              skipReplay: !hasReplayCursor,
             }).then(ok => {
               if (!ok) unsubReconnect();
             });

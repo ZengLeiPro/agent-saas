@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { acquireDirectRuntimeRunLease } from '../runtime/rawRuntimeRunDispatch.js';
+import { acquireDirectRuntimeRunLease, startWakeLeaseRenewal } from '../runtime/rawRuntimeRunDispatch.js';
 import type { RunRecord, RunStore } from '../runtime/runStore.js';
 
 function runRecord(runId: string, workerId: string): RunRecord {
@@ -58,5 +58,70 @@ describe('acquireDirectRuntimeRunLease', () => {
 
     expect(lease).toBeNull();
     expect(acquireCalls).toBe(0);
+  });
+});
+
+describe('startWakeLeaseRenewal durable cancel fallback', () => {
+  // 2026-08-04 P0 兜底回归：run_cancel_requested 的主投递通道是 PG NOTIFY；
+  // NOTIFY 丢失时 renewal 轮询必须在 ≤intervalMs 内感知 durable cancelled 并 abort。
+  it('aborts the run when durable status turns cancelled while renewals still succeed', async () => {
+    const abortController = new AbortController();
+    const lease = { renew: async () => {}, release: async () => {} } as any;
+    const runStore = {
+      get: async () => ({
+        runId: 'run-cancel',
+        sessionId: 'session-1',
+        status: 'cancelled',
+        statusReason: 'web_abort',
+        requestedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        metadata: {},
+      }),
+    } as unknown as RunStore;
+
+    const timer = startWakeLeaseRenewal({
+      lease,
+      runStore,
+      runId: 'run-cancel',
+      abortController,
+      intervalMs: 10,
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(abortController.signal.aborted).toBe(true);
+      const reason = abortController.signal.reason;
+      expect(String(reason instanceof Error ? reason.message : reason)).toContain('web_abort');
+    } finally {
+      if (timer) clearInterval(timer);
+    }
+  });
+
+  it('does not abort for completed runs (loop-owned terminal states)', async () => {
+    const abortController = new AbortController();
+    const lease = { renew: async () => {}, release: async () => {} } as any;
+    const runStore = {
+      get: async () => ({
+        runId: 'run-done',
+        sessionId: 'session-1',
+        status: 'completed',
+        requestedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        metadata: {},
+      }),
+    } as unknown as RunStore;
+
+    const timer = startWakeLeaseRenewal({
+      lease,
+      runStore,
+      runId: 'run-done',
+      abortController,
+      intervalMs: 10,
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(abortController.signal.aborted).toBe(false);
+    } finally {
+      if (timer) clearInterval(timer);
+    }
   });
 });

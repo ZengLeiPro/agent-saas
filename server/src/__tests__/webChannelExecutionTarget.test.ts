@@ -321,6 +321,60 @@ describe('WebChannel executionTarget gating', () => {
     }
   });
 
+  // 2026-08-04 P2 回归：enqueue 路径对已有会话的每条消息只允许写一条
+  // user_message_submitted（带 runId 的权威条）。修复前 processChatMessage 会在
+  // enqueue 前再写一条无 runId 的，形成双份 submitted（实证 fc3bf95a seq 75/76 等四对）。
+  it('writes exactly one user_message_submitted per message on existing sessions', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'web-enqueue-submitted-'));
+    try {
+      const runStore = new MemoryRunStore();
+      const enqueued: UpsertRunInput[] = [];
+      const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
+      const { channel } = createChannel({
+        agentCwd: tmp,
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        enqueueRuntime: {
+          scheduler: {
+            enqueue: async (input: UpsertRunInput) => {
+              enqueued.push(input);
+              return runStore.upsertPending(input);
+            },
+          } as any,
+          runStore,
+          sessionCatalog,
+          enabled: true,
+        },
+      });
+      const client = {
+        ws: new FakeWebSocket() as any,
+        user: { sub: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'wain-test' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      };
+
+      await (channel as any).processChatMessage(client, chatMessage({}));
+      await flushMicrotasks();
+      const sessionId = enqueued[0]?.sessionId as string;
+      expect(sessionId).toBeTruthy();
+
+      await (channel as any).processChatMessage(client, chatMessage({ sessionId, message: 'second message' }));
+      // appendDurableWebCommand 是 fire-and-forget 且含真实 fs 扫描，等宏任务
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      const transcriptPath = (enqueued[1]?.metadata as any)?.transcriptPath as string;
+      expect(transcriptPath).toBeTruthy();
+      const store = new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+      const events = await store.list(sessionId);
+      const submitted = events.filter((event: any) => (
+        event.type === 'user_message_submitted' && event.content === 'second message'
+      ));
+      expect(submitted).toHaveLength(1);
+      expect((submitted[0] as any).runId).toBeTruthy();
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('passes admin-selected server-container down to the dispatcher', async () => {
     const { channel, calls } = createChannel();
     const ws = new FakeWebSocket();

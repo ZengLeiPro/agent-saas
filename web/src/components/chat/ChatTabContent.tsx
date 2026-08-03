@@ -10,7 +10,6 @@ import type { AgentProfile, OrgAgentSummary, SessionParticipants } from "@agent/
 import { MessageList } from "@/components/MessageList";
 import { FileUpload } from "@/components/FileUpload";
 import { ChatInput } from "@/components/ChatInput";
-import { TodoPanel } from "@/components/TodoPanel";
 import { AskUserPromptPanel } from "@/components/AskUserPromptPanel";
 
 interface ChatTabContentProps {
@@ -267,9 +266,6 @@ export function ChatTabContent({
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={onAutoApproveRunShellChange}
               onSendVoice={onSendVoice}
-              attachedTopSlot={(
-                <TodoPanel messages={messages} sessionId={sessionId} runActive={loading && !stopping} />
-              )}
               topSlot={(orgAgent || activeAskUser) ? (
                 <div className="space-y-2">
                   {orgAgent && (

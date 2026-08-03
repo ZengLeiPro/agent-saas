@@ -24,9 +24,9 @@ export interface TodoOutcome {
 }
 
 export interface TodoItem {
-  /** 稳定业务步骤 ID；旧 TodoWrite 快照可以不带。 */
+  /** 稳定业务步骤 ID；历史 TodoWrite 快照可以不带。 */
   id?: string;
-  /** task 保持原有轻量样式；business 启用富业务步骤展示。 */
+  /** 新调用只生成 business；task/undefined 仅用于解析历史快照。 */
   kind?: "task" | "business";
   content: string;
   status: TodoStatus;
@@ -184,7 +184,7 @@ export function isBusinessTodo(todo: TodoItem): boolean {
 //   把每个状态转移变成一条会话流内的事件，出现在它发生的时间位置。
 // - 普通工具调用不再被吸进步骤卡：thinking / 工具活动 / 正文保持自然时间顺序，
 //   与业务事件同向线性生长，杜绝「活动跳回上方卡片、正文在下方脱节」的撕裂。
-// - 计划总览职责交给常驻导航（TodoPanel），流内只保留叙事事件。
+// - 计划与步骤状态只在会话流内呈现，不再额外投影到输入框上方。
 // - 投影是纯函数、无累积状态：同一输入永远产出同一事件序列（React 重渲染幂等）。
 
 export type BusinessStepEventKind =
@@ -218,7 +218,7 @@ export interface BusinessStepProjection {
   events: BusinessStepEventItem[];
   /** 按 anchor 消息 id 索引，供 groupMessages 在对应位置插入事件。 */
   eventsByAnchor: Map<string, BusinessStepEventItem[]>;
-  /** 完整解析的 TodoWrite 消息 id；非 debug 视图从主流隐藏（TodoPanel 承载总览）。 */
+  /** 完整解析的 TodoWrite 消息 id；非 debug 视图隐藏原始工具块，由业务步骤事件承载。 */
   hiddenMessageIds: Set<string>;
 }
 
@@ -405,32 +405,4 @@ export function projectBusinessStepEvents(
   }
 
   return { events, eventsByAnchor, hiddenMessageIds };
-}
-
-export function extractLatestTodos(messages: MessageItem[]): TodoItem[] | null {
-  let hasUserMessageAfterTodo = false;
-
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-
-    if (message.type === "user") {
-      hasUserMessageAfterTodo = true;
-      continue;
-    }
-
-    if (message.type !== "tool_use" || message.toolName !== TODO_WRITE_TOOL_NAME) {
-      continue;
-    }
-
-    const todos = parseTodos(message.toolInput);
-    if (todos === undefined) continue;
-    if (todos === null) return null;
-
-    const allCompleted = todos.every((todo) => todo.status === "completed");
-    if (allCompleted && hasUserMessageAfterTodo) return null;
-
-    return todos;
-  }
-
-  return null;
 }

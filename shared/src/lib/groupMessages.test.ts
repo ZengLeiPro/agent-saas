@@ -10,7 +10,7 @@
  * Business TodoWrite 走「快照差分→事件流」投影：
  * - 事件插在产生它的 TodoWrite 消息位置，按时间线性出现；
  * - 普通工具调用不再被吸进步骤卡，保持自然活动分组；
- * - TodoWrite 消息非 debug 隐藏（总览由 TodoPanel 承载），debug 保留原始块。
+ * - TodoWrite 原始工具块在非 debug 视图隐藏，debug 保留。
  */
 import { describe, expect, it } from 'vitest';
 import { groupMessages } from './groupMessages';
@@ -123,7 +123,7 @@ describe('groupMessages', () => {
     expect((debug[2] as ActivityGroup).items.map(i => i.id)).toEqual(['todo-1']);
   });
 
-  it('task-only TodoWrite 从主流隐藏且不产生事件（总览由 TodoPanel 承载）', () => {
+  it('历史 task-only TodoWrite 不产生业务事件，非 debug 视图隐藏原始块', () => {
     const taskSnapshot = businessTodo('todo-task', [
       { id: 'task', kind: 'task', content: '普通任务', status: 'in_progress' },
     ]);

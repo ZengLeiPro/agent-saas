@@ -41,11 +41,16 @@ export interface BuiltinToolsConfig {
 const TODO_LRU_CAPACITY = 1024;
 
 type TodoItem = {
-  id?: string;
-  kind?: 'task' | 'business';
+  id: string;
+  kind: 'business';
   content: string;
   status: 'pending' | 'in_progress' | 'waiting' | 'blocked' | 'completed' | 'failed';
   activeForm?: string;
+  outcome?: {
+    text: string;
+    tone?: 'ok' | 'warn' | 'fail';
+    stat?: Array<{ label: string; value: string }>;
+  };
   detail?: unknown[];
   display?: unknown[];
   evidenceRefs?: string[];
@@ -119,8 +124,8 @@ export const todoWriteToolDescriptor: ToolDescriptor<TodoWriteInput> = {
     todos: z
       .array(
         z.object({
-          id: z.string().min(1).max(100).optional(),
-          kind: z.enum(['task', 'business']).optional(),
+          id: z.string().min(1).max(100),
+          kind: z.literal('business'),
           content: todoTextSchema,
           status: z.enum(['pending', 'in_progress', 'waiting', 'blocked', 'completed', 'failed']),
           activeForm: todoTextSchema.optional(),

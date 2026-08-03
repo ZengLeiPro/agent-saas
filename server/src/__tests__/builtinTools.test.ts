@@ -167,7 +167,7 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
     await expect(
       provider.invoke(
         makeCall(todoWriteToolDescriptor.id, {
-          todos: [{ content: 'do thing', status: 'pending' as const }],
+          todos: [{ id: 'do-thing', kind: 'business' as const, content: 'do thing', status: 'pending' as const }],
         }),
         ctx,
       ),
@@ -179,7 +179,7 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
     const provider = new BuiltinToolProvider();
     const res1 = await provider.invoke(
       makeCall(todoWriteToolDescriptor.id, {
-        todos: [{ content: 'A', status: 'pending' as const }],
+        todos: [{ id: 'a', kind: 'business' as const, content: 'A', status: 'pending' as const }],
       }),
       makeContext(root, 'sess-x'),
     );
@@ -187,13 +187,23 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
     const res2 = await provider.invoke(
       makeCall(todoWriteToolDescriptor.id, {
         todos: [
-          { content: 'A', status: 'completed' as const },
-          { content: 'B', status: 'pending' as const },
+          { id: 'a', kind: 'business' as const, content: 'A', status: 'completed' as const },
+          { id: 'b', kind: 'business' as const, content: 'B', status: 'pending' as const },
         ],
       }),
       makeContext(root, 'sess-x'),
     );
     expect(res2?.content).toMatch(/TODO list updated \(2 items\)/);
+  });
+
+  it('只接受带稳定 id 的 business 步骤', () => {
+    expect(() => todoWriteToolDescriptor.schema.parse({
+      todos: [{ id: 'legacy', kind: 'task', content: '旧任务', status: 'pending' }],
+    })).toThrow();
+
+    expect(() => todoWriteToolDescriptor.schema.parse({
+      todos: [{ kind: 'business', content: '缺少稳定 ID', status: 'pending' }],
+    })).toThrow();
   });
 
   it('接受富业务步骤并拒绝 Todo 内伪造交互块', () => {

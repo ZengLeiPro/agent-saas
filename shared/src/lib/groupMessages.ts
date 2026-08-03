@@ -20,7 +20,7 @@ function isGroupActive(items: MessageItem[], isLastGroup: boolean, loading: bool
 export interface GroupMessagesOptions {
   /**
    * debug 视图保留 TodoWrite 原始工具块（与业务步骤事件并存，语义=看原始数据）；
-   * 非 debug 视图 TodoWrite 从主流隐藏——总览由 TodoPanel 承载、叙事由事件承载。
+   * 非 debug 视图隐藏原始 TodoWrite 工具块，只呈现业务步骤事件。
    */
   debugMode?: boolean;
   /**

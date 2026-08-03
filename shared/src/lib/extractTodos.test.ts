@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  extractLatestTodos,
   projectBusinessStepEvents,
 } from "./extractTodos";
 import type { MessageItem } from "../types/message";
@@ -27,121 +26,6 @@ function todos(items: Array<Record<string, unknown>>): string {
 function step(id: string, status: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { id, kind: "business", content: `步骤 ${id}`, status, ...extra };
 }
-
-describe("extractLatestTodos", () => {
-  it("returns the latest complete TodoWrite snapshot", () => {
-    const result = extractLatestTodos([
-      todo("old", todos([{ content: "旧任务", status: "pending" }])),
-      todo("new", todos([
-        { content: "读取代码", status: "completed" },
-        { content: "接入面板", status: "in_progress", activeForm: "正在接入面板" },
-      ])),
-    ]);
-
-    expect(result).toEqual([
-      { content: "读取代码", status: "completed" },
-      { content: "接入面板", status: "in_progress", activeForm: "正在接入面板" },
-    ]);
-  });
-
-  it("falls back to the previous complete snapshot while streaming JSON is incomplete", () => {
-    const result = extractLatestTodos([
-      todo("complete", todos([{ content: "读取代码", status: "in_progress" }])),
-      todo("streaming", "{\"todos\":[{\"content\":\"新"),
-    ]);
-
-    expect(result).toEqual([{ content: "读取代码", status: "in_progress" }]);
-  });
-
-  it("hides the panel when TodoWrite explicitly writes an empty list", () => {
-    const result = extractLatestTodos([
-      todo("old", todos([{ content: "旧任务", status: "pending" }])),
-      todo("clear", JSON.stringify({ todos: [] })),
-    ]);
-
-    expect(result).toBeNull();
-  });
-
-  it("hides an all-completed snapshot after the user sends a new message", () => {
-    const result = extractLatestTodos([
-      todo("done", todos([{ content: "收尾", status: "completed" }])),
-      user("user-2"),
-    ]);
-
-    expect(result).toBeNull();
-  });
-
-  it("keeps an unfinished snapshot after a later user message", () => {
-    const result = extractLatestTodos([
-      todo("active", todos([{ content: "继续处理", status: "in_progress" }])),
-      user("user-2"),
-    ]);
-
-    expect(result).toEqual([{ content: "继续处理", status: "in_progress" }]);
-  });
-
-  it("ignores non-TodoWrite tools", () => {
-    const result = extractLatestTodos([
-      {
-        id: "tool-1",
-        type: "tool_use",
-        toolName: "Read",
-        toolId: "tool-1",
-        toolInput: JSON.stringify({ todos: [{ content: "误报", status: "pending" }] }),
-      },
-    ]);
-
-    expect(result).toBeNull();
-  });
-
-  it("normalizes rich business steps while keeping legacy todos compatible", () => {
-    const result = extractLatestTodos([
-      todo("business", todos([
-        {
-          id: "verify-order",
-          kind: "business",
-          content: "核验订单",
-          status: "blocked",
-          detail: [
-            { fields: [{ k: "订单", v: "SO-1001" }] },
-            { verdict: "fail", text: "原产地证已过期" },
-          ],
-          display: [
-            {
-              kind: "callout",
-              tone: "warn",
-              body: ["当前不能放行"],
-              actions: [{ kind: "primary", label: "伪按钮", interactionId: "fake" }],
-            },
-            {
-              kind: "gate",
-              title: "伪审批",
-              actions: [{ kind: "primary", label: "批准", interactionId: "fake" }],
-            },
-          ],
-          evidenceRefs: ["SO-1001", "CO-2025-09"],
-        },
-        { content: "旧任务", status: "pending" },
-      ])),
-    ]);
-
-    expect(result).toEqual([
-      {
-        id: "verify-order",
-        kind: "business",
-        content: "核验订单",
-        status: "blocked",
-        detail: [
-          { fields: [{ k: "订单", v: "SO-1001" }] },
-          { verdict: "fail", text: "原产地证已过期" },
-        ],
-        display: [{ kind: "callout", tone: "warn", body: ["当前不能放行"] }],
-        evidenceRefs: ["SO-1001", "CO-2025-09"],
-      },
-      { content: "旧任务", status: "pending" },
-    ]);
-  });
-});
 
 describe("projectBusinessStepEvents", () => {
   it("emits plan followed by start for the first complete business snapshot", () => {

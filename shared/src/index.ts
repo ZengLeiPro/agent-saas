@@ -319,7 +319,6 @@ export { searchSessions } from "./lib/searchApi";
 export type { SearchSessionsParams } from "./lib/searchApi";
 export { mergeServerMessagesWithLocalTail, mergeSessionMessageDelta, mergeSessionMessagePage } from "./lib/sessionMerge";
 export {
-  extractLatestTodos,
   isBusinessTodo,
   isTerminalStepEvent,
   projectBusinessStepEvents,

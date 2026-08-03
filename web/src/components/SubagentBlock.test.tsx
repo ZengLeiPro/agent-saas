@@ -34,7 +34,8 @@ describe('SubagentBlock', () => {
       />,
     );
 
-    expect(screen.getByText('失败')).toBeTruthy();
+    // 排版型外壳：状态文字标签已删，失败语义由红色 icon 承载；折叠行显示标题+结果预览。
+    expect(screen.getByText(/部分材料/)).toBeTruthy();
     expect(screen.getByText('gpt-5.6 · 10m · 123.5k tokens')).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: /子任务 调研金球奖/ }));

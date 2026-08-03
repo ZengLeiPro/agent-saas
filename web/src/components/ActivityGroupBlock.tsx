@@ -293,6 +293,11 @@ interface ActivityGroupBlockProps {
   isActive: boolean;
   isLast?: boolean;
   debugMode?: boolean;
+  /**
+   * 业务步骤节内平铺：节的「过程 · N 项」折叠已是唯一收纳层，
+   * 不再套第二层「Agent 活动」折叠壳（消除双重折叠）。
+   */
+  flat?: boolean;
 }
 
 export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: { isActive?: boolean; durationMs?: number; hasIssue?: boolean }) {
@@ -312,7 +317,7 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
   );
 }
 
-export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true }: ActivityGroupBlockProps) {
+export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true, flat = false }: ActivityGroupBlockProps) {
   // 折叠行已提供分组摘要，具体工具详情由用户按需展开，避免长会话默认铺满执行细节。
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -320,6 +325,17 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
   // 否则场景回放和真实会话都会把关键业务动作标题折叠掉。
   if (items.length === 1 && hasPresentation(items[0])) {
     return <ActivityItem item={items[0]} debugMode={debugMode} />;
+  }
+
+  // 节内平铺：外层「过程」折叠是唯一收纳层，这里直接铺内容。
+  if (flat) {
+    return (
+      <div className="flex flex-col gap-2.5 [&>*]:my-0">
+        {items.map(item => (
+          <ActivityItem key={item.id} item={item} debugMode={debugMode} />
+        ))}
+      </div>
+    );
   }
 
   const summary = getGroupSummary(items, isActive);
@@ -341,13 +357,13 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
   return (
     <AgentActivityShell
       state={state}
-      title="Agent 活动"
-      subtitle={summary.text}
+      // 摘要即标题：「Agent 活动」这个泛化标题信息量为零，折叠行直接说发生了什么。
+      title={summary.text}
       meta={meta}
       expanded={isExpanded}
       onToggle={() => setIsExpanded((value) => !value)}
     >
-      <div className="flex flex-col [&>*]:my-0" style={{ gap: 10 }}>
+      <div className="flex flex-col gap-2.5 [&>*]:my-0">
         {items.map(item => (
           <ActivityItem key={item.id} item={item} debugMode={debugMode} />
         ))}

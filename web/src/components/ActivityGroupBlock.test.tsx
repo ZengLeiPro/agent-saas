@@ -14,13 +14,16 @@ const failedTool: Extract<MessageItem, { type: 'tool_use' }> = {
   result: 'tool error: exit code 1',
 };
 
-describe('ActivityGroupBlock 统一活动卡', () => {
-  it('单条异常不再让整个分组显示异常，展开后才能看到具体异常', () => {
-    render(<ActivityGroupBlock items={[failedTool]} isActive={false} debugMode />);
+describe('ActivityGroupBlock 排版型活动行', () => {
+  it('折叠行为一行摘要（无标题无卡片），单条异常不在折叠行暴露，展开后可见', () => {
+    const { container } = render(<ActivityGroupBlock items={[failedTool]} isActive={false} debugMode />);
 
-    expect(screen.getByText('Agent 活动')).toBeTruthy();
-    expect(screen.getByText('已完成')).toBeTruthy();
+    // 摘要即标题：泛化「Agent 活动」标题已删除
+    expect(screen.queryByText('Agent 活动')).toBeNull();
+    expect(screen.getByText(/已完成 1 条/)).toBeTruthy();
     expect(screen.queryByText('有异常')).toBeNull();
+    // 排版型：无卡片容器（rounded/border/bg 壳已移除）
+    expect(container.querySelector('.rounded-lg.border')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { expanded: false }));
     expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(1);
@@ -37,8 +40,7 @@ describe('ActivityGroupBlock 统一活动卡', () => {
       debugMode
     />);
 
-    const summary = screen.getByText('已完成 2 条：1 次思考 · 1 个工具');
-    expect(screen.getByText('已完成')).toBeTruthy();
+    const summary = screen.getByText(/已完成 2 条：1 次思考 · 1 个工具/);
     expect(screen.queryByText('有异常')).toBeNull();
     expect(screen.getByText(/1\.2s.*2 项/)).toBeTruthy();
 
@@ -57,16 +59,14 @@ describe('ActivityGroupBlock 统一活动卡', () => {
       debugMode
     />);
 
-    expect(screen.getByText('正在处理')).toBeTruthy();
-    expect(screen.getByText('运行中')).toBeTruthy();
+    expect(screen.getByText(/正在处理/)).toBeTruthy();
     expect(screen.queryByText(/异常/)).toBeNull();
   });
 
   it('关闭调试模式后仍使用统一外壳，折叠行不显示异常', () => {
     render(<ActivityGroupBlock items={[failedTool]} isActive={false} debugMode={false} />);
 
-    expect(screen.getByText('Agent 活动')).toBeTruthy();
-    expect(screen.getByText('已完成')).toBeTruthy();
+    expect(screen.getByText(/已完成 1 条/)).toBeTruthy();
     expect(screen.queryByText('有异常')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { expanded: false }));
@@ -84,7 +84,24 @@ describe('ActivityGroupBlock 统一活动卡', () => {
     />);
 
     expect(screen.queryByText('有异常')).toBeNull();
-    expect(screen.getByText('已完成 2 条：1 次思考 · 1 个工具')).toBeTruthy();
+    expect(screen.getByText(/已完成 2 条：1 次思考 · 1 个工具/)).toBeTruthy();
     expect(screen.queryByText(/exit 1/)).toBeNull();
+  });
+
+  it('flat 模式（业务步骤节内）直接平铺内容，无折叠壳', () => {
+    render(<ActivityGroupBlock
+      items={[
+        { id: 'thinking', type: 'thinking', content: '换一种方法', streaming: false },
+        failedTool,
+      ]}
+      isActive={false}
+      debugMode
+      flat
+    />);
+
+    // 无折叠行摘要，内容直接平铺（节的「过程」折叠是唯一收纳层）；
+    // ThinkingBlock / ToolBlock 保持各自的一级折叠行为。
+    expect(screen.queryByText(/已完成 2 条/)).toBeNull();
+    expect(screen.getAllByText(/有异常/).length).toBeGreaterThanOrEqual(1);
   });
 });

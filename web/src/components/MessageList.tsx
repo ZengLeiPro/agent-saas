@@ -632,12 +632,12 @@ export const MessageList = memo(function MessageList({
           const showHeader = headerItemIds.has(item.id);
 
           // AI 流内子项渲染：ai_bubble 内与业务步骤节内共用（节内过程 = 完整消息渲染，非降级视图）。
-          const renderFlowItem = (sub: RenderItem): React.ReactNode => {
+          const renderFlowItem = (sub: RenderItem, inSection = false): React.ReactNode => {
             if (sub.type === 'business_step_section') {
               return (
                 <ErrorBoundary key={sub.id} inline>
                   <BusinessStepSectionView section={sub}>
-                    {sub.items.map((child) => renderFlowItem(child))}
+                    {sub.items.map((child) => renderFlowItem(child, true))}
                   </BusinessStepSectionView>
                 </ErrorBoundary>
               );
@@ -656,7 +656,14 @@ export const MessageList = memo(function MessageList({
             if (sub.type === 'activity_group') {
               return (
                 <ErrorBoundary key={sub.id} inline>
-                  <ActivityGroupBlock items={sub.items} isActive={sub.isActive} isLast={sub.id === lastActivityGroupId} debugMode={debugMode} />
+                  <ActivityGroupBlock
+                    items={sub.items}
+                    isActive={sub.isActive}
+                    isLast={sub.id === lastActivityGroupId}
+                    debugMode={debugMode}
+                    // 节内平铺：节的「过程」折叠是唯一收纳层，不再套第二层折叠壳。
+                    flat={inSection}
+                  />
                 </ErrorBoundary>
               );
             }

@@ -644,12 +644,12 @@ export const MessageList = memo(function MessageList({
           const showHeader = headerItemIds.has(item.id);
 
           // AI 流内子项渲染：ai_bubble 内与业务步骤节内共用（节内过程 = 完整消息渲染，非降级视图）。
-          const renderFlowItem = (sub: RenderItem, inSection = false): React.ReactNode => {
+          const renderFlowItem = (sub: RenderItem): React.ReactNode => {
             if (sub.type === 'business_step_section') {
               return (
                 <ErrorBoundary key={sub.id} inline>
                   <BusinessStepSectionView section={sub} debugMode={debugMode}>
-                    {sub.items.map((child) => renderFlowItem(child, true))}
+                    {sub.items.map((child) => renderFlowItem(child))}
                   </BusinessStepSectionView>
                 </ErrorBoundary>
               );
@@ -673,8 +673,6 @@ export const MessageList = memo(function MessageList({
                     isActive={sub.isActive}
                     isLast={sub.id === lastActivityGroupId}
                     debugMode={debugMode}
-                    // 调试模式沿用节内平铺；普通用户保留活动组折叠摘要，但锁定为不可展开。
-                    flat={inSection && debugMode}
                   />
                 </ErrorBoundary>
               );

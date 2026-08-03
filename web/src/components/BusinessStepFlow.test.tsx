@@ -166,9 +166,14 @@ describe("BusinessStepSectionView", () => {
     expect(screen.queryByText("共核验 12 项字段")).toBeNull();
     expect(screen.getByText("已完成")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "业务详情" }));
+    const summaryToggle = screen.getByRole("button", { name: "业务详情" });
+    const processToggle = screen.getByRole("button", { name: /过程 ·/ });
+    expect(summaryToggle.lastElementChild?.classList.contains("lucide-chevron-right")).toBe(true);
+    expect(processToggle.lastElementChild?.classList.contains("lucide-chevron-right")).toBe(true);
+
+    fireEvent.click(summaryToggle);
     expect(screen.getByText("共核验 12 项字段")).toBeTruthy();
-    fireEvent.click(screen.getByText(/过程 ·/));
+    fireEvent.click(processToggle);
     expect(screen.getByTestId("process-content")).toBeTruthy();
   });
 

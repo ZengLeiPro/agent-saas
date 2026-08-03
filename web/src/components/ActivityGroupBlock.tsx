@@ -188,11 +188,6 @@ interface ActivityGroupBlockProps {
   isActive: boolean;
   isLast?: boolean;
   debugMode?: boolean;
-  /**
-   * 调试模式下的业务步骤节内平铺：外层「过程 · N 项」是唯一收纳层。
-   * 非调试模式保留活动组折叠摘要，并锁定为不可展开。
-   */
-  flat?: boolean;
 }
 
 export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: { isActive?: boolean; durationMs?: number; hasIssue?: boolean }) {
@@ -212,7 +207,7 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
   );
 }
 
-export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true, flat = false }: ActivityGroupBlockProps) {
+export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true }: ActivityGroupBlockProps) {
   // 折叠行已提供分组摘要，具体工具详情由用户按需展开，避免长会话默认铺满执行细节。
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -220,17 +215,6 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
   // 否则场景回放和真实会话都会把关键业务动作标题折叠掉。
   if (items.length === 1 && hasPresentation(items[0])) {
     return <ActivityItem item={items[0]} debugMode={debugMode} />;
-  }
-
-  // 仅调试模式节内平铺：外层「过程」折叠是唯一收纳层，这里直接铺内容。
-  if (flat) {
-    return (
-      <div className="flex flex-col gap-3 [&>*]:my-0">
-        {items.map(item => (
-          <ActivityItem key={item.id} item={item} debugMode={debugMode} />
-        ))}
-      </div>
-    );
   }
 
   const summary = getGroupSummary(items, isActive);

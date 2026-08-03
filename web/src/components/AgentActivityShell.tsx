@@ -45,9 +45,6 @@ export function AgentActivityShell({
 }) {
   const content = (
     <>
-      {!disabled ? (
-        <ChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground/60 transition-transform', expanded && 'rotate-90')} />
-      ) : null}
       <StatusIcon state={state} />
       <span className="flex min-w-0 items-baseline gap-2">
         <span className={cn(
@@ -61,6 +58,9 @@ export function AgentActivityShell({
         </span>
         {meta ? <span className="shrink-0 text-[11px] text-muted-foreground/70">{meta}</span> : null}
       </span>
+      {!disabled ? (
+        <ChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground/60 transition-transform', expanded && 'rotate-90')} />
+      ) : null}
     </>
   );
 

@@ -124,13 +124,21 @@ describe("MessageList business step sections", () => {
     expect(screen.queryByText("Shell")).toBeNull();
   });
 
-  it("re-expands the collapsed process in debug mode with full tool rendering", () => {
+  it("keeps activity groups inside the expanded process in debug mode", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride />);
 
     // debug 视图会额外保留 TodoWrite 原始工具块，因此过程项数包含该工具。
-    fireEvent.click(screen.getByText(/过程 · 2 项/));
-    // 展开后节内是完整的活动组渲染（非降级视图）
-    expect(screen.getByText(/读取订单/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /过程 · 2 项/ }));
+
+    // 过程展开后先显示活动组摘要，而不是直接铺开组内命令。
+    const groupToggle = screen.getByRole("button", { name: /读取订单.*2 项/ });
+    expect(groupToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("TodoWrite")).toBeNull();
+
+    // 继续展开活动组后，才显示具体命令。
+    fireEvent.click(groupToggle);
+    expect(screen.getByText("TodoWrite")).toBeTruthy();
+    expect(screen.getAllByText(/读取订单/).length).toBeGreaterThanOrEqual(2);
   });
 
   it("keeps final text outside any section", () => {

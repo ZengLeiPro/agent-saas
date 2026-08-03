@@ -134,8 +134,8 @@ function DisclosureButton({
       aria-expanded={open}
       onClick={onToggle}
     >
-      <ChevronRight className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
       {label}
+      <ChevronRight className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
     </button>
   );
 }

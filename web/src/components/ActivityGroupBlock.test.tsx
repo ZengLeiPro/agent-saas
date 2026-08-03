@@ -26,7 +26,9 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     // 排版型：无卡片容器（rounded/border/bg 壳已移除）
     expect(container.querySelector('.rounded-lg.border')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    const toggle = screen.getByRole('button', { expanded: false });
+    expect(toggle.lastElementChild?.classList.contains('lucide-chevron-right')).toBe(true);
+    fireEvent.click(toggle);
     expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(1);
   });
 
@@ -178,7 +180,7 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     expect(screen.queryByText(/exit 1/)).toBeNull();
   });
 
-  it('flat 模式（业务步骤节内）直接平铺内容，无折叠壳', () => {
+  it('调试模式始终保留活动组折叠层，展开后才显示组内动作', () => {
     render(<ActivityGroupBlock
       items={[
         { id: 'thinking', type: 'thinking', content: '换一种方法', streaming: false },
@@ -186,12 +188,13 @@ describe('ActivityGroupBlock 排版型活动行', () => {
       ]}
       isActive={false}
       debugMode
-      flat
     />);
 
-    // 无折叠行摘要（组级 meta「N 项」不出现），内容直接平铺（节的「过程」折叠是唯一收纳层）；
-    // ThinkingBlock / ToolBlock 保持各自的一级折叠行为。
-    expect(screen.queryByText(/2 项/)).toBeNull();
+    const toggle = screen.getByRole('button', { name: /已运行.*2 项/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText(/有异常/)).toBeNull();
+
+    fireEvent.click(toggle);
     expect(screen.getAllByText(/有异常/).length).toBeGreaterThanOrEqual(1);
   });
 });
